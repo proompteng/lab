@@ -50,6 +50,7 @@ const expectedRepositoryTemplate =
   '{{ if hasKey . "repoURL" }}{{ .repoURL }}{{ else }}https://github.com/proompteng/lab.git{{ end }}'
 const expectedRevisionTemplate = '{{ if hasKey . "targetRevision" }}{{ .targetRevision }}{{ else }}main{{ end }}'
 const expectedPathTemplate = '{{ .path }}'
+const expectedProjectTemplate = '{{ if hasKey . "project" }}{{ .project }}{{ else }}default{{ end }}'
 export const TENGRI_APPLICATION_TEMPLATE_PATCH = `{{- if .annotations }}
 metadata:
   annotations:
@@ -251,6 +252,7 @@ function findTengriApplicationBlock(contents: string) {
   const repository = document.getIn(['spec', 'template', 'spec', 'source', 'repoURL'])
   const revision = document.getIn(['spec', 'template', 'spec', 'source', 'targetRevision'])
   const path = document.getIn(['spec', 'template', 'spec', 'source', 'path'])
+  const project = document.getIn(['spec', 'template', 'spec', 'project'])
   const repositoryIsSafe = repository === expectedRepository || repository === expectedRepositoryTemplate
   const revisionIsSafe = revision === expectedRevision || revision === expectedRevisionTemplate
   if (!repositoryIsSafe || !revisionIsSafe) {
@@ -260,6 +262,9 @@ function findTengriApplicationBlock(contents: string) {
   }
   if (path !== expectedPathTemplate) {
     throw new Error('Tengri ApplicationSet template must resolve source path from the application entry')
+  }
+  if (project !== 'default' && project !== expectedProjectTemplate) {
+    throw new Error('Tengri ApplicationSet template must resolve Tengri to the default project')
   }
 
   assertSafeTemplatePatch(document.getIn(['spec', 'templatePatch']))

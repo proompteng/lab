@@ -85,6 +85,7 @@ images:
                   values: ["false", "False", "0"]
   template:
     spec:
+      project: '{{ if hasKey . "project" }}{{ .project }}{{ else }}default{{ end }}'
       source:
         repoURL: '{{ if hasKey . "repoURL" }}{{ .repoURL }}{{ else }}https://github.com/proompteng/lab.git{{ end }}'
         targetRevision: '{{ if hasKey . "targetRevision" }}{{ .targetRevision }}{{ else }}main{{ end }}'
@@ -707,6 +708,31 @@ spec:
       expect(() => validateTengriRelease(paths)).toThrow('template must resolve to repository')
       expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
         'template must resolve to repository',
+      )
+      expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+      expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
+      expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
+      rmSync(paths.directory, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a global template that resolves Tengri to another project', () => {
+    for (const replacement of ["      project: 'unverified'\n", '']) {
+      const paths = fixture()
+      const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+      const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+      writeFileSync(
+        paths.applicationSetPath,
+        readFileSync(paths.applicationSetPath, 'utf8').replace(
+          `      project: '{{ if hasKey . "project" }}{{ .project }}{{ else }}default{{ end }}'\n`,
+          replacement,
+        ),
+      )
+      const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+
+      expect(() => validateTengriRelease(paths)).toThrow('must resolve Tengri to the default project')
+      expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
+        'must resolve Tengri to the default project',
       )
       expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
       expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
