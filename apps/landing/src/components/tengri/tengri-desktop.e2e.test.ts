@@ -63,6 +63,7 @@ const sourceEntries = [
 type MockOptions = {
   authenticated?: boolean
   agent?: typeof readyAgent | null
+  extraFiles?: typeof workspaceEntries
   searchDelays?: Record<string, number>
 }
 
@@ -70,7 +71,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   let agent = options.agent === undefined ? readyAgent : options.agent
   const authenticated = options.authenticated ?? true
   const actions: Record<string, unknown>[] = []
-  let files = [...rootEntries, ...workspaceEntries, ...sourceEntries]
+  let files = [...rootEntries, ...workspaceEntries, ...sourceEntries, ...(options.extraFiles ?? [])]
   const contents = new Map<string, string>([
     ['/workspace/README.md', '# Tengri\n\nA persistent Firecracker workspace.\n'],
     ['/workspace/package.json', '{\n  "name": "tengri-workspace"\n}\n'],
@@ -299,9 +300,23 @@ async function resizeWindow(
 ) {
   const before = await frame.boundingBox()
   expect(before).not.toBeNull()
-  const handle = frame.locator(`.cursor-${edge}-resize`)
+  const handle = frame.locator('..').locator(`.cursor-${edge}-resize`)
   const handleBounds = await handle.boundingBox()
   expect(handleBounds).not.toBeNull()
+  await expect
+    .poll(() =>
+      page.evaluate(
+        ({ x, y }) => ({
+          className: document.elementFromPoint(x, y)?.getAttribute('class'),
+          tagName: document.elementFromPoint(x, y)?.tagName,
+        }),
+        {
+          x: handleBounds!.x + handleBounds!.width / 2,
+          y: handleBounds!.y + handleBounds!.height / 2,
+        },
+      ),
+    )
+    .toMatchObject({ className: expect.stringContaining(`cursor-${edge}-resize`) })
 
   await page.mouse.move(handleBounds!.x + handleBounds!.width / 2, handleBounds!.y + handleBounds!.height / 2)
   await page.mouse.down()
@@ -320,7 +335,16 @@ async function resizeWindow(
 }
 
 test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and window controls', async ({ page }) => {
-  const mock = await mockTengri(page, { searchDelays: { readme: 750 } })
+  const mock = await mockTengri(page, {
+    extraFiles: Array.from({ length: 8 }, (_, index) => ({
+      name: `test-${index + 1}.txt`,
+      path: `/workspace/test-${index + 1}.txt`,
+      directory: false,
+      size: 1,
+      modifiedAt: '2026-08-26T12:06:00.000Z',
+    })),
+    searchDelays: { readme: 750 },
+  })
   await page.goto('/')
 
   const dock = page.getByRole('navigation', { name: 'Dock' })
@@ -368,6 +392,14 @@ test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and win
   await expect(page.locator('button[aria-label="Close Quick Look"]')).toHaveCount(0)
 
   await page.keyboard.press('Meta+Space')
+  await spotlight.getByRole('combobox').fill('te')
+  await expect.poll(() => spotlight.getByRole('option').count()).toBeGreaterThan(8)
+  const optionCount = await spotlight.getByRole('option').count()
+  const resultsList = spotlight.getByRole('listbox')
+  await expect.poll(() => resultsList.evaluate((element) => element.scrollTop)).toBe(0)
+  for (let index = 1; index < optionCount; index += 1) await page.keyboard.press('ArrowDown')
+  await expect(spotlight.getByRole('option').last()).toHaveAttribute('aria-selected', 'true')
+  await expect.poll(() => resultsList.evaluate((element) => element.scrollTop)).toBeGreaterThan(0)
   await spotlight.getByRole('combobox').fill('src')
   await expect(spotlight.getByRole('option', { name: /src/ })).toBeVisible()
   await spotlight.getByRole('combobox').fill('readme')
@@ -566,7 +598,7 @@ test('supports desktop window shortcuts, independent windows, drag, and eight-ed
   await expect.poll(async () => (await frontmost.boundingBox())?.x).toBeGreaterThan(beforeDrag!.x + 50)
 
   const frameBounds = await frontmost.boundingBox()
-  const eastHandleBounds = await frontmost.locator('.cursor-e-resize').boundingBox()
+  const eastHandleBounds = await frontmost.locator('..').locator('.cursor-e-resize').boundingBox()
   expect(frameBounds).not.toBeNull()
   expect(eastHandleBounds).not.toBeNull()
   const frameRight = frameBounds!.x + frameBounds!.width
@@ -590,8 +622,18 @@ test('supports desktop window shortcuts, independent windows, drag, and eight-ed
   await page.keyboard.press('Meta+Backquote')
   await expect
     .poll(async () => {
-      const firstZ = Number(await chromeWindows.first().evaluate((element) => getComputedStyle(element).zIndex))
-      const lastZ = Number(await chromeWindows.last().evaluate((element) => getComputedStyle(element).zIndex))
+      const firstZ = Number(
+        await chromeWindows
+          .first()
+          .locator('..')
+          .evaluate((element) => getComputedStyle(element).zIndex),
+      )
+      const lastZ = Number(
+        await chromeWindows
+          .last()
+          .locator('..')
+          .evaluate((element) => getComputedStyle(element).zIndex),
+      )
       return firstZ > lastZ
     })
     .toBe(true)

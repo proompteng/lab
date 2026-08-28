@@ -44,6 +44,7 @@ export function Spotlight({
   const [searching, setSearching] = useState(false)
   const [selection, setSelection] = useState(0)
   const inputRef = useRef<HTMLInputElement | null>(null)
+  const resultsRef = useRef<HTMLDivElement | null>(null)
   const recentKey = `tengri:spotlight:${agentId}:recents`
 
   useEffect(() => {
@@ -139,6 +140,11 @@ export function Spotlight({
 
   useEffect(() => setSelection(0), [query])
   useEffect(() => setSelection((index) => Math.min(index, Math.max(0, results.length - 1))), [results.length])
+  useEffect(() => {
+    resultsRef.current
+      ?.querySelector<HTMLElement>(`#spotlight-result-${selection}`)
+      ?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [results, selection])
 
   function activate(result: SpotlightResult | undefined) {
     if (!result) return
@@ -215,6 +221,7 @@ export function Spotlight({
           </p>
         ) : null}
         <div
+          ref={resultsRef}
           aria-label="Search results"
           className="max-h-[430px] overflow-auto p-2"
           id="spotlight-results"

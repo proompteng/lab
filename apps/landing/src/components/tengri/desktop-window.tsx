@@ -22,6 +22,8 @@ type Interaction = {
   frame: number | null
 }
 
+const RESIZE_GUTTER = 12
+
 export function DesktopWindowFrame({
   active,
   children,
@@ -92,7 +94,7 @@ export function DesktopWindowFrame({
         interaction.frame = null
         const element = elementRef.current
         if (!element) return
-        paintWindowInteractionFrame(element.style, interaction)
+        paintWindowInteractionFrame(element.style, interaction, RESIZE_GUTTER)
       })
     },
     [viewport],
@@ -104,7 +106,7 @@ export function DesktopWindowFrame({
       if (!interaction || interaction.pointerId !== event.pointerId) return
       if (interaction.frame !== null) cancelAnimationFrame(interaction.frame)
       const element = elementRef.current
-      if (element) paintWindowInteractionFrame(element.style, interaction)
+      if (element) paintWindowInteractionFrame(element.style, interaction, RESIZE_GUTTER)
       interactionRef.current = null
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId)
@@ -117,12 +119,9 @@ export function DesktopWindowFrame({
 
   const bounds = window.bounds
   return (
-    <motion.section
+    <motion.div
       ref={elementRef}
-      aria-label={`${window.title} window`}
-      aria-hidden={window.mode === 'minimized'}
-      inert={window.mode === 'minimized' ? true : undefined}
-      className="tengri-window absolute overflow-visible rounded-[22px] border border-white/20 bg-[rgba(20,22,28,0.91)] shadow-[0_38px_100px_rgba(0,0,0,0.48),inset_0_1px_0_rgba(255,255,255,0.16)] backdrop-blur-2xl [contain:layout]"
+      className="absolute overflow-visible"
       initial={false}
       animate={
         window.mode === 'minimized'
@@ -136,67 +135,75 @@ export function DesktopWindowFrame({
       }
       transition={reducedMotion ? { duration: 0 } : { type: 'spring', stiffness: 440, damping: 38, mass: 0.8 }}
       style={{
-        left: bounds.x,
-        top: bounds.y,
-        width: bounds.width,
-        height: bounds.height,
+        left: bounds.x - RESIZE_GUTTER,
+        top: bounds.y - RESIZE_GUTTER,
+        width: bounds.width + RESIZE_GUTTER * 2,
+        height: bounds.height + RESIZE_GUTTER * 2,
         zIndex: window.z,
       }}
       onPointerDown={() => dispatch({ type: 'focus', id: window.id })}
     >
-      <header
-        className="flex h-11 touch-none items-center rounded-t-[21px] border-b border-white/10 bg-white/[0.045] px-4"
-        onDoubleClick={() => dispatch({ type: 'toggle-maximize', id: window.id, viewport: viewport() })}
-        onPointerDown={(event) => begin(event, null)}
-        onPointerMove={move}
-        onPointerUp={end}
-        onPointerCancel={end}
+      <section
+        aria-label={`${window.title} window`}
+        aria-hidden={window.mode === 'minimized'}
+        inert={window.mode === 'minimized' ? true : undefined}
+        className="tengri-window absolute inset-3 overflow-visible rounded-[22px] border border-white/20 bg-[rgba(20,22,28,0.91)] shadow-[0_38px_100px_rgba(0,0,0,0.48),inset_0_1px_0_rgba(255,255,255,0.16)] backdrop-blur-2xl"
+        style={{ pointerEvents: window.mode === 'minimized' ? 'none' : 'auto' }}
       >
-        <div className="flex items-center gap-2" aria-label="Window controls">
-          <button
-            type="button"
-            aria-label={`Close ${window.title}`}
-            className="group grid h-6 w-6 place-items-center rounded-full"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={() => (onCloseRequest ? onCloseRequest() : dispatch({ type: 'close', id: window.id }))}
-          >
-            <span
-              aria-hidden="true"
-              className="h-3.5 w-3.5 rounded-full border border-black/20 bg-[#ff5f57] shadow-inner"
-            />
-          </button>
-          <button
-            type="button"
-            aria-label={`Minimize ${window.title}`}
-            className="group grid h-6 w-6 place-items-center rounded-full"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={() => dispatch({ type: 'minimize', id: window.id })}
-          >
-            <span
-              aria-hidden="true"
-              className="h-3.5 w-3.5 rounded-full border border-black/20 bg-[#febc2e] shadow-inner"
-            />
-          </button>
-          <button
-            type="button"
-            aria-label={`${window.mode === 'maximized' ? 'Restore' : 'Maximize'} ${window.title}`}
-            className="group grid h-6 w-6 place-items-center rounded-full"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={() => dispatch({ type: 'toggle-maximize', id: window.id, viewport: viewport() })}
-          >
-            <span
-              aria-hidden="true"
-              className="h-3.5 w-3.5 rounded-full border border-black/20 bg-[#28c840] shadow-inner"
-            />
-          </button>
-        </div>
-        <h2
-          className={`pointer-events-none absolute inset-x-28 truncate text-center text-[13px] font-semibold ${active ? 'text-white/88' : 'text-white/48'}`}
+        <header
+          className="flex h-11 touch-none items-center rounded-t-[21px] border-b border-white/10 bg-white/[0.045] px-4"
+          onDoubleClick={() => dispatch({ type: 'toggle-maximize', id: window.id, viewport: viewport() })}
+          onPointerDown={(event) => begin(event, null)}
+          onPointerMove={move}
+          onPointerUp={end}
+          onPointerCancel={end}
         >
-          {window.title}
-        </h2>
-      </header>
-      <div className="h-[calc(100%-2.75rem)] min-h-0 overflow-hidden rounded-b-[21px]">{children}</div>
+          <div className="flex items-center gap-2" aria-label="Window controls">
+            <button
+              type="button"
+              aria-label={`Close ${window.title}`}
+              className="group grid h-6 w-6 place-items-center rounded-full"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() => (onCloseRequest ? onCloseRequest() : dispatch({ type: 'close', id: window.id }))}
+            >
+              <span
+                aria-hidden="true"
+                className="h-3.5 w-3.5 rounded-full border border-black/20 bg-[#ff5f57] shadow-inner"
+              />
+            </button>
+            <button
+              type="button"
+              aria-label={`Minimize ${window.title}`}
+              className="group grid h-6 w-6 place-items-center rounded-full"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() => dispatch({ type: 'minimize', id: window.id })}
+            >
+              <span
+                aria-hidden="true"
+                className="h-3.5 w-3.5 rounded-full border border-black/20 bg-[#febc2e] shadow-inner"
+              />
+            </button>
+            <button
+              type="button"
+              aria-label={`${window.mode === 'maximized' ? 'Restore' : 'Maximize'} ${window.title}`}
+              className="group grid h-6 w-6 place-items-center rounded-full"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() => dispatch({ type: 'toggle-maximize', id: window.id, viewport: viewport() })}
+            >
+              <span
+                aria-hidden="true"
+                className="h-3.5 w-3.5 rounded-full border border-black/20 bg-[#28c840] shadow-inner"
+              />
+            </button>
+          </div>
+          <h2
+            className={`pointer-events-none absolute inset-x-28 truncate text-center text-[13px] font-semibold ${active ? 'text-white/88' : 'text-white/48'}`}
+          >
+            {window.title}
+          </h2>
+        </header>
+        <div className="h-[calc(100%-2.75rem)] min-h-0 overflow-hidden rounded-b-[21px]">{children}</div>
+      </section>
       {window.mode === 'normal'
         ? (['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'] as const).map((edge) => (
             <div
@@ -210,13 +217,14 @@ export function DesktopWindowFrame({
             />
           ))
         : null}
-    </motion.section>
+    </motion.div>
   )
 }
 
 export function paintWindowInteractionFrame(
   style: Pick<CSSStyleDeclaration, 'height' | 'left' | 'top' | 'transform' | 'width'>,
   interaction: Pick<Interaction, 'base' | 'edge' | 'next'>,
+  gutter = 0,
 ) {
   if (!interaction.edge) {
     const translateX = interaction.next.x - interaction.base.x
@@ -224,10 +232,10 @@ export function paintWindowInteractionFrame(
     style.transform = `translate3d(${translateX}px, ${translateY}px, 0)`
     return
   }
-  style.left = `${interaction.next.x}px`
-  style.top = `${interaction.next.y}px`
-  style.width = `${interaction.next.width}px`
-  style.height = `${interaction.next.height}px`
+  style.left = `${interaction.next.x - gutter}px`
+  style.top = `${interaction.next.y - gutter}px`
+  style.width = `${interaction.next.width + gutter * 2}px`
+  style.height = `${interaction.next.height + gutter * 2}px`
 }
 
 function resetTransientStyles(element: HTMLDivElement | null) {
@@ -239,14 +247,14 @@ function resetTransientStyles(element: HTMLDivElement | null) {
 function resizeHandleClass(edge: ResizeEdge) {
   const shared = 'z-20 touch-none'
   const classes: Record<ResizeEdge, string> = {
-    n: '-top-2 left-3 right-3 h-2 cursor-n-resize',
-    s: '-bottom-2 left-3 right-3 h-2 cursor-s-resize',
-    e: 'top-3 -right-2 bottom-3 w-2 cursor-e-resize',
-    w: 'top-3 bottom-3 -left-2 w-2 cursor-w-resize',
-    ne: '-top-2 -right-2 h-3 w-3 cursor-ne-resize',
-    nw: '-top-2 -left-2 h-3 w-3 cursor-nw-resize',
-    se: '-right-2 -bottom-2 h-3 w-3 cursor-se-resize',
-    sw: '-bottom-2 -left-2 h-3 w-3 cursor-sw-resize',
+    n: 'top-0 left-3 right-3 h-3 cursor-n-resize',
+    s: 'bottom-0 left-3 right-3 h-3 cursor-s-resize',
+    e: 'top-3 right-0 bottom-3 w-3 cursor-e-resize',
+    w: 'top-3 bottom-3 left-0 w-3 cursor-w-resize',
+    ne: 'top-0 right-0 h-3 w-3 cursor-ne-resize',
+    nw: 'top-0 left-0 h-3 w-3 cursor-nw-resize',
+    se: 'right-0 bottom-0 h-3 w-3 cursor-se-resize',
+    sw: 'bottom-0 left-0 h-3 w-3 cursor-sw-resize',
   }
   return `${shared} ${classes[edge]}`
 }
