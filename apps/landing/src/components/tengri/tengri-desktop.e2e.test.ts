@@ -58,6 +58,8 @@ const sourceEntries = [
 
 const previewTicket = `${'a'.repeat(48)}.${'b'.repeat(43)}`
 
+type TerminalStore = { sessions: Record<string, unknown>[] }
+
 type MockOptions = {
   authenticated?: boolean
   agent?: typeof readyAgent | null
@@ -72,6 +74,7 @@ type MockOptions = {
   resumeThreadRawJson?: string
   searchDelays?: Record<string, number>
   searchTruncated?: boolean
+  terminalStore?: TerminalStore
 }
 
 async function mockTengri(page: Page, options: MockOptions = {}) {
@@ -108,7 +111,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
     markHeldLifecycleActionStarted = resolve
   })
   let files = [...workspaceEntries, ...sourceEntries, ...(options.extraFiles ?? [])]
-  let terminalSessions: Record<string, unknown>[] = []
+  const terminalStore = options.terminalStore ?? { sessions: [] }
   const contents = new Map<string, string>([
     ['/README.md', '# Tengri\n\nA persistent Firecracker workspace.\n'],
     ['/package.json', '{\n  "name": "tengri-workspace"\n}\n'],
@@ -341,24 +344,24 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         result = { id: 'thread-1', rawJson: '{}', eventSequence: 0 }
         break
       case 'list-terminals':
-        result = terminalSessions
+        result = terminalStore.sessions
         break
       case 'create-terminal': {
         const creationId = String(action.creationId)
-        const existing = terminalSessions.find((session) => session.creationId === creationId)
+        const existing = terminalStore.sessions.find((session) => session.creationId === creationId)
         result = existing ?? {
-          id: `terminal-${terminalSessions.length + 1}`,
+          id: `terminal-${terminalStore.sessions.length + 1}`,
           creationId,
           cwd: '/workspace',
           createdAt: '2026-08-26T12:34:00.000Z',
           lastActivityAt: '2026-08-26T12:34:00.000Z',
           attached: false,
         }
-        if (!existing) terminalSessions = [...terminalSessions, result as Record<string, unknown>]
+        if (!existing) terminalStore.sessions = [...terminalStore.sessions, result as Record<string, unknown>]
         break
       }
       case 'terminate-terminal':
-        terminalSessions = terminalSessions.filter((session) => session.id !== action.terminalId)
+        terminalStore.sessions = terminalStore.sessions.filter((session) => session.id !== action.terminalId)
         break
       case 'terminal-ticket':
         result = {
@@ -639,6 +642,50 @@ test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and win
   expect(terminalCreations.every((action) => creationIdPattern.test(String(action.creationId)))).toBe(true)
   await page.getByRole('button', { name: 'Close Terminal' }).last().click()
   await expect.poll(() => mock.actions.some((action) => action.action === 'terminate-terminal')).toBe(true)
+})
+
+test('preserves terminal identity on reload and isolates a duplicated desktop tab', async ({ page }) => {
+  const terminalStore: TerminalStore = { sessions: [] }
+  const originalMock = await mockTengri(page, { terminalStore })
+  await page.goto('/')
+
+  const openTerminal = (target: Page) =>
+    target.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Terminal' }).click()
+  await openTerminal(page)
+  await expect.poll(() => originalMock.actions.filter((action) => action.action === 'create-terminal').length).toBe(1)
+  const originalCreationId = String(
+    originalMock.actions.find((action) => action.action === 'create-terminal')?.creationId,
+  )
+  await expect(
+    page.getByRole('region', { name: 'Terminal window' }).getByText('Connected', { exact: true }),
+  ).toBeVisible()
+
+  await page.reload()
+  await openTerminal(page)
+  await expect(
+    page.getByRole('region', { name: 'Terminal window' }).getByText('Connected', { exact: true }),
+  ).toBeVisible()
+  expect(originalMock.actions.filter((action) => action.action === 'create-terminal')).toHaveLength(1)
+
+  const inheritedSessionStorage = await page.evaluate(() => Object.entries(sessionStorage))
+  const duplicate = await page.context().newPage()
+  await duplicate.addInitScript((entries: Array<[string, string]>) => {
+    for (const [key, value] of entries) sessionStorage.setItem(key, value)
+  }, inheritedSessionStorage)
+  const duplicateMock = await mockTengri(duplicate, { terminalStore })
+  await duplicate.goto('/')
+  await openTerminal(duplicate)
+  await expect.poll(() => duplicateMock.actions.filter((action) => action.action === 'create-terminal').length).toBe(1)
+  await expect(
+    duplicate.getByRole('region', { name: 'Terminal window' }).getByText('Connected', { exact: true }),
+  ).toBeVisible()
+
+  const duplicateCreationId = String(
+    duplicateMock.actions.find((action) => action.action === 'create-terminal')?.creationId,
+  )
+  expect(duplicateCreationId).not.toBe(originalCreationId)
+  expect(terminalStore.sessions).toHaveLength(2)
+  await duplicate.close()
 })
 
 test('reports the desktop window limit for shortcuts, Dock launches, and Spotlight actions', async ({ page }) => {

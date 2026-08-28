@@ -51,9 +51,13 @@ export function normalizeTerminalSize(columns: number, rows: number): { columns:
 }
 
 export function terminalCreationId(agentId: string, desktopId: string, windowId: string): string {
-  const creationId = `tengri-${agentId}-${desktopId}-${windowId}`
+  const creationId = `${terminalCreationScope(agentId, desktopId)}${windowId}`
   if (!CREATION_ID.test(creationId)) throw new Error('Terminal creation identity is invalid')
   return creationId
+}
+
+export function terminalCreationScope(agentId: string, desktopId: string): string {
+  return `tengri-${agentId}-${desktopId}-`
 }
 
 export function buildTerminalWebSocketUrl(
@@ -205,13 +209,19 @@ export function terminalResumeAttachment(state: TerminalResumeState, attached: b
 export function terminalReconciliationCandidate<Session extends ReconciliationSession>(
   sessions: readonly Session[],
   creationId: string,
+  creationScope: string,
   claimedSessionIds: ReadonlySet<string>,
 ): Session | null {
   const exact = sessions.find(
     (candidate) => candidate.creationId === creationId && !claimedSessionIds.has(candidate.id),
   )
   if (exact) return exact
-  return sessions.find((candidate) => !candidate.attached && !claimedSessionIds.has(candidate.id)) ?? null
+  return (
+    sessions.find(
+      (candidate) =>
+        candidate.creationId.startsWith(creationScope) && !candidate.attached && !claimedSessionIds.has(candidate.id),
+    ) ?? null
+  )
 }
 
 export async function settleTerminalCreation<Session>(

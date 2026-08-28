@@ -10,6 +10,7 @@ import {
   safelyDisposeTerminal,
   settleTerminalCreation,
   terminalCreationId,
+  terminalCreationScope,
   terminalHeartbeatAction,
   terminalPlainText,
   terminalReconnectDelay,
@@ -137,22 +138,37 @@ describe('Tengri terminal protocol', () => {
 
   test('reconciles a transient desktop window with an existing guest session', () => {
     const sessions = [
-      { id: 'detached-session', creationId: 'old-window', attached: false },
-      { id: 'exact-session', creationId: 'current-window', attached: true },
-      { id: 'other-detached', creationId: 'other-window', attached: false },
+      { id: 'detached-session', creationId: 'tengri-agent-a-desktop-a-terminal-1', attached: false },
+      { id: 'exact-session', creationId: 'tengri-agent-a-desktop-a-terminal-2', attached: true },
+      { id: 'other-detached', creationId: 'tengri-agent-a-desktop-a-terminal-3', attached: false },
+      { id: 'other-desktop', creationId: 'tengri-agent-a-desktop-b-terminal-1', attached: false },
     ]
+    const scope = terminalCreationScope('agent-a', 'desktop-a')
 
-    expect(terminalReconciliationCandidate(sessions, 'current-window', new Set())).toBe(sessions[1])
-    expect(terminalReconciliationCandidate(sessions, 'missing-window', new Set())).toBe(sessions[0])
-    expect(terminalReconciliationCandidate(sessions, 'missing-window', new Set(['detached-session']))).toBe(sessions[2])
+    expect(terminalReconciliationCandidate(sessions, sessions[1].creationId, scope, new Set())).toBe(sessions[1])
+    expect(terminalReconciliationCandidate(sessions, 'missing-window', scope, new Set())).toBe(sessions[0])
+    expect(terminalReconciliationCandidate(sessions, 'missing-window', scope, new Set(['detached-session']))).toBe(
+      sessions[2],
+    )
     expect(
       terminalReconciliationCandidate(
         sessions.filter((session) => session.attached),
         'missing-window',
+        scope,
         new Set(),
       ),
     ).toBeNull()
-    expect(terminalReconciliationCandidate(sessions, 'current-window', new Set(['exact-session']))).toBe(sessions[0])
+    expect(terminalReconciliationCandidate(sessions, sessions[1].creationId, scope, new Set(['exact-session']))).toBe(
+      sessions[0],
+    )
+    expect(
+      terminalReconciliationCandidate(
+        sessions.filter((session) => session.id === 'other-desktop'),
+        'missing-window',
+        scope,
+        new Set(),
+      ),
+    ).toBeNull()
   })
 
   test('cleans an accepted terminal when its window closes before creation returns', async () => {

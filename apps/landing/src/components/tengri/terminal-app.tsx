@@ -20,6 +20,7 @@ import {
   safelyDisposeTerminal,
   settleTerminalCreation,
   terminalCreationId,
+  terminalCreationScope,
   terminalHeartbeatAction,
   terminalPlainText,
   terminalReconciliationCandidate,
@@ -55,6 +56,7 @@ export function TerminalApp({
   const reconnectNowRef = useRef<() => void>(() => undefined)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const creationId = terminalCreationId(agentId, desktopId, windowId)
+  const creationScope = terminalCreationScope(agentId, desktopId)
   const storageKey = `tengri:terminal:${agentId}:${desktopId}:${windowId}`
   const cleanupStorageKey = `tengri:terminal-cleanup:${agentId}`
   const [connection, setConnection] = useState<ConnectionState>({
@@ -296,7 +298,12 @@ export function TerminalApp({
           { action: 'list-terminals', agentId },
           requestSignal(),
         )
-        const candidate = terminalReconciliationCandidate(sessions, creationId, claimedTerminalSessionIds)
+        const candidate = terminalReconciliationCandidate(
+          sessions,
+          creationId,
+          creationScope,
+          claimedTerminalSessionIds,
+        )
         if (candidate && claimSession(candidate)) {
           session = candidate
           reconnectToken = ''
@@ -349,7 +356,7 @@ export function TerminalApp({
         )
         const existing = current
           ? sessions.find((candidate) => candidate.id === current.id)
-          : terminalReconciliationCandidate(sessions, creationId, claimedTerminalSessionIds)
+          : terminalReconciliationCandidate(sessions, creationId, creationScope, claimedTerminalSessionIds)
         if (existing) {
           if (!claimSession(existing)) return
           session = existing

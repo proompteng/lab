@@ -48,8 +48,116 @@ import { TerminalApp } from './terminal-app'
 type TargetedCodeOpenRequest = CodeOpenRequest & { targetWindowId: string }
 type TargetedFinderOpenRequest = FinderOpenRequest & { targetWindowId: string }
 type CommittedTransition = 'delete' | 'sign-out' | 'sleep'
+type DesktopIdentity = { agentId: string; id: string }
+type DesktopIdentityLease = {
+  identity: Promise<string>
+  references: number
+  release: () => void
+  releaseTimer: ReturnType<typeof setTimeout> | null
+}
 
 const getServerGuestOperationSnapshot = () => false
+const DESKTOP_ID_PATTERN = /^[0-9a-f]{32}$/
+const desktopIdentityLeases = new Map<string, DesktopIdentityLease>()
+
+function newDesktopId() {
+  return crypto.randomUUID().replaceAll('-', '')
+}
+
+function createDesktopIdentityLease(agentId: string): DesktopIdentityLease {
+  let released = false
+  let resolveIdentity = (_id: string) => undefined
+  const identity = new Promise<string>((resolve) => {
+    resolveIdentity = resolve
+  })
+  const lease: DesktopIdentityLease = {
+    identity,
+    references: 0,
+    release: () => undefined,
+    releaseTimer: null,
+  }
+  let handlePageHide = () => undefined
+  const storageKey = `tengri:desktop:${agentId}`
+  let storedId = ''
+  try {
+    const candidate = sessionStorage.getItem(storageKey) ?? ''
+    if (DESKTOP_ID_PATTERN.test(candidate)) storedId = candidate
+  } catch {
+    // A random identity still isolates this tab when session storage is unavailable.
+  }
+
+  const commitIdentity = (id: string) => {
+    if (released) return
+    try {
+      sessionStorage.setItem(storageKey, id)
+    } catch {
+      // Terminal identity remains valid for this document without persistence.
+    }
+    resolveIdentity(id)
+  }
+
+  const claimIdentity = (candidate: string) => {
+    if (!navigator.locks) {
+      commitIdentity(newDesktopId())
+      return
+    }
+    void navigator.locks
+      .request(`tengri-desktop:${agentId}:${candidate}`, { ifAvailable: true }, async (lock) => {
+        if (released) return
+        if (!lock) {
+          claimIdentity(newDesktopId())
+          return
+        }
+        commitIdentity(candidate)
+        await lockReleased
+      })
+      .catch(() => commitIdentity(newDesktopId()))
+  }
+
+  const lockReleased = new Promise<void>((resolve) => {
+    lease.release = () => {
+      if (released) return
+      released = true
+      globalThis.removeEventListener('pagehide', handlePageHide)
+      if (desktopIdentityLeases.get(agentId) === lease) desktopIdentityLeases.delete(agentId)
+      resolve()
+    }
+  })
+  handlePageHide = () => lease.release()
+  globalThis.addEventListener('pagehide', handlePageHide, { once: true })
+  claimIdentity(storedId || newDesktopId())
+  return lease
+}
+
+function useDesktopIdentity(agentId: string) {
+  const [identity, setIdentity] = useState<DesktopIdentity | null>(null)
+
+  useEffect(() => {
+    let disposed = false
+    const lease = desktopIdentityLeases.get(agentId) ?? createDesktopIdentityLease(agentId)
+    desktopIdentityLeases.set(agentId, lease)
+    lease.references += 1
+    if (lease.releaseTimer !== null) {
+      clearTimeout(lease.releaseTimer)
+      lease.releaseTimer = null
+    }
+    void lease.identity.then((id) => {
+      if (!disposed) setIdentity({ agentId, id })
+    })
+
+    return () => {
+      disposed = true
+      lease.references = Math.max(0, lease.references - 1)
+      if (lease.references > 0) return
+      lease.releaseTimer = setTimeout(() => {
+        lease.releaseTimer = null
+        if (lease.references === 0) lease.release()
+      }, 0)
+    }
+  }, [agentId])
+
+  return identity?.agentId === agentId ? identity.id : null
+}
 
 export function ReadyDesktop({
   agent,
@@ -78,7 +186,7 @@ export function ReadyDesktop({
   const [committedTransition, setCommittedTransition] = useState<CommittedTransition | null>(null)
   const [spotlightOpen, setSpotlightOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
-  const [desktopId] = useState(() => crypto.randomUUID().replaceAll('-', ''))
+  const desktopId = useDesktopIdentity(agent.id)
   const codeRequestIdRef = useRef(0)
   const finderRequestIdRef = useRef(0)
   const lifecycleTransitionReleaseRef = useRef<(() => void) | null>(null)
@@ -529,12 +637,19 @@ export function ReadyDesktop({
                   request={codeRequest?.targetWindowId === desktopWindow.id ? codeRequest : null}
                 />
               ) : desktopWindow.app === 'terminal' ? (
-                <TerminalApp
-                  agentId={agent.id}
-                  desktopId={desktopId}
-                  registerCloseHandler={registerTerminalCloseHandler}
-                  windowId={desktopWindow.id}
-                />
+                desktopId ? (
+                  <TerminalApp
+                    agentId={agent.id}
+                    desktopId={desktopId}
+                    registerCloseHandler={registerTerminalCloseHandler}
+                    windowId={desktopWindow.id}
+                  />
+                ) : (
+                  <div className="flex h-full items-center justify-center gap-2 text-sm text-zinc-300" role="status">
+                    <LoaderCircle aria-hidden="true" className="size-4 animate-spin" />
+                    Preparing Terminal…
+                  </div>
+                )
               ) : (
                 <SettingsApp
                   active={desktopWindow.id === windowState.activeWindowId}
