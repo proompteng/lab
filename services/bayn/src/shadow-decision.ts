@@ -340,6 +340,20 @@ const validateBindings = (
   ) {
     return Result.fail(error('binding', 'intraday-momentum entry requires execution market-data binding v2'))
   }
+  if (intradayEntry && executionMarketData?.schemaVersion === 'bayn.execution-market-data-binding.v2') {
+    const decisionSymbols = decision.signals.map(({ symbol }) => symbol).toSorted()
+    const bindsCompleteUniverse =
+      executionMarketData.symbols.length === executionMarketData.universe.length &&
+      executionMarketData.symbols.every((symbol, index) => symbol === executionMarketData.universe[index])
+    const bindsDecisionSignals =
+      executionMarketData.symbols.length === decisionSymbols.length &&
+      executionMarketData.symbols.every((symbol, index) => symbol === decisionSymbols[index])
+    if (!bindsCompleteUniverse || !bindsDecisionSignals) {
+      return Result.fail(
+        error('binding', 'intraday entry requires complete market-data evidence for the decision universe'),
+      )
+    }
+  }
   if (intradayClose && executionMarketData?.purpose !== 'LIQUIDATION') {
     return Result.fail(error('binding', 'intraday close requires explicit liquidation market-data evidence'))
   }

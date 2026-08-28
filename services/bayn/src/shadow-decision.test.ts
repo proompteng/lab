@@ -911,6 +911,45 @@ describe('OBSERVE shadow decision', () => {
     })
   })
 
+  test('requires complete decision-universe evidence for intraday-momentum entries', async () => {
+    const input = makeIntradayMomentumInput()
+    const binding = input.executionMarketData
+    if (binding?.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
+      throw new Error('intraday fixture must include archive execution market data v2')
+    }
+    const {
+      contentHash: _contentHash,
+      snapshotId: _snapshotId,
+      schemaVersion,
+      snapshotSchemaVersion,
+      ...bindingMaterial
+    } = binding
+    const subsetMaterial = { ...bindingMaterial, symbols: binding.symbols.slice(0, 1) }
+    const snapshotMaterial = { schemaVersion: snapshotSchemaVersion, ...subsetMaterial }
+    const contentHash = canonicalHashV1(snapshotMaterial)
+    const subsetBinding = Result.getOrThrow(
+      Schema.decodeUnknownResult(
+        ExecutionMarketDataBindingSchema,
+        strictParseOptions,
+      )({
+        schemaVersion,
+        snapshotSchemaVersion,
+        ...subsetMaterial,
+        contentHash,
+        snapshotId: canonicalHashV1({ ...snapshotMaterial, contentHash }),
+      }),
+    )
+
+    const failure = await Effect.runPromise(
+      Effect.flip(buildObserveShadowDecision({ ...input, executionMarketData: subsetBinding })),
+    )
+
+    expect(failure).toMatchObject({
+      failure: 'binding',
+      message: 'intraday entry requires complete market-data evidence for the decision universe',
+    })
+  })
+
   test('requires the canonical source universe on new execution market-data bindings', () => {
     const legacyBinding = openingDriveMarketDataBinding(makeOpeningDriveCycle())
     const currentBinding = { ...legacyBinding, schemaVersion: 'bayn.execution-market-data-binding.v2' }
