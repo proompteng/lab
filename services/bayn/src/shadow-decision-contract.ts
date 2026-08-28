@@ -105,6 +105,9 @@ const marketDataBindingIssues = (
     issues.push({ path: ['sourceTopics'], issue: 'bar, quote, and trade topics must be distinct' })
   }
   const universe = binding.universe
+  if (binding.purpose === 'LIQUIDATION' && universe === undefined) {
+    issues.push({ path: ['universe'], issue: 'must bind the canonical source universe for liquidation' })
+  }
   if (
     universe !== undefined &&
     (sha256(universe.join(',')) !== binding.universeSymbolHash ||

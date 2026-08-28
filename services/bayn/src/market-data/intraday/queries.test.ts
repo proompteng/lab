@@ -56,9 +56,29 @@ describe('intraday archive queries', () => {
     expect(capture).toContain('FROM signal.intraday_bars_1m_v2')
     expect(capture).toContain('FROM signal.intraday_quotes_v1')
     expect(capture).toContain('FROM signal.intraday_trades_v1')
-    expect(capture).not.toContain('event_ts >=')
-    expect(capture).not.toContain('event_ts <=')
     expect(capture).not.toContain('has(')
+    expect(capture).toContain(
+      `event_ts >= parseDateTime64BestEffort("${request.calendar.sessions[0]!.openAt}", 3, 'UTC')`,
+    )
+    expect(capture).toContain(
+      `event_ts <= parseDateTime64BestEffort("${request.calendar.sessions[0]!.closeAt}", 3, 'UTC')`,
+    )
+    expect(
+      capture.match(
+        new RegExp(
+          `event_ts >= parseDateTime64BestEffort\\("${request.calendar.sessions[0]!.openAt}", 9, 'UTC'\\)`,
+          'g',
+        ),
+      ),
+    ).toHaveLength(2)
+    expect(
+      capture.match(
+        new RegExp(
+          `event_ts <= parseDateTime64BestEffort\\("${request.calendar.sessions[0]!.closeAt}", 9, 'UTC'\\)`,
+          'g',
+        ),
+      ),
+    ).toHaveLength(2)
     expect(capture.split(request.observedAt)).toHaveLength(4)
     expect(
       capture.match(new RegExp(`ingest_ts <= parseDateTime64BestEffort\\("${request.observedAt}", 9, 'UTC'\\)`, 'g')),

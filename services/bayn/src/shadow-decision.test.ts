@@ -37,6 +37,7 @@ import { BrokerMode, Gate, PolicySchema, Reason, StateSchema, type Policy, type 
 import { strictParseOptions } from './schemas'
 import {
   decodeObserveShadowDecisionDocument,
+  ExecutionMarketDataBindingSchema,
   makeObserveShadowDecisionDocument,
   ShadowDecisionContractFailure,
   type ExecutionMarketDataBinding,
@@ -773,6 +774,38 @@ const build = (input: ObserveShadowDecisionInput): Promise<ObserveShadowDecision
   Effect.runPromise(buildObserveShadowDecision(input))
 
 describe('OBSERVE shadow decision', () => {
+  test('rejects a liquidation binding that omits its canonical source universe', () => {
+    const binding = openingDriveMarketDataBinding(makeOpeningDriveCycle())
+    const {
+      contentHash: _contentHash,
+      snapshotId: _snapshotId,
+      schemaVersion,
+      snapshotSchemaVersion,
+      ...bindingMaterial
+    } = binding
+    const liquidationMaterial = {
+      ...bindingMaterial,
+      purpose: 'LIQUIDATION' as const,
+      barCount: 0,
+      tradeCount: 0,
+    }
+    const snapshotMaterial = { schemaVersion: snapshotSchemaVersion, ...liquidationMaterial }
+    const contentHash = canonicalHashV1(snapshotMaterial)
+    const result = Schema.decodeUnknownResult(
+      ExecutionMarketDataBindingSchema,
+      strictParseOptions,
+    )({
+      schemaVersion,
+      snapshotSchemaVersion,
+      ...liquidationMaterial,
+      contentHash,
+      snapshotId: canonicalHashV1({ ...snapshotMaterial, contentHash }),
+    })
+
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(String(result.failure)).toContain('universe')
+  })
+
   test('binds opening-drive decisions to the immutable cycle execution calendar', async () => {
     const input = makeOpeningDriveInput()
     const accepted = await build(input)
