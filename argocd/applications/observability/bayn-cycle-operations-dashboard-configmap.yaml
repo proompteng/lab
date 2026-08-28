@@ -795,11 +795,11 @@ data:
             "type": "prometheus",
             "uid": "prom"
           },
-          "description": "Targets in the current or latest terminal cycle; zero is a real durable count.",
+          "description": "Targets in the current or latest terminal cycle. Zero is a durable count; NO CYCLE means no cycle evidence exists.",
           "fieldConfig": {
             "defaults": {
               "decimals": 0,
-              "noValue": "0"
+              "noValue": "NO CYCLE"
             },
             "overrides": []
           },
@@ -842,11 +842,11 @@ data:
             "type": "prometheus",
             "uid": "prom"
           },
-          "description": "Intents in the current or latest terminal cycle; zero is a real durable count.",
+          "description": "Intents in the current or latest terminal cycle. Zero is a durable count; NO CYCLE means no cycle evidence exists.",
           "fieldConfig": {
             "defaults": {
               "decimals": 0,
-              "noValue": "0"
+              "noValue": "NO CYCLE"
             },
             "overrides": []
           },
@@ -889,11 +889,11 @@ data:
             "type": "prometheus",
             "uid": "prom"
           },
-          "description": "Orders in the current or latest terminal cycle; zero is a real durable count.",
+          "description": "Orders in the current or latest terminal cycle. Zero is a durable count; NO CYCLE means no cycle evidence exists.",
           "fieldConfig": {
             "defaults": {
               "decimals": 0,
-              "noValue": "0"
+              "noValue": "NO CYCLE"
             },
             "overrides": []
           },
@@ -936,11 +936,11 @@ data:
             "type": "prometheus",
             "uid": "prom"
           },
-          "description": "Fills in the current or latest terminal cycle; zero is a real durable count.",
+          "description": "Fills in the current or latest terminal cycle. Zero is a durable count; NO CYCLE means no cycle evidence exists.",
           "fieldConfig": {
             "defaults": {
               "decimals": 0,
-              "noValue": "0"
+              "noValue": "NO CYCLE"
             },
             "overrides": []
           },

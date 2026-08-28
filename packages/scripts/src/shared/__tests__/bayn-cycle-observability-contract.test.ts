@@ -293,6 +293,11 @@ describe('Bayn cycle operations alert contract', () => {
       const panel = dashboard.panels.find((candidate) => candidate.title === title)
       expect(panel?.fieldConfig?.defaults?.noValue).toBe('NO FILLS')
     }
+    for (const title of ['Targets', 'Intents', 'Orders', 'Fills']) {
+      const panel = dashboard.panels.find((candidate) => candidate.title === title)
+      expect(panel?.fieldConfig?.defaults?.noValue).toBe('NO CYCLE')
+      expect(panel?.description).toContain('NO CYCLE')
+    }
     const overlappingPanels = dashboard.panels.flatMap((left, leftIndex) =>
       dashboard.panels.slice(leftIndex + 1).flatMap((right) => {
         const overlapsHorizontally =
