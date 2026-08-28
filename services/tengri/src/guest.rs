@@ -132,7 +132,49 @@ impl TerminalIdentityRegistry {
             .insert(session_id.to_owned(), creation_id.to_owned());
     }
 
-    fn reconcile(&self, agent_id: &str, sessions: &mut [TerminalSession]) {
+    pub(crate) fn restore_legacy_creation(
+        &self,
+        agent_id: &str,
+        creation_id: &str,
+        cwd: &str,
+        existing_session_ids: &[String],
+        terminal_id: Option<&str>,
+    ) {
+        let mut state = self.state();
+        let identities = state.agents.entry(agent_id.to_owned()).or_default();
+        if let Some(terminal_id) = terminal_id {
+            identities.pending.remove(creation_id);
+            identities
+                .creation_ids
+                .insert(terminal_id.to_owned(), creation_id.to_owned());
+            return;
+        }
+        identities.pending.insert(
+            creation_id.to_owned(),
+            PendingLegacyCreation {
+                existing_session_ids: existing_session_ids.iter().cloned().collect(),
+                cwd: cwd.to_owned(),
+            },
+        );
+    }
+
+    pub(crate) fn remove_creation(&self, agent_id: &str, creation_id: &str) {
+        let mut state = self.state();
+        let remove_agent = if let Some(identities) = state.agents.get_mut(agent_id) {
+            identities.pending.remove(creation_id);
+            identities
+                .creation_ids
+                .retain(|_, stored_creation_id| stored_creation_id != creation_id);
+            identities.creation_ids.is_empty() && identities.pending.is_empty()
+        } else {
+            false
+        };
+        if remove_agent {
+            state.agents.remove(agent_id);
+        }
+    }
+
+    pub(crate) fn reconcile(&self, agent_id: &str, sessions: &mut [TerminalSession]) {
         let mut state = self.state();
         let Some(identities) = state.agents.get_mut(agent_id) else {
             return;
@@ -478,7 +520,7 @@ impl GuestClient {
         columns: u32,
         rows: u32,
     ) -> Result<TerminalCreation, GuestError> {
-        let response = self
+        let response = match self
             .send_unary(
                 self.request(Method::POST, "/v1/terminals")
                     .json(&serde_json::json!({
@@ -488,7 +530,15 @@ impl GuestClient {
                         "rows": rows
                     })),
             )
-            .await?;
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                return self
+                    .reconcile_terminal_creation_error(creation_id, error)
+                    .await;
+            }
+        };
         match terminal_creation(response, creation_id).await {
             Ok(creation) => {
                 self.terminal_identities.finish_creation(
@@ -502,8 +552,29 @@ impl GuestClient {
                 self.create_legacy_terminal(creation_id, cwd, columns, rows)
                     .await
             }
-            Err(error) => Err(error),
+            Err(error) => {
+                self.reconcile_terminal_creation_error(creation_id, error)
+                    .await
+            }
         }
+    }
+
+    async fn reconcile_terminal_creation_error(
+        &self,
+        creation_id: &str,
+        original_error: GuestError,
+    ) -> Result<TerminalCreation, GuestError> {
+        if let Ok(sessions) = self.list_terminals().await
+            && let Some(session) = sessions
+                .into_iter()
+                .find(|session| session.creation_id == creation_id)
+        {
+            return Ok(TerminalCreation {
+                session,
+                created: false,
+            });
+        }
+        Err(original_error)
     }
 
     async fn create_legacy_terminal(
@@ -561,7 +632,7 @@ impl GuestClient {
                 {
                     return Ok(TerminalCreation {
                         session,
-                        created: true,
+                        created: false,
                     });
                 }
                 Err(error)
@@ -792,6 +863,17 @@ mod tests {
         })
     }
 
+    fn terminal_json(creation_id: &str) -> Value {
+        serde_json::json!({
+            "id": "abcdefghijklmnopqrstuvwx",
+            "creationId": creation_id,
+            "cwd": "/workspace",
+            "createdAt": "2026-08-28T00:00:00Z",
+            "lastActivityAt": "2026-08-28T00:00:00Z",
+            "attached": false
+        })
+    }
+
     #[tokio::test]
     async fn guest_response_body_is_bounded_before_and_during_streaming() {
         let declared: reqwest::Response = http::Response::builder()
@@ -996,6 +1078,106 @@ mod tests {
             .await
             .expect("legacy terminal listing succeeds");
         assert_eq!(sessions[0].creation_id, "terminal-creation-legacy");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn terminal_creation_reconciliation_does_not_claim_a_new_session() {
+        const CREATION_ID: &str = "terminal-creation-timeout";
+        let created = Arc::new(AtomicBool::new(false));
+        let creation_state = Arc::clone(&created);
+        let list_state = Arc::clone(&created);
+        let router = Router::new().route(
+            "/v1/terminals",
+            get(move || {
+                let created = Arc::clone(&list_state);
+                async move {
+                    let sessions = if created.load(Ordering::SeqCst) {
+                        vec![terminal_json(CREATION_ID)]
+                    } else {
+                        Vec::new()
+                    };
+                    Json(serde_json::json!({"sessions": sessions}))
+                }
+            })
+            .post(move |Json(body): Json<Value>| {
+                let created = Arc::clone(&creation_state);
+                async move {
+                    assert_eq!(
+                        body.get("creationId").and_then(Value::as_str),
+                        Some(CREATION_ID)
+                    );
+                    created.store(true, Ordering::SeqCst);
+                    (StatusCode::CREATED, "unreadable terminal response")
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind Nanoagent reconciliation fixture");
+        let address = listener
+            .local_addr()
+            .expect("Nanoagent reconciliation address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router)
+                .await
+                .expect("serve Nanoagent reconciliation fixture");
+        });
+        let client = GuestClient {
+            http: reqwest::Client::new(),
+            base_url: format!("http://{address}"),
+            token: "test-bootstrap-token".to_owned(),
+            agent_id: "agent-response-timeout".to_owned(),
+            terminal_identities: TerminalIdentityRegistry::default(),
+        };
+
+        let creation = client
+            .create_terminal(CREATION_ID, "/workspace", 120, 32)
+            .await
+            .expect("created terminal is reconciled after its response times out");
+
+        assert!(!creation.created);
+        assert_eq!(creation.session.id, "abcdefghijklmnopqrstuvwx");
+        assert_eq!(creation.session.creation_id, CREATION_ID);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn terminal_creation_reconciles_a_lost_replay_without_recounting_it() {
+        const CREATION_ID: &str = "terminal-creation-replay";
+        let router = Router::new().route(
+            "/v1/terminals",
+            get(|| async {
+                Json(serde_json::json!({
+                    "sessions": [terminal_json(CREATION_ID)]
+                }))
+            })
+            .post(|| async { (StatusCode::OK, "unreadable terminal replay") }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind Nanoagent replay fixture");
+        let address = listener.local_addr().expect("Nanoagent replay address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router)
+                .await
+                .expect("serve Nanoagent replay fixture");
+        });
+        let client = GuestClient {
+            http: reqwest::Client::new(),
+            base_url: format!("http://{address}"),
+            token: "test-bootstrap-token".to_owned(),
+            agent_id: "agent-replayed-response".to_owned(),
+            terminal_identities: TerminalIdentityRegistry::default(),
+        };
+
+        let replay = client
+            .create_terminal(CREATION_ID, "/workspace", 120, 32)
+            .await
+            .expect("existing terminal is reconciled after its replay response is lost");
+
+        assert!(!replay.created);
+        assert_eq!(replay.session.creation_id, CREATION_ID);
         server.abort();
     }
 
