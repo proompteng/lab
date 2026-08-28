@@ -2889,7 +2889,11 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         }>`
           SELECT
             submission_cutoff_after_open_ms AS after_open_ms,
-            to_jsonb(cycle) - 'submission_cutoff_after_open_ms' AS row
+            to_jsonb(cycle) - ARRAY[
+              'submission_cutoff_after_open_ms',
+              'warmup_after_open_ms',
+              'submission_cutoff_before_close_ms'
+            ] AS row
           FROM autonomous_cycles AS cycle
           WHERE cycle_id = ${draft.identity.cycleId}
         `
