@@ -28,7 +28,7 @@ const micros = 1_000_000
 const weightScale = 1_000_000
 const minuteMs = 60_000
 
-export const intradayMomentumBehaviorVersion = 'bayn.intraday-momentum.behavior.v2' as const
+export const intradayMomentumBehaviorVersion = 'bayn.intraday-momentum.behavior.v3' as const
 export const intradayMomentumBehaviorHash = sha256(intradayMomentumBehaviorVersion)
 
 const compareCanonicalText = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
@@ -163,6 +163,7 @@ const validateSnapshot = (
     manifest.universeSymbolHash !== protocol.universeSymbolHash ||
     manifest.feed !== protocol.feed ||
     manifest.delayClass !== protocol.delayClass ||
+    manifest.maximumQuoteAgeMs !== protocol.maximumQuoteAgeMs ||
     manifest.symbols.length !== protocol.universe.length ||
     manifest.symbols.some((symbol, index) => symbol !== protocol.universe[index])
   ) {

@@ -48,6 +48,7 @@ interface FixtureOptions {
   readonly rangeEndAt: string
   readonly returnBps?: Readonly<Record<string, number>>
   readonly quoteAgeMs?: number
+  readonly snapshotMaximumQuoteAgeMs?: number
   readonly observedLagMs?: number
   readonly spreadBps?: number
   readonly displayedSize?: number
@@ -155,7 +156,7 @@ const marketContextAt = (options: FixtureOptions) => {
     feed: defaultIntradayMomentumProtocolDocument.feed,
     delayClass: defaultIntradayMomentumProtocolDocument.delayClass,
     sourceTopics: { bars: barsTopic, quotes: quotesTopic, trades: tradesTopic },
-    maximumQuoteAgeMs: defaultIntradayMomentumProtocolDocument.maximumQuoteAgeMs,
+    maximumQuoteAgeMs: options.snapshotMaximumQuoteAgeMs ?? defaultIntradayMomentumProtocolDocument.maximumQuoteAgeMs,
     minimumWatermarkLagMs: defaultIntradayMomentumProtocolDocument.decisionDelaySeconds * 1_000,
     archiveWatermarks,
   } as const
@@ -303,6 +304,22 @@ describe('intraday momentum strategy', () => {
         ),
       ),
     ).toMatchObject({ reason: 'snapshot-window' })
+  })
+
+  test('rejects a snapshot whose verified freshness contract is looser than the protocol', () => {
+    const protocol = success(decodeDefaultIntradayMomentumProtocol())
+    expect(
+      error(
+        decideIntradayMomentum(
+          marketContextAt({
+            rangeEndAt: '2026-08-18T18:00:00.000Z',
+            snapshotMaximumQuoteAgeMs: protocol.maximumQuoteAgeMs + 1,
+            returnBps: qualifyingReturns,
+          }),
+          protocol,
+        ),
+      ),
+    ).toMatchObject({ reason: 'snapshot-identity' })
   })
 
   test('accepts a fresh snapshot at an arbitrary 30-second controller poll phase', () => {
