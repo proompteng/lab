@@ -688,21 +688,33 @@ const validateArchiveProgress = (
   requested: readonly IntradayArchiveWatermark[],
   actual: readonly IntradayArchiveWatermark[],
 ): Result.Result<void, IntradaySnapshotFailure> => {
-  if (requested.length !== actual.length) {
-    return Result.fail(failure('watermark', 'intraday archive partition topology changed after version capture'))
+  const watermarkKey = (watermark: IntradayArchiveWatermark): string =>
+    `${watermark.sourceTopic}\u0000${watermark.sourcePartition}`
+  const actualByPartition = new Map(actual.map((watermark) => [watermarkKey(watermark), watermark]))
+  const missingPartitions = requested.filter((watermark) => !actualByPartition.has(watermarkKey(watermark)))
+  if (missingPartitions.length > 0) {
+    return Result.fail(
+      failure('watermark', 'intraday archive partition topology changed after version capture', {
+        missingPartitions: missingPartitions.map(({ sourceTopic, sourcePartition }) => ({
+          sourceTopic,
+          sourcePartition,
+        })),
+      }),
+    )
   }
-  for (let index = 0; index < requested.length; index += 1) {
-    const expected = requested[index]
-    const observed = actual[index]
-    if (
-      expected === undefined ||
-      observed === undefined ||
-      expected.sourceTopic !== observed.sourceTopic ||
-      expected.sourcePartition !== observed.sourcePartition
-    ) {
-      return Result.fail(
-        failure('watermark', 'intraday archive partition topology does not match the captured version'),
-      )
+  const requestedPartitions = new Set(requested.map(watermarkKey))
+  const addedPartitions = actual.filter((watermark) => !requestedPartitions.has(watermarkKey(watermark)))
+  if (addedPartitions.length > 0) {
+    return Result.fail(
+      failure('not-ready', 'intraday archive gained partitions after version capture', {
+        addedPartitions: addedPartitions.map(({ sourceTopic, sourcePartition }) => ({ sourceTopic, sourcePartition })),
+      }),
+    )
+  }
+  for (const expected of requested) {
+    const observed = actualByPartition.get(watermarkKey(expected))
+    if (observed === undefined) {
+      return Result.fail(failure('watermark', 'intraday archive partition topology changed after version capture'))
     }
     if (BigInt(observed.inclusiveLastOffset) < BigInt(expected.inclusiveLastOffset)) {
       return Result.fail(

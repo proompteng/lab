@@ -186,6 +186,24 @@ describe('immutable intraday market snapshot', () => {
     expect(Object.isFrozen(snapshot.manifest.archiveWatermarks[0])).toBe(true)
   })
 
+  test('treats newly materialized source partitions as retryable snapshot growth', () => {
+    const rows = makeRows()
+    const addedPartition = {
+      source_topic: barsTopic,
+      source_partition: '1',
+      inclusive_last_offset: '1',
+    }
+    const grownWatermarks = [rows.archiveWatermarks[0], addedPartition, ...rows.archiveWatermarks.slice(1)]
+
+    expect(error(verifyIntradaySnapshot(request, { ...rows, archiveWatermarks: grownWatermarks }))).toMatchObject({
+      reason: 'not-ready',
+      message: 'intraday archive gained partitions after version capture',
+      facts: {
+        addedPartitions: [{ sourceTopic: barsTopic, sourcePartition: 1 }],
+      },
+    })
+  })
+
   test('uses ClickHouse binary ordering for case-mixed Kafka topics', () => {
     const caseMixedRequest: IntradaySnapshotRequest = {
       ...request,
