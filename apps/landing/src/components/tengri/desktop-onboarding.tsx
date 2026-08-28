@@ -4,7 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { Bot, CircleAlert, CircleUserRound, Cloud, LoaderCircle, Moon, Play, RotateCw, Trash2 } from 'lucide-react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import type { ReactNode } from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { useForm } from 'react-hook-form'
 
 import { tengriAuthClient } from '@/lib/tengri/auth-client'
@@ -217,7 +217,7 @@ function CreateAgentWindow({ onCreated }: { onCreated: () => Promise<void> }) {
   })
 
   return (
-    <LifecycleWindow title="Create Agent" interactive>
+    <LifecycleWindow title="Create your agent" interactive>
       <form noValidate onSubmit={createAgent}>
         <WindowHero
           icon={<Bot className="h-7 w-7" />}
@@ -351,7 +351,7 @@ function FailedAgentWindow({ agent, onChanged }: { agent: TengriAgent; onChanged
 
 function StatusWindow({ icon, title, detail, progress = false }: WindowMessageProps & { progress?: boolean }) {
   return (
-    <LifecycleWindow title="Tengri">
+    <LifecycleWindow title={title}>
       <WindowHero icon={icon} title={title} detail={detail} />
       {progress ? <ProgressBar /> : null}
     </LifecycleWindow>
@@ -377,7 +377,7 @@ function ActionWindow({
   onAction: () => void
 }) {
   return (
-    <LifecycleWindow title="Tengri" interactive>
+    <LifecycleWindow title={title} interactive>
       <WindowHero icon={icon} title={title} detail={detail} />
       {error ? <InlineError message={error} /> : null}
       <button
@@ -408,12 +408,13 @@ function LifecycleWindow({
   title: string
 }) {
   const modalFocus = useModalFocus<HTMLElement>(interactive)
-  const reducedMotion = useReducedMotion()
+  const reducedMotion = useHydratedReducedMotion()
   return (
     <motion.section
       ref={modalFocus.ref}
       role={interactive ? 'dialog' : 'status'}
       aria-modal={interactive ? 'true' : undefined}
+      data-tengri-modal={interactive ? 'true' : undefined}
       aria-label={title}
       tabIndex={interactive ? -1 : undefined}
       className="w-full max-w-lg overflow-hidden rounded-[28px] border border-white/18 bg-[rgba(27,30,39,0.88)] text-white shadow-[0_48px_140px_rgba(0,0,0,0.58),inset_0_1px_0_rgba(255,255,255,0.17)] backdrop-blur-3xl"
@@ -471,7 +472,7 @@ function InlineError({ message }: { message: string }) {
 }
 
 function ProgressBar() {
-  const reducedMotion = useReducedMotion()
+  const reducedMotion = useHydratedReducedMotion()
   return (
     <div className="mt-6 h-1 overflow-hidden rounded-full bg-white/8">
       <motion.div
@@ -481,6 +482,20 @@ function ProgressBar() {
       />
     </div>
   )
+}
+
+function useHydratedReducedMotion() {
+  const reducedMotion = useReducedMotion()
+  const hydrated = useSyncExternalStore(
+    subscribeToHydration,
+    () => true,
+    () => false,
+  )
+  return hydrated && Boolean(reducedMotion)
+}
+
+function subscribeToHydration() {
+  return () => {}
 }
 
 function TengriMark() {

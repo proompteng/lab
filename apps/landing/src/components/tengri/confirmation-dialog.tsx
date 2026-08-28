@@ -42,6 +42,7 @@ export function ConfirmationDialog({
       }}
     >
       <AlertDialogContent
+        data-tengri-modal="true"
         aria-busy={busy}
         overlayClassName="z-[4000] bg-black/45 backdrop-blur-md"
         className="font-inter z-[4001] w-[calc(100%-2.5rem)] max-w-md gap-0 overflow-hidden rounded-[24px] border border-white/18 bg-[rgba(29,31,39,0.94)] p-0 text-white shadow-[0_42px_120px_rgba(0,0,0,0.62),inset_0_1px_0_rgba(255,255,255,0.16)] ring-0 backdrop-blur-3xl sm:max-w-md"
