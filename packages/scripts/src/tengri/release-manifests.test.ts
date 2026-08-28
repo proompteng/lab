@@ -42,6 +42,9 @@ images:
     applicationSetPath,
     `apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
+metadata:
+  name: platform
+  namespace: argocd
 spec:
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
@@ -267,6 +270,62 @@ spec:
       expect(() => validateTengriRelease(paths)).toThrow('must be an argoproj.io/v1alpha1 ApplicationSet')
       expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
         'must be an argoproj.io/v1alpha1 ApplicationSet',
+      )
+      expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+      expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
+      expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
+      rmSync(paths.directory, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects an ApplicationSet outside the canonical resource identity', () => {
+    for (const [expected, replacement] of [
+      ['  name: platform', '  name: other'],
+      ['  namespace: argocd', '  namespace: other'],
+    ] as const) {
+      const paths = fixture()
+      const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+      const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+      writeFileSync(
+        paths.applicationSetPath,
+        readFileSync(paths.applicationSetPath, 'utf8').replace(expected, replacement),
+      )
+      const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+
+      expect(() => validateTengriRelease(paths)).toThrow('must be metadata.name=platform in namespace argocd')
+      expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
+        'must be metadata.name=platform in namespace argocd',
+      )
+      expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+      expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
+      expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
+      rmSync(paths.directory, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects multi-source application templates without mutating release manifests', () => {
+    const sourceLists = [
+      '      sources: []\n',
+      `      sources:
+        - repoURL: https://github.com/example/fork.git
+          targetRevision: unverified
+          path: argocd/applications/other
+`,
+    ] as const
+
+    for (const sources of sourceLists) {
+      const paths = fixture()
+      const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+      const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+      writeFileSync(
+        paths.applicationSetPath,
+        readFileSync(paths.applicationSetPath, 'utf8').replace('      source:\n', `${sources}      source:\n`),
+      )
+      const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+
+      expect(() => validateTengriRelease(paths)).toThrow('must use one verified source and must not define sources')
+      expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
+        'must use one verified source and must not define sources',
       )
       expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
       expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)

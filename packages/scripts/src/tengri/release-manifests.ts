@@ -194,6 +194,9 @@ function findTengriApplicationBlock(contents: string) {
   if (document.get('apiVersion') !== 'argoproj.io/v1alpha1' || document.get('kind') !== 'ApplicationSet') {
     throw new Error('Platform application manifest must be an argoproj.io/v1alpha1 ApplicationSet')
   }
+  if (document.getIn(['metadata', 'name']) !== 'platform' || document.getIn(['metadata', 'namespace']) !== 'argocd') {
+    throw new Error('Platform ApplicationSet must be metadata.name=platform in namespace argocd')
+  }
 
   const goTemplateOptions = document.getIn(['spec', 'goTemplateOptions'], true)
   if (
@@ -252,6 +255,9 @@ function findTengriApplicationBlock(contents: string) {
   const selector = selectorNode === undefined ? undefined : isMap(selectorNode) ? selectorNode.toJSON() : null
   assertSelectorAdmitsTengri(selector, application)
 
+  if (document.getIn(['spec', 'template', 'spec', 'sources'], true) !== undefined) {
+    throw new Error('Tengri ApplicationSet template must use one verified source and must not define sources')
+  }
   const repository = document.getIn(['spec', 'template', 'spec', 'source', 'repoURL'])
   const revision = document.getIn(['spec', 'template', 'spec', 'source', 'targetRevision'])
   const path = document.getIn(['spec', 'template', 'spec', 'source', 'path'])
