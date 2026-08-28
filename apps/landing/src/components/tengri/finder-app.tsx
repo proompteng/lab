@@ -844,7 +844,10 @@ export function FinderApp({
         {quickLook ? (
           <Dialog.Portal>
             <Dialog.Overlay className="fixed inset-0 z-[6800] bg-black/34 backdrop-blur-sm" />
-            <Dialog.Content className="fixed top-1/2 left-1/2 z-[6801] flex h-[min(620px,calc(100vh-64px))] w-[min(820px,calc(100vw-48px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-white/18 bg-[#181b21]/96 shadow-2xl outline-none">
+            <Dialog.Content
+              data-tengri-modal="true"
+              className="fixed top-1/2 left-1/2 z-[6801] flex h-[min(620px,calc(100vh-64px))] w-[min(820px,calc(100vw-48px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-white/18 bg-[#181b21]/96 shadow-2xl outline-none"
+            >
               <header className="flex h-11 shrink-0 items-center border-b border-white/9 px-4">
                 <FinderFileIcon entry={quickLook.entry} />
                 <Dialog.Title className="ml-2 min-w-0 flex-1 truncate text-xs font-semibold text-white/82">

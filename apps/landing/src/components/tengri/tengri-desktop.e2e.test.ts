@@ -63,6 +63,7 @@ const sourceEntries = [
 type MockOptions = {
   authenticated?: boolean
   agent?: typeof readyAgent | null
+  searchDelays?: Record<string, number>
 }
 
 async function mockTengri(page: Page, options: MockOptions = {}) {
@@ -169,6 +170,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         }
         break
       case 'search-files':
+        await new Promise((resolve) => setTimeout(resolve, options.searchDelays?.[String(action.query)] ?? 0))
         result = files.filter((entry) => entry.name.toLowerCase().includes(String(action.query).toLowerCase()))
         break
       case 'read-file':
@@ -318,7 +320,7 @@ async function resizeWindow(
 }
 
 test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and window controls', async ({ page }) => {
-  const mock = await mockTengri(page)
+  const mock = await mockTengri(page, { searchDelays: { readme: 750 } })
   await page.goto('/')
 
   const dock = page.getByRole('navigation', { name: 'Dock' })
@@ -352,11 +354,20 @@ test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and win
   await finder.getByRole('button', { name: /^workspace/ }).dblclick()
   await finder.getByRole('button', { name: /README\.md/ }).click()
   await finder.getByRole('button', { name: 'Quick Look' }).click()
-  await expect(page.getByRole('dialog', { name: /README\.md/ })).toBeVisible()
+  const quickLook = page.getByRole('dialog', { name: /README\.md/ })
+  await expect(quickLook).toBeVisible()
+  await page.keyboard.press('Meta+Space')
+  await expect(spotlight).toHaveCount(0)
+  await expect(quickLook).toBeVisible()
   await page.locator('button[aria-label="Close Quick Look"]').click()
   await expect(page.locator('button[aria-label="Close Quick Look"]')).toHaveCount(0)
 
   await page.keyboard.press('Meta+Space')
+  await spotlight.getByRole('combobox').fill('src')
+  await expect(spotlight.getByRole('option', { name: /src/ })).toBeVisible()
+  await spotlight.getByRole('combobox').fill('readme')
+  await expect(spotlight.getByRole('option', { name: /src/ })).toHaveCount(0, { timeout: 400 })
+  await expect(spotlight.getByRole('option', { name: /README\.md/ })).toBeVisible()
   await spotlight.getByRole('combobox').fill('src')
   await expect(spotlight.getByRole('option', { name: /src/ })).toBeVisible()
   await page.keyboard.press('Enter')
@@ -383,6 +394,11 @@ test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and win
   await expect.poll(() => mock.actions.some((action) => action.action === 'create-terminal')).toBe(true)
   await expect.poll(() => mock.actions.some((action) => action.action === 'terminal-ticket')).toBe(true)
   await expect(terminal.getByText('Connected', { exact: true })).toBeVisible()
+  await page.keyboard.press('Meta+Space')
+  await spotlight.getByRole('combobox').fill('New Terminal')
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('region', { name: 'Terminal window' })).toHaveCount(2)
+  await expect.poll(() => mock.actions.filter((action) => action.action === 'create-terminal').length).toBe(2)
 })
 
 test('persists real Finder changes into Code and exposes a localhost preview from Chrome', async ({ page }) => {
@@ -523,9 +539,14 @@ test('supports desktop window shortcuts, independent windows, drag, and eight-ed
   const chromeWindows = page.getByRole('region', { name: 'Chrome window' })
   const chromeFrames = page.locator('section[aria-label="Chrome window"]')
   await expect(chromeWindows).toHaveCount(1)
-  await page.getByRole('menuitem', { name: 'Chrome', exact: true }).focus()
+  await chromeWindows.getByRole('textbox', { name: 'Address' }).focus()
   await page.keyboard.press('Meta+n')
   await expect(chromeWindows).toHaveCount(2)
+  await chromeWindows.last().getByRole('textbox', { name: 'Address' }).focus()
+  await page.keyboard.press('Meta+o')
+  await expect(page.getByRole('dialog', { name: 'Spotlight' })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog', { name: 'Spotlight' })).toHaveCount(0)
 
   const frontmost = chromeWindows.last()
   const beforeDrag = await frontmost.boundingBox()

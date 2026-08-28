@@ -158,7 +158,20 @@ export function ReadyDesktop({
       return
     }
     if (document.querySelector('[data-tengri-modal="true"]')) return
-    if (!command || event.defaultPrevented || isEditableTarget(event.target)) return
+    if (!command || event.defaultPrevented) return
+    const active = windowState.windows.find((candidate) => candidate.id === windowState.activeWindowId)
+    if (event.code === 'KeyO') {
+      event.preventDefault()
+      setSpotlightOpen(true)
+      return
+    }
+    if (event.code === 'KeyN') {
+      event.preventDefault()
+      const app = active?.app ?? windowState.activeApp
+      dispatch({ type: 'new', app, title: APP_TITLES[app], viewport: viewport() })
+      return
+    }
+    if (isEditableTarget(event.target)) return
     if (event.key === 'Tab') {
       event.preventDefault()
       const frontmostByApp = new Map<TengriApp, DesktopWindow>()
@@ -172,7 +185,6 @@ export function ReadyDesktop({
       if (next) dispatch({ type: 'restore', id: next.id, viewport: viewport() })
       return
     }
-    const active = windowState.windows.find((candidate) => candidate.id === windowState.activeWindowId)
     if (!active) return
     if (event.code === 'KeyW') {
       event.preventDefault()
@@ -183,12 +195,6 @@ export function ReadyDesktop({
     } else if (event.ctrlKey && event.code === 'KeyF') {
       event.preventDefault()
       dispatch({ type: 'toggle-maximize', id: active.id, viewport: viewport() })
-    } else if (event.code === 'KeyO') {
-      event.preventDefault()
-      setSpotlightOpen(true)
-    } else if (event.code === 'KeyN') {
-      event.preventDefault()
-      dispatch({ type: 'new', app: active.app, title: APP_TITLES[active.app], viewport: viewport() })
     } else if (event.code === 'Backquote') {
       event.preventDefault()
       const siblings = [...windowState.windows]
@@ -234,6 +240,15 @@ export function ReadyDesktop({
   const openTerminal = useCallback(() => {
     dispatch({ type: 'open', app: 'terminal', title: APP_TITLES.terminal, viewport: viewport() })
   }, [viewport])
+
+  const newAppWindow = useCallback(
+    (app: TengriApp) => {
+      dispatch({ type: 'new', app, title: APP_TITLES[app], viewport: viewport() })
+      setMenuOpen(null)
+      setSpotlightOpen(false)
+    },
+    [viewport],
+  )
 
   const openApp = useCallback(
     (app: TengriApp) => {
@@ -501,6 +516,7 @@ export function ReadyDesktop({
           <Spotlight
             agentId={agent.id}
             onClose={() => setSpotlightOpen(false)}
+            onNewApp={newAppWindow}
             onOpenApp={openApp}
             onOpenDirectory={openFinder}
             onOpenFile={(path) => openCode(path)}

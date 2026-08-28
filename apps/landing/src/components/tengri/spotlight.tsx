@@ -15,15 +15,22 @@ type SpotlightResult =
   | { id: string; kind: 'file'; label: string; detail: string; directory: boolean; path: string }
   | { id: string; kind: 'action'; label: string; detail: string; run: () => void }
 
+type FileSearchState = {
+  entries: TengriFileEntry[]
+  query: string
+}
+
 export function Spotlight({
   agentId,
   onClose,
+  onNewApp,
   onOpenApp,
   onOpenDirectory,
   onOpenFile,
 }: {
   agentId: string
   onClose: () => void
+  onNewApp: (app: TengriApp) => void
   onOpenApp: (app: TengriApp) => void
   onOpenDirectory: (path: string) => void
   onOpenFile: (path: string) => void
@@ -31,7 +38,7 @@ export function Spotlight({
   const modalFocus = useModalFocus<HTMLElement>()
   const reducedMotion = useReducedMotion()
   const [query, setQuery] = useState('')
-  const [files, setFiles] = useState<TengriFileEntry[]>([])
+  const [fileSearch, setFileSearch] = useState<FileSearchState>({ entries: [], query: '' })
   const [recentIds, setRecentIds] = useState<string[]>([])
   const [searchError, setSearchError] = useState('')
   const [searching, setSearching] = useState(false)
@@ -57,24 +64,29 @@ export function Spotlight({
   }, [recentKey])
 
   useEffect(() => {
-    if (query.trim().length < 2) {
-      setFiles([])
+    const searchQuery = query.trim()
+    if (searchQuery.length < 2) {
+      setFileSearch({ entries: [], query: searchQuery })
       setSearchError('')
       setSearching(false)
       return
     }
+    setFileSearch({ entries: [], query: searchQuery })
     setSearching(true)
     const controller = new AbortController()
     const timer = window.setTimeout(() => {
-      void runTengriAction<TengriFileEntry[]>({ action: 'search-files', agentId, path: '/', query }, controller.signal)
+      void runTengriAction<TengriFileEntry[]>(
+        { action: 'search-files', agentId, path: '/', query: searchQuery },
+        controller.signal,
+      )
         .then((entries) => {
-          setFiles(entries.slice(0, 8))
+          setFileSearch({ entries: entries.slice(0, 8), query: searchQuery })
           setSearchError('')
           setSearching(false)
         })
         .catch((cause: unknown) => {
           if (controller.signal.aborted) return
-          setFiles([])
+          setFileSearch({ entries: [], query: searchQuery })
           setSearchError(cause instanceof Error ? cause.message : 'File search is unavailable')
           setSearching(false)
         })
@@ -87,6 +99,7 @@ export function Spotlight({
 
   const results = useMemo<SpotlightResult[]>(() => {
     const needle = query.trim().toLowerCase()
+    const files = fileSearch.query === query.trim() ? fileSearch.entries : []
     const apps = DOCK_APPS.filter((app) => fuzzy(APP_TITLES[app].toLowerCase(), needle)).map((app) => ({
       id: `app:${app}`,
       kind: 'app' as const,
@@ -107,7 +120,7 @@ export function Spotlight({
         kind: 'action' as const,
         label: 'New Terminal',
         detail: 'Desktop action',
-        run: () => onOpenApp('terminal'),
+        run: () => onNewApp('terminal'),
       },
     ].filter((item) => fuzzy(item.label.toLowerCase(), needle))
     const fileResults = files.map((file) => ({
@@ -122,7 +135,7 @@ export function Spotlight({
     return [...apps, ...actions, ...fileResults]
       .sort((left, right) => (recentPosition.get(left.id) ?? 99) - (recentPosition.get(right.id) ?? 99))
       .slice(0, 12)
-  }, [files, onOpenApp, query, recentIds])
+  }, [fileSearch, onNewApp, onOpenApp, query, recentIds])
 
   useEffect(() => setSelection(0), [query])
   useEffect(() => setSelection((index) => Math.min(index, Math.max(0, results.length - 1))), [results.length])
