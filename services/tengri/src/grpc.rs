@@ -23,7 +23,9 @@ use crate::{
         IDLE_MINUTES, LIFETIME_HOURS, MicroVM, MicroVMArchitecture, MicroVMDesiredState,
         MicroVMPhase, MicroVMResources, MicroVMSpec,
     },
-    guest::{GuestClient, GuestError, TerminalIdentityRegistry},
+    guest::{
+        GuestClient, GuestError, TerminalIdentityRegistry, TerminalSession as GuestTerminalSession,
+    },
     metrics,
     tickets::TicketStore,
 };
@@ -567,13 +569,28 @@ impl MicroVmControlPlane for ControlPlane {
     ) -> Result<Response<TerminalSession>, Status> {
         let principal = self.authorize(&request).await?;
         let request = request.into_inner();
-        let creation_id = compatible_terminal_creation_id(&request.creation_id);
-        let creation = self
-            .guest(&principal, &request.agent_id)
-            .await?
-            .create_terminal(&creation_id, &request.cwd, request.columns, request.rows)
-            .await
-            .map_err(map_guest_error)?;
+        let guest = self.guest(&principal, &request.agent_id).await?;
+        let creation = if request.creation_id.is_empty() {
+            let _guard = self
+                .terminal_identities
+                .lock_legacy_creation(&request.agent_id)
+                .await;
+            let sessions = guest.list_terminals().await.map_err(map_guest_error)?;
+            let creation_id = compatible_terminal_creation_id("", &sessions, &request.cwd);
+            guest
+                .create_terminal(&creation_id, &request.cwd, request.columns, request.rows)
+                .await
+        } else {
+            guest
+                .create_terminal(
+                    &request.creation_id,
+                    &request.cwd,
+                    request.columns,
+                    request.rows,
+                )
+                .await
+        }
+        .map_err(map_guest_error)?;
         if creation.created {
             metrics::global().record_pty_created(&request.agent_id, &creation.session.id);
         }
@@ -1491,11 +1508,24 @@ fn validate_resource_id(value: &str) -> Result<(), Status> {
     Ok(())
 }
 
-fn compatible_terminal_creation_id(value: &str) -> String {
-    if value.is_empty() {
-        return format!("legacy-{}", Uuid::new_v4().simple());
+fn compatible_terminal_creation_id(
+    value: &str,
+    sessions: &[GuestTerminalSession],
+    cwd: &str,
+) -> String {
+    if !value.is_empty() {
+        return value.to_owned();
     }
-    value.to_owned()
+    sessions
+        .iter()
+        .rev()
+        .find(|session| {
+            !session.attached
+                && session.cwd == cwd
+                && session.creation_id.starts_with("legacy-grpc-")
+        })
+        .map(|session| session.creation_id.clone())
+        .unwrap_or_else(|| format!("legacy-grpc-{}", Uuid::new_v4().simple()))
 }
 
 fn validate_preview_session_id(value: &str) -> Result<(), Status> {
@@ -2202,9 +2232,16 @@ mod tests {
     }
 
     #[test]
-    fn legacy_terminal_requests_receive_valid_unique_creation_ids() {
-        let first = compatible_terminal_creation_id("");
-        let second = compatible_terminal_creation_id("");
+    fn legacy_terminal_requests_reuse_an_unattached_retry_identity() {
+        let first = compatible_terminal_creation_id("", &[], "/workspace");
+        let orphan = GuestTerminalSession {
+            id: "terminal-orphan".to_owned(),
+            creation_id: first.clone(),
+            cwd: "/workspace".to_owned(),
+            created_at: "2026-08-28T00:00:00Z".to_owned(),
+            last_activity_at: "2026-08-28T00:00:00Z".to_owned(),
+            attached: false,
+        };
 
         assert!((16..=128).contains(&first.len()));
         assert!(
@@ -2212,9 +2249,24 @@ mod tests {
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
         );
-        assert_ne!(first, second);
         assert_eq!(
-            compatible_terminal_creation_id("tengri-existing-creation"),
+            compatible_terminal_creation_id("", std::slice::from_ref(&orphan), "/workspace"),
+            first
+        );
+        let attached = GuestTerminalSession {
+            attached: true,
+            ..orphan.clone()
+        };
+        assert_ne!(
+            compatible_terminal_creation_id("", &[attached], "/workspace"),
+            first
+        );
+        assert_ne!(
+            compatible_terminal_creation_id("", &[orphan], "/other"),
+            first
+        );
+        assert_eq!(
+            compatible_terminal_creation_id("tengri-existing-creation", &[], "/workspace"),
             "tengri-existing-creation"
         );
     }

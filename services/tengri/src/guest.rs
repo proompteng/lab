@@ -80,7 +80,7 @@ struct PendingLegacyCreation {
 }
 
 impl TerminalIdentityRegistry {
-    async fn lock_legacy_creation(&self, agent_id: &str) -> OwnedMutexGuard<()> {
+    pub(crate) async fn lock_legacy_creation(&self, agent_id: &str) -> OwnedMutexGuard<()> {
         let lock = {
             let mut locks = self
                 .legacy_creation_locks
