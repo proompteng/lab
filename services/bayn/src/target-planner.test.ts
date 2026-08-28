@@ -276,6 +276,11 @@ describe('causal target planner', () => {
     expect(result).toMatchObject({
       schemaVersion: referenceTargetPlanSchemaVersion,
       status: TargetPlanStatus.Planned,
+      executionTerms: {
+        orderType: OrderType.Limit,
+        timeInForce: TimeInForce.ImmediateOrCancel,
+        priceReference: 'verified-adverse-quote-boundary',
+      },
       requiredReferenceBuyNotionalMicros: '990000000',
       targets: [{ symbol: 'AMD', targetQuantityMicros: '33000000' }],
       intentTargets: [
@@ -390,6 +395,12 @@ describe('causal target planner', () => {
 
     expect(result).toMatchObject({
       status: TargetPlanStatus.Planned,
+      executionTerms: {
+        executionPurpose: 'fractional-close',
+        orderType: OrderType.Market,
+        timeInForce: TimeInForce.Day,
+        priceReference: 'verified-adverse-quote-boundary',
+      },
       targets: [{ symbol: 'AMD', currentQuantityMicros: '500000', targetQuantityMicros: '0' }],
       intentTargets: [
         {
@@ -401,6 +412,30 @@ describe('causal target planner', () => {
         },
       ],
     })
+  })
+
+  test('rejects a rehashed MARKET/DAY close that lacks matching durable close evidence', () => {
+    const planned = planSuccess(
+      fixture({
+        quoteBound: true,
+        allocationCapitalMicros: '0',
+        positions: [position('AMD', '1000000')],
+        priceMicros: { AMD: '100000000' },
+        targetWeights: { AMD: 0 },
+      }),
+    )
+    if (planned.status !== TargetPlanStatus.Planned) return expect.unreachable('expected a planned close')
+    const { outputHash: _outputHash, ...material } = planned
+    const tampered = {
+      ...material,
+      intentTargets: planned.intentTargets.map((intent) => ({
+        ...intent,
+        orderType: OrderType.Market,
+        timeInForce: TimeInForce.Day,
+      })),
+    }
+
+    expect(Result.isFailure(decodeTargetPlanResult({ ...tampered, outputHash: canonicalHashV1(tampered) }))).toBe(true)
   })
 
   test('permits only the exactly reconciled short quantity in a forced buy-to-cover', () => {

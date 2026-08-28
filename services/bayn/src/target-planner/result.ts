@@ -161,21 +161,26 @@ const plannedIntentIssues = (
   const supportedExecutionTerms = (
     intent: ReferenceTargetIntent,
     target: typeof PlannedTargetQuantitySchema.Type,
-  ): boolean =>
-    result.schemaVersion === legacyReferenceTargetPlanSchemaVersion
-      ? intent.orderType === OrderType.Market && intent.timeInForce === TimeInForce.Day
-      : result.schemaVersion === referenceTargetPlanSchemaVersion &&
-        ((intent.orderType === OrderType.Limit && intent.timeInForce === TimeInForce.ImmediateOrCancel) ||
-          (intent.side === OrderSide.Sell &&
-            intent.orderType === OrderType.Market &&
-            intent.timeInForce === TimeInForce.Day &&
-            BigInt(target.currentQuantityMicros) > 0n &&
-            BigInt(target.targetQuantityMicros) === 0n) ||
-          (intent.side === OrderSide.Buy &&
-            intent.orderType === OrderType.Market &&
-            intent.timeInForce === TimeInForce.Day &&
-            BigInt(target.currentQuantityMicros) < 0n &&
-            BigInt(target.targetQuantityMicros) === 0n))
+  ): boolean => {
+    if (result.schemaVersion === legacyReferenceTargetPlanSchemaVersion) {
+      return intent.orderType === OrderType.Market && intent.timeInForce === TimeInForce.Day
+    }
+    const executionTerms = result.executionTerms
+    if (
+      result.schemaVersion !== referenceTargetPlanSchemaVersion ||
+      executionTerms === undefined ||
+      intent.orderType !== executionTerms.orderType ||
+      intent.timeInForce !== executionTerms.timeInForce
+    ) {
+      return false
+    }
+    if (executionTerms.orderType === OrderType.Limit) return true
+    return (
+      BigInt(target.targetQuantityMicros) === 0n &&
+      ((intent.side === OrderSide.Sell && BigInt(target.currentQuantityMicros) > 0n) ||
+        (intent.side === OrderSide.Buy && BigInt(target.currentQuantityMicros) < 0n))
+    )
+  }
   for (const { delta, index, intent, target } of facts.deltas) {
     if (delta === 0n && intent !== undefined) {
       issues.push({ path: ['intentTargets'], issue: `must not retain a zero delta for ${target.symbol}` })
@@ -233,6 +238,24 @@ const targetPlanStatusIssues = (
   return issues
 }
 
+const targetPlanExecutionTermsIssues = (result: typeof TargetPlanResultBase.Type): readonly Schema.FilterIssue[] => {
+  if (result.schemaVersion === legacyReferenceTargetPlanSchemaVersion) {
+    return result.executionTerms === undefined
+      ? []
+      : [{ path: ['executionTerms'], issue: 'legacy target plans must not claim quote-bound execution evidence' }]
+  }
+  if (result.executionTerms === undefined) {
+    return [{ path: ['executionTerms'], issue: 'quote-bound target plans require durable execution-term evidence' }]
+  }
+  if (
+    result.executionTerms.executionPurpose !== undefined &&
+    result.targets.some((target) => target.targetWeight !== 0 || BigInt(target.targetQuantityMicros) !== 0n)
+  ) {
+    return [{ path: ['executionTerms', 'executionPurpose'], issue: 'close execution must target a flat account' }]
+  }
+  return []
+}
+
 const targetPlanBuyingPowerIssues = (
   result: typeof TargetPlanResultBase.Type,
   facts: TargetPlanSemanticFacts,
@@ -284,6 +307,7 @@ const targetPlanSemanticIssues = (result: typeof TargetPlanResultBase.Type): rea
     ...targetQuantityIssues(facts),
     ...plannedIntentIssues(result, facts),
     ...targetPlanStatusIssues(result, facts),
+    ...targetPlanExecutionTermsIssues(result),
     ...targetPlanBuyingPowerIssues(result, facts),
   ]
 }

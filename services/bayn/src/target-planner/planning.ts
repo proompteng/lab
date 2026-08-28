@@ -12,6 +12,7 @@ import {
   type BlockedTargetPlanReason,
   type PlannedTargetQuantity,
   type ReferenceTargetIntent,
+  type TargetPlanExecutionTerms,
   type TargetPlannerFailure,
   type TargetPlannerInput,
 } from './model'
@@ -35,6 +36,21 @@ const outputSchemaVersion = (input: TargetPlannerInput) =>
     ? referenceTargetPlanSchemaVersion
     : legacyReferenceTargetPlanSchemaVersion
 
+const targetPlanExecutionTerms = (
+  input: TargetPlannerInput,
+): { readonly executionTerms: TargetPlanExecutionTerms } | Record<never, never> => {
+  if (input.schemaVersion !== quoteBoundTargetPlannerInputSchemaVersion) return {}
+  const { executionPurpose, orderType, timeInForce, priceReference } = input.executionTerms
+  return {
+    executionTerms: {
+      ...(executionPurpose === undefined ? {} : { executionPurpose }),
+      orderType,
+      timeInForce,
+      priceReference,
+    },
+  }
+}
+
 const blocked = (
   input: TargetPlannerInput,
   inputHash: string,
@@ -45,6 +61,7 @@ const blocked = (
 ): BlockedOutputMaterial => ({
   schemaVersion: outputSchemaVersion(input),
   inputHash,
+  ...targetPlanExecutionTerms(input),
   status: TargetPlanStatus.Blocked,
   reason,
   targets,
@@ -140,6 +157,7 @@ const assembleExecutableTargetPlan = (
   const common = {
     schemaVersion: outputSchemaVersion(facts.input),
     inputHash: facts.inputHash,
+    ...targetPlanExecutionTerms(facts.input),
     targets,
     requiredReferenceBuyNotionalMicros: requiredBuyingPower.toString(),
     availableBuyingPowerMicros: facts.input.brokerState.account.buyingPowerMicros,

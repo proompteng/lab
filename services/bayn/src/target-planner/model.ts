@@ -173,31 +173,43 @@ const TargetPlannerInputFields = {
 
 export const quoteBoundTargetPlannerInputSchemaVersion = 'bayn.target-planner-input.quote-bound.v1' as const
 
-const QuoteBoundLimitExecutionTermsSchema = Schema.Struct({
+const QuoteBoundLimitExecutionIdentityFields = {
   executionPurpose: Schema.optionalKey(Schema.Literal('forced-close')),
   orderType: Schema.Literal(OrderType.Limit),
   timeInForce: Schema.Literal(TimeInForce.ImmediateOrCancel),
   priceReference: Schema.Literal('verified-adverse-quote-boundary'),
+} as const
+
+const FractionalCloseExecutionIdentityFields = {
+  executionPurpose: Schema.Literal('fractional-close'),
+  orderType: Schema.Literal(OrderType.Market),
+  timeInForce: Schema.Literal(TimeInForce.Day),
+  priceReference: Schema.Literal('verified-adverse-quote-boundary'),
+} as const
+
+const ReconciledPositionCloseExecutionIdentityFields = {
+  executionPurpose: Schema.Literal('forced-close'),
+  orderType: Schema.Literal(OrderType.Market),
+  timeInForce: Schema.Literal(TimeInForce.Day),
+  priceReference: Schema.Literal('reconciled-broker-position-mark'),
+} as const
+
+const QuoteBoundLimitExecutionTermsSchema = Schema.Struct({
+  ...QuoteBoundLimitExecutionIdentityFields,
   snapshotId: Sha256Schema,
   snapshotContentHash: Sha256Schema,
   maximumBuyQuantityMicros: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
 })
 
 const FractionalCloseExecutionTermsSchema = Schema.Struct({
-  executionPurpose: Schema.Literal('fractional-close'),
-  orderType: Schema.Literal(OrderType.Market),
-  timeInForce: Schema.Literal(TimeInForce.Day),
-  priceReference: Schema.Literal('verified-adverse-quote-boundary'),
+  ...FractionalCloseExecutionIdentityFields,
   snapshotId: Sha256Schema,
   snapshotContentHash: Sha256Schema,
   maximumBuyQuantityMicros: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
 })
 
 const ReconciledPositionCloseExecutionTermsSchema = Schema.Struct({
-  executionPurpose: Schema.Literal('forced-close'),
-  orderType: Schema.Literal(OrderType.Market),
-  timeInForce: Schema.Literal(TimeInForce.Day),
-  priceReference: Schema.Literal('reconciled-broker-position-mark'),
+  ...ReconciledPositionCloseExecutionIdentityFields,
   snapshotId: Sha256Schema,
   snapshotContentHash: Sha256Schema,
   maximumBuyQuantityMicros: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
@@ -208,6 +220,13 @@ export const QuoteBoundExecutionTermsSchema = Schema.Union([
   FractionalCloseExecutionTermsSchema,
   ReconciledPositionCloseExecutionTermsSchema,
 ])
+
+export const TargetPlanExecutionTermsSchema = Schema.Union([
+  Schema.Struct(QuoteBoundLimitExecutionIdentityFields),
+  Schema.Struct(FractionalCloseExecutionIdentityFields),
+  Schema.Struct(ReconciledPositionCloseExecutionIdentityFields),
+])
+export type TargetPlanExecutionTerms = typeof TargetPlanExecutionTermsSchema.Type
 
 export const TargetPlannerInputV1Schema = Schema.Struct({
   schemaVersion: Schema.Literal(legacyTargetPlannerInputV1SchemaVersion),
@@ -479,6 +498,7 @@ export const TargetPlanResultFields = {
   schemaVersion: Schema.Literals([legacyReferenceTargetPlanSchemaVersion, referenceTargetPlanSchemaVersion]),
   inputHash: Sha256Schema,
   outputHash: Sha256Schema,
+  executionTerms: Schema.optionalKey(TargetPlanExecutionTermsSchema),
   targets: Schema.Array(PlannedTargetQuantitySchema),
   requiredReferenceBuyNotionalMicros: UnsignedMicrosSchema,
   availableBuyingPowerMicros: SignedMicrosSchema,
