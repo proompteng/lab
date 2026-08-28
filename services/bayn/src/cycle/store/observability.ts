@@ -764,7 +764,7 @@ const makeCycleObservability = Effect.gen(function* () {
                 SELECT count(*)::integer FROM latest_cycle_orders
                 WHERE status IN ('NEW', 'PARTIALLY_FILLED', 'PENDING')
               ),
-              'filledOrderCount', (SELECT count(*)::integer FROM latest_cycle_orders WHERE status = 'FILLED'),
+              'filledOrderCount', (SELECT count(DISTINCT broker_order_id)::integer FROM cycle_fills),
               'canceledOrderCount', (SELECT count(*)::integer FROM latest_cycle_orders WHERE status = 'CANCELED'),
               'expiredOrderCount', (SELECT count(*)::integer FROM latest_cycle_orders WHERE status = 'EXPIRED'),
               'rejectedOrderCount', (SELECT count(*)::integer FROM latest_cycle_orders WHERE status = 'REJECTED'),

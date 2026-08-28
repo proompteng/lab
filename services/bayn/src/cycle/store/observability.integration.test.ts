@@ -865,6 +865,31 @@ const seedOrderLifecycle = (cycleId: string) =>
 
     yield* insertTerminalOrder('7', 'CANCELED', '2026-04-08T13:32:00.000Z')
     yield* insertTerminalOrder('8', 'EXPIRED', '2026-04-08T13:33:00.000Z')
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        const partialFillEventId = '9'.repeat(64)
+        yield* sql`
+          INSERT INTO broker_events (
+            event_id, schema_version, content_hash, event_kind, broker, account_id,
+            source_event_id, source_sequence, occurred_at, observed_at
+          ) VALUES (
+            ${partialFillEventId}, 'bayn.paper-broker-event.v1', ${partialFillEventId}, 'FILL', 'ALPACA',
+            ${accountId}, 'partial-fill-before-cancel', 105,
+            '2026-04-08T13:31:30.000Z', '2026-04-08T13:31:30.000Z'
+          )
+        `
+        yield* sql`
+          INSERT INTO fills (
+            event_id, account_id, schema_version, fill_id, broker_order_id, client_order_id, intent_id,
+            symbol, side, quantity_micros, price_micros, fee_micros, source_timestamp
+          ) VALUES (
+            ${partialFillEventId}, ${accountId}, 'bayn.paper-fill.v1', 'partial-fill-before-cancel',
+            'broker-observability-canceled', 'bayn-observability-canceled', ${'7'.repeat(64)},
+            'AAPL', 'BUY', 500000, 100000000, 0, '2026-04-08T13:31:30.000000000Z'
+          )
+        `
+      }),
+    )
   })
 
 describePostgres('PostgreSQL cycle observability projection', () => {
@@ -1232,7 +1257,7 @@ describePostgres('PostgreSQL cycle observability projection', () => {
     })
   })
 
-  test('measures acknowledgement from the first order event and preserves fill latencies wider than int32', async () => {
+  test('counts partial fills on canceled orders and preserves order latencies wider than int32', async () => {
     const draft = makeIntradayDraft()
     const projection = await runtime.runPromise(
       Effect.gen(function* () {
@@ -1247,7 +1272,7 @@ describePostgres('PostgreSQL cycle observability projection', () => {
 
     expect(projection.execution).toMatchObject({
       orderCount: 3,
-      filledOrderCount: 1,
+      filledOrderCount: 2,
       canceledOrderCount: 1,
       expiredOrderCount: 1,
       latestOrderAt: '2026-04-08T13:33:00.000Z',
