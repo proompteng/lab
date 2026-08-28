@@ -2,17 +2,18 @@ import { defineConfig } from '@playwright/test'
 
 const port = Number.parseInt(process.env.TENGRI_PLAYWRIGHT_PORT ?? '3000', 10)
 const baseURL = process.env.TENGRI_PLAYWRIGHT_BASE_URL ?? `http://127.0.0.1:${port}`
-
 export default defineConfig({
   testDir: './src/components/tengri',
   testMatch: '**/*.e2e.test.ts',
   timeout: 45_000,
-  expect: { timeout: 10_000 },
+  expect: {
+    timeout: 10_000,
+  },
   fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,
   workers: 1,
-  reporter: 'line',
+  reporter: process.env.CI ? [['line'], ['html', { open: 'never' }]] : 'line',
   use: {
     baseURL,
     colorScheme: 'dark',
@@ -20,6 +21,7 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     timezoneId: 'UTC',
     trace: 'on-first-retry',
+    video: 'retain-on-failure',
     viewport: { width: 1440, height: 900 },
   },
   webServer:

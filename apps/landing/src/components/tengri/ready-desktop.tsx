@@ -1,8 +1,8 @@
 'use client'
 
-import { FileCode2, Folder, LoaderCircle, Moon, Settings, SquareTerminal, Wifi } from 'lucide-react'
-import { motion, useReducedMotion } from 'motion/react'
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
+import { FileCode2, Folder, LoaderCircle, Moon, Settings, SquareTerminal } from 'lucide-react'
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import { useCallback, useEffect, useEffectEvent, useReducer, useRef, useState } from 'react'
 
 import { tengriAuthClient } from '@/lib/tengri/auth-client'
 import type { TengriAgent, TengriUser } from '@/lib/tengri/types'
@@ -12,6 +12,7 @@ import {
   initialWindowState,
   type Bounds,
   type DesktopWindow,
+  type TengriApp,
   windowIdForOpen,
   windowReducer,
 } from '@/lib/tengri/window-manager'
@@ -21,12 +22,15 @@ import { CodeEditor } from './code-editor'
 import { type CodeOpenRequest, updateDirtyCodeWindows } from './code-editor-model'
 import { ConfirmationDialog } from './confirmation-dialog'
 import { DesktopWindowFrame } from './desktop-window'
-import { FinderApp } from './finder-app'
+import { FinderApp, type FinderOpenRequest } from './finder-app'
+import { MenuBar } from './menu-bar'
 import { SettingsApp } from './settings-app'
 import { commitDesktopLifecycleAction, selectSleepRequestError } from './settings-model'
+import { Spotlight } from './spotlight'
 import { TerminalApp } from './terminal-app'
 
 type TargetedCodeOpenRequest = CodeOpenRequest & { targetWindowId: string }
+type TargetedFinderOpenRequest = FinderOpenRequest & { targetWindowId: string }
 
 export function ReadyDesktop({
   agent,
@@ -48,9 +52,13 @@ export function ReadyDesktop({
   const [error, setError] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [codeRequest, setCodeRequest] = useState<TargetedCodeOpenRequest | null>(null)
+  const [finderRequest, setFinderRequest] = useState<TargetedFinderOpenRequest | null>(null)
   const [dirtyCodeWindows, setDirtyCodeWindows] = useState<Set<string>>(() => new Set())
   const [sleepRequested, setSleepRequested] = useState(false)
+  const [spotlightOpen, setSpotlightOpen] = useState(false)
+  const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const codeRequestIdRef = useRef(0)
+  const finderRequestIdRef = useRef(0)
   const reducedMotion = useReducedMotion()
 
   const viewport = useCallback((): Bounds => {
@@ -126,24 +134,82 @@ export function ReadyDesktop({
   }, [onChanged, sleepRequested])
 
   useEffect(() => {
-    const handleShortcut = (event: KeyboardEvent) => {
-      if (!event.metaKey || event.defaultPrevented || isEditableTarget(event.target)) return
-      const active = windowState.windows.find((candidate) => candidate.id === windowState.activeWindowId)
-      if (!active) return
-      if (event.key.toLowerCase() === 'w') {
-        event.preventDefault()
-        closeWindow(active)
-      } else if (event.key.toLowerCase() === 'm') {
-        event.preventDefault()
-        dispatch({ type: 'minimize', id: active.id })
-      } else if (event.ctrlKey && event.key.toLowerCase() === 'f') {
-        event.preventDefault()
-        dispatch({ type: 'toggle-maximize', id: active.id, viewport: viewport() })
-      }
+    if (!menuOpen) return
+    const closeOutside = (event: PointerEvent) => {
+      const target = event.target instanceof Element ? event.target : null
+      if (!target?.closest('[role="menubar"]')) setMenuOpen(null)
     }
+    document.addEventListener('pointerdown', closeOutside)
+    return () => document.removeEventListener('pointerdown', closeOutside)
+  }, [menuOpen])
+
+  const handleShortcut = useEffectEvent((event: KeyboardEvent) => {
+    const command = event.metaKey
+    if (command && event.code === 'Space') {
+      event.preventDefault()
+      setMenuOpen(null)
+      if (spotlightOpen) setSpotlightOpen(false)
+      else if (!document.querySelector('[data-tengri-modal="true"]')) setSpotlightOpen(true)
+      return
+    }
+    if (event.key === 'Escape' && spotlightOpen) {
+      event.preventDefault()
+      setSpotlightOpen(false)
+      return
+    }
+    if (document.querySelector('[data-tengri-modal="true"]')) return
+    if (!command || event.defaultPrevented) return
+    const active = windowState.windows.find((candidate) => candidate.id === windowState.activeWindowId)
+    if (event.code === 'KeyO') {
+      event.preventDefault()
+      setSpotlightOpen(true)
+      return
+    }
+    if (event.code === 'KeyN') {
+      event.preventDefault()
+      const app = active?.app ?? windowState.activeApp
+      dispatch({ type: 'new', app, title: APP_TITLES[app], viewport: viewport() })
+      return
+    }
+    if (isEditableTarget(event.target)) return
+    if (event.key === 'Tab') {
+      event.preventDefault()
+      const frontmostByApp = new Map<TengriApp, DesktopWindow>()
+      for (const candidate of [...windowState.windows].sort((left, right) => right.z - left.z)) {
+        if (!frontmostByApp.has(candidate.app)) frontmostByApp.set(candidate.app, candidate)
+      }
+      const running = [...frontmostByApp.values()]
+      if (running.length < 2) return
+      const current = running.findIndex((candidate) => candidate.app === windowState.activeApp)
+      const next = running[(current + (event.shiftKey ? -1 : 1) + running.length) % running.length]
+      if (next) dispatch({ type: 'restore', id: next.id, viewport: viewport() })
+      return
+    }
+    if (!active) return
+    if (event.code === 'KeyW') {
+      event.preventDefault()
+      closeWindow(active)
+    } else if (event.code === 'KeyM') {
+      event.preventDefault()
+      dispatch({ type: 'minimize', id: active.id })
+    } else if (event.ctrlKey && event.code === 'KeyF') {
+      event.preventDefault()
+      dispatch({ type: 'toggle-maximize', id: active.id, viewport: viewport() })
+    } else if (event.code === 'Backquote') {
+      event.preventDefault()
+      const siblings = [...windowState.windows]
+        .filter((candidate) => candidate.app === active.app)
+        .sort((left, right) => right.z - left.z)
+      const current = siblings.findIndex((candidate) => candidate.id === active.id)
+      const next = siblings[(current + 1) % siblings.length]
+      if (next) dispatch({ type: 'restore', id: next.id, viewport: viewport() })
+    }
+  })
+
+  useEffect(() => {
     window.addEventListener('keydown', handleShortcut)
     return () => window.removeEventListener('keydown', handleShortcut)
-  }, [closeWindow, viewport, windowState.activeWindowId, windowState.windows])
+  }, [])
 
   const openSettings = useCallback(() => {
     dispatch({ type: 'open', app: 'settings', title: APP_TITLES.settings, viewport: viewport() })
@@ -153,9 +219,14 @@ export function ReadyDesktop({
     dispatch({ type: 'open', app: 'chrome', title: APP_TITLES.chrome, viewport: viewport() })
   }, [viewport])
 
-  const openFinder = useCallback(() => {
-    dispatch({ type: 'open', app: 'finder', title: APP_TITLES.finder, viewport: viewport() })
-  }, [viewport])
+  const openFinder = useCallback(
+    (path?: string) => {
+      const targetWindowId = windowIdForOpen(windowState, 'finder')
+      dispatch({ type: 'open', app: 'finder', title: APP_TITLES.finder, viewport: viewport() })
+      if (path) setFinderRequest({ path, requestId: ++finderRequestIdRef.current, targetWindowId })
+    },
+    [viewport, windowState],
+  )
 
   const openCode = useCallback(
     (path?: string) => {
@@ -170,26 +241,34 @@ export function ReadyDesktop({
     dispatch({ type: 'open', app: 'terminal', title: APP_TITLES.terminal, viewport: viewport() })
   }, [viewport])
 
-  const openActiveApp = useCallback(() => {
+  const newAppWindow = useCallback(
+    (app: TengriApp) => {
+      dispatch({ type: 'new', app, title: APP_TITLES[app], viewport: viewport() })
+      setMenuOpen(null)
+      setSpotlightOpen(false)
+    },
+    [viewport],
+  )
+
+  const openApp = useCallback(
+    (app: TengriApp) => {
+      if (app === 'chrome') openChrome()
+      else if (app === 'finder') openFinder()
+      else if (app === 'code') openCode()
+      else if (app === 'terminal') openTerminal()
+      else openSettings()
+      setMenuOpen(null)
+      setSpotlightOpen(false)
+    },
+    [openChrome, openCode, openFinder, openSettings, openTerminal],
+  )
+
+  const newActiveWindow = useCallback(() => {
     const active = windowState.windows.find((candidate) => candidate.id === windowState.activeWindowId)
-    if (active?.app === 'chrome') {
-      openChrome()
-      return
-    }
-    if (active?.app === 'finder') {
-      openFinder()
-      return
-    }
-    if (active?.app === 'code') {
-      openCode()
-      return
-    }
-    if (active?.app === 'terminal') {
-      openTerminal()
-      return
-    }
-    openSettings()
-  }, [openChrome, openCode, openFinder, openSettings, openTerminal, windowState.activeWindowId, windowState.windows])
+    const app = active?.app ?? windowState.activeApp
+    dispatch({ type: 'new', app, title: APP_TITLES[app], viewport: viewport() })
+    setMenuOpen(null)
+  }, [viewport, windowState.activeApp, windowState.activeWindowId, windowState.windows])
 
   async function mutate(action: 'delete-agent' | 'sleep-agent') {
     if (dirtyCodeWindows.size > 0) {
@@ -247,7 +326,7 @@ export function ReadyDesktop({
   const settingsRunning = windowState.windows.some((candidate) => candidate.app === 'settings')
   const terminalRunning = windowState.windows.some((candidate) => candidate.app === 'terminal')
   const activeWindow = windowState.windows.find((candidate) => candidate.id === windowState.activeWindowId)
-  const activeAppTitle = activeWindow ? APP_TITLES[activeWindow.app] : 'Tengri'
+  const activeApp = activeWindow?.app ?? windowState.activeApp
 
   if (sleepRequested) {
     return (
@@ -258,51 +337,32 @@ export function ReadyDesktop({
   return (
     <>
       <main
-        aria-hidden={confirmOpen || undefined}
-        inert={confirmOpen || undefined}
+        aria-hidden={confirmOpen || spotlightOpen || undefined}
+        inert={confirmOpen || spotlightOpen || undefined}
         className="font-inter relative h-[100dvh] min-h-[520px] w-screen overflow-hidden bg-[#050914] text-white selection:bg-[#78a9ff]/35"
       >
         <DesktopWallpaper />
-        <header className="absolute inset-x-0 top-0 z-[2000] flex h-[30px] items-center justify-between border-b border-white/10 bg-[rgba(16,20,31,0.5)] px-3 text-[12px] shadow-sm backdrop-blur-2xl">
-          <nav aria-label="Application menu" className="flex h-full items-center gap-1">
-            <button
-              type="button"
-              aria-label="Open Tengri Settings"
-              className="flex h-6 items-center rounded-md px-2 font-semibold text-white/90 outline-none hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-white/50"
-              onClick={openSettings}
-            >
-              <TengriMark />
-            </button>
-            <button
-              type="button"
-              className="flex h-6 items-center rounded-md px-2 font-semibold text-white/88 outline-none hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-white/50"
-              onClick={openActiveApp}
-            >
-              {activeAppTitle}
-            </button>
-          </nav>
-          <div className="flex min-w-0 items-center gap-3 text-white/72">
-            <span className="hidden items-center gap-1.5 sm:flex">
-              <span
-                aria-hidden="true"
-                className={cn('h-1.5 w-1.5 rounded-full', connectionWarning ? 'bg-amber-300' : 'bg-emerald-400')}
-              />
-              <span className="max-w-36 truncate">{agent.displayName}</span>
-            </span>
-            <span title={connectionWarning ? 'Connection degraded' : 'Connected'}>
-              <Wifi aria-hidden="true" className="h-3.5 w-3.5" />
-              <span className="sr-only">{connectionWarning ? 'Connection degraded' : 'Connected'}</span>
-            </span>
-            <span className="hidden max-w-32 truncate md:inline">{user.name || 'GitHub user'}</span>
-            <time className="tabular-nums" dateTime={clock?.toISOString()}>
-              {clock
-                ? new Intl.DateTimeFormat(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' }).format(
-                    clock,
-                  )
-                : '\u00a0'}
-            </time>
-          </div>
-        </header>
+        <MenuBar
+          activeApp={activeApp}
+          agent={agent}
+          clock={clock}
+          connectionWarning={connectionWarning}
+          menuOpen={menuOpen}
+          onCloseActive={() => activeWindow && closeWindow(activeWindow)}
+          onMenuChange={setMenuOpen}
+          onMinimizeActive={() => activeWindow && dispatch({ type: 'minimize', id: activeWindow.id })}
+          onNewWindow={newActiveWindow}
+          onOpenApp={openApp}
+          onOpenSpotlight={() => {
+            setMenuOpen(null)
+            setSpotlightOpen(true)
+          }}
+          onSignOut={() => void signOut()}
+          onToggleMaximize={() =>
+            activeWindow && dispatch({ type: 'toggle-maximize', id: activeWindow.id, viewport: viewport() })
+          }
+          userName={user.name}
+        />
 
         <div ref={stageRef} className="absolute inset-x-0 top-[30px] bottom-0 overflow-hidden">
           {connectionWarning ? (
@@ -337,6 +397,7 @@ export function ReadyDesktop({
                   active={desktopWindow.id === windowState.activeWindowId}
                   agentId={agent.id}
                   onOpenFile={openCode}
+                  request={finderRequest?.targetWindowId === desktopWindow.id ? finderRequest : null}
                 />
               ) : desktopWindow.app === 'chrome' ? (
                 <ChromeApp active={desktopWindow.id === windowState.activeWindowId} agentId={agent.id} />
@@ -376,7 +437,7 @@ export function ReadyDesktop({
                 type="button"
                 aria-label="Open Finder"
                 className="group relative flex flex-col items-center outline-none"
-                onClick={openFinder}
+                onClick={() => openFinder()}
                 whileHover={reducedMotion ? undefined : dockHoverAnimation}
                 whileTap={reducedMotion ? undefined : dockTapAnimation}
                 transition={dockTransition}
@@ -449,6 +510,19 @@ export function ReadyDesktop({
           </div>
         </div>
       </main>
+
+      <AnimatePresence>
+        {spotlightOpen ? (
+          <Spotlight
+            agentId={agent.id}
+            onClose={() => setSpotlightOpen(false)}
+            onNewApp={newAppWindow}
+            onOpenApp={openApp}
+            onOpenDirectory={openFinder}
+            onOpenFile={(path) => openCode(path)}
+          />
+        ) : null}
+      </AnimatePresence>
 
       <ConfirmationDialog
         busy={busyAction === 'delete'}
