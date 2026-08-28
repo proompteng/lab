@@ -10,6 +10,12 @@ export default Effect.gen(function* () {
   `
 
   yield* sql`
+    CREATE INDEX broker_events_account_snapshot_order_idx
+    ON broker_events (account_id, observed_at DESC, source_sequence DESC, event_id DESC)
+    WHERE event_kind = 'ACCOUNT'
+  `
+
+  yield* sql`
     CREATE INDEX intents_account_cycle_idx
     ON intents (account_id, cycle_id)
   `

@@ -1164,6 +1164,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           WHERE schemaname = 'public'
             AND indexname IN (
               'position_snapshots_account_observed_at_idx',
+              'broker_events_account_snapshot_order_idx',
               'intents_account_cycle_idx',
               'orders_account_intent_idx',
               'fills_account_intent_idx'
@@ -1175,10 +1176,11 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     )
 
     expect(schema.decisionHashColumn).toEqual({ is_generated: 'ALWAYS' })
-    expect(schema.observabilityIndexes).toHaveLength(4)
+    expect(schema.observabilityIndexes).toHaveLength(5)
     expect(schema.observabilityIndexes).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ indexname: 'position_snapshots_account_observed_at_idx' }),
+        expect.objectContaining({ indexname: 'broker_events_account_snapshot_order_idx' }),
         expect.objectContaining({ indexname: 'intents_account_cycle_idx' }),
         expect.objectContaining({ indexname: 'orders_account_intent_idx' }),
         expect.objectContaining({ indexname: 'fills_account_intent_idx' }),
@@ -1188,6 +1190,14 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       schema.observabilityIndexes.find(({ indexname }) => indexname === 'position_snapshots_account_observed_at_idx')
         ?.indexdef,
     ).toContain('(account_id, observed_at DESC)')
+    expect(
+      schema.observabilityIndexes.find(({ indexname }) => indexname === 'broker_events_account_snapshot_order_idx')
+        ?.indexdef,
+    ).toContain('(account_id, observed_at DESC, source_sequence DESC, event_id DESC)')
+    expect(
+      schema.observabilityIndexes.find(({ indexname }) => indexname === 'broker_events_account_snapshot_order_idx')
+        ?.indexdef,
+    ).toContain("WHERE (event_kind = 'ACCOUNT'::text)")
     expect(
       schema.observabilityIndexes.find(({ indexname }) => indexname === 'intents_account_cycle_idx')?.indexdef,
     ).toContain('(account_id, cycle_id)')

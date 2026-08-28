@@ -1555,7 +1555,7 @@ data:
               "refId": "B"
             },
             {
-              "expr": "max(((bayn_accounting_state{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",state=\"gap\"} == 1) * on(instance) (bayn_accounting_activity_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",kind=\"transactions\"} == bool 0)) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "expr": "max(((bayn_accounting_state{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",state=\"gap\"} == 1) * on(instance) ((bayn_accounting_activity_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",kind=\"transactions\"} == 0) + 1)) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "fills awaiting accounting",
               "range": false,
@@ -1662,7 +1662,7 @@ data:
               "refId": "B"
             },
             {
-              "expr": "max(((bayn_accounting_state{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",state=\"gap\"} == 1) * on(instance) (bayn_accounting_activity_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",kind=\"transactions\"} == bool 0)) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "expr": "max(((bayn_accounting_state{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",state=\"gap\"} == 1) * on(instance) ((bayn_accounting_activity_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",kind=\"transactions\"} == 0) + 1)) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "fills awaiting accounting",
               "range": false,
@@ -1769,7 +1769,7 @@ data:
               "refId": "B"
             },
             {
-              "expr": "max(((bayn_accounting_state{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",state=\"gap\"} == 1) * on(instance) (bayn_accounting_activity_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",kind=\"transactions\"} == bool 0)) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "expr": "max(((bayn_accounting_state{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",state=\"gap\"} == 1) * on(instance) ((bayn_accounting_activity_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",kind=\"transactions\"} == 0) + 1)) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "fills awaiting accounting",
               "range": false,
