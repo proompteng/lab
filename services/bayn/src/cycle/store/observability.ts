@@ -528,7 +528,7 @@ const makeCycleObservability = Effect.gen(function* () {
             SELECT snapshot.*
             FROM position_snapshots AS snapshot
             WHERE snapshot.account_id = (SELECT account_id FROM selected_account)
-            ORDER BY snapshot.observed_at DESC, snapshot.snapshot_id DESC
+            ORDER BY snapshot.observed_at DESC, snapshot.ingestion_sequence DESC, snapshot.snapshot_id DESC
             LIMIT 1
           ),
           current_positions AS (
@@ -734,7 +734,12 @@ const makeCycleObservability = Effect.gen(function* () {
                   'tradeCount', coalesce((decision.document #>> '{bindings,executionMarketData,tradeCount}')::integer, 0),
                   'targetPlanStatus', decision.document #>> '{targetPlan,status}',
                   'targetPlanReason', decision.document #>> '{targetPlan,reason}',
-                  'targetCount', coalesce(jsonb_array_length(decision.document #> '{targetPlan,intentTargets}'), 0),
+                  'targetCount', (
+                    SELECT count(*)::integer
+                    FROM jsonb_array_elements(coalesce(decision.document #> '{targetPlan,targets}', '[]'::jsonb)) AS target
+                    WHERE (target ->> 'currentQuantityMicros')::numeric <>
+                      (target ->> 'targetQuantityMicros')::numeric
+                  ),
                   'orderedIntentCount', coalesce(jsonb_array_length(decision.document -> 'orderedIntentIds'), 0),
                   'dispatchable', coalesce((decision.document ->> 'dispatchable')::boolean, false),
                   'riskBlockReason', decision.document #>> '{riskBlock,reasonCodes,0}',

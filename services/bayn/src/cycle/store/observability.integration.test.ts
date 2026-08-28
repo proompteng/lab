@@ -1118,6 +1118,120 @@ describePostgres('PostgreSQL cycle observability projection', () => {
     })
   })
 
+  test('uses durable ingestion ordering to break tied position-snapshot timestamps', async () => {
+    const projection = await runtime.runPromise(
+      Effect.gen(function* () {
+        const observability = yield* CycleObservability
+        const sql = yield* PgClient.PgClient
+        yield* seedSafetyState()
+        yield* sql`
+          INSERT INTO position_snapshots (
+            snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash
+          ) VALUES
+            (
+              ${'f'.repeat(64)}, 'bayn.paper-position-snapshot.v1', ${accountId}, ${'3'.repeat(64)},
+              '2026-03-06T21:00:01.000Z', 1, ${'4'.repeat(64)}
+            ),
+            (
+              ${'0'.repeat(64)}, 'bayn.paper-position-snapshot.v1', ${accountId}, ${'5'.repeat(64)},
+              '2026-03-06T21:00:01.000Z', 0, ${'6'.repeat(64)}
+            )
+        `
+        return yield* observability.read(qualificationRunId, accountId)
+      }),
+    )
+
+    expect(projection.execution).toMatchObject({
+      positionSnapshotObservedAt: '2026-03-06T21:00:01.000Z',
+      positionCount: 0,
+      grossExposureMicros: '0',
+      netExposureMicros: '0',
+      unrealizedPnlMicros: '0',
+    })
+  })
+
+  test('counts blocked nonzero target deltas before intent planning', async () => {
+    const draft = makeIntradayDraft()
+    const projection = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const observability = yield* CycleObservability
+        const sql = yield* PgClient.PgClient
+        yield* seedSafetyState()
+        yield* store.acquire(draft, '2026-03-09T13:00:00.000Z')
+        yield* store.activate(draft.identity.cycleId, draft.window.submissionOpenAt)
+        const createdAt = new Date(Date.parse(draft.window.submissionOpenAt) + 60_000).toISOString()
+        const contentHash = '7'.repeat(64)
+        const snapshotId = '8'.repeat(64)
+        const document = {
+          schemaVersion: 'bayn.observe-shadow-decision.v1',
+          mode: 'OBSERVE',
+          dispatchable: false,
+          contentHash,
+          createdAt,
+          bindings: {
+            cycleId: draft.identity.cycleId,
+            snapshotId,
+            executionMarketData: {
+              observedAt: createdAt,
+              barCount: 210,
+              quoteCount: 7,
+              tradeCount: 7,
+            },
+          },
+          targetPlan: {
+            status: 'BLOCKED',
+            reason: 'INSUFFICIENT_BUYING_POWER',
+            targets: [
+              {
+                symbol: 'AAPL',
+                currentQuantityMicros: '0',
+                targetQuantityMicros: '1000000',
+              },
+              {
+                symbol: 'SPY',
+                currentQuantityMicros: '1000000',
+                targetQuantityMicros: '1000000',
+              },
+            ],
+            intentTargets: [],
+          },
+          orderedIntentIds: [],
+          riskBlock: { reasonCodes: [] },
+        }
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`
+              INSERT INTO autonomous_cycle_shadow_decisions (
+                cycle_id, schema_version, document, created_at
+              ) VALUES (
+                ${draft.identity.cycleId}, 'bayn.observe-shadow-decision.v1',
+                ${sql.json(encodeSqlJson(document))}, ${createdAt}
+              )
+            `
+            yield* sql`
+              UPDATE autonomous_cycles
+              SET
+                snapshot_id = ${snapshotId},
+                decision_hash = ${contentHash},
+                state_version = state_version + 1,
+                updated_at = ${createdAt}
+              WHERE cycle_id = ${draft.identity.cycleId}
+            `
+          }),
+        )
+        return yield* observability.read(qualificationRunId, accountId)
+      }),
+    )
+
+    expect(projection.execution?.decision).toMatchObject({
+      targetPlanStatus: 'BLOCKED',
+      targetPlanReason: 'INSUFFICIENT_BUYING_POWER',
+      targetCount: 1,
+      orderedIntentCount: 0,
+    })
+  })
+
   test('measures acknowledgement from the first order event and preserves fill latencies wider than int32', async () => {
     const draft = makeIntradayDraft()
     const projection = await runtime.runPromise(
