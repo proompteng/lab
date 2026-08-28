@@ -8,6 +8,8 @@ spec:
     average: 240
     burst: 240
     period: 1m
+    sourceCriterion:
+      requestHeaderName: CF-Connecting-IP
 ---
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute

@@ -84,6 +84,8 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            - name: next-cache
+              mountPath: /app/apps/landing/.next/cache
             - name: tengri-bff
               mountPath: /var/run/secrets/tengri-bff
               readOnly: true
@@ -91,6 +93,9 @@ spec:
         - name: tmp
           emptyDir:
             sizeLimit: 128Mi
+        - name: next-cache
+          emptyDir:
+            sizeLimit: 256Mi
         - name: tengri-bff
           secret:
             secretName: tengri-bff
