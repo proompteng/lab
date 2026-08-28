@@ -1,4 +1,10 @@
-use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Weak},
+    time::Duration,
+};
 
 use async_stream::try_stream;
 use chrono::{DateTime, Utc};
@@ -7,6 +13,7 @@ use kube::{
     Api, Client, Resource, ResourceExt,
     api::{DeleteParams, ListParams, Patch, PatchParams, PostParams},
 };
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, oneshot};
 use tokio::time::{Instant, sleep};
@@ -591,21 +598,32 @@ impl MicroVmControlPlane for ControlPlane {
         let request = request.into_inner();
         let guest = self.guest(&principal, &request.agent_id).await?;
         if request.creation_id.is_empty() {
+            let creation_guard = self
+                .provisional_terminal_leases
+                .lock_creation(&request.agent_id)
+                .await;
             let creation_id = compatible_terminal_creation_id("");
-            self.provisional_terminal_leases
+            let existing_sessions = guest.list_terminals().await.map_err(map_guest_error)?;
+            let creation_record = self
+                .provisional_terminal_leases
                 .begin_creation(
                     &request.agent_id,
                     &creation_id,
+                    &request.cwd,
+                    &existing_sessions,
                     LEGACY_TERMINAL_TICKET_TIMEOUT,
                 )
                 .await?;
             let create_guest = guest.clone();
+            let provisional_terminal_leases = self.provisional_terminal_leases.clone();
             let provisional_agent_id = request.agent_id.clone();
+            let completion_creation_id = creation_id.clone();
             let cwd = request.cwd.clone();
             let columns = request.columns;
             let rows = request.rows;
             let creation = detached_terminal_creation(
                 async move {
+                    let _creation_guard = creation_guard;
                     create_guest
                         .create_terminal(&creation_id, &cwd, columns, rows)
                         .await
@@ -615,6 +633,14 @@ impl MicroVmControlPlane for ControlPlane {
                         let terminal_id = creation.session.id.clone();
                         metrics::global().record_pty_created(&provisional_agent_id, &terminal_id);
                     }
+                    provisional_terminal_leases
+                        .record_terminal_id(
+                            &provisional_agent_id,
+                            &completion_creation_id,
+                            creation_record,
+                            &creation.session.id,
+                        )
+                        .await?;
                     Ok(creation)
                 },
             )
@@ -1572,6 +1598,50 @@ fn compatible_terminal_creation_id(value: &str) -> String {
     )
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProvisionalTerminalCreationRecord {
+    expires_at: String,
+    cwd: String,
+    existing_session_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    terminal_id: Option<String>,
+}
+
+fn provisional_terminal_cleanup_id(
+    sessions: &[crate::guest::TerminalSession],
+    creation_id: &str,
+    record: &ProvisionalTerminalCreationRecord,
+) -> Result<Option<String>, usize> {
+    if let Some(session) = sessions
+        .iter()
+        .find(|session| session.creation_id == creation_id)
+    {
+        return Ok(Some(session.id.clone()));
+    }
+    if let Some(terminal_id) = &record.terminal_id {
+        return Ok(sessions
+            .iter()
+            .any(|session| session.id == *terminal_id)
+            .then(|| terminal_id.clone()));
+    }
+
+    let candidates = sessions
+        .iter()
+        .filter(|session| {
+            session.creation_id.is_empty()
+                && session.cwd == record.cwd
+                && !record.existing_session_ids.contains(&session.id)
+        })
+        .map(|session| session.id.clone())
+        .collect::<Vec<_>>();
+    match candidates.as_slice() {
+        [] => Ok(None),
+        [terminal_id] => Ok(Some(terminal_id.clone())),
+        _ => Err(candidates.len()),
+    }
+}
+
 #[derive(Clone)]
 struct ProvisionalTerminalLeaseManager {
     client: Client,
@@ -1579,6 +1649,7 @@ struct ProvisionalTerminalLeaseManager {
     terminal_identities: TerminalIdentityRegistry,
     registry: ProvisionalTerminalLeaseRegistry,
     creation_intents: ProvisionalTerminalLeaseRegistry,
+    creation_locks: Arc<Mutex<HashMap<String, Weak<Mutex<()>>>>>,
 }
 
 impl ProvisionalTerminalLeaseManager {
@@ -1593,23 +1664,91 @@ impl ProvisionalTerminalLeaseManager {
             terminal_identities,
             registry: ProvisionalTerminalLeaseRegistry::default(),
             creation_intents: ProvisionalTerminalLeaseRegistry::default(),
+            creation_locks: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    async fn lock_creation(&self, agent_id: &str) -> tokio::sync::OwnedMutexGuard<()> {
+        let lock = {
+            let mut locks = self.creation_locks.lock().await;
+            locks.retain(|_, lock| lock.strong_count() > 0);
+            if let Some(lock) = locks.get(agent_id).and_then(Weak::upgrade) {
+                lock
+            } else {
+                let lock = Arc::new(Mutex::new(()));
+                locks.insert(agent_id.to_owned(), Arc::downgrade(&lock));
+                lock
+            }
+        };
+        lock.lock_owned().await
     }
 
     async fn begin_creation(
         &self,
         agent_id: &str,
         creation_id: &str,
+        cwd: &str,
+        existing_sessions: &[crate::guest::TerminalSession],
         timeout: Duration,
-    ) -> Result<(), Status> {
+    ) -> Result<ProvisionalTerminalCreationRecord, Status> {
         let expires_at = Utc::now()
             + chrono::Duration::from_std(timeout)
                 .map_err(|_| Status::internal("terminal lease duration is invalid"))?;
-        self.patch_creation_annotation(agent_id, creation_id, Some(&expires_at.to_rfc3339()))
+        let mut existing_session_ids = existing_sessions
+            .iter()
+            .map(|session| session.id.clone())
+            .collect::<Vec<_>>();
+        existing_session_ids.sort();
+        existing_session_ids.dedup();
+        let record = ProvisionalTerminalCreationRecord {
+            expires_at: expires_at.to_rfc3339(),
+            cwd: if cwd.trim().is_empty() { "/" } else { cwd }.to_owned(),
+            existing_session_ids,
+            terminal_id: None,
+        };
+        let serialized = serde_json::to_string(&record).map_err(|error| {
+            Status::internal(format!(
+                "failed to encode terminal creation intent: {error}"
+            ))
+        })?;
+        self.patch_creation_annotation(agent_id, creation_id, Some(&serialized))
             .await
             .map_err(map_kube_error)?;
-        self.schedule_creation(agent_id, creation_id, timeout).await;
-        Ok(())
+        self.schedule_creation(agent_id, creation_id, timeout, record.clone())
+            .await;
+        Ok(record)
+    }
+
+    async fn record_terminal_id(
+        &self,
+        agent_id: &str,
+        creation_id: &str,
+        mut record: ProvisionalTerminalCreationRecord,
+        terminal_id: &str,
+    ) -> Result<(), Status> {
+        record.terminal_id = Some(terminal_id.to_owned());
+        let serialized = serde_json::to_string(&record).map_err(|error| {
+            Status::internal(format!(
+                "failed to encode terminal creation intent: {error}"
+            ))
+        })?;
+        let manager = self.clone();
+        let key_agent_id = agent_id.to_owned();
+        let key_creation_id = creation_id.to_owned();
+        let patch_agent_id = key_agent_id.clone();
+        let patch_creation_id = key_creation_id.clone();
+        self.creation_intents
+            .while_tracked(&key_agent_id, &key_creation_id, move || async move {
+                manager
+                    .patch_creation_annotation(
+                        &patch_agent_id,
+                        &patch_creation_id,
+                        Some(&serialized),
+                    )
+                    .await
+                    .map_err(map_kube_error)
+            })
+            .await
     }
 
     async fn recover(&self) -> Result<(), kube::Error> {
@@ -1621,8 +1760,13 @@ impl ProvisionalTerminalLeaseManager {
                     .await;
             }
             for intent in recoverable_provisional_terminal_creation_intents(&agent, now) {
-                self.schedule_creation(&intent.agent_id, &intent.creation_id, intent.delay)
-                    .await;
+                self.schedule_creation(
+                    &intent.agent_id,
+                    &intent.creation_id,
+                    intent.delay,
+                    intent.record,
+                )
+                .await;
             }
         }
         Ok(())
@@ -1646,9 +1790,16 @@ impl ProvisionalTerminalLeaseManager {
             .await;
     }
 
-    async fn schedule_creation(&self, agent_id: &str, creation_id: &str, timeout: Duration) {
+    async fn schedule_creation(
+        &self,
+        agent_id: &str,
+        creation_id: &str,
+        timeout: Duration,
+        record: ProvisionalTerminalCreationRecord,
+    ) {
         let cleanup = self.clone();
         let cleanup_agent_id = agent_id.to_owned();
+        let cleanup_record = record.clone();
         self.creation_intents
             .register(
                 agent_id,
@@ -1658,7 +1809,12 @@ impl ProvisionalTerminalLeaseManager {
                 move |creation_id| {
                     let cleanup = cleanup.clone();
                     let agent_id = cleanup_agent_id.clone();
-                    async move { cleanup.cleanup_creation_once(&agent_id, &creation_id).await }
+                    let record = cleanup_record.clone();
+                    async move {
+                        cleanup
+                            .cleanup_creation_once(&agent_id, &creation_id, &record)
+                            .await
+                    }
                 },
             )
             .await;
@@ -1720,7 +1876,12 @@ impl ProvisionalTerminalLeaseManager {
         }
     }
 
-    async fn cleanup_creation_once(&self, agent_id: &str, creation_id: &str) -> bool {
+    async fn cleanup_creation_once(
+        &self,
+        agent_id: &str,
+        creation_id: &str,
+        record: &ProvisionalTerminalCreationRecord,
+    ) -> bool {
         let guest = match GuestClient::for_agent_with_terminal_identities(
             self.client.clone(),
             &self.namespace,
@@ -1755,18 +1916,28 @@ impl ProvisionalTerminalLeaseManager {
                     return false;
                 }
             };
-            if let Some(session) = sessions
-                .into_iter()
-                .find(|session| session.creation_id == creation_id)
+            let terminal_id = match provisional_terminal_cleanup_id(&sessions, creation_id, record)
             {
-                match guest.terminate_terminal(&session.id).await {
-                    Ok(()) => metrics::global().record_pty_terminated(agent_id, &session.id),
+                Ok(terminal_id) => terminal_id,
+                Err(candidate_count) => {
+                    tracing::warn!(
+                        agent_id,
+                        creation_id,
+                        candidate_count,
+                        "provisional terminal creation matches multiple legacy sessions; retrying"
+                    );
+                    return false;
+                }
+            };
+            if let Some(terminal_id) = terminal_id {
+                match guest.terminate_terminal(&terminal_id).await {
+                    Ok(()) => metrics::global().record_pty_terminated(agent_id, &terminal_id),
                     Err(error) if terminal_is_absent(&error) => {}
                     Err(error) => {
                         tracing::warn!(
                             agent_id,
                             creation_id,
-                            terminal_id = session.id,
+                            terminal_id,
                             %error,
                             "failed to clean up a provisional terminal creation; retrying"
                         );
@@ -1952,6 +2123,7 @@ struct RecoverableProvisionalTerminalCreationIntent {
     agent_id: String,
     creation_id: String,
     delay: Duration,
+    record: ProvisionalTerminalCreationRecord,
 }
 
 fn recoverable_provisional_terminal_creation_intents(
@@ -1978,7 +2150,19 @@ fn recoverable_provisional_terminal_creation_intents(
                 );
                 return None;
             }
-            let expires_at = DateTime::parse_from_rfc3339(value)
+            let record = match serde_json::from_str::<ProvisionalTerminalCreationRecord>(value) {
+                Ok(record) => record,
+                Err(error) => {
+                    tracing::warn!(
+                        agent_id,
+                        annotation = key,
+                        %error,
+                        "ignoring an invalid provisional terminal creation record"
+                    );
+                    return None;
+                }
+            };
+            let expires_at = DateTime::parse_from_rfc3339(&record.expires_at)
                 .map(|value| value.with_timezone(&Utc))
                 .unwrap_or(now);
             let delay = (expires_at - now).to_std().unwrap_or(Duration::ZERO);
@@ -1986,6 +2170,7 @@ fn recoverable_provisional_terminal_creation_intents(
                 agent_id: agent_id.clone(),
                 creation_id: format!("{LEGACY_TERMINAL_CREATION_PREFIX}{suffix}"),
                 delay,
+                record,
             })
         })
         .collect()
@@ -2080,6 +2265,27 @@ impl ProvisionalTerminalLeaseRegistry {
                 }
             }
         });
+    }
+
+    async fn while_tracked<I, IF>(
+        &self,
+        agent_id: &str,
+        terminal_id: &str,
+        action: I,
+    ) -> Result<(), Status>
+    where
+        I: FnOnce() -> IF,
+        IF: Future<Output = Result<(), Status>>,
+    {
+        let key = (agent_id.to_owned(), terminal_id.to_owned());
+        let leases = self.leases.lock().await;
+        match leases.get(&key) {
+            Some(ProvisionalTerminalLease::AwaitingTicket(_)) => action().await,
+            Some(ProvisionalTerminalLease::Expiring(_)) => Err(Status::not_found(
+                "terminal session expired before creation completed",
+            )),
+            None => Ok(()),
+        }
     }
 
     async fn issue_and_confirm<T, I, IF>(
@@ -2882,16 +3088,89 @@ mod tests {
 
     fn legacy_guest_terminal_creation(id: &str) -> GuestTerminalCreation {
         GuestTerminalCreation {
-            session: crate::guest::TerminalSession {
-                id: id.to_owned(),
-                creation_id: "legacy-grpc-test".to_owned(),
-                cwd: "/workspace".to_owned(),
-                created_at: "2026-08-28T00:00:00Z".to_owned(),
-                last_activity_at: "2026-08-28T00:00:00Z".to_owned(),
-                attached: false,
-            },
+            session: guest_terminal_session(id, "legacy-grpc-test", "/workspace"),
             created: true,
         }
+    }
+
+    fn guest_terminal_session(
+        id: &str,
+        creation_id: &str,
+        cwd: &str,
+    ) -> crate::guest::TerminalSession {
+        crate::guest::TerminalSession {
+            id: id.to_owned(),
+            creation_id: creation_id.to_owned(),
+            cwd: cwd.to_owned(),
+            created_at: "2026-08-28T00:00:00Z".to_owned(),
+            last_activity_at: "2026-08-28T00:00:00Z".to_owned(),
+            attached: false,
+        }
+    }
+
+    fn provisional_creation_record(
+        expires_at: DateTime<Utc>,
+        existing_session_ids: Vec<String>,
+        terminal_id: Option<&str>,
+    ) -> ProvisionalTerminalCreationRecord {
+        ProvisionalTerminalCreationRecord {
+            expires_at: expires_at.to_rfc3339(),
+            cwd: "/workspace".to_owned(),
+            existing_session_ids,
+            terminal_id: terminal_id.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn legacy_terminal_cleanup_finds_the_unique_session_created_after_the_snapshot() {
+        let creation_id = "legacy-grpc-0123456789abcdef0123456789abcdef";
+        let record =
+            provisional_creation_record(Utc::now(), vec!["terminal-before".to_owned()], None);
+        let sessions = vec![
+            guest_terminal_session("terminal-before", "", "/workspace"),
+            guest_terminal_session("terminal-new", "", "/workspace"),
+            guest_terminal_session("terminal-other-cwd", "", "/tmp"),
+        ];
+
+        assert_eq!(
+            provisional_terminal_cleanup_id(&sessions, creation_id, &record),
+            Ok(Some("terminal-new".to_owned())),
+        );
+    }
+
+    #[test]
+    fn legacy_terminal_cleanup_uses_the_persisted_terminal_id_after_restart() {
+        let creation_id = "legacy-grpc-0123456789abcdef0123456789abcdef";
+        let record = provisional_creation_record(
+            Utc::now(),
+            vec!["terminal-before".to_owned()],
+            Some("terminal-created"),
+        );
+        let sessions = vec![
+            guest_terminal_session("terminal-before", "", "/workspace"),
+            guest_terminal_session("terminal-created", "", "/workspace"),
+            guest_terminal_session("terminal-later", "", "/workspace"),
+        ];
+
+        assert_eq!(
+            provisional_terminal_cleanup_id(&sessions, creation_id, &record),
+            Ok(Some("terminal-created".to_owned())),
+        );
+    }
+
+    #[test]
+    fn legacy_terminal_cleanup_retries_instead_of_guessing_between_candidates() {
+        let creation_id = "legacy-grpc-0123456789abcdef0123456789abcdef";
+        let record = provisional_creation_record(Utc::now(), Vec::new(), None);
+        let sessions = vec![
+            guest_terminal_session("terminal-first", "", "/workspace"),
+            guest_terminal_session("terminal-second", "", "/workspace"),
+        ];
+
+        assert_eq!(
+            provisional_terminal_cleanup_id(&sessions, creation_id, &record),
+            Err(2),
+        );
     }
 
     fn provisional_terminal_test_agent(now: DateTime<Utc>) -> MicroVM {
@@ -2975,9 +3254,20 @@ mod tests {
             TerminalIdentityRegistry::default(),
         );
         let creation_id = "legacy-grpc-0123456789abcdef0123456789abcdef".to_owned();
+        let existing_sessions = vec![guest_terminal_session(
+            "terminal-existing",
+            "",
+            "/workspace",
+        )];
         let persistence = tokio::spawn(async move {
             manager
-                .begin_creation("agent-legacy", &creation_id, Duration::from_secs(60))
+                .begin_creation(
+                    "agent-legacy",
+                    &creation_id,
+                    "/workspace",
+                    &existing_sessions,
+                    Duration::from_secs(60),
+                )
                 .await
         });
 
@@ -2998,11 +3288,16 @@ mod tests {
             "legacy-grpc-0123456789abcdef0123456789abcdef",
         )
         .expect("creation intent key");
-        assert!(
+        let record: ProvisionalTerminalCreationRecord = serde_json::from_str(
             body["metadata"]["annotations"][key]
                 .as_str()
-                .is_some_and(|value| DateTime::parse_from_rfc3339(value).is_ok())
-        );
+                .expect("serialized creation record"),
+        )
+        .expect("creation record JSON");
+        assert!(DateTime::parse_from_rfc3339(&record.expires_at).is_ok());
+        assert_eq!(record.cwd, "/workspace");
+        assert_eq!(record.existing_session_ids, vec!["terminal-existing"]);
+        assert_eq!(record.terminal_id, None);
         response.send_response(
             HttpResponse::builder()
                 .status(HttpStatusCode::OK)
@@ -3017,6 +3312,78 @@ mod tests {
             .await
             .expect("creation intent persistence task")
             .expect("creation intent persistence request");
+    }
+
+    #[tokio::test]
+    async fn persisted_terminal_identity_is_not_reintroduced_after_ticket_confirmation() {
+        let registry = ProvisionalTerminalLeaseRegistry::default();
+        registry
+            .register(
+                "agent-legacy",
+                "legacy-grpc-confirmed",
+                Duration::from_secs(60),
+                Duration::from_millis(1),
+                |_| async { true },
+            )
+            .await;
+        let writes = Arc::new(AtomicUsize::new(0));
+        let tracked_writes = writes.clone();
+        registry
+            .while_tracked("agent-legacy", "legacy-grpc-confirmed", move || {
+                let tracked_writes = tracked_writes.clone();
+                async move {
+                    tracked_writes.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            })
+            .await
+            .expect("tracked write");
+        registry
+            .issue_and_confirm("agent-legacy", "legacy-grpc-confirmed", |_| async {
+                Ok(())
+            })
+            .await
+            .expect("ticket confirmation");
+        let confirmed_writes = writes.clone();
+        registry
+            .while_tracked("agent-legacy", "legacy-grpc-confirmed", move || {
+                let confirmed_writes = confirmed_writes.clone();
+                async move {
+                    confirmed_writes.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            })
+            .await
+            .expect("confirmed creation no-op");
+
+        assert_eq!(writes.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn legacy_creation_snapshots_are_serialized_per_agent_only() {
+        let (service, _handle) =
+            tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+        let manager = ProvisionalTerminalLeaseManager::new(
+            Client::new(service, "tengri"),
+            Arc::<str>::from("tengri"),
+            TerminalIdentityRegistry::default(),
+        );
+        let first_agent = manager.lock_creation("agent-a").await;
+        let other_agent =
+            tokio::time::timeout(Duration::from_millis(50), manager.lock_creation("agent-b"))
+                .await
+                .expect("another agent must not be blocked");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), manager.lock_creation("agent-a"))
+                .await
+                .is_err(),
+            "the same agent must remain serialized",
+        );
+        drop(first_agent);
+        tokio::time::timeout(Duration::from_millis(50), manager.lock_creation("agent-a"))
+            .await
+            .expect("same agent lock after release");
+        drop(other_agent);
     }
 
     #[tokio::test]
@@ -3225,11 +3592,16 @@ mod tests {
     async fn replacement_recovers_creation_intent_before_guest_response() {
         let now = Utc::now();
         let creation_id = "legacy-grpc-fedcba9876543210fedcba9876543210";
+        let record = provisional_creation_record(
+            now - chrono::Duration::seconds(1),
+            vec!["terminal-existing".to_owned()],
+            Some("terminal-created"),
+        );
         let mut agent = provisional_terminal_test_agent(now);
         agent.metadata.annotations = Some(std::collections::BTreeMap::from([(
             provisional_terminal_creation_annotation_key(creation_id)
                 .expect("creation intent annotation key"),
-            (now - chrono::Duration::seconds(1)).to_rfc3339(),
+            serde_json::to_string(&record).expect("creation record JSON"),
         )]));
         let recovered = recoverable_provisional_terminal_creation_intents(&agent, now);
         assert_eq!(
@@ -3238,6 +3610,7 @@ mod tests {
                 agent_id: "agent-legacy".to_owned(),
                 creation_id: creation_id.to_owned(),
                 delay: Duration::ZERO,
+                record,
             }]
         );
 
