@@ -1876,6 +1876,230 @@ data:
             "type": "prometheus",
             "uid": "prom"
           },
+          "description": "Status of the latest immutable forward-performance receipt. No receipt means no completed economic proof, not zero profit.",
+          "fieldConfig": {
+            "defaults": {
+              "noValue": "NO COMPLETED RECEIPT"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 0,
+            "y": 27
+          },
+          "id": 36,
+          "options": {
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "name",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max by (status) ((bayn_forward_performance_evidence{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} == 1) and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "{{status}}",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Terminal receipt",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Total broker fees, other charged costs, and financing recorded by the latest immutable forward-performance receipt.",
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 2,
+              "noValue": "NO COMPLETED RECEIPT",
+              "unit": "currencyUSD"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 6,
+            "y": 27
+          },
+          "id": 37,
+          "options": {
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max(bayn_forward_performance_total_costs_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "all costs",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Terminal costs",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Immutable realized P&L after every recorded cost and cash-yield adjustment. Running partial accounting is never substituted here.",
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 2,
+              "noValue": "NO COMPLETED RECEIPT",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0
+                  },
+                  {
+                    "color": "green",
+                    "value": 0.000001
+                  }
+                ]
+              },
+              "unit": "currencyUSD"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 12,
+            "y": 27
+          },
+          "id": 38,
+          "options": {
+            "colorMode": "value",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max(bayn_forward_performance_net_realized_pnl_after_costs_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "net after all costs",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Terminal net P&L",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Immutable realized return after every recorded cost from the latest completed forward-performance receipt.",
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 3,
+              "noValue": "NO COMPLETED RECEIPT",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0
+                  },
+                  {
+                    "color": "green",
+                    "value": 0.000001
+                  }
+                ]
+              },
+              "unit": "percentunit"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 18,
+            "y": 27
+          },
+          "id": 39,
+          "options": {
+            "colorMode": "value",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max(bayn_forward_performance_net_realized_return_ratio{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "net realized return",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Terminal return",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
           "description": "The cycle-scoped funnel over time. A drop between stages identifies whether the strategy, planner, broker, or fill path stopped progress.",
           "fieldConfig": {
             "defaults": {
@@ -1896,7 +2120,7 @@ data:
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 27
+            "y": 31
           },
           "id": 31,
           "options": {
@@ -1940,7 +2164,7 @@ data:
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 27
+            "y": 31
           },
           "id": 32,
           "options": {
@@ -1991,7 +2215,7 @@ data:
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 34
+            "y": 38
           },
           "id": 33,
           "options": {
@@ -2052,7 +2276,7 @@ data:
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 34
+            "y": 38
           },
           "id": 34,
           "options": {
@@ -2110,7 +2334,7 @@ data:
             "h": 4,
             "w": 24,
             "x": 0,
-            "y": 41
+            "y": 45
           },
           "id": 35,
           "options": {
@@ -2159,6 +2383,6 @@ data:
       "timezone": "browser",
       "title": "Bayn Trading Operations",
       "uid": "bayn-cycle-operations",
-      "version": 5,
+      "version": 6,
       "weekStart": ""
     }

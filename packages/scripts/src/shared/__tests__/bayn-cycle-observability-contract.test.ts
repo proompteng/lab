@@ -249,7 +249,7 @@ describe('Bayn cycle operations alert contract', () => {
 
     expect(dashboard.uid).toBe('bayn-cycle-operations')
     expect(dashboard.title).toBe('Bayn Trading Operations')
-    expect(dashboard.version).toBe(5)
+    expect(dashboard.version).toBe(6)
     expect(dashboard.time).toEqual({ from: 'now-24h', to: 'now' })
     expect(dashboard.description).toContain('zero orders are explained by the first stage that did not advance')
     expect(dashboard.panels.map(({ title }) => title)).toEqual([
@@ -283,6 +283,10 @@ describe('Bayn cycle operations alert contract', () => {
       'Net realized P&L',
       'Profitability',
       'Accounting coverage',
+      'Terminal receipt',
+      'Terminal costs',
+      'Terminal net P&L',
+      'Terminal return',
       'Opportunity → fill history',
       'Blocker history',
       'Execution latency',
@@ -318,6 +322,11 @@ describe('Bayn cycle operations alert contract', () => {
       expect(panel?.fieldConfig?.defaults?.noValue).toBe('NO CYCLE')
       expect(panel?.description).toContain('NO CYCLE')
     }
+    for (const title of ['Terminal receipt', 'Terminal costs', 'Terminal net P&L', 'Terminal return']) {
+      expect(dashboard.panels.find((panel) => panel.title === title)?.fieldConfig?.defaults?.noValue).toBe(
+        'NO COMPLETED RECEIPT',
+      )
+    }
     const overlappingPanels = dashboard.panels.flatMap((left, leftIndex) =>
       dashboard.panels.slice(leftIndex + 1).flatMap((right) => {
         const overlapsHorizontally =
@@ -351,6 +360,10 @@ describe('Bayn cycle operations alert contract', () => {
         'max(bayn_accounting_execution_fees_dollars{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
         'max(bayn_accounting_net_realized_pnl_after_execution_fees_dollars{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
         'max by (profitability) ((bayn_forward_performance_profitability{job="bayn",namespace="bayn",service="bayn"} == 1) and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
+        'max by (status) ((bayn_forward_performance_evidence{job="bayn",namespace="bayn",service="bayn"} == 1) and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
+        'max(bayn_forward_performance_total_costs_dollars{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
+        'max(bayn_forward_performance_net_realized_pnl_after_costs_dollars{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
+        'max(bayn_forward_performance_net_realized_return_ratio{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
         'max by (state) ((bayn_accounting_state{job="bayn",namespace="bayn",service="bayn"} == 1) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
         'max(bayn_unresolved_mutations{job="bayn",namespace="bayn",service="bayn"})',
         'max(bayn_cycle_submission_open_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) * 1000 > 0',
@@ -394,7 +407,7 @@ describe('Bayn cycle operations alert contract', () => {
     }
     expect(dashboardExpressions.join('\n')).not.toContain('bayn_intents{')
     const statPanels = dashboard.panels.filter(({ type }) => type === 'stat')
-    expect(statPanels).toHaveLength(29)
+    expect(statPanels).toHaveLength(33)
     expect(
       statPanels.every(({ targets = [] }) =>
         targets.every(({ instant, range }) => instant === true && range === false),
