@@ -1158,11 +1158,19 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             AND table_name = 'autonomous_cycle_shadow_decisions'
             AND column_name = 'decision_hash'
         `
-        return { decisionHashColumn, tables, migrations }
+        const [positionSnapshotIndex] = yield* sql<{ indexdef: string }>`
+          SELECT indexdef
+          FROM pg_indexes
+          WHERE schemaname = 'public'
+            AND tablename = 'position_snapshots'
+            AND indexname = 'position_snapshots_account_observed_at_idx'
+        `
+        return { decisionHashColumn, migrations, positionSnapshotIndex, tables }
       }),
     )
 
     expect(schema.decisionHashColumn).toEqual({ is_generated: 'ALWAYS' })
+    expect(schema.positionSnapshotIndex?.indexdef).toContain('(account_id, observed_at DESC)')
     expect(schema.tables.map((row) => row.table_name)).toEqual([
       'account_snapshots',
       'accounting_receipts',
@@ -1258,6 +1266,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 49, name: 'preserve_reconciliation_cycle' },
       { migration_id: 50, name: 'preserve_failure_rearm_cycle' },
       { migration_id: 51, name: 'position_snapshot_ingestion_order' },
+      { migration_id: 52, name: 'position_snapshot_observability_index' },
     ])
   })
 

@@ -310,8 +310,7 @@ describe('Bayn cycle operations alert contract', () => {
       expect(panel?.targets?.[1]?.expr).toContain('state="idle"')
       expect(panel?.targets?.[2]?.expr).toContain('state="gap"')
       expect(panel?.targets?.[2]?.expr).toContain('kind="transactions"')
-      expect(panel?.targets?.[2]?.expr).toContain('kind="transactions"} == 0')
-      expect(panel?.targets?.[2]?.expr).not.toContain('kind="transactions"} == bool 0')
+      expect(panel?.targets?.[2]?.expr).toContain('kind="transactions"} == bool 0')
       const fallbackMappings = Object.fromEntries(
         (panel?.fieldConfig?.overrides ?? []).map((override: Record<string, any>) => [
           override.matcher.options,

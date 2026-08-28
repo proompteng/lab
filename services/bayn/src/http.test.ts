@@ -2096,6 +2096,10 @@ describe('Bayn HTTP probes', () => {
     const brokerReadCleared = render(healthy)
     const brokerBindingInjected = render(brokerBindingFailure)
     const brokerBindingCleared = render(healthy)
+    const brokerExecutionEligible = render({
+      ...healthy,
+      broker: { ...broker, executionEligible: true, executionDisabledReason: null },
+    })
 
     expect(metricValue(healthyBefore, 'bayn_runtime_ready')).toBe(1)
     expect(metricValue(loopInjected, 'bayn_runtime_ready')).toBe(0)
@@ -2112,6 +2116,8 @@ describe('Bayn HTTP probes', () => {
     expect(metricValue(brokerBindingInjected, 'bayn_broker_account_bound')).toBe(0)
     expect(metricValue(brokerBindingCleared, 'bayn_runtime_ready')).toBe(1)
     expect(metricValue(brokerBindingCleared, 'bayn_broker_account_bound')).toBe(1)
+    expect(metricValue(healthyBefore, 'bayn_broker_execution_eligible')).toBe(0)
+    expect(metricValue(brokerExecutionEligible, 'bayn_broker_execution_eligible')).toBe(1)
   })
 
   test('renders the exact bounded terminal reason behind the canonical blocked condition', () => {
