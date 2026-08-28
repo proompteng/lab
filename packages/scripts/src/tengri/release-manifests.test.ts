@@ -414,6 +414,64 @@ spec:
     rmSync(paths.directory, { recursive: true, force: true })
   })
 
+  it('rejects matrix and list generator templates that override the verified application template', () => {
+    const overrides = [
+      [
+        '    - matrix:\n        generators:',
+        `    - matrix:
+        template:
+          spec:
+            destination:
+              server: https://other.example
+            source:
+              repoURL: https://github.com/example/fork.git
+              targetRevision: unverified
+              path: argocd/applications/other
+        generators:`,
+      ],
+      [
+        '          - list:\n              elements:\n              - cluster: in-cluster',
+        `          - list:
+              template:
+                spec:
+                  source:
+                    path: argocd/applications/other
+              elements:
+              - cluster: in-cluster`,
+      ],
+      [
+        '          - list:\n              elements:\n              - name: kata',
+        `          - list:
+              template:
+                spec:
+                  source:
+                    repoURL: https://github.com/example/fork.git
+              elements:
+              - name: kata`,
+      ],
+    ] as const
+
+    for (const [expected, override] of overrides) {
+      const paths = fixture()
+      const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+      const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+      writeFileSync(
+        paths.applicationSetPath,
+        readFileSync(paths.applicationSetPath, 'utf8').replace(expected, override),
+      )
+      const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+
+      expect(() => validateTengriRelease(paths)).toThrow('must not define generator-level templates')
+      expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
+        'must not define generator-level templates',
+      )
+      expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+      expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
+      expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
+      rmSync(paths.directory, { recursive: true, force: true })
+    }
+  })
+
   it('rejects a Tengri entry moved into the matrix cluster generator', () => {
     const paths = fixture()
     const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')

@@ -107,7 +107,11 @@ function findTengriApplicationBlock(contents: string) {
     throw new Error(`Platform ApplicationSet is not valid YAML: ${document.errors[0].message}`)
   }
 
-  const generators = document.getIn(['spec', 'generators', 0, 'matrix', 'generators'], true)
+  const matrix = document.getIn(['spec', 'generators', 0, 'matrix'], true)
+  if (!isMap(matrix)) {
+    throw new Error('Platform ApplicationSet must contain the expected matrix generator')
+  }
+  const generators = matrix.get('generators', true)
   if (!isSeq(generators)) {
     throw new Error('Platform ApplicationSet must contain the expected matrix generators')
   }
@@ -119,6 +123,13 @@ function findTengriApplicationBlock(contents: string) {
   const applicationGenerator = generators.items[1]
   if (!isMap(clusterGenerator) || !isMap(applicationGenerator)) {
     throw new Error('Platform ApplicationSet matrix generators must be list generators')
+  }
+  if (
+    matrix.has('template') ||
+    clusterGenerator.hasIn(['list', 'template']) ||
+    applicationGenerator.hasIn(['list', 'template'])
+  ) {
+    throw new Error('Tengri ApplicationSet must not define generator-level templates')
   }
   const clusterElements = clusterGenerator.getIn(['list', 'elements'], true)
   const applicationElements = applicationGenerator.getIn(['list', 'elements'], true)
