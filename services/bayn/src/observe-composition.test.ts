@@ -3647,6 +3647,33 @@ describe('OBSERVE runtime composition', () => {
     expect(
       Result.isFailure(makeExecutionDecisionDocument({ ...outOfUniverseMaterial, targetPlan: forgedArchivePlan })),
     ).toBe(true)
+    const brokerPositionBinding = outOfUniverseClose.bindings.executionMarketData
+    if (brokerPositionBinding?.schemaVersion !== 'bayn.reconciled-position-liquidation-binding.v1') {
+      return expect.unreachable('out-of-universe close must bind the exact reconciled broker position')
+    }
+    const rehashBrokerPositionBinding = (
+      overrides: Partial<
+        Omit<typeof brokerPositionBinding, 'schemaVersion' | 'purpose' | 'source' | 'contentHash' | 'snapshotId'>
+      >,
+    ) => {
+      const { contentHash: _contentHash, snapshotId: _snapshotId, ...bindingMaterial } = brokerPositionBinding
+      const changedMaterial = { ...bindingMaterial, ...overrides }
+      const contentHash = canonicalHashV1(changedMaterial)
+      return { ...changedMaterial, contentHash, snapshotId: canonicalHashV1({ ...changedMaterial, contentHash }) }
+    }
+    const forgedReconciliationBinding = rehashBrokerPositionBinding({ reconciliationId: 'f'.repeat(64) })
+    const forgedPositionBinding = rehashBrokerPositionBinding({
+      positions: brokerPositionBinding.positions.map((position) => ({ ...position, quantityMicros: '250000' })),
+    })
+    for (const forgedBinding of [forgedReconciliationBinding, forgedPositionBinding]) {
+      const forgedDocument = makeExecutionDecisionDocument({
+        ...outOfUniverseMaterial,
+        bindings: { ...outOfUniverseMaterial.bindings, executionMarketData: forgedBinding },
+      })
+      expect(Result.isFailure(forgedDocument)).toBe(true)
+      if (Result.isFailure(forgedDocument))
+        expect(String(forgedDocument.failure.cause)).toContain('executionMarketData')
+    }
     expect(waiting).toEqual(
       new ExecutionCloseAwaitingMarketData({
         message: `${unavailable.message}: ${unavailable.message}`,

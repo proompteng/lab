@@ -445,8 +445,10 @@ const executionMaterialIssues = (
   }
   const usesReconciledPositionMark =
     document.targetPlan.executionTerms?.priceReference === 'reconciled-broker-position-mark'
-  const bindsReconciledPositions =
+  const reconciledPositionBinding =
     document.bindings.executionMarketData?.schemaVersion === reconciledPositionLiquidationBindingSchemaVersion
+      ? document.bindings.executionMarketData
+      : undefined
   const usesLiquidationMarketData = document.bindings.executionMarketData?.purpose === 'LIQUIDATION'
   const isClosePlan = document.targetPlan.executionTerms?.executionPurpose !== undefined
   if (usesLiquidationMarketData !== isClosePlan) {
@@ -455,11 +457,44 @@ const executionMaterialIssues = (
       issue: 'liquidation market data must bind a close-only target plan and must not bind an entry plan',
     })
   }
-  if (usesReconciledPositionMark !== bindsReconciledPositions) {
+  if (usesReconciledPositionMark !== (reconciledPositionBinding !== undefined)) {
     issues.push({
       path: ['bindings', 'executionMarketData'],
       issue: 'reconciled broker-position execution terms require their exact liquidation binding and vice versa',
     })
+  }
+  if (reconciledPositionBinding !== undefined) {
+    if (
+      reconciledPositionBinding.reconciliationId !== document.bindings.reconciliationId ||
+      reconciledPositionBinding.reconciliationHash !== document.bindings.reconciliationHash
+    ) {
+      issues.push({
+        path: ['bindings', 'executionMarketData', 'reconciliationId'],
+        issue: 'must match the outer decision reconciliation identity and content hash',
+      })
+    }
+    const targets = document.targetPlan.targets
+    const targetSymbols = targets.map(({ symbol }) => symbol)
+    const bindsTargetSymbols =
+      reconciledPositionBinding.symbols.length === targetSymbols.length &&
+      reconciledPositionBinding.symbols.every((symbol, index) => symbol === targetSymbols[index])
+    const bindsTargetPositions =
+      reconciledPositionBinding.positions.length === targets.length &&
+      reconciledPositionBinding.positions.every((position, index) => {
+        const target = targets[index]
+        return (
+          target !== undefined &&
+          position.symbol === target.symbol &&
+          position.quantityMicros === target.currentQuantityMicros &&
+          position.marketPriceMicros === target.referencePriceMicros
+        )
+      })
+    if (!bindsTargetSymbols || !bindsTargetPositions) {
+      issues.push({
+        path: ['bindings', 'executionMarketData', 'positions'],
+        issue: 'must match the exact ordered symbols, quantities, and reference marks in the target plan',
+      })
+    }
   }
   const targets = document.targetPlan.intentTargets
   const planned = document.targetPlan.status === TargetPlanStatus.Planned
