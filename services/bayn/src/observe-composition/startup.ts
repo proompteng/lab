@@ -8,7 +8,7 @@ import { Authority, type AuthorityState } from '../execution/contracts'
 import { CycleExecutionModelSchema } from '../execution-model-contract'
 import { canonicalHashV1Result } from '../hash'
 import { strictParseOptions } from '../schemas'
-import { strategyDefinition, type StrategyRuntime } from '../strategy'
+import { defaultIntradayMomentumProtocolDocument, strategyDefinition, type StrategyRuntime } from '../strategy'
 import type {
   MutationAutonomousCycleInput,
   ObserveAutonomousCycleInput,
@@ -48,6 +48,19 @@ export const prepareObserveStartup = (
         message: 'strategy definition does not match its runtime provenance',
       }),
     )
+  }
+  if (definition.name === 'intraday-momentum') {
+    const sourceProtocolHash = canonicalHashV1Result(defaultIntradayMomentumProtocolDocument)
+    if (Result.isFailure(sourceProtocolHash) || sourceProtocolHash.success !== parameterHash.success) {
+      return Result.fail(
+        operationalError({
+          component: 'strategy',
+          operation: 'cycle-policy',
+          message: 'intraday-momentum autonomous execution requires the source-controlled protocol',
+          ...(Result.isFailure(sourceProtocolHash) ? { cause: sourceProtocolHash.failure } : {}),
+        }),
+      )
+    }
   }
   const decodedExecutionModel = decodeStrategyExecutionModel(input.strategy)
   if (Result.isFailure(decodedExecutionModel)) return Result.fail(decodedExecutionModel.failure)

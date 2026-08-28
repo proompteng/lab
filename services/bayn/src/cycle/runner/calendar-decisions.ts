@@ -3,6 +3,7 @@ import { DateTime, HashSet, Option, pipe, Result } from 'effect'
 import type { MarketCalendarObservation, MarketCalendarQuery, MarketCalendarSession } from '../../broker/alpaca'
 import type { MarketDataInspection } from '../../market-data'
 import { Pipeable } from '../../pipeable'
+import { defaultIntradayMomentumProtocolDocument } from '../../strategy/intraday-momentum/protocol'
 import {
   makeCycleDraft,
   makeCycleIdentity,
@@ -222,7 +223,10 @@ export const selectIntradayExecutionSession = (
         : Date.parse(session.closeAt) - executionPolicy.submissionCutoffBeforeCloseMs
     const hasExecutableWindow =
       executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v2' ||
-      openAtMillis + executionPolicy.warmupAfterOpenMs < cutoffAt
+      openAtMillis +
+        executionPolicy.warmupAfterOpenMs +
+        defaultIntradayMomentumProtocolDocument.decisionDelaySeconds * 1_000 <
+        cutoffAt
     if (!Number.isFinite(cutoffAt) || !hasExecutableWindow || observedAtMillis >= cutoffAt) return selected
     return selected === undefined || session.date < selected.date ? session : selected
   }, undefined)

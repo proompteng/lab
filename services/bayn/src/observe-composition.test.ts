@@ -1029,8 +1029,9 @@ const prepareStoredExecutionStep = async (
 }
 
 describe('OBSERVE runtime composition', () => {
-  test('defers only causally noncanonical v5 entry holdings to close-only containment', () => {
+  test('defers causally noncanonical quote-bound entry holdings to close-only containment', () => {
     const blocked = (reason: TargetPlanReason) => ({ status: TargetPlanStatus.Blocked, reason })
+    const openingDriveUniverse = Result.getOrThrow(decodeDefaultOpeningDriveProtocol()).universe
 
     expect(
       blockedEntryRequiresCloseOnlyContainment(
@@ -1050,7 +1051,7 @@ describe('OBSERVE runtime composition', () => {
       blockedEntryRequiresCloseOnlyContainment(
         blocked(TargetPlanReason.IdentityMismatch),
         [{ symbol: 'TSLA', quantityMicros: '1000000' }],
-        ['AAPL'],
+        openingDriveUniverse,
       ),
     ).toBe(true)
     expect(
@@ -4420,6 +4421,33 @@ describe('OBSERVE runtime composition', () => {
         warmupAfterOpenMs: 1_800_000,
         submissionCutoffBeforeCloseMs: 3_600_000,
       })
+    }
+
+    const customDefinition = makeIntradayMomentumDefinition({ ...protocol, lookbackMinutes: 10 })
+    const customProtocol = prepareObserveStartup({
+      accountId,
+      authorityGenerationHash: generationHash,
+      pollIntervalMs: 30_000,
+      reconciliationIntervalMs: 30_000,
+      reconciliationPassTimeoutMs: 30_000,
+      strategy: {
+        definition: customDefinition,
+        provenance: {
+          ...fixtureRuntime.provenance,
+          strategy: {
+            name: customDefinition.name,
+            behaviorHash: intradayMomentumBehaviorHash,
+            parameterHash: canonicalHashV1(customDefinition.parameters),
+            parameterSchemaVersion: customDefinition.parameters.schemaVersion,
+          },
+        },
+      },
+    })
+    expect(Result.isFailure(customProtocol)).toBe(true)
+    if (Result.isFailure(customProtocol)) {
+      expect(customProtocol.failure.message).toBe(
+        'intraday-momentum autonomous execution requires the source-controlled protocol',
+      )
     }
   })
 

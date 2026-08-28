@@ -621,6 +621,7 @@ const executeBoundExecutionCycle = (
           sessionCloseStartLeadMs: protocol.flattenBeforeCloseMinutes * 60_000,
           sessionCloseSubmitLeadMs: protocol.hardFlatBeforeCloseMinutes * 60_000,
         }
+        closeOnlyContainmentUniverse = protocol.universe
       }
     }
     const closeWindow = yield* Effect.fromResult(

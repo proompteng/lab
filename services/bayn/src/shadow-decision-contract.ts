@@ -25,6 +25,7 @@ import {
   strictParseOptions,
 } from './schemas'
 import { TargetPlanResultSchema, TargetPlanStatus } from './target-planner'
+import { RuntimeStrategyDecisionSchema } from './strategy/runtime-decision'
 import { defaultIntradayMomentumProtocolDocument } from './strategy/intraday-momentum/protocol'
 import { utcInstantFromEpochMillis } from './time'
 
@@ -425,6 +426,8 @@ const ExecutionDecisionMaterialSchema = Schema.Struct({
   bindings: ExecutionDecisionBindingsSchema,
   /** Persist the complete signal/session binding so a close plan can be built after data services expire. */
   executionSession: Schema.optionalKey(ExecutionSessionBindingSchema),
+  /** Persist the pure strategy output that authorized the targets; legacy documents remain decodable without it. */
+  strategyDecision: Schema.optionalKey(RuntimeStrategyDecisionSchema),
   targetPlan: TargetPlanResultSchema,
   deltaRisk: Schema.Array(DeltaRiskEvaluationSchema),
   orderedIntentIds: Schema.Array(Sha256Schema),
@@ -442,7 +445,63 @@ const executionBindingMatchesIntradayMomentumProtocol = (
   binding.universeId === defaultIntradayMomentumProtocolDocument.universeId &&
   binding.universeSymbolHash === defaultIntradayMomentumProtocolDocument.universeSymbolHash &&
   binding.universe.length === defaultIntradayMomentumProtocolDocument.universe.length &&
-  binding.universe.every((symbol, index) => symbol === defaultIntradayMomentumProtocolDocument.universe[index])
+  binding.universe.every((symbol, index) => symbol === defaultIntradayMomentumProtocolDocument.universe[index]) &&
+  binding.feed === defaultIntradayMomentumProtocolDocument.feed &&
+  binding.delayClass === defaultIntradayMomentumProtocolDocument.delayClass &&
+  binding.sourceTopics.bars === defaultIntradayMomentumProtocolDocument.sourceTopics.bars &&
+  binding.sourceTopics.quotes === defaultIntradayMomentumProtocolDocument.sourceTopics.quotes &&
+  binding.sourceTopics.trades === defaultIntradayMomentumProtocolDocument.sourceTopics.trades &&
+  binding.maximumQuoteAgeMs === defaultIntradayMomentumProtocolDocument.maximumQuoteAgeMs
+
+const intradayMomentumAllocationIssues = (
+  targetPlan: typeof TargetPlanResultSchema.Type,
+  strategyDecision: Extract<
+    typeof RuntimeStrategyDecisionSchema.Type,
+    { readonly schemaVersion: 'bayn.intraday-momentum.target.v1' }
+  >,
+): readonly Schema.FilterIssue[] => {
+  const issues: Schema.FilterIssue[] = []
+  const selectedTargets = targetPlan.targets.filter(({ targetWeight }) => targetWeight > 0)
+  if (selectedTargets.length > defaultIntradayMomentumProtocolDocument.maximumPositions) {
+    issues.push({
+      path: ['targetPlan', 'targets'],
+      issue: 'intraday-momentum entry exceeds the source-controlled maximum position count',
+    })
+  }
+  if (selectedTargets.length > 0) {
+    const weightScale = 1_000_000
+    const expectedWeight =
+      Math.min(
+        Math.floor(defaultIntradayMomentumProtocolDocument.maximumSymbolWeight * weightScale),
+        Math.floor((defaultIntradayMomentumProtocolDocument.maximumGrossWeight * weightScale) / selectedTargets.length),
+      ) / weightScale
+    if (selectedTargets.some(({ targetWeight }) => targetWeight !== expectedWeight)) {
+      issues.push({
+        path: ['targetPlan', 'targets'],
+        issue: 'intraday-momentum entry weights must match the source-controlled equal-weight allocation',
+      })
+    }
+  }
+
+  const plannedSymbols = selectedTargets.map(({ symbol }) => symbol).toSorted()
+  const selectedSymbols = [...strategyDecision.selectedSymbols].sort()
+  if (
+    plannedSymbols.length !== selectedSymbols.length ||
+    plannedSymbols.some((symbol, index) => symbol !== selectedSymbols[index])
+  ) {
+    issues.push({
+      path: ['targetPlan', 'targets'],
+      issue: 'intraday-momentum entry targets must exactly match the persisted selected signals',
+    })
+  }
+  if (targetPlan.targets.some(({ symbol, targetWeight }) => strategyDecision.targetWeights[symbol] !== targetWeight)) {
+    issues.push({
+      path: ['targetPlan', 'targets'],
+      issue: 'intraday-momentum entry target weights must exactly match the persisted strategy decision',
+    })
+  }
+  return issues
+}
 
 const executionMaterialIssues = (
   document: typeof ExecutionDecisionMaterialSchema.Type,
@@ -453,6 +512,19 @@ const executionMaterialIssues = (
   }
   if (document.createdAt >= document.expiresAt) {
     issues.push({ path: ['createdAt'], issue: 'must precede execution authority expiry' })
+  }
+  const strategyDecision = document.strategyDecision
+  if (strategyDecision !== undefined) {
+    const strategyDecisionHash = canonicalHashV1Result(strategyDecision)
+    if (
+      Result.isFailure(strategyDecisionHash) ||
+      strategyDecisionHash.success !== document.bindings.strategyDecisionHash
+    ) {
+      issues.push({
+        path: ['strategyDecision'],
+        issue: 'must match the exact strategy decision hash in the execution bindings',
+      })
+    }
   }
   const usesReconciledPositionMark =
     document.targetPlan.executionTerms?.priceReference === 'reconciled-broker-position-mark'
@@ -488,6 +560,14 @@ const executionMaterialIssues = (
     })
   }
   if (document.bindings.strategyName === 'intraday-momentum' && !isClosePlan) {
+    if (strategyDecision?.schemaVersion !== 'bayn.intraday-momentum.target.v1') {
+      issues.push({
+        path: ['strategyDecision'],
+        issue: 'intraday-momentum entry requires its complete persisted selected-signal evidence',
+      })
+    } else {
+      issues.push(...intradayMomentumAllocationIssues(document.targetPlan, strategyDecision))
+    }
     if (executionMarketData?.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
       issues.push({
         path: ['bindings', 'executionMarketData', 'schemaVersion'],
@@ -496,8 +576,8 @@ const executionMaterialIssues = (
     } else {
       if (!executionBindingMatchesIntradayMomentumProtocol(executionMarketData)) {
         issues.push({
-          path: ['bindings', 'executionMarketData', 'universe'],
-          issue: 'intraday-momentum entry must bind the source-controlled strategy universe',
+          path: ['bindings', 'executionMarketData'],
+          issue: 'intraday-momentum entry must bind the source-controlled market-data protocol',
         })
       }
       const executionSession = document.executionSession

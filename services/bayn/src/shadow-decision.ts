@@ -951,6 +951,7 @@ const assembleExecutionDecisionDocument = (
         ...(input.executionMarketData === undefined ? {} : { executionMarketData: input.executionMarketData }),
       },
       executionSession,
+      strategyDecision: input.compiledDecision,
       targetPlan: input.targetPlan,
       deltaRisk: reduction.deltaRisk,
       orderedIntentIds: reduction.deltaRisk.map((risk) => risk.evaluation.input.intentId),

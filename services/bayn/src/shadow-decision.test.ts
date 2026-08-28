@@ -708,6 +708,10 @@ const currentEntryMarketDataBinding = (
     universeSymbolHash: defaultIntradayMomentumProtocolDocument.universeSymbolHash,
     universe: defaultIntradayMomentumProtocolDocument.universe,
     symbols: defaultIntradayMomentumProtocolDocument.universe,
+    feed: defaultIntradayMomentumProtocolDocument.feed,
+    delayClass: defaultIntradayMomentumProtocolDocument.delayClass,
+    sourceTopics: defaultIntradayMomentumProtocolDocument.sourceTopics,
+    maximumQuoteAgeMs: defaultIntradayMomentumProtocolDocument.maximumQuoteAgeMs,
     barCount: defaultIntradayMomentumProtocolDocument.universe.length * 10,
     quoteCount: defaultIntradayMomentumProtocolDocument.universe.length,
     tradeCount: defaultIntradayMomentumProtocolDocument.universe.length,
@@ -737,7 +741,17 @@ const rehashEntryMarketDataBinding = (
   changes: Partial<
     Pick<
       ArchiveMarketDataBindingV2,
-      'observedAt' | 'rangeEndAt' | 'rangeStartAt' | 'symbols' | 'universe' | 'universeId' | 'universeSymbolHash'
+      | 'delayClass'
+      | 'feed'
+      | 'maximumQuoteAgeMs'
+      | 'observedAt'
+      | 'rangeEndAt'
+      | 'rangeStartAt'
+      | 'sourceTopics'
+      | 'symbols'
+      | 'universe'
+      | 'universeId'
+      | 'universeSymbolHash'
     >
   >,
 ): ArchiveMarketDataBindingV2 => {
@@ -815,6 +829,10 @@ type OpeningDriveShadowDecisionInput = Omit<ObserveShadowDecisionInput, 'planner
   readonly plannerInput: QuoteBoundTargetPlannerInput
 }
 
+type IntradayMomentumShadowDecisionInput = Omit<OpeningDriveShadowDecisionInput, 'compiledDecision'> & {
+  readonly compiledDecision: IntradayMomentumTargetPortfolio
+}
+
 const makeOpeningDriveInput = (
   calendarHash?: string,
   cycle: AutonomousCycle = makeOpeningDriveCycle(),
@@ -881,7 +899,7 @@ const makeOpeningDriveInput = (
   }
 }
 
-const makeIntradayMomentumInput = (calendarHash?: string): OpeningDriveShadowDecisionInput => {
+const makeIntradayMomentumInput = (calendarHash?: string): IntradayMomentumShadowDecisionInput => {
   const cycle = makeIntradayMomentumCycle()
   const base = makeOpeningDriveInput(undefined, cycle)
   const executionMarketData = currentEntryMarketDataBinding(cycle)
@@ -1250,6 +1268,34 @@ describe('OBSERVE shadow decision', () => {
       }),
     )
     const { contentHash: _contentHash, ...material } = document
+    expect(material.strategyDecision).toEqual(input.compiledDecision)
+    const forgedSelectedSymbol = defaultIntradayMomentumProtocolDocument.universe[0]
+    const forgedStrategyDecision = {
+      ...input.compiledDecision,
+      selectedSymbols: [forgedSelectedSymbol],
+      targetWeights: Object.fromEntries(
+        defaultIntradayMomentumProtocolDocument.universe.map((symbol) => [
+          symbol,
+          symbol === forgedSelectedSymbol ? 0.1 : 0,
+        ]),
+      ),
+      signals: input.compiledDecision.signals.map((signal) =>
+        signal.symbol === forgedSelectedSymbol ? { ...signal, eligible: true, rejectionReasons: [], rank: 1 } : signal,
+      ),
+    }
+    const forgedTargetSelection = makeExecutionDecisionDocument({
+      ...material,
+      bindings: {
+        ...material.bindings,
+        strategyDecisionHash: canonicalHashV1(forgedStrategyDecision),
+      },
+      strategyDecision: forgedStrategyDecision,
+    })
+    expect(Result.isFailure(forgedTargetSelection)).toBe(true)
+    if (Result.isFailure(forgedTargetSelection)) {
+      expect(String(forgedTargetSelection.failure.cause)).toContain('persisted selected signals')
+    }
+
     const rebindExecutionMarketData = (binding: ArchiveMarketDataBindingV2) => {
       const executionTerms = material.targetPlan.executionTerms
       if (executionTerms === undefined) throw new Error('intraday fixture must persist execution terms')
@@ -1365,7 +1411,28 @@ describe('OBSERVE shadow decision', () => {
     const foreignUniverseEvidence = rebindExecutionMarketData(foreignUniverseBinding)
     expect(Result.isFailure(foreignUniverseEvidence)).toBe(true)
     if (Result.isFailure(foreignUniverseEvidence)) {
-      expect(String(foreignUniverseEvidence.failure.cause)).toContain('source-controlled strategy universe')
+      expect(String(foreignUniverseEvidence.failure.cause)).toContain('source-controlled market-data protocol')
+    }
+
+    const foreignProtocolBindings = [
+      rehashEntryMarketDataBinding(executionMarketData, { feed: 'sip' }),
+      rehashEntryMarketDataBinding(executionMarketData, { delayClass: 'real_time_consolidated' }),
+      rehashEntryMarketDataBinding(executionMarketData, {
+        sourceTopics: {
+          ...executionMarketData.sourceTopics,
+          quotes: 'foreign.quotes.v1',
+        },
+      }),
+      rehashEntryMarketDataBinding(executionMarketData, {
+        maximumQuoteAgeMs: defaultIntradayMomentumProtocolDocument.maximumQuoteAgeMs + 1,
+      }),
+    ]
+    for (const foreignProtocolBinding of foreignProtocolBindings) {
+      const foreignProtocolEvidence = rebindExecutionMarketData(foreignProtocolBinding)
+      expect(Result.isFailure(foreignProtocolEvidence)).toBe(true)
+      if (Result.isFailure(foreignProtocolEvidence)) {
+        expect(String(foreignProtocolEvidence.failure.cause)).toContain('source-controlled market-data protocol')
+      }
     }
 
     const alternateSessionDate = '2026-07-23'
@@ -1437,6 +1504,109 @@ describe('OBSERVE shadow decision', () => {
         'market-data session and calendar must match the execution session',
       )
     }
+  })
+
+  test('rejects durable intraday entries that exceed source-controlled allocation limits', async () => {
+    const input = makeIntradayMomentumInput()
+    const executionMarketData = input.executionMarketData
+    if (executionMarketData?.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
+      throw new Error('intraday allocation fixture must include archive execution market data v2')
+    }
+    const selectedSymbols = defaultIntradayMomentumProtocolDocument.universe.slice(0, 4)
+    const selectedSet = new Set(selectedSymbols)
+    const selectedRanks = new Map<string, number>(selectedSymbols.map((symbol, index) => [symbol, index + 1]))
+    const targetWeights = Object.fromEntries(
+      defaultIntradayMomentumProtocolDocument.universe.map((symbol) => [symbol, selectedSet.has(symbol) ? 0.075 : 0]),
+    )
+    const compiledDecision = {
+      ...input.compiledDecision,
+      selectedSymbols,
+      targetWeights,
+      signals: input.compiledDecision.signals.map((signal) => {
+        const rank = selectedRanks.get(signal.symbol)
+        return rank === undefined ? signal : { ...signal, eligible: true, rejectionReasons: [], rank }
+      }),
+    }
+    const { contentHash: _referencePriceHash, ...referencePriceMaterial } = input.plannerInput.referencePrices
+    const priceMicros = Object.fromEntries(
+      defaultIntradayMomentumProtocolDocument.universe.map((symbol) => [symbol, '10000000']),
+    )
+    const referencePrices = {
+      ...referencePriceMaterial,
+      priceMicros,
+      bidPriceMicros: priceMicros,
+      askPriceMicros: priceMicros,
+    }
+    const lowPowerAccount = { ...input.plannerInput.brokerState.account, buyingPowerMicros: '1' }
+    const brokerStateHash = Result.getOrThrow(
+      reconciledStateHash({
+        account: lowPowerAccount,
+        positions: input.plannerInput.brokerState.positions,
+        positionsObservedAt: input.plannerInput.brokerState.positionsObservedAt,
+        orders: input.plannerInput.brokerState.orders,
+        ordersObservedAt: input.plannerInput.brokerState.ordersObservedAt,
+        accountingHash: input.plannerInput.brokerState.accountingHash,
+      }),
+    )
+    const reconciliationMaterial = {
+      ...input.plannerInput.brokerState.reconciliation,
+      expectedHash: brokerStateHash,
+      observedHash: brokerStateHash,
+    }
+    const {
+      reconciliationId: _reconciliationId,
+      contentHash: _reconciliationHash,
+      ...reconciliationFields
+    } = reconciliationMaterial
+    const reconciliationId = canonicalHashV1({
+      schemaVersion: 'bayn.paper-reconciliation-id.v1',
+      material: reconciliationFields,
+    })
+    const plannerInput: QuoteBoundTargetPlannerInput = {
+      ...input.plannerInput,
+      decisionHash: canonicalHashV1(compiledDecision),
+      targetWeights,
+      referencePrices: { ...referencePrices, contentHash: canonicalHashV1(referencePrices) },
+      brokerState: {
+        ...input.plannerInput.brokerState,
+        account: lowPowerAccount,
+        reconciliation: {
+          ...reconciliationFields,
+          reconciliationId,
+          contentHash: canonicalHashV1({ ...reconciliationFields, reconciliationId }),
+        },
+      },
+      maximumInputAgeMs: 4 * 60 * 60 * 1_000,
+    }
+    const targetPlan = planTargetsSuccess(plannerInput)
+    expect(targetPlan).toMatchObject({
+      status: TargetPlanStatus.Blocked,
+      reason: TargetPlanReason.InsufficientBuyingPower,
+    })
+    expect(targetPlan.targets.filter(({ targetWeight }) => targetWeight > 0)).toHaveLength(4)
+    const executionSession = bindExecutionSessionSuccess({
+      executionSessionDate: executionDate,
+      planningBrokerState: { observedAt: brokerObservedAt, contentHash: brokerStateHash },
+      calendar: executionMarketData.calendar,
+      executionModel: intradayMomentumExecutionModel,
+    })
+
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        buildExecutionDecision({
+          ...input,
+          compiledDecision,
+          plannerInput,
+          targetPlan,
+          authorityGenerationHash: hash('6'),
+          executionSession,
+        }),
+      ),
+    )
+
+    expect(failure.cause).toBeInstanceOf(ShadowDecisionContractFailure)
+    if (!(failure.cause instanceof ShadowDecisionContractFailure)) return expect.unreachable()
+    expect(String(failure.cause.cause)).toContain('maximum position count')
   })
 
   test('binds full-session intraday decisions to the exact rolling snapshot and cycle calendar', async () => {
