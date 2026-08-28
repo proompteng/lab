@@ -14,7 +14,7 @@ rules:
     verbs: [delete, get, list, patch, watch]
   - apiGroups: [""]
     resources: [persistentvolumeclaims, secrets]
-    verbs: [delete, get, patch, watch]
+    verbs: [delete, get, list, patch, watch]
   - apiGroups: [""]
     resources: [configmaps]
     resourceNames: [tengri-auth-nonces]
