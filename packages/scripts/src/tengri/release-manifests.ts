@@ -191,6 +191,15 @@ function findTengriApplicationBlock(contents: string) {
     throw new Error(`Platform ApplicationSet is not valid YAML: ${document.errors[0].message}`)
   }
 
+  const goTemplateOptions = document.getIn(['spec', 'goTemplateOptions'], true)
+  if (
+    document.getIn(['spec', 'goTemplate']) !== true ||
+    !isSeq(goTemplateOptions) ||
+    !isDeepStrictEqual(goTemplateOptions.toJSON(), ['missingkey=error'])
+  ) {
+    throw new Error('Tengri ApplicationSet must enable Go templating with missingkey=error')
+  }
+
   const matrix = document.getIn(['spec', 'generators', 0, 'matrix'], true)
   if (!isMap(matrix)) {
     throw new Error('Platform ApplicationSet must contain the expected matrix generator')
@@ -271,6 +280,20 @@ function findTengriApplicationBlock(contents: string) {
   const sourceOverrides = ['repoURL', 'targetRevision', '<<'].filter((field) => matrixInput.has(field))
   if (sourceOverrides.length > 0) {
     throw new Error(`Tengri matrix inputs must not override the release source; remove ${sourceOverrides.join(', ')}`)
+  }
+  if (matrixInput.has('project')) {
+    throw new Error('Tengri matrix inputs must not override the default project')
+  }
+  const expectedMatrixInput = {
+    cluster: 'in-cluster',
+    suffix: '',
+    destinationServer: expectedDestinationServer,
+  }
+  const matrixInputValue = matrixInput.toJSON() as Record<string, unknown>
+  if (!isDeepStrictEqual(matrixInputValue, expectedMatrixInput)) {
+    const unexpectedFields = Object.keys(matrixInputValue).filter((field) => !Object.hasOwn(expectedMatrixInput, field))
+    const suffix = unexpectedFields.length > 0 ? `; remove ${unexpectedFields.join(', ')}` : ''
+    throw new Error(`Tengri matrix input must match the verified in-cluster target${suffix}`)
   }
 
   const enabledNode = entry.get('enabled', true)

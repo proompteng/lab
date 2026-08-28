@@ -41,6 +41,8 @@ images:
   writeFileSync(
     applicationSetPath,
     `spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
   generators:
     - matrix:
         generators:
@@ -455,6 +457,55 @@ spec:
     expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
     expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
     rmSync(paths.directory, { recursive: true, force: true })
+  })
+
+  it('rejects project overrides from the matrix input', () => {
+    const paths = fixture()
+    const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+    const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+    writeFileSync(
+      paths.applicationSetPath,
+      readFileSync(paths.applicationSetPath, 'utf8').replace(
+        '              - cluster: in-cluster',
+        '              - cluster: in-cluster\n                project: unverified',
+      ),
+    )
+    const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+
+    expect(() => validateTengriRelease(paths)).toThrow('must not override the default project')
+    expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
+      'must not override the default project',
+    )
+    expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+    expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
+    expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
+    rmSync(paths.directory, { recursive: true, force: true })
+  })
+
+  it('requires the verified Go-template options', () => {
+    const drifts = [
+      ['  goTemplate: true\n', ''],
+      ['  goTemplate: true', '  goTemplate: false'],
+      ['  goTemplateOptions: ["missingkey=error"]', '  goTemplateOptions: []'],
+      ['  goTemplateOptions: ["missingkey=error"]', '  goTemplateOptions: ["missingkey=zero"]'],
+    ] as const
+
+    for (const [expected, drifted] of drifts) {
+      const paths = fixture()
+      const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+      const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+      writeFileSync(paths.applicationSetPath, readFileSync(paths.applicationSetPath, 'utf8').replace(expected, drifted))
+      const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+
+      expect(() => validateTengriRelease(paths)).toThrow('must enable Go templating with missingkey=error')
+      expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
+        'must enable Go templating with missingkey=error',
+      )
+      expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+      expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
+      expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
+      rmSync(paths.directory, { recursive: true, force: true })
+    }
   })
 
   it('rejects an application selector that excludes the enabled Tengri entry', () => {
