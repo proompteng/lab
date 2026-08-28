@@ -467,11 +467,16 @@ describe('intraday momentum strategy', () => {
 
   test('accepts a complete rolling baseline expressed at equivalent nanosecond precision', () => {
     const protocol = success(decodeDefaultIntradayMomentumProtocol())
+    const rangeEndAt = '2026-08-18T18:00:00.000Z'
+    const baselineEventAt = instant(Date.parse(rangeEndAt) - protocol.lookbackMinutes * 60_000).replace(
+      '.000Z',
+      '.000000000Z',
+    )
     const decision = success(
       decideIntradayMomentum(
         marketContextAt({
-          rangeEndAt: '2026-08-18T18:00:00.000Z',
-          baselineEventAt: '2026-08-18T17:40:00.000000000Z',
+          rangeEndAt,
+          baselineEventAt,
           returnBps: qualifyingReturns,
         }),
         protocol,
