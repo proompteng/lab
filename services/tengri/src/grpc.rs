@@ -22,7 +22,7 @@ use crate::{
         IDLE_MINUTES, LIFETIME_HOURS, MicroVM, MicroVMArchitecture, MicroVMDesiredState,
         MicroVMPhase, MicroVMResources, MicroVMSpec,
     },
-    guest::{GuestClient, GuestError},
+    guest::{GuestClient, GuestError, TerminalIdentityRegistry},
     metrics,
     tickets::TicketStore,
 };
@@ -63,6 +63,7 @@ pub struct ControlPlane {
     tickets: TicketStore,
     activity: ActivityTracker,
     create_lock: Arc<Mutex<()>>,
+    terminal_identities: TerminalIdentityRegistry,
 }
 
 pub struct ControlPlaneConfig {
@@ -95,6 +96,7 @@ impl ControlPlane {
             tickets: TicketStore::new(config.public_url, config.ticket_signing_secret)?,
             activity,
             create_lock: Arc::new(Mutex::new(())),
+            terminal_identities: TerminalIdentityRegistry::default(),
         })
     }
 
@@ -193,9 +195,14 @@ impl ControlPlane {
 
     async fn guest(&self, principal: &Principal, id: &str) -> Result<GuestClient, Status> {
         self.wake_agent(principal, id).await?;
-        GuestClient::for_agent(self.client.clone(), &self.namespace, id)
-            .await
-            .map_err(map_guest_error)
+        GuestClient::for_agent_with_terminal_identities(
+            self.client.clone(),
+            &self.namespace,
+            id,
+            self.terminal_identities.clone(),
+        )
+        .await
+        .map_err(map_guest_error)
     }
 }
 
@@ -558,14 +565,21 @@ impl MicroVmControlPlane for ControlPlane {
     ) -> Result<Response<TerminalSession>, Status> {
         let principal = self.authorize(&request).await?;
         let request = request.into_inner();
-        let terminal = self
+        let creation = self
             .guest(&principal, &request.agent_id)
             .await?
-            .create_terminal(&request.cwd, request.columns, request.rows)
+            .create_terminal(
+                &request.creation_id,
+                &request.cwd,
+                request.columns,
+                request.rows,
+            )
             .await
             .map_err(map_guest_error)?;
-        metrics::global().record_pty_created(&request.agent_id, &terminal.id);
-        Ok(Response::new(terminal_session(terminal)))
+        if creation.created {
+            metrics::global().record_pty_created(&request.agent_id, &creation.session.id);
+        }
+        Ok(Response::new(terminal_session(creation.session)))
     }
 
     async fn list_terminals(
@@ -988,6 +1002,7 @@ fn file_entry(entry: crate::guest::FileEntry) -> FileEntry {
 fn terminal_session(session: crate::guest::TerminalSession) -> TerminalSession {
     TerminalSession {
         id: session.id,
+        creation_id: session.creation_id,
         cwd: session.cwd,
         created_at: session.created_at,
         last_activity_at: session.last_activity_at,
@@ -997,12 +1012,7 @@ fn terminal_session(session: crate::guest::TerminalSession) -> TerminalSession {
 
 fn codex_event(event: crate::guest::CodexEvent) -> CodexEvent {
     let method = event.method.clone();
-    let raw_json = event.raw.to_string();
-    let raw_json = if raw_json.len() <= MAX_CODEX_EVENT_TEXT_BYTES {
-        raw_json
-    } else {
-        "{}".to_owned()
-    };
+    let raw_json = bounded_codex_raw_json(&event);
     CodexEvent {
         sequence: event.sequence,
         kind: codex_event_kind(&method, &event.approval_id, &event.raw) as i32,
@@ -1021,6 +1031,68 @@ fn codex_event(event: crate::guest::CodexEvent) -> CodexEvent {
         approval_id: event.approval_id,
         raw_json,
     }
+}
+
+fn bounded_codex_raw_json(event: &crate::guest::CodexEvent) -> String {
+    let raw_json = event.raw.to_string();
+    if raw_json.len() <= MAX_CODEX_EVENT_TEXT_BYTES {
+        return raw_json;
+    }
+
+    let bounded = match event
+        .raw
+        .pointer("/params/availableDecisions")
+        .filter(|_| !event.approval_id.is_empty())
+    {
+        Some(available_decisions) => json!({
+            "params": {
+                "availableDecisions": bounded_approval_decisions(available_decisions),
+            },
+            "rawOmitted": true,
+        }),
+        None => json!({"rawOmitted": true}),
+    }
+    .to_string();
+
+    debug_assert!(bounded.len() <= MAX_CODEX_EVENT_TEXT_BYTES);
+    bounded
+}
+
+fn bounded_approval_decisions(value: &Value) -> Value {
+    let Some(decisions) = value.as_array() else {
+        return Value::Null;
+    };
+    let mut bounded = Vec::new();
+    for decision in decisions.iter().take(16) {
+        let canonical = match decision.as_str() {
+            Some(value @ ("accept" | "acceptForSession" | "decline" | "cancel")) => {
+                Some(Value::String(value.to_owned()))
+            }
+            _ if decision
+                .pointer("/acceptWithExecpolicyAmendment/execpolicy_amendment")
+                .is_some() =>
+            {
+                Some(json!({
+                    "acceptWithExecpolicyAmendment": {"execpolicy_amendment": true},
+                }))
+            }
+            _ if decision
+                .pointer("/applyNetworkPolicyAmendment/network_policy_amendment")
+                .is_some() =>
+            {
+                Some(json!({
+                    "applyNetworkPolicyAmendment": {"network_policy_amendment": true},
+                }))
+            }
+            _ => None,
+        };
+        if let Some(canonical) = canonical
+            && !bounded.contains(&canonical)
+        {
+            bounded.push(canonical);
+        }
+    }
+    Value::Array(bounded)
 }
 
 fn codex_event_kind(method: &str, approval_id: &str, raw: &Value) -> CodexEventKind {
@@ -2044,6 +2116,50 @@ mod tests {
         assert!(bounded.len() <= MAX_CODEX_EVENT_TEXT_BYTES);
         assert!(bounded.ends_with("… output truncated …"));
         assert!(bounded.is_char_boundary(bounded.len()));
+    }
+
+    #[test]
+    fn oversized_approvals_retain_only_supported_decision_metadata() {
+        let event = codex_event(crate::guest::CodexEvent {
+            sequence: 9,
+            method: "item/commandExecution/requestApproval".to_owned(),
+            approval_id: "approval-large".to_owned(),
+            raw: json!({
+                "params": {
+                    "threadId": "thread-large",
+                    "command": "x".repeat(MAX_CODEX_EVENT_TEXT_BYTES + 1),
+                    "availableDecisions": ["decline"]
+                }
+            }),
+        });
+
+        assert_eq!(event.thread_id, "thread-large");
+        assert!(event.raw_json.len() <= MAX_CODEX_EVENT_TEXT_BYTES);
+        let raw: Value = serde_json::from_str(&event.raw_json).expect("bounded approval JSON");
+        assert_eq!(raw.pointer("/rawOmitted"), Some(&Value::Bool(true)));
+        assert_eq!(
+            raw.pointer("/params/availableDecisions"),
+            Some(&json!(["decline"])),
+        );
+
+        assert_eq!(
+            bounded_approval_decisions(&json!([
+                "accept",
+                "acceptForSession",
+                "cancel",
+                {"acceptWithExecpolicyAmendment": {"execpolicy_amendment": {"ignored": "x".repeat(MAX_CODEX_EVENT_TEXT_BYTES)}}},
+                {"applyNetworkPolicyAmendment": {"network_policy_amendment": {"ignored": true}}},
+                "unsupported"
+            ])),
+            json!([
+                "accept",
+                "acceptForSession",
+                "cancel",
+                {"acceptWithExecpolicyAmendment": {"execpolicy_amendment": true}},
+                {"applyNetworkPolicyAmendment": {"network_policy_amendment": true}}
+            ]),
+        );
+        assert_eq!(bounded_approval_decisions(&Value::Null), Value::Null);
     }
 
     #[test]

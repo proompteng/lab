@@ -58,6 +58,13 @@ type searchFilesResponse struct {
 
 var errTooManyDirectoryEntries = errors.New("directory exceeds the 10,000 entry Finder limit")
 
+var workspaceSearchExcludedRootNames = map[string]struct{}{
+	".bun":   {},
+	".cache": {},
+	".cargo": {},
+	".local": {},
+}
+
 func (server *apiServer) handleListFiles(writer http.ResponseWriter, request *http.Request) {
 	requested := request.URL.Query().Get("path")
 	if _, err := server.workspace.resolveExisting(requested); err != nil {
@@ -408,6 +415,11 @@ func (server *apiServer) handleSearchFiles(writer http.ResponseWriter, request *
 		}
 		if walkErr != nil {
 			return nil
+		}
+		if root == server.workspace.realRoot && path != root && entry.IsDir() && filepath.Dir(path) == root {
+			if _, excluded := workspaceSearchExcludedRootNames[entry.Name()]; excluded {
+				return filepath.SkipDir
+			}
 		}
 		if path != root && !server.workspace.isVisibleAbsolute(path) {
 			if entry.IsDir() {

@@ -48,7 +48,15 @@ function focusChromeTab(tabId: string) {
   })
 }
 
-export function ChromeApp({ active: applicationActive = true, agentId }: { active?: boolean; agentId: string }) {
+export function ChromeApp({
+  active: applicationActive = true,
+  agentId,
+  previewGatewayOrigin,
+}: {
+  active?: boolean
+  agentId: string
+  previewGatewayOrigin: string
+}) {
   const [state, dispatch] = useReducer(chromeReducer, undefined, initialChromeState)
   const activeTab = activeChromeTab(state)
   const activePage = currentChromePage(activeTab)
@@ -89,7 +97,7 @@ export function ChromeApp({ active: applicationActive = true, agentId }: { activ
     try {
       const session = await issuePreview(agentId, activePage)
       issuedSessionId = session.id
-      const launchUrl = safePreviewLaunchUrl(session.launchUrl)
+      const launchUrl = safePreviewLaunchUrl(session.launchUrl, previewGatewayOrigin)
       if (!launchUrl) throw new Error('Tengri returned an invalid preview URL')
       popup.location.replace(launchUrl)
     } catch (cause) {
@@ -286,6 +294,7 @@ export function ChromeApp({ active: applicationActive = true, agentId }: { activ
                   onNavigate={(nextPage, mode) => synchronizePreview(tab.id, nextPage, mode)}
                   onShortcut={runShortcut}
                   page={page}
+                  previewGatewayOrigin={previewGatewayOrigin}
                 />
               )}
             </div>
@@ -303,6 +312,7 @@ function PreviewFrame({
   onNavigate,
   onShortcut,
   page,
+  previewGatewayOrigin,
 }: {
   active: boolean
   agentId: string
@@ -310,6 +320,7 @@ function PreviewFrame({
   onNavigate: (page: PreviewPage, mode: ChromePreviewNavigationMode) => void
   onShortcut: (key: ChromePreviewShortcut) => void
   page: PreviewPage
+  previewGatewayOrigin: string
 }) {
   const [attempt, setAttempt] = useState(0)
   const [session, setSession] = useState<{ id: string; launchUrl: string } | null>(null)
@@ -333,7 +344,7 @@ function PreviewFrame({
           void revokePreview(agentId, issued.id)
           return
         }
-        const safeUrl = safePreviewLaunchUrl(issued.launchUrl)
+        const safeUrl = safePreviewLaunchUrl(issued.launchUrl, previewGatewayOrigin)
         if (!safeUrl) throw new Error('Tengri returned an invalid preview URL')
         setSession({ id: issued.id, launchUrl: safeUrl })
       })
@@ -346,7 +357,7 @@ function PreviewFrame({
       disposed = true
       if (issuedSessionId) void revokePreview(agentId, issuedSessionId)
     }
-  }, [active, agentId, attempt, loadRevision])
+  }, [active, agentId, attempt, loadRevision, previewGatewayOrigin])
 
   useEffect(() => {
     if (!session) return

@@ -17,9 +17,9 @@ import {
   codexApprovalDecisions,
   codexCanStartNewConversation,
   codexEventDisplayText,
-  codexEventContinuesRestoredItem,
   codexEventMatchesThread,
   codexEventShouldRender,
+  codexEventSupersedesRestoredItem,
   codexLoginCompletionError,
   codexLoginCompletionMatches,
   codexReconciledActiveTurnId,
@@ -56,7 +56,9 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const completedTurns = useRef(new Set<string>())
   const loginIdRef = useRef('')
   const threadIdRef = useRef('')
+  const activeTurnIdRef = useRef('')
   const lastEventSequence = useRef(0)
+  const lastTurnLifecycleSequence = useRef(0)
   const restoredHistoryRef = useRef<ReadonlyMap<string, CodexTranscriptItem>>(new Map())
   const restoredHistorySequenceRef = useRef(0)
   const replayRecoveryRef = useRef(false)
@@ -69,6 +71,11 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     submitting,
     threadReady,
   })
+
+  const setCurrentActiveTurnId = useCallback((turnId: string) => {
+    activeTurnIdRef.current = turnId
+    setActiveTurnId(turnId)
+  }, [])
 
   useEffect(() => {
     mountedRef.current = true
@@ -127,7 +134,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     loginIdRef.current = ''
     setLogin(null)
     setThreadReady(false)
-    setActiveTurnId('')
+    setCurrentActiveTurnId('')
     setHistoryItems([])
     setRestoredHistorySequence(0)
     setEvents([])
@@ -137,6 +144,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setEventStreamState('connecting')
     completedTurns.current.clear()
     lastEventSequence.current = 0
+    lastTurnLifecycleSequence.current = 0
     restoredHistoryRef.current = new Map()
     restoredHistorySequenceRef.current = 0
     replayRecoveryRef.current = false
@@ -144,7 +152,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     const stored = readStoredThread(agentId)
     threadIdRef.current = stored
     setThreadId(stored)
-  }, [agentId])
+  }, [agentId, setCurrentActiveTurnId])
 
   useEffect(() => {
     if (!active) return
@@ -182,7 +190,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   }, [account?.authenticated, active, login, refreshAccount])
 
   const commitThreadState = useCallback(
-    (thread: TengriCodexThread) => {
+    (thread: TengriCodexThread, commitActiveTurn = true) => {
       const restored = commitThread(agentId, thread, threadIdRef, setThreadId, setHistoryItems)
       const sequence = thread.eventSequence
       const restoredById = new Map(restored.historyItems.map((item) => [item.id, item]))
@@ -190,14 +198,18 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       restoredHistorySequenceRef.current = sequence
       setRestoredHistorySequence(sequence)
       setEvents((current) => reconcileCodexEventsWithRestoredHistory(current, restoredById, sequence))
-      setActiveTurnId(codexReconciledActiveTurnId(restored.activeTurnId, completedTurns.current))
+      const restoredActiveTurnId = codexReconciledActiveTurnId(restored.activeTurnId, completedTurns.current)
+      const activeTurnId = commitActiveTurn ? restoredActiveTurnId : activeTurnIdRef.current
+      if (commitActiveTurn) setCurrentActiveTurnId(activeTurnId)
+      return { ...restored, activeTurnId }
     },
-    [agentId],
+    [agentId, setCurrentActiveTurnId],
   )
 
   useEffect(() => {
     if (!active || !account?.authenticated || !threadId || threadReady || replayRecoveryRef.current) return
     const controller = new AbortController()
+    const resumeSequence = lastEventSequence.current
     const generation = ++threadResumeGeneration.current
     void runTengriAction<TengriCodexThread>({ action: 'resume-thread', agentId, threadId }, controller.signal)
       .then((thread) => {
@@ -207,7 +219,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         ) {
           return
         }
-        commitThreadState(thread)
+        commitThreadState(thread, lastTurnLifecycleSequence.current <= resumeSequence)
         setThreadReady(true)
         setError('')
       })
@@ -225,6 +237,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const recoverThreadState = useCallback(async () => {
     const currentThread = threadIdRef.current
     if (!currentThread || replayRecoveryRef.current) return
+    const recoverySequence = lastEventSequence.current
     replayRecoveryRef.current = true
     const generation = ++threadResumeGeneration.current
     setThreadReady(false)
@@ -241,7 +254,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       ) {
         return
       }
-      commitThreadState(thread)
+      commitThreadState(thread, lastTurnLifecycleSequence.current <= recoverySequence)
       setThreadReady(true)
       setError('')
     } catch (cause) {
@@ -294,16 +307,18 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       } else if (event.method === 'tengri/replayWarning') {
         void recoverThreadState()
       } else if (event.method === 'turn/started' && event.turnId) {
-        setActiveTurnId(event.turnId)
+        lastTurnLifecycleSequence.current = Math.max(lastTurnLifecycleSequence.current, event.sequence)
+        setCurrentActiveTurnId(event.turnId)
       } else if (event.method === 'turn/completed' && event.turnId) {
+        lastTurnLifecycleSequence.current = Math.max(lastTurnLifecycleSequence.current, event.sequence)
         completedTurns.current.add(event.turnId)
-        setActiveTurnId((current) => (current === event.turnId ? '' : current))
+        if (activeTurnIdRef.current === event.turnId) setCurrentActiveTurnId('')
       }
     }
     source.onopen = () => setEventStreamState('connected')
     source.onerror = () => setEventStreamState('reconnecting')
     return () => source.close()
-  }, [accountChecked, active, agentId, recoverThreadState, refreshAccount])
+  }, [accountChecked, active, agentId, recoverThreadState, refreshAccount, setCurrentActiveTurnId])
 
   useEffect(() => {
     if (!active) return
@@ -331,7 +346,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       new Set(
         renderedEvents
           .map(({ event }) =>
-            codexEventContinuesRestoredItem(event, historyById.get(event.itemId), restoredHistorySequence)
+            codexEventSupersedesRestoredItem(event, historyById.get(event.itemId), restoredHistorySequence)
               ? event.itemId
               : '',
           )
@@ -352,22 +367,22 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setPrompt('')
     try {
       const currentThread = await ensureThread()
-      if (activeTurnId) {
+      if (currentThread.activeTurnId) {
         await runTengriAction<TengriCodexTurn>({
           action: 'steer-turn',
           agentId,
-          threadId: currentThread,
-          turnId: activeTurnId,
+          threadId: currentThread.id,
+          turnId: currentThread.activeTurnId,
           text,
         })
       } else {
         const turn = await runTengriAction<TengriCodexTurn>({
           action: 'send-turn',
           agentId,
-          threadId: currentThread,
+          threadId: currentThread.id,
           text,
         })
-        if (!completedTurns.current.has(turn.id)) setActiveTurnId(turn.id)
+        if (!completedTurns.current.has(turn.id)) setCurrentActiveTurnId(turn.id)
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Message could not be sent')
@@ -378,13 +393,14 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   }
 
   async function ensureThread() {
-    if (threadId && threadReady) return threadId
+    if (threadId && threadReady) return { id: threadId, activeTurnId: activeTurnIdRef.current }
+    const resumeSequence = lastEventSequence.current
     const thread = threadId
       ? await runTengriAction<TengriCodexThread>({ action: 'resume-thread', agentId, threadId })
       : await runTengriAction<TengriCodexThread>({ action: 'create-thread', agentId })
-    commitThreadState(thread)
+    const state = commitThreadState(thread, lastTurnLifecycleSequence.current <= resumeSequence)
     setThreadReady(true)
-    return thread.id
+    return { id: thread.id, activeTurnId: state.activeTurnId }
   }
 
   async function resolveApproval(event: TengriCodexEvent, decision: CodexApprovalDecision) {
@@ -450,7 +466,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     threadResumeGeneration.current += 1
     setThreadId('')
     setThreadReady(false)
-    setActiveTurnId('')
+    setCurrentActiveTurnId('')
     setHistoryItems([])
     setRestoredHistorySequence(0)
     setEvents([])

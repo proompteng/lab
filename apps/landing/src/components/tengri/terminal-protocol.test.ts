@@ -9,9 +9,11 @@ import {
   parseTerminalResumeState,
   safelyDisposeTerminal,
   settleTerminalCreation,
+  terminalCreationId,
   terminalHeartbeatAction,
   terminalPlainText,
   terminalReconnectDelay,
+  terminalReconciliationCandidate,
   terminalResumeAttachment,
   terminalTicketProtocol,
 } from './terminal-protocol'
@@ -114,6 +116,26 @@ describe('Tengri terminal protocol', () => {
     expect(terminalResumeAttachment(state, true)).toEqual({ reconnectToken: '', sequence: 0 })
   })
 
+  test('reconciles a transient desktop window with an existing guest session', () => {
+    const sessions = [
+      { id: 'detached-session', creationId: 'old-window', attached: false },
+      { id: 'exact-session', creationId: 'current-window', attached: true },
+      { id: 'other-detached', creationId: 'other-window', attached: false },
+    ]
+
+    expect(terminalReconciliationCandidate(sessions, 'current-window', new Set())).toBe(sessions[1])
+    expect(terminalReconciliationCandidate(sessions, 'missing-window', new Set())).toBe(sessions[0])
+    expect(terminalReconciliationCandidate(sessions, 'missing-window', new Set(['detached-session']))).toBe(sessions[2])
+    expect(
+      terminalReconciliationCandidate(
+        sessions.filter((session) => session.attached),
+        'missing-window',
+        new Set(),
+      ),
+    ).toBeNull()
+    expect(terminalReconciliationCandidate(sessions, 'current-window', new Set(['exact-session']))).toBe(sessions[0])
+  })
+
   test('cleans an accepted terminal when its window closes before creation returns', async () => {
     const cleanup = mock(async () => undefined)
     const session = { id: 'abcdefghijklmnopqrstuvwx' }
@@ -133,6 +155,12 @@ describe('Tengri terminal protocol', () => {
     expect(terminalReconnectDelay(0)).toBe(400)
     expect(terminalReconnectDelay(100)).toBe(8_000)
     expect(terminalPlainText('\u001b[2J unsafe\nmessage')).toBe('[2J unsafe message')
+  })
+
+  test('derives a stable bounded terminal creation identity from the desktop window', () => {
+    expect(terminalCreationId('agent-123', 'terminal-7')).toBe('tengri-agent-123-terminal-7')
+    expect(() => terminalCreationId('agent with spaces', 'terminal-7')).toThrow('creation identity')
+    expect(() => terminalCreationId('a'.repeat(120), 'terminal-7')).toThrow('creation identity')
   })
 
   test('contains renderer disposal failures', () => {

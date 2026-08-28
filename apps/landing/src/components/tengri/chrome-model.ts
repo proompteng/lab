@@ -1,6 +1,9 @@
+import { normalizePreviewGatewayOrigin } from '@/lib/tengri/preview-origin'
+
 export const MAX_CHROME_TABS = 8
 const MAX_CHROME_HISTORY = 30
 const MAX_PREVIEW_PATH_BYTES = 4096
+const PREVIEW_TICKET_PATTERN = /^[A-Za-z0-9_-]{16,128}\.[A-Za-z0-9_-]{16,128}$/
 export const PREVIEW_BRIDGE_CHANNEL = 'tengri-preview-v1'
 
 export type ChromePreviewShortcut = 'l' | 'r' | 't' | 'w'
@@ -222,17 +225,19 @@ export function parsePreviewBridgeMessage(
   }
 }
 
-export function safePreviewLaunchUrl(value: string) {
+export function safePreviewLaunchUrl(value: string, previewGatewayOrigin: string) {
   try {
     const url = new URL(value)
-    const localHttp =
-      url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname.toLowerCase())
+    const trustedGatewayOrigin = normalizePreviewGatewayOrigin(previewGatewayOrigin)
+    const ticket = url.hash.slice(1)
     if (
-      (url.protocol !== 'https:' && !localHttp) ||
+      !trustedGatewayOrigin ||
+      url.origin !== trustedGatewayOrigin ||
       url.username ||
       url.password ||
       url.pathname !== '/v1/preview/open' ||
-      !url.hash.slice(1)
+      url.search ||
+      !PREVIEW_TICKET_PATTERN.test(ticket)
     ) {
       return ''
     }

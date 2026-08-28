@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils'
 import {
   APP_TITLES,
   initialWindowState,
+  MAX_DESKTOP_WINDOWS,
   type Bounds,
   type DesktopWindow,
   type TengriApp,
@@ -36,11 +37,13 @@ export function ReadyDesktop({
   agent,
   connectionWarning = '',
   onChanged,
+  previewGatewayOrigin,
   user,
 }: {
   agent: TengriAgent
   connectionWarning?: string
   onChanged: () => Promise<void>
+  previewGatewayOrigin: string
   user: TengriUser
 }) {
   const stageRef = useRef<HTMLDivElement | null>(null)
@@ -59,6 +62,7 @@ export function ReadyDesktop({
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const codeRequestIdRef = useRef(0)
   const finderRequestIdRef = useRef(0)
+  const terminalCloseHandlersRef = useRef(new Map<string, () => void>())
   const reducedMotion = useReducedMotion()
 
   const viewport = useCallback((): Bounds => {
@@ -68,6 +72,43 @@ export function ReadyDesktop({
       y: 0,
       width: rect?.width ?? globalThis.innerWidth,
       height: rect?.height ?? Math.max(0, globalThis.innerHeight - 30),
+    }
+  }, [])
+
+  const requireWindowCapacity = useCallback(
+    (requiresNewWindow: boolean) => {
+      if (!requiresNewWindow || windowState.windows.length < MAX_DESKTOP_WINDOWS) return true
+      setError(`Tengri supports at most ${MAX_DESKTOP_WINDOWS} open windows. Close one before opening another.`)
+      return false
+    },
+    [windowState.windows.length],
+  )
+
+  const appendDesktopWindow = useCallback(
+    (app: TengriApp) => {
+      if (!requireWindowCapacity(true)) return false
+      dispatch({ type: 'new', app, title: APP_TITLES[app], viewport: viewport() })
+      return true
+    },
+    [requireWindowCapacity, viewport],
+  )
+
+  const openDesktopApp = useCallback(
+    (app: TengriApp) => {
+      const alreadyOpen = windowState.windows.some((candidate) => candidate.app === app)
+      if (!requireWindowCapacity(!alreadyOpen)) return false
+      dispatch({ type: 'open', app, title: APP_TITLES[app], viewport: viewport() })
+      return true
+    },
+    [requireWindowCapacity, viewport, windowState.windows],
+  )
+
+  const registerTerminalCloseHandler = useCallback((windowId: string, handler: () => void) => {
+    terminalCloseHandlersRef.current.set(windowId, handler)
+    return () => {
+      if (terminalCloseHandlersRef.current.get(windowId) === handler) {
+        terminalCloseHandlersRef.current.delete(windowId)
+      }
     }
   }, [])
 
@@ -87,6 +128,7 @@ export function ReadyDesktop({
         dispatch({ type: 'focus', id: desktopWindow.id })
         return
       }
+      if (desktopWindow.app === 'terminal') terminalCloseHandlersRef.current.get(desktopWindow.id)?.()
       dispatch({ type: 'close', id: desktopWindow.id })
     },
     [dirtyCodeWindows],
@@ -177,7 +219,7 @@ export function ReadyDesktop({
     if (event.code === 'KeyN') {
       event.preventDefault()
       const app = active?.app ?? windowState.activeApp
-      dispatch({ type: 'new', app, title: APP_TITLES[app], viewport: viewport() })
+      appendDesktopWindow(app)
       return
     }
     if (isEditableTarget(event.target)) return
@@ -220,43 +262,37 @@ export function ReadyDesktop({
     return () => window.removeEventListener('keydown', handleShortcut)
   }, [])
 
-  const openSettings = useCallback(() => {
-    dispatch({ type: 'open', app: 'settings', title: APP_TITLES.settings, viewport: viewport() })
-  }, [viewport])
+  const openSettings = useCallback(() => void openDesktopApp('settings'), [openDesktopApp])
 
-  const openChrome = useCallback(() => {
-    dispatch({ type: 'open', app: 'chrome', title: APP_TITLES.chrome, viewport: viewport() })
-  }, [viewport])
+  const openChrome = useCallback(() => void openDesktopApp('chrome'), [openDesktopApp])
 
   const openFinder = useCallback(
     (path?: string) => {
       const targetWindowId = windowIdForOpen(windowState, 'finder')
-      dispatch({ type: 'open', app: 'finder', title: APP_TITLES.finder, viewport: viewport() })
+      if (!openDesktopApp('finder')) return
       if (path) setFinderRequest({ path, requestId: ++finderRequestIdRef.current, targetWindowId })
     },
-    [viewport, windowState],
+    [openDesktopApp, windowState],
   )
 
   const openCode = useCallback(
     (path?: string) => {
       const targetWindowId = windowIdForOpen(windowState, 'code')
-      dispatch({ type: 'open', app: 'code', title: APP_TITLES.code, viewport: viewport() })
+      if (!openDesktopApp('code')) return
       if (path) setCodeRequest({ path, requestId: ++codeRequestIdRef.current, targetWindowId })
     },
-    [viewport, windowState],
+    [openDesktopApp, windowState],
   )
 
-  const openTerminal = useCallback(() => {
-    dispatch({ type: 'open', app: 'terminal', title: APP_TITLES.terminal, viewport: viewport() })
-  }, [viewport])
+  const openTerminal = useCallback(() => void openDesktopApp('terminal'), [openDesktopApp])
 
   const newAppWindow = useCallback(
     (app: TengriApp) => {
-      dispatch({ type: 'new', app, title: APP_TITLES[app], viewport: viewport() })
+      appendDesktopWindow(app)
       setMenuOpen(null)
       setSpotlightOpen(false)
     },
-    [viewport],
+    [appendDesktopWindow],
   )
 
   const openApp = useCallback(
@@ -275,9 +311,9 @@ export function ReadyDesktop({
   const newActiveWindow = useCallback(() => {
     const active = windowState.windows.find((candidate) => candidate.id === windowState.activeWindowId)
     const app = active?.app ?? windowState.activeApp
-    dispatch({ type: 'new', app, title: APP_TITLES[app], viewport: viewport() })
+    appendDesktopWindow(app)
     setMenuOpen(null)
-  }, [viewport, windowState.activeApp, windowState.activeWindowId, windowState.windows])
+  }, [appendDesktopWindow, windowState.activeApp, windowState.activeWindowId, windowState.windows])
 
   async function mutate(action: 'delete-agent' | 'sleep-agent') {
     if (dirtyCodeWindows.size > 0) {
@@ -409,7 +445,11 @@ export function ReadyDesktop({
                   request={finderRequest?.targetWindowId === desktopWindow.id ? finderRequest : null}
                 />
               ) : desktopWindow.app === 'chrome' ? (
-                <ChromeApp active={desktopWindow.id === windowState.activeWindowId} agentId={agent.id} />
+                <ChromeApp
+                  active={desktopWindow.id === windowState.activeWindowId}
+                  agentId={agent.id}
+                  previewGatewayOrigin={previewGatewayOrigin}
+                />
               ) : desktopWindow.app === 'code' ? (
                 <CodeEditor
                   agentId={agent.id}
@@ -417,7 +457,11 @@ export function ReadyDesktop({
                   request={codeRequest?.targetWindowId === desktopWindow.id ? codeRequest : null}
                 />
               ) : desktopWindow.app === 'terminal' ? (
-                <TerminalApp agentId={agent.id} />
+                <TerminalApp
+                  agentId={agent.id}
+                  registerCloseHandler={registerTerminalCloseHandler}
+                  windowId={desktopWindow.id}
+                />
               ) : (
                 <SettingsApp
                   active={desktopWindow.id === windowState.activeWindowId}

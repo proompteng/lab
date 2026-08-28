@@ -59,6 +59,43 @@ func TestFileSearchStopsWhenRequestIsCanceled(t *testing.T) {
 	}
 }
 
+func TestFileSearchSkipsHiddenRuntimeCachesAndPreservesVisibleDirectories(t *testing.T) {
+	t.Parallel()
+	server := testAPIServer(t)
+	for _, path := range []string{
+		".cache/needle-cache.txt",
+		".cargo/needle-cargo.txt",
+		"go/needle-go.txt",
+		"src/go/needle-nested-go.txt",
+		"src/needle-project.txt",
+	} {
+		absolute := filepath.Join(server.workspace.root, path)
+		if err := os.MkdirAll(filepath.Dir(absolute), 0o750); err != nil {
+			t.Fatalf("create fixture directory: %v", err)
+		}
+		if err := os.WriteFile(absolute, []byte(path), 0o640); err != nil {
+			t.Fatalf("write fixture: %v", err)
+		}
+	}
+
+	response := performAuthorizedRequest(
+		server.authenticatedRoutes(),
+		http.MethodGet,
+		"/v1/files/search?query=needle&path=%2F",
+		nil,
+	)
+	if response.Code != http.StatusOK {
+		t.Fatalf("search status = %d body = %s", response.Code, response.Body.String())
+	}
+	var result searchFilesResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode search response: %v", err)
+	}
+	if len(result.Entries) != 3 || result.Entries[0].Path != "/go/needle-go.txt" || result.Entries[1].Path != "/src/go/needle-nested-go.txt" || result.Entries[2].Path != "/src/needle-project.txt" {
+		t.Fatalf("search entries = %#v", result.Entries)
+	}
+}
+
 func TestFileAPIWritesReadsAndListsWorkspaceFiles(t *testing.T) {
 	t.Parallel()
 	server := testAPIServer(t)

@@ -25,9 +25,30 @@ describe('Tengri BFF action schema', () => {
       tengriActionSchema.safeParse({
         action: 'create-terminal',
         agentId: 'agent-123',
+        creationId: 'terminal-creation-123',
         cwd: '/',
         columns: 10_000,
         rows: 24,
+      }).success,
+    ).toBe(false)
+    expect(
+      tengriActionSchema.safeParse({
+        action: 'create-terminal',
+        agentId: 'agent-123',
+        creationId: 'terminal-creation-123',
+        cwd: '/workspace',
+        columns: 120,
+        rows: 32,
+      }).success,
+    ).toBe(true)
+    expect(
+      tengriActionSchema.safeParse({
+        action: 'create-terminal',
+        agentId: 'agent-123',
+        creationId: 'bad creation id',
+        cwd: '/workspace',
+        columns: 120,
+        rows: 32,
       }).success,
     ).toBe(false)
     for (const decision of ['approve-exec-policy-amendment', 'approve-network-policy-amendment']) {

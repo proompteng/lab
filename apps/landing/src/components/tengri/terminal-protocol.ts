@@ -2,6 +2,7 @@ const OUTPUT_FRAME_TYPE = 1
 const MAX_UINT32 = 0xffff_ffff
 const RFC_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
 const SESSION_ID = /^[A-Za-z0-9_-]{16,128}$/
+const CREATION_ID = /^[A-Za-z0-9_-]{16,128}$/
 
 export type TerminalOutputFrame = {
   sequence: number
@@ -35,11 +36,23 @@ export type TerminalResumeAttachment = {
   sequence: number
 }
 
+type ReconciliationSession = {
+  id: string
+  creationId: string
+  attached: boolean
+}
+
 export function normalizeTerminalSize(columns: number, rows: number): { columns: number; rows: number } {
   return {
     columns: clampInteger(columns, 120, 20, 400),
     rows: clampInteger(rows, 32, 6, 200),
   }
+}
+
+export function terminalCreationId(agentId: string, windowId: string): string {
+  const creationId = `tengri-${agentId}-${windowId}`
+  if (!CREATION_ID.test(creationId)) throw new Error('Terminal creation identity is invalid')
+  return creationId
 }
 
 export function buildTerminalWebSocketUrl(
@@ -174,6 +187,18 @@ export function terminalHeartbeatAction(
 
 export function terminalResumeAttachment(state: TerminalResumeState, attached: boolean): TerminalResumeAttachment {
   return { reconnectToken: attached ? '' : state.reconnectToken, sequence: 0 }
+}
+
+export function terminalReconciliationCandidate<Session extends ReconciliationSession>(
+  sessions: readonly Session[],
+  creationId: string,
+  claimedSessionIds: ReadonlySet<string>,
+): Session | null {
+  const exact = sessions.find(
+    (candidate) => candidate.creationId === creationId && !claimedSessionIds.has(candidate.id),
+  )
+  if (exact) return exact
+  return sessions.find((candidate) => !candidate.attached && !claimedSessionIds.has(candidate.id)) ?? null
 }
 
 export async function settleTerminalCreation<Session>(

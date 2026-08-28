@@ -3,6 +3,8 @@ import type { TengriFileEntry } from '@/lib/tengri/types'
 export const FINDER_WORKSPACE_PATH = '/'
 export const FINDER_SEARCH_REFRESH_MS = 2_000
 
+const protectedFinderPaths = new Set([FINDER_WORKSPACE_PATH])
+
 const finderDateFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: 'medium',
   timeStyle: 'short',
@@ -45,7 +47,7 @@ export function finderCanBeginRename<T extends Pick<TengriFileEntry, 'path'>>(
   entry: T | null,
   actionBusy: boolean,
 ): entry is T {
-  return Boolean(entry && entry.path !== FINDER_WORKSPACE_PATH && !actionBusy)
+  return Boolean(entry && !protectedFinderPaths.has(entry.path) && !actionBusy)
 }
 
 export function finderChildPath(parentPath: string, name: string): string | null {
@@ -66,7 +68,7 @@ export function finderChildPath(parentPath: string, name: string): string | null
 
 export function finderRenamePath(sourcePath: string, name: string): string | null {
   const source = normalizeFinderPath(sourcePath)
-  if (!source || source === FINDER_WORKSPACE_PATH) return null
+  if (!source || protectedFinderPaths.has(source)) return null
   const separator = source.lastIndexOf('/')
   const parent = separator > 0 ? source.slice(0, separator) : FINDER_WORKSPACE_PATH
   return finderChildPath(parent, name)
@@ -106,7 +108,7 @@ export function updateFinderSelection(
 export function finderDeletionTargets(
   entries: readonly Pick<TengriFileEntry, 'directory' | 'path'>[],
 ): Pick<TengriFileEntry, 'directory' | 'path'>[] {
-  const candidates = entries.filter((entry) => entry.path !== FINDER_WORKSPACE_PATH)
+  const candidates = entries.filter((entry) => !protectedFinderPaths.has(entry.path))
   const selectedDirectories = candidates.filter((entry) => entry.directory).map((entry) => entry.path)
   return candidates.filter(
     (entry) =>
