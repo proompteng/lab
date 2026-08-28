@@ -32,6 +32,7 @@ describe('landing browser validation workflow', () => {
 
     expect(pullRequestTrigger).toContain("'.github/workflows/pull-request.yml'")
     expect(pullRequestTrigger).toContain("'.github/workflows/scripts-ci.yml'")
+    expect(pullRequestTrigger).toContain("'.github/workflows/tengri.yaml'")
   })
 
   test('does not duplicate pull-request browser validation', () => {

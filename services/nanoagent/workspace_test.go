@@ -54,3 +54,30 @@ func TestWorkspacePreservesWhitespaceInRequestedPaths(t *testing.T) {
 		t.Fatalf("displayPath() = %q, want /report<space>", got)
 	}
 }
+
+func TestWorkspaceReservesOnlyGeneratedAtomicWriteNames(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{".nanoagent-write-notes", ".nanoagent-write-deadbeef"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0o600); err != nil {
+			t.Fatalf("write %q: %v", name, err)
+		}
+	}
+
+	workspace, err := newWorkspace(root)
+	if err != nil {
+		t.Fatalf("newWorkspace() error = %v", err)
+	}
+	t.Cleanup(func() { _ = workspace.close() })
+	for _, name := range []string{".nanoagent-write-notes", ".nanoagent-write-deadbeef"} {
+		if _, err := workspace.resolveExisting("/" + name); err != nil {
+			t.Fatalf("resolveExisting(%q) error = %v", name, err)
+		}
+		if !workspace.isVisibleAbsolute(filepath.Join(workspace.realRoot, name)) {
+			t.Fatalf("user file %q was hidden as internal", name)
+		}
+	}
+	generated := ".nanoagent-write-0123456789abcdef01234567"
+	if !isInternalRelativePath(generated) {
+		t.Fatalf("generated temporary file %q was visible", generated)
+	}
+}

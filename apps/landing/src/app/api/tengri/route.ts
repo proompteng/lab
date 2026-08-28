@@ -33,6 +33,7 @@ import {
   noStoreHeaders,
   readTengriJsonBody,
   requireSameOrigin,
+  requireSameOriginGet,
   requireTengriIdentity,
   tengriRouteError,
 } from '@/lib/tengri/http'
@@ -44,6 +45,7 @@ export const dynamic = 'force-dynamic'
 
 export async function GET(request: Request) {
   try {
+    requireSameOriginGet(request)
     const authConfigured = isTengriAuthConfigured()
     const previewGatewayOrigin = normalizePreviewGatewayOrigin(process.env.TENGRI_PUBLIC_URL || '')
     const controlPlaneConfigured = isTengriControlPlaneConfigured() && Boolean(previewGatewayOrigin)
