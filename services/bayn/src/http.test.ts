@@ -667,6 +667,27 @@ describe('Bayn HTTP pure decisions', () => {
     expect(idleMetrics).toContain('bayn_forward_performance_receipt_available 0')
     expect(idleMetrics).not.toContain('bayn_forward_performance_net_realized_pnl_after_costs_dollars ')
 
+    const uncoveredFill: RuntimeState = {
+      ...idle,
+      cycle: {
+        ...idle.cycle,
+        economics: {
+          accounting: {
+            ...idle.cycle.economics!.accounting,
+            fillCount: 1,
+            unaccountedFillCount: 1,
+          },
+          forwardPerformance: null,
+        },
+      },
+    }
+    const uncoveredFillMetrics = renderPrometheusMetrics(uncoveredFill, config, provenance, 'embedded')
+    expect(uncoveredFillMetrics).toContain('bayn_accounting_state{state="gap"} 1')
+    expect(uncoveredFillMetrics).toContain('bayn_accounting_uncovered{kind="fills"} 1')
+    expect(uncoveredFillMetrics).not.toContain('bayn_accounting_gross_realized_pnl_dollars ')
+    expect(uncoveredFillMetrics).not.toContain('bayn_accounting_execution_fees_dollars ')
+    expect(uncoveredFillMetrics).not.toContain('bayn_accounting_net_realized_pnl_after_execution_fees_dollars ')
+
     const completed: RuntimeState = {
       ...idle,
       cycle: {

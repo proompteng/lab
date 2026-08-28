@@ -1103,7 +1103,7 @@ const renderPrometheusMetricsDataFirst = (
           ...(['idle', 'exact', 'gap'] as const).map(
             (state) => `bayn_accounting_state{state="${state}"} ${accountingState === state ? 1 : 0}`,
           ),
-          ...(accounting.fillCount === 0
+          ...(accounting.transactionCount === 0
             ? []
             : [
                 '# HELP bayn_accounting_gross_realized_pnl_dollars Running gross realized PnL from durable accounting transactions.',
