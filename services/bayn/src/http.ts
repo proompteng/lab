@@ -651,6 +651,7 @@ const renderPrometheusMetricsDataFirst = (
   const publicBroker = publicBrokerState(state)
   const runtimeReady = runtimeReadyOverride ?? isReady(state)
   const cycleObservationAvailable = state.cycle.condition !== CycleOperationsCondition.Unknown
+  const cycleRecorded = state.cycle.current !== null || state.cycle.last !== null
   const cyclePhase =
     cycleObservationAvailable === false
       ? 'unknown'
@@ -768,7 +769,7 @@ const renderPrometheusMetricsDataFirst = (
     ...terminalReasons.map(
       (reason) => `bayn_cycle_terminal_reason{reason="${reason}"} ${cycleTerminalReason === reason ? 1 : 0}`,
     ),
-    ...(cycleObservationAvailable
+    ...(cycleObservationAvailable && cycleRecorded
       ? [
           '# HELP bayn_cycle_unfinished_count Number of unfinished cycles for the bound qualification run.',
           '# TYPE bayn_cycle_unfinished_count gauge',
@@ -944,14 +945,14 @@ const renderPrometheusMetricsDataFirst = (
           `bayn_oldest_unresolved_mutation_age_seconds ${prometheusNumber((state.cycle.oldestUnresolvedMutationAgeMs ?? 0) / 1_000)}`,
         ]
       : []),
-    ...(cycleObservationAvailable && executionFunnel !== undefined
+    ...(cycleObservationAvailable && cycleRecorded && executionFunnel !== undefined
       ? [
           '# HELP bayn_execution_funnel_count Current or latest terminal cycle count by opportunity-to-fill stage.',
           '# TYPE bayn_execution_funnel_count gauge',
           `bayn_execution_funnel_count{stage="targets"} ${cycleDecision?.targetCount ?? 0}`,
           `bayn_execution_funnel_count{stage="intents"} ${executionFunnel.intentCount}`,
           `bayn_execution_funnel_count{stage="orders"} ${executionFunnel.orderCount}`,
-          `bayn_execution_funnel_count{stage="fills"} ${executionFunnel.fillCount}`,
+          `bayn_execution_funnel_count{stage="fills"} ${executionFunnel.filledOrderCount}`,
           '# HELP bayn_cycle_intents Current or latest terminal cycle intent count by durable state.',
           '# TYPE bayn_cycle_intents gauge',
           `bayn_cycle_intents{state="planned"} ${executionFunnel.plannedIntentCount}`,
@@ -1016,6 +1017,10 @@ const renderPrometheusMetricsDataFirst = (
                 '# TYPE bayn_cycle_fill_latency_seconds gauge',
                 `bayn_cycle_fill_latency_seconds ${prometheusNumber(executionFunnel.maximumFillLatencyMs / 1_000)}`,
               ]),
+        ]
+      : []),
+    ...(cycleObservationAvailable && executionFunnel !== undefined
+      ? [
           ...(executionFunnel.positionSnapshotObservedAt === null ||
           executionFunnel.positionCount === null ||
           executionFunnel.grossExposureMicros === null ||

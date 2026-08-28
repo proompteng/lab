@@ -350,6 +350,26 @@ describe('Bayn HTTP pure decisions', () => {
       ...readyState(),
       cycle: {
         ...readyState().cycle,
+        current: {
+          cycleId: '1'.repeat(64),
+          accountId: 'paper-account-1',
+          signalSessionDate: '2026-08-31',
+          executionSessionDate: '2026-09-01',
+          phase: CycleState.Active,
+          snapshotId: '2'.repeat(64),
+          decisionHash: '3'.repeat(64),
+          terminalReason: null,
+          submissionOpenAt: '2026-09-01T13:30:00.000Z',
+          submissionCutoffAt: '2026-09-01T14:00:00.000Z',
+          executionOpenAt: '2026-09-01T13:30:00.000Z',
+          executionCloseAt: '2026-09-01T20:00:00.000Z',
+          createdAt: '2026-09-01T13:30:00.000Z',
+          updatedAt: '2026-09-01T13:35:08.000Z',
+          terminalAt: null,
+        },
+        unfinishedCycleCount: 1,
+        condition: CycleOperationsCondition.Running,
+        reason: CycleOperationsReason.Active,
         mutations: {
           ...readyState().cycle.mutations,
           recoveryFoundCount: 185,
@@ -390,8 +410,8 @@ describe('Bayn HTTP pure decisions', () => {
           canceledOrderCount: 0,
           expiredOrderCount: 0,
           rejectedOrderCount: 0,
-          fillCount: 2,
-          buyFillCount: 2,
+          fillCount: 3,
+          buyFillCount: 3,
           sellFillCount: 0,
           latestIntentAt: '2026-09-01T13:35:06.000Z',
           latestOrderAt: '2026-09-01T13:35:07.000Z',
@@ -447,13 +467,40 @@ describe('Bayn HTTP pure decisions', () => {
     expect(metrics).toContain('bayn_cycle_orders{status="filled"} 2')
     expect(metrics).toContain('bayn_cycle_orders{status="canceled"} 0')
     expect(metrics).toContain('bayn_cycle_orders{status="expired"} 0')
-    expect(metrics).toContain('bayn_cycle_fills{side="buy"} 2')
+    expect(metrics).toContain('bayn_cycle_fills{side="buy"} 3')
     expect(metrics).toContain('bayn_broker_position_count 2')
     expect(metrics).toContain('bayn_broker_position_snapshot_observed_timestamp_seconds ')
     expect(metrics).toContain('bayn_broker_gross_exposure_dollars 800.000000')
     expect(metrics).toContain('bayn_broker_unrealized_pnl_dollars 1.250000')
     expect(metrics).toContain('bayn_broker_account_dollars{kind="buying_power"} 396800.000000')
     expect(metrics).toContain('bayn_capital_activation_recovery_only 0')
+
+    const noCycleMetrics = renderPrometheusMetrics(
+      {
+        ...realized,
+        cycle: {
+          ...realized.cycle,
+          current: null,
+          last: null,
+          condition: CycleOperationsCondition.Waiting,
+          reason: CycleOperationsReason.NoCycleRecorded,
+          unfinishedCycleCount: 0,
+          attemptAgeMs: null,
+        },
+      },
+      config,
+      provenance,
+      'embedded',
+    )
+    expect(noCycleMetrics).toContain('bayn_cycle_observation_available 1')
+    expect(noCycleMetrics).toContain('bayn_cycle_reason{reason="no_cycle_recorded"} 1')
+    expect(noCycleMetrics).not.toContain('bayn_cycle_unfinished_count ')
+    expect(noCycleMetrics).not.toContain('bayn_execution_funnel_count{')
+    expect(noCycleMetrics).not.toContain('bayn_cycle_intents{')
+    expect(noCycleMetrics).not.toContain('bayn_cycle_orders{')
+    expect(noCycleMetrics).not.toContain('bayn_cycle_fills{')
+    expect(noCycleMetrics).toContain('bayn_broker_position_count 2')
+    expect(noCycleMetrics).toContain('bayn_broker_account_dollars{kind="equity"} 100001.250000')
 
     const missingPositionSnapshotMetrics = renderPrometheusMetrics(
       {
