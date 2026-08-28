@@ -990,9 +990,11 @@ const buildOrderLimitGates = (facts: RiskFacts, metrics: DerivedRiskMetrics): re
     ),
     makeGate(
       Gate.BuyingPower,
-      metrics.aggregateBuyingPowerMicros <= facts.accountBuyingPowerMicros,
+      exposureReducingClose || metrics.aggregateBuyingPowerMicros <= facts.accountBuyingPowerMicros,
       metrics.aggregateBuyingPowerMicros,
-      `<=${state.account.buyingPowerMicros}`,
+      facts.state.closeOnly === true
+        ? `<=${state.account.buyingPowerMicros}|STRICTLY_EXPOSURE_REDUCING_CLOSE`
+        : `<=${state.account.buyingPowerMicros}`,
     ),
     makeGate(
       Gate.AdverseSlippage,

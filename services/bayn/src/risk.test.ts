@@ -637,6 +637,44 @@ describe('bounded execution risk', () => {
     expectBlocked(Reason.OrderTypeNotAllowed, intent, makeState({ positions }), policy)
   })
 
+  test('does not require buying power for a strictly exposure-reducing short cover', () => {
+    const positions = baseState().positions.map((position) =>
+      position.symbol === 'NVDA'
+        ? {
+            ...position,
+            quantityMicros: '-1000000',
+            marketValueMicros: '-100000000',
+            unrealizedPnlMicros: '0',
+          }
+        : position,
+    )
+    const state = makeState({
+      account: { ...baseState().account, buyingPowerMicros: '0' },
+      positions,
+      reservedBuyingPowerMicros: '100000000',
+      closeOnly: true,
+      closeOnlyExpiresAt: '2026-07-21T21:01:00.000Z',
+    })
+    const cover = makeIntent({
+      side: OrderSide.Buy,
+      quantityMicros: '1000000',
+      notionalLimitMicros: '100000000',
+    })
+
+    const result = evaluateSuccess(cover, state, makePolicy())
+    expect(result.decision.outcome).toBe(RiskOutcome.Approved)
+    expect(result.gates.find((gate) => gate.name === Gate.BuyingPower)?.passed).toBe(true)
+    expect(result.metrics.postTradeSymbolExposureMicros).toBe('0')
+
+    expectBlocked(Reason.BuyingPowerExceeded, cover, makeState({ ...state, closeOnly: false }), makePolicy())
+    expectBlocked(
+      Reason.ShortPositionNotAllowed,
+      makeIntent({ side: OrderSide.Buy, quantityMicros: '2000000', notionalLimitMicros: '200000000' }),
+      state,
+      makePolicy({ maxOrderNotionalMicros: '200000000' }),
+    )
+  })
+
   test('permits only the bounded sell close through an active kill', () => {
     const closeOnlyState = makeState({
       closeOnly: true,
