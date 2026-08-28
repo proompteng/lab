@@ -64,6 +64,7 @@ type MockOptions = {
   extraFiles?: typeof workspaceEntries
   failSnapshotAfterAction?: 'delete-agent' | 'sleep-agent'
   holdCodexAccount?: boolean
+  holdLifecycleAction?: 'delete-agent' | 'sleep-agent'
   holdReplayResume?: boolean
   resumeThreadDelayMs?: number
   resumeThreadRawJson?: string
@@ -79,6 +80,8 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   let releaseHeldResume = () => {}
   let markHeldResumeStarted = () => {}
   let releaseHeldCodexAccount = () => {}
+  let releaseHeldLifecycleAction = () => {}
+  let markHeldLifecycleActionStarted = () => {}
   const heldResume = new Promise<void>((resolve) => {
     releaseHeldResume = resolve
   })
@@ -87,6 +90,12 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   })
   const heldCodexAccount = new Promise<void>((resolve) => {
     releaseHeldCodexAccount = resolve
+  })
+  const heldLifecycleAction = new Promise<void>((resolve) => {
+    releaseHeldLifecycleAction = resolve
+  })
+  const heldLifecycleActionStarted = new Promise<void>((resolve) => {
+    markHeldLifecycleActionStarted = resolve
   })
   let files = [...workspaceEntries, ...sourceEntries, ...(options.extraFiles ?? [])]
   let terminalSessions: Record<string, unknown>[] = []
@@ -338,6 +347,10 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         result = { id: 'turn-1', threadId: action.threadId }
         break
       case 'sleep-agent':
+        if (options.holdLifecycleAction === 'sleep-agent') {
+          markHeldLifecycleActionStarted()
+          await heldLifecycleAction
+        }
         agent = agent ? { ...agent, phase: 'sleeping' } : agent
         result = agent
         break
@@ -346,6 +359,10 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         result = agent
         break
       case 'delete-agent':
+        if (options.holdLifecycleAction === 'delete-agent') {
+          markHeldLifecycleActionStarted()
+          await heldLifecycleAction
+        }
         agent = null
         break
       default:
@@ -359,7 +376,9 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
     getAgent: () => agent,
     getResumeThreadResponseCount: () => resumeThreadResponses,
     releaseHeldCodexAccount,
+    releaseHeldLifecycleAction,
     releaseHeldResume,
+    waitForHeldLifecycleAction: () => heldLifecycleActionStarted,
     waitForHeldResume: () => heldResumeStarted,
   }
 }
@@ -752,6 +771,27 @@ test('blocks lifecycle changes while Settings has a guest request in flight', as
   mock.releaseHeldCodexAccount()
   await expect(settings.getByRole('button', { name: 'Sleep Agent' })).toBeEnabled()
   await settings.getByRole('button', { name: 'Sleep Agent' }).click()
+  await expect(page.getByRole('dialog', { name: 'Tengri is sleeping' })).toBeVisible()
+})
+
+test('does not refresh the guest account after sleep starts', async ({ page }) => {
+  const mock = await mockTengri(page, { holdLifecycleAction: 'sleep-agent' })
+  await page.goto('/')
+
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  await dock.getByRole('button', { name: 'Open Settings' }).click()
+  const settings = page.getByRole('region', { name: 'Settings window' })
+  await expect(settings.getByRole('button', { name: 'Sleep Agent' })).toBeEnabled()
+  await settings.getByRole('button', { name: 'Sleep Agent' }).click()
+  await mock.waitForHeldLifecycleAction()
+  const accountRequestCount = mock.actions.filter((action) => action.action === 'codex-account').length
+
+  await dock.getByRole('button', { name: 'Open Finder' }).click()
+  await dock.getByRole('button', { name: 'Open Settings' }).click()
+  await page.waitForTimeout(100)
+  expect(mock.actions.filter((action) => action.action === 'codex-account')).toHaveLength(accountRequestCount)
+
+  mock.releaseHeldLifecycleAction()
   await expect(page.getByRole('dialog', { name: 'Tengri is sleeping' })).toBeVisible()
 })
 

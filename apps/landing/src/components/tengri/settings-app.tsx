@@ -45,6 +45,7 @@ export function SettingsApp({
   const [now, setNow] = useState<number | null>(null)
   const refreshAbortRef = useRef<AbortController | null>(null)
   const refreshGenerationRef = useRef(0)
+  const lifecycleBusy = busyAction !== null
 
   useEffect(() => {
     setNow(Date.now())
@@ -52,7 +53,19 @@ export function SettingsApp({
     return () => window.clearInterval(timer)
   }, [])
 
+  const cancelAccountRefresh = useCallback(() => {
+    const controller = refreshAbortRef.current
+    if (!controller) return
+    controller.abort()
+    if (refreshAbortRef.current !== controller) return
+    refreshAbortRef.current = null
+    refreshGenerationRef.current += 1
+    setAccountRefreshing(false)
+    onGuestOperationChange(instanceId, false)
+  }, [instanceId, onGuestOperationChange])
+
   const refreshAccount = useCallback(async () => {
+    if (lifecycleBusy) return
     refreshAbortRef.current?.abort()
     const controller = new AbortController()
     const generation = ++refreshGenerationRef.current
@@ -80,23 +93,19 @@ export function SettingsApp({
         onGuestOperationChange(instanceId, false)
       }
     }
-  }, [agent.id, instanceId, onGuestOperationChange])
+  }, [agent.id, instanceId, lifecycleBusy, onGuestOperationChange])
 
   useEffect(() => {
     setAccountState({ agentId: agent.id, status: 'loading' })
-    if (active) void refreshAccount()
-    return () => {
-      const controller = refreshAbortRef.current
-      controller?.abort()
-      if (controller && refreshAbortRef.current === controller) {
-        refreshAbortRef.current = null
-        onGuestOperationChange(instanceId, false)
-      }
-    }
-  }, [active, agent.id, instanceId, onGuestOperationChange, refreshAccount])
+  }, [agent.id])
 
   useEffect(() => {
-    if (!active) return
+    if (active && !lifecycleBusy) void refreshAccount()
+    return cancelAccountRefresh
+  }, [active, cancelAccountRefresh, lifecycleBusy, refreshAccount])
+
+  useEffect(() => {
+    if (!active || lifecycleBusy) return
     const refreshIfVisible = () => {
       if (shouldRefreshCodexAccount({ active, documentVisible: document.visibilityState === 'visible' })) {
         void refreshAccount()
@@ -108,7 +117,7 @@ export function SettingsApp({
       window.removeEventListener('focus', refreshIfVisible)
       document.removeEventListener('visibilitychange', refreshIfVisible)
     }
-  }, [active, refreshAccount])
+  }, [active, lifecycleBusy, refreshAccount])
 
   const currentAccountState: AccountState =
     accountState.agentId === agent.id ? accountState : { agentId: agent.id, status: 'loading' }
@@ -120,8 +129,8 @@ export function SettingsApp({
         : currentAccountState.account.authenticated
           ? currentAccountState.account.email || currentAccountState.account.plan || 'Connected'
           : 'Not connected'
-  const busy = busyAction !== null
-  const lifecycleBlocked = busy || accountRefreshing || lifecycleDisabled
+  const busy = lifecycleBusy
+  const lifecycleBlocked = lifecycleBusy || accountRefreshing || lifecycleDisabled
   const hydrated = now !== null
   const agentHeadingId = `${instanceId}-settings-agent-heading`
   const lifecycleHeadingId = `${instanceId}-settings-lifecycle-heading`
