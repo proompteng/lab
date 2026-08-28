@@ -795,10 +795,22 @@ data:
             "type": "prometheus",
             "uid": "prom"
           },
-          "description": "Targets in the current or latest terminal cycle. Zero is a durable count; NO CYCLE means no cycle evidence exists.",
+          "description": "Targets in the current or latest terminal cycle. Zero is a decided no-target outcome; NO DECISION means the cycle is still awaiting a decision; NO CYCLE means no cycle evidence exists.",
           "fieldConfig": {
             "defaults": {
               "decimals": 0,
+              "mappings": [
+                {
+                  "options": {
+                    "-1": {
+                      "color": "yellow",
+                      "index": 0,
+                      "text": "NO DECISION"
+                    }
+                  },
+                  "type": "value"
+                }
+              ],
               "noValue": "NO CYCLE"
             },
             "overrides": []
@@ -827,7 +839,7 @@ data:
           },
           "targets": [
             {
-              "expr": "max(bayn_execution_funnel_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",stage=\"targets\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "expr": "max(bayn_execution_funnel_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",stage=\"targets\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) or ((max(bayn_cycle_decision_bound{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) == bool 0) * -1)",
               "instant": true,
               "legendFormat": "targets",
               "range": false,
@@ -1451,14 +1463,59 @@ data:
             "type": "prometheus",
             "uid": "prom"
           },
-          "description": "Running gross realized P&L from durable accounting transactions.",
+          "description": "Running gross realized P&L from durable accounting transactions. NO FILLS means the cycle has no fills; NO ACCOUNTED FILLS means fills exist but no accounting transaction exists yet; NO CYCLE means no cycle evidence exists.",
           "fieldConfig": {
             "defaults": {
               "decimals": 2,
-              "noValue": "NO ACCOUNTED FILLS",
+              "noValue": "NO CYCLE",
               "unit": "currencyUSD"
             },
-            "overrides": []
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byFrameRefID",
+                  "options": "B"
+                },
+                "properties": [
+                  {
+                    "id": "mappings",
+                    "value": [
+                      {
+                        "options": {
+                          "1": {
+                            "index": 0,
+                            "text": "NO FILLS"
+                          }
+                        },
+                        "type": "value"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byFrameRefID",
+                  "options": "C"
+                },
+                "properties": [
+                  {
+                    "id": "mappings",
+                    "value": [
+                      {
+                        "options": {
+                          "1": {
+                            "index": 0,
+                            "text": "NO ACCOUNTED FILLS"
+                          }
+                        },
+                        "type": "value"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
           },
           "gridPos": {
             "h": 4,
@@ -1489,6 +1546,20 @@ data:
               "legendFormat": "gross realized",
               "range": false,
               "refId": "A"
+            },
+            {
+              "expr": "max((bayn_accounting_state{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",state=\"idle\"} == 1) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "no fills",
+              "range": false,
+              "refId": "B"
+            },
+            {
+              "expr": "max(((bayn_accounting_state{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",state=\"gap\"} == 1) * on(instance) (bayn_accounting_activity_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",kind=\"transactions\"} == bool 0)) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "fills awaiting accounting",
+              "range": false,
+              "refId": "C"
             }
           ],
           "title": "Gross realized P&L",
@@ -1499,14 +1570,59 @@ data:
             "type": "prometheus",
             "uid": "prom"
           },
-          "description": "Running broker execution fees recorded in durable accounting.",
+          "description": "Running broker execution fees recorded in durable accounting. NO FILLS means the cycle has no fills; NO ACCOUNTED FILLS means fills exist but no accounting transaction exists yet; NO CYCLE means no cycle evidence exists.",
           "fieldConfig": {
             "defaults": {
               "decimals": 2,
-              "noValue": "NO ACCOUNTED FILLS",
+              "noValue": "NO CYCLE",
               "unit": "currencyUSD"
             },
-            "overrides": []
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byFrameRefID",
+                  "options": "B"
+                },
+                "properties": [
+                  {
+                    "id": "mappings",
+                    "value": [
+                      {
+                        "options": {
+                          "1": {
+                            "index": 0,
+                            "text": "NO FILLS"
+                          }
+                        },
+                        "type": "value"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byFrameRefID",
+                  "options": "C"
+                },
+                "properties": [
+                  {
+                    "id": "mappings",
+                    "value": [
+                      {
+                        "options": {
+                          "1": {
+                            "index": 0,
+                            "text": "NO ACCOUNTED FILLS"
+                          }
+                        },
+                        "type": "value"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
           },
           "gridPos": {
             "h": 4,
@@ -1537,6 +1653,20 @@ data:
               "legendFormat": "fees",
               "range": false,
               "refId": "A"
+            },
+            {
+              "expr": "max((bayn_accounting_state{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",state=\"idle\"} == 1) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "no fills",
+              "range": false,
+              "refId": "B"
+            },
+            {
+              "expr": "max(((bayn_accounting_state{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",state=\"gap\"} == 1) * on(instance) (bayn_accounting_activity_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",kind=\"transactions\"} == bool 0)) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "fills awaiting accounting",
+              "range": false,
+              "refId": "C"
             }
           ],
           "title": "Recorded costs",
@@ -1547,14 +1677,59 @@ data:
             "type": "prometheus",
             "uid": "prom"
           },
-          "description": "Running realized P&L after recorded execution fees; terminal all-cost proof remains separate.",
+          "description": "Running realized P&L after recorded execution fees; terminal all-cost proof remains separate. NO FILLS means the cycle has no fills; NO ACCOUNTED FILLS means fills exist but no accounting transaction exists yet; NO CYCLE means no cycle evidence exists.",
           "fieldConfig": {
             "defaults": {
               "decimals": 2,
-              "noValue": "NO ACCOUNTED FILLS",
+              "noValue": "NO CYCLE",
               "unit": "currencyUSD"
             },
-            "overrides": []
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byFrameRefID",
+                  "options": "B"
+                },
+                "properties": [
+                  {
+                    "id": "mappings",
+                    "value": [
+                      {
+                        "options": {
+                          "1": {
+                            "index": 0,
+                            "text": "NO FILLS"
+                          }
+                        },
+                        "type": "value"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byFrameRefID",
+                  "options": "C"
+                },
+                "properties": [
+                  {
+                    "id": "mappings",
+                    "value": [
+                      {
+                        "options": {
+                          "1": {
+                            "index": 0,
+                            "text": "NO ACCOUNTED FILLS"
+                          }
+                        },
+                        "type": "value"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
           },
           "gridPos": {
             "h": 4,
@@ -1585,6 +1760,20 @@ data:
               "legendFormat": "net realized",
               "range": false,
               "refId": "A"
+            },
+            {
+              "expr": "max((bayn_accounting_state{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",state=\"idle\"} == 1) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "no fills",
+              "range": false,
+              "refId": "B"
+            },
+            {
+              "expr": "max(((bayn_accounting_state{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",state=\"gap\"} == 1) * on(instance) (bayn_accounting_activity_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",kind=\"transactions\"} == bool 0)) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "fills awaiting accounting",
+              "range": false,
+              "refId": "C"
             }
           ],
           "title": "Net realized P&L",
@@ -1970,6 +2159,6 @@ data:
       "timezone": "browser",
       "title": "Bayn Trading Operations",
       "uid": "bayn-cycle-operations",
-      "version": 4,
+      "version": 5,
       "weekStart": ""
     }

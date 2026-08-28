@@ -235,6 +235,7 @@ describe('Bayn cycle operations alert contract', () => {
           readonly expr?: string
           readonly instant?: boolean
           readonly range?: boolean
+          readonly refId?: string
         }[]
         readonly fieldConfig?: Record<string, any>
         readonly options?: Record<string, any>
@@ -248,7 +249,7 @@ describe('Bayn cycle operations alert contract', () => {
 
     expect(dashboard.uid).toBe('bayn-cycle-operations')
     expect(dashboard.title).toBe('Bayn Trading Operations')
-    expect(dashboard.version).toBe(4)
+    expect(dashboard.version).toBe(5)
     expect(dashboard.time).toEqual({ from: 'now-24h', to: 'now' })
     expect(dashboard.description).toContain('zero orders are explained by the first stage that did not advance')
     expect(dashboard.panels.map(({ title }) => title)).toEqual([
@@ -289,11 +290,30 @@ describe('Bayn cycle operations alert contract', () => {
       'Running build',
     ])
     expect(new Set(dashboard.panels.map(({ title }) => title)).size).toBe(dashboard.panels.length)
+    const targetsPanel = dashboard.panels.find(({ title }) => title === 'Targets')
+    expect(targetsPanel?.fieldConfig?.defaults?.noValue).toBe('NO CYCLE')
+    expect(targetsPanel?.fieldConfig?.defaults?.mappings?.[0]?.options?.['-1']?.text).toBe('NO DECISION')
+    expect(targetsPanel?.description).toContain('NO DECISION')
+    expect(targetsPanel?.description).toContain('NO CYCLE')
+    expect(targetsPanel?.targets?.[0]?.expr).toContain('bayn_cycle_decision_bound')
     for (const title of ['Gross realized P&L', 'Recorded costs', 'Net realized P&L']) {
       const panel = dashboard.panels.find((candidate) => candidate.title === title)
-      expect(panel?.fieldConfig?.defaults?.noValue).toBe('NO ACCOUNTED FILLS')
+      expect(panel?.fieldConfig?.defaults?.noValue).toBe('NO CYCLE')
+      expect(panel?.description).toContain('NO FILLS')
+      expect(panel?.description).toContain('NO ACCOUNTED FILLS')
+      expect(panel?.targets?.map(({ refId }) => refId)).toEqual(['A', 'B', 'C'])
+      expect(panel?.targets?.[1]?.expr).toContain('state="idle"')
+      expect(panel?.targets?.[2]?.expr).toContain('state="gap"')
+      expect(panel?.targets?.[2]?.expr).toContain('kind="transactions"')
+      const fallbackMappings = Object.fromEntries(
+        (panel?.fieldConfig?.overrides ?? []).map((override: Record<string, any>) => [
+          override.matcher.options,
+          override.properties[0].value[0].options['1'].text,
+        ]),
+      )
+      expect(fallbackMappings).toEqual({ B: 'NO FILLS', C: 'NO ACCOUNTED FILLS' })
     }
-    for (const title of ['Targets', 'Intents', 'Orders', 'Fills']) {
+    for (const title of ['Intents', 'Orders', 'Fills']) {
       const panel = dashboard.panels.find((candidate) => candidate.title === title)
       expect(panel?.fieldConfig?.defaults?.noValue).toBe('NO CYCLE')
       expect(panel?.description).toContain('NO CYCLE')
