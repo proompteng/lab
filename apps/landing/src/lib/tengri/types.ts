@@ -62,6 +62,7 @@ export type TengriFileEvent = {
 
 export type TengriTerminalSession = {
   id: string
+  creationId: string
   cwd: string
   createdAt: string
   lastActivityAt: string
@@ -144,7 +145,7 @@ export type TengriAction =
   | { action: 'delete-file'; agentId: string; path: string; recursive: boolean }
   | { action: 'search-files'; agentId: string; path: string; query: string }
   | { action: 'list-terminals'; agentId: string }
-  | { action: 'create-terminal'; agentId: string; cwd: string; columns: number; rows: number }
+  | { action: 'create-terminal'; agentId: string; creationId: string; cwd: string; columns: number; rows: number }
   | { action: 'terminate-terminal'; agentId: string; terminalId: string }
   | { action: 'terminal-ticket'; agentId: string; terminalId: string }
   | { action: 'codex-account'; agentId: string }

@@ -120,7 +120,15 @@ export async function POST(request: Request) {
         result = await listTerminals(identity.subject, action.agentId)
         break
       case 'create-terminal':
-        result = await createTerminal(identity.subject, action.agentId, action.cwd, action.columns, action.rows)
+        result = await createTerminal(
+          identity.subject,
+          action.agentId,
+          action.creationId,
+          action.cwd,
+          action.columns,
+          action.rows,
+          request.signal,
+        )
         break
       case 'terminate-terminal':
         await terminateTerminal(identity.subject, action.agentId, action.terminalId)

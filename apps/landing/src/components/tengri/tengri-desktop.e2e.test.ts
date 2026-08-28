@@ -28,22 +28,18 @@ const readyAgent = {
   ],
 }
 
-const rootEntries = [
-  { name: 'workspace', path: '/workspace', directory: true, size: 0, modifiedAt: '2026-08-26T12:01:00.000Z' },
-]
-
 const workspaceEntries = [
   {
     name: 'README.md',
-    path: '/workspace/README.md',
+    path: '/README.md',
     directory: false,
     size: 418,
     modifiedAt: '2026-08-26T12:02:00.000Z',
   },
-  { name: 'src', path: '/workspace/src', directory: true, size: 0, modifiedAt: '2026-08-26T12:03:00.000Z' },
+  { name: 'src', path: '/src', directory: true, size: 0, modifiedAt: '2026-08-26T12:03:00.000Z' },
   {
     name: 'package.json',
-    path: '/workspace/package.json',
+    path: '/package.json',
     directory: false,
     size: 221,
     modifiedAt: '2026-08-26T12:04:00.000Z',
@@ -53,7 +49,7 @@ const workspaceEntries = [
 const sourceEntries = [
   {
     name: 'main.ts',
-    path: '/workspace/src/main.ts',
+    path: '/src/main.ts',
     directory: false,
     size: 128,
     modifiedAt: '2026-08-26T12:05:00.000Z',
@@ -71,10 +67,11 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   let agent = options.agent === undefined ? readyAgent : options.agent
   const authenticated = options.authenticated ?? true
   const actions: Record<string, unknown>[] = []
-  let files = [...rootEntries, ...workspaceEntries, ...sourceEntries, ...(options.extraFiles ?? [])]
+  let files = [...workspaceEntries, ...sourceEntries, ...(options.extraFiles ?? [])]
+  let terminalSessions: Record<string, unknown>[] = []
   const contents = new Map<string, string>([
-    ['/workspace/README.md', '# Tengri\n\nA persistent Firecracker workspace.\n'],
-    ['/workspace/package.json', '{\n  "name": "tengri-workspace"\n}\n'],
+    ['/README.md', '# Tengri\n\nA persistent Firecracker workspace.\n'],
+    ['/package.json', '{\n  "name": "tengri-workspace"\n}\n'],
   ])
 
   page.on('pageerror', (error) => console.error(`[browser:pageerror] ${error.stack ?? error.message}`))
@@ -86,6 +83,11 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   await page.addInitScript(() => {
     localStorage.clear()
     const NativeEventSource = window.EventSource
+    const eventSourceState = { fileClosed: 0, fileOpened: 0 }
+    Object.defineProperty(window, '__tengriTestEventSources', {
+      configurable: true,
+      value: eventSourceState,
+    })
     class HealthyEventSource extends EventTarget {
       static readonly CLOSED = 2
       static readonly CONNECTING = 0
@@ -99,14 +101,19 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
       onerror: ((event: Event) => void) | null = null
       onmessage: ((event: MessageEvent) => void) | null = null
       onopen: ((event: Event) => void) | null = null
+      readonly tracksFiles: boolean
 
       constructor(url: string | URL) {
         super()
         this.url = String(url)
+        this.tracksFiles = new URL(this.url, window.location.href).pathname === '/api/tengri/files/events'
+        if (this.tracksFiles) eventSourceState.fileOpened += 1
         queueMicrotask(() => this.onopen?.(new Event('open')))
       }
 
-      close() {}
+      close() {
+        if (this.tracksFiles) eventSourceState.fileClosed += 1
+      }
     }
     const SelectiveEventSource = new Proxy(NativeEventSource, {
       construct(target, args) {
@@ -244,14 +251,25 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
       case 'create-thread':
         result = { id: 'thread-1', rawJson: '{}' }
         break
-      case 'create-terminal':
-        result = {
-          id: 'terminal-1',
+      case 'list-terminals':
+        result = terminalSessions
+        break
+      case 'create-terminal': {
+        const creationId = String(action.creationId)
+        const existing = terminalSessions.find((session) => session.creationId === creationId)
+        result = existing ?? {
+          id: `terminal-${terminalSessions.length + 1}`,
+          creationId,
           cwd: '/workspace',
           createdAt: '2026-08-26T12:34:00.000Z',
           lastActivityAt: '2026-08-26T12:34:00.000Z',
           attached: false,
         }
+        if (!existing) terminalSessions = [...terminalSessions, result as Record<string, unknown>]
+        break
+      }
+      case 'terminate-terminal':
+        terminalSessions = terminalSessions.filter((session) => session.id !== action.terminalId)
         break
       case 'terminal-ticket':
         result = {
@@ -383,7 +401,6 @@ test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and win
   await dock.getByRole('button', { name: 'Open Finder' }).click()
   const finder = page.getByRole('region', { name: 'Finder window' })
   await expect(finder).toBeVisible()
-  await finder.getByRole('button', { name: /^workspace/ }).dblclick()
   await finder.getByRole('button', { name: /README\.md/ }).click()
   await finder.getByRole('button', { name: 'Quick Look' }).click()
   const quickLook = page.getByRole('dialog', { name: /README\.md/ })
@@ -408,19 +425,41 @@ test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and win
   await spotlight.getByRole('combobox').fill('readme')
   await expect(spotlight.getByRole('option', { name: /src/ })).toHaveCount(0, { timeout: 400 })
   await expect(spotlight.getByRole('option', { name: /README\.md/ })).toBeVisible()
+  expect(mock.actions.filter((action) => action.action === 'search-files').at(-1)?.path).toBe('/')
   await spotlight.getByRole('combobox').fill('src')
   await expect(spotlight.getByRole('option', { name: /src/ })).toBeVisible()
   await page.keyboard.press('Enter')
   await expect(finder.getByRole('button', { name: /main\.ts/ })).toBeVisible()
   await expect
-    .poll(() => mock.actions.some((action) => action.action === 'list-files' && action.path === '/workspace/src'))
+    .poll(() => mock.actions.some((action) => action.action === 'list-files' && action.path === '/src'))
     .toBe(true)
-  expect(mock.actions.some((action) => action.action === 'read-file' && action.path === '/workspace/src')).toBe(false)
+  expect(mock.actions.some((action) => action.action === 'read-file' && action.path === '/src')).toBe(false)
 
   const finderFrame = page.locator('section[aria-label="Finder window"]')
+  const finderWatchBeforeMinimize = await page.evaluate(
+    () =>
+      (
+        window as typeof window & {
+          __tengriTestEventSources: { fileClosed: number; fileOpened: number }
+        }
+      ).__tengriTestEventSources,
+  )
+  expect(finderWatchBeforeMinimize.fileOpened - finderWatchBeforeMinimize.fileClosed).toBeGreaterThan(0)
   await page.getByRole('button', { name: 'Minimize Finder' }).click()
   await expect(finderFrame).toHaveAttribute('aria-hidden', 'true')
   await expect(finderFrame).toHaveCSS('pointer-events', 'none')
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (
+            window as typeof window & {
+              __tengriTestEventSources: { fileClosed: number; fileOpened: number }
+            }
+          ).__tengriTestEventSources.fileClosed,
+      ),
+    )
+    .toBe(finderWatchBeforeMinimize.fileClosed)
   await dock.getByRole('button', { name: 'Open Finder' }).click()
   await expect(finderFrame).not.toHaveAttribute('aria-hidden', 'true')
   await expect(finderFrame).toHaveCSS('pointer-events', 'auto')
@@ -439,6 +478,40 @@ test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and win
   await page.keyboard.press('Enter')
   await expect(page.getByRole('region', { name: 'Terminal window' })).toHaveCount(2)
   await expect.poll(() => mock.actions.filter((action) => action.action === 'create-terminal').length).toBe(2)
+  const terminalCreations = mock.actions.filter((action) => action.action === 'create-terminal')
+  expect(new Set(terminalCreations.map((action) => action.creationId)).size).toBe(2)
+  expect(
+    terminalCreations.every((action) => String(action.creationId).startsWith(`tengri-${readyAgent.id}-terminal-`)),
+  ).toBe(true)
+  await page.getByRole('button', { name: 'Close Terminal' }).last().click()
+  await expect.poll(() => mock.actions.some((action) => action.action === 'terminate-terminal')).toBe(true)
+})
+
+test('reports the desktop window limit for shortcuts, Dock launches, and Spotlight actions', async ({ page }) => {
+  await mockTengri(page)
+  await page.goto('/')
+
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  await dock.getByRole('button', { name: 'Open Settings' }).click()
+  for (let index = 0; index < 17; index += 1) await page.keyboard.press('Meta+N')
+  await expect(page.getByRole('region', { name: 'Settings window' })).toHaveCount(18)
+
+  await page.keyboard.press('Meta+N')
+  const capacityAlert = page.getByRole('alert').filter({ hasText: 'at most 20 open windows' }).first()
+  await expect(capacityAlert).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Settings window' })).toHaveCount(18)
+
+  await dock.getByRole('button', { name: 'Open Terminal' }).click()
+  await expect(page.getByRole('region', { name: 'Terminal window' })).toHaveCount(0)
+  await expect(capacityAlert).toBeVisible()
+
+  await page.keyboard.press('Meta+Space')
+  const spotlight = page.getByRole('dialog', { name: 'Spotlight' })
+  await spotlight.getByRole('combobox').fill('New Terminal')
+  await page.keyboard.press('Enter')
+  await expect(spotlight).toHaveCount(0)
+  await expect(page.getByRole('region', { name: 'Terminal window' })).toHaveCount(0)
+  await expect(capacityAlert).toBeVisible()
 })
 
 test('persists real Finder changes into Code and exposes a localhost preview from Chrome', async ({ page }) => {
@@ -448,7 +521,6 @@ test('persists real Finder changes into Code and exposes a localhost preview fro
   const dock = page.getByRole('navigation', { name: 'Dock' })
   await dock.getByRole('button', { name: 'Open Finder' }).click()
   const finder = page.getByRole('region', { name: 'Finder window' })
-  await finder.getByRole('button', { name: /^workspace/ }).dblclick()
   await finder.getByRole('button', { name: 'New folder' }).click()
   await finder.getByLabel('New folder name').fill('sandbox')
   await finder.getByLabel('New folder name').press('Enter')
@@ -470,7 +542,7 @@ test('persists real Finder changes into Code and exposes a localhost preview fro
   const code = page.getByRole('region', { name: 'Code window' })
   await expect(code.getByRole('tab', { name: /README\.md/ })).toBeVisible()
   await expect
-    .poll(() => mock.actions.some((action) => action.action === 'read-file' && action.path === '/workspace/README.md'))
+    .poll(() => mock.actions.some((action) => action.action === 'read-file' && action.path === '/README.md'))
     .toBe(true)
   const editor = code.locator('.monaco-editor')
   await expect(editor).toHaveCount(1)
@@ -481,9 +553,7 @@ test('persists real Finder changes into Code and exposes a localhost preview fro
     .poll(() =>
       mock.actions.some(
         (action) =>
-          action.action === 'write-file' &&
-          action.path === '/workspace/README.md' &&
-          action.content === '# Edited in Tengri',
+          action.action === 'write-file' && action.path === '/README.md' && action.content === '# Edited in Tengri',
       ),
     )
     .toBe(true)

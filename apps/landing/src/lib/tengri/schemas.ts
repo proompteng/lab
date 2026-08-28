@@ -25,6 +25,11 @@ const codexId = z
   .min(1)
   .max(160)
   .regex(/^[a-zA-Z0-9._:-]+$/)
+const terminalCreationId = z
+  .string()
+  .min(16)
+  .max(128)
+  .regex(/^[A-Za-z0-9_-]+$/)
 const previewPort = z
   .number()
   .int()
@@ -71,6 +76,7 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
   z.strictObject({
     action: z.literal('create-terminal'),
     agentId,
+    creationId: terminalCreationId,
     cwd: filePath,
     columns: z.number().int().min(20).max(400),
     rows: z.number().int().min(6).max(200),

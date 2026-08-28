@@ -348,8 +348,8 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
                 ..VolumeMount::default()
             },
         ]),
-        // Home and workspace are two stable paths into the same persistent claim. Mounting
-        // /workspace explicitly keeps older Nanoagent images writable as the guest evolves.
+        // Preserve the volume-root workspace mapping used by existing immutable guest
+        // images and PVCs. A future split requires an explicit, versioned data migration.
         working_dir: Some("/home/nanoagent".to_owned()),
         ..Container::default()
     }
