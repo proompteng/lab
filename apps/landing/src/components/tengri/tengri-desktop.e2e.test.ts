@@ -61,9 +61,11 @@ const previewTicket = `${'a'.repeat(48)}.${'b'.repeat(43)}`
 type MockOptions = {
   authenticated?: boolean
   agent?: typeof readyAgent | null
+  codexAuthenticated?: boolean
   extraFiles?: typeof workspaceEntries
   failSnapshotAfterAction?: 'delete-agent' | 'sleep-agent'
   holdCodexAccount?: boolean
+  holdCodexAccountAfterLogin?: boolean
   holdLifecycleAction?: 'delete-agent' | 'sleep-agent'
   holdReplayResume?: boolean
   resumeThreadDelayMs?: number
@@ -78,11 +80,13 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   const actions: Record<string, unknown>[] = []
   let resumeThreadRequests = 0
   let resumeThreadResponses = 0
+  let heldCodexAccountRequest = false
   let searchRequestsInFlight = 0
   let maxConcurrentSearchRequests = 0
   let releaseHeldResume = () => {}
   let markHeldResumeStarted = () => {}
   let releaseHeldCodexAccount = () => {}
+  let markHeldCodexAccountStarted = () => {}
   let releaseHeldLifecycleAction = () => {}
   let markHeldLifecycleActionStarted = () => {}
   const heldResume = new Promise<void>((resolve) => {
@@ -93,6 +97,9 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   })
   const heldCodexAccount = new Promise<void>((resolve) => {
     releaseHeldCodexAccount = resolve
+  })
+  const heldCodexAccountStarted = new Promise<void>((resolve) => {
+    markHeldCodexAccountStarted = resolve
   })
   const heldLifecycleAction = new Promise<void>((resolve) => {
     releaseHeldLifecycleAction = resolve
@@ -306,8 +313,29 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         }
         break
       case 'codex-account':
-        if (options.holdCodexAccount) await heldCodexAccount
-        result = { authenticated: true, email: 'ada@example.test', plan: 'pro' }
+        if (
+          options.holdCodexAccount ||
+          (options.holdCodexAccountAfterLogin &&
+            !heldCodexAccountRequest &&
+            actions.some((candidate) => candidate.action === 'codex-login'))
+        ) {
+          heldCodexAccountRequest = true
+          markHeldCodexAccountStarted()
+          await heldCodexAccount
+        }
+        result = {
+          authenticated: options.codexAuthenticated ?? true,
+          email: options.codexAuthenticated === false ? '' : 'ada@example.test',
+          plan: options.codexAuthenticated === false ? '' : 'pro',
+        }
+        break
+      case 'codex-login':
+        result = {
+          loginId: 'login-1',
+          verificationUrl: 'https://auth.openai.com/device',
+          userCode: 'TENG-RI01',
+          expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+        }
         break
       case 'create-thread':
         result = { id: 'thread-1', rawJson: '{}', eventSequence: 0 }
@@ -392,6 +420,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
     releaseHeldLifecycleAction,
     releaseHeldResume,
     waitForHeldLifecycleAction: () => heldLifecycleActionStarted,
+    waitForHeldCodexAccount: () => heldCodexAccountStarted,
     waitForHeldResume: () => heldResumeStarted,
   }
 }
@@ -798,6 +827,32 @@ test('blocks lifecycle changes while Settings has a guest request in flight', as
   await expect(lifecycleButtons).toHaveCount(3)
   for (const button of await lifecycleButtons.all()) await expect(button).toBeDisabled()
   expect(mock.actions.some((action) => action.action === 'sleep-agent')).toBe(false)
+
+  mock.releaseHeldCodexAccount()
+  await expect(settings.getByRole('button', { name: 'Sleep Agent' })).toBeEnabled()
+  await settings.getByRole('button', { name: 'Sleep Agent' }).click()
+  await expect(page.getByRole('dialog', { name: 'Tengri is sleeping' })).toBeVisible()
+})
+
+test('blocks lifecycle changes while Chrome has a device-login refresh in flight', async ({ page }) => {
+  const mock = await mockTengri(page, { codexAuthenticated: false, holdCodexAccountAfterLogin: true })
+  await page.goto('/')
+
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  await chrome.getByRole('button', { name: 'Start device login' }).click()
+  await chrome.getByRole('button', { name: 'I’ve completed login' }).click()
+  await mock.waitForHeldCodexAccount()
+
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  await dock.getByRole('button', { name: 'Open Settings' }).click()
+  const settings = page.getByRole('region', { name: 'Settings window' })
+  await expect.poll(() => mock.actions.filter((action) => action.action === 'codex-account').length).toBeGreaterThan(2)
+  for (const button of await settings
+    .getByRole('button')
+    .filter({ hasText: /Sleep Agent|Sign Out|Delete Agent/ })
+    .all()) {
+    await expect(button).toBeDisabled()
+  }
 
   mock.releaseHeldCodexAccount()
   await expect(settings.getByRole('button', { name: 'Sleep Agent' })).toBeEnabled()

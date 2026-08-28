@@ -23,7 +23,6 @@ export function SettingsApp({
   instanceId,
   lifecycleDisabled,
   onDelete,
-  onGuestOperationChange,
   onSignOut,
   onSleep,
   user,
@@ -35,7 +34,6 @@ export function SettingsApp({
   instanceId: string
   lifecycleDisabled: boolean
   onDelete: () => void
-  onGuestOperationChange: (instanceId: string, active: boolean) => void
   onSignOut: () => void
   onSleep: () => void
   user: TengriUser
@@ -61,8 +59,7 @@ export function SettingsApp({
     refreshAbortRef.current = null
     refreshGenerationRef.current += 1
     setAccountRefreshing(false)
-    onGuestOperationChange(instanceId, false)
-  }, [instanceId, onGuestOperationChange])
+  }, [])
 
   const refreshAccount = useCallback(async () => {
     if (lifecycleBusy) return
@@ -71,7 +68,6 @@ export function SettingsApp({
     const generation = ++refreshGenerationRef.current
     refreshAbortRef.current = controller
     setAccountRefreshing(true)
-    onGuestOperationChange(instanceId, true)
     try {
       const account = await runTengriAction<TengriCodexAccount>(
         { action: 'codex-account', agentId: agent.id },
@@ -90,10 +86,9 @@ export function SettingsApp({
       if (refreshAbortRef.current === controller) {
         refreshAbortRef.current = null
         setAccountRefreshing(false)
-        onGuestOperationChange(instanceId, false)
       }
     }
-  }, [agent.id, instanceId, lifecycleBusy, onGuestOperationChange])
+  }, [agent.id, lifecycleBusy])
 
   useEffect(() => {
     setAccountState({ agentId: agent.id, status: 'loading' })
