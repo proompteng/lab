@@ -200,6 +200,10 @@ function findTengriApplicationBlock(contents: string) {
   if (document.getIn(['metadata', 'name']) !== 'platform' || document.getIn(['metadata', 'namespace']) !== 'argocd') {
     throw new Error('Platform ApplicationSet must be metadata.name=platform in namespace argocd')
   }
+  const specNode = document.get('spec', true)
+  if (isMap(specNode) && containsMergeKey(specNode.toJSON())) {
+    throw new Error('Tengri ApplicationSet spec must not contain YAML merge keys')
+  }
 
   const goTemplateOptions = document.getIn(['spec', 'goTemplateOptions'], true)
   if (
@@ -259,8 +263,19 @@ function findTengriApplicationBlock(contents: string) {
   ) {
     throw new Error('Tengri ApplicationSet must not define generator-level templates')
   }
-  const clusterElements = clusterGenerator.getIn(['list', 'elements'], true)
-  const applicationElements = applicationGenerator.getIn(['list', 'elements'], true)
+  const clusterList = clusterGenerator.get('list', true)
+  const applicationList = applicationGenerator.get('list', true)
+  if (!isMap(clusterList) || !isMap(applicationList)) {
+    throw new Error('Platform ApplicationSet matrix generators must contain list mappings')
+  }
+  if (
+    Object.keys(clusterList.toJSON()).some((field) => field !== 'elements') ||
+    Object.keys(applicationList.toJSON()).some((field) => field !== 'elements')
+  ) {
+    throw new Error('Tengri ApplicationSet list generators must contain only elements')
+  }
+  const clusterElements = clusterList.get('elements', true)
+  const applicationElements = applicationList.get('elements', true)
   if (!isSeq(clusterElements) || !isSeq(applicationElements)) {
     throw new Error('Platform ApplicationSet matrix must contain cluster and application element lists')
   }
@@ -283,8 +298,12 @@ function findTengriApplicationBlock(contents: string) {
   const selector = selectorNode === undefined ? undefined : isMap(selectorNode) ? selectorNode.toJSON() : null
   assertSelectorAdmitsTengri(selector, application)
 
-  if (document.getIn(['spec', 'template', 'metadata', 'name']) !== expectedApplicationNameTemplate) {
+  const templateMetadataNode = document.getIn(['spec', 'template', 'metadata'], true)
+  if (!isMap(templateMetadataNode) || templateMetadataNode.get('name') !== expectedApplicationNameTemplate) {
     throw new Error(`Tengri ApplicationSet template must name applications ${expectedApplicationNameTemplate}`)
+  }
+  if (Object.keys(templateMetadataNode.toJSON()).some((field) => field !== 'name')) {
+    throw new Error('Tengri ApplicationSet template metadata must contain only the verified Application name')
   }
   const destinationNode = document.getIn(['spec', 'template', 'spec', 'destination'], true)
   const destination = isMap(destinationNode) ? destinationNode.toJSON() : null
@@ -468,6 +487,12 @@ function assertSelectorAdmitsTengri(selector: unknown, application: Record<strin
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function containsMergeKey(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(containsMergeKey)
+  if (!isPlainRecord(value)) return false
+  return Object.hasOwn(value, '<<') || Object.values(value).some(containsMergeKey)
 }
 
 function ignoreSelectorCanMatch(value: unknown, expected: string) {

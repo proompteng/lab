@@ -386,6 +386,77 @@ spec:
     }
   })
 
+  it('rejects elementsYaml overrides in either verified list generator', () => {
+    const placements = [
+      [
+        '          - list:\n              elements:\n              - cluster: in-cluster',
+        `          - list:
+              elementsYaml: '[{"cluster":"other"}]'
+              elements:
+              - cluster: in-cluster`,
+      ],
+      [
+        '          - list:\n              elements:\n              - name: kata',
+        `          - list:
+              elementsYaml: '[{"name":"other"}]'
+              elements:
+              - name: kata`,
+      ],
+    ] as const
+
+    for (const [expected, replacement] of placements) {
+      const paths = fixture()
+      const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+      const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+      writeFileSync(
+        paths.applicationSetPath,
+        readFileSync(paths.applicationSetPath, 'utf8').replace(expected, replacement),
+      )
+      const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+
+      expect(() => validateTengriRelease(paths)).toThrow('list generators must contain only elements')
+      expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
+        'list generators must contain only elements',
+      )
+      expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+      expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
+      expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
+      rmSync(paths.directory, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects YAML merge keys anywhere in the verified ApplicationSet spec', () => {
+    const placements = [
+      ['  generators:\n', '  <<: { strategy: { type: RollingSync } }\n  generators:\n'],
+      [
+        '      project: \'{{ if hasKey . "project" }}{{ .project }}{{ else }}default{{ end }}\'\n',
+        `      <<: { sources: [] }
+      project: '{{ if hasKey . "project" }}{{ .project }}{{ else }}default{{ end }}'
+`,
+      ],
+    ] as const
+
+    for (const [expected, replacement] of placements) {
+      const paths = fixture()
+      const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+      const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+      writeFileSync(
+        paths.applicationSetPath,
+        readFileSync(paths.applicationSetPath, 'utf8').replace(expected, replacement),
+      )
+      const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+
+      expect(() => validateTengriRelease(paths)).toThrow('spec must not contain YAML merge keys')
+      expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
+        'spec must not contain YAML merge keys',
+      )
+      expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+      expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
+      expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
+      rmSync(paths.directory, { recursive: true, force: true })
+    }
+  })
+
   it('rejects rollout strategies that can hold the verified release', () => {
     const paths = fixture()
     const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
@@ -547,6 +618,29 @@ spec:
       expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
       rmSync(paths.directory, { recursive: true, force: true })
     }
+  })
+
+  it('rejects a generated Application namespace outside argocd', () => {
+    const paths = fixture()
+    const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+    const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+    writeFileSync(
+      paths.applicationSetPath,
+      readFileSync(paths.applicationSetPath, 'utf8').replace(
+        "      name: '{{ .name }}{{ .suffix }}'\n",
+        "      name: '{{ .name }}{{ .suffix }}'\n      namespace: other\n",
+      ),
+    )
+    const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+
+    expect(() => validateTengriRelease(paths)).toThrow('template metadata must contain only the verified Application')
+    expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
+      'template metadata must contain only the verified Application',
+    )
+    expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+    expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
+    expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
+    rmSync(paths.directory, { recursive: true, force: true })
   })
 
   it('rejects base-template destinations that conflict with the verified destination patch', () => {
@@ -730,8 +824,10 @@ spec:
     )
     const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
 
-    expect(() => validateTengriRelease(paths)).toThrow('must not use YAML merge keys')
-    expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow('must not use YAML merge keys')
+    expect(() => validateTengriRelease(paths)).toThrow('spec must not contain YAML merge keys')
+    expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
+      'spec must not contain YAML merge keys',
+    )
     expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
     expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
     expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
@@ -783,11 +879,12 @@ spec:
         ),
       )
       const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+      const message = override.startsWith('<<')
+        ? 'spec must not contain YAML merge keys'
+        : 'matrix inputs must not override the release source'
 
-      expect(() => validateTengriRelease(paths)).toThrow('matrix inputs must not override the release source')
-      expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
-        'matrix inputs must not override the release source',
-      )
+      expect(() => validateTengriRelease(paths)).toThrow(message)
+      expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(message)
       expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
       expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
       expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
