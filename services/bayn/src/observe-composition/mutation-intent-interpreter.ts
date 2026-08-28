@@ -659,7 +659,6 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
           yield* Effect.fromResult(
             input.mutationPhase === 'CLOSE'
               ? decidePreparedCloseIntentAdmission(
-                  prepared.intent,
                   decision,
                   facts.evaluatedAt,
                   submitExpiresAt,

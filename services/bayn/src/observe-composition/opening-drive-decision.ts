@@ -101,6 +101,7 @@ export const openingDriveCloseQuery = (
   protocol: OpeningDriveProtocol,
   calendar: MarketCalendarObservation,
   observedAt: string,
+  symbols: readonly string[],
 ): Result.Result<IntradaySnapshotQuery, OpeningDriveRuntimeDecisionFailure> => {
   const observedEpoch = Date.parse(observedAt)
   const rangeEndEpoch = Math.floor(observedEpoch / 60_000) * 60_000
@@ -114,9 +115,11 @@ export const openingDriveCloseQuery = (
   ) {
     return Result.fail(failure('close-query', 'cycle does not admit a complete intraday close snapshot at this time'))
   }
-  return Result.succeed(
-    commonQuery(protocol, cycle.identity.executionSessionDate, calendar, rangeStartAt, rangeEndAt, observedAt, 0),
-  )
+  return Result.succeed({
+    ...commonQuery(protocol, cycle.identity.executionSessionDate, calendar, rangeStartAt, rangeEndAt, observedAt, 0),
+    symbols: [...new Set(symbols)].sort(),
+    purpose: 'LIQUIDATION',
+  })
 }
 
 export const loadIntradaySnapshot = (

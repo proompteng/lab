@@ -327,6 +327,9 @@ const validateBindings = (
   if (intradayEntry && decision.calendarHash !== cycle.window.executionCalendarHash) {
     return Result.fail(error('binding', 'intraday decision calendar must match the immutable cycle execution calendar'))
   }
+  if (intradayClose && executionMarketData?.purpose !== 'LIQUIDATION') {
+    return Result.fail(error('binding', 'intraday close requires explicit liquidation market-data evidence'))
+  }
   if (
     intradayDecision !== (executionMarketData !== undefined) ||
     (executionMarketData !== undefined && executionMarketData.sessionDate !== cycle.identity.executionSessionDate) ||

@@ -95,6 +95,7 @@ import {
   decideExecutionCycleCompletion,
   decideExecutionIntentTerminalDisposition,
   decidePreparedMutationIntent,
+  decidePreparedCloseIntentAdmission,
   decidePreparedMutationIntentAdmission,
   decidePreparedMutationRecovery,
   decideMutationIntentSettlement,
@@ -434,7 +435,9 @@ const intradaySnapshot = (protocol: OpeningDriveProtocol, request: IntradaySnaps
     observedAt: request.observedAt,
     universeId: request.universeId,
     universeSymbolHash: request.universeSymbolHash,
-    symbols: [...request.universe].sort(),
+    ...(request.purpose === undefined ? {} : { universe: request.universe }),
+    symbols: [...(request.symbols ?? request.universe)].sort(),
+    ...(request.purpose === undefined ? {} : { purpose: request.purpose }),
     feed: request.feed,
     delayClass: request.delayClass,
     sourceTopics: request.sourceTopics,
@@ -1397,6 +1400,32 @@ describe('OBSERVE runtime composition', () => {
     ).toBe(true)
 
     const submit = { _tag: 'Submit' as const }
+    expect(
+      Result.isSuccess(
+        decidePreparedCloseIntentAdmission(
+          submit,
+          evaluatedAt,
+          cycle.window.submissionCutoffAt,
+          0,
+          ReconciliationStatus.Exact,
+          true,
+          0,
+        ),
+      ),
+    ).toBe(true)
+    expect(
+      Option.getOrUndefined(
+        Result.getFailure(
+          decidePreparedCloseIntentAdmission(
+            submit,
+            evaluatedAt,
+            cycle.window.submissionCutoffAt,
+            0,
+            ReconciliationStatus.Discrepancy,
+          ),
+        ),
+      )?.reason,
+    ).toBe('reconciliation-not-exact')
     expect(
       Option.getOrUndefined(
         Result.getFailure(

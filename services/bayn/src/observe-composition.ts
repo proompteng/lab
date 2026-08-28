@@ -5,6 +5,7 @@ export {
   decideMutationIntentSettlement,
   decideExecutionCycleCompletion,
   decideExecutionIntentTerminalDisposition,
+  decidePreparedCloseIntentAdmission,
   decidePreparedMutationIntent,
   decidePreparedMutationIntentAdmission,
   decidePreparedMutationRecovery,

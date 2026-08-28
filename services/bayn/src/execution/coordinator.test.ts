@@ -338,30 +338,26 @@ describe('MutationStore decision algebra', () => {
       ),
     )
     const closeInput = { ...decisionStartInput(MutationOperation.Submit), closeOnly: true as const }
-    const closeStarted = resultSuccess(
-      decideMutationStart(
-        MutationOperation.Submit,
-        closeInput,
-        closeBinding,
-        { ...decisionIntent(), side: OrderSide.Sell },
-        undefined,
-      ),
-    )
-    expect(closeStarted.intentTransition).toBe('ApprovedToIoStarted')
-    expect(
-      resultFailure(
-        decideMutationStart(MutationOperation.Submit, closeInput, closeBinding, decisionIntent(), undefined),
-      ),
-    ).toMatchObject({ failure: 'authority', message: 'close-only submit requires a sell intent' })
-    expect(
-      resultFailure(
-        decideFinalSubmitAuthorization({
-          authority: closeBinding,
-          intent: decisionIntent(IntentState.IoStarted),
-          closeOnly: true,
-        }),
-      ),
-    ).toMatchObject({ failure: 'authority', message: 'close-only submit requires a sell intent' })
+    for (const side of [OrderSide.Buy, OrderSide.Sell]) {
+      const closeStarted = resultSuccess(
+        decideMutationStart(
+          MutationOperation.Submit,
+          closeInput,
+          closeBinding,
+          { ...decisionIntent(), side },
+          undefined,
+        ),
+      )
+      expect(closeStarted.intentTransition).toBe('ApprovedToIoStarted')
+      expect(
+        resultSuccess(
+          decideFinalSubmitAuthorization({
+            authority: closeBinding,
+            intent: { ...decisionIntent(IntentState.IoStarted), side },
+          }),
+        ),
+      ).toBeUndefined()
+    }
   })
 
   test('decides start replay, immutable binding, stale time, and retained cancel identity', () => {

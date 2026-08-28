@@ -1514,7 +1514,7 @@ export const buildClosingExecutionCycleDecision = (
               Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
             )
             query = yield* Effect.fromResult(
-              openingDriveCloseQuery(cycle, definition.parameters, executionSession.calendar, evaluatedAt),
+              openingDriveCloseQuery(cycle, definition.parameters, executionSession.calendar, evaluatedAt, symbols),
             ).pipe(
               Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
             )

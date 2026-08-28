@@ -2,7 +2,7 @@ import { Result, Schema } from 'effect'
 
 import { MutationOperation, type MutationEvidence, type PartialMutationEvidence } from '../../broker/alpaca-mutations'
 import { canonicalHashV1Result } from '../../hash'
-import { Authority, IntentState, KillState, OrderSide, TerminalOutcome } from '../contracts'
+import { Authority, IntentState, KillState, TerminalOutcome } from '../contracts'
 import { legacyMutationEventSchemaVersion, legacyMutationIdentitySchemaVersion } from '../legacy-wire'
 import { strictParseOptions } from '../../schemas'
 import {
@@ -297,25 +297,15 @@ export const decideMutationAuthority = Pipeable.by<
 export interface FinalSubmitAuthorizationInput {
   readonly authority: MutationAuthorityBinding
   readonly intent: MutationIntentSnapshot | undefined
-  readonly closeOnly?: boolean
 }
 
 export const decideFinalSubmitAuthorization = (
   input: FinalSubmitAuthorizationInput,
 ): Result.Result<void, MutationStoreError> => {
-  const { authority, intent, closeOnly = false } = input
+  const { authority, intent } = input
   if (intent === undefined) {
     return Result.fail(
       storeError({ operation: 'begin-submit', failure: 'invariant', message: 'final submit intent does not exist' }),
-    )
-  }
-  if (closeOnly && intent.side !== OrderSide.Sell) {
-    return Result.fail(
-      storeError({
-        operation: 'begin-submit',
-        failure: 'authority',
-        message: 'close-only submit requires a sell intent',
-      }),
     )
   }
   if (
@@ -384,15 +374,6 @@ const decideMutationStartDataFirst = (
         operation: storeOperation,
         failure: 'authority',
         message: 'intent account does not match the active execution authority generation',
-      }),
-    )
-  }
-  if (input.closeOnly === true && intent.side !== OrderSide.Sell) {
-    return Result.fail(
-      storeError({
-        operation: 'begin-submit',
-        failure: 'authority',
-        message: 'close-only submit requires a sell intent',
       }),
     )
   }

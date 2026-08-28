@@ -338,7 +338,7 @@ describe('opening-drive runtime decision boundary', () => {
 
   test('uses only the last complete minute before a close decision', () => {
     const cycle = makeActiveCycle()
-    const query = success(openingDriveCloseQuery(cycle, protocol, calendar, '2026-08-18T19:30:01.000Z'))
+    const query = success(openingDriveCloseQuery(cycle, protocol, calendar, '2026-08-18T19:30:01.000Z', ['AMD']))
 
     expect(query).toMatchObject({
       sessionDate: '2026-08-18',
@@ -346,11 +346,17 @@ describe('opening-drive runtime decision boundary', () => {
       rangeEndAt: '2026-08-18T19:30:00.000Z',
       observedAt: '2026-08-18T19:30:01.000Z',
       minimumWatermarkLagMs: 0,
+      purpose: 'LIQUIDATION',
+      symbols: ['AMD'],
     })
-    expect(failure(openingDriveCloseQuery(cycle, protocol, calendar, '2026-08-18T19:30:00.000Z'))).toMatchObject({
+    expect(
+      failure(openingDriveCloseQuery(cycle, protocol, calendar, '2026-08-18T19:30:00.000Z', ['AMD'])),
+    ).toMatchObject({
       operation: 'close-query',
     })
-    expect(failure(openingDriveCloseQuery(cycle, protocol, calendar, '2026-08-18T20:00:01.000Z'))).toMatchObject({
+    expect(
+      failure(openingDriveCloseQuery(cycle, protocol, calendar, '2026-08-18T20:00:01.000Z', ['AMD'])),
+    ).toMatchObject({
       operation: 'close-query',
     })
   })
@@ -368,7 +374,9 @@ describe('opening-drive runtime decision boundary', () => {
       },
       verifyArchiveSnapshot: (candidate) => Effect.succeed(candidate as ArchiveVerifiedIntradayMarketSnapshot),
     }
-    const query = success(openingDriveCloseQuery(makeActiveCycle(), protocol, calendar, snapshot.manifest.observedAt))
+    const query = success(
+      openingDriveCloseQuery(makeActiveCycle(), protocol, calendar, snapshot.manifest.observedAt, ['AMD']),
+    )
 
     expect(await Effect.runPromise(loadIntradaySnapshot(service, query))).toBe(snapshot)
     expect(calls).toEqual([`capture`, `load:${protocol.universe.length}`])

@@ -540,6 +540,59 @@ describe('final broker mutation authority', () => {
     expect(observed.submits).toBe(1)
   })
 
+  test('keeps an exact short cover eligible with exhausted buying power in close-only mode', async () => {
+    const observed = await runLiveSubmit({
+      brokerAccount: account({ buyingPowerMicros: '0' }),
+      positions: [
+        position({
+          side: PositionSide.Short,
+          quantityMicros: '-1000000',
+          marketValueMicros: '-100000000',
+        }),
+      ],
+      proposedIntent: intent({ side: OrderSide.Buy }),
+      closeOnly: true,
+    })
+
+    expect(observed.exit._tag).toBe('Success')
+    expect(observed.submits).toBe(1)
+  })
+
+  test('does not charge buying power to a strict short cover in a mixed portfolio', async () => {
+    const observed = await runLiveSubmit({
+      brokerAccount: account({ buyingPowerMicros: '0' }),
+      positions: [
+        position({
+          side: PositionSide.Short,
+          quantityMicros: '-1000000',
+          marketValueMicros: '-100000000',
+        }),
+        position({
+          assetId: '7781125b-04ba-4fcb-903f-ad4c34eb6832',
+          symbol: 'NVDA',
+          quantityMicros: '1000000',
+          marketValueMicros: '100000000',
+        }),
+      ],
+      proposedIntent: intent({ side: OrderSide.Buy }),
+      closeOnly: true,
+    })
+
+    expect(observed.exit._tag).toBe('Success')
+    expect(observed.submits).toBe(1)
+  })
+
+  test('rejects a close-only buy that is not a strictly reducing short cover', async () => {
+    const observed = await runLiveSubmit({
+      positions: [],
+      proposedIntent: intent({ side: OrderSide.Buy }),
+      closeOnly: true,
+    })
+
+    expect(failureTag(observed.exit)).toBe('CloseOnlyOrderNotReducing')
+    expect(observed.submits).toBe(0)
+  })
+
   test('rejects exposure drift observed after the final account safety read', async () => {
     const observed = await runLiveSubmit({
       positionSnapshots: [[], [], [position()]],

@@ -680,7 +680,6 @@ export type AuthorityBindingFailure =
       readonly observed: string | null
       readonly expected: string
     }
-  | { readonly _tag: 'ClosingIntentMustSell' }
 
 export const decodeAuthorityBindingRows = (
   rows: unknown,
@@ -749,7 +748,6 @@ const validateCurrentClosingAuthorityDataFirst = (
   { readonly _tag: 'CurrentCapitalGrant'; readonly binding: AuthorityBindingRow },
   AuthorityBindingFailure
 > => {
-  if (intent.side !== 'SELL') return Result.fail({ _tag: 'ClosingIntentMustSell' })
   if (rows.length === 0) return Result.fail({ _tag: 'AuthorityMissing' })
   if (rows.length > 1) return Result.fail({ _tag: 'MultipleAuthorityRows', count: rows.length })
   const [authority] = rows

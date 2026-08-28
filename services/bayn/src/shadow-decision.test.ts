@@ -671,6 +671,45 @@ const openingDriveMarketDataBinding = (
   }
 }
 
+const liquidationMarketDataBinding = (
+  cycle: AutonomousCycle,
+  barsContentHash: string = hash('8'),
+): ExecutionMarketDataBinding => {
+  const binding = openingDriveMarketDataBinding(cycle, barsContentHash)
+  const {
+    contentHash: _contentHash,
+    snapshotId: _snapshotId,
+    schemaVersion: _bindingSchemaVersion,
+    snapshotSchemaVersion,
+    purpose: _purpose,
+    universe: _universe,
+    ...bindingMaterial
+  } = binding
+  const universe = [...binding.symbols].sort()
+  const liquidationMaterial = {
+    ...bindingMaterial,
+    universe,
+    universeSymbolHash: sha256(universe.join(',')),
+    purpose: 'LIQUIDATION' as const,
+    barCount: 0,
+    tradeCount: 0,
+  }
+  const snapshotMaterial = { schemaVersion: snapshotSchemaVersion, ...liquidationMaterial }
+  const contentHash = canonicalHashV1(snapshotMaterial)
+  return Result.getOrThrow(
+    Schema.decodeUnknownResult(
+      ExecutionMarketDataBindingSchema,
+      strictParseOptions,
+    )({
+      schemaVersion: 'bayn.execution-market-data-binding.v2',
+      snapshotSchemaVersion,
+      ...liquidationMaterial,
+      contentHash,
+      snapshotId: canonicalHashV1({ ...snapshotMaterial, contentHash }),
+    }),
+  )
+}
+
 type OpeningDriveShadowDecisionInput = Omit<ObserveShadowDecisionInput, 'plannerInput'> & {
   readonly plannerInput: QuoteBoundTargetPlannerInput
 }
@@ -978,7 +1017,7 @@ describe('OBSERVE shadow decision', () => {
     const input = makeOpeningDriveInput()
     const entryMarketData = input.executionMarketData
     if (entryMarketData === undefined) throw new Error('opening-drive fixture must include entry market data')
-    const closeMarketData = openingDriveMarketDataBinding(input.cycle, hash('b'))
+    const closeMarketData = liquidationMarketDataBinding(input.cycle, hash('b'))
     expect(closeMarketData.snapshotId).not.toBe(entryMarketData.snapshotId)
     const compiledDecision = {
       schemaVersion: 'bayn.execution-flat-target.v1' as const,
@@ -1072,7 +1111,7 @@ describe('OBSERVE shadow decision', () => {
         }),
       }
     })
-    const document = await build({
+    const closeInput = {
       ...input,
       compiledDecision,
       executionMarketData: closeMarketData,
@@ -1080,11 +1119,25 @@ describe('OBSERVE shadow decision', () => {
       targetPlan,
       riskInputs,
       submissionCutoffAt: closeSubmitCutoffAt,
-    })
+    }
+    const document = await build(closeInput)
 
     expect(document.bindings.snapshotId).toBe(entryMarketData.snapshotId)
     expect(document.bindings.executionMarketData?.snapshotId).toBe(closeMarketData.snapshotId)
     expect(document.targetPlan.status).toBe(TargetPlanStatus.Planned)
+
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        buildObserveShadowDecision({
+          ...closeInput,
+          executionMarketData: openingDriveMarketDataBinding(input.cycle, hash('c')),
+        }),
+      ),
+    )
+    expect(failure).toMatchObject({
+      failure: 'binding',
+      message: 'intraday close requires explicit liquidation market-data evidence',
+    })
   })
 
   test('binds each decision variant to its strategy and validates exact flat-close weights', () => {

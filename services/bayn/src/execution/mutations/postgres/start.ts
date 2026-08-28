@@ -206,7 +206,7 @@ const makeMutationStartPostgresDataFirst = (
     Effect.gen(function* () {
       const authority = yield* readAuthorityBinding(MutationOperation.Submit, closeOnly)
       const intent = yield* readIntent(MutationOperation.Submit, intentId)
-      yield* fromDecision(() => decideFinalSubmitAuthorization({ authority, intent, closeOnly }))
+      yield* fromDecision(() => decideFinalSubmitAuthorization({ authority, intent }))
     })
 
   return { authorizeSubmit, begin }
