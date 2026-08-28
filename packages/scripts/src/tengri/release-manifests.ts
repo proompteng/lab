@@ -221,6 +221,9 @@ function findTengriApplicationBlock(contents: string) {
   if (isMap(topLevelGenerator) && topLevelGenerator.has('selector')) {
     throw new Error('Tengri ApplicationSet top-level matrix generator must not define a selector')
   }
+  if (isMap(topLevelGenerator) && Object.keys(topLevelGenerator.toJSON()).some((field) => field !== 'matrix')) {
+    throw new Error('Tengri ApplicationSet top-level generator must contain only the verified matrix generator')
+  }
   const matrix = isMap(topLevelGenerator) ? topLevelGenerator.get('matrix', true) : undefined
   if (!isMap(matrix)) {
     throw new Error('Platform ApplicationSet must contain the expected matrix generator')
@@ -240,6 +243,14 @@ function findTengriApplicationBlock(contents: string) {
   }
   if (clusterGenerator.has('selector')) {
     throw new Error('Tengri ApplicationSet cluster generator must not define a selector')
+  }
+  const clusterGeneratorFields = Object.keys(clusterGenerator.toJSON())
+  const applicationGeneratorFields = Object.keys(applicationGenerator.toJSON())
+  if (
+    clusterGeneratorFields.some((field) => field !== 'list') ||
+    applicationGeneratorFields.some((field) => field !== 'list' && field !== 'selector')
+  ) {
+    throw new Error('Tengri ApplicationSet matrix children must contain only their verified list generators')
   }
   if (
     matrix.has('template') ||
@@ -312,6 +323,12 @@ function findTengriApplicationBlock(contents: string) {
   if (project !== 'default' && project !== expectedProjectTemplate) {
     throw new Error('Tengri ApplicationSet template must resolve Tengri to the default project')
   }
+
+  const globalIgnoreDifferencesNode = document.getIn(['spec', 'template', 'spec', 'ignoreDifferences'], true)
+  if (globalIgnoreDifferencesNode !== undefined && !isSeq(globalIgnoreDifferencesNode)) {
+    throw new Error('Tengri ApplicationSet global ignoreDifferences must be a sequence')
+  }
+  assertGlobalIgnoreDifferencesDoNotMatchTengri(globalIgnoreDifferencesNode?.toJSON())
 
   assertSafeTemplatePatch(document.getIn(['spec', 'templatePatch']))
 
@@ -451,6 +468,28 @@ function assertSelectorAdmitsTengri(selector: unknown, application: Record<strin
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function ignoreSelectorCanMatch(value: unknown, expected: string) {
+  return value === undefined || value === expected || (typeof value === 'string' && value.includes('*'))
+}
+
+function assertGlobalIgnoreDifferencesDoNotMatchTengri(value: unknown) {
+  if (value === undefined) return
+  if (!Array.isArray(value) || value.some((rule) => !isPlainRecord(rule))) {
+    throw new Error('Tengri ApplicationSet global ignoreDifferences must contain resource rules')
+  }
+  const matchesTengriDeployment = value.some(
+    (rule) =>
+      isPlainRecord(rule) &&
+      ignoreSelectorCanMatch(rule.group, 'apps') &&
+      ignoreSelectorCanMatch(rule.kind, 'Deployment') &&
+      ignoreSelectorCanMatch(rule.namespace, 'tengri') &&
+      ignoreSelectorCanMatch(rule.name, 'tengri'),
+  )
+  if (matchesTengriDeployment) {
+    throw new Error('Tengri ApplicationSet global ignoreDifferences must not match the Tengri Deployment')
+  }
 }
 
 function assertTengriApplicationTarget(application: Record<string, unknown>) {

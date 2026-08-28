@@ -336,6 +336,56 @@ spec:
     rmSync(paths.directory, { recursive: true, force: true })
   })
 
+  it('rejects mixed generator definitions without mutating release manifests', () => {
+    const mixedDefinitions = [
+      [
+        '  template:\n',
+        `      list:
+        elements: []
+  template:
+`,
+        'top-level generator must contain only the verified matrix generator',
+      ],
+      [
+        '          - list:\n              elements:\n              - name: kata',
+        `            git:
+              repoURL: https://github.com/example/fork.git
+              revision: HEAD
+          - list:
+              elements:
+              - name: kata`,
+        'matrix children must contain only their verified list generators',
+      ],
+      [
+        '            selector:\n              matchExpressions:',
+        `            git:
+              repoURL: https://github.com/example/fork.git
+              revision: HEAD
+            selector:
+              matchExpressions:`,
+        'matrix children must contain only their verified list generators',
+      ],
+    ] as const
+
+    for (const [expected, replacement, message] of mixedDefinitions) {
+      const paths = fixture()
+      const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+      const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+      writeFileSync(
+        paths.applicationSetPath,
+        readFileSync(paths.applicationSetPath, 'utf8').replace(expected, replacement),
+      )
+      const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+
+      expect(() => validateTengriRelease(paths)).toThrow(message)
+      expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(message)
+      expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+      expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
+      expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
+      rmSync(paths.directory, { recursive: true, force: true })
+    }
+  })
+
   it('rejects rollout strategies that can hold the verified release', () => {
     const paths = fixture()
     const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
@@ -521,6 +571,37 @@ spec:
       expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
       rmSync(paths.directory, { recursive: true, force: true })
     }
+  })
+
+  it('rejects global ignore rules that can match the Tengri Deployment', () => {
+    const paths = fixture()
+    const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+    const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+    writeFileSync(
+      paths.applicationSetPath,
+      readFileSync(paths.applicationSetPath, 'utf8').replace(
+        '  templatePatch: |\n',
+        `      ignoreDifferences:
+        - group: apps
+          kind: Deployment
+          namespace: tengri
+          name: tengri
+          jsonPointers:
+            - /spec/template/spec/containers/0/image
+  templatePatch: |
+`,
+      ),
+    )
+    const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+
+    expect(() => validateTengriRelease(paths)).toThrow('global ignoreDifferences must not match the Tengri Deployment')
+    expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
+      'global ignoreDifferences must not match the Tengri Deployment',
+    )
+    expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+    expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
+    expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
+    rmSync(paths.directory, { recursive: true, force: true })
   })
 
   it('rejects a Tengri ApplicationSet entry that targets a different application', () => {
