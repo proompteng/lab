@@ -602,10 +602,19 @@ const intradayMomentumDecision = (calendarHash: string, boundSnapshotId: string)
   })),
 })
 
+type ArchiveMarketDataBindingV1 = Extract<
+  ExecutionMarketDataBinding,
+  { readonly schemaVersion: 'bayn.execution-market-data-binding.v1' }
+>
+type ArchiveMarketDataBindingV2 = Extract<
+  ExecutionMarketDataBinding,
+  { readonly schemaVersion: 'bayn.execution-market-data-binding.v2' }
+>
+
 const openingDriveMarketDataBinding = (
   cycle: AutonomousCycle,
   barsContentHash: string = hash('8'),
-): ExecutionMarketDataBinding => {
+): ArchiveMarketDataBindingV1 => {
   const calendarMaterial = {
     schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
     source: 'alpaca-v2-calendar' as const,
@@ -671,11 +680,46 @@ const openingDriveMarketDataBinding = (
   }
 }
 
+const currentEntryMarketDataBinding = (cycle: AutonomousCycle): ArchiveMarketDataBindingV2 => {
+  const binding = openingDriveMarketDataBinding(cycle)
+  const {
+    contentHash: _contentHash,
+    snapshotId: _snapshotId,
+    schemaVersion: _bindingSchemaVersion,
+    snapshotSchemaVersion,
+    ...bindingMaterial
+  } = binding
+  const universe = [...binding.symbols].sort()
+  const currentMaterial = {
+    ...bindingMaterial,
+    universe,
+    universeSymbolHash: sha256(universe.join(',')),
+  }
+  const snapshotMaterial = { schemaVersion: snapshotSchemaVersion, ...currentMaterial }
+  const contentHash = canonicalHashV1(snapshotMaterial)
+  const decoded = Result.getOrThrow(
+    Schema.decodeUnknownResult(
+      ExecutionMarketDataBindingSchema,
+      strictParseOptions,
+    )({
+      schemaVersion: 'bayn.execution-market-data-binding.v2',
+      snapshotSchemaVersion,
+      ...currentMaterial,
+      contentHash,
+      snapshotId: canonicalHashV1({ ...snapshotMaterial, contentHash }),
+    }),
+  )
+  if (decoded.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
+    throw new Error('current entry fixture must decode as archive binding v2')
+  }
+  return decoded
+}
+
 const liquidationMarketDataBinding = (
   cycle: AutonomousCycle,
   barsContentHash: string = hash('8'),
   symbols?: readonly string[],
-): ExecutionMarketDataBinding => {
+): ArchiveMarketDataBindingV2 => {
   const binding = openingDriveMarketDataBinding(cycle, barsContentHash)
   const {
     contentHash: _contentHash,
@@ -699,7 +743,7 @@ const liquidationMarketDataBinding = (
   }
   const snapshotMaterial = { schemaVersion: snapshotSchemaVersion, ...liquidationMaterial }
   const contentHash = canonicalHashV1(snapshotMaterial)
-  return Result.getOrThrow(
+  const decoded = Result.getOrThrow(
     Schema.decodeUnknownResult(
       ExecutionMarketDataBindingSchema,
       strictParseOptions,
@@ -711,6 +755,10 @@ const liquidationMarketDataBinding = (
       snapshotId: canonicalHashV1({ ...snapshotMaterial, contentHash }),
     }),
   )
+  if (decoded.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
+    throw new Error('liquidation fixture must decode as archive binding v2')
+  }
+  return decoded
 }
 
 type OpeningDriveShadowDecisionInput = Omit<ObserveShadowDecisionInput, 'plannerInput'> & {
@@ -786,17 +834,31 @@ const makeOpeningDriveInput = (
 const makeIntradayMomentumInput = (calendarHash?: string): OpeningDriveShadowDecisionInput => {
   const cycle = makeIntradayMomentumCycle()
   const base = makeOpeningDriveInput(undefined, cycle)
-  const executionMarketData = base.executionMarketData
-  if (executionMarketData === undefined) throw new Error('intraday fixture must include execution market data')
+  const executionMarketData = currentEntryMarketDataBinding(cycle)
   const compiledDecision = intradayMomentumDecision(
     calendarHash ?? cycle.window.executionCalendarHash,
     executionMarketData.snapshotId,
   )
+  const { contentHash: _referencePriceHash, ...referencePriceMaterial } = base.plannerInput.referencePrices
+  const currentReferencePriceMaterial = {
+    ...referencePriceMaterial,
+    snapshotId: executionMarketData.snapshotId,
+    snapshotContentHash: executionMarketData.contentHash,
+  }
   const plannerInput: QuoteBoundTargetPlannerInput = {
     ...base.plannerInput,
     strategyName: 'intraday-momentum',
     decisionHash: canonicalHashV1(compiledDecision),
     targetWeights: compiledDecision.targetWeights,
+    referencePrices: {
+      ...currentReferencePriceMaterial,
+      contentHash: canonicalHashV1(currentReferencePriceMaterial),
+    },
+    executionTerms: {
+      ...base.plannerInput.executionTerms,
+      snapshotId: executionMarketData.snapshotId,
+      snapshotContentHash: executionMarketData.contentHash,
+    },
     precision: {
       quantityIncrementMicros: '1000000',
       priceIncrementMicros: intradayMomentumExecutionModel.precision.priceIncrementMicros,
@@ -807,6 +869,7 @@ const makeIntradayMomentumInput = (calendarHash?: string): OpeningDriveShadowDec
   return {
     ...base,
     compiledDecision,
+    executionMarketData,
     plannerInput,
     targetPlan: planTargetsSuccess(plannerInput),
   }
@@ -816,6 +879,27 @@ const build = (input: ObserveShadowDecisionInput): Promise<ObserveShadowDecision
   Effect.runPromise(buildObserveShadowDecision(input))
 
 describe('OBSERVE shadow decision', () => {
+  test('requires v2 execution market-data evidence for intraday-momentum entries', async () => {
+    const input = makeIntradayMomentumInput()
+    const executionMarketData = input.executionMarketData
+    if (executionMarketData?.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
+      throw new Error('intraday fixture must include archive execution market data v2')
+    }
+
+    await expect(
+      build({
+        ...input,
+        executionMarketData: {
+          ...executionMarketData,
+          schemaVersion: 'bayn.execution-market-data-binding.v1',
+        },
+      }),
+    ).rejects.toMatchObject({
+      failure: 'binding',
+      message: 'intraday-momentum entry requires execution market-data binding v2',
+    })
+  })
+
   test('requires the canonical source universe on new execution market-data bindings', () => {
     const legacyBinding = openingDriveMarketDataBinding(makeOpeningDriveCycle())
     const currentBinding = { ...legacyBinding, schemaVersion: 'bayn.execution-market-data-binding.v2' }

@@ -1,6 +1,12 @@
-import { Data, Duration, Effect, pipe, Result } from 'effect'
+import { Data, Duration, Effect, pipe, Result, Schema } from 'effect'
 import type { AutonomousCycleStartup } from '../app'
-import { BrokerRead, type BrokerReadShape, type MarketCalendarQuery } from '../broker/alpaca'
+import {
+  BrokerRead,
+  type BrokerReadShape,
+  type MarketCalendarObservation,
+  type MarketCalendarQuery,
+} from '../broker/alpaca'
+import { quantizeAlpacaLimitPriceMicros } from '../broker/alpaca-price'
 import {
   cycleAuthoritySessionDate,
   isIntradayAutonomousCycle,
@@ -48,17 +54,24 @@ import {
   type ShadowDecisionError,
   type ShadowDeltaRiskInput,
 } from '../shadow-decision'
-import type {
-  CycleDecisionDocument,
-  ObserveShadowDecisionDocument,
-  ExecutionDecisionDocument,
+import {
+  ExecutionMarketDataBindingSchema,
+  reconciledPositionLiquidationBindingSchemaVersion,
+  type ExecutionMarketDataBinding,
+  type CycleDecisionDocument,
+  type ObserveShadowDecisionDocument,
+  type ExecutionDecisionDocument,
 } from '../shadow-decision-contract'
+import { strictParseOptions } from '../schemas'
 import { currentUtcInstant } from '../time'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
 import {
   planTargets,
+  ExecutionReferencePricesSchema,
   intradaySnapshotReferencePricesSchemaVersion,
   quoteBoundTargetPlannerInputSchemaVersion,
+  reconciledPositionReferencePricesSchemaVersion,
+  type ExecutionReferencePrices,
   type IntradaySnapshotReferencePrices,
   type SignalSessionReferencePrices,
   type TargetPlannerInput,
@@ -235,6 +248,7 @@ type ObserveDecisionCompositionFailure = {
     | 'execution-mandate-allocation'
     | 'reconciled-state-hash'
     | 'reference-prices'
+    | 'liquidation-binding'
     | 'risk-policy-hash'
     | 'shadow-risk-inputs'
   readonly message: string
@@ -400,7 +414,7 @@ export const notDueReconciliationError = (cause: ReconciliationPassError): Cycle
 const hashObserveMaterial = (
   operation: Extract<
     ObserveDecisionCompositionFailure['operation'],
-    'compiled-decision-hash' | 'reference-prices' | 'risk-policy-hash'
+    'compiled-decision-hash' | 'reference-prices' | 'risk-policy-hash' | 'liquidation-binding'
   >,
   message: string,
   value: unknown,
@@ -449,6 +463,99 @@ const intradayReferencePrices = (
   return Result.map(
     hashObserveMaterial('reference-prices', 'Intraday snapshot reference prices are not canonicalizable', material),
     (contentHash) => ({ ...material, contentHash }),
+  )
+}
+
+const decodeExecutionMarketDataBinding = Schema.decodeUnknownResult(
+  ExecutionMarketDataBindingSchema,
+  strictParseOptions,
+)
+const decodeExecutionReferencePrices = Schema.decodeUnknownResult(ExecutionReferencePricesSchema, strictParseOptions)
+
+const reconciledPositionLiquidationBinding = (
+  cycle: AutonomousCycle,
+  calendar: MarketCalendarObservation,
+  brokerState: ReconciliationPassResult['brokerState'],
+): Result.Result<ExecutionMarketDataBinding, ObserveDecisionCompositionFailure> => {
+  const positions = brokerState.positions
+    .filter(({ quantityMicros }) => BigInt(quantityMicros) !== 0n)
+    .toSorted((left, right) => left.symbol.localeCompare(right.symbol))
+    .map(({ symbol, quantityMicros, marketPriceMicros, observedAt }) => ({
+      symbol,
+      quantityMicros,
+      marketPriceMicros,
+      observedAt,
+    }))
+  const material = {
+    schemaVersion: reconciledPositionLiquidationBindingSchemaVersion,
+    purpose: 'LIQUIDATION' as const,
+    source: 'alpaca-v2-positions' as const,
+    sessionDate: cycle.identity.executionSessionDate,
+    calendar,
+    observedAt: brokerState.positionsObservedAt,
+    symbols: positions.map(({ symbol }) => symbol),
+    positionsObservedAt: brokerState.positionsObservedAt,
+    reconciliationId: brokerState.reconciliation.reconciliationId,
+    reconciliationHash: brokerState.reconciliation.contentHash,
+    positions,
+  }
+  return Result.flatMap(
+    hashObserveMaterial(
+      'liquidation-binding',
+      'Reconciled broker positions are not canonicalizable as liquidation evidence',
+      material,
+    ),
+    (contentHash) =>
+      Result.flatMap(
+        hashObserveMaterial(
+          'liquidation-binding',
+          'Reconciled broker position liquidation identity is not canonicalizable',
+          { ...material, contentHash },
+        ),
+        (snapshotId) =>
+          Result.mapError(decodeExecutionMarketDataBinding({ ...material, contentHash, snapshotId }), (cause) =>
+            compositionFailure(
+              'liquidation-binding',
+              'Reconciled broker positions cannot form a liquidation binding',
+              cause,
+            ),
+          ),
+      ),
+  )
+}
+
+const reconciledPositionReferencePrices = (
+  signalDate: SignalSessionReferencePrices['signalDate'],
+  binding: ExecutionMarketDataBinding,
+): Result.Result<ExecutionReferencePrices, ObserveDecisionCompositionFailure> => {
+  if (binding.schemaVersion !== reconciledPositionLiquidationBindingSchemaVersion) {
+    return Result.fail(
+      compositionFailure('reference-prices', 'Liquidation reference prices require reconciled broker positions'),
+    )
+  }
+  const priceMicros = Object.fromEntries(
+    binding.positions.map(({ symbol, quantityMicros, marketPriceMicros }) => [
+      symbol,
+      quantizeAlpacaLimitPriceMicros(BigInt(marketPriceMicros), BigInt(quantityMicros) < 0n ? 'UP' : 'DOWN').toString(),
+    ]),
+  )
+  const material = {
+    schemaVersion: reconciledPositionReferencePricesSchemaVersion,
+    signalDate,
+    observedAt: binding.observedAt,
+    snapshotId: binding.snapshotId,
+    snapshotContentHash: binding.contentHash,
+    priceReference: 'reconciled-broker-position-mark' as const,
+    priceMicros,
+    bidPriceMicros: priceMicros,
+    askPriceMicros: priceMicros,
+  }
+  return Result.flatMap(
+    hashObserveMaterial('reference-prices', 'Reconciled position reference prices are not canonicalizable', material),
+    (contentHash) =>
+      Result.mapError(decodeExecutionReferencePrices({ ...material, contentHash }), (cause) =>
+        compositionFailure('reference-prices', 'Reconciled position reference prices are invalid', cause),
+      ),
   )
 }
 
@@ -1483,18 +1590,14 @@ export const buildClosingExecutionCycleDecision = (
     )
     const closeExecutionMarketData = isQuoteBoundExecutionModel(preparation.executionModel)
       ? yield* Effect.gen(function* () {
-          if (input.intradayMarketData === undefined) {
-            return yield* mutationRunnerError({
-              message: 'intraday close has no injected intraday archive reader',
-              failure: 'operational',
-            })
-          }
-          let query: IntradaySnapshotQuery
+          let sourceUniverse: readonly string[]
+          let queryEffect: Effect.Effect<IntradaySnapshotQuery, CycleRunnerError | ExecutionCloseAwaitingMarketData>
           if (preparation.executionModel.schemaVersion === 'bayn.execution-model.v5') {
             const definition = yield* Effect.fromResult(intradayMomentumDefinition(input.strategy)).pipe(
               Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
             )
-            query = yield* Effect.fromResult(
+            sourceUniverse = definition.parameters.universe
+            queryEffect = Effect.fromResult(
               intradayMomentumCloseQuery(
                 cycle,
                 definition.parameters,
@@ -1513,12 +1616,37 @@ export const buildClosingExecutionCycleDecision = (
             const definition = yield* Effect.fromResult(openingDriveDefinition(input.strategy)).pipe(
               Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
             )
-            query = yield* Effect.fromResult(
+            sourceUniverse = definition.parameters.universe
+            queryEffect = Effect.fromResult(
               openingDriveCloseQuery(cycle, definition.parameters, executionSession.calendar, evaluatedAt, symbols),
             ).pipe(
               Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
             )
           }
+          if (liquidationSymbols.some((symbol) => !sourceUniverse.includes(symbol))) {
+            const binding = yield* Effect.fromResult(
+              reconciledPositionLiquidationBinding(cycle, executionSession.calendar, reconciliation.brokerState),
+            ).pipe(
+              Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
+            )
+            const referencePrices = yield* Effect.fromResult(
+              reconciledPositionReferencePrices(cycle.identity.executionSessionDate, binding),
+            ).pipe(
+              Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
+            )
+            return {
+              binding,
+              bidPriceMicros: referencePrices.bidPriceMicros,
+              askPriceMicros: referencePrices.askPriceMicros,
+            }
+          }
+          if (input.intradayMarketData === undefined) {
+            return yield* mutationRunnerError({
+              message: 'intraday close has no injected intraday archive reader',
+              failure: 'operational',
+            })
+          }
+          const query = yield* queryEffect
           const snapshot = yield* loadIntradaySnapshot(input.intradayMarketData, query).pipe(
             Effect.mapError((cause) =>
               cause.cause instanceof IntradaySnapshotFailure && cause.cause.reason === 'not-ready'
@@ -1576,42 +1704,56 @@ export const buildClosingExecutionCycleDecision = (
           failure: 'contract',
         })
       }
+      const reconciledPositionClose =
+        closeExecutionMarketData.binding.schemaVersion === reconciledPositionLiquidationBindingSchemaVersion
       prices = yield* Effect.fromResult(
-        intradayReferencePrices(plannerSessionDate, closeExecutionMarketData.binding, {
-          priceMicros: closeExecutionMarketData.askPriceMicros,
-          bidPriceMicros: closeExecutionMarketData.bidPriceMicros,
-          askPriceMicros: closeExecutionMarketData.askPriceMicros,
-        }),
+        reconciledPositionClose
+          ? reconciledPositionReferencePrices(plannerSessionDate, closeExecutionMarketData.binding)
+          : intradayReferencePrices(plannerSessionDate, closeExecutionMarketData.binding, {
+              priceMicros: closeExecutionMarketData.askPriceMicros,
+              bidPriceMicros: closeExecutionMarketData.bidPriceMicros,
+              askPriceMicros: closeExecutionMarketData.askPriceMicros,
+            }),
       ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
       plannerInput = {
         schemaVersion: quoteBoundTargetPlannerInputSchemaVersion,
         ...commonPlannerInput,
         referencePrices: prices,
         precision: {
-          quantityIncrementMicros: requiresFractionalClose ? '1' : '1000000',
+          quantityIncrementMicros: requiresFractionalClose || reconciledPositionClose ? '1' : '1000000',
           priceIncrementMicros: preparation.executionModel.precision.priceIncrementMicros,
           minimumBuyNotionalMicros: preparation.executionModel.precision.minimumBuyNotionalMicros,
         },
         allocationCapitalMicros: '0',
-        executionTerms: requiresFractionalClose
+        executionTerms: reconciledPositionClose
           ? {
-              executionPurpose: 'fractional-close',
+              executionPurpose: 'forced-close',
               orderType: OrderType.Market,
               timeInForce: TimeInForce.Day,
-              priceReference: 'verified-adverse-quote-boundary',
+              priceReference: 'reconciled-broker-position-mark',
               snapshotId: closeExecutionMarketData.binding.snapshotId,
               snapshotContentHash: closeExecutionMarketData.binding.contentHash,
               maximumBuyQuantityMicros: maximumCloseBuyQuantityMicros,
             }
-          : {
-              executionPurpose: 'forced-close',
-              orderType: OrderType.Limit,
-              timeInForce: TimeInForce.ImmediateOrCancel,
-              priceReference: 'verified-adverse-quote-boundary',
-              snapshotId: closeExecutionMarketData.binding.snapshotId,
-              snapshotContentHash: closeExecutionMarketData.binding.contentHash,
-              maximumBuyQuantityMicros: maximumCloseBuyQuantityMicros,
-            },
+          : requiresFractionalClose
+            ? {
+                executionPurpose: 'fractional-close',
+                orderType: OrderType.Market,
+                timeInForce: TimeInForce.Day,
+                priceReference: 'verified-adverse-quote-boundary',
+                snapshotId: closeExecutionMarketData.binding.snapshotId,
+                snapshotContentHash: closeExecutionMarketData.binding.contentHash,
+                maximumBuyQuantityMicros: maximumCloseBuyQuantityMicros,
+              }
+            : {
+                executionPurpose: 'forced-close',
+                orderType: OrderType.Limit,
+                timeInForce: TimeInForce.ImmediateOrCancel,
+                priceReference: 'verified-adverse-quote-boundary',
+                snapshotId: closeExecutionMarketData.binding.snapshotId,
+                snapshotContentHash: closeExecutionMarketData.binding.contentHash,
+                maximumBuyQuantityMicros: maximumCloseBuyQuantityMicros,
+              },
       }
     } else {
       if (!isLegacyAutonomousCycle(cycle)) {

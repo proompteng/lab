@@ -381,7 +381,7 @@ describe('causal target planner', () => {
         executionPurpose: 'fractional-close',
         orderType: OrderType.Market,
         timeInForce: TimeInForce.Day,
-        priceReference: input.executionTerms.priceReference,
+        priceReference: 'verified-adverse-quote-boundary',
         snapshotId: input.executionTerms.snapshotId,
         snapshotContentHash: input.executionTerms.snapshotContentHash,
         maximumBuyQuantityMicros: { AMD: '0' },
@@ -407,6 +407,7 @@ describe('causal target planner', () => {
     const input = fixture({
       quoteBound: true,
       allocationCapitalMicros: '0',
+      buyingPowerMicros: '1',
       positions: [position('AMD', '-2000000')],
       priceMicros: { AMD: '100000000' },
       targetWeights: { AMD: 0 },
@@ -428,6 +429,8 @@ describe('causal target planner', () => {
 
     expect(result).toMatchObject({
       status: TargetPlanStatus.Planned,
+      requiredReferenceBuyNotionalMicros: '0',
+      residualBuyingPowerMicros: '1',
       targets: [{ symbol: 'AMD', currentQuantityMicros: '-2000000', targetQuantityMicros: '0' }],
       intentTargets: [
         {

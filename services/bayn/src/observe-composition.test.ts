@@ -3365,6 +3365,17 @@ describe('OBSERVE runtime composition', () => {
       marketValueMicros: '-50000000',
     }
     const cover = await buildClose(shortPosition)
+    const outOfUniversePosition: Position = {
+      ...openPosition,
+      symbol: 'TSLA',
+    }
+    const unusedArchive: IntradayMarketDataService = {
+      captureVersion: () => Effect.die('out-of-universe liquidation must not query the strategy archive'),
+      loadSnapshot: () => Effect.die('out-of-universe liquidation must not load a strategy snapshot'),
+    }
+    const outOfUniverseClose = await Effect.runPromise(
+      buildCloseProgram(outOfUniversePosition, { ...input, intradayMarketData: unusedArchive }),
+    )
     const unavailable = new IntradaySnapshotFailure({
       reason: 'not-ready',
       message: 'liquidation snapshot lacks a post-range quote',
@@ -3419,6 +3430,36 @@ describe('OBSERVE runtime composition', () => {
           {
             symbol: shortPosition.symbol,
             side: OrderSide.Buy,
+            orderType: OrderType.Market,
+            timeInForce: TimeInForce.Day,
+            quantityMicros: '500000',
+          },
+        ],
+      },
+    })
+    expect(outOfUniverseClose).toMatchObject({
+      dispatchable: true,
+      bindings: {
+        executionMarketData: {
+          schemaVersion: 'bayn.reconciled-position-liquidation-binding.v1',
+          source: 'alpaca-v2-positions',
+          symbols: ['TSLA'],
+          positions: [
+            {
+              symbol: 'TSLA',
+              quantityMicros: '500000',
+              marketPriceMicros: '100000000',
+              observedAt: closeObservedAt,
+            },
+          ],
+        },
+      },
+      targetPlan: {
+        status: TargetPlanStatus.Planned,
+        intentTargets: [
+          {
+            symbol: 'TSLA',
+            side: OrderSide.Sell,
             orderType: OrderType.Market,
             timeInForce: TimeInForce.Day,
             quantityMicros: '500000',

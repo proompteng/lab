@@ -23,8 +23,10 @@ import {
   IntentSchema,
   IntentState,
   OrderSide,
+  OrderType,
   ReferenceIntentSchema,
   RiskOutcome,
+  TimeInForce,
   type Intent,
   type Position,
   type ReferenceIntent,
@@ -43,6 +45,7 @@ import {
   ExecutionMarketDataBindingSchema,
   makeExecutionDecisionDocument,
   makeObserveShadowDecisionDocument,
+  reconciledPositionLiquidationBindingSchemaVersion,
   type CycleDecisionDocument,
   type DeltaRiskEvaluation,
   type ExecutionMarketDataBinding,
@@ -58,6 +61,7 @@ import {
   TargetPlannerInputSchema,
   TargetPlanResultSchema,
   TargetPlanStatus,
+  quoteBoundTargetPlannerInputSchemaVersion,
   type PlannedTargetQuantity,
   type TargetPlannerInput,
   type TargetPlanResult,
@@ -330,6 +334,12 @@ const validateBindings = (
   if (intradayEntry && executionMarketData?.purpose === 'LIQUIDATION') {
     return Result.fail(error('binding', 'intraday entry requires non-liquidation market-data evidence'))
   }
+  if (
+    decision.schemaVersion === 'bayn.intraday-momentum.target.v1' &&
+    executionMarketData?.schemaVersion !== 'bayn.execution-market-data-binding.v2'
+  ) {
+    return Result.fail(error('binding', 'intraday-momentum entry requires execution market-data binding v2'))
+  }
   if (intradayClose && executionMarketData?.purpose !== 'LIQUIDATION') {
     return Result.fail(error('binding', 'intraday close requires explicit liquidation market-data evidence'))
   }
@@ -340,6 +350,37 @@ const validateBindings = (
       executionMarketData.symbols.some((symbol, index) => symbol !== decision.symbols[index]))
   ) {
     return Result.fail(error('binding', 'intraday close market-data symbols must match the flat execution target'))
+  }
+  if (executionMarketData?.schemaVersion === reconciledPositionLiquidationBindingSchemaVersion) {
+    const positions = plannerInput.brokerState.positions
+      .filter(({ quantityMicros }) => BigInt(quantityMicros) !== 0n)
+      .toSorted((left, right) => left.symbol.localeCompare(right.symbol))
+    const bindingMatchesReconciliation =
+      executionMarketData.reconciliationId === plannerInput.brokerState.reconciliation.reconciliationId &&
+      executionMarketData.reconciliationHash === plannerInput.brokerState.reconciliation.contentHash &&
+      executionMarketData.positionsObservedAt === plannerInput.brokerState.positionsObservedAt &&
+      executionMarketData.positions.length === positions.length &&
+      executionMarketData.positions.every((position, index) => {
+        const expected = positions[index]
+        return (
+          expected !== undefined &&
+          position.symbol === expected.symbol &&
+          position.quantityMicros === expected.quantityMicros &&
+          position.marketPriceMicros === expected.marketPriceMicros &&
+          position.observedAt === expected.observedAt
+        )
+      })
+    const narrowCloseTerms =
+      plannerInput.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
+      plannerInput.executionTerms.executionPurpose === 'forced-close' &&
+      plannerInput.executionTerms.orderType === OrderType.Market &&
+      plannerInput.executionTerms.timeInForce === TimeInForce.Day &&
+      plannerInput.executionTerms.priceReference === 'reconciled-broker-position-mark'
+    if (!intradayClose || !bindingMatchesReconciliation || !narrowCloseTerms) {
+      return Result.fail(
+        error('binding', 'reconciled position evidence is authorized only for the exact close-only broker state'),
+      )
+    }
   }
   if (
     intradayDecision !== (executionMarketData !== undefined) ||

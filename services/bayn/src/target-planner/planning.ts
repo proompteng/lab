@@ -123,8 +123,20 @@ const assembleExecutableTargetPlan = (
 ): OutputMaterial => {
   const targets = targetFacts.map((fact) => fact.target)
   const intents = makeReferenceTargetIntents(facts.input, targetFacts)
+  const forcedClose =
+    facts.input.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
+    facts.input.executionTerms.executionPurpose !== undefined
   const requiredReferenceBuyNotionals = targetFacts
-    .filter((fact) => fact.delta > 0n)
+    .filter(
+      (fact) =>
+        fact.delta > 0n &&
+        !(
+          forcedClose &&
+          BigInt(fact.target.currentQuantityMicros) < 0n &&
+          BigInt(fact.target.targetQuantityMicros) === 0n &&
+          fact.delta === -BigInt(fact.target.currentQuantityMicros)
+        ),
+    )
     .map((fact) => referenceNotional(fact.delta, fact.referencePrice))
   const requiredBuyingPower = requiredReferenceBuyNotionals.reduce((total, value) => total + value, 0n)
   const notionalBlock = selectTargetNotionalBlock(facts, targets, requiredReferenceBuyNotionals)

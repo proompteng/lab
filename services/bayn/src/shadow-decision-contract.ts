@@ -16,6 +16,7 @@ import {
   NonNegativeIntegerSchema,
   PositiveIntegerSchema,
   Sha256Schema,
+  SignedMicrosSchema,
   StrictNonEmptyStringSchema,
   SymbolSchema,
   UnsignedMicrosSchema,
@@ -93,6 +94,32 @@ const ExecutionMarketDataBindingBase = Schema.Union([
     universe: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique()),
   }),
 ])
+
+export const reconciledPositionLiquidationBindingSchemaVersion =
+  'bayn.reconciled-position-liquidation-binding.v1' as const
+
+const ReconciledPositionLiquidationBindingBase = Schema.Struct({
+  schemaVersion: Schema.Literal(reconciledPositionLiquidationBindingSchemaVersion),
+  purpose: Schema.Literal('LIQUIDATION'),
+  source: Schema.Literal('alpaca-v2-positions'),
+  sessionDate: IsoDateSchema,
+  calendar: ExecutionCalendarObservationSchema,
+  observedAt: UtcInstantSchema,
+  symbols: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique()),
+  positionsObservedAt: UtcInstantSchema,
+  reconciliationId: Sha256Schema,
+  reconciliationHash: Sha256Schema,
+  positions: Schema.Array(
+    Schema.Struct({
+      symbol: SymbolSchema,
+      quantityMicros: SignedMicrosSchema,
+      marketPriceMicros: PositiveMicrosSchema,
+      observedAt: UtcInstantSchema,
+    }),
+  ).check(Schema.isMinLength(1)),
+  contentHash: Sha256Schema,
+  snapshotId: Sha256Schema,
+})
 
 const compareCanonicalText = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
 
@@ -176,9 +203,69 @@ const marketDataBindingIssues = (
   return issues
 }
 
-export const ExecutionMarketDataBindingSchema = ExecutionMarketDataBindingBase.check(
+const ReconciledPositionLiquidationBindingSchema = ReconciledPositionLiquidationBindingBase.check(
+  Schema.makeFilter((binding: typeof ReconciledPositionLiquidationBindingBase.Type): readonly Schema.FilterIssue[] => {
+    const issues: Schema.FilterIssue[] = []
+    const { normalizedResponseHash, ...calendarMaterial } = binding.calendar
+    const calendarHash = canonicalHashV1Result(calendarMaterial)
+    if (Result.isFailure(calendarHash) || calendarHash.success !== normalizedResponseHash) {
+      issues.push({ path: ['calendar', 'normalizedResponseHash'], issue: 'must match the canonical calendar content' })
+    }
+
+    const orderedSymbols = binding.symbols.toSorted(compareCanonicalText)
+    const orderedPositions = binding.positions.toSorted((left, right) =>
+      compareCanonicalText(left.symbol, right.symbol),
+    )
+    if (binding.symbols.some((symbol, index) => symbol !== orderedSymbols[index])) {
+      issues.push({ path: ['symbols'], issue: 'must be canonically ordered' })
+    }
+    if (
+      binding.positions.some((position, index) => position !== orderedPositions[index]) ||
+      new Set(binding.positions.map(({ symbol }) => symbol)).size !== binding.positions.length
+    ) {
+      issues.push({ path: ['positions'], issue: 'must contain unique positions in canonical symbol order' })
+    }
+    const positionSymbols = binding.positions.map(({ symbol }) => symbol)
+    if (
+      positionSymbols.length !== binding.symbols.length ||
+      positionSymbols.some((symbol, index) => symbol !== binding.symbols[index])
+    ) {
+      issues.push({ path: ['positions'], issue: 'must bind exactly one nonzero reconciled position per symbol' })
+    }
+    for (const [index, position] of binding.positions.entries()) {
+      if (BigInt(position.quantityMicros) === 0n) {
+        issues.push({ path: ['positions', index, 'quantityMicros'], issue: 'must be nonzero' })
+      }
+      if (position.observedAt !== binding.positionsObservedAt) {
+        issues.push({ path: ['positions', index, 'observedAt'], issue: 'must match positionsObservedAt' })
+      }
+    }
+    if (binding.observedAt !== binding.positionsObservedAt) {
+      issues.push({ path: ['observedAt'], issue: 'must match the reconciled position observation time' })
+    }
+
+    const { contentHash, snapshotId, ...material } = binding
+    const expectedContentHash = canonicalHashV1Result(material)
+    if (Result.isFailure(expectedContentHash) || expectedContentHash.success !== contentHash) {
+      issues.push({ path: ['contentHash'], issue: 'must match the complete canonical liquidation material' })
+    } else {
+      const expectedSnapshotId = canonicalHashV1Result({ ...material, contentHash })
+      if (Result.isFailure(expectedSnapshotId) || expectedSnapshotId.success !== snapshotId) {
+        issues.push({ path: ['snapshotId'], issue: 'must match the complete canonical liquidation identity' })
+      }
+    }
+    return issues
+  }),
+)
+
+const ArchiveExecutionMarketDataBindingSchema = ExecutionMarketDataBindingBase.check(
   Schema.makeFilter(marketDataBindingIssues),
 )
+
+export const ExecutionMarketDataBindingSchema = Schema.Union([
+  ArchiveExecutionMarketDataBindingSchema,
+  ReconciledPositionLiquidationBindingSchema,
+])
 export type ExecutionMarketDataBinding = typeof ExecutionMarketDataBindingSchema.Type
 
 const ShadowDecisionBindingsSchema = Schema.Struct({

@@ -637,6 +637,45 @@ describe('bounded execution risk', () => {
     expectBlocked(Reason.OrderTypeNotAllowed, intent, makeState({ positions }), policy)
   })
 
+  test('admits an out-of-policy symbol only as an exact reconciled close', () => {
+    const positions = baseState().positions.map((position) =>
+      position.symbol === 'NVDA'
+        ? {
+            ...position,
+            symbol: 'TSLA',
+          }
+        : position,
+    )
+    const closeOnlyState = makeState({
+      positions,
+      marketDataSymbol: 'TSLA',
+      closeOnly: true,
+      closeOnlyExpiresAt: '2026-07-21T21:01:00.000Z',
+    })
+    const exactClose = makeIntent({
+      symbol: 'TSLA',
+      side: OrderSide.Sell,
+      quantityMicros: '1000000',
+    })
+
+    const approved = evaluateSuccess(exactClose, closeOnlyState, makePolicy())
+    expect(approved.decision.outcome).toBe(RiskOutcome.Approved)
+    expect(approved.gates.find((gate) => gate.name === Gate.Symbol)?.passed).toBe(true)
+
+    expectBlocked(Reason.SymbolNotAllowed, exactClose, makeState({ positions, marketDataSymbol: 'TSLA' }), makePolicy())
+    expectBlocked(
+      Reason.ShortPositionNotAllowed,
+      makeIntent({
+        symbol: 'TSLA',
+        side: OrderSide.Sell,
+        quantityMicros: '2000000',
+        notionalLimitMicros: '200000000',
+      }),
+      closeOnlyState,
+      makePolicy({ maxOrderNotionalMicros: '200000000', maxDailyTradedNotionalMicros: '300000000' }),
+    )
+  })
+
   test('does not require buying power for a strictly exposure-reducing short cover', () => {
     const positions = baseState().positions.map((position) =>
       position.symbol === 'NVDA'

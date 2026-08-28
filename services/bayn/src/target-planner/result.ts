@@ -84,7 +84,8 @@ const deriveTargetPlanSemanticFacts = (result: typeof TargetPlanResultBase.Type)
     const targetQuantity = BigInt(target.targetQuantityMicros)
     const delta = targetQuantity - currentQuantity
     if (delta !== 0n) nonzeroDeltaCount += 1
-    if (delta > 0n) {
+    const exactShortCover = currentQuantity < 0n && targetQuantity === 0n && delta === -currentQuantity
+    if (delta > 0n && !exactShortCover) {
       positiveDeltaCount += 1
       requiredReferenceBuyNotional += (delta * BigInt(target.referencePriceMicros) + MICROS - 1n) / MICROS
     }

@@ -87,6 +87,49 @@ export const IntradaySnapshotReferencePricesSchema = IntradaySnapshotReferencePr
   Schema.makeFilter(intradayReferencePriceIssues),
 )
 
+export const reconciledPositionReferencePricesSchemaVersion = 'bayn.reconciled-position-reference-prices.v1' as const
+
+const ReconciledPositionReferencePricesBase = Schema.Struct({
+  schemaVersion: Schema.Literal(reconciledPositionReferencePricesSchemaVersion),
+  signalDate: IsoDateSchema,
+  observedAt: UtcInstantSchema,
+  snapshotId: Sha256Schema,
+  snapshotContentHash: Sha256Schema,
+  priceReference: Schema.Literal('reconciled-broker-position-mark'),
+  contentHash: Sha256Schema,
+  priceMicros: Schema.Record(SymbolSchema, PositiveMicrosSchema),
+  bidPriceMicros: Schema.Record(SymbolSchema, PositiveMicrosSchema),
+  askPriceMicros: Schema.Record(SymbolSchema, PositiveMicrosSchema),
+})
+
+export const ReconciledPositionReferencePricesSchema = ReconciledPositionReferencePricesBase.check(
+  Schema.makeFilter((prices: typeof ReconciledPositionReferencePricesBase.Type): readonly Schema.FilterIssue[] => {
+    const symbols = Object.keys(prices.priceMicros).sort()
+    const bidSymbols = Object.keys(prices.bidPriceMicros).sort()
+    const askSymbols = Object.keys(prices.askPriceMicros).sort()
+    const issues: Schema.FilterIssue[] = []
+    if (
+      symbols.length !== bidSymbols.length ||
+      symbols.length !== askSymbols.length ||
+      symbols.some((symbol, index) => symbol !== bidSymbols[index] || symbol !== askSymbols[index])
+    ) {
+      issues.push({ path: ['priceMicros'], issue: 'position mark maps must bind identical symbols' })
+    }
+    for (const symbol of symbols) {
+      const price = prices.priceMicros[symbol]
+      if (price !== prices.bidPriceMicros[symbol] || price !== prices.askPriceMicros[symbol]) {
+        issues.push({ path: ['priceMicros', symbol], issue: 'position mark must be identical in every price map' })
+      }
+    }
+    return issues
+  }),
+)
+
+export const ExecutionReferencePricesSchema = Schema.Union([
+  IntradaySnapshotReferencePricesSchema,
+  ReconciledPositionReferencePricesSchema,
+])
+
 export const TargetPlannerBrokerStateSchema = Schema.Struct({
   account: AccountSnapshotSchema,
   positions: Schema.Array(PositionSchema),
@@ -150,9 +193,20 @@ const FractionalCloseExecutionTermsSchema = Schema.Struct({
   maximumBuyQuantityMicros: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
 })
 
+const ReconciledPositionCloseExecutionTermsSchema = Schema.Struct({
+  executionPurpose: Schema.Literal('forced-close'),
+  orderType: Schema.Literal(OrderType.Market),
+  timeInForce: Schema.Literal(TimeInForce.Day),
+  priceReference: Schema.Literal('reconciled-broker-position-mark'),
+  snapshotId: Sha256Schema,
+  snapshotContentHash: Sha256Schema,
+  maximumBuyQuantityMicros: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
+})
+
 export const QuoteBoundExecutionTermsSchema = Schema.Union([
   QuoteBoundLimitExecutionTermsSchema,
   FractionalCloseExecutionTermsSchema,
+  ReconciledPositionCloseExecutionTermsSchema,
 ])
 
 export const TargetPlannerInputV1Schema = Schema.Struct({
@@ -169,7 +223,7 @@ export const TargetPlannerInputV2Schema = Schema.Struct({
 const QuoteBoundTargetPlannerInputBase = Schema.Struct({
   schemaVersion: Schema.Literal(quoteBoundTargetPlannerInputSchemaVersion),
   ...TargetPlannerInputFields,
-  referencePrices: IntradaySnapshotReferencePricesSchema,
+  referencePrices: ExecutionReferencePricesSchema,
   precision: Schema.Struct({
     quantityIncrementMicros: Schema.Union([Schema.Literal('1'), Schema.Literal('1000000')]),
     priceIncrementMicros: PositiveMicrosSchema,
@@ -190,6 +244,9 @@ const quoteBoundInputIssues = (input: typeof QuoteBoundTargetPlannerInputBase.Ty
       issue: 'must bind the same verified intraday snapshot as its reference prices',
     })
   }
+  if (input.executionTerms.priceReference !== input.referencePrices.priceReference) {
+    issues.push({ path: ['executionTerms', 'priceReference'], issue: 'must match the bound reference-price source' })
+  }
   const targetSymbols = Object.keys(input.targetWeights).sort()
   const quantitySymbols = Object.keys(input.executionTerms.maximumBuyQuantityMicros).sort()
   if (
@@ -202,15 +259,15 @@ const quoteBoundInputIssues = (input: typeof QuoteBoundTargetPlannerInputBase.Ty
     })
   }
   const quantityIncrement = BigInt(input.precision.quantityIncrementMicros)
-  const fractionalClose = input.executionTerms.orderType === OrderType.Market
+  const marketClose = input.executionTerms.orderType === OrderType.Market
   const forcedClose = input.executionTerms.executionPurpose !== undefined
-  if (fractionalClose && input.precision.quantityIncrementMicros !== '1') {
+  if (marketClose && input.precision.quantityIncrementMicros !== '1') {
     issues.push({
       path: ['precision', 'quantityIncrementMicros'],
-      issue: 'fractional close must preserve the exact reconciled broker quantity',
+      issue: 'market close must preserve the exact reconciled broker quantity',
     })
   }
-  if (!fractionalClose && input.precision.quantityIncrementMicros !== '1000000') {
+  if (!marketClose && input.precision.quantityIncrementMicros !== '1000000') {
     issues.push({
       path: ['precision', 'quantityIncrementMicros'],
       issue: 'quote-bound LIMIT/IOC execution requires whole-share quantity precision',
@@ -261,6 +318,7 @@ export const TargetPlannerInputSchema = Schema.Union([
 
 export type SignalSessionReferencePrices = typeof SignalSessionReferencePricesSchema.Type
 export type IntradaySnapshotReferencePrices = typeof IntradaySnapshotReferencePricesSchema.Type
+export type ExecutionReferencePrices = typeof ExecutionReferencePricesSchema.Type
 export type TargetPlannerBrokerState = typeof TargetPlannerBrokerStateSchema.Type
 export type TargetPlannerInputV1 = typeof TargetPlannerInputV1Schema.Type
 export type TargetPlannerInputV2 = typeof TargetPlannerInputV2Schema.Type

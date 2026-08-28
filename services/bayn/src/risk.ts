@@ -853,6 +853,7 @@ const isBrokerSupportedFractionalCloseOrder = (facts: RiskFacts): boolean =>
 const buildIntentContractGates = (facts: RiskFacts): readonly GateResult[] => {
   const { intent, policy, state } = facts
   const fractionalCloseOrder = isBrokerSupportedFractionalCloseOrder(facts)
+  const closeOnlyPositionReduction = state.closeOnly === true && isPositionReducingCloseOrder(facts)
   return [
     makeGate(Gate.IntentState, intent.state === IntentState.Planned, intent.state, 'PLANNED'),
     makeGate(
@@ -882,9 +883,11 @@ const buildIntentContractGates = (facts: RiskFacts): readonly GateResult[] => {
     makeGate(Gate.Equity, facts.accountEquityMicros > 0n, state.account.equityMicros, '>0'),
     makeGate(
       Gate.Symbol,
-      policy.allowedSymbols.includes(intent.symbol),
+      policy.allowedSymbols.includes(intent.symbol) || closeOnlyPositionReduction,
       intent.symbol,
-      policy.allowedSymbols.join(','),
+      closeOnlyPositionReduction
+        ? `${policy.allowedSymbols.join(',')}|RECONCILED_CLOSE_ONLY`
+        : policy.allowedSymbols.join(','),
     ),
     makeGate(Gate.MarketDataSymbol, state.marketDataSymbol === intent.symbol, state.marketDataSymbol, intent.symbol),
     makeGate(
