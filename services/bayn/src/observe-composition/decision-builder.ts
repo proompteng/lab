@@ -35,7 +35,7 @@ import {
   constrainExecutionTargetAllocationCapitalMicros,
   executionMandateAllocationCapitalMicros,
 } from '../execution/mandate'
-import { Authority, OrderType, TimeInForce, type AuthorityState } from '../execution/contracts'
+import { Authority, OrderType, TimeInForce, type AuthorityState, type Position } from '../execution/contracts'
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { isQuoteBoundExecutionModel, type CycleExecutionModel } from '../execution-model-contract'
 import {
@@ -1556,6 +1556,44 @@ const recoverExecutionSession = (
   )
 }
 
+type ClosingSymbolScope =
+  | { readonly _tag: 'current-intraday'; readonly universe: readonly string[] }
+  | { readonly _tag: 'legacy'; readonly symbols: readonly string[] }
+
+export type ClosingSymbolPass = {
+  readonly kind: 'broker-position' | 'fractional' | 'quote-bound' | 'legacy'
+  readonly symbols: readonly string[]
+}
+
+export const selectClosingSymbolPass = (
+  positions: readonly Pick<Position, 'symbol' | 'quantityMicros'>[],
+  scope: ClosingSymbolScope,
+): ClosingSymbolPass => {
+  const activePositions = positions
+    .filter(({ quantityMicros }) => BigInt(quantityMicros) !== 0n)
+    .toSorted((left, right) => left.symbol.localeCompare(right.symbol))
+
+  if (scope._tag === 'current-intraday') {
+    const universe = new Set(scope.universe)
+    const externalSymbols = activePositions.filter(({ symbol }) => !universe.has(symbol)).map(({ symbol }) => symbol)
+    if (externalSymbols.length > 0) return { kind: 'broker-position', symbols: externalSymbols }
+
+    const fractionalSymbols = activePositions
+      .filter(({ quantityMicros }) => BigInt(quantityMicros) % 1_000_000n !== 0n)
+      .map(({ symbol }) => symbol)
+    return fractionalSymbols.length > 0
+      ? { kind: 'fractional', symbols: fractionalSymbols }
+      : { kind: 'quote-bound', symbols: activePositions.map(({ symbol }) => symbol) }
+  }
+
+  const fractionalSymbols = activePositions
+    .filter(({ quantityMicros }) => BigInt(quantityMicros) % 1_000_000n !== 0n)
+    .map(({ symbol }) => symbol)
+  return fractionalSymbols.length > 0
+    ? { kind: 'fractional', symbols: fractionalSymbols }
+    : { kind: 'legacy', symbols: scope.symbols }
+}
+
 export interface BuildClosingExecutionCycleDecisionInput {
   readonly input: ObserveAutonomousCycleInput
   readonly preparation: ObserveStartupPreparation
@@ -1590,26 +1628,21 @@ export const buildClosingExecutionCycleDecision = (
       ...entryDocument.targetPlan.targets.map((target) => target.symbol),
       ...reconciliation.brokerState.positions.map((position) => position.symbol),
     ]
-    const liquidationSymbols = [
-      ...new Set(
-        reconciliation.brokerState.positions
-          .filter((position) => BigInt(position.quantityMicros) !== 0n)
-          .map((position) => position.symbol),
-      ),
-    ].sort()
-    const fractionalLiquidationSymbols = reconciliation.brokerState.positions
-      .filter(
-        (position) => BigInt(position.quantityMicros) !== 0n && BigInt(position.quantityMicros) % 1_000_000n !== 0n,
-      )
-      .map((position) => position.symbol)
-      .sort()
-    const symbols =
-      fractionalLiquidationSymbols.length > 0
-        ? fractionalLiquidationSymbols
-        : preparation.executionModel.schemaVersion === 'bayn.execution-model.v5'
-          ? liquidationSymbols
-          : legacyCloseSymbols
-    const requiresFractionalClose = symbols.some((symbol) => fractionalLiquidationSymbols.includes(symbol))
+    const intradayParameters =
+      preparation.executionModel.schemaVersion === 'bayn.execution-model.v5'
+        ? yield* Effect.fromResult(intradayMomentumDefinition(input.strategy)).pipe(
+            Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
+            Effect.map((definition) => definition.parameters),
+          )
+        : undefined
+    const closingPass = selectClosingSymbolPass(
+      reconciliation.brokerState.positions,
+      intradayParameters === undefined
+        ? { _tag: 'legacy', symbols: legacyCloseSymbols }
+        : { _tag: 'current-intraday', universe: intradayParameters.universe },
+    )
+    const symbols = closingPass.symbols
+    const requiresFractionalClose = closingPass.kind === 'fractional'
     const closeDecision = yield* Effect.fromResult(makeClosingDecisionPlan(cycle.identity, symbols)).pipe(
       Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
     )
@@ -1629,15 +1662,40 @@ export const buildClosingExecutionCycleDecision = (
     )
     const closeExecutionMarketData = isQuoteBoundExecutionModel(preparation.executionModel)
       ? yield* Effect.gen(function* () {
+          if (closingPass.kind === 'broker-position') {
+            const binding = yield* Effect.fromResult(
+              reconciledPositionLiquidationBinding(
+                cycle,
+                executionSession.calendar,
+                reconciliation.brokerState,
+                symbols,
+              ),
+            ).pipe(
+              Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
+            )
+            const referencePrices = yield* Effect.fromResult(
+              reconciledPositionReferencePrices(cycle.identity.executionSessionDate, binding),
+            ).pipe(
+              Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
+            )
+            return {
+              binding,
+              bidPriceMicros: referencePrices.bidPriceMicros,
+              askPriceMicros: referencePrices.askPriceMicros,
+            }
+          }
           let sourceUniverse: readonly string[]
           let queryEffect: Effect.Effect<IntradaySnapshotQuery, CycleRunnerError | ExecutionCloseAwaitingMarketData>
           if (preparation.executionModel.schemaVersion === 'bayn.execution-model.v5') {
-            const definition = yield* Effect.fromResult(intradayMomentumDefinition(input.strategy)).pipe(
-              Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
-            )
-            sourceUniverse = definition.parameters.universe
+            if (intradayParameters === undefined) {
+              return yield* mutationRunnerError({
+                message: 'intraday close has no decoded strategy parameters',
+                failure: 'contract',
+              })
+            }
+            sourceUniverse = intradayParameters.universe
             queryEffect = Effect.fromResult(
-              intradayMomentumCloseQuery(cycle, definition.parameters, executionSession.calendar, evaluatedAt, symbols),
+              intradayMomentumCloseQuery(cycle, intradayParameters, executionSession.calendar, evaluatedAt, symbols),
             ).pipe(
               Effect.mapError((cause) =>
                 cause instanceof IntradayMomentumCloseAwaitingSnapshot

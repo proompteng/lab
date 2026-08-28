@@ -1256,6 +1256,76 @@ describe('OBSERVE shadow decision', () => {
     if (Result.isFailure(subsetEvidence)) {
       expect(String(subsetEvidence.failure.cause)).toContain('complete execution universe')
     }
+
+    const alternateSessionDate = '2026-07-23'
+    const { normalizedResponseHash: _calendarHash, ...calendarMaterial } = executionMarketData.calendar
+    const alternateCalendarMaterial = {
+      ...calendarMaterial,
+      requestedRange: { start: alternateSessionDate, end: alternateSessionDate },
+      sessions: calendarMaterial.sessions.map((session) => ({ ...session, date: alternateSessionDate })),
+    }
+    const {
+      contentHash: _alternateContentHash,
+      snapshotId: _alternateSnapshotId,
+      schemaVersion: alternateBindingSchemaVersion,
+      snapshotSchemaVersion: alternateSnapshotSchemaVersion,
+      ...alternateBindingMaterial
+    } = executionMarketData
+    const otherSessionMaterial = {
+      ...alternateBindingMaterial,
+      sessionDate: alternateSessionDate,
+      calendar: {
+        ...alternateCalendarMaterial,
+        normalizedResponseHash: canonicalHashV1(alternateCalendarMaterial),
+      },
+    }
+    const otherSessionSnapshotMaterial = {
+      schemaVersion: alternateSnapshotSchemaVersion,
+      ...otherSessionMaterial,
+    }
+    const otherSessionContentHash = canonicalHashV1(otherSessionSnapshotMaterial)
+    const otherSessionBinding = Result.getOrThrow(
+      Schema.decodeUnknownResult(
+        ExecutionMarketDataBindingSchema,
+        strictParseOptions,
+      )({
+        schemaVersion: alternateBindingSchemaVersion,
+        snapshotSchemaVersion: alternateSnapshotSchemaVersion,
+        ...otherSessionMaterial,
+        contentHash: otherSessionContentHash,
+        snapshotId: canonicalHashV1({ ...otherSessionSnapshotMaterial, contentHash: otherSessionContentHash }),
+      }),
+    )
+    const targetExecutionTerms = material.targetPlan.executionTerms
+    if (targetExecutionTerms === undefined) throw new Error('intraday fixture must persist execution terms')
+    const { outputHash: _targetPlanHash, ...targetPlanMaterial } = material.targetPlan
+    const otherSessionTargetPlanMaterial = {
+      ...targetPlanMaterial,
+      executionTerms: {
+        ...targetExecutionTerms,
+        snapshotId: otherSessionBinding.snapshotId,
+        snapshotContentHash: otherSessionBinding.contentHash,
+      },
+    }
+    const otherSessionEvidence = makeExecutionDecisionDocument({
+      ...material,
+      bindings: {
+        ...material.bindings,
+        snapshotId: otherSessionBinding.snapshotId,
+        snapshotContentHash: otherSessionBinding.contentHash,
+        executionMarketData: otherSessionBinding,
+      },
+      targetPlan: {
+        ...otherSessionTargetPlanMaterial,
+        outputHash: canonicalHashV1(otherSessionTargetPlanMaterial),
+      },
+    })
+    expect(Result.isFailure(otherSessionEvidence)).toBe(true)
+    if (Result.isFailure(otherSessionEvidence)) {
+      expect(String(otherSessionEvidence.failure.cause)).toContain(
+        'market-data session and calendar must match the execution session',
+      )
+    }
   })
 
   test('binds full-session intraday decisions to the exact rolling snapshot and cycle calendar', async () => {

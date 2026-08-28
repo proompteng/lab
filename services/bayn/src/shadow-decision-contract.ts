@@ -484,6 +484,17 @@ const executionMaterialIssues = (
         issue: 'intraday-momentum entry requires execution market-data binding v2',
       })
     } else {
+      const executionSession = document.executionSession
+      if (
+        executionSession === undefined ||
+        executionMarketData.sessionDate !== executionSession.executionSession.date ||
+        executionMarketData.calendar.normalizedResponseHash !== executionSession.calendar.normalizedResponseHash
+      ) {
+        issues.push({
+          path: ['bindings', 'executionMarketData', 'calendar'],
+          issue: 'intraday-momentum entry market-data session and calendar must match the execution session',
+        })
+      }
       const bindsCompleteUniverse =
         executionMarketData.symbols.length === executionMarketData.universe.length &&
         executionMarketData.symbols.every((symbol, index) => symbol === executionMarketData.universe[index])

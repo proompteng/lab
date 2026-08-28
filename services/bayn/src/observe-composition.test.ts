@@ -124,7 +124,7 @@ import {
   type RecoveryFirstCycleDriver,
   type RecoveryFirstCycleDriverOwner,
 } from './observe-composition'
-import { ExecutionCloseAwaitingMarketData } from './observe-composition/decision-builder'
+import { ExecutionCloseAwaitingMarketData, selectClosingSymbolPass } from './observe-composition/decision-builder'
 import {
   AccountStatus,
   Authority,
@@ -1028,6 +1028,48 @@ const prepareStoredExecutionStep = async (
 }
 
 describe('OBSERVE runtime composition', () => {
+  test('closes external holdings before quote-bound in-universe holdings', () => {
+    const positions = [
+      { symbol: 'AAPL', quantityMicros: '1000000' },
+      { symbol: 'TSLA', quantityMicros: '2000000' },
+    ]
+
+    expect(selectClosingSymbolPass(positions, { _tag: 'current-intraday', universe: ['AAPL'] })).toEqual({
+      kind: 'broker-position',
+      symbols: ['TSLA'],
+    })
+    expect(
+      selectClosingSymbolPass(
+        positions.filter(({ symbol }) => symbol === 'AAPL'),
+        {
+          _tag: 'current-intraday',
+          universe: ['AAPL'],
+        },
+      ),
+    ).toEqual({ kind: 'quote-bound', symbols: ['AAPL'] })
+  })
+
+  test('uses the fractional pass only after external holdings are flat', () => {
+    const positions = [
+      { symbol: 'AAPL', quantityMicros: '500000' },
+      { symbol: 'TSLA', quantityMicros: '250000' },
+    ]
+
+    expect(selectClosingSymbolPass(positions, { _tag: 'current-intraday', universe: ['AAPL'] })).toEqual({
+      kind: 'broker-position',
+      symbols: ['TSLA'],
+    })
+    expect(
+      selectClosingSymbolPass(
+        positions.filter(({ symbol }) => symbol === 'AAPL'),
+        {
+          _tag: 'current-intraday',
+          universe: ['AAPL'],
+        },
+      ),
+    ).toEqual({ kind: 'fractional', symbols: ['AAPL'] })
+  })
+
   test('projects accepted nonterminal intents as one unresolved order for the next risk pass', () => {
     const intent: Intent = {
       schemaVersion: 'bayn.paper-intent.v3',
