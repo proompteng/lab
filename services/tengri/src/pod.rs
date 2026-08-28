@@ -296,7 +296,7 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
             },
             EnvVar {
                 name: "NANOAGENT_WORKSPACE".to_owned(),
-                value: Some("/home/nanoagent".to_owned()),
+                value: Some("/workspace".to_owned()),
                 ..EnvVar::default()
             },
         ]),
@@ -338,13 +338,18 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
                 ..VolumeMount::default()
             },
             VolumeMount {
+                name: "home".to_owned(),
+                mount_path: "/workspace".to_owned(),
+                ..VolumeMount::default()
+            },
+            VolumeMount {
                 name: "tmp".to_owned(),
                 mount_path: "/tmp".to_owned(),
                 ..VolumeMount::default()
             },
         ]),
-        // Nanoagent creates $HOME/workspace on first boot. The image's /workspace symlink
-        // points there, so the project stays inside the persistent home volume.
+        // Preserve the volume-root workspace mapping used by existing immutable guest
+        // images and PVCs. A future split requires an explicit, versioned data migration.
         working_dir: Some("/home/nanoagent".to_owned()),
         ..Container::default()
     }
@@ -460,14 +465,16 @@ mod tests {
                 .as_ref()
                 .is_some_and(|env| env.iter().any(|value| {
                     value.name == "NANOAGENT_WORKSPACE"
-                        && value.value.as_deref() == Some("/home/nanoagent")
+                        && value.value.as_deref() == Some("/workspace")
                 }))
         );
         assert!(container.volume_mounts.as_ref().is_some_and(|mounts| {
             mounts
                 .iter()
                 .any(|mount| mount.name == "home" && mount.mount_path == "/home/nanoagent")
-                && mounts.iter().all(|mount| mount.mount_path != "/workspace")
+                && mounts
+                    .iter()
+                    .any(|mount| mount.name == "home" && mount.mount_path == "/workspace")
         }));
     }
 

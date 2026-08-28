@@ -28,22 +28,18 @@ const readyAgent = {
   ],
 }
 
-const rootEntries = [
-  { name: 'workspace', path: '/workspace', directory: true, size: 0, modifiedAt: '2026-08-26T12:01:00.000Z' },
-]
-
 const workspaceEntries = [
   {
     name: 'README.md',
-    path: '/workspace/README.md',
+    path: '/README.md',
     directory: false,
     size: 418,
     modifiedAt: '2026-08-26T12:02:00.000Z',
   },
-  { name: 'src', path: '/workspace/src', directory: true, size: 0, modifiedAt: '2026-08-26T12:03:00.000Z' },
+  { name: 'src', path: '/src', directory: true, size: 0, modifiedAt: '2026-08-26T12:03:00.000Z' },
   {
     name: 'package.json',
-    path: '/workspace/package.json',
+    path: '/package.json',
     directory: false,
     size: 221,
     modifiedAt: '2026-08-26T12:04:00.000Z',
@@ -53,7 +49,7 @@ const workspaceEntries = [
 const sourceEntries = [
   {
     name: 'main.ts',
-    path: '/workspace/src/main.ts',
+    path: '/src/main.ts',
     directory: false,
     size: 128,
     modifiedAt: '2026-08-26T12:05:00.000Z',
@@ -71,11 +67,11 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   let agent = options.agent === undefined ? readyAgent : options.agent
   const authenticated = options.authenticated ?? true
   const actions: Record<string, unknown>[] = []
-  let files = [...rootEntries, ...workspaceEntries, ...sourceEntries, ...(options.extraFiles ?? [])]
+  let files = [...workspaceEntries, ...sourceEntries, ...(options.extraFiles ?? [])]
   let terminalSessions: Record<string, unknown>[] = []
   const contents = new Map<string, string>([
-    ['/workspace/README.md', '# Tengri\n\nA persistent Firecracker workspace.\n'],
-    ['/workspace/package.json', '{\n  "name": "tengri-workspace"\n}\n'],
+    ['/README.md', '# Tengri\n\nA persistent Firecracker workspace.\n'],
+    ['/package.json', '{\n  "name": "tengri-workspace"\n}\n'],
   ])
 
   page.on('pageerror', (error) => console.error(`[browser:pageerror] ${error.stack ?? error.message}`))
@@ -429,15 +425,15 @@ test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and win
   await spotlight.getByRole('combobox').fill('readme')
   await expect(spotlight.getByRole('option', { name: /src/ })).toHaveCount(0, { timeout: 400 })
   await expect(spotlight.getByRole('option', { name: /README\.md/ })).toBeVisible()
-  expect(mock.actions.filter((action) => action.action === 'search-files').at(-1)?.path).toBe('/workspace')
+  expect(mock.actions.filter((action) => action.action === 'search-files').at(-1)?.path).toBe('/')
   await spotlight.getByRole('combobox').fill('src')
   await expect(spotlight.getByRole('option', { name: /src/ })).toBeVisible()
   await page.keyboard.press('Enter')
   await expect(finder.getByRole('button', { name: /main\.ts/ })).toBeVisible()
   await expect
-    .poll(() => mock.actions.some((action) => action.action === 'list-files' && action.path === '/workspace/src'))
+    .poll(() => mock.actions.some((action) => action.action === 'list-files' && action.path === '/src'))
     .toBe(true)
-  expect(mock.actions.some((action) => action.action === 'read-file' && action.path === '/workspace/src')).toBe(false)
+  expect(mock.actions.some((action) => action.action === 'read-file' && action.path === '/src')).toBe(false)
 
   const finderFrame = page.locator('section[aria-label="Finder window"]')
   const finderWatchBeforeMinimize = await page.evaluate(
@@ -546,7 +542,7 @@ test('persists real Finder changes into Code and exposes a localhost preview fro
   const code = page.getByRole('region', { name: 'Code window' })
   await expect(code.getByRole('tab', { name: /README\.md/ })).toBeVisible()
   await expect
-    .poll(() => mock.actions.some((action) => action.action === 'read-file' && action.path === '/workspace/README.md'))
+    .poll(() => mock.actions.some((action) => action.action === 'read-file' && action.path === '/README.md'))
     .toBe(true)
   const editor = code.locator('.monaco-editor')
   await expect(editor).toHaveCount(1)
@@ -557,9 +553,7 @@ test('persists real Finder changes into Code and exposes a localhost preview fro
     .poll(() =>
       mock.actions.some(
         (action) =>
-          action.action === 'write-file' &&
-          action.path === '/workspace/README.md' &&
-          action.content === '# Edited in Tengri',
+          action.action === 'write-file' && action.path === '/README.md' && action.content === '# Edited in Tengri',
       ),
     )
     .toBe(true)

@@ -96,6 +96,7 @@ pub struct FileEvent {
 #[serde(rename_all = "camelCase")]
 pub struct TerminalSession {
     pub id: String,
+    #[serde(default)]
     pub creation_id: String,
     pub cwd: String,
     pub created_at: String,
@@ -310,7 +311,22 @@ impl GuestClient {
                     })),
             )
             .await?;
-        terminal_creation(response).await
+        match terminal_creation(response, creation_id).await {
+            Ok(creation) => Ok(creation),
+            Err(error) if legacy_terminal_creation_id_rejection(&error) => {
+                let response = self
+                    .send_unary(self.request(Method::POST, "/v1/terminals").json(
+                        &serde_json::json!({
+                            "cwd": cwd,
+                            "columns": columns,
+                            "rows": rows
+                        }),
+                    ))
+                    .await?;
+                terminal_creation(response, creation_id).await
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub async fn list_terminals(&self) -> Result<Vec<TerminalSession>, GuestError> {
@@ -465,14 +481,28 @@ async fn checked_response(response: reqwest::Response) -> Result<reqwest::Respon
     Err(GuestError::Api { status, message })
 }
 
-async fn terminal_creation(response: reqwest::Response) -> Result<TerminalCreation, GuestError> {
+async fn terminal_creation(
+    response: reqwest::Response,
+    requested_creation_id: &str,
+) -> Result<TerminalCreation, GuestError> {
     let response = checked_response(response).await?;
     let created = response.status() == StatusCode::CREATED;
     let body = bounded_response_body(response, MAX_GUEST_JSON_BYTES).await?;
-    Ok(TerminalCreation {
-        session: serde_json::from_slice(&body)?,
-        created,
-    })
+    let mut session: TerminalSession = serde_json::from_slice(&body)?;
+    if session.creation_id.is_empty() {
+        session.creation_id = requested_creation_id.to_owned();
+    }
+    Ok(TerminalCreation { session, created })
+}
+
+fn legacy_terminal_creation_id_rejection(error: &GuestError) -> bool {
+    matches!(
+        error,
+        GuestError::Api { status, message }
+            if *status == StatusCode::BAD_REQUEST
+                && message.contains("unknown field")
+                && message.contains("creationId")
+    )
 }
 
 async fn bounded_response_body(
@@ -500,6 +530,13 @@ async fn bounded_response_body(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    use axum::{Json, Router, routing::post};
 
     #[tokio::test]
     async fn guest_response_body_is_bounded_before_and_during_streaming() {
@@ -539,12 +576,109 @@ mod tests {
                 .body(body)
                 .expect("terminal response")
                 .into();
-            let creation = terminal_creation(response)
+            let creation = terminal_creation(response, "terminal-creation-status")
                 .await
                 .expect("valid terminal creation response");
             assert_eq!(creation.created, expected_created);
             assert_eq!(creation.session.creation_id, "terminal-creation-status");
         }
+    }
+
+    #[tokio::test]
+    async fn terminal_creation_accepts_legacy_sessions_without_creation_identity() {
+        let response: reqwest::Response = http::Response::builder()
+            .status(StatusCode::CREATED)
+            .body(
+                r#"{
+                    "id":"abcdefghijklmnopqrstuvwx",
+                    "cwd":"/workspace",
+                    "createdAt":"2026-08-28T00:00:00Z",
+                    "lastActivityAt":"2026-08-28T00:00:00Z",
+                    "attached":false
+                }"#,
+            )
+            .expect("legacy terminal response")
+            .into();
+
+        let creation = terminal_creation(response, "terminal-creation-legacy")
+            .await
+            .expect("legacy response remains compatible");
+        assert!(creation.created);
+        assert_eq!(creation.session.creation_id, "terminal-creation-legacy");
+    }
+
+    #[test]
+    fn terminal_creation_retries_only_the_legacy_unknown_field_error() {
+        let legacy = GuestError::Api {
+            status: StatusCode::BAD_REQUEST,
+            message: r#"{"error":"json: unknown field \"creationId\""}"#.to_owned(),
+        };
+        assert!(legacy_terminal_creation_id_rejection(&legacy));
+        assert!(!legacy_terminal_creation_id_rejection(&GuestError::Api {
+            status: StatusCode::BAD_REQUEST,
+            message: "cwd is invalid".to_owned(),
+        }));
+        assert!(!legacy_terminal_creation_id_rejection(&GuestError::Api {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: r#"unknown field \"creationId\""#.to_owned(),
+        }));
+    }
+
+    #[tokio::test]
+    async fn terminal_creation_negotiates_with_a_legacy_guest() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let request_attempts = Arc::clone(&attempts);
+        let router = Router::new().route(
+            "/v1/terminals",
+            post(move |Json(body): Json<Value>| {
+                let request_attempts = Arc::clone(&request_attempts);
+                async move {
+                    request_attempts.fetch_add(1, Ordering::SeqCst);
+                    if body.get("creationId").is_some() {
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            Json(serde_json::json!({
+                                "error": "json: unknown field \"creationId\""
+                            })),
+                        );
+                    }
+                    (
+                        StatusCode::CREATED,
+                        Json(serde_json::json!({
+                            "id": "abcdefghijklmnopqrstuvwx",
+                            "cwd": "/workspace",
+                            "createdAt": "2026-08-28T00:00:00Z",
+                            "lastActivityAt": "2026-08-28T00:00:00Z",
+                            "attached": false
+                        })),
+                    )
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind legacy Nanoagent fixture");
+        let address = listener.local_addr().expect("legacy Nanoagent address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router)
+                .await
+                .expect("serve legacy Nanoagent fixture");
+        });
+        let client = GuestClient {
+            http: reqwest::Client::new(),
+            base_url: format!("http://{address}"),
+            token: "test-bootstrap-token".to_owned(),
+        };
+
+        let creation = client
+            .create_terminal("terminal-creation-legacy", "/workspace", 120, 32)
+            .await
+            .expect("legacy terminal creation succeeds");
+        server.abort();
+
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        assert!(creation.created);
+        assert_eq!(creation.session.creation_id, "terminal-creation-legacy");
     }
 
     #[test]

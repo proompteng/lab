@@ -1,10 +1,9 @@
 import type { TengriFileEntry } from '@/lib/tengri/types'
 
-export const FINDER_HOME_PATH = '/'
-export const FINDER_WORKSPACE_PATH = '/workspace'
+export const FINDER_WORKSPACE_PATH = '/'
 export const FINDER_SEARCH_REFRESH_MS = 2_000
 
-const protectedFinderPaths = new Set([FINDER_HOME_PATH, FINDER_WORKSPACE_PATH])
+const protectedFinderPaths = new Set([FINDER_WORKSPACE_PATH])
 
 const finderDateFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: 'medium',
@@ -30,7 +29,7 @@ export function normalizeFinderPath(value: string): string | null {
     segments.push(segment)
   }
 
-  return segments.length ? `/${segments.join('/')}` : FINDER_HOME_PATH
+  return segments.length ? `/${segments.join('/')}` : FINDER_WORKSPACE_PATH
 }
 
 export function finderSearchRefreshInterval(active: boolean, query: string): number | null {
@@ -64,14 +63,14 @@ export function finderChildPath(parentPath: string, name: string): string | null
   )
     return null
 
-  return parent === FINDER_HOME_PATH ? `/${child}` : `${parent}/${child}`
+  return parent === FINDER_WORKSPACE_PATH ? `/${child}` : `${parent}/${child}`
 }
 
 export function finderRenamePath(sourcePath: string, name: string): string | null {
   const source = normalizeFinderPath(sourcePath)
   if (!source || protectedFinderPaths.has(source)) return null
   const separator = source.lastIndexOf('/')
-  const parent = separator > 0 ? source.slice(0, separator) : FINDER_HOME_PATH
+  const parent = separator > 0 ? source.slice(0, separator) : FINDER_WORKSPACE_PATH
   return finderChildPath(parent, name)
 }
 
