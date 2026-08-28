@@ -83,7 +83,12 @@ jobs:
       fail-fast: false
       matrix:
         target: ${{ fromJSON(needs.plan.outputs.targets) }}
-    runs-on: ${{ (matrix.target == 'docs' || matrix.target == 'landing' || matrix.target == 'app' || matrix.target == 'olden' || matrix.target == 'cms' || matrix.target == 'kitty-krew' || matrix.target == 'reviseur' || matrix.target == 'design') && 'arc-arm64' || 'ubuntu-latest' }}
+    runs-on: >-
+      ${{
+        matrix.target == 'landing' && 'arc-amd64' ||
+        (matrix.target == 'docs' || matrix.target == 'app' || matrix.target == 'olden' || matrix.target == 'cms' || matrix.target == 'kitty-krew' || matrix.target == 'reviseur' || matrix.target == 'design') && 'arc-arm64' ||
+        'ubuntu-latest'
+      }}
     env:
       CHANGED_FILES_JSON: ${{ needs.plan.outputs.changed_files }}
       CHANGED_MANIFESTS_JSON: ${{ needs.plan.outputs.changed_manifests }}
@@ -127,6 +132,17 @@ jobs:
           bun run --cwd apps/landing lint:oxlint
           bun run --cwd apps/landing lint:oxlint:type
           bun run --filter landing build
+
+      - name: Upload landing browser artifacts
+        if: ${{ always() && matrix.target == 'landing' }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: landing-browser-${{ github.run_attempt }}
+          path: |
+            apps/landing/playwright-report
+            apps/landing/test-results
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Run selected validation
         if: ${{ matrix.target != 'landing' }}

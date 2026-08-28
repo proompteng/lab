@@ -110,6 +110,7 @@ const contentSecurityPolicy = buildContentSecurityPolicy({
 })
 
 const nextConfig: NextConfig = {
+  devIndicators: false,
   output: 'standalone',
   experimental: {
     useTypeScriptCli: true,

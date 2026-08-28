@@ -7,15 +7,24 @@ const scriptsWorkflow = readFileSync(
   new URL('../../../../../.github/workflows/scripts-ci.yml', import.meta.url),
   'utf8',
 )
+const tengriWorkflow = readFileSync(new URL('../../../../../.github/workflows/tengri.yaml', import.meta.url), 'utf8')
 
 describe('landing browser validation workflow', () => {
   test('installs Chromium and runs the co-located Tengri Playwright suite', () => {
     const landingStep = workflow.match(
-      /- name: Run landing validation[\s\S]*?\n\s+- name: Run selected validation/,
+      /- name: Run landing validation[\s\S]*?\n\s+- name: Upload landing browser artifacts/,
     )?.[0]
+    const artifactStep = workflow.match(
+      /- name: Upload landing browser artifacts[\s\S]*?\n\s+- name: Run selected validation/,
+    )?.[0]
+    const runner = workflow.match(/runs-on: >-\n[\s\S]*?\n\s+env:/)?.[0]
 
     expect(landingStep).toContain('bunx playwright install --with-deps chromium')
     expect(landingStep).toContain('bun run --cwd apps/landing test:e2e')
+    expect(runner).toContain("matrix.target == 'landing' && 'arc-amd64'")
+    expect(runner).not.toContain("matrix.target == 'docs' || matrix.target == 'landing'")
+    expect(artifactStep).toContain("always() && matrix.target == 'landing'")
+    expect(artifactStep).toContain('apps/landing/test-results')
   })
 
   test('runs this contract for pull-request workflow-only changes', () => {
@@ -23,5 +32,13 @@ describe('landing browser validation workflow', () => {
 
     expect(pullRequestTrigger).toContain("'.github/workflows/pull-request.yml'")
     expect(pullRequestTrigger).toContain("'.github/workflows/scripts-ci.yml'")
+  })
+
+  test('does not duplicate pull-request browser validation', () => {
+    const trigger = tengriWorkflow.match(/on:\n[\s\S]*?\n\nconcurrency:/)?.[0]
+
+    expect(trigger).toContain('push:')
+    expect(trigger).toContain('workflow_dispatch:')
+    expect(trigger).not.toContain('pull_request:')
   })
 })
