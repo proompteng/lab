@@ -25,20 +25,6 @@ const calendarMaterial = {
   timeZone: 'UTC' as const,
   sessions: [{ date: '2026-08-18', openAt: '2026-08-18T13:30:00.000Z', closeAt: '2026-08-18T20:00:00.000Z' }],
 }
-const calendar = { ...calendarMaterial, normalizedResponseHash: canonicalHashV1(calendarMaterial) }
-const executionCalendar = Result.getOrThrow(
-  makeExecutionCalendarObservation({
-    schemaVersion: calendar.schemaVersion,
-    source: calendar.source,
-    ...calendar.sessions[0]!,
-  }),
-)
-const session = Object.freeze({
-  sessionDate: '2026-08-18' as const,
-  openAt: calendar.sessions[0]!.openAt,
-  closeAt: calendar.sessions[0]!.closeAt,
-  calendarHash: executionCalendar.executionCalendarHash,
-})
 
 const success = <A, E>(result: Result.Result<A, E>): A => Result.getOrThrow(result)
 const error = <A, E>(result: Result.Result<A, E>): E => Result.getOrThrow(Result.flip(result))
@@ -46,6 +32,7 @@ const instant = (epoch: number): string => new Date(epoch).toISOString()
 
 interface FixtureOptions {
   readonly rangeEndAt: string
+  readonly sessionCloseAt?: string
   readonly returnBps?: Readonly<Record<string, number>>
   readonly quoteAgeMs?: number
   readonly snapshotMaximumQuoteAgeMs?: number
@@ -56,6 +43,32 @@ interface FixtureOptions {
 }
 
 const marketContextAt = (options: FixtureOptions) => {
+  const boundCalendarMaterial = {
+    ...calendarMaterial,
+    sessions: [
+      {
+        ...calendarMaterial.sessions[0]!,
+        closeAt: options.sessionCloseAt ?? calendarMaterial.sessions[0]!.closeAt,
+      },
+    ],
+  }
+  const boundCalendar = {
+    ...boundCalendarMaterial,
+    normalizedResponseHash: canonicalHashV1(boundCalendarMaterial),
+  }
+  const boundExecutionCalendar = success(
+    makeExecutionCalendarObservation({
+      schemaVersion: boundCalendar.schemaVersion,
+      source: boundCalendar.source,
+      ...boundCalendar.sessions[0]!,
+    }),
+  )
+  const boundSession = Object.freeze({
+    sessionDate: '2026-08-18' as const,
+    openAt: boundCalendar.sessions[0]!.openAt,
+    closeAt: boundCalendar.sessions[0]!.closeAt,
+    calendarHash: boundExecutionCalendar.executionCalendarHash,
+  })
   const rangeEnd = Date.parse(options.rangeEndAt)
   const rangeStart = rangeEnd - defaultIntradayMomentumProtocolDocument.lookbackMinutes * 60_000
   const observedLagMs = options.observedLagMs ?? defaultIntradayMomentumProtocolDocument.decisionDelaySeconds * 1_000
@@ -146,7 +159,7 @@ const marketContextAt = (options: FixtureOptions) => {
   ] as const
   const request = {
     sessionDate: '2026-08-18',
-    calendar,
+    calendar: boundCalendar,
     rangeStartAt: instant(rangeStart),
     rangeEndAt: options.rangeEndAt,
     observedAt,
@@ -170,7 +183,7 @@ const marketContextAt = (options: FixtureOptions) => {
     quotes,
     trades,
   } satisfies IntradaySnapshotRows
-  return Object.freeze({ snapshot: success(verifyIntradaySnapshot(request, rows)), session })
+  return Object.freeze({ snapshot: success(verifyIntradaySnapshot(request, rows)), session: boundSession })
 }
 
 const qualifyingReturns = Object.freeze({ AMD: 50, AVGO: 45, NVDA: 40 })
@@ -264,6 +277,51 @@ describe('intraday momentum strategy', () => {
     expect(
       Schema.decodeUnknownResult(IntradayMomentumTargetPortfolioSchema, strictParseOptions)(decision),
     ).toMatchObject({ _tag: 'Success' })
+  })
+
+  test('uses the bound early-close duration and rejects only impossible decision intervals', () => {
+    const earlyCloseAt = '2026-08-18T17:00:00.000Z'
+    const defaultProtocol = success(decodeDefaultIntradayMomentumProtocol())
+    expect(
+      success(
+        decideIntradayMomentum(
+          marketContextAt({
+            rangeEndAt: '2026-08-18T15:00:00.000Z',
+            sessionCloseAt: earlyCloseAt,
+            returnBps: qualifyingReturns,
+          }),
+          defaultProtocol,
+        ),
+      ).selectedSymbols,
+    ).toEqual(['AMD', 'AVGO', 'NVDA'])
+
+    const impossibleProtocol = success(
+      decodeIntradayMomentumProtocol({
+        ...defaultIntradayMomentumProtocolDocument,
+        warmupMinutesAfterOpen: 120,
+        entryCutoffMinutesBeforeClose: 100,
+        executionModel: {
+          ...defaultIntradayMomentumProtocolDocument.executionModel,
+          order: {
+            ...defaultIntradayMomentumProtocolDocument.executionModel.order,
+            warmupAfterOpenMs: 120 * 60_000,
+            submissionCutoffBeforeCloseMs: 100 * 60_000,
+          },
+        },
+      }),
+    )
+    expect(
+      error(
+        decideIntradayMomentum(
+          marketContextAt({
+            rangeEndAt: '2026-08-18T15:30:00.000Z',
+            sessionCloseAt: earlyCloseAt,
+            returnBps: qualifyingReturns,
+          }),
+          impossibleProtocol,
+        ),
+      ),
+    ).toMatchObject({ reason: 'snapshot-window' })
   })
 
   test('rejects the old opening-only decision window instead of silently reusing it all day', () => {

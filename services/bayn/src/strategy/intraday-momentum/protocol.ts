@@ -164,6 +164,21 @@ const protocolIssues = (protocol: typeof IntradayMomentumProtocolBase.Type): rea
 export const IntradayMomentumProtocolSchema = IntradayMomentumProtocolBase.check(Schema.makeFilter(protocolIssues))
 export type IntradayMomentumProtocol = typeof IntradayMomentumProtocolSchema.Type
 
+export const intradayMomentumSessionHasDecisionInterval = (
+  protocol: IntradayMomentumProtocol,
+  session: { readonly openAt: string; readonly closeAt: string },
+): boolean => {
+  const openAt = Date.parse(session.openAt)
+  const closeAt = Date.parse(session.closeAt)
+  const earliestDecisionAt = openAt + protocol.warmupMinutesAfterOpen * 60_000 + protocol.decisionDelaySeconds * 1_000
+  const entryCutoffAt = closeAt - protocol.entryCutoffMinutesBeforeClose * 60_000
+  return (
+    [openAt, closeAt, earliestDecisionAt, entryCutoffAt].every(Number.isSafeInteger) &&
+    openAt < closeAt &&
+    earliestDecisionAt < entryCutoffAt
+  )
+}
+
 export const defaultIntradayMomentumProtocolDocument = Object.freeze({
   schemaVersion: 'bayn.intraday-momentum.protocol.v1',
   universeId: coreUniverse.id,

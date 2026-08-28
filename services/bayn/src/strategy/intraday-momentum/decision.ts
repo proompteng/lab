@@ -22,7 +22,7 @@ import {
   type IntradayMomentumStrategyDefinition,
   type IntradayMomentumTargetPortfolio,
 } from './model'
-import type { IntradayMomentumProtocol } from './protocol'
+import { intradayMomentumSessionHasDecisionInterval, type IntradayMomentumProtocol } from './protocol'
 
 const micros = 1_000_000
 const weightScale = 1_000_000
@@ -204,6 +204,7 @@ const validateSnapshot = (
     Result.isFailure(selectedCalendar) ||
     session.calendarHash !== selectedCalendar.success.executionCalendarHash ||
     sessionOpen >= sessionClose ||
+    !intradayMomentumSessionHasDecisionInterval(protocol, session) ||
     rangeStart < sessionOpen ||
     rangeEnd - rangeStart !== protocol.lookbackMinutes * minuteMs ||
     rangeEnd < earliestRangeEnd ||
