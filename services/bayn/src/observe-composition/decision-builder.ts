@@ -841,6 +841,23 @@ const unwrapStrategyApplicationFailure = (cause: unknown): unknown => {
   return cause
 }
 
+const classifyIntradayEntrySnapshotFailure = (
+  cause: OperationalError,
+  observedAt: string,
+  submissionCutoffAt: string,
+): OperationalError | ObserveDecisionAwaitingSignal => {
+  const snapshotFailure = cause.cause
+  return snapshotFailure instanceof IntradaySnapshotFailure &&
+    snapshotFailure.reason === 'watermark' &&
+    snapshotFailure.message === 'intraday archive has not materialized the captured source offset'
+    ? new ObserveDecisionAwaitingSignal({
+        message: snapshotFailure.message,
+        observedAt,
+        submissionCutoffAt,
+      })
+    : cause
+}
+
 const compileObserveStrategyDecision = <R>(
   input: ObserveDecisionInput<R>,
   facts: ObserveDecisionFacts,
@@ -870,7 +887,11 @@ const compileObserveStrategyDecision = <R>(
           }),
         ),
       )
-      const snapshot = yield* loadIntradaySnapshot(intradayMarketData, query)
+      const snapshot = yield* loadIntradaySnapshot(intradayMarketData, query).pipe(
+        Effect.mapError((cause) =>
+          classifyIntradayEntrySnapshotFailure(cause, facts.evaluatedAt, input.cycle.window.submissionCutoffAt),
+        ),
+      )
       const compiled = yield* Effect.fromResult(
         Result.flatMap(requireFreshIntradayPositionQuotes(snapshot, facts.reconciliation.brokerState.positions), () =>
           compileOpeningDriveDecision(openingDefinition, input.cycle, snapshot),
@@ -936,7 +957,11 @@ const compileObserveStrategyDecision = <R>(
               }),
         ),
       )
-      const snapshot = yield* loadIntradaySnapshot(intradayMarketData, query)
+      const snapshot = yield* loadIntradaySnapshot(intradayMarketData, query).pipe(
+        Effect.mapError((cause) =>
+          classifyIntradayEntrySnapshotFailure(cause, facts.evaluatedAt, input.cycle.window.submissionCutoffAt),
+        ),
+      )
       const compiled = yield* Effect.fromResult(
         Result.flatMap(requireFreshIntradayPositionQuotes(snapshot, facts.reconciliation.brokerState.positions), () =>
           compileIntradayMomentumDecision(intradayDefinition, input.cycle, snapshot),

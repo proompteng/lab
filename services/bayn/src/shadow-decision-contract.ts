@@ -443,6 +443,16 @@ const executionMaterialIssues = (
   if (document.createdAt >= document.expiresAt) {
     issues.push({ path: ['createdAt'], issue: 'must precede execution authority expiry' })
   }
+  const usesReconciledPositionMark =
+    document.targetPlan.executionTerms?.priceReference === 'reconciled-broker-position-mark'
+  const bindsReconciledPositions =
+    document.bindings.executionMarketData?.schemaVersion === reconciledPositionLiquidationBindingSchemaVersion
+  if (usesReconciledPositionMark !== bindsReconciledPositions) {
+    issues.push({
+      path: ['bindings', 'executionMarketData'],
+      issue: 'reconciled broker-position execution terms require their exact liquidation binding and vice versa',
+    })
+  }
   const targets = document.targetPlan.intentTargets
   const planned = document.targetPlan.status === TargetPlanStatus.Planned
   const riskBlocked = document.riskBlock !== undefined

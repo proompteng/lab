@@ -147,7 +147,7 @@ import { ReconciliationError, type ReconciliationPassResult } from './reconciler
 import { reconciledStateHash } from './reconciliation'
 import { Reason, type Policy } from './risk'
 import { decodeExecutionDecisionDocument, makeExecutionDecisionDocument } from './shadow-decision-contract'
-import { TargetPlanStatus } from './target-planner'
+import { decodeTargetPlanResult, TargetPlanStatus } from './target-planner'
 import { fixtureProtocol, makeSnapshot, makeTestDefinition } from './test-fixtures'
 import { utcInstantFromEpochMillis } from './time'
 import type { DecisionPlan, IsoDate } from './types'
@@ -3289,6 +3289,56 @@ describe('OBSERVE runtime composition', () => {
     } as const
     const preparation = Result.getOrThrow(prepareObserveStartup(input))
     const policy = await Effect.runPromise(loadStrategyExecutionRiskPolicy(accountId, strategy))
+    const failedEntry = (snapshotFailure: IntradaySnapshotFailure) => {
+      const laggingArchive: IntradayMarketDataService = {
+        captureVersion: archive.captureVersion,
+        loadSnapshot: () =>
+          Effect.fail(
+            operationalError({
+              component: 'market-data',
+              operation: 'load-intraday',
+              message: snapshotFailure.message,
+              cause: snapshotFailure,
+            }),
+          ),
+      }
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(historicalWindow.submissionOpenAt))
+          return yield* buildMutationShadowCycleDecision({
+            authorityGenerationHash: generationHash,
+            cycle: historicalCycle,
+            executionModel: openingDriveExecutionModel,
+            policy,
+            reconcile: Effect.succeed(reconciliationResult(generationHash, Authority.Execution)),
+            strategy,
+            intradayMarketData: laggingArchive,
+          })
+        }).pipe(
+          (program) => provideDecisionServices(program, marketData([]), calendarRead([])),
+          Effect.provide(TestClock.layer()),
+          Effect.flip,
+        ),
+      )
+    }
+    const replicaLag = new IntradaySnapshotFailure({
+      reason: 'watermark',
+      message: 'intraday archive has not materialized the captured source offset',
+    })
+    const topologyMismatch = new IntradaySnapshotFailure({
+      reason: 'watermark',
+      message: 'intraday archive partition topology changed after version capture',
+    })
+    expect(await failedEntry(replicaLag)).toMatchObject({
+      _tag: 'ObserveDecisionAwaitingSignal',
+      message: replicaLag.message,
+      observedAt: historicalWindow.submissionOpenAt,
+      submissionCutoffAt: historicalWindow.submissionCutoffAt,
+    })
+    expect(await failedEntry(topologyMismatch)).toMatchObject({
+      _tag: 'OperationalError',
+      cause: topologyMismatch,
+    })
     const entryDocument = await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(historicalWindow.submissionOpenAt))
@@ -3467,6 +3517,36 @@ describe('OBSERVE runtime composition', () => {
         ],
       },
     })
+    const withExecutionTerms = (
+      targetPlan: typeof close.targetPlan,
+      executionTerms: Readonly<Record<string, string>>,
+    ) => {
+      const { outputHash: _outputHash, ...material } = targetPlan
+      const changed = { ...material, executionTerms }
+      return { ...changed, outputHash: canonicalHashV1(changed) }
+    }
+    const forgedBrokerMarkPlan = withExecutionTerms(close.targetPlan, {
+      executionPurpose: 'forced-close',
+      orderType: OrderType.Market,
+      timeInForce: TimeInForce.Day,
+      priceReference: 'reconciled-broker-position-mark',
+    })
+    const forgedArchivePlan = withExecutionTerms(outOfUniverseClose.targetPlan, {
+      executionPurpose: 'fractional-close',
+      orderType: OrderType.Market,
+      timeInForce: TimeInForce.Day,
+      priceReference: 'verified-adverse-quote-boundary',
+    })
+    const { contentHash: _closeHash, ...closeMaterial } = close
+    const { contentHash: _outOfUniverseHash, ...outOfUniverseMaterial } = outOfUniverseClose
+    expect(Result.isSuccess(decodeTargetPlanResult(forgedBrokerMarkPlan))).toBe(true)
+    expect(Result.isSuccess(decodeTargetPlanResult(forgedArchivePlan))).toBe(true)
+    expect(
+      Result.isFailure(makeExecutionDecisionDocument({ ...closeMaterial, targetPlan: forgedBrokerMarkPlan })),
+    ).toBe(true)
+    expect(
+      Result.isFailure(makeExecutionDecisionDocument({ ...outOfUniverseMaterial, targetPlan: forgedArchivePlan })),
+    ).toBe(true)
     expect(waiting).toEqual(
       new ExecutionCloseAwaitingMarketData({
         message: `${unavailable.message}: ${unavailable.message}`,
