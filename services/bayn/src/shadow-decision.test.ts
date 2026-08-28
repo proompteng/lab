@@ -680,8 +680,11 @@ const openingDriveMarketDataBinding = (
   }
 }
 
-const currentEntryMarketDataBinding = (cycle: AutonomousCycle): ArchiveMarketDataBindingV2 => {
-  const binding = openingDriveMarketDataBinding(cycle)
+const currentEntryMarketDataBinding = (
+  cycle: AutonomousCycle,
+  barsContentHash?: string,
+): ArchiveMarketDataBindingV2 => {
+  const binding = openingDriveMarketDataBinding(cycle, barsContentHash)
   const {
     contentHash: _contentHash,
     snapshotId: _snapshotId,
@@ -868,6 +871,11 @@ const makeIntradayMomentumInput = (calendarHash?: string): OpeningDriveShadowDec
   }
   return {
     ...base,
+    snapshot: {
+      snapshotId: executionMarketData.snapshotId,
+      contentHash: executionMarketData.contentHash,
+      finalizedAt: executionMarketData.observedAt,
+    },
     compiledDecision,
     executionMarketData,
     plannerInput,
@@ -886,15 +894,18 @@ describe('OBSERVE shadow decision', () => {
       throw new Error('intraday fixture must include archive execution market data v2')
     }
 
-    await expect(
-      build({
-        ...input,
-        executionMarketData: {
-          ...executionMarketData,
-          schemaVersion: 'bayn.execution-market-data-binding.v1',
-        },
-      }),
-    ).rejects.toMatchObject({
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        buildObserveShadowDecision({
+          ...input,
+          executionMarketData: {
+            ...executionMarketData,
+            schemaVersion: 'bayn.execution-market-data-binding.v1',
+          },
+        }),
+      ),
+    )
+    expect(failure).toMatchObject({
       failure: 'binding',
       message: 'intraday-momentum entry requires execution market-data binding v2',
     })
