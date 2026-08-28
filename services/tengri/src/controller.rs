@@ -5,7 +5,7 @@ use futures::StreamExt;
 use k8s_openapi::api::core::v1::{ContainerStatus, PersistentVolumeClaim, Pod, Secret};
 use kube::{
     Api, Client, Resource, ResourceExt,
-    api::{DeleteParams, Patch, PatchParams},
+    api::{DeleteParams, Patch, PatchParams, Preconditions},
     runtime::{
         Controller,
         controller::Action,
@@ -23,7 +23,7 @@ use crate::{
     metrics,
     pod::{
         FINALIZER_NAME, MANAGER_NAME, bootstrap_secret_name, build_pod, ensure_bootstrap_secret,
-        ensure_pvc, pvc_name,
+        ensure_pvc, is_controlled_by_microvm, pvc_name,
     },
     tickets::TicketStore,
 };
@@ -122,7 +122,7 @@ async fn reconcile(
         metrics::global().clear_pty_sessions(&name);
         // Sleeping is observable only after the Firecracker guest is gone. Waiting for
         // foreground deletion also prevents a resume from racing a terminating Pod.
-        delete_and_wait(&pods, &name).await?;
+        delete_owned_and_wait(&pods, &name, &microvm).await?;
         let status = sleeping_status(&microvm, idle, now);
         if microvm.status.as_ref() != Some(&status) {
             patch_status(&microvms, &microvm, status).await?;
@@ -277,13 +277,17 @@ async fn cleanup(
     let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
     let secrets: Api<Secret> = Api::namespaced(client.clone(), namespace);
     let claims: Api<PersistentVolumeClaim> = Api::namespaced(client.clone(), namespace);
-    delete_and_wait(&pods, &microvm.name_any()).await?;
-    delete_and_wait(&secrets, &bootstrap_secret_name(microvm)).await?;
-    delete_and_wait(&claims, &pvc_name(microvm)).await?;
+    delete_owned_and_wait(&pods, &microvm.name_any(), microvm).await?;
+    delete_owned_and_wait(&secrets, &bootstrap_secret_name(microvm), microvm).await?;
+    delete_owned_and_wait(&claims, &pvc_name(microvm), microvm).await?;
     Ok(())
 }
 
-async fn delete_and_wait<K>(api: &Api<K>, name: &str) -> Result<(), ReconcileError>
+async fn delete_owned_and_wait<K>(
+    api: &Api<K>,
+    name: &str,
+    microvm: &MicroVM,
+) -> Result<(), ReconcileError>
 where
     K: Clone + serde::de::DeserializeOwned + std::fmt::Debug + Resource + Send + 'static,
     <K as Resource>::DynamicType: Default,
@@ -291,8 +295,27 @@ where
     let Some(resource) = api.get_opt(name).await? else {
         return Ok(());
     };
-    let uid = resource.uid().unwrap_or_default();
-    match api.delete(name, &DeleteParams::foreground()).await {
+    if !is_controlled_by_microvm(&resource, microvm) {
+        warn!(
+            resource = name,
+            microvm = %microvm.name_any(),
+            "skipping cleanup of resource not controlled by MicroVM"
+        );
+        return Ok(());
+    }
+    let Some(uid) = resource.uid() else {
+        warn!(
+            resource = name,
+            microvm = %microvm.name_any(),
+            "skipping cleanup of owned resource without a Kubernetes UID"
+        );
+        return Ok(());
+    };
+    let params = DeleteParams::foreground().preconditions(Preconditions {
+        uid: Some(uid.clone()),
+        resource_version: resource.resource_version(),
+    });
+    match api.delete(name, &params).await {
         Ok(_) => {}
         Err(kube::Error::Api(response)) if response.code == 404 => return Ok(()),
         Err(error) => return Err(error.into()),
@@ -755,7 +778,7 @@ mod tests {
     use kube::client::Body as KubeBody;
 
     fn test_microvm(now: DateTime<Utc>) -> MicroVM {
-        MicroVM::new(
+        let mut microvm = MicroVM::new(
             "agent",
             MicroVMSpec {
                 display_name: "Agent".to_owned(),
@@ -768,7 +791,99 @@ mod tests {
                 idle_deadline: (now + chrono::Duration::minutes(IDLE_MINUTES)).to_rfc3339(),
                 expires_at: (now + chrono::Duration::hours(4)).to_rfc3339(),
             },
+        );
+        microvm.metadata.uid = Some("microvm-uid".to_owned());
+        microvm
+    }
+
+    #[tokio::test]
+    async fn owned_cleanup_uses_uid_and_resource_version_preconditions() {
+        let microvm = test_microvm(Utc::now());
+        let (service, mut handle) =
+            tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
+        let client = Client::new(service, "tengri");
+        let pods: Api<Pod> = Api::namespaced(client, "tengri");
+        let cleanup =
+            tokio::spawn(async move { delete_owned_and_wait(&pods, "agent", &microvm).await });
+
+        let (request, response) = handle.next_request().await.expect("owned Pod lookup");
+        assert_eq!(request.method(), http::Method::GET);
+        assert_eq!(request.uri().path(), "/api/v1/namespaces/tengri/pods/agent");
+        response.send_response(
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(KubeBody::from(
+                    br#"{"apiVersion":"v1","kind":"Pod","metadata":{"name":"agent","namespace":"tengri","uid":"pod-uid","resourceVersion":"17","ownerReferences":[{"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM","name":"agent","uid":"microvm-uid","controller":true}]}}"#
+                        .to_vec(),
+                ))
+                .expect("owned Pod response"),
+        );
+
+        let (request, response) = handle.next_request().await.expect("owned Pod deletion");
+        assert_eq!(request.method(), http::Method::DELETE);
+        assert_eq!(request.uri().path(), "/api/v1/namespaces/tengri/pods/agent");
+        let body: serde_json::Value = serde_json::from_slice(
+            &request
+                .into_body()
+                .collect_bytes()
+                .await
+                .expect("delete request body"),
         )
+        .expect("delete options JSON");
+        assert_eq!(body["propagationPolicy"], "Foreground");
+        assert_eq!(body["preconditions"]["uid"], "pod-uid");
+        assert_eq!(body["preconditions"]["resourceVersion"], "17");
+        response.send_response(
+            Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(KubeBody::from(
+                    br#"{"apiVersion":"v1","kind":"Status","status":"Failure","reason":"NotFound","message":"Pod agent was already deleted","code":404}"#
+                        .to_vec(),
+                ))
+                .expect("Pod not found response"),
+        );
+
+        cleanup
+            .await
+            .expect("owned cleanup task")
+            .expect("owned cleanup result");
+    }
+
+    #[tokio::test]
+    async fn cleanup_skips_a_same_named_resource_not_owned_by_the_microvm() {
+        let microvm = test_microvm(Utc::now());
+        let (service, mut handle) =
+            tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
+        let client = Client::new(service, "tengri");
+        let secrets: Api<Secret> = Api::namespaced(client, "tengri");
+        let cleanup = tokio::spawn(async move {
+            delete_owned_and_wait(&secrets, "agent-bootstrap", &microvm).await
+        });
+
+        let (request, response) = handle.next_request().await.expect("foreign Secret lookup");
+        assert_eq!(request.method(), http::Method::GET);
+        response.send_response(
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(KubeBody::from(
+                    br#"{"apiVersion":"v1","kind":"Secret","metadata":{"name":"agent-bootstrap","namespace":"tengri","uid":"foreign-secret-uid","ownerReferences":[{"apiVersion":"v1","kind":"ConfigMap","name":"foreign","uid":"foreign-uid","controller":true}]}}"#
+                        .to_vec(),
+                ))
+                .expect("foreign Secret response"),
+        );
+
+        cleanup
+            .await
+            .expect("foreign cleanup task")
+            .expect("foreign resource is skipped");
+        if let Ok(Some(_)) =
+            tokio::time::timeout(Duration::from_millis(25), handle.next_request()).await
+        {
+            panic!("foreign resource must not be deleted");
+        }
     }
 
     #[test]

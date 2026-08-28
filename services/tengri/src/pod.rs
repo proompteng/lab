@@ -79,8 +79,22 @@ pub async fn ensure_bootstrap_secret(
 ) -> Result<String, KubeError> {
     let name = bootstrap_secret_name(microvm);
     let secrets: Api<Secret> = Api::namespaced(client, namespace);
-    if secrets.get_opt(&name).await?.is_some() {
-        return Ok(name);
+    if let Some(secret) = secrets.get_opt(&name).await? {
+        if is_controlled_by_microvm(&secret, microvm) {
+            return Ok(name);
+        }
+        return Err(KubeError::Api(
+            kube::core::Status {
+                code: 422,
+                reason: "Invalid".to_owned(),
+                message: format!(
+                    "bootstrap Secret {name} already exists and is not controlled by MicroVM {}",
+                    microvm.name_any()
+                ),
+                ..kube::core::Status::default()
+            }
+            .boxed(),
+        ));
     }
 
     let token = Alphanumeric.sample_string(&mut rand::rng(), 64);
@@ -96,6 +110,22 @@ pub async fn ensure_bootstrap_secret(
         .patch(&name, &params, &Patch::Apply(&secret))
         .await?;
     Ok(name)
+}
+
+pub(crate) fn is_controlled_by_microvm<K>(resource: &K, microvm: &MicroVM) -> bool
+where
+    K: Resource,
+{
+    let Some(microvm_uid) = microvm.meta().uid.as_deref() else {
+        return false;
+    };
+    resource
+        .meta()
+        .owner_references
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .any(|owner| owner.controller == Some(true) && owner.uid == microvm_uid)
 }
 
 pub async fn ensure_pvc(
@@ -406,9 +436,11 @@ fn http_probe(path: &str, period_seconds: i32, failure_threshold: i32) -> Probe 
 mod tests {
     use super::*;
     use crate::crd::{MicroVMArchitecture, MicroVMDesiredState, MicroVMResources, MicroVMSpec};
+    use http::{Request, Response, StatusCode};
+    use kube::client::Body as KubeBody;
 
     fn test_microvm() -> MicroVM {
-        MicroVM::new(
+        let mut microvm = MicroVM::new(
             "agent-1234",
             MicroVMSpec {
                 display_name: "Tengri".to_owned(),
@@ -421,7 +453,54 @@ mod tests {
                 idle_deadline: "2026-08-26T01:00:00Z".to_owned(),
                 expires_at: "2026-08-26T04:00:00Z".to_owned(),
             },
-        )
+        );
+        microvm.metadata.uid = Some("microvm-uid".to_owned());
+        microvm
+    }
+
+    #[tokio::test]
+    async fn rejects_an_existing_bootstrap_secret_owned_by_another_resource() {
+        let microvm = test_microvm();
+        let (service, mut handle) =
+            tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
+        let client = Client::new(service, "tengri");
+        let ensure =
+            tokio::spawn(async move { ensure_bootstrap_secret(client, "tengri", &microvm).await });
+
+        let (request, response) = handle.next_request().await.expect("Secret lookup");
+        assert_eq!(request.method(), http::Method::GET);
+        assert_eq!(
+            request.uri().path(),
+            "/api/v1/namespaces/tengri/secrets/agent-1234-bootstrap"
+        );
+        response.send_response(
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(KubeBody::from(
+                    br#"{"apiVersion":"v1","kind":"Secret","metadata":{"name":"agent-1234-bootstrap","namespace":"tengri","uid":"secret-uid","ownerReferences":[{"apiVersion":"v1","kind":"ConfigMap","name":"foreign","uid":"foreign-uid","controller":true}]}}"#
+                        .to_vec(),
+                ))
+                .expect("foreign Secret response"),
+        );
+
+        let error = ensure
+            .await
+            .expect("Secret ensure task")
+            .expect_err("foreign Secret must be rejected");
+        match error {
+            KubeError::Api(response) => {
+                assert_eq!(response.code, 422);
+                assert_eq!(response.reason, "Invalid");
+                assert!(response.message.contains("not controlled by MicroVM"));
+            }
+            other => panic!("unexpected Secret collision error: {other}"),
+        }
+        if let Ok(Some(_)) =
+            tokio::time::timeout(std::time::Duration::from_millis(25), handle.next_request()).await
+        {
+            panic!("foreign Secret must not be patched");
+        }
     }
 
     #[test]
