@@ -52,7 +52,7 @@ spec:
             - name: TENGRI_GRPC_ENDPOINT
               # The release promotion enables this endpoint atomically with
               # the Tengri ApplicationSet entry and immutable image digests.
-              value: ""
+              value: tengri-grpc.tengri.svc.cluster.local:50051
             - name: TENGRI_GRPC_TLS
               value: "false"
             - name: TENGRI_BFF_SECRET_DIR
