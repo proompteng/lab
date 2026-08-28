@@ -558,7 +558,7 @@ impl MicroVmControlPlane for ControlPlane {
     ) -> Result<Response<TerminalSession>, Status> {
         let principal = self.authorize(&request).await?;
         let request = request.into_inner();
-        let terminal = self
+        let creation = self
             .guest(&principal, &request.agent_id)
             .await?
             .create_terminal(
@@ -569,8 +569,10 @@ impl MicroVmControlPlane for ControlPlane {
             )
             .await
             .map_err(map_guest_error)?;
-        metrics::global().record_pty_created(&request.agent_id, &terminal.id);
-        Ok(Response::new(terminal_session(terminal)))
+        if creation.created {
+            metrics::global().record_pty_created(&request.agent_id, &creation.session.id);
+        }
+        Ok(Response::new(terminal_session(creation.session)))
     }
 
     async fn list_terminals(

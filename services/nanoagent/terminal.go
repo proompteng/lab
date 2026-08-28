@@ -241,39 +241,39 @@ func (manager *terminalManager) close() {
 	})
 }
 
-func (manager *terminalManager) create(creationID, cwd string, columns, rows uint16) (terminalSessionView, error) {
+func (manager *terminalManager) create(creationID, cwd string, columns, rows uint16) (terminalSessionView, bool, error) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 	if manager.closed {
-		return terminalSessionView{}, errors.New("terminal manager is closed")
+		return terminalSessionView{}, false, errors.New("terminal manager is closed")
 	}
 	if !validTerminalCreationID(creationID) {
-		return terminalSessionView{}, errors.New("terminal creation ID is invalid")
+		return terminalSessionView{}, false, errors.New("terminal creation ID is invalid")
 	}
 	for _, session := range manager.sessions {
 		if session.creationID == creationID {
-			return session.view(), nil
+			return session.view(), false, nil
 		}
 	}
 	if len(manager.sessions) >= maxTerminalSessions {
-		return terminalSessionView{}, errors.New("at most four terminal sessions are allowed")
+		return terminalSessionView{}, false, errors.New("at most four terminal sessions are allowed")
 	}
 	if strings.TrimSpace(cwd) == "" {
 		cwd = "/"
 	}
 	resolved, err := manager.workspace.resolveExisting(cwd)
 	if err != nil {
-		return terminalSessionView{}, err
+		return terminalSessionView{}, false, err
 	}
 	info, err := os.Stat(resolved)
 	if err != nil || !info.IsDir() {
-		return terminalSessionView{}, errors.New("terminal cwd must be a directory")
+		return terminalSessionView{}, false, errors.New("terminal cwd must be a directory")
 	}
 	columns = clampTerminalDimension(columns, 120, 20, 400)
 	rows = clampTerminalDimension(rows, 32, 6, 200)
 	id, err := randomToken(24)
 	if err != nil {
-		return terminalSessionView{}, fmt.Errorf("generate terminal session ID: %w", err)
+		return terminalSessionView{}, false, fmt.Errorf("generate terminal session ID: %w", err)
 	}
 	command := exec.Command(manager.shell, "-l", "-i")
 	command.Dir = resolved
@@ -285,7 +285,7 @@ func (manager *terminalManager) create(creationID, cwd string, columns, rows uin
 	)
 	terminal, err := pty.StartWithSize(command, &pty.Winsize{Cols: columns, Rows: rows})
 	if err != nil {
-		return terminalSessionView{}, err
+		return terminalSessionView{}, false, err
 	}
 	now := time.Now().UTC()
 	session := &terminalSession{
@@ -304,7 +304,7 @@ func (manager *terminalManager) create(creationID, cwd string, columns, rows uin
 	manager.sessions[id] = session
 	go manager.readOutput(session)
 	go manager.waitForExit(session)
-	return session.view(), nil
+	return session.view(), true, nil
 }
 
 func (manager *terminalManager) list() []terminalSessionView {
@@ -845,7 +845,7 @@ func (server *apiServer) handleCreateTerminal(writer http.ResponseWriter, reques
 	if !decodeJSON(writer, request, &input) {
 		return
 	}
-	session, err := server.terminals.create(input.CreationID, input.Cwd, input.Columns, input.Rows)
+	session, created, err := server.terminals.create(input.CreationID, input.Cwd, input.Columns, input.Rows)
 	if err != nil {
 		if strings.Contains(err.Error(), "four terminal") {
 			writeAPIError(writer, http.StatusConflict, err.Error())
@@ -857,7 +857,11 @@ func (server *apiServer) handleCreateTerminal(writer http.ResponseWriter, reques
 	if request.Context().Err() != nil {
 		return
 	}
-	writeJSON(writer, http.StatusCreated, session)
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	writeJSON(writer, status, session)
 }
 
 func (server *apiServer) handleListTerminals(writer http.ResponseWriter, _ *http.Request) {

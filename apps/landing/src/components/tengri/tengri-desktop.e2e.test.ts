@@ -429,6 +429,7 @@ test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and win
   await spotlight.getByRole('combobox').fill('readme')
   await expect(spotlight.getByRole('option', { name: /src/ })).toHaveCount(0, { timeout: 400 })
   await expect(spotlight.getByRole('option', { name: /README\.md/ })).toBeVisible()
+  expect(mock.actions.filter((action) => action.action === 'search-files').at(-1)?.path).toBe('/workspace')
   await spotlight.getByRole('combobox').fill('src')
   await expect(spotlight.getByRole('option', { name: /src/ })).toBeVisible()
   await page.keyboard.press('Enter')

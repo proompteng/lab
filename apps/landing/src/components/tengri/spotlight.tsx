@@ -8,6 +8,7 @@ import type { TengriFileEntry } from '@/lib/tengri/types'
 import { APP_TITLES, type TengriApp } from '@/lib/tengri/window-manager'
 import { runTengriAction } from './client'
 import { DOCK_APPS } from './desktop-apps'
+import { FINDER_WORKSPACE_PATH } from './finder-model'
 import { useModalFocus } from './modal-focus'
 
 type SpotlightResult =
@@ -77,7 +78,7 @@ export function Spotlight({
     const controller = new AbortController()
     const timer = window.setTimeout(() => {
       void runTengriAction<TengriFileEntry[]>(
-        { action: 'search-files', agentId, path: '/', query: searchQuery },
+        { action: 'search-files', agentId, path: FINDER_WORKSPACE_PATH, query: searchQuery },
         controller.signal,
       )
         .then((entries) => {

@@ -13,6 +13,7 @@ import {
   terminalHeartbeatAction,
   terminalPlainText,
   terminalReconnectDelay,
+  terminalReconciliationCandidate,
   terminalResumeAttachment,
   terminalTicketProtocol,
 } from './terminal-protocol'
@@ -113,6 +114,26 @@ describe('Tengri terminal protocol', () => {
       sequence: 0,
     })
     expect(terminalResumeAttachment(state, true)).toEqual({ reconnectToken: '', sequence: 0 })
+  })
+
+  test('reconciles a transient desktop window with an existing guest session', () => {
+    const sessions = [
+      { id: 'detached-session', creationId: 'old-window', attached: false },
+      { id: 'exact-session', creationId: 'current-window', attached: true },
+      { id: 'other-detached', creationId: 'other-window', attached: false },
+    ]
+
+    expect(terminalReconciliationCandidate(sessions, 'current-window', new Set())).toBe(sessions[1])
+    expect(terminalReconciliationCandidate(sessions, 'missing-window', new Set())).toBe(sessions[0])
+    expect(terminalReconciliationCandidate(sessions, 'missing-window', new Set(['detached-session']))).toBe(sessions[2])
+    expect(
+      terminalReconciliationCandidate(
+        sessions.filter((session) => session.attached),
+        'missing-window',
+        new Set(),
+      ),
+    ).toBeNull()
+    expect(terminalReconciliationCandidate(sessions, 'current-window', new Set(['exact-session']))).toBe(sessions[0])
   })
 
   test('cleans an accepted terminal when its window closes before creation returns', async () => {

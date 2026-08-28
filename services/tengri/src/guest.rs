@@ -103,6 +103,12 @@ pub struct TerminalSession {
     pub attached: bool,
 }
 
+#[derive(Debug)]
+pub struct TerminalCreation {
+    pub session: TerminalSession,
+    pub created: bool,
+}
+
 #[derive(Debug, Deserialize)]
 struct TerminalList {
     sessions: Vec<TerminalSession>,
@@ -292,17 +298,19 @@ impl GuestClient {
         cwd: &str,
         columns: u32,
         rows: u32,
-    ) -> Result<TerminalSession, GuestError> {
-        self.json(
-            self.request(Method::POST, "/v1/terminals")
-                .json(&serde_json::json!({
-                    "creationId": creation_id,
-                    "cwd": cwd,
-                    "columns": columns,
-                    "rows": rows
-                })),
-        )
-        .await
+    ) -> Result<TerminalCreation, GuestError> {
+        let response = self
+            .send_unary(
+                self.request(Method::POST, "/v1/terminals")
+                    .json(&serde_json::json!({
+                        "creationId": creation_id,
+                        "cwd": cwd,
+                        "columns": columns,
+                        "rows": rows
+                    })),
+            )
+            .await?;
+        terminal_creation(response).await
     }
 
     pub async fn list_terminals(&self) -> Result<Vec<TerminalSession>, GuestError> {
@@ -457,6 +465,16 @@ async fn checked_response(response: reqwest::Response) -> Result<reqwest::Respon
     Err(GuestError::Api { status, message })
 }
 
+async fn terminal_creation(response: reqwest::Response) -> Result<TerminalCreation, GuestError> {
+    let response = checked_response(response).await?;
+    let created = response.status() == StatusCode::CREATED;
+    let body = bounded_response_body(response, MAX_GUEST_JSON_BYTES).await?;
+    Ok(TerminalCreation {
+        session: serde_json::from_slice(&body)?,
+        created,
+    })
+}
+
 async fn bounded_response_body(
     response: reqwest::Response,
     limit: usize,
@@ -503,6 +521,30 @@ mod tests {
             bounded_response_body(streamed, 4).await,
             Err(GuestError::ResponseTooLarge(4))
         ));
+    }
+
+    #[tokio::test]
+    async fn terminal_creation_distinguishes_new_sessions_from_idempotent_replays() {
+        let body = r#"{
+            "id":"abcdefghijklmnopqrstuvwx",
+            "creationId":"terminal-creation-status",
+            "cwd":"/workspace",
+            "createdAt":"2026-08-28T00:00:00Z",
+            "lastActivityAt":"2026-08-28T00:00:00Z",
+            "attached":false
+        }"#;
+        for (status, expected_created) in [(StatusCode::CREATED, true), (StatusCode::OK, false)] {
+            let response: reqwest::Response = http::Response::builder()
+                .status(status)
+                .body(body)
+                .expect("terminal response")
+                .into();
+            let creation = terminal_creation(response)
+                .await
+                .expect("valid terminal creation response");
+            assert_eq!(creation.created, expected_created);
+            assert_eq!(creation.session.creation_id, "terminal-creation-status");
+        }
     }
 
     #[test]

@@ -22,6 +22,7 @@ import {
   terminalCreationId,
   terminalHeartbeatAction,
   terminalPlainText,
+  terminalReconciliationCandidate,
   terminalReconnectDelay,
   terminalResumeAttachment,
   terminalTicketProtocol,
@@ -35,6 +36,7 @@ type ConnectionState = {
 }
 
 const encoder = new TextEncoder()
+const claimedTerminalSessionIds = new Set<string>()
 
 export function TerminalApp({
   agentId,
@@ -91,6 +93,7 @@ export function TerminalApp({
     let resizeObserver: ResizeObserver | null = null
     let cleanupChecked = false
     let resumeChecked = false
+    let claimedSessionId: string | null = null
     let creationPromise: Promise<TengriTerminalSession> | null = null
     const controller = new AbortController()
     const disposables: Array<{ dispose(): void }> = []
@@ -204,6 +207,21 @@ export function TerminalApp({
       waitingForPongSince = null
     }
 
+    const releaseSessionClaim = (sessionId = claimedSessionId) => {
+      if (!sessionId || claimedSessionId !== sessionId) return
+      claimedTerminalSessionIds.delete(sessionId)
+      claimedSessionId = null
+    }
+
+    const claimSession = (candidate: TengriTerminalSession): boolean => {
+      if (claimedSessionId === candidate.id) return true
+      if (claimedTerminalSessionIds.has(candidate.id)) return false
+      releaseSessionClaim()
+      claimedTerminalSessionIds.add(candidate.id)
+      claimedSessionId = candidate.id
+      return true
+    }
+
     async function terminateAndClear(current: TengriTerminalSession, keepalive = false) {
       await runTengriAction(
         { action: 'terminate-terminal', agentId, terminalId: current.id },
@@ -211,6 +229,7 @@ export function TerminalApp({
       )
       clearPendingCleanup(current.id)
       clearStoredSession(current.id)
+      releaseSessionClaim(current.id)
     }
 
     const terminalSize = () => normalizeTerminalSize(terminalRef.current?.cols ?? 120, terminalRef.current?.rows ?? 32)
@@ -258,7 +277,7 @@ export function TerminalApp({
           const existing = sessions.find((candidate) => candidate.id === stored.sessionId)
           if (existing && stored.cleanupPending) {
             await terminateAndClear(existing)
-          } else if (existing) {
+          } else if (existing && claimSession(existing)) {
             session = existing
             const restored = terminalResumeAttachment(stored, existing.attached)
             reconnectToken = restored.reconnectToken
@@ -274,7 +293,12 @@ export function TerminalApp({
           { action: 'list-terminals', agentId },
           requestSignal(),
         )
-        session = sessions.find((candidate) => candidate.creationId === creationId) ?? null
+        const candidate = terminalReconciliationCandidate(sessions, creationId, claimedTerminalSessionIds)
+        if (candidate && claimSession(candidate)) {
+          session = candidate
+          reconnectToken = ''
+          lastSequence = 0
+        }
       }
       if (!session) {
         const { columns, rows } = normalizeTerminalSize(terminal.cols, terminal.rows)
@@ -291,7 +315,7 @@ export function TerminalApp({
         )
         creationPromise = pending
         try {
-          session = await settleTerminalCreation(
+          const created = await settleTerminalCreation(
             pending,
             () => closeRequested,
             async (created) => {
@@ -300,6 +324,8 @@ export function TerminalApp({
               await terminateAndClear(created, true).catch(() => undefined)
             },
           )
+          if (!claimSession(created)) throw new Error('Terminal session is already open in another window')
+          session = created
         } finally {
           if (creationPromise === pending) creationPromise = null
         }
@@ -318,15 +344,17 @@ export function TerminalApp({
           { action: 'list-terminals', agentId },
           requestSignal(),
         )
-        const existing = sessions.find(
-          (candidate) => candidate.id === current?.id || candidate.creationId === creationId,
-        )
+        const existing = current
+          ? sessions.find((candidate) => candidate.id === current.id)
+          : terminalReconciliationCandidate(sessions, creationId, claimedTerminalSessionIds)
         if (existing) {
+          if (!claimSession(existing)) return
           session = existing
           persist()
           return
         }
         clearStoredSession(current?.id)
+        releaseSessionClaim(current?.id)
         session = null
         reconnectToken = ''
         lastSequence = 0
@@ -457,6 +485,7 @@ export function TerminalApp({
               session = null
               if (current) clearPendingCleanup(current.id)
               clearStoredSession(current?.id)
+              releaseSessionClaim(current?.id)
               stopHeartbeat()
               const message = control.exitCode === 0 ? 'Terminal exited' : `Terminal exited (${control.exitCode})`
               terminal.write(`\r\n\x1b[90m[${message}]\x1b[0m\r\n`)
@@ -688,6 +717,7 @@ export function TerminalApp({
       } else if (!current && closeRequested) {
         void cleanupCreatedTerminal()
       }
+      releaseSessionClaim()
     }
   }, [agentId, cleanupStorageKey, creationId, registerCloseHandler, run, storageKey, windowId])
 

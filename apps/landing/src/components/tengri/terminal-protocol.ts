@@ -36,6 +36,12 @@ export type TerminalResumeAttachment = {
   sequence: number
 }
 
+type ReconciliationSession = {
+  id: string
+  creationId: string
+  attached: boolean
+}
+
 export function normalizeTerminalSize(columns: number, rows: number): { columns: number; rows: number } {
   return {
     columns: clampInteger(columns, 120, 20, 400),
@@ -181,6 +187,18 @@ export function terminalHeartbeatAction(
 
 export function terminalResumeAttachment(state: TerminalResumeState, attached: boolean): TerminalResumeAttachment {
   return { reconnectToken: attached ? '' : state.reconnectToken, sequence: 0 }
+}
+
+export function terminalReconciliationCandidate<Session extends ReconciliationSession>(
+  sessions: readonly Session[],
+  creationId: string,
+  claimedSessionIds: ReadonlySet<string>,
+): Session | null {
+  const exact = sessions.find(
+    (candidate) => candidate.creationId === creationId && !claimedSessionIds.has(candidate.id),
+  )
+  if (exact) return exact
+  return sessions.find((candidate) => !candidate.attached && !claimedSessionIds.has(candidate.id)) ?? null
 }
 
 export async function settleTerminalCreation<Session>(
