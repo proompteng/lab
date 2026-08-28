@@ -1728,12 +1728,37 @@ impl ProvisionalTerminalLeaseManager {
                 "failed to encode terminal creation intent: {error}"
             ))
         })?;
-        self.patch_creation_annotation(agent_id, creation_id, Some(&serialized))
+        let manager = self.clone();
+        let persisted_agent_id = agent_id.to_owned();
+        let persisted_creation_id = creation_id.to_owned();
+        let persisted_record = record.clone();
+        let (result_sender, result_receiver) = oneshot::channel();
+        tokio::spawn(async move {
+            let persistence = manager
+                .patch_creation_annotation(
+                    &persisted_agent_id,
+                    &persisted_creation_id,
+                    Some(&serialized),
+                )
+                .await;
+            manager
+                .schedule_creation(
+                    &persisted_agent_id,
+                    &persisted_creation_id,
+                    timeout,
+                    persisted_record.clone(),
+                    persistence.is_ok(),
+                )
+                .await;
+            let result = persistence
+                .map(|()| persisted_record)
+                .map_err(map_kube_error);
+            let _ = result_sender.send(result);
+        });
+
+        result_receiver
             .await
-            .map_err(map_kube_error)?;
-        self.schedule_creation(agent_id, creation_id, timeout, record.clone(), true)
-            .await;
-        Ok(record)
+            .map_err(|_| Status::internal("terminal creation intent task ended without a result"))?
     }
 
     async fn record_terminal_id(
@@ -3543,6 +3568,71 @@ mod tests {
             .await
             .expect("creation intent persistence task")
             .expect("creation intent persistence request");
+    }
+
+    #[tokio::test]
+    async fn canceled_persistence_waiter_still_registers_applied_creation_intent() {
+        let (service, mut handle) =
+            tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+        let manager = ProvisionalTerminalLeaseManager::new(
+            Client::new(service, "tengri"),
+            Arc::<str>::from("tengri"),
+            TerminalIdentityRegistry::default(),
+        );
+        let creation_id = "legacy-grpc-0123456789abcdef0123456789abcdef";
+        let lease_guard = manager.creation_intents.leases.lock().await;
+        let persistence_manager = manager.clone();
+        let persistence = tokio::spawn(async move {
+            persistence_manager
+                .begin_creation(
+                    "agent-legacy",
+                    creation_id,
+                    "/workspace",
+                    &[],
+                    Duration::from_secs(60),
+                )
+                .await
+        });
+
+        let (_request, response) = handle
+            .next_request()
+            .await
+            .expect("MicroVM creation intent patch");
+        response.send_response(
+            HttpResponse::builder()
+                .status(HttpStatusCode::OK)
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(KubeBody::from(
+                    serde_json::to_vec(&provisional_terminal_test_agent(Utc::now()))
+                        .expect("MicroVM response JSON"),
+                ))
+                .expect("MicroVM creation intent response"),
+        );
+        tokio::task::yield_now().await;
+        persistence.abort();
+        assert!(
+            persistence
+                .await
+                .expect_err("persistence waiter must be canceled")
+                .is_cancelled()
+        );
+        drop(lease_guard);
+
+        let key = ("agent-legacy".to_owned(), creation_id.to_owned());
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if matches!(
+                    manager.creation_intents.leases.lock().await.get(&key),
+                    Some(ProvisionalTerminalLease::Creating(_))
+                ) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("detached persistence must register cleanup after caller cancellation");
+        assert!(manager.creation_intents.clear(&key.0, &key.1).await);
     }
 
     #[tokio::test]
