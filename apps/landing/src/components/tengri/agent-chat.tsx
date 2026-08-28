@@ -501,7 +501,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       <div className="flex h-10 shrink-0 items-center border-b border-white/8 px-4 text-xs text-white/48">
         <Bot className="mr-2 h-3.5 w-3.5 text-[#9ccfd8]" aria-hidden="true" />
         Agent Chat
-        {account.plan ? <span className="ml-2 text-white/28">{account.plan}</span> : null}
+        {account.plan ? <span className="ml-2 text-white/55">{account.plan}</span> : null}
         <button
           type="button"
           disabled={!canStartNewConversation}
