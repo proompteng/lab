@@ -521,7 +521,7 @@ const makeCycleObservability = Effect.gen(function* () {
             FROM account_snapshots AS snapshot
             JOIN broker_events AS events ON events.event_id = snapshot.event_id
             WHERE snapshot.account_id = (SELECT account_id FROM selected_account)
-            ORDER BY events.observed_at DESC, snapshot.event_id DESC
+            ORDER BY events.observed_at DESC, events.source_sequence DESC, snapshot.event_id DESC
             LIMIT 1
           ),
           latest_position_snapshot AS (

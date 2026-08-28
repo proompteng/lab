@@ -1067,6 +1067,57 @@ describePostgres('PostgreSQL cycle observability projection', () => {
     expect(projection.unfinishedCycleCount).toBe(1)
   })
 
+  test('uses broker source ordering to break tied account-snapshot timestamps', async () => {
+    const projection = await runtime.runPromise(
+      Effect.gen(function* () {
+        const observability = yield* CycleObservability
+        const sql = yield* PgClient.PgClient
+        yield* seedSafetyState()
+
+        const insertAccountSnapshot = (
+          eventId: string,
+          sourceSequence: number,
+          cashMicros: string,
+          buyingPowerMicros: string,
+        ) =>
+          sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`
+                INSERT INTO broker_events (
+                  event_id, schema_version, content_hash, event_kind, broker, account_id,
+                  source_event_id, source_sequence, occurred_at, observed_at
+                ) VALUES (
+                  ${eventId}, 'bayn.paper-broker-event.v1', ${eventId}, 'ACCOUNT', 'ALPACA',
+                  ${accountId}, ${`account-${sourceSequence}`}, ${sourceSequence},
+                  '2026-03-06T20:59:59.000Z', '2026-03-06T21:00:01.000Z'
+                )
+              `
+              yield* sql`
+                INSERT INTO account_snapshots (
+                  event_id, account_id, schema_version, status, currency,
+                  cash_micros, equity_micros, buying_power_micros
+                ) VALUES (
+                  ${eventId}, ${accountId}, 'bayn.paper-account-snapshot.v1', 'ACTIVE', 'USD',
+                  ${cashMicros}, ${cashMicros}, ${buyingPowerMicros}
+                )
+              `
+            }),
+          )
+
+        yield* insertAccountSnapshot('f'.repeat(64), 1, '1000000', '2000000')
+        yield* insertAccountSnapshot('0'.repeat(64), 2, '3000000', '4000000')
+        return yield* observability.read(qualificationRunId, accountId)
+      }),
+    )
+
+    expect(projection.execution).toMatchObject({
+      accountObservedAt: '2026-03-06T21:00:01.000Z',
+      cashMicros: '3000000',
+      equityMicros: '3000000',
+      buyingPowerMicros: '4000000',
+    })
+  })
+
   test('measures acknowledgement from the first order event and preserves fill latencies wider than int32', async () => {
     const draft = makeIntradayDraft()
     const projection = await runtime.runPromise(

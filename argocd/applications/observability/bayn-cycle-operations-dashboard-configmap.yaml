@@ -780,7 +780,7 @@ data:
           },
           "targets": [
             {
-              "expr": "max by (status, reason) (bayn_cycle_target_plan_info{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})",
+              "expr": "max by (status, reason) (bayn_cycle_target_plan_info{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "{{status}} · {{reason}}",
               "range": false,
@@ -1064,7 +1064,7 @@ data:
           },
           "targets": [
             {
-              "expr": "max by (kind) (bayn_cycle_decision_market_data_records{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})",
+              "expr": "max by (kind) (bayn_cycle_decision_market_data_records{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "{{kind}}",
               "range": false,
@@ -1820,14 +1820,14 @@ data:
           },
           "targets": [
             {
-              "expr": "max(bayn_cycle_order_acknowledgement_latency_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})",
+              "expr": "max(bayn_cycle_order_acknowledgement_latency_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": false,
               "legendFormat": "order acknowledgement",
               "range": true,
               "refId": "A"
             },
             {
-              "expr": "max(bayn_cycle_fill_latency_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})",
+              "expr": "max(bayn_cycle_fill_latency_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": false,
               "legendFormat": "fill",
               "range": true,
