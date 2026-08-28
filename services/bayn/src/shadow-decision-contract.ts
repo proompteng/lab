@@ -25,6 +25,8 @@ import {
   strictParseOptions,
 } from './schemas'
 import { TargetPlanResultSchema, TargetPlanStatus } from './target-planner'
+import { defaultIntradayMomentumProtocolDocument } from './strategy/intraday-momentum/protocol'
+import { utcInstantFromEpochMillis } from './time'
 
 const ExecutionCalendarObservationSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.alpaca-market-calendar-observation.v1'),
@@ -493,6 +495,30 @@ const executionMaterialIssues = (
         issues.push({
           path: ['bindings', 'executionMarketData', 'calendar'],
           issue: 'intraday-momentum entry market-data session and calendar must match the execution session',
+        })
+      }
+      const decisionAt = Date.parse(document.createdAt)
+      const minuteMs = 60_000
+      const expectedRangeEndAt = utcInstantFromEpochMillis(
+        Math.floor((decisionAt - defaultIntradayMomentumProtocolDocument.decisionDelaySeconds * 1_000) / minuteMs) *
+          minuteMs,
+      )
+      const expectedRangeStartAt = utcInstantFromEpochMillis(
+        Date.parse(expectedRangeEndAt) - defaultIntradayMomentumProtocolDocument.lookbackMinutes * minuteMs,
+      )
+      if (executionMarketData.observedAt !== document.createdAt) {
+        issues.push({
+          path: ['bindings', 'executionMarketData', 'observedAt'],
+          issue: 'intraday-momentum entry observation must equal the decision instant',
+        })
+      }
+      if (
+        executionMarketData.rangeStartAt !== expectedRangeStartAt ||
+        executionMarketData.rangeEndAt !== expectedRangeEndAt
+      ) {
+        issues.push({
+          path: ['bindings', 'executionMarketData', 'rangeEndAt'],
+          issue: 'intraday-momentum entry must bind the exact rolling window at the decision instant',
         })
       }
       const bindsCompleteUniverse =

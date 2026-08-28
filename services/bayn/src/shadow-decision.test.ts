@@ -696,6 +696,9 @@ const currentEntryMarketDataBinding = (
   const universe = [...binding.symbols].sort()
   const currentMaterial = {
     ...bindingMaterial,
+    rangeStartAt: '2026-07-22T15:40:00.000Z',
+    rangeEndAt: '2026-07-22T16:00:00.000Z',
+    observedAt: '2026-07-22T16:00:02.000Z',
     universe,
     universeSymbolHash: sha256(universe.join(',')),
   }
@@ -717,6 +720,34 @@ const currentEntryMarketDataBinding = (
     throw new Error('current entry fixture must decode as archive binding v2')
   }
   return decoded
+}
+
+const rehashEntryMarketDataBinding = (
+  binding: ArchiveMarketDataBindingV2,
+  changes: Partial<Pick<ArchiveMarketDataBindingV2, 'observedAt' | 'rangeEndAt' | 'rangeStartAt'>>,
+): ArchiveMarketDataBindingV2 => {
+  const {
+    contentHash: _contentHash,
+    snapshotId: _snapshotId,
+    schemaVersion,
+    snapshotSchemaVersion,
+    ...bindingMaterial
+  } = binding
+  const changedMaterial = { ...bindingMaterial, ...changes }
+  const snapshotMaterial = { schemaVersion: snapshotSchemaVersion, ...changedMaterial }
+  const contentHash = canonicalHashV1(snapshotMaterial)
+  return Result.getOrThrow(
+    Schema.decodeUnknownResult(
+      ExecutionMarketDataBindingSchema,
+      strictParseOptions,
+    )({
+      schemaVersion,
+      snapshotSchemaVersion,
+      ...changedMaterial,
+      contentHash,
+      snapshotId: canonicalHashV1({ ...snapshotMaterial, contentHash }),
+    }),
+  ) as ArchiveMarketDataBindingV2
 }
 
 const liquidationMarketDataBinding = (
@@ -1196,6 +1227,32 @@ describe('OBSERVE shadow decision', () => {
       }),
     )
     const { contentHash: _contentHash, ...material } = document
+    const rebindExecutionMarketData = (binding: ArchiveMarketDataBindingV2) => {
+      const executionTerms = material.targetPlan.executionTerms
+      if (executionTerms === undefined) throw new Error('intraday fixture must persist execution terms')
+      const { outputHash: _outputHash, ...targetPlanMaterial } = material.targetPlan
+      const reboundTargetPlanMaterial = {
+        ...targetPlanMaterial,
+        executionTerms: {
+          ...executionTerms,
+          snapshotId: binding.snapshotId,
+          snapshotContentHash: binding.contentHash,
+        },
+      }
+      return makeExecutionDecisionDocument({
+        ...material,
+        bindings: {
+          ...material.bindings,
+          snapshotId: binding.snapshotId,
+          snapshotContentHash: binding.contentHash,
+          executionMarketData: binding,
+        },
+        targetPlan: {
+          ...reboundTargetPlanMaterial,
+          outputHash: canonicalHashV1(reboundTargetPlanMaterial),
+        },
+      })
+    }
     const alternateBinding = currentEntryMarketDataBinding(input.cycle, hash('b'))
     const mismatchedSnapshot = makeExecutionDecisionDocument({
       ...material,
@@ -1204,6 +1261,22 @@ describe('OBSERVE shadow decision', () => {
     expect(Result.isFailure(mismatchedSnapshot)).toBe(true)
     if (Result.isFailure(mismatchedSnapshot)) {
       expect(String(mismatchedSnapshot.failure.cause)).toContain('outer decision snapshot identity')
+    }
+
+    const shiftedObservation = rebindExecutionMarketData(
+      rehashEntryMarketDataBinding(executionMarketData, { observedAt: '2026-07-22T16:00:03.000Z' }),
+    )
+    expect(Result.isFailure(shiftedObservation)).toBe(true)
+    if (Result.isFailure(shiftedObservation)) {
+      expect(String(shiftedObservation.failure.cause)).toContain('observation must equal the decision instant')
+    }
+
+    const shiftedRange = rebindExecutionMarketData(
+      rehashEntryMarketDataBinding(executionMarketData, { rangeStartAt: '2026-07-22T15:39:00.000Z' }),
+    )
+    expect(Result.isFailure(shiftedRange)).toBe(true)
+    if (Result.isFailure(shiftedRange)) {
+      expect(String(shiftedRange.failure.cause)).toContain('exact rolling window at the decision instant')
     }
 
     const legacyBinding = openingDriveMarketDataBinding(input.cycle)
