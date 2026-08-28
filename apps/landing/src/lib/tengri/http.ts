@@ -19,15 +19,25 @@ export async function requireTengriIdentity(request: Request) {
 }
 
 export function requireSameOrigin(request: Request) {
-  const configuredUrl = process.env.BETTER_AUTH_URL?.trim()
-  let expectedOrigin: string
-  try {
-    expectedOrigin = new URL(configuredUrl || '').origin
-  } catch {
-    throw new TengriUnavailableError('Tengri authentication origin is not configured')
-  }
+  const expectedOrigin = configuredAuthOrigin()
   const requestOrigin = request.headers.get('origin')
   if (request.headers.get('sec-fetch-site') === 'cross-site' || requestOrigin !== expectedOrigin) {
+    throw new TengriUnavailableError('Cross-origin Tengri actions are not allowed', 403)
+  }
+}
+
+export function requireSameOriginGet(request: Request) {
+  const expectedOrigin = configuredAuthOrigin()
+  const fetchSite = request.headers.get('sec-fetch-site')
+  const requestOrigin = request.headers.get('origin')
+  const sameOriginMetadata = fetchSite === 'same-origin'
+  const matchingOrigin = requestOrigin === expectedOrigin
+
+  if (
+    (!sameOriginMetadata && !matchingOrigin) ||
+    (fetchSite !== null && !sameOriginMetadata) ||
+    (requestOrigin !== null && !matchingOrigin)
+  ) {
     throw new TengriUnavailableError('Cross-origin Tengri actions are not allowed', 403)
   }
 }
@@ -148,4 +158,13 @@ function exceeds(windows: Map<string, RateWindow>, key: string, limit: number, n
   }
   current.count += 1
   return current.count > limit
+}
+
+function configuredAuthOrigin() {
+  const configuredUrl = process.env.BETTER_AUTH_URL?.trim() || 'http://localhost:3000'
+  try {
+    return new URL(configuredUrl).origin
+  } catch {
+    throw new TengriUnavailableError('Tengri authentication origin is not configured')
+  }
 }

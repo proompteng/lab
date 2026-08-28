@@ -1,11 +1,12 @@
 import { normalizeCodexEvent, watchCodexEvents } from '@/lib/tengri/grpc'
-import { noStoreHeaders, requireTengriIdentity, tengriRouteError } from '@/lib/tengri/http'
+import { noStoreHeaders, requireSameOriginGet, requireTengriIdentity, tengriRouteError } from '@/lib/tengri/http'
 import { acquireTengriEventStreamSlot, createTengriEventStream, tengriEventStreamHeaders } from '@/lib/tengri/sse'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(request: Request) {
   try {
+    requireSameOriginGet(request)
     const identity = await requireTengriIdentity(request)
     const url = new URL(request.url)
     const agentId = url.searchParams.get('agentId') || ''
