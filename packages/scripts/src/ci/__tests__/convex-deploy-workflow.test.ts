@@ -8,6 +8,7 @@ describe('Convex production deployment workflow', () => {
   test('deploys backend function changes from main with self-hosted credentials', () => {
     expect(workflow).toContain('push:')
     expect(workflow).toContain('- main')
+    expect(workflow).toMatch(/deploy:\n\s+name: Deploy functions\n\s+if: github\.ref == 'refs\/heads\/main'/)
     expect(workflow).toContain("- 'packages/backend/convex/**'")
     expect(workflow).not.toContain('pull_request:')
     expect(workflow).toContain('CONVEX_SELF_HOSTED_URL: ${{ secrets.CONVEX_SELF_HOSTED_URL }}')
