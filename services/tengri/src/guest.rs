@@ -225,6 +225,14 @@ pub struct FileList {
     pub entries: Vec<FileEntry>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileSearchResult {
+    pub entries: Vec<FileEntry>,
+    #[serde(default)]
+    pub truncated: bool,
+}
+
 #[derive(Debug)]
 pub struct FileContent {
     pub path: String,
@@ -442,19 +450,13 @@ impl GuestClient {
         query: &str,
         path: &str,
         limit: u32,
-    ) -> Result<Vec<FileEntry>, GuestError> {
-        #[derive(Deserialize)]
-        struct SearchResponse {
-            entries: Vec<FileEntry>,
-        }
-        let result: SearchResponse = self
-            .json(self.request(Method::GET, "/v1/files/search").query(&[
-                ("query", query.to_owned()),
-                ("path", path.to_owned()),
-                ("limit", limit.to_string()),
-            ]))
-            .await?;
-        Ok(result.entries)
+    ) -> Result<FileSearchResult, GuestError> {
+        self.json(self.request(Method::GET, "/v1/files/search").query(&[
+            ("query", query.to_owned()),
+            ("path", path.to_owned()),
+            ("limit", limit.to_string()),
+        ]))
+        .await
     }
 
     pub async fn watch_files(
@@ -810,6 +812,57 @@ mod tests {
             bounded_response_body(streamed, 4).await,
             Err(GuestError::ResponseTooLarge(4))
         ));
+    }
+
+    #[tokio::test]
+    async fn file_search_preserves_truncation_metadata() {
+        let router = Router::new().route(
+            "/v1/files/search",
+            get(|| async {
+                Json(serde_json::json!({
+                    "entries": [{
+                        "name": "main.rs",
+                        "path": "/workspace/main.rs",
+                        "directory": false,
+                        "size": 42,
+                        "modifiedAt": "2026-08-28T00:00:00Z"
+                    }],
+                    "truncated": true
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind Nanoagent search fixture");
+        let address = listener.local_addr().expect("Nanoagent search address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router)
+                .await
+                .expect("serve Nanoagent search fixture");
+        });
+        let client = GuestClient {
+            http: reqwest::Client::new(),
+            base_url: format!("http://{address}"),
+            token: "test-bootstrap-token".to_owned(),
+            agent_id: "agent-search".to_owned(),
+            terminal_identities: TerminalIdentityRegistry::default(),
+        };
+
+        let result = client
+            .search_files("main", "/workspace", 100)
+            .await
+            .expect("search response");
+        assert!(result.truncated);
+        assert_eq!(result.entries.len(), 1);
+        assert_eq!(result.entries[0].path, "/workspace/main.rs");
+        server.abort();
+    }
+
+    #[test]
+    fn file_search_accepts_legacy_response_without_truncation_metadata() {
+        let result: FileSearchResult = serde_json::from_value(serde_json::json!({"entries": []}))
+            .expect("legacy Nanoagent search response");
+        assert!(!result.truncated);
     }
 
     #[tokio::test]

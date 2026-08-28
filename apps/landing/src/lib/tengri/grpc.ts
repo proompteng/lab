@@ -18,6 +18,7 @@ import type {
   TengriFileEntry,
   TengriFileEvent,
   TengriFileEventKind,
+  TengriFileSearchResult,
   TengriPreviewSession,
   TengriTerminalSession,
   TengriTerminalTicket,
@@ -160,13 +161,16 @@ export async function deleteFile(subject: string, agentId: string, filePath: str
 }
 
 export async function searchFiles(subject: string, agentId: string, filePath: string, query: string) {
-  const response = await unary<{ entries?: RawRecord[] }>(
+  const response = await unary<{ entries?: RawRecord[]; truncated?: boolean }>(
     'searchFiles',
     { agentId, path: filePath, query, limit: 100 },
     subject,
     130_000,
   )
-  return (response.entries ?? []).map(normalizeFileEntry)
+  return {
+    entries: (response.entries ?? []).map(normalizeFileEntry),
+    truncated: response.truncated === true,
+  } satisfies TengriFileSearchResult
 }
 
 export function watchFiles(subject: string, agentId: string, filePath: string, afterSequence: number) {

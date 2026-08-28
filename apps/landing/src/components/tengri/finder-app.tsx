@@ -26,7 +26,7 @@ import type {
   PointerEvent as ReactPointerEvent,
 } from 'react'
 
-import type { TengriFileEntry } from '@/lib/tengri/types'
+import type { TengriFileEntry, TengriFileSearchResult } from '@/lib/tengri/types'
 import { finderItemFormSchema, type FinderItemFormValues } from '@/schemas/finder-item'
 
 import { runTengriAction } from './client'
@@ -86,6 +86,7 @@ export function FinderApp({
     null,
   )
   const [loading, setLoading] = useState(true)
+  const [searchTruncated, setSearchTruncated] = useState(false)
   const [watchState, setWatchState] = useState<'connected' | 'paused' | 'reconnecting'>('paused')
   const [error, setError] = useState('')
   const [deleteError, setDeleteError] = useState('')
@@ -115,8 +116,9 @@ export function FinderApp({
   })
   const contentRef = useRef<HTMLDivElement | null>(null)
   const entryRefs = useRef(new Map<string, HTMLElement>())
+  const inFlightLoad = useRef<{ key: string; promise: Promise<void> } | null>(null)
   const loadSequence = useRef(0)
-  const latestLoad = useRef<(quiet?: boolean) => Promise<void>>(async () => {})
+  const latestLoad = useRef<(quiet?: boolean, signal?: AbortSignal, force?: boolean) => Promise<void>>(async () => {})
   const quickLookAbort = useRef<AbortController | null>(null)
   const consumedRequestId = useRef<number | null>(null)
   const selectionAnchor = useRef<string | null>(null)
@@ -144,18 +146,14 @@ export function FinderApp({
       setError('')
       try {
         const result = query.trim()
-          ? {
-              entries: await runTengriAction<TengriFileEntry[]>(
-                { action: 'search-files', agentId, path, query },
-                signal,
-              ),
-            }
+          ? await runTengriAction<TengriFileSearchResult>({ action: 'search-files', agentId, path, query }, signal)
           : await runTengriAction<{ path: string; entries: TengriFileEntry[] }>(
               { action: 'list-files', agentId, path },
               signal,
             )
         if (sequence !== loadSequence.current || signal?.aborted) return
         setEntries(result.entries)
+        setSearchTruncated('truncated' in result && result.truncated)
         setRenaming((current) => retainVisibleFinderEntry(current, result.entries))
         if (selectionAnchor.current && !result.entries.some((entry) => entry.path === selectionAnchor.current)) {
           selectionAnchor.current = null
@@ -173,17 +171,33 @@ export function FinderApp({
     },
     [agentId, path, query],
   )
-  latestLoad.current = (quiet = false) => load(quiet)
+
+  const invokeLoad = useCallback(
+    (quiet = false, signal?: AbortSignal, force = false) => {
+      const key = `${agentId}\n${path}\n${query}`
+      if (!force && inFlightLoad.current?.key === key) return inFlightLoad.current.promise
+
+      let request: { key: string; promise: Promise<void> }
+      const promise = load(quiet, signal).finally(() => {
+        if (inFlightLoad.current === request) inFlightLoad.current = null
+      })
+      request = { key, promise }
+      inFlightLoad.current = request
+      return promise
+    },
+    [agentId, load, path, query],
+  )
+  latestLoad.current = invokeLoad
 
   useEffect(() => {
     if (!active) return
     const controller = new AbortController()
-    const timer = window.setTimeout(() => void load(false, controller.signal), query ? 180 : 0)
+    const timer = window.setTimeout(() => void invokeLoad(false, controller.signal), query ? 180 : 0)
     return () => {
       window.clearTimeout(timer)
       controller.abort()
     }
-  }, [active, load, query])
+  }, [active, invokeLoad, query])
 
   useEffect(() => {
     let refreshTimer = 0
@@ -208,9 +222,20 @@ export function FinderApp({
   useEffect(() => {
     const interval = finderSearchRefreshInterval(active, query)
     if (!interval) return
-    const timer = window.setInterval(() => void latestLoad.current(true), interval)
-    return () => window.clearInterval(timer)
-  }, [active, query])
+    const controller = new AbortController()
+    let stopped = false
+    let timer = 0
+    const refresh = async () => {
+      await latestLoad.current(true, controller.signal)
+      if (!stopped) timer = window.setTimeout(refresh, interval)
+    }
+    timer = window.setTimeout(refresh, interval)
+    return () => {
+      stopped = true
+      controller.abort()
+      window.clearTimeout(timer)
+    }
+  }, [active, agentId, path, query])
 
   useEffect(
     () => () => {
@@ -237,7 +262,7 @@ export function FinderApp({
       resetRename()
       setError('')
       if (normalized === path) {
-        void latestLoad.current(false)
+        void latestLoad.current(false, undefined, true)
         return
       }
       setPath(normalized)
@@ -291,7 +316,7 @@ export function FinderApp({
       await runTengriAction({ action: 'create-directory', agentId, path: destination })
       resetCreateFolder()
       setShowCreate(false)
-      await latestLoad.current(true)
+      await latestLoad.current(true, undefined, true)
     } catch (cause) {
       setCreateFolderError('root.server', {
         message: cause instanceof Error ? cause.message : 'Finder could not create this folder',
@@ -315,7 +340,7 @@ export function FinderApp({
       setSelected(new Set())
       selectionAnchor.current = null
       setDeleteConfirmationOpen(false)
-      await latestLoad.current(true)
+      await latestLoad.current(true, undefined, true)
     } catch (cause) {
       setDeleteError(cause instanceof Error ? cause.message : 'Finder could not delete the selected items')
     } finally {
@@ -350,7 +375,7 @@ export function FinderApp({
       selectionAnchor.current = destinationPath
       setRenaming(null)
       resetRename()
-      await latestLoad.current(true)
+      await latestLoad.current(true, undefined, true)
     } catch (cause) {
       setRenameError('root.server', {
         message: cause instanceof Error ? cause.message : 'Finder could not rename this item',
@@ -626,7 +651,10 @@ export function FinderApp({
             <input
               value={query}
               aria-label="Search files"
-              onChange={(event) => setQuery(event.target.value)}
+              onChange={(event) => {
+                setQuery(event.target.value)
+                setSearchTruncated(false)
+              }}
               placeholder="Search"
               className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-white/28"
             />
@@ -830,7 +858,8 @@ export function FinderApp({
           className="flex h-7 shrink-0 items-center justify-between border-t border-white/7 px-3 py-1 text-[10px] text-white/35"
         >
           <span>
-            {entries.length} items{selected.size ? ` · ${selected.size} selected` : ''}
+            {searchTruncated ? 'Search limit reached · Narrow your search' : `${entries.length} items`}
+            {!searchTruncated && selected.size ? ` · ${selected.size} selected` : ''}
           </span>
           <span className={watchState === 'connected' ? 'text-emerald-300/60' : 'text-amber-200/65'}>{watchLabel}</span>
         </div>

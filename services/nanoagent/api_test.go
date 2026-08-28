@@ -94,6 +94,30 @@ func TestFileSearchSkipsHiddenRuntimeCachesAndPreservesVisibleDirectories(t *tes
 	if len(result.Entries) != 3 || result.Entries[0].Path != "/go/needle-go.txt" || result.Entries[1].Path != "/src/go/needle-nested-go.txt" || result.Entries[2].Path != "/src/needle-project.txt" {
 		t.Fatalf("search entries = %#v", result.Entries)
 	}
+	if result.Truncated {
+		t.Fatal("search unexpectedly reported truncated results")
+	}
+}
+
+func TestFileSearchStopsAtTraversalBudgetAndReportsTruncation(t *testing.T) {
+	t.Parallel()
+	server := testAPIServer(t)
+	for _, path := range []string{"a.txt", "b.txt", "c.txt", "d.txt"} {
+		if err := os.WriteFile(filepath.Join(server.workspace.root, path), []byte(path), 0o640); err != nil {
+			t.Fatalf("write fixture: %v", err)
+		}
+	}
+
+	result, err := server.searchFiles(context.Background(), server.workspace.realRoot, "missing", 100, 3)
+	if err != nil {
+		t.Fatalf("search files: %v", err)
+	}
+	if len(result.Entries) != 0 {
+		t.Fatalf("search entries = %#v, want none", result.Entries)
+	}
+	if !result.Truncated {
+		t.Fatal("search did not report traversal-budget truncation")
+	}
 }
 
 func TestFileAPIWritesReadsAndListsWorkspaceFiles(t *testing.T) {
