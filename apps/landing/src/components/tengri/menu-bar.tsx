@@ -285,6 +285,7 @@ function MenuPopover({
             onClick={() => {
               void entry.run()
               onClose()
+              returnFocus()
             }}
             role="menuitem"
             type="button"
