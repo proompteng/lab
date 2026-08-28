@@ -26,6 +26,10 @@ export class IntradayMomentumEntryAwaitingSnapshot extends Data.TaggedError('Int
   readonly availableAt?: string
 }> {}
 
+export class IntradayMomentumCloseAwaitingSnapshot extends Data.TaggedError('IntradayMomentumCloseAwaitingSnapshot')<{
+  readonly message: string
+}> {}
+
 const failure = (
   operation: IntradayMomentumRuntimeDecisionFailure['operation'],
   message: string,
@@ -106,7 +110,10 @@ export const intradayMomentumCloseQuery = (
   calendar: MarketCalendarObservation,
   observedAt: string,
   symbols: readonly string[],
-): Result.Result<IntradaySnapshotQuery, IntradayMomentumRuntimeDecisionFailure> => {
+): Result.Result<
+  IntradaySnapshotQuery,
+  IntradayMomentumCloseAwaitingSnapshot | IntradayMomentumRuntimeDecisionFailure
+> => {
   const observedEpoch = Date.parse(observedAt)
   const rangeEndEpoch = Math.floor(observedEpoch / minuteMs) * minuteMs
   const rangeEndAt = utcInstantFromEpochMillis(rangeEndEpoch)
@@ -114,10 +121,16 @@ export const intradayMomentumCloseQuery = (
   if (
     cycle.identity.strategyName !== 'intraday-momentum' ||
     rangeStartAt < cycle.window.executionOpenAt ||
-    rangeEndAt >= cycle.window.executionCloseAt ||
-    observedAt <= rangeEndAt
+    rangeEndAt >= cycle.window.executionCloseAt
   ) {
     return Result.fail(failure('entry-query', 'cycle does not admit a complete intraday close snapshot at this time'))
+  }
+  if (observedAt <= rangeEndAt) {
+    return Result.fail(
+      new IntradayMomentumCloseAwaitingSnapshot({
+        message: 'intraday close is waiting for the current minute to become complete',
+      }),
+    )
   }
   return Result.succeed({
     ...snapshotQuery(cycle, protocol, calendar, rangeStartAt, rangeEndAt, observedAt, 0, symbols),

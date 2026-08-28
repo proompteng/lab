@@ -93,6 +93,7 @@ import {
 } from './opening-drive-decision'
 import {
   compileIntradayMomentumDecision,
+  IntradayMomentumCloseAwaitingSnapshot,
   IntradayMomentumEntryAwaitingSnapshot,
   intradayMomentumCloseQuery,
   intradayMomentumEntryDisposition,
@@ -214,6 +215,11 @@ export class ObserveDecisionAwaitingSignal extends Data.TaggedError('ObserveDeci
   readonly message: string
   readonly observedAt: string
   readonly submissionCutoffAt: string
+}> {}
+
+export class ExecutionCloseAwaitingMarketData extends Data.TaggedError('ExecutionCloseAwaitingMarketData')<{
+  readonly message: string
+  readonly observedAt: string
 }> {}
 
 type LoadedSnapshotPublication = Effect.Success<ReturnType<MarketDataService['loadSnapshotPublication']>>
@@ -1425,7 +1431,11 @@ export interface BuildClosingExecutionCycleDecisionInput {
 
 export const buildClosingExecutionCycleDecision = (
   request: BuildClosingExecutionCycleDecisionInput,
-): Effect.Effect<ExecutionDecisionDocument, CycleRunnerError, ObserveDecisionRuntime> => {
+): Effect.Effect<
+  ExecutionDecisionDocument,
+  CycleRunnerError | ExecutionCloseAwaitingMarketData,
+  ObserveDecisionRuntime
+> => {
   const { input, preparation, policy, cycle, entryDocument, reconcile, closeExpiresAt, replanGenerationHash } = request
   return Effect.gen(function* () {
     const reconciliation = yield* reconcile.pipe(
@@ -1493,7 +1503,11 @@ export const buildClosingExecutionCycleDecision = (
                 liquidationSymbols,
               ),
             ).pipe(
-              Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
+              Effect.mapError((cause) =>
+                cause instanceof IntradayMomentumCloseAwaitingSnapshot
+                  ? new ExecutionCloseAwaitingMarketData({ message: cause.message, observedAt: evaluatedAt })
+                  : mutationRunnerError({ message: cause.message, cause, failure: 'contract' }),
+              ),
             )
           } else {
             const definition = yield* Effect.fromResult(openingDriveDefinition(input.strategy)).pipe(
@@ -1507,7 +1521,9 @@ export const buildClosingExecutionCycleDecision = (
           }
           const snapshot = yield* loadIntradaySnapshot(input.intradayMarketData, query).pipe(
             Effect.mapError((cause) =>
-              mutationRunnerError({ message: 'execution close market-data read failed', cause }),
+              cause.cause instanceof IntradaySnapshotFailure && cause.cause.reason === 'not-ready'
+                ? new ExecutionCloseAwaitingMarketData({ message: cause.message, observedAt: evaluatedAt })
+                : mutationRunnerError({ message: 'execution close market-data read failed', cause }),
             ),
           )
           const quotePrices = yield* Effect.fromResult(adverseClosingQuotePrices(snapshot, symbols)).pipe(

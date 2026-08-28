@@ -22,6 +22,7 @@ import {
 import {
   compileIntradayMomentumDecision,
   intradayMomentumCloseQuery,
+  IntradayMomentumCloseAwaitingSnapshot,
   IntradayMomentumEntryAwaitingSnapshot,
   intradayMomentumEntryDisposition,
   intradayMomentumEntryQuery,
@@ -225,9 +226,11 @@ describe('intraday-momentum runtime decision boundary', () => {
       symbols: ['AMD'],
       purpose: 'LIQUIDATION',
     })
-    expect(
-      failure(intradayMomentumCloseQuery(cycle, protocol, calendar, '2026-08-18T19:30:00.000Z', ['AMD'])),
-    ).toMatchObject({ operation: 'entry-query' })
+    expect(failure(intradayMomentumCloseQuery(cycle, protocol, calendar, '2026-08-18T19:30:00.000Z', ['AMD']))).toEqual(
+      new IntradayMomentumCloseAwaitingSnapshot({
+        message: 'intraday close is waiting for the current minute to become complete',
+      }),
+    )
   })
 
   test('keeps an empty signal armed until finalization headroom, then terminalizes honestly', () => {

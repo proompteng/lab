@@ -63,6 +63,7 @@ import type { ExecutionProgram } from './execution/runtime-program'
 import { WriterFence, WriterFenceError, type WriterFenceService } from './execution/writer-fence'
 import { canonicalHashV1 } from './hash'
 import {
+  IntradaySnapshotFailure,
   MarketData,
   type IntradayMarketDataService,
   type IntradayMarketSnapshot,
@@ -122,6 +123,7 @@ import {
   type RecoveryFirstCycleDriver,
   type RecoveryFirstCycleDriverOwner,
 } from './observe-composition'
+import { ExecutionCloseAwaitingMarketData } from './observe-composition/decision-builder'
 import {
   AccountStatus,
   Authority,
@@ -3298,32 +3300,31 @@ describe('OBSERVE runtime composition', () => {
       unrealizedPnlMicros: '0',
       observedAt: closeObservedAt,
     }
-    const buildClose = (position: Position) =>
-      Effect.runPromise(
-        Effect.gen(function* () {
-          yield* TestClock.setTime(Date.parse(closeObservedAt))
-          return yield* buildClosingExecutionCycleDecision({
-            input,
-            preparation,
-            policy,
-            cycle: boundCycle,
-            entryDocument,
-            reconcile: Effect.succeed(reconciliationResultAt(closeObservedAt, 0, 0, [position])),
-            closeExpiresAt,
-          })
-        }).pipe(
-          Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
-          Effect.provideService(MarketData, marketData([])),
-          Effect.provideService(BrokerEventStore, {} as BrokerEventStoreShape),
-          Effect.provideService(FillAccountingStore, {} as FillAccountingStoreShape),
-          Effect.provideService(ValuationStore, {} as ValuationStoreShape),
-          Effect.provideService(ReconciliationStore, {} as ReconciliationStoreShape),
-          Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
-          Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
-          Effect.provideService(WriterFence, {} as WriterFenceService),
-          Effect.provide(TestClock.layer()),
-        ),
+    const buildCloseProgram = (position: Position, closeInput: typeof input = input) =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(closeObservedAt))
+        return yield* buildClosingExecutionCycleDecision({
+          input: closeInput,
+          preparation,
+          policy,
+          cycle: boundCycle,
+          entryDocument,
+          reconcile: Effect.succeed(reconciliationResultAt(closeObservedAt, 0, 0, [position])),
+          closeExpiresAt,
+        })
+      }).pipe(
+        Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
+        Effect.provideService(MarketData, marketData([])),
+        Effect.provideService(BrokerEventStore, {} as BrokerEventStoreShape),
+        Effect.provideService(FillAccountingStore, {} as FillAccountingStoreShape),
+        Effect.provideService(ValuationStore, {} as ValuationStoreShape),
+        Effect.provideService(ReconciliationStore, {} as ReconciliationStoreShape),
+        Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
+        Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
+        Effect.provideService(WriterFence, {} as WriterFenceService),
+        Effect.provide(TestClock.layer()),
       )
+    const buildClose = (position: Position) => Effect.runPromise(buildCloseProgram(position))
     const close = await buildClose(openPosition)
     const shortPosition: Position = {
       ...openPosition,
@@ -3331,6 +3332,26 @@ describe('OBSERVE runtime composition', () => {
       marketValueMicros: '-50000000',
     }
     const cover = await buildClose(shortPosition)
+    const unavailable = new IntradaySnapshotFailure({
+      reason: 'not-ready',
+      message: 'liquidation snapshot lacks a post-range quote',
+      facts: { symbol: heldSymbol },
+    })
+    const waitingArchive: IntradayMarketDataService = {
+      captureVersion: () =>
+        Effect.fail(
+          operationalError({
+            component: 'market-data',
+            operation: 'load-intraday',
+            message: unavailable.message,
+            cause: unavailable,
+          }),
+        ),
+      loadSnapshot: () => Effect.die('not-ready capture must not load snapshot rows'),
+    }
+    const waiting = await Effect.runPromise(
+      buildCloseProgram(openPosition, { ...input, intradayMarketData: waitingArchive }).pipe(Effect.flip),
+    )
 
     expect(entryDocument.executionSession?.schemaVersion).toBe('bayn.execution-session-binding.v2')
     expect(close).toMatchObject({
@@ -3369,6 +3390,12 @@ describe('OBSERVE runtime composition', () => {
         ],
       },
     })
+    expect(waiting).toEqual(
+      new ExecutionCloseAwaitingMarketData({
+        message: `${unavailable.message}: ${unavailable.message}`,
+        observedAt: closeObservedAt,
+      }),
+    )
   })
 
   test('keeps a rejected execution close intent recoverable while reconciliation still shows an open position', async () => {

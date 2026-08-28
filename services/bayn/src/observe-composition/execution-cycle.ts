@@ -310,7 +310,7 @@ const ensureExecutionCycleClosure = (
     const store = input.executionCycleClosureStore
     const observedAt = yield* currentUtcInstant
     if (closeWindow === undefined || store === undefined || observedAt < closeWindow.startAt) {
-      return { _tag: 'Wait', observedAt }
+      return { _tag: 'Wait', observedAt } as const
     }
     const existing = yield* readExecutionCycleClosure(cycle.identity.cycleId, store)
     const entryDecisionHash = cycle.bindings.decisionHash
@@ -344,9 +344,9 @@ const ensureExecutionCycleClosure = (
         closeExpiresAt: closeWindow.expiresAt,
       })
       const decision = decideExecutionCycleCloseDocument(document)
-      if (decision._tag === 'Complete') return { _tag: 'Complete', observedAt: reconciledAt }
+      if (decision._tag === 'Complete') return { _tag: 'Complete', observedAt: reconciledAt } as const
       if (decision._tag === 'Block') {
-        return { _tag: 'Block', reason: CycleTerminalReason.Risk, observedAt: reconciledAt }
+        return { _tag: 'Block', reason: CycleTerminalReason.Risk, observedAt: reconciledAt } as const
       }
       const closure = yield* Effect.fromResult(
         makeExecutionCycleClosure({
@@ -369,13 +369,13 @@ const ensureExecutionCycleClosure = (
             mutationRunnerError({ message: 'execution close plan durable bind failed', cause, failure: 'store' }),
           ),
         )
-      return { _tag: 'Close', document: stored.document }
+      return { _tag: 'Close', document: stored.document } as const
     }
 
     const latestReplan = yield* readLatestExecutionCycleCloseReplan(cycle.identity.cycleId, store)
     const active = latestReplan ?? existing
     if (!(yield* closePlanNeedsResidualReplan(active.document, reconcile))) {
-      return { _tag: 'Close', document: active.document }
+      return { _tag: 'Close', document: active.document } as const
     }
 
     const document = yield* buildClosingExecutionCycleDecision({
@@ -390,7 +390,7 @@ const ensureExecutionCycleClosure = (
     })
     const decision = decideExecutionCycleCloseDocument(document)
     if (decision._tag !== 'Bind') {
-      return { _tag: 'Block', reason: CycleTerminalReason.Risk, observedAt }
+      return { _tag: 'Block', reason: CycleTerminalReason.Risk, observedAt } as const
     }
     const closure = yield* Effect.fromResult(
       makeExecutionCycleClosure({
@@ -419,8 +419,12 @@ const ensureExecutionCycleClosure = (
         }),
       ),
     )
-    return { _tag: 'Close', document: stored.document }
-  })
+    return { _tag: 'Close', document: stored.document } as const
+  }).pipe(
+    Effect.catchTag('ExecutionCloseAwaitingMarketData', ({ observedAt }) =>
+      Effect.succeed<ExecutionCycleClosureResult>({ _tag: 'Wait', observedAt }),
+    ),
+  )
 
 export const mutationDecisionInput = (
   input: ObserveAutonomousCycleInput,
