@@ -478,7 +478,7 @@ impl GuestClient {
         columns: u32,
         rows: u32,
     ) -> Result<TerminalCreation, GuestError> {
-        let response = self
+        let response = match self
             .send_unary(
                 self.request(Method::POST, "/v1/terminals")
                     .json(&serde_json::json!({
@@ -488,7 +488,15 @@ impl GuestClient {
                         "rows": rows
                     })),
             )
-            .await?;
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                return self
+                    .reconcile_terminal_creation_error(creation_id, error)
+                    .await;
+            }
+        };
         match terminal_creation(response, creation_id).await {
             Ok(creation) => {
                 self.terminal_identities.finish_creation(
@@ -502,8 +510,29 @@ impl GuestClient {
                 self.create_legacy_terminal(creation_id, cwd, columns, rows)
                     .await
             }
-            Err(error) => Err(error),
+            Err(error) => {
+                self.reconcile_terminal_creation_error(creation_id, error)
+                    .await
+            }
         }
+    }
+
+    async fn reconcile_terminal_creation_error(
+        &self,
+        creation_id: &str,
+        original_error: GuestError,
+    ) -> Result<TerminalCreation, GuestError> {
+        if let Ok(sessions) = self.list_terminals().await
+            && let Some(session) = sessions
+                .into_iter()
+                .find(|session| session.creation_id == creation_id)
+        {
+            return Ok(TerminalCreation {
+                session,
+                created: true,
+            });
+        }
+        Err(original_error)
     }
 
     async fn create_legacy_terminal(
@@ -792,6 +821,17 @@ mod tests {
         })
     }
 
+    fn terminal_json(creation_id: &str) -> Value {
+        serde_json::json!({
+            "id": "abcdefghijklmnopqrstuvwx",
+            "creationId": creation_id,
+            "cwd": "/workspace",
+            "createdAt": "2026-08-28T00:00:00Z",
+            "lastActivityAt": "2026-08-28T00:00:00Z",
+            "attached": false
+        })
+    }
+
     #[tokio::test]
     async fn guest_response_body_is_bounded_before_and_during_streaming() {
         let declared: reqwest::Response = http::Response::builder()
@@ -996,6 +1036,71 @@ mod tests {
             .await
             .expect("legacy terminal listing succeeds");
         assert_eq!(sessions[0].creation_id, "terminal-creation-legacy");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn terminal_creation_reconciles_after_the_guest_response_times_out() {
+        const CREATION_ID: &str = "terminal-creation-timeout";
+        let created = Arc::new(AtomicBool::new(false));
+        let creation_state = Arc::clone(&created);
+        let list_state = Arc::clone(&created);
+        let router = Router::new().route(
+            "/v1/terminals",
+            get(move || {
+                let created = Arc::clone(&list_state);
+                async move {
+                    let sessions = if created.load(Ordering::SeqCst) {
+                        vec![terminal_json(CREATION_ID)]
+                    } else {
+                        Vec::new()
+                    };
+                    Json(serde_json::json!({"sessions": sessions}))
+                }
+            })
+            .post(move |Json(body): Json<Value>| {
+                let created = Arc::clone(&creation_state);
+                async move {
+                    assert_eq!(
+                        body.get("creationId").and_then(Value::as_str),
+                        Some(CREATION_ID)
+                    );
+                    created.store(true, Ordering::SeqCst);
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    (StatusCode::CREATED, Json(terminal_json(CREATION_ID)))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind Nanoagent response-timeout fixture");
+        let address = listener
+            .local_addr()
+            .expect("Nanoagent response-timeout address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router)
+                .await
+                .expect("serve Nanoagent response-timeout fixture");
+        });
+        let client = GuestClient {
+            http: reqwest::Client::builder()
+                .timeout(Duration::from_millis(25))
+                .build()
+                .expect("short-timeout HTTP client"),
+            base_url: format!("http://{address}"),
+            token: "test-bootstrap-token".to_owned(),
+            agent_id: "agent-response-timeout".to_owned(),
+            terminal_identities: TerminalIdentityRegistry::default(),
+        };
+
+        let creation = client
+            .create_terminal(CREATION_ID, "/workspace", 120, 32)
+            .await
+            .expect("created terminal is reconciled after its response times out");
+
+        assert!(creation.created);
+        assert_eq!(creation.session.id, "abcdefghijklmnopqrstuvwx");
+        assert_eq!(creation.session.creation_id, CREATION_ID);
         server.abort();
     }
 
