@@ -65,7 +65,6 @@ spec:
                 pattern: ^[a-f0-9]{64}$
                 type: string
               resources:
-                additionalProperties: false
                 properties:
                   cpuMillis:
                     enum:
