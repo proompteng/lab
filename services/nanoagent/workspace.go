@@ -13,6 +13,8 @@ var (
 	errPathOutsideWorkspace = errors.New("path escapes the workspace")
 )
 
+const workspaceTemporaryFilePrefix = ".nanoagent-write-"
+
 var internalPathNames = map[string]struct{}{
 	".codex":  {},
 	".tengri": {},
@@ -157,8 +159,29 @@ func isInternalRelativePath(relative string) bool {
 		if _, internal := internalPathNames[part]; internal {
 			return true
 		}
+		if isWorkspaceTemporaryFileName(part) {
+			return true
+		}
 	}
 	return false
+}
+
+func isWorkspaceTemporaryFileName(name string) bool {
+	if !strings.HasPrefix(name, workspaceTemporaryFilePrefix) {
+		return false
+	}
+	suffix := strings.TrimPrefix(name, workspaceTemporaryFilePrefix)
+	if len(suffix) != 24 {
+		return false
+	}
+	for _, character := range []byte(suffix) {
+		if character < '0' || character > '9' {
+			if character < 'a' || character > 'f' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (workspace workspace) isVisibleAbsolute(absolute string) bool {
