@@ -42,7 +42,6 @@ describe('Tengri Settings', () => {
         instanceId: 'settings-1',
         lifecycleDisabled: false,
         onDelete: () => undefined,
-        onGuestOperationChange: () => undefined,
         onSignOut: () => undefined,
         onSleep: () => undefined,
         user,
