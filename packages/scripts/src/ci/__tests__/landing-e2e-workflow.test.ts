@@ -16,9 +16,12 @@ describe('landing browser validation workflow', () => {
     const artifactStep = workflow.match(
       /- name: Upload landing browser artifacts[\s\S]*?\n\s+- name: Run selected validation/,
     )?.[0]
+    const runner = workflow.match(/runs-on: >-\n[\s\S]*?\n\s+env:/)?.[0]
 
     expect(landingStep).toContain('bunx playwright install --with-deps chromium')
     expect(landingStep).toContain('bun run --cwd apps/landing test:e2e')
+    expect(runner).toContain("matrix.target == 'landing' && 'arc-amd64'")
+    expect(runner).not.toContain("matrix.target == 'docs' || matrix.target == 'landing'")
     expect(artifactStep).toContain("always() && matrix.target == 'landing'")
     expect(artifactStep).toContain('apps/landing/test-results')
   })
