@@ -51,6 +51,10 @@ spec:
                   fieldPath: metadata.namespace
             - name: TENGRI_GUEST_ARCHITECTURE
               value: amd64
+            # Keep the predecessor controller stable until the v2 image promotion lands.
+            # The v2 controller ignores this variable and always creates home-workspace-v2.
+            - name: TENGRI_NEW_AGENT_STORAGE_LAYOUT
+              value: home-workspace-v1
             - name: TENGRI_DEFAULT_IMAGE
               valueFrom:
                 configMapKeyRef:

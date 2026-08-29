@@ -100,7 +100,10 @@ has one application container and no init container, so Firecracker creates only
 
 The failed `home-workspace-v1` experiment never produced a working guest and is not a compatibility contract. A CR with
 any other layout is rejected and must be deleted and recreated; Tengri does not migrate or fall back to the broken
-topology. Promote or roll back the controller and Nanoagent digests together through GitOps.
+topology. The Deployment temporarily retains the predecessor's `TENGRI_NEW_AGENT_STORAGE_LAYOUT=home-workspace-v1`
+environment variable so the still-pinned predecessor remains stable until the v2 image promotion lands. The v2
+controller does not read that variable and always creates `home-workspace-v2`. Remove the inert variable in a later
+GitOps-only cleanup after the v2 controller is live. Promote or roll back the controller and Nanoagent digests together.
 
 ## Local validation
 

@@ -147,6 +147,10 @@ Tengri supports only `runtime.proompteng.ai/storage-layout=home-workspace-v2`:
 3. Any CR with a missing or different layout is rejected and must be deleted and recreated. The failed
    `home-workspace-v1` experiment never produced a working guest, so there is no migration or fallback path.
 
+The Deployment temporarily retains `TENGRI_NEW_AGENT_STORAGE_LAYOUT=home-workspace-v1` only to keep the pinned
+pre-v2 controller stable between the source merge and image promotion. The v2 controller ignores the variable and
+always writes `home-workspace-v2`; remove the inert variable in a later GitOps cleanup after v2 is live.
+
 Promote or roll back the controller and Nanoagent digests together through GitOps. Do not mix a controller and guest
 image from different releases.
 
