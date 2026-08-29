@@ -24,6 +24,8 @@ pub const FINALIZER_NAME: &str = "runtime.proompteng.ai/finalizer";
 pub const BOOTSTRAP_TOKEN_KEY: &str = "token";
 pub const STORAGE_CLASS: &str = "rook-ceph-block";
 const GUEST_UID: i64 = 1_000;
+const RUNTIME_IDENTITY_VOLUME: &str = "runtime-identity";
+const RUNTIME_PASSWD_PATH: &str = "/runtime-identity/passwd";
 const MAX_DNS_LABEL_LENGTH: usize = 63;
 const MAX_DNS_SUBDOMAIN_LENGTH: usize = 253;
 const MAX_LABEL_VALUE_LENGTH: usize = 63;
@@ -188,6 +190,7 @@ pub fn build_pod(
             automount_service_account_token: Some(false),
             containers: vec![build_container(microvm, bootstrap_secret)],
             enable_service_links: Some(false),
+            init_containers: Some(vec![build_identity_init_container(microvm)]),
             node_selector: Some(node_selector),
             restart_policy: Some("Always".to_owned()),
             runtime_class_name: Some("kata-fc".to_owned()),
@@ -232,6 +235,14 @@ pub fn build_pod(
                     empty_dir: Some(EmptyDirVolumeSource {
                         size_limit: Some(Quantity("2Gi".to_owned())),
                         ..EmptyDirVolumeSource::default()
+                    }),
+                    ..Volume::default()
+                },
+                Volume {
+                    name: RUNTIME_IDENTITY_VOLUME.to_owned(),
+                    empty_dir: Some(EmptyDirVolumeSource {
+                        medium: Some("Memory".to_owned()),
+                        size_limit: Some(Quantity("64Ki".to_owned())),
                     }),
                     ..Volume::default()
                 },
@@ -382,10 +393,75 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
                 mount_path: "/tmp".to_owned(),
                 ..VolumeMount::default()
             },
+            VolumeMount {
+                name: RUNTIME_IDENTITY_VOLUME.to_owned(),
+                mount_path: "/etc/passwd".to_owned(),
+                read_only: Some(true),
+                sub_path: Some("passwd".to_owned()),
+                ..VolumeMount::default()
+            },
         ]),
-        // Mount the PVC once at the existing volume-root workspace path. Pointing the
-        // runtime home there also preserves persistent user state for every pinned image.
+        // The PVC remains mounted once at the existing volume-root workspace path. The
+        // generated passwd file makes UID 1000 resolve its home there as well, including
+        // for immutable guest images whose baked-in passwd entry points elsewhere.
         working_dir: Some("/workspace".to_owned()),
+        ..Container::default()
+    }
+}
+
+fn build_identity_init_container(microvm: &MicroVM) -> Container {
+    let fixed = BTreeMap::from([
+        ("cpu".to_owned(), Quantity("10m".to_owned())),
+        ("memory".to_owned(), Quantity("16Mi".to_owned())),
+    ]);
+
+    Container {
+        name: "prepare-runtime-identity".to_owned(),
+        image: Some(microvm.spec.image.clone()),
+        image_pull_policy: Some("IfNotPresent".to_owned()),
+        command: Some(vec!["/bin/sh".to_owned(), "-ceu".to_owned()]),
+        args: Some(vec![format!(
+            r#"temporary='{RUNTIME_PASSWD_PATH}.tmp'
+: > "$temporary"
+found=
+while IFS=: read -r name password uid gid gecos home shell; do
+  if [ "$uid" = '{GUEST_UID}' ]; then
+    home=/workspace
+    found=1
+  fi
+  printf '%s:%s:%s:%s:%s:%s:%s\n' "$name" "$password" "$uid" "$gid" "$gecos" "$home" "$shell" >> "$temporary"
+done < /etc/passwd
+test "$found" = 1
+chmod 0444 "$temporary"
+mv "$temporary" '{RUNTIME_PASSWD_PATH}'"#
+        )]),
+        resources: Some(ResourceRequirements {
+            limits: Some(fixed.clone()),
+            requests: Some(fixed),
+            ..ResourceRequirements::default()
+        }),
+        security_context: Some(SecurityContext {
+            allow_privilege_escalation: Some(false),
+            capabilities: Some(Capabilities {
+                drop: Some(vec!["ALL".to_owned()]),
+                ..Capabilities::default()
+            }),
+            privileged: Some(false),
+            read_only_root_filesystem: Some(true),
+            run_as_non_root: Some(true),
+            run_as_group: Some(GUEST_UID),
+            run_as_user: Some(GUEST_UID),
+            seccomp_profile: Some(SeccompProfile {
+                type_: "RuntimeDefault".to_owned(),
+                ..SeccompProfile::default()
+            }),
+            ..SecurityContext::default()
+        }),
+        volume_mounts: Some(vec![VolumeMount {
+            name: RUNTIME_IDENTITY_VOLUME.to_owned(),
+            mount_path: "/runtime-identity".to_owned(),
+            ..VolumeMount::default()
+        }]),
         ..Container::default()
     }
 }
@@ -570,6 +646,53 @@ mod tests {
             mounts
                 .iter()
                 .all(|mount| mount.mount_path != "/home/nanoagent")
+        }));
+        let passwd_mount = container
+            .volume_mounts
+            .as_ref()
+            .expect("volume mounts")
+            .iter()
+            .find(|mount| mount.mount_path == "/etc/passwd")
+            .expect("generated passwd mount");
+        assert_eq!(passwd_mount.name, RUNTIME_IDENTITY_VOLUME);
+        assert_eq!(passwd_mount.sub_path.as_deref(), Some("passwd"));
+        assert_eq!(passwd_mount.read_only, Some(true));
+
+        let init = spec
+            .init_containers
+            .as_ref()
+            .and_then(|containers| containers.first())
+            .expect("runtime identity init container");
+        assert_eq!(init.image, container.image);
+        assert_eq!(
+            init.command.as_deref(),
+            Some(&["/bin/sh".to_owned(), "-ceu".to_owned()][..])
+        );
+        assert!(init.args.as_ref().is_some_and(|args| {
+            args.len() == 1
+                && args[0].contains("home=/workspace")
+                && args[0].contains(&format!("[ \"$uid\" = '{GUEST_UID}' ]"))
+                && args[0].contains(RUNTIME_PASSWD_PATH)
+        }));
+        let init_security = init
+            .security_context
+            .as_ref()
+            .expect("init security context");
+        assert_eq!(init_security.run_as_user, Some(GUEST_UID));
+        assert_eq!(init_security.read_only_root_filesystem, Some(true));
+        let init_resources = init.resources.as_ref().expect("init resources");
+        assert_eq!(init_resources.requests, init_resources.limits);
+        assert!(spec.volumes.as_ref().is_some_and(|volumes| {
+            volumes.iter().any(|volume| {
+                volume.name == RUNTIME_IDENTITY_VOLUME
+                    && volume.empty_dir.as_ref().is_some_and(|source| {
+                        source.medium.as_deref() == Some("Memory")
+                            && source
+                                .size_limit
+                                .as_ref()
+                                .is_some_and(|size| size.0 == "64Ki")
+                    })
+            })
         }));
     }
 
