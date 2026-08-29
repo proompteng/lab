@@ -3,6 +3,7 @@ import { Schema } from 'effect'
 import { DecisionPlanSchema } from '../evidence-contracts'
 import { IsoDateSchema, StrictNonEmptyStringSchema, SymbolSchema } from '../schemas'
 import { OpeningDriveTargetPortfolioSchema } from './opening-drive/model'
+import { IntradayMomentumTargetPortfolioSchema } from './intraday-momentum/model'
 
 const FlatExecutionTargetBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.execution-flat-target.v1'),
@@ -27,6 +28,7 @@ export const FlatExecutionTargetSchema = FlatExecutionTargetBase.check(
 export const RuntimeStrategyDecisionSchema = Schema.Union([
   DecisionPlanSchema,
   OpeningDriveTargetPortfolioSchema,
+  IntradayMomentumTargetPortfolioSchema,
   FlatExecutionTargetSchema,
 ])
 
@@ -38,6 +40,8 @@ export const runtimeDecisionMatchesStrategy = (decision: RuntimeStrategyDecision
       return strategyName === 'risk-balanced-trend'
     case 'bayn.opening-drive.target.v1':
       return strategyName === 'opening-drive-momentum'
+    case 'bayn.intraday-momentum.target.v1':
+      return strategyName === 'intraday-momentum'
     case 'bayn.execution-flat-target.v1':
       return decision.strategyName === strategyName
   }

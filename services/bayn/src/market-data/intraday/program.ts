@@ -6,6 +6,7 @@ import { marketDataOperationError } from '../errors'
 import {
   IntradayMarketData,
   IntradaySnapshotFailure,
+  intradaySnapshotSymbols,
   type ArchiveVerifiedIntradayMarketSnapshot,
   type IntradayMarketDataService,
   type IntradayMarketSnapshot,
@@ -121,7 +122,9 @@ const requestFromSnapshot = (snapshot: IntradayMarketSnapshot): IntradaySnapshot
     observedAt: manifest.observedAt,
     universeId: manifest.universeId,
     universeSymbolHash: manifest.universeSymbolHash,
-    universe: manifest.symbols,
+    universe: manifest.universe ?? manifest.symbols,
+    ...(manifest.universe === undefined ? {} : { symbols: manifest.symbols }),
+    ...(manifest.purpose === undefined ? {} : { purpose: manifest.purpose }),
     feed: manifest.feed,
     delayClass: manifest.delayClass,
     sourceTopics: manifest.sourceTopics,
@@ -187,18 +190,18 @@ export const makeIntradayMarketData: Effect.Effect<
             bars: loadIntradayArchivePages(
               (after) => loadIntradayBars(verified, after),
               decodeIntradayBarRows,
-              verified.universe.length *
+              intradaySnapshotSymbols(verified).length *
                 ((Date.parse(verified.rangeEndAt) - Date.parse(verified.rangeStartAt)) / 60_000),
             ),
             quotes: loadIntradayArchivePages(
               (after) => loadIntradayQuotes(verified, after),
               decodeIntradayQuoteRows,
-              verified.universe.length,
+              intradaySnapshotSymbols(verified).length,
             ),
             trades: loadIntradayArchivePages(
               (after) => loadIntradayTrades(verified, after),
               decodeIntradayTradeRows,
-              verified.universe.length,
+              intradaySnapshotSymbols(verified).length,
             ),
           },
           { concurrency: 4 },

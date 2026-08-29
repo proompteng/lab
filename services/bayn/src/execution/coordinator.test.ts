@@ -46,7 +46,7 @@ import {
 import { cancel, dryRunSubmit, ExecutionError, ExecutionFailure, recover, submit } from './coordinator'
 import { IntentStore, type IntentStoreService, type StoredIntent } from './intents'
 
-const encodedRequest = (value: Intent) => Result.getOrThrow(orderRequestBody(value))
+const encodedRequest = (value: Intent, closeOnly = false) => Result.getOrThrow(orderRequestBody(value, closeOnly))
 import {
   decideFinalSubmitAuthorization,
   decideMutationAuthority,
@@ -107,7 +107,11 @@ const riskDecision: RiskDecision = {
   expiresAt: '1970-01-01T00:10:00.000Z',
 }
 
-const brokerOrder = (status = OrderStatus.Accepted, observedAt = '1970-01-01T00:00:01.000Z'): Order => ({
+const brokerOrder = (
+  status = OrderStatus.Accepted,
+  observedAt = '1970-01-01T00:00:01.000Z',
+  representation: 'notional' | 'quantity' = 'notional',
+): Order => ({
   accountId,
   brokerOrderId: orderId,
   clientOrderId: intent.clientOrderId,
@@ -117,7 +121,9 @@ const brokerOrder = (status = OrderStatus.Accepted, observedAt = '1970-01-01T00:
   assetId: 'b0b6dd9d-8b9b-48a9-ba46-b9d54906e415',
   symbol: intent.symbol,
   assetClass: AssetClass.UsEquity,
-  notionalMicros: intent.notionalLimitMicros,
+  ...(representation === 'notional'
+    ? { notionalMicros: intent.notionalLimitMicros }
+    : { quantityMicros: intent.quantityMicros }),
   filledQuantityMicros: status === OrderStatus.Filled ? intent.quantityMicros : '0',
   orderClass: OrderClass.Simple,
   orderType: BrokerOrderType.Market,
@@ -338,30 +344,26 @@ describe('MutationStore decision algebra', () => {
       ),
     )
     const closeInput = { ...decisionStartInput(MutationOperation.Submit), closeOnly: true as const }
-    const closeStarted = resultSuccess(
-      decideMutationStart(
-        MutationOperation.Submit,
-        closeInput,
-        closeBinding,
-        { ...decisionIntent(), side: OrderSide.Sell },
-        undefined,
-      ),
-    )
-    expect(closeStarted.intentTransition).toBe('ApprovedToIoStarted')
-    expect(
-      resultFailure(
-        decideMutationStart(MutationOperation.Submit, closeInput, closeBinding, decisionIntent(), undefined),
-      ),
-    ).toMatchObject({ failure: 'authority', message: 'close-only submit requires a sell intent' })
-    expect(
-      resultFailure(
-        decideFinalSubmitAuthorization({
-          authority: closeBinding,
-          intent: decisionIntent(IntentState.IoStarted),
-          closeOnly: true,
-        }),
-      ),
-    ).toMatchObject({ failure: 'authority', message: 'close-only submit requires a sell intent' })
+    for (const side of [OrderSide.Buy, OrderSide.Sell]) {
+      const closeStarted = resultSuccess(
+        decideMutationStart(
+          MutationOperation.Submit,
+          closeInput,
+          closeBinding,
+          { ...decisionIntent(), side },
+          undefined,
+        ),
+      )
+      expect(closeStarted.intentTransition).toBe('ApprovedToIoStarted')
+      expect(
+        resultSuccess(
+          decideFinalSubmitAuthorization({
+            authority: closeBinding,
+            intent: { ...decisionIntent(IntentState.IoStarted), side },
+          }),
+        ),
+      ).toBeUndefined()
+    }
   })
 
   test('decides start replay, immutable binding, stale time, and retained cancel identity', () => {
@@ -1300,6 +1302,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
   let stored: StoredIntent = { intent, decision: riskDecision, stateVersion: 3, updatedAt: initialTime }
   const latest = new Map<MutationOperation, MutationEvent>()
   let submitCalls = 0
+  let submittedCloseOnly: boolean | undefined
   let cancelCalls = 0
   let lookupCalls = 0
   let lookupClientOrderId: string | undefined
@@ -1570,14 +1573,15 @@ const makeHarness = (options: HarnessOptions = {}) => {
   }
 
   const mutation: BrokerMutationShape = {
-    submit: (submitted) => {
+    submit: (submitted, closeOnly = false) => {
       submitCalls += 1
+      submittedCloseOnly = closeOnly
       if (latest.get(MutationOperation.Submit)?.eventType !== MutationEventType.SubmitStarted) {
         return Effect.die(new Error('submit happened before SUBMIT_STARTED was durable'))
       }
       if (options.crashAfterSubmit === true) return Effect.die(new Error('injected crash after send'))
       if (options.submitError !== undefined) return Effect.fail(options.submitError)
-      const hash = canonicalHashV1(encodedRequest(submitted))
+      const hash = canonicalHashV1(encodedRequest(submitted, closeOnly))
       if (options.unknownSubmit === true) {
         return Effect.fail(
           new BrokerMutationError({
@@ -1644,6 +1648,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
     provideRecovery,
     mutations: mutationStore,
     calls: () => ({ submit: submitCalls, cancel: cancelCalls, lookup: lookupCalls }),
+    submittedCloseOnly: () => submittedCloseOnly,
     lookupClientOrderId: () => lookupClientOrderId,
     intent: () => stored.intent,
     state: () => stored.intent.state,
@@ -1743,6 +1748,19 @@ describe('execution coordinator', () => {
     expect(result.replay.eventId).toBe(result.accepted.eventId)
     expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 0 })
     expect(harness.state()).toBe(IntentState.Acknowledged)
+  })
+
+  test('propagates close-only short-cover encoding through the durable submit boundary', async () => {
+    const harness = makeHarness({ submittedOrder: brokerOrder(OrderStatus.Accepted, undefined, 'quantity') })
+    const accepted = await Effect.runPromise(harness.provide(submit(intentId, 1_000, true)))
+
+    expect(accepted).toMatchObject({
+      eventType: MutationEventType.SubmitAccepted,
+      requestHash: canonicalHashV1(encodedRequest(intent, true)),
+    })
+    expect(encodedRequest(intent, true)).toMatchObject({ side: 'buy', qty: '1.25' })
+    expect(harness.submittedCloseOnly()).toBe(true)
+    expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 0 })
   })
 
   test('recovers an accepted order to terminal at the exact delay without another POST', async () => {

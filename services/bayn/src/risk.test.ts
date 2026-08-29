@@ -565,6 +565,155 @@ describe('bounded execution risk', () => {
     expect(() => decodePolicy({ ...policy, schemaVersion: 'bayn.paper-risk-policy.v2' })).toThrow()
   })
 
+  test('admits MARKET/DAY only for an exact exposure-reducing close', () => {
+    const policy = decodePolicy({
+      ...makePolicy(),
+      schemaVersion: executionRiskPolicySchemaVersion,
+      allowedOrderTypes: [OrderType.Limit],
+      allowedTimeInForce: [TimeInForce.ImmediateOrCancel],
+    })
+    const positions = baseState().positions.map((position) =>
+      position.symbol === 'NVDA'
+        ? {
+            ...position,
+            quantityMicros: '500000',
+            marketValueMicros: '50000000',
+            unrealizedPnlMicros: '5000000',
+          }
+        : position,
+    )
+    const state = makeState({
+      positions,
+      closeOnly: true,
+      closeOnlyExpiresAt: '2026-07-21T21:01:00.000Z',
+    })
+    const intent = makeIntent({
+      policyHash: canonicalHashV1(policy),
+      side: OrderSide.Sell,
+      orderType: OrderType.Market,
+      timeInForce: TimeInForce.Day,
+      quantityMicros: '500000',
+      notionalLimitMicros: '50000000',
+    })
+
+    expect(evaluateSuccess(intent, state, policy).decision.outcome).toBe(RiskOutcome.Approved)
+    expectBlocked(Reason.OrderTypeNotAllowed, intent, makeState({ positions }), policy)
+  })
+
+  test('admits an exact MARKET/DAY buy-to-cover only in close-only mode', () => {
+    const policy = decodePolicy({
+      ...makePolicy(),
+      schemaVersion: executionRiskPolicySchemaVersion,
+      allowedOrderTypes: [OrderType.Limit],
+      allowedTimeInForce: [TimeInForce.ImmediateOrCancel],
+    })
+    const positions = baseState().positions.map((position) =>
+      position.symbol === 'NVDA'
+        ? {
+            ...position,
+            quantityMicros: '-500000',
+            marketValueMicros: '-50000000',
+            unrealizedPnlMicros: '0',
+          }
+        : position,
+    )
+    const state = makeState({
+      positions,
+      closeOnly: true,
+      closeOnlyExpiresAt: '2026-07-21T21:01:00.000Z',
+    })
+    const intent = makeIntent({
+      policyHash: canonicalHashV1(policy),
+      side: OrderSide.Buy,
+      orderType: OrderType.Market,
+      timeInForce: TimeInForce.Day,
+      quantityMicros: '500000',
+      notionalLimitMicros: '50000000',
+    })
+
+    const cover = evaluateSuccess(intent, state, policy)
+    expect(cover.decision.outcome).toBe(RiskOutcome.Approved)
+    expect(cover.gates.find((gate) => gate.name === Gate.LongOnly)?.passed).toBe(true)
+    expectBlocked(Reason.OrderTypeNotAllowed, intent, makeState({ positions }), policy)
+  })
+
+  test('admits an out-of-policy symbol only as an exact reconciled close', () => {
+    const positions = baseState().positions.map((position) =>
+      position.symbol === 'NVDA'
+        ? {
+            ...position,
+            symbol: 'TSLA',
+          }
+        : position,
+    )
+    const closeOnlyState = makeState({
+      positions,
+      marketDataSymbol: 'TSLA',
+      closeOnly: true,
+      closeOnlyExpiresAt: '2026-07-21T21:01:00.000Z',
+    })
+    const exactClose = makeIntent({
+      symbol: 'TSLA',
+      side: OrderSide.Sell,
+      quantityMicros: '1000000',
+    })
+
+    const approved = evaluateSuccess(exactClose, closeOnlyState, makePolicy())
+    expect(approved.decision.outcome).toBe(RiskOutcome.Approved)
+    expect(approved.gates.find((gate) => gate.name === Gate.Symbol)?.passed).toBe(true)
+
+    expectBlocked(Reason.SymbolNotAllowed, exactClose, makeState({ positions, marketDataSymbol: 'TSLA' }), makePolicy())
+    expectBlocked(
+      Reason.ShortPositionNotAllowed,
+      makeIntent({
+        symbol: 'TSLA',
+        side: OrderSide.Sell,
+        quantityMicros: '2000000',
+        notionalLimitMicros: '200000000',
+      }),
+      closeOnlyState,
+      makePolicy({ maxOrderNotionalMicros: '200000000', maxDailyTradedNotionalMicros: '300000000' }),
+    )
+  })
+
+  test('does not require buying power for a strictly exposure-reducing short cover', () => {
+    const positions = baseState().positions.map((position) =>
+      position.symbol === 'NVDA'
+        ? {
+            ...position,
+            quantityMicros: '-1000000',
+            marketValueMicros: '-100000000',
+            unrealizedPnlMicros: '0',
+          }
+        : position,
+    )
+    const state = makeState({
+      account: { ...baseState().account, buyingPowerMicros: '0' },
+      positions,
+      reservedBuyingPowerMicros: '100000000',
+      closeOnly: true,
+      closeOnlyExpiresAt: '2026-07-21T21:01:00.000Z',
+    })
+    const cover = makeIntent({
+      side: OrderSide.Buy,
+      quantityMicros: '1000000',
+      notionalLimitMicros: '100000000',
+    })
+
+    const result = evaluateSuccess(cover, state, makePolicy())
+    expect(result.decision.outcome).toBe(RiskOutcome.Approved)
+    expect(result.gates.find((gate) => gate.name === Gate.BuyingPower)?.passed).toBe(true)
+    expect(result.metrics.postTradeSymbolExposureMicros).toBe('0')
+
+    expectBlocked(Reason.BuyingPowerExceeded, cover, makeState({ ...state, closeOnly: false }), makePolicy())
+    expectBlocked(
+      Reason.ShortPositionNotAllowed,
+      makeIntent({ side: OrderSide.Buy, quantityMicros: '2000000', notionalLimitMicros: '200000000' }),
+      state,
+      makePolicy({ maxOrderNotionalMicros: '200000000' }),
+    )
+  })
+
   test('permits only the bounded sell close through an active kill', () => {
     const closeOnlyState = makeState({
       closeOnly: true,

@@ -303,7 +303,9 @@ const makeOpeningRangeRows = (request: IntradaySnapshotRequest): IntradaySnapsho
   }
 }
 
-const snapshot = success(verifyIntradaySnapshot(snapshotRequest, makeSnapshotRows()))
+const snapshot = success(
+  verifyIntradaySnapshot(snapshotRequest, makeSnapshotRows()),
+) as unknown as ArchiveVerifiedIntradayMarketSnapshot
 
 describe('opening-drive runtime decision boundary', () => {
   test('admits entry only for the exact post-open range and bounded submission window', () => {
@@ -338,7 +340,7 @@ describe('opening-drive runtime decision boundary', () => {
 
   test('uses only the last complete minute before a close decision', () => {
     const cycle = makeActiveCycle()
-    const query = success(openingDriveCloseQuery(cycle, protocol, calendar, '2026-08-18T19:30:01.000Z'))
+    const query = success(openingDriveCloseQuery(cycle, protocol, calendar, '2026-08-18T19:30:01.000Z', ['AMD']))
 
     expect(query).toMatchObject({
       sessionDate: '2026-08-18',
@@ -346,11 +348,17 @@ describe('opening-drive runtime decision boundary', () => {
       rangeEndAt: '2026-08-18T19:30:00.000Z',
       observedAt: '2026-08-18T19:30:01.000Z',
       minimumWatermarkLagMs: 0,
+      purpose: 'LIQUIDATION',
+      symbols: ['AMD'],
     })
-    expect(failure(openingDriveCloseQuery(cycle, protocol, calendar, '2026-08-18T19:30:00.000Z'))).toMatchObject({
+    expect(
+      failure(openingDriveCloseQuery(cycle, protocol, calendar, '2026-08-18T19:30:00.000Z', ['AMD'])),
+    ).toMatchObject({
       operation: 'close-query',
     })
-    expect(failure(openingDriveCloseQuery(cycle, protocol, calendar, '2026-08-18T20:00:01.000Z'))).toMatchObject({
+    expect(
+      failure(openingDriveCloseQuery(cycle, protocol, calendar, '2026-08-18T20:00:01.000Z', ['AMD'])),
+    ).toMatchObject({
       operation: 'close-query',
     })
   })
@@ -368,7 +376,9 @@ describe('opening-drive runtime decision boundary', () => {
       },
       verifyArchiveSnapshot: (candidate) => Effect.succeed(candidate as ArchiveVerifiedIntradayMarketSnapshot),
     }
-    const query = success(openingDriveCloseQuery(makeActiveCycle(), protocol, calendar, snapshot.manifest.observedAt))
+    const query = success(
+      openingDriveCloseQuery(makeActiveCycle(), protocol, calendar, snapshot.manifest.observedAt, ['AMD']),
+    )
 
     expect(await Effect.runPromise(loadIntradaySnapshot(service, query))).toBe(snapshot)
     expect(calls).toEqual([`capture`, `load:${protocol.universe.length}`])
@@ -382,8 +392,33 @@ describe('opening-drive runtime decision boundary', () => {
       quotesContentHash: snapshot.manifest.quotesContentHash,
       tradesContentHash: snapshot.manifest.tradesContentHash,
     })
+
+    const rows = makeSnapshotRows()
+    const liquidationSnapshot = success(
+      verifyIntradaySnapshot(
+        { ...snapshotRequest, symbols: ['AMD'], purpose: 'LIQUIDATION' },
+        {
+          ...rows,
+          bars: [],
+          quotes: rows.quotes.filter(
+            (row) => typeof row === 'object' && row !== null && 'symbol' in row && row.symbol === 'AMD',
+          ),
+          trades: [],
+        },
+      ),
+    )
+    expect(success(executionMarketDataBinding(liquidationSnapshot))).toMatchObject({
+      purpose: 'LIQUIDATION',
+      symbols: ['AMD'],
+      barCount: 0,
+      quoteCount: 1,
+      tradeCount: 0,
+      contentHash: liquidationSnapshot.manifest.contentHash,
+      snapshotId: liquidationSnapshot.manifest.snapshotId,
+    })
+
     expect(success(closeBidPrices(snapshot, ['AMD', 'AMD']))).toEqual({ AMD: '100120000' })
-    expect(failure(closeBidPrices(snapshot, ['AAPL']))).toMatchObject({ operation: 'close-prices' })
+    expect(failure(closeBidPrices(snapshot, ['AAPL']))).toMatchObject({ operation: 'close-quote-not-ready' })
 
     const amdQuote = snapshot.latestQuotes['AMD']
     if (amdQuote === undefined) return expect.unreachable('opening-drive fixture requires an AMD quote')
@@ -395,7 +430,7 @@ describe('opening-drive runtime decision boundary', () => {
       },
     }
     expect(failure(closeBidPrices(staleHeldSymbolSnapshot, ['AMD']))).toMatchObject({
-      operation: 'close-prices',
+      operation: 'close-quote-not-ready',
       message: 'closing quote for AMD is outside the freshness window',
     })
     expect(success(closeBidPrices(staleHeldSymbolSnapshot, ['AVGO']))).toEqual({ AVGO: '102120000' })
@@ -412,6 +447,9 @@ describe('opening-drive runtime decision boundary', () => {
       operation: 'entry-decision',
       message: 'existing position AMD has no fresh entry-cycle liquidation quote',
     })
+    expect(
+      success(requireFreshOpeningDrivePositionQuotes(delayedSnapshot, [{ symbol: 'TSLA', quantityMicros: '1000000' }])),
+    ).toBeUndefined()
     expect(success(requireFreshOpeningDrivePositionQuotes(delayedSnapshot, []))).toBeUndefined()
   })
 

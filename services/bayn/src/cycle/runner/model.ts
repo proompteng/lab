@@ -4,7 +4,7 @@ import type { SignalSessionRow } from '../../market-data'
 import type { CycleDecisionDocument } from '../../shadow-decision-contract'
 import type { AutonomousCycle, CycleExecutionPolicy, CycleIdentity } from '../model'
 import type { CyclePublicationReadiness } from '../readiness'
-import type { CycleAcquireReceipt } from '../store'
+import type { CycleAcquireReceipt, CycleDecisionBindingEvidence } from '../store'
 
 type SignalCycleSession = Pick<SignalSessionRow, 'calendar_version' | 'session_date' | 'close_time' | 'timezone'>
 
@@ -40,6 +40,9 @@ export interface CycleRunContext<R = never> {
     cycle: AutonomousCycle,
     reconciliationCompleted?: Effect.Effect<void>,
   ) => Effect.Effect<CycleDecisionDocument, CycleDecisionBuildError, R>
+  readonly buildDecisionEvidence?: (
+    document: CycleDecisionDocument,
+  ) => Effect.Effect<CycleDecisionBindingEvidence, CycleDecisionBuildError, R>
 }
 
 export interface CycleCandidate {

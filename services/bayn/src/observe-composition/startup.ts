@@ -8,7 +8,7 @@ import { Authority, type AuthorityState } from '../execution/contracts'
 import { CycleExecutionModelSchema } from '../execution-model-contract'
 import { canonicalHashV1Result } from '../hash'
 import { strictParseOptions } from '../schemas'
-import { strategyDefinition, type StrategyRuntime } from '../strategy'
+import { defaultIntradayMomentumProtocolDocument, strategyDefinition, type StrategyRuntime } from '../strategy'
 import type {
   MutationAutonomousCycleInput,
   ObserveAutonomousCycleInput,
@@ -49,18 +49,32 @@ export const prepareObserveStartup = (
       }),
     )
   }
+  if (definition.name === 'intraday-momentum') {
+    const sourceProtocolHash = canonicalHashV1Result(defaultIntradayMomentumProtocolDocument)
+    if (Result.isFailure(sourceProtocolHash) || sourceProtocolHash.success !== parameterHash.success) {
+      return Result.fail(
+        operationalError({
+          component: 'strategy',
+          operation: 'cycle-policy',
+          message: 'intraday-momentum autonomous execution requires the source-controlled protocol',
+          ...(Result.isFailure(sourceProtocolHash) ? { cause: sourceProtocolHash.failure } : {}),
+        }),
+      )
+    }
+  }
   const decodedExecutionModel = decodeStrategyExecutionModel(input.strategy)
   if (Result.isFailure(decodedExecutionModel)) return Result.fail(decodedExecutionModel.failure)
   const executionModel = decodedExecutionModel.success
   if (
     executionModel.schemaVersion !== 'bayn.execution-model.v3' &&
-    executionModel.schemaVersion !== 'bayn.execution-model.v4'
+    executionModel.schemaVersion !== 'bayn.execution-model.v4' &&
+    executionModel.schemaVersion !== 'bayn.execution-model.v5'
   ) {
     return Result.fail(
       operationalError({
         component: 'strategy',
         operation: 'cycle-loop',
-        message: 'autonomous cycles require an account-neutral v3 or v4 execution model',
+        message: 'autonomous cycles require an account-neutral v3, v4, or v5 execution model',
       }),
     )
   }

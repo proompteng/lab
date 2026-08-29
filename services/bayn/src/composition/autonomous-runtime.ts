@@ -665,9 +665,7 @@ export const makeAutonomousServiceRuntime = (
                                               entrySubmitExpiresAt: request.cutoffAt,
                                               closeSubmitExpiresAt: executionMandateCloseExpiresAt(request.expiresAt),
                                               isCloseOnlyIntent: (intentId) =>
-                                                runtimeServices.executionCycleClosureStore
-                                                  .containsIntent(intentId)
-                                                  .pipe(Effect.orElseSucceed(() => false)),
+                                                runtimeServices.executionCycleClosureStore.containsIntent(intentId),
                                               intentStore: runtimeServices.intentStore,
                                               mutationStore: runtimeServices.mutationStore,
                                               writerFence: runtimeServices.writerFence,

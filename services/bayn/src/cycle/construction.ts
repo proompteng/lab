@@ -159,19 +159,27 @@ export const makeCycleExecutionPolicyFromModel = (
       failure('execution-policy', 'hash', 'strategy execution model is not canonicalizable', {}, cause),
     )
     return yield* makeCycleExecutionPolicy(
-      decodedModel.schemaVersion === 'bayn.execution-model.v4'
+      decodedModel.schemaVersion === 'bayn.execution-model.v5'
         ? {
-            schemaVersion: 'bayn.autonomous-cycle-execution-policy.v2',
+            schemaVersion: 'bayn.autonomous-cycle-execution-policy.v3',
             strategyExecutionModelHash,
-            submissionWindowMs: decodedModel.order.submissionCutoffAfterOpenMs - decodedModel.order.decisionAfterOpenMs,
-            submissionCutoffAfterOpenMs: decodedModel.order.submissionCutoffAfterOpenMs,
+            warmupAfterOpenMs: decodedModel.order.warmupAfterOpenMs,
+            submissionCutoffBeforeCloseMs: decodedModel.order.submissionCutoffBeforeCloseMs,
           }
-        : {
-            schemaVersion: 'bayn.autonomous-cycle-execution-policy.v1',
-            strategyExecutionModelHash,
-            submissionWindowMs: autonomousCycleSubmissionWindowMs,
-            submissionCutoffBeforeOpenMs: decodedModel.order.submissionCutoffLeadMinutes * 60_000,
-          },
+        : decodedModel.schemaVersion === 'bayn.execution-model.v4'
+          ? {
+              schemaVersion: 'bayn.autonomous-cycle-execution-policy.v2',
+              strategyExecutionModelHash,
+              submissionWindowMs:
+                decodedModel.order.submissionCutoffAfterOpenMs - decodedModel.order.decisionAfterOpenMs,
+              submissionCutoffAfterOpenMs: decodedModel.order.submissionCutoffAfterOpenMs,
+            }
+          : {
+              schemaVersion: 'bayn.autonomous-cycle-execution-policy.v1',
+              strategyExecutionModelHash,
+              submissionWindowMs: autonomousCycleSubmissionWindowMs,
+              submissionCutoffBeforeOpenMs: decodedModel.order.submissionCutoffLeadMinutes * 60_000,
+            },
     )
   })
 
@@ -283,6 +291,19 @@ const decodeCycleWindowInputs = (
 const validateCycleWindowDurations = (
   policy: CycleWindowPolicyInput,
 ): Result.Result<void, CycleConstructionFailure> => {
+  if ('warmupAfterOpenMs' in policy) {
+    const invalid = [policy.warmupAfterOpenMs, policy.submissionCutoffBeforeCloseMs].find(
+      (offset) => !Number.isSafeInteger(offset) || offset <= 0 || offset > maximumSubmissionDurationMs,
+    )
+    return invalid === undefined
+      ? Result.succeed(undefined)
+      : Result.fail(
+          failure('cycle-window', 'duration', 'intraday session-relative offsets must be within one day', {
+            warmupAfterOpenMs: policy.warmupAfterOpenMs,
+            submissionCutoffBeforeCloseMs: policy.submissionCutoffBeforeCloseMs,
+          }),
+        )
+  }
   const { submissionWindowMs } = policy
   if (
     !Number.isSafeInteger(submissionWindowMs) ||
@@ -311,6 +332,11 @@ const deriveCycleWindowTimes = (
   input: DecodedCycleWindowInput,
 ): Result.Result<DerivedCycleWindowTimes, CycleConstructionFailure> => {
   const { calendar, policy, signal } = input
+  if ('warmupAfterOpenMs' in policy) {
+    return Result.fail(
+      failure('cycle-window', 'decode', 'a signal-bound cycle cannot use a session-relative rolling policy'),
+    )
+  }
   if (signal.session_date >= calendar.executionSessionDate) {
     return Result.fail(
       failure('cycle-window', 'session-order', 'execution session must follow the Signal session', {
@@ -394,16 +420,25 @@ const makeIntradayCycleWindowDataFirst = (
     const policy = yield* Result.mapError(decodeCycleWindowPolicyInputResult(executionPolicy), (cause) =>
       failure('cycle-window', 'decode', 'intraday cycle window policy is invalid', {}, cause),
     )
-    if (!('submissionCutoffAfterOpenMs' in policy)) {
+    if (
+      !('submissionCutoffAfterOpenMs' in policy) &&
+      !('submissionCutoffBeforeCloseMs' in policy && 'warmupAfterOpenMs' in policy)
+    ) {
       return yield* Result.fail(
-        failure('cycle-window', 'decode', 'intraday cycle window requires a post-open execution policy'),
+        failure('cycle-window', 'decode', 'intraday cycle window requires a session-relative execution policy'),
       )
     }
     yield* validateCycleWindowDurations(policy)
-    const submissionCutoffAt = utcInstantFromEpochMillis(
-      Date.parse(calendar.executionOpenAt) + policy.submissionCutoffAfterOpenMs,
+    const submissionOpenAt = utcInstantFromEpochMillis(
+      'warmupAfterOpenMs' in policy
+        ? Date.parse(calendar.executionOpenAt) + policy.warmupAfterOpenMs
+        : Date.parse(calendar.executionOpenAt) + policy.submissionCutoffAfterOpenMs - policy.submissionWindowMs,
     )
-    const submissionOpenAt = utcInstantFromEpochMillis(Date.parse(submissionCutoffAt) - policy.submissionWindowMs)
+    const submissionCutoffAt = utcInstantFromEpochMillis(
+      'submissionCutoffBeforeCloseMs' in policy
+        ? Date.parse(calendar.executionCloseAt) - policy.submissionCutoffBeforeCloseMs
+        : Date.parse(calendar.executionOpenAt) + policy.submissionCutoffAfterOpenMs,
+    )
     return yield* Result.mapError(
       decodeCycleWindowResult({
         schemaVersion: 'bayn.autonomous-cycle-window.v3',

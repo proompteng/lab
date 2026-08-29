@@ -16,7 +16,7 @@ import type {
   IntradaySnapshotRequest,
   IntradayTrade,
 } from './model'
-import { IntradaySnapshotFailure } from './model'
+import { IntradaySnapshotFailure, intradaySnapshotSymbols } from './model'
 import type { IntradayArchiveWatermarkRow, IntradayBarRow, IntradayQuoteRow, IntradayTradeRow } from './rows'
 import {
   decodeIntradayArchiveWatermarkRows,
@@ -251,6 +251,25 @@ const validateQuery = <T extends IntradaySnapshotQuery>(request: T): Result.Resu
   if (request.universeSymbolHash !== sha256(request.universe.join(','))) {
     return Result.fail(failure('request', 'intraday universe hash does not match its canonical symbols'))
   }
+  const requestedSymbols = intradaySnapshotSymbols(request)
+  const canonicalSymbols = [...new Set(requestedSymbols)].sort()
+  if (request.purpose !== undefined && request.purpose !== 'LIQUIDATION') {
+    return Result.fail(failure('request', 'intraday snapshot purpose is not supported'))
+  }
+  if (
+    canonicalSymbols.length === 0 ||
+    canonicalSymbols.length > canonicalUniverse.length ||
+    canonicalSymbols.length !== requestedSymbols.length ||
+    canonicalSymbols.some((symbol, index) => symbol !== requestedSymbols[index]) ||
+    requestedSymbols.some((symbol) => !canonicalUniverse.includes(symbol))
+  ) {
+    return Result.fail(
+      failure('request', 'intraday snapshot symbols must be a non-empty canonical subset of the bound universe'),
+    )
+  }
+  if (request.purpose === 'LIQUIDATION' && request.symbols === undefined) {
+    return Result.fail(failure('request', 'liquidation snapshots require an explicit canonical symbol subset'))
+  }
   if (request.universeId.length === 0 || request.universeId.trim() !== request.universeId) {
     return Result.fail(failure('request', 'intraday universe ID must be non-empty and canonical'))
   }
@@ -283,6 +302,7 @@ export const verifyIntradaySnapshotQuery = (
       ...verified,
       calendar: freezeCalendar(verified.calendar),
       universe: Object.freeze([...verified.universe]),
+      ...(verified.symbols === undefined ? {} : { symbols: Object.freeze([...verified.symbols]) }),
       sourceTopics: Object.freeze({ ...verified.sourceTopics }),
     }),
   )
@@ -377,6 +397,7 @@ export const verifyIntradaySnapshotRequest = (
       ...request,
       calendar: freezeCalendar(request.calendar),
       universe: Object.freeze([...request.universe]),
+      ...(request.symbols === undefined ? {} : { symbols: Object.freeze([...request.symbols]) }),
       sourceTopics: Object.freeze({ ...request.sourceTopics }),
       archiveWatermarks: Object.freeze(request.archiveWatermarks.map((watermark) => Object.freeze({ ...watermark }))),
     })
@@ -500,7 +521,7 @@ const validateIdentity = (
   eventWindowEndAt: string,
   inclusiveEnd: boolean,
 ): Result.Result<void, IntradaySnapshotFailure> => {
-  const symbols = new Set(request.universe)
+  const symbols = new Set(intradaySnapshotSymbols(request))
   const watermarkByPartition = new Map(
     request.archiveWatermarks.map((watermark) => [
       `${watermark.sourceTopic}\u0000${watermark.sourcePartition}`,
@@ -577,7 +598,8 @@ const validateBarCoverage = (
   const rangeEndNanos = intradayInstantNanos(request.rangeEndAt)
   const minuteNanos = millisecondsAsNanos(minuteMs)
   const rangeMinutes = (epoch(request.rangeEndAt) - rangeStart) / minuteMs
-  const maximumCount = request.universe.length * rangeMinutes
+  const requestedSymbols = intradaySnapshotSymbols(request)
+  const maximumCount = requestedSymbols.length * rangeMinutes
   const observed = new Map<string, number>()
   for (const bar of bars) {
     const availabilityDelay = intradayAgeNanos(bar.ingestedAt, bar.eventAt)
@@ -620,15 +642,17 @@ const validateBarCoverage = (
       }),
     )
   }
-  const completionEventAt = rangeEndNanos - minuteNanos
-  for (const symbol of request.universe) {
-    if (!observed.has(`${symbol}\u0000${completionEventAt}`)) {
-      return Result.fail(
-        failure('not-ready', 'intraday snapshot lacks a per-symbol range-completion bar', {
-          symbol,
-          eventAt: new Date(epoch(request.rangeEndAt) - minuteMs).toISOString(),
-        }),
-      )
+  if (request.purpose !== 'LIQUIDATION') {
+    const completionEventAt = rangeEndNanos - minuteNanos
+    for (const symbol of requestedSymbols) {
+      if (!observed.has(`${symbol}\u0000${completionEventAt}`)) {
+        return Result.fail(
+          failure('not-ready', 'intraday snapshot lacks a per-symbol range-completion bar', {
+            symbol,
+            eventAt: new Date(epoch(request.rangeEndAt) - minuteMs).toISOString(),
+          }),
+        )
+      }
     }
   }
   // Alpaca stock bars are trade aggregates: an interior minute with no qualifying trade has no emitted bar. Accept
@@ -664,21 +688,33 @@ const validateArchiveProgress = (
   requested: readonly IntradayArchiveWatermark[],
   actual: readonly IntradayArchiveWatermark[],
 ): Result.Result<void, IntradaySnapshotFailure> => {
-  if (requested.length !== actual.length) {
-    return Result.fail(failure('watermark', 'intraday archive partition topology changed after version capture'))
+  const watermarkKey = (watermark: IntradayArchiveWatermark): string =>
+    `${watermark.sourceTopic}\u0000${watermark.sourcePartition}`
+  const actualByPartition = new Map(actual.map((watermark) => [watermarkKey(watermark), watermark]))
+  const missingPartitions = requested.filter((watermark) => !actualByPartition.has(watermarkKey(watermark)))
+  if (missingPartitions.length > 0) {
+    return Result.fail(
+      failure('watermark', 'intraday archive partition topology changed after version capture', {
+        missingPartitions: missingPartitions.map(({ sourceTopic, sourcePartition }) => ({
+          sourceTopic,
+          sourcePartition,
+        })),
+      }),
+    )
   }
-  for (let index = 0; index < requested.length; index += 1) {
-    const expected = requested[index]
-    const observed = actual[index]
-    if (
-      expected === undefined ||
-      observed === undefined ||
-      expected.sourceTopic !== observed.sourceTopic ||
-      expected.sourcePartition !== observed.sourcePartition
-    ) {
-      return Result.fail(
-        failure('watermark', 'intraday archive partition topology does not match the captured version'),
-      )
+  const requestedPartitions = new Set(requested.map(watermarkKey))
+  const addedPartitions = actual.filter((watermark) => !requestedPartitions.has(watermarkKey(watermark)))
+  if (addedPartitions.length > 0) {
+    return Result.fail(
+      failure('not-ready', 'intraday archive gained partitions after version capture', {
+        addedPartitions: addedPartitions.map(({ sourceTopic, sourcePartition }) => ({ sourceTopic, sourcePartition })),
+      }),
+    )
+  }
+  for (const expected of requested) {
+    const observed = actualByPartition.get(watermarkKey(expected))
+    if (observed === undefined) {
+      return Result.fail(failure('watermark', 'intraday archive partition topology changed after version capture'))
     }
     if (BigInt(observed.inclusiveLastOffset) < BigInt(expected.inclusiveLastOffset)) {
       return Result.fail(
@@ -708,7 +744,7 @@ const latestQuotes = (
   const maximumDelay = millisecondsAsNanos(expectedDelayMs + request.maximumQuoteAgeMs)
   // Bind complete post-range evidence here. Executable freshness is symbol-local and is enforced by the strategy
   // before selection; sparse IEX activity for one symbol must not invalidate fresh evidence for another symbol.
-  for (const symbol of request.universe) {
+  for (const symbol of intradaySnapshotSymbols(request)) {
     const quote = latest[symbol]
     const trade = latestTrades[symbol]
     if (quote === undefined || intradayInstantNanos(quote.eventAt) < intradayInstantNanos(request.rangeEndAt)) {
@@ -718,12 +754,16 @@ const latestQuotes = (
         }),
       )
     }
-    if (trade === undefined || intradayInstantNanos(trade.eventAt) < intradayInstantNanos(request.rangeEndAt)) {
+    if (
+      request.purpose !== 'LIQUIDATION' &&
+      (trade === undefined || intradayInstantNanos(trade.eventAt) < intradayInstantNanos(request.rangeEndAt))
+    ) {
       return Result.fail(
         failure('not-ready', 'intraday snapshot lacks a post-range trade for every symbol', { symbol }),
       )
     }
-    for (const evidence of [quote, trade]) {
+    for (const evidence of request.purpose === 'LIQUIDATION' ? [quote] : [quote, trade]) {
+      if (evidence === undefined) continue
       const availabilityDelay = intradayAgeNanos(evidence.ingestedAt, evidence.eventAt)
       if (availabilityDelay < minimumDelay || availabilityDelay > maximumDelay) {
         return Result.fail(
@@ -792,6 +832,8 @@ export interface IntradaySnapshotRows {
   readonly trades: readonly unknown[]
 }
 
+export type PersistedIntradaySnapshotRows = Omit<IntradaySnapshotRows, 'archiveWatermarks'>
+
 export const verifyIntradaySnapshot = (
   request: IntradaySnapshotRequest,
   rows: IntradaySnapshotRows,
@@ -835,7 +877,9 @@ export const verifyIntradaySnapshot = (
       observedAt: verifiedRequest.observedAt,
       universeId: verifiedRequest.universeId,
       universeSymbolHash: verifiedRequest.universeSymbolHash,
-      symbols: Object.freeze([...verifiedRequest.universe]),
+      ...(verifiedRequest.symbols === undefined ? {} : { universe: Object.freeze([...verifiedRequest.universe]) }),
+      symbols: Object.freeze([...intradaySnapshotSymbols(verifiedRequest)]),
+      ...(verifiedRequest.purpose === undefined ? {} : { purpose: verifiedRequest.purpose }),
       feed: verifiedRequest.feed,
       delayClass: verifiedRequest.delayClass,
       sourceTopics: Object.freeze({ ...verifiedRequest.sourceTopics }),
@@ -949,19 +993,11 @@ const replayedBarRow = (bar: IntradayBar): Result.Result<IntradayBarRow, Intrada
       : row
   })
 
-/**
- * Re-enters an already materialized snapshot through the authoritative row
- * verifier. This is intentionally stronger than rehashing caller-provided
- * payloads: every archive, identity, ordering, coverage, freshness, and
- * lineage invariant is evaluated again before replay or execution.
- */
-export const reverifyIntradayMarketSnapshot = (
+export const persistIntradaySnapshotRows = (
   snapshot: IntradayMarketSnapshot,
-): Result.Result<IntradayMarketSnapshot, IntradaySnapshotFailure> =>
+): Result.Result<PersistedIntradaySnapshotRows, IntradaySnapshotFailure> =>
   Result.gen(function* () {
-    const replay = yield* replaySnapshotEnvelope(snapshot)
-    const { manifest } = replay
-    const collections = replay
+    const collections = yield* replaySnapshotEnvelope(snapshot)
     const bars = yield* Result.all(collections.bars.map(replayedBarRow))
     const quoteCandidateKeys = yield* replayCandidateKeys(collections.quotes, 'quote', (quote) => [
       quote.bidPrice,
@@ -973,28 +1009,7 @@ export const reverifyIntradayMarketSnapshot = (
       trade.price,
       trade.size,
     ])
-    const request: IntradaySnapshotRequest = {
-      sessionDate: manifest.sessionDate,
-      calendar: manifest.calendar,
-      rangeStartAt: manifest.rangeStartAt,
-      rangeEndAt: manifest.rangeEndAt,
-      observedAt: manifest.observedAt,
-      universeId: manifest.universeId,
-      universeSymbolHash: manifest.universeSymbolHash,
-      universe: manifest.symbols,
-      feed: manifest.feed,
-      delayClass: manifest.delayClass,
-      sourceTopics: manifest.sourceTopics,
-      maximumQuoteAgeMs: manifest.maximumQuoteAgeMs,
-      minimumWatermarkLagMs: manifest.minimumWatermarkLagMs,
-      archiveWatermarks: manifest.archiveWatermarks,
-    }
-    const verified = yield* verifyIntradaySnapshot(request, {
-      archiveWatermarks: manifest.archiveWatermarks.map((watermark) => ({
-        source_topic: watermark.sourceTopic,
-        source_partition: watermark.sourcePartition,
-        inclusive_last_offset: watermark.inclusiveLastOffset,
-      })),
+    return {
       bars,
       quotes: collections.quotes.map((quote) => ({
         ...archiveIdentityRow(quote),
@@ -1010,6 +1025,47 @@ export const reverifyIntradayMarketSnapshot = (
         price: trade.price,
         size: trade.size,
       })),
+    }
+  })
+
+/**
+ * Re-enters an already materialized snapshot through the authoritative row
+ * verifier. This is intentionally stronger than rehashing caller-provided
+ * payloads: every archive, identity, ordering, coverage, freshness, and
+ * lineage invariant is evaluated again before replay or execution.
+ */
+export const reverifyIntradayMarketSnapshot = (
+  snapshot: IntradayMarketSnapshot,
+): Result.Result<IntradayMarketSnapshot, IntradaySnapshotFailure> =>
+  Result.gen(function* () {
+    const replay = yield* replaySnapshotEnvelope(snapshot)
+    const { manifest } = replay
+    const rows = yield* persistIntradaySnapshotRows(replay)
+    const request: IntradaySnapshotRequest = {
+      sessionDate: manifest.sessionDate,
+      calendar: manifest.calendar,
+      rangeStartAt: manifest.rangeStartAt,
+      rangeEndAt: manifest.rangeEndAt,
+      observedAt: manifest.observedAt,
+      universeId: manifest.universeId,
+      universeSymbolHash: manifest.universeSymbolHash,
+      universe: manifest.universe ?? manifest.symbols,
+      ...(manifest.universe === undefined ? {} : { symbols: manifest.symbols }),
+      ...(manifest.purpose === undefined ? {} : { purpose: manifest.purpose }),
+      feed: manifest.feed,
+      delayClass: manifest.delayClass,
+      sourceTopics: manifest.sourceTopics,
+      maximumQuoteAgeMs: manifest.maximumQuoteAgeMs,
+      minimumWatermarkLagMs: manifest.minimumWatermarkLagMs,
+      archiveWatermarks: manifest.archiveWatermarks,
+    }
+    const verified = yield* verifyIntradaySnapshot(request, {
+      archiveWatermarks: manifest.archiveWatermarks.map((watermark) => ({
+        source_topic: watermark.sourceTopic,
+        source_partition: watermark.sourcePartition,
+        inclusive_last_offset: watermark.inclusiveLastOffset,
+      })),
+      ...rows,
     })
     const boundHashes = yield* Result.all({
       expectedManifest: hash(verified.manifest, 'reverified manifest'),

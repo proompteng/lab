@@ -16,8 +16,12 @@ import {
   type AutonomousCycle,
 } from './cycle'
 import { defaultExecutionModel } from './execution-model'
+import { makeExecutionIntentFromDecodedPlan } from './execution/intents/domain'
+import { legacyIntentPlanSchemaVersion } from './execution/legacy-wire'
 import { bindExecutionSession, type BindExecutionSessionInput } from './execution-session'
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1, sha256 } from './hash'
+import { persistIntradaySnapshotRows, verifyIntradaySnapshot } from './market-data'
+import type { ArchiveVerifiedIntradayMarketSnapshot } from './market-data/intraday/model'
 import { utcInstantFromEpochMillis } from './time'
 import {
   AccountStatus,
@@ -33,10 +37,12 @@ import {
   type Reconciliation,
 } from './execution/contracts'
 import { reconciledStateHash } from './reconciliation'
-import { BrokerMode, Gate, PolicySchema, Reason, StateSchema, type Policy, type State } from './risk'
+import { BrokerMode, Gate, PolicySchema, Reason, StateSchema, evaluate, type Policy, type State } from './risk'
 import { strictParseOptions } from './schemas'
 import {
   decodeObserveShadowDecisionDocument,
+  ExecutionMarketDataBindingSchema,
+  makeExecutionDecisionDocument,
   makeObserveShadowDecisionDocument,
   ShadowDecisionContractFailure,
   type ExecutionMarketDataBinding,
@@ -49,6 +55,12 @@ import {
   type ShadowDeltaRiskInput,
 } from './shadow-decision'
 import { FlatExecutionTargetSchema, runtimeDecisionMatchesStrategy } from './strategy/runtime-decision'
+import { decideIntradayMomentum, deriveIntradayMomentumSignalMetrics } from './strategy/intraday-momentum/decision'
+import type { IntradayMomentumTargetPortfolio } from './strategy/intraday-momentum/model'
+import {
+  defaultIntradayMomentumProtocolDocument,
+  intradayMomentumExecutionModel,
+} from './strategy/intraday-momentum/protocol'
 import type { OpeningDriveTargetPortfolio } from './strategy/opening-drive/model'
 import { openingDriveExecutionModel } from './strategy/opening-drive/protocol'
 import {
@@ -61,6 +73,7 @@ import {
   type TargetPlannerInput,
 } from './target-planner'
 import type { DecisionPlan } from './types'
+import { adverseClosingQuotePrices, executionMarketDataBinding } from './observe-composition/opening-drive-decision'
 
 const hash = (character: string): string => character.repeat(64)
 const accountId = 'paper-account-1'
@@ -179,6 +192,42 @@ const makeOpeningDriveCycle = (): AutonomousCycle => {
   const identity = makeCycleIdentitySuccess({
     schemaVersion: 'bayn.autonomous-cycle-identity.v3',
     strategyName: 'opening-drive-momentum',
+    qualificationRunId: hash('1'),
+    strategyProtocolHash: hash('4'),
+    accountId,
+    executionSessionDate: executionDate,
+    executionCalendarSchemaVersion: executionCalendar.executionCalendarSchemaVersion,
+    executionCalendarSource: executionCalendar.executionCalendarSource,
+    executionCalendarHash: executionCalendar.executionCalendarHash,
+    executionPolicy,
+  })
+  const window = resultValue(makeIntradayCycleWindow(executionCalendar, executionPolicy))
+  const draft = makeCycleDraftSuccess(identity, window)
+  return decodeCycle({
+    ...draft,
+    state: CycleState.Active,
+    bindings: {},
+    stateVersion: 3,
+    createdAt: '2026-07-22T11:45:00.000Z',
+    updatedAt: window.submissionOpenAt,
+  })
+}
+
+const makeIntradayMomentumCycle = (): AutonomousCycle => {
+  const executionPolicy = resultValue(makeCycleExecutionPolicyFromModel(intradayMomentumExecutionModel))
+  if (executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3') {
+    throw new Error('intraday-momentum fixture requires a rolling intraday execution policy')
+  }
+  const executionCalendar = makeExecutionCalendarObservationSuccess({
+    schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+    source: 'alpaca-v2-calendar',
+    date: executionDate,
+    openAt: '2026-07-22T13:30:00.000Z',
+    closeAt: '2026-07-22T20:00:00.000Z',
+  })
+  const identity = makeCycleIdentitySuccess({
+    schemaVersion: 'bayn.autonomous-cycle-identity.v3',
+    strategyName: 'intraday-momentum',
     qualificationRunId: hash('1'),
     strategyProtocolHash: hash('4'),
     accountId,
@@ -534,10 +583,19 @@ const openingDriveDecision = (calendarHash: string, boundSnapshotId: string): Op
   })),
 })
 
+type ArchiveMarketDataBindingV1 = Extract<
+  ExecutionMarketDataBinding,
+  { readonly schemaVersion: 'bayn.execution-market-data-binding.v1' }
+>
+type ArchiveMarketDataBindingV2 = Extract<
+  ExecutionMarketDataBinding,
+  { readonly schemaVersion: 'bayn.execution-market-data-binding.v2' }
+>
+
 const openingDriveMarketDataBinding = (
   cycle: AutonomousCycle,
   barsContentHash: string = hash('8'),
-): ExecutionMarketDataBinding => {
+): ArchiveMarketDataBindingV1 => {
   const calendarMaterial = {
     schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
     source: 'alpaca-v2-calendar' as const,
@@ -603,8 +661,389 @@ const openingDriveMarketDataBinding = (
   }
 }
 
+const currentEntryMarketDataBinding = (
+  cycle: AutonomousCycle,
+  barsContentHash?: string,
+): ArchiveMarketDataBindingV2 => {
+  const binding = openingDriveMarketDataBinding(cycle, barsContentHash)
+  const {
+    contentHash: _contentHash,
+    snapshotId: _snapshotId,
+    schemaVersion: _bindingSchemaVersion,
+    snapshotSchemaVersion,
+    ...bindingMaterial
+  } = binding
+  const currentMaterial = {
+    ...bindingMaterial,
+    rangeStartAt: '2026-07-22T15:40:00.000Z',
+    rangeEndAt: '2026-07-22T16:00:00.000Z',
+    observedAt: '2026-07-22T16:00:02.000Z',
+    universeId: defaultIntradayMomentumProtocolDocument.universeId,
+    universeSymbolHash: defaultIntradayMomentumProtocolDocument.universeSymbolHash,
+    universe: defaultIntradayMomentumProtocolDocument.universe,
+    symbols: defaultIntradayMomentumProtocolDocument.universe,
+    feed: defaultIntradayMomentumProtocolDocument.feed,
+    delayClass: defaultIntradayMomentumProtocolDocument.delayClass,
+    sourceTopics: defaultIntradayMomentumProtocolDocument.sourceTopics,
+    maximumQuoteAgeMs: defaultIntradayMomentumProtocolDocument.maximumQuoteAgeMs,
+    barCount: defaultIntradayMomentumProtocolDocument.universe.length * 10,
+    quoteCount: defaultIntradayMomentumProtocolDocument.universe.length,
+    tradeCount: defaultIntradayMomentumProtocolDocument.universe.length,
+  }
+  const snapshotMaterial = { schemaVersion: snapshotSchemaVersion, ...currentMaterial }
+  const contentHash = canonicalHashV1(snapshotMaterial)
+  const decoded = Result.getOrThrow(
+    Schema.decodeUnknownResult(
+      ExecutionMarketDataBindingSchema,
+      strictParseOptions,
+    )({
+      schemaVersion: 'bayn.execution-market-data-binding.v2',
+      snapshotSchemaVersion,
+      ...currentMaterial,
+      contentHash,
+      snapshotId: canonicalHashV1({ ...snapshotMaterial, contentHash }),
+    }),
+  )
+  if (decoded.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
+    throw new Error('current entry fixture must decode as archive binding v2')
+  }
+  return decoded
+}
+
+const verifiedIntradaySnapshotEvidence = (
+  cycle: AutonomousCycle,
+  selectedSymbol?: string,
+  window: {
+    readonly rangeStartAt: string
+    readonly rangeEndAt: string
+    readonly observedAt: string
+  } = {
+    rangeStartAt: '2026-07-22T15:40:00.000Z',
+    rangeEndAt: '2026-07-22T16:00:00.000Z',
+    observedAt: '2026-07-22T16:00:02.000Z',
+  },
+) => {
+  const protocol = defaultIntradayMomentumProtocolDocument
+  const calendarMaterial = {
+    schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
+    source: 'alpaca-v2-calendar' as const,
+    requestedRange: { start: executionDate, end: executionDate },
+    timeZone: 'UTC' as const,
+    sessions: [
+      {
+        date: executionDate,
+        openAt: cycle.window.executionOpenAt,
+        closeAt: cycle.window.executionCloseAt,
+      },
+    ],
+  }
+  const calendar = { ...calendarMaterial, normalizedResponseHash: canonicalHashV1(calendarMaterial) }
+  const { rangeStartAt, rangeEndAt, observedAt } = window
+  const rangeMinutes = (Date.parse(rangeEndAt) - Date.parse(rangeStartAt)) / 60_000
+  const postRangeEvidenceAt = utcInstantFromEpochMillis(Date.parse(rangeEndAt) + 1_000)
+  const bars = protocol.universe.flatMap((symbol, symbolIndex) =>
+    Array.from({ length: rangeMinutes }, (_, minute) => {
+      const eventAt = utcInstantFromEpochMillis(Date.parse(rangeStartAt) + minute * 60_000)
+      const selected = symbol === selectedSymbol
+      return {
+        provider: 'alpaca',
+        universe_id: protocol.universeId,
+        universe_symbol_hash: protocol.universeSymbolHash,
+        feed: protocol.feed,
+        market_session: 'regular',
+        delay_class: protocol.delayClass,
+        symbol,
+        event_at: eventAt,
+        ingested_at: utcInstantFromEpochMillis(Date.parse(eventAt) + 60_000),
+        source_topic: protocol.sourceTopics.bars,
+        source_partition: 0,
+        source_offset: String(symbolIndex * rangeMinutes + minute + 1),
+        schema_version: 1,
+        channel: 'bars',
+        is_final: 1,
+        open: selected ? 49 : 100,
+        high: selected ? 49.8 : 101,
+        low: selected ? 49 : 99,
+        close: selected ? 49.5 : 100,
+        volume: 1_000,
+        vwap: selected ? 49.5 : 100,
+        trade_count: '100',
+      }
+    }),
+  )
+  const quotes = protocol.universe.map((symbol, index) => {
+    const selected = symbol === selectedSymbol
+    return {
+      provider: 'alpaca',
+      universe_id: protocol.universeId,
+      universe_symbol_hash: protocol.universeSymbolHash,
+      feed: protocol.feed,
+      market_session: 'regular',
+      delay_class: protocol.delayClass,
+      symbol,
+      event_at: postRangeEvidenceAt,
+      ingested_at: postRangeEvidenceAt,
+      source_topic: protocol.sourceTopics.quotes,
+      source_partition: 0,
+      source_offset: String(index + 1),
+      schema_version: 1,
+      latest_payload_variants: '1',
+      bid_price: selected ? 49.95 : 100,
+      bid_size: 1,
+      ask_price: selected ? 50 : 100.01,
+      ask_size: 1,
+    }
+  })
+  const trades = protocol.universe.map((symbol, index) => ({
+    provider: 'alpaca',
+    universe_id: protocol.universeId,
+    universe_symbol_hash: protocol.universeSymbolHash,
+    feed: protocol.feed,
+    market_session: 'regular',
+    delay_class: protocol.delayClass,
+    symbol,
+    event_at: postRangeEvidenceAt,
+    ingested_at: postRangeEvidenceAt,
+    source_topic: protocol.sourceTopics.trades,
+    source_partition: 0,
+    source_offset: String(index + 1),
+    schema_version: 1,
+    latest_payload_variants: '1',
+    price: 100,
+    size: 1,
+  }))
+  const archiveWatermarks = [
+    {
+      sourceTopic: protocol.sourceTopics.bars,
+      sourcePartition: 0,
+      inclusiveLastOffset: String(bars.length),
+    },
+    {
+      sourceTopic: protocol.sourceTopics.quotes,
+      sourcePartition: 0,
+      inclusiveLastOffset: String(quotes.length),
+    },
+    {
+      sourceTopic: protocol.sourceTopics.trades,
+      sourcePartition: 0,
+      inclusiveLastOffset: String(trades.length),
+    },
+  ].sort((left, right) => left.sourceTopic.localeCompare(right.sourceTopic))
+  const snapshot = resultValue(
+    verifyIntradaySnapshot(
+      {
+        sessionDate: executionDate,
+        calendar,
+        rangeStartAt,
+        rangeEndAt,
+        observedAt,
+        universeId: protocol.universeId,
+        universeSymbolHash: protocol.universeSymbolHash,
+        universe: protocol.universe,
+        symbols: protocol.universe,
+        feed: protocol.feed,
+        delayClass: protocol.delayClass,
+        sourceTopics: protocol.sourceTopics,
+        maximumQuoteAgeMs: protocol.maximumQuoteAgeMs,
+        minimumWatermarkLagMs: protocol.decisionDelaySeconds * 1_000,
+        archiveWatermarks,
+      },
+      {
+        archiveWatermarks: archiveWatermarks.map((watermark) => ({
+          source_topic: watermark.sourceTopic,
+          source_partition: watermark.sourcePartition,
+          inclusive_last_offset: watermark.inclusiveLastOffset,
+        })),
+        bars,
+        quotes,
+        trades,
+      },
+    ),
+  )
+  const executionMarketData = resultValue(executionMarketDataBinding(snapshot))
+  if (executionMarketData.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
+    throw new Error('verified intraday fixture must produce archive execution market data v2')
+  }
+  return {
+    decisionMarketDataRows: resultValue(persistIntradaySnapshotRows(snapshot)),
+    executionMarketData,
+    snapshot,
+  }
+}
+
+const verifiedIntradayMomentumEvidence = (cycle: AutonomousCycle, selectedSymbol?: string) => {
+  const evidence = verifiedIntradaySnapshotEvidence(cycle, selectedSymbol)
+  const compiledDecision = resultValue(
+    decideIntradayMomentum(
+      {
+        snapshot: evidence.snapshot as unknown as ArchiveVerifiedIntradayMarketSnapshot,
+        session: {
+          sessionDate: executionDate,
+          openAt: cycle.window.executionOpenAt,
+          closeAt: cycle.window.executionCloseAt,
+          calendarHash: cycle.window.executionCalendarHash,
+        },
+      },
+      defaultIntradayMomentumProtocolDocument,
+    ),
+  )
+  return { ...evidence, compiledDecision }
+}
+
+const verifiedLiquidationEvidence = (cycle: AutonomousCycle, symbols: readonly string[]) => {
+  const entry = verifiedIntradaySnapshotEvidence(cycle, undefined, {
+    rangeStartAt: '2026-07-22T13:49:00.000Z',
+    rangeEndAt: '2026-07-22T13:50:00.000Z',
+    observedAt: '2026-07-22T13:50:02.000Z',
+  })
+  const binding = entry.executionMarketData
+  const hasSelectedSymbol = (row: unknown): boolean =>
+    typeof row === 'object' &&
+    row !== null &&
+    'symbol' in row &&
+    typeof row.symbol === 'string' &&
+    symbols.includes(row.symbol)
+  const rows = {
+    bars: entry.decisionMarketDataRows.bars.filter(hasSelectedSymbol),
+    quotes: entry.decisionMarketDataRows.quotes.filter(hasSelectedSymbol),
+    trades: entry.decisionMarketDataRows.trades.filter(hasSelectedSymbol),
+  }
+  const snapshot = resultValue(
+    verifyIntradaySnapshot(
+      {
+        sessionDate: binding.sessionDate,
+        calendar: binding.calendar,
+        rangeStartAt: binding.rangeStartAt,
+        rangeEndAt: binding.rangeEndAt,
+        observedAt: binding.observedAt,
+        universeId: binding.universeId,
+        universeSymbolHash: binding.universeSymbolHash,
+        universe: binding.universe,
+        symbols,
+        purpose: 'LIQUIDATION',
+        feed: binding.feed,
+        delayClass: binding.delayClass,
+        sourceTopics: binding.sourceTopics,
+        maximumQuoteAgeMs: binding.maximumQuoteAgeMs,
+        minimumWatermarkLagMs: binding.minimumWatermarkLagMs,
+        archiveWatermarks: binding.archiveWatermarks,
+      },
+      {
+        archiveWatermarks: binding.archiveWatermarks.map((watermark) => ({
+          source_topic: watermark.sourceTopic,
+          source_partition: watermark.sourcePartition,
+          inclusive_last_offset: watermark.inclusiveLastOffset,
+        })),
+        ...rows,
+      },
+    ),
+  )
+  const executionMarketData = resultValue(executionMarketDataBinding(snapshot))
+  if (executionMarketData.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
+    throw new Error('verified liquidation fixture must produce archive execution market data v2')
+  }
+  return {
+    decisionMarketDataRows: resultValue(persistIntradaySnapshotRows(snapshot)),
+    executionMarketData,
+    referencePrices: resultValue(adverseClosingQuotePrices(snapshot, executionMarketData.symbols)),
+  }
+}
+
+const rehashEntryMarketDataBinding = (
+  binding: ArchiveMarketDataBindingV2,
+  changes: Partial<
+    Pick<
+      ArchiveMarketDataBindingV2,
+      | 'delayClass'
+      | 'feed'
+      | 'maximumQuoteAgeMs'
+      | 'observedAt'
+      | 'rangeEndAt'
+      | 'rangeStartAt'
+      | 'sourceTopics'
+      | 'symbols'
+      | 'universe'
+      | 'universeId'
+      | 'universeSymbolHash'
+    >
+  >,
+): ArchiveMarketDataBindingV2 => {
+  const {
+    contentHash: _contentHash,
+    snapshotId: _snapshotId,
+    schemaVersion,
+    snapshotSchemaVersion,
+    ...bindingMaterial
+  } = binding
+  const changedMaterial = { ...bindingMaterial, ...changes }
+  const snapshotMaterial = { schemaVersion: snapshotSchemaVersion, ...changedMaterial }
+  const contentHash = canonicalHashV1(snapshotMaterial)
+  return Result.getOrThrow(
+    Schema.decodeUnknownResult(
+      ExecutionMarketDataBindingSchema,
+      strictParseOptions,
+    )({
+      schemaVersion,
+      snapshotSchemaVersion,
+      ...changedMaterial,
+      contentHash,
+      snapshotId: canonicalHashV1({ ...snapshotMaterial, contentHash }),
+    }),
+  ) as ArchiveMarketDataBindingV2
+}
+
+const liquidationMarketDataBinding = (
+  cycle: AutonomousCycle,
+  barsContentHash: string = hash('8'),
+  symbols?: readonly string[],
+): ArchiveMarketDataBindingV2 => {
+  const binding = openingDriveMarketDataBinding(cycle, barsContentHash)
+  const {
+    contentHash: _contentHash,
+    snapshotId: _snapshotId,
+    schemaVersion: _bindingSchemaVersion,
+    snapshotSchemaVersion,
+    purpose: _purpose,
+    universe: _universe,
+    ...bindingMaterial
+  } = binding
+  const universe = [...binding.symbols].sort()
+  const liquidationSymbols = [...(symbols ?? binding.symbols)].sort()
+  const liquidationMaterial = {
+    ...bindingMaterial,
+    symbols: liquidationSymbols,
+    universe,
+    universeSymbolHash: sha256(universe.join(',')),
+    purpose: 'LIQUIDATION' as const,
+    barCount: 0,
+    tradeCount: 0,
+  }
+  const snapshotMaterial = { schemaVersion: snapshotSchemaVersion, ...liquidationMaterial }
+  const contentHash = canonicalHashV1(snapshotMaterial)
+  const decoded = Result.getOrThrow(
+    Schema.decodeUnknownResult(
+      ExecutionMarketDataBindingSchema,
+      strictParseOptions,
+    )({
+      schemaVersion: 'bayn.execution-market-data-binding.v2',
+      snapshotSchemaVersion,
+      ...liquidationMaterial,
+      contentHash,
+      snapshotId: canonicalHashV1({ ...snapshotMaterial, contentHash }),
+    }),
+  )
+  if (decoded.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
+    throw new Error('liquidation fixture must decode as archive binding v2')
+  }
+  return decoded
+}
+
 type OpeningDriveShadowDecisionInput = Omit<ObserveShadowDecisionInput, 'plannerInput'> & {
   readonly plannerInput: QuoteBoundTargetPlannerInput
+}
+
+type IntradayMomentumShadowDecisionInput = Omit<OpeningDriveShadowDecisionInput, 'compiledDecision'> & {
+  readonly compiledDecision: IntradayMomentumTargetPortfolio
 }
 
 const makeOpeningDriveInput = (
@@ -673,10 +1112,382 @@ const makeOpeningDriveInput = (
   }
 }
 
+const makeIntradayMomentumInput = (
+  calendarHash?: string,
+  selectedSymbol?: string,
+): IntradayMomentumShadowDecisionInput => {
+  const cycle = makeIntradayMomentumCycle()
+  const base = makeOpeningDriveInput(undefined, cycle)
+  const evidence = verifiedIntradayMomentumEvidence(cycle, selectedSymbol)
+  const { decisionMarketDataRows, executionMarketData } = evidence
+  const compiledDecision =
+    calendarHash === undefined ? evidence.compiledDecision : { ...evidence.compiledDecision, calendarHash }
+  const universe = defaultIntradayMomentumProtocolDocument.universe
+  const priceMicros = Object.fromEntries(
+    compiledDecision.signals.map((signal) => [signal.symbol, signal.askPriceMicros]),
+  )
+  const bidPriceMicros = Object.fromEntries(
+    compiledDecision.signals.map((signal) => [signal.symbol, signal.bidPriceMicros]),
+  )
+  const askPriceMicros = Object.fromEntries(
+    compiledDecision.signals.map((signal) => [signal.symbol, signal.askPriceMicros]),
+  )
+  const { contentHash: _referencePriceHash, ...referencePriceMaterial } = base.plannerInput.referencePrices
+  const currentReferencePriceMaterial = {
+    ...referencePriceMaterial,
+    snapshotId: executionMarketData.snapshotId,
+    snapshotContentHash: executionMarketData.contentHash,
+    priceMicros,
+    bidPriceMicros,
+    askPriceMicros,
+  }
+  const plannerInput: QuoteBoundTargetPlannerInput = {
+    ...base.plannerInput,
+    strategyName: 'intraday-momentum',
+    decisionHash: canonicalHashV1(compiledDecision),
+    targetWeights: compiledDecision.targetWeights,
+    maximumInputAgeMs: selectedSymbol === undefined ? base.plannerInput.maximumInputAgeMs : 4 * 60 * 60 * 1_000,
+    referencePrices: {
+      ...currentReferencePriceMaterial,
+      contentHash: canonicalHashV1(currentReferencePriceMaterial),
+    },
+    executionTerms: {
+      ...base.plannerInput.executionTerms,
+      snapshotId: executionMarketData.snapshotId,
+      snapshotContentHash: executionMarketData.contentHash,
+      maximumBuyQuantityMicros: Object.fromEntries(universe.map((symbol) => [symbol, '1000000'])),
+    },
+    precision: {
+      quantityIncrementMicros: '1000000',
+      priceIncrementMicros: intradayMomentumExecutionModel.precision.priceIncrementMicros,
+      minimumBuyNotionalMicros: intradayMomentumExecutionModel.precision.minimumBuyNotionalMicros,
+    },
+    observedAt: compiledDecision.observedAt,
+  }
+  return {
+    ...base,
+    snapshot: {
+      snapshotId: executionMarketData.snapshotId,
+      contentHash: executionMarketData.contentHash,
+      finalizedAt: executionMarketData.observedAt,
+    },
+    compiledDecision,
+    decisionMarketDataRows,
+    executionMarketData,
+    plannerInput,
+    targetPlan: planTargetsSuccess(plannerInput),
+  }
+}
+
+const makeIntradayExecutionFixture = (
+  selectedSymbol: string,
+  equityFacts: Readonly<Pick<State, 'dayStartEquityMicros' | 'peakEquityMicros'>> = {
+    dayStartEquityMicros: '1000000000',
+    peakEquityMicros: '1000000000',
+  },
+  positions?: readonly Position[],
+) => {
+  const baseInput = makeIntradayMomentumInput(undefined, selectedSymbol)
+  const input =
+    positions === undefined
+      ? baseInput
+      : (() => {
+          const brokerState = makeBrokerState(positions)
+          const plannerInput: QuoteBoundTargetPlannerInput = {
+            ...baseInput.plannerInput,
+            brokerState: {
+              account: brokerState.account,
+              positions: brokerState.positions,
+              positionsObservedAt: brokerObservedAt,
+              orders: brokerState.orders,
+              ordersObservedAt: brokerObservedAt,
+              accountingHash,
+              reconciliation: brokerState.reconciliation,
+              unknownOrderCount: 0,
+            },
+          }
+          return { ...baseInput, plannerInput, targetPlan: planTargetsSuccess(plannerInput) }
+        })()
+  const executionMarketData = input.executionMarketData
+  if (executionMarketData?.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
+    throw new Error('intraday execution fixture must include archive execution market data v2')
+  }
+  if (input.targetPlan.status !== TargetPlanStatus.Planned) {
+    throw new Error('intraday execution fixture must produce a planned target')
+  }
+  const executionSession = bindExecutionSessionSuccess({
+    executionSessionDate: executionDate,
+    planningBrokerState: {
+      observedAt: brokerObservedAt,
+      contentHash: input.plannerInput.brokerState.reconciliation.observedHash,
+    },
+    calendar: executionMarketData.calendar,
+    executionModel: intradayMomentumExecutionModel,
+  })
+  const riskInputs: ShadowDeltaRiskInput[] = input.targetPlan.intentTargets.map((target) => {
+    const plannedTarget = input.targetPlan.targets.find(({ symbol }) => symbol === target.symbol)
+    if (plannedTarget === undefined) throw new Error(`intraday execution fixture is missing ${target.symbol}`)
+    return {
+      symbol: target.symbol,
+      notionalLimitMicros: (
+        (BigInt(target.quantityMicros) * BigInt(plannedTarget.referencePriceMicros)) /
+        1_000_000n
+      ).toString(),
+      state: decodeState({
+        schemaVersion: 'bayn.paper-risk-state.v2',
+        brokerMode: BrokerMode.Execution,
+        account: input.plannerInput.brokerState.account,
+        positions: input.plannerInput.brokerState.positions,
+        positionsObservedAt: input.plannerInput.brokerState.positionsObservedAt,
+        orders: input.plannerInput.brokerState.orders,
+        ordersObservedAt: input.plannerInput.brokerState.ordersObservedAt,
+        reconciliation: input.plannerInput.brokerState.reconciliation,
+        authority: {
+          schemaVersion: 'bayn.paper-authority.v1',
+          generationHash: hash('6'),
+          maximum: Authority.Execution,
+          effective: Authority.Execution,
+          kill: KillState.Clear,
+          version: 1,
+          updatedAt: brokerObservedAt,
+        },
+        authorityObservedAt: brokerObservedAt,
+        unknownMutationCount: 0,
+        dailyTradedNotionalMicros: '0',
+        ...equityFacts,
+        accountingHash,
+        marketDataSymbol: target.symbol,
+        marketDataHash: executionMarketData.contentHash,
+        executionMarketDataHash: executionMarketData.contentHash,
+        referencePriceMicros: plannedTarget.referencePriceMicros,
+        expectedExecutionPriceMicros: plannedTarget.referencePriceMicros,
+        marketDataObservedAt: executionMarketData.observedAt,
+        executionSession,
+        reservedBuyingPowerMicros: '0',
+        evaluatedAt: input.plannerInput.observedAt,
+      }),
+    }
+  })
+  return { input, executionSession, riskInputs }
+}
+
 const build = (input: ObserveShadowDecisionInput): Promise<ObserveShadowDecisionDocument> =>
   Effect.runPromise(buildObserveShadowDecision(input))
 
 describe('OBSERVE shadow decision', () => {
+  test('requires v2 execution market-data evidence for intraday-momentum entries', async () => {
+    const input = makeIntradayMomentumInput()
+    const executionMarketData = input.executionMarketData
+    if (executionMarketData?.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
+      throw new Error('intraday fixture must include archive execution market data v2')
+    }
+
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        buildObserveShadowDecision({
+          ...input,
+          executionMarketData: {
+            ...executionMarketData,
+            schemaVersion: 'bayn.execution-market-data-binding.v1',
+          },
+        }),
+      ),
+    )
+    expect(failure).toMatchObject({
+      failure: 'binding',
+      message: 'intraday-momentum entry requires execution market-data binding v2',
+    })
+  })
+
+  test('requires complete decision-universe evidence for intraday-momentum entries', async () => {
+    const input = makeIntradayMomentumInput()
+    const binding = input.executionMarketData
+    if (binding?.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
+      throw new Error('intraday fixture must include archive execution market data v2')
+    }
+    const {
+      contentHash: _contentHash,
+      snapshotId: _snapshotId,
+      schemaVersion,
+      snapshotSchemaVersion,
+      ...bindingMaterial
+    } = binding
+    const subsetMaterial = { ...bindingMaterial, symbols: binding.symbols.slice(0, 1) }
+    const snapshotMaterial = { schemaVersion: snapshotSchemaVersion, ...subsetMaterial }
+    const contentHash = canonicalHashV1(snapshotMaterial)
+    const subsetBinding = Result.getOrThrow(
+      Schema.decodeUnknownResult(
+        ExecutionMarketDataBindingSchema,
+        strictParseOptions,
+      )({
+        schemaVersion,
+        snapshotSchemaVersion,
+        ...subsetMaterial,
+        contentHash,
+        snapshotId: canonicalHashV1({ ...snapshotMaterial, contentHash }),
+      }),
+    )
+
+    const failure = await Effect.runPromise(
+      Effect.flip(buildObserveShadowDecision({ ...input, executionMarketData: subsetBinding })),
+    )
+
+    expect(failure).toMatchObject({
+      failure: 'binding',
+      message: 'intraday entry requires complete market-data evidence for the decision universe',
+    })
+  })
+
+  test('requires the canonical source universe on new execution market-data bindings', () => {
+    const legacyBinding = openingDriveMarketDataBinding(makeOpeningDriveCycle())
+    const currentBinding = { ...legacyBinding, schemaVersion: 'bayn.execution-market-data-binding.v2' }
+
+    expect(
+      Result.isSuccess(Schema.decodeUnknownResult(ExecutionMarketDataBindingSchema, strictParseOptions)(legacyBinding)),
+    ).toBe(true)
+    expect(
+      Result.isFailure(
+        Schema.decodeUnknownResult(ExecutionMarketDataBindingSchema, strictParseOptions)(currentBinding),
+      ),
+    ).toBe(true)
+  })
+
+  test('rejects a liquidation binding that omits its canonical source universe', () => {
+    const binding = openingDriveMarketDataBinding(makeOpeningDriveCycle())
+    const {
+      contentHash: _contentHash,
+      snapshotId: _snapshotId,
+      schemaVersion,
+      snapshotSchemaVersion,
+      ...bindingMaterial
+    } = binding
+    const liquidationMaterial = {
+      ...bindingMaterial,
+      purpose: 'LIQUIDATION' as const,
+      barCount: 0,
+      tradeCount: 0,
+    }
+    const snapshotMaterial = { schemaVersion: snapshotSchemaVersion, ...liquidationMaterial }
+    const contentHash = canonicalHashV1(snapshotMaterial)
+    const result = Schema.decodeUnknownResult(
+      ExecutionMarketDataBindingSchema,
+      strictParseOptions,
+    )({
+      schemaVersion,
+      snapshotSchemaVersion,
+      ...liquidationMaterial,
+      contentHash,
+      snapshotId: canonicalHashV1({ ...snapshotMaterial, contentHash }),
+    })
+
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(String(result.failure)).toContain('universe')
+  })
+
+  test('rejects liquidation evidence encoded with the legacy v1 binding', () => {
+    const binding = openingDriveMarketDataBinding(makeOpeningDriveCycle())
+    const {
+      contentHash: _contentHash,
+      snapshotId: _snapshotId,
+      schemaVersion,
+      snapshotSchemaVersion,
+      ...bindingMaterial
+    } = binding
+    const universe = [...binding.symbols]
+    const liquidationMaterial = {
+      ...bindingMaterial,
+      universe,
+      universeSymbolHash: sha256(universe.join(',')),
+      purpose: 'LIQUIDATION' as const,
+      barCount: 0,
+      tradeCount: 0,
+    }
+    const snapshotMaterial = { schemaVersion: snapshotSchemaVersion, ...liquidationMaterial }
+    const contentHash = canonicalHashV1(snapshotMaterial)
+    const result = Schema.decodeUnknownResult(
+      ExecutionMarketDataBindingSchema,
+      strictParseOptions,
+    )({
+      schemaVersion,
+      snapshotSchemaVersion,
+      ...liquidationMaterial,
+      contentHash,
+      snapshotId: canonicalHashV1({ ...snapshotMaterial, contentHash }),
+    })
+
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(String(result.failure)).toContain('binding v2')
+  })
+
+  test('rejects a liquidation binding whose source universe is not canonically ordered', () => {
+    const binding = openingDriveMarketDataBinding(makeOpeningDriveCycle())
+    const {
+      contentHash: _contentHash,
+      snapshotId: _snapshotId,
+      schemaVersion,
+      snapshotSchemaVersion,
+      ...bindingMaterial
+    } = binding
+    const universe = ['NVDA', 'AMD']
+    const liquidationMaterial = {
+      ...bindingMaterial,
+      universe,
+      universeSymbolHash: sha256(universe.join(',')),
+      symbols: ['AMD'],
+      purpose: 'LIQUIDATION' as const,
+      barCount: 0,
+      tradeCount: 0,
+    }
+    const snapshotMaterial = { schemaVersion: snapshotSchemaVersion, ...liquidationMaterial }
+    const contentHash = canonicalHashV1(snapshotMaterial)
+    const result = Schema.decodeUnknownResult(
+      ExecutionMarketDataBindingSchema,
+      strictParseOptions,
+    )({
+      schemaVersion,
+      snapshotSchemaVersion,
+      ...liquidationMaterial,
+      contentHash,
+      snapshotId: canonicalHashV1({ ...snapshotMaterial, contentHash }),
+    })
+
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(String(result.failure)).toContain('canonically ordered')
+  })
+
+  test('rejects a liquidation binding whose held-symbol subset is not canonically ordered', () => {
+    const binding = openingDriveMarketDataBinding(makeOpeningDriveCycle())
+    const {
+      contentHash: _contentHash,
+      snapshotId: _snapshotId,
+      schemaVersion,
+      snapshotSchemaVersion,
+      ...bindingMaterial
+    } = binding
+    const liquidationMaterial = {
+      ...bindingMaterial,
+      symbols: ['NVDA', 'AMD'],
+      purpose: 'LIQUIDATION' as const,
+      barCount: 0,
+      tradeCount: 0,
+    }
+    const snapshotMaterial = { schemaVersion: snapshotSchemaVersion, ...liquidationMaterial }
+    const contentHash = canonicalHashV1(snapshotMaterial)
+    const result = Schema.decodeUnknownResult(
+      ExecutionMarketDataBindingSchema,
+      strictParseOptions,
+    )({
+      schemaVersion,
+      snapshotSchemaVersion,
+      ...liquidationMaterial,
+      contentHash,
+      snapshotId: canonicalHashV1({ ...snapshotMaterial, contentHash }),
+    })
+
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(String(result.failure)).toContain('symbols')
+  })
+
   test('binds opening-drive decisions to the immutable cycle execution calendar', async () => {
     const input = makeOpeningDriveInput()
     const accepted = await build(input)
@@ -697,7 +1508,966 @@ describe('OBSERVE shadow decision', () => {
     const failure = await Effect.runPromise(Effect.flip(buildObserveShadowDecision(makeOpeningDriveInput(hash('f')))))
     expect(failure).toMatchObject({
       failure: 'binding',
-      message: 'opening-drive decision calendar must match the immutable cycle execution calendar',
+      message: 'intraday decision calendar must match the immutable cycle execution calendar',
+    })
+  })
+
+  test('rejects liquidation-only evidence for an intraday entry decision', async () => {
+    const input = makeOpeningDriveInput()
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        buildObserveShadowDecision({
+          ...input,
+          executionMarketData: liquidationMarketDataBinding(input.cycle),
+        }),
+      ),
+    )
+
+    expect(failure).toMatchObject({
+      failure: 'binding',
+      message: 'intraday entry requires non-liquidation market-data evidence',
+    })
+  })
+
+  test('rejects rehashed liquidation evidence when durably decoding an intraday entry decision', async () => {
+    const input = makeIntradayMomentumInput()
+    const executionMarketData = input.executionMarketData
+    if (executionMarketData === undefined) throw new Error('intraday fixture must include execution market data')
+    const brokerState = makeBrokerState([])
+    const executionSession = bindExecutionSessionSuccess({
+      executionSessionDate: executionDate,
+      planningBrokerState: { observedAt: brokerObservedAt, contentHash: brokerState.stateHash },
+      calendar: executionMarketData.calendar,
+      executionModel: intradayMomentumExecutionModel,
+    })
+    const document = await Effect.runPromise(
+      buildExecutionDecision({
+        ...input,
+        authorityGenerationHash: hash('6'),
+        executionSession,
+      }),
+    )
+    const { contentHash: _contentHash, ...material } = document
+    const forged = makeExecutionDecisionDocument({
+      ...material,
+      bindings: {
+        ...material.bindings,
+        executionMarketData: liquidationMarketDataBinding(input.cycle),
+      },
+    })
+
+    expect(Result.isFailure(forged)).toBe(true)
+    if (Result.isFailure(forged)) expect(String(forged.failure.cause)).toContain('liquidation market data')
+  })
+
+  test('binds durable intraday entry evidence to its exact full-universe snapshot', async () => {
+    const input = makeIntradayMomentumInput()
+    const executionMarketData = input.executionMarketData
+    if (executionMarketData?.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
+      throw new Error('intraday fixture must include archive execution market data v2')
+    }
+    const executionSession = bindExecutionSessionSuccess({
+      executionSessionDate: executionDate,
+      planningBrokerState: {
+        observedAt: brokerObservedAt,
+        contentHash: makeBrokerState([]).stateHash,
+      },
+      calendar: executionMarketData.calendar,
+      executionModel: intradayMomentumExecutionModel,
+    })
+    const document = await Effect.runPromise(
+      buildExecutionDecision({
+        ...input,
+        authorityGenerationHash: hash('6'),
+        executionSession,
+      }),
+    )
+    const { contentHash: _contentHash, ...material } = document
+    expect(material.strategyDecision).toEqual(input.compiledDecision)
+    expect(material.plannerInput).toEqual(input.plannerInput)
+    const { plannerInput: _plannerInput, ...withoutPlannerInput } = material
+    const missingPlannerInput = makeExecutionDecisionDocument(withoutPlannerInput)
+    expect(Result.isFailure(missingPlannerInput)).toBe(true)
+    if (Result.isFailure(missingPlannerInput)) {
+      expect(String(missingPlannerInput.failure.cause)).toContain('requires persisted target-planner evidence')
+    }
+    const forgedMetricDecision = {
+      ...input.compiledDecision,
+      signals: input.compiledDecision.signals.map((signal, index) =>
+        index === 0 ? { ...signal, lookbackReturnBps: signal.lookbackReturnBps + 1 } : signal,
+      ),
+    }
+    const forgedMetricDocument = makeExecutionDecisionDocument({
+      ...material,
+      bindings: {
+        ...material.bindings,
+        strategyDecisionHash: canonicalHashV1(forgedMetricDecision),
+      },
+      strategyDecision: forgedMetricDecision,
+    })
+    expect(Result.isFailure(forgedMetricDocument)).toBe(true)
+    if (Result.isFailure(forgedMetricDocument)) {
+      expect(String(forgedMetricDocument.failure.cause)).toContain('signal metrics must match persisted price evidence')
+    }
+    const originalSignal = input.compiledDecision.signals[0]
+    if (originalSignal === undefined) throw new Error('intraday fixture requires signal evidence')
+    const forgedReferencePrice = BigInt(originalSignal.referencePriceMicros) + 1n
+    const forgedPriceMetrics = resultValue(
+      deriveIntradayMomentumSignalMetrics(
+        {
+          reference: forgedReferencePrice,
+          high: BigInt(originalSignal.rangeHighPriceMicros),
+          low: BigInt(originalSignal.rangeLowPriceMicros),
+          bid: BigInt(originalSignal.bidPriceMicros),
+          ask: BigInt(originalSignal.askPriceMicros),
+          trade: BigInt(originalSignal.confirmationTradePriceMicros),
+        },
+        originalSignal.symbol,
+      ),
+    )
+    const forgedPriceDecision = {
+      ...input.compiledDecision,
+      signals: input.compiledDecision.signals.map((signal, index) =>
+        index === 0 ? { ...signal, referencePriceMicros: String(forgedReferencePrice), ...forgedPriceMetrics } : signal,
+      ),
+    }
+    const forgedPriceDocument = makeExecutionDecisionDocument({
+      ...material,
+      bindings: {
+        ...material.bindings,
+        strategyDecisionHash: canonicalHashV1(forgedPriceDecision),
+      },
+      strategyDecision: forgedPriceDecision,
+    })
+    expect(Result.isFailure(forgedPriceDocument)).toBe(true)
+    if (Result.isFailure(forgedPriceDocument)) {
+      expect(String(forgedPriceDocument.failure.cause)).toContain(
+        'strategy decision must be reproduced from its exact verified archive rows',
+      )
+    }
+    const forgedSelectedSymbol = defaultIntradayMomentumProtocolDocument.universe[0]
+    const forgedStrategyDecision = {
+      ...input.compiledDecision,
+      selectedSymbols: [forgedSelectedSymbol],
+      targetWeights: Object.fromEntries(
+        defaultIntradayMomentumProtocolDocument.universe.map((symbol) => [
+          symbol,
+          symbol === forgedSelectedSymbol ? 0.1 : 0,
+        ]),
+      ),
+      signals: input.compiledDecision.signals.map((signal) =>
+        signal.symbol === forgedSelectedSymbol ? { ...signal, eligible: true, rejectionReasons: [], rank: 1 } : signal,
+      ),
+    }
+    const forgedTargetSelection = makeExecutionDecisionDocument({
+      ...material,
+      bindings: {
+        ...material.bindings,
+        strategyDecisionHash: canonicalHashV1(forgedStrategyDecision),
+      },
+      strategyDecision: forgedStrategyDecision,
+    })
+    expect(Result.isFailure(forgedTargetSelection)).toBe(true)
+    if (Result.isFailure(forgedTargetSelection)) {
+      expect(String(forgedTargetSelection.failure.cause)).toContain('canonical source-controlled signal ranking')
+    }
+
+    const strategyBindingForgeries = [
+      { snapshotId: hash('d') },
+      { sessionDate: '2026-07-23' as const },
+      { observedAt: '2026-07-22T16:00:03.000Z' },
+      { calendarHash: hash('e') },
+    ]
+    for (const overrides of strategyBindingForgeries) {
+      const forgedStrategyBinding = { ...input.compiledDecision, ...overrides }
+      const forged = makeExecutionDecisionDocument({
+        ...material,
+        bindings: {
+          ...material.bindings,
+          strategyDecisionHash: canonicalHashV1(forgedStrategyBinding),
+        },
+        strategyDecision: forgedStrategyBinding,
+      })
+      expect(Result.isFailure(forged)).toBe(true)
+      if (Result.isFailure(forged)) {
+        expect(String(forged.failure.cause)).toContain('exact market-data snapshot and session')
+      }
+    }
+
+    const rebindExecutionMarketData = (binding: ArchiveMarketDataBindingV2) => {
+      const executionTerms = material.targetPlan.executionTerms
+      if (executionTerms === undefined) throw new Error('intraday fixture must persist execution terms')
+      const { outputHash: _outputHash, ...targetPlanMaterial } = material.targetPlan
+      const reboundTargetPlanMaterial = {
+        ...targetPlanMaterial,
+        executionTerms: {
+          ...executionTerms,
+          snapshotId: binding.snapshotId,
+          snapshotContentHash: binding.contentHash,
+        },
+      }
+      return makeExecutionDecisionDocument({
+        ...material,
+        bindings: {
+          ...material.bindings,
+          snapshotId: binding.snapshotId,
+          snapshotContentHash: binding.contentHash,
+          executionMarketData: binding,
+        },
+        targetPlan: {
+          ...reboundTargetPlanMaterial,
+          outputHash: canonicalHashV1(reboundTargetPlanMaterial),
+        },
+      })
+    }
+    const alternateBinding = currentEntryMarketDataBinding(input.cycle, hash('b'))
+    const mismatchedSnapshot = makeExecutionDecisionDocument({
+      ...material,
+      bindings: { ...material.bindings, executionMarketData: alternateBinding },
+    })
+    expect(Result.isFailure(mismatchedSnapshot)).toBe(true)
+    if (Result.isFailure(mismatchedSnapshot)) {
+      expect(String(mismatchedSnapshot.failure.cause)).toContain('outer decision snapshot identity')
+    }
+
+    const shiftedObservation = rebindExecutionMarketData(
+      rehashEntryMarketDataBinding(executionMarketData, { observedAt: '2026-07-22T16:00:03.000Z' }),
+    )
+    expect(Result.isFailure(shiftedObservation)).toBe(true)
+    if (Result.isFailure(shiftedObservation)) {
+      expect(String(shiftedObservation.failure.cause)).toContain('observation must equal the decision instant')
+    }
+
+    const shiftedRange = rebindExecutionMarketData(
+      rehashEntryMarketDataBinding(executionMarketData, { rangeStartAt: '2026-07-22T15:39:00.000Z' }),
+    )
+    expect(Result.isFailure(shiftedRange)).toBe(true)
+    if (Result.isFailure(shiftedRange)) {
+      expect(String(shiftedRange.failure.cause)).toContain('exact rolling window at the decision instant')
+    }
+
+    const legacyBinding = openingDriveMarketDataBinding(input.cycle)
+    const legacyEvidence = makeExecutionDecisionDocument({
+      ...material,
+      bindings: {
+        ...material.bindings,
+        snapshotId: legacyBinding.snapshotId,
+        snapshotContentHash: legacyBinding.contentHash,
+        executionMarketData: legacyBinding,
+      },
+    })
+    expect(Result.isFailure(legacyEvidence)).toBe(true)
+    if (Result.isFailure(legacyEvidence)) {
+      expect(String(legacyEvidence.failure.cause)).toContain('entry requires execution market-data binding v2')
+    }
+
+    const {
+      contentHash: _bindingContentHash,
+      snapshotId: _bindingSnapshotId,
+      schemaVersion,
+      snapshotSchemaVersion,
+      ...bindingMaterial
+    } = executionMarketData
+    const subsetMaterial = { ...bindingMaterial, symbols: executionMarketData.symbols.slice(0, 1) }
+    const snapshotMaterial = { schemaVersion: snapshotSchemaVersion, ...subsetMaterial }
+    const subsetContentHash = canonicalHashV1(snapshotMaterial)
+    const subsetBinding = Result.getOrThrow(
+      Schema.decodeUnknownResult(
+        ExecutionMarketDataBindingSchema,
+        strictParseOptions,
+      )({
+        schemaVersion,
+        snapshotSchemaVersion,
+        ...subsetMaterial,
+        contentHash: subsetContentHash,
+        snapshotId: canonicalHashV1({ ...snapshotMaterial, contentHash: subsetContentHash }),
+      }),
+    )
+    const subsetEvidence = makeExecutionDecisionDocument({
+      ...material,
+      bindings: {
+        ...material.bindings,
+        snapshotId: subsetBinding.snapshotId,
+        snapshotContentHash: subsetBinding.contentHash,
+        executionMarketData: subsetBinding,
+      },
+    })
+    expect(Result.isFailure(subsetEvidence)).toBe(true)
+    if (Result.isFailure(subsetEvidence)) {
+      expect(String(subsetEvidence.failure.cause)).toContain('complete execution universe')
+    }
+
+    const foreignUniverse = executionMarketData.universe
+      .map((symbol) => (symbol === 'AAPL' ? 'TSLA' : symbol))
+      .toSorted()
+    const foreignUniverseBinding = rehashEntryMarketDataBinding(executionMarketData, {
+      universeId: 'foreign-equity-universe-v1',
+      universeSymbolHash: sha256(foreignUniverse.join(',')),
+      universe: foreignUniverse,
+      symbols: foreignUniverse,
+    })
+    const foreignUniverseEvidence = rebindExecutionMarketData(foreignUniverseBinding)
+    expect(Result.isFailure(foreignUniverseEvidence)).toBe(true)
+    if (Result.isFailure(foreignUniverseEvidence)) {
+      expect(String(foreignUniverseEvidence.failure.cause)).toContain('source-controlled market-data protocol')
+    }
+
+    const foreignProtocolBindings = [
+      rehashEntryMarketDataBinding(executionMarketData, { feed: 'sip' }),
+      rehashEntryMarketDataBinding(executionMarketData, { delayClass: 'real_time_consolidated' }),
+      rehashEntryMarketDataBinding(executionMarketData, {
+        sourceTopics: {
+          ...executionMarketData.sourceTopics,
+          quotes: 'foreign.quotes.v1',
+        },
+      }),
+      rehashEntryMarketDataBinding(executionMarketData, {
+        maximumQuoteAgeMs: defaultIntradayMomentumProtocolDocument.maximumQuoteAgeMs + 1,
+      }),
+    ]
+    for (const foreignProtocolBinding of foreignProtocolBindings) {
+      const foreignProtocolEvidence = rebindExecutionMarketData(foreignProtocolBinding)
+      expect(Result.isFailure(foreignProtocolEvidence)).toBe(true)
+      if (Result.isFailure(foreignProtocolEvidence)) {
+        expect(String(foreignProtocolEvidence.failure.cause)).toContain('source-controlled market-data protocol')
+      }
+    }
+
+    const alternateSessionDate = '2026-07-23'
+    const { normalizedResponseHash: _calendarHash, ...calendarMaterial } = executionMarketData.calendar
+    const alternateCalendarMaterial = {
+      ...calendarMaterial,
+      requestedRange: { start: alternateSessionDate, end: alternateSessionDate },
+      sessions: calendarMaterial.sessions.map((session) => ({ ...session, date: alternateSessionDate })),
+    }
+    const {
+      contentHash: _alternateContentHash,
+      snapshotId: _alternateSnapshotId,
+      schemaVersion: alternateBindingSchemaVersion,
+      snapshotSchemaVersion: alternateSnapshotSchemaVersion,
+      ...alternateBindingMaterial
+    } = executionMarketData
+    const otherSessionMaterial = {
+      ...alternateBindingMaterial,
+      sessionDate: alternateSessionDate,
+      calendar: {
+        ...alternateCalendarMaterial,
+        normalizedResponseHash: canonicalHashV1(alternateCalendarMaterial),
+      },
+    }
+    const otherSessionSnapshotMaterial = {
+      schemaVersion: alternateSnapshotSchemaVersion,
+      ...otherSessionMaterial,
+    }
+    const otherSessionContentHash = canonicalHashV1(otherSessionSnapshotMaterial)
+    const otherSessionBinding = Result.getOrThrow(
+      Schema.decodeUnknownResult(
+        ExecutionMarketDataBindingSchema,
+        strictParseOptions,
+      )({
+        schemaVersion: alternateBindingSchemaVersion,
+        snapshotSchemaVersion: alternateSnapshotSchemaVersion,
+        ...otherSessionMaterial,
+        contentHash: otherSessionContentHash,
+        snapshotId: canonicalHashV1({ ...otherSessionSnapshotMaterial, contentHash: otherSessionContentHash }),
+      }),
+    )
+    const targetExecutionTerms = material.targetPlan.executionTerms
+    if (targetExecutionTerms === undefined) throw new Error('intraday fixture must persist execution terms')
+    const { outputHash: _targetPlanHash, ...targetPlanMaterial } = material.targetPlan
+    const otherSessionTargetPlanMaterial = {
+      ...targetPlanMaterial,
+      executionTerms: {
+        ...targetExecutionTerms,
+        snapshotId: otherSessionBinding.snapshotId,
+        snapshotContentHash: otherSessionBinding.contentHash,
+      },
+    }
+    const otherSessionEvidence = makeExecutionDecisionDocument({
+      ...material,
+      bindings: {
+        ...material.bindings,
+        snapshotId: otherSessionBinding.snapshotId,
+        snapshotContentHash: otherSessionBinding.contentHash,
+        executionMarketData: otherSessionBinding,
+      },
+      targetPlan: {
+        ...otherSessionTargetPlanMaterial,
+        outputHash: canonicalHashV1(otherSessionTargetPlanMaterial),
+      },
+    })
+    expect(Result.isFailure(otherSessionEvidence)).toBe(true)
+    if (Result.isFailure(otherSessionEvidence)) {
+      expect(String(otherSessionEvidence.failure.cause)).toContain(
+        'market-data session and calendar must match the execution session',
+      )
+    }
+  })
+
+  test('rejects durable intraday entries that exceed source-controlled allocation limits', async () => {
+    const input = makeIntradayMomentumInput()
+    const executionMarketData = input.executionMarketData
+    if (executionMarketData?.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
+      throw new Error('intraday allocation fixture must include archive execution market data v2')
+    }
+    const selectedSymbols = defaultIntradayMomentumProtocolDocument.universe.slice(0, 4)
+    const selectedSet = new Set(selectedSymbols)
+    const selectedRanks = new Map<string, number>(selectedSymbols.map((symbol, index) => [symbol, index + 1]))
+    const targetWeights = Object.fromEntries(
+      defaultIntradayMomentumProtocolDocument.universe.map((symbol) => [symbol, selectedSet.has(symbol) ? 0.075 : 0]),
+    )
+    const compiledDecision = {
+      ...input.compiledDecision,
+      selectedSymbols,
+      targetWeights,
+      signals: input.compiledDecision.signals.map((signal) => {
+        const rank = selectedRanks.get(signal.symbol)
+        return rank === undefined ? signal : { ...signal, eligible: true, rejectionReasons: [], rank }
+      }),
+    }
+    const { contentHash: _referencePriceHash, ...referencePriceMaterial } = input.plannerInput.referencePrices
+    const priceMicros = Object.fromEntries(
+      defaultIntradayMomentumProtocolDocument.universe.map((symbol) => [symbol, '10000000']),
+    )
+    const referencePrices = {
+      ...referencePriceMaterial,
+      priceMicros,
+      bidPriceMicros: priceMicros,
+      askPriceMicros: priceMicros,
+    }
+    const lowPowerAccount = { ...input.plannerInput.brokerState.account, buyingPowerMicros: '1' }
+    const brokerStateHash = Result.getOrThrow(
+      reconciledStateHash({
+        account: lowPowerAccount,
+        positions: input.plannerInput.brokerState.positions,
+        positionsObservedAt: input.plannerInput.brokerState.positionsObservedAt,
+        orders: input.plannerInput.brokerState.orders,
+        ordersObservedAt: input.plannerInput.brokerState.ordersObservedAt,
+        accountingHash: input.plannerInput.brokerState.accountingHash,
+      }),
+    )
+    const reconciliationMaterial = {
+      ...input.plannerInput.brokerState.reconciliation,
+      expectedHash: brokerStateHash,
+      observedHash: brokerStateHash,
+    }
+    const {
+      reconciliationId: _reconciliationId,
+      contentHash: _reconciliationHash,
+      ...reconciliationFields
+    } = reconciliationMaterial
+    const reconciliationId = canonicalHashV1({
+      schemaVersion: 'bayn.paper-reconciliation-id.v1',
+      material: reconciliationFields,
+    })
+    const plannerInput: QuoteBoundTargetPlannerInput = {
+      ...input.plannerInput,
+      decisionHash: canonicalHashV1(compiledDecision),
+      targetWeights,
+      referencePrices: { ...referencePrices, contentHash: canonicalHashV1(referencePrices) },
+      brokerState: {
+        ...input.plannerInput.brokerState,
+        account: lowPowerAccount,
+        reconciliation: {
+          ...reconciliationFields,
+          reconciliationId,
+          contentHash: canonicalHashV1({ ...reconciliationFields, reconciliationId }),
+        },
+      },
+      maximumInputAgeMs: 4 * 60 * 60 * 1_000,
+    }
+    const targetPlan = planTargetsSuccess(plannerInput)
+    expect(targetPlan).toMatchObject({
+      status: TargetPlanStatus.Blocked,
+      reason: TargetPlanReason.InsufficientBuyingPower,
+    })
+    expect(targetPlan.targets.filter(({ targetWeight }) => targetWeight > 0)).toHaveLength(4)
+    const executionSession = bindExecutionSessionSuccess({
+      executionSessionDate: executionDate,
+      planningBrokerState: { observedAt: brokerObservedAt, contentHash: brokerStateHash },
+      calendar: executionMarketData.calendar,
+      executionModel: intradayMomentumExecutionModel,
+    })
+
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        buildExecutionDecision({
+          ...input,
+          compiledDecision,
+          plannerInput,
+          targetPlan,
+          authorityGenerationHash: hash('6'),
+          executionSession,
+        }),
+      ),
+    )
+
+    expect(failure.cause).toBeInstanceOf(ShadowDecisionContractFailure)
+    if (!(failure.cause instanceof ShadowDecisionContractFailure)) return expect.unreachable()
+    expect(String(failure.cause.cause)).toContain('maximum position count')
+  })
+
+  test('binds durable intraday target quantities, prices, and zero-weight universe members to planner evidence', async () => {
+    const selectedSymbol = defaultIntradayMomentumProtocolDocument.universe[0]
+    if (selectedSymbol === undefined) throw new Error('intraday target fixture requires a non-empty universe')
+    const input = makeIntradayMomentumInput(undefined, selectedSymbol)
+    const executionMarketData = input.executionMarketData
+    if (executionMarketData?.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
+      throw new Error('intraday target fixture must include archive execution market data v2')
+    }
+    const compiledDecision = input.compiledDecision
+    const plannerInput = input.plannerInput
+    const targetPlan = input.targetPlan
+    expect(targetPlan.status).toBe(TargetPlanStatus.Planned)
+    const executionSession = bindExecutionSessionSuccess({
+      executionSessionDate: executionDate,
+      planningBrokerState: {
+        observedAt: brokerObservedAt,
+        contentHash: plannerInput.brokerState.reconciliation.observedHash,
+      },
+      calendar: executionMarketData.calendar,
+      executionModel: intradayMomentumExecutionModel,
+    })
+    const riskInputs: ShadowDeltaRiskInput[] = targetPlan.intentTargets.map((target) => {
+      const plannedTarget = targetPlan.targets.find(({ symbol }) => symbol === target.symbol)
+      if (plannedTarget === undefined) throw new Error(`intraday target fixture is missing ${target.symbol}`)
+      return {
+        symbol: target.symbol,
+        notionalLimitMicros: (
+          (BigInt(target.quantityMicros) * BigInt(plannedTarget.referencePriceMicros)) /
+          1_000_000n
+        ).toString(),
+        state: decodeState({
+          schemaVersion: 'bayn.paper-risk-state.v2',
+          brokerMode: BrokerMode.Execution,
+          account: plannerInput.brokerState.account,
+          positions: plannerInput.brokerState.positions,
+          positionsObservedAt: plannerInput.brokerState.positionsObservedAt,
+          orders: plannerInput.brokerState.orders,
+          ordersObservedAt: plannerInput.brokerState.ordersObservedAt,
+          reconciliation: plannerInput.brokerState.reconciliation,
+          authority: {
+            schemaVersion: 'bayn.paper-authority.v1',
+            generationHash: hash('6'),
+            maximum: Authority.Execution,
+            effective: Authority.Execution,
+            kill: KillState.Clear,
+            version: 1,
+            updatedAt: brokerObservedAt,
+          },
+          authorityObservedAt: brokerObservedAt,
+          unknownMutationCount: 0,
+          dailyTradedNotionalMicros: '0',
+          dayStartEquityMicros: '1000000000',
+          peakEquityMicros: '1000000000',
+          accountingHash,
+          marketDataSymbol: target.symbol,
+          marketDataHash: executionMarketData.contentHash,
+          executionMarketDataHash: executionMarketData.contentHash,
+          referencePriceMicros: plannedTarget.referencePriceMicros,
+          expectedExecutionPriceMicros: plannedTarget.referencePriceMicros,
+          marketDataObservedAt: executionMarketData.observedAt,
+          executionSession,
+          reservedBuyingPowerMicros: '0',
+          evaluatedAt: plannerInput.observedAt,
+        }),
+      }
+    })
+    const document = await Effect.runPromise(
+      buildExecutionDecision({
+        ...input,
+        compiledDecision,
+        plannerInput,
+        targetPlan,
+        riskInputs,
+        authorityGenerationHash: hash('6'),
+        executionSession,
+      }),
+    )
+    const zeroWeightSymbol = Object.entries(compiledDecision.targetWeights).find(([, weight]) => weight === 0)?.[0]
+    if (zeroWeightSymbol === undefined) throw new Error('intraday target fixture requires a zero-weight symbol')
+    const { contentHash: _contentHash, ...material } = document
+    const { outputHash: _outputHash, ...targetPlanMaterial } = material.targetPlan
+    const rehashTargetPlan = (targets: typeof targetPlanMaterial.targets) => {
+      const forgedTargetPlanMaterial = { ...targetPlanMaterial, targets }
+      return { ...forgedTargetPlanMaterial, outputHash: canonicalHashV1(forgedTargetPlanMaterial) }
+    }
+    const selectedTarget = targetPlanMaterial.targets.find(({ symbol }) => symbol === selectedSymbol)
+    if (selectedTarget === undefined) throw new Error('intraday target fixture is missing its selected target')
+    const quantityShift = 1_000_000n
+    const forgedQuantities = makeExecutionDecisionDocument({
+      ...material,
+      targetPlan: rehashTargetPlan(
+        targetPlanMaterial.targets.map((target) =>
+          target.symbol === selectedTarget.symbol
+            ? {
+                ...target,
+                currentQuantityMicros: (BigInt(target.currentQuantityMicros) + quantityShift).toString(),
+                targetQuantityMicros: (BigInt(target.targetQuantityMicros) + quantityShift).toString(),
+              }
+            : target,
+        ),
+      ),
+    })
+    expect(Result.isFailure(forgedQuantities)).toBe(true)
+    if (Result.isFailure(forgedQuantities)) {
+      expect(String(forgedQuantities.failure.cause)).toContain('persisted target-planner evidence')
+    }
+
+    const forgedReferencePrice = makeExecutionDecisionDocument({
+      ...material,
+      targetPlan: rehashTargetPlan(
+        targetPlanMaterial.targets.map((target) =>
+          target.symbol === zeroWeightSymbol
+            ? { ...target, referencePriceMicros: (BigInt(target.referencePriceMicros) + 1n).toString() }
+            : target,
+        ),
+      ),
+    })
+    expect(Result.isFailure(forgedReferencePrice)).toBe(true)
+    if (Result.isFailure(forgedReferencePrice)) {
+      expect(String(forgedReferencePrice.failure.cause)).toContain('persisted target-planner evidence')
+    }
+
+    const reducedTargetPlanMaterial = {
+      ...targetPlanMaterial,
+      targets: targetPlanMaterial.targets.filter(({ symbol }) => symbol !== zeroWeightSymbol),
+    }
+    const forged = makeExecutionDecisionDocument({
+      ...material,
+      targetPlan: {
+        ...reducedTargetPlanMaterial,
+        outputHash: canonicalHashV1(reducedTargetPlanMaterial),
+      },
+    })
+
+    expect(Result.isFailure(forged)).toBe(true)
+    if (Result.isFailure(forged)) {
+      expect(String(forged.failure.cause)).toContain('retain every persisted strategy weight')
+    }
+  })
+
+  test('reproduces complete durable risk facts before admitting a rehashed execution approval', async () => {
+    const selectedSymbol = defaultIntradayMomentumProtocolDocument.universe[0]
+    if (selectedSymbol === undefined) throw new Error('intraday execution fixture requires a non-empty universe')
+    const { input, executionSession, riskInputs } = makeIntradayExecutionFixture(selectedSymbol, {
+      dayStartEquityMicros: '1200000000',
+      peakEquityMicros: '1000000000',
+    })
+    const document = await Effect.runPromise(
+      buildExecutionDecision({
+        ...input,
+        riskInputs,
+        authorityGenerationHash: hash('6'),
+        executionSession,
+      }),
+    )
+
+    expect(document.riskPolicy).toEqual(input.policy)
+    expect(document.deltaRisk.every(({ facts }) => facts !== undefined)).toBe(true)
+    expect(document.riskBlock?.reasonCodes).toContain(Reason.DailyLossExceeded)
+    expect(document.dispatchable).toBe(false)
+
+    const forgedDeltaRisk = document.deltaRisk.map((risk) => {
+      const forgedGates = risk.evaluation.gates.map((gate) => ({ ...gate, passed: true }))
+      const { decisionId: _decisionId, ...decisionMaterial } = risk.evaluation.decision
+      const approvedDecisionMaterial = {
+        ...decisionMaterial,
+        outcome: RiskOutcome.Approved,
+        reasonCodes: [],
+      }
+      return {
+        ...risk,
+        evaluation: {
+          ...risk.evaluation,
+          gates: forgedGates,
+          decision: {
+            ...approvedDecisionMaterial,
+            decisionId: canonicalHashV1(approvedDecisionMaterial),
+          },
+        },
+      }
+    })
+    const { contentHash: _contentHash, riskBlock: _riskBlock, ...material } = document
+    const forged = makeExecutionDecisionDocument({
+      ...material,
+      dispatchable: true,
+      deltaRisk: forgedDeltaRisk,
+    })
+
+    expect(Result.isFailure(forged)).toBe(true)
+    if (Result.isFailure(forged)) {
+      expect(String(forged.failure.cause)).toContain('must reproduce the exact persisted risk gates')
+    }
+  })
+
+  test('binds durable risk context before replaying a fully rehashed evaluation', async () => {
+    const selectedSymbol = defaultIntradayMomentumProtocolDocument.universe[0]
+    if (selectedSymbol === undefined) throw new Error('intraday execution fixture requires a non-empty universe')
+    const { input, executionSession, riskInputs } = makeIntradayExecutionFixture(selectedSymbol, {
+      dayStartEquityMicros: '1200000000',
+      peakEquityMicros: '1000000000',
+    })
+    const authorityGenerationHash = hash('6')
+    const document = await Effect.runPromise(
+      buildExecutionDecision({ ...input, riskInputs, authorityGenerationHash, executionSession }),
+    )
+    const target = document.targetPlan.intentTargets[0]
+    const risk = document.deltaRisk[0]
+    if (target === undefined || risk?.facts === undefined) {
+      throw new Error('risk-context fixture requires one persisted execution risk input')
+    }
+    const executionIntent = Result.getOrThrow(
+      makeExecutionIntentFromDecodedPlan(
+        {
+          schemaVersion: legacyIntentPlanSchemaVersion,
+          ...target,
+          notionalLimitMicros: risk.notionalLimitMicros,
+        },
+        authorityGenerationHash,
+      ),
+    )
+    const forgedState = {
+      ...risk.facts.state,
+      dayStartEquityMicros: '1000000000',
+    }
+    const forgedEvaluation = Result.getOrThrow(
+      evaluate({
+        intent: executionIntent,
+        state: forgedState,
+        policy: input.policy,
+        proposedPositions: risk.facts.proposedPositions,
+      }),
+    )
+    const { contentHash: _contentHash, riskBlock: _riskBlock, ...material } = document
+    const forged = makeExecutionDecisionDocument({
+      ...material,
+      dispatchable: true,
+      deltaRisk: [
+        {
+          ...risk,
+          facts: { ...risk.facts, state: forgedState },
+          evaluation: forgedEvaluation,
+        },
+      ],
+    })
+
+    expect(Result.isFailure(forged)).toBe(true)
+    if (Result.isFailure(forged)) {
+      expect(String(forged.failure.cause)).toContain('must match the exact planner, authority, market-data')
+    }
+  })
+
+  test('binds the complete authority state before replaying a rehashed evaluation', async () => {
+    const selectedSymbol = defaultIntradayMomentumProtocolDocument.universe[0]
+    if (selectedSymbol === undefined) throw new Error('intraday execution fixture requires a non-empty universe')
+    const { input, executionSession, riskInputs } = makeIntradayExecutionFixture(selectedSymbol)
+    const authorityGenerationHash = hash('6')
+    const document = await Effect.runPromise(
+      buildExecutionDecision({ ...input, riskInputs, authorityGenerationHash, executionSession }),
+    )
+    const target = document.targetPlan.intentTargets[0]
+    const risk = document.deltaRisk[0]
+    if (target === undefined || risk?.facts === undefined) {
+      throw new Error('authority fixture requires one persisted execution risk input')
+    }
+    const executionIntent = Result.getOrThrow(
+      makeExecutionIntentFromDecodedPlan(
+        {
+          schemaVersion: legacyIntentPlanSchemaVersion,
+          ...target,
+          notionalLimitMicros: risk.notionalLimitMicros,
+        },
+        authorityGenerationHash,
+      ),
+    )
+    const forgedState = {
+      ...risk.facts.state,
+      authority: { ...risk.facts.state.authority, version: risk.facts.state.authority.version + 1 },
+    }
+    const forgedEvaluation = Result.getOrThrow(
+      evaluate({
+        intent: executionIntent,
+        state: forgedState,
+        policy: input.policy,
+        proposedPositions: risk.facts.proposedPositions,
+      }),
+    )
+    const { contentHash: _contentHash, ...material } = document
+    const forged = makeExecutionDecisionDocument({
+      ...material,
+      deltaRisk: [
+        {
+          ...risk,
+          facts: { ...risk.facts, state: forgedState },
+          evaluation: forgedEvaluation,
+        },
+      ],
+    })
+
+    expect(Result.isFailure(forged)).toBe(true)
+    if (Result.isFailure(forged)) {
+      expect(String(forged.failure.cause)).toContain('must match the exact planner, authority, market-data')
+    }
+  })
+
+  test('recomputes quote-bound execution pricing before admitting a rehashed evaluation', async () => {
+    const selectedSymbol = defaultIntradayMomentumProtocolDocument.universe[0]
+    if (selectedSymbol === undefined) throw new Error('intraday execution fixture requires a non-empty universe')
+    const { input, executionSession, riskInputs } = makeIntradayExecutionFixture(selectedSymbol)
+    const authorityGenerationHash = hash('6')
+    const document = await Effect.runPromise(
+      buildExecutionDecision({ ...input, riskInputs, authorityGenerationHash, executionSession }),
+    )
+    const target = document.targetPlan.intentTargets[0]
+    const risk = document.deltaRisk[0]
+    if (target === undefined || risk?.facts === undefined) {
+      throw new Error('pricing fixture requires one persisted execution risk input')
+    }
+    const forgedNotionalLimitMicros = (BigInt(risk.notionalLimitMicros) + 1n).toString()
+    const executionIntent = Result.getOrThrow(
+      makeExecutionIntentFromDecodedPlan(
+        {
+          schemaVersion: legacyIntentPlanSchemaVersion,
+          ...target,
+          notionalLimitMicros: forgedNotionalLimitMicros,
+        },
+        authorityGenerationHash,
+      ),
+    )
+    const forgedState = {
+      ...risk.facts.state,
+      expectedExecutionPriceMicros: (BigInt(risk.facts.state.expectedExecutionPriceMicros) + 1n).toString(),
+    }
+    const forgedEvaluation = Result.getOrThrow(
+      evaluate({
+        intent: executionIntent,
+        state: forgedState,
+        policy: input.policy,
+        proposedPositions: risk.facts.proposedPositions,
+      }),
+    )
+    const { contentHash: _contentHash, ...material } = document
+    const forged = makeExecutionDecisionDocument({
+      ...material,
+      orderedIntentIds: [executionIntent.intentId],
+      deltaRisk: [
+        {
+          ...risk,
+          notionalLimitMicros: forgedNotionalLimitMicros,
+          facts: { ...risk.facts, state: forgedState },
+          evaluation: forgedEvaluation,
+        },
+      ],
+    })
+
+    expect(Result.isFailure(forged)).toBe(true)
+    if (Result.isFailure(forged)) {
+      expect(String(forged.failure.cause)).toContain('must reproduce the exact persisted risk gates')
+    }
+  })
+
+  test('reconstructs held positions before replaying persisted entry risk', async () => {
+    const selectedSymbol = defaultIntradayMomentumProtocolDocument.universe[0]
+    if (selectedSymbol === undefined) throw new Error('intraday execution fixture requires a non-empty universe')
+    const { input, executionSession, riskInputs } = makeIntradayExecutionFixture(
+      selectedSymbol,
+      { dayStartEquityMicros: '1000000000', peakEquityMicros: '1000000000' },
+      [position(selectedSymbol)],
+    )
+    const authorityGenerationHash = hash('6')
+    const document = await Effect.runPromise(
+      buildExecutionDecision({
+        ...input,
+        riskInputs,
+        authorityGenerationHash,
+        executionSession,
+      }),
+    )
+    const target = document.targetPlan.intentTargets[0]
+    const risk = document.deltaRisk[0]
+    if (target === undefined || risk?.facts === undefined) {
+      throw new Error('held-position fixture requires one persisted execution risk input')
+    }
+    expect(risk.facts.proposedPositions).toHaveLength(1)
+
+    const executionIntent = Result.getOrThrow(
+      makeExecutionIntentFromDecodedPlan(
+        {
+          schemaVersion: legacyIntentPlanSchemaVersion,
+          ...target,
+          notionalLimitMicros: risk.notionalLimitMicros,
+        },
+        authorityGenerationHash,
+      ),
+    )
+    const forgedEvaluation = Result.getOrThrow(
+      evaluate({
+        intent: executionIntent,
+        state: risk.facts.state,
+        policy: input.policy,
+        proposedPositions: [],
+      }),
+    )
+    const { contentHash: _contentHash, ...material } = document
+    const forged = makeExecutionDecisionDocument({
+      ...material,
+      deltaRisk: [
+        {
+          ...risk,
+          facts: { ...risk.facts, proposedPositions: [] },
+          evaluation: forgedEvaluation,
+        },
+      ],
+    })
+
+    expect(Result.isFailure(forged)).toBe(true)
+    if (Result.isFailure(forged)) {
+      expect(String(forged.failure.cause)).toContain('must reproduce the exact persisted risk gates')
+    }
+  })
+
+  test('rejects liquidation exemptions forged into an intraday entry risk state', async () => {
+    const selectedSymbol = defaultIntradayMomentumProtocolDocument.universe[0]
+    if (selectedSymbol === undefined) throw new Error('intraday execution fixture requires a non-empty universe')
+    const { input, executionSession, riskInputs } = makeIntradayExecutionFixture(selectedSymbol)
+    const closeOnlyRiskInputs = riskInputs.map((riskInput) => ({
+      ...riskInput,
+      state: decodeState({
+        ...riskInput.state,
+        closeOnly: true,
+        closeOnlyExpiresAt: input.cycle.window.submissionCutoffAt,
+      }),
+    }))
+
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        buildExecutionDecision({
+          ...input,
+          riskInputs: closeOnlyRiskInputs,
+          authorityGenerationHash: hash('6'),
+          executionSession,
+        }),
+      ),
+    )
+
+    expect(failure.failure).toBe('contract')
+    expect(failure.cause).toBeInstanceOf(ShadowDecisionContractFailure)
+    if (!(failure.cause instanceof ShadowDecisionContractFailure)) return expect.unreachable()
+    expect(String(failure.cause.cause)).toContain('must bind non-close-only entry state or the exact close-only lease')
+  })
+
+  test('binds full-session intraday decisions to the exact rolling snapshot and cycle calendar', async () => {
+    const input = makeIntradayMomentumInput()
+    const accepted = await build(input)
+
+    expect(accepted.bindings.executionMarketData?.snapshotId).toBe(input.executionMarketData?.snapshotId)
+    const failure = await Effect.runPromise(
+      Effect.flip(buildObserveShadowDecision(makeIntradayMomentumInput(hash('f')))),
+    )
+    expect(failure).toMatchObject({
+      failure: 'binding',
+      message: 'intraday decision calendar must match the immutable cycle execution calendar',
     })
   })
 
@@ -717,7 +2487,8 @@ describe('OBSERVE shadow decision', () => {
     const input = makeOpeningDriveInput()
     const entryMarketData = input.executionMarketData
     if (entryMarketData === undefined) throw new Error('opening-drive fixture must include entry market data')
-    const closeMarketData = openingDriveMarketDataBinding(input.cycle, hash('b'))
+    const liquidationEvidence = verifiedLiquidationEvidence(input.cycle, ['AMD', 'NVDA'])
+    const closeMarketData = liquidationEvidence.executionMarketData
     expect(closeMarketData.snapshotId).not.toBe(entryMarketData.snapshotId)
     const compiledDecision = {
       schemaVersion: 'bayn.execution-flat-target.v1' as const,
@@ -731,8 +2502,12 @@ describe('OBSERVE shadow decision', () => {
     const brokerState = makeBrokerState()
     const closePriceMaterial = {
       ...input.plannerInput.referencePrices,
+      observedAt: closeMarketData.observedAt,
       snapshotId: closeMarketData.snapshotId,
       snapshotContentHash: closeMarketData.contentHash,
+      priceMicros: liquidationEvidence.referencePrices.askPriceMicros,
+      bidPriceMicros: liquidationEvidence.referencePrices.bidPriceMicros,
+      askPriceMicros: liquidationEvidence.referencePrices.askPriceMicros,
     }
     const { contentHash: _entryPriceHash, ...closePriceFields } = closePriceMaterial
     const plannerInput = {
@@ -750,10 +2525,15 @@ describe('OBSERVE shadow decision', () => {
       decisionHash: canonicalHashV1(compiledDecision),
       targetWeights: compiledDecision.targetWeights,
       referencePrices: { ...closePriceFields, contentHash: canonicalHashV1(closePriceFields) },
+      observedAt: closeMarketData.observedAt,
       executionTerms: {
-        ...input.plannerInput.executionTerms,
+        orderType: OrderType.Limit as const,
+        timeInForce: TimeInForce.ImmediateOrCancel as const,
+        priceReference: 'verified-adverse-quote-boundary' as const,
+        executionPurpose: 'forced-close' as const,
         snapshotId: closeMarketData.snapshotId,
         snapshotContentHash: closeMarketData.contentHash,
+        maximumBuyQuantityMicros: { AMD: '0', NVDA: '0' },
       },
       submissionCutoffAt: closeSubmitCutoffAt,
     }
@@ -811,19 +2591,166 @@ describe('OBSERVE shadow decision', () => {
         }),
       }
     })
-    const document = await build({
+    const closeInput = {
       ...input,
       compiledDecision,
+      decisionMarketDataRows: liquidationEvidence.decisionMarketDataRows,
       executionMarketData: closeMarketData,
       plannerInput,
       targetPlan,
       riskInputs,
       submissionCutoffAt: closeSubmitCutoffAt,
-    })
+    }
+    const document = await build(closeInput)
 
     expect(document.bindings.snapshotId).toBe(entryMarketData.snapshotId)
     expect(document.bindings.executionMarketData?.snapshotId).toBe(closeMarketData.snapshotId)
     expect(document.targetPlan.status).toBe(TargetPlanStatus.Planned)
+
+    const executionDocument = await Effect.runPromise(
+      buildExecutionDecision({
+        ...closeInput,
+        riskInputs: closeInput.riskInputs.map((riskInput) => ({
+          ...riskInput,
+          state: {
+            ...riskInput.state,
+            authority: {
+              ...riskInput.state.authority,
+              maximum: Authority.Execution,
+              effective: Authority.Execution,
+            },
+          },
+        })),
+        authorityGenerationHash: hash('6'),
+        executionSession,
+      }),
+    )
+    const { contentHash: _documentContentHash, ...documentMaterial } = executionDocument
+    const mismatchedCloseLease = makeExecutionDecisionDocument({
+      ...documentMaterial,
+      deltaRisk: documentMaterial.deltaRisk.map((risk) => ({
+        ...risk,
+        ...(risk.facts === undefined
+          ? {}
+          : {
+              facts: {
+                ...risk.facts,
+                state: {
+                  ...risk.facts.state,
+                  closeOnlyExpiresAt: '2026-07-22T19:46:00.000Z',
+                },
+              },
+            }),
+      })),
+    })
+    expect(Result.isFailure(mismatchedCloseLease)).toBe(true)
+    if (Result.isFailure(mismatchedCloseLease)) {
+      expect(String(mismatchedCloseLease.failure.cause)).toContain(
+        'must bind non-close-only entry state or the exact close-only lease',
+      )
+    }
+    const persistedPlannerInput = documentMaterial.plannerInput
+    if (persistedPlannerInput?.referencePrices.schemaVersion !== 'bayn.intraday-snapshot-reference-prices.v1') {
+      throw new Error('quote-bound close fixture must persist intraday reference prices')
+    }
+    const { contentHash: _referencePriceHash, ...referencePriceMaterial } = persistedPlannerInput.referencePrices
+    const forgedAskPriceMicros = {
+      ...referencePriceMaterial.askPriceMicros,
+      AMD: (BigInt(referencePriceMaterial.askPriceMicros['AMD'] ?? '0') + 10_000n).toString(),
+    }
+    const forgedReferencePriceMaterial = {
+      ...referencePriceMaterial,
+      priceMicros: forgedAskPriceMicros,
+      askPriceMicros: forgedAskPriceMicros,
+    }
+    const forgedQuoteBoundClose = makeExecutionDecisionDocument({
+      ...documentMaterial,
+      plannerInput: {
+        ...persistedPlannerInput,
+        referencePrices: {
+          ...forgedReferencePriceMaterial,
+          contentHash: canonicalHashV1(forgedReferencePriceMaterial),
+        },
+      },
+    })
+    expect(Result.isFailure(forgedQuoteBoundClose)).toBe(true)
+    if (Result.isFailure(forgedQuoteBoundClose)) {
+      expect(String(forgedQuoteBoundClose.failure.cause)).toContain(
+        'quote-bound liquidation reference prices must match its exact verified archive rows',
+      )
+    }
+    const { plannerInput: _plannerInput, ...closeWithoutPlannerInput } = documentMaterial
+    const missingClosePlannerInput = makeExecutionDecisionDocument(closeWithoutPlannerInput)
+    expect(Result.isFailure(missingClosePlannerInput)).toBe(true)
+    if (Result.isFailure(missingClosePlannerInput)) {
+      expect(String(missingClosePlannerInput.failure.cause)).toContain(
+        'quote-bound liquidation requires persisted target-planner evidence',
+      )
+    }
+    const replacementCloseBinding = liquidationMarketDataBinding(input.cycle, hash('e'))
+    const mismatchedPersistedClose = makeExecutionDecisionDocument({
+      ...documentMaterial,
+      bindings: { ...documentMaterial.bindings, executionMarketData: replacementCloseBinding },
+    })
+    expect(Result.isFailure(mismatchedPersistedClose)).toBe(true)
+    if (Result.isFailure(mismatchedPersistedClose)) {
+      expect(String(mismatchedPersistedClose.failure.cause)).toContain(
+        'exact market-data snapshot persisted by the target plan',
+      )
+    }
+
+    const subsetCloseBinding = liquidationMarketDataBinding(input.cycle, hash('d'), ['AMD'])
+    const closeExecutionTerms = documentMaterial.targetPlan.executionTerms
+    if (closeExecutionTerms === undefined) throw new Error('close fixture must persist execution terms')
+    const { outputHash: _targetPlanOutputHash, ...targetPlanMaterial } = documentMaterial.targetPlan
+    const mismatchedTargetPlanMaterial = {
+      ...targetPlanMaterial,
+      executionTerms: {
+        ...closeExecutionTerms,
+        snapshotId: subsetCloseBinding.snapshotId,
+        snapshotContentHash: subsetCloseBinding.contentHash,
+      },
+    }
+    const mismatchedPersistedSymbols = makeExecutionDecisionDocument({
+      ...documentMaterial,
+      bindings: { ...documentMaterial.bindings, executionMarketData: subsetCloseBinding },
+      targetPlan: {
+        ...mismatchedTargetPlanMaterial,
+        outputHash: canonicalHashV1(mismatchedTargetPlanMaterial),
+      },
+    })
+    expect(Result.isFailure(mismatchedPersistedSymbols)).toBe(true)
+    if (Result.isFailure(mismatchedPersistedSymbols)) {
+      expect(String(mismatchedPersistedSymbols.failure.cause)).toContain(
+        'liquidation market-data symbols must exactly match the ordered close targets',
+      )
+    }
+
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        buildObserveShadowDecision({
+          ...closeInput,
+          executionMarketData: openingDriveMarketDataBinding(input.cycle, hash('c')),
+        }),
+      ),
+    )
+    expect(failure).toMatchObject({
+      failure: 'binding',
+      message: 'intraday close requires explicit liquidation market-data evidence',
+    })
+
+    const mismatchedSymbols = await Effect.runPromise(
+      Effect.flip(
+        buildObserveShadowDecision({
+          ...closeInput,
+          executionMarketData: liquidationMarketDataBinding(input.cycle, hash('d'), ['AMD']),
+        }),
+      ),
+    )
+    expect(mismatchedSymbols).toMatchObject({
+      failure: 'binding',
+      message: 'intraday close market-data symbols must match the flat execution target',
+    })
   })
 
   test('binds each decision variant to its strategy and validates exact flat-close weights', () => {

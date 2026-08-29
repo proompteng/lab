@@ -13,6 +13,7 @@ import {
   type IntradayMarketSnapshot,
   type IntradaySnapshotQuery,
 } from '../market-data'
+import type { ArchiveVerifiedIntradayMarketSnapshot } from '../market-data/intraday/model'
 import { ExecutionMarketDataBindingSchema, type ExecutionMarketDataBinding } from '../shadow-decision-contract'
 import { strictParseOptions } from '../schemas'
 import type {
@@ -29,7 +30,13 @@ export const intradayArchiveTopics = Object.freeze({
 })
 
 export class OpeningDriveRuntimeDecisionFailure extends Data.TaggedError('OpeningDriveRuntimeDecisionFailure')<{
-  readonly operation: 'entry-query' | 'entry-decision' | 'close-query' | 'close-prices' | 'binding'
+  readonly operation:
+    | 'entry-query'
+    | 'entry-decision'
+    | 'close-query'
+    | 'close-quote-not-ready'
+    | 'close-prices'
+    | 'binding'
   readonly message: string
   readonly cause?: unknown
 }> {}
@@ -101,6 +108,7 @@ export const openingDriveCloseQuery = (
   protocol: OpeningDriveProtocol,
   calendar: MarketCalendarObservation,
   observedAt: string,
+  symbols: readonly string[],
 ): Result.Result<IntradaySnapshotQuery, OpeningDriveRuntimeDecisionFailure> => {
   const observedEpoch = Date.parse(observedAt)
   const rangeEndEpoch = Math.floor(observedEpoch / 60_000) * 60_000
@@ -114,15 +122,17 @@ export const openingDriveCloseQuery = (
   ) {
     return Result.fail(failure('close-query', 'cycle does not admit a complete intraday close snapshot at this time'))
   }
-  return Result.succeed(
-    commonQuery(protocol, cycle.identity.executionSessionDate, calendar, rangeStartAt, rangeEndAt, observedAt, 0),
-  )
+  return Result.succeed({
+    ...commonQuery(protocol, cycle.identity.executionSessionDate, calendar, rangeStartAt, rangeEndAt, observedAt, 0),
+    symbols: [...new Set(symbols)].sort(),
+    purpose: 'LIQUIDATION',
+  })
 }
 
 export const loadIntradaySnapshot = (
   marketData: IntradayMarketDataService,
   query: IntradaySnapshotQuery,
-): Effect.Effect<IntradayMarketSnapshot, OperationalError> =>
+): Effect.Effect<ArchiveVerifiedIntradayMarketSnapshot, OperationalError> =>
   marketData
     .captureVersion(query)
     .pipe(Effect.flatMap((archiveWatermarks) => marketData.loadSnapshot({ ...query, archiveWatermarks })))
@@ -137,7 +147,10 @@ export const executionMarketDataBinding = (
 ): Result.Result<ExecutionMarketDataBinding, OpeningDriveRuntimeDecisionFailure> =>
   Result.mapError(
     decodeExecutionMarketDataBinding({
-      schemaVersion: 'bayn.execution-market-data-binding.v1',
+      schemaVersion:
+        snapshot.manifest.universe === undefined
+          ? 'bayn.execution-market-data-binding.v1'
+          : 'bayn.execution-market-data-binding.v2',
       snapshotSchemaVersion: snapshot.manifest.schemaVersion,
       sessionDate: snapshot.manifest.sessionDate,
       calendar: snapshot.manifest.calendar,
@@ -146,7 +159,9 @@ export const executionMarketDataBinding = (
       observedAt: snapshot.manifest.observedAt,
       universeId: snapshot.manifest.universeId,
       universeSymbolHash: snapshot.manifest.universeSymbolHash,
+      ...(snapshot.manifest.universe === undefined ? {} : { universe: snapshot.manifest.universe }),
       symbols: snapshot.manifest.symbols,
+      ...(snapshot.manifest.purpose === undefined ? {} : { purpose: snapshot.manifest.purpose }),
       feed: snapshot.manifest.feed,
       delayClass: snapshot.manifest.delayClass,
       sourceTopics: snapshot.manifest.sourceTopics,
@@ -213,7 +228,7 @@ export const openingDriveEntryDisposition = (
   return remainingMs > finalizationHeadroomMs ? 'AWAIT_SIGNAL' : 'NO_TRADE'
 }
 
-const adverseQuotePrices = (
+export const adverseQuotePrices = (
   snapshot: IntradayMarketSnapshot,
   symbols: readonly string[],
 ): Result.Result<AdverseQuotePrices, OpeningDriveRuntimeDecisionFailure> => {
@@ -248,23 +263,26 @@ export const adverseClosingQuotePrices = (
   for (const symbol of [...new Set(symbols)].sort()) {
     const quote = snapshot.latestQuotes[symbol]
     if (quote === undefined) {
-      return Result.fail(failure('close-prices', `intraday snapshot has no verified quote for ${symbol}`))
+      return Result.fail(failure('close-quote-not-ready', `intraday snapshot has no verified quote for ${symbol}`))
     }
     const quoteAge = intradayAgeNanos(snapshot.manifest.observedAt, quote.eventAt)
     if (quoteAge < 0n || quoteAge > maximumQuoteAge) {
-      return Result.fail(failure('close-prices', `closing quote for ${symbol} is outside the freshness window`))
+      return Result.fail(
+        failure('close-quote-not-ready', `closing quote for ${symbol} is outside the freshness window`),
+      )
     }
   }
   return adverseQuotePrices(snapshot, symbols)
 }
 
-export const requireFreshOpeningDrivePositionQuotes = (
+export const requireFreshIntradayPositionQuotes = (
   snapshot: IntradayMarketSnapshot,
   positions: readonly { readonly symbol: string; readonly quantityMicros: string }[],
 ): Result.Result<void, OpeningDriveRuntimeDecisionFailure> => {
   const maximumQuoteAge = millisecondsAsNanos(snapshot.manifest.maximumQuoteAgeMs)
+  const entryUniverse = new Set(snapshot.manifest.symbols)
   for (const position of positions) {
-    if (BigInt(position.quantityMicros) === 0n) continue
+    if (BigInt(position.quantityMicros) === 0n || !entryUniverse.has(position.symbol)) continue
     const quote = snapshot.latestQuotes[position.symbol]
     if (quote === undefined) {
       return Result.fail(
@@ -281,7 +299,9 @@ export const requireFreshOpeningDrivePositionQuotes = (
   return Result.succeed(undefined)
 }
 
-const maximumBuyQuantities = (
+export const requireFreshOpeningDrivePositionQuotes = requireFreshIntradayPositionQuotes
+
+export const maximumBuyQuantities = (
   snapshot: IntradayMarketSnapshot,
   targetWeights: Readonly<Record<string, number>>,
 ): Result.Result<Readonly<Record<string, string>>, OpeningDriveRuntimeDecisionFailure> => {

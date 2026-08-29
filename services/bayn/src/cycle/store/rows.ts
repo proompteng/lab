@@ -26,7 +26,7 @@ const StoredCycleRowSchema = Schema.Struct({
     'bayn.autonomous-cycle-identity.v2',
     'bayn.autonomous-cycle-identity.v3',
   ]),
-  strategy_name: Schema.Literals(['risk-balanced-trend', 'opening-drive-momentum']),
+  strategy_name: Schema.Literals(['risk-balanced-trend', 'opening-drive-momentum', 'intraday-momentum']),
   qualification_run_id: Sha256Schema,
   strategy_protocol_hash: Sha256Schema,
   account_id: StrictNonEmptyStringSchema,
@@ -35,12 +35,15 @@ const StoredCycleRowSchema = Schema.Struct({
   execution_policy_schema_version: Schema.Literals([
     'bayn.autonomous-cycle-execution-policy.v1',
     'bayn.autonomous-cycle-execution-policy.v2',
+    'bayn.autonomous-cycle-execution-policy.v3',
   ]),
   execution_policy_hash: Sha256Schema,
   strategy_execution_model_hash: Sha256Schema,
   submission_window_ms: PositiveIntegerSchema,
   submission_cutoff_before_open_ms: Schema.NullOr(PositiveIntegerSchema),
   submission_cutoff_after_open_ms: Schema.NullOr(PositiveIntegerSchema),
+  warmup_after_open_ms: Schema.NullOr(PositiveIntegerSchema),
+  submission_cutoff_before_close_ms: Schema.NullOr(PositiveIntegerSchema),
   window_schema_version: Schema.Literals([
     'bayn.autonomous-cycle-window.v1',
     'bayn.autonomous-cycle-window.v2',
@@ -172,6 +175,14 @@ const storedExecutionPolicy = (row: typeof StoredCycleRowSchema.Type) => {
   } as const
   if (row.execution_policy_schema_version === 'bayn.autonomous-cycle-execution-policy.v1') {
     return { ...policyMaterial, submissionCutoffBeforeOpenMs: row.submission_cutoff_before_open_ms }
+  }
+  if (row.execution_policy_schema_version === 'bayn.autonomous-cycle-execution-policy.v3') {
+    const { submissionWindowMs: _, ...rollingPolicyMaterial } = policyMaterial
+    return {
+      ...rollingPolicyMaterial,
+      warmupAfterOpenMs: row.warmup_after_open_ms,
+      submissionCutoffBeforeCloseMs: row.submission_cutoff_before_close_ms,
+    }
   }
   return {
     ...policyMaterial,

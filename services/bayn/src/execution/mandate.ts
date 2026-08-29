@@ -326,7 +326,7 @@ export const decideExecutionMandateCycleTerminalization = (input: {
   if (!input.closeOnly && input.entryCutoffAt !== undefined && input.observedAt < input.entryCutoffAt) {
     return { _tag: 'WaitForClose' }
   }
-  if (!input.closeOnly && input.entryCutoffAt !== undefined && input.entryHasUnsuccessfulIntent) {
+  if (input.entryHasUnsuccessfulIntent) {
     return { _tag: 'Block' }
   }
   return { _tag: 'Complete' }

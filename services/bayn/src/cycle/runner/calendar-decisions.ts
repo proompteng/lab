@@ -3,6 +3,7 @@ import { DateTime, HashSet, Option, pipe, Result } from 'effect'
 import type { MarketCalendarObservation, MarketCalendarQuery, MarketCalendarSession } from '../../broker/alpaca'
 import type { MarketDataInspection } from '../../market-data'
 import { Pipeable } from '../../pipeable'
+import { defaultIntradayMomentumProtocolDocument } from '../../strategy/intraday-momentum/protocol'
 import {
   makeCycleDraft,
   makeCycleIdentity,
@@ -206,17 +207,30 @@ export const selectNextExecutionSession = Pipeable.dual(2, selectNextExecutionSe
 
 export const selectIntradayExecutionSession = (
   observation: MarketCalendarObservation,
-  executionPolicy: Extract<
-    CycleExecutionPolicy,
-    { readonly schemaVersion: 'bayn.autonomous-cycle-execution-policy.v2' }
-  >,
+  executionPolicy:
+    | Extract<CycleExecutionPolicy, { readonly schemaVersion: 'bayn.autonomous-cycle-execution-policy.v2' }>
+    | Extract<CycleExecutionPolicy, { readonly schemaVersion: 'bayn.autonomous-cycle-execution-policy.v3' }>,
   observedAt: string,
-): MarketCalendarSession | undefined =>
-  observation.sessions.reduce<MarketCalendarSession | undefined>((selected, session) => {
-    const cutoffAt = Date.parse(session.openAt) + executionPolicy.submissionCutoffAfterOpenMs
-    if (!Number.isFinite(cutoffAt) || Date.parse(observedAt) >= cutoffAt) return selected
+): MarketCalendarSession | undefined => {
+  const observedAtMillis = Date.parse(observedAt)
+  if (!Number.isFinite(observedAtMillis)) return undefined
+
+  return observation.sessions.reduce<MarketCalendarSession | undefined>((selected, session) => {
+    const openAtMillis = Date.parse(session.openAt)
+    const cutoffAt =
+      executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v2'
+        ? openAtMillis + executionPolicy.submissionCutoffAfterOpenMs
+        : Date.parse(session.closeAt) - executionPolicy.submissionCutoffBeforeCloseMs
+    const hasExecutableWindow =
+      executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v2' ||
+      openAtMillis +
+        executionPolicy.warmupAfterOpenMs +
+        defaultIntradayMomentumProtocolDocument.decisionDelaySeconds * 1_000 <
+        cutoffAt
+    if (!Number.isFinite(cutoffAt) || !hasExecutableWindow || observedAtMillis >= cutoffAt) return selected
     return selected === undefined || session.date < selected.date ? session : selected
   }, undefined)
+}
 
 const isMonthEndCycleDueDataFirst = (signalSessionDate: string, executionSessionDate: string): boolean =>
   signalSessionDate.slice(0, 7) !== executionSessionDate.slice(0, 7)
@@ -260,16 +274,29 @@ const makeDueCycleDraftDataFirst = (
 
 export const makeDueCycleDraft = Pipeable.dual(3, makeDueCycleDraftDataFirst)
 
-export interface IntradayCycleCandidate {
+interface IntradayCycleCandidateCommon {
   readonly qualificationRunId: string
-  readonly strategyName: 'opening-drive-momentum'
   readonly strategyProtocolHash: string
   readonly accountId: string
-  readonly executionPolicy: Extract<
-    CycleExecutionPolicy,
-    { readonly schemaVersion: 'bayn.autonomous-cycle-execution-policy.v2' }
-  >
 }
+
+export type IntradayCycleCandidate = IntradayCycleCandidateCommon &
+  (
+    | {
+        readonly strategyName: 'opening-drive-momentum'
+        readonly executionPolicy: Extract<
+          CycleExecutionPolicy,
+          { readonly schemaVersion: 'bayn.autonomous-cycle-execution-policy.v2' }
+        >
+      }
+    | {
+        readonly strategyName: 'intraday-momentum'
+        readonly executionPolicy: Extract<
+          CycleExecutionPolicy,
+          { readonly schemaVersion: 'bayn.autonomous-cycle-execution-policy.v3' }
+        >
+      }
+  )
 
 export const makeIntradayCycleDraft = (
   candidate: IntradayCycleCandidate,

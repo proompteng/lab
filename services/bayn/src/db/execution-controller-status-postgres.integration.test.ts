@@ -515,7 +515,7 @@ describePostgres('PostgreSQL execution controller status projection', () => {
         }),
       )
 
-      expect(migrated.migration).toEqual({ migration_id: 52, name: 'position_snapshot_observability_index' })
+      expect(migrated.migration).toEqual({ migration_id: 55, name: 'intraday_snapshot_references' })
       expect(migrated.column).toEqual({ is_nullable: 'NO' })
       expect(migrated.row).toEqual({ next_sequence: '9' })
       expect(migrated.triggerDefinition).toContain('NEW.last_pass')

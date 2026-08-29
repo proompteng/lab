@@ -6,6 +6,7 @@ import type { MarketCalendarObservation } from '../../broker/alpaca/model'
 
 export type IntradayFeed = 'iex' | 'sip' | 'delayed_sip'
 export type IntradayDelayClass = 'real_time_exchange_only' | 'real_time_consolidated' | 'delayed_15m_consolidated'
+export type IntradaySnapshotPurpose = 'LIQUIDATION'
 
 export interface IntradaySnapshotQuery {
   readonly sessionDate: IsoDate
@@ -15,7 +16,12 @@ export interface IntradaySnapshotQuery {
   readonly observedAt: string
   readonly universeId: string
   readonly universeSymbolHash: string
+  /** Full source-universe membership bound by universeSymbolHash. */
   readonly universe: readonly string[]
+  /** Canonical subset required by this snapshot. Omission means the full universe. */
+  readonly symbols?: readonly string[]
+  /** Quote-led close evidence; omission keeps the full decision-time bar and trade contract. */
+  readonly purpose?: IntradaySnapshotPurpose
   readonly feed: IntradayFeed
   readonly delayClass: IntradayDelayClass
   readonly sourceTopics: {
@@ -95,7 +101,10 @@ export interface IntradaySnapshotManifest {
   readonly observedAt: string
   readonly universeId: string
   readonly universeSymbolHash: string
+  /** Added for subset snapshots; omitted only by legacy v1 material. */
+  readonly universe?: readonly string[]
   readonly symbols: readonly string[]
+  readonly purpose?: IntradaySnapshotPurpose
   readonly feed: IntradayFeed
   readonly delayClass: IntradayDelayClass
   readonly sourceTopics: IntradaySnapshotRequest['sourceTopics']
@@ -132,6 +141,23 @@ declare const ArchiveVerifiedIntradayMarketSnapshotTypeId: unique symbol
 export type ArchiveVerifiedIntradayMarketSnapshot = IntradayMarketSnapshot & {
   readonly [ArchiveVerifiedIntradayMarketSnapshotTypeId]: true
 }
+
+declare const ArchiveVerifiedIntradaySnapshotReferenceTypeId: unique symbol
+
+/** Compact durable identity derived only from a snapshot reverified against the immutable archive. */
+export type ArchiveVerifiedIntradaySnapshotReference = {
+  readonly schemaVersion: 'bayn.intraday-snapshot-reference.v1'
+  readonly manifest: IntradaySnapshotManifest
+  readonly [ArchiveVerifiedIntradaySnapshotReferenceTypeId]: true
+}
+
+export const archiveVerifiedIntradaySnapshotReference = (
+  snapshot: ArchiveVerifiedIntradayMarketSnapshot,
+): ArchiveVerifiedIntradaySnapshotReference =>
+  Object.freeze({
+    schemaVersion: 'bayn.intraday-snapshot-reference.v1',
+    manifest: snapshot.manifest,
+  }) as ArchiveVerifiedIntradaySnapshotReference
 
 /**
  * Verified intraday market-data boundary. This service is introduced with the
@@ -173,3 +199,6 @@ export class IntradaySnapshotFailure extends Data.TaggedError('IntradaySnapshotF
   readonly facts?: Readonly<Record<string, unknown>>
   readonly cause?: unknown
 }> {}
+
+export const intradaySnapshotSymbols = (query: IntradaySnapshotQuery): readonly string[] =>
+  query.symbols ?? query.universe

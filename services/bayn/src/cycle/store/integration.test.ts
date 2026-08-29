@@ -65,6 +65,7 @@ import { BlockedCycleIntentStore, BlockedCycleIntentStoreLive } from '../../exec
 import { canonicalHashV1, sha256 } from '../../hash'
 import { Journal, type JournalService } from '../../ledger'
 import {
+  type ArchiveVerifiedIntradaySnapshotReference,
   MarketData,
   type FinalizedPublicationInspection,
   type MarketDataService,
@@ -85,8 +86,11 @@ import {
   IntentState,
   KillState,
   makeResearchCapitalGrantGenerationResult,
+  OrderStatus,
+  OrderType,
   ReconciliationStatus,
   RiskOutcome,
+  TimeInForce,
 } from '../../execution/contracts'
 import { BrokerAccess, noCapitalAuthority } from '../../execution/authority'
 import { planExecutionIntent } from '../../execution/intents'
@@ -101,6 +105,10 @@ import {
 } from '../../shadow-decision-contract'
 import { makeRiskBalancedTrendDefinition } from '../../strategy'
 import { defaultOpeningDriveProtocolHash, openingDriveExecutionModel } from '../../strategy/opening-drive'
+import {
+  defaultIntradayMomentumProtocolDocument,
+  intradayMomentumExecutionModel,
+} from '../../strategy/intraday-momentum/protocol'
 import { TargetPlanReason, TargetPlanStatus } from '../../target-planner'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from '../../test-fixtures'
 import { baynTestPostgresUrl, isGithubActions } from '../../test-environment.test-support'
@@ -120,6 +128,7 @@ import { PostgresClientLive } from '../../db/evidence-store'
 import { migrationLoader } from '../../db/migrations'
 import { ensureSnapshotReference } from '../../db/snapshot-reference'
 import { CycleStore, CycleStoreLive, WriterFencedCycleStoreLive, type CycleStoreShape } from '.'
+import { makeCycleQueries } from './queries'
 
 const encodeSqlJson = Schema.encodeSync(Schema.UnknownFromJsonString)
 const migrationLoaderBeforeIntradayNativeCycles = migrationLoader.pipe(
@@ -1001,6 +1010,40 @@ const makeIntradayDraft = (
   return draft
 }
 
+const makeFullSessionIntradayDraft = (
+  accountId = 'paper-account-full-session-intraday',
+  qualificationRunId = '4'.repeat(64),
+): IntradayCycleDraft => {
+  const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(intradayMomentumExecutionModel))
+  const executionCalendar = Result.getOrThrow(
+    makeExecutionCalendarObservation({
+      schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+      source: 'alpaca-v2-calendar',
+      date: '2026-03-09',
+      openAt: '2026-03-09T13:30:00.000Z',
+      closeAt: '2026-03-09T20:00:00.000Z',
+    }),
+  )
+  const identity = Result.getOrThrow(
+    makeCycleIdentity({
+      schemaVersion: 'bayn.autonomous-cycle-identity.v3',
+      strategyName: 'intraday-momentum',
+      qualificationRunId,
+      strategyProtocolHash: canonicalHashV1(defaultIntradayMomentumProtocolDocument),
+      accountId,
+      executionSessionDate: executionCalendar.executionSessionDate,
+      executionCalendarSchemaVersion: executionCalendar.executionCalendarSchemaVersion,
+      executionCalendarSource: executionCalendar.executionCalendarSource,
+      executionCalendarHash: executionCalendar.executionCalendarHash,
+      executionPolicy,
+    }),
+  )
+  const window = Result.getOrThrow(makeIntradayCycleWindow(executionCalendar, executionPolicy))
+  const draft = Result.getOrThrow(makeCycleDraft(identity, window))
+  if (!isIntradayCycleDraft(draft)) return expect.unreachable('expected a full-session intraday cycle draft')
+  return draft
+}
+
 const monthEndExecutionWindow = (
   evaluatedAt: string,
 ): {
@@ -1286,6 +1329,7 @@ const makeShadowDecision = (
 }
 
 const makeIntradayShadowDecision = (draft: IntradayCycleDraft) => {
+  const universe = ['AMD', 'NVDA'] as const
   const sourceTopics = {
     bars: 'torghut.bars.1m.v1',
     quotes: 'torghut.quotes.v1',
@@ -1315,8 +1359,9 @@ const makeIntradayShadowDecision = (draft: IntradayCycleDraft) => {
     rangeEndAt: '2026-03-09T13:35:00.000Z',
     observedAt: draft.window.submissionOpenAt,
     universeId: 'opening-drive-fixture-v1',
-    universeSymbolHash: '7'.repeat(64),
-    symbols: ['AMD', 'NVDA'],
+    universeSymbolHash: sha256(universe.join(',')),
+    universe,
+    symbols: universe,
     feed: 'sip' as const,
     delayClass: 'real_time_consolidated' as const,
     sourceTopics,
@@ -1344,7 +1389,7 @@ const makeIntradayShadowDecision = (draft: IntradayCycleDraft) => {
   const contentHash = canonicalHashV1(snapshotMaterial)
   const { schemaVersion: snapshotSchemaVersion, ...material } = snapshotMaterial
   const executionMarketData = {
-    schemaVersion: 'bayn.execution-market-data-binding.v1' as const,
+    schemaVersion: 'bayn.execution-market-data-binding.v2' as const,
     snapshotSchemaVersion,
     ...material,
     contentHash,
@@ -1365,6 +1410,20 @@ const makeIntradayShadowDecision = (draft: IntradayCycleDraft) => {
   })
   if (Result.isFailure(result)) throw new Error(`${result.failure.message}: ${String(result.failure.cause)}`)
   return result.success
+}
+
+const makeIntradaySnapshotReference = (
+  document: ReturnType<typeof makeIntradayShadowDecision>,
+): ArchiveVerifiedIntradaySnapshotReference => {
+  const binding = document.bindings.executionMarketData
+  if (binding?.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
+    return expect.unreachable('intraday store fixture requires archive market-data binding v2')
+  }
+  const { schemaVersion: _bindingSchemaVersion, snapshotSchemaVersion, ...manifest } = binding
+  return {
+    schemaVersion: 'bayn.intraday-snapshot-reference.v1',
+    manifest: { schemaVersion: snapshotSchemaVersion, ...manifest },
+  } as unknown as ArchiveVerifiedIntradaySnapshotReference
 }
 
 const makePaperNoTradeDecision = (
@@ -1397,7 +1456,11 @@ const makePaperNoTradeDecision = (
 const plannedPaperGenerationHash = 'a'.repeat(64)
 const plannedPaperAccountingHash = '8'.repeat(64)
 
-const plannedPaperReconciliation = (draft: CycleDraft, observedAt = plannedDecisionAt): ReconciliationPassResult => {
+const plannedPaperReconciliation = (
+  draft: CycleDraft,
+  observedAt = plannedDecisionAt,
+  orders: ReconciliationPassResult['brokerState']['orders'] = [],
+): ReconciliationPassResult => {
   const account = {
     schemaVersion: 'bayn.paper-account-snapshot.v1' as const,
     accountId: draft.identity.accountId,
@@ -1413,7 +1476,7 @@ const plannedPaperReconciliation = (draft: CycleDraft, observedAt = plannedDecis
       account,
       positions: [],
       positionsObservedAt: observedAt,
-      orders: [],
+      orders,
       ordersObservedAt: observedAt,
       accountingHash: plannedPaperAccountingHash,
     }),
@@ -1453,7 +1516,7 @@ const plannedPaperReconciliation = (draft: CycleDraft, observedAt = plannedDecis
       account,
       positions: [],
       positionsObservedAt: observedAt,
-      orders: [],
+      orders,
       ordersObservedAt: observedAt,
       accountingHash: plannedPaperAccountingHash,
       reconciliation,
@@ -2226,15 +2289,25 @@ const insertSupersedingObserveGeneration = (document: ExecutionDecisionDocument)
     return { activatedAt, generationHash }
   })
 
-const insertFilledPlannedPaperIntent = (
+interface TerminalPlannedPaperIntentFixture {
+  readonly brokerOrderPrefix: string
+  readonly latestMutation: 'accepted' | 'recovered' | 'started'
+  readonly orderType?: OrderType
+  readonly requestLabel: string
+  readonly responseContentHash: string
+  readonly terminalOutcome: 'CANCELED' | 'FILLED'
+  readonly timeInForce?: TimeInForce
+}
+
+const insertTerminalPlannedPaperIntent = (
   document: ExecutionDecisionDocument,
-  latestMutation: 'accepted' | 'started' = 'accepted',
+  fixture: TerminalPlannedPaperIntentFixture,
 ) =>
   Effect.gen(function* () {
     const target = document.targetPlan.intentTargets[0]
     const risk = document.deltaRisk[0]
     if (target === undefined || risk === undefined) {
-      return yield* Effect.die(new Error('filled PAPER completion fixture requires one ordered intent'))
+      return yield* Effect.die(new Error('terminal PAPER completion fixture requires one ordered intent'))
     }
     const intent = yield* planExecutionIntent(
       {
@@ -2259,10 +2332,15 @@ const insertFilledPlannedPaperIntent = (
     const intentCreatedAt = utcInstantFromEpochMillis(Date.parse(document.createdAt) - 1)
     const submitStartedAt = utcInstantFromEpochMillis(Date.parse(document.createdAt) + 1)
     const acceptedAt = utcInstantFromEpochMillis(Date.parse(document.createdAt) + 2)
-    const filledAt = utcInstantFromEpochMillis(Date.parse(document.createdAt) + 3)
+    const recoveredAt = utcInstantFromEpochMillis(Date.parse(document.createdAt) + 3)
+    const terminalAt = utcInstantFromEpochMillis(
+      Date.parse(document.createdAt) + (fixture.latestMutation === 'recovered' ? 4 : 3),
+    )
     const mutationId = canonicalHashV1({ intentId: intent.intentId, operation: 'SUBMIT' })
-    const requestHash = canonicalHashV1({ intentId: intent.intentId, request: 'filled-completion' })
-    const brokerOrderId = `filled-${intent.intentId.slice(0, 24)}`
+    const requestHash = canonicalHashV1({ intentId: intent.intentId, request: fixture.requestLabel })
+    const brokerOrderId = `${fixture.brokerOrderPrefix}-${intent.intentId.slice(0, 24)}`
+    const orderType = fixture.orderType ?? intent.orderType
+    const timeInForce = fixture.timeInForce ?? intent.timeInForce
 
     yield* sql.withTransaction(
       Effect.gen(function* () {
@@ -2276,7 +2354,7 @@ const insertFilledPlannedPaperIntent = (
             ${intent.intentId}, ${intent.schemaVersion}, ${intent.authorityGenerationHash},
             ${intent.strategyName}, ${intent.cycleId}, ${intent.decisionHash},
             ${intent.policyHash}, ${intent.accountId}, ${intent.clientOrderId},
-            ${intent.symbol}, ${intent.side}, ${intent.orderType}, ${intent.timeInForce},
+            ${intent.symbol}, ${intent.side}, ${orderType}, ${timeInForce},
             ${intent.quantityMicros}, ${intent.notionalLimitMicros}, 'PLANNED',
             ${intentCreatedAt}, ${intentCreatedAt}
           )
@@ -2317,7 +2395,7 @@ const insertFilledPlannedPaperIntent = (
           SET state = 'IO_STARTED', state_version = state_version + 1, updated_at = ${submitStartedAt}
           WHERE intent_id = ${intent.intentId}
         `
-        if (latestMutation === 'accepted') {
+        if (fixture.latestMutation === 'accepted') {
           yield* sql`
             INSERT INTO mutation_events (
               event_id, schema_version, mutation_id, intent_id, sequence,
@@ -2327,7 +2405,7 @@ const insertFilledPlannedPaperIntent = (
               ${canonicalHashV1({ mutationId, sequence: 2, eventType: 'SUBMIT_ACCEPTED' })},
               'bayn.paper-mutation-event.v1', ${mutationId}, ${intent.intentId}, 2,
               'SUBMIT', 'SUBMIT_ACCEPTED', ${requestHash}, 1000,
-              ${brokerOrderId}, 'filled-completion-request', 200, ${'a'.repeat(64)}, ${acceptedAt}
+              ${brokerOrderId}, ${fixture.requestLabel}, 200, ${fixture.responseContentHash}, ${acceptedAt}
             )
           `
           yield* sql`
@@ -2336,19 +2414,65 @@ const insertFilledPlannedPaperIntent = (
             WHERE intent_id = ${intent.intentId}
           `
         }
+        if (fixture.latestMutation === 'recovered') {
+          yield* sql`
+            INSERT INTO mutation_events (
+              event_id, schema_version, mutation_id, intent_id, sequence,
+              operation, event_type, request_hash, consistency_delay_ms, occurred_at
+            ) VALUES (
+              ${canonicalHashV1({ mutationId, sequence: 2, eventType: 'SUBMIT_UNKNOWN' })},
+              'bayn.paper-mutation-event.v1', ${mutationId}, ${intent.intentId}, 2,
+              'SUBMIT', 'SUBMIT_UNKNOWN', ${requestHash}, 1000, ${acceptedAt}
+            )
+          `
+          yield* sql`
+            UPDATE intents
+            SET state = 'UNKNOWN', state_version = state_version + 1, updated_at = ${acceptedAt}
+            WHERE intent_id = ${intent.intentId}
+          `
+          yield* sql`
+            INSERT INTO mutation_events (
+              event_id, schema_version, mutation_id, intent_id, sequence,
+              operation, event_type, request_hash, consistency_delay_ms,
+              broker_order_id, request_id, response_status, response_content_hash, occurred_at
+            ) VALUES (
+              ${canonicalHashV1({ mutationId, sequence: 3, eventType: 'RECOVERY_FOUND' })},
+              'bayn.paper-mutation-event.v1', ${mutationId}, ${intent.intentId}, 3,
+              'SUBMIT', 'RECOVERY_FOUND', ${requestHash}, 1000,
+              ${brokerOrderId}, ${fixture.requestLabel}, 200, ${fixture.responseContentHash}, ${recoveredAt}
+            )
+          `
+          yield* sql`
+            UPDATE intents
+            SET state = 'RECOVERED', state_version = state_version + 1, updated_at = ${recoveredAt}
+            WHERE intent_id = ${intent.intentId}
+          `
+        }
         yield* sql`
           UPDATE intents
           SET
             state = 'TERMINAL',
-            terminal_outcome = 'FILLED',
+            terminal_outcome = ${fixture.terminalOutcome},
             state_version = state_version + 1,
-            updated_at = ${filledAt}
+            updated_at = ${terminalAt}
           WHERE intent_id = ${intent.intentId}
         `
       }),
     )
-    return { acceptedAt, brokerOrderId, filledAt, intent, mutationId, requestHash }
+    return { acceptedAt, brokerOrderId, intent, mutationId, requestHash, terminalAt }
   })
+
+const insertFilledPlannedPaperIntent = (
+  document: ExecutionDecisionDocument,
+  latestMutation: 'accepted' | 'started' = 'accepted',
+) =>
+  insertTerminalPlannedPaperIntent(document, {
+    brokerOrderPrefix: 'filled',
+    latestMutation,
+    requestLabel: 'filled-completion',
+    responseContentHash: 'a'.repeat(64),
+    terminalOutcome: 'FILLED',
+  }).pipe(Effect.map((fixture) => ({ ...fixture, filledAt: fixture.terminalAt })))
 
 const settleStartedPaperSubmit = (
   filled: Effect.Success<ReturnType<typeof insertFilledPlannedPaperIntent>>,
@@ -2368,6 +2492,70 @@ const settleStartedPaperSubmit = (
         ${filled.brokerOrderId}, 'filled-completion-recovery', 200, ${'b'.repeat(64)}, ${occurredAt}
       )
     `
+  })
+
+const insertBenignZeroFillIocPlannedIntent = (
+  document: ExecutionDecisionDocument,
+  latestMutation: 'accepted' | 'recovered' = 'accepted',
+) =>
+  insertTerminalPlannedPaperIntent(document, {
+    brokerOrderPrefix: 'zero-fill',
+    latestMutation,
+    orderType: OrderType.Limit,
+    requestLabel: 'zero-fill-ioc-completion',
+    responseContentHash: 'c'.repeat(64),
+    terminalOutcome: 'CANCELED',
+    timeInForce: TimeInForce.ImmediateOrCancel,
+  }).pipe(Effect.map((fixture) => ({ ...fixture, canceledAt: fixture.terminalAt })))
+
+const insertBenignZeroFillIocOrder = (
+  fixture: Effect.Success<ReturnType<typeof insertBenignZeroFillIocPlannedIntent>>,
+  observedAt: string,
+) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    const eventId = canonicalHashV1({ brokerOrderId: fixture.brokerOrderId, observedAt })
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`
+          INSERT INTO broker_events (
+            event_id, schema_version, content_hash, event_kind, broker, account_id,
+            source_event_id, source_sequence, occurred_at, observed_at
+          ) VALUES (
+            ${eventId}, 'bayn.paper-broker-event.v1', ${canonicalHashV1({ eventId, fixture: 'zero-fill-ioc' })},
+            'ORDER', 'ALPACA', ${fixture.intent.accountId}, ${`zero-fill-${fixture.brokerOrderId}`}, 1,
+            ${observedAt}, ${observedAt}
+          )
+        `
+        yield* sql`
+          INSERT INTO orders (
+            event_id, account_id, schema_version, broker_order_id, client_order_id,
+            intent_id, symbol, side, order_type, time_in_force, quantity_micros,
+            filled_quantity_micros, limit_price_micros, status
+          ) VALUES (
+            ${eventId}, ${fixture.intent.accountId}, 'bayn.paper-order.v1', ${fixture.brokerOrderId},
+            ${fixture.intent.clientOrderId}, ${fixture.intent.intentId}, ${fixture.intent.symbol},
+            ${fixture.intent.side}, 'LIMIT', 'IOC', ${fixture.intent.quantityMicros}, 0, 1000000, 'CANCELED'
+          )
+        `
+      }),
+    )
+    return {
+      schemaVersion: 'bayn.paper-order.v1' as const,
+      accountId: fixture.intent.accountId,
+      brokerOrderId: fixture.brokerOrderId,
+      clientOrderId: fixture.intent.clientOrderId,
+      intentId: fixture.intent.intentId,
+      symbol: fixture.intent.symbol,
+      side: fixture.intent.side,
+      orderType: OrderType.Limit,
+      timeInForce: TimeInForce.ImmediateOrCancel,
+      quantityMicros: fixture.intent.quantityMicros,
+      filledQuantityMicros: '0',
+      limitPriceMicros: '1000000',
+      status: OrderStatus.Canceled,
+      observedAt,
+    }
   })
 
 type SupersededMutationFixture = 'submit-accepted' | 'submit-unknown' | 'cancel-accepted' | 'cancel-unknown'
@@ -2851,7 +3039,11 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         }>`
           SELECT
             submission_cutoff_after_open_ms AS after_open_ms,
-            to_jsonb(cycle) - 'submission_cutoff_after_open_ms' AS row
+            to_jsonb(cycle) - ARRAY[
+              'submission_cutoff_after_open_ms',
+              'warmup_after_open_ms',
+              'submission_cutoff_before_close_ms'
+            ] AS row
           FROM autonomous_cycles AS cycle
           WHERE cycle_id = ${draft.identity.cycleId}
         `
@@ -2949,6 +3141,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
   test('persists and recovers the versioned intraday cycle without changing legacy rows', async () => {
     const draft = makeIntradayDraft()
     const document = makeIntradayShadowDecision(draft)
+    const snapshotReference = makeIntradaySnapshotReference(document)
     const observed = await runtime.runPromise(
       Effect.gen(function* () {
         const store = yield* CycleStore
@@ -2958,8 +3151,22 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         )
         const activated = yield* store.activate(draft.identity.cycleId, draft.window.submissionOpenAt)
         yield* insertShadowReconciliation(draft)
-        const bound = yield* store.bindDecision(draft.identity.cycleId, document, document.createdAt)
+        const missingReference = yield* Effect.exit(
+          store.bindDecision(draft.identity.cycleId, document, document.createdAt),
+        )
+        const bound = yield* store.bindDecision(draft.identity.cycleId, document, document.createdAt, {
+          intradaySnapshotReferences: [snapshotReference],
+        })
         const replay = yield* store.bindDecision(draft.identity.cycleId, structuredClone(document), document.createdAt)
+        const conflictingReference = {
+          ...snapshotReference,
+          manifest: { ...snapshotReference.manifest, contentHash: 'f'.repeat(64) },
+        } as ArchiveVerifiedIntradaySnapshotReference
+        const conflictingEvidence = yield* Effect.exit(
+          store.bindDecision(draft.identity.cycleId, structuredClone(document), document.createdAt, {
+            intradaySnapshotReferences: [conflictingReference],
+          }),
+        )
         const authoritySlot = yield* store.readAuthoritySlot({
           qualificationRunId: draft.identity.qualificationRunId,
           accountId: draft.identity.accountId,
@@ -2985,11 +3192,20 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           FROM snapshot_references
           WHERE snapshot_id = ${document.bindings.snapshotId}
         `
+        const [intradayReference] = yield* sql<{ count: number }>`
+          SELECT count(*)::integer AS count
+          FROM intraday_snapshot_references
+          WHERE snapshot_id = ${document.bindings.snapshotId}
+            AND content_hash = ${document.bindings.snapshotContentHash}
+        `
         return {
           activated,
           authoritySlot,
           bound,
+          conflictingEvidence,
           dailyReferenceCount: dailyReference.count,
+          intradayReferenceCount: intradayReference.count,
+          missingReference,
           receipt,
           replay,
           row,
@@ -3019,6 +3235,12 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     })
     expect(Exit.isFailure(observed.standaloneSnapshot)).toBe(true)
     expect(observed.activated).toMatchObject({ changed: true, cycle: { state: CycleState.Active, bindings: {} } })
+    expect(Exit.isFailure(observed.missingReference)).toBe(true)
+    if (Exit.isFailure(observed.missingReference)) {
+      expect(Cause.pretty(observed.missingReference.cause)).toContain(
+        'decision does not match its durable market-data and exact reconciliation evidence',
+      )
+    }
     expect(observed.bound).toMatchObject({
       changed: true,
       cycle: {
@@ -3031,13 +3253,387 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       },
     })
     expect(observed.replay).toEqual({ changed: false, cycle: observed.bound.cycle })
+    expect(Exit.isFailure(observed.conflictingEvidence)).toBe(true)
+    if (Exit.isFailure(observed.conflictingEvidence)) {
+      expect(Cause.pretty(observed.conflictingEvidence.cause)).toContain(
+        'stored intraday snapshot reference diverged from the archive-verified manifest',
+      )
+    }
     expect(observed.authoritySlot).toEqual(Option.some(observed.bound.cycle))
     expect(observed.dailyReferenceCount).toBe(0)
+    expect(observed.intradayReferenceCount).toBe(1)
     expect(observed.row).toEqual({
       schema_version: 'bayn.autonomous-cycle.v3',
       execution_policy_schema_version: 'bayn.autonomous-cycle-execution-policy.v2',
       submission_cutoff_before_open_ms: null,
       submission_cutoff_after_open_ms: 1_800_000,
+    })
+  })
+
+  test('persists and recovers full-session intraday policy bounds without rewriting historical cycles', async () => {
+    const draft = makeFullSessionIntradayDraft()
+    const observed = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const receipt = yield* store.acquire(draft, '2026-03-09T17:00:00.000Z')
+        const authoritySlot = yield* store.readAuthoritySlot({
+          qualificationRunId: draft.identity.qualificationRunId,
+          accountId: draft.identity.accountId,
+          executionSessionDate: draft.identity.executionSessionDate,
+        })
+        const sql = yield* PgClient.PgClient
+        const [row] = yield* sql<{
+          schema_version: string
+          execution_policy_schema_version: string
+          submission_window_ms: number
+          submission_cutoff_before_open_ms: number | null
+          submission_cutoff_after_open_ms: number | null
+          warmup_after_open_ms: number | null
+          submission_cutoff_before_close_ms: number | null
+        }>`
+          SELECT
+            schema_version,
+            execution_policy_schema_version,
+            submission_window_ms,
+            submission_cutoff_before_open_ms,
+            submission_cutoff_after_open_ms,
+            warmup_after_open_ms,
+            submission_cutoff_before_close_ms
+          FROM autonomous_cycles
+          WHERE cycle_id = ${draft.identity.cycleId}
+        `
+        const missingWarmup = yield* Effect.exit(sql`
+          UPDATE autonomous_cycles
+          SET warmup_after_open_ms = NULL
+          WHERE cycle_id = ${draft.identity.cycleId}
+        `)
+        const missingCutoff = yield* Effect.exit(sql`
+          UPDATE autonomous_cycles
+          SET submission_cutoff_before_close_ms = NULL
+          WHERE cycle_id = ${draft.identity.cycleId}
+        `)
+        return { authoritySlot, missingCutoff, missingWarmup, receipt, row }
+      }),
+    )
+
+    expect(observed.receipt).toMatchObject({
+      created: true,
+      cycle: {
+        schemaVersion: 'bayn.autonomous-cycle.v3',
+        identity: {
+          strategyName: 'intraday-momentum',
+          executionPolicy: {
+            schemaVersion: 'bayn.autonomous-cycle-execution-policy.v3',
+            warmupAfterOpenMs: 1_800_000,
+            submissionCutoffBeforeCloseMs: 3_600_000,
+          },
+        },
+        window: {
+          submissionOpenAt: '2026-03-09T14:00:00.000Z',
+          submissionCutoffAt: '2026-03-09T19:00:00.000Z',
+        },
+      },
+    })
+    expect(observed.authoritySlot).toEqual(Option.some(observed.receipt.cycle))
+    expect(Exit.isFailure(observed.missingWarmup)).toBe(true)
+    expect(Exit.isFailure(observed.missingCutoff)).toBe(true)
+    expect(observed.row).toEqual({
+      schema_version: 'bayn.autonomous-cycle.v3',
+      execution_policy_schema_version: 'bayn.autonomous-cycle-execution-policy.v3',
+      submission_window_ms: 18_000_000,
+      submission_cutoff_before_open_ms: null,
+      submission_cutoff_after_open_ms: null,
+      warmup_after_open_ms: 1_800_000,
+      submission_cutoff_before_close_ms: 3_600_000,
+    })
+  })
+
+  test('admits an intraday decision only against exact durable authority and risk context', async () => {
+    const draft = makeFullSessionIntradayDraft()
+    const forgedReconciledAt = '2026-03-09T16:58:00.000Z'
+    const observedAt = '2026-03-09T17:00:00.000Z'
+    const parentAuthorityUpdatedAt = '2026-03-09T16:58:30.000Z'
+    const reconciliation = plannedPaperReconciliation(draft, observedAt)
+    const reconciledRiskContext = reconciliation.riskContext
+    if (reconciledRiskContext.authority === null || reconciledRiskContext.authorityObservedAt === null) {
+      throw new Error('intraday risk-context fixture requires execution authority')
+    }
+    const authorityUpdatedAt = '2026-03-09T16:59:00.000Z'
+    const parentAuthorityGenerationHash = 'e'.repeat(64)
+    const authorityGenerationHash = 'f'.repeat(64)
+    const policyHash = '9'.repeat(64)
+    const riskContext = {
+      ...reconciledRiskContext,
+      authority: {
+        ...reconciledRiskContext.authority,
+        generationHash: authorityGenerationHash,
+        maximum: Authority.Execution,
+        effective: Authority.Execution,
+        version: 2,
+        updatedAt: authorityUpdatedAt,
+      },
+      authorityObservedAt: authorityUpdatedAt,
+      unknownMutationCount: 1,
+    }
+    const snapshotId = 'b'.repeat(64)
+    const snapshotContentHash = 'c'.repeat(64)
+    const document = {
+      mode: 'PAPER',
+      createdAt: observedAt,
+      bindings: {
+        accountId: draft.identity.accountId,
+        snapshotId,
+        snapshotContentHash,
+        snapshotFinalizedAt: observedAt,
+        planningBrokerStateHash: reconciliation.report.reconciliation.observedHash,
+        reconciliationId: reconciliation.report.reconciliation.reconciliationId,
+        reconciliationHash: reconciliation.report.reconciliation.contentHash,
+        policyHash,
+        executionMarketData: { snapshotId, contentHash: snapshotContentHash, observedAt },
+        riskContext,
+      },
+      deltaRisk: [{ facts: { state: { reconciliation: reconciliation.report.reconciliation } } }],
+    } as unknown as ExecutionDecisionDocument
+
+    const observed = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const brokerIdentity = Result.getOrThrow(
+          makeBrokerIdentity({
+            schemaVersion: 'bayn.broker-identity.v2',
+            provider: BrokerProvider.Alpaca,
+            environment: BrokerEnvironment.Sandbox,
+            accountId: draft.identity.accountId,
+          }),
+        )
+        const durableReconciliation = reconciliation.report.reconciliation
+        yield* sql`
+          INSERT INTO reconciliations (
+            reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+            content_hash, status, discrepancies, reconciled_at
+          ) VALUES (
+            ${durableReconciliation.reconciliationId}, ${durableReconciliation.schemaVersion},
+            ${durableReconciliation.accountId}, ${durableReconciliation.expectedHash},
+            ${durableReconciliation.observedHash}, ${durableReconciliation.contentHash},
+            ${durableReconciliation.status}, ${sql.json(encodeSqlJson(durableReconciliation.discrepancies))},
+            ${durableReconciliation.reconciledAt}
+          )
+        `
+        yield* sql`
+          INSERT INTO authority_generations (
+            generation_hash, schema_version, previous_generation_hash, maximum,
+            authority_version, account_id, broker_identity_schema_version,
+            broker_identity_hash, broker_provider, broker_environment, activated_at
+          ) VALUES (
+            ${parentAuthorityGenerationHash}, 'bayn.authority-generation-history.v1', NULL, 'OBSERVE', 1,
+            ${draft.identity.accountId}, ${brokerIdentity.schemaVersion}, ${brokerIdentity.identityHash},
+            ${brokerIdentity.provider}, ${brokerIdentity.environment}, ${parentAuthorityUpdatedAt}
+          )
+        `
+        yield* sql`
+          INSERT INTO authority_generations (
+            generation_hash, schema_version, activation_schema_version, previous_generation_hash,
+            maximum, authority_version, activation_source_revision, activation_image_repository,
+            activation_image_digest, strategy_name, strategy_behavior_hash, strategy_parameter_hash,
+            strategy_parameter_schema_version, strategy_protocol_hash, account_id,
+            broker_identity_schema_version, broker_identity_hash, broker_provider, broker_environment,
+            risk_policy_hash, proof_plan_hash, reconciliation_id, reconciliation_content_hash,
+            research_plan_hash, activated_at
+          ) VALUES (
+            ${authorityGenerationHash}, 'bayn.authority-generation-history.v1',
+            'bayn.paper-authority-generation.v3', ${parentAuthorityGenerationHash}, 'PAPER', 2,
+            ${'1'.repeat(40)}, 'registry.example.test/lab/bayn', ${`sha256:${'2'.repeat(64)}`},
+            'intraday-momentum', ${'3'.repeat(64)}, ${'4'.repeat(64)},
+            'bayn.intraday-momentum.protocol.v1', ${draft.identity.strategyProtocolHash},
+            ${draft.identity.accountId}, ${brokerIdentity.schemaVersion}, ${brokerIdentity.identityHash},
+            ${brokerIdentity.provider}, ${brokerIdentity.environment}, ${policyHash}, ${'5'.repeat(64)},
+            ${durableReconciliation.reconciliationId}, ${durableReconciliation.contentHash},
+            ${'6'.repeat(64)}, ${authorityUpdatedAt}
+          )
+        `
+        yield* sql`
+          INSERT INTO authority_state (
+            singleton, schema_version, generation_hash, maximum, effective, kill_state,
+            reason, version, updated_at
+          ) VALUES (
+            true, ${riskContext.authority.schemaVersion}, ${parentAuthorityGenerationHash},
+            'OBSERVE', 'OBSERVE', ${riskContext.authority.kill}, NULL, 1, ${parentAuthorityUpdatedAt}
+          )
+        `
+        yield* sql`
+          UPDATE authority_state
+          SET
+            generation_hash = ${authorityGenerationHash},
+            maximum = 'PAPER',
+            effective = 'PAPER',
+            version = 2,
+            updated_at = ${authorityUpdatedAt}
+          WHERE singleton
+        `
+        const intentId = '1'.repeat(64)
+        const riskDecisionId = 'a'.repeat(64)
+        const submitMutationId = '2'.repeat(64)
+        const cancelMutationId = '3'.repeat(64)
+        const submitRequestHash = '4'.repeat(64)
+        const cancelRequestHash = '5'.repeat(64)
+        const brokerOrderId = 'risk-cutoff-order'
+        yield* sql`
+          INSERT INTO intents (
+            intent_id, schema_version, authority_generation_hash, risk_decision_id, strategy_name, cycle_id,
+            decision_hash, policy_hash, account_id, client_order_id, symbol, side, order_type, time_in_force,
+            quantity_micros, notional_limit_micros, state, terminal_outcome, state_version, created_at, updated_at
+          ) VALUES (
+            ${intentId}, 'bayn.paper-intent.v3', ${authorityGenerationHash}, NULL, 'intraday-momentum',
+            ${draft.identity.cycleId}, ${'4'.repeat(64)}, ${'5'.repeat(64)}, ${draft.identity.accountId},
+            'bayn-risk-cutoff-test', 'SPY', 'BUY', 'LIMIT', 'IOC', 1000000, 1000000,
+            'PLANNED', NULL, 1, '2026-03-09T16:59:30.000Z', '2026-03-09T16:59:30.000Z'
+          )
+        `
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`
+              INSERT INTO risk_decisions (
+                decision_id, schema_version, input_hash, intent_id, policy_hash, outcome,
+                reason_codes, decided_at, expires_at
+              ) VALUES (
+                ${riskDecisionId}, 'bayn.paper-risk-decision.v1', ${'b'.repeat(64)}, ${intentId},
+                ${'5'.repeat(64)}, 'APPROVED', ARRAY[]::text[],
+                '2026-03-09T16:59:31.000Z', '2099-01-01T00:00:00.000Z'
+              )
+            `
+            yield* sql`
+              UPDATE intents
+              SET
+                risk_decision_id = ${riskDecisionId}, state = 'APPROVED', state_version = 2,
+                updated_at = '2026-03-09T16:59:31.000Z'
+              WHERE intent_id = ${intentId}
+            `
+          }),
+        )
+        yield* sql`
+          UPDATE intents
+          SET state = 'IO_STARTED', state_version = 3, updated_at = '2026-03-09T16:59:32.000Z'
+          WHERE intent_id = ${intentId}
+        `
+        yield* sql`
+          INSERT INTO mutation_events (
+            event_id, schema_version, mutation_id, intent_id, sequence, operation, event_type,
+            request_hash, consistency_delay_ms, broker_order_id, request_id, response_status,
+            response_content_hash, occurred_at
+          ) VALUES (
+            ${'6'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${submitMutationId}, ${intentId}, 1,
+            'SUBMIT', 'SUBMIT_STARTED', ${submitRequestHash}, 1000, NULL, NULL, NULL, NULL,
+            '2026-03-09T16:59:33.000Z'
+          )
+        `
+        yield* sql`
+          INSERT INTO mutation_events (
+            event_id, schema_version, mutation_id, intent_id, sequence, operation, event_type,
+            request_hash, consistency_delay_ms, broker_order_id, request_id, response_status,
+            response_content_hash, occurred_at
+          ) VALUES (
+            ${'7'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${submitMutationId}, ${intentId}, 2,
+            'SUBMIT', 'SUBMIT_ACCEPTED', ${submitRequestHash}, 1000, ${brokerOrderId},
+            'risk-cutoff-submit', 200, ${'8'.repeat(64)}, '2026-03-09T16:59:34.000Z'
+          )
+        `
+        yield* sql`
+          UPDATE intents
+          SET state = 'ACKNOWLEDGED', state_version = 4, updated_at = '2026-03-09T16:59:35.000Z'
+          WHERE intent_id = ${intentId}
+        `
+        yield* sql`
+          INSERT INTO mutation_events (
+            event_id, schema_version, mutation_id, intent_id, sequence, operation, event_type,
+            request_hash, consistency_delay_ms, broker_order_id, request_id, response_status,
+            response_content_hash, occurred_at
+          ) VALUES (
+            ${'9'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${cancelMutationId}, ${intentId}, 1,
+            'CANCEL', 'CANCEL_STARTED', ${cancelRequestHash}, 1000, ${brokerOrderId}, NULL, NULL, NULL,
+            '2026-03-09T16:59:36.000Z'
+          )
+        `
+        yield* sql`
+          INSERT INTO mutation_events (
+            event_id, schema_version, mutation_id, intent_id, sequence, operation, event_type,
+            request_hash, consistency_delay_ms, broker_order_id, request_id, response_status,
+            response_content_hash, occurred_at
+          ) VALUES (
+            ${'a'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${cancelMutationId}, ${intentId}, 2,
+            'CANCEL', 'CANCEL_ACCEPTED', ${cancelRequestHash}, 1000, ${brokerOrderId},
+            'risk-cutoff-cancel', 204, ${'b'.repeat(64)}, '2026-03-09T16:59:37.000Z'
+          )
+        `
+        yield* sql`
+          INSERT INTO mutation_events (
+            event_id, schema_version, mutation_id, intent_id, sequence, operation, event_type,
+            request_hash, consistency_delay_ms, broker_order_id, request_id, response_status,
+            response_content_hash, occurred_at
+          ) VALUES (
+            ${'c'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${cancelMutationId}, ${intentId}, 3,
+            'CANCEL', 'RECOVERY_FOUND', ${cancelRequestHash}, 1000, ${brokerOrderId},
+            'risk-cutoff-recovery', 200, ${'d'.repeat(64)}, '2026-03-09T16:59:38.000Z'
+          )
+        `
+        yield* sql`
+          UPDATE intents
+          SET
+            state = 'TERMINAL', terminal_outcome = 'CANCELED', state_version = 5,
+            updated_at = '2026-03-09T17:00:30.000Z'
+          WHERE intent_id = ${intentId}
+        `
+        yield* sql`
+          INSERT INTO valuations (
+            valuation_id, schema_version, account_id, source_hash, cash_micros,
+            long_market_value_micros, short_market_value_micros, equity_micros, as_of
+          ) VALUES
+            (
+              ${'1'.repeat(64)}, 'bayn.paper-valuation.v1', ${draft.identity.accountId}, ${'2'.repeat(64)},
+              ${riskContext.dayStartEquityMicros}, 0, 0, ${riskContext.dayStartEquityMicros},
+              ${forgedReconciledAt}
+            ),
+            (
+              ${'d'.repeat(64)}, 'bayn.paper-valuation.v1', ${draft.identity.accountId}, ${'e'.repeat(64)},
+              ${riskContext.dayStartEquityMicros}, 0, 0, ${riskContext.dayStartEquityMicros}, ${observedAt}
+            )
+        `
+        const queries = makeCycleQueries(sql)
+        const exact = yield* queries.decisionEvidenceMatches(document)
+        const forged = yield* queries.decisionEvidenceMatches({
+          ...document,
+          bindings: {
+            ...document.bindings,
+            riskContext: {
+              ...riskContext,
+              authority: { ...riskContext.authority, version: riskContext.authority.version + 1 },
+            },
+          },
+        })
+        const forgedReconciliationCutoff = yield* queries.decisionEvidenceMatches({
+          ...document,
+          deltaRisk: [
+            {
+              facts: {
+                state: {
+                  reconciliation: { ...durableReconciliation, reconciledAt: forgedReconciledAt },
+                },
+              },
+            },
+          ],
+        } as unknown as ExecutionDecisionDocument)
+        const forgedPolicyHash = yield* queries.decisionEvidenceMatches({
+          ...document,
+          bindings: { ...document.bindings, policyHash: 'a'.repeat(64) },
+        } as unknown as ExecutionDecisionDocument)
+        return { exact, forged, forgedPolicyHash, forgedReconciliationCutoff }
+      }),
+    )
+
+    expect(observed).toEqual({
+      exact: true,
+      forged: false,
+      forgedPolicyHash: false,
+      forgedReconciliationCutoff: false,
     })
   })
 
@@ -5460,6 +6056,96 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       orders: 0,
     })
   })
+
+  test.each(['accepted', 'recovered'] as const)(
+    'completes a terminal zero-fill LIMIT/IOC through a %s submit path only after exact order and reconciliation evidence',
+    async (submitPath) => {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const [clock] = yield* sql<{ evaluated_at: string }>`
+          SELECT to_char(
+            (clock_timestamp() - interval '1 second') AT TIME ZONE 'UTC',
+            'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+          ) AS evaluated_at
+        `
+          if (clock === undefined) return yield* Effect.die(new Error('database Clock returned no row'))
+          const {
+            evaluationAt: evaluatedAt,
+            executionOpenAt,
+            executionSessionDate,
+            signalSessionDate,
+            snapshotBoundAt,
+          } = monthEndExecutionWindow(clock.evaluated_at)
+          const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(fixtureProtocol.executionModel))
+          const draft = makeDraft(`paper-account-zero-fill-ioc-completion-${submitPath}`, {
+            executionPolicy,
+            executionCloseAt: `${executionSessionDate}T23:59:59.999Z`,
+            executionOpenAt,
+            executionSessionDate,
+            signalSessionDate,
+          })
+          const acquisitionAt = utcInstantFromEpochMillis(Date.parse(draft.window.signalCloseAt) + 60_000)
+          const activatedAt = utcInstantFromEpochMillis(Date.parse(snapshotBoundAt) + 1_000)
+          const manifest = makeInputManifest(snapshotB, {
+            asOfSession: signalSessionDate,
+            finalizedAt: snapshotBoundAt,
+            lastSession: signalSessionDate,
+          })
+
+          const store = yield* CycleStore
+          yield* store.acquire(draft, acquisitionAt)
+          yield* store.bindSnapshot(draft.identity.cycleId, manifest, snapshotBoundAt)
+          const activated = yield* store.activate(draft.identity.cycleId, activatedAt)
+          const planned = yield* buildPlannedExecutionDecision(activated.cycle, snapshotB, {
+            evaluatedAt,
+            snapshotFinalizedAt: snapshotBoundAt,
+          })
+          if (
+            planned.document.targetPlan.status !== TargetPlanStatus.Planned ||
+            planned.document.riskBlock !== undefined
+          ) {
+            return yield* Effect.die(new Error('zero-fill IOC fixture requires a dispatchable planned decision'))
+          }
+          yield* insertReconciliation(planned.reconciliation)
+          yield* insertQualifiedPaperLineage(planned.document)
+          yield* store.bindDecision(draft.identity.cycleId, planned.document, evaluatedAt)
+
+          const zeroFill = yield* insertBenignZeroFillIocPlannedIntent(planned.document, submitPath)
+          const missingOrderReconciledAt = utcInstantFromEpochMillis(Date.parse(zeroFill.canceledAt) + 1)
+          yield* insertReconciliation(plannedPaperReconciliation(activated.cycle, missingOrderReconciledAt))
+          const withoutOrder = yield* Effect.exit(
+            store.finish(draft.identity.cycleId, CycleState.Completed, missingOrderReconciledAt),
+          )
+
+          const orderObservedAt = utcInstantFromEpochMillis(Date.parse(missingOrderReconciledAt) + 1)
+          const order = yield* insertBenignZeroFillIocOrder(zeroFill, orderObservedAt)
+          const withoutPostOrderReconciliation = yield* Effect.exit(
+            store.finish(draft.identity.cycleId, CycleState.Completed, orderObservedAt),
+          )
+
+          const reconciledAt = utcInstantFromEpochMillis(Date.parse(orderObservedAt) + 1)
+          yield* insertReconciliation(plannedPaperReconciliation(activated.cycle, reconciledAt, [order]))
+          const completed = yield* store.finish(draft.identity.cycleId, CycleState.Completed, reconciledAt)
+          const replayed = yield* store.finish(draft.identity.cycleId, CycleState.Completed, reconciledAt)
+          const unfinished = yield* store.readOldestUnfinished({
+            qualificationRunId: draft.identity.qualificationRunId,
+            accountId: draft.identity.accountId,
+          })
+          return { completed, reconciledAt, replayed, unfinished, withoutOrder, withoutPostOrderReconciliation }
+        }).pipe(Effect.provide(TestClock.layer())),
+      )
+
+      expect(Exit.isFailure(result.withoutOrder)).toBe(true)
+      expect(Exit.isFailure(result.withoutPostOrderReconciliation)).toBe(true)
+      expect(result.completed).toMatchObject({
+        changed: true,
+        cycle: { state: CycleState.Completed, terminalAt: result.reconciledAt },
+      })
+      expect(result.replayed).toEqual({ changed: false, cycle: result.completed.cycle })
+      expect(Option.isNone(result.unfinished)).toBe(true)
+    },
+  )
 
   test('finishes the exact no-trade decision once after cutoff and preserves terminal history across runtimes', async () => {
     const draft = makeDraft()

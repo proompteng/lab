@@ -7,6 +7,7 @@ import {
   snapshotReferenceIssueTags,
 } from '../../db/snapshot-reference'
 import { decodeInputManifestArtifact } from '../../evidence-contracts'
+import type { ArchiveVerifiedIntradaySnapshotReference } from '../../market-data/intraday/model'
 import { Pipeable } from '../../pipeable'
 import type { CycleDecisionDocument } from '../../shadow-decision-contract'
 import type { InputManifest } from '../../types'
@@ -23,6 +24,7 @@ import {
   liftCycleDecision,
   runCycleStore,
   type CycleMutationReceipt,
+  type CycleDecisionBindingEvidence,
   type CycleStoreInternalError,
   type CycleStoreShape,
 } from './model'
@@ -147,6 +149,63 @@ const makeCycleBindingProgramsDataFirst = (
       Effect.map((cycle) => ({ cycle, changed: true })),
     )
 
+  const persistIntradaySnapshotReference = (
+    reference: ArchiveVerifiedIntradaySnapshotReference,
+  ): Effect.Effect<void, CycleStoreInternalError> =>
+    Effect.gen(function* () {
+      const manifest = reference.manifest
+      yield* sql`
+        INSERT INTO intraday_snapshot_references (
+          snapshot_id, schema_version, content_hash, observed_at, manifest
+        ) VALUES (
+          ${manifest.snapshotId}, ${reference.schemaVersion}, ${manifest.contentHash},
+          ${manifest.observedAt}::timestamptz, ${sql.json(manifest)}
+        )
+        ON CONFLICT (snapshot_id) DO NOTHING
+      `
+      const [match] = yield* sql<{ matches: boolean }>`
+        SELECT EXISTS (
+          SELECT 1
+          FROM intraday_snapshot_references AS reference
+          WHERE reference.snapshot_id = ${manifest.snapshotId}
+            AND reference.schema_version = ${reference.schemaVersion}
+            AND reference.content_hash = ${manifest.contentHash}
+            AND reference.observed_at = ${manifest.observedAt}::timestamptz
+            AND reference.manifest = ${sql.json(manifest)}
+        ) AS matches
+      `
+      if (match?.matches !== true) {
+        return yield* failCycleStore(
+          'bind-decision',
+          'conflict',
+          'stored intraday snapshot reference diverged from the archive-verified manifest',
+        )
+      }
+    })
+
+  const persistDecisionEvidence = (
+    evidence: CycleDecisionBindingEvidence | undefined,
+  ): Effect.Effect<void, CycleStoreInternalError> =>
+    Effect.forEach(evidence?.intradaySnapshotReferences ?? [], persistIntradaySnapshotReference, {
+      concurrency: 1,
+      discard: true,
+    })
+
+  const requireDecisionEvidence = (document: CycleDecisionDocument): Effect.Effect<void, CycleStoreInternalError> =>
+    queries
+      .decisionEvidenceMatches(document)
+      .pipe(
+        Effect.flatMap((matches) =>
+          matches
+            ? Effect.void
+            : failCycleStore(
+                'bind-decision',
+                'invariant',
+                'decision does not match its durable market-data and exact reconciliation evidence',
+              ),
+        ),
+      )
+
   const interpretSnapshotDecision = (
     manifest: InputManifest,
     observedAt: string,
@@ -186,17 +245,7 @@ const makeCycleBindingProgramsDataFirst = (
     observedAt: string,
     decision: Extract<DecisionBindingDecision, { readonly _tag: 'Persist' }>,
   ): Effect.Effect<CycleMutationReceipt, CycleStoreInternalError> =>
-    queries.decisionEvidenceMatches(decision.document).pipe(
-      Effect.flatMap((matches) =>
-        matches
-          ? Effect.void
-          : failCycleStore(
-              'bind-decision',
-              'invariant',
-              'decision does not match its durable market-data and exact reconciliation evidence',
-            ),
-      ),
-      Effect.andThen(sql`
+    sql`
         INSERT INTO autonomous_cycle_shadow_decisions (
           cycle_id,
           schema_version,
@@ -208,7 +257,7 @@ const makeCycleBindingProgramsDataFirst = (
           ${sql.json(decision.document)},
           ${decision.document.createdAt}
         )
-      `),
+    `.pipe(
       Effect.andThen(sql<Record<string, unknown>>`
         UPDATE autonomous_cycles
         SET
@@ -237,11 +286,21 @@ const makeCycleBindingProgramsDataFirst = (
   const interpretDecisionBinding = (
     observedAt: string,
     decision: DecisionBindingDecision,
+    document: CycleDecisionDocument,
+    evidence: CycleDecisionBindingEvidence | undefined,
   ): Effect.Effect<CycleMutationReceipt, CycleStoreInternalError> =>
     Match.value(decision).pipe(
       Match.tagsExhaustive({
-        Replay: ({ cycle }) => Effect.succeed({ cycle, changed: false }),
-        Persist: (persist) => persistDecisionBinding(observedAt, persist),
+        Replay: ({ cycle }) =>
+          persistDecisionEvidence(evidence).pipe(
+            Effect.andThen(requireDecisionEvidence(document)),
+            Effect.as({ cycle, changed: false }),
+          ),
+        Persist: (persist) =>
+          persistDecisionEvidence(evidence).pipe(
+            Effect.andThen(requireDecisionEvidence(document)),
+            Effect.andThen(persistDecisionBinding(observedAt, persist)),
+          ),
         Block: ({ cycle, reason }) => mutations.blockCycle('bind-decision', cycle, reason, observedAt),
       }),
     )
@@ -250,6 +309,7 @@ const makeCycleBindingProgramsDataFirst = (
     cycleId: string,
     document: CycleDecisionDocument,
     observedAt: string,
+    evidence?: CycleDecisionBindingEvidence,
   ) =>
     runCycleStore(
       'bind-decision',
@@ -270,7 +330,9 @@ const makeCycleBindingProgramsDataFirst = (
                   decideDecisionBinding(cycle, input.document, input.observedAt, documents),
                 ),
               ),
-              Effect.flatMap((decision) => interpretDecisionBinding(input.observedAt, decision)),
+              Effect.flatMap((decision) =>
+                interpretDecisionBinding(input.observedAt, decision, input.document, evidence),
+              ),
             ),
           ),
         ),

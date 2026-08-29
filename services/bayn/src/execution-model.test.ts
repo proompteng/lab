@@ -105,7 +105,7 @@ describe('explicit execution model', () => {
       precision: { quantityIncrementMicros: '1000000' },
     })
     expect(Result.isSuccess(decodeExecutionModel(intradayMomentumExecutionModel))).toBeTrue()
-    expect(Result.isFailure(decodeCycleExecutionModel(intradayMomentumExecutionModel))).toBeTrue()
+    expect(Result.isSuccess(decodeCycleExecutionModel(intradayMomentumExecutionModel))).toBeTrue()
     expect(
       Result.isFailure(
         decodeExecutionModel({

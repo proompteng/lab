@@ -418,8 +418,7 @@ export const decidePreparedMutationIntentAdmission = Pipeable.by<
   decidePreparedMutationIntentAdmissionDataFirst,
 )
 
-const decidePreparedCloseIntentAdmissionDataFirst = (
-  intent: Pick<Intent, 'side'>,
+export const decidePreparedCloseIntentAdmission = (
   prepared: PreparedMutationIntentDecision,
   observedAt: string,
   expiresAt: string,
@@ -429,13 +428,6 @@ const decidePreparedCloseIntentAdmissionDataFirst = (
   unknownOrderCount = 0,
 ): Result.Result<void, PreparedMutationIntentAdmissionFailure> => {
   if (prepared._tag !== 'Submit') return Result.succeed(undefined)
-  if (intent.side !== 'SELL') {
-    return Result.fail({
-      _tag: 'PreparedMutationIntentAdmissionFailure',
-      reason: 'authority',
-      message: 'close-only execution admission permits sell intents only',
-    })
-  }
   if (observedAt >= expiresAt) {
     return Result.fail({
       _tag: 'PreparedMutationIntentAdmissionFailure',
@@ -473,22 +465,6 @@ const decidePreparedCloseIntentAdmissionDataFirst = (
   }
   return Result.succeed(undefined)
 }
-
-export const decidePreparedCloseIntentAdmission = Pipeable.by<
-  (
-    prepared: PreparedMutationIntentDecision,
-    observedAt: string,
-    expiresAt: string,
-    unknownMutationCount: number,
-    reconciliationStatus?: ReconciliationStatus,
-    accountingExact?: boolean,
-    unknownOrderCount?: number,
-  ) => (intent: Pick<Intent, 'side'>) => ReturnType<typeof decidePreparedCloseIntentAdmissionDataFirst>,
-  typeof decidePreparedCloseIntentAdmissionDataFirst
->(
-  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null && 'side' in arguments_[0],
-  decidePreparedCloseIntentAdmissionDataFirst,
-)
 
 const appendPendingMutationOrderDataFirst = (orders: readonly Order[], pending: Order): readonly Order[] =>
   orders.some((order) => order.brokerOrderId === pending.brokerOrderId || order.clientOrderId === pending.clientOrderId)

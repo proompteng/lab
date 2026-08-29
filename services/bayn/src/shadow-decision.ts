@@ -18,13 +18,16 @@ import {
 } from './execution/intents/domain'
 import type { ExecutionSessionBinding } from './execution-session'
 import { canonicalHashV1Result } from './hash'
+import type { PersistedIntradaySnapshotRows } from './market-data'
 import {
   Authority,
   IntentSchema,
   IntentState,
   OrderSide,
+  OrderType,
   ReferenceIntentSchema,
   RiskOutcome,
+  TimeInForce,
   type Intent,
   type Position,
   type ReferenceIntent,
@@ -43,6 +46,7 @@ import {
   ExecutionMarketDataBindingSchema,
   makeExecutionDecisionDocument,
   makeObserveShadowDecisionDocument,
+  reconciledPositionLiquidationBindingSchemaVersion,
   type CycleDecisionDocument,
   type DeltaRiskEvaluation,
   type ExecutionMarketDataBinding,
@@ -58,6 +62,7 @@ import {
   TargetPlannerInputSchema,
   TargetPlanResultSchema,
   TargetPlanStatus,
+  quoteBoundTargetPlannerInputSchemaVersion,
   type PlannedTargetQuantity,
   type TargetPlannerInput,
   type TargetPlanResult,
@@ -86,6 +91,7 @@ export interface ObserveShadowDecisionInput {
   readonly cycle: AutonomousCycle
   readonly snapshot: ShadowSnapshotBinding
   readonly compiledDecision: RuntimeStrategyDecision
+  readonly decisionMarketDataRows?: PersistedIntradaySnapshotRows
   readonly executionMarketData?: ExecutionMarketDataBinding
   readonly plannerInput: TargetPlannerInput
   readonly targetPlan: TargetPlanResult
@@ -129,6 +135,13 @@ const ObserveShadowDecisionInputSchema = Schema.Struct({
   cycle: AutonomousCycleSchema,
   snapshot: ShadowSnapshotBindingSchema,
   compiledDecision: Schema.Unknown,
+  decisionMarketDataRows: Schema.optionalKey(
+    Schema.Struct({
+      bars: Schema.Array(Schema.Unknown),
+      quotes: Schema.Array(Schema.Unknown),
+      trades: Schema.Array(Schema.Unknown),
+    }),
+  ),
   executionMarketData: Schema.optionalKey(Schema.Unknown),
   plannerInput: TargetPlannerInputSchema,
   targetPlan: TargetPlanResultSchema,
@@ -208,12 +221,15 @@ const revaluePositionAtReferencePrice = (position: Position, referencePriceMicro
 const revalueInitialPositions = (
   positions: readonly Position[],
   referencePrices: Readonly<Record<string, string>>,
+  preserveReconciledMarksForUnselectedPositions: boolean,
 ): Result.Result<readonly Position[], ShadowDecisionError> =>
   Result.all(
     positions.map((position) => {
       const referencePrice = referencePrices[position.symbol]
       return referencePrice === undefined
-        ? Result.fail(error('binding', `held symbol ${position.symbol} has no target-planning reference price`))
+        ? preserveReconciledMarksForUnselectedPositions
+          ? Result.succeed(position)
+          : Result.fail(error('binding', `held symbol ${position.symbol} has no target-planning reference price`))
         : Result.succeed(revaluePositionAtReferencePrice(position, referencePrice))
     }),
   ).pipe(Result.map((revalued) => revalued.sort(compareSymbols)))
@@ -305,9 +321,12 @@ const validateBindings = (
   ) {
     return Result.fail(error('binding', 'flat execution targets require the explicit bounded close-only lease'))
   }
-  const intradayEntry = decision.schemaVersion === 'bayn.opening-drive.target.v1'
+  const intradayEntry =
+    decision.schemaVersion === 'bayn.opening-drive.target.v1' ||
+    decision.schemaVersion === 'bayn.intraday-momentum.target.v1'
   const intradayClose =
-    decision.schemaVersion === 'bayn.execution-flat-target.v1' && decision.strategyName === 'opening-drive-momentum'
+    decision.schemaVersion === 'bayn.execution-flat-target.v1' &&
+    (decision.strategyName === 'opening-drive-momentum' || decision.strategyName === 'intraday-momentum')
   const intradayDecision = intradayEntry || intradayClose
   const executionMarketData = input.executionMarketData
   const executionCalendarSession = executionMarketData?.calendar.sessions.find(
@@ -322,9 +341,77 @@ const validateBindings = (
           ...executionCalendarSession,
         })
   if (intradayEntry && decision.calendarHash !== cycle.window.executionCalendarHash) {
-    return Result.fail(
-      error('binding', 'opening-drive decision calendar must match the immutable cycle execution calendar'),
-    )
+    return Result.fail(error('binding', 'intraday decision calendar must match the immutable cycle execution calendar'))
+  }
+  if (intradayEntry && executionMarketData?.purpose === 'LIQUIDATION') {
+    return Result.fail(error('binding', 'intraday entry requires non-liquidation market-data evidence'))
+  }
+  if (
+    decision.schemaVersion === 'bayn.intraday-momentum.target.v1' &&
+    executionMarketData?.schemaVersion !== 'bayn.execution-market-data-binding.v2'
+  ) {
+    return Result.fail(error('binding', 'intraday-momentum entry requires execution market-data binding v2'))
+  }
+  if (intradayEntry && executionMarketData?.schemaVersion === 'bayn.execution-market-data-binding.v2') {
+    const decisionSymbols = decision.signals.map(({ symbol }) => symbol).toSorted()
+    const bindsCompleteUniverse =
+      executionMarketData.symbols.length === executionMarketData.universe.length &&
+      executionMarketData.symbols.every((symbol, index) => symbol === executionMarketData.universe[index])
+    const bindsDecisionSignals =
+      executionMarketData.symbols.length === decisionSymbols.length &&
+      executionMarketData.symbols.every((symbol, index) => symbol === decisionSymbols[index])
+    if (!bindsCompleteUniverse || !bindsDecisionSignals) {
+      return Result.fail(
+        error('binding', 'intraday entry requires complete market-data evidence for the decision universe'),
+      )
+    }
+  }
+  if (intradayClose && executionMarketData?.purpose !== 'LIQUIDATION') {
+    return Result.fail(error('binding', 'intraday close requires explicit liquidation market-data evidence'))
+  }
+  if (
+    intradayClose &&
+    executionMarketData !== undefined &&
+    (executionMarketData.symbols.length !== decision.symbols.length ||
+      executionMarketData.symbols.some((symbol, index) => symbol !== decision.symbols[index]))
+  ) {
+    return Result.fail(error('binding', 'intraday close market-data symbols must match the flat execution target'))
+  }
+  if (executionMarketData?.schemaVersion === reconciledPositionLiquidationBindingSchemaVersion) {
+    const positions = plannerInput.brokerState.positions
+      .filter(
+        ({ symbol, quantityMicros }) =>
+          decision.schemaVersion === 'bayn.execution-flat-target.v1' &&
+          decision.symbols.includes(symbol) &&
+          BigInt(quantityMicros) !== 0n,
+      )
+      .toSorted((left, right) => left.symbol.localeCompare(right.symbol))
+    const bindingMatchesReconciliation =
+      executionMarketData.reconciliationId === plannerInput.brokerState.reconciliation.reconciliationId &&
+      executionMarketData.reconciliationHash === plannerInput.brokerState.reconciliation.contentHash &&
+      executionMarketData.positionsObservedAt === plannerInput.brokerState.positionsObservedAt &&
+      executionMarketData.positions.length === positions.length &&
+      executionMarketData.positions.every((position, index) => {
+        const expected = positions[index]
+        return (
+          expected !== undefined &&
+          position.symbol === expected.symbol &&
+          position.quantityMicros === expected.quantityMicros &&
+          position.marketPriceMicros === expected.marketPriceMicros &&
+          position.observedAt === expected.observedAt
+        )
+      })
+    const narrowCloseTerms =
+      plannerInput.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
+      plannerInput.executionTerms.executionPurpose === 'forced-close' &&
+      plannerInput.executionTerms.orderType === OrderType.Market &&
+      plannerInput.executionTerms.timeInForce === TimeInForce.Day &&
+      plannerInput.executionTerms.priceReference === 'reconciled-broker-position-mark'
+    if (!intradayClose || !bindingMatchesReconciliation || !narrowCloseTerms) {
+      return Result.fail(
+        error('binding', 'reconciled position evidence is authorized only for the exact close-only broker state'),
+      )
+    }
   }
   if (
     intradayDecision !== (executionMarketData !== undefined) ||
@@ -333,8 +420,7 @@ const validateBindings = (
       (executionCalendar === undefined ||
         Result.isFailure(executionCalendar) ||
         executionCalendar.success.executionCalendarHash !== cycle.window.executionCalendarHash)) ||
-    (decision.schemaVersion === 'bayn.opening-drive.target.v1' &&
-      executionMarketData?.snapshotId !== decision.snapshotId)
+    (intradayEntry && executionMarketData?.snapshotId !== decision.snapshotId)
   ) {
     return Result.fail(error('binding', 'execution market data must match the intraday strategy decision and cycle'))
   }
@@ -574,6 +660,14 @@ const reduceShadowDelta = (
     ...accumulator.deltaRisk,
     {
       notionalLimitMicros: provided.notionalLimitMicros,
+      ...(context.authority === Authority.Execution
+        ? {
+            facts: {
+              state: state.success,
+              proposedPositions: accumulator.projectedPositions,
+            },
+          }
+        : {}),
       evaluation: evaluation.success,
     },
   ]
@@ -725,6 +819,8 @@ const prepareShadowRisk = (context: ShadowDecisionContext): Result.Result<Prepar
     const revalued = revalueInitialPositions(
       firstRiskInput?.state.positions ?? input.plannerInput.brokerState.positions,
       input.plannerInput.referencePrices.priceMicros,
+      input.plannerInput.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
+        input.plannerInput.executionTerms.executionPurpose !== undefined,
     )
     if (Result.isFailure(revalued)) return Result.fail(revalued.failure)
     initialPositions = revalued.success
@@ -849,6 +945,7 @@ const assembleExecutionDecisionDocument = (
     (cause) => error('contract', 'planning broker state hash could not be derived', cause),
   )
   if (Result.isFailure(planningBrokerStateHash)) return Result.fail(planningBrokerStateHash.failure)
+  const initialRiskState = input.riskInputs[0]?.state
   return Result.mapError(
     makeExecutionDecisionDocument({
       schemaVersion: legacyCycleDecisionSchemaVersion,
@@ -869,9 +966,25 @@ const assembleExecutionDecisionDocument = (
         reconciliationId: input.plannerInput.brokerState.reconciliation.reconciliationId,
         reconciliationHash: input.plannerInput.brokerState.reconciliation.contentHash,
         authorityGenerationHash,
+        ...(input.plannerInput.strategyName !== 'intraday-momentum' || initialRiskState === undefined
+          ? {}
+          : {
+              riskContext: {
+                authority: initialRiskState.authority,
+                authorityObservedAt: initialRiskState.authorityObservedAt,
+                unknownMutationCount: initialRiskState.unknownMutationCount,
+                dailyTradedNotionalMicros: initialRiskState.dailyTradedNotionalMicros,
+                dayStartEquityMicros: initialRiskState.dayStartEquityMicros,
+                peakEquityMicros: initialRiskState.peakEquityMicros,
+              },
+            }),
         ...(input.executionMarketData === undefined ? {} : { executionMarketData: input.executionMarketData }),
       },
       executionSession,
+      strategyDecision: input.compiledDecision,
+      ...(input.decisionMarketDataRows === undefined ? {} : { decisionMarketDataRows: input.decisionMarketDataRows }),
+      plannerInput: input.plannerInput,
+      riskPolicy: input.policy,
       targetPlan: input.targetPlan,
       deltaRisk: reduction.deltaRisk,
       orderedIntentIds: reduction.deltaRisk.map((risk) => risk.evaluation.input.intentId),
@@ -894,6 +1007,7 @@ export const buildExecutionDecision = (
         cycle: input.cycle,
         snapshot: input.snapshot,
         compiledDecision: input.compiledDecision,
+        ...(input.decisionMarketDataRows === undefined ? {} : { decisionMarketDataRows: input.decisionMarketDataRows }),
         ...(input.executionMarketData === undefined ? {} : { executionMarketData: input.executionMarketData }),
         plannerInput: input.plannerInput,
         targetPlan: input.targetPlan,

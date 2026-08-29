@@ -1244,6 +1244,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       'fills',
       'gate_outcomes',
       'intents',
+      'intraday_snapshot_references',
       'lifecycle_commands',
       'live_capital_grant_revocations',
       'live_capital_grants',
@@ -1320,6 +1321,9 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 50, name: 'preserve_failure_rearm_cycle' },
       { migration_id: 51, name: 'position_snapshot_ingestion_order' },
       { migration_id: 52, name: 'position_snapshot_observability_index' },
+      { migration_id: 53, name: 'full_session_intraday_cycles' },
+      { migration_id: 54, name: 'benign_zero_fill_ioc_completion' },
+      { migration_id: 55, name: 'intraday_snapshot_references' },
     ])
   })
 

@@ -5,6 +5,7 @@ export {
   decideMutationIntentSettlement,
   decideExecutionCycleCompletion,
   decideExecutionIntentTerminalDisposition,
+  decidePreparedCloseIntentAdmission,
   decidePreparedMutationIntent,
   decidePreparedMutationIntentAdmission,
   decidePreparedMutationRecovery,
@@ -68,8 +69,12 @@ export type {
 } from './observe-composition/model'
 
 export {
+  blockedEntryRequiresCloseOnlyContainment,
+  decideReconciledExecutionCycleCompletion,
+  decideReconciledExecutionCycleTerminalization,
   decideExecutionCycleCloseDocument,
   executionMutationSubmissionAllowed,
+  isExecutionCycleReconciledFlat,
   prepareNextMutationIntent,
   terminalizeBlockedExecutionCycle,
 } from './observe-composition/execution-cycle'

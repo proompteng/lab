@@ -317,6 +317,33 @@ describe('execution coordinator decisions', () => {
     ).toMatchObject({ _tag: 'RecoveryFound' })
   })
 
+  test('recovers an interrupted close-only buy-to-cover from its durable quantity request', () => {
+    const unknownIntent = { ...intent, state: IntentState.Unknown }
+    const closeOnlyRequest = Result.getOrThrow(orderRequestBody(unknownIntent, true))
+    const interrupted = {
+      ...mutation(MutationOperation.Submit, MutationEventType.SubmitUnknown, unknownIntent),
+      requestHash: canonicalHashV1(closeOnlyRequest),
+    }
+    const { notionalMicros: _notionalMicros, ...acceptedOrder } = order()
+    const acceptedCover = { ...acceptedOrder, quantityMicros: unknownIntent.quantityMicros }
+
+    expect(closeOnlyRequest).toMatchObject({ side: BrokerSide.Buy, qty: '1.25' })
+    expect(Result.getOrThrow(validateRecovery(unknownIntent, interrupted, undefined))).toEqual(interrupted)
+    expect(
+      decideRecoverySuccess(
+        unknownIntent,
+        MutationOperation.Submit,
+        interrupted,
+        { value: acceptedCover, evidence },
+        undefined,
+      ),
+    ).toEqual({
+      _tag: 'RecoveryFound',
+      brokerOrderId,
+      evidence,
+    })
+  })
+
   test('recovers a legacy sub-dollar BUY without permitting a new sub-dollar submission', () => {
     const unknownIntent = {
       ...intent,

@@ -145,6 +145,64 @@ describe('immutable intraday market snapshot', () => {
     expect(success(reverifyIntradayMarketSnapshot(snapshot))).toEqual(snapshot)
   })
 
+  test('verifies quote-led liquidation evidence without requiring a range-completion bar or trade', () => {
+    const rows = makeRows()
+    const liquidationRequest = { ...request, symbols: ['AMD'], purpose: 'LIQUIDATION' as const }
+    const liquidationRows = {
+      archiveWatermarks: rows.archiveWatermarks,
+      bars: rows.bars.filter((row) => row.symbol === 'AMD').slice(0, -1),
+      quotes: rows.quotes.filter((row) => row.symbol === 'AMD'),
+      trades: [],
+    }
+    const snapshot = success(verifyIntradaySnapshot(liquidationRequest, liquidationRows))
+
+    expect(snapshot.manifest).toMatchObject({
+      universe: request.universe,
+      universeSymbolHash: request.universeSymbolHash,
+      symbols: ['AMD'],
+      purpose: 'LIQUIDATION',
+      barCount: 4,
+      quoteCount: 1,
+      tradeCount: 0,
+    })
+    expect(success(reverifyIntradayMarketSnapshot(snapshot))).toEqual(snapshot)
+    expect(error(verifyIntradaySnapshotRequest({ ...liquidationRequest, symbols: ['AAPL'] }))).toMatchObject({
+      reason: 'request',
+    })
+  })
+
+  test('re-queries liquidation snapshots with their full universe, exact symbol subset, and purpose', async () => {
+    const rows = makeRows()
+    const liquidationRequest: IntradaySnapshotRequest = {
+      ...request,
+      symbols: ['AMD'],
+      purpose: 'LIQUIDATION',
+    }
+    const liquidationRows = {
+      archiveWatermarks: rows.archiveWatermarks,
+      bars: rows.bars.filter((row) => row.symbol === 'AMD').slice(0, -1),
+      quotes: rows.quotes.filter((row) => row.symbol === 'AMD'),
+      trades: [],
+    }
+    const snapshot = success(verifyIntradaySnapshot(liquidationRequest, liquidationRows))
+    let replayRequest: IntradaySnapshotRequest | undefined
+
+    const replayed = await Effect.runPromise(
+      verifyIntradayArchiveSnapshot((candidate) => {
+        replayRequest = candidate
+        return Effect.succeed(snapshot as ArchiveVerifiedIntradayMarketSnapshot)
+      }, snapshot),
+    )
+
+    expect(replayed as IntradayMarketSnapshot).toEqual(snapshot)
+    expect(replayRequest).toMatchObject({
+      universe: request.universe,
+      universeSymbolHash: request.universeSymbolHash,
+      symbols: ['AMD'],
+      purpose: 'LIQUIDATION',
+    })
+  })
+
   test('publishes detached immutable archive watermarks', () => {
     const rows = makeRows()
     const mutableWatermarks = request.archiveWatermarks.map((watermark) => ({ ...watermark }))
@@ -158,6 +216,24 @@ describe('immutable intraday market snapshot', () => {
     expect(snapshot.manifest.archiveWatermarks[0]?.inclusiveLastOffset).toBe('10')
     expect(Object.isFrozen(snapshot.manifest.archiveWatermarks)).toBe(true)
     expect(Object.isFrozen(snapshot.manifest.archiveWatermarks[0])).toBe(true)
+  })
+
+  test('treats newly materialized source partitions as retryable snapshot growth', () => {
+    const rows = makeRows()
+    const addedPartition = {
+      source_topic: barsTopic,
+      source_partition: '1',
+      inclusive_last_offset: '1',
+    }
+    const grownWatermarks = [rows.archiveWatermarks[0], addedPartition, ...rows.archiveWatermarks.slice(1)]
+
+    expect(error(verifyIntradaySnapshot(request, { ...rows, archiveWatermarks: grownWatermarks }))).toMatchObject({
+      reason: 'not-ready',
+      message: 'intraday archive gained partitions after version capture',
+      facts: {
+        addedPartitions: [{ sourceTopic: barsTopic, sourcePartition: 1 }],
+      },
+    })
   })
 
   test('uses ClickHouse binary ordering for case-mixed Kafka topics', () => {

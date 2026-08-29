@@ -3,6 +3,7 @@ export {
   CycleStoreError,
   type CycleAcquireReceipt,
   type CycleAuthoritySlot,
+  type CycleDecisionBindingEvidence,
   type CycleMutationReceipt,
   type CycleRecoveryScope,
   type CycleStoreShape,

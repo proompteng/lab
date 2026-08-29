@@ -53,6 +53,7 @@ import {
   type CycleRunResult,
 } from './runner'
 import { CycleNotDueReason } from './runner/model'
+import { selectIntradayExecutionSession } from './runner/calendar-decisions'
 import { completeCycleAuthoritySelection } from './runner/decisions'
 import { runAutonomousCycleUntilSettled } from './runner/program'
 import { selectBoundDecision } from './runner/recovery-decision-binding'
@@ -73,6 +74,7 @@ import {
 import { TargetPlanReason, TargetPlanStatus } from '../target-planner'
 import { utcInstantFromEpochMillis } from '../time'
 import { openingDriveExecutionModel } from '../strategy/opening-drive'
+import { intradayMomentumExecutionModel } from '../strategy/intraday-momentum/protocol'
 import { DataFeed, DataSource, PriceAdjustment, PublicationSchema, type InputManifest, type IsoDate } from '../types'
 
 const signalCalendarVersion = 'signal-XNYS-2026-v1'
@@ -1669,6 +1671,143 @@ describe('autonomous cycle runner', () => {
     expect(publicationReads).toBe(0)
     expect(control.acquisitions).toHaveLength(1)
     expect(control.binds).toBe(0)
+  })
+
+  test('acquires a full-session intraday cycle late in the session without reading daily Signal publications', async () => {
+    const policy = makeCycleExecutionPolicyFromModel(intradayMomentumExecutionModel)
+    if (Result.isFailure(policy)) throw policy.failure
+    if (policy.success.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3') {
+      throw new Error('intraday-momentum fixture requires a rolling intraday execution policy')
+    }
+    const intradayContext: CycleRunContext = {
+      ...context(),
+      strategyName: 'intraday-momentum',
+      executionPolicy: policy.success,
+    }
+    const control: StoreControl = { acquisitions: [], binds: 0 }
+    const queries: MarketCalendarQuery[] = []
+    let publicationReads = 0
+    const observation = calendar(
+      [
+        {
+          date: '2026-01-30',
+          openAt: '2026-01-30T14:30:00.000Z',
+          closeAt: '2026-01-30T21:00:00.000Z',
+        },
+      ],
+      { start: '2026-01-30', end: '2026-03-01' },
+    )
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-01-30T17:00:00.000Z'))
+        return yield* provide(
+          runAutonomousCyclePass(intradayContext),
+          brokerRead((query) => {
+            queries.push(query)
+            return Effect.succeed({ value: observation, evidence })
+          }),
+          cycleStore(control),
+          marketDataService(
+            Effect.sync(() => {
+              publicationReads += 1
+              return { outcome: 'MISSING' as const, observedAt: '2026-01-30T17:00:00.000Z' }
+            }),
+          ),
+        )
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(result).toMatchObject({
+      outcome: 'ACQUIRED',
+      executionSessionDate: '2026-01-30',
+      receipt: {
+        created: true,
+        cycle: {
+          schemaVersion: 'bayn.autonomous-cycle.v3',
+          state: CycleState.Pending,
+          identity: {
+            strategyName: 'intraday-momentum',
+            executionPolicy: {
+              schemaVersion: 'bayn.autonomous-cycle-execution-policy.v3',
+            },
+          },
+          window: {
+            submissionOpenAt: '2026-01-30T15:00:00.000Z',
+            submissionCutoffAt: '2026-01-30T20:00:00.000Z',
+          },
+          bindings: {},
+        },
+      },
+    })
+    expect(queries).toEqual([{ start: '2026-01-30', end: '2026-03-01' }])
+    expect(publicationReads).toBe(0)
+    expect(control.acquisitions).toHaveLength(1)
+    expect(control.binds).toBe(0)
+  })
+
+  test('skips an early-close session without a legal rolling intraday window', () => {
+    const policy = makeCycleExecutionPolicy({
+      schemaVersion: 'bayn.autonomous-cycle-execution-policy.v3',
+      strategyExecutionModelHash: '3'.repeat(64),
+      warmupAfterOpenMs: 3 * 60 * 60_000,
+      submissionCutoffBeforeCloseMs: 2 * 60 * 60_000,
+    })
+    if (Result.isFailure(policy)) throw policy.failure
+    if (policy.success.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3') {
+      throw new Error('early-close fixture requires a rolling intraday execution policy')
+    }
+    const observation = calendar(
+      [
+        {
+          date: '2026-11-27',
+          openAt: '2026-11-27T14:30:00.000Z',
+          closeAt: '2026-11-27T18:00:00.000Z',
+        },
+        {
+          date: '2026-11-30',
+          openAt: '2026-11-30T14:30:00.000Z',
+          closeAt: '2026-11-30T21:00:00.000Z',
+        },
+      ],
+      { start: '2026-11-27', end: '2026-11-30' },
+    )
+
+    expect(selectIntradayExecutionSession(observation, policy.success, '2026-11-27T14:00:00.000Z')?.date).toBe(
+      '2026-11-30',
+    )
+  })
+
+  test('includes the strategy decision delay when selecting an intraday session', () => {
+    const policy = makeCycleExecutionPolicy({
+      schemaVersion: 'bayn.autonomous-cycle-execution-policy.v3',
+      strategyExecutionModelHash: '3'.repeat(64),
+      warmupAfterOpenMs: 30 * 60_000,
+      submissionCutoffBeforeCloseMs: 60 * 60_000,
+    })
+    if (Result.isFailure(policy)) throw policy.failure
+    if (policy.success.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3') {
+      throw new Error('decision-delay fixture requires a rolling intraday execution policy')
+    }
+    const observation = calendar(
+      [
+        {
+          date: '2026-11-27',
+          openAt: '2026-11-27T14:30:00.000Z',
+          closeAt: '2026-11-27T16:00:01.000Z',
+        },
+        {
+          date: '2026-11-30',
+          openAt: '2026-11-30T14:30:00.000Z',
+          closeAt: '2026-11-30T21:00:00.000Z',
+        },
+      ],
+      { start: '2026-11-27', end: '2026-11-30' },
+    )
+
+    expect(selectIntradayExecutionSession(observation, policy.success, '2026-11-27T14:00:00.000Z')?.date).toBe(
+      '2026-11-30',
+    )
   })
 
   test('does nothing when no finalized publication exists and never reads the broker', async () => {

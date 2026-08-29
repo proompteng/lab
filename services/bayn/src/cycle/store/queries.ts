@@ -1,6 +1,7 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect } from 'effect'
 
+import { legacyExecutionAuthorityToken } from '../../execution/legacy-wire'
 import type { CycleDecisionDocument, ExecutionDecisionDocument } from '../../shadow-decision-contract'
 import { CycleState, type AutonomousCycle } from '../model'
 import { attachCycleDecisionStoreEvidence } from './decision-contract'
@@ -41,7 +42,7 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
             signal_session_date::text AS signal_session_date, signal_calendar_version,
             execution_policy_schema_version, execution_policy_hash,
             strategy_execution_model_hash, submission_window_ms, submission_cutoff_before_open_ms,
-            submission_cutoff_after_open_ms,
+            submission_cutoff_after_open_ms, warmup_after_open_ms, submission_cutoff_before_close_ms,
             window_schema_version, execution_calendar_schema_version,
             execution_calendar_source, execution_calendar_hash,
             execution_session_date::text AS execution_session_date,
@@ -59,7 +60,7 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
             signal_session_date::text AS signal_session_date, signal_calendar_version,
             execution_policy_schema_version, execution_policy_hash,
             strategy_execution_model_hash, submission_window_ms, submission_cutoff_before_open_ms,
-            submission_cutoff_after_open_ms,
+            submission_cutoff_after_open_ms, warmup_after_open_ms, submission_cutoff_before_close_ms,
             window_schema_version, execution_calendar_schema_version,
             execution_calendar_source, execution_calendar_hash,
             execution_session_date::text AS execution_session_date,
@@ -82,7 +83,7 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
             signal_session_date::text AS signal_session_date, signal_calendar_version,
             execution_policy_schema_version, execution_policy_hash,
             strategy_execution_model_hash, submission_window_ms, submission_cutoff_before_open_ms,
-            submission_cutoff_after_open_ms,
+            submission_cutoff_after_open_ms, warmup_after_open_ms, submission_cutoff_before_close_ms,
             window_schema_version, execution_calendar_schema_version,
             execution_calendar_source, execution_calendar_hash,
             execution_session_date::text AS execution_session_date,
@@ -102,7 +103,7 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
         signal_session_date::text AS signal_session_date, signal_calendar_version,
         execution_policy_schema_version, execution_policy_hash,
         strategy_execution_model_hash, submission_window_ms, submission_cutoff_before_open_ms,
-        submission_cutoff_after_open_ms,
+        submission_cutoff_after_open_ms, warmup_after_open_ms, submission_cutoff_before_close_ms,
         window_schema_version, execution_calendar_schema_version,
         execution_calendar_source, execution_calendar_hash,
         execution_session_date::text AS execution_session_date,
@@ -237,7 +238,7 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
         cycle.signal_session_date::text AS signal_session_date, cycle.signal_calendar_version,
         cycle.execution_policy_schema_version, cycle.execution_policy_hash,
         cycle.strategy_execution_model_hash, cycle.submission_window_ms, cycle.submission_cutoff_before_open_ms,
-        cycle.submission_cutoff_after_open_ms,
+        cycle.submission_cutoff_after_open_ms, cycle.warmup_after_open_ms, cycle.submission_cutoff_before_close_ms,
         cycle.window_schema_version, cycle.execution_calendar_schema_version,
         cycle.execution_calendar_source, cycle.execution_calendar_hash,
         cycle.execution_session_date::text AS execution_session_date,
@@ -258,6 +259,84 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
 
   const decisionEvidenceMatches: CycleQueries['decisionEvidenceMatches'] = (document) => {
     const executionMarketData = document.bindings.executionMarketData
+    const riskContext = document.mode === legacyExecutionAuthorityToken ? document.bindings.riskContext : undefined
+    const riskState = document.mode === legacyExecutionAuthorityToken ? document.deltaRisk[0]?.facts?.state : undefined
+    const riskContextEvidence =
+      riskContext === undefined || riskState === undefined
+        ? sql`${riskContext === undefined}`
+        : sql`
+            reconciliation.reconciled_at = ${riskState.reconciliation.reconciledAt}::timestamptz
+            AND EXISTS (
+              SELECT 1
+              FROM authority_state AS authority
+              JOIN authority_generations AS generation
+                ON generation.generation_hash = authority.generation_hash
+              WHERE authority.singleton
+                AND authority.schema_version = ${riskContext.authority.schemaVersion}
+                AND authority.generation_hash = ${riskContext.authority.generationHash}
+                AND authority.maximum = ${riskContext.authority.maximum}
+                AND authority.effective = ${riskContext.authority.effective}
+                AND authority.kill_state = ${riskContext.authority.kill}
+                AND authority.reason IS NOT DISTINCT FROM ${riskContext.authority.reason ?? null}::text
+                AND authority.version = ${riskContext.authority.version}
+                AND authority.updated_at = ${riskContext.authority.updatedAt}::timestamptz
+                AND generation.risk_policy_hash = ${document.bindings.policyHash}
+            )
+            AND ${riskContext.authorityObservedAt}::timestamptz <= ${document.createdAt}::timestamptz
+            AND coalesce((
+              SELECT sum(transaction.notional_micros)::text
+              FROM accounting_transactions AS transaction
+              WHERE transaction.account_id = ${document.bindings.accountId}
+                AND transaction.occurred_at <= ${riskState.reconciliation.reconciledAt}::timestamptz
+                AND (transaction.occurred_at AT TIME ZONE 'America/New_York')::date =
+                  (${riskState.reconciliation.reconciledAt}::timestamptz AT TIME ZONE 'America/New_York')::date
+            ), '0') = ${riskContext.dailyTradedNotionalMicros}
+            AND (
+              SELECT valuation.equity_micros::text
+              FROM valuations AS valuation
+              WHERE valuation.account_id = ${document.bindings.accountId}
+                AND valuation.as_of <= ${riskState.reconciliation.reconciledAt}::timestamptz
+                AND (valuation.as_of AT TIME ZONE 'America/New_York')::date =
+                  (${riskState.reconciliation.reconciledAt}::timestamptz AT TIME ZONE 'America/New_York')::date
+              ORDER BY valuation.as_of, valuation.valuation_id COLLATE "C"
+              LIMIT 1
+            ) = ${riskContext.dayStartEquityMicros}
+            AND (
+              SELECT max(valuation.equity_micros)::text
+              FROM valuations AS valuation
+              WHERE valuation.account_id = ${document.bindings.accountId}
+                AND valuation.as_of <= ${riskState.reconciliation.reconciledAt}::timestamptz
+            ) = ${riskContext.peakEquityMicros}
+            AND (
+              SELECT count(*)::integer
+              FROM intents AS intent
+              JOIN LATERAL (
+                SELECT event.operation, event.event_type
+                FROM mutation_events AS event
+                WHERE event.intent_id = intent.intent_id
+                  AND event.occurred_at <= ${riskState.reconciliation.reconciledAt}::timestamptz
+                ORDER BY
+                  CASE event.operation WHEN 'CANCEL' THEN 1 ELSE 0 END DESC,
+                  event.sequence DESC
+                LIMIT 1
+              ) AS latest ON true
+              WHERE intent.account_id = ${document.bindings.accountId}
+                AND (
+                  latest.event_type IN (
+                    'SUBMIT_STARTED', 'SUBMIT_UNKNOWN', 'RECOVERY_NOT_FOUND', 'RECOVERY_UNKNOWN',
+                    'CANCEL_STARTED', 'CANCEL_ACCEPTED', 'CANCEL_UNKNOWN'
+                  )
+                  OR (
+                    latest.operation = 'CANCEL'
+                    AND latest.event_type = 'RECOVERY_FOUND'
+                    AND (
+                      intent.state <> 'TERMINAL'
+                      OR intent.updated_at > ${riskState.reconciliation.reconciledAt}::timestamptz
+                    )
+                  )
+                )
+            ) = ${riskContext.unknownMutationCount}
+          `
     const snapshotEvidence =
       executionMarketData === undefined
         ? sql`
@@ -269,16 +348,30 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
                 AND snapshot.manifest ->> 'finalizedAt' = ${document.bindings.snapshotFinalizedAt}
             )
           `
-        : sql`
-            ${document.bindings.snapshotId} = ${executionMarketData.snapshotId}
-            AND ${document.bindings.snapshotContentHash} = ${executionMarketData.contentHash}
-            AND ${document.bindings.snapshotFinalizedAt} = ${executionMarketData.observedAt}
-          `
+        : executionMarketData.schemaVersion === 'bayn.execution-market-data-binding.v2'
+          ? sql`
+              ${document.bindings.snapshotId} = ${executionMarketData.snapshotId}
+              AND ${document.bindings.snapshotContentHash} = ${executionMarketData.contentHash}
+              AND ${document.bindings.snapshotFinalizedAt} = ${executionMarketData.observedAt}
+              AND EXISTS (
+                SELECT 1
+                FROM intraday_snapshot_references AS snapshot
+                WHERE snapshot.snapshot_id = ${executionMarketData.snapshotId}
+                  AND snapshot.content_hash = ${executionMarketData.contentHash}
+                  AND snapshot.observed_at = ${executionMarketData.observedAt}::timestamptz
+              )
+            `
+          : sql`
+              ${document.bindings.snapshotId} = ${executionMarketData.snapshotId}
+              AND ${document.bindings.snapshotContentHash} = ${executionMarketData.contentHash}
+              AND ${document.bindings.snapshotFinalizedAt} = ${executionMarketData.observedAt}
+            `
     return sql<Record<string, unknown>>`
       SELECT EXISTS (
         SELECT 1
         FROM reconciliations AS reconciliation
         WHERE ${snapshotEvidence}
+          AND ${riskContextEvidence}
           AND reconciliation.reconciliation_id = ${document.bindings.reconciliationId}
           AND reconciliation.account_id = ${document.bindings.accountId}
           AND reconciliation.expected_hash = ${document.bindings.planningBrokerStateHash}

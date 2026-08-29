@@ -109,6 +109,7 @@ const makeCycleMutationPrimitivesDataFirst = (
         execution_policy_schema_version, execution_policy_hash,
         strategy_execution_model_hash, submission_window_ms,
         submission_cutoff_before_open_ms, submission_cutoff_after_open_ms,
+        warmup_after_open_ms, submission_cutoff_before_close_ms,
         window_schema_version, execution_calendar_schema_version,
         execution_calendar_source, execution_calendar_hash, execution_session_date,
         signal_close_at, publication_deadline_at, submission_open_at,
@@ -133,11 +134,16 @@ const makeCycleMutationPrimitivesDataFirst = (
         ${candidate.identity.executionPolicy.schemaVersion},
         ${candidate.identity.executionPolicy.executionPolicyHash},
         ${candidate.identity.executionPolicy.strategyExecutionModelHash},
-        ${candidate.identity.executionPolicy.submissionWindowMs},
+        ${
+          candidate.identity.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v3'
+            ? Date.parse(candidate.window.submissionCutoffAt) - Date.parse(candidate.window.submissionOpenAt)
+            : candidate.identity.executionPolicy.submissionWindowMs
+        },
         ${
           candidate.identity.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v1'
             ? candidate.identity.executionPolicy.submissionCutoffBeforeOpenMs
-            : candidate.schemaVersion === 'bayn.autonomous-cycle.v2'
+            : candidate.schemaVersion === 'bayn.autonomous-cycle.v2' &&
+                candidate.identity.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v2'
               ? candidate.identity.executionPolicy.submissionCutoffAfterOpenMs
               : null
         },
@@ -145,6 +151,16 @@ const makeCycleMutationPrimitivesDataFirst = (
           candidate.schemaVersion === 'bayn.autonomous-cycle.v3' &&
           candidate.identity.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v2'
             ? candidate.identity.executionPolicy.submissionCutoffAfterOpenMs
+            : null
+        },
+        ${
+          candidate.identity.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v3'
+            ? candidate.identity.executionPolicy.warmupAfterOpenMs
+            : null
+        },
+        ${
+          candidate.identity.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v3'
+            ? candidate.identity.executionPolicy.submissionCutoffBeforeCloseMs
             : null
         },
         ${candidate.window.schemaVersion}, ${candidate.window.executionCalendarSchemaVersion},

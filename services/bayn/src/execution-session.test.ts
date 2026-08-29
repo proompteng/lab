@@ -31,6 +31,7 @@ import {
 import { canonicalHashV1 } from './hash'
 import { strictParseOptions } from './schemas'
 import { openingDriveExecutionModel } from './strategy/opening-drive'
+import { intradayMomentumExecutionModel } from './strategy/intraday-momentum/protocol'
 
 const hash = (character: string): string => character.repeat(64)
 const resultValue = <A, E>(result: Result.Result<A, E>): A => {
@@ -204,6 +205,48 @@ const makeActiveOpeningCycle = (policyOverride?: CycleExecutionPolicy): Intraday
     bindings: { snapshotId: hash('6') },
     stateVersion: 3,
     createdAt: '2026-01-30T21:00:00.000Z',
+    updatedAt: window.submissionOpenAt,
+  }
+}
+
+const makeActiveIntradayMomentumCycle = (policyOverride?: CycleExecutionPolicy): IntradayAutonomousCycle => {
+  const executionSession = monthEndCalendar.sessions[1]
+  if (executionSession === undefined) throw new Error('intraday cycle fixture requires the post-signal session')
+  const executionCalendar = resultValue(
+    makeExecutionCalendarObservation({
+      schemaVersion: monthEndCalendar.schemaVersion,
+      source: monthEndCalendar.source,
+      ...executionSession,
+    }),
+  )
+  const executionPolicy =
+    policyOverride ?? resultValue(makeCycleExecutionPolicyFromModel(intradayMomentumExecutionModel))
+  if (executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3') {
+    throw new Error('intraday momentum fixture requires the session-relative execution policy')
+  }
+  const identity = resultValue(
+    makeCycleIdentity({
+      schemaVersion: 'bayn.autonomous-cycle-identity.v3',
+      strategyName: 'intraday-momentum',
+      qualificationRunId: hash('7'),
+      strategyProtocolHash: hash('8'),
+      accountId: 'paper-account-1',
+      executionSessionDate: executionCalendar.executionSessionDate,
+      executionCalendarSchemaVersion: executionCalendar.executionCalendarSchemaVersion,
+      executionCalendarSource: executionCalendar.executionCalendarSource,
+      executionCalendarHash: executionCalendar.executionCalendarHash,
+      executionPolicy,
+    }),
+  )
+  const window = resultValue(makeIntradayCycleWindow(executionCalendar, executionPolicy))
+  const draft = resultValue(makeCycleDraft(identity, window))
+  if (!isIntradayCycleDraft(draft)) throw new Error('intraday momentum fixture returned a legacy draft')
+  return {
+    ...draft,
+    state: CycleState.Active,
+    bindings: {},
+    stateVersion: 1,
+    createdAt: '2026-02-02T14:00:00.000Z',
     updatedAt: window.submissionOpenAt,
   }
 }
@@ -510,6 +553,28 @@ describe('causal execution-session binding', () => {
         },
       })
     }
+  })
+
+  test('binds rolling intraday execution to warmup and the actual session close', () => {
+    const cycle = makeActiveIntradayMomentumCycle()
+    const binding = bindCycleExecutionSessionSuccess({
+      cycle,
+      executionSessionDate: cycle.identity.executionSessionDate,
+      planningBrokerState: {
+        observedAt: cycle.window.submissionOpenAt,
+        contentHash: hash('9'),
+      },
+      calendar: monthEndCalendar,
+      executionModel: intradayMomentumExecutionModel,
+    })
+
+    expect(binding).toMatchObject({
+      schemaVersion: 'bayn.execution-session-binding.v3',
+      submissionOpenAt: '2026-02-02T15:00:00.000Z',
+      submissionCutoffAt: '2026-02-02T20:00:00.000Z',
+      decisionAfterOpenMs: 1_800_000,
+      submissionCutoffAfterOpenMs: 19_800_000,
+    })
   })
 
   test('decodes the durable signal-bound v2 opening-drive contract without changing its hash material', () => {

@@ -648,6 +648,23 @@ describe('same-code execution program composition', () => {
     expect(posts).toBe(0)
   })
 
+  test('fails closed before submission when close-only classification is unavailable', async () => {
+    const fixture = finalLiveFixture()
+    const classificationFailure = { _tag: 'ExecutionCloseClassificationUnavailable' as const }
+    const program = Result.getOrThrow(
+      makeExecutionProgram(fixture.authority, {
+        ...dependencies('close-classification-failure'),
+        isCloseOnlyIntent: () => Effect.fail(classificationFailure),
+      }),
+    )
+
+    const exit = await Effect.runPromise(
+      program.submit(fixture.intent.intentId, 1_000, '2026-07-28T08:30:00.000Z').pipe(Effect.exit),
+    )
+
+    expect(finalAuthorizationFailureTag(exit)).toBe(classificationFailure._tag)
+  })
+
   test('reuses one transaction-stable intent read across every final risk check', async () => {
     const fixture = finalLiveFixture()
     const trace: string[] = []
@@ -837,7 +854,7 @@ describe('same-code execution program composition', () => {
     expect(posts).toBe(1)
   })
 
-  test('preserves policy limit exemptions for a freshly verified exposure-reducing close', async () => {
+  test('preserves policy limit exemptions for a verified close in a mixed-sign account', async () => {
     const authority = Result.getOrThrow(
       makeExecutionAuthority({
         brokerIdentity: identity(BrokerEnvironment.Sandbox),
@@ -917,8 +934,8 @@ describe('same-code execution program composition', () => {
       ).pipe(Effect.exit, Effect.provide(TestClock.layer())),
     )
 
-    expect(finalAuthorizationFailureTag(shortElsewhere)).toBe('OrderNotionalLimitExceeded')
-    expect(posts).toBe(1)
+    expect(shortElsewhere._tag).toBe('Success')
+    expect(posts).toBe(2)
   })
 
   test('keeps a distinct live-grant order cap on an exposure-reducing close', async () => {

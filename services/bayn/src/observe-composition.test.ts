@@ -63,6 +63,7 @@ import type { ExecutionProgram } from './execution/runtime-program'
 import { WriterFence, WriterFenceError, type WriterFenceService } from './execution/writer-fence'
 import { canonicalHashV1 } from './hash'
 import {
+  IntradaySnapshotFailure,
   MarketData,
   type IntradayMarketDataService,
   type IntradayMarketSnapshot,
@@ -78,18 +79,24 @@ import {
   openingDriveExecutionModel,
   type OpeningDriveProtocol,
 } from './strategy/opening-drive'
+import { intradayMomentumBehaviorHash, makeIntradayMomentumDefinition } from './strategy/intraday-momentum/decision'
+import { decodeDefaultIntradayMomentumProtocol } from './strategy/intraday-momentum/protocol'
 import {
   buildMutationShadowCycleDecision,
   buildClosingExecutionCycleDecision,
   makeClosingDecisionPlan,
   buildObserveCycleDecision,
   appendPendingMutationOrder,
+  blockedEntryRequiresCloseOnlyContainment,
   countOpenPositions,
   decideExecutionCycleCloseDocument,
+  decideReconciledExecutionCycleCompletion,
+  decideReconciledExecutionCycleTerminalization,
   decidePendingMutationObservation,
   decideExecutionCycleCompletion,
   decideExecutionIntentTerminalDisposition,
   decidePreparedMutationIntent,
+  decidePreparedCloseIntentAdmission,
   decidePreparedMutationIntentAdmission,
   decidePreparedMutationRecovery,
   decideMutationIntentSettlement,
@@ -99,6 +106,7 @@ import {
   mutationIntentReconciliationDelayMs,
   executionSubmitExpiresAt,
   executionMutationSubmissionAllowed,
+  isExecutionCycleReconciledFlat,
   executionCycleHasFilledIntent,
   executionClosePlanNeedsResidualReplan,
   prepareNextMutationIntent,
@@ -117,6 +125,7 @@ import {
   type RecoveryFirstCycleDriver,
   type RecoveryFirstCycleDriverOwner,
 } from './observe-composition'
+import { ExecutionCloseAwaitingMarketData, selectClosingSymbolPass } from './observe-composition/decision-builder'
 import {
   AccountStatus,
   Authority,
@@ -139,7 +148,7 @@ import { ReconciliationError, type ReconciliationPassResult } from './reconciler
 import { reconciledStateHash } from './reconciliation'
 import { Reason, type Policy } from './risk'
 import { decodeExecutionDecisionDocument, makeExecutionDecisionDocument } from './shadow-decision-contract'
-import { TargetPlanStatus } from './target-planner'
+import { decodeTargetPlanResult, TargetPlanReason, TargetPlanStatus } from './target-planner'
 import { fixtureProtocol, makeSnapshot, makeTestDefinition } from './test-fixtures'
 import { utcInstantFromEpochMillis } from './time'
 import type { DecisionPlan, IsoDate } from './types'
@@ -346,6 +355,7 @@ const intradayArchiveTopics = {
 const intradaySnapshot = (protocol: OpeningDriveProtocol, request: IntradaySnapshotRequest): IntradayMarketSnapshot => {
   const rangeStartEpoch = Date.parse(request.rangeStartAt)
   const rangeMinutes = (Date.parse(request.rangeEndAt) - rangeStartEpoch) / 60_000
+  const requestedSymbols = request.symbols ?? request.universe
   const identity = (
     symbol: string,
     sourceTopic: string,
@@ -369,7 +379,7 @@ const intradaySnapshot = (protocol: OpeningDriveProtocol, request: IntradaySnaps
   })
   const compareRecords = (left: { eventAt: string; symbol: string }, right: { eventAt: string; symbol: string }) =>
     left.eventAt.localeCompare(right.eventAt) || left.symbol.localeCompare(right.symbol)
-  const bars = protocol.universe
+  const bars = requestedSymbols
     .flatMap((symbol, symbolIndex) =>
       Array.from({ length: rangeMinutes }, (_, minute) => ({
         ...identity(
@@ -392,7 +402,7 @@ const intradaySnapshot = (protocol: OpeningDriveProtocol, request: IntradaySnaps
     )
     .toSorted(compareRecords)
   const quoteAt = utcInstantFromEpochMillis(Date.parse(request.rangeEndAt) + 500)
-  const quotes = protocol.universe
+  const quotes = requestedSymbols
     .map((symbol, index) => ({
       ...identity(symbol, intradayArchiveTopics.quotes, index + 1, quoteAt),
       bidPrice: 99.99,
@@ -402,7 +412,7 @@ const intradaySnapshot = (protocol: OpeningDriveProtocol, request: IntradaySnaps
     }))
     .toSorted(compareRecords)
   const tradeAt = utcInstantFromEpochMillis(Date.parse(request.rangeEndAt) + 400)
-  const trades = protocol.universe
+  const trades = requestedSymbols
     .map((symbol, index) => ({
       ...identity(symbol, intradayArchiveTopics.trades, index + 1, tradeAt),
       price: 100,
@@ -415,8 +425,8 @@ const intradaySnapshot = (protocol: OpeningDriveProtocol, request: IntradaySnaps
       sourceTopic,
       sourcePartition: 0,
       firstOffset: '1',
-      lastOffset: String(sourceTopic === intradayArchiveTopics.bars ? bars.length : protocol.universe.length),
-      recordCount: sourceTopic === intradayArchiveTopics.bars ? bars.length : protocol.universe.length,
+      lastOffset: String(sourceTopic === intradayArchiveTopics.bars ? bars.length : requestedSymbols.length),
+      recordCount: sourceTopic === intradayArchiveTopics.bars ? bars.length : requestedSymbols.length,
     }))
   const material = {
     schemaVersion: 'bayn.intraday-market-snapshot.v1' as const,
@@ -427,7 +437,9 @@ const intradaySnapshot = (protocol: OpeningDriveProtocol, request: IntradaySnaps
     observedAt: request.observedAt,
     universeId: request.universeId,
     universeSymbolHash: request.universeSymbolHash,
-    symbols: [...request.universe].sort(),
+    ...(request.purpose === undefined ? {} : { universe: request.universe }),
+    symbols: [...requestedSymbols].sort(),
+    ...(request.purpose === undefined ? {} : { purpose: request.purpose }),
     feed: request.feed,
     delayClass: request.delayClass,
     sourceTopics: request.sourceTopics,
@@ -1018,6 +1030,115 @@ const prepareStoredExecutionStep = async (
 }
 
 describe('OBSERVE runtime composition', () => {
+  test('defers causally noncanonical quote-bound entry holdings to close-only containment', () => {
+    const blocked = (reason: TargetPlanReason) => ({ status: TargetPlanStatus.Blocked, reason })
+    const openingDriveUniverse = Result.getOrThrow(decodeDefaultOpeningDriveProtocol()).universe
+
+    expect(
+      blockedEntryRequiresCloseOnlyContainment(
+        blocked(TargetPlanReason.ShortPositionNotAllowed),
+        [{ symbol: 'AAPL', quantityMicros: '-1000000' }],
+        ['AAPL'],
+      ),
+    ).toBe(true)
+    expect(
+      blockedEntryRequiresCloseOnlyContainment(
+        blocked(TargetPlanReason.InputMismatch),
+        [{ symbol: 'AAPL', quantityMicros: '500000' }],
+        ['AAPL'],
+      ),
+    ).toBe(true)
+    expect(
+      blockedEntryRequiresCloseOnlyContainment(
+        blocked(TargetPlanReason.IdentityMismatch),
+        [{ symbol: 'TSLA', quantityMicros: '1000000' }],
+        openingDriveUniverse,
+      ),
+    ).toBe(true)
+    expect(
+      blockedEntryRequiresCloseOnlyContainment(
+        blocked(TargetPlanReason.InputStale),
+        [{ symbol: 'AAPL', quantityMicros: '500000' }],
+        ['AAPL'],
+      ),
+    ).toBe(false)
+    expect(
+      blockedEntryRequiresCloseOnlyContainment(
+        blocked(TargetPlanReason.InputMismatch),
+        [{ symbol: 'AAPL', quantityMicros: '1000000' }],
+        ['AAPL'],
+      ),
+    ).toBe(false)
+  })
+
+  test('closes external holdings before quote-bound in-universe holdings', () => {
+    const positions = [
+      { symbol: 'AAPL', quantityMicros: '1000000' },
+      { symbol: 'TSLA', quantityMicros: '2000000' },
+    ]
+
+    expect(selectClosingSymbolPass(positions, { _tag: 'current-intraday', universe: ['AAPL'] })).toEqual({
+      kind: 'broker-position',
+      symbols: ['TSLA'],
+    })
+    expect(
+      selectClosingSymbolPass(
+        positions.filter(({ symbol }) => symbol === 'AAPL'),
+        {
+          _tag: 'current-intraday',
+          universe: ['AAPL'],
+        },
+      ),
+    ).toEqual({ kind: 'quote-bound', symbols: ['AAPL'] })
+  })
+
+  test('uses the fractional pass only after external holdings are flat', () => {
+    const positions = [
+      { symbol: 'AAPL', quantityMicros: '500000' },
+      { symbol: 'TSLA', quantityMicros: '250000' },
+    ]
+
+    expect(selectClosingSymbolPass(positions, { _tag: 'current-intraday', universe: ['AAPL'] })).toEqual({
+      kind: 'broker-position',
+      symbols: ['TSLA'],
+    })
+    expect(
+      selectClosingSymbolPass(
+        positions.filter(({ symbol }) => symbol === 'AAPL'),
+        {
+          _tag: 'current-intraday',
+          universe: ['AAPL'],
+        },
+      ),
+    ).toEqual({ kind: 'fractional', symbols: ['AAPL'] })
+  })
+
+  test('closes external opening-drive holdings before its persisted target scope', () => {
+    const positions = [
+      { symbol: 'AMD', quantityMicros: '1000000' },
+      { symbol: 'TSLA', quantityMicros: '1000000' },
+    ]
+    const scope = {
+      _tag: 'opening-drive' as const,
+      universe: ['AMD'],
+      symbols: ['AMD', 'TSLA'],
+    }
+
+    expect(selectClosingSymbolPass(positions, scope)).toEqual({
+      kind: 'broker-position',
+      symbols: ['TSLA'],
+    })
+    expect(
+      selectClosingSymbolPass(
+        positions.filter(({ symbol }) => symbol === 'AMD'),
+        scope,
+      ),
+    ).toEqual({
+      kind: 'legacy',
+      symbols: ['AMD', 'TSLA'],
+    })
+  })
+
   test('projects accepted nonterminal intents as one unresolved order for the next risk pass', () => {
     const intent: Intent = {
       schemaVersion: 'bayn.paper-intent.v3',
@@ -1391,6 +1512,32 @@ describe('OBSERVE runtime composition', () => {
 
     const submit = { _tag: 'Submit' as const }
     expect(
+      Result.isSuccess(
+        decidePreparedCloseIntentAdmission(
+          submit,
+          evaluatedAt,
+          cycle.window.submissionCutoffAt,
+          0,
+          ReconciliationStatus.Exact,
+          true,
+          0,
+        ),
+      ),
+    ).toBe(true)
+    expect(
+      Option.getOrUndefined(
+        Result.getFailure(
+          decidePreparedCloseIntentAdmission(
+            submit,
+            evaluatedAt,
+            cycle.window.submissionCutoffAt,
+            0,
+            ReconciliationStatus.Discrepancy,
+          ),
+        ),
+      )?.reason,
+    ).toBe('reconciliation-not-exact')
+    expect(
       Option.getOrUndefined(
         Result.getFailure(
           decidePreparedMutationIntentAdmission(
@@ -1707,6 +1854,60 @@ describe('OBSERVE runtime composition', () => {
         },
       ),
     ).toEqual({ _tag: 'Complete' })
+  })
+
+  test('completes an already-flat cycle without constructing a close plan', () => {
+    const flat = {
+      report: {
+        reconciliation: { status: ReconciliationStatus.Exact },
+        metrics: { accountingExact: true },
+      },
+      brokerState: {
+        positions: [],
+        orders: [{ status: OrderStatus.Canceled }],
+        unknownOrderCount: 0,
+      },
+      riskContext: { unknownMutationCount: 0 },
+    } as const
+
+    expect(isExecutionCycleReconciledFlat(flat)).toBe(true)
+    expect(
+      isExecutionCycleReconciledFlat({
+        ...flat,
+        brokerState: { ...flat.brokerState, orders: [{ status: OrderStatus.Pending }] },
+      }),
+    ).toBe(false)
+    expect(
+      isExecutionCycleReconciledFlat({
+        ...flat,
+        brokerState: { ...flat.brokerState, positions: [{ quantityMicros: '1' }] },
+      }),
+    ).toBe(false)
+    expect(isExecutionCycleReconciledFlat({ ...flat, riskContext: { unknownMutationCount: 1 } })).toBe(false)
+  })
+
+  test('uses the persisted reconciliation time when completing an already-flat cycle', () => {
+    const reconciliationCompletedAt = '2020-05-01T12:45:04.000Z'
+    const flatReconciliation = reconciliationResultAt(reconciliationCompletedAt)
+
+    expect(decideReconciledExecutionCycleCompletion(flatReconciliation)).toEqual({
+      _tag: 'Complete',
+      observedAt: reconciliationCompletedAt,
+    })
+    expect(decideReconciledExecutionCycleTerminalization(flatReconciliation, 'COMPLETE')).toEqual({
+      _tag: 'Complete',
+      observedAt: reconciliationCompletedAt,
+    })
+    expect(decideReconciledExecutionCycleTerminalization(flatReconciliation, 'MISSING')).toEqual({
+      _tag: 'Block',
+      reason: CycleTerminalReason.MissedSubmission,
+      observedAt: reconciliationCompletedAt,
+    })
+    expect(decideReconciledExecutionCycleTerminalization(flatReconciliation, 'UNSUCCESSFUL')).toEqual({
+      _tag: 'Block',
+      reason: CycleTerminalReason.Risk,
+      observedAt: reconciliationCompletedAt,
+    })
   })
 
   test('retains an unfilled sell while reserving a later buy in projected risk positions', () => {
@@ -3134,7 +3335,7 @@ describe('OBSERVE runtime composition', () => {
     })
   })
 
-  test('recovers a persisted v2 opening-drive cycle into a quote-bound forced close', async () => {
+  test('recovers a persisted v2 opening-drive cycle into an exact fractional forced close', async () => {
     const protocol = Result.getOrThrow(decodeDefaultOpeningDriveProtocol())
     const definition = makeOpeningDriveDefinition(protocol)
     const strategy = {
@@ -3204,6 +3405,67 @@ describe('OBSERVE runtime composition', () => {
     } as const
     const preparation = Result.getOrThrow(prepareObserveStartup(input))
     const policy = await Effect.runPromise(loadStrategyExecutionRiskPolicy(accountId, strategy))
+    const failedEntry = (snapshotFailure: IntradaySnapshotFailure) => {
+      const laggingArchive: IntradayMarketDataService = {
+        captureVersion: archive.captureVersion,
+        loadSnapshot: () =>
+          Effect.fail(
+            operationalError({
+              component: 'market-data',
+              operation: 'load-intraday',
+              message: snapshotFailure.message,
+              cause: snapshotFailure,
+            }),
+          ),
+        verifyArchiveSnapshot: () => Effect.die('failed entry load must not verify an archive snapshot'),
+      }
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(historicalWindow.submissionOpenAt))
+          return yield* buildMutationShadowCycleDecision({
+            authorityGenerationHash: generationHash,
+            cycle: historicalCycle,
+            executionModel: openingDriveExecutionModel,
+            policy,
+            reconcile: Effect.succeed(reconciliationResult(generationHash, Authority.Execution)),
+            strategy,
+            intradayMarketData: laggingArchive,
+          })
+        }).pipe(
+          (program) => provideDecisionServices(program, marketData([]), calendarRead([])),
+          Effect.provide(TestClock.layer()),
+          Effect.flip,
+        ),
+      )
+    }
+    const replicaLag = new IntradaySnapshotFailure({
+      reason: 'watermark',
+      message: 'intraday archive has not materialized the captured source offset',
+    })
+    const entryNotReady = new IntradaySnapshotFailure({
+      reason: 'not-ready',
+      message: 'intraday entry snapshot lacks a post-range trade',
+    })
+    const topologyMismatch = new IntradaySnapshotFailure({
+      reason: 'watermark',
+      message: 'intraday archive partition topology changed after version capture',
+    })
+    expect(await failedEntry(replicaLag)).toMatchObject({
+      _tag: 'ObserveDecisionAwaitingSignal',
+      message: replicaLag.message,
+      observedAt: historicalWindow.submissionOpenAt,
+      submissionCutoffAt: historicalWindow.submissionCutoffAt,
+    })
+    expect(await failedEntry(entryNotReady)).toMatchObject({
+      _tag: 'ObserveDecisionAwaitingSignal',
+      message: entryNotReady.message,
+      observedAt: historicalWindow.submissionOpenAt,
+      submissionCutoffAt: historicalWindow.submissionCutoffAt,
+    })
+    expect(await failedEntry(topologyMismatch)).toMatchObject({
+      _tag: 'OperationalError',
+      cause: topologyMismatch,
+    })
     const entryDocument = await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(historicalWindow.submissionOpenAt))
@@ -3237,23 +3499,34 @@ describe('OBSERVE runtime composition', () => {
       schemaVersion: 'bayn.paper-position.v1',
       accountId,
       symbol: heldSymbol,
-      quantityMicros: '1000000',
+      quantityMicros: '500000',
       averageEntryPriceMicros: '100000000',
       marketPriceMicros: '100000000',
-      marketValueMicros: '100000000',
+      marketValueMicros: '50000000',
       unrealizedPnlMicros: '0',
       observedAt: closeObservedAt,
     }
-    const close = await Effect.runPromise(
+    const buildClosePositionsProgram = (
+      positions: readonly Position[],
+      closeInput: typeof input = input,
+      observedAt: string = closeObservedAt,
+    ) =>
       Effect.gen(function* () {
-        yield* TestClock.setTime(Date.parse(closeObservedAt))
+        yield* TestClock.setTime(Date.parse(observedAt))
         return yield* buildClosingExecutionCycleDecision({
-          input,
+          input: closeInput,
           preparation,
           policy,
           cycle: boundCycle,
           entryDocument,
-          reconcile: Effect.succeed(reconciliationResultAt(closeObservedAt, 0, 0, [openPosition])),
+          reconcile: Effect.succeed(
+            reconciliationResultAt(
+              observedAt,
+              0,
+              0,
+              positions.map((position) => ({ ...position, observedAt })),
+            ),
+          ),
           closeExpiresAt,
         })
       }).pipe(
@@ -3267,8 +3540,119 @@ describe('OBSERVE runtime composition', () => {
         Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
         Effect.provideService(WriterFence, {} as WriterFenceService),
         Effect.provide(TestClock.layer()),
-      ),
+      )
+    const buildCloseProgram = (
+      position: Position,
+      closeInput: typeof input = input,
+      observedAt: string = closeObservedAt,
+    ) => buildClosePositionsProgram([position], closeInput, observedAt)
+    const buildClose = (position: Position) => Effect.runPromise(buildCloseProgram(position))
+    const close = await buildClose(openPosition)
+    const shortPosition: Position = {
+      ...openPosition,
+      quantityMicros: '-500000',
+      marketValueMicros: '-50000000',
+    }
+    const cover = await buildClose(shortPosition)
+    const outOfUniversePosition: Position = {
+      ...openPosition,
+      symbol: 'TSLA',
+      marketPriceMicros: '100005000',
+      marketValueMicros: '50002500',
+    }
+    const unusedArchive: IntradayMarketDataService = {
+      captureVersion: () => Effect.die('out-of-universe liquidation must not query the strategy archive'),
+      loadSnapshot: () => Effect.die('out-of-universe liquidation must not load a strategy snapshot'),
+      verifyArchiveSnapshot: () => Effect.die('out-of-universe liquidation must not verify a strategy snapshot'),
+    }
+    const outOfUniverseClose = await Effect.runPromise(
+      buildCloseProgram(outOfUniversePosition, { ...input, intradayMarketData: unusedArchive }),
     )
+    const wholeSymbol = protocol.universe.find((symbol) => symbol !== heldSymbol)
+    if (wholeSymbol === undefined) return expect.unreachable('mixed close fixture requires two strategy symbols')
+    const wholePosition: Position = {
+      ...openPosition,
+      symbol: wholeSymbol,
+      quantityMicros: '1000000',
+      marketValueMicros: '100000000',
+    }
+    const wholeOutOfUniversePosition: Position = {
+      ...outOfUniversePosition,
+      quantityMicros: '1000000',
+      marketValueMicros: '100005000',
+    }
+    const externalPass = await Effect.runPromise(
+      buildClosePositionsProgram([wholePosition, wholeOutOfUniversePosition], {
+        ...input,
+        intradayMarketData: unusedArchive,
+      }),
+    )
+    const fractionalPass = await Effect.runPromise(buildClosePositionsProgram([openPosition, wholePosition]))
+    const wholePass = await Effect.runPromise(buildClosePositionsProgram([wholePosition]))
+    const unavailable = new IntradaySnapshotFailure({
+      reason: 'not-ready',
+      message: 'liquidation snapshot lacks a post-range quote',
+      facts: { symbol: heldSymbol },
+    })
+    const waitingArchive: IntradayMarketDataService = {
+      captureVersion: () =>
+        Effect.fail(
+          operationalError({
+            component: 'market-data',
+            operation: 'load-intraday',
+            message: unavailable.message,
+            cause: unavailable,
+          }),
+        ),
+      loadSnapshot: () => Effect.die('not-ready capture must not load snapshot rows'),
+      verifyArchiveSnapshot: () => Effect.die('not-ready capture must not verify an archive snapshot'),
+    }
+    const waiting = await Effect.runPromise(
+      buildCloseProgram(openPosition, { ...input, intradayMarketData: waitingArchive }).pipe(Effect.flip),
+    )
+    const closeReplicaLag = new IntradaySnapshotFailure({
+      reason: 'watermark',
+      message: 'intraday archive has not materialized the captured source offset',
+    })
+    const laggingCloseArchive: IntradayMarketDataService = {
+      captureVersion: archive.captureVersion,
+      loadSnapshot: () =>
+        Effect.fail(
+          operationalError({
+            component: 'market-data',
+            operation: 'load-intraday',
+            message: closeReplicaLag.message,
+            cause: closeReplicaLag,
+          }),
+        ),
+      verifyArchiveSnapshot: () => Effect.die('failed close load must not verify an archive snapshot'),
+    }
+    const waitingForReplica = await Effect.runPromise(
+      buildCloseProgram(openPosition, { ...input, intradayMarketData: laggingCloseArchive }).pipe(Effect.flip),
+    )
+    const closeTopologyMismatch = new IntradaySnapshotFailure({
+      reason: 'watermark',
+      message: 'intraday archive partition topology changed after version capture',
+    })
+    const mismatchedCloseArchive: IntradayMarketDataService = {
+      captureVersion: archive.captureVersion,
+      loadSnapshot: () =>
+        Effect.fail(
+          operationalError({
+            component: 'market-data',
+            operation: 'load-intraday',
+            message: closeTopologyMismatch.message,
+            cause: closeTopologyMismatch,
+          }),
+        ),
+      verifyArchiveSnapshot: () => Effect.die('mismatched close load must not verify an archive snapshot'),
+    }
+    const fatalCloseMismatch = await Effect.runPromise(
+      buildCloseProgram(openPosition, { ...input, intradayMarketData: mismatchedCloseArchive }).pipe(Effect.flip),
+    )
+    const staleObservedAt = '2020-05-01T19:30:10.000Z'
+    const stale = await Effect.runPromise(buildCloseProgram(openPosition, input, staleObservedAt).pipe(Effect.flip))
+    const refreshed = await Effect.runPromise(buildCloseProgram(openPosition, input, '2020-05-01T19:31:01.000Z'))
 
     expect(entryDocument.executionSession?.schemaVersion).toBe('bayn.execution-session-binding.v2')
     expect(close).toMatchObject({
@@ -3281,7 +3665,232 @@ describe('OBSERVE runtime composition', () => {
       },
       targetPlan: {
         status: TargetPlanStatus.Planned,
-        intentTargets: [{ symbol: openPosition.symbol, side: OrderSide.Sell }],
+        intentTargets: [
+          {
+            symbol: openPosition.symbol,
+            side: OrderSide.Sell,
+            orderType: OrderType.Market,
+            timeInForce: TimeInForce.Day,
+            quantityMicros: '500000',
+          },
+        ],
+      },
+    })
+    expect(cover).toMatchObject({
+      dispatchable: true,
+      targetPlan: {
+        status: TargetPlanStatus.Planned,
+        intentTargets: [
+          {
+            symbol: shortPosition.symbol,
+            side: OrderSide.Buy,
+            orderType: OrderType.Market,
+            timeInForce: TimeInForce.Day,
+            quantityMicros: '500000',
+          },
+        ],
+      },
+    })
+    expect(outOfUniverseClose).toMatchObject({
+      dispatchable: true,
+      bindings: {
+        executionMarketData: {
+          schemaVersion: 'bayn.reconciled-position-liquidation-binding.v1',
+          source: 'alpaca-v2-positions',
+          symbols: ['TSLA'],
+          positions: [
+            {
+              symbol: 'TSLA',
+              quantityMicros: '500000',
+              marketPriceMicros: '100005000',
+              observedAt: closeObservedAt,
+            },
+          ],
+        },
+      },
+      targetPlan: {
+        status: TargetPlanStatus.Planned,
+        targets: [{ symbol: 'TSLA', referencePriceMicros: '100000000' }],
+        intentTargets: [
+          {
+            symbol: 'TSLA',
+            side: OrderSide.Sell,
+            orderType: OrderType.Market,
+            timeInForce: TimeInForce.Day,
+            quantityMicros: '500000',
+          },
+        ],
+      },
+    })
+    expect(externalPass).toMatchObject({
+      dispatchable: true,
+      bindings: {
+        executionMarketData: {
+          schemaVersion: 'bayn.reconciled-position-liquidation-binding.v1',
+          symbols: ['TSLA'],
+          positions: [{ symbol: 'TSLA', quantityMicros: '1000000' }],
+        },
+      },
+      targetPlan: {
+        status: TargetPlanStatus.Planned,
+        targets: [{ symbol: 'TSLA' }],
+        intentTargets: [
+          {
+            symbol: 'TSLA',
+            side: OrderSide.Sell,
+            orderType: OrderType.Market,
+            timeInForce: TimeInForce.Day,
+            quantityMicros: '1000000',
+          },
+        ],
+      },
+    })
+    expect(fractionalPass.targetPlan).toMatchObject({
+      executionTerms: {
+        executionPurpose: 'fractional-close',
+        orderType: OrderType.Market,
+        timeInForce: TimeInForce.Day,
+      },
+      intentTargets: [
+        {
+          symbol: heldSymbol,
+          orderType: OrderType.Market,
+          timeInForce: TimeInForce.Day,
+          quantityMicros: '500000',
+        },
+      ],
+    })
+    expect(wholePass.targetPlan).toMatchObject({
+      executionTerms: {
+        executionPurpose: 'forced-close',
+        orderType: OrderType.Limit,
+        timeInForce: TimeInForce.ImmediateOrCancel,
+      },
+      intentTargets: [
+        {
+          symbol: wholeSymbol,
+          orderType: OrderType.Limit,
+          timeInForce: TimeInForce.ImmediateOrCancel,
+          quantityMicros: '1000000',
+        },
+      ],
+    })
+    const closeMarketData = wholePass.bindings.executionMarketData
+    if (closeMarketData?.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
+      return expect.unreachable('quote-bound close fixture requires archived intraday market data')
+    }
+    const { contentHash: _wholePassHash, ...wholePassMaterial } = wholePass
+    const forgedClose = (material: typeof wholePassMaterial, expectedFailure: string) => {
+      const result = decodeExecutionDecisionDocument({ ...material, contentHash: canonicalHashV1(material) })
+      expect(Result.isFailure(result)).toBeTrue()
+      if (Result.isFailure(result)) expect(String(result.failure.cause)).toContain(expectedFailure)
+    }
+    forgedClose(
+      { ...wholePassMaterial, createdAt: utcInstantFromEpochMillis(Date.parse(wholePass.createdAt) + 1_000) },
+      'observation must equal the close decision instant',
+    )
+    forgedClose(
+      {
+        ...wholePassMaterial,
+        createdAt: utcInstantFromEpochMillis(Date.parse(wholePass.createdAt) + 60_000),
+      },
+      'must bind the exact completed one-minute window',
+    )
+    const { executionSession: _executionSession, ...withoutExecutionSession } = wholePassMaterial
+    forgedClose(
+      withoutExecutionSession as typeof wholePassMaterial,
+      'must match the persisted execution session and calendar',
+    )
+    const withExecutionTerms = (
+      targetPlan: typeof close.targetPlan,
+      executionTerms: Readonly<Record<string, string>>,
+    ) => {
+      const { outputHash: _outputHash, ...material } = targetPlan
+      const changed = { ...material, executionTerms }
+      return { ...changed, outputHash: canonicalHashV1(changed) }
+    }
+    const forgedBrokerMarkPlan = withExecutionTerms(close.targetPlan, {
+      ...close.targetPlan.executionTerms,
+      executionPurpose: 'forced-close',
+      orderType: OrderType.Market,
+      timeInForce: TimeInForce.Day,
+      priceReference: 'reconciled-broker-position-mark',
+    })
+    const forgedArchivePlan = withExecutionTerms(outOfUniverseClose.targetPlan, {
+      ...outOfUniverseClose.targetPlan.executionTerms,
+      executionPurpose: 'fractional-close',
+      orderType: OrderType.Market,
+      timeInForce: TimeInForce.Day,
+      priceReference: 'verified-adverse-quote-boundary',
+    })
+    const { contentHash: _closeHash, ...closeMaterial } = close
+    const { contentHash: _outOfUniverseHash, ...outOfUniverseMaterial } = outOfUniverseClose
+    expect(Result.isSuccess(decodeTargetPlanResult(forgedBrokerMarkPlan))).toBe(true)
+    expect(Result.isSuccess(decodeTargetPlanResult(forgedArchivePlan))).toBe(true)
+    expect(
+      Result.isFailure(makeExecutionDecisionDocument({ ...closeMaterial, targetPlan: forgedBrokerMarkPlan })),
+    ).toBe(true)
+    expect(
+      Result.isFailure(makeExecutionDecisionDocument({ ...outOfUniverseMaterial, targetPlan: forgedArchivePlan })),
+    ).toBe(true)
+    const brokerPositionBinding = outOfUniverseClose.bindings.executionMarketData
+    if (brokerPositionBinding?.schemaVersion !== 'bayn.reconciled-position-liquidation-binding.v1') {
+      return expect.unreachable('out-of-universe close must bind the exact reconciled broker position')
+    }
+    const rehashBrokerPositionBinding = (
+      overrides: Partial<
+        Omit<typeof brokerPositionBinding, 'schemaVersion' | 'purpose' | 'source' | 'contentHash' | 'snapshotId'>
+      >,
+    ) => {
+      const { contentHash: _contentHash, snapshotId: _snapshotId, ...bindingMaterial } = brokerPositionBinding
+      const changedMaterial = { ...bindingMaterial, ...overrides }
+      const contentHash = canonicalHashV1(changedMaterial)
+      return { ...changedMaterial, contentHash, snapshotId: canonicalHashV1({ ...changedMaterial, contentHash }) }
+    }
+    const forgedReconciliationBinding = rehashBrokerPositionBinding({ reconciliationId: 'f'.repeat(64) })
+    const forgedPositionBinding = rehashBrokerPositionBinding({
+      positions: brokerPositionBinding.positions.map((position) => ({ ...position, quantityMicros: '250000' })),
+    })
+    for (const forgedBinding of [forgedReconciliationBinding, forgedPositionBinding]) {
+      const forgedDocument = makeExecutionDecisionDocument({
+        ...outOfUniverseMaterial,
+        bindings: { ...outOfUniverseMaterial.bindings, executionMarketData: forgedBinding },
+      })
+      expect(Result.isFailure(forgedDocument)).toBe(true)
+      if (Result.isFailure(forgedDocument))
+        expect(String(forgedDocument.failure.cause)).toContain('executionMarketData')
+    }
+    expect(waiting).toEqual(
+      new ExecutionCloseAwaitingMarketData({
+        message: `${unavailable.message}: ${unavailable.message}`,
+        observedAt: closeObservedAt,
+      }),
+    )
+    expect(waitingForReplica).toEqual(
+      new ExecutionCloseAwaitingMarketData({
+        message: `${closeReplicaLag.message}: ${closeReplicaLag.message}`,
+        observedAt: closeObservedAt,
+      }),
+    )
+    expect(fatalCloseMismatch).toMatchObject({
+      _tag: 'CycleRunnerError',
+      failure: 'operational',
+      cause: {
+        _tag: 'OperationalError',
+        cause: closeTopologyMismatch,
+      },
+    })
+    expect(stale).toEqual(
+      new ExecutionCloseAwaitingMarketData({
+        message: `closing quote for ${heldSymbol} is outside the freshness window`,
+        observedAt: staleObservedAt,
+      }),
+    )
+    expect(refreshed).toMatchObject({
+      dispatchable: true,
+      targetPlan: {
+        status: TargetPlanStatus.Planned,
+        intentTargets: [{ symbol: heldSymbol, side: OrderSide.Sell, quantityMicros: '500000' }],
       },
     })
   })
@@ -3814,6 +4423,69 @@ describe('OBSERVE runtime composition', () => {
         }),
       ),
     ).toBe(true)
+  })
+
+  test('admits the provenance-bound full-session intraday execution model at autonomous startup', () => {
+    const protocol = Result.getOrThrow(decodeDefaultIntradayMomentumProtocol())
+    const definition = makeIntradayMomentumDefinition(protocol)
+    const strategy = {
+      definition,
+      provenance: {
+        ...fixtureRuntime.provenance,
+        strategy: {
+          name: definition.name,
+          behaviorHash: intradayMomentumBehaviorHash,
+          parameterHash: canonicalHashV1(definition.parameters),
+          parameterSchemaVersion: definition.parameters.schemaVersion,
+        },
+      },
+    }
+
+    const prepared = prepareObserveStartup({
+      accountId,
+      authorityGenerationHash: generationHash,
+      pollIntervalMs: 30_000,
+      reconciliationIntervalMs: 30_000,
+      reconciliationPassTimeoutMs: 30_000,
+      strategy,
+    })
+
+    expect(Result.isSuccess(prepared)).toBe(true)
+    if (Result.isSuccess(prepared)) {
+      expect(prepared.success.executionModel.schemaVersion).toBe('bayn.execution-model.v5')
+      expect(prepared.success.executionPolicy).toMatchObject({
+        schemaVersion: 'bayn.autonomous-cycle-execution-policy.v3',
+        warmupAfterOpenMs: 1_800_000,
+        submissionCutoffBeforeCloseMs: 3_600_000,
+      })
+    }
+
+    const customDefinition = makeIntradayMomentumDefinition({ ...protocol, lookbackMinutes: 10 })
+    const customProtocol = prepareObserveStartup({
+      accountId,
+      authorityGenerationHash: generationHash,
+      pollIntervalMs: 30_000,
+      reconciliationIntervalMs: 30_000,
+      reconciliationPassTimeoutMs: 30_000,
+      strategy: {
+        definition: customDefinition,
+        provenance: {
+          ...fixtureRuntime.provenance,
+          strategy: {
+            name: customDefinition.name,
+            behaviorHash: intradayMomentumBehaviorHash,
+            parameterHash: canonicalHashV1(customDefinition.parameters),
+            parameterSchemaVersion: customDefinition.parameters.schemaVersion,
+          },
+        },
+      },
+    })
+    expect(Result.isFailure(customProtocol)).toBe(true)
+    if (Result.isFailure(customProtocol)) {
+      expect(customProtocol.failure.message).toBe(
+        'intraday-momentum autonomous execution requires the source-controlled protocol',
+      )
+    }
   })
 
   test('decodes the bounded source policy with the configured account and canonical universe', async () => {
