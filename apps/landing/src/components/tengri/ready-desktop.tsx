@@ -23,6 +23,7 @@ import {
   type Bounds,
   type DesktopWindow,
   type TengriApp,
+  type WindowManagerState,
   windowIdForOpen,
   windowReducer,
 } from '@/lib/tengri/window-manager'
@@ -59,6 +60,10 @@ type DesktopIdentityLease = {
 const getServerGuestOperationSnapshot = () => false
 const DESKTOP_ID_PATTERN = /^[0-9a-f]{32}$/
 const desktopIdentityLeases = new Map<string, DesktopIdentityLease>()
+
+function desktopLayoutStorageKey(agentId: string, desktopId: string) {
+  return `tengri:windows:${agentId}:${desktopId}`
+}
 
 function newDesktopId() {
   return crypto.randomUUID().replaceAll('-', '')
@@ -188,6 +193,7 @@ export function ReadyDesktop({
   const [committedTransition, setCommittedTransition] = useState<CommittedTransition | null>(null)
   const [spotlightOpen, setSpotlightOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
+  const [hydratedDesktopId, setHydratedDesktopId] = useState<string | null>(null)
   const desktopId = useDesktopIdentity(agent.id)
   const codeRequestIdRef = useRef(0)
   const finderRequestIdRef = useRef(0)
@@ -255,12 +261,39 @@ export function ReadyDesktop({
 
   useLayoutEffect(() => {
     const measuredViewport = viewport()
+    if (!desktopId) {
+      setHydratedDesktopId(null)
+      dispatch({
+        type: 'hydrate',
+        state: initialWindowState(measuredViewport, ['finder', 'chrome']),
+        viewport: measuredViewport,
+      })
+      return
+    }
+
+    let state: WindowManagerState = initialWindowState(measuredViewport, ['finder', 'chrome'])
+    try {
+      const persisted = sessionStorage.getItem(desktopLayoutStorageKey(agent.id, desktopId))
+      if (persisted) state = JSON.parse(persisted) as WindowManagerState
+    } catch {
+      // A malformed or unavailable session store falls back to a clean desktop.
+    }
     dispatch({
       type: 'hydrate',
-      state: initialWindowState(measuredViewport, ['finder', 'chrome']),
+      state,
       viewport: measuredViewport,
     })
-  }, [viewport])
+    setHydratedDesktopId(desktopId)
+  }, [agent.id, desktopId, viewport])
+
+  useEffect(() => {
+    if (!desktopId || hydratedDesktopId !== desktopId) return
+    try {
+      sessionStorage.setItem(desktopLayoutStorageKey(agent.id, desktopId), JSON.stringify(windowState))
+    } catch {
+      // The live desktop remains usable when session storage is unavailable.
+    }
+  }, [agent.id, desktopId, hydratedDesktopId, windowState])
 
   useEffect(
     () => () => {

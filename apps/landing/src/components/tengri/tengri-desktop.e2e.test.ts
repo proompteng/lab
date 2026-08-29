@@ -664,7 +664,7 @@ test('preserves terminal identity on reload and BFCache restore while isolating 
   ).toBeVisible()
 
   await page.reload()
-  await openTerminal(page)
+  await expect(page.getByRole('region', { name: 'Terminal window' })).toHaveCount(1)
   await expect(
     page.getByRole('region', { name: 'Terminal window' }).getByText('Connected', { exact: true }),
   ).toBeVisible()
