@@ -77,23 +77,23 @@ impl Default for MicroVMResources {
 #[serde(rename_all = "camelCase")]
 pub struct MicroVMStatus {
     pub phase: MicroVMPhase,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub pod_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub pvc_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub pod_ip: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub node_name: Option<String>,
     #[serde(default)]
     pub guest_ready: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub failure_reason: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub message: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub ready_at: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub last_activity_at: Option<String>,
     #[serde(default)]
     pub conditions: Vec<MicroVMCondition>,
@@ -132,5 +132,27 @@ mod tests {
         assert_eq!(MicroVMResources::default().cpu_millis, 2_000);
         assert_eq!(MicroVMResources::default().memory_mib, 4_096);
         assert_eq!(MicroVMResources::default().workspace_gib, 16);
+    }
+
+    #[test]
+    fn status_serialization_clears_stale_optional_fields() {
+        let serialized = serde_json::to_value(MicroVMStatus::default()).expect("serialize status");
+
+        for field in [
+            "podName",
+            "pvcName",
+            "podIp",
+            "nodeName",
+            "failureReason",
+            "message",
+            "readyAt",
+            "lastActivityAt",
+        ] {
+            assert_eq!(
+                serialized.get(field),
+                Some(&serde_json::Value::Null),
+                "JSON merge status patches must explicitly clear {field}"
+            );
+        }
     }
 }
