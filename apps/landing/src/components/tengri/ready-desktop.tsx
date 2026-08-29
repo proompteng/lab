@@ -39,7 +39,12 @@ import { CodeEditor } from './code-editor'
 import { type CodeOpenRequest, updateDirtyCodeWindows } from './code-editor-model'
 import { ConfirmationDialog } from './confirmation-dialog'
 import { DesktopWindowFrame } from './desktop-window'
-import { clearDeletedDesktopState } from './desktop-session-storage'
+import {
+  clearDeletedDesktopState,
+  createDesktopCoordinationChannel,
+  publishDeletedDesktopState,
+  subscribeDeletedDesktopState,
+} from './desktop-session-storage'
 import { FinderApp, type FinderOpenRequest } from './finder-app'
 import { MenuBar } from './menu-bar'
 import { SettingsApp } from './settings-app'
@@ -72,6 +77,8 @@ function newDesktopId() {
 
 function createDesktopIdentityLease(agentId: string): DesktopIdentityLease {
   let released = false
+  let committedId = ''
+  let pendingCandidate = ''
   let resolveIdentity: (id: string) => void = () => {}
   const identity = new Promise<string>((resolve) => {
     resolveIdentity = resolve
@@ -83,6 +90,18 @@ function createDesktopIdentityLease(agentId: string): DesktopIdentityLease {
     releaseTimer: null,
   }
   let handlePageHide: (event: PageTransitionEvent) => void = () => {}
+  const pendingPresence = new Map<string, { present: () => void; timer: ReturnType<typeof setTimeout> }>()
+  let coordination: ReturnType<typeof createDesktopCoordinationChannel>
+  coordination = createDesktopCoordinationChannel(agentId, (message) => {
+    if (
+      message.type === 'identity-probe' &&
+      (committedId === message.desktopId || pendingCandidate === message.desktopId)
+    ) {
+      coordination.post({ type: 'identity-present', desktopId: message.desktopId, requestId: message.requestId })
+      return
+    }
+    if (message.type === 'identity-present') pendingPresence.get(message.requestId)?.present()
+  })
   const storageKey = `tengri:desktop:${agentId}`
   let storedId = ''
   try {
@@ -94,6 +113,7 @@ function createDesktopIdentityLease(agentId: string): DesktopIdentityLease {
 
   const commitIdentity = (id: string) => {
     if (released) return
+    committedId = id
     try {
       sessionStorage.setItem(storageKey, id)
     } catch {
@@ -104,7 +124,30 @@ function createDesktopIdentityLease(agentId: string): DesktopIdentityLease {
 
   const claimIdentity = (candidate: string) => {
     if (!navigator.locks) {
-      commitIdentity(candidate)
+      if (!coordination.available) {
+        const navigation = performance.getEntriesByType('navigation').at(0) as PerformanceNavigationTiming | undefined
+        commitIdentity(storedId && navigation?.type === 'reload' ? candidate : newDesktopId())
+        return
+      }
+      const requestId = newDesktopId()
+      pendingCandidate = candidate
+      const timer = setTimeout(() => {
+        pendingPresence.delete(requestId)
+        pendingCandidate = ''
+        commitIdentity(candidate)
+      }, 120)
+      pendingPresence.set(requestId, {
+        timer,
+        present: () => {
+          const probe = pendingPresence.get(requestId)
+          if (!probe) return
+          clearTimeout(probe.timer)
+          pendingPresence.delete(requestId)
+          pendingCandidate = ''
+          claimIdentity(newDesktopId())
+        },
+      })
+      coordination.post({ type: 'identity-probe', desktopId: candidate, requestId })
       return
     }
     void navigator.locks
@@ -126,6 +169,9 @@ function createDesktopIdentityLease(agentId: string): DesktopIdentityLease {
       released = true
       globalThis.removeEventListener('pagehide', handlePageHide)
       if (desktopIdentityLeases.get(agentId) === lease) desktopIdentityLeases.delete(agentId)
+      for (const probe of pendingPresence.values()) clearTimeout(probe.timer)
+      pendingPresence.clear()
+      coordination.close()
       resolve()
     }
   })
@@ -201,6 +247,17 @@ export function ReadyDesktop({
   const lifecycleTransitionReleaseRef = useRef<(() => void) | null>(null)
   const terminalCloseHandlersRef = useRef(new Map<string, () => void>())
   const reducedMotion = useReducedMotion()
+
+  useEffect(
+    () =>
+      subscribeDeletedDesktopState(agent.id, () => {
+        for (const closeTerminal of terminalCloseHandlersRef.current.values()) closeTerminal()
+        clearDeletedDesktopState(agent.id)
+        setCommittedTransition('delete')
+        void onChanged()
+      }),
+    [agent.id, onChanged],
+  )
 
   const subscribeGuestOperations = useCallback(
     (listener: () => void) => subscribeTengriGuestOperations(agent.id, listener),
@@ -522,7 +579,7 @@ export function ReadyDesktop({
           setCommittedTransition(committedAction === 'sleep-agent' ? 'sleep' : 'delete')
           if (committedAction === 'delete-agent') {
             for (const closeTerminal of terminalCloseHandlersRef.current.values()) closeTerminal()
-            clearDeletedDesktopState(agent.id)
+            publishDeletedDesktopState(agent.id)
             setConfirmOpen(false)
           }
         },

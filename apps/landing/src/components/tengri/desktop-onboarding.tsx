@@ -13,7 +13,11 @@ import type { TengriAgent, TengriDesktopSnapshot } from '@/lib/tengri/types'
 import { createAgentFormSchema, type CreateAgentFormValues } from '@/schemas/tengri-agent'
 import { getDesktopSnapshot, runTengriAction } from './client'
 import { ConfirmationDialog } from './confirmation-dialog'
-import { clearDeletedDesktopState } from './desktop-session-storage'
+import {
+  clearDeletedDesktopState,
+  publishDeletedDesktopState,
+  subscribeDeletedDesktopState,
+} from './desktop-session-storage'
 import { useModalFocus } from './modal-focus'
 import { ReadyDesktop } from './ready-desktop'
 
@@ -46,6 +50,14 @@ export default function DesktopOnboarding() {
   }, [refresh])
 
   const gate = resolveDesktopGate(snapshot, snapshotError)
+  const agentId = snapshot?.agent?.id
+  useEffect(() => {
+    if (!agentId || gate.kind === 'ready') return
+    return subscribeDeletedDesktopState(agentId, () => {
+      clearDeletedDesktopState(agentId)
+      void refresh()
+    })
+  }, [agentId, gate.kind, refresh])
   useEffect(() => {
     const refreshDelay = desktopRefreshDelay(gate, Date.now())
     if (refreshDelay === null) return
@@ -319,7 +331,7 @@ function FailedAgentWindow({ agent, onChanged }: { agent: TengriAgent; onChanged
     setError('')
     try {
       await runTengriAction<null>({ action: 'delete-agent', agentId: agent.id })
-      clearDeletedDesktopState(agent.id)
+      publishDeletedDesktopState(agent.id)
       setConfirmOpen(false)
       await onChanged()
     } catch (cause) {

@@ -696,9 +696,10 @@ test('preserves terminal identity on reload and BFCache restore while isolating 
   await duplicate.close()
 })
 
-test('restores the desktop and terminal session when Web Locks are unavailable', async ({ page }) => {
+test('restores and isolates desktop sessions without Web Locks or BroadcastChannel', async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(navigator, 'locks', { configurable: true, value: undefined })
+    Object.defineProperty(globalThis, 'BroadcastChannel', { configurable: true, value: undefined })
   })
   const terminalStore: TerminalStore = { sessions: [] }
   const mock = await mockTengri(page, { terminalStore })
@@ -720,6 +721,28 @@ test('restores the desktop and terminal session when Web Locks are unavailable',
     desktopId,
   )
   expect(mock.actions.filter((action) => action.action === 'create-terminal')).toHaveLength(1)
+
+  const originalCreationId = String(mock.actions.find((action) => action.action === 'create-terminal')?.creationId)
+  const inheritedSessionStorage = await page.evaluate(() => Object.entries(sessionStorage))
+  const duplicate = await page.context().newPage()
+  await duplicate.addInitScript((entries: Array<[string, string]>) => {
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: undefined })
+    Object.defineProperty(globalThis, 'BroadcastChannel', { configurable: true, value: undefined })
+    for (const [key, value] of entries) sessionStorage.setItem(key, value)
+  }, inheritedSessionStorage)
+  const duplicateMock = await mockTengri(duplicate, { terminalStore })
+  await duplicate.goto('/')
+  await duplicate.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Terminal' }).click()
+  await expect.poll(() => duplicateMock.actions.filter((action) => action.action === 'create-terminal').length).toBe(1)
+  const duplicateCreationId = String(
+    duplicateMock.actions.find((action) => action.action === 'create-terminal')?.creationId,
+  )
+  expect(duplicateCreationId).not.toBe(originalCreationId)
+  expect(
+    await duplicate.evaluate((agentId) => sessionStorage.getItem(`tengri:desktop:${agentId}`), readyAgent.id),
+  ).not.toBe(desktopId)
+  expect(terminalStore.sessions).toHaveLength(2)
+  await duplicate.close()
 })
 
 test('migrates one legacy terminal resume state without sharing it across desktop tabs', async ({ page }) => {
@@ -982,6 +1005,57 @@ test('sends a real agent turn and executes sleep, resume, and confirmed deletion
   await create.getByRole('button', { name: 'Create Agent' }).click()
   await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
   await expect(page.getByRole('region', { name: 'Terminal window' })).toHaveCount(0)
+})
+
+test('propagates deletion cleanup to every open desktop tab', async ({ page }) => {
+  const terminalStore: TerminalStore = { sessions: [] }
+  await mockTengri(page, { terminalStore })
+  await page.goto('/')
+
+  const duplicate = await page.context().newPage()
+  await mockTengri(duplicate, { terminalStore })
+  await duplicate.goto('/')
+  await duplicate.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Terminal' }).click()
+  await expect(
+    duplicate.getByRole('region', { name: 'Terminal window' }).getByText('Connected', { exact: true }),
+  ).toBeVisible()
+  expect(
+    await duplicate.evaluate(
+      (agentId) =>
+        Object.keys(sessionStorage).some(
+          (key) => key.startsWith(`tengri:windows:${agentId}:`) || key.startsWith(`tengri:terminal:${agentId}:`),
+        ),
+      readyAgent.id,
+    ),
+  ).toBe(true)
+
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  await dock.getByRole('button', { name: 'Open Settings' }).click()
+  const settings = page.getByRole('region', { name: 'Settings window' })
+  await settings.getByRole('button', { name: 'Delete Agent' }).click()
+  await page
+    .getByRole('alertdialog', { name: /Delete “Tengri”/ })
+    .getByRole('button', { name: 'Delete Agent' })
+    .click()
+
+  await expect(page.getByRole('dialog', { name: 'Create your agent' })).toBeVisible()
+  await expect(duplicate.getByRole('heading', { name: 'Deleting Tengri' })).toBeVisible()
+  await expect
+    .poll(() =>
+      duplicate.evaluate(
+        (agentId) =>
+          Object.keys(sessionStorage).filter(
+            (key) =>
+              key === `tengri:desktop:${agentId}` ||
+              key.startsWith(`tengri:windows:${agentId}:`) ||
+              key.startsWith(`tengri:terminal:${agentId}:`) ||
+              key === `tengri:terminal-cleanup:${agentId}`,
+          ),
+        readyAgent.id,
+      ),
+    )
+    .toEqual([])
+  await duplicate.close()
 })
 
 test('blocks lifecycle changes while Settings has a guest request in flight', async ({ page }) => {
