@@ -435,13 +435,15 @@ describePostgres('PostgreSQL intraday observability projection', () => {
     )
     const byName = Object.fromEntries(indexes.map((index) => [index.indexname, index.indexdef]))
 
-    expect(byName.broker_events_account_snapshot_order_idx).toContain(
+    expect(byName['broker_events_account_snapshot_order_idx']).toContain(
       '(account_id, source_sequence DESC, observed_at DESC, event_id DESC)',
     )
-    expect(byName.broker_events_account_snapshot_clock_idx).toContain(
+    expect(byName['broker_events_account_snapshot_clock_idx']).toContain(
       '(account_id, observed_at DESC, source_sequence DESC, event_id DESC)',
     )
-    expect(byName.position_snapshots_account_ingestion_sequence_idx).toContain('(account_id, ingestion_sequence DESC)')
+    expect(byName['position_snapshots_account_ingestion_sequence_idx']).toContain(
+      '(account_id, ingestion_sequence DESC)',
+    )
   })
 
   test('ignores future-dated broker snapshots when selecting observable state', async () => {
