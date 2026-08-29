@@ -146,7 +146,9 @@ Storage-layout changes require two independently mergeable releases:
    legacy-layout agents.
 2. Verify the compatibility image is live and that newly created CRs remain unmarked.
 3. In a separate GitOps PR, set `TENGRI_NEW_AGENT_STORAGE_LAYOUT=home-workspace-v1`. New agents are then explicitly
-   marked and use the single-mount PVC layout; existing unmarked agents keep the legacy layout.
+   marked and mount their PVC exactly once at `/home/nanoagent`. The Nanoagent image exposes the persistent
+   `/home/nanoagent/workspace` directory through `/workspace`; no init container or synthetic passwd volume is used.
+   Existing unmarked agents keep the legacy layout.
 
 To roll back activation, remove the environment variable through GitOps and keep the compatibility controller image.
 Do not restore a controller from before compatibility support while a marked `MicroVM` remains. Marked CRs and PVCs

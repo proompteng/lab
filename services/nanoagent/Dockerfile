@@ -63,8 +63,8 @@ RUN set -eux; \
     else \
       useradd --uid 1000 --gid 1000 --home-dir /home/nanoagent --shell /bin/bash --create-home nanoagent; \
     fi; \
-    mkdir -p /home/nanoagent/.cache /home/nanoagent/.codex /home/nanoagent/.local/bin; \
-    ln -s /tengri/workspace /workspace; \
+    mkdir -p /home/nanoagent/.cache /home/nanoagent/.codex /home/nanoagent/.local/bin /home/nanoagent/workspace; \
+    ln -s /home/nanoagent/workspace /workspace; \
     chown -R 1000:1000 /home/nanoagent; \
     test -x /bin/bash
 

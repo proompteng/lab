@@ -101,8 +101,10 @@ Storage-layout changes use two releases so activation always has a safe rollback
 2. After the compatibility image is live, enable `TENGRI_NEW_AGENT_STORAGE_LAYOUT=home-workspace-v1` in a separate
    GitOps PR. Rolling back this activation removes the environment variable while retaining the compatibility image.
 
-Do not roll back past the compatibility image while a marked `MicroVM` exists. Marked agents use the single-mount PVC
-layout and must remain readable until their four-hour hard expiry deletes the CR and PVC.
+Do not roll back past the compatibility image while a marked `MicroVM` exists. Marked agents mount the PVC exactly once
+at `/home/nanoagent`; the Nanoagent image exposes its persistent `workspace/` subdirectory at `/workspace`. The Pod has
+no init container, so Firecracker's block-backed root filesystem is created only once. Marked agents must remain
+readable until their four-hour hard expiry deletes the CR and PVC.
 
 ## Local validation
 
