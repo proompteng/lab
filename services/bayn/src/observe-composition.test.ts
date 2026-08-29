@@ -139,7 +139,7 @@ import {
 import type { ReconciliationPassResult } from './reconciler'
 import { reconciledStateHash } from './reconciliation'
 import type { Policy } from './risk'
-import { makeExecutionDecisionDocument } from './shadow-decision-contract'
+import { decodeExecutionDecisionDocument, makeExecutionDecisionDocument } from './shadow-decision-contract'
 import { TargetPlanReason, TargetPlanStatus } from './target-planner'
 import { utcInstantFromEpochMillis } from './time'
 import type { DecisionPlan, IsoDate } from './types'
@@ -3822,6 +3822,69 @@ describe('OBSERVE runtime composition', () => {
     expect(noTradeDecision.selectedSymbols).toEqual([])
     expect(noTradeCompiled.decisionMarketData).toBeUndefined()
     expect('purpose' in noTradeCompiled.executionMarketData).toBe(false)
+
+    const closeObservedAt = '2020-05-01T15:30:01.000Z'
+    const closeCycle = Effect.runSync(
+      decodeAutonomousCycle({
+        ...activeCycle,
+        bindings: { snapshotId: document.bindings.snapshotId, decisionHash: document.contentHash },
+        stateVersion: activeCycle.stateVersion + 1,
+        updatedAt: document.createdAt,
+      }),
+    )
+    const closeDocument = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(closeObservedAt))
+        return yield* buildClosingExecutionCycleDecision({
+          input,
+          preparation,
+          policy,
+          cycle: closeCycle,
+          entryDocument: document,
+          reconcile: Effect.succeed(
+            reconciliationResultAt(closeObservedAt, 0, 0, [{ ...heldPosition, observedAt: closeObservedAt }]),
+          ),
+          closeExpiresAt: '2020-05-01T16:00:00.000Z',
+        })
+      }).pipe(
+        Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
+        Effect.provideService(MarketData, marketData([])),
+        Effect.provideService(BrokerEventStore, {} as BrokerEventStoreShape),
+        Effect.provideService(FillAccountingStore, {} as FillAccountingStoreShape),
+        Effect.provideService(ValuationStore, {} as ValuationStoreShape),
+        Effect.provideService(ReconciliationStore, {} as ReconciliationStoreShape),
+        Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
+        Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
+        Effect.provideService(WriterFence, {} as WriterFenceService),
+        Effect.provide(TestClock.layer()),
+      ),
+    )
+    expect(closeDocument.bindings.executionMarketData).toMatchObject({
+      schemaVersion: 'bayn.execution-market-data-binding.v2',
+      purpose: IntradaySnapshotPurpose.Liquidation,
+      rangeStartAt: '2020-05-01T15:29:00.000Z',
+      rangeEndAt: '2020-05-01T15:30:00.000Z',
+      observedAt: closeObservedAt,
+    })
+    const { contentHash: _closeContentHash, ...closeMaterial } = closeDocument
+    const forgedClose = (material: typeof closeMaterial, expectedFailure: string) => {
+      const result = decodeExecutionDecisionDocument({ ...material, contentHash: canonicalHashV1(material) })
+      expect(Result.isFailure(result)).toBeTrue()
+      if (Result.isFailure(result)) expect(String(result.failure.cause)).toContain(expectedFailure)
+    }
+    forgedClose(
+      { ...closeMaterial, createdAt: utcInstantFromEpochMillis(Date.parse(closeDocument.createdAt) + 1_000) },
+      'observation must equal the close decision instant',
+    )
+    forgedClose(
+      { ...closeMaterial, createdAt: utcInstantFromEpochMillis(Date.parse(closeDocument.createdAt) + 60_000) },
+      'must bind the exact completed one-minute window',
+    )
+    const { executionSession: _closeExecutionSession, ...withoutCloseExecutionSession } = closeMaterial
+    forgedClose(
+      withoutCloseExecutionSession as typeof closeMaterial,
+      'must match the persisted execution session and calendar',
+    )
   })
 
   test('decodes a versioned quote-bound LIMIT/IOC policy for intraday execution', async () => {
