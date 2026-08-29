@@ -1,8 +1,12 @@
 import { resolve } from 'node:path'
 
 const repositoryRoot = resolve(import.meta.dir, '..')
+const outputRoot = resolve(process.env.TENGRI_SEALED_SECRET_OUTPUT_ROOT ?? repositoryRoot)
 const controllerName = process.env.SEALED_SECRETS_CONTROLLER_NAME ?? 'sealed-secrets'
 const controllerNamespace = process.env.SEALED_SECRETS_CONTROLLER_NAMESPACE ?? 'sealed-secrets'
+const githubOAuthTokenUrl = process.env.TENGRI_GITHUB_OAUTH_TOKEN_URL ?? 'https://github.com/login/oauth/access_token'
+const githubOAuthCallbackUrl =
+  process.env.TENGRI_GITHUB_OAUTH_CALLBACK_URL ?? 'https://proompteng.ai/api/auth/callback/github'
 
 const required = [
   'BETTER_AUTH_SECRET',
@@ -13,6 +17,28 @@ const required = [
 ] as const
 
 type RequiredSecret = (typeof required)[number]
+
+const forwardedEnvironment = [
+  'PATH',
+  'HOME',
+  'KUBECONFIG',
+  'XDG_CONFIG_HOME',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+  'HTTPS_PROXY',
+  'HTTP_PROXY',
+  'NO_PROXY',
+  'TENGRI_SEALED_SECRET_OUTPUT_ROOT',
+] as const
+
+function subprocessEnvironment(extra: Record<string, string> = {}): Record<string, string> {
+  const environment = { ...extra }
+  for (const name of forwardedEnvironment) {
+    const value = process.env[name]
+    if (value) environment[name] = value
+  }
+  return environment
+}
 
 function readSecrets(): Record<RequiredSecret, string> {
   const missing = required.filter((name) => !process.env[name])
@@ -39,6 +65,32 @@ function readSecrets(): Record<RequiredSecret, string> {
   }
 
   return secrets
+}
+
+async function verifyGitHubOAuthCredentials(clientId: string, clientSecret: string): Promise<void> {
+  const response = await fetch(githubOAuthTokenUrl, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'User-Agent': 'tengri-sealed-secret-generator',
+    },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      code: `tengri-credential-preflight-${crypto.randomUUID()}`,
+      redirect_uri: githubOAuthCallbackUrl,
+    }),
+  })
+
+  if (!response.ok) {
+    throw new Error(`GitHub OAuth credential preflight returned HTTP ${response.status}`)
+  }
+
+  const result = (await response.json()) as { error?: string }
+  if (result.error !== 'bad_verification_code') {
+    throw new Error(`GitHub OAuth credential preflight failed: ${result.error ?? 'unexpected success response'}`)
+  }
 }
 
 async function sealSecret(
@@ -68,6 +120,7 @@ async function sealSecret(
       controllerNamespace,
     ],
     {
+      env: subprocessEnvironment(),
       stdin: new Blob([JSON.stringify(secret)]),
       stdout: 'pipe',
       stderr: 'pipe',
@@ -87,7 +140,7 @@ async function sealSecret(
   const annotate = Bun.spawn(
     ['yq', '-o=yaml', '.metadata.annotations."argocd.argoproj.io/sync-wave" = strenv(SYNC_WAVE)'],
     {
-      env: { ...process.env, SYNC_WAVE: syncWave },
+      env: subprocessEnvironment({ SYNC_WAVE: syncWave }),
       stdin: new Blob([stdout]),
       stdout: 'pipe',
       stderr: 'pipe',
@@ -106,6 +159,7 @@ async function sealSecret(
 }
 
 const secrets = readSecrets()
+await verifyGitHubOAuthCredentials(secrets.GITHUB_CLIENT_ID, secrets.GITHUB_CLIENT_SECRET)
 const controllerManifest = await sealSecret(
   'tengri',
   'tengri-runtime',
@@ -128,8 +182,8 @@ for (const secret of Object.values(secrets)) {
   }
 }
 
-const controllerPath = resolve(repositoryRoot, 'argocd/applications/tengri/sealed-secret.yaml')
-const bffPath = resolve(repositoryRoot, 'argocd/applications/proompteng/sealed-secret.yaml')
+const controllerPath = resolve(outputRoot, 'argocd/applications/tengri/sealed-secret.yaml')
+const bffPath = resolve(outputRoot, 'argocd/applications/proompteng/sealed-secret.yaml')
 
 await Promise.all([Bun.write(controllerPath, controllerManifest), Bun.write(bffPath, bffManifest)])
 

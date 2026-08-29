@@ -40,7 +40,11 @@ The plaintext inputs are these case-sensitive environment variables:
 
 The BFF reads the first four values. The controller reads the final two. Both manifests must be generated in one run so
 the controller and BFF receive the same HMAC signing bundle. The sealing script validates every input, keeps plaintext
-out of command arguments and files, uses namespace/name-bound strict scope, and writes only encrypted manifests.
+out of command arguments and files, uses namespace/name-bound strict scope, and writes only encrypted manifests. Before
+sealing, it also submits a random invalid authorization code with the production callback URL and requires GitHub to
+return `bad_verification_code`. GitHub returns `incorrect_client_credentials` for a wrong client pair and
+`redirect_uri_mismatch` for an unregistered callback, so either mistake stops the generator before it replaces a
+manifest. See [GitHub's OAuth token request errors](https://docs.github.com/en/apps/oauth-apps/maintaining-oauth-apps/troubleshooting-oauth-app-access-token-request-errors).
 
 Generate or rotate both manifests from the repository root. The local landing environment supplies the first four
 values; the ticket key is generated only for this rotation and is never written in plaintext:
@@ -88,6 +92,11 @@ test "$(kubectl --context galactic-lan -n proompteng get secret tengri-bff -o js
 kubectl --context galactic-lan -n tengri rollout status deployment/tengri --timeout=5m
 kubectl --context galactic-lan -n proompteng rollout status deployment/proompteng --timeout=5m
 ```
+
+Finish the cutover with a real browser session. Open `https://proompteng.ai`, sign out any existing session, select
+**Sign in with GitHub**, and require GitHub to return to `https://proompteng.ai/api/auth/callback/github` without an
+OAuth error. Confirm that the desktop renders the authenticated GitHub user before treating credential delivery as
+working. A successful root probe or Deployment rollout is not an authentication test.
 
 Do not merge ciphertext that fails `kubeseal --validate`. The Deployments intentionally remain unavailable rather than
 booting with missing or mismatched credentials.
