@@ -366,10 +366,10 @@ describe('Bayn cycle operations alert contract', () => {
         'max by (status, reason) (bayn_cycle_target_plan_info{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
         'max by (stage) (bayn_execution_funnel_count{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
         'max by (kind) (bayn_cycle_decision_market_data_records{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
-        'max(bayn_broker_position_count{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
-        'max(bayn_broker_gross_exposure_dollars{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
-        'max(bayn_broker_net_exposure_dollars{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
-        'max(bayn_broker_unrealized_pnl_dollars{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
+        'max(bayn_broker_position_count{job="bayn",namespace="bayn",service="bayn"} and on(instance) ((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) <= on(instance) bayn_reconciliation_stale_threshold_seconds{job="bayn",namespace="bayn",service="bayn"}) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
+        'max(bayn_broker_gross_exposure_dollars{job="bayn",namespace="bayn",service="bayn"} and on(instance) ((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) <= on(instance) bayn_reconciliation_stale_threshold_seconds{job="bayn",namespace="bayn",service="bayn"}) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
+        'max(bayn_broker_net_exposure_dollars{job="bayn",namespace="bayn",service="bayn"} and on(instance) ((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) <= on(instance) bayn_reconciliation_stale_threshold_seconds{job="bayn",namespace="bayn",service="bayn"}) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
+        'max(bayn_broker_unrealized_pnl_dollars{job="bayn",namespace="bayn",service="bayn"} and on(instance) ((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) <= on(instance) bayn_reconciliation_stale_threshold_seconds{job="bayn",namespace="bayn",service="bayn"}) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
         'max(bayn_broker_account_dollars{job="bayn",namespace="bayn",service="bayn",kind="buying_power"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
         'max(bayn_accounting_gross_realized_pnl_dollars{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
         'max(bayn_accounting_execution_fees_dollars{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
@@ -418,7 +418,7 @@ describe('Bayn cycle operations alert contract', () => {
     }
     for (const title of ['Open positions', 'Gross exposure', 'Net exposure', 'Unrealized P&L']) {
       expect(dashboard.panels.find((panel) => panel.title === title)?.fieldConfig?.defaults?.noValue).toBe(
-        'NO POSITION SNAPSHOT',
+        'STALE / NO SNAPSHOT',
       )
     }
     expect(dashboardExpressions.join('\n')).not.toContain('bayn_intents{')
