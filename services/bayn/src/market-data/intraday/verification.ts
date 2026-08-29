@@ -812,12 +812,7 @@ const eventPayloadKey = (record: IntradayQuote | IntradayTrade): Result.Result<s
   Result.try({
     try: () => `${record.symbol}\u0000${intradayInstantNanos(record.eventAt)}`,
     catch: (cause) =>
-      failure(
-        'rows',
-        'intraday quote or trade timestamp does not match the archive contract',
-        { symbol: record.symbol },
-        cause,
-      ),
+      failure('rows', 'intraday quote or trade timestamp does not match the archive contract', undefined, cause),
   })
 
 const eventPayloadVariant = <T extends IntradayQuote | IntradayTrade>(
@@ -827,12 +822,7 @@ const eventPayloadVariant = <T extends IntradayQuote | IntradayTrade>(
   Result.try({
     try: () => JSON.stringify(payload(record)),
     catch: (cause) =>
-      failure(
-        'rows',
-        'intraday quote or trade payload does not match the archive contract',
-        { symbol: record.symbol },
-        cause,
-      ),
+      failure('rows', 'intraday quote or trade payload does not match the archive contract', undefined, cause),
   })
 
 const payloadVariantCounts = <T extends IntradayQuote | IntradayTrade>(

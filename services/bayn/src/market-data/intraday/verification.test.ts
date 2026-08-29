@@ -746,6 +746,28 @@ describe('immutable intraday market snapshot', () => {
     }
   })
 
+  test('returns a typed row failure for null replayed quote and trade rows', () => {
+    const verified = success(verifyIntradaySnapshot(request, makeRows()))
+
+    const malformedSnapshots: readonly IntradayMarketSnapshot[] = [
+      {
+        ...verified,
+        quotes: [null as never, ...verified.quotes.slice(1)],
+      },
+      {
+        ...verified,
+        trades: [null as never, ...verified.trades.slice(1)],
+      },
+    ]
+
+    for (const malformed of malformedSnapshots) {
+      expect(error(reverifyIntradayMarketSnapshot(malformed))).toMatchObject({
+        reason: 'rows',
+        message: 'intraday quote or trade timestamp does not match the archive contract',
+      })
+    }
+  })
+
   test('returns a typed row failure for non-serializable replayed quote and trade payloads', () => {
     const verified = success(verifyIntradaySnapshot(request, makeRows()))
 
