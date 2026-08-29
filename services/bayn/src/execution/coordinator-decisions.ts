@@ -209,9 +209,10 @@ export const nextInstant = Pipeable.dual(3, nextInstantDataFirst)
 const encodeOrderDataFirst = (
   operation: MutationOperation,
   intent: Intent,
+  closeOnly = false,
   message = 'intent cannot be represented as an Alpaca order',
 ): Result.Result<EncodedOrder, ExecutionDecisionFailure> =>
-  orderRequestBody(intent).pipe(
+  orderRequestBody(intent, closeOnly).pipe(
     Result.mapError(
       (cause): ExecutionDecisionFailure => ({ _tag: 'OrderCanonicalizationFailed', operation, message, cause }),
     ),
@@ -231,7 +232,11 @@ const encodeOrderDataFirst = (
   )
 
 export const encodeOrder = Pipeable.by<
-  (intent: Intent, message?: string) => (operation: MutationOperation) => ReturnType<typeof encodeOrderDataFirst>,
+  (
+    intent: Intent,
+    closeOnly?: boolean,
+    message?: string,
+  ) => (operation: MutationOperation) => ReturnType<typeof encodeOrderDataFirst>,
   typeof encodeOrderDataFirst
 >((arguments_) => typeof arguments_[0] === 'string', encodeOrderDataFirst)
 
@@ -290,7 +295,12 @@ const makeDryRunSubmitDataFirst = (
 ): Result.Result<DryRunSubmitDecision, ExecutionDecisionFailure> =>
   validateActiveSubmitRiskDecision(stored, currentTimeMillis, 'dry-run submission').pipe(
     Result.flatMap(({ intent }) =>
-      encodeOrder(MutationOperation.Submit, intent, 'approved intent cannot be represented as an Alpaca order').pipe(
+      encodeOrder(
+        MutationOperation.Submit,
+        intent,
+        false,
+        'approved intent cannot be represented as an Alpaca order',
+      ).pipe(
         Result.map(({ request, requestHash }) => ({
           schemaVersion: legacySubmitDryRunSchemaVersion,
           intentId: intent.intentId,

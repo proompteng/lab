@@ -86,9 +86,9 @@ describe('Signal publisher GitOps authority contract', () => {
       HISTORY_START_DATE: '2016-01-04',
       HISTORY_FEED: 'sip',
     })
-    expect(coreSymbols).toEqual(schedulerSymbols)
+    expect(schedulerSymbols.every((symbol) => coreSymbols.includes(symbol))).toBe(true)
     expect(csv(websocketConfig.data.SYMBOLS_ALLOWLIST)).toEqual(coreSymbols)
-    expect(coreSymbols).toHaveLength(10)
+    expect(coreSymbols).toHaveLength(16)
     expect(coreSymbols.length + selected.length).toBeLessThanOrEqual(30)
     expect(websocketVariables.get('ALPACA_OBSERVATION_SYMBOLS')).toMatchObject(universeRef('UNIVERSE_SYMBOLS'))
     expect(websocketVariables.get('MARKET_DATA_UNIVERSE_ID')).toMatchObject(universeRef('UNIVERSE_ID'))
@@ -235,7 +235,7 @@ describe('Signal publisher GitOps authority contract', () => {
       'pdb.yaml',
     ])
     expect(archive.spec).toMatchObject({
-      restartNonce: 10,
+      restartNonce: 11,
       job: {
         entryClass: 'ai.proompteng.dorvud.ta.flink.MarketDataArchiveJobKt',
         parallelism: 3,
@@ -255,7 +255,7 @@ describe('Signal publisher GitOps authority contract', () => {
       ARCHIVE_CORE_BARS_TOPIC: 'torghut.bars.1m.v1',
       ARCHIVE_CORE_QUOTES_TOPIC: 'torghut.quotes.v1',
       ARCHIVE_CORE_TRADES_TOPIC: 'torghut.trades.v1',
-      ARCHIVE_CORE_UNIVERSE_ID: 'torghut-core-equity-v1',
+      ARCHIVE_CORE_UNIVERSE_ID: 'torghut-core-equity-v2',
       ARCHIVE_CORE_UNIVERSE_SYMBOL_HASH: expectedCoreArchiveHash,
       ARCHIVE_DELAYED_SIP_BARS_TOPIC: 'bayn.market-data.delayed-sip.bars.1m.v1',
       ARCHIVE_DELAYED_SIP_QUOTES_TOPIC: 'bayn.market-data.delayed-sip.quotes.v1',
@@ -286,7 +286,7 @@ describe('Signal publisher GitOps authority contract', () => {
       'argocd.argoproj.io/sync-wave': '5',
     })
     expect(websocketDeployment.spec.template.metadata.annotations).toMatchObject({
-      'torghut.proompteng.ai/ws-config-generation': 'bayn-cross-asset-v2',
+      'torghut.proompteng.ai/ws-config-generation': 'bayn-intraday-liquid-v1',
     })
   })
 

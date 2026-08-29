@@ -540,6 +540,121 @@ describe('final broker mutation authority', () => {
     expect(observed.submits).toBe(1)
   })
 
+  test('keeps an exact short cover eligible with exhausted buying power in close-only mode', async () => {
+    const observed = await runLiveSubmit({
+      brokerAccount: account({ buyingPowerMicros: '0' }),
+      positions: [
+        position({
+          side: PositionSide.Short,
+          quantityMicros: '-1000000',
+          marketValueMicros: '-100000000',
+        }),
+      ],
+      proposedIntent: intent({ side: OrderSide.Buy }),
+      closeOnly: true,
+    })
+
+    expect(observed.exit._tag).toBe('Success')
+    expect(observed.submits).toBe(1)
+  })
+
+  test('does not charge buying power to a strict short cover in a mixed portfolio', async () => {
+    const observed = await runLiveSubmit({
+      brokerAccount: account({ buyingPowerMicros: '0' }),
+      positions: [
+        position({
+          side: PositionSide.Short,
+          quantityMicros: '-1000000',
+          marketValueMicros: '-100000000',
+        }),
+        position({
+          assetId: '7781125b-04ba-4fcb-903f-ad4c34eb6832',
+          symbol: 'NVDA',
+          quantityMicros: '1000000',
+          marketValueMicros: '100000000',
+        }),
+      ],
+      proposedIntent: intent({ side: OrderSide.Buy }),
+      closeOnly: true,
+    })
+
+    expect(observed.exit._tag).toBe('Success')
+    expect(observed.submits).toBe(1)
+  })
+
+  test('keeps a gross-reducing hard close eligible for a mixed-sign account above ordinary caps', async () => {
+    const observed = await runLiveSubmit({
+      grant: persistedGrantRecord({ ...defaultLimits, maxOrderNotionalMicros: '99999999' }),
+      brokerAccount: account({
+        buyingPowerMicros: '0',
+        equityMicros: '899999999',
+        lastEquityMicros: '1000000000',
+      }),
+      positions: [
+        position({
+          side: PositionSide.Short,
+          quantityMicros: '-1000000',
+          marketValueMicros: '-100000000',
+        }),
+        position({
+          assetId: '7781125b-04ba-4fcb-903f-ad4c34eb6832',
+          symbol: 'NVDA',
+          quantityMicros: '1000000',
+          marketValueMicros: '100000000',
+        }),
+      ],
+      proposedIntent: intent({ side: OrderSide.Buy }),
+      currentDailyTradedNotionalMicros: '250000000',
+      maxDailyTradedNotionalMicros: '249999999',
+      peakEquityMicros: '1000000000',
+      maxDrawdownMicros: '100000000',
+      closeOnly: true,
+    })
+
+    expect(observed.exit._tag).toBe('Success')
+    expect(observed.submits).toBe(1)
+  })
+
+  test('keeps a gross-reducing hedge close eligible when temporary net exposure exceeds the cap', async () => {
+    const observed = await runLiveSubmit({
+      brokerAccount: account({ buyingPowerMicros: '0' }),
+      positions: [
+        position({
+          side: PositionSide.Short,
+          quantityMicros: '-1500000',
+          marketValueMicros: '-150000000',
+        }),
+        position({
+          assetId: '7781125b-04ba-4fcb-903f-ad4c34eb6832',
+          symbol: 'NVDA',
+          quantityMicros: '1500000',
+          marketValueMicros: '150000000',
+        }),
+      ],
+      proposedIntent: intent({
+        side: OrderSide.Buy,
+        quantityMicros: '1500000',
+        notionalLimitMicros: '150000000',
+      }),
+      maxNetExposureMicros: '100000000',
+      closeOnly: true,
+    })
+
+    expect(observed.exit._tag).toBe('Success')
+    expect(observed.submits).toBe(1)
+  })
+
+  test('rejects a close-only buy that is not a strictly reducing short cover', async () => {
+    const observed = await runLiveSubmit({
+      positions: [],
+      proposedIntent: intent({ side: OrderSide.Buy }),
+      closeOnly: true,
+    })
+
+    expect(failureTag(observed.exit)).toBe('CloseOnlyOrderNotReducing')
+    expect(observed.submits).toBe(0)
+  })
+
   test('rejects exposure drift observed after the final account safety read', async () => {
     const observed = await runLiveSubmit({
       positionSnapshots: [[], [], [position()]],

@@ -156,8 +156,6 @@ const authorityError = (failure: AuthorityBindingFailure): IntentStoreError => {
         `active execution generation ${failure.generationHash} has mismatched ${failure.field}`,
         failure,
       )
-    case 'ClosingIntentMustSell':
-      return storeError('invariant', 'commit', 'an execution close intent must be sell-only', failure)
   }
 }
 

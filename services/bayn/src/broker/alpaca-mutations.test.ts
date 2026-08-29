@@ -290,6 +290,17 @@ describe('Alpaca broker mutations', () => {
     expect(orderRequestBody({ ...boundaryIntent, side: OrderSide.Sell })).toMatchObject(
       Result.succeed({ type: 'market', qty: '3', side: 'sell' }),
     )
+    expect(orderRequestBody({ ...boundaryIntent, side: OrderSide.Buy }, true)).toMatchObject(
+      Result.succeed({ type: 'market', qty: '3', side: 'buy' }),
+    )
+    expect(
+      orderRequestBody({
+        ...boundaryIntent,
+        side: OrderSide.Sell,
+        quantityMicros: '500000',
+        notionalLimitMicros: '50000000',
+      }),
+    ).toMatchObject(Result.succeed({ type: 'market', time_in_force: 'day', qty: '0.5', side: 'sell' }))
     expect(
       orderRequestBody({
         ...boundaryIntent,
@@ -589,6 +600,37 @@ describe('Alpaca broker mutations', () => {
         requestId: 'req-123',
         status: 200,
         contentHash: canonicalHashV1(orderResponse),
+      },
+    })
+  })
+
+  test('submits a close-only BUY as the exact short-cover quantity', async () => {
+    const requests: Array<{ body: unknown; method: string; url: string }> = []
+    const client = HttpClient.make((request, url) => {
+      requests.push({ body: requestBody(request), method: request.method, url: url.toString() })
+      return Effect.succeed(response(request, { ...orderResponse, notional: null, qty: '1.25' }))
+    })
+
+    const receipt = await Effect.runPromise(withMutation(client, (mutation) => mutation.submit(intent, true)))
+
+    const body = {
+      symbol: 'AMD',
+      qty: '1.25',
+      side: 'buy',
+      type: 'market',
+      time_in_force: 'day',
+      client_order_id: intent.clientOrderId,
+      extended_hours: false,
+    }
+    expect(requests).toEqual([{ body, method: 'POST', url: 'https://paper-api.alpaca.markets/v2/orders' }])
+    expect(receipt).toMatchObject({
+      requestHash: canonicalHashV1(body),
+      order: {
+        accountId,
+        brokerOrderId: orderId,
+        clientOrderId: intent.clientOrderId,
+        status: OrderStatus.Accepted,
+        quantityMicros: intent.quantityMicros,
       },
     })
   })

@@ -194,9 +194,10 @@ const submitToBroker = (
   stored: StoredIntent,
   requestHash: string,
   request: DryRunSubmitDecision['request'],
+  closeOnly: boolean,
 ) => {
   const submittedIntent: Intent = { ...stored.intent, state: IntentState.IoStarted }
-  return services.broker.submit(submittedIntent).pipe(
+  return services.broker.submit(submittedIntent, closeOnly).pipe(
     Effect.matchEffect({
       onFailure: (error) =>
         persistSubmitDecision(services, stored.intent.intentId, requestHash, decideSubmitFailure(requestHash, error)),
@@ -216,6 +217,7 @@ const continueStartedSubmit = (
   intentId: string,
   requestHash: string,
   request: DryRunSubmitDecision['request'],
+  closeOnly: boolean,
 ): Effect.Effect<
   MutationEvent,
   ExecutionError | IntentStoreError | MutationStoreError | WriterFenceError,
@@ -228,7 +230,7 @@ const continueStartedSubmit = (
           (currentTimeMillis): Effect.Effect<MutationEvent, ExecutionError | MutationStoreError | WriterFenceError> => {
             const validation = validateStartedSubmitRiskDecision(startedIntent, currentTimeMillis)
             if (Result.isSuccess(validation)) {
-              return submitToBroker(services, validation.success, requestHash, request)
+              return submitToBroker(services, validation.success, requestHash, request, closeOnly)
             }
             return validation.failure._tag === 'ExpiredRiskDecision'
               ? currentInstant.pipe(
@@ -267,7 +269,7 @@ const startSubmit = (
     ),
     Effect.flatMap((started) => {
       if (!started.started) return Effect.succeed(started.event)
-      return continueStartedSubmit(services, stored.intent.intentId, requestHash, request)
+      return continueStartedSubmit(services, stored.intent.intentId, requestHash, request, closeOnly)
     }),
   )
 
@@ -278,7 +280,7 @@ const runSubmit = (services: MutationServices, intentId: string, consistencyDela
       Effect.flatMap((existing) =>
         readIntent(MutationOperation.Submit, intentId).pipe(
           Effect.flatMap((stored) =>
-            liftDecision(encodeOrder(MutationOperation.Submit, stored.intent)).pipe(
+            liftDecision(encodeOrder(MutationOperation.Submit, stored.intent, closeOnly)).pipe(
               Effect.flatMap(({ request, requestHash }) =>
                 existing === undefined
                   ? startSubmit(services, stored, requestHash, request, consistencyDelayMs, closeOnly)

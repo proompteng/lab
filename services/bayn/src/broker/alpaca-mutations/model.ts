@@ -56,7 +56,7 @@ export interface CancelReceipt {
 }
 
 export interface BrokerMutationShape {
-  readonly submit: (intent: Intent) => Effect.Effect<SubmitReceipt, BrokerMutationError>
+  readonly submit: (intent: Intent, closeOnly?: boolean) => Effect.Effect<SubmitReceipt, BrokerMutationError>
   readonly cancel: (brokerOrderId: string) => Effect.Effect<CancelReceipt, BrokerMutationError>
   readonly orderById?: (brokerOrderId: string) => Effect.Effect<ReadResult<Order>, BrokerReadError>
   readonly orderByClientId?: (clientOrderId: string) => Effect.Effect<ReadResult<Order>, BrokerReadError>

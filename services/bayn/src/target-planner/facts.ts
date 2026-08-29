@@ -58,6 +58,7 @@ export interface TargetPlannerFacts {
   readonly bidPrices: ReadonlyMap<string, bigint>
   readonly askPrices: ReadonlyMap<string, bigint>
   readonly maximumBuyQuantities: ReadonlyMap<string, bigint>
+  readonly maximumSellQuantities: ReadonlyMap<string, bigint>
   readonly positions: ReadonlyMap<string, bigint>
   readonly positionQuantities: readonly bigint[]
   readonly positionMarketValues: readonly bigint[]
@@ -76,6 +77,7 @@ export interface PlannedTargetFact {
   readonly target: PlannedTargetQuantity
   readonly referencePrice: bigint
   readonly delta: bigint
+  readonly blockedReason?: TargetPlanReason.InsufficientBuyLiquidity
 }
 
 const plannerInputHash = (
@@ -140,6 +142,13 @@ const parseTargetPlannerFactsDataFirst = (
         )
       : [],
   )
+  const maximumSellQuantities = new Map(
+    input.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion
+      ? Object.entries(input.executionTerms.maximumSellQuantityMicros).map(
+          ([symbol, quantity]) => [symbol, BigInt(quantity)] as const,
+        )
+      : [],
+  )
   const positionQuantities = input.brokerState.positions.map((position) => BigInt(position.quantityMicros))
   const positionMarketValues = input.brokerState.positions.map((position) => BigInt(position.marketValueMicros))
   const positions = new Map(
@@ -155,6 +164,7 @@ const parseTargetPlannerFactsDataFirst = (
     bidPrices,
     askPrices,
     maximumBuyQuantities,
+    maximumSellQuantities,
     positions,
     positionQuantities,
     positionMarketValues,
@@ -184,6 +194,9 @@ export const parseTargetPlannerFacts = Pipeable.dual(2, parseTargetPlannerFactsD
 const identityAndSessionMatch = (facts: TargetPlannerFacts): boolean => {
   const { input, priceSymbols, targetSymbols } = facts
   const accountId = input.accountId
+  const partialClose =
+    input.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
+    input.executionTerms.executionPurpose !== undefined
   return (
     targetSymbols.length > 0 &&
     sameStrings(targetSymbols, priceSymbols) &&
@@ -192,7 +205,7 @@ const identityAndSessionMatch = (facts: TargetPlannerFacts): boolean => {
     input.brokerState.account.accountId === accountId &&
     input.brokerState.reconciliation.accountId === accountId &&
     input.brokerState.positions.every(
-      (position) => position.accountId === accountId && targetSymbols.includes(position.symbol),
+      (position) => position.accountId === accountId && (partialClose || targetSymbols.includes(position.symbol)),
     ) &&
     input.brokerState.orders.every((order) => order.accountId === accountId)
   )
@@ -331,18 +344,40 @@ export const derivePlannedTargetFacts = (
               return { referencePrice: askPrice, quantity: currentQuantity }
             })
           })()
-          return Result.map(selectedTarget, (selected) => {
+          return Result.flatMap(selectedTarget, (selected) => {
             const desiredDelta = selected.quantity - currentQuantity
             const maximumBuyQuantity = facts.maximumBuyQuantities.get(symbol)
-            const targetQuantity =
-              desiredDelta > 0n && maximumBuyQuantity !== undefined && desiredDelta > maximumBuyQuantity
+            const buyLiquidityUnavailable =
+              facts.input.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
+              desiredDelta > 0n &&
+              maximumBuyQuantity === 0n
+            const buyLiquidityBlocked =
+              buyLiquidityUnavailable && facts.positionQuantities.some((quantity) => quantity !== 0n)
+            if (buyLiquidityUnavailable && !buyLiquidityBlocked) {
+              return Result.fail(
+                deriveTargetsFailure({
+                  reason: 'precision',
+                  message: 'quote-bound buy target has no executable displayed ask capacity',
+                  facts: {
+                    cycleId: facts.input.cycleId,
+                    symbol,
+                    desiredQuantityMicros: selected.quantity.toString(),
+                    currentQuantityMicros: currentQuantity.toString(),
+                  },
+                }),
+              )
+            }
+            const targetQuantity = buyLiquidityBlocked
+              ? currentQuantity
+              : desiredDelta > 0n && maximumBuyQuantity !== undefined && desiredDelta > maximumBuyQuantity
                 ? currentQuantity + maximumBuyQuantity
                 : selected.quantity
-            return [
+            return Result.succeed([
               ...targetFacts,
               {
                 referencePrice: selected.referencePrice,
                 delta: targetQuantity - currentQuantity,
+                ...(buyLiquidityBlocked ? { blockedReason: TargetPlanReason.InsufficientBuyLiquidity } : {}),
                 target: {
                   symbol,
                   targetWeight,
@@ -351,7 +386,7 @@ export const derivePlannedTargetFacts = (
                   targetQuantityMicros: targetQuantity.toString(),
                 },
               },
-            ]
+            ] as const)
           })
         }),
       Result.succeed([]),
@@ -370,7 +405,12 @@ export const selectTargetPlannerPreflightReason = (facts: TargetPlannerFacts): B
   if (input.brokerState.account.status !== AccountStatus.Active) return TargetPlanReason.AccountNotActive
   if (input.brokerState.unknownOrderCount > 0) return TargetPlanReason.UnknownOrder
   if (input.brokerState.orders.some((order) => isUnresolved(order.status))) return TargetPlanReason.UnresolvedOrder
-  if (facts.positionQuantities.some((quantity) => quantity < 0n)) return TargetPlanReason.ShortPositionNotAllowed
+  const forcedClose =
+    input.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
+    input.executionTerms.executionPurpose !== undefined
+  if (!forcedClose && facts.positionQuantities.some((quantity) => quantity < 0n)) {
+    return TargetPlanReason.ShortPositionNotAllowed
+  }
   if (facts.equity <= 0n) return TargetPlanReason.NonPositiveEquity
   return undefined
 }

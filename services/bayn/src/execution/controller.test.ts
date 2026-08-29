@@ -347,7 +347,7 @@ describe('execution controller decisions', () => {
     const observation = {
       result: 'SUCCESS' as const,
       observedAt: completedResult.completedAt,
-      outcome: 'NO_PUBLICATION' as const,
+      outcome: 'WINDOW_CLOSED' as const,
     }
     const state = Result.getOrThrow(
       completeExecutionControllerTick(

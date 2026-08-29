@@ -124,9 +124,17 @@ const CycleExecutionPolicyV2MaterialSchema = Schema.Struct({
   submissionCutoffAfterOpenMs: SubmissionWindowMsSchema,
 })
 
+const CycleExecutionPolicyV3MaterialSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.autonomous-cycle-execution-policy.v3'),
+  strategyExecutionModelHash: Sha256Schema,
+  warmupAfterOpenMs: SubmissionWindowMsSchema,
+  submissionCutoffBeforeCloseMs: SubmissionWindowMsSchema,
+})
+
 export const CycleExecutionPolicyMaterialSchema = Schema.Union([
   CycleExecutionPolicyV1MaterialSchema,
   CycleExecutionPolicyV2MaterialSchema,
+  CycleExecutionPolicyV3MaterialSchema,
 ])
 export type CycleExecutionPolicyMaterial = typeof CycleExecutionPolicyMaterialSchema.Type
 
@@ -138,9 +146,16 @@ const CycleExecutionPolicyV2Base = Schema.Struct({
   ...CycleExecutionPolicyV2MaterialSchema.fields,
   executionPolicyHash: Sha256Schema,
 })
+const CycleExecutionPolicyV3Base = Schema.Struct({
+  ...CycleExecutionPolicyV3MaterialSchema.fields,
+  executionPolicyHash: Sha256Schema,
+})
 
 const cycleExecutionPolicyIssues = (
-  policy: typeof CycleExecutionPolicyV1Base.Type | typeof CycleExecutionPolicyV2Base.Type,
+  policy:
+    | typeof CycleExecutionPolicyV1Base.Type
+    | typeof CycleExecutionPolicyV2Base.Type
+    | typeof CycleExecutionPolicyV3Base.Type,
 ): readonly Schema.FilterIssue[] => {
   const { executionPolicyHash, ...material } = policy
   return canonicalHashMatches(material, executionPolicyHash)
@@ -151,6 +166,7 @@ const cycleExecutionPolicyIssues = (
 export const CycleExecutionPolicySchema = Schema.Union([
   CycleExecutionPolicyV1Base.check(Schema.makeFilter(cycleExecutionPolicyIssues)),
   CycleExecutionPolicyV2Base.check(Schema.makeFilter(cycleExecutionPolicyIssues)),
+  CycleExecutionPolicyV3Base.check(Schema.makeFilter(cycleExecutionPolicyIssues)),
 ])
 export type CycleExecutionPolicy = typeof CycleExecutionPolicySchema.Type
 
@@ -184,12 +200,24 @@ const CycleIdentityV2MaterialSchema = Schema.Struct({
   executionPolicy: CycleExecutionPolicyV2Base.check(Schema.makeFilter(cycleExecutionPolicyIssues)),
 })
 
-const CycleIdentityV3MaterialSchema = Schema.Struct({
+const OpeningDriveCycleIdentityV3MaterialSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.autonomous-cycle-identity.v3'),
   strategyName: Schema.Literal('opening-drive-momentum'),
   ...CycleIdentityExecutionMaterial,
   executionPolicy: CycleExecutionPolicyV2Base.check(Schema.makeFilter(cycleExecutionPolicyIssues)),
 })
+
+const IntradayMomentumCycleIdentityV3MaterialSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.autonomous-cycle-identity.v3'),
+  strategyName: Schema.Literal('intraday-momentum'),
+  ...CycleIdentityExecutionMaterial,
+  executionPolicy: CycleExecutionPolicyV3Base.check(Schema.makeFilter(cycleExecutionPolicyIssues)),
+})
+
+const CycleIdentityV3MaterialSchema = Schema.Union([
+  OpeningDriveCycleIdentityV3MaterialSchema,
+  IntradayMomentumCycleIdentityV3MaterialSchema,
+])
 
 export const CycleIdentityMaterialSchema = Schema.Union([
   CycleIdentityV1MaterialSchema,
@@ -200,10 +228,21 @@ export type CycleIdentityMaterial = typeof CycleIdentityMaterialSchema.Type
 
 const CycleIdentityV1Base = Schema.Struct({ ...CycleIdentityV1MaterialSchema.fields, cycleId: Sha256Schema })
 const CycleIdentityV2Base = Schema.Struct({ ...CycleIdentityV2MaterialSchema.fields, cycleId: Sha256Schema })
-const CycleIdentityV3Base = Schema.Struct({ ...CycleIdentityV3MaterialSchema.fields, cycleId: Sha256Schema })
+const OpeningDriveCycleIdentityV3Base = Schema.Struct({
+  ...OpeningDriveCycleIdentityV3MaterialSchema.fields,
+  cycleId: Sha256Schema,
+})
+const IntradayMomentumCycleIdentityV3Base = Schema.Struct({
+  ...IntradayMomentumCycleIdentityV3MaterialSchema.fields,
+  cycleId: Sha256Schema,
+})
 
 const cycleIdentityIssues = (
-  identity: typeof CycleIdentityV1Base.Type | typeof CycleIdentityV2Base.Type | typeof CycleIdentityV3Base.Type,
+  identity:
+    | typeof CycleIdentityV1Base.Type
+    | typeof CycleIdentityV2Base.Type
+    | typeof OpeningDriveCycleIdentityV3Base.Type
+    | typeof IntradayMomentumCycleIdentityV3Base.Type,
 ): readonly Schema.FilterIssue[] => {
   const issues: Schema.FilterIssue[] = []
   const { cycleId, ...material } = identity
@@ -222,7 +261,8 @@ const cycleIdentityIssues = (
 export const CycleIdentitySchema = Schema.Union([
   CycleIdentityV1Base.check(Schema.makeFilter(cycleIdentityIssues)),
   CycleIdentityV2Base.check(Schema.makeFilter(cycleIdentityIssues)),
-  CycleIdentityV3Base.check(Schema.makeFilter(cycleIdentityIssues)),
+  OpeningDriveCycleIdentityV3Base.check(Schema.makeFilter(cycleIdentityIssues)),
+  IntradayMomentumCycleIdentityV3Base.check(Schema.makeFilter(cycleIdentityIssues)),
 ])
 export type CycleIdentity = typeof CycleIdentitySchema.Type
 
@@ -357,26 +397,44 @@ const cycleDraftIssues = (draft: typeof CycleDraftBase.Type): readonly Schema.Fi
   if (draft.identity.executionCalendarHash !== draft.window.executionCalendarHash) {
     issues.push({ path: ['window', 'executionCalendarHash'], issue: 'must match the cycle identity' })
   }
-  const submissionWindowMs = Date.parse(draft.window.submissionCutoffAt) - Date.parse(draft.window.submissionOpenAt)
-  if (submissionWindowMs !== draft.identity.executionPolicy.submissionWindowMs) {
-    issues.push({
-      path: ['window', 'submissionCutoffAt'],
-      issue: 'must match the bound execution policy submission window',
-    })
+  const policy = draft.identity.executionPolicy
+  if (policy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v3') {
+    const expectedSubmissionOpenAt = Date.parse(draft.window.executionOpenAt) + policy.warmupAfterOpenMs
+    const expectedSubmissionCutoffAt = Date.parse(draft.window.executionCloseAt) - policy.submissionCutoffBeforeCloseMs
+    if (Date.parse(draft.window.submissionOpenAt) !== expectedSubmissionOpenAt) {
+      issues.push({
+        path: ['window', 'submissionOpenAt'],
+        issue: 'must equal execution open plus the bound intraday warmup',
+      })
+    }
+    if (Date.parse(draft.window.submissionCutoffAt) !== expectedSubmissionCutoffAt) {
+      issues.push({
+        path: ['window', 'submissionCutoffAt'],
+        issue: 'must equal execution close minus the bound intraday cutoff lead',
+      })
+    }
+  } else {
+    const submissionWindowMs = Date.parse(draft.window.submissionCutoffAt) - Date.parse(draft.window.submissionOpenAt)
+    if (submissionWindowMs !== policy.submissionWindowMs) {
+      issues.push({
+        path: ['window', 'submissionCutoffAt'],
+        issue: 'must match the bound execution policy submission window',
+      })
+    }
   }
-  if (draft.identity.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v1') {
+  if (policy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v1') {
     const submissionCutoffBeforeOpenMs =
       Date.parse(draft.window.executionOpenAt) - Date.parse(draft.window.submissionCutoffAt)
-    if (submissionCutoffBeforeOpenMs !== draft.identity.executionPolicy.submissionCutoffBeforeOpenMs) {
+    if (submissionCutoffBeforeOpenMs !== policy.submissionCutoffBeforeOpenMs) {
       issues.push({
         path: ['window', 'submissionCutoffAt'],
         issue: 'must match the bound execution policy broker cutoff lead',
       })
     }
-  } else {
+  } else if (policy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v2') {
     const submissionCutoffAfterOpenMs =
       Date.parse(draft.window.submissionCutoffAt) - Date.parse(draft.window.executionOpenAt)
-    if (submissionCutoffAfterOpenMs !== draft.identity.executionPolicy.submissionCutoffAfterOpenMs) {
+    if (submissionCutoffAfterOpenMs !== policy.submissionCutoffAfterOpenMs) {
       issues.push({
         path: ['window', 'submissionCutoffAt'],
         issue: 'must match the bound execution policy intraday cutoff',
@@ -614,6 +672,10 @@ export const CycleWindowPolicyInputSchema = Schema.Union([
   Schema.Struct({
     submissionWindowMs: Schema.Finite,
     submissionCutoffAfterOpenMs: Schema.Finite,
+  }),
+  Schema.Struct({
+    warmupAfterOpenMs: Schema.Finite,
+    submissionCutoffBeforeCloseMs: Schema.Finite,
   }),
 ])
 

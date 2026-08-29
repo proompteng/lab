@@ -6,7 +6,7 @@ import { Result } from 'effect'
 import { executionControllerMaximumRecoveryWindow, type ExecutionControllerState } from '../execution/controller'
 import { TransientExecutionFailure } from '../execution/advance'
 import { ExecutionControllerOutcome } from '../execution/controller-status'
-import { CycleNotDueReason, CycleRunnerError } from '../cycle/runner/model'
+import { CycleRunnerError } from '../cycle/runner/model'
 import {
   executionControllerAdvanceRunOptions,
   executionControllerAdvanceMaximumAttempts,
@@ -131,9 +131,7 @@ describe('native Restate execution controller', () => {
           observation: {
             result: 'SUCCESS' as const,
             observedAt: '2026-08-13T18:00:01.000Z',
-            outcome: 'NOT_DUE' as const,
-            cadence: 'EVERY_SESSION' as const,
-            notDueReason: CycleNotDueReason.StaleExecutionBootstrap,
+            outcome: 'WINDOW_CLOSED' as const,
           },
           outcome: {
             _tag: ExecutionControllerOutcome.Blocked,

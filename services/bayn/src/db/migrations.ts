@@ -50,6 +50,12 @@ import openingDriveQualificationEvidence from '../../migrations/0047_opening_dri
 import researchReconciliationRearm from '../../migrations/0048_research_reconciliation_rearm'
 import preserveReconciliationCycle from '../../migrations/0049_preserve_reconciliation_cycle'
 import preserveFailureRearmCycle from '../../migrations/0050_preserve_failure_rearm_cycle'
+import positionSnapshotIngestionOrder from '../../migrations/0051_position_snapshot_ingestion_order'
+import positionSnapshotObservabilityIndex from '../../migrations/0052_position_snapshot_observability_index'
+import fullSessionIntradayCycles from '../../migrations/0053_full_session_intraday_cycles'
+import benignZeroFillIocCompletion from '../../migrations/0054_benign_zero_fill_ioc_completion'
+import intradaySnapshotReferences from '../../migrations/0055_intraday_snapshot_references'
+import intradayStrategyCutover from '../../migrations/0056_intraday_strategy_cutover'
 
 export const migrationLoader = PgMigrator.fromRecord({
   '1_initial_schema': initialSchema,
@@ -102,4 +108,10 @@ export const migrationLoader = PgMigrator.fromRecord({
   '48_research_reconciliation_rearm': researchReconciliationRearm,
   '49_preserve_reconciliation_cycle': preserveReconciliationCycle,
   '50_preserve_failure_rearm_cycle': preserveFailureRearmCycle,
+  '51_position_snapshot_ingestion_order': positionSnapshotIngestionOrder,
+  '52_position_snapshot_observability_index': positionSnapshotObservabilityIndex,
+  '53_full_session_intraday_cycles': fullSessionIntradayCycles,
+  '54_benign_zero_fill_ioc_completion': benignZeroFillIocCompletion,
+  '55_intraday_snapshot_references': intradaySnapshotReferences,
+  '56_intraday_strategy_cutover': intradayStrategyCutover,
 })

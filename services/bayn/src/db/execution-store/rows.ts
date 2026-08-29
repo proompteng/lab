@@ -16,7 +16,6 @@ import {
   ReconciliationStatus,
   ValuationSchema,
 } from '../../execution/contracts'
-import { QualificationLockSchema, QualificationResultSchema } from '../../qualification'
 import {
   Sha256Schema as Sha256,
   StrictNonEmptyStringSchema as NonEmptyString,
@@ -137,7 +136,7 @@ export const AuthorityGenerationRow = Schema.Struct({
   activation_source_revision: Schema.NullOr(Schema.String),
   activation_image_repository: Schema.NullOr(NonEmptyString),
   activation_image_digest: Schema.NullOr(Schema.String),
-  strategy_name: Schema.NullOr(Schema.Literals(['risk-balanced-trend', 'opening-drive-momentum'])),
+  strategy_name: Schema.NullOr(Schema.Literals(['risk-balanced-trend', 'opening-drive-momentum', 'intraday-momentum'])),
   strategy_behavior_hash: Schema.NullOr(Sha256),
   strategy_parameter_hash: Schema.NullOr(Sha256),
   strategy_parameter_schema_version: Schema.NullOr(
@@ -145,6 +144,8 @@ export const AuthorityGenerationRow = Schema.Struct({
       'bayn.risk-balanced-trend.protocol.v3',
       'bayn.risk-balanced-trend.protocol.v4',
       'bayn.opening-drive.protocol.v2',
+      'bayn.intraday-momentum.protocol.v1',
+      'bayn.intraday-momentum.protocol.v2',
     ]),
   ),
   account_id: Schema.NullOr(NonEmptyString),
@@ -159,34 +160,6 @@ export const AuthorityGenerationRow = Schema.Struct({
 export type AuthorityGenerationRow = typeof AuthorityGenerationRow.Type
 
 export const AuthorityGenerationRows = Schema.Array(AuthorityGenerationRow).check(Schema.isMaxLength(1))
-export const ActivationEvidenceRow = Schema.Struct({
-  lock_payload: QualificationLockSchema,
-  result_payload: QualificationResultSchema,
-  run_status: Schema.Literals(['WRITING', 'COMPLETE']),
-  expected_artifact_count: Schema.Int,
-  expected_event_count: Schema.Int,
-  expected_gate_count: Schema.Int,
-  artifact_count: Schema.Int,
-  event_count: Schema.Int,
-  gate_count: Schema.Int,
-  status_count: Schema.Int,
-  writing_status_count: Schema.Int,
-  complete_status_count: Schema.Int,
-  writing_detail: Schema.Unknown,
-  complete_detail: Schema.Unknown,
-  protocol_schema_version: Schema.Literals([
-    'bayn.risk-balanced-trend.protocol.v2',
-    'bayn.risk-balanced-trend.protocol.v3',
-    'bayn.risk-balanced-trend.protocol.v4',
-  ]),
-  strategy_name: Schema.Literal('risk-balanced-trend'),
-  behavior_hash: Sha256,
-  parameter_hash: Sha256,
-  parameters: Schema.Unknown,
-})
-export type ActivationEvidenceRow = typeof ActivationEvidenceRow.Type
-
-export const ActivationEvidenceRows = Schema.Array(ActivationEvidenceRow).check(Schema.isMaxLength(1))
 export const ActivationReconciliationRow = Schema.Struct({
   reconciliation_id: Sha256,
   account_id: NonEmptyString,
@@ -298,11 +271,6 @@ const decodeAuthorityGenerationRowsDataFirst = Schema.decodeUnknownEffect(Author
 
 export const decodeAuthorityGenerationRows = Pipeable.dual(1, (input: unknown) =>
   decodeAuthorityGenerationRowsDataFirst(input),
-)
-const decodeActivationEvidenceRowsDataFirst = Schema.decodeUnknownEffect(ActivationEvidenceRows, strictParseOptions)
-
-export const decodeActivationEvidenceRows = Pipeable.dual(1, (input: unknown) =>
-  decodeActivationEvidenceRowsDataFirst(input),
 )
 const decodeActivationReconciliationRowsDataFirst = Schema.decodeUnknownEffect(
   ActivationReconciliationRows,

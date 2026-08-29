@@ -6,7 +6,6 @@ import {
   CycleRunnerError,
   cyclePassLogFacts,
   decideIdleReconciliationCadence,
-  observableCycleCadence,
   validateCyclePassTimeout,
   validateReconciliationInterval,
   type CycleRunContext,
@@ -15,13 +14,14 @@ import {
 } from '../cycle/runner'
 import { validateCycleLoopInterval } from '../cycle/runner/decisions'
 import { type ReconciliationCadenceState } from '../cycle/runner/model'
+import type { CycleDecisionBindingEvidence } from '../cycle/store'
 import { OperationalError, operationalError } from '../errors'
+import { archiveVerifiedIntradaySnapshotReference, type IntradayMarketDataService } from '../market-data'
 import { type ReconciliationPassResult } from '../reconciler'
 import { type Policy } from '../risk'
 import { currentUtcInstant } from '../time'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
-import type { CycleDecisionDocument } from '../shadow-decision-contract'
-import { strategyDefinition } from '../strategy'
+import { reconstructBoundIntradaySnapshot, type CycleDecisionDocument } from '../shadow-decision-contract'
 import { restrictMutationLoopFailure } from './mutation-interpreter'
 import type {
   ExecutionCapability,
@@ -38,8 +38,8 @@ import {
   buildObserveCycleDecision,
   decisionBuildError,
   mutationCyclePassTimeoutError,
-  notDueReconciliationError,
   observePass,
+  reconciliationRunnerError,
   runMutationPassWithinTimeout,
   type ReconciliationPassError,
 } from './decision-builder'
@@ -49,33 +49,63 @@ import {
   mutationDecisionInput,
   runRecoveryFirstCyclePass,
 } from './execution-cycle'
-import { strategyAllowsMutationCadence } from './strategy-cadence'
 
 type RecoveryFirstDecisionBuilder = (
   cycle: AutonomousCycle,
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
 ) => Effect.Effect<CycleDecisionDocument, CycleDecisionBuildError, ObserveDecisionRuntime>
 
-const observeMutationPass = (
-  startup: Parameters<AutonomousCycleStartup>[0],
-  observation: CyclePassObservation,
-  cadence?: CycleRunContext['cadence'],
-): Effect.Effect<AutonomousCyclePassObservation> => {
-  const facts = cyclePassLogFacts(observation, cadence)
-  const log = facts.level === 'INFO' ? Effect.logInfo(facts.message) : Effect.logError(facts.message)
-  return observePass(startup.recordPass, observation, cadence).pipe(
-    Effect.tap(() => log.pipe(Effect.annotateLogs(facts.annotations))),
+const verifyDecisionBindingEvidence = (
+  marketData: IntradayMarketDataService | undefined,
+  document: CycleDecisionDocument,
+): Effect.Effect<CycleDecisionBindingEvidence, CycleDecisionBuildError> => {
+  const binding = document.bindings.decisionMarketData ?? document.bindings.executionMarketData
+  if (binding?.schemaVersion !== 'bayn.execution-market-data-binding.v2') return Effect.succeed({})
+  if (
+    marketData === undefined ||
+    !('decisionMarketDataRows' in document) ||
+    document.decisionMarketDataRows === undefined
+  ) {
+    return Effect.fail(
+      new CycleDecisionBuildError({
+        failure: 'contract',
+        message: 'intraday decision has no archive reader or persisted rows for external verification',
+      }),
+    )
+  }
+  const snapshot = reconstructBoundIntradaySnapshot(binding, document.decisionMarketDataRows)
+  if (snapshot === undefined) {
+    return Effect.fail(
+      new CycleDecisionBuildError({
+        failure: 'contract',
+        message: 'intraday decision rows do not reconstruct their bound archive snapshot',
+      }),
+    )
+  }
+  return marketData.verifyArchiveSnapshot(snapshot).pipe(
+    Effect.map((verified) => ({
+      intradaySnapshotReferences: [archiveVerifiedIntradaySnapshotReference(verified)],
+    })),
+    Effect.mapError(
+      (cause) =>
+        new CycleDecisionBuildError({
+          failure: 'market-data',
+          message: 'intraday decision does not match the immutable archive at its bound watermarks',
+          cause,
+        }),
+    ),
   )
 }
 
-const mutationIdleReconciliationError = (cause: ReconciliationPassError): CycleRunnerError => {
-  const converted = notDueReconciliationError(cause)
-  return new CycleRunnerError({
-    operation: 'reconcile-not-due',
-    failure: converted.failure,
-    message: converted.message,
-    cause: converted,
-  })
+const observeMutationPass = (
+  startup: Parameters<AutonomousCycleStartup>[0],
+  observation: CyclePassObservation,
+): Effect.Effect<AutonomousCyclePassObservation> => {
+  const facts = cyclePassLogFacts(observation)
+  const log = facts.level === 'INFO' ? Effect.logInfo(facts.message) : Effect.logError(facts.message)
+  return observePass(startup.recordPass, observation).pipe(
+    Effect.tap(() => log.pipe(Effect.annotateLogs(facts.annotations))),
+  )
 }
 
 const markMutationReconciliationCompleted = (cadence: Ref.Ref<ReconciliationCadenceState>): Effect.Effect<void> =>
@@ -103,7 +133,7 @@ const attemptMutationIdleReconciliation = (
     Effect.andThen(
       reconcile.pipe(
         Effect.asVoid,
-        Effect.mapError(mutationIdleReconciliationError),
+        Effect.mapError(reconciliationRunnerError),
         Effect.tapError((lastFailure) =>
           Clock.currentTimeNanos.pipe(
             Effect.flatMap((lastAttemptAtNanos) => Ref.set(cadence, { lastAttemptAtNanos, lastFailure })),
@@ -126,74 +156,22 @@ const reconcileMutationBeforeExternallyDrivenAdvance = (
     else if (state.lastFailure !== undefined) return yield* state.lastFailure
   })
 
-const reconcileMutationNotDuePass = (
-  input: ObserveAutonomousCycleInput,
-  cadence: Ref.Ref<ReconciliationCadenceState>,
-  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
-  result: CycleRunResult,
-): Effect.Effect<CycleRunResult, CycleRunnerError, ObserveDecisionRuntime> => {
-  if (result.outcome !== 'NOT_DUE') return Effect.succeed(result)
-  return Effect.gen(function* () {
-    const nowNanos = yield* Clock.currentTimeNanos
-    const state = yield* Ref.get(cadence)
-    const decision = decideIdleReconciliationCadence(state, nowNanos, input.reconciliationIntervalMs)
-    if (decision._tag === 'WAIT') {
-      if (state.lastFailure !== undefined) return yield* state.lastFailure
-      return result
-    }
-    yield* attemptMutationIdleReconciliation(cadence, reconcile)
-    return result
-  })
-}
-
-const observeMutationIdleReconciliation = (
-  input: ObserveAutonomousCycleInput,
+const observeMutationCycleResult = (
   startup: Parameters<AutonomousCycleStartup>[0],
   cadence: Ref.Ref<ReconciliationCadenceState>,
-  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
-  result: Extract<CycleRunResult, { readonly outcome: 'NOT_DUE' }>,
-): Effect.Effect<AutonomousCyclePassObservation, never, ObserveDecisionRuntime> =>
-  reconcileMutationNotDuePass(input, cadence, reconcile, result).pipe(
-    Effect.flatMap((reconciled) =>
+  result: CycleRunResult,
+): Effect.Effect<AutonomousCyclePassObservation> =>
+  Ref.get(cadence).pipe(
+    Effect.flatMap((state) =>
       currentUtcInstant.pipe(
         Effect.flatMap((observedAt) =>
-          observeMutationPass(startup, { outcome: 'SUCCEEDED', observedAt, result: reconciled }, input.cycleCadence),
-        ),
-      ),
-    ),
-    Effect.catch((error) =>
-      currentUtcInstant.pipe(
-        Effect.flatMap((observedAt) =>
-          observeMutationPass(startup, { outcome: 'FAILED', observedAt, error }, input.cycleCadence),
+          state.lastFailure === undefined
+            ? observeMutationPass(startup, { outcome: 'SUCCEEDED', observedAt, result })
+            : observeMutationPass(startup, { outcome: 'FAILED', observedAt, error: state.lastFailure }),
         ),
       ),
     ),
   )
-
-const observeMutationCycleResult = (
-  input: ObserveAutonomousCycleInput,
-  startup: Parameters<AutonomousCycleStartup>[0],
-  cadence: Ref.Ref<ReconciliationCadenceState>,
-  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
-  result: CycleRunResult,
-): Effect.Effect<AutonomousCyclePassObservation, never, ObserveDecisionRuntime> =>
-  result.outcome === 'NOT_DUE'
-    ? observeMutationIdleReconciliation(input, startup, cadence, reconcile, result)
-    : Ref.get(cadence).pipe(
-        Effect.flatMap((state) =>
-          currentUtcInstant.pipe(
-            Effect.flatMap((observedAt) =>
-              state.lastFailure === undefined
-                ? observeMutationPass(startup, { outcome: 'SUCCEEDED', observedAt, result }, input.cycleCadence)
-                : observeMutationPass(
-                    startup,
-                    { outcome: 'FAILED', observedAt, error: state.lastFailure },
-                    input.cycleCadence,
-                  ),
-            ),
-          ),
-        ),
-      )
 
 export const recoveryFirstCycleNextDelayMs = (input: {
   readonly pollIntervalMs: number
@@ -221,36 +199,27 @@ const makeRecoveryFirstCycleDriverEffect = (
         Effect.catch((restrictionError: CycleRunnerError) =>
           currentUtcInstant.pipe(
             Effect.flatMap((observedAt) =>
-              observeMutationPass(
-                startup,
-                { outcome: 'FAILED', observedAt, error: restrictionError },
-                input.cycleCadence,
-              ),
+              observeMutationPass(startup, { outcome: 'FAILED', observedAt, error: restrictionError }),
             ),
             Effect.andThen(Effect.fail(restrictionError)),
           ),
         ),
         Effect.andThen(currentUtcInstant),
-        Effect.flatMap((observedAt) =>
-          observeMutationPass(startup, { outcome: 'FAILED', observedAt, error }, input.cycleCadence),
-        ),
+        Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
         Effect.map((observation) => ({ observation })),
       )
     const advanceCycle = Effect.gen(function* () {
-      const strategyName = strategyDefinition(input.strategy).name
       const context: CycleRunContext<ObserveDecisionRuntime> = {
-        qualificationRunId: startup.qualificationRunId,
-        ...(input.cycleCadence === undefined ? {} : { cadence: input.cycleCadence }),
-        ...(strategyName === 'risk-balanced-trend' || strategyName === 'opening-drive-momentum'
-          ? { strategyName }
-          : {}),
+        cycleBindingId: startup.cycleBindingId,
+        strategyName: 'intraday-momentum',
         strategyProtocolHash: preparation.strategyProtocolHash,
         accountId: input.accountId,
         executionPolicy: preparation.executionPolicy,
         buildDecision: (cycle) => buildDecision(cycle, reconcile),
+        buildDecisionEvidence: (document) => verifyDecisionBindingEvidence(input.intradayMarketData, document),
       }
       const result = yield* runMutationPassWithinTimeout(
-        runRecoveryFirstCyclePass(input, preparation, policy, context, reconcile, capability),
+        runRecoveryFirstCyclePass(input, policy, context, reconcile, capability),
         cyclePassTimeoutMs,
       )
       if (isPostMutationReconciliation(result)) {
@@ -269,7 +238,7 @@ const makeRecoveryFirstCycleDriverEffect = (
       Effect.matchEffect({
         onFailure: observeCycleFailure,
         onSuccess: ({ result, nextDelayMs }) =>
-          observeMutationCycleResult(input, startup, cadence, reconcile, result).pipe(
+          observeMutationCycleResult(startup, cadence, result).pipe(
             Effect.map((observation) => ({
               observation,
               result,
@@ -284,7 +253,6 @@ const makeRecoveryFirstCycleDriverEffect = (
           result: 'SUCCESS',
           observedAt,
           outcome: 'RECOVERED',
-          cadence: observableCycleCadence(input.cycleCadence),
         }
         return startup.recordPass(observation).pipe(Effect.as({ observation }))
       }),
@@ -303,9 +271,7 @@ const makeRecoveryFirstCycleDriverEffect = (
       Effect.matchEffect({
         onFailure: (error) =>
           currentUtcInstant.pipe(
-            Effect.flatMap((observedAt) =>
-              observeMutationPass(startup, { outcome: 'FAILED', observedAt, error }, input.cycleCadence),
-            ),
+            Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
             Effect.map((observation) => ({ observation })),
           ),
         onSuccess: () => continueAfterReconciliation,
@@ -382,16 +348,7 @@ export const mutationDecisionBuilder =
     preparation: ObserveStartupPreparation,
     policy: Policy,
   ): RecoveryFirstDecisionBuilder =>
-  (cycle, reconcile) => {
-    if (!strategyAllowsMutationCadence(input.strategy, input.cycleCadence)) {
-      return Effect.fail(
-        new CycleDecisionBuildError({
-          failure: 'contract',
-          message: `every-session mutation requires an INTRADAY strategy; ${strategyDefinition(input.strategy).name} is MULTI_SESSION`,
-        }),
-      )
-    }
-    return buildMutationShadowCycleDecision(mutationDecisionInput(input, preparation, policy, cycle, reconcile)).pipe(
+  (cycle, reconcile) =>
+    buildMutationShadowCycleDecision(mutationDecisionInput(input, preparation, policy, cycle, reconcile)).pipe(
       Effect.mapError(decisionBuildError),
     )
-  }

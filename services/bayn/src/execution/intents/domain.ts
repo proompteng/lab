@@ -227,7 +227,7 @@ const makeReferenceIntentResult = (decoded: IntentPlan): Result.Result<Reference
   )
 }
 
-const makeExecutionIntentResult = (
+export const makeExecutionIntentFromDecodedPlan = (
   decoded: IntentPlan,
   authorityGenerationHash: string,
 ): Result.Result<Intent, IntentConstructionFailure> => {
@@ -309,7 +309,7 @@ const planExecutionIntentDataFirst = (
   }
   return Effect.fromResult(
     Result.flatMap(decodePlanForPlanning(input), (decoded) =>
-      makeExecutionIntentResult(decoded, state.authority.generationHash),
+      makeExecutionIntentFromDecodedPlan(decoded, state.authority.generationHash),
     ),
   )
 }
@@ -535,7 +535,7 @@ const validateCommitIdentityDataFirst = (
 ): Result.Result<PreparedCommit, CommitMaterialFailure> => {
   const intent = decodeIntentResult(inputIntent)
   if (Result.isFailure(intent)) return Result.fail({ _tag: 'IntentDecodeFailed', cause: intent.failure })
-  const expectedIntent = makeExecutionIntentResult(
+  const expectedIntent = makeExecutionIntentFromDecodedPlan(
     planFromIntent(intent.success),
     intent.success.authorityGenerationHash,
   )
@@ -680,7 +680,6 @@ export type AuthorityBindingFailure =
       readonly observed: string | null
       readonly expected: string
     }
-  | { readonly _tag: 'ClosingIntentMustSell' }
 
 export const decodeAuthorityBindingRows = (
   rows: unknown,
@@ -749,7 +748,6 @@ const validateCurrentClosingAuthorityDataFirst = (
   { readonly _tag: 'CurrentCapitalGrant'; readonly binding: AuthorityBindingRow },
   AuthorityBindingFailure
 > => {
-  if (intent.side !== 'SELL') return Result.fail({ _tag: 'ClosingIntentMustSell' })
   if (rows.length === 0) return Result.fail({ _tag: 'AuthorityMissing' })
   if (rows.length > 1) return Result.fail({ _tag: 'MultipleAuthorityRows', count: rows.length })
   const [authority] = rows

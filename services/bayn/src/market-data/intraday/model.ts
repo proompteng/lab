@@ -6,6 +6,10 @@ import type { MarketCalendarObservation } from '../../broker/alpaca/model'
 
 export type IntradayFeed = 'iex' | 'sip' | 'delayed_sip'
 export type IntradayDelayClass = 'real_time_exchange_only' | 'real_time_consolidated' | 'delayed_15m_consolidated'
+export enum IntradaySnapshotPurpose {
+  EntryPricing = 'ENTRY_PRICING',
+  Liquidation = 'LIQUIDATION',
+}
 
 export interface IntradaySnapshotQuery {
   readonly sessionDate: IsoDate
@@ -15,7 +19,12 @@ export interface IntradaySnapshotQuery {
   readonly observedAt: string
   readonly universeId: string
   readonly universeSymbolHash: string
+  /** Full source-universe membership bound by universeSymbolHash. */
   readonly universe: readonly string[]
+  /** Canonical subset required by this snapshot. Omission means the full universe. */
+  readonly symbols?: readonly string[]
+  /** Quote-only execution evidence; omission keeps the full decision-time bar and trade contract. */
+  readonly purpose?: IntradaySnapshotPurpose
   readonly feed: IntradayFeed
   readonly delayClass: IntradayDelayClass
   readonly sourceTopics: {
@@ -95,7 +104,10 @@ export interface IntradaySnapshotManifest {
   readonly observedAt: string
   readonly universeId: string
   readonly universeSymbolHash: string
+  /** Added for subset snapshots; omitted only by legacy v1 material. */
+  readonly universe?: readonly string[]
   readonly symbols: readonly string[]
+  readonly purpose?: IntradaySnapshotPurpose
   readonly feed: IntradayFeed
   readonly delayClass: IntradayDelayClass
   readonly sourceTopics: IntradaySnapshotRequest['sourceTopics']
@@ -121,16 +133,53 @@ export interface IntradayMarketSnapshot {
   readonly manifest: IntradaySnapshotManifest
 }
 
+declare const ArchiveVerifiedIntradayMarketSnapshotTypeId: unique symbol
+
+/**
+ * Opaque snapshot produced only after the immutable ClickHouse archive query
+ * has selected each canonical quote and trade winner at the bound watermarks.
+ * Persisted or caller-constructed snapshot documents must be reloaded through
+ * IntradayMarketData before they can cross this boundary.
+ */
+export type ArchiveVerifiedIntradayMarketSnapshot = IntradayMarketSnapshot & {
+  readonly [ArchiveVerifiedIntradayMarketSnapshotTypeId]: true
+}
+
+declare const ArchiveVerifiedIntradaySnapshotReferenceTypeId: unique symbol
+
+/** Compact durable identity derived only from a snapshot reverified against the immutable archive. */
+export type ArchiveVerifiedIntradaySnapshotReference = {
+  readonly schemaVersion: 'bayn.intraday-snapshot-reference.v1'
+  readonly manifest: IntradaySnapshotManifest
+  readonly [ArchiveVerifiedIntradaySnapshotReferenceTypeId]: true
+}
+
+export const archiveVerifiedIntradaySnapshotReference = (
+  snapshot: ArchiveVerifiedIntradayMarketSnapshot,
+): ArchiveVerifiedIntradaySnapshotReference =>
+  Object.freeze({
+    schemaVersion: 'bayn.intraday-snapshot-reference.v1',
+    manifest: snapshot.manifest,
+  }) as ArchiveVerifiedIntradaySnapshotReference
+
 /**
  * Verified intraday market-data boundary. This service is introduced with the
  * verifier and its ClickHouse implementation so callers can never obtain a
  * materialized snapshot without the immutable-row checks in this layer.
  */
 export interface IntradayMarketDataService {
+  /** Verifies that the three tables required by the active strategy are queryable. */
+  readonly check: Effect.Effect<void, OperationalError>
   readonly captureVersion: (
     query: IntradaySnapshotQuery,
   ) => Effect.Effect<readonly IntradayArchiveWatermark[], OperationalError>
-  readonly loadSnapshot: (request: IntradaySnapshotRequest) => Effect.Effect<IntradayMarketSnapshot, OperationalError>
+  readonly loadSnapshot: (
+    request: IntradaySnapshotRequest,
+  ) => Effect.Effect<ArchiveVerifiedIntradayMarketSnapshot, OperationalError>
+  /** Re-query the bound immutable archive and reject a caller-provided snapshot that is not the canonical result. */
+  readonly verifyArchiveSnapshot: (
+    snapshot: IntradayMarketSnapshot,
+  ) => Effect.Effect<ArchiveVerifiedIntradayMarketSnapshot, OperationalError>
 }
 
 export class IntradayMarketData extends Context.Service<IntradayMarketData, IntradayMarketDataService>()(
@@ -155,3 +204,6 @@ export class IntradaySnapshotFailure extends Data.TaggedError('IntradaySnapshotF
   readonly facts?: Readonly<Record<string, unknown>>
   readonly cause?: unknown
 }> {}
+
+export const intradaySnapshotSymbols = (query: IntradaySnapshotQuery): readonly string[] =>
+  query.symbols ?? query.universe

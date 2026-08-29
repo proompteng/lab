@@ -3,6 +3,7 @@ import { isSqlError, type SqlError } from 'effect/unstable/sql/SqlError'
 
 import { Pipeable } from '../../pipeable'
 import type { CycleDecisionDocument } from '../../shadow-decision-contract'
+import type { ArchiveVerifiedIntradaySnapshotReference } from '../../market-data/intraday/model'
 import type { InputManifest, IsoDate } from '../../types'
 import type { AutonomousCycle, CycleCompletionState, CycleDraft, CycleTerminalReason } from '../model'
 import type { CycleStoreDecisionFailure } from './decision-contract'
@@ -21,6 +22,10 @@ export interface CycleAcquireReceipt {
 export interface CycleMutationReceipt {
   readonly cycle: AutonomousCycle
   readonly changed: boolean
+}
+
+export interface CycleDecisionBindingEvidence {
+  readonly intradaySnapshotReferences?: readonly ArchiveVerifiedIntradaySnapshotReference[]
 }
 
 interface CycleAuthoritySlotScope {
@@ -79,6 +84,7 @@ export interface CycleStoreShape {
     cycleId: string,
     document: CycleDecisionDocument,
     observedAt: string,
+    evidence?: CycleDecisionBindingEvidence,
   ) => Effect.Effect<CycleMutationReceipt, CycleStoreError>
   readonly finish: (
     cycleId: string,

@@ -305,15 +305,23 @@ describe('Bayn manifest promotion', () => {
 
     const sourceSha = 'a'.repeat(40)
     const digest = `sha256:${'b'.repeat(64)}`
-    const nextBehaviorHash = '3'.repeat(64)
-    const nextParameterHash = '4'.repeat(64)
+    const nextBehaviorHash = 'a'.repeat(64)
+    const nextParameterHash = 'd'.repeat(64)
     const nextStrategyName = 'opening-drive-momentum-v2'
     const nextStrategyProtocolHash = '8'.repeat(64)
     const nextExecutionRiskPolicyHash = '7'.repeat(64)
-    const nextResearchRequestHash = '8'.repeat(64)
+    const nextResearchRequestHash = 'c'.repeat(64)
     writeFileSync(
       paths.deploymentPath,
       readFileSync(paths.deploymentPath, 'utf8')
+        .replace(
+          environmentBlock('BAYN_STRATEGY_BEHAVIOR_HASH', strategyBehaviorHash),
+          environmentBlock('BAYN_STRATEGY_BEHAVIOR_HASH', nextBehaviorHash),
+        )
+        .replace(
+          environmentBlock('BAYN_STRATEGY_PARAMETER_HASH', strategyParameterHash),
+          environmentBlock('BAYN_STRATEGY_PARAMETER_HASH', nextParameterHash),
+        )
         .replace(
           environmentBlock('BAYN_STRATEGY_NAME', strategyName),
           environmentBlock('BAYN_STRATEGY_NAME', nextStrategyName),
@@ -336,8 +344,6 @@ describe('Bayn manifest promotion', () => {
         .replaceAll(`sha256:${'0'.repeat(64)}`, digest)
         .replaceAll('0'.repeat(40), sourceSha)
         .replaceAll(researchRequestHash, nextResearchRequestHash)
-        .replaceAll(strategyBehaviorHash, nextBehaviorHash)
-        .replaceAll(strategyParameterHash, nextParameterHash)
       writeFileSync(path, candidate)
     }
 
@@ -348,6 +354,7 @@ describe('Bayn manifest promotion', () => {
       strategyBehaviorHash: nextBehaviorHash,
       strategyParameterHash: nextParameterHash,
       rolloutTimestamp: '2026-07-22T10:00:00Z',
+      researchLineageSourceSha: sourceSha,
       deployedDeploymentPath,
       ...paths,
       ...nativePaths,
@@ -362,6 +369,23 @@ describe('Bayn manifest promotion', () => {
     expect(readFileSync(paths.deploymentPath, 'utf8')).toContain(
       `- name: BAYN_CODE_REVISION\n              value: ${sourceSha}`,
     )
+    for (const manifest of [
+      readFileSync(paths.deploymentPath, 'utf8'),
+      readFileSync(nativePaths.executionControllerPath, 'utf8'),
+      readFileSync(nativePaths.executionActivationPath, 'utf8'),
+    ]) {
+      expect(manifest).toContain(environmentBlock('BAYN_STRATEGY_BEHAVIOR_HASH', nextBehaviorHash).trim())
+      expect(manifest).toContain(environmentBlock('BAYN_STRATEGY_PARAMETER_HASH', nextParameterHash).trim())
+    }
+    expect(readFileSync(paths.deploymentPath, 'utf8')).toContain(
+      environmentBlock('BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH', baynExecutionControllerPlanHash).trim(),
+    )
+    expect(
+      environmentValueForTest(
+        readFileSync(nativePaths.executionActivationPath, 'utf8'),
+        'BAYN_EXECUTION_ACTIVATION_GENERATION',
+      ),
+    ).toBe(expectedActivationGeneration(sourceSha, digest, nextResearchRequestHash))
   })
 
   test('holds an authored identity change when the research request hash was not refreshed', () => {

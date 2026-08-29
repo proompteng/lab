@@ -13,7 +13,7 @@ import {
 } from 'effect/unstable/sql/SqlError'
 
 import { CycleObservabilityError } from './cycle/store'
-import { DatabaseError } from './db/evidence-store'
+import { DatabaseError } from './db/database-error'
 import { databaseOperation, sqlResource } from './operations'
 
 const buildSqlResource = <A, E, R>(layer: Layer.Layer<A, E, R>) => Layer.build(sqlResource(layer))

@@ -1,8 +1,14 @@
 import { describe, expect, test } from 'bun:test'
-import { Result } from 'effect'
+import { Effect, Result } from 'effect'
 
 import { canonicalHashV1, sha256 } from '../../hash'
-import type { IntradayMarketSnapshot, IntradaySnapshotRequest } from './model'
+import {
+  IntradaySnapshotPurpose,
+  type ArchiveVerifiedIntradayMarketSnapshot,
+  type IntradayMarketSnapshot,
+  type IntradaySnapshotRequest,
+} from './model'
+import { verifyIntradayArchiveSnapshot } from './program'
 import type { IntradayBarRow, IntradayQuoteRow, IntradayTradeRow } from './rows'
 import { reverifyIntradayMarketSnapshot, verifyIntradaySnapshot, verifyIntradaySnapshotRequest } from './verification'
 
@@ -144,6 +150,94 @@ describe('immutable intraday market snapshot', () => {
     expect(success(reverifyIntradayMarketSnapshot(snapshot))).toEqual(snapshot)
   })
 
+  test('verifies quote-led liquidation evidence without requiring a range-completion bar or trade', () => {
+    const rows = makeRows()
+    const liquidationRequest = {
+      ...request,
+      symbols: ['AMD'],
+      purpose: IntradaySnapshotPurpose.Liquidation,
+    }
+    const liquidationRows = {
+      archiveWatermarks: rows.archiveWatermarks,
+      bars: rows.bars.filter((row) => row.symbol === 'AMD').slice(0, -1),
+      quotes: rows.quotes.filter((row) => row.symbol === 'AMD'),
+      trades: [],
+    }
+    const snapshot = success(verifyIntradaySnapshot(liquidationRequest, liquidationRows))
+
+    expect(snapshot.manifest).toMatchObject({
+      universe: request.universe,
+      universeSymbolHash: request.universeSymbolHash,
+      symbols: ['AMD'],
+      purpose: IntradaySnapshotPurpose.Liquidation,
+      barCount: 4,
+      quoteCount: 1,
+      tradeCount: 0,
+    })
+    expect(success(reverifyIntradayMarketSnapshot(snapshot))).toEqual(snapshot)
+    expect(error(verifyIntradaySnapshotRequest({ ...liquidationRequest, symbols: ['AAPL'] }))).toMatchObject({
+      reason: 'request',
+    })
+  })
+
+  test('re-queries liquidation snapshots with their full universe, exact symbol subset, and purpose', async () => {
+    const rows = makeRows()
+    const liquidationRequest: IntradaySnapshotRequest = {
+      ...request,
+      symbols: ['AMD'],
+      purpose: IntradaySnapshotPurpose.Liquidation,
+    }
+    const liquidationRows = {
+      archiveWatermarks: rows.archiveWatermarks,
+      bars: rows.bars.filter((row) => row.symbol === 'AMD').slice(0, -1),
+      quotes: rows.quotes.filter((row) => row.symbol === 'AMD'),
+      trades: [],
+    }
+    const snapshot = success(verifyIntradaySnapshot(liquidationRequest, liquidationRows))
+    let replayRequest: IntradaySnapshotRequest | undefined
+
+    const replayed = await Effect.runPromise(
+      verifyIntradayArchiveSnapshot((candidate) => {
+        replayRequest = candidate
+        return Effect.succeed(snapshot as ArchiveVerifiedIntradayMarketSnapshot)
+      }, snapshot),
+    )
+
+    expect(replayed as IntradayMarketSnapshot).toEqual(snapshot)
+    expect(replayRequest).toMatchObject({
+      universe: request.universe,
+      universeSymbolHash: request.universeSymbolHash,
+      symbols: ['AMD'],
+      purpose: IntradaySnapshotPurpose.Liquidation,
+    })
+  })
+
+  test('verifies quote-only entry pricing without promoting held symbols into signal evidence', () => {
+    const rows = makeRows()
+    const pricingRequest = {
+      ...request,
+      symbols: ['AMD'],
+      purpose: IntradaySnapshotPurpose.EntryPricing,
+    }
+    const pricingRows = {
+      archiveWatermarks: rows.archiveWatermarks,
+      bars: [],
+      quotes: rows.quotes.filter((row) => row.symbol === 'AMD'),
+      trades: [],
+    }
+    const snapshot = success(verifyIntradaySnapshot(pricingRequest, pricingRows))
+
+    expect(snapshot.manifest).toMatchObject({
+      universe: request.universe,
+      symbols: ['AMD'],
+      purpose: IntradaySnapshotPurpose.EntryPricing,
+      barCount: 0,
+      quoteCount: 1,
+      tradeCount: 0,
+    })
+    expect(success(reverifyIntradayMarketSnapshot(snapshot))).toEqual(snapshot)
+  })
+
   test('publishes detached immutable archive watermarks', () => {
     const rows = makeRows()
     const mutableWatermarks = request.archiveWatermarks.map((watermark) => ({ ...watermark }))
@@ -157,6 +251,24 @@ describe('immutable intraday market snapshot', () => {
     expect(snapshot.manifest.archiveWatermarks[0]?.inclusiveLastOffset).toBe('10')
     expect(Object.isFrozen(snapshot.manifest.archiveWatermarks)).toBe(true)
     expect(Object.isFrozen(snapshot.manifest.archiveWatermarks[0])).toBe(true)
+  })
+
+  test('treats newly materialized source partitions as retryable snapshot growth', () => {
+    const rows = makeRows()
+    const addedPartition = {
+      source_topic: barsTopic,
+      source_partition: '1',
+      inclusive_last_offset: '1',
+    }
+    const grownWatermarks = [rows.archiveWatermarks[0], addedPartition, ...rows.archiveWatermarks.slice(1)]
+
+    expect(error(verifyIntradaySnapshot(request, { ...rows, archiveWatermarks: grownWatermarks }))).toMatchObject({
+      reason: 'not-ready',
+      message: 'intraday archive gained partitions after version capture',
+      facts: {
+        addedPartitions: [{ sourceTopic: barsTopic, sourcePartition: 1 }],
+      },
+    })
   })
 
   test('uses ClickHouse binary ordering for case-mixed Kafka topics', () => {
@@ -654,6 +766,252 @@ describe('immutable intraday market snapshot', () => {
       reason: 'ordering',
       message: 'latest intraday timestamp has conflicting market payloads',
     })
+  })
+
+  test('rejects a self-consistent replay with conflicting duplicate quote candidates', () => {
+    const rows = makeRows()
+    const firstQuote = rows.quotes[0]
+    if (firstQuote === undefined) throw new Error('quote fixture is incomplete')
+    const forgedRequest: IntradaySnapshotRequest = {
+      ...request,
+      archiveWatermarks: request.archiveWatermarks.map((watermark) =>
+        watermark.sourceTopic === quotesTopic ? { ...watermark, inclusiveLastOffset: '15' } : watermark,
+      ),
+    }
+    const forgedRows = {
+      ...rows,
+      archiveWatermarks: rows.archiveWatermarks.map((watermark) =>
+        watermark.source_topic === quotesTopic ? { ...watermark, inclusive_last_offset: '15' } : watermark,
+      ),
+      quotes: [
+        ...rows.quotes,
+        {
+          ...firstQuote,
+          source_offset: '15',
+          latest_payload_variants: '1',
+          bid_price: '99.50',
+          ask_price: '99.52',
+        },
+      ],
+    }
+    const forged = success(verifyIntradaySnapshot(forgedRequest, forgedRows))
+
+    expect(error(reverifyIntradayMarketSnapshot(forged))).toMatchObject({
+      reason: 'rows',
+      message: 'intraday replay snapshot contains more than one quote candidate for a symbol',
+    })
+  })
+
+  test('rejects replay snapshots with extra canonical candidates that the archive query cannot return', () => {
+    const rows = makeRows()
+    const firstQuote = rows.quotes[0]
+    const firstTrade = rows.trades[0]
+    if (firstQuote === undefined || firstTrade === undefined) throw new Error('intraday fixture is incomplete')
+
+    const cases = [
+      {
+        sourceTopic: quotesTopic,
+        sourceOffset: '15',
+        rows: { ...rows, quotes: [...rows.quotes, { ...firstQuote, source_offset: '15' }] },
+        message: 'intraday replay snapshot contains more than one quote candidate for a symbol',
+      },
+      {
+        sourceTopic: tradesTopic,
+        sourceOffset: '16',
+        rows: { ...rows, trades: [...rows.trades, { ...firstTrade, source_offset: '16' }] },
+        message: 'intraday replay snapshot contains more than one trade candidate for a symbol',
+      },
+    ] as const
+
+    for (const testCase of cases) {
+      const forgedRequest: IntradaySnapshotRequest = {
+        ...request,
+        archiveWatermarks: request.archiveWatermarks.map((watermark) =>
+          watermark.sourceTopic === testCase.sourceTopic
+            ? { ...watermark, inclusiveLastOffset: testCase.sourceOffset }
+            : watermark,
+        ),
+      }
+      const forgedRows = {
+        ...testCase.rows,
+        archiveWatermarks: testCase.rows.archiveWatermarks.map((watermark) =>
+          watermark.source_topic === testCase.sourceTopic
+            ? { ...watermark, inclusive_last_offset: testCase.sourceOffset }
+            : watermark,
+        ),
+      }
+      const forgedSnapshot = success(verifyIntradaySnapshot(forgedRequest, forgedRows))
+
+      expect(error(reverifyIntradayMarketSnapshot(forgedSnapshot))).toMatchObject({
+        reason: 'rows',
+        message: testCase.message,
+        facts: { symbol: 'AMD' },
+      })
+    }
+  })
+
+  test('re-queries the immutable archive before accepting a self-rehashed lower-ranked winner', async () => {
+    const rows = makeRows()
+    const authoritative = success(verifyIntradaySnapshot(request, rows))
+    const firstQuote = rows.quotes[0]
+    if (firstQuote === undefined) throw new Error('quote fixture is incomplete')
+    const lowerRankedRows = {
+      ...rows,
+      quotes: rows.quotes.map((quote, index) =>
+        index === 0
+          ? {
+              ...firstQuote,
+              source_offset: '1',
+              bid_price: '99.50',
+              ask_price: '99.52',
+            }
+          : quote,
+      ),
+    }
+    const selfRehashed = success(verifyIntradaySnapshot(request, lowerRankedRows))
+    expect(success(reverifyIntradayMarketSnapshot(selfRehashed))).toEqual(selfRehashed)
+
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        verifyIntradayArchiveSnapshot(
+          () => Effect.succeed(authoritative as ArchiveVerifiedIntradayMarketSnapshot),
+          selfRehashed,
+        ),
+      ),
+    )
+
+    expect(failure).toMatchObject({
+      reason: 'hash',
+      message: 'intraday replay snapshot is not the canonical immutable archive winner',
+    })
+  })
+
+  test('returns a typed row failure for malformed replayed quote and trade timestamps', () => {
+    const verified = success(verifyIntradaySnapshot(request, makeRows()))
+
+    const malformedSnapshots: readonly IntradayMarketSnapshot[] = [
+      {
+        ...verified,
+        quotes: verified.quotes.map((quote, index) => (index === 0 ? { ...quote, eventAt: 'bad' } : quote)),
+      },
+      {
+        ...verified,
+        trades: verified.trades.map((trade, index) => (index === 0 ? { ...trade, eventAt: 'bad' } : trade)),
+      },
+    ]
+
+    for (const malformed of malformedSnapshots) {
+      expect(error(reverifyIntradayMarketSnapshot(malformed))).toMatchObject({
+        reason: 'rows',
+        message: 'intraday quote or trade timestamp does not match the archive contract',
+      })
+    }
+  })
+
+  test('returns a typed row failure for null replayed quote and trade rows', () => {
+    const verified = success(verifyIntradaySnapshot(request, makeRows()))
+
+    const malformedSnapshots: readonly IntradayMarketSnapshot[] = [
+      {
+        ...verified,
+        quotes: [null as never, ...verified.quotes.slice(1)],
+      },
+      {
+        ...verified,
+        trades: [null as never, ...verified.trades.slice(1)],
+      },
+    ]
+
+    for (const malformed of malformedSnapshots) {
+      expect(error(reverifyIntradayMarketSnapshot(malformed))).toMatchObject({
+        reason: 'rows',
+        message: 'intraday quote or trade timestamp does not match the archive contract',
+      })
+    }
+  })
+
+  test('returns a typed row failure for malformed replayed bar rows', () => {
+    const verified = success(verifyIntradaySnapshot(request, makeRows()))
+
+    const malformedSnapshots: readonly IntradayMarketSnapshot[] = [
+      {
+        ...verified,
+        bars: [null as never, ...verified.bars.slice(1)],
+      },
+      {
+        ...verified,
+        bars: verified.bars.map((bar, index) => (index === 0 ? { ...bar, open: Number.NaN } : bar)),
+      },
+    ]
+
+    for (const malformed of malformedSnapshots) {
+      expect(error(reverifyIntradayMarketSnapshot(malformed))).toMatchObject({
+        reason: 'rows',
+        message: 'intraday replayed bar does not match the archive contract',
+      })
+    }
+  })
+
+  test('returns a typed row failure for malformed replayed snapshot collections', () => {
+    const verified = success(verifyIntradaySnapshot(request, makeRows()))
+
+    const malformedSnapshots: readonly IntradayMarketSnapshot[] = [
+      { ...verified, bars: null as never },
+      { ...verified, quotes: null as never },
+      { ...verified, trades: undefined as never },
+    ]
+
+    for (const malformed of malformedSnapshots) {
+      expect(error(reverifyIntradayMarketSnapshot(malformed))).toMatchObject({
+        reason: 'rows',
+        message: 'intraday replay snapshot and manifest do not match the archive contract',
+      })
+    }
+  })
+
+  test('decodes the replay envelope before reading nested manifest fields', () => {
+    const verified = success(verifyIntradaySnapshot(request, makeRows()))
+    const malformedSnapshots: readonly IntradayMarketSnapshot[] = [
+      null as never,
+      { ...verified, manifest: null as never },
+      {
+        ...verified,
+        manifest: { ...verified.manifest, archiveWatermarks: null as never },
+      },
+      {
+        ...verified,
+        manifest: { ...verified.manifest, calendar: { ...verified.manifest.calendar, sessions: null as never } },
+      },
+    ]
+
+    for (const malformed of malformedSnapshots) {
+      expect(error(reverifyIntradayMarketSnapshot(malformed))).toMatchObject({
+        reason: 'rows',
+        message: 'intraday replay snapshot and manifest do not match the archive contract',
+      })
+    }
+  })
+
+  test('returns a typed row failure for non-serializable replayed quote and trade payloads', () => {
+    const verified = success(verifyIntradaySnapshot(request, makeRows()))
+
+    const malformedSnapshots: readonly IntradayMarketSnapshot[] = [
+      {
+        ...verified,
+        quotes: verified.quotes.map((quote, index) => (index === 0 ? { ...quote, bidPrice: 1n as never } : quote)),
+      },
+      {
+        ...verified,
+        trades: verified.trades.map((trade, index) => (index === 0 ? { ...trade, price: 1n as never } : trade)),
+      },
+    ]
+
+    for (const malformed of malformedSnapshots) {
+      expect(error(reverifyIntradayMarketSnapshot(malformed))).toMatchObject({
+        reason: 'rows',
+        message: 'intraday quote or trade payload does not match the archive contract',
+      })
+    }
   })
 
   test('binds a materialized archive version and rejects non-final or post-version records', () => {

@@ -54,10 +54,22 @@ describe('intraday archive queries', () => {
     const trades = String(queries.loadIntradayTrades(request))
 
     expect(capture).toContain('FROM signal.intraday_bars_1m_v2')
-    expect(capture).toContain(`event_ts >= parseDateTime64BestEffort("${request.rangeStartAt}", 3, 'UTC')`)
-    expect(capture).toContain(`event_ts < parseDateTime64BestEffort("${request.rangeEndAt}", 3, 'UTC')`)
+    expect(capture).toContain('FROM signal.intraday_quotes_v1')
+    expect(capture).toContain('FROM signal.intraday_trades_v1')
+    expect(capture).not.toContain('has(')
+    expect(capture).toContain(
+      `event_ts >= parseDateTime64BestEffort("${request.calendar.sessions[0]!.openAt}", 3, 'UTC')`,
+    )
+    expect(capture).toContain(
+      `event_ts <= parseDateTime64BestEffort("${request.calendar.sessions[0]!.closeAt}", 3, 'UTC')`,
+    )
     expect(
-      capture.match(new RegExp(`ingest_ts <= parseDateTime64BestEffort\\("${request.observedAt}", 9, 'UTC'\\)`, 'g')),
+      capture.match(
+        new RegExp(
+          `event_ts >= parseDateTime64BestEffort\\("${request.calendar.sessions[0]!.openAt}", 9, 'UTC'\\)`,
+          'g',
+        ),
+      ),
     ).toHaveLength(2)
     expect(
       capture.match(
@@ -66,6 +78,10 @@ describe('intraday archive queries', () => {
           'g',
         ),
       ),
+    ).toHaveLength(2)
+    expect(capture.split(request.observedAt)).toHaveLength(4)
+    expect(
+      capture.match(new RegExp(`ingest_ts <= parseDateTime64BestEffort\\("${request.observedAt}", 9, 'UTC'\\)`, 'g')),
     ).toHaveLength(2)
     expect(bars).toContain('FROM signal.intraday_bars_1m_v2')
     expect(bars).toContain(`event_ts >= parseDateTime64BestEffort("${request.rangeStartAt}", 9, 'UTC')`)
@@ -104,6 +120,29 @@ describe('intraday archive queries', () => {
     expect(bars).toContain(`event_ts >= parseDateTime64BestEffort("${preciseRequest.rangeStartAt}", 9, 'UTC')`)
     expect(bars).toContain(`event_ts < parseDateTime64BestEffort("${preciseRequest.rangeEndAt}", 9, 'UTC')`)
     expect(bars).toContain(`ingest_ts <= parseDateTime64BestEffort("${preciseRequest.observedAt}", 9, 'UTC')`)
+  })
+
+  test('filters close evidence to requested positions while retaining archive-universe lineage', () => {
+    const queries = makeIntradayMarketDataQueries(makeSqlRecorder())
+    const closeRequest = {
+      ...request,
+      universe: ['AMD', 'NVDA'],
+      symbols: ['AMD'],
+    }
+
+    const capture = String(queries.captureIntradayArchiveWatermarks(closeRequest))
+    expect(capture).toContain(`universe_symbol_hash = "${request.universeSymbolHash}"`)
+    expect(capture).not.toContain('has(')
+
+    for (const query of [
+      queries.loadIntradayBars(closeRequest),
+      queries.loadIntradayQuotes(closeRequest),
+      queries.loadIntradayTrades(closeRequest),
+    ]) {
+      expect(String(query)).toContain(`universe_symbol_hash = "${request.universeSymbolHash}"`)
+      expect(String(query)).toContain('has(["AMD"], symbol)')
+      expect(String(query)).not.toContain('has(["AMD","NVDA"], symbol)')
+    }
   })
 
   test('continues bounded pages strictly after the last canonical source identity', () => {

@@ -1,7 +1,7 @@
 import type { AutonomousCycle } from '../model'
 import type { CycleRunResult } from './model'
 
-export type CyclePassProgress = 'ACTIVATED' | 'DECISION_BOUND' | 'DISCOVERED_EXISTING' | 'SNAPSHOT_BOUND'
+export type CyclePassProgress = 'ACTIVATED' | 'DECISION_BOUND' | 'DISCOVERED_EXISTING'
 
 export type CyclePassContinuation =
   | { readonly _tag: 'RETURN' }
@@ -11,31 +11,15 @@ export type CyclePassContinuation =
       readonly progress: CyclePassProgress
     }
 
-const continueFromReadiness = (
-  result: Extract<CycleRunResult, { readonly outcome: 'ACQUIRED' | 'REACQUIRED' | 'RESUMED' }>,
-): CyclePassContinuation => {
-  if (result.readiness === undefined) {
-    if (result.outcome === 'RESUMED') return { _tag: 'RETURN' }
-    return { _tag: 'CONTINUE', cycle: result.receipt.cycle, progress: 'DISCOVERED_EXISTING' }
-  }
-  const readiness = result.readiness
-  return readiness.outcome === 'BOUND' || readiness.outcome === 'ALREADY_BOUND'
-    ? { _tag: 'CONTINUE', cycle: readiness.cycle, progress: 'SNAPSHOT_BOUND' }
-    : { _tag: 'RETURN' }
-}
-
 export const selectCyclePassContinuation = (result: CycleRunResult): CyclePassContinuation => {
   switch (result.outcome) {
     case 'ACQUIRED':
     case 'REACQUIRED':
-    case 'RESUMED':
-      return continueFromReadiness(result)
+      return { _tag: 'CONTINUE', cycle: result.receipt.cycle, progress: 'DISCOVERED_EXISTING' }
     case 'ALREADY_ACQUIRED':
       return { _tag: 'CONTINUE', cycle: result.cycle, progress: 'DISCOVERED_EXISTING' }
     case 'RECOVERED':
       switch (result.action) {
-        case 'BOUND_SNAPSHOT':
-          return { _tag: 'CONTINUE', cycle: result.cycle, progress: 'SNAPSHOT_BOUND' }
         case 'ACTIVATED':
           return { _tag: 'CONTINUE', cycle: result.cycle, progress: 'ACTIVATED' }
         case 'BOUND_DECISION':
@@ -47,8 +31,7 @@ export const selectCyclePassContinuation = (result: CycleRunResult): CyclePassCo
           return { _tag: 'RETURN' }
       }
     case 'ALREADY_TERMINAL':
-    case 'NO_PUBLICATION':
-    case 'NOT_DUE':
+    case 'WINDOW_CLOSED':
       return { _tag: 'RETURN' }
   }
 }

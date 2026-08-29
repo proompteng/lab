@@ -1,34 +1,19 @@
 import { createServer } from 'node:http'
 
-import { NodeHttpServer, NodeHttpServerRequest } from '@effect/platform-node'
-import { Clock, Deferred, Effect, Option, Ref, Result, Scope } from 'effect'
+import { NodeHttpServer } from '@effect/platform-node'
+import { Clock, Effect, Ref, Scope } from 'effect'
 import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http'
 
 import type { RuntimeBuildMetadata, RuntimeConfig } from './config'
 import type { RuntimeProvenance } from './contracts'
-import {
-  CycleOperationsCondition,
-  CycleOperationsReason,
-  MonthEndCadenceCondition,
-  MonthEndCadenceReason,
-  projectAutonomousCycleCadenceObservation,
-  retainedAutonomousCycleCadenceDecision,
-  type AutonomousCycleCadenceFreshness,
-} from './cycle/observability'
+import { CycleOperationsCondition, CycleOperationsReason } from './cycle/observability'
 import { CycleState, CycleTerminalReason } from './cycle'
-import { CycleNotDueReason } from './cycle/runner/model'
-import type { DatabaseError, EvidenceStoreService } from './db/evidence-store'
-import type { OperationalError } from './errors'
 import { BrokerAccess, CapitalAuthorityKind } from './execution/authority'
 import type { ExecutionPolicy } from './execution/configuration'
 import { executionControllerStatusHasCompletion } from './execution/controller-status'
-import { databaseOperation, withinDeadline } from './operations'
 import { Authority, KillState, ReconciliationStatus } from './execution/contracts'
-import { makeQualificationDiagnosisResult } from './qualification-diagnosis'
 import { isReady, type DependencyHealth, type RuntimeState } from './runtime-state'
 import { Pipeable } from './pipeable'
-
-type ReadEvidence = EvidenceStoreService['read']
 
 export type HttpResponseDecision =
   | {
@@ -44,10 +29,6 @@ export type HttpResponseDecision =
       readonly contentType: string
       readonly headers?: Readonly<Record<string, string>>
     }
-
-export type HistoricalRunRequestDecision =
-  | { readonly _tag: 'ReadEvidence'; readonly runId: string }
-  | { readonly _tag: 'Respond'; readonly response: HttpResponseDecision }
 
 const jsonDecision = (
   body: unknown,
@@ -67,13 +48,13 @@ const textDecision = (
   ...(headers === undefined ? {} : { headers }),
 })
 
-const verifiedState = (state: RuntimeState, dependency: DependencyHealth) => {
-  if (state.evidence === null || dependency.status === 'UNKNOWN') return 'UNKNOWN'
+const verifiedState = (dependency: DependencyHealth) => {
+  if (dependency.status === 'UNKNOWN') return 'UNKNOWN'
   return dependency.status === 'AVAILABLE' ? 'CURRENT' : 'INVALID'
 }
 
 const accountingState = (state: RuntimeState) => {
-  if (state.evidence === null || state.health.dependencies.tigerBeetle.status === 'UNKNOWN') return 'UNKNOWN'
+  if (state.health.dependencies.tigerBeetle.status === 'UNKNOWN') return 'UNKNOWN'
   return state.health.dependencies.tigerBeetle.status === 'AVAILABLE' ? 'EXACT' : 'UNAVAILABLE'
 }
 
@@ -142,35 +123,12 @@ const publicDependencies = (state: RuntimeState) => ({
   },
 })
 
-const autonomousCycleCadenceFreshness = (state: RuntimeState): AutonomousCycleCadenceFreshness => {
-  const dependency = state.health.dependencies.cycleRunner
-  if (dependency.status === 'AVAILABLE') return 'AVAILABLE'
-  return dependency.error?.startsWith('autonomous cycle loop has not completed a successful pass for ') === true ||
-    dependency.error?.startsWith('Restate execution controller is overdue by ') === true
-    ? 'STALE'
-    : 'UNAVAILABLE'
-}
-
-const autonomousCycleCadenceObservation = (state: RuntimeState) => {
-  const lastPass = state.autonomousCycleLoop.lastPass
-  const cadenceDecision = retainedAutonomousCycleCadenceDecision(lastPass)
-  return projectAutonomousCycleCadenceObservation({
-    configured: state.autonomousCycleLoop.configured,
-    lastPassResult: lastPass?.result ?? null,
-    lastPassOutcome: lastPass?.result === 'SUCCESS' ? lastPass.outcome : null,
-    freshness: autonomousCycleCadenceFreshness(state),
-    ...(lastPass?.cadence === undefined ? {} : { cadence: lastPass.cadence }),
-    ...(cadenceDecision === undefined ? {} : { cadenceDecision }),
-  })
-}
-
 const publicAutonomousCycleLoop = (state: RuntimeState) => {
   const lastPass = state.autonomousCycleLoop.lastPass
   return {
     configured: state.autonomousCycleLoop.configured,
     owner: state.autonomousCycleLoop.owner ?? 'Process',
     startedAt: state.autonomousCycleLoop.startedAt,
-    cadence: autonomousCycleCadenceObservation(state),
     lastPass:
       lastPass === null
         ? null
@@ -179,15 +137,12 @@ const publicAutonomousCycleLoop = (state: RuntimeState) => {
               result: lastPass.result,
               observedAt: lastPass.observedAt,
               outcome: lastPass.outcome,
-              ...(lastPass.cadence === undefined ? {} : { cadence: lastPass.cadence }),
-              ...(lastPass.notDueReason === undefined ? {} : { notDueReason: lastPass.notDueReason }),
             }
           : {
               result: lastPass.result,
               observedAt: lastPass.observedAt,
               operation: lastPass.operation,
               failure: lastPass.failure,
-              ...(lastPass.cadence === undefined ? {} : { cadence: lastPass.cadence }),
               reasonCode: 'AUTONOMOUS_CYCLE_PASS_FAILED',
             },
   } as const
@@ -366,11 +321,6 @@ const statusFactsDataFirst = (
   const capitalActivationRealized = state.capitalActivation?._tag === 'Realized'
   const effectiveBrokerAccess = capitalActivationRealized ? BrokerAccess.Mutation : BrokerAccess.ReadOnly
   const effectiveCapitalAuthority = capitalActivationRealized ? CapitalAuthorityKind.Granted : CapitalAuthorityKind.None
-  const diagnosis =
-    state.evidence === null
-      ? null
-      : makeQualificationDiagnosisResult(state.evidence.evaluation, state.evidence.qualification)
-  const publicDiagnosis = diagnosis === null || Result.isFailure(diagnosis) ? null : diagnosis.success
   return {
     service: 'bayn',
     operational: {
@@ -381,31 +331,11 @@ const statusFactsDataFirst = (
     },
     dependencies,
     data: {
-      status: verifiedState(state, state.health.dependencies.signal),
-      input: state.evidence?.evaluation.input ?? null,
-    },
-    evidence: {
-      status: verifiedState(state, state.health.dependencies.evidence),
-      runId: state.evidence?.evaluation.runId ?? null,
-      startupMode: state.evidence?.startupMode ?? null,
-      persistence: state.evidence?.persistence ?? null,
-    },
-    economic: {
-      verdict: state.evidence?.qualification.evaluationVerdict ?? null,
-    },
-    qualification: {
-      verdict: state.evidence?.qualification.verdict ?? null,
-      lockId: state.evidence?.qualification.lockId ?? null,
-      resultHash: state.evidence?.qualification.resultHash ?? null,
-      analysisHash: state.evidence?.qualification.analysis.analysisHash ?? null,
-      candidateOrdinal: state.evidence?.qualification.analysis.candidateOrdinal ?? null,
-      reasonCodes: state.evidence?.qualification.reasonCodes ?? [],
-      diagnosis: publicDiagnosis,
-      executionProvenance: state.evidence?.provenance ?? null,
+      status: verifiedState(state.health.dependencies.signal),
     },
     accounting: {
       status: accountingState(state),
-      reconciliation: state.evidence?.reconciliation ?? null,
+      economics: state.cycle.economics ?? null,
     },
     cycle: publicCycleState(state),
     autonomousCycleLoop: publicAutonomousCycleLoop(state),
@@ -548,51 +478,6 @@ export const readinessResponseDecision = (
   )
 }
 
-export const validateHistoricalRunRequest = (runId: string | undefined): HistoricalRunRequestDecision =>
-  runId !== undefined && /^[0-9a-f]{64}$/.test(runId)
-    ? { _tag: 'ReadEvidence', runId }
-    : { _tag: 'Respond', response: jsonDecision({ error: 'invalid_run_id' }, 400) }
-
-export const historicalEvidenceResponseDecision = (stored: Option.Option<unknown>): HttpResponseDecision =>
-  Option.match(stored, {
-    onNone: () => jsonDecision({ error: 'evaluation_not_found' }, 404),
-    onSome: (evidence) => jsonDecision(evidence),
-  })
-
-const historicalReadFailureDecisionDataFirst = (runId: string, error: OperationalError) =>
-  ({
-    response: jsonDecision({ error: 'evidence_unavailable' }, 503),
-    log: {
-      message: 'Bayn historical evidence read failed',
-      cause: error,
-      annotations: {
-        service: 'bayn',
-        runId,
-        component: error.component,
-        operation: error.operation,
-        retryable: error.retryable,
-        error: error.message,
-      },
-    },
-  }) as const
-
-export const historicalReadFailureDecision = Pipeable.dual(2, historicalReadFailureDecisionDataFirst)
-
-const readHistoricalEvidenceDataFirst = <A, R>(
-  read: Effect.Effect<Option.Option<A>, DatabaseError, R>,
-  timeoutMs: number,
-): Effect.Effect<Option.Option<A>, OperationalError, R> =>
-  withinDeadline(databaseOperation(read, 'read-evidence'), timeoutMs, 'database', 'read-evidence')
-
-export const readHistoricalEvidence = Pipeable.generic<
-  <A, R>(
-    timeoutMs: number,
-  ) => (
-    read: Effect.Effect<Option.Option<A>, DatabaseError, R>,
-  ) => Effect.Effect<Option.Option<A>, OperationalError, R>,
-  typeof readHistoricalEvidenceDataFirst
->(2, readHistoricalEvidenceDataFirst)
-
 export const fallbackResponseDecision = (method: string): HttpResponseDecision =>
   method === 'GET'
     ? jsonDecision({ error: 'not_found' }, 404)
@@ -651,6 +536,7 @@ const renderPrometheusMetricsDataFirst = (
   const publicBroker = publicBrokerState(state)
   const runtimeReady = runtimeReadyOverride ?? isReady(state)
   const cycleObservationAvailable = state.cycle.condition !== CycleOperationsCondition.Unknown
+  const cycleRecorded = state.cycle.current !== null || state.cycle.last !== null
   const cyclePhase =
     cycleObservationAvailable === false
       ? 'unknown'
@@ -670,11 +556,6 @@ const renderPrometheusMetricsDataFirst = (
   const sessionPreflightReady = executionSessionPreflightReady(state, runtimeReady)
   const loopResults = ['unknown', 'success', 'failure'] as const
   const loopResult = state.autonomousCycleLoop.lastPass?.result.toLowerCase() ?? 'unknown'
-  const notDueReasons = ['unknown', 'none', ...Object.values(CycleNotDueReason).map((reason) => reason.toLowerCase())]
-  const loopNotDueReason =
-    state.autonomousCycleLoop.lastPass?.result === 'SUCCESS' && state.autonomousCycleLoop.lastPass.outcome === 'NOT_DUE'
-      ? (state.autonomousCycleLoop.lastPass.notDueReason?.toLowerCase() ?? 'unknown')
-      : 'none'
   const capitalActivationRealized = state.capitalActivation?._tag === 'Realized'
   const effectiveBrokerMutation = capitalActivationRealized
   const effectiveCapitalPromotion = capitalActivationRealized
@@ -683,10 +564,6 @@ const renderPrometheusMetricsDataFirst = (
       ? 'not_configured'
       : state.capitalActivation._tag.toLowerCase()
   const capitalActivationStates = ['not_configured', 'pending', 'realized', 'completed'] as const
-  const cadence = autonomousCycleCadenceObservation(state)
-  const cadenceConditions = Object.values(MonthEndCadenceCondition)
-  const cadenceReasons = Object.values(MonthEndCadenceReason)
-  const nextEligibilityStatuses = ['proven', 'unknown'] as const
   const loopHealthy =
     state.autonomousCycleLoop.configured &&
     state.health.dependencies.cycleRunner.status === 'AVAILABLE' &&
@@ -712,6 +589,8 @@ const renderPrometheusMetricsDataFirst = (
     state.cycle.authority?.maximum === Authority.Execution &&
     state.cycle.authority.effective === Authority.Observe &&
     state.cycle.alerts.killActive
+  const executionFunnel = state.cycle.execution
+  const cycleDecision = executionFunnel?.decision ?? null
   const economics = state.cycle.economics
   const accounting = economics?.accounting
   const forwardPerformance = economics?.forwardPerformance ?? null
@@ -737,6 +616,13 @@ const renderPrometheusMetricsDataFirst = (
     '# HELP bayn_runtime_ready Whether the bounded runtime state and required dependencies are operationally ready.',
     '# TYPE bayn_runtime_ready gauge',
     `bayn_runtime_ready ${runtimeReady ? 1 : 0}`,
+    ...(state.health.checkedAt === null
+      ? []
+      : [
+          '# HELP bayn_runtime_projection_timestamp_seconds Observation time of the runtime projection rendered by this scrape.',
+          '# TYPE bayn_runtime_projection_timestamp_seconds gauge',
+          `bayn_runtime_projection_timestamp_seconds ${prometheusNumber(epochSeconds(state.health.checkedAt))}`,
+        ]),
     '# HELP bayn_cycle_observation_available Whether the bounded PostgreSQL cycle projection is current.',
     '# TYPE bayn_cycle_observation_available gauge',
     `bayn_cycle_observation_available ${cycleObservationAvailable ? 1 : 0}`,
@@ -759,32 +645,80 @@ const renderPrometheusMetricsDataFirst = (
     ...terminalReasons.map(
       (reason) => `bayn_cycle_terminal_reason{reason="${reason}"} ${cycleTerminalReason === reason ? 1 : 0}`,
     ),
-    ...(cycleObservationAvailable
+    ...(cycleObservationAvailable && cycleRecorded
       ? [
-          '# HELP bayn_cycle_unfinished_count Number of unfinished cycles for the bound qualification run.',
+          '# HELP bayn_cycle_unfinished_count Number of unfinished cycles for the active execution binding.',
           '# TYPE bayn_cycle_unfinished_count gauge',
           `bayn_cycle_unfinished_count ${state.cycle.unfinishedCycleCount}`,
-          '# HELP bayn_cycle_attempt_age_seconds Age of the current cycle state transition.',
-          '# TYPE bayn_cycle_attempt_age_seconds gauge',
-          `bayn_cycle_attempt_age_seconds ${prometheusNumber((state.cycle.attemptAgeMs ?? 0) / 1_000)}`,
-          '# HELP bayn_cycle_decision_bound Whether the current durable cycle has an immutable decision binding.',
-          '# TYPE bayn_cycle_decision_bound gauge',
-          `bayn_cycle_decision_bound ${cycleDecisionBound ? 1 : 0}`,
-          '# HELP bayn_cycle_submission_open_timestamp_seconds Bound broker submission-open time.',
-          '# TYPE bayn_cycle_submission_open_timestamp_seconds gauge',
-          `bayn_cycle_submission_open_timestamp_seconds ${prometheusNumber(epochSeconds(state.cycle.current?.submissionOpenAt))}`,
-          '# HELP bayn_cycle_submission_cutoff_timestamp_seconds Bound broker submission cutoff.',
-          '# TYPE bayn_cycle_submission_cutoff_timestamp_seconds gauge',
-          `bayn_cycle_submission_cutoff_timestamp_seconds ${prometheusNumber(epochSeconds(state.cycle.current?.submissionCutoffAt))}`,
-          '# HELP bayn_cycle_execution_open_timestamp_seconds Bound current execution-session open.',
-          '# TYPE bayn_cycle_execution_open_timestamp_seconds gauge',
-          `bayn_cycle_execution_open_timestamp_seconds ${prometheusNumber(epochSeconds(state.cycle.current?.executionOpenAt))}`,
-          '# HELP bayn_cycle_execution_close_timestamp_seconds Bound current execution-session close.',
-          '# TYPE bayn_cycle_execution_close_timestamp_seconds gauge',
-          `bayn_cycle_execution_close_timestamp_seconds ${prometheusNumber(epochSeconds(state.cycle.current?.executionCloseAt))}`,
+          ...(state.cycle.current === null
+            ? []
+            : [
+                '# HELP bayn_cycle_attempt_age_seconds Age of the current cycle state transition.',
+                '# TYPE bayn_cycle_attempt_age_seconds gauge',
+                `bayn_cycle_attempt_age_seconds ${prometheusNumber((state.cycle.attemptAgeMs ?? 0) / 1_000)}`,
+                '# HELP bayn_cycle_decision_bound Whether the current durable cycle has an immutable decision binding.',
+                '# TYPE bayn_cycle_decision_bound gauge',
+                `bayn_cycle_decision_bound ${cycleDecisionBound ? 1 : 0}`,
+                '# HELP bayn_cycle_snapshot_bound Whether the current durable cycle has an immutable market-data snapshot binding.',
+                '# TYPE bayn_cycle_snapshot_bound gauge',
+                `bayn_cycle_snapshot_bound ${state.cycle.current.snapshotId === null ? 0 : 1}`,
+                '# HELP bayn_cycle_submission_open_timestamp_seconds Bound broker submission-open time.',
+                '# TYPE bayn_cycle_submission_open_timestamp_seconds gauge',
+                `bayn_cycle_submission_open_timestamp_seconds ${prometheusNumber(epochSeconds(state.cycle.current.submissionOpenAt))}`,
+                '# HELP bayn_cycle_submission_cutoff_timestamp_seconds Bound broker submission cutoff.',
+                '# TYPE bayn_cycle_submission_cutoff_timestamp_seconds gauge',
+                `bayn_cycle_submission_cutoff_timestamp_seconds ${prometheusNumber(epochSeconds(state.cycle.current.submissionCutoffAt))}`,
+                '# HELP bayn_cycle_execution_open_timestamp_seconds Bound current execution-session open.',
+                '# TYPE bayn_cycle_execution_open_timestamp_seconds gauge',
+                `bayn_cycle_execution_open_timestamp_seconds ${prometheusNumber(epochSeconds(state.cycle.current.executionOpenAt))}`,
+                '# HELP bayn_cycle_execution_close_timestamp_seconds Bound current execution-session close.',
+                '# TYPE bayn_cycle_execution_close_timestamp_seconds gauge',
+                `bayn_cycle_execution_close_timestamp_seconds ${prometheusNumber(epochSeconds(state.cycle.current.executionCloseAt))}`,
+              ]),
           '# HELP bayn_cycle_last_terminal_timestamp_seconds Latest terminal cycle timestamp.',
           '# TYPE bayn_cycle_last_terminal_timestamp_seconds gauge',
           `bayn_cycle_last_terminal_timestamp_seconds ${prometheusNumber(epochSeconds(state.cycle.last?.terminalAt))}`,
+          ...(cycleDecision === null
+            ? []
+            : [
+                '# HELP bayn_cycle_target_plan_info Exact target-plan status and bounded reason for the observed cycle.',
+                '# TYPE bayn_cycle_target_plan_info gauge',
+                `bayn_cycle_target_plan_info{status="${cycleDecision.targetPlanStatus.toLowerCase()}",reason="${prometheusLabel((cycleDecision.targetPlanReason ?? 'none').toLowerCase())}"} 1`,
+                '# HELP bayn_cycle_decision_dispatchable Whether the observed decision is eligible for broker dispatch.',
+                '# TYPE bayn_cycle_decision_dispatchable gauge',
+                `bayn_cycle_decision_dispatchable ${cycleDecision.dispatchable ? 1 : 0}`,
+                '# HELP bayn_cycle_decision_target_count Number of nonzero target deltas in the observed decision.',
+                '# TYPE bayn_cycle_decision_target_count gauge',
+                `bayn_cycle_decision_target_count ${cycleDecision.targetCount}`,
+                '# HELP bayn_cycle_decision_ordered_intent_count Number of canonical ordered intents in the observed decision.',
+                '# TYPE bayn_cycle_decision_ordered_intent_count gauge',
+                `bayn_cycle_decision_ordered_intent_count ${cycleDecision.orderedIntentCount}`,
+                '# HELP bayn_cycle_decision_timestamp_seconds Creation time of the observed immutable decision.',
+                '# TYPE bayn_cycle_decision_timestamp_seconds gauge',
+                `bayn_cycle_decision_timestamp_seconds ${prometheusNumber(epochSeconds(cycleDecision.createdAt))}`,
+                ...(cycleDecision.marketDataObservedAt === null
+                  ? []
+                  : [
+                      '# HELP bayn_cycle_decision_market_data_records Verified intraday market-data records bound to the observed decision.',
+                      '# TYPE bayn_cycle_decision_market_data_records gauge',
+                      `bayn_cycle_decision_market_data_records{kind="bars"} ${cycleDecision.barCount}`,
+                      `bayn_cycle_decision_market_data_records{kind="quotes"} ${cycleDecision.quoteCount}`,
+                      `bayn_cycle_decision_market_data_records{kind="trades"} ${cycleDecision.tradeCount}`,
+                      '# HELP bayn_cycle_market_data_observed_timestamp_seconds Observation time of the market-data snapshot bound to the decision.',
+                      '# TYPE bayn_cycle_market_data_observed_timestamp_seconds gauge',
+                      `bayn_cycle_market_data_observed_timestamp_seconds ${prometheusNumber(epochSeconds(cycleDecision.marketDataObservedAt))}`,
+                    ]),
+                ...(cycleDecision.riskBlockReason === null
+                  ? []
+                  : [
+                      '# HELP bayn_cycle_risk_block_info First bounded risk reason that stopped dispatch for the observed decision.',
+                      '# TYPE bayn_cycle_risk_block_info gauge',
+                      `bayn_cycle_risk_block_info{reason="${prometheusLabel(cycleDecision.riskBlockReason.toLowerCase())}"} 1`,
+                    ]),
+                '# HELP bayn_cycle_risk_block_reason_count Number of distinct risk reasons that stopped dispatch.',
+                '# TYPE bayn_cycle_risk_block_reason_count gauge',
+                `bayn_cycle_risk_block_reason_count ${cycleDecision.riskBlockReasonCount}`,
+              ]),
         ]
       : []),
     '# HELP bayn_cycle_stall_threshold_seconds Configured attempt-stall threshold.',
@@ -842,11 +776,6 @@ const renderPrometheusMetricsDataFirst = (
     ...loopResults.map(
       (result) => `bayn_autonomous_cycle_loop_last_pass{result="${result}"} ${loopResult === result ? 1 : 0}`,
     ),
-    '# HELP bayn_autonomous_cycle_not_due_reason Exact bounded reason for the latest NOT_DUE pass.',
-    '# TYPE bayn_autonomous_cycle_not_due_reason gauge',
-    ...notDueReasons.map(
-      (reason) => `bayn_autonomous_cycle_not_due_reason{reason="${reason}"} ${loopNotDueReason === reason ? 1 : 0}`,
-    ),
     ...(state.autonomousCycleLoop.lastPass === null
       ? []
       : [
@@ -857,24 +786,6 @@ const renderPrometheusMetricsDataFirst = (
           '# TYPE bayn_autonomous_cycle_loop_last_pass_age_seconds gauge',
           `bayn_autonomous_cycle_loop_last_pass_age_seconds ${prometheusNumber((loopLastPassAgeMs ?? 0) / 1_000)}`,
         ]),
-    '# HELP bayn_autonomous_cycle_cadence_condition Exact bounded month-end cadence interpretation of the latest pass.',
-    '# TYPE bayn_autonomous_cycle_cadence_condition gauge',
-    ...cadenceConditions.map(
-      (condition) =>
-        `bayn_autonomous_cycle_cadence_condition{condition="${condition.toLowerCase()}"} ${cadence.condition === condition ? 1 : 0}`,
-    ),
-    '# HELP bayn_autonomous_cycle_cadence_reason Stable bounded reason for the latest cadence interpretation.',
-    '# TYPE bayn_autonomous_cycle_cadence_reason gauge',
-    ...cadenceReasons.map(
-      (reason) =>
-        `bayn_autonomous_cycle_cadence_reason{reason="${reason.toLowerCase()}"} ${cadence.reason === reason ? 1 : 0}`,
-    ),
-    '# HELP bayn_autonomous_cycle_next_eligibility Whether current retained evidence proves the next eligible session.',
-    '# TYPE bayn_autonomous_cycle_next_eligibility gauge',
-    ...nextEligibilityStatuses.map(
-      (status) =>
-        `bayn_autonomous_cycle_next_eligibility{status="${status}"} ${cadence.nextEligibility.status.toLowerCase() === status ? 1 : 0}`,
-    ),
     ...(cycleObservationAvailable
       ? [
           '# HELP bayn_mutation_events_total Durable broker mutation event count.',
@@ -883,16 +794,129 @@ const renderPrometheusMetricsDataFirst = (
           '# HELP bayn_mutation_recovery_found_events_total Durable broker recovery-found event count.',
           '# TYPE bayn_mutation_recovery_found_events_total counter',
           `bayn_mutation_recovery_found_events_total ${state.cycle.mutations.recoveryFoundCount}`,
-          '# HELP bayn_intents Durable execution intent count by active state.',
-          '# TYPE bayn_intents gauge',
-          `bayn_intents{state="approved"} ${state.cycle.mutations.approvedIntentCount}`,
-          `bayn_intents{state="acknowledged"} ${state.cycle.mutations.acknowledgedIntentCount}`,
           '# HELP bayn_unresolved_mutations Durable unresolved broker mutation count.',
           '# TYPE bayn_unresolved_mutations gauge',
           `bayn_unresolved_mutations ${state.cycle.mutations.unresolvedCount}`,
           '# HELP bayn_oldest_unresolved_mutation_age_seconds Age of the oldest unresolved broker mutation.',
           '# TYPE bayn_oldest_unresolved_mutation_age_seconds gauge',
           `bayn_oldest_unresolved_mutation_age_seconds ${prometheusNumber((state.cycle.oldestUnresolvedMutationAgeMs ?? 0) / 1_000)}`,
+        ]
+      : []),
+    ...(cycleObservationAvailable && cycleRecorded && executionFunnel !== undefined
+      ? [
+          '# HELP bayn_execution_funnel_count Current or latest terminal cycle count by opportunity-to-fill stage.',
+          '# TYPE bayn_execution_funnel_count gauge',
+          ...(cycleDecision === null
+            ? []
+            : [`bayn_execution_funnel_count{stage="targets"} ${cycleDecision.targetCount}`]),
+          `bayn_execution_funnel_count{stage="intents"} ${executionFunnel.intentCount}`,
+          `bayn_execution_funnel_count{stage="orders"} ${executionFunnel.orderCount}`,
+          `bayn_execution_funnel_count{stage="fills"} ${executionFunnel.executedOrderCount}`,
+          '# HELP bayn_cycle_intents Current or latest terminal cycle intent count by durable state.',
+          '# TYPE bayn_cycle_intents gauge',
+          `bayn_cycle_intents{state="planned"} ${executionFunnel.plannedIntentCount}`,
+          `bayn_cycle_intents{state="approved"} ${executionFunnel.approvedIntentCount}`,
+          `bayn_cycle_intents{state="io_started"} ${executionFunnel.ioStartedIntentCount}`,
+          `bayn_cycle_intents{state="acknowledged"} ${executionFunnel.acknowledgedIntentCount}`,
+          `bayn_cycle_intents{state="unknown"} ${executionFunnel.unknownIntentCount}`,
+          `bayn_cycle_intents{state="terminal"} ${executionFunnel.terminalIntentCount}`,
+          `bayn_cycle_intents{state="recovered"} ${executionFunnel.recoveredIntentCount}`,
+          '# HELP bayn_cycle_terminal_intents Current or latest terminal cycle intent count by terminal outcome.',
+          '# TYPE bayn_cycle_terminal_intents gauge',
+          `bayn_cycle_terminal_intents{outcome="filled"} ${executionFunnel.filledIntentCount}`,
+          `bayn_cycle_terminal_intents{outcome="canceled"} ${executionFunnel.canceledIntentCount}`,
+          `bayn_cycle_terminal_intents{outcome="expired"} ${executionFunnel.expiredIntentCount}`,
+          `bayn_cycle_terminal_intents{outcome="rejected"} ${executionFunnel.rejectedIntentCount}`,
+          `bayn_cycle_terminal_intents{outcome="blocked"} ${executionFunnel.blockedIntentCount}`,
+          '# HELP bayn_cycle_orders Current or latest terminal cycle broker-order count by outcome group.',
+          '# TYPE bayn_cycle_orders gauge',
+          `bayn_cycle_orders{status="all"} ${executionFunnel.orderCount}`,
+          `bayn_cycle_orders{status="open"} ${executionFunnel.openOrderCount}`,
+          `bayn_cycle_orders{status="filled"} ${executionFunnel.filledOrderCount}`,
+          `bayn_cycle_orders{status="canceled"} ${executionFunnel.canceledOrderCount}`,
+          `bayn_cycle_orders{status="expired"} ${executionFunnel.expiredOrderCount}`,
+          `bayn_cycle_orders{status="rejected"} ${executionFunnel.rejectedOrderCount}`,
+          '# HELP bayn_cycle_fills Current or latest terminal cycle broker-fill count by side.',
+          '# TYPE bayn_cycle_fills gauge',
+          `bayn_cycle_fills{side="all"} ${executionFunnel.fillCount}`,
+          `bayn_cycle_fills{side="buy"} ${executionFunnel.buyFillCount}`,
+          `bayn_cycle_fills{side="sell"} ${executionFunnel.sellFillCount}`,
+          ...(executionFunnel.latestIntentAt === null
+            ? []
+            : [
+                '# HELP bayn_cycle_latest_intent_timestamp_seconds Latest current-cycle intent creation time.',
+                '# TYPE bayn_cycle_latest_intent_timestamp_seconds gauge',
+                `bayn_cycle_latest_intent_timestamp_seconds ${prometheusNumber(epochSeconds(executionFunnel.latestIntentAt))}`,
+              ]),
+          ...(executionFunnel.latestOrderAt === null
+            ? []
+            : [
+                '# HELP bayn_cycle_latest_order_timestamp_seconds Latest current-cycle broker-order observation time.',
+                '# TYPE bayn_cycle_latest_order_timestamp_seconds gauge',
+                `bayn_cycle_latest_order_timestamp_seconds ${prometheusNumber(epochSeconds(executionFunnel.latestOrderAt))}`,
+              ]),
+          ...(executionFunnel.latestFillAt === null
+            ? []
+            : [
+                '# HELP bayn_cycle_latest_fill_timestamp_seconds Latest current-cycle broker-fill observation time.',
+                '# TYPE bayn_cycle_latest_fill_timestamp_seconds gauge',
+                `bayn_cycle_latest_fill_timestamp_seconds ${prometheusNumber(epochSeconds(executionFunnel.latestFillAt))}`,
+              ]),
+          ...(executionFunnel.maximumOrderAcknowledgementLatencyMs === null
+            ? []
+            : [
+                '# HELP bayn_cycle_order_acknowledgement_latency_seconds Maximum current-cycle intent-to-order acknowledgement latency.',
+                '# TYPE bayn_cycle_order_acknowledgement_latency_seconds gauge',
+                `bayn_cycle_order_acknowledgement_latency_seconds ${prometheusNumber(executionFunnel.maximumOrderAcknowledgementLatencyMs / 1_000)}`,
+              ]),
+          ...(executionFunnel.maximumFillLatencyMs === null
+            ? []
+            : [
+                '# HELP bayn_cycle_fill_latency_seconds Maximum current-cycle intent-to-fill latency.',
+                '# TYPE bayn_cycle_fill_latency_seconds gauge',
+                `bayn_cycle_fill_latency_seconds ${prometheusNumber(executionFunnel.maximumFillLatencyMs / 1_000)}`,
+              ]),
+        ]
+      : []),
+    ...(cycleObservationAvailable && executionFunnel !== undefined
+      ? [
+          ...(executionFunnel.positionSnapshotObservedAt === null ||
+          executionFunnel.positionCount === null ||
+          executionFunnel.grossExposureMicros === null ||
+          executionFunnel.netExposureMicros === null ||
+          executionFunnel.unrealizedPnlMicros === null
+            ? []
+            : [
+                '# HELP bayn_broker_position_snapshot_observed_timestamp_seconds Observation time of the latest complete broker position snapshot.',
+                '# TYPE bayn_broker_position_snapshot_observed_timestamp_seconds gauge',
+                `bayn_broker_position_snapshot_observed_timestamp_seconds ${prometheusNumber(epochSeconds(executionFunnel.positionSnapshotObservedAt))}`,
+                '# HELP bayn_broker_position_count Open positions in the latest complete broker position snapshot.',
+                '# TYPE bayn_broker_position_count gauge',
+                `bayn_broker_position_count ${executionFunnel.positionCount}`,
+                '# HELP bayn_broker_gross_exposure_dollars Gross market exposure in the latest complete broker position snapshot.',
+                '# TYPE bayn_broker_gross_exposure_dollars gauge',
+                `bayn_broker_gross_exposure_dollars ${microsToPrometheusDollars(executionFunnel.grossExposureMicros)}`,
+                '# HELP bayn_broker_net_exposure_dollars Net market exposure in the latest complete broker position snapshot.',
+                '# TYPE bayn_broker_net_exposure_dollars gauge',
+                `bayn_broker_net_exposure_dollars ${microsToPrometheusDollars(executionFunnel.netExposureMicros)}`,
+                '# HELP bayn_broker_unrealized_pnl_dollars Unrealized PnL in the latest complete broker position snapshot.',
+                '# TYPE bayn_broker_unrealized_pnl_dollars gauge',
+                `bayn_broker_unrealized_pnl_dollars ${microsToPrometheusDollars(executionFunnel.unrealizedPnlMicros)}`,
+              ]),
+          ...(executionFunnel.cashMicros === null ||
+          executionFunnel.equityMicros === null ||
+          executionFunnel.buyingPowerMicros === null
+            ? []
+            : [
+                '# HELP bayn_broker_account_dollars Latest broker account value by kind.',
+                '# TYPE bayn_broker_account_dollars gauge',
+                `bayn_broker_account_dollars{kind="cash"} ${microsToPrometheusDollars(executionFunnel.cashMicros)}`,
+                `bayn_broker_account_dollars{kind="equity"} ${microsToPrometheusDollars(executionFunnel.equityMicros)}`,
+                `bayn_broker_account_dollars{kind="buying_power"} ${microsToPrometheusDollars(executionFunnel.buyingPowerMicros)}`,
+                '# HELP bayn_broker_account_observed_timestamp_seconds Observation time of the latest broker account snapshot.',
+                '# TYPE bayn_broker_account_observed_timestamp_seconds gauge',
+                `bayn_broker_account_observed_timestamp_seconds ${prometheusNumber(epochSeconds(executionFunnel.accountObservedAt))}`,
+              ]),
         ]
       : []),
     '# HELP bayn_zero_mutation_confirmed Whether the current projection confirms zero durable mutation events.',
@@ -938,15 +962,19 @@ const renderPrometheusMetricsDataFirst = (
           ...(['idle', 'exact', 'gap'] as const).map(
             (state) => `bayn_accounting_state{state="${state}"} ${accountingState === state ? 1 : 0}`,
           ),
-          '# HELP bayn_accounting_gross_realized_pnl_dollars Running gross realized PnL from durable accounting transactions.',
-          '# TYPE bayn_accounting_gross_realized_pnl_dollars gauge',
-          `bayn_accounting_gross_realized_pnl_dollars ${microsToPrometheusDollars(accounting.grossRealizedPnlMicros)}`,
-          '# HELP bayn_accounting_execution_fees_dollars Running broker execution fees from durable accounting transactions.',
-          '# TYPE bayn_accounting_execution_fees_dollars gauge',
-          `bayn_accounting_execution_fees_dollars ${microsToPrometheusDollars(accounting.executionFeesMicros)}`,
-          '# HELP bayn_accounting_net_realized_pnl_after_execution_fees_dollars Running realized PnL after recorded execution fees; terminal all-cost proof is separate.',
-          '# TYPE bayn_accounting_net_realized_pnl_after_execution_fees_dollars gauge',
-          `bayn_accounting_net_realized_pnl_after_execution_fees_dollars ${microsToPrometheusDollars(accounting.netRealizedPnlAfterExecutionFeesMicros)}`,
+          ...(accounting.transactionCount === 0
+            ? []
+            : [
+                '# HELP bayn_accounting_gross_realized_pnl_dollars Running gross realized PnL from durable accounting transactions.',
+                '# TYPE bayn_accounting_gross_realized_pnl_dollars gauge',
+                `bayn_accounting_gross_realized_pnl_dollars ${microsToPrometheusDollars(accounting.grossRealizedPnlMicros)}`,
+                '# HELP bayn_accounting_execution_fees_dollars Running broker execution fees from durable accounting transactions.',
+                '# TYPE bayn_accounting_execution_fees_dollars gauge',
+                `bayn_accounting_execution_fees_dollars ${microsToPrometheusDollars(accounting.executionFeesMicros)}`,
+                '# HELP bayn_accounting_net_realized_pnl_after_execution_fees_dollars Running realized PnL after recorded execution fees; terminal all-cost proof is separate.',
+                '# TYPE bayn_accounting_net_realized_pnl_after_execution_fees_dollars gauge',
+                `bayn_accounting_net_realized_pnl_after_execution_fees_dollars ${microsToPrometheusDollars(accounting.netRealizedPnlAfterExecutionFeesMicros)}`,
+              ]),
           '# HELP bayn_forward_performance_receipt_available Whether an immutable terminal all-cost performance receipt exists.',
           '# TYPE bayn_forward_performance_receipt_available gauge',
           `bayn_forward_performance_receipt_available ${forwardPerformance === null ? 0 : 1}`,
@@ -1050,6 +1078,9 @@ const renderPrometheusMetricsDataFirst = (
     '# HELP bayn_broker_account_bound Whether the observed Alpaca account matches the configured identity.',
     '# TYPE bayn_broker_account_bound gauge',
     `bayn_broker_account_bound ${booleanMetric(publicBroker.accountBound)}`,
+    '# HELP bayn_broker_execution_eligible Whether the verified broker binding is eligible for execution.',
+    '# TYPE bayn_broker_execution_eligible gauge',
+    `bayn_broker_execution_eligible ${booleanMetric(publicBroker.executionEligible)}`,
     '# HELP bayn_broker_orders_enabled Whether broker mutation dispatch is enabled in this runtime.',
     '# TYPE bayn_broker_orders_enabled gauge',
     `bayn_broker_orders_enabled ${effectiveBrokerMutation ? 1 : 0}`,
@@ -1093,48 +1124,6 @@ const interpretResponseDecision = (
         }),
       )
 
-const interpretHistoricalReadFailure = (
-  runId: string,
-  error: OperationalError,
-): Effect.Effect<HttpServerResponse.HttpServerResponse> => {
-  const decision = historicalReadFailureDecision(runId, error)
-  return Effect.logError(decision.log.message, decision.log.cause).pipe(
-    Effect.annotateLogs(decision.log.annotations),
-    Effect.andThen(interpretResponseDecision(decision.response)),
-  )
-}
-
-const clientDisconnect = (request: HttpServerRequest.HttpServerRequest): Effect.Effect<never> => {
-  const incoming = NodeHttpServerRequest.toIncomingMessage(request)
-  const socket = incoming.socket
-  return Effect.scoped(
-    Deferred.make<void>().pipe(
-      Effect.flatMap((disconnected) => {
-        const onDisconnect = () => {
-          Deferred.doneUnsafe(disconnected, Effect.void)
-        }
-        return Effect.acquireRelease(
-          Effect.sync(() => {
-            incoming.once('aborted', onDisconnect)
-            socket.once('close', onDisconnect)
-            if (incoming.aborted || socket.destroyed) onDisconnect()
-          }),
-          () =>
-            Effect.sync(() => {
-              incoming.off('aborted', onDisconnect)
-              socket.off('close', onDisconnect)
-            }),
-        ).pipe(Effect.andThen(Deferred.await(disconnected)), Effect.andThen(Effect.interrupt))
-      }),
-    ),
-  )
-}
-
-const interruptOnClientDisconnect = <A, E, R>(
-  request: HttpServerRequest.HttpServerRequest,
-  effect: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E, R> => Effect.raceFirst(effect, clientDisconnect(request)).pipe(Effect.interruptible)
-
 type HttpConfig = Pick<
   RuntimeConfig,
   | 'cycleStallThresholdMs'
@@ -1155,7 +1144,6 @@ const registerHttpRoutes = (
   state: Ref.Ref<RuntimeState>,
   provenance: RuntimeProvenance,
   provenanceVerification: RuntimeBuildMetadata['verification'],
-  readEvidence: ReadEvidence,
   router: HttpRouter.HttpRouter,
   currentTimeMillis: Effect.Effect<number>,
 ): Effect.Effect<void> => {
@@ -1195,22 +1183,6 @@ const registerHttpRoutes = (
     ),
     Effect.flatMap(interpretResponseDecision),
   )
-  const historicalEvaluation = Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
-    HttpRouter.params.pipe(
-      Effect.map(({ runId }) => validateHistoricalRunRequest(runId)),
-      Effect.flatMap((decision) => {
-        if (decision._tag === 'Respond') return interpretResponseDecision(decision.response)
-        return interruptOnClientDisconnect(
-          request,
-          readHistoricalEvidence(readEvidence(decision.runId), config.operationTimeoutMs),
-        ).pipe(
-          Effect.map(historicalEvidenceResponseDecision),
-          Effect.flatMap(interpretResponseDecision),
-          Effect.catch((error) => interpretHistoricalReadFailure(decision.runId, error)),
-        )
-      }),
-    ),
-  )
   const fallback = (
     request: HttpServerRequest.HttpServerRequest,
   ): Effect.Effect<HttpServerResponse.HttpServerResponse> =>
@@ -1220,7 +1192,6 @@ const registerHttpRoutes = (
     yield* router.add('GET', '/readyz', ready)
     yield* router.add('GET', '/metrics', metrics)
     yield* router.add('GET', '/v1/status', status)
-    yield* router.add('GET', '/v1/evaluations/:runId', historicalEvaluation)
     yield* router.add('*', '*', fallback)
   })
 }
@@ -1230,34 +1201,24 @@ const serveHttpDataFirst = (
   state: Ref.Ref<RuntimeState>,
   provenance: RuntimeProvenance,
   provenanceVerification: RuntimeBuildMetadata['verification'],
-  readEvidence: ReadEvidence,
   currentTimeMillis: Effect.Effect<number> = Clock.currentTimeMillis,
 ): Effect.Effect<void, never, HttpServer.HttpServer | Scope.Scope> =>
   Effect.gen(function* () {
     const router = yield* HttpRouter.make
-    yield* registerHttpRoutes(
-      config,
-      state,
-      provenance,
-      provenanceVerification,
-      readEvidence,
-      router,
-      currentTimeMillis,
-    )
+    yield* registerHttpRoutes(config, state, provenance, provenanceVerification, router, currentTimeMillis)
     // The router API erases the closed route error set to unknown; the total fallback makes any residue a defect.
     // @effect-diagnostics-next-line anyUnknownInErrorContext:off
     const handler = router.asHttpEffect().pipe(Effect.orDie)
     yield* HttpServer.serveEffect(handler)
   })
 
-export const serveHttp = Pipeable.dual(5, serveHttpDataFirst)
+export const serveHttp = Pipeable.dual(4, serveHttpDataFirst)
 
 export const serveHttpWithCurrentTime = (
   config: HttpConfig,
   state: Ref.Ref<RuntimeState>,
   provenance: RuntimeProvenance,
   provenanceVerification: RuntimeBuildMetadata['verification'],
-  readEvidence: ReadEvidence,
   currentTimeMillis: Effect.Effect<number>,
 ): Effect.Effect<void, never, HttpServer.HttpServer | Scope.Scope> =>
-  serveHttpDataFirst(config, state, provenance, provenanceVerification, readEvidence, currentTimeMillis)
+  serveHttpDataFirst(config, state, provenance, provenanceVerification, currentTimeMillis)

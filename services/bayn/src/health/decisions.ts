@@ -1,40 +1,28 @@
 import { Result } from 'effect'
 
 import type { RuntimeConfig } from '../config'
-import type { FinalizedSnapshotProvenance } from '../contracts'
 import {
   CycleOperationsCondition,
-  CycleOperationsReason,
   deriveCycleOperationsStatusResult,
   renderCycleOperationsStatusFailure,
   type CycleOperationsProjection,
   type CycleOperationsStatus,
   unknownCycleOperationsStatus,
 } from '../cycle/observability'
-import { CycleState, CycleTerminalReason } from '../cycle'
-import { CycleNotDueReason, type CycleRunResult } from '../cycle/runner/model'
-import { Authority, KillState, ReconciliationStatus } from '../execution/contracts'
-import {
-  ExecutionControllerOutcome,
-  executionControllerStatusHasCompletion,
-  type ExecutionControllerStatus,
-} from '../execution/controller-status'
-import type { QualificationRecord, RecoveredEvaluationEvidence } from '../db/evidence-store'
-import { canonicalHashV1Result, renderCanonicalJsonFailure } from '../hash'
+import { Authority } from '../execution/contracts'
+import { executionControllerStatusHasCompletion } from '../execution/controller-status'
 import type {
   AutonomousCycleLoopStatus,
   BrokerConfiguration,
   BrokerStatus,
   DependencyHealth,
   ExecutionControllerRuntimeStatus,
-  RuntimeEvidence,
   RuntimeHealth,
   RuntimeState,
 } from '../runtime-state'
 import type {
   AutonomousCycleFiberObservation,
   BrokerHealthObservation,
-  DurableEvidenceFailure,
   HealthDependencyName,
   HealthFailureSummary,
   HealthLogDecision,
@@ -43,249 +31,8 @@ import type {
   HealthTransition,
   HealthTransitionInput,
   ProbeResult,
-  SignalIdentityFailure,
 } from './model'
 import { Pipeable } from '../pipeable'
-
-export interface ResearchCapitalBootstrapPassObservation {
-  readonly result: 'SUCCESS' | 'FAILURE'
-  readonly outcome?: CycleRunResult['outcome']
-  readonly notDueReason?: CycleNotDueReason
-  readonly cadenceDecision?: {
-    readonly signalSessionDate: string | null
-    readonly executionSessionDate: string | null
-  }
-}
-
-const observesCompletedControllerPassAfter = (
-  last: NonNullable<CycleOperationsStatus['last']>,
-  controller: ExecutionControllerStatus | null,
-): boolean => {
-  if (
-    controller === null ||
-    !controller.active ||
-    !executionControllerStatusHasCompletion(controller) ||
-    controller.lastOutcome !== ExecutionControllerOutcome.Blocked ||
-    controller.nextDueAt === undefined ||
-    last.terminalAt === null
-  ) {
-    return false
-  }
-  const terminalAtMs = Date.parse(last.terminalAt)
-  const completedAtMs = Date.parse(controller.completedAt)
-  const nextDueAtMs = Date.parse(controller.nextDueAt)
-  return (
-    Number.isFinite(terminalAtMs) &&
-    Number.isFinite(completedAtMs) &&
-    Number.isFinite(nextDueAtMs) &&
-    completedAtMs > terminalAtMs &&
-    nextDueAtMs >= completedAtMs
-  )
-}
-
-const observesMissedOrNewerBootstrap = (
-  last: NonNullable<CycleOperationsStatus['last']>,
-  cadence: NonNullable<ResearchCapitalBootstrapPassObservation['cadenceDecision']> | undefined,
-): boolean => {
-  if (cadence === undefined || cadence.signalSessionDate === null || cadence.executionSessionDate === null) return false
-  const exact =
-    cadence.signalSessionDate === last.signalSessionDate && cadence.executionSessionDate === last.executionSessionDate
-  const newer =
-    cadence.signalSessionDate > last.signalSessionDate && cadence.executionSessionDate > last.executionSessionDate
-  return exact || newer
-}
-
-/**
- * A research activation that starts after its first execution window must wait for a later eligible window. The
- * immutable missed cycle remains visible, but it stops poisoning current readiness only after the active driver has
- * completed a later pass and fresh exact reconciliation proves that no mutation is pending. Every other blocked-cycle
- * state remains failed.
- */
-export const projectResearchCapitalBootstrapWaiting = (
-  status: CycleOperationsStatus,
-  enabled: boolean,
-  lastPass: ResearchCapitalBootstrapPassObservation | null,
-  controller: ExecutionControllerStatus | null = null,
-): CycleOperationsStatus => {
-  const last = status.last
-  const cadence = lastPass?.cadenceDecision
-  const processPassProvesRecovery =
-    last?.terminalReason === CycleTerminalReason.MissedPublication &&
-    lastPass?.result === 'SUCCESS' &&
-    lastPass.outcome === 'NOT_DUE' &&
-    lastPass.notDueReason === CycleNotDueReason.StaleExecutionBootstrap &&
-    observesMissedOrNewerBootstrap(last, cadence)
-  const controllerPass =
-    controller !== null && executionControllerStatusHasCompletion(controller) ? controller.lastPass : undefined
-  const controllerPassProvesRecovery =
-    (last?.terminalReason === CycleTerminalReason.MissedPublication ||
-      last?.terminalReason === CycleTerminalReason.MissedSubmission) &&
-    controllerPass?.result === 'SUCCESS' &&
-    controllerPass.outcome === 'NOT_DUE' &&
-    controllerPass.notDueReason === CycleNotDueReason.StaleExecutionBootstrap &&
-    observesMissedOrNewerBootstrap(last, controllerPass.cadenceDecision) &&
-    observesCompletedControllerPassAfter(last, controller)
-  if (
-    !enabled ||
-    status.condition !== CycleOperationsCondition.Failed ||
-    status.reason !== CycleOperationsReason.LastCycleBlocked ||
-    status.current !== null ||
-    last?.phase !== CycleState.Blocked ||
-    status.authority?.maximum !== Authority.Execution ||
-    status.authority.effective !== Authority.Execution ||
-    status.authority.kill !== KillState.Clear ||
-    status.reconciliation?.status !== ReconciliationStatus.Exact ||
-    status.reconciliation.discrepancyCount !== 0 ||
-    !status.reconciliation.coversLatestMutation ||
-    status.mutations.unresolvedCount !== 0 ||
-    (!processPassProvesRecovery && !controllerPassProvesRecovery)
-  ) {
-    return status
-  }
-  return {
-    ...status,
-    condition: CycleOperationsCondition.Waiting,
-    reason: controllerPassProvesRecovery
-      ? CycleOperationsReason.ResearchCapitalBootstrapRecovered
-      : CycleOperationsReason.StaleExecutionBootstrapSkipped,
-    alerts: { ...status.alerts, cycleFailed: false },
-  }
-}
-
-const validateSignalIdentityDataFirst = (
-  snapshot: FinalizedSnapshotProvenance,
-  evidence: RuntimeEvidence | null,
-): Result.Result<void, SignalIdentityFailure> => {
-  if (evidence === null) {
-    return Result.fail({ _tag: 'EvidenceUnavailable' })
-  }
-  if (snapshot.snapshotId !== evidence.evaluation.input.snapshotId) {
-    return Result.fail({
-      _tag: 'SnapshotMismatch',
-      observedSnapshotId: snapshot.snapshotId,
-      expectedSnapshotId: evidence.evaluation.input.snapshotId,
-    })
-  }
-  if (snapshot.publicationId !== evidence.evaluation.input.publicationId) {
-    return Result.fail({
-      _tag: 'PublicationMismatch',
-      observedPublicationId: snapshot.publicationId,
-      expectedPublicationId: evidence.evaluation.input.publicationId,
-    })
-  }
-  return Result.succeed(undefined)
-}
-
-export const validateSignalIdentity = Pipeable.dual(2, validateSignalIdentityDataFirst)
-
-export const renderSignalIdentityFailure = (failure: SignalIdentityFailure): string => {
-  switch (failure._tag) {
-    case 'EvidenceUnavailable':
-      return 'startup evidence is unavailable'
-    case 'SnapshotMismatch':
-      return `configured Signal snapshot ${failure.observedSnapshotId} differs from active run snapshot ${failure.expectedSnapshotId}`
-    case 'PublicationMismatch':
-      return `configured Signal publication ${failure.observedPublicationId} differs from active run publication ${failure.expectedPublicationId}`
-  }
-}
-
-const durableMaterial = (evidence: RuntimeEvidence | RecoveredEvaluationEvidence) => ({
-  evaluation: evidence.evaluation,
-  reconciliation: evidence.reconciliation,
-  persistence: {
-    runId: evidence.persistence.runId,
-    artifactCount: evidence.persistence.artifactCount,
-    eventCount: evidence.persistence.eventCount,
-    gateCount: evidence.persistence.gateCount,
-  },
-})
-
-const canonicalHashResult = (
-  runId: string,
-  material: Extract<DurableEvidenceFailure, { readonly _tag: 'CanonicalizationFailed' }>['material'],
-  value: unknown,
-): Result.Result<string, DurableEvidenceFailure> =>
-  Result.mapError(
-    canonicalHashV1Result(value),
-    (cause): DurableEvidenceFailure => ({ _tag: 'CanonicalizationFailed', runId, material, cause }),
-  )
-
-const validateDurableEvidenceDataFirst = (
-  recovered: RecoveredEvaluationEvidence | null,
-  qualification: QualificationRecord | null,
-  evidence: RuntimeEvidence | null,
-): Result.Result<void, DurableEvidenceFailure> => {
-  if (evidence === null) {
-    return Result.fail({ _tag: 'EvidenceUnavailable' })
-  }
-  if (recovered === null) {
-    return Result.fail({
-      _tag: 'RunMissing',
-      runId: evidence.evaluation.runId,
-    })
-  }
-  if (qualification === null || qualification.state !== 'TERMINAL') {
-    return Result.fail({
-      _tag: 'TerminalQualificationMissing',
-      runId: evidence.evaluation.runId,
-      observedState: qualification?.state ?? null,
-    })
-  }
-
-  const durableHashes = Result.all({
-    expected: canonicalHashResult(evidence.evaluation.runId, 'EXPECTED_DURABLE_EVIDENCE', durableMaterial(evidence)),
-    observed: canonicalHashResult(evidence.evaluation.runId, 'OBSERVED_DURABLE_EVIDENCE', durableMaterial(recovered)),
-  })
-  if (Result.isFailure(durableHashes)) return Result.fail(durableHashes.failure)
-  const expectedRunHash = durableHashes.success.expected
-  const observedRunHash = durableHashes.success.observed
-  if (observedRunHash !== expectedRunHash) {
-    return Result.fail({
-      _tag: 'RunMismatch',
-      runId: evidence.evaluation.runId,
-      observedDurableHash: observedRunHash,
-      expectedDurableHash: expectedRunHash,
-    })
-  }
-
-  const qualificationHashes = Result.all({
-    expected: canonicalHashResult(evidence.evaluation.runId, 'EXPECTED_QUALIFICATION', evidence.qualification),
-    observed: canonicalHashResult(evidence.evaluation.runId, 'OBSERVED_QUALIFICATION', qualification.result),
-  })
-  if (Result.isFailure(qualificationHashes)) return Result.fail(qualificationHashes.failure)
-  const expectedQualificationHash = qualificationHashes.success.expected
-  const observedQualificationHash = qualificationHashes.success.observed
-  if (observedQualificationHash !== expectedQualificationHash) {
-    return Result.fail({
-      _tag: 'TerminalQualificationMismatch',
-      runId: evidence.evaluation.runId,
-      observedQualificationHash,
-      expectedQualificationHash,
-    })
-  }
-  return Result.succeed(undefined)
-}
-
-export const validateDurableEvidence = Pipeable.dual(3, validateDurableEvidenceDataFirst)
-
-export const renderDurableEvidenceFailure = (failure: DurableEvidenceFailure): string => {
-  switch (failure._tag) {
-    case 'EvidenceUnavailable':
-      return 'startup evidence is unavailable'
-    case 'RunMissing':
-      return `durable run ${failure.runId} is missing`
-    case 'TerminalQualificationMissing':
-      return failure.observedState === null
-        ? `terminal qualification ${failure.runId} is missing`
-        : `qualification ${failure.runId} is ${failure.observedState}, expected TERMINAL`
-    case 'RunMismatch':
-      return `durable run ${failure.runId} hash ${failure.observedDurableHash} differs from active proof hash ${failure.expectedDurableHash}`
-    case 'TerminalQualificationMismatch':
-      return `terminal qualification ${failure.runId} hash ${failure.observedQualificationHash} differs from active proof hash ${failure.expectedQualificationHash}`
-    case 'CanonicalizationFailed':
-      return `canonicalization of ${failure.material} for run ${failure.runId} failed: ${renderCanonicalJsonFailure(failure.cause)}`
-  }
-}
 
 const dependencyHealth = <A>(result: ProbeResult<A>, checkedAt: string | null): DependencyHealth => ({
   status: result._tag === 'Available' ? 'AVAILABLE' : 'UNAVAILABLE',
@@ -457,7 +204,6 @@ const deriveCycleStatus = (
   config: RuntimeConfig,
   runtime: RuntimeState,
   clock: HealthProbeClock,
-  executionController: ExecutionControllerRuntimeStatus | undefined,
 ): CycleOperationsStatus => {
   const clockError =
     clock._tag === 'Unavailable'
@@ -481,18 +227,7 @@ const deriveCycleStatus = (
           ...unknownCycleOperationsStatus(renderCycleOperationsStatusFailure(failure)),
           checkedAt: null,
         }),
-        onSuccess: (status) =>
-          projectResearchCapitalBootstrapWaiting(
-            status,
-            runtime.capitalActivation?._tag === 'Realized' && runtime.capitalActivation.grant === 'Research',
-            runtime.autonomousCycleLoop.lastPass,
-            executionController?.readAvailable === true &&
-              executionController.status !== null &&
-              executionController.status.controllerKey === executionController.controllerKey &&
-              executionController.status.planHash === executionController.planHash
-              ? executionController.status
-              : null,
-          ),
+        onSuccess: (status) => status,
       },
     )
   }
@@ -514,7 +249,6 @@ const deriveRuntimeHealth = (
     postgresql: dependencyHealth(results.postgresql, checkedAt),
     signal: dependencyHealth(results.signal, checkedAt),
     tigerBeetle: dependencyHealth(results.tigerBeetle, checkedAt),
-    evidence: dependencyHealth(results.durableEvidence, checkedAt),
     cycle: dependencyHealth(results.cycle, checkedAt),
     cycleRunner,
   },
@@ -560,7 +294,6 @@ const summarizeHealthFailures = (
 
 const deriveNextRuntimeState = (
   current: RuntimeState,
-  evidenceAvailable: boolean,
   health: RuntimeHealth,
   cycle: CycleOperationsStatus,
   broker: BrokerStatus | null,
@@ -572,7 +305,6 @@ const deriveNextRuntimeState = (
       ? { ...current, health, cycle, broker }
       : { ...current, health, cycle, broker, executionController }
   if (current.status === 'FAILED') return projected
-  if (!evidenceAvailable) return projected
   if (failures.messages.length === 0) {
     return { ...projected, status: 'READY', error: null }
   }
@@ -615,19 +347,11 @@ const deriveHealthTransitionDataFirst = (current: RuntimeState, input: HealthTra
     executionController === undefined
       ? { ...current, autonomousCycleLoop }
       : { ...current, autonomousCycleLoop, executionController }
-  const cycle = deriveCycleStatus(cycleObservation, input.config, projectedCurrent, input.clock, executionController)
+  const cycle = deriveCycleStatus(cycleObservation, input.config, projectedCurrent, input.clock)
   const broker = deriveBrokerStatus(current.broker, input.broker, input.results.broker, checkedAt)
   const health = deriveRuntimeHealth(current, { ...input.results, cycle: cycleObservation }, cycleRunner, checkedAt)
   const failures = summarizeHealthFailures(health, broker, cycle, clockError)
-  const next = deriveNextRuntimeState(
-    projectedCurrent,
-    input.evidenceAvailable,
-    health,
-    cycle,
-    broker,
-    executionController,
-    failures,
-  )
+  const next = deriveNextRuntimeState(projectedCurrent, health, cycle, broker, executionController, failures)
   return {
     current,
     next,

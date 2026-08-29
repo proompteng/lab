@@ -191,6 +191,13 @@ export type ExecutionCapitalLimitFailure =
       readonly projectedQuantityMicros: string
     }
   | {
+      readonly _tag: 'CloseOnlyOrderNotReducing'
+      readonly symbol: string
+      readonly side: IntentOrderSide
+      readonly currentQuantityMicros: string
+      readonly projectedQuantityMicros: string
+    }
+  | {
       readonly _tag: 'PendingSellUncovered'
       readonly symbol: string
       readonly currentQuantityMicros: string
@@ -503,19 +510,24 @@ export const priceOpenOrders = (
   return Result.succeed(notionals)
 }
 
-const minimumSymbolQuantityAfterPendingSells = (
+const symbolQuantityEnvelopeAfterPendingOrders = (
   intent: Intent,
   snapshot: ExecutionCapitalSnapshot,
 ): Result.Result<
-  { readonly beforeIntentMicros: bigint; readonly afterIntentMicros: bigint },
+  {
+    readonly beforeIntentMinimumMicros: bigint
+    readonly beforeIntentMaximumMicros: bigint
+    readonly afterIntentMinimumMicros: bigint
+    readonly afterIntentMaximumMicros: bigint
+  },
   Extract<ExecutionCapitalLimitFailure, { readonly _tag: 'OpenOrderQuantityUnavailable' | 'OpenOrderQuantityInvalid' }>
 > => {
-  let beforeIntentMicros = snapshot.positions
+  const currentQuantityMicros = snapshot.positions
     .filter((position) => position.symbol === intent.symbol)
     .reduce((total, position) => total + BigInt(position.quantityMicros), 0n)
-  for (const order of snapshot.openOrders.filter(
-    (candidate) => candidate.symbol === intent.symbol && candidate.side === BrokerOrderSide.Sell,
-  )) {
+  let beforeIntentMinimumMicros = currentQuantityMicros
+  let beforeIntentMaximumMicros = currentQuantityMicros
+  for (const order of snapshot.openOrders.filter((candidate) => candidate.symbol === intent.symbol)) {
     const remaining = unfilledOrderQuantity(order)
     if (Result.isFailure(remaining)) return Result.fail(remaining.failure)
     if (remaining.success === undefined) {
@@ -526,12 +538,19 @@ const minimumSymbolQuantityAfterPendingSells = (
       })
     }
 
-    beforeIntentMicros -= remaining.success
+    if (order.side === BrokerOrderSide.Buy) {
+      beforeIntentMaximumMicros += remaining.success
+    } else {
+      beforeIntentMinimumMicros -= remaining.success
+    }
   }
-  const intentQuantity = BigInt(intent.quantityMicros)
+  const signedIntentQuantityMicros =
+    intent.side === IntentOrderSide.Buy ? BigInt(intent.quantityMicros) : -BigInt(intent.quantityMicros)
   return Result.succeed({
-    beforeIntentMicros,
-    afterIntentMicros: beforeIntentMicros + (intent.side === IntentOrderSide.Buy ? intentQuantity : -intentQuantity),
+    beforeIntentMinimumMicros,
+    beforeIntentMaximumMicros,
+    afterIntentMinimumMicros: beforeIntentMinimumMicros + signedIntentQuantityMicros,
+    afterIntentMaximumMicros: beforeIntentMaximumMicros + signedIntentQuantityMicros,
   })
 }
 
@@ -786,18 +805,35 @@ const validateExecutionCapitalLimitsDataFirst = (
     pendingNetExposure,
     proposedSignedNotional,
   )
-  const projectedQuantity = minimumSymbolQuantityAfterPendingSells(intent, snapshot)
-  if (Result.isFailure(projectedQuantity)) return Result.fail(projectedQuantity.failure)
-  const exposureReducingClose =
+  const quantityEnvelope = symbolQuantityEnvelopeAfterPendingOrders(intent, snapshot)
+  if (Result.isFailure(quantityEnvelope)) return Result.fail(quantityEnvelope.failure)
+  const currentQuantityMicros = snapshot.positions
+    .filter((position) => position.symbol === intent.symbol)
+    .reduce((total, position) => total + BigInt(position.quantityMicros), 0n)
+  const projectedQuantityMicros =
+    currentQuantityMicros +
+    (intent.side === IntentOrderSide.Buy ? BigInt(intent.quantityMicros) : -BigInt(intent.quantityMicros))
+  const strictlyReducingClose =
     context.closeOnly &&
-    intent.side === IntentOrderSide.Sell &&
-    snapshot.positions.every((position) => BigInt(position.quantityMicros) >= 0n) &&
-    projectedQuantity.success.beforeIntentMicros > 0n &&
-    projectedQuantity.success.afterIntentMicros >= 0n &&
-    projectedQuantity.success.afterIntentMicros < projectedQuantity.success.beforeIntentMicros &&
-    projectedSymbol < currentSymbol &&
-    projectedGross <= currentGross &&
-    projectedNetExposure <= currentNetExposure
+    (intent.side === IntentOrderSide.Sell
+      ? quantityEnvelope.success.beforeIntentMinimumMicros > 0n &&
+        quantityEnvelope.success.afterIntentMinimumMicros >= 0n &&
+        quantityEnvelope.success.afterIntentMaximumMicros < quantityEnvelope.success.beforeIntentMaximumMicros
+      : quantityEnvelope.success.beforeIntentMaximumMicros < 0n &&
+        quantityEnvelope.success.afterIntentMaximumMicros <= 0n &&
+        quantityEnvelope.success.afterIntentMinimumMicros > quantityEnvelope.success.beforeIntentMinimumMicros) &&
+    projectedSymbol < currentSymbol
+  const exposureReducingClose = strictlyReducingClose && projectedGross < currentGross
+
+  if (context.closeOnly && !strictlyReducingClose) {
+    return Result.fail({
+      _tag: 'CloseOnlyOrderNotReducing',
+      symbol: intent.symbol,
+      side: intent.side,
+      currentQuantityMicros: currentQuantityMicros.toString(),
+      projectedQuantityMicros: projectedQuantityMicros.toString(),
+    })
+  }
 
   const enforcedOrderLimit = exposureReducingClose
     ? context.hardCloseLimits?.maxOrderNotionalMicros
@@ -809,19 +845,23 @@ const validateExecutionCapitalLimitsDataFirst = (
       proposedMicros: proposedOrderNotional.toString(),
     })
   }
-  if (intent.side === IntentOrderSide.Buy && proposedOrderNotional > BigInt(snapshot.account.buyingPowerMicros)) {
+  if (
+    !strictlyReducingClose &&
+    intent.side === IntentOrderSide.Buy &&
+    proposedOrderNotional > BigInt(snapshot.account.buyingPowerMicros)
+  ) {
     return Result.fail({
       _tag: 'BuyingPowerExceeded',
       availableMicros: snapshot.account.buyingPowerMicros,
       proposedMicros: proposedOrderNotional.toString(),
     })
   }
-  if (intent.side === IntentOrderSide.Sell && projectedQuantity.success.afterIntentMicros < 0n) {
+  if (intent.side === IntentOrderSide.Sell && quantityEnvelope.success.afterIntentMinimumMicros < 0n) {
     return Result.fail({
       _tag: 'IncreasingSellUnsupported',
       symbol: intent.symbol,
-      currentQuantityMicros: projectedQuantity.success.beforeIntentMicros.toString(),
-      projectedQuantityMicros: projectedQuantity.success.afterIntentMicros.toString(),
+      currentQuantityMicros: quantityEnvelope.success.beforeIntentMinimumMicros.toString(),
+      projectedQuantityMicros: quantityEnvelope.success.afterIntentMinimumMicros.toString(),
     })
   }
 
@@ -842,7 +882,11 @@ const validateExecutionCapitalLimitsDataFirst = (
     })
   }
 
-  if (projectedNetExposure > BigInt(context.maxNetExposureMicros) && projectedNetExposure >= currentNetExposure) {
+  if (
+    !exposureReducingClose &&
+    projectedNetExposure > BigInt(context.maxNetExposureMicros) &&
+    projectedNetExposure >= currentNetExposure
+  ) {
     return Result.fail({
       _tag: 'NetExposureLimitExceeded',
       limitMicros: context.maxNetExposureMicros,
@@ -1062,9 +1106,9 @@ const makeAuthorityGuardedBrokerMutationDataFirst = (
   authority: MutationExecutionAuthority,
   dependencies: MutationAuthorityDependencies,
 ): BrokerMutationShape => {
-  const transmit = (intent: Intent) =>
+  const transmit = (intent: Intent, closeOnly: boolean) =>
     dependencies
-      .finalSubmitAuthorization(intent, dependencies.brokerMutation.submit(intent))
+      .finalSubmitAuthorization(intent, dependencies.brokerMutation.submit(intent, closeOnly))
       .pipe(
         Effect.mapError((cause) =>
           cause instanceof BrokerMutationError
@@ -1072,14 +1116,14 @@ const makeAuthorityGuardedBrokerMutationDataFirst = (
             : mutationAuthorizationError('final broker submit authorization failed', cause),
         ),
       )
-  const submit = (intent: Intent) => {
+  const submit = (intent: Intent, closeOnly = false) => {
     const binding = validateIntentAuthorityBinding(authority, intent)
     if (Result.isFailure(binding)) {
       return Effect.fail(
         mutationAuthorizationError('intent is not bound to the active execution authority', binding.failure),
       )
     }
-    return transmit(intent)
+    return transmit(intent, closeOnly)
   }
 
   return {

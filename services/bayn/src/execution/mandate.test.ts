@@ -191,7 +191,7 @@ describe('execution mandate decisions', () => {
         entryCutoffAt: cutoff,
         entryHasUnsuccessfulIntent: true,
       }),
-    ).toEqual({ _tag: 'Complete' })
+    ).toEqual({ _tag: 'Block' })
     expect(
       decideExecutionMandateCycleTerminalization({
         closeOnly: false,

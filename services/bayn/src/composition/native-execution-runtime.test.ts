@@ -16,12 +16,10 @@ import {
 import { TestClock } from 'effect/testing'
 
 import type { ApplicationPlanFor } from '../app'
-import { config, fixtureRuntime } from '../app-test-support'
+import { config, fixtureRuntime } from '../testing/runtime-fixtures'
 import { alpacaSandboxBaseUrl } from '../broker/connection'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import type { RuntimeConfig } from '../config'
-import { decideMonthEndCadenceEligibility } from '../cycle/observability'
-import { CycleNotDueReason } from '../cycle/runner/model'
 import {
   ExecutionControllerOutcome,
   ExecutionControllerStatusStore,
@@ -34,7 +32,6 @@ import {
 import { TransientExecutionFailure, type AdvanceExecutionCommand } from '../execution/advance'
 import { BrokerAccess, CapitalAuthorityKind } from '../execution/authority'
 import type { RecoveryFirstRuntime } from '../observe-composition'
-import { fixtureProtocol } from '../test-fixtures'
 import {
   awaitNativeExecutionRuntimeDriver,
   captureRecoveryFirstCycleDriver,
@@ -89,7 +86,6 @@ type PlanOverrides = {
   readonly imageDigest?: string
   readonly cyclePollIntervalMs?: number
   readonly reconciliationStaleThresholdMs?: number
-  readonly qualificationRunId?: string
   readonly persistedGrantHash?: string
   readonly marketDataBinding?: MarketDataBinding
   readonly tigerBeetleClusterId?: bigint
@@ -119,26 +115,20 @@ const driver = {
     observation: {
       result: 'SUCCESS' as const,
       observedAt: completedAt,
-      outcome: 'NOT_DUE' as const,
+      outcome: 'WINDOW_CLOSED' as const,
     },
   }),
   nextDelayMs: 30_000,
 }
 
-const staleBootstrapObservation = {
+const windowClosedObservation = {
   result: 'SUCCESS' as const,
   observedAt: completedAt,
-  outcome: 'NOT_DUE' as const,
-  cadence: 'EVERY_SESSION' as const,
-  notDueReason: CycleNotDueReason.StaleExecutionBootstrap,
-  cadenceDecision: decideMonthEndCadenceEligibility({
-    signalSessionDate: '2026-08-17',
-    executionSessionDate: '2026-08-18',
-  }),
+  outcome: 'WINDOW_CLOSED' as const,
 }
 
-const staleBootstrapDriver = {
-  advance: Effect.succeed({ observation: staleBootstrapObservation }),
+const windowClosedDriver = {
+  advance: Effect.succeed({ observation: windowClosedObservation }),
   nextDelayMs: 30_000,
 }
 
@@ -190,7 +180,6 @@ const plan = (overrides: PlanOverrides = {}): ApplicationPlanFor<'AutonomousServ
         sourceRevision,
         imageDigest: overrides.imageDigest ?? `sha256:${hash('3')}`,
       },
-      qualificationRunId: overrides.qualificationRunId ?? hash('9'),
       clickhouse: { ...config.clickhouse, ...(overrides.marketDataBinding ?? marketDataBinding) },
       execution: readOnly
         ? {
@@ -218,7 +207,6 @@ const plan = (overrides: PlanOverrides = {}): ApplicationPlanFor<'AutonomousServ
       operationTimeoutMs: 30_000,
     },
     strategy: fixtureRuntime,
-    protocol: fixtureProtocol,
     parameterHash: fixtureRuntime.provenance.strategy.parameterHash,
     strategyProtocolHash: hash('7'),
   }
@@ -459,7 +447,6 @@ describe('native execution runtime', () => {
       plan({ imageDigest: `sha256:${hash('a')}` }),
       plan({ cyclePollIntervalMs: 60_000 }),
       plan({ reconciliationStaleThresholdMs: 180_000 }),
-      plan({ qualificationRunId: hash('a') }),
       plan({ persistedGrantHash: hash('d') }),
       plan({ brokerAccess: 'read-only' }),
       plan({ capitalAuthorityKind: 'none' }),
@@ -514,7 +501,7 @@ describe('native execution runtime', () => {
           observation: {
             result: 'SUCCESS' as const,
             observedAt: completedAt,
-            outcome: 'NOT_DUE' as const,
+            outcome: 'WINDOW_CLOSED' as const,
           },
         }
       }),
@@ -644,7 +631,7 @@ describe('native execution runtime', () => {
           observation: {
             result: 'SUCCESS' as const,
             observedAt: completedAt,
-            outcome: 'NOT_DUE' as const,
+            outcome: 'WINDOW_CLOSED' as const,
           },
         }
       }),
@@ -792,7 +779,7 @@ describe('native execution runtime', () => {
     const result = await Effect.runPromise(
       executeNativeExecutionAdvance(
         command,
-        staleBootstrapDriver,
+        windowClosedDriver,
         statusStore((candidate) => {
           projected = candidate
           return { _tag: 'Applied', status: candidate }
@@ -802,7 +789,7 @@ describe('native execution runtime', () => {
     )
 
     expect(result.outcome).toMatchObject({ _tag: 'Blocked', nextDelayMs: 30_000 })
-    expect(result.observation).toEqual(staleBootstrapObservation)
+    expect(result.observation).toEqual(windowClosedObservation)
     expect(projected).toMatchObject({
       controllerKey: command.controllerKey,
       planHash: controllerPlanHash,
@@ -811,7 +798,7 @@ describe('native execution runtime', () => {
       lastSequence: command.sequence,
       lastOutcome: 'Blocked',
       lastReceiptHash: result.outcome.receiptHash,
-      lastPass: staleBootstrapObservation,
+      lastPass: windowClosedObservation,
     })
     if (projected === undefined || !executionControllerStatusHasCompletion(projected)) {
       throw new Error('completed execution did not project completion evidence')
@@ -853,7 +840,7 @@ describe('native execution runtime', () => {
   })
 
   test('keeps retained pass evidence in PostgreSQL while Restate state remains rollback-compatible', async () => {
-    const retained = status({ lastPass: staleBootstrapObservation })
+    const retained = status({ lastPass: windowClosedObservation })
     if (!executionControllerStatusHasCompletion(retained)) {
       throw new Error('retained projection fixture must contain completion evidence')
     }
@@ -891,7 +878,7 @@ describe('native execution runtime', () => {
 
     expect(projected).toMatchObject({
       lastSequence: command.sequence,
-      lastPass: staleBootstrapObservation,
+      lastPass: windowClosedObservation,
     })
   })
 
@@ -960,10 +947,10 @@ describe('native execution runtime', () => {
     let projectCount = 0
     const persistence: { current: ExecutionControllerStatus | null } = { current: null }
     const replayDriver = {
-      ...staleBootstrapDriver,
+      ...windowClosedDriver,
       advance: Effect.sync(() => {
         advanceCount += 1
-        return { observation: staleBootstrapObservation }
+        return { observation: windowClosedObservation }
       }),
     }
     const uncertainStore: ExecutionControllerStatusStoreShape = {
@@ -1001,7 +988,7 @@ describe('native execution runtime', () => {
     }
     expect(replay).toEqual({
       completedAt: committed.completedAt,
-      observation: staleBootstrapObservation,
+      observation: windowClosedObservation,
       outcome: {
         _tag: committed.lastOutcome,
         receiptHash: committed.lastReceiptHash,
@@ -1017,7 +1004,7 @@ describe('native execution runtime', () => {
     let readCount = 0
     const authoritative = status({
       lastReceiptHash: hash('a'),
-      lastPass: staleBootstrapObservation,
+      lastPass: windowClosedObservation,
     })
     if (!executionControllerStatusHasCompletion(authoritative)) {
       throw new Error('projection-race fixture requires completion evidence')
@@ -1040,10 +1027,10 @@ describe('native execution runtime', () => {
       },
     }
     const replayDriver = {
-      ...staleBootstrapDriver,
+      ...windowClosedDriver,
       advance: Effect.sync(() => {
         advanceCount += 1
-        return { observation: staleBootstrapObservation }
+        return { observation: windowClosedObservation }
       }),
     }
 
@@ -1056,7 +1043,7 @@ describe('native execution runtime', () => {
     expect(readCount).toBe(2)
     expect(observed).toEqual({
       completedAt: authoritative.completedAt,
-      observation: staleBootstrapObservation,
+      observation: windowClosedObservation,
       outcome: {
         _tag: authoritative.lastOutcome,
         receiptHash: authoritative.lastReceiptHash,
@@ -1127,7 +1114,7 @@ describe('native execution runtime', () => {
               observation: {
                 result: 'SUCCESS' as const,
                 observedAt: completedAt,
-                outcome: 'NOT_DUE' as const,
+                outcome: 'WINDOW_CLOSED' as const,
               },
             }
           }),
@@ -1192,7 +1179,7 @@ describe('native execution runtime', () => {
               observation: {
                 result: 'SUCCESS' as const,
                 observedAt: completedAt,
-                outcome: 'NOT_DUE' as const,
+                outcome: 'WINDOW_CLOSED' as const,
               },
             }
           }),
@@ -1238,7 +1225,7 @@ describe('native execution runtime', () => {
           observation: {
             result: 'SUCCESS' as const,
             observedAt: completedAt,
-            outcome: 'NOT_DUE' as const,
+            outcome: 'WINDOW_CLOSED' as const,
           },
         }
       }),

@@ -12,6 +12,7 @@ import {
   type BlockedTargetPlanReason,
   type PlannedTargetQuantity,
   type ReferenceTargetIntent,
+  type TargetPlanExecutionTerms,
   type TargetPlannerFailure,
   type TargetPlannerInput,
 } from './model'
@@ -35,6 +36,24 @@ const outputSchemaVersion = (input: TargetPlannerInput) =>
     ? referenceTargetPlanSchemaVersion
     : legacyReferenceTargetPlanSchemaVersion
 
+const targetPlanExecutionTerms = (
+  input: TargetPlannerInput,
+): { readonly executionTerms: TargetPlanExecutionTerms } | Record<never, never> => {
+  if (input.schemaVersion !== quoteBoundTargetPlannerInputSchemaVersion) return {}
+  const { executionPurpose, orderType, timeInForce, priceReference, snapshotId, snapshotContentHash } =
+    input.executionTerms
+  return {
+    executionTerms: {
+      ...(executionPurpose === undefined ? {} : { executionPurpose }),
+      orderType,
+      timeInForce,
+      priceReference,
+      snapshotId,
+      snapshotContentHash,
+    },
+  }
+}
+
 const blocked = (
   input: TargetPlannerInput,
   inputHash: string,
@@ -45,6 +64,7 @@ const blocked = (
 ): BlockedOutputMaterial => ({
   schemaVersion: outputSchemaVersion(input),
   inputHash,
+  ...targetPlanExecutionTerms(input),
   status: TargetPlanStatus.Blocked,
   reason,
   targets,
@@ -117,14 +137,60 @@ const selectTargetNotionalBlock = (
     : undefined
 }
 
+const selectSellLiquidityBlock = (
+  facts: TargetPlannerFacts,
+  targetFacts: readonly PlannedTargetFact[],
+): BlockedOutputMaterial | undefined => {
+  if (facts.input.schemaVersion !== quoteBoundTargetPlannerInputSchemaVersion) return undefined
+  const exceedsBound = targetFacts.some(({ delta, target }) => {
+    if (delta >= 0n) return false
+    const maximumSellQuantity = facts.maximumSellQuantities.get(target.symbol)
+    return maximumSellQuantity === undefined || -delta > maximumSellQuantity
+  })
+  return exceedsBound
+    ? blocked(
+        facts.input,
+        facts.inputHash,
+        TargetPlanReason.InsufficientSellLiquidity,
+        facts.input.brokerState.account.buyingPowerMicros,
+      )
+    : undefined
+}
+
+const selectBuyLiquidityBlock = (
+  facts: TargetPlannerFacts,
+  targetFacts: readonly PlannedTargetFact[],
+): BlockedOutputMaterial | undefined =>
+  targetFacts.some(({ blockedReason }) => blockedReason === TargetPlanReason.InsufficientBuyLiquidity)
+    ? blocked(
+        facts.input,
+        facts.inputHash,
+        TargetPlanReason.InsufficientBuyLiquidity,
+        facts.input.brokerState.account.buyingPowerMicros,
+        targetFacts.map(({ target }) => target),
+      )
+    : undefined
+
 const assembleExecutableTargetPlan = (
   facts: TargetPlannerFacts,
   targetFacts: readonly PlannedTargetFact[],
 ): OutputMaterial => {
+  const buyLiquidityBlock = selectBuyLiquidityBlock(facts, targetFacts)
+  if (buyLiquidityBlock !== undefined) return buyLiquidityBlock
+  const sellLiquidityBlock = selectSellLiquidityBlock(facts, targetFacts)
+  if (sellLiquidityBlock !== undefined) return sellLiquidityBlock
   const targets = targetFacts.map((fact) => fact.target)
   const intents = makeReferenceTargetIntents(facts.input, targetFacts)
   const requiredReferenceBuyNotionals = targetFacts
-    .filter((fact) => fact.delta > 0n)
+    .filter(
+      (fact) =>
+        fact.delta > 0n &&
+        !(
+          BigInt(fact.target.currentQuantityMicros) < 0n &&
+          BigInt(fact.target.targetQuantityMicros) === 0n &&
+          fact.delta === -BigInt(fact.target.currentQuantityMicros)
+        ),
+    )
     .map((fact) => referenceNotional(fact.delta, fact.referencePrice))
   const requiredBuyingPower = requiredReferenceBuyNotionals.reduce((total, value) => total + value, 0n)
   const notionalBlock = selectTargetNotionalBlock(facts, targets, requiredReferenceBuyNotionals)
@@ -132,6 +198,7 @@ const assembleExecutableTargetPlan = (
   const common = {
     schemaVersion: outputSchemaVersion(facts.input),
     inputHash: facts.inputHash,
+    ...targetPlanExecutionTerms(facts.input),
     targets,
     requiredReferenceBuyNotionalMicros: requiredBuyingPower.toString(),
     availableBuyingPowerMicros: facts.input.brokerState.account.buyingPowerMicros,

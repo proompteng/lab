@@ -8,7 +8,7 @@ import {
   makeForwardPerformanceReceiptEnvelope,
 } from '../db/forward-performance-receipt'
 import { AuthorityRestrictionStore, type AuthorityRestrictionStoreShape } from '../db/execution-store'
-import type { CapitalActivationRequest } from '../execution/configuration'
+import type { ResearchCapitalActivationRequest } from '../execution/configuration'
 import { WriterFence, type WriterFenceService } from '../execution/writer-fence'
 import type { OperationalError } from '../errors'
 import { runForwardPerformance } from '../forward-performance'
@@ -58,7 +58,7 @@ export const decideExecutionLifecycleMaintenance = (input: {
 }
 
 export const runExecutionLifecycleMaintenance = (
-  request: CapitalActivationRequest,
+  request: ResearchCapitalActivationRequest,
   authorityRestrictionStore: AuthorityRestrictionStoreShape,
   writerFence: WriterFenceService,
   finalizeReceipt: (cycleId: string | undefined, observedAt: string) => Effect.Effect<boolean, CycleRunnerError>,
@@ -225,7 +225,7 @@ export const makeClosedCycleReceiptEmitter =
 
 export const finalizeExecutionMandateDataFirst = (
   state: Ref.Ref<RuntimeState>,
-  request: CapitalActivationRequest,
+  request: ResearchCapitalActivationRequest,
   generationHash: string,
   authorityRestrictionStore: AuthorityRestrictionStoreShape,
   writerFence: WriterFenceService,

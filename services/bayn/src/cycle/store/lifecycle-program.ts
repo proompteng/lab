@@ -160,9 +160,19 @@ const makeCycleLifecycleProgramsDataFirst = (
         Replay: ({ cycle }) => Effect.succeed({ cycle, changed: false }),
         VerifyDecision: (verification) =>
           queries.selectDecisionDocuments(verification.cycle.identity.cycleId).pipe(
-            Effect.flatMap((documents) =>
-              liftCycleDecision('finish', validateCompletionDocument(verification, documents)),
-            ),
+            Effect.flatMap((documents) => {
+              const document = documents[0]
+              if (document === undefined || document.mode !== 'PAPER') {
+                return liftCycleDecision('finish', validateCompletionDocument(verification, documents))
+              }
+              return queries
+                .executionCompletionEvidenceMatches(document, observedAt)
+                .pipe(
+                  Effect.flatMap((matches) =>
+                    liftCycleDecision('finish', validateCompletionDocument(verification, documents, matches)),
+                  ),
+                )
+            }),
             Effect.andThen(persistCompletion(observedAt, verification)),
           ),
       }),

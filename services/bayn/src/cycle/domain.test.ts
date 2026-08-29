@@ -29,7 +29,7 @@ import { defaultExecutionModel } from '../execution-model'
 import { canonicalHashV1 } from '../hash'
 import type { SignalSessionRow } from '../market-data'
 import { strictParseOptions } from '../schemas'
-import { openingDriveExecutionModel } from '../strategy/opening-drive'
+import { intradayMomentumExecutionModel } from '../strategy/intraday-momentum/protocol'
 import type { IsoDate } from '../types'
 
 const signalCalendarVersion = 'signal-XNYS-2026-v1'
@@ -154,50 +154,48 @@ describe('autonomous cycle identity and calendar', () => {
     )
   })
 
-  test('derives one versioned post-open cycle from the opening-drive execution contract', () => {
-    const policy = makeCycleExecutionPolicyFromModelSuccess(openingDriveExecutionModel)
-    if (policy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v2') {
-      throw new Error('opening-drive execution must derive the intraday v2 cycle policy')
+  test('derives a full-session rolling cycle from actual regular and early-close session bounds', () => {
+    const policy = makeCycleExecutionPolicyFromModelSuccess(intradayMomentumExecutionModel)
+    if (policy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3') {
+      throw new Error('intraday momentum execution must derive the session-relative v3 cycle policy')
     }
-    const observedExecutionCalendar = executionCalendar()
+    const regularCalendar = executionCalendar()
+    const earlyCloseCalendar = executionCalendar({
+      ...springDstSession,
+      closeAt: '2026-03-09T17:00:00.000Z',
+    })
     const identity = makeCycleIdentitySuccess({
       schemaVersion: 'bayn.autonomous-cycle-identity.v3',
-      strategyName: 'opening-drive-momentum',
+      strategyName: 'intraday-momentum',
       qualificationRunId,
       strategyProtocolHash,
       accountId: 'paper-account-1',
-      executionSessionDate: observedExecutionCalendar.executionSessionDate,
-      executionCalendarSchemaVersion: observedExecutionCalendar.executionCalendarSchemaVersion,
-      executionCalendarSource: observedExecutionCalendar.executionCalendarSource,
-      executionCalendarHash: observedExecutionCalendar.executionCalendarHash,
+      executionSessionDate: regularCalendar.executionSessionDate,
+      executionCalendarSchemaVersion: regularCalendar.executionCalendarSchemaVersion,
+      executionCalendarSource: regularCalendar.executionCalendarSource,
+      executionCalendarHash: regularCalendar.executionCalendarHash,
       executionPolicy: policy,
     })
-    const window = makeIntradayCycleWindowSuccess(observedExecutionCalendar, policy)
-    const draft = makeCycleDraftSuccess(identity, window)
+    const regularWindow = makeIntradayCycleWindowSuccess(regularCalendar, policy)
+    const earlyCloseWindow = makeIntradayCycleWindowSuccess(earlyCloseCalendar, policy)
 
     expect(policy).toMatchObject({
-      strategyExecutionModelHash: canonicalHashV1(openingDriveExecutionModel),
-      submissionWindowMs: 1_499_000,
-      submissionCutoffAfterOpenMs: 1_800_000,
+      strategyExecutionModelHash: canonicalHashV1(intradayMomentumExecutionModel),
+      warmupAfterOpenMs: 3_600_000,
+      submissionCutoffBeforeCloseMs: 3_600_000,
     })
-    expect(window).toMatchObject({
-      schemaVersion: 'bayn.autonomous-cycle-window.v3',
-      executionOpenAt: '2026-03-09T13:30:00.000Z',
-      submissionOpenAt: '2026-03-09T13:35:01.000Z',
-      submissionCutoffAt: '2026-03-09T14:00:00.000Z',
-      executionCloseAt: '2026-03-09T20:00:00.000Z',
+    expect(regularWindow).toMatchObject({
+      submissionOpenAt: '2026-03-09T14:30:00.000Z',
+      submissionCutoffAt: '2026-03-09T19:00:00.000Z',
     })
-    expect(draft).toMatchObject({
+    expect(earlyCloseWindow).toMatchObject({
+      submissionOpenAt: '2026-03-09T14:30:00.000Z',
+      submissionCutoffAt: '2026-03-09T16:00:00.000Z',
+    })
+    expect(makeCycleDraftSuccess(identity, regularWindow)).toMatchObject({
       schemaVersion: 'bayn.autonomous-cycle.v3',
-      identity: {
-        schemaVersion: 'bayn.autonomous-cycle-identity.v3',
-        strategyName: 'opening-drive-momentum',
-      },
-      window: { schemaVersion: 'bayn.autonomous-cycle-window.v3' },
+      identity: { strategyName: 'intraday-momentum' },
     })
-    expect(
-      Result.isFailure(makeCycleDraft({ ...identity, schemaVersion: 'bayn.autonomous-cycle-identity.v1' }, window)),
-    ).toBeTrue()
   })
 
   test('derives stable identities from all Signal, execution-calendar, account, and policy inputs', () => {

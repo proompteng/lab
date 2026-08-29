@@ -807,16 +807,23 @@ const deriveRiskMetrics = (facts: RiskFacts): Result.Result<DerivedRiskMetrics, 
   })
 }
 
+const isPositionReducingCloseOrder = (facts: RiskFacts): boolean => {
+  if (facts.state.closeOnly !== true) return false
+  const currentQuantity =
+    facts.positions.find((position) => position.symbol === facts.intent.symbol)?.quantityMicros ?? 0n
+  const postTradeQuantity =
+    currentQuantity + (facts.intent.side === OrderSide.Buy ? facts.intentQuantityMicros : -facts.intentQuantityMicros)
+  return currentQuantity > 0n
+    ? facts.intent.side === OrderSide.Sell && postTradeQuantity >= 0n && postTradeQuantity < currentQuantity
+    : currentQuantity < 0n
+      ? facts.intent.side === OrderSide.Buy && postTradeQuantity <= 0n && postTradeQuantity > currentQuantity
+      : false
+}
+
 const isStrictlyExposureReducingClose = (facts: RiskFacts, metrics: DerivedRiskMetrics): boolean =>
-  facts.state.closeOnly === true &&
-  facts.intent.side === OrderSide.Sell &&
-  facts.positions.every((position) => position.quantityMicros >= 0n) &&
-  metrics.currentSymbolQuantityMicros > 0n &&
-  metrics.postTradeSymbolQuantityMicros >= 0n &&
-  metrics.postTradeSymbolQuantityMicros < metrics.currentSymbolQuantityMicros &&
+  isPositionReducingCloseOrder(facts) &&
   metrics.postTradeSymbolExposureMagnitudeMicros < metrics.currentSymbolExposureMagnitudeMicros &&
-  metrics.postTradeGrossExposureMicros <= metrics.currentGrossExposureMicros &&
-  metrics.postTradeNetExposureMagnitudeMicros <= metrics.currentNetExposureMagnitudeMicros
+  metrics.postTradeGrossExposureMicros <= metrics.currentGrossExposureMicros
 
 const deriveReconciledHash = (facts: RiskFacts): Result.Result<string, RiskEvaluationFailure> =>
   pipe(
@@ -838,8 +845,15 @@ const deriveReconciledHash = (facts: RiskFacts): Result.Result<string, RiskEvalu
     ),
   )
 
+const isBrokerSupportedFractionalCloseOrder = (facts: RiskFacts): boolean =>
+  isPositionReducingCloseOrder(facts) &&
+  facts.intent.orderType === OrderType.Market &&
+  facts.intent.timeInForce === TimeInForce.Day
+
 const buildIntentContractGates = (facts: RiskFacts): readonly GateResult[] => {
   const { intent, policy, state } = facts
+  const fractionalCloseOrder = isBrokerSupportedFractionalCloseOrder(facts)
+  const closeOnlyPositionReduction = state.closeOnly === true && isPositionReducingCloseOrder(facts)
   return [
     makeGate(Gate.IntentState, intent.state === IntentState.Planned, intent.state, 'PLANNED'),
     makeGate(
@@ -869,22 +883,28 @@ const buildIntentContractGates = (facts: RiskFacts): readonly GateResult[] => {
     makeGate(Gate.Equity, facts.accountEquityMicros > 0n, state.account.equityMicros, '>0'),
     makeGate(
       Gate.Symbol,
-      policy.allowedSymbols.includes(intent.symbol),
+      policy.allowedSymbols.includes(intent.symbol) || closeOnlyPositionReduction,
       intent.symbol,
-      policy.allowedSymbols.join(','),
+      closeOnlyPositionReduction
+        ? `${policy.allowedSymbols.join(',')}|RECONCILED_CLOSE_ONLY`
+        : policy.allowedSymbols.join(','),
     ),
     makeGate(Gate.MarketDataSymbol, state.marketDataSymbol === intent.symbol, state.marketDataSymbol, intent.symbol),
     makeGate(
       Gate.OrderType,
-      policyAllowsOrderType(policy, intent.orderType),
+      policyAllowsOrderType(policy, intent.orderType) || fractionalCloseOrder,
       intent.orderType,
-      policy.allowedOrderTypes.join(','),
+      fractionalCloseOrder
+        ? `${policy.allowedOrderTypes.join(',')}|MARKET_CLOSE_ONLY`
+        : policy.allowedOrderTypes.join(','),
     ),
     makeGate(
       Gate.TimeInForce,
-      policy.allowedTimeInForce.includes(intent.timeInForce),
+      policy.allowedTimeInForce.includes(intent.timeInForce) || fractionalCloseOrder,
       intent.timeInForce,
-      policy.allowedTimeInForce.join(','),
+      fractionalCloseOrder
+        ? `${policy.allowedTimeInForce.join(',')}|DAY_MARKET_CLOSE_ONLY`
+        : policy.allowedTimeInForce.join(','),
     ),
   ]
 }
@@ -894,8 +914,9 @@ const buildAuthorityAndStateGates = (
   metrics: DerivedRiskMetrics,
   reconciledHash: string,
 ): readonly GateResult[] => {
-  const { intent, policy, state } = facts
+  const { policy, state } = facts
   const closeOnly = state.closeOnly === true
+  const positionReducingClose = isPositionReducingCloseOrder(facts)
   return [
     makeGate(
       Gate.Authority,
@@ -908,10 +929,9 @@ const buildAuthorityAndStateGates = (
     ),
     makeGate(
       Gate.Kill,
-      state.authority.kill === KillState.Clear ||
-        (closeOnly && intent.side === OrderSide.Sell && state.authority.kill === KillState.Active),
+      state.authority.kill === KillState.Clear || (positionReducingClose && state.authority.kill === KillState.Active),
       state.authority.kill,
-      closeOnly ? 'CLEAR|ACTIVE_FOR_SELL_CLOSE' : 'CLEAR',
+      closeOnly ? 'CLEAR|ACTIVE_FOR_POSITION_CLOSE' : 'CLEAR',
     ),
     makeGate(
       Gate.Reconciliation,
@@ -973,9 +993,11 @@ const buildOrderLimitGates = (facts: RiskFacts, metrics: DerivedRiskMetrics): re
     ),
     makeGate(
       Gate.BuyingPower,
-      metrics.aggregateBuyingPowerMicros <= facts.accountBuyingPowerMicros,
+      exposureReducingClose || metrics.aggregateBuyingPowerMicros <= facts.accountBuyingPowerMicros,
       metrics.aggregateBuyingPowerMicros,
-      `<=${state.account.buyingPowerMicros}`,
+      facts.state.closeOnly === true
+        ? `<=${state.account.buyingPowerMicros}|STRICTLY_EXPOSURE_REDUCING_CLOSE`
+        : `<=${state.account.buyingPowerMicros}`,
     ),
     makeGate(
       Gate.AdverseSlippage,
@@ -992,7 +1014,8 @@ const buildExposureGates = (facts: RiskFacts, metrics: DerivedRiskMetrics): read
   return [
     makeGate(
       Gate.LongOnly,
-      metrics.currentSymbolQuantityMicros >= 0n && metrics.postTradeSymbolQuantityMicros >= 0n,
+      exposureReducingClose ||
+        (metrics.currentSymbolQuantityMicros >= 0n && metrics.postTradeSymbolQuantityMicros >= 0n),
       `${metrics.currentSymbolQuantityMicros}:${metrics.postTradeSymbolQuantityMicros}`,
       '>=0:>=0',
     ),
