@@ -61,7 +61,8 @@ and reuse the existing home-volume install.
 On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.149.0 package from the npm registry,
 verifies its pinned SHA-512 digest, and atomically installs the complete native package under the 16 GiB PVC-backed
 `~/.tengri/codex` directory. Subsequent boots reuse that verified install. Nanoagent does not become ready until the
-Codex app server is available, and the `MicroVM` startup probe allows ten minutes for a cold download. Image builds run
+Codex app server is available, and the `MicroVM` startup probe allows fifteen minutes for the sequential toolchain and
+Codex cold boot. Image builds run
 the same verified bootstrap without copying its payload into the final image, so a bad checksum or package layout fails
 CI before publication. Nanoagent invokes the installer only after its bootstrap credential has moved through the
 one-use pipe and been removed from the process environment, so downloader and archive child processes cannot inherit
