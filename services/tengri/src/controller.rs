@@ -29,6 +29,7 @@ use crate::{
 };
 
 const BOOTSTRAP_SECRET_REJECTED: &str = "BootstrapSecretRejected";
+const UNSCHEDULABLE_FAILURE_GRACE_SECONDS: i64 = 30;
 
 #[derive(Clone)]
 pub struct ControllerContext {
@@ -673,24 +674,28 @@ fn derive_status(
             .chain(status.container_statuses.iter().flatten())
             .find_map(container_failure)
     });
-    let scheduling_failure = pod_status
-        .and_then(|status| status.conditions.as_ref())
-        .and_then(|conditions| {
-            conditions
-                .iter()
-                .find(|condition| condition.type_ == "PodScheduled" && condition.status == "False")
+    let scheduling_failure = unschedulable_failure_is_terminal(pod, now)
+        .then(|| {
+            pod_status
+                .and_then(|status| status.conditions.as_ref())
+                .and_then(|conditions| {
+                    conditions.iter().find(|condition| {
+                        condition.type_ == "PodScheduled" && condition.status == "False"
+                    })
+                })
+                .and_then(|condition| {
+                    let reason = condition.reason.as_deref().unwrap_or_default();
+                    (reason == "Unschedulable").then(|| {
+                        (
+                            reason.to_owned(),
+                            condition.message.clone().unwrap_or_else(|| {
+                                "No proven Firecracker node can schedule this agent".to_owned()
+                            }),
+                        )
+                    })
+                })
         })
-        .and_then(|condition| {
-            let reason = condition.reason.as_deref().unwrap_or_default();
-            (reason == "Unschedulable").then(|| {
-                (
-                    reason.to_owned(),
-                    condition.message.clone().unwrap_or_else(|| {
-                        "No proven Firecracker node can schedule this agent".to_owned()
-                    }),
-                )
-            })
-        });
+        .flatten();
     let pod_phase = pod_status.and_then(|status| status.phase.as_deref());
 
     let (phase, reason, message, ready_at) = if let Some((reason, message)) = failed {
@@ -750,6 +755,14 @@ fn derive_status(
         )],
         observed_generation: microvm.meta().generation.unwrap_or_default(),
     }
+}
+
+fn unschedulable_failure_is_terminal(pod: &Pod, now: DateTime<Utc>) -> bool {
+    let Some(created_at) = pod.metadata.creation_timestamp.as_ref() else {
+        return true;
+    };
+
+    now.timestamp().saturating_sub(created_at.0.as_second()) >= UNSCHEDULABLE_FAILURE_GRACE_SECONDS
 }
 
 fn pod_is_ready(pod: &Pod) -> bool {
@@ -856,6 +869,7 @@ mod tests {
     use k8s_openapi::api::core::v1::{
         ContainerState, ContainerStateTerminated, ContainerStateWaiting, PodCondition, PodStatus,
     };
+    use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
     use kube::client::Body as KubeBody;
 
     fn test_microvm(now: DateTime<Utc>) -> MicroVM {
@@ -1002,6 +1016,15 @@ mod tests {
     fn reports_unschedulable_firecracker_guest_precisely() {
         let now = Utc::now();
         let pod = Pod {
+            metadata: kube::core::ObjectMeta {
+                creation_timestamp: Some(Time(
+                    k8s_openapi::jiff::Timestamp::from_second(
+                        now.timestamp() - UNSCHEDULABLE_FAILURE_GRACE_SECONDS - 1,
+                    )
+                    .expect("old Pod creation timestamp"),
+                )),
+                ..kube::core::ObjectMeta::default()
+            },
             status: Some(PodStatus {
                 phase: Some("Pending".to_owned()),
                 conditions: Some(vec![PodCondition {
@@ -1022,6 +1045,40 @@ mod tests {
         assert_eq!(
             status.message.as_deref(),
             Some("0/3 nodes match the proven runtime selector")
+        );
+    }
+
+    #[test]
+    fn keeps_new_pod_booting_while_its_pvc_binds() {
+        let now = Utc::now();
+        let pod = Pod {
+            metadata: kube::core::ObjectMeta {
+                creation_timestamp: Some(Time(
+                    k8s_openapi::jiff::Timestamp::from_second(now.timestamp())
+                        .expect("new Pod creation timestamp"),
+                )),
+                ..kube::core::ObjectMeta::default()
+            },
+            status: Some(PodStatus {
+                phase: Some("Pending".to_owned()),
+                conditions: Some(vec![PodCondition {
+                    type_: "PodScheduled".to_owned(),
+                    status: "False".to_owned(),
+                    reason: Some("Unschedulable".to_owned()),
+                    message: Some("pod has unbound immediate PersistentVolumeClaims".to_owned()),
+                    ..PodCondition::default()
+                }]),
+                ..PodStatus::default()
+            }),
+            ..Pod::default()
+        };
+
+        let status = derive_status(&test_microvm(now), &pod, "agent-home", now);
+        assert_eq!(status.phase, MicroVMPhase::Booting);
+        assert_eq!(status.failure_reason, None);
+        assert_eq!(
+            status.message.as_deref(),
+            Some("Starting the Firecracker guest")
         );
     }
 
