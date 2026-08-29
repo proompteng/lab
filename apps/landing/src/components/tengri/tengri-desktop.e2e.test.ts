@@ -1238,6 +1238,16 @@ test('renders truthful booting, sleeping, and failed lifecycle states', async ({
     agent: { ...readyAgent, phase: 'failed', message: 'Guest readiness probe failed without fabricated progress.' },
   })
   await page.reload()
+  const staleDesktopId = '0123456789abcdef0123456789abcdef'
+  await page.evaluate(
+    ({ agentId, desktopId }) => {
+      sessionStorage.setItem(`tengri:desktop:${agentId}`, desktopId)
+      sessionStorage.setItem(`tengri:windows:${agentId}:${desktopId}`, '{"windows":[]}')
+      sessionStorage.setItem(`tengri:terminal:${agentId}:${desktopId}:terminal-4`, '{"sessionId":"stale"}')
+      sessionStorage.setItem(`tengri:terminal-cleanup:${agentId}`, '[]')
+    },
+    { agentId: readyAgent.id, desktopId: staleDesktopId },
+  )
   const failed = page.getByRole('dialog', { name: 'Agent could not start' })
   await expect(failed).toContainText('Guest readiness probe failed without fabricated progress.')
   await failed.getByRole('button', { name: 'Delete Failed Agent' }).click()
@@ -1246,6 +1256,19 @@ test('renders truthful booting, sleeping, and failed lifecycle states', async ({
     .getByRole('button', { name: 'Delete Agent' })
     .click()
   await expect(page.getByRole('dialog', { name: 'Create your agent' })).toBeVisible()
+  expect(
+    await page.evaluate(
+      (agentId) =>
+        Object.keys(sessionStorage).filter(
+          (key) =>
+            key === `tengri:desktop:${agentId}` ||
+            key.startsWith(`tengri:windows:${agentId}:`) ||
+            key.startsWith(`tengri:terminal:${agentId}:`) ||
+            key === `tengri:terminal-cleanup:${agentId}`,
+        ),
+      readyAgent.id,
+    ),
+  ).toEqual([])
 })
 
 test('shows native-feeling unauthenticated and create-agent states', async ({ page }) => {

@@ -39,6 +39,7 @@ import { CodeEditor } from './code-editor'
 import { type CodeOpenRequest, updateDirtyCodeWindows } from './code-editor-model'
 import { ConfirmationDialog } from './confirmation-dialog'
 import { DesktopWindowFrame } from './desktop-window'
+import { clearDeletedDesktopState } from './desktop-session-storage'
 import { FinderApp, type FinderOpenRequest } from './finder-app'
 import { MenuBar } from './menu-bar'
 import { SettingsApp } from './settings-app'
@@ -63,24 +64,6 @@ const desktopIdentityLeases = new Map<string, DesktopIdentityLease>()
 
 function desktopLayoutStorageKey(agentId: string, desktopId: string) {
   return `tengri:windows:${agentId}:${desktopId}`
-}
-
-function clearDeletedDesktopState(agentId: string, desktopId: string) {
-  try {
-    const terminalPrefix = `tengri:terminal:${agentId}:`
-    const keys = [
-      desktopLayoutStorageKey(agentId, desktopId),
-      `tengri:desktop:${agentId}`,
-      `tengri:terminal-cleanup:${agentId}`,
-    ]
-    for (let index = 0; index < sessionStorage.length; index += 1) {
-      const key = sessionStorage.key(index)
-      if (key?.startsWith(terminalPrefix)) keys.push(key)
-    }
-    for (const key of new Set(keys)) sessionStorage.removeItem(key)
-  } catch {
-    // Deleted guest state is still authoritative when session storage is unavailable.
-  }
 }
 
 function newDesktopId() {
@@ -539,7 +522,7 @@ export function ReadyDesktop({
           setCommittedTransition(committedAction === 'sleep-agent' ? 'sleep' : 'delete')
           if (committedAction === 'delete-agent') {
             for (const closeTerminal of terminalCloseHandlersRef.current.values()) closeTerminal()
-            if (desktopId) clearDeletedDesktopState(agent.id, desktopId)
+            clearDeletedDesktopState(agent.id)
             setConfirmOpen(false)
           }
         },

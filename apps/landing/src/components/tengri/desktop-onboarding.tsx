@@ -13,6 +13,7 @@ import type { TengriAgent, TengriDesktopSnapshot } from '@/lib/tengri/types'
 import { createAgentFormSchema, type CreateAgentFormValues } from '@/schemas/tengri-agent'
 import { getDesktopSnapshot, runTengriAction } from './client'
 import { ConfirmationDialog } from './confirmation-dialog'
+import { clearDeletedDesktopState } from './desktop-session-storage'
 import { useModalFocus } from './modal-focus'
 import { ReadyDesktop } from './ready-desktop'
 
@@ -318,6 +319,7 @@ function FailedAgentWindow({ agent, onChanged }: { agent: TengriAgent; onChanged
     setError('')
     try {
       await runTengriAction<null>({ action: 'delete-agent', agentId: agent.id })
+      clearDeletedDesktopState(agent.id)
       setConfirmOpen(false)
       await onChanged()
     } catch (cause) {
