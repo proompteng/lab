@@ -269,6 +269,8 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
             AND EXISTS (
               SELECT 1
               FROM authority_state AS authority
+              JOIN authority_generations AS generation
+                ON generation.generation_hash = authority.generation_hash
               WHERE authority.singleton
                 AND authority.schema_version = ${riskContext.authority.schemaVersion}
                 AND authority.generation_hash = ${riskContext.authority.generationHash}
@@ -278,6 +280,7 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
                 AND authority.reason IS NOT DISTINCT FROM ${riskContext.authority.reason ?? null}::text
                 AND authority.version = ${riskContext.authority.version}
                 AND authority.updated_at = ${riskContext.authority.updatedAt}::timestamptz
+                AND generation.risk_policy_hash = ${document.bindings.policyHash}
             )
             AND ${riskContext.authorityObservedAt}::timestamptz <= ${document.createdAt}::timestamptz
             AND coalesce((

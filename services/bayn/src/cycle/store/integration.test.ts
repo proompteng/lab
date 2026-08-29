@@ -3298,21 +3298,24 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     const draft = makeFullSessionIntradayDraft()
     const forgedReconciledAt = '2026-03-09T16:58:00.000Z'
     const observedAt = '2026-03-09T17:00:00.000Z'
+    const parentAuthorityUpdatedAt = '2026-03-09T16:58:30.000Z'
     const reconciliation = plannedPaperReconciliation(draft, observedAt)
     const reconciledRiskContext = reconciliation.riskContext
     if (reconciledRiskContext.authority === null || reconciledRiskContext.authorityObservedAt === null) {
       throw new Error('intraday risk-context fixture requires execution authority')
     }
     const authorityUpdatedAt = '2026-03-09T16:59:00.000Z'
+    const parentAuthorityGenerationHash = 'e'.repeat(64)
     const authorityGenerationHash = 'f'.repeat(64)
+    const policyHash = '9'.repeat(64)
     const riskContext = {
       ...reconciledRiskContext,
       authority: {
         ...reconciledRiskContext.authority,
         generationHash: authorityGenerationHash,
-        maximum: Authority.Observe,
-        effective: Authority.Observe,
-        version: 1,
+        maximum: Authority.Execution,
+        effective: Authority.Execution,
+        version: 2,
         updatedAt: authorityUpdatedAt,
       },
       authorityObservedAt: authorityUpdatedAt,
@@ -3331,6 +3334,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         planningBrokerStateHash: reconciliation.report.reconciliation.observedHash,
         reconciliationId: reconciliation.report.reconciliation.reconciliationId,
         reconciliationHash: reconciliation.report.reconciliation.contentHash,
+        policyHash,
         executionMarketData: { snapshotId, contentHash: snapshotContentHash, observedAt },
         riskContext,
       },
@@ -3348,15 +3352,49 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
             accountId: draft.identity.accountId,
           }),
         )
+        const durableReconciliation = reconciliation.report.reconciliation
+        yield* sql`
+          INSERT INTO reconciliations (
+            reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+            content_hash, status, discrepancies, reconciled_at
+          ) VALUES (
+            ${durableReconciliation.reconciliationId}, ${durableReconciliation.schemaVersion},
+            ${durableReconciliation.accountId}, ${durableReconciliation.expectedHash},
+            ${durableReconciliation.observedHash}, ${durableReconciliation.contentHash},
+            ${durableReconciliation.status}, ${sql.json(encodeSqlJson(durableReconciliation.discrepancies))},
+            ${durableReconciliation.reconciledAt}
+          )
+        `
         yield* sql`
           INSERT INTO authority_generations (
             generation_hash, schema_version, previous_generation_hash, maximum,
             authority_version, account_id, broker_identity_schema_version,
             broker_identity_hash, broker_provider, broker_environment, activated_at
           ) VALUES (
-            ${authorityGenerationHash}, 'bayn.authority-generation-history.v1', NULL, 'OBSERVE', 1,
+            ${parentAuthorityGenerationHash}, 'bayn.authority-generation-history.v1', NULL, 'OBSERVE', 1,
             ${draft.identity.accountId}, ${brokerIdentity.schemaVersion}, ${brokerIdentity.identityHash},
-            ${brokerIdentity.provider}, ${brokerIdentity.environment}, ${authorityUpdatedAt}
+            ${brokerIdentity.provider}, ${brokerIdentity.environment}, ${parentAuthorityUpdatedAt}
+          )
+        `
+        yield* sql`
+          INSERT INTO authority_generations (
+            generation_hash, schema_version, activation_schema_version, previous_generation_hash,
+            maximum, authority_version, activation_source_revision, activation_image_repository,
+            activation_image_digest, strategy_name, strategy_behavior_hash, strategy_parameter_hash,
+            strategy_parameter_schema_version, strategy_protocol_hash, account_id,
+            broker_identity_schema_version, broker_identity_hash, broker_provider, broker_environment,
+            risk_policy_hash, proof_plan_hash, reconciliation_id, reconciliation_content_hash,
+            research_plan_hash, activated_at
+          ) VALUES (
+            ${authorityGenerationHash}, 'bayn.authority-generation-history.v1',
+            'bayn.paper-authority-generation.v3', ${parentAuthorityGenerationHash}, 'PAPER', 2,
+            ${'1'.repeat(40)}, 'registry.example.test/lab/bayn', ${`sha256:${'2'.repeat(64)}`},
+            'intraday-momentum', ${'3'.repeat(64)}, ${'4'.repeat(64)},
+            'bayn.intraday-momentum.protocol.v1', ${draft.identity.strategyProtocolHash},
+            ${draft.identity.accountId}, ${brokerIdentity.schemaVersion}, ${brokerIdentity.identityHash},
+            ${brokerIdentity.provider}, ${brokerIdentity.environment}, ${policyHash}, ${'5'.repeat(64)},
+            ${durableReconciliation.reconciliationId}, ${durableReconciliation.contentHash},
+            ${'6'.repeat(64)}, ${authorityUpdatedAt}
           )
         `
         yield* sql`
@@ -3364,9 +3402,19 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
             singleton, schema_version, generation_hash, maximum, effective, kill_state,
             reason, version, updated_at
           ) VALUES (
-            true, ${riskContext.authority.schemaVersion}, ${authorityGenerationHash},
-            'OBSERVE', 'OBSERVE', ${riskContext.authority.kill}, NULL, 1, ${authorityUpdatedAt}
+            true, ${riskContext.authority.schemaVersion}, ${parentAuthorityGenerationHash},
+            'OBSERVE', 'OBSERVE', ${riskContext.authority.kill}, NULL, 1, ${parentAuthorityUpdatedAt}
           )
+        `
+        yield* sql`
+          UPDATE authority_state
+          SET
+            generation_hash = ${authorityGenerationHash},
+            maximum = 'PAPER',
+            effective = 'PAPER',
+            version = 2,
+            updated_at = ${authorityUpdatedAt}
+          WHERE singleton
         `
         const intentId = '1'.repeat(64)
         const mutationId = '2'.repeat(64)
@@ -3420,19 +3468,6 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
               ${riskContext.dayStartEquityMicros}, 0, 0, ${riskContext.dayStartEquityMicros}, ${observedAt}
             )
         `
-        const durableReconciliation = reconciliation.report.reconciliation
-        yield* sql`
-          INSERT INTO reconciliations (
-            reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
-            content_hash, status, discrepancies, reconciled_at
-          ) VALUES (
-            ${durableReconciliation.reconciliationId}, ${durableReconciliation.schemaVersion},
-            ${durableReconciliation.accountId}, ${durableReconciliation.expectedHash},
-            ${durableReconciliation.observedHash}, ${durableReconciliation.contentHash},
-            ${durableReconciliation.status}, ${sql.json(encodeSqlJson(durableReconciliation.discrepancies))},
-            ${durableReconciliation.reconciledAt}
-          )
-        `
         const queries = makeCycleQueries(sql)
         const exact = yield* queries.decisionEvidenceMatches(document)
         const forged = yield* queries.decisionEvidenceMatches({
@@ -3457,11 +3492,20 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
             },
           ],
         } as unknown as ExecutionDecisionDocument)
-        return { exact, forged, forgedReconciliationCutoff }
+        const forgedPolicyHash = yield* queries.decisionEvidenceMatches({
+          ...document,
+          bindings: { ...document.bindings, policyHash: 'a'.repeat(64) },
+        } as unknown as ExecutionDecisionDocument)
+        return { exact, forged, forgedPolicyHash, forgedReconciliationCutoff }
       }),
     )
 
-    expect(observed).toEqual({ exact: true, forged: false, forgedReconciliationCutoff: false })
+    expect(observed).toEqual({
+      exact: true,
+      forged: false,
+      forgedPolicyHash: false,
+      forgedReconciliationCutoff: false,
+    })
   })
 
   test('fences standalone cycle mutations across ready execution runtimes and hands ownership off', async () => {
