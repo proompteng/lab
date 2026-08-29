@@ -24,6 +24,7 @@ pub const FINALIZER_NAME: &str = "runtime.proompteng.ai/finalizer";
 pub const BOOTSTRAP_TOKEN_KEY: &str = "token";
 pub const STORAGE_CLASS: &str = "rook-ceph-block";
 const GUEST_UID: i64 = 1_000;
+const RUNTIME_HOME_ALIAS_VOLUME: &str = "runtime-home-alias";
 const RUNTIME_IDENTITY_VOLUME: &str = "runtime-identity";
 const RUNTIME_PASSWD_PATH: &str = "/runtime-identity/passwd";
 const MAX_DNS_LABEL_LENGTH: usize = 63;
@@ -239,6 +240,14 @@ pub fn build_pod(
                     ..Volume::default()
                 },
                 Volume {
+                    name: RUNTIME_HOME_ALIAS_VOLUME.to_owned(),
+                    empty_dir: Some(EmptyDirVolumeSource {
+                        medium: Some("Memory".to_owned()),
+                        size_limit: Some(Quantity("64Ki".to_owned())),
+                    }),
+                    ..Volume::default()
+                },
+                Volume {
                     name: RUNTIME_IDENTITY_VOLUME.to_owned(),
                     empty_dir: Some(EmptyDirVolumeSource {
                         medium: Some("Memory".to_owned()),
@@ -402,6 +411,12 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
                 ..VolumeMount::default()
             },
             VolumeMount {
+                name: RUNTIME_HOME_ALIAS_VOLUME.to_owned(),
+                mount_path: "/home".to_owned(),
+                read_only: Some(true),
+                ..VolumeMount::default()
+            },
+            VolumeMount {
                 name: RUNTIME_IDENTITY_VOLUME.to_owned(),
                 mount_path: "/etc/passwd".to_owned(),
                 read_only: Some(true),
@@ -410,8 +425,8 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
             },
         ]),
         // The PVC remains mounted once at the existing volume-root workspace path. The
-        // generated passwd file makes UID 1000 resolve its home there as well, including
-        // for immutable guest images whose baked-in passwd entry points elsewhere.
+        // generated passwd file makes UID 1000 resolve its home there, while the read-only
+        // /home/nanoagent symlink preserves absolute paths written by older guest images.
         working_dir: Some("/workspace".to_owned()),
         ..Container::default()
     }
@@ -431,6 +446,8 @@ fn build_identity_init_container(microvm: &MicroVM) -> Container {
         args: Some(vec![format!(
             r#"temporary='{RUNTIME_PASSWD_PATH}.tmp'
 : > "$temporary"
+rm -f /runtime-home-alias/nanoagent
+ln -s /workspace /runtime-home-alias/nanoagent
 found=
 while IFS=: read -r name password uid gid gecos home shell; do
   if [ "$uid" = '{GUEST_UID}' ]; then
@@ -465,11 +482,18 @@ mv "$temporary" '{RUNTIME_PASSWD_PATH}'"#
             }),
             ..SecurityContext::default()
         }),
-        volume_mounts: Some(vec![VolumeMount {
-            name: RUNTIME_IDENTITY_VOLUME.to_owned(),
-            mount_path: "/runtime-identity".to_owned(),
-            ..VolumeMount::default()
-        }]),
+        volume_mounts: Some(vec![
+            VolumeMount {
+                name: RUNTIME_HOME_ALIAS_VOLUME.to_owned(),
+                mount_path: "/runtime-home-alias".to_owned(),
+                ..VolumeMount::default()
+            },
+            VolumeMount {
+                name: RUNTIME_IDENTITY_VOLUME.to_owned(),
+                mount_path: "/runtime-identity".to_owned(),
+                ..VolumeMount::default()
+            },
+        ]),
         ..Container::default()
     }
 }
@@ -654,11 +678,15 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(home_mounts.len(), 1);
         assert_eq!(home_mounts[0].mount_path, "/workspace");
-        assert!(container.volume_mounts.as_ref().is_some_and(|mounts| {
-            mounts
-                .iter()
-                .all(|mount| mount.mount_path != "/home/nanoagent")
-        }));
+        let legacy_home_mount = container
+            .volume_mounts
+            .as_ref()
+            .expect("volume mounts")
+            .iter()
+            .find(|mount| mount.mount_path == "/home")
+            .expect("legacy home alias mount");
+        assert_eq!(legacy_home_mount.name, RUNTIME_HOME_ALIAS_VOLUME);
+        assert_eq!(legacy_home_mount.read_only, Some(true));
         let passwd_mount = container
             .volume_mounts
             .as_ref()
@@ -685,6 +713,7 @@ mod tests {
                 && args[0].contains("home=/workspace")
                 && args[0].contains(&format!("[ \"$uid\" = '{GUEST_UID}' ]"))
                 && args[0].contains(RUNTIME_PASSWD_PATH)
+                && args[0].contains("ln -s /workspace /runtime-home-alias/nanoagent")
         }));
         let init_security = init
             .security_context
@@ -694,9 +723,10 @@ mod tests {
         assert_eq!(init_security.read_only_root_filesystem, Some(true));
         let init_resources = init.resources.as_ref().expect("init resources");
         assert_eq!(init_resources.requests, init_resources.limits);
-        assert!(spec.volumes.as_ref().is_some_and(|volumes| {
-            volumes.iter().any(|volume| {
-                volume.name == RUNTIME_IDENTITY_VOLUME
+        let volumes = spec.volumes.as_ref().expect("volumes");
+        for name in [RUNTIME_HOME_ALIAS_VOLUME, RUNTIME_IDENTITY_VOLUME] {
+            assert!(volumes.iter().any(|volume| {
+                volume.name == name
                     && volume.empty_dir.as_ref().is_some_and(|source| {
                         source.medium.as_deref() == Some("Memory")
                             && source
@@ -704,8 +734,8 @@ mod tests {
                                 .as_ref()
                                 .is_some_and(|size| size.0 == "64Ki")
                     })
-            })
-        }));
+            }));
+        }
     }
 
     #[test]
