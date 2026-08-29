@@ -155,15 +155,33 @@ argocd app wait proompteng --sync --health --timeout 300
 kubectl --context galactic-lan -n proompteng rollout status deployment/proompteng --timeout=5m
 kubectl --context galactic-lan -n proompteng get deployment/proompteng \
   -o jsonpath='{.status.readyReplicas}/{.status.replicas}{"\n"}'
-kubectl --context galactic-lan -n proompteng get pod -l app=proompteng \
-  -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.containerStatuses[0].imageID}{"\n"}{end}'
+
+proompteng_image=registry.ide-newton.ts.net/lab/proompteng
+proompteng_index_digest=$(yq -er \
+  '.images[] | select(.name == "registry.ide-newton.ts.net/lab/proompteng") | .digest' \
+  argocd/applications/proompteng/kustomization.yaml)
+proompteng_arm64_digest=$(bun run packages/scripts/src/shared/oci.ts inspect \
+  "$proompteng_image@$proompteng_index_digest" | awk '$1 == "linux/arm64" { print $2 }')
+test -n "$proompteng_arm64_digest"
+
+proompteng_image_id=$(kubectl --context galactic-lan -n proompteng get pod -l app=proompteng -o json | jq -er '
+  [.items[] | select(.status.containerStatuses[0].ready == true) | .status.containerStatuses[0].imageID]
+  | if length == 1 then .[0] else error("expected exactly one ready proompteng Pod") end')
+case "$proompteng_image_id" in
+  *"$proompteng_index_digest"|*"$proompteng_arm64_digest") ;;
+  *)
+    echo "unexpected proompteng imageID: $proompteng_image_id" >&2
+    exit 1
+    ;;
+esac
 curl --fail --silent --show-error --output /dev/null https://proompteng.ai/
 ```
 
-The image ID must match the promoted digest, the Deployment must return to `1/1`, and the Argo application must be
-`Synced` and `Healthy`. Finish with the built-in browser: reload `https://proompteng.ai`, require the authenticated
-desktop to return to `Connected`, and exercise the capability changed by the promoted source. Deployment health and an
-HTTP 200 alone are not sufficient product acceptance.
+The kubelet can report either the promoted multi-platform index digest or the selected `linux/arm64` child-manifest
+digest, so the check accepts exactly those two values from the published index. The Deployment must return to `1/1`,
+and the Argo application must be `Synced` and `Healthy`. Finish with the built-in browser: reload
+`https://proompteng.ai`, require the authenticated desktop to return to `Connected`, and exercise the capability changed
+by the promoted source. Deployment health and an HTTP 200 alone are not sufficient product acceptance.
 
 If the replacement Pod does not become ready or the browser acceptance fails, open a normal follow-up PR that reverts
 the promotion commit or restores the previously proven digest in the same Kustomization. Let CI and Argo perform the
