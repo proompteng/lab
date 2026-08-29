@@ -34,7 +34,10 @@ import {
 } from './schemas'
 import { TargetPlannerInputSchema, TargetPlanResultSchema, TargetPlanStatus, planTargets } from './target-planner'
 import { RuntimeStrategyDecisionSchema } from './strategy/runtime-decision'
-import { decideIntradayMomentum, deriveIntradayMomentumSignalMetrics } from './strategy/intraday-momentum/decision'
+import {
+  deriveIntradayMomentumSignalMetrics,
+  verifyIntradayMomentumDecisionEnvelope,
+} from './strategy/intraday-momentum/decision'
 import {
   intradayMomentumSignalRejectionReasons,
   selectCanonicalIntradayMomentumSignals,
@@ -653,7 +656,7 @@ const intradayMomentumSnapshotEvidenceIssues = (
       },
     ]
   }
-  const reproduced = decideIntradayMomentum(
+  const reproduced = verifyIntradayMomentumDecisionEnvelope(
     {
       snapshot,
       session: {
@@ -664,9 +667,9 @@ const intradayMomentumSnapshotEvidenceIssues = (
       },
     },
     defaultIntradayMomentumProtocolDocument,
+    document.bindings.strategyDecisionHash,
   )
-  const reproducedHash = Result.flatMap(reproduced, canonicalHashV1Result)
-  if (Result.isFailure(reproducedHash) || reproducedHash.success !== document.bindings.strategyDecisionHash) {
+  if (Result.isFailure(reproduced)) {
     return [
       {
         path: ['strategyDecision'],

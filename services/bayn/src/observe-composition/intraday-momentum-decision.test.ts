@@ -12,7 +12,7 @@ import {
   type AutonomousCycle,
 } from '../cycle'
 import { canonicalHashV1, sha256 } from '../hash'
-import type { IntradayMarketSnapshot } from '../market-data'
+import type { ArchiveVerifiedIntradayMarketSnapshot } from '../market-data'
 import { IntradayMomentumFailure, type IntradayMomentumTargetPortfolio } from '../strategy/intraday-momentum/model'
 import { makeIntradayMomentumDefinition } from '../strategy/intraday-momentum/decision'
 import {
@@ -191,7 +191,13 @@ describe('intraday-momentum runtime decision boundary', () => {
     }
 
     expect(
-      failure(compileIntradayMomentumDecision(definition, makeActiveCycle(), {} as IntradayMarketSnapshot)),
+      failure(
+        compileIntradayMomentumDecision(
+          definition,
+          makeActiveCycle(),
+          {} as unknown as ArchiveVerifiedIntradayMarketSnapshot,
+        ),
+      ),
     ).toEqual(
       new IntradayMomentumEntryAwaitingSnapshot({
         message: 'intraday symbol lacks the complete rolling lookback baseline',

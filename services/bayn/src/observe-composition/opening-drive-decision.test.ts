@@ -303,7 +303,9 @@ const makeOpeningRangeRows = (request: IntradaySnapshotRequest): IntradaySnapsho
   }
 }
 
-const snapshot = success(verifyIntradaySnapshot(snapshotRequest, makeSnapshotRows()))
+const snapshot = success(
+  verifyIntradaySnapshot(snapshotRequest, makeSnapshotRows()),
+) as unknown as ArchiveVerifiedIntradayMarketSnapshot
 
 describe('opening-drive runtime decision boundary', () => {
   test('admits entry only for the exact post-open range and bounded submission window', () => {

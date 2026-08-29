@@ -9,6 +9,7 @@ import { utcInstantFromEpochMillis } from '../time'
 import {
   intradayAgeNanos,
   millisecondsAsNanos,
+  type ArchiveVerifiedIntradayMarketSnapshot,
   type IntradayMarketDataService,
   type IntradayMarketSnapshot,
   type IntradaySnapshotQuery,
@@ -131,7 +132,7 @@ export const openingDriveCloseQuery = (
 export const loadIntradaySnapshot = (
   marketData: IntradayMarketDataService,
   query: IntradaySnapshotQuery,
-): Effect.Effect<IntradayMarketSnapshot, OperationalError> =>
+): Effect.Effect<ArchiveVerifiedIntradayMarketSnapshot, OperationalError> =>
   marketData
     .captureVersion(query)
     .pipe(Effect.flatMap((archiveWatermarks) => marketData.loadSnapshot({ ...query, archiveWatermarks })))

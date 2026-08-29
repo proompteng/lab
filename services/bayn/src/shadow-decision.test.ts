@@ -18,7 +18,11 @@ import {
 import { defaultExecutionModel } from './execution-model'
 import { bindExecutionSession, type BindExecutionSessionInput } from './execution-session'
 import { canonicalHashV1, sha256 } from './hash'
-import { persistIntradaySnapshotRows, verifyIntradaySnapshot } from './market-data'
+import {
+  persistIntradaySnapshotRows,
+  verifyIntradaySnapshot,
+  type ArchiveVerifiedIntradayMarketSnapshot,
+} from './market-data'
 import { utcInstantFromEpochMillis } from './time'
 import {
   AccountStatus,
@@ -872,7 +876,7 @@ const verifiedIntradayMomentumEvidence = (cycle: AutonomousCycle, selectedSymbol
   const compiledDecision = resultValue(
     decideIntradayMomentum(
       {
-        snapshot: evidence.snapshot,
+        snapshot: evidence.snapshot as unknown as ArchiveVerifiedIntradayMarketSnapshot,
         session: {
           sessionDate: executionDate,
           openAt: cycle.window.executionOpenAt,

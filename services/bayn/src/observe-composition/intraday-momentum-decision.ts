@@ -5,7 +5,7 @@ import type { AutonomousCycle } from '../cycle'
 import { utcInstantFromEpochMillis } from '../time'
 import {
   persistIntradaySnapshotRows,
-  type IntradayMarketSnapshot,
+  type ArchiveVerifiedIntradayMarketSnapshot,
   type IntradaySnapshotQuery,
   type PersistedIntradaySnapshotRows,
 } from '../market-data'
@@ -168,7 +168,7 @@ export interface CompiledIntradayMomentumDecision {
 export const compileIntradayMomentumDecision = (
   definition: IntradayMomentumStrategyDefinition,
   cycle: AutonomousCycle,
-  snapshot: IntradayMarketSnapshot,
+  snapshot: ArchiveVerifiedIntradayMarketSnapshot,
 ): Result.Result<
   CompiledIntradayMomentumDecision,
   IntradayMomentumEntryAwaitingSnapshot | IntradayMomentumRuntimeDecisionFailure

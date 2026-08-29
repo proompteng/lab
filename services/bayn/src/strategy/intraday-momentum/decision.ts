@@ -1,8 +1,13 @@
 import { Result, Schema } from 'effect'
 
 import { makeExecutionCalendarObservation } from '../../cycle/construction'
-import { sha256 } from '../../hash'
-import type { IntradayBar, IntradayQuote, IntradayTrade } from '../../market-data/intraday/model'
+import { canonicalHashV1Result, sha256 } from '../../hash'
+import type {
+  IntradayBar,
+  IntradayMarketSnapshot,
+  IntradayQuote,
+  IntradayTrade,
+} from '../../market-data/intraday/model'
 import { compareIntradayInstants, intradayInstantNanos } from '../../market-data/intraday/time'
 import { strictParseOptions, UtcInstantSchema } from '../../schemas'
 import type { VerifiedStrategyContext } from '../core'
@@ -136,8 +141,13 @@ export const deriveIntradayMomentumSignalMetrics = (
   })
 }
 
+type IntradayMomentumEnvelopeContext = {
+  readonly snapshot: IntradayMarketSnapshot
+  readonly session: IntradayMomentumMarketContext['session']
+}
+
 const validateSnapshot = (
-  context: IntradayMomentumMarketContext,
+  context: IntradayMomentumEnvelopeContext,
   protocol: IntradayMomentumProtocol,
 ): Result.Result<void, IntradayMomentumFailure> => {
   const { session, snapshot } = context
@@ -313,8 +323,8 @@ const signalFor = (
   })
 }
 
-export const decideIntradayMomentum = (
-  context: IntradayMomentumMarketContext,
+const decideIntradayMomentumFromEnvelope = (
+  context: IntradayMomentumEnvelopeContext,
   protocol: IntradayMomentumProtocol,
 ): Result.Result<IntradayMomentumTargetPortfolio, IntradayMomentumFailure> =>
   Result.gen(function* () {
@@ -364,6 +374,45 @@ export const decideIntradayMomentum = (
       signals: rankedSignals,
     })
   })
+
+/** Execution decision boundary: only immutable-archive-selected snapshots can produce targets. */
+export const decideIntradayMomentum = (
+  context: IntradayMomentumMarketContext,
+  protocol: IntradayMomentumProtocol,
+): Result.Result<IntradayMomentumTargetPortfolio, IntradayMomentumFailure> =>
+  decideIntradayMomentumFromEnvelope(context, protocol)
+
+/**
+ * Pure durable-document verifier. It exposes no target portfolio and does not establish archive provenance; callers
+ * use it only to prove that persisted rows reproduce an already-bound strategy-decision hash.
+ */
+export const verifyIntradayMomentumDecisionEnvelope = (
+  context: IntradayMomentumEnvelopeContext,
+  protocol: IntradayMomentumProtocol,
+  expectedDecisionHash: string,
+): Result.Result<void, IntradayMomentumFailure> =>
+  Result.flatMap(decideIntradayMomentumFromEnvelope(context, protocol), (decision) =>
+    Result.flatMap(
+      Result.mapError(
+        canonicalHashV1Result(decision),
+        (cause) =>
+          new IntradayMomentumFailure({
+            reason: 'snapshot-identity',
+            message: 'intraday decision evidence is not canonicalizable',
+            cause,
+          }),
+      ),
+      (decisionHash) =>
+        decisionHash === expectedDecisionHash
+          ? Result.succeed(undefined)
+          : Result.fail(
+              new IntradayMomentumFailure({
+                reason: 'snapshot-identity',
+                message: 'intraday decision evidence does not reproduce the bound strategy decision',
+              }),
+            ),
+    ),
+  )
 
 export const makeIntradayMomentumDefinition = (
   protocol: IntradayMomentumProtocol,
