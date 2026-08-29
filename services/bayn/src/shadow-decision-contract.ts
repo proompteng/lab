@@ -1,6 +1,7 @@
 import { Data, Result, Schema } from 'effect'
 
 import { quantizeAlpacaLimitPriceMicros } from './broker/alpaca-price'
+import { makeExecutionCalendarObservation } from './cycle'
 import { intentIdForPlan, executionIntentIdForDecodedPlan } from './execution/intents/domain'
 import { ExecutionSessionBindingSchema } from './execution-session'
 import { canonicalHashV1Result, sha256 } from './hash'
@@ -461,6 +462,19 @@ const intradayMomentumAllocationIssues = (
   >,
 ): readonly Schema.FilterIssue[] => {
   const issues: Schema.FilterIssue[] = []
+  if (targetPlan.status !== TargetPlanStatus.Blocked) {
+    const targetSymbols = targetPlan.targets.map(({ symbol }) => symbol).toSorted()
+    const decisionSymbols = Object.keys(strategyDecision.targetWeights).toSorted()
+    if (
+      targetSymbols.length !== decisionSymbols.length ||
+      targetSymbols.some((symbol, index) => symbol !== decisionSymbols[index])
+    ) {
+      issues.push({
+        path: ['targetPlan', 'targets'],
+        issue: 'intraday-momentum entry targets must retain every persisted strategy weight',
+      })
+    }
+  }
   const selectedTargets = targetPlan.targets.filter(({ targetWeight }) => targetWeight > 0)
   if (selectedTargets.length > defaultIntradayMomentumProtocolDocument.maximumPositions) {
     issues.push({
@@ -589,6 +603,31 @@ const executionMaterialIssues = (
         issues.push({
           path: ['bindings', 'executionMarketData', 'calendar'],
           issue: 'intraday-momentum entry market-data session and calendar must match the execution session',
+        })
+      }
+      const selectedCalendarSession = executionMarketData.calendar.sessions.find(
+        ({ date }) => date === executionMarketData.sessionDate,
+      )
+      const executionCalendar =
+        selectedCalendarSession === undefined
+          ? undefined
+          : makeExecutionCalendarObservation({
+              schemaVersion: executionMarketData.calendar.schemaVersion,
+              source: executionMarketData.calendar.source,
+              ...selectedCalendarSession,
+            })
+      if (
+        strategyDecision?.schemaVersion === 'bayn.intraday-momentum.target.v1' &&
+        (strategyDecision.snapshotId !== executionMarketData.snapshotId ||
+          strategyDecision.sessionDate !== executionMarketData.sessionDate ||
+          strategyDecision.observedAt !== executionMarketData.observedAt ||
+          executionCalendar === undefined ||
+          Result.isFailure(executionCalendar) ||
+          strategyDecision.calendarHash !== executionCalendar.success.executionCalendarHash)
+      ) {
+        issues.push({
+          path: ['strategyDecision'],
+          issue: 'intraday-momentum strategy decision must match its exact market-data snapshot and session',
         })
       }
       const decisionAt = Date.parse(document.createdAt)

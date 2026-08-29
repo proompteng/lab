@@ -648,6 +648,23 @@ describe('same-code execution program composition', () => {
     expect(posts).toBe(0)
   })
 
+  test('fails closed before submission when close-only classification is unavailable', async () => {
+    const fixture = finalLiveFixture()
+    const classificationFailure = { _tag: 'ExecutionCloseClassificationUnavailable' as const }
+    const program = Result.getOrThrow(
+      makeExecutionProgram(fixture.authority, {
+        ...dependencies('close-classification-failure'),
+        isCloseOnlyIntent: () => Effect.fail(classificationFailure),
+      }),
+    )
+
+    const exit = await Effect.runPromise(
+      program.submit(fixture.intent.intentId, 1_000, '2026-07-28T08:30:00.000Z').pipe(Effect.exit),
+    )
+
+    expect(finalAuthorizationFailureTag(exit)).toBe(classificationFailure._tag)
+  })
+
   test('reuses one transaction-stable intent read across every final risk check', async () => {
     const fixture = finalLiveFixture()
     const trace: string[] = []

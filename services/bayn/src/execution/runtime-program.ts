@@ -50,7 +50,7 @@ export interface ExecutionProgramDependencies {
   readonly entrySubmitExpiresAt?: string
   /** Close-only intents may finish recovery until this separate close lease expires. */
   readonly closeSubmitExpiresAt?: string
-  readonly isCloseOnlyIntent?: (intentId: string) => Effect.Effect<boolean>
+  readonly isCloseOnlyIntent?: (intentId: string) => Effect.Effect<boolean, FinalSubmitAuthorizationFailure>
 }
 
 export interface ExecutionProgramConstructionFailure {

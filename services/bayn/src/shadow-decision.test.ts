@@ -1296,6 +1296,28 @@ describe('OBSERVE shadow decision', () => {
       expect(String(forgedTargetSelection.failure.cause)).toContain('persisted selected signals')
     }
 
+    const strategyBindingForgeries = [
+      { snapshotId: hash('d') },
+      { sessionDate: '2026-07-23' as const },
+      { observedAt: '2026-07-22T16:00:03.000Z' },
+      { calendarHash: hash('e') },
+    ]
+    for (const overrides of strategyBindingForgeries) {
+      const forgedStrategyBinding = { ...input.compiledDecision, ...overrides }
+      const forged = makeExecutionDecisionDocument({
+        ...material,
+        bindings: {
+          ...material.bindings,
+          strategyDecisionHash: canonicalHashV1(forgedStrategyBinding),
+        },
+        strategyDecision: forgedStrategyBinding,
+      })
+      expect(Result.isFailure(forged)).toBe(true)
+      if (Result.isFailure(forged)) {
+        expect(String(forged.failure.cause)).toContain('exact market-data snapshot and session')
+      }
+    }
+
     const rebindExecutionMarketData = (binding: ArchiveMarketDataBindingV2) => {
       const executionTerms = material.targetPlan.executionTerms
       if (executionTerms === undefined) throw new Error('intraday fixture must persist execution terms')
@@ -1607,6 +1629,146 @@ describe('OBSERVE shadow decision', () => {
     expect(failure.cause).toBeInstanceOf(ShadowDecisionContractFailure)
     if (!(failure.cause instanceof ShadowDecisionContractFailure)) return expect.unreachable()
     expect(String(failure.cause.cause)).toContain('maximum position count')
+  })
+
+  test('rejects durable intraday target plans that omit zero-weight universe members', async () => {
+    const input = makeIntradayMomentumInput()
+    const executionMarketData = input.executionMarketData
+    if (executionMarketData?.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
+      throw new Error('intraday target fixture must include archive execution market data v2')
+    }
+    const selectedSymbol = defaultIntradayMomentumProtocolDocument.universe[0]
+    if (selectedSymbol === undefined) throw new Error('intraday target fixture requires a non-empty universe')
+    const targetWeights = Object.fromEntries(
+      defaultIntradayMomentumProtocolDocument.universe.map((symbol) => [symbol, symbol === selectedSymbol ? 0.1 : 0]),
+    )
+    const compiledDecision = {
+      ...input.compiledDecision,
+      selectedSymbols: [selectedSymbol],
+      targetWeights,
+      signals: input.compiledDecision.signals.map((signal) =>
+        signal.symbol === selectedSymbol
+          ? {
+              ...signal,
+              referencePriceMicros: '50000000',
+              rangeHighPriceMicros: '51000000',
+              rangeLowPriceMicros: '49000000',
+              bidPriceMicros: '49900000',
+              askPriceMicros: '50000000',
+              eligible: true,
+              rejectionReasons: [],
+              rank: 1,
+            }
+          : signal,
+      ),
+    }
+    const { contentHash: _referencePriceHash, ...referencePriceMaterial } = input.plannerInput.referencePrices
+    const priceMicros = Object.fromEntries(
+      defaultIntradayMomentumProtocolDocument.universe.map((symbol) => [symbol, '50000000']),
+    )
+    const bidPriceMicros = Object.fromEntries(
+      defaultIntradayMomentumProtocolDocument.universe.map((symbol) => [symbol, '49900000']),
+    )
+    const referencePrices = {
+      ...referencePriceMaterial,
+      priceMicros,
+      bidPriceMicros,
+      askPriceMicros: priceMicros,
+    }
+    const plannerInput: QuoteBoundTargetPlannerInput = {
+      ...input.plannerInput,
+      decisionHash: canonicalHashV1(compiledDecision),
+      targetWeights,
+      referencePrices: { ...referencePrices, contentHash: canonicalHashV1(referencePrices) },
+      maximumInputAgeMs: 4 * 60 * 60 * 1_000,
+    }
+    const targetPlan = planTargetsSuccess(plannerInput)
+    expect(targetPlan.status).toBe(TargetPlanStatus.Planned)
+    const executionSession = bindExecutionSessionSuccess({
+      executionSessionDate: executionDate,
+      planningBrokerState: {
+        observedAt: brokerObservedAt,
+        contentHash: plannerInput.brokerState.reconciliation.observedHash,
+      },
+      calendar: executionMarketData.calendar,
+      executionModel: intradayMomentumExecutionModel,
+    })
+    const riskInputs: ShadowDeltaRiskInput[] = targetPlan.intentTargets.map((target) => {
+      const plannedTarget = targetPlan.targets.find(({ symbol }) => symbol === target.symbol)
+      if (plannedTarget === undefined) throw new Error(`intraday target fixture is missing ${target.symbol}`)
+      return {
+        symbol: target.symbol,
+        notionalLimitMicros: (
+          (BigInt(target.quantityMicros) * BigInt(plannedTarget.referencePriceMicros)) /
+          1_000_000n
+        ).toString(),
+        state: decodeState({
+          schemaVersion: 'bayn.paper-risk-state.v2',
+          brokerMode: BrokerMode.Execution,
+          account: plannerInput.brokerState.account,
+          positions: plannerInput.brokerState.positions,
+          positionsObservedAt: plannerInput.brokerState.positionsObservedAt,
+          orders: plannerInput.brokerState.orders,
+          ordersObservedAt: plannerInput.brokerState.ordersObservedAt,
+          reconciliation: plannerInput.brokerState.reconciliation,
+          authority: {
+            schemaVersion: 'bayn.paper-authority.v1',
+            generationHash: hash('6'),
+            maximum: Authority.Execution,
+            effective: Authority.Execution,
+            kill: KillState.Clear,
+            version: 1,
+            updatedAt: brokerObservedAt,
+          },
+          authorityObservedAt: brokerObservedAt,
+          unknownMutationCount: 0,
+          dailyTradedNotionalMicros: '0',
+          dayStartEquityMicros: '1000000000',
+          peakEquityMicros: '1000000000',
+          accountingHash,
+          marketDataSymbol: target.symbol,
+          marketDataHash: executionMarketData.contentHash,
+          executionMarketDataHash: executionMarketData.contentHash,
+          referencePriceMicros: plannedTarget.referencePriceMicros,
+          expectedExecutionPriceMicros: plannedTarget.referencePriceMicros,
+          marketDataObservedAt: executionMarketData.observedAt,
+          executionSession,
+          reservedBuyingPowerMicros: '0',
+          evaluatedAt: plannerInput.observedAt,
+        }),
+      }
+    })
+    const document = await Effect.runPromise(
+      buildExecutionDecision({
+        ...input,
+        compiledDecision,
+        plannerInput,
+        targetPlan,
+        riskInputs,
+        authorityGenerationHash: hash('6'),
+        executionSession,
+      }),
+    )
+    const zeroWeightSymbol = Object.entries(compiledDecision.targetWeights).find(([, weight]) => weight === 0)?.[0]
+    if (zeroWeightSymbol === undefined) throw new Error('intraday target fixture requires a zero-weight symbol')
+    const { contentHash: _contentHash, ...material } = document
+    const { outputHash: _outputHash, ...targetPlanMaterial } = material.targetPlan
+    const reducedTargetPlanMaterial = {
+      ...targetPlanMaterial,
+      targets: targetPlanMaterial.targets.filter(({ symbol }) => symbol !== zeroWeightSymbol),
+    }
+    const forged = makeExecutionDecisionDocument({
+      ...material,
+      targetPlan: {
+        ...reducedTargetPlanMaterial,
+        outputHash: canonicalHashV1(reducedTargetPlanMaterial),
+      },
+    })
+
+    expect(Result.isFailure(forged)).toBe(true)
+    if (Result.isFailure(forged)) {
+      expect(String(forged.failure.cause)).toContain('retain every persisted strategy weight')
+    }
   })
 
   test('binds full-session intraday decisions to the exact rolling snapshot and cycle calendar', async () => {
