@@ -879,41 +879,38 @@ const eventPayloadKey = (record: IntradayQuote | IntradayTrade): Result.Result<s
       failure('rows', 'intraday quote or trade timestamp does not match the archive contract', undefined, cause),
   })
 
-const eventPayloadVariant = <T extends IntradayQuote | IntradayTrade>(
+const validateReplayPayload = <T extends IntradayQuote | IntradayTrade>(
   record: T,
   payload: (record: T) => readonly number[],
-): Result.Result<string, IntradaySnapshotFailure> =>
+): Result.Result<void, IntradaySnapshotFailure> =>
   Result.try({
-    try: () => JSON.stringify(payload(record)),
+    try: () => void JSON.stringify(payload(record)),
     catch: (cause) =>
       failure('rows', 'intraday quote or trade payload does not match the archive contract', undefined, cause),
   })
 
-const payloadVariantCounts = <T extends IntradayQuote | IntradayTrade>(
+const replayCandidateKeys = <T extends IntradayQuote | IntradayTrade>(
   records: readonly T[],
+  recordKind: 'quote' | 'trade',
   payload: (record: T) => readonly number[],
-): Result.Result<
-  {
-    readonly counts: ReadonlyMap<string, number>
-    readonly keys: ReadonlyMap<T, string>
-  },
-  IntradaySnapshotFailure
-> =>
+): Result.Result<ReadonlyMap<T, string>, IntradaySnapshotFailure> =>
   Result.gen(function* () {
-    const variants = new Map<string, Set<string>>()
     const keys = new Map<T, string>()
+    const observedSymbols = new Set<string>()
     for (const record of records) {
       const key = yield* eventPayloadKey(record)
-      const variant = yield* eventPayloadVariant(record, payload)
-      const observed = variants.get(key) ?? new Set<string>()
-      observed.add(variant)
-      variants.set(key, observed)
+      yield* validateReplayPayload(record, payload)
+      if (observedSymbols.has(record.symbol)) {
+        return yield* Result.fail(
+          failure('rows', `intraday replay snapshot contains more than one ${recordKind} candidate for a symbol`, {
+            symbol: record.symbol,
+          }),
+        )
+      }
+      observedSymbols.add(record.symbol)
       keys.set(record, key)
     }
-    return {
-      counts: new Map([...variants].map(([key, observed]) => [key, observed.size])),
-      keys,
-    }
+    return keys
   })
 
 const replaySnapshotEnvelope = (snapshot: unknown): Result.Result<IntradayMarketSnapshot, IntradaySnapshotFailure> =>
@@ -966,13 +963,16 @@ export const reverifyIntradayMarketSnapshot = (
     const { manifest } = replay
     const collections = replay
     const bars = yield* Result.all(collections.bars.map(replayedBarRow))
-    const quotePayloadVariants = yield* payloadVariantCounts(collections.quotes, (quote) => [
+    const quoteCandidateKeys = yield* replayCandidateKeys(collections.quotes, 'quote', (quote) => [
       quote.bidPrice,
       quote.bidSize,
       quote.askPrice,
       quote.askSize,
     ])
-    const tradePayloadVariants = yield* payloadVariantCounts(collections.trades, (trade) => [trade.price, trade.size])
+    const tradeCandidateKeys = yield* replayCandidateKeys(collections.trades, 'trade', (trade) => [
+      trade.price,
+      trade.size,
+    ])
     const request: IntradaySnapshotRequest = {
       sessionDate: manifest.sessionDate,
       calendar: manifest.calendar,
@@ -998,9 +998,7 @@ export const reverifyIntradayMarketSnapshot = (
       bars,
       quotes: collections.quotes.map((quote) => ({
         ...archiveIdentityRow(quote),
-        latest_payload_variants: String(
-          quotePayloadVariants.counts.get(quotePayloadVariants.keys.get(quote) ?? '') ?? 0,
-        ),
+        latest_payload_variants: quoteCandidateKeys.has(quote) ? '1' : '0',
         bid_price: quote.bidPrice,
         bid_size: quote.bidSize,
         ask_price: quote.askPrice,
@@ -1008,9 +1006,7 @@ export const reverifyIntradayMarketSnapshot = (
       })),
       trades: collections.trades.map((trade) => ({
         ...archiveIdentityRow(trade),
-        latest_payload_variants: String(
-          tradePayloadVariants.counts.get(tradePayloadVariants.keys.get(trade) ?? '') ?? 0,
-        ),
+        latest_payload_variants: tradeCandidateKeys.has(trade) ? '1' : '0',
         price: trade.price,
         size: trade.size,
       })),

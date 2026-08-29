@@ -656,7 +656,7 @@ describe('immutable intraday market snapshot', () => {
     })
   })
 
-  test('recomputes tied payload variants instead of trusting a self-consistent forged snapshot', () => {
+  test('rejects a self-consistent replay with conflicting duplicate quote candidates', () => {
     const rows = makeRows()
     const firstQuote = rows.quotes[0]
     if (firstQuote === undefined) throw new Error('quote fixture is incomplete')
@@ -685,43 +685,57 @@ describe('immutable intraday market snapshot', () => {
     const forged = success(verifyIntradaySnapshot(forgedRequest, forgedRows))
 
     expect(error(reverifyIntradayMarketSnapshot(forged))).toMatchObject({
-      reason: 'ordering',
-      message: 'latest intraday timestamp has conflicting market payloads',
+      reason: 'rows',
+      message: 'intraday replay snapshot contains more than one quote candidate for a symbol',
     })
   })
 
-  test('groups tied payload variants by canonical instant across fractional precision', () => {
+  test('rejects replay snapshots with extra canonical candidates that the archive query cannot return', () => {
     const rows = makeRows()
     const firstQuote = rows.quotes[0]
-    if (firstQuote === undefined) throw new Error('quote fixture is incomplete')
-    const forgedRequest: IntradaySnapshotRequest = {
-      ...request,
-      archiveWatermarks: request.archiveWatermarks.map((watermark) =>
-        watermark.sourceTopic === quotesTopic ? { ...watermark, inclusiveLastOffset: '15' } : watermark,
-      ),
-    }
-    const forgedRows = {
-      ...rows,
-      archiveWatermarks: rows.archiveWatermarks.map((watermark) =>
-        watermark.source_topic === quotesTopic ? { ...watermark, inclusive_last_offset: '15' } : watermark,
-      ),
-      quotes: [
-        ...rows.quotes,
-        {
-          ...firstQuote,
-          event_at: '2026-08-18T13:35:15.000000000Z',
-          source_offset: '15',
-          bid_price: '99.50',
-          ask_price: '99.52',
-        },
-      ],
-    }
-    const forged = success(verifyIntradaySnapshot(forgedRequest, forgedRows))
+    const firstTrade = rows.trades[0]
+    if (firstQuote === undefined || firstTrade === undefined) throw new Error('intraday fixture is incomplete')
 
-    expect(error(reverifyIntradayMarketSnapshot(forged))).toMatchObject({
-      reason: 'ordering',
-      message: 'latest intraday timestamp has conflicting market payloads',
-    })
+    const cases = [
+      {
+        sourceTopic: quotesTopic,
+        sourceOffset: '15',
+        rows: { ...rows, quotes: [...rows.quotes, { ...firstQuote, source_offset: '15' }] },
+        message: 'intraday replay snapshot contains more than one quote candidate for a symbol',
+      },
+      {
+        sourceTopic: tradesTopic,
+        sourceOffset: '16',
+        rows: { ...rows, trades: [...rows.trades, { ...firstTrade, source_offset: '16' }] },
+        message: 'intraday replay snapshot contains more than one trade candidate for a symbol',
+      },
+    ] as const
+
+    for (const testCase of cases) {
+      const forgedRequest: IntradaySnapshotRequest = {
+        ...request,
+        archiveWatermarks: request.archiveWatermarks.map((watermark) =>
+          watermark.sourceTopic === testCase.sourceTopic
+            ? { ...watermark, inclusiveLastOffset: testCase.sourceOffset }
+            : watermark,
+        ),
+      }
+      const forgedRows = {
+        ...testCase.rows,
+        archiveWatermarks: testCase.rows.archiveWatermarks.map((watermark) =>
+          watermark.source_topic === testCase.sourceTopic
+            ? { ...watermark, inclusive_last_offset: testCase.sourceOffset }
+            : watermark,
+        ),
+      }
+      const forgedSnapshot = success(verifyIntradaySnapshot(forgedRequest, forgedRows))
+
+      expect(error(reverifyIntradayMarketSnapshot(forgedSnapshot))).toMatchObject({
+        reason: 'rows',
+        message: testCase.message,
+        facts: { symbol: 'AMD' },
+      })
+    }
   })
 
   test('returns a typed row failure for malformed replayed quote and trade timestamps', () => {
