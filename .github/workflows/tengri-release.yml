@@ -194,6 +194,7 @@ jobs:
             .github/workflows/tengri-release.yml \
             argocd/applications/tengri/crd.yaml
           git checkout "$main_head" -- \
+            argocd/root.yaml \
             argocd/applications/tengri/deployment.yaml \
             argocd/applications/tengri/kustomization.yaml \
             argocd/applicationsets/platform.yaml \
@@ -228,6 +229,7 @@ jobs:
             argocd/applications/tengri/crd.yaml
 
           git checkout "$latest_main" -- \
+            argocd/root.yaml \
             argocd/applications/tengri/deployment.yaml \
             argocd/applications/tengri/kustomization.yaml \
             argocd/applicationsets/platform.yaml \
