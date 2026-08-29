@@ -84,7 +84,8 @@ const DEFAULT_TOPIC_BY_ROLE: Record<KafkaRole, string> = {
 }
 
 const DEFAULT_TA_STATUS_TOPIC = 'torghut.ta.status.v1'
-const REQUIRED_WS_CHANNELS = ['trades', 'quotes', 'bars', 'updatedBars']
+const REQUIRED_WS_CHANNELS = ['trades', 'quotes', 'bars']
+const OPTIONAL_WS_CHANNELS = ['updatedBars']
 const REQUIRED_KAFKA_ROLES: KafkaRole[] = ['trades', 'quotes', 'bars']
 const ACCEPTED_SOURCE_STALE_REASON = 'accepted_ta_signal_stale'
 const CONDITIONAL_NO_EVENT_WS_CHANNEL = 'updatedBars'
@@ -497,7 +498,11 @@ export const evaluateMarketDataSmoke = (input: MarketDataSmokeInput): MarketData
   warnings.push(...taStatusEvaluation.warnings)
 
   const wsChannels = getWsChannels(input.wsReadyz)
-  for (const channel of REQUIRED_WS_CHANNELS) {
+  const channelsToEvaluate = [
+    ...REQUIRED_WS_CHANNELS,
+    ...OPTIONAL_WS_CHANNELS.filter((channel) => wsChannels.has(channel)),
+  ]
+  for (const channel of channelsToEvaluate) {
     const status = wsChannels.get(channel)
     const ready = status?.ready === true
     const subscribed = asNumber(status?.subscribed_symbol_count) ?? 0
