@@ -208,6 +208,8 @@ jobs:
             --tengri-digest '${{ steps.release.outputs.tengri_digest }}' \
             --nanoagent-digest '${{ steps.release.outputs.nanoagent_digest }}'
           bun packages/scripts/src/tengri/validate-release.ts
+          nix develop -c kustomize build argocd/applications/tengri \
+            | bun packages/scripts/src/tengri/validate-rendered-release.ts
 
       - name: Revalidate current main before opening promotion
         id: final-release
@@ -240,6 +242,8 @@ jobs:
             --tengri-digest '${{ steps.release.outputs.tengri_digest }}' \
             --nanoagent-digest '${{ steps.release.outputs.nanoagent_digest }}'
           bun packages/scripts/src/tengri/validate-release.ts
+          nix develop -c kustomize build argocd/applications/tengri \
+            | bun packages/scripts/src/tengri/validate-rendered-release.ts
 
       - name: Create release pull request
         uses: peter-evans/create-pull-request@v7

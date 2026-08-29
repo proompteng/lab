@@ -1038,6 +1038,45 @@ function assertTengriDeploymentImage(contents: string) {
   }
 }
 
+export function assertRenderedTengriWorkload(contents: string, release: Pick<TengriRelease, 'tengriDigest'>) {
+  const documents = YAML.parseAllDocuments(contents)
+  const parseError = documents.flatMap((document) => document.errors).at(0)
+  if (parseError) {
+    throw new Error(`Rendered Tengri manifests are not valid YAML: ${parseError.message}`)
+  }
+  const resources = documents.map((document) => document.toJSON()).filter(isPlainRecord)
+  const deployments = resources.filter(
+    (resource) =>
+      resource.kind === 'Deployment' && isPlainRecord(resource.metadata) && resource.metadata.name === 'tengri',
+  )
+  if (deployments.length !== 1) {
+    throw new Error(`Rendered Tengri manifests must contain exactly one Deployment/tengri, found ${deployments.length}`)
+  }
+  const deployment = deployments[0]
+  if (deployment.apiVersion !== 'apps/v1') {
+    throw new Error('Rendered Deployment/tengri must use apps/v1')
+  }
+  const spec = deployment.spec
+  const template = isPlainRecord(spec) ? spec.template : undefined
+  const podSpec = isPlainRecord(template) ? template.spec : undefined
+  const containers = isPlainRecord(podSpec) && Array.isArray(podSpec.containers) ? podSpec.containers : []
+  const tengriContainers = containers.filter(
+    (container) => isPlainRecord(container) && container.name === 'tengri',
+  ) as Record<string, unknown>[]
+  if (tengriContainers.length !== 1) {
+    throw new Error(
+      `Rendered Deployment/tengri must contain exactly one tengri container, found ${tengriContainers.length}`,
+    )
+  }
+  const expectedImage = `${TENGRI_IMAGE}@${release.tengriDigest}`
+  const actualImage = tengriContainers[0]?.image
+  if (actualImage !== expectedImage) {
+    throw new Error(
+      `Rendered Deployment/tengri image must be ${expectedImage}, got ${typeof actualImage === 'string' ? actualImage : 'missing or invalid'}`,
+    )
+  }
+}
+
 export function readTengriRelease(paths: TengriReleasePaths = {}): TengriRelease {
   const kustomizationPath = absolutePath(paths.kustomizationPath ?? defaultKustomizationPath)
   const rootApplicationPath = absolutePath(paths.rootApplicationPath ?? defaultRootApplicationPath)

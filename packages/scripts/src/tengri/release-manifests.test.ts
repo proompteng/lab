@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  assertRenderedTengriWorkload,
   readTengriRelease,
   TENGRI_APPLICATION_TEMPLATE_PATCH,
   TENGRI_GRPC_ENDPOINT,
@@ -199,6 +200,57 @@ describe('Tengri release manifests', () => {
     expect(readFileSync(paths.applicationSetPath, 'utf8')).toContain('enabled: "true"')
     expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toContain(TENGRI_GRPC_ENDPOINT)
     rmSync(paths.directory, { recursive: true, force: true })
+  })
+
+  it('accepts exactly one rendered Deployment with the promoted Tengri image', () => {
+    expect(() =>
+      assertRenderedTengriWorkload(
+        `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tengri
+spec:
+  template:
+    spec:
+      containers:
+        - name: tengri
+          image: registry.ide-newton.ts.net/lab/tengri@${tengriDigest}
+`,
+        { tengriDigest },
+      ),
+    ).not.toThrow()
+  })
+
+  it('rejects a missing, duplicate, malformed, or incorrectly pinned rendered Tengri Deployment', () => {
+    const validDeployment = `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tengri
+spec:
+  template:
+    spec:
+      containers:
+        - name: tengri
+          image: registry.ide-newton.ts.net/lab/tengri@${tengriDigest}
+`
+    const failures = [
+      ['', 'exactly one Deployment/tengri, found 0'],
+      [`${validDeployment}\n---\n${validDeployment}`, 'exactly one Deployment/tengri, found 2'],
+      [validDeployment.replace('apps/v1', 'apps/v1beta1'), 'must use apps/v1'],
+      [
+        validDeployment.replace('name: tengri\n          image:', 'name: other\n          image:'),
+        'tengri container, found 0',
+      ],
+      [
+        validDeployment.replace(tengriDigest, nanoagentDigest),
+        `image must be registry.ide-newton.ts.net/lab/tengri@${tengriDigest}`,
+      ],
+      ['apiVersion: [', 'not valid YAML'],
+    ] as const
+
+    for (const [rendered, message] of failures) {
+      expect(() => assertRenderedTengriWorkload(rendered, { tengriDigest })).toThrow(message)
+    }
   })
 
   it('updates only the proompteng container endpoint', () => {
