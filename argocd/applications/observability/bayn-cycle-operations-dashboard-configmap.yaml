@@ -1302,11 +1302,11 @@ data:
             "type": "prometheus",
             "uid": "prom"
           },
-          "description": "Buying power from the latest durable broker account snapshot.",
+          "description": "Buying power from the latest durable broker account snapshot. Hidden when that snapshot is stale.",
           "fieldConfig": {
             "defaults": {
               "decimals": 2,
-              "noValue": "NO SNAPSHOT",
+              "noValue": "STALE / NO SNAPSHOT",
               "unit": "currencyUSD"
             },
             "overrides": []
@@ -1335,7 +1335,7 @@ data:
           },
           "targets": [
             {
-              "expr": "max(bayn_broker_account_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",kind=\"buying_power\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "expr": "max(bayn_broker_account_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",kind=\"buying_power\"} and on(instance) ((time() - bayn_broker_account_observed_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) <= on(instance) bayn_reconciliation_stale_threshold_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "buying power",
               "range": false,
