@@ -10,6 +10,7 @@ type StreamSource<Value> = {
   on(event: 'data', listener: (value: Value) => void): unknown
   on(event: 'end', listener: () => void): unknown
   on(event: 'error', listener: (error: Error) => void): unknown
+  once(event: 'error', listener: (error: Error) => void): unknown
   pause(): void
   resume(): void
 }
@@ -59,7 +60,14 @@ export function createTengriEventStream<Value>(
           source.off('data', onData)
           source.off('end', onEnd)
           source.off('error', onError)
-          if (cancelSource) source.cancel()
+          if (cancelSource) {
+            source.once('error', onCancelledSourceError)
+            try {
+              source.cancel()
+            } catch {
+              source.off('error', onCancelledSourceError)
+            }
+          }
         } finally {
           onDispose?.()
         }
@@ -91,6 +99,9 @@ export function createTengriEventStream<Value>(
       const onError = () => {
         if (!disposeSource(false)) return
         controller.error(new Error('Tengri event stream ended unexpectedly'))
+      }
+      const onCancelledSourceError = () => {
+        // grpc-js emits CANCELLED after cancel(). Keep one terminal listener until that expected error arrives.
       }
 
       source.on('data', onData)
