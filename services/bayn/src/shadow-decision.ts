@@ -660,6 +660,14 @@ const reduceShadowDelta = (
     ...accumulator.deltaRisk,
     {
       notionalLimitMicros: provided.notionalLimitMicros,
+      ...(context.authority === Authority.Execution
+        ? {
+            facts: {
+              state: state.success,
+              proposedPositions: accumulator.projectedPositions,
+            },
+          }
+        : {}),
       evaluation: evaluation.success,
     },
   ]
@@ -963,6 +971,7 @@ const assembleExecutionDecisionDocument = (
       strategyDecision: input.compiledDecision,
       ...(input.decisionMarketDataRows === undefined ? {} : { decisionMarketDataRows: input.decisionMarketDataRows }),
       plannerInput: input.plannerInput,
+      riskPolicy: input.policy,
       targetPlan: input.targetPlan,
       deltaRisk: reduction.deltaRisk,
       orderedIntentIds: reduction.deltaRisk.map((risk) => risk.evaluation.input.intentId),

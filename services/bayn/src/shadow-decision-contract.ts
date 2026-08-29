@@ -3,11 +3,15 @@ import { Data, Result, Schema } from 'effect'
 import { quantizeAlpacaLimitPriceMicros } from './broker/alpaca-price'
 import { makeExecutionCalendarObservation } from './cycle'
 import { numberToMicros } from './execution-model'
-import { intentIdForPlan, executionIntentIdForDecodedPlan } from './execution/intents/domain'
+import {
+  executionIntentIdForDecodedPlan,
+  intentIdForPlan,
+  makeExecutionIntentFromDecodedPlan,
+} from './execution/intents/domain'
 import { ExecutionSessionBindingSchema } from './execution-session'
 import { canonicalHashV1Result, sha256 } from './hash'
 import { verifyIntradaySnapshot } from './market-data/intraday/verification'
-import { OrderSide, PositiveMicrosSchema, RiskOutcome } from './execution/contracts'
+import { OrderSide, PositionSchema, PositiveMicrosSchema, RiskOutcome } from './execution/contracts'
 import {
   legacyCycleDecisionSchemaVersion,
   legacyExecutionAuthorityToken,
@@ -15,7 +19,7 @@ import {
   legacyObserveAuthorityToken,
 } from './execution/legacy-wire'
 import { reconciledStateHash } from './reconciliation'
-import { EvaluationSchema, Reason, isAuthorityNotGrantedReason } from './risk'
+import { EvaluationSchema, PolicySchema, Reason, StateSchema, evaluate, isAuthorityNotGrantedReason } from './risk'
 import {
   IsoDateSchema,
   NonNegativeIntegerSchema,
@@ -303,6 +307,12 @@ export type ShadowDecisionBindings = typeof ShadowDecisionBindingsSchema.Type
 
 const DeltaRiskEvaluationSchema = Schema.Struct({
   notionalLimitMicros: PositiveMicrosSchema,
+  facts: Schema.optionalKey(
+    Schema.Struct({
+      state: StateSchema,
+      proposedPositions: Schema.Array(PositionSchema),
+    }),
+  ),
   evaluation: EvaluationSchema,
 })
 export type DeltaRiskEvaluation = typeof DeltaRiskEvaluationSchema.Type
@@ -450,6 +460,8 @@ const ExecutionDecisionMaterialSchema = Schema.Struct({
   decisionMarketDataRows: Schema.optionalKey(PersistedIntradaySnapshotRowsSchema),
   /** Persist validated planner facts so durable decoding can reproduce every quantity and reference price. */
   plannerInput: Schema.optionalKey(TargetPlannerInputSchema),
+  /** Persist the exact risk policy so durable decoding can reproduce every gate and derived metric. */
+  riskPolicy: Schema.optionalKey(PolicySchema),
   targetPlan: TargetPlanResultSchema,
   deltaRisk: Schema.Array(DeltaRiskEvaluationSchema),
   orderedIntentIds: Schema.Array(Sha256Schema),
@@ -851,8 +863,18 @@ const executionMaterialIssues = (
   document: typeof ExecutionDecisionMaterialSchema.Type,
 ): readonly Schema.FilterIssue[] => {
   const issues: Schema.FilterIssue[] = []
+  const planned = document.targetPlan.status === TargetPlanStatus.Planned
+  const requiresDurableRiskFacts = document.bindings.strategyName === 'intraday-momentum' && planned
   if (document.expiresAt !== document.submissionCutoffAt) {
     issues.push({ path: ['expiresAt'], issue: 'must equal the immutable cycle submission cutoff' })
+  }
+  if (document.riskPolicy !== undefined) {
+    const riskPolicyHash = canonicalHashV1Result(document.riskPolicy)
+    if (Result.isFailure(riskPolicyHash) || riskPolicyHash.success !== document.bindings.policyHash) {
+      issues.push({ path: ['riskPolicy'], issue: 'must match the exact policy hash in the execution bindings' })
+    }
+  } else if (requiresDurableRiskFacts) {
+    issues.push({ path: ['riskPolicy'], issue: 'intraday execution requires its complete durable risk policy' })
   }
   if (document.createdAt >= document.expiresAt) {
     issues.push({ path: ['createdAt'], issue: 'must precede execution authority expiry' })
@@ -1065,7 +1087,6 @@ const executionMaterialIssues = (
     }
   }
   const targets = document.targetPlan.intentTargets
-  const planned = document.targetPlan.status === TargetPlanStatus.Planned
   const riskBlocked = document.riskBlock !== undefined
   const riskCount = document.deltaRisk.length
   if (
@@ -1117,6 +1138,71 @@ const executionMaterialIssues = (
     }
     if (risk.evaluation.input.intentId !== document.orderedIntentIds[index]) {
       issues.push({ path: ['deltaRisk', index], issue: 'must bind the corresponding ordered intent identity' })
+    }
+    if (requiresDurableRiskFacts) {
+      const facts = risk.facts
+      const policy = document.riskPolicy
+      const executionIntent = makeExecutionIntentFromDecodedPlan(plan, document.bindings.authorityGenerationHash)
+      const reproduced =
+        facts === undefined || policy === undefined || Result.isFailure(executionIntent)
+          ? undefined
+          : evaluate({
+              intent: executionIntent.success,
+              state: facts.state,
+              policy,
+              proposedPositions: facts.proposedPositions,
+            })
+      const reproducedHash =
+        reproduced === undefined || Result.isFailure(reproduced) ? undefined : canonicalHashV1Result(reproduced.success)
+      const recordedHash = canonicalHashV1Result(risk.evaluation)
+      if (
+        facts === undefined ||
+        policy === undefined ||
+        Result.isFailure(executionIntent) ||
+        reproduced === undefined ||
+        Result.isFailure(reproduced) ||
+        reproducedHash === undefined ||
+        Result.isFailure(reproducedHash) ||
+        Result.isFailure(recordedHash) ||
+        reproducedHash.success !== recordedHash.success
+      ) {
+        issues.push({
+          path: ['deltaRisk', index, 'facts'],
+          issue: 'must reproduce the exact persisted risk gates, metrics, decision, and input hashes',
+        })
+      } else {
+        const brokerStateHash = reconciledStateHash({
+          account: facts.state.account,
+          positions: facts.state.positions,
+          positionsObservedAt: facts.state.positionsObservedAt,
+          orders: facts.state.orders,
+          ordersObservedAt: facts.state.ordersObservedAt,
+          accountingHash: facts.state.accountingHash,
+        })
+        const expectedMarketDataHash = executionMarketData?.contentHash ?? document.bindings.snapshotContentHash
+        const previousEvaluation = document.deltaRisk[index - 1]?.evaluation
+        if (
+          Result.isFailure(brokerStateHash) ||
+          brokerStateHash.success !== document.bindings.planningBrokerStateHash ||
+          facts.state.reconciliation.reconciliationId !== document.bindings.reconciliationId ||
+          facts.state.reconciliation.contentHash !== document.bindings.reconciliationHash ||
+          facts.state.evaluatedAt !== document.createdAt ||
+          facts.state.authority.generationHash !== document.bindings.authorityGenerationHash ||
+          facts.state.marketDataSymbol !== target.symbol ||
+          facts.state.marketDataHash !== expectedMarketDataHash ||
+          facts.state.executionMarketDataHash !== executionMarketData?.contentHash ||
+          facts.state.referencePriceMicros !==
+            document.targetPlan.targets.find(({ symbol }) => symbol === target.symbol)?.referencePriceMicros ||
+          (previousEvaluation !== undefined &&
+            (facts.state.reservedBuyingPowerMicros !== previousEvaluation.metrics.aggregateBuyingPowerMicros ||
+              facts.state.dailyTradedNotionalMicros !== previousEvaluation.metrics.dailyTradedNotionalMicros))
+        ) {
+          issues.push({
+            path: ['deltaRisk', index, 'facts'],
+            issue: 'must match the exact planner, authority, market-data, reconciliation, and cumulative risk facts',
+          })
+        }
+      }
     }
     const notional = BigInt(risk.notionalLimitMicros)
     const previousRisk = document.deltaRisk[index - 1]

@@ -1175,6 +1175,77 @@ const makeIntradayMomentumInput = (
   }
 }
 
+const makeIntradayExecutionFixture = (
+  selectedSymbol: string,
+  equityFacts: Readonly<Pick<State, 'dayStartEquityMicros' | 'peakEquityMicros'>> = {
+    dayStartEquityMicros: '1000000000',
+    peakEquityMicros: '1000000000',
+  },
+) => {
+  const input = makeIntradayMomentumInput(undefined, selectedSymbol)
+  const executionMarketData = input.executionMarketData
+  if (executionMarketData?.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
+    throw new Error('intraday execution fixture must include archive execution market data v2')
+  }
+  if (input.targetPlan.status !== TargetPlanStatus.Planned) {
+    throw new Error('intraday execution fixture must produce a planned target')
+  }
+  const executionSession = bindExecutionSessionSuccess({
+    executionSessionDate: executionDate,
+    planningBrokerState: {
+      observedAt: brokerObservedAt,
+      contentHash: input.plannerInput.brokerState.reconciliation.observedHash,
+    },
+    calendar: executionMarketData.calendar,
+    executionModel: intradayMomentumExecutionModel,
+  })
+  const riskInputs: ShadowDeltaRiskInput[] = input.targetPlan.intentTargets.map((target) => {
+    const plannedTarget = input.targetPlan.targets.find(({ symbol }) => symbol === target.symbol)
+    if (plannedTarget === undefined) throw new Error(`intraday execution fixture is missing ${target.symbol}`)
+    return {
+      symbol: target.symbol,
+      notionalLimitMicros: (
+        (BigInt(target.quantityMicros) * BigInt(plannedTarget.referencePriceMicros)) /
+        1_000_000n
+      ).toString(),
+      state: decodeState({
+        schemaVersion: 'bayn.paper-risk-state.v2',
+        brokerMode: BrokerMode.Execution,
+        account: input.plannerInput.brokerState.account,
+        positions: input.plannerInput.brokerState.positions,
+        positionsObservedAt: input.plannerInput.brokerState.positionsObservedAt,
+        orders: input.plannerInput.brokerState.orders,
+        ordersObservedAt: input.plannerInput.brokerState.ordersObservedAt,
+        reconciliation: input.plannerInput.brokerState.reconciliation,
+        authority: {
+          schemaVersion: 'bayn.paper-authority.v1',
+          generationHash: hash('6'),
+          maximum: Authority.Execution,
+          effective: Authority.Execution,
+          kill: KillState.Clear,
+          version: 1,
+          updatedAt: brokerObservedAt,
+        },
+        authorityObservedAt: brokerObservedAt,
+        unknownMutationCount: 0,
+        dailyTradedNotionalMicros: '0',
+        ...equityFacts,
+        accountingHash,
+        marketDataSymbol: target.symbol,
+        marketDataHash: executionMarketData.contentHash,
+        executionMarketDataHash: executionMarketData.contentHash,
+        referencePriceMicros: plannedTarget.referencePriceMicros,
+        expectedExecutionPriceMicros: plannedTarget.referencePriceMicros,
+        marketDataObservedAt: executionMarketData.observedAt,
+        executionSession,
+        reservedBuyingPowerMicros: '0',
+        evaluatedAt: input.plannerInput.observedAt,
+      }),
+    }
+  })
+  return { input, executionSession, riskInputs }
+}
+
 const build = (input: ObserveShadowDecisionInput): Promise<ObserveShadowDecisionDocument> =>
   Effect.runPromise(buildObserveShadowDecision(input))
 
@@ -2048,6 +2119,60 @@ describe('OBSERVE shadow decision', () => {
     expect(Result.isFailure(forged)).toBe(true)
     if (Result.isFailure(forged)) {
       expect(String(forged.failure.cause)).toContain('retain every persisted strategy weight')
+    }
+  })
+
+  test('reproduces complete durable risk facts before admitting a rehashed execution approval', async () => {
+    const selectedSymbol = defaultIntradayMomentumProtocolDocument.universe[0]
+    if (selectedSymbol === undefined) throw new Error('intraday execution fixture requires a non-empty universe')
+    const { input, executionSession, riskInputs } = makeIntradayExecutionFixture(selectedSymbol, {
+      dayStartEquityMicros: '1200000000',
+      peakEquityMicros: '1000000000',
+    })
+    const document = await Effect.runPromise(
+      buildExecutionDecision({
+        ...input,
+        riskInputs,
+        authorityGenerationHash: hash('6'),
+        executionSession,
+      }),
+    )
+
+    expect(document.riskPolicy).toEqual(input.policy)
+    expect(document.deltaRisk.every(({ facts }) => facts !== undefined)).toBe(true)
+    expect(document.riskBlock?.reasonCodes).toContain(Reason.DailyLossExceeded)
+    expect(document.dispatchable).toBe(false)
+
+    const forgedDeltaRisk = document.deltaRisk.map((risk) => {
+      const forgedGates = risk.evaluation.gates.map((gate) => ({ ...gate, passed: true }))
+      const { decisionId: _decisionId, ...decisionMaterial } = risk.evaluation.decision
+      const approvedDecisionMaterial = {
+        ...decisionMaterial,
+        outcome: RiskOutcome.Approved,
+        reasonCodes: [],
+      }
+      return {
+        ...risk,
+        evaluation: {
+          ...risk.evaluation,
+          gates: forgedGates,
+          decision: {
+            ...approvedDecisionMaterial,
+            decisionId: canonicalHashV1(approvedDecisionMaterial),
+          },
+        },
+      }
+    })
+    const { contentHash: _contentHash, riskBlock: _riskBlock, ...material } = document
+    const forged = makeExecutionDecisionDocument({
+      ...material,
+      dispatchable: true,
+      deltaRisk: forgedDeltaRisk,
+    })
+
+    expect(Result.isFailure(forged)).toBe(true)
+    if (Result.isFailure(forged)) {
+      expect(String(forged.failure.cause)).toContain('must reproduce the exact persisted risk gates')
     }
   })
 
