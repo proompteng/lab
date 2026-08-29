@@ -10,8 +10,14 @@ export default Effect.gen(function* () {
   `
 
   yield* sql`
+    CREATE INDEX position_snapshots_account_ingestion_sequence_idx
+    ON position_snapshots (account_id, ingestion_sequence DESC)
+    WHERE ingestion_order_trusted
+  `
+
+  yield* sql`
     CREATE INDEX broker_events_account_snapshot_order_idx
-    ON broker_events (account_id, observed_at DESC, source_sequence DESC, event_id DESC)
+    ON broker_events (account_id, source_sequence DESC, observed_at DESC, event_id DESC)
     WHERE event_kind = 'ACCOUNT'
   `
 

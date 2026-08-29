@@ -517,16 +517,33 @@ const makeCycleObservability = Effect.gen(function* () {
               ON intents.intent_id = fills.intent_id
               AND intents.account_id = fills.account_id
           ),
-          latest_account_snapshot AS (
-            SELECT snapshot.*, events.observed_at
+          latest_account_snapshot_candidate AS (
+            SELECT snapshot.*, events.observed_at, events.source_sequence
             FROM account_snapshots AS snapshot
             JOIN broker_events AS events ON events.event_id = snapshot.event_id
             WHERE snapshot.account_id = (SELECT account_id FROM selected_account)
               AND events.account_id = (SELECT account_id FROM selected_account)
               AND events.event_kind = 'ACCOUNT'
               AND events.observed_at <= CURRENT_TIMESTAMP
-            ORDER BY events.observed_at DESC, events.source_sequence DESC, snapshot.event_id DESC
+            ORDER BY events.source_sequence DESC, events.observed_at DESC, snapshot.event_id DESC
             LIMIT 1
+          ),
+          account_snapshot_clock_regressed AS (
+            SELECT EXISTS (
+              SELECT 1
+              FROM broker_events AS previous
+              JOIN latest_account_snapshot_candidate AS latest
+                ON previous.account_id = latest.account_id
+              WHERE previous.event_kind = 'ACCOUNT'
+                AND previous.source_sequence < latest.source_sequence
+                AND previous.observed_at <= CURRENT_TIMESTAMP
+                AND previous.observed_at > latest.observed_at
+            ) AS regressed
+          ),
+          latest_account_snapshot AS (
+            SELECT snapshot.*
+            FROM latest_account_snapshot_candidate AS snapshot
+            WHERE NOT (SELECT regressed FROM account_snapshot_clock_regressed)
           ),
           latest_trusted_position_snapshot AS (
             SELECT snapshot.*
@@ -536,6 +553,20 @@ const makeCycleObservability = Effect.gen(function* () {
               AND snapshot.observed_at <= CURRENT_TIMESTAMP
             ORDER BY snapshot.ingestion_sequence DESC
             LIMIT 1
+          ),
+          latest_legacy_position_snapshot_time AS (
+            SELECT max(snapshot.observed_at) AS observed_at
+            FROM position_snapshots AS snapshot
+            WHERE snapshot.account_id = (SELECT account_id FROM selected_account)
+              AND NOT snapshot.ingestion_order_trusted
+              AND snapshot.observed_at <= CURRENT_TIMESTAMP
+          ),
+          latest_legacy_position_snapshot_candidates AS (
+            SELECT snapshot.*
+            FROM position_snapshots AS snapshot
+            JOIN latest_legacy_position_snapshot_time AS latest ON latest.observed_at = snapshot.observed_at
+            WHERE snapshot.account_id = (SELECT account_id FROM selected_account)
+              AND NOT snapshot.ingestion_order_trusted
           ),
           trusted_position_snapshot_clock_regressed AS (
             SELECT EXISTS (
@@ -547,22 +578,12 @@ const makeCycleObservability = Effect.gen(function* () {
                 AND previous.ingestion_sequence < latest.ingestion_sequence
                 AND previous.observed_at <= CURRENT_TIMESTAMP
                 AND previous.observed_at > latest.observed_at
+              UNION ALL
+              SELECT 1
+              FROM latest_legacy_position_snapshot_time AS legacy
+              JOIN latest_trusted_position_snapshot AS latest
+                ON legacy.observed_at > latest.observed_at
             ) AS regressed
-          ),
-          latest_legacy_position_snapshot_time AS (
-            SELECT max(snapshot.observed_at) AS observed_at
-            FROM position_snapshots AS snapshot
-            WHERE snapshot.account_id = (SELECT account_id FROM selected_account)
-              AND NOT snapshot.ingestion_order_trusted
-              AND snapshot.observed_at <= CURRENT_TIMESTAMP
-              AND NOT EXISTS (SELECT 1 FROM latest_trusted_position_snapshot)
-          ),
-          latest_legacy_position_snapshot_candidates AS (
-            SELECT snapshot.*
-            FROM position_snapshots AS snapshot
-            JOIN latest_legacy_position_snapshot_time AS latest ON latest.observed_at = snapshot.observed_at
-            WHERE snapshot.account_id = (SELECT account_id FROM selected_account)
-              AND NOT snapshot.ingestion_order_trusted
           ),
           latest_position_snapshot AS (
             SELECT snapshot.*
@@ -571,7 +592,8 @@ const makeCycleObservability = Effect.gen(function* () {
             UNION ALL
             SELECT snapshot.*
             FROM latest_legacy_position_snapshot_candidates AS snapshot
-            WHERE (SELECT count(*) FROM latest_legacy_position_snapshot_candidates) = 1
+            WHERE NOT EXISTS (SELECT 1 FROM latest_trusted_position_snapshot)
+              AND (SELECT count(*) FROM latest_legacy_position_snapshot_candidates) = 1
           ),
           current_positions AS (
             SELECT position.*

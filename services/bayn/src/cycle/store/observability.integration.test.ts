@@ -1144,6 +1144,56 @@ describePostgres('PostgreSQL cycle observability projection', () => {
     })
   })
 
+  test('fails closed when a newer account snapshot regresses its observation clock', async () => {
+    const projection = await runtime.runPromise(
+      Effect.gen(function* () {
+        const observability = yield* CycleObservability
+        const sql = yield* PgClient.PgClient
+        yield* seedSafetyState()
+
+        const insertAccountSnapshot = (
+          eventId: string,
+          sourceSequence: number,
+          observedAt: string,
+          cashMicros: string,
+        ) =>
+          sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`
+                INSERT INTO broker_events (
+                  event_id, schema_version, content_hash, event_kind, broker, account_id,
+                  source_event_id, source_sequence, occurred_at, observed_at
+                ) VALUES (
+                  ${eventId}, 'bayn.paper-broker-event.v1', ${eventId}, 'ACCOUNT', 'ALPACA',
+                  ${accountId}, ${`account-${sourceSequence}`}, ${sourceSequence}, ${observedAt}, ${observedAt}
+                )
+              `
+              yield* sql`
+                INSERT INTO account_snapshots (
+                  event_id, account_id, schema_version, status, currency,
+                  cash_micros, equity_micros, buying_power_micros
+                ) VALUES (
+                  ${eventId}, ${accountId}, 'bayn.paper-account-snapshot.v1', 'ACTIVE', 'USD',
+                  ${cashMicros}, ${cashMicros}, ${cashMicros}
+                )
+              `
+            }),
+          )
+
+        yield* insertAccountSnapshot('e'.repeat(64), 1, '2026-03-06T21:00:02.000Z', '1000000')
+        yield* insertAccountSnapshot('d'.repeat(64), 2, '2026-03-06T21:00:01.000Z', '2000000')
+        return yield* observability.read(qualificationRunId, accountId)
+      }),
+    )
+
+    expect(projection.execution).toMatchObject({
+      accountObservedAt: null,
+      cashMicros: null,
+      equityMicros: null,
+      buyingPowerMicros: null,
+    })
+  })
+
   test('uses durable ingestion ordering to break tied position-snapshot timestamps', async () => {
     const projection = await runtime.runPromise(
       Effect.gen(function* () {
@@ -1193,6 +1243,39 @@ describePostgres('PostgreSQL cycle observability projection', () => {
             (
               ${'0'.repeat(64)}, 'bayn.paper-position-snapshot.v1', ${accountId}, ${'5'.repeat(64)},
               '2026-03-06T21:00:01.000Z', 0, ${'6'.repeat(64)}
+            )
+        `
+        return yield* observability.read(qualificationRunId, accountId)
+      }),
+    )
+
+    expect(projection.execution).toMatchObject({
+      positionSnapshotObservedAt: null,
+      positionCount: null,
+      grossExposureMicros: null,
+      netExposureMicros: null,
+      unrealizedPnlMicros: null,
+    })
+  })
+
+  test('fails closed when the first trusted position snapshot regresses the legacy clock', async () => {
+    const projection = await runtime.runPromise(
+      Effect.gen(function* () {
+        const observability = yield* CycleObservability
+        const sql = yield* PgClient.PgClient
+        yield* seedSafetyState()
+        yield* sql`
+          INSERT INTO position_snapshots (
+            snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash,
+            ingestion_order_trusted
+          ) VALUES
+            (
+              ${'e'.repeat(64)}, 'bayn.paper-position-snapshot.v1', ${accountId}, ${'3'.repeat(64)},
+              '2026-03-06T21:00:02.000Z', 1, ${'4'.repeat(64)}, false
+            ),
+            (
+              ${'d'.repeat(64)}, 'bayn.paper-position-snapshot.v1', ${accountId}, ${'5'.repeat(64)},
+              '2026-03-06T21:00:01.000Z', 0, ${'6'.repeat(64)}, true
             )
         `
         return yield* observability.read(qualificationRunId, accountId)
@@ -1311,6 +1394,28 @@ describePostgres('PostgreSQL cycle observability projection', () => {
       { snapshot_id: 'legacy-b', ingestion_sequence: '2', ingestion_order_trusted: false },
       { snapshot_id: 'current', ingestion_sequence: '3', ingestion_order_trusted: true },
     ])
+  })
+
+  test('indexes recurring account snapshot lookups by their durable sequence', async () => {
+    const indexes = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        return yield* sql<{ indexname: string; indexdef: string }>`
+          SELECT indexname, indexdef
+          FROM pg_indexes
+          WHERE schemaname = 'public'
+            AND indexname IN (
+              'position_snapshots_account_ingestion_sequence_idx',
+              'broker_events_account_snapshot_order_idx'
+            )
+          ORDER BY indexname
+        `
+      }),
+    )
+
+    expect(indexes).toHaveLength(2)
+    expect(indexes[0]?.indexdef).toContain('(account_id, source_sequence DESC, observed_at DESC, event_id DESC)')
+    expect(indexes[1]?.indexdef).toContain('(account_id, ingestion_sequence DESC)')
   })
 
   test('rejects ambiguous historical position-snapshot timestamp ties', async () => {
