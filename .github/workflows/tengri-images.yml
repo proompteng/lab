@@ -94,6 +94,8 @@ jobs:
           CGO_ENABLED: '1'
         run: |
           set -euo pipefail
+          bash -n bootstrap-codex.sh
+          bash bootstrap-codex.sh --validate-manifest
           test -z "$(gofmt -l .)"
           GOWORK=off go test -race ./...
           GOWORK=off go vet ./...
