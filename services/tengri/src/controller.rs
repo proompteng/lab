@@ -619,9 +619,14 @@ fn derive_status(
 ) -> MicroVMStatus {
     let pod_status = pod.status.as_ref();
     let ready = pod_is_ready(pod);
-    let failed = pod_status
-        .and_then(|status| status.container_statuses.as_ref())
-        .and_then(|statuses| statuses.iter().find_map(container_failure));
+    let failed = pod_status.and_then(|status| {
+        status
+            .init_container_statuses
+            .iter()
+            .flatten()
+            .chain(status.container_statuses.iter().flatten())
+            .find_map(container_failure)
+    });
     let scheduling_failure = pod_status
         .and_then(|status| status.conditions.as_ref())
         .and_then(|conditions| {
@@ -786,10 +791,12 @@ fn container_failure(status: &ContainerStatus) -> Option<(String, String)> {
             .reason
             .clone()
             .unwrap_or_else(|| "GuestExited".to_owned());
-        let message = terminated
-            .message
-            .clone()
-            .unwrap_or_else(|| format!("Nanoagent exited with code {}", terminated.exit_code));
+        let message = terminated.message.clone().unwrap_or_else(|| {
+            format!(
+                "Container {} exited with code {}",
+                status.name, terminated.exit_code
+            )
+        });
         return Some((reason, message));
     }
     None
@@ -801,7 +808,7 @@ mod tests {
     use crate::crd::{IDLE_MINUTES, MicroVMArchitecture, MicroVMResources, MicroVMSpec};
     use http::{Request, Response, StatusCode};
     use k8s_openapi::api::core::v1::{
-        ContainerState, ContainerStateWaiting, PodCondition, PodStatus,
+        ContainerState, ContainerStateTerminated, ContainerStateWaiting, PodCondition, PodStatus,
     };
     use kube::client::Body as KubeBody;
 
@@ -1007,6 +1014,42 @@ mod tests {
         assert_eq!(
             status.message.as_deref(),
             Some("bootstrap Secret is missing")
+        );
+    }
+
+    #[test]
+    fn reports_init_container_failure_precisely() {
+        let now = Utc::now();
+        let pod = Pod {
+            status: Some(PodStatus {
+                phase: Some("Pending".to_owned()),
+                init_container_statuses: Some(vec![ContainerStatus {
+                    name: "prepare-runtime-identity".to_owned(),
+                    image: "registry.example/nanoagent".to_owned(),
+                    image_id: "registry.example/nanoagent@sha256:abc".to_owned(),
+                    ready: false,
+                    restart_count: 1,
+                    state: Some(ContainerState {
+                        terminated: Some(ContainerStateTerminated {
+                            exit_code: 1,
+                            reason: Some("Error".to_owned()),
+                            ..ContainerStateTerminated::default()
+                        }),
+                        ..ContainerState::default()
+                    }),
+                    ..ContainerStatus::default()
+                }]),
+                ..PodStatus::default()
+            }),
+            ..Pod::default()
+        };
+
+        let status = derive_status(&test_microvm(now), &pod, "agent-home", now);
+        assert_eq!(status.phase, MicroVMPhase::Failed);
+        assert_eq!(status.failure_reason.as_deref(), Some("Error"));
+        assert_eq!(
+            status.message.as_deref(),
+            Some("Container prepare-runtime-identity exited with code 1")
         );
     }
 
