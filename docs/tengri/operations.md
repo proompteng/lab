@@ -206,10 +206,12 @@ and the Argo application must be `Synced` and `Healthy`. Finish with the built-i
 `https://proompteng.ai`, require the authenticated desktop to return to `Connected`, and exercise the capability changed
 by the promoted source. Deployment health and an HTTP 200 alone are not sufficient product acceptance.
 
-If the replacement Pod does not become ready or the browser acceptance fails, open a normal follow-up PR that reverts
-the promotion commit or restores the previously proven digest in the same Kustomization. Let CI and Argo perform the
-rollback. Do not patch the live Deployment, delete the SealedSecrets, or change the running microVM while rolling the
-web image back.
+If the replacement Pod does not become ready or the browser acceptance fails, create a normal follow-up PR from the
+latest `main` that restores only the previously proven Proompteng digest in
+`argocd/applications/proompteng/kustomization.yaml`. The PR must leave the `app`, `synthesis`, and `docs` manifests at
+their current digests; never revert a multi-service promotion commit to recover only Proompteng. Verify that the PR
+changes only the Proompteng Kustomization, then let CI and Argo perform the targeted rollback. Do not patch the live
+Deployment, delete the SealedSecrets, or change the running microVM while rolling the web image back.
 
 Do not deploy from a worktree, directly apply rendered manifests, cordon or drain a node, reboot a node, or create a
 permanent canary DaemonSet.
