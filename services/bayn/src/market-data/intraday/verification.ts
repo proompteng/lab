@@ -820,6 +820,21 @@ const eventPayloadKey = (record: IntradayQuote | IntradayTrade): Result.Result<s
       ),
   })
 
+const eventPayloadVariant = <T extends IntradayQuote | IntradayTrade>(
+  record: T,
+  payload: (record: T) => readonly number[],
+): Result.Result<string, IntradaySnapshotFailure> =>
+  Result.try({
+    try: () => JSON.stringify(payload(record)),
+    catch: (cause) =>
+      failure(
+        'rows',
+        'intraday quote or trade payload does not match the archive contract',
+        { symbol: record.symbol },
+        cause,
+      ),
+  })
+
 const payloadVariantCounts = <T extends IntradayQuote | IntradayTrade>(
   records: readonly T[],
   payload: (record: T) => readonly number[],
@@ -835,8 +850,9 @@ const payloadVariantCounts = <T extends IntradayQuote | IntradayTrade>(
     const keys = new Map<T, string>()
     for (const record of records) {
       const key = yield* eventPayloadKey(record)
+      const variant = yield* eventPayloadVariant(record, payload)
       const observed = variants.get(key) ?? new Set<string>()
-      observed.add(JSON.stringify(payload(record)))
+      observed.add(variant)
       variants.set(key, observed)
       keys.set(record, key)
     }
