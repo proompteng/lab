@@ -37,6 +37,8 @@ const RUNTIME_SECRET_POLL_INTERVAL: Duration = Duration::from_secs(15);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    install_rustls_crypto_provider()?;
+
     tracing_subscriber::fmt()
         .json()
         .with_env_filter(
@@ -203,6 +205,16 @@ async fn main() -> anyhow::Result<()> {
     result
 }
 
+fn install_rustls_crypto_provider() -> anyhow::Result<()> {
+    if rustls::crypto::CryptoProvider::get_default().is_some() {
+        return Ok(());
+    }
+
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .map_err(|_| anyhow::anyhow!("install the process-level rustls AWS-LC crypto provider"))
+}
+
 fn task_result(
     name: &str,
     result: Result<anyhow::Result<()>, tokio::task::JoinError>,
@@ -263,5 +275,16 @@ fn parse_architecture(value: &str) -> anyhow::Result<MicroVMArchitecture> {
         _ => Err(anyhow::anyhow!(
             "TENGRI_GUEST_ARCHITECTURE must be amd64 or arm64"
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::install_rustls_crypto_provider;
+
+    #[test]
+    fn installs_process_level_rustls_crypto_provider() {
+        install_rustls_crypto_provider().expect("install rustls provider");
+        assert!(rustls::crypto::CryptoProvider::get_default().is_some());
     }
 }
