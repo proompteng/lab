@@ -24,6 +24,15 @@ export const prepareObserveStartup = (
   input: ObserveAutonomousCycleInput,
 ): Result.Result<ObserveStartupPreparation, OperationalError> => {
   const definition = strategyDefinition(input.strategy)
+  if (definition.name !== 'intraday-momentum' || definition.holdingPeriod !== 'INTRADAY') {
+    return Result.fail(
+      operationalError({
+        component: 'strategy',
+        operation: 'cycle-policy',
+        message: 'autonomous execution requires the active intraday-momentum strategy',
+      }),
+    )
+  }
   const parameterHash = canonicalHashV1Result(definition.parameters)
   if (Result.isFailure(parameterHash)) {
     return Result.fail(
@@ -49,32 +58,26 @@ export const prepareObserveStartup = (
       }),
     )
   }
-  if (definition.name === 'intraday-momentum') {
-    const sourceProtocolHash = canonicalHashV1Result(defaultIntradayMomentumProtocolDocument)
-    if (Result.isFailure(sourceProtocolHash) || sourceProtocolHash.success !== parameterHash.success) {
-      return Result.fail(
-        operationalError({
-          component: 'strategy',
-          operation: 'cycle-policy',
-          message: 'intraday-momentum autonomous execution requires the source-controlled protocol',
-          ...(Result.isFailure(sourceProtocolHash) ? { cause: sourceProtocolHash.failure } : {}),
-        }),
-      )
-    }
+  const sourceProtocolHash = canonicalHashV1Result(defaultIntradayMomentumProtocolDocument)
+  if (Result.isFailure(sourceProtocolHash) || sourceProtocolHash.success !== parameterHash.success) {
+    return Result.fail(
+      operationalError({
+        component: 'strategy',
+        operation: 'cycle-policy',
+        message: 'intraday-momentum autonomous execution requires the source-controlled protocol',
+        ...(Result.isFailure(sourceProtocolHash) ? { cause: sourceProtocolHash.failure } : {}),
+      }),
+    )
   }
   const decodedExecutionModel = decodeStrategyExecutionModel(input.strategy)
   if (Result.isFailure(decodedExecutionModel)) return Result.fail(decodedExecutionModel.failure)
   const executionModel = decodedExecutionModel.success
-  if (
-    executionModel.schemaVersion !== 'bayn.execution-model.v3' &&
-    executionModel.schemaVersion !== 'bayn.execution-model.v4' &&
-    executionModel.schemaVersion !== 'bayn.execution-model.v5'
-  ) {
+  if (executionModel.schemaVersion !== 'bayn.execution-model.v5') {
     return Result.fail(
       operationalError({
         component: 'strategy',
         operation: 'cycle-loop',
-        message: 'autonomous cycles require an account-neutral v3, v4, or v5 execution model',
+        message: 'autonomous intraday cycles require the quote-bound v5 execution model',
       }),
     )
   }
@@ -88,20 +91,28 @@ export const prepareObserveStartup = (
       }),
     ),
     (executionPolicy) =>
-      Result.mapError(makeStrategyProtocolHashResult(input.strategy.provenance.strategy), (cause) =>
-        operationalError({
-          component: 'strategy',
-          operation: 'cycle-policy',
-          message: 'strategy protocol hash construction failed',
-          cause,
-        }),
-      ).pipe(
-        Result.map((strategyProtocolHash) => ({
-          executionModel,
-          executionPolicy,
-          strategyProtocolHash,
-        })),
-      ),
+      executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3'
+        ? Result.fail(
+            operationalError({
+              component: 'strategy',
+              operation: 'cycle-policy',
+              message: 'intraday execution requires the session-relative v3 cycle policy',
+            }),
+          )
+        : Result.mapError(makeStrategyProtocolHashResult(input.strategy.provenance.strategy), (cause) =>
+            operationalError({
+              component: 'strategy',
+              operation: 'cycle-policy',
+              message: 'strategy protocol hash construction failed',
+              cause,
+            }),
+          ).pipe(
+            Result.map((strategyProtocolHash) => ({
+              executionModel,
+              executionPolicy,
+              strategyProtocolHash,
+            })),
+          ),
   )
 }
 

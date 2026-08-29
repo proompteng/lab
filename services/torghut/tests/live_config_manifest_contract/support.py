@@ -30,6 +30,24 @@ _RESEARCHED_CHIP_TECH_UNIVERSE = (
 )
 _LIVE_EXECUTION_CHIP_TECH_UNIVERSE = _RESEARCHED_CHIP_TECH_UNIVERSE
 _QUOTE_COVERED_PAPER_STRATEGY_UNIVERSE = _LIVE_EXECUTION_CHIP_TECH_UNIVERSE
+_WEBSOCKET_SUBSCRIPTION_UNIVERSE = (
+    "AAPL",
+    "AMD",
+    "AMZN",
+    "AVGO",
+    "COHR",
+    "CRDO",
+    "IWM",
+    "LITE",
+    "MRVL",
+    "MU",
+    "NVDA",
+    "QQQ",
+    "SMH",
+    "SNDK",
+    "SPY",
+    "WDC",
+)
 _CHIP_UNIVERSE_SYMBOLS = set(_RESEARCHED_CHIP_TECH_UNIVERSE)
 _LIVE_EXECUTION_CHIP_UNIVERSE_SYMBOLS = set(_LIVE_EXECUTION_CHIP_TECH_UNIVERSE)
 
@@ -319,6 +337,23 @@ def _assert_exact_quote_covered_paper_strategy_universe(
     )
 
 
+def _assert_exact_websocket_subscription_universe(
+    test_case: TestCase, symbols: Iterable[object], *, context: str
+) -> None:
+    normalized = [
+        str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()
+    ]
+    test_case.assertEqual(
+        tuple(normalized),
+        _WEBSOCKET_SUBSCRIPTION_UNIVERSE,
+        f"{context} does not match the exact shared market-data subscription universe",
+    )
+    test_case.assertTrue(
+        set(_QUOTE_COVERED_PAPER_STRATEGY_UNIVERSE).issubset(normalized),
+        f"{context} does not cover the executable strategy universe",
+    )
+
+
 class _TestLiveConfigManifestContractBase(TestCase):
     pass
 
@@ -343,6 +378,7 @@ __all__: tuple[str, ...] = (
     "_assert_exact_chip_tech_universe",
     "_assert_exact_live_execution_chip_universe",
     "_assert_exact_quote_covered_paper_strategy_universe",
+    "_assert_exact_websocket_subscription_universe",
     "_container_env",
     "_csv_symbols",
     "_csv_values",

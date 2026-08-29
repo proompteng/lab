@@ -4,19 +4,23 @@ import type { MarketCalendarObservation } from '../broker/alpaca'
 import type { AutonomousCycle } from '../cycle'
 import { utcInstantFromEpochMillis } from '../time'
 import {
+  IntradaySnapshotPurpose,
   persistIntradaySnapshotRows,
+  type IntradayMarketSnapshot,
   type IntradaySnapshotQuery,
   type PersistedIntradaySnapshotRows,
 } from '../market-data'
 import type { ArchiveVerifiedIntradayMarketSnapshot } from '../market-data/intraday/model'
 import type { ExecutionMarketDataBinding } from '../shadow-decision-contract'
+import { MICROS } from '../execution-model'
 import {
-  IntradayMomentumFailure,
+  intradayMomentumPlanningTargetWeights,
   type IntradayMomentumStrategyDefinition,
   type IntradayMomentumTargetPortfolio,
 } from '../strategy/intraday-momentum/model'
-import type { IntradayMomentumProtocol } from '../strategy/intraday-momentum/protocol'
-import { adverseQuotePrices, executionMarketDataBinding, maximumBuyQuantities } from './opening-drive-decision'
+import { intradayMomentumSnapshotSymbols, type IntradayMomentumProtocol } from '../strategy/intraday-momentum/protocol'
+import { numberToMicros } from '../strategy/execution-model/fixed-point'
+import { adverseQuotePrices, executionMarketDataBinding, maximumBuyQuantities } from './intraday-market-data'
 
 const minuteMs = 60_000
 
@@ -105,24 +109,37 @@ export const intradayMomentumEntryQuery = (
     )
   }
   return Result.succeed(
-    snapshotQuery(cycle, protocol, calendar, rangeStartAt, rangeEndAt, observedAt, decisionDelayMs, protocol.universe),
+    snapshotQuery(
+      cycle,
+      protocol,
+      calendar,
+      rangeStartAt,
+      rangeEndAt,
+      observedAt,
+      decisionDelayMs,
+      intradayMomentumSnapshotSymbols(protocol),
+    ),
   )
 }
 
-export const intradayMomentumCloseQuery = (
+export const intradayMomentumPricingQuery = (
   cycle: AutonomousCycle,
   protocol: IntradayMomentumProtocol,
   calendar: MarketCalendarObservation,
   observedAt: string,
+  decisionRangeEndAt: string,
   symbols: readonly string[],
 ): Result.Result<
   IntradaySnapshotQuery,
   IntradayMomentumCloseAwaitingSnapshot | IntradayMomentumRuntimeDecisionFailure
 > => {
-  const observedEpoch = Date.parse(observedAt)
-  const rangeEndEpoch = Math.floor(observedEpoch / minuteMs) * minuteMs
+  const canonicalSymbols = [...new Set(symbols)].sort()
+  const rangeEndEpoch = Date.parse(decisionRangeEndAt)
   const rangeEndAt = utcInstantFromEpochMillis(rangeEndEpoch)
   const rangeStartAt = utcInstantFromEpochMillis(rangeEndEpoch - minuteMs)
+  if (canonicalSymbols.length === 0 || canonicalSymbols.some((symbol) => !protocol.universe.includes(symbol))) {
+    return Result.fail(failure('entry-query', 'existing position is outside the strategy source universe'))
+  }
   if (
     cycle.identity.strategyName !== 'intraday-momentum' ||
     rangeStartAt < cycle.window.executionOpenAt ||
@@ -138,10 +155,32 @@ export const intradayMomentumCloseQuery = (
     )
   }
   return Result.succeed({
-    ...snapshotQuery(cycle, protocol, calendar, rangeStartAt, rangeEndAt, observedAt, 0, symbols),
-    purpose: 'LIQUIDATION',
+    ...snapshotQuery(cycle, protocol, calendar, rangeStartAt, rangeEndAt, observedAt, 0, canonicalSymbols),
+    purpose: IntradaySnapshotPurpose.EntryPricing,
   })
 }
+
+export const intradayMomentumCloseQuery = (
+  cycle: AutonomousCycle,
+  protocol: IntradayMomentumProtocol,
+  calendar: MarketCalendarObservation,
+  observedAt: string,
+  symbols: readonly string[],
+): Result.Result<
+  IntradaySnapshotQuery,
+  IntradayMomentumCloseAwaitingSnapshot | IntradayMomentumRuntimeDecisionFailure
+> =>
+  Result.map(
+    intradayMomentumPricingQuery(
+      cycle,
+      protocol,
+      calendar,
+      observedAt,
+      utcInstantFromEpochMillis(Math.floor(Date.parse(observedAt) / minuteMs) * minuteMs),
+      symbols,
+    ),
+    (query) => ({ ...query, purpose: IntradaySnapshotPurpose.Liquidation }),
+  )
 
 export type IntradayMomentumEntryDisposition = 'AWAIT_SIGNAL' | 'EXECUTE' | 'NO_TRADE'
 
@@ -163,50 +202,106 @@ export interface CompiledIntradayMomentumDecision {
   readonly bidPriceMicros: Readonly<Record<string, string>>
   readonly askPriceMicros: Readonly<Record<string, string>>
   readonly maximumBuyQuantityMicros: Readonly<Record<string, string>>
+  readonly maximumSellQuantityMicros: Readonly<Record<string, string>>
+  readonly planningTargetWeights: Readonly<Record<string, number>>
+  readonly decisionMarketData?: ExecutionMarketDataBinding
   readonly executionMarketData: ExecutionMarketDataBinding
 }
 
-export const compileIntradayMomentumDecision = (
+export const maximumSellQuantities = (
+  snapshot: { readonly latestQuotes: Readonly<Record<string, { readonly bidSize: number }>> },
+  positions: readonly { readonly symbol: string; readonly quantityMicros: string }[],
+  targetWeights: Readonly<Record<string, number>>,
+): Result.Result<Readonly<Record<string, string>>, IntradayMomentumRuntimeDecisionFailure> => {
+  const quantities: Record<string, string> = Object.fromEntries(
+    Object.keys(targetWeights)
+      .sort()
+      .map((symbol) => [symbol, '0']),
+  )
+  for (const { symbol, quantityMicros } of positions) {
+    const heldQuantity = BigInt(quantityMicros)
+    if (heldQuantity <= 0n) continue
+    const quote = snapshot.latestQuotes[symbol]
+    if (quote === undefined) {
+      return Result.fail(failure('entry-decision', `held long for ${symbol} has no verified pricing quote`))
+    }
+    const bidQuantity = numberToMicros(quote.bidSize, `entry bid size for ${symbol}`)
+    if (Result.isFailure(bidQuantity)) {
+      return Result.fail(
+        failure(
+          'entry-decision',
+          `entry bid size for ${symbol} is outside the exact quantity domain`,
+          bidQuantity.failure,
+        ),
+      )
+    }
+    quantities[symbol] = ((bidQuantity.success / MICROS) * MICROS).toString()
+  }
+  return Result.succeed(Object.freeze(quantities))
+}
+
+export const evaluateIntradayMomentumDecision = (
   definition: IntradayMomentumStrategyDefinition,
   cycle: AutonomousCycle,
-  snapshot: ArchiveVerifiedIntradayMarketSnapshot,
+  decisionSnapshot: ArchiveVerifiedIntradayMarketSnapshot,
 ): Result.Result<
-  CompiledIntradayMomentumDecision,
+  IntradayMomentumTargetPortfolio,
   IntradayMomentumEntryAwaitingSnapshot | IntradayMomentumRuntimeDecisionFailure
 > =>
   Result.mapError(
-    Result.gen(function* () {
-      const decision = yield* definition.decide({
-        market: {
-          snapshot,
-          session: {
-            sessionDate: cycle.identity.executionSessionDate,
-            openAt: cycle.window.executionOpenAt,
-            closeAt: cycle.window.executionCloseAt,
-            calendarHash: cycle.window.executionCalendarHash,
-          },
+    definition.decide({
+      market: {
+        snapshot: decisionSnapshot,
+        session: {
+          sessionDate: cycle.identity.executionSessionDate,
+          openAt: cycle.window.executionOpenAt,
+          closeAt: cycle.window.executionCloseAt,
+          calendarHash: cycle.window.executionCalendarHash,
         },
-      })
-      const maximumBuyQuantityMicros = yield* maximumBuyQuantities(snapshot, decision.targetWeights)
-      const quotePrices = yield* adverseQuotePrices(
-        snapshot,
-        decision.signals.map((signal) => signal.symbol),
+      },
+    }),
+    (cause) =>
+      cause.reason === 'snapshot-coverage' &&
+      cause.message === 'intraday symbol lacks the complete rolling lookback baseline'
+        ? new IntradayMomentumEntryAwaitingSnapshot({ message: cause.message })
+        : failure('entry-decision', 'intraday-momentum strategy rejected its verified runtime snapshot', cause),
+  )
+
+export const compileIntradayMomentumDecision = (
+  decision: IntradayMomentumTargetPortfolio,
+  decisionSnapshot: IntradayMarketSnapshot,
+  pricingSnapshot: IntradayMarketSnapshot,
+  heldPositions: readonly { readonly symbol: string; readonly quantityMicros: string }[] = [],
+): Result.Result<CompiledIntradayMomentumDecision, IntradayMomentumRuntimeDecisionFailure> =>
+  Result.mapError(
+    Result.gen(function* () {
+      const heldSymbols = heldPositions.map((position) => position.symbol)
+      const planningTargetWeights = intradayMomentumPlanningTargetWeights(decision, heldSymbols)
+      const planningSymbols = Object.keys(planningTargetWeights)
+      const maximumSellQuantityMicros = yield* maximumSellQuantities(
+        pricingSnapshot,
+        heldPositions,
+        planningTargetWeights,
       )
-      const decisionMarketDataRows = yield* persistIntradaySnapshotRows(snapshot)
-      const binding = yield* executionMarketDataBinding(snapshot)
+      const maximumBuyQuantityMicros = yield* maximumBuyQuantities(pricingSnapshot, planningTargetWeights)
+      const quotePrices = yield* adverseQuotePrices(pricingSnapshot, planningSymbols)
+      const decisionMarketDataRows = yield* persistIntradaySnapshotRows(decisionSnapshot)
+      const decisionBinding = yield* executionMarketDataBinding(decisionSnapshot)
+      const usesDedicatedPricing = pricingSnapshot.manifest.purpose === IntradaySnapshotPurpose.EntryPricing
+      const executionBinding = usesDedicatedPricing
+        ? yield* executionMarketDataBinding(pricingSnapshot)
+        : decisionBinding
       return {
         decision,
         decisionMarketDataRows,
         priceMicros: quotePrices.askPriceMicros,
         ...quotePrices,
         maximumBuyQuantityMicros,
-        executionMarketData: binding,
+        maximumSellQuantityMicros,
+        planningTargetWeights,
+        ...(usesDedicatedPricing ? { decisionMarketData: decisionBinding } : {}),
+        executionMarketData: executionBinding,
       }
     }),
-    (cause) =>
-      cause instanceof IntradayMomentumFailure &&
-      cause.reason === 'snapshot-coverage' &&
-      cause.message === 'intraday symbol lacks the complete rolling lookback baseline'
-        ? new IntradayMomentumEntryAwaitingSnapshot({ message: cause.message })
-        : failure('entry-decision', 'intraday-momentum strategy rejected its verified runtime snapshot', cause),
+    (cause) => failure('entry-decision', 'intraday-momentum execution evidence could not be compiled', cause),
   )

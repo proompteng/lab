@@ -5,12 +5,10 @@ import type { AddressInfo } from 'node:net'
 import { describe, expect, test } from 'bun:test'
 import { ConfigProvider, Effect } from 'effect'
 
-import type { ApplicationPlan } from '../app'
 import { acquireRestateHttp2Server } from './restate-http2-server'
 import {
   decodeRestateRequestIdentityKeys,
   makeRestateExecutionEndpointHandler,
-  requireAutonomousApplicationPlan,
   restateExecutionServerConfig,
 } from './restate-execution-server'
 
@@ -192,19 +190,5 @@ describe('native Restate execution server', () => {
     )
 
     expect(status).toBe(401)
-  })
-
-  test('rejects every non-autonomous application plan before acquiring runtime resources', async () => {
-    const failure = await Effect.runPromise(
-      Effect.flip(
-        requireAutonomousApplicationPlan({
-          _tag: 'BrokerlessService',
-          config: { runtimeMode: 'BrokerlessService' },
-        } as ApplicationPlan),
-      ),
-    )
-
-    expect(failure).toBeInstanceOf(Error)
-    expect(failure.message).toBe('native Restate execution requires the autonomous service runtime mode')
   })
 })

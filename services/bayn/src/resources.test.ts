@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Data, Deferred, Effect, Exit, Fiber, Layer, Option, Redacted, Ref, Result } from 'effect'
-import { AuthorizationError, SqlError } from 'effect/unstable/sql/SqlError'
+import { Data, Deferred, Effect, Exit, Fiber, Layer, Redacted, Result } from 'effect'
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
 
 import { AlpacaBrokerResourcesLive } from './broker/alpaca/composition'
@@ -9,16 +8,8 @@ import { BrokerProvider, BrokerSession, decodeBrokerConnection, type BrokerConne
 import { AlpacaHttpClient } from './broker/alpaca/http'
 import { BrokerEnvironment } from './broker/identity'
 import type { RuntimeConfig } from './config'
-import { BrokerAccess, noCapitalAuthority } from './execution/authority'
-import { EvidenceStore, type EvidenceStoreService } from './db/evidence-store'
-import { operationalError } from './errors'
-import { Journal, JournalLive, type JournalService, type TigerBeetleClient } from './ledger'
-import { MarketData, marketDataOperationError, type MarketDataService } from './market-data'
-import { initialState, type RuntimeState } from './runtime-state'
-import { runStartup } from './startup'
-import { fixtureRuntime } from './app-test-support'
-import type { StrategyRuntime } from './strategy'
-import { makeSnapshot, makeTestProvenance } from './test-fixtures'
+import { Journal, JournalLive, type TigerBeetleClient } from './ledger'
+import { config as fixtureConfig } from './testing/runtime-fixtures'
 import {
   parseReplicaEndpoints,
   resolveReplicaAddresses,
@@ -29,106 +20,9 @@ import {
 
 class TestFailure extends Data.TaggedError('TestFailure')<{ readonly message: string }> {}
 
-const initialize = (runtimeConfig: RuntimeConfig, state: Ref.Ref<RuntimeState>, strategy: StrategyRuntime) =>
-  Effect.all({ marketData: MarketData, journal: Journal, evidenceStore: EvidenceStore }).pipe(
-    Effect.flatMap((dependencies) => runStartup(runtimeConfig, state, strategy, dependencies)),
-  )
-
-const provenance = makeTestProvenance()
-
 const config: RuntimeConfig = {
-  host: '127.0.0.1',
-  port: 0,
-  execution: {
-    brokerIdentity: undefined,
-    brokerAccess: BrokerAccess.ReadOnly,
-    capitalAuthority: noCapitalAuthority,
-  },
-  build: {
-    sourceRevision: provenance.sourceRevision,
-    imageRepository: provenance.image.repository,
-    imageDigest: provenance.image.digest,
-    strategyBehaviorHash: provenance.strategy.behaviorHash,
-    strategyParameterHash: provenance.strategy.parameterHash,
-    verification: 'embedded',
-  },
-  healthIntervalMs: 100,
+  ...fixtureConfig,
   operationTimeoutMs: 20,
-  cycleStallThresholdMs: 300_000,
-  reconciliationStaleThresholdMs: 120_000,
-  unknownMutationThresholdMs: 300_000,
-  clickhouse: {
-    url: 'http://clickhouse.test:8123',
-    username: 'bayn',
-    password: Redacted.make('secret'),
-    snapshotId: '1'.repeat(64),
-    publicationAsOf: '2026-07-17',
-    calendarVersion: 'fixture-calendar-v1',
-    bounds: {
-      schemaVersion: 'bayn.evaluation-bounds.v1',
-      dataStart: '2018-01-02',
-      dataEnd: '2026-07-17',
-      lookbackStart: '2018-01-02',
-      evaluationStart: '2019-01-02',
-      evaluationEnd: '2026-07-17',
-    },
-  },
-  postgres: {
-    url: Redacted.make('postgresql://bayn:secret@postgres.test:5432/bayn'),
-    tls: false,
-    caPath: '/tmp/test-postgres-ca.crt',
-  },
-  tigerBeetle: { clusterId: 2001n, replicaAddresses: ['3000'], ledger: 7001 },
-}
-
-const successfulJournal: JournalService = {
-  post: () => Effect.void,
-  verifyAccount: () => Effect.succeed(true),
-  check: Effect.void,
-  checkRun: () => Effect.void,
-  journalAndReconcile: (evaluation) =>
-    Effect.succeed({ runId: evaluation.runId, accountCount: 1, transferCount: 1, exact: true }),
-}
-
-const marketDataService = (load: MarketDataService['load']): MarketDataService => ({
-  check: Effect.sync(() => makeSnapshot().manifest.finalizedSnapshot),
-  inspect: Effect.sync(() => {
-    const snapshot = makeSnapshot()
-    return {
-      manifest: snapshot.manifest,
-      sessionDates: [...new Set(snapshot.bars.map((bar) => bar.sessionDate))].sort(),
-      signalSession: {
-        calendar_version: snapshot.manifest.finalizedSnapshot.calendarVersion,
-        session_date: snapshot.manifest.lastSession,
-        close_time: '16:00',
-        timezone: 'America/New_York',
-      },
-    }
-  }),
-  inspectCyclePublications: Effect.die(new Error('resource lifecycle must not inspect cycle publication candidates')),
-  inspectPublication: () => Effect.die(new Error('resource lifecycle must not inspect cycle publications')),
-  inspectSnapshotPublication: () =>
-    Effect.die(new Error('resource lifecycle must not inspect bound cycle publications')),
-  loadSnapshotPublication: () => load,
-  load,
-})
-
-const successfulEvidenceStore: EvidenceStoreService = {
-  check: Effect.void,
-  read: () => Effect.succeed(Option.none()),
-  readArtifactItems: () => Effect.succeed(Option.none()),
-  recover: () => Effect.succeed(Option.none()),
-  listPriorTrials: Effect.succeed([]),
-  openQualification: ({ lock }) => Effect.succeed({ state: 'ACQUIRED', lock }),
-  readQualification: () => Effect.succeed(Option.none()),
-  persist: ({ evaluation }) =>
-    Effect.succeed({
-      runId: evaluation.runId,
-      deduplicated: false,
-      artifactCount: 17,
-      eventCount: evaluation.events.length,
-      gateCount: evaluation.verdict.gates.length,
-    }),
 }
 
 const makeTigerBeetleClient = (overrides: Partial<TigerBeetleClient> = {}): TigerBeetleClient => ({
@@ -531,117 +425,5 @@ describe('Bayn resource lifecycle', () => {
     expect(clientAcquisitions).toBe(3)
     expect(closeCounts).toEqual([1, 1])
     expect(replacementError.message).toContain('replacement unavailable')
-  })
-
-  test('interrupts an in-flight market-data read when the startup deadline expires', async () => {
-    let interrupted = false
-    const marketData = marketDataService(
-      Effect.never.pipe(Effect.onInterrupt(() => Effect.sync(() => void (interrupted = true)))),
-    )
-    const state = await Effect.runPromise(Ref.make(initialState({})))
-
-    const exit = await Effect.runPromiseExit(
-      Effect.scoped(
-        initialize(config, state, fixtureRuntime).pipe(
-          Effect.provideService(Journal, successfulJournal),
-          Effect.provideService(EvidenceStore, successfulEvidenceStore),
-          Effect.provideService(MarketData, marketData),
-        ),
-      ),
-    )
-
-    expect(interrupted).toBe(true)
-    expect(Exit.isFailure(exit)).toBe(true)
-    if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain('load timed out')
-    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({ status: 'STARTING', error: null })
-  })
-
-  test('fails closed when ClickHouse returns a malformed row', async () => {
-    const marketData = marketDataService(
-      Effect.fail(
-        operationalError({
-          component: 'market-data',
-          operation: 'verify',
-          message: 'Signal snapshot verification failed',
-          cause: new Error('malformed row'),
-        }),
-      ),
-    )
-    const state = await Effect.runPromise(Ref.make(initialState({})))
-
-    await Effect.runPromise(
-      Effect.scoped(
-        initialize(config, state, fixtureRuntime).pipe(
-          Effect.provideService(Journal, successfulJournal),
-          Effect.provideService(EvidenceStore, successfulEvidenceStore),
-          Effect.provideService(MarketData, marketData),
-        ),
-      ),
-    )
-
-    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
-      status: 'FAILED',
-      error: expect.stringContaining('market-data.verify'),
-    })
-  })
-
-  test('keeps ClickHouse authorization failures observable as terminal startup failures', async () => {
-    const authorization = SqlError.make({
-      reason: AuthorizationError.make({ cause: new Error('SELECT denied'), operation: 'query' }),
-    })
-    const marketData = marketDataService(
-      Effect.fail(marketDataOperationError('load', 'failed to load finalized Signal snapshot', authorization)),
-    )
-    const state = await Effect.runPromise(Ref.make(initialState({})))
-
-    await Effect.runPromise(
-      Effect.scoped(
-        initialize(config, state, fixtureRuntime).pipe(
-          Effect.provideService(Journal, successfulJournal),
-          Effect.provideService(EvidenceStore, successfulEvidenceStore),
-          Effect.provideService(MarketData, marketData),
-        ),
-      ),
-    )
-
-    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
-      status: 'FAILED',
-      error: expect.stringContaining('market-data.load'),
-    })
-  })
-
-  test('destroys TigerBeetle to cancel its indefinite retry when the startup deadline expires', async () => {
-    let destroyed = false
-    const pendingLookup = Deferred.makeUnsafe<never, TestFailure>()
-    const tigerBeetleClient = makeTigerBeetleClient({
-      lookupAccounts: () => Effect.runPromise(Deferred.await(pendingLookup)),
-      destroy: () => {
-        if (destroyed) return
-        destroyed = true
-        Effect.runSync(Deferred.fail(pendingLookup, new TestFailure({ message: 'client closed' })))
-      },
-    })
-    const marketData = marketDataService(Effect.succeed(makeSnapshot()))
-    const state = await Effect.runPromise(Ref.make(initialState({})))
-
-    const exit = await Effect.runPromiseExit(
-      Effect.scoped(
-        initialize(config, state, fixtureRuntime).pipe(
-          Effect.provideService(MarketData, marketData),
-          Effect.provideService(EvidenceStore, successfulEvidenceStore),
-          Effect.provide(
-            JournalLive(config, {
-              createClient: () => tigerBeetleClient,
-              resolveReplicaAddresses: () => Effect.succeed(['3000']),
-            }),
-          ),
-        ),
-      ),
-    )
-
-    expect(destroyed).toBe(true)
-    expect(Exit.isFailure(exit)).toBe(true)
-    if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain('connectivity-check timed out')
-    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({ status: 'STARTING', error: null })
   })
 })

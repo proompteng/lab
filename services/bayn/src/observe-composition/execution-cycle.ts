@@ -27,8 +27,9 @@ import { type Policy } from '../risk'
 import type { CycleDecisionDocument, ExecutionDecisionDocument } from '../shadow-decision-contract'
 import { currentUtcInstant } from '../time'
 import { TargetPlanReason, TargetPlanStatus } from '../target-planner'
-import { decodeIntradayMomentumProtocol, decodeOpeningDriveProtocol, strategyDefinition } from '../strategy'
-import { isQuoteBoundExecutionModel } from '../execution-model-contract'
+import { decodeIntradayMomentumProtocol, intradayMomentumExecutionModel, strategyDefinition } from '../strategy'
+import { canonicalHashV1Result } from '../hash'
+import { makeStrategyProtocolHashResult } from '../contracts'
 import {
   countOpenPositions,
   decideExecutionIntentTerminalDisposition,
@@ -71,7 +72,58 @@ import {
   type ReconciliationPassError,
 } from './decision-builder'
 import { resolveExecutionCycleCloseWindow, type ExecutionCycleCloseWindow } from './execution-window'
-import { strategyAllowsMutationCadence } from './strategy-cadence'
+
+type RecoveredExecutionContext = {
+  readonly preparation: ObserveStartupPreparation
+  readonly policy: Policy
+}
+
+/** Recover only the active intraday execution contract exactly bound to the persisted decision. */
+export const recoverBoundExecutionContext = (
+  currentPolicy: Policy,
+  cycle: AutonomousCycle,
+  document: ExecutionDecisionDocument,
+): Effect.Effect<RecoveredExecutionContext, CycleRunnerError> =>
+  Effect.gen(function* () {
+    const executionModelHash = canonicalHashV1Result(intradayMomentumExecutionModel)
+    if (
+      cycle.identity.strategyName !== 'intraday-momentum' ||
+      cycle.identity.executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3' ||
+      Result.isFailure(executionModelHash) ||
+      cycle.identity.executionPolicy.strategyExecutionModelHash !== executionModelHash.success
+    ) {
+      return yield* mutationRunnerError({
+        message: 'bound execution cycle does not match the active intraday execution contract',
+        ...(Result.isFailure(executionModelHash) ? { cause: executionModelHash.failure } : {}),
+        failure: 'contract',
+      })
+    }
+    const policyHash = canonicalHashV1Result(currentPolicy)
+    if (Result.isFailure(policyHash) || policyHash.success !== document.bindings.policyHash) {
+      return yield* mutationRunnerError({
+        message: 'bound execution cycle does not match the active risk policy',
+        ...(Result.isFailure(policyHash) ? { cause: policyHash.failure } : {}),
+        failure: 'contract',
+      })
+    }
+    return {
+      preparation: {
+        executionModel: intradayMomentumExecutionModel,
+        executionPolicy: cycle.identity.executionPolicy,
+        strategyProtocolHash: cycle.identity.strategyProtocolHash,
+      },
+      policy: currentPolicy,
+    }
+  })
+
+const runtimeStrategyMatchesCycle = (input: ObserveAutonomousCycleInput, cycle: AutonomousCycle): boolean => {
+  const runtimeProtocolHash = makeStrategyProtocolHashResult(input.strategy.provenance.strategy)
+  return (
+    Result.isSuccess(runtimeProtocolHash) &&
+    runtimeProtocolHash.success === cycle.identity.strategyProtocolHash &&
+    strategyDefinition(input.strategy).name === cycle.identity.strategyName
+  )
+}
 
 export const isPostMutationReconciliation = (
   result: RecoveryFirstCyclePassResult,
@@ -106,6 +158,10 @@ export const blockedEntryRequiresCloseOnlyContainment = (
       )
     case TargetPlanReason.IdentityMismatch:
       return positions.some(({ symbol, quantityMicros }) => !universeSet.has(symbol) && BigInt(quantityMicros) !== 0n)
+    case TargetPlanReason.InsufficientBuyLiquidity:
+      return positions.some(({ symbol, quantityMicros }) => universeSet.has(symbol) && BigInt(quantityMicros) !== 0n)
+    case TargetPlanReason.InsufficientSellLiquidity:
+      return positions.some(({ symbol, quantityMicros }) => universeSet.has(symbol) && BigInt(quantityMicros) > 0n)
     default:
       return false
   }
@@ -510,14 +566,11 @@ const readMutationPreparationFacts = (
     const authority = yield* Effect.fromResult(
       requireMutationAuthorityGeneration(facts.reconciliation, request.policy, request.input.authorityGenerationHash),
     ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
-    const snapshot =
-      facts.schemaVersion === 'bayn.observe-decision-facts.v1'
-        ? facts.snapshot.manifest.finalizedSnapshot
-        : {
-            snapshotId: request.document.bindings.snapshotId,
-            contentHash: request.document.bindings.snapshotContentHash,
-            finalizedAt: request.document.bindings.snapshotFinalizedAt,
-          }
+    const snapshot = {
+      snapshotId: request.document.bindings.snapshotId,
+      contentHash: request.document.bindings.snapshotContentHash,
+      finalizedAt: request.document.bindings.snapshotFinalizedAt,
+    }
     return {
       snapshot,
       reconciliation: facts.reconciliation,
@@ -595,50 +648,30 @@ const executeBoundExecutionCycle = (
 ): Effect.Effect<BoundExecutionCycleOutcome, CycleRunnerError, RecoveryFirstRuntime> =>
   Effect.gen(function* () {
     const observedAt = yield* currentUtcInstant
-    let closeOnlyContainmentUniverse: readonly string[] | undefined
-    let sessionCloseLeads:
-      | { readonly sessionCloseStartLeadMs: number; readonly sessionCloseSubmitLeadMs: number }
-      | undefined
-    if (isQuoteBoundExecutionModel(preparation.executionModel)) {
-      if (preparation.executionModel.schemaVersion === 'bayn.execution-model.v5') {
-        const protocol = yield* Effect.fromResult(
-          decodeIntradayMomentumProtocol(strategyDefinition(input.strategy).parameters),
-        ).pipe(
-          Effect.mapError((cause) =>
-            mutationRunnerError({
-              message: 'intraday close window protocol is invalid',
-              cause,
-              failure: 'contract',
-            }),
-          ),
-        )
-        sessionCloseLeads = {
-          sessionCloseStartLeadMs: protocol.flattenBeforeCloseMinutes * 60_000,
-          sessionCloseSubmitLeadMs: protocol.hardFlatBeforeCloseMinutes * 60_000,
-        }
-        closeOnlyContainmentUniverse = protocol.universe
-      } else {
-        const protocol = yield* Effect.fromResult(
-          decodeOpeningDriveProtocol(strategyDefinition(input.strategy).parameters),
-        ).pipe(
-          Effect.mapError((cause) =>
-            mutationRunnerError({
-              message: 'intraday close window protocol is invalid',
-              cause,
-              failure: 'contract',
-            }),
-          ),
-        )
-        sessionCloseLeads = {
-          sessionCloseStartLeadMs: protocol.flattenBeforeCloseMinutes * 60_000,
-          sessionCloseSubmitLeadMs: protocol.hardFlatBeforeCloseMinutes * 60_000,
-        }
-        closeOnlyContainmentUniverse = protocol.universe
-      }
+    const runtimeMatchesCycle = runtimeStrategyMatchesCycle(input, cycle)
+    if (!runtimeMatchesCycle || preparation.executionModel.schemaVersion !== 'bayn.execution-model.v5') {
+      return yield* mutationRunnerError({
+        message: 'bound execution cycle does not match the active intraday runtime',
+        failure: 'contract',
+      })
+    }
+    const protocol = yield* Effect.fromResult(
+      decodeIntradayMomentumProtocol(strategyDefinition(input.strategy).parameters),
+    ).pipe(
+      Effect.mapError((cause) =>
+        mutationRunnerError({
+          message: 'intraday close window protocol is invalid',
+          cause,
+          failure: 'contract',
+        }),
+      ),
+    )
+    const sessionCloseLeads = {
+      sessionCloseStartLeadMs: protocol.flattenBeforeCloseMinutes * 60_000,
+      sessionCloseSubmitLeadMs: protocol.hardFlatBeforeCloseMinutes * 60_000,
     }
     const closeWindow = yield* Effect.fromResult(
       resolveExecutionCycleCloseWindow({
-        ...(input.cycleCadence === undefined ? {} : { cadence: input.cycleCadence }),
         executionCloseAt: cycle.window.executionCloseAt,
         ...sessionCloseLeads,
         ...(input.executionMandateCutoffAt === undefined
@@ -675,47 +708,22 @@ const executeBoundExecutionCycle = (
       document.targetPlan.status === TargetPlanStatus.Blocked &&
       (document.targetPlan.reason === TargetPlanReason.ShortPositionNotAllowed ||
         document.targetPlan.reason === TargetPlanReason.InputMismatch ||
-        document.targetPlan.reason === TargetPlanReason.IdentityMismatch)
-    const entryRequiresCloseOnlyContainment =
-      closeOnlyContainmentUniverse !== undefined && closeOnlyContainmentReason
-        ? yield* reconcile.pipe(
-            Effect.mapError((cause) =>
-              mutationRunnerError({ message: 'blocked entry containment reconciliation failed', cause }),
-            ),
-            Effect.map(({ brokerState }) =>
-              blockedEntryRequiresCloseOnlyContainment(
-                document.targetPlan,
-                brokerState.positions,
-                closeOnlyContainmentUniverse,
-              ),
-            ),
-          )
-        : false
-    const drainIncompatibleEntry =
-      capability._tag === 'Mutation' && !strategyAllowsMutationCadence(input.strategy, input.cycleCadence)
+        document.targetPlan.reason === TargetPlanReason.IdentityMismatch ||
+        document.targetPlan.reason === TargetPlanReason.InsufficientBuyLiquidity ||
+        document.targetPlan.reason === TargetPlanReason.InsufficientSellLiquidity)
+    const entryRequiresCloseOnlyContainment = closeOnlyContainmentReason
+      ? yield* reconcile.pipe(
+          Effect.mapError((cause) =>
+            mutationRunnerError({ message: 'blocked entry containment reconciliation failed', cause }),
+          ),
+          Effect.map(({ brokerState }) =>
+            blockedEntryRequiresCloseOnlyContainment(document.targetPlan, brokerState.positions, protocol.universe),
+          ),
+        )
+      : false
     let closeOnly = false
     let phaseInput = entryPhaseInput
     let step: PreparedMutationCycleStep | undefined
-
-    if (drainIncompatibleEntry && !closeDue) {
-      const entryDrain = yield* prepareNextMutationIntent({
-        input: entryPhaseInput,
-        preparation,
-        policy,
-        cycle,
-        document,
-        reconcile,
-        allowSubmit: false,
-        drainOpenOrders: true,
-      })
-      if (entryDrain._tag === 'Execute') {
-        step = entryDrain
-      } else if (entryDrain._tag !== 'Complete') {
-        return entryDrain
-      } else {
-        return { _tag: 'Wait', observedAt: entryDrain.observedAt }
-      }
-    }
 
     if (step === undefined && entryRequiresCloseOnlyContainment && !closeDue) {
       return { _tag: 'Wait', observedAt }
@@ -880,7 +888,7 @@ const readUnfinishedMutationCycle = (
   CycleStore.pipe(
     Effect.flatMap((store) =>
       store.readOldestUnfinished({
-        qualificationRunId: context.qualificationRunId,
+        qualificationRunId: context.cycleBindingId,
         accountId: context.accountId,
       }),
     ),
@@ -1046,7 +1054,6 @@ const interpretBoundExecutionCycleOutcome = (
 
 const recoverBoundMutationCycle = (
   input: ObserveAutonomousCycleInput,
-  preparation: ObserveStartupPreparation,
   policy: Policy,
   cycle: AutonomousCycle,
   context: CycleRunContext<ObserveDecisionRuntime>,
@@ -1056,8 +1063,24 @@ const recoverBoundMutationCycle = (
   readBoundMutationDocument(cycle).pipe(
     Effect.flatMap((document) =>
       document.mode === 'OBSERVE'
-        ? runAutonomousCyclePass(context)
-        : executeBoundExecutionCycle(input, preparation, policy, cycle, document, reconcile, capability).pipe(
+        ? Effect.fail(
+            mutationRunnerError({
+              message: 'bound OBSERVE decisions are not executable after the intraday hard cutover',
+              failure: 'contract',
+            }),
+          )
+        : recoverBoundExecutionContext(policy, cycle, document).pipe(
+            Effect.flatMap((recovered) =>
+              executeBoundExecutionCycle(
+                input,
+                recovered.preparation,
+                recovered.policy,
+                cycle,
+                document,
+                reconcile,
+                capability,
+              ),
+            ),
             Effect.flatMap((outcome) => interpretBoundExecutionCycleOutcome(input, outcome, cycle, context)),
           ),
     ),
@@ -1065,7 +1088,6 @@ const recoverBoundMutationCycle = (
 
 export const runRecoveryFirstCyclePass = (
   input: ObserveAutonomousCycleInput,
-  preparation: ObserveStartupPreparation,
   policy: Policy,
   context: CycleRunContext<ObserveDecisionRuntime>,
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
@@ -1074,7 +1096,7 @@ export const runRecoveryFirstCyclePass = (
   readUnfinishedMutationCycle(context).pipe(
     Effect.flatMap((unfinished) => {
       if (mutationBound(unfinished)) {
-        return recoverBoundMutationCycle(input, preparation, policy, unfinished, context, reconcile, capability)
+        return recoverBoundMutationCycle(input, policy, unfinished, context, reconcile, capability)
       }
       return currentUtcInstant.pipe(
         Effect.flatMap((observedAt) => {
@@ -1086,12 +1108,12 @@ export const runRecoveryFirstCyclePass = (
             return terminalizeUnboundMutationCycleAtCutoff(unfinished, observedAt)
           }
           if (input.executionMandateCutoffAt !== undefined && observedAt >= input.executionMandateCutoffAt) {
-            return Effect.succeed({ outcome: 'NO_PUBLICATION' as const, observedAt })
+            return Effect.succeed({ outcome: 'WINDOW_CLOSED' as const, observedAt })
           }
           return runAutonomousCyclePass(context).pipe(
             Effect.flatMap((result) =>
               result.outcome === 'RECOVERED' && result.action === 'BOUND_DECISION'
-                ? recoverBoundMutationCycle(input, preparation, policy, result.cycle, context, reconcile, capability)
+                ? recoverBoundMutationCycle(input, policy, result.cycle, context, reconcile, capability)
                 : Effect.succeed(result),
             ),
           )

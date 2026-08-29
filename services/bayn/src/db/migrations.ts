@@ -55,6 +55,7 @@ import positionSnapshotObservabilityIndex from '../../migrations/0052_position_s
 import fullSessionIntradayCycles from '../../migrations/0053_full_session_intraday_cycles'
 import benignZeroFillIocCompletion from '../../migrations/0054_benign_zero_fill_ioc_completion'
 import intradaySnapshotReferences from '../../migrations/0055_intraday_snapshot_references'
+import intradayStrategyCutover from '../../migrations/0056_intraday_strategy_cutover'
 
 export const migrationLoader = PgMigrator.fromRecord({
   '1_initial_schema': initialSchema,
@@ -112,4 +113,5 @@ export const migrationLoader = PgMigrator.fromRecord({
   '53_full_session_intraday_cycles': fullSessionIntradayCycles,
   '54_benign_zero_fill_ioc_completion': benignZeroFillIocCompletion,
   '55_intraday_snapshot_references': intradaySnapshotReferences,
+  '56_intraday_strategy_cutover': intradayStrategyCutover,
 })

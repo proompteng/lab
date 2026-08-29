@@ -12,6 +12,7 @@ import {
   type AutonomousCycle,
 } from '../cycle'
 import { canonicalHashV1, sha256 } from '../hash'
+import { IntradaySnapshotPurpose, type IntradayMarketSnapshot } from '../market-data'
 import type { ArchiveVerifiedIntradayMarketSnapshot } from '../market-data/intraday/model'
 import { IntradayMomentumFailure, type IntradayMomentumTargetPortfolio } from '../strategy/intraday-momentum/model'
 import { makeIntradayMomentumDefinition } from '../strategy/intraday-momentum/decision'
@@ -20,13 +21,15 @@ import {
   intradayMomentumExecutionModel,
 } from '../strategy/intraday-momentum/protocol'
 import {
-  compileIntradayMomentumDecision,
+  evaluateIntradayMomentumDecision,
   intradayMomentumCloseQuery,
   IntradayMomentumCloseAwaitingSnapshot,
   IntradayMomentumEntryAwaitingSnapshot,
   intradayMomentumEntryDisposition,
   intradayMomentumEntryQuery,
+  intradayMomentumPricingQuery,
 } from './intraday-momentum-decision'
+import { maximumBuyQuantities } from './intraday-market-data'
 
 const success = <A, E>(result: Result.Result<A, E>): A => Result.getOrThrow(result)
 const failure = <A, E>(result: Result.Result<A, E>): E => Result.getOrThrow(Result.flip(result))
@@ -93,17 +96,26 @@ const calendarFor = (cycle: AutonomousCycle) => {
 }
 
 const target = (observedAt: string, selected: boolean): IntradayMomentumTargetPortfolio => ({
-  schemaVersion: 'bayn.intraday-momentum.target.v1',
+  schemaVersion: 'bayn.intraday-momentum.target.v2',
   strategy: 'intraday-momentum',
   sessionDate: '2026-08-18',
   snapshotId: sha256(observedAt),
   observedAt,
   calendarHash: sha256('calendar'),
-  selectedSymbols: selected ? ['AMD'] : [],
-  targetWeights: { AMD: selected ? 0.1 : 0 },
+  benchmark: {
+    symbol: 'SPY',
+    referencePriceMicros: '100000000',
+    bidPriceMicros: '100040000',
+    askPriceMicros: '100060000',
+    bidSizeMicros: '1000000',
+    askSizeMicros: '1000000',
+    quoteObservedAt: observedAt,
+  },
+  selectedSymbols: selected ? ['AAPL'] : [],
+  targetWeights: { AAPL: selected ? 0.1 : 0 },
   signals: [
     {
-      symbol: 'AMD',
+      symbol: 'AAPL',
       referencePriceMicros: '100000000',
       rangeHighPriceMicros: '100000000',
       rangeLowPriceMicros: '99000000',
@@ -114,12 +126,16 @@ const target = (observedAt: string, selected: boolean): IntradayMomentumTargetPo
       quoteObservedAt: observedAt,
       confirmationTradePriceMicros: '100000000',
       confirmationTradeObservedAt: observedAt,
+      excessReturnNumerator: selected ? '15' : '-5',
+      excessReturnDenominator: '10000',
       lookbackReturnBps: selected ? 20 : 0,
+      benchmarkReturnBps: 5,
+      excessReturnBps: selected ? 15 : -5,
       breakoutBps: selected ? 5 : 0,
       rangeLocationPpm: selected ? 900_000 : 500_000,
       spreadBps: 2,
       eligible: selected,
-      rejectionReasons: selected ? [] : ['lookback-return', 'breakout', 'range-location'],
+      rejectionReasons: selected ? [] : ['lookback-return'],
       rank: selected ? 1 : null,
     },
   ],
@@ -127,8 +143,8 @@ const target = (observedAt: string, selected: boolean): IntradayMomentumTargetPo
 
 describe('intraday-momentum runtime decision boundary', () => {
   test.each([
-    ['late morning', '2026-08-18T16:00:02.000Z', '2026-08-18T15:40:00.000Z', '2026-08-18T16:00:00.000Z'],
-    ['afternoon', '2026-08-18T18:30:02.000Z', '2026-08-18T18:10:00.000Z', '2026-08-18T18:30:00.000Z'],
+    ['late morning', '2026-08-18T16:00:02.000Z', '2026-08-18T15:30:00.000Z', '2026-08-18T16:00:00.000Z'],
+    ['afternoon', '2026-08-18T18:30:02.000Z', '2026-08-18T18:00:00.000Z', '2026-08-18T18:30:00.000Z'],
   ])('queries the latest completed rolling window in the %s', (_, observedAt, rangeStartAt, rangeEndAt) => {
     const cycle = makeActiveCycle()
     const query = success(intradayMomentumEntryQuery(cycle, protocol, calendarFor(cycle), observedAt))
@@ -141,6 +157,7 @@ describe('intraday-momentum runtime decision boundary', () => {
       minimumWatermarkLagMs: 2_000,
       feed: 'iex',
       delayClass: 'real_time_exchange_only',
+      symbols: ['AAPL', 'AMZN', 'IWM', 'NVDA', 'QQQ', 'SMH', 'SPY'],
     })
   })
 
@@ -192,7 +209,7 @@ describe('intraday-momentum runtime decision boundary', () => {
 
     expect(
       failure(
-        compileIntradayMomentumDecision(
+        evaluateIntradayMomentumDecision(
           definition,
           makeActiveCycle(),
           {} as unknown as ArchiveVerifiedIntradayMarketSnapshot,
@@ -211,11 +228,56 @@ describe('intraday-momentum runtime decision boundary', () => {
 
     expect(cycle.window.submissionCutoffAt).toBe('2026-08-18T16:00:00.000Z')
     expect(success(intradayMomentumEntryQuery(cycle, protocol, calendar, '2026-08-18T15:40:02.000Z'))).toMatchObject({
-      rangeStartAt: '2026-08-18T15:20:00.000Z',
+      rangeStartAt: '2026-08-18T15:10:00.000Z',
       rangeEndAt: '2026-08-18T15:40:00.000Z',
     })
     expect(failure(intradayMomentumEntryQuery(cycle, protocol, calendar, '2026-08-18T16:00:00.000Z'))).toMatchObject({
       operation: 'entry-query',
+    })
+  })
+
+  test('keeps held-only pricing out of candidate signal evidence', () => {
+    const cycle = makeActiveCycle()
+    const calendar = calendarFor(cycle)
+    const entryQuery = success(intradayMomentumEntryQuery(cycle, protocol, calendar, '2026-08-18T16:00:02.000Z'))
+    const pricingQuery = success(
+      intradayMomentumPricingQuery(cycle, protocol, calendar, '2026-08-18T16:00:02.000Z', entryQuery.rangeEndAt, [
+        'AVGO',
+        'AMD',
+        'AMD',
+      ]),
+    )
+
+    expect(entryQuery.symbols).toEqual(['AAPL', 'AMZN', 'IWM', 'NVDA', 'QQQ', 'SMH', 'SPY'])
+    expect(pricingQuery).toMatchObject({
+      symbols: ['AMD', 'AVGO'],
+      purpose: IntradaySnapshotPurpose.EntryPricing,
+    })
+    expect(
+      failure(
+        intradayMomentumPricingQuery(cycle, protocol, calendar, '2026-08-18T16:00:02.000Z', entryQuery.rangeEndAt, [
+          'OUTSIDE',
+        ]),
+      ),
+    ).toMatchObject({ operation: 'entry-query', message: 'existing position is outside the strategy source universe' })
+  })
+
+  test('keeps fresh decision-window quotes valid across a controller minute boundary', () => {
+    const cycle = makeActiveCycle()
+    const calendar = calendarFor(cycle)
+    const observedAt = '2026-08-18T16:00:01.500Z'
+    const decisionQuery = success(intradayMomentumEntryQuery(cycle, protocol, calendar, observedAt))
+    const pricingQuery = success(
+      intradayMomentumPricingQuery(cycle, protocol, calendar, observedAt, decisionQuery.rangeEndAt, ['AAPL']),
+    )
+
+    expect(decisionQuery.rangeEndAt).toBe('2026-08-18T15:59:00.000Z')
+    expect(pricingQuery).toMatchObject({
+      rangeStartAt: '2026-08-18T15:58:00.000Z',
+      rangeEndAt: decisionQuery.rangeEndAt,
+      observedAt,
+      symbols: ['AAPL'],
+      purpose: IntradaySnapshotPurpose.EntryPricing,
     })
   })
 
@@ -232,7 +294,7 @@ describe('intraday-momentum runtime decision boundary', () => {
       universe: protocol.universe,
       universeSymbolHash: protocol.universeSymbolHash,
       symbols: ['AMD'],
-      purpose: 'LIQUIDATION',
+      purpose: IntradaySnapshotPurpose.Liquidation,
     })
     expect(failure(intradayMomentumCloseQuery(cycle, protocol, calendar, '2026-08-18T19:30:00.000Z', ['AMD']))).toEqual(
       new IntradayMomentumCloseAwaitingSnapshot({
@@ -256,5 +318,65 @@ describe('intraday-momentum runtime decision boundary', () => {
     expect(intradayMomentumEntryDisposition(target('2026-08-18T18:00:00.000Z', false), true, cutoffAt, 60_000)).toBe(
       'EXECUTE',
     )
+  })
+
+  test('records zero buy capacity when the displayed ask cannot fill one whole-share IOC order', () => {
+    const cycle = makeActiveCycle()
+    const observedAt = '2026-08-18T16:00:02.000Z'
+    const quote = {
+      provider: 'alpaca' as const,
+      universeId: protocol.universeId,
+      universeSymbolHash: protocol.universeSymbolHash,
+      feed: protocol.feed,
+      marketSession: 'regular' as const,
+      delayClass: protocol.delayClass,
+      symbol: 'AAPL',
+      eventAt: observedAt,
+      ingestedAt: observedAt,
+      sourceTopic: protocol.sourceTopics.quotes,
+      sourcePartition: 0,
+      sourceOffset: '1',
+      schemaVersion: 1 as const,
+      bidPrice: 100,
+      bidSize: 1,
+      askPrice: 100.01,
+      askSize: 0.75,
+    }
+    const snapshot: IntradayMarketSnapshot = {
+      bars: [],
+      quotes: [quote],
+      trades: [],
+      latestQuotes: { AAPL: quote },
+      manifest: {
+        schemaVersion: 'bayn.intraday-market-snapshot.v1',
+        sessionDate: cycle.identity.executionSessionDate,
+        calendar: calendarFor(cycle),
+        rangeStartAt: '2026-08-18T15:30:00.000Z',
+        rangeEndAt: '2026-08-18T16:00:00.000Z',
+        observedAt,
+        universeId: protocol.universeId,
+        universeSymbolHash: protocol.universeSymbolHash,
+        universe: protocol.universe,
+        symbols: ['AAPL'],
+        purpose: IntradaySnapshotPurpose.EntryPricing,
+        feed: protocol.feed,
+        delayClass: protocol.delayClass,
+        sourceTopics: protocol.sourceTopics,
+        archiveWatermarks: [],
+        maximumQuoteAgeMs: protocol.maximumQuoteAgeMs,
+        minimumWatermarkLagMs: 2_000,
+        barCount: 0,
+        quoteCount: 1,
+        tradeCount: 0,
+        barsContentHash: sha256('bars'),
+        quotesContentHash: sha256('quotes'),
+        tradesContentHash: sha256('trades'),
+        lineage: [],
+        contentHash: sha256('snapshot-content'),
+        snapshotId: sha256('snapshot'),
+      },
+    }
+
+    expect(success(maximumBuyQuantities(snapshot, { AAPL: 0.1 }))).toEqual({ AAPL: '0' })
   })
 })

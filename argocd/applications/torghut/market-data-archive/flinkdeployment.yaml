@@ -13,7 +13,7 @@ spec:
   imagePullPolicy: IfNotPresent
   # Cut over from the v1 consumer's historical replay to the current-session v2 consumer.
   # Existing ClickHouse history stays intact; the new group begins at each topic's live head.
-  restartNonce: 10
+  restartNonce: 11
   flinkVersion: v2_0
   serviceAccount: torghut-runtime
   flinkConfiguration:

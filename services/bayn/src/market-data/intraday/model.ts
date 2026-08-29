@@ -6,7 +6,10 @@ import type { MarketCalendarObservation } from '../../broker/alpaca/model'
 
 export type IntradayFeed = 'iex' | 'sip' | 'delayed_sip'
 export type IntradayDelayClass = 'real_time_exchange_only' | 'real_time_consolidated' | 'delayed_15m_consolidated'
-export type IntradaySnapshotPurpose = 'LIQUIDATION'
+export enum IntradaySnapshotPurpose {
+  EntryPricing = 'ENTRY_PRICING',
+  Liquidation = 'LIQUIDATION',
+}
 
 export interface IntradaySnapshotQuery {
   readonly sessionDate: IsoDate
@@ -20,7 +23,7 @@ export interface IntradaySnapshotQuery {
   readonly universe: readonly string[]
   /** Canonical subset required by this snapshot. Omission means the full universe. */
   readonly symbols?: readonly string[]
-  /** Quote-led close evidence; omission keeps the full decision-time bar and trade contract. */
+  /** Quote-only execution evidence; omission keeps the full decision-time bar and trade contract. */
   readonly purpose?: IntradaySnapshotPurpose
   readonly feed: IntradayFeed
   readonly delayClass: IntradayDelayClass
@@ -165,6 +168,8 @@ export const archiveVerifiedIntradaySnapshotReference = (
  * materialized snapshot without the immutable-row checks in this layer.
  */
 export interface IntradayMarketDataService {
+  /** Verifies that the three tables required by the active strategy are queryable. */
+  readonly check: Effect.Effect<void, OperationalError>
   readonly captureVersion: (
     query: IntradaySnapshotQuery,
   ) => Effect.Effect<readonly IntradayArchiveWatermark[], OperationalError>

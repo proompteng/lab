@@ -1,34 +1,13 @@
-import type { RuntimeProvenance } from './contracts'
 import type { ExecutionControllerStatus } from './execution/controller-status'
 import {
   CycleOperationsCondition,
   type CycleOperationsStatus,
   unknownCycleOperationsStatus,
 } from './cycle/observability'
-import type { QualificationResult } from './qualification'
 import {
-  MonthEndCadenceDecisionSchema,
   RetainedAutonomousCyclePassObservationSchema,
   type RetainedAutonomousCyclePassObservation,
 } from './cycle/runner/pass-observation'
-import type { EvaluationSummary, ReconciliationResult } from './types'
-
-export interface RuntimePersistenceReceipt {
-  readonly runId: string
-  readonly deduplicated: boolean
-  readonly artifactCount: number
-  readonly eventCount: number
-  readonly gateCount: number
-}
-
-export interface RuntimeEvidence {
-  readonly startupMode: 'evaluated' | 'pinned' | 'recovered'
-  readonly provenance: RuntimeProvenance
-  readonly evaluation: EvaluationSummary
-  readonly reconciliation: ReconciliationResult
-  readonly persistence: RuntimePersistenceReceipt
-  readonly qualification: QualificationResult
-}
 
 export interface DependencyHealth {
   readonly status: 'UNKNOWN' | 'AVAILABLE' | 'UNAVAILABLE'
@@ -43,7 +22,6 @@ export interface RuntimeHealth {
     readonly postgresql: DependencyHealth
     readonly signal: DependencyHealth
     readonly tigerBeetle: DependencyHealth
-    readonly evidence: DependencyHealth
     readonly cycle: DependencyHealth
     readonly cycleRunner: DependencyHealth
   }
@@ -65,7 +43,6 @@ export interface BrokerStatus extends BrokerConfiguration {
 }
 
 export const AutonomousCyclePassObservationSchema = RetainedAutonomousCyclePassObservationSchema
-export { MonthEndCadenceDecisionSchema }
 
 export type AutonomousCyclePassObservation = RetainedAutonomousCyclePassObservation
 
@@ -97,7 +74,7 @@ export type CapitalActivationRuntimeState =
       readonly _tag: 'Realized'
       readonly requestHash: string
       readonly generationHash: string
-      readonly grant: 'Qualified' | 'Research'
+      readonly grant: 'Research'
       readonly cutoffAt: string
       readonly expiresAt: string
       readonly maximumCloseSessions: number | null
@@ -106,14 +83,12 @@ export type CapitalActivationRuntimeState =
       readonly _tag: 'Completed'
       readonly requestHash: string
       readonly generationHash: string
-      readonly grant: 'Qualified' | 'Research'
+      readonly grant: 'Research'
       readonly receiptHash: string
     }
 
 export interface RuntimeState {
   readonly status: 'STARTING' | 'READY' | 'DEGRADED' | 'FAILED'
-  readonly qualificationEvidenceRequired: boolean
-  readonly evidence: RuntimeEvidence | null
   readonly health: RuntimeHealth
   readonly cycle: CycleOperationsStatus
   readonly autonomousCycleLoop: AutonomousCycleLoopStatus
@@ -126,7 +101,6 @@ export interface RuntimeState {
 const unknownDependency = (): DependencyHealth => ({ status: 'UNKNOWN', checkedAt: null, error: null })
 
 export interface InitialRuntimeStateInput {
-  readonly qualificationEvidenceRequired?: boolean
   readonly broker?: BrokerConfiguration | undefined
   readonly autonomousCycleLoopConfigured?: boolean
   readonly autonomousCycleLoopOwner?: 'Process' | 'Restate'
@@ -138,8 +112,6 @@ export interface InitialRuntimeStateInput {
 
 export const initialState = (input: InitialRuntimeStateInput): RuntimeState => ({
   status: 'STARTING',
-  qualificationEvidenceRequired: input.qualificationEvidenceRequired ?? true,
-  evidence: null,
   health: {
     sequence: 0,
     checkedAt: null,
@@ -147,7 +119,6 @@ export const initialState = (input: InitialRuntimeStateInput): RuntimeState => (
       postgresql: unknownDependency(),
       signal: unknownDependency(),
       tigerBeetle: unknownDependency(),
-      evidence: unknownDependency(),
       cycle: unknownDependency(),
       cycleRunner: unknownDependency(),
     },
@@ -190,19 +161,9 @@ export const initialState = (input: InitialRuntimeStateInput): RuntimeState => (
   error: null,
 })
 
-export const qualificationEvidenceSatisfied = (state: RuntimeState): boolean => {
-  if (state.capitalActivation?._tag === 'Pending') return false
-  return (
-    !state.qualificationEvidenceRequired ||
-    state.evidence !== null ||
-    ((state.capitalActivation?._tag === 'Realized' || state.capitalActivation?._tag === 'Completed') &&
-      state.capitalActivation.grant === 'Research')
-  )
-}
-
 export const isReady = (state: RuntimeState): boolean =>
   state.status === 'READY' &&
-  qualificationEvidenceSatisfied(state) &&
+  state.capitalActivation?._tag !== 'Pending' &&
   state.cycle.condition !== CycleOperationsCondition.Unknown &&
   state.cycle.condition !== CycleOperationsCondition.Stalled &&
   state.cycle.condition !== CycleOperationsCondition.Failed &&

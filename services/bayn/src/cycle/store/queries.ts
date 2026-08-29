@@ -259,6 +259,7 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
 
   const decisionEvidenceMatches: CycleQueries['decisionEvidenceMatches'] = (document) => {
     const executionMarketData = document.bindings.executionMarketData
+    const decisionMarketData = document.bindings.decisionMarketData ?? executionMarketData
     const riskContext = document.mode === legacyExecutionAuthorityToken ? document.bindings.riskContext : undefined
     const riskState = document.mode === legacyExecutionAuthorityToken ? document.deltaRisk[0]?.facts?.state : undefined
     const riskContextEvidence =
@@ -338,7 +339,7 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
             ) = ${riskContext.unknownMutationCount}
           `
     const snapshotEvidence =
-      executionMarketData === undefined
+      decisionMarketData === undefined
         ? sql`
             EXISTS (
               SELECT 1
@@ -348,23 +349,23 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
                 AND snapshot.manifest ->> 'finalizedAt' = ${document.bindings.snapshotFinalizedAt}
             )
           `
-        : executionMarketData.schemaVersion === 'bayn.execution-market-data-binding.v2'
+        : decisionMarketData.schemaVersion === 'bayn.execution-market-data-binding.v2'
           ? sql`
-              ${document.bindings.snapshotId} = ${executionMarketData.snapshotId}
-              AND ${document.bindings.snapshotContentHash} = ${executionMarketData.contentHash}
-              AND ${document.bindings.snapshotFinalizedAt} = ${executionMarketData.observedAt}
+              ${document.bindings.snapshotId} = ${decisionMarketData.snapshotId}
+              AND ${document.bindings.snapshotContentHash} = ${decisionMarketData.contentHash}
+              AND ${document.bindings.snapshotFinalizedAt} = ${decisionMarketData.observedAt}
               AND EXISTS (
                 SELECT 1
                 FROM intraday_snapshot_references AS snapshot
-                WHERE snapshot.snapshot_id = ${executionMarketData.snapshotId}
-                  AND snapshot.content_hash = ${executionMarketData.contentHash}
-                  AND snapshot.observed_at = ${executionMarketData.observedAt}::timestamptz
+                WHERE snapshot.snapshot_id = ${decisionMarketData.snapshotId}
+                  AND snapshot.content_hash = ${decisionMarketData.contentHash}
+                  AND snapshot.observed_at = ${decisionMarketData.observedAt}::timestamptz
               )
             `
           : sql`
-              ${document.bindings.snapshotId} = ${executionMarketData.snapshotId}
-              AND ${document.bindings.snapshotContentHash} = ${executionMarketData.contentHash}
-              AND ${document.bindings.snapshotFinalizedAt} = ${executionMarketData.observedAt}
+              ${document.bindings.snapshotId} = ${decisionMarketData.snapshotId}
+              AND ${document.bindings.snapshotContentHash} = ${decisionMarketData.contentHash}
+              AND ${document.bindings.snapshotFinalizedAt} = ${decisionMarketData.observedAt}
             `
     return sql<Record<string, unknown>>`
       SELECT EXISTS (

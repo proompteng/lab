@@ -13,8 +13,6 @@ import {
 } from './config'
 import { BrokerAccess, BrokerEnvironment, CapitalAuthorityKind } from './execution/authority'
 import { CapitalAuthoritySelection } from './execution/configuration'
-import type { ExecutionPrepareRequest } from './execution-prepare'
-import { makeExecutionPrepareDiscoveryReceiptFixture } from './execution-prepare/test-support'
 
 const sourceRevision = 'a'.repeat(40)
 const imageRepository = 'registry.ide-newton.ts.net/lab/bayn'
@@ -28,56 +26,12 @@ const buildMetadata: EmbeddedBuildMetadata = {
   strategyBehaviorHash: 'c'.repeat(64),
   strategyParameterHash: 'd'.repeat(64),
 }
-const qualificationRunId = 'e'.repeat(64)
 const alpacaAccountId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
 const clickhousePassword = 'clickhouse-password-must-remain-redacted'
 const postgresUrl = 'postgresql://bayn:postgres-secret-must-remain-redacted@postgres.test:5432/bayn'
-const executionPrepareStrategy = {
-  name: 'risk-balanced-trend' as const,
-  behaviorHash: buildMetadata.strategyBehaviorHash,
-  parameterHash: buildMetadata.strategyParameterHash,
-  parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v4' as const,
-}
-const executionPrepareStrategyProtocolHash = '7'.repeat(64)
-const executionPrepareRiskPolicyHash = 'd'.repeat(64)
-const executionPrepareReconciliationId = 'e'.repeat(64)
-const executionPrepareReconciliationContentHash = 'f'.repeat(64)
-const executionPrepareDiscoveryReceipt = makeExecutionPrepareDiscoveryReceiptFixture({
-  sourceRevision,
-  imageRepository,
-  imageDigest,
-  strategy: executionPrepareStrategy,
-  strategyProtocolHash: executionPrepareStrategyProtocolHash,
-  qualificationRunId,
-  accountId: alpacaAccountId,
-  authorityGenerationHash,
-  policyHash: executionPrepareRiskPolicyHash,
-  reconciliationId: executionPrepareReconciliationId,
-  reconciliationContentHash: executionPrepareReconciliationContentHash,
-})
-const executionPrepareCandidate = executionPrepareDiscoveryReceipt.candidateFacts.candidates[0]!
-
-const executionPrepareRequest: ExecutionPrepareRequest = {
-  schemaVersion: 'bayn.execution-prepare-request.v1',
-  qualification: {
-    runId: qualificationRunId,
-    lockId: '8'.repeat(64),
-    resultHash: '9'.repeat(64),
-    verdict: 'QUALIFIED',
-    sourceRevision: 'f'.repeat(40),
-    imageRepository,
-    imageDigest: `sha256:${'1'.repeat(64)}`,
-    candidateOrdinal: executionPrepareCandidate.ordinal,
-  },
-  discoveryReceipt: executionPrepareDiscoveryReceipt,
-}
-
 const baseParsedConfig: ParsedRuntimeConfig = {
   host: '0.0.0.0',
   port: 8080,
-  qualificationRunId: undefined,
-  configuredOperation: undefined,
-  executionPrepareRequest: undefined,
   brokerAccess: BrokerAccess.ReadOnly,
   capitalAuthority: CapitalAuthoritySelection.None,
   persistedCapitalGrantHash: undefined,
@@ -95,9 +49,9 @@ const baseParsedConfig: ParsedRuntimeConfig = {
     provider: BrokerProvider.Alpaca,
     environment: BrokerEnvironment.Sandbox,
     baseUrl: alpacaSandboxBaseUrl,
-    accountId: undefined,
-    key: undefined,
-    secret: undefined,
+    accountId: alpacaAccountId,
+    key: Redacted.make('sandbox-key'),
+    secret: Redacted.make('sandbox-secret'),
     proxyUrl: 'http://bayn-egress-proxy:3128',
     retryAttempts: 2,
     reconciliationIntervalMs: 30_000,
@@ -154,8 +108,7 @@ const expectFailure = (overrides: Partial<ParsedRuntimeConfig>, expected: Runtim
 }
 
 describe('pure runtime configuration resolution', () => {
-  test('resolves brokerless and connected read-only services with no capital', () => {
-    const brokerless = Result.getOrThrow(resolveRuntimeConfig(resolutionInput({ authorityGenerationHash: undefined })))
+  test('requires one account-bound autonomous service and resolves sandbox or live read-only access', () => {
     const sandbox = Result.getOrThrow(
       resolveRuntimeConfig(resolutionInput({ configuredAlpaca: alpaca(BrokerEnvironment.Sandbox) })),
     )
@@ -163,10 +116,6 @@ describe('pure runtime configuration resolution', () => {
       resolveRuntimeConfig(resolutionInput({ configuredAlpaca: alpaca(BrokerEnvironment.Live) })),
     )
 
-    expect(brokerless).toMatchObject({
-      runtimeMode: 'BrokerlessService',
-      execution: { brokerAccess: BrokerAccess.ReadOnly, capitalAuthority: { _tag: CapitalAuthorityKind.None } },
-    })
     expect(sandbox).toMatchObject({
       runtimeMode: 'AutonomousService',
       execution: {
@@ -345,51 +294,14 @@ describe('pure runtime configuration resolution', () => {
     })
   })
 
-  test('resolves candidate discovery into a read-only bounded operation', () => {
-    const config = Result.getOrThrow(
-      resolveRuntimeConfig(
-        resolutionInput({
-          qualificationRunId,
-          configuredOperation: 'ExecutionCandidateDiscovery',
-          configuredAlpaca: alpaca(BrokerEnvironment.Sandbox),
-        }),
-      ),
-    )
-
-    expect(config).toMatchObject({
-      runtimeMode: 'ExecutionCandidateDiscovery',
-      qualificationRunId,
-      execution: { brokerAccess: BrokerAccess.ReadOnly, capitalAuthority: { _tag: CapitalAuthorityKind.None } },
-    })
-  })
-
-  test('resolves EXECUTION_PREPARE as an explicit read-only bounded operation', () => {
-    const config = Result.getOrThrow(
-      resolveRuntimeConfig(
-        resolutionInput({
-          qualificationRunId,
-          configuredOperation: 'ExecutionPrepare',
-          executionPrepareRequest,
-          configuredAlpaca: alpaca(BrokerEnvironment.Sandbox),
-        }),
-      ),
-    )
-
-    expect(config).toMatchObject({
-      runtimeMode: 'ExecutionPrepare',
-      qualificationRunId,
-      executionPrepareRequest,
-      execution: { brokerAccess: BrokerAccess.ReadOnly, capitalAuthority: { _tag: CapitalAuthorityKind.None } },
-      alpaca: { environment: BrokerEnvironment.Sandbox, expectedAccountId: alpacaAccountId },
-    })
-  })
-
   test('rejects partial credentials and connection binding failures before composition', () => {
     expectFailure(
       {
         configuredAlpaca: {
           ...baseParsedConfig.configuredAlpaca,
           accountId: alpacaAccountId,
+          key: undefined,
+          secret: undefined,
         },
       },
       {
@@ -400,6 +312,17 @@ describe('pure runtime configuration resolution', () => {
     expectFailure(
       { configuredAlpaca: alpaca(BrokerEnvironment.Sandbox), authorityGenerationHash: undefined },
       { _tag: 'MissingAlpacaAuthorityGeneration' },
+    )
+    expectFailure(
+      {
+        configuredAlpaca: {
+          ...baseParsedConfig.configuredAlpaca,
+          accountId: undefined,
+          key: undefined,
+          secret: undefined,
+        },
+      },
+      { _tag: 'MissingAlpacaCredentials' },
     )
   })
 
@@ -439,93 +362,6 @@ describe('pure runtime configuration resolution', () => {
         failure: { _tag: 'InvalidExecutionPolicy', cause: { _tag: entry.tag } },
       })
     }
-  })
-
-  test('requires candidate discovery to remain read-only, pinned, and broker-bound', () => {
-    expectFailure(
-      {
-        configuredOperation: 'ExecutionCandidateDiscovery',
-        configuredAlpaca: alpaca(BrokerEnvironment.Sandbox),
-      },
-      { _tag: 'ExecutionCandidateDiscoveryRequiresQualificationRun' },
-    )
-    expectFailure(
-      {
-        configuredOperation: 'ExecutionCandidateDiscovery',
-        qualificationRunId,
-        authorityGenerationHash: undefined,
-      },
-      { _tag: 'ExecutionCandidateDiscoveryRequiresAlpacaBinding' },
-    )
-    expectFailure(
-      {
-        configuredOperation: 'ExecutionCandidateDiscovery',
-        qualificationRunId,
-        configuredAlpaca: alpaca(BrokerEnvironment.Sandbox),
-        brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: CapitalAuthoritySelection.Granted,
-      },
-      {
-        _tag: 'ExecutionCandidateDiscoveryRequiresReadOnlyNoCapital',
-        brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: CapitalAuthoritySelection.Granted,
-      },
-    )
-  })
-
-  test('requires EXECUTION_PREPARE to remain read-only, pinned, and broker-bound', () => {
-    expectFailure(
-      {
-        configuredOperation: 'ExecutionPrepare',
-        qualificationRunId,
-        configuredAlpaca: alpaca(BrokerEnvironment.Sandbox),
-      },
-      { _tag: 'ExecutionPrepareRequiresRequest' },
-    )
-    expectFailure(
-      {
-        configuredOperation: 'ExecutionPrepare',
-        executionPrepareRequest,
-        configuredAlpaca: alpaca(BrokerEnvironment.Sandbox),
-      },
-      { _tag: 'ExecutionCandidateDiscoveryRequiresQualificationRun' },
-    )
-    expectFailure(
-      {
-        configuredOperation: 'ExecutionPrepare',
-        executionPrepareRequest,
-        qualificationRunId,
-        authorityGenerationHash: undefined,
-      },
-      { _tag: 'ExecutionCandidateDiscoveryRequiresAlpacaBinding' },
-    )
-    expectFailure(
-      {
-        configuredOperation: 'ExecutionPrepare',
-        executionPrepareRequest,
-        qualificationRunId,
-        configuredAlpaca: alpaca(BrokerEnvironment.Sandbox),
-        brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: CapitalAuthoritySelection.Granted,
-      },
-      {
-        _tag: 'ExecutionCandidateDiscoveryRequiresReadOnlyNoCapital',
-        brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: CapitalAuthoritySelection.Granted,
-      },
-    )
-    expectFailure(
-      {
-        configuredOperation: 'ExecutionPrepare',
-        executionPrepareRequest,
-        qualificationRunId,
-        configuredAlpaca: alpaca(BrokerEnvironment.Live),
-      },
-      {
-        _tag: 'ExecutionPrepareRequiresSandboxBroker',
-        brokerEnvironment: BrokerEnvironment.Live,
-      },
-    )
   })
 
   test('validates provenance, PostgreSQL TLS, bounds, and cycle timing before runtime startup', () => {
@@ -571,8 +407,6 @@ const runtimeEnvironment = new Map([
   ['BAYN_ALPACA_ACCOUNT_ID', alpacaAccountId],
   ['BAYN_ALPACA_KEY_ID', 'sandbox-key'],
   ['BAYN_ALPACA_SECRET_KEY', 'sandbox-secret'],
-  ['BAYN_QUALIFICATION_RUN_ID', qualificationRunId],
-  ['BAYN_OPERATION', 'EXECUTION_CANDIDATE_DISCOVERY'],
   ['BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH', expectedExecutionControllerPlanHash],
   ['BAYN_CLICKHOUSE_URL', 'http://clickhouse.test:8123'],
   ['BAYN_CLICKHOUSE_USERNAME', 'bayn'],
@@ -595,11 +429,11 @@ const provideEnvironment = <A, E>(effect: Effect.Effect<A, E>, environment: Map<
   )
 
 describe('runtime configuration loading', () => {
-  test('decodes the canonical operation and authority configuration into the read-only runtime contract', async () => {
+  test('decodes the canonical autonomous account binding into the read-only runtime contract', async () => {
     const config = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), runtimeEnvironment))
 
     expect(config).toMatchObject({
-      runtimeMode: 'ExecutionCandidateDiscovery',
+      runtimeMode: 'AutonomousService',
       expectedExecutionControllerPlanHash,
       execution: {
         brokerAccess: BrokerAccess.ReadOnly,
@@ -624,8 +458,6 @@ describe('runtime configuration loading', () => {
 
   test('maps canonical sandbox and live capital configuration into the account-neutral policy', async () => {
     const sandboxEnvironment = new Map(runtimeEnvironment)
-    sandboxEnvironment.delete('BAYN_OPERATION')
-    sandboxEnvironment.delete('BAYN_QUALIFICATION_RUN_ID')
     sandboxEnvironment.set('BAYN_BROKER_ACCESS', BrokerAccess.Mutation)
     sandboxEnvironment.set('BAYN_CAPITAL_AUTHORITY', CapitalAuthoritySelection.Granted)
 
@@ -653,8 +485,6 @@ describe('runtime configuration loading', () => {
 
   test('returns a typed startup error when a live broker lacks its persisted capital grant', async () => {
     const environment = new Map(runtimeEnvironment)
-    environment.delete('BAYN_OPERATION')
-    environment.delete('BAYN_QUALIFICATION_RUN_ID')
     environment.set('BAYN_BROKER_ACCESS', BrokerAccess.Mutation)
     environment.set('BAYN_CAPITAL_AUTHORITY', CapitalAuthoritySelection.Granted)
     environment.set('BAYN_BROKER_ENVIRONMENT', BrokerEnvironment.Live)
@@ -672,30 +502,5 @@ describe('runtime configuration loading', () => {
         cause: { _tag: 'PersistedCapitalGrantRequired', environment: BrokerEnvironment.Live },
       },
     })
-  })
-
-  test('loads the public EXECUTION_PREPARE token and strict JSON request without exposing credentials', async () => {
-    const environment = new Map(runtimeEnvironment)
-    environment.set('BAYN_OPERATION', 'EXECUTION_PREPARE')
-    environment.set('BAYN_EXECUTION_PREPARE_REQUEST', JSON.stringify(executionPrepareRequest))
-
-    const config = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), environment))
-    expect(config).toMatchObject({
-      runtimeMode: 'ExecutionPrepare',
-      executionPrepareRequest,
-      execution: { brokerAccess: BrokerAccess.ReadOnly, capitalAuthority: { _tag: CapitalAuthorityKind.None } },
-    })
-    const serialized = JSON.stringify(config, (_key, value) => (typeof value === 'bigint' ? value.toString() : value))
-    expect(serialized).not.toContain('sandbox-secret')
-    expect(serialized).not.toContain('sandbox-key')
-  })
-
-  test('rejects malformed EXECUTION_PREPARE JSON at the config boundary', async () => {
-    const environment = new Map(runtimeEnvironment)
-    environment.set('BAYN_OPERATION', 'EXECUTION_PREPARE')
-    environment.set('BAYN_EXECUTION_PREPARE_REQUEST', '{"schemaVersion":"wrong"}')
-
-    const failure = await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), environment)))
-    expect(failure).toMatchObject({ component: 'config', operation: 'load', retryable: false })
   })
 })

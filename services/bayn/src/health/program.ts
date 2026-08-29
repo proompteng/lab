@@ -1,4 +1,4 @@
-import { Cause, Clock, Duration, Effect, Exit, Fiber, Option, Ref, Result, Schedule } from 'effect'
+import { Cause, Clock, Duration, Effect, Exit, Fiber, Ref, Result, Schedule } from 'effect'
 
 import {
   OrderCollection,
@@ -8,25 +8,11 @@ import {
   type BrokerReadShape,
 } from '../broker/alpaca'
 import type { RuntimeConfig } from '../config'
-import type { FinalizedSnapshotProvenance } from '../contracts'
-import type { QualificationRecord, RecoveredEvaluationEvidence } from '../db/evidence-store'
-import { OperationalError, operationalError } from '../errors'
+import { operationalError } from '../errors'
 import { databaseOperation, withinDeadline } from '../operations'
-import {
-  qualificationEvidenceSatisfied,
-  type BrokerConfiguration,
-  type RuntimeEvidence,
-  type RuntimeState,
-} from '../runtime-state'
+import { type BrokerConfiguration, type RuntimeState } from '../runtime-state'
 import { utcInstantFromEpochMillisResult } from '../time'
-import {
-  deriveHealthLogDecisions,
-  deriveHealthTransition,
-  renderDurableEvidenceFailure,
-  renderSignalIdentityFailure,
-  validateDurableEvidence,
-  validateSignalIdentity,
-} from './decisions'
+import { deriveHealthLogDecisions, deriveHealthTransition } from './decisions'
 import type {
   AutonomousCycleFiberObservation,
   BrokerHealthObservation,
@@ -142,43 +128,6 @@ const observeBroker = (read: BrokerReadShape, timeoutMs: number): Effect.Effect<
     }),
   )
 
-const ensureSignalIdentityDataFirst = (
-  snapshot: FinalizedSnapshotProvenance,
-  evidence: RuntimeEvidence | null,
-): Effect.Effect<void, OperationalError> =>
-  Effect.mapError(
-    Effect.fromResult(validateSignalIdentity(snapshot, evidence)),
-    (failure) =>
-      new OperationalError({
-        component: 'market-data',
-        operation: 'check-identity',
-        message: `Signal identity check failed: ${renderSignalIdentityFailure(failure)}`,
-        retryable: false,
-        cause: failure,
-      }),
-  )
-
-export const ensureSignalIdentity = Pipeable.dual(2, ensureSignalIdentityDataFirst)
-
-const ensureDurableEvidenceDataFirst = (
-  recovered: RecoveredEvaluationEvidence | null,
-  qualification: QualificationRecord | null,
-  evidence: RuntimeEvidence | null,
-): Effect.Effect<void, OperationalError> =>
-  Effect.mapError(
-    Effect.fromResult(validateDurableEvidence(recovered, qualification, evidence)),
-    (failure) =>
-      new OperationalError({
-        component: 'database',
-        operation: 'verify-evidence',
-        message: `durable evidence verification failed: ${renderDurableEvidenceFailure(failure)}`,
-        retryable: false,
-        cause: failure,
-      }),
-  )
-
-export const ensureDurableEvidence = Pipeable.dual(3, ensureDurableEvidenceDataFirst)
-
 const sampleAutonomousCycleFiber = (fiber: Fiber.Fiber<void, never> | undefined): AutonomousCycleFiberObservation => {
   if (fiber === undefined) return { _tag: 'NotProvided' }
   const exit = fiber.pollUnsafe()
@@ -211,79 +160,32 @@ const interpretHealthLogs = (decisions: readonly HealthLogDecision[]): Effect.Ef
 
 const collectHealthProbeResults = (
   config: RuntimeConfig,
-  evidence: RuntimeEvidence | null,
-  marketData: HealthDependencies['marketData'],
-  journal: HealthDependencies['journal'],
-  evidenceStore: HealthDependencies['evidenceStore'],
-  cycleObservability: HealthDependencies['cycleObservability'],
+  dependencies: HealthDependencies,
   broker: BrokerProbe | undefined,
   cycleObservation: CycleObservationBinding,
-  qualificationEvidenceRequired: boolean,
   executionController: ExecutionControllerProbe | undefined,
 ): Effect.Effect<HealthProbeResults, never> => {
-  const cycleBindingId =
-    cycleObservation._tag === 'Exact'
-      ? cycleObservation.bindingId
-      : cycleObservation._tag === 'FromEvidence'
-        ? evidence?.evaluation.runId
-        : undefined
+  const cycleBindingId = cycleObservation._tag === 'Exact' ? cycleObservation.bindingId : undefined
   return Effect.map(
     Effect.all(
       [
         observe(
           withinDeadline(
-            databaseOperation(evidenceStore.check, 'continuous-health'),
+            databaseOperation(dependencies.postgresql, 'continuous-health'),
             config.operationTimeoutMs,
             'database',
             'continuous-health',
           ),
         ),
         observe(
-          withinDeadline(marketData.check, config.operationTimeoutMs, 'market-data', 'continuous-health').pipe(
-            Effect.flatMap((snapshot) =>
-              qualificationEvidenceRequired ? ensureSignalIdentity(snapshot, evidence) : Effect.void,
-            ),
-          ),
-        ),
-        observe(
           withinDeadline(
-            evidence === null ? journal.check : journal.checkRun(evidence.reconciliation),
+            dependencies.marketData.check.pipe(Effect.asVoid),
             config.operationTimeoutMs,
-            'journal',
+            'market-data',
             'continuous-health',
           ),
         ),
-        observe(
-          !qualificationEvidenceRequired
-            ? Effect.void
-            : evidence === null
-              ? Effect.fail(
-                  operationalError({
-                    component: 'database',
-                    operation: 'verify-evidence',
-                    message: 'startup evidence is unavailable',
-                  }),
-                )
-              : withinDeadline(
-                  Effect.all([
-                    databaseOperation(
-                      evidenceStore.recover(evidence.evaluation.runId, evidence.provenance),
-                      'continuous-recovery',
-                    ),
-                    databaseOperation(
-                      evidenceStore.readQualification(evidence.evaluation.runId),
-                      'continuous-qualification',
-                    ),
-                  ]),
-                  config.operationTimeoutMs,
-                  'database',
-                  'continuous-recovery',
-                ).pipe(
-                  Effect.flatMap(([recovered, qualification]) =>
-                    ensureDurableEvidence(Option.getOrNull(recovered), Option.getOrNull(qualification), evidence),
-                  ),
-                ),
-        ),
+        observe(withinDeadline(dependencies.journal.check, config.operationTimeoutMs, 'journal', 'continuous-health')),
         observe(
           cycleBindingId === undefined
             ? Effect.fail(
@@ -295,7 +197,7 @@ const collectHealthProbeResults = (
               )
             : withinDeadline(
                 databaseOperation(
-                  cycleObservability.read(cycleBindingId, broker?.expectedAccountId),
+                  dependencies.cycleObservability.read(cycleBindingId, broker?.expectedAccountId),
                   'cycle-observability',
                 ),
                 config.operationTimeoutMs,
@@ -327,11 +229,10 @@ const collectHealthProbeResults = (
       ],
       { concurrency: 'unbounded' },
     ),
-    ([postgresql, signal, tigerBeetle, durableEvidence, cycle, brokerResult, executionControllerResult]) => ({
+    ([postgresql, signal, tigerBeetle, cycle, brokerResult, executionControllerResult]) => ({
       postgresql,
       signal,
       tigerBeetle,
-      durableEvidence,
       cycle,
       broker: brokerResult,
       executionController: executionControllerResult,
@@ -339,7 +240,7 @@ const collectHealthProbeResults = (
   )
 }
 
-const defaultCycleObservationBinding: CycleObservationBinding = { _tag: 'FromEvidence' }
+const defaultCycleObservationBinding: CycleObservationBinding = { _tag: 'Unavailable' }
 
 const checkHealthDataFirst = (
   config: RuntimeConfig,
@@ -348,21 +249,14 @@ const checkHealthDataFirst = (
   broker?: BrokerProbe,
   autonomousCycleFiber?: Fiber.Fiber<void, never>,
   cycleObservation: CycleObservationBinding = defaultCycleObservationBinding,
-  qualificationEvidenceRequired = true,
   executionController?: ExecutionControllerProbe,
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
-    const initial = yield* Ref.get(state)
     const results = yield* collectHealthProbeResults(
       config,
-      initial.evidence,
-      dependencies.marketData,
-      dependencies.journal,
-      dependencies.evidenceStore,
-      dependencies.cycleObservability,
+      dependencies,
       broker,
       cycleObservation,
-      qualificationEvidenceRequired,
       executionController,
     )
     const checkedAtMs = yield* Clock.currentTimeMillis
@@ -375,7 +269,6 @@ const checkHealthDataFirst = (
     const transition = yield* Ref.modify(state, (current) => {
       const decision = deriveHealthTransition(current, {
         config,
-        evidenceAvailable: qualificationEvidenceSatisfied(initial),
         results,
         broker: brokerConfiguration(broker),
         cycleFiber,
@@ -393,7 +286,6 @@ export const checkHealth = Pipeable.by<
     broker?: BrokerProbe,
     autonomousCycleFiber?: Fiber.Fiber<void, never>,
     cycleObservation?: CycleObservationBinding,
-    qualificationEvidenceRequired?: boolean,
     executionController?: ExecutionControllerProbe,
   ) => (config: RuntimeConfig) => ReturnType<typeof checkHealthDataFirst>,
   typeof checkHealthDataFirst
@@ -409,19 +301,12 @@ const runHealthMonitorDataFirst = (
   broker?: BrokerProbe,
   autonomousCycleFiber?: Fiber.Fiber<void, never>,
   cycleObservation: CycleObservationBinding = defaultCycleObservationBinding,
-  qualificationEvidenceRequired = true,
   executionController?: ExecutionControllerProbe,
 ): Effect.Effect<void> =>
-  checkHealth(
-    config,
-    state,
-    dependencies,
-    broker,
-    autonomousCycleFiber,
-    cycleObservation,
-    qualificationEvidenceRequired,
-    executionController,
-  ).pipe(Effect.repeat(Schedule.spaced(Duration.millis(config.healthIntervalMs))), Effect.asVoid)
+  checkHealth(config, state, dependencies, broker, autonomousCycleFiber, cycleObservation, executionController).pipe(
+    Effect.repeat(Schedule.spaced(Duration.millis(config.healthIntervalMs))),
+    Effect.asVoid,
+  )
 
 export const runHealthMonitor = Pipeable.by<
   (
@@ -430,7 +315,6 @@ export const runHealthMonitor = Pipeable.by<
     broker?: BrokerProbe,
     autonomousCycleFiber?: Fiber.Fiber<void, never>,
     cycleObservation?: CycleObservationBinding,
-    qualificationEvidenceRequired?: boolean,
     executionController?: ExecutionControllerProbe,
   ) => (config: RuntimeConfig) => ReturnType<typeof runHealthMonitorDataFirst>,
   typeof runHealthMonitorDataFirst

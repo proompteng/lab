@@ -9,37 +9,32 @@
 
 let
   imageRepository = "registry.ide-newton.ts.net/lab/bayn";
-  # SHA-256 identity for bayn.opening-drive-momentum.behavior.v3, verified by the production executable.
-  strategyBehaviorHash = "6644f644d83bda5104de9c7bbcf4ec6d5a7db4b5e7ab43b82dc27df0b1fdb94e";
-  # Canonical hash of the compiled bayn.opening-drive.protocol.v2 document.
-  strategyParameterHash = "3a6ee606f44434b968579fd2a7e8da4dd2aab26c99a3cc8c9e70433be16c6329";
-  strategyName = "opening-drive-momentum";
+  # SHA-256 identity for bayn.intraday-momentum.behavior.v9, verified by the production executable.
+  strategyBehaviorHash = "9b85a04413b635b35ad3dea33fcfc5e5bf3dd5590c1564390b454f1092988fa2";
+  # Canonical hash of the compiled bayn.intraday-momentum.protocol.v2 document.
+  strategyParameterHash = "88f4bf9a18fd881226a123ba277a65daaaf92aba76acfde86072d03d143624ef";
+  strategyName = "intraday-momentum";
   # Canonical bayn.strategy-protocol.v1 identity: name, behavior, parameters, and parameter schema.
-  strategyProtocolHash = "23cbcd451a16c515ab9e9c28c5f8d47064bfbd38d60a21c7b45e998956847b5a";
+  strategyProtocolHash = "b2cb0303849ff30d64214f0faeea689b78bcb93554eb517251f914001ec50318";
   # Canonical quote-bound policy for the build-contract account sentinel. It binds every source-controlled risk limit
   # without embedding a broker account identity; runtime separately verifies the account-bound activation policy.
-  executionRiskPolicyHash = "667ad270624ec0804cf68b47b77e6488b8c8230d587df8534bb4d65eaccfa53f";
+  executionRiskPolicyHash = "2e60270036900493a121a87c73730960154278778a8aa71b663b138effd82227";
   forwardPerformanceCommand = pkgs.writeShellScriptBin "bayn-forward-performance" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/forward-performance-command.js" "$@"
   '';
-  openingDriveQualificationCommand = pkgs.writeShellScriptBin "bayn-opening-drive-qualification" ''
-    set -eu
-    root="''${BAYN_IMAGE_ROOT:-}"
-    exec "$root/bin/node" "$root/app/services/bayn/dist/opening-drive-qualification-command.js" "$@"
-  '';
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = {
     # Refreshed from the two authoritative Linux builders for the Bun 1.4.0 dependency closure.
-    x86_64-linux = "sha256-Yek58Alv6n2J1pG1D0MZBAfDvlYtrY6zknnRJMcnOjY=";
-    aarch64-linux = "sha256-HVdu7a1WjI5BUcFTs1PH7xdz0j8Af7O/7E2LXCciyW0=";
+    x86_64-linux = "sha256-rMnyn/fJW/PPZDazhzqRBAELt41pUfjGc2aSE2xiux8=";
+    aarch64-linux = "sha256-8CrmVAcnms+gBroKhJaowxtFIHReQrsLSB98OOzZfXA=";
   };
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
     (
-      "bun --cwd=services/bayn build src/index.ts src/verify-build-contract.ts src/forward-performance-command.ts src/opening-drive-qualification-command.ts src/restate/restate-execution-server.ts src/restate/restate-execution-activate.ts --target=node "
+      "bun --cwd=services/bayn build src/index.ts src/verify-build-contract.ts src/forward-performance-command.ts src/restate/restate-execution-server.ts src/restate/restate-execution-activate.ts --target=node "
       + "--external tigerbeetle-node --entry-naming '[name].js' --outdir=dist "
       + buildDefine "__BAYN_BUILD_SOURCE_REVISION__" repoRevision
       + " "
@@ -58,7 +53,6 @@ let
     "node services/bayn/dist/verify-build-contract.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/index.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/forward-performance-command.js"
-    "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/opening-drive-qualification-command.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/restate-execution-server.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/restate-execution-activate.js"
     "grep -F -- ${lib.escapeShellArg strategyBehaviorHash} services/bayn/dist/index.js"
@@ -71,7 +65,6 @@ let
     mkdir -p "$out/app/services/bayn/dist" "$out/app/services/bayn/node_modules/tigerbeetle-node"
     cp "$TMPDIR/work/services/bayn/dist/index.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/forward-performance-command.js" "$out/app/services/bayn/dist/"
-    cp "$TMPDIR/work/services/bayn/dist/opening-drive-qualification-command.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/restate-execution-server.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/restate-execution-activate.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/package.json" "$out/app/services/bayn/package.json"
@@ -114,7 +107,6 @@ import ./bun-workspace-service.nix {
     nodejs
     pkgs.cacert
     forwardPerformanceCommand
-    openingDriveQualificationCommand
   ];
   exposedPorts = {
     "8080/tcp" = { };

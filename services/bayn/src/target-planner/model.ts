@@ -204,6 +204,7 @@ const QuoteBoundLimitExecutionTermsSchema = Schema.Struct({
   snapshotId: Sha256Schema,
   snapshotContentHash: Sha256Schema,
   maximumBuyQuantityMicros: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
+  maximumSellQuantityMicros: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
 })
 
 const FractionalCloseExecutionTermsSchema = Schema.Struct({
@@ -211,6 +212,7 @@ const FractionalCloseExecutionTermsSchema = Schema.Struct({
   snapshotId: Sha256Schema,
   snapshotContentHash: Sha256Schema,
   maximumBuyQuantityMicros: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
+  maximumSellQuantityMicros: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
 })
 
 const ReconciledPositionCloseExecutionTermsSchema = Schema.Struct({
@@ -218,6 +220,7 @@ const ReconciledPositionCloseExecutionTermsSchema = Schema.Struct({
   snapshotId: Sha256Schema,
   snapshotContentHash: Sha256Schema,
   maximumBuyQuantityMicros: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
+  maximumSellQuantityMicros: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
 })
 
 export const QuoteBoundExecutionTermsSchema = Schema.Union([
@@ -272,14 +275,16 @@ const quoteBoundInputIssues = (input: typeof QuoteBoundTargetPlannerInputBase.Ty
     issues.push({ path: ['executionTerms', 'priceReference'], issue: 'must match the bound reference-price source' })
   }
   const targetSymbols = Object.keys(input.targetWeights).sort()
-  const quantitySymbols = Object.keys(input.executionTerms.maximumBuyQuantityMicros).sort()
+  const buyQuantitySymbols = Object.keys(input.executionTerms.maximumBuyQuantityMicros).sort()
+  const sellQuantitySymbols = Object.keys(input.executionTerms.maximumSellQuantityMicros).sort()
   if (
-    targetSymbols.length !== quantitySymbols.length ||
-    targetSymbols.some((symbol, index) => symbol !== quantitySymbols[index])
+    targetSymbols.length !== buyQuantitySymbols.length ||
+    targetSymbols.length !== sellQuantitySymbols.length ||
+    targetSymbols.some((symbol, index) => symbol !== buyQuantitySymbols[index] || symbol !== sellQuantitySymbols[index])
   ) {
     issues.push({
-      path: ['executionTerms', 'maximumBuyQuantityMicros'],
-      issue: 'must contain one quantity limit for every target symbol',
+      path: ['executionTerms'],
+      issue: 'must contain one buy and sell quantity limit for every target symbol',
     })
   }
   const quantityIncrement = BigInt(input.precision.quantityIncrementMicros)
@@ -308,23 +313,28 @@ const quoteBoundInputIssues = (input: typeof QuoteBoundTargetPlannerInputBase.Ty
       targetSymbols.some((symbol) => {
         const currentQuantity = positionQuantities.get(symbol) ?? 0n
         const expectedMaximumBuy = currentQuantity < 0n ? -currentQuantity : 0n
-        return BigInt(input.executionTerms.maximumBuyQuantityMicros[symbol] ?? '0') !== expectedMaximumBuy
+        const expectedMaximumSell = currentQuantity > 0n ? currentQuantity : 0n
+        return (
+          BigInt(input.executionTerms.maximumBuyQuantityMicros[symbol] ?? '0') !== expectedMaximumBuy ||
+          BigInt(input.executionTerms.maximumSellQuantityMicros[symbol] ?? '0') !== expectedMaximumSell
+        )
       })
     ) {
       issues.push({
-        path: ['executionTerms', 'maximumBuyQuantityMicros'],
-        issue: 'forced close must cap buys at each exactly reconciled short quantity',
+        path: ['executionTerms'],
+        issue: 'forced close must cap buys and sells at each exactly reconciled position quantity',
       })
     }
   }
   if (
-    Object.values(input.executionTerms.maximumBuyQuantityMicros).some(
-      (quantity) => BigInt(quantity) % quantityIncrement !== 0n,
-    )
+    [
+      ...Object.values(input.executionTerms.maximumBuyQuantityMicros),
+      ...Object.values(input.executionTerms.maximumSellQuantityMicros),
+    ].some((quantity) => BigInt(quantity) % quantityIncrement !== 0n)
   ) {
     issues.push({
-      path: ['executionTerms', 'maximumBuyQuantityMicros'],
-      issue: 'must use the declared quantity precision',
+      path: ['executionTerms'],
+      issue: 'buy and sell limits must use the declared quantity precision',
     })
   }
   return issues
@@ -372,6 +382,8 @@ export enum TargetPlanReason {
   IdentityMismatch = 'IDENTITY_MISMATCH',
   InputMismatch = 'INPUT_MISMATCH',
   InputStale = 'INPUT_STALE',
+  InsufficientBuyLiquidity = 'INSUFFICIENT_BUY_LIQUIDITY',
+  InsufficientSellLiquidity = 'INSUFFICIENT_SELL_LIQUIDITY',
   InsufficientBuyingPower = 'INSUFFICIENT_BUYING_POWER',
   NonPositiveEquity = 'NON_POSITIVE_EQUITY',
   ReconciliationNotExact = 'RECONCILIATION_NOT_EXACT',
@@ -388,6 +400,8 @@ export const blockedTargetPlanReasons = [
   TargetPlanReason.IdentityMismatch,
   TargetPlanReason.InputMismatch,
   TargetPlanReason.InputStale,
+  TargetPlanReason.InsufficientBuyLiquidity,
+  TargetPlanReason.InsufficientSellLiquidity,
   TargetPlanReason.InsufficientBuyingPower,
   TargetPlanReason.NonPositiveEquity,
   TargetPlanReason.ReconciliationNotExact,

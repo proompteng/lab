@@ -1,4 +1,5 @@
 import type { ClickhouseClient } from '@effect/sql-clickhouse'
+import { Effect } from 'effect'
 
 import { intradaySnapshotSymbols, type IntradaySnapshotQuery, type IntradaySnapshotRequest } from './model'
 
@@ -13,6 +14,14 @@ export interface IntradayArchivePageCursor {
 }
 
 export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseClient) => {
+  const checkIntradayArchive = Effect.all(
+    [
+      sql`SELECT 1 FROM signal.intraday_bars_1m_v2 LIMIT 0`,
+      sql`SELECT 1 FROM signal.intraday_quotes_v1 LIMIT 0`,
+      sql`SELECT 1 FROM signal.intraday_trades_v1 LIMIT 0`,
+    ],
+    { concurrency: 3, discard: true },
+  )
   const symbols = (request: IntradaySnapshotQuery) => sql.param('Array(String)', intradaySnapshotSymbols(request))
   const bounds = (request: IntradaySnapshotQuery) => {
     const session = request.calendar.sessions.find((candidate) => candidate.date === request.sessionDate)
@@ -271,5 +280,11 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
     `
   }
 
-  return { captureIntradayArchiveWatermarks, loadIntradayBars, loadIntradayQuotes, loadIntradayTrades }
+  return {
+    checkIntradayArchive,
+    captureIntradayArchiveWatermarks,
+    loadIntradayBars,
+    loadIntradayQuotes,
+    loadIntradayTrades,
+  }
 }

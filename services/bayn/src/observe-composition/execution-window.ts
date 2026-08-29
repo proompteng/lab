@@ -1,6 +1,5 @@
 import { Result } from 'effect'
 
-import { isEverySessionCycleCadence, type CycleCadence } from '../cycle/runner/model'
 import { utcInstantFromEpochMillisResult } from '../time'
 
 export const everySessionCloseStartLeadMs = 60 * 60_000
@@ -13,7 +12,6 @@ export interface ExecutionCycleCloseWindow {
 }
 
 export interface ExecutionCycleCloseWindowFacts {
-  readonly cadence?: CycleCadence
   readonly executionCloseAt: string
   /** Strategy-bound lead from the session close to the start of forced flattening. */
   readonly sessionCloseStartLeadMs?: number
@@ -74,50 +72,42 @@ export const resolveExecutionCycleCloseWindow = (
     const mandateCloseExpiresAt = yield* decodeInstant(facts.mandateCloseExpiresAt, 'mandate close expiry instant')
     const executionCloseAt = yield* decodeInstant(facts.executionCloseAt, 'execution close instant')
 
-    const window = isEverySessionCycleCadence(facts.cadence)
-      ? yield* Result.gen(function* () {
-          const closeAt = Date.parse(executionCloseAt)
-          const startLeadMs = yield* decodeLead(
-            facts.sessionCloseStartLeadMs,
-            everySessionCloseStartLeadMs,
-            'session close start lead',
-          )
-          const submitLeadMs = yield* decodeLead(
-            facts.sessionCloseSubmitLeadMs,
-            everySessionCloseSubmitLeadMs,
-            'session close submit lead',
-          )
-          if (startLeadMs <= submitLeadMs) {
-            return yield* Result.fail({
-              _tag: 'ExecutionCycleCloseWindowInvalid' as const,
-              reason: 'session close start lead must be greater than the submit lead',
-            })
-          }
-          const sessionStartAt = yield* Result.mapError(
-            utcInstantFromEpochMillisResult(closeAt - startLeadMs),
-            (): ExecutionCycleCloseWindowFailure => ({
-              _tag: 'ExecutionCycleCloseWindowInvalid',
-              reason: 'execution close instant is invalid',
-            }),
-          )
-          const sessionSubmitCutoffAt = yield* Result.mapError(
-            utcInstantFromEpochMillisResult(closeAt - submitLeadMs),
-            (): ExecutionCycleCloseWindowFailure => ({
-              _tag: 'ExecutionCycleCloseWindowInvalid',
-              reason: 'execution close instant is invalid',
-            }),
-          )
-          return {
-            startAt: earlierInstant(mandateForceCloseAt, sessionStartAt),
-            submitCutoffAt: earlierInstant(mandateCloseSubmitCutoffAt, sessionSubmitCutoffAt),
-            expiresAt: earlierInstant(mandateCloseExpiresAt, executionCloseAt),
-          }
-        })
-      : {
-          startAt: mandateForceCloseAt,
-          submitCutoffAt: mandateCloseSubmitCutoffAt,
-          expiresAt: mandateCloseExpiresAt,
-        }
+    const closeAt = Date.parse(executionCloseAt)
+    const startLeadMs = yield* decodeLead(
+      facts.sessionCloseStartLeadMs,
+      everySessionCloseStartLeadMs,
+      'session close start lead',
+    )
+    const submitLeadMs = yield* decodeLead(
+      facts.sessionCloseSubmitLeadMs,
+      everySessionCloseSubmitLeadMs,
+      'session close submit lead',
+    )
+    if (startLeadMs <= submitLeadMs) {
+      return yield* Result.fail({
+        _tag: 'ExecutionCycleCloseWindowInvalid' as const,
+        reason: 'session close start lead must be greater than the submit lead',
+      })
+    }
+    const sessionStartAt = yield* Result.mapError(
+      utcInstantFromEpochMillisResult(closeAt - startLeadMs),
+      (): ExecutionCycleCloseWindowFailure => ({
+        _tag: 'ExecutionCycleCloseWindowInvalid',
+        reason: 'execution close instant is invalid',
+      }),
+    )
+    const sessionSubmitCutoffAt = yield* Result.mapError(
+      utcInstantFromEpochMillisResult(closeAt - submitLeadMs),
+      (): ExecutionCycleCloseWindowFailure => ({
+        _tag: 'ExecutionCycleCloseWindowInvalid',
+        reason: 'execution close instant is invalid',
+      }),
+    )
+    const window = {
+      startAt: earlierInstant(mandateForceCloseAt, sessionStartAt),
+      submitCutoffAt: earlierInstant(mandateCloseSubmitCutoffAt, sessionSubmitCutoffAt),
+      expiresAt: earlierInstant(mandateCloseExpiresAt, executionCloseAt),
+    }
 
     return window.startAt < window.submitCutoffAt && window.submitCutoffAt <= window.expiresAt
       ? window

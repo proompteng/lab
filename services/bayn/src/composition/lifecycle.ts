@@ -6,7 +6,7 @@ import { BrokerMutationError } from '../broker/alpaca-mutations'
 import { CycleRunnerError } from '../cycle/runner'
 import { CapitalAuthorityKind } from '../execution/authority'
 import { Authority, type AuthorityState } from '../execution/contracts'
-import type { CapitalActivationRequest } from '../execution/configuration'
+import type { ResearchCapitalActivationRequest } from '../execution/configuration'
 import { makeExecutionProgram, type ExecutionProgram } from '../execution/runtime-program'
 import { operationalError } from '../errors'
 import {
@@ -17,8 +17,7 @@ import {
   type LifecycleAdvanceMaintenance,
   type RecoveryFirstCycleDriver,
 } from '../observe-composition'
-import { notDueReconciliationError } from '../observe-composition/decision-builder'
-import { strategyCycleCadence } from '../observe-composition/strategy-cadence'
+import { reconciliationRunnerError } from '../observe-composition/decision-builder'
 import type { ReconciliationPassError } from '../reconciler'
 import { currentUtcInstant } from '../time'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
@@ -83,13 +82,7 @@ export const lifecycleMaintenanceCycle =
     )
 
 const lifecycleReconciliationError = (cause: ReconciliationPassError): CycleRunnerError => {
-  const converted = notDueReconciliationError(cause)
-  return new CycleRunnerError({
-    operation: 'reconcile-not-due',
-    failure: converted.failure,
-    message: converted.message,
-    cause: converted,
-  })
+  return reconciliationRunnerError(cause)
 }
 
 export const runLifecycleMaintenanceAdvance = (
@@ -111,7 +104,6 @@ export const observeCycle = (
   authorityGenerationHash: string,
   intradayMarketData: IntradayMarketDataService,
 ) => {
-  const cycleCadence = strategyCycleCadence(plan.strategy)
   return makeObserveAutonomousCycleStartup({
     accountId: plan.config.alpaca.expectedAccountId,
     authorityGenerationHash,
@@ -120,21 +112,19 @@ export const observeCycle = (
     reconciliationPassTimeoutMs: plan.config.operationTimeoutMs,
     strategy: plan.strategy,
     intradayMarketData,
-    ...(cycleCadence === undefined ? {} : { cycleCadence }),
   })
 }
 
 export const mutationCycle = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   executionProgram: ExecutionProgram,
-  executionMandate: CapitalActivationRequest,
+  executionMandate: ResearchCapitalActivationRequest,
   executionCycleClosureStore: import('../db/execution-cycle-closure').ExecutionCycleClosureStoreShape,
   blockedCycleIntentStore: import('../execution/intents').BlockedCycleIntentStoreShape,
   onClosedCycle: (cycleId: string, observedAt: string) => Effect.Effect<void>,
   lifecycleMaintenance: LifecycleAdvanceMaintenance | undefined,
   intradayMarketData: IntradayMarketDataService,
 ) => {
-  const cycleCadence = strategyCycleCadence(plan.strategy)
   return makeMutationAutonomousCycleStartup({
     accountId: plan.config.alpaca.expectedAccountId,
     authorityGenerationHash:
@@ -146,7 +136,6 @@ export const mutationCycle = (
     reconciliationPassTimeoutMs: plan.config.operationTimeoutMs,
     strategy: plan.strategy,
     intradayMarketData,
-    ...(cycleCadence === undefined ? {} : { cycleCadence }),
     executionProgram,
     executionCycleClosureStore,
     blockedCycleIntentStore,

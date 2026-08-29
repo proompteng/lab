@@ -10,6 +10,5 @@ export type {
   RuntimeConfig,
   RuntimeConfigResolutionFailure,
   RuntimeConfigResolutionInput,
-  RuntimeOperation,
 } from './config/model'
 export { redactedConfigSummary, resolveRuntimeConfig } from './config/resolution'

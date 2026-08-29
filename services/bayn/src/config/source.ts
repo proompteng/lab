@@ -5,7 +5,6 @@ import { BrokerEnvironment, BrokerEnvironmentSchema } from '../broker/identity'
 import { EvaluationBoundsSchema, IsoDateSchema, Sha256Schema } from '../contracts'
 import { BrokerAccess, BrokerAccessSchema } from '../execution/authority'
 import { CapitalAuthoritySelection } from '../execution/configuration'
-import { ExecutionPrepareRequestSchema } from '../execution-prepare/model'
 import {
   GitSourceRevisionSchema as SourceRevision,
   ImageDigestSchema as ImageDigest,
@@ -18,7 +17,6 @@ import {
   maximumOperationalThresholdMs,
   minimumOperationalThresholdMs,
   type ParsedRuntimeConfig,
-  type RuntimeOperation,
 } from './model'
 import { Pipeable } from '../pipeable'
 
@@ -27,7 +25,6 @@ const RetryAttempts = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3
 const OperationalThresholdMs = Schema.Int.check(
   Schema.isBetween({ minimum: minimumOperationalThresholdMs, maximum: maximumOperationalThresholdMs }),
 )
-const RuntimeOperationTokenSchema = Schema.Literals(['EXECUTION_CANDIDATE_DISCOVERY', 'EXECUTION_PREPARE'])
 
 const ReplicaAddresses = Schema.Trim.pipe(
   Schema.decodeTo(
@@ -50,13 +47,6 @@ const positiveInteger = (name: string, fallback: number) =>
 const operationalThreshold = (name: string, fallback: number) =>
   Config.schema(OperationalThresholdMs, name).pipe(Config.withDefault(fallback))
 
-const runtimeOperation = Config.schema(RuntimeOperationTokenSchema, 'BAYN_OPERATION').pipe(
-  Config.map(
-    (operation): RuntimeOperation =>
-      operation === 'EXECUTION_PREPARE' ? 'ExecutionPrepare' : 'ExecutionCandidateDiscovery',
-  ),
-)
-
 export const runtimeConfigSource = Config.all({
   host: nonEmptyString('BAYN_HTTP_HOST').pipe(Config.withDefault('0.0.0.0')),
   port: Config.port('BAYN_HTTP_PORT').pipe(Config.withDefault(8080)),
@@ -66,13 +56,8 @@ export const runtimeConfigSource = Config.all({
   strategyBehaviorHash: Config.schema(Sha256Schema, 'BAYN_STRATEGY_BEHAVIOR_HASH'),
   strategyParameterHash: Config.schema(Sha256Schema, 'BAYN_STRATEGY_PARAMETER_HASH'),
   provenanceMode: Config.schema(ProvenanceMode, 'BAYN_PROVENANCE_MODE').pipe(Config.withDefault('production')),
-  qualificationRunId: Config.option(Config.schema(Sha256Schema, 'BAYN_QUALIFICATION_RUN_ID')),
   capitalActivationRequestJson: Config.option(nonEmptyString('BAYN_CAPITAL_ACTIVATION_REQUEST')),
   researchCapitalBuildLineageJson: Config.option(nonEmptyString('BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE')),
-  operation: Config.option(runtimeOperation),
-  executionPrepareRequest: Config.option(
-    Config.schema(Schema.fromJsonString(ExecutionPrepareRequestSchema), 'BAYN_EXECUTION_PREPARE_REQUEST'),
-  ),
   brokerAccess: Config.schema(BrokerAccessSchema, 'BAYN_BROKER_ACCESS').pipe(Config.withDefault(BrokerAccess.ReadOnly)),
   capitalAuthority: Config.schema(CapitalAuthoritySelectionSchema, 'BAYN_CAPITAL_AUTHORITY').pipe(
     Config.withDefault(CapitalAuthoritySelection.None),
@@ -127,11 +112,8 @@ export const runtimeConfigSource = Config.all({
     (config): ParsedRuntimeConfig => ({
       host: config.host,
       port: config.port,
-      qualificationRunId: Option.getOrUndefined(config.qualificationRunId),
       capitalActivationRequestJson: Option.getOrUndefined(config.capitalActivationRequestJson),
       researchCapitalBuildLineageJson: Option.getOrUndefined(config.researchCapitalBuildLineageJson),
-      configuredOperation: Option.getOrUndefined(config.operation),
-      executionPrepareRequest: Option.getOrUndefined(config.executionPrepareRequest),
       brokerAccess: config.brokerAccess,
       capitalAuthority: config.capitalAuthority,
       persistedCapitalGrantHash: Option.getOrUndefined(config.persistedCapitalGrantHash),

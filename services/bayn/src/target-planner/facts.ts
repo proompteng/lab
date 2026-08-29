@@ -58,6 +58,7 @@ export interface TargetPlannerFacts {
   readonly bidPrices: ReadonlyMap<string, bigint>
   readonly askPrices: ReadonlyMap<string, bigint>
   readonly maximumBuyQuantities: ReadonlyMap<string, bigint>
+  readonly maximumSellQuantities: ReadonlyMap<string, bigint>
   readonly positions: ReadonlyMap<string, bigint>
   readonly positionQuantities: readonly bigint[]
   readonly positionMarketValues: readonly bigint[]
@@ -76,6 +77,7 @@ export interface PlannedTargetFact {
   readonly target: PlannedTargetQuantity
   readonly referencePrice: bigint
   readonly delta: bigint
+  readonly blockedReason?: TargetPlanReason.InsufficientBuyLiquidity
 }
 
 const plannerInputHash = (
@@ -140,6 +142,13 @@ const parseTargetPlannerFactsDataFirst = (
         )
       : [],
   )
+  const maximumSellQuantities = new Map(
+    input.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion
+      ? Object.entries(input.executionTerms.maximumSellQuantityMicros).map(
+          ([symbol, quantity]) => [symbol, BigInt(quantity)] as const,
+        )
+      : [],
+  )
   const positionQuantities = input.brokerState.positions.map((position) => BigInt(position.quantityMicros))
   const positionMarketValues = input.brokerState.positions.map((position) => BigInt(position.marketValueMicros))
   const positions = new Map(
@@ -155,6 +164,7 @@ const parseTargetPlannerFactsDataFirst = (
     bidPrices,
     askPrices,
     maximumBuyQuantities,
+    maximumSellQuantities,
     positions,
     positionQuantities,
     positionMarketValues,
@@ -334,18 +344,40 @@ export const derivePlannedTargetFacts = (
               return { referencePrice: askPrice, quantity: currentQuantity }
             })
           })()
-          return Result.map(selectedTarget, (selected) => {
+          return Result.flatMap(selectedTarget, (selected) => {
             const desiredDelta = selected.quantity - currentQuantity
             const maximumBuyQuantity = facts.maximumBuyQuantities.get(symbol)
-            const targetQuantity =
-              desiredDelta > 0n && maximumBuyQuantity !== undefined && desiredDelta > maximumBuyQuantity
+            const buyLiquidityUnavailable =
+              facts.input.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
+              desiredDelta > 0n &&
+              maximumBuyQuantity === 0n
+            const buyLiquidityBlocked =
+              buyLiquidityUnavailable && facts.positionQuantities.some((quantity) => quantity !== 0n)
+            if (buyLiquidityUnavailable && !buyLiquidityBlocked) {
+              return Result.fail(
+                deriveTargetsFailure({
+                  reason: 'precision',
+                  message: 'quote-bound buy target has no executable displayed ask capacity',
+                  facts: {
+                    cycleId: facts.input.cycleId,
+                    symbol,
+                    desiredQuantityMicros: selected.quantity.toString(),
+                    currentQuantityMicros: currentQuantity.toString(),
+                  },
+                }),
+              )
+            }
+            const targetQuantity = buyLiquidityBlocked
+              ? currentQuantity
+              : desiredDelta > 0n && maximumBuyQuantity !== undefined && desiredDelta > maximumBuyQuantity
                 ? currentQuantity + maximumBuyQuantity
                 : selected.quantity
-            return [
+            return Result.succeed([
               ...targetFacts,
               {
                 referencePrice: selected.referencePrice,
                 delta: targetQuantity - currentQuantity,
+                ...(buyLiquidityBlocked ? { blockedReason: TargetPlanReason.InsufficientBuyLiquidity } : {}),
                 target: {
                   symbol,
                   targetWeight,
@@ -354,7 +386,7 @@ export const derivePlannedTargetFacts = (
                   targetQuantityMicros: targetQuantity.toString(),
                 },
               },
-            ]
+            ] as const)
           })
         }),
       Result.succeed([]),

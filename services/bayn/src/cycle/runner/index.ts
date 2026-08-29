@@ -1,30 +1,15 @@
-export { CycleDecisionBuildError, CycleRunnerError, isEverySessionCycleCadence } from './model'
-export type {
-  AutonomousCycleLoopOptions,
-  CycleCadence,
-  CycleCandidate,
-  CyclePassObservation,
-  CycleRunContext,
-  CycleRunResult,
-} from './model'
+export { CycleDecisionBuildError, CycleRunnerError } from './model'
+export type { CyclePassObservation, CycleRunContext, CycleRunResult } from './model'
 export {
-  boundedCyclePublications,
   cyclePassLogFacts,
   decideIdleReconciliationCadence,
-  isMonthEndCycleDue,
   makeIntradayCycleDraft,
-  makeDueCycleDraft,
   marketCalendarQueryFromSession,
-  marketCalendarQueryForPublications,
-  marketCalendarQueryForSignal,
-  observableCycleCadence,
-  selectCycleAuthoritySlots,
-  selectCycleCalendarCandidate,
-  selectDiscoveredPublications,
-  selectNextExecutionSession,
+  retainAutonomousCyclePassObservation,
+  selectIntradayExecutionSession,
   shouldDeferCyclePollForReconciliation,
   validateCyclePassTimeout,
   validateReconciliationInterval,
-  type ObservableCycleCadence,
+  type IntradayCycleCandidate,
 } from './decisions'
 export { discoverAutonomousCyclePass, runAutonomousCyclePass } from './program'

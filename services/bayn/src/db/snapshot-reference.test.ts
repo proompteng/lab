@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { makeSnapshot } from '../test-fixtures'
+import { makePersistedSnapshotFixture } from '../testing/persisted-snapshot-fixture'
 import { decodeSnapshotReferenceRows, validateSnapshotReference, type SnapshotReferenceRow } from './snapshot-reference'
 
-const manifest = makeSnapshot(800).manifest
+const manifest = makePersistedSnapshotFixture()
 const snapshot = manifest.finalizedSnapshot
 const reference: SnapshotReferenceRow = {
   snapshot_id: snapshot.snapshotId,

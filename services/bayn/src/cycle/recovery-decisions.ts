@@ -19,6 +19,8 @@ export const cycleTerminalReasonForBlockedTargetPlan = (reason: BlockedTargetPla
     case TargetPlanReason.UnresolvedOrder:
       return CycleTerminalReason.UnresolvedMutation
     case TargetPlanReason.BelowMinimumBuyNotional:
+    case TargetPlanReason.InsufficientBuyLiquidity:
+    case TargetPlanReason.InsufficientSellLiquidity:
     case TargetPlanReason.InsufficientBuyingPower:
     case TargetPlanReason.NonPositiveEquity:
     case TargetPlanReason.ShortPositionNotAllowed:

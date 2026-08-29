@@ -1,4 +1,4 @@
-import { Data, Duration, Effect, pipe, Result, Schema } from 'effect'
+import { Data, Duration, Effect, Result, Schema } from 'effect'
 import type { AutonomousCycleStartup } from '../app'
 import {
   BrokerRead,
@@ -7,21 +7,14 @@ import {
   type MarketCalendarQuery,
 } from '../broker/alpaca'
 import { quantizeAlpacaLimitPriceMicros } from '../broker/alpaca-price'
-import {
-  cycleAuthoritySessionDate,
-  isIntradayAutonomousCycle,
-  isLegacyAutonomousCycle,
-  type AutonomousCycle,
-} from '../cycle'
+import { cycleAuthoritySessionDate, isIntradayAutonomousCycle, type AutonomousCycle } from '../cycle'
+import { makeStrategyProtocolHashResult } from '../contracts'
 import {
   CycleDecisionBuildError,
   CycleRunnerError,
   marketCalendarQueryFromSession,
-  marketCalendarQueryForSignal,
   type CyclePassObservation,
-  type CycleRunContext,
 } from '../cycle/runner'
-import { CycleNotDueReconciliationError } from '../cycle/runner/model'
 import { retainAutonomousCyclePassObservation } from '../cycle/runner/pass-decisions'
 import {
   bindCycleExecutionSession,
@@ -32,10 +25,8 @@ import { OperationalError, operationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
 import {
   IntradaySnapshotFailure,
-  MarketData,
+  IntradaySnapshotPurpose,
   persistIntradaySnapshotRows,
-  type IntradaySnapshotQuery,
-  type MarketDataService,
   type PersistedIntradaySnapshotRows,
 } from '../market-data'
 import {
@@ -45,13 +36,7 @@ import {
 import { Authority, OrderType, TimeInForce, type AuthorityState, type Position } from '../execution/contracts'
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { isQuoteBoundExecutionModel, type CycleExecutionModel } from '../execution-model-contract'
-import {
-  legacyCloseDecisionSessionsSchemaVersion,
-  legacyRiskPolicySchemaVersion,
-  legacyRiskStateSchemaVersion,
-  legacyTargetPlannerInputV1SchemaVersion,
-  legacyTargetPlannerInputV2SchemaVersion,
-} from '../execution/legacy-wire'
+import { legacyRiskPolicySchemaVersion, legacyRiskStateSchemaVersion } from '../execution/legacy-wire'
 import { runOnce, type ReconciliationPassResult } from '../reconciler'
 import { reconciledStateHash } from '../reconciliation'
 import { BrokerMode, decodePolicy, executionRiskPolicySchemaVersion, type Policy, type State } from '../risk'
@@ -86,14 +71,9 @@ import {
   type TargetPlanResult,
 } from '../target-planner'
 import {
-  decodeOpeningDriveProtocol,
   decodeIntradayMomentumProtocol,
   makeIntradayMomentumDefinition,
-  makeOpeningDriveDefinition,
-  strategyApplication,
   strategyDefinition,
-  type CompiledStrategyDecision,
-  type OpeningDriveStrategyDefinition,
   type IntradayMomentumStrategyDefinition,
   type StrategyRuntime,
 } from '../strategy'
@@ -103,21 +83,19 @@ import type { DecisionPlan, IsoDate } from '../types'
 import { mutationRunnerError } from './mutation-interpreter'
 import {
   adverseClosingQuotePrices,
-  compileOpeningDriveDecision,
   executionMarketDataBinding,
   loadIntradaySnapshot,
-  openingDriveCloseQuery,
-  openingDriveEntryDisposition,
-  openingDriveEntryQuery,
   requireFreshIntradayPositionQuotes,
-} from './opening-drive-decision'
+} from './intraday-market-data'
 import {
   compileIntradayMomentumDecision,
+  evaluateIntradayMomentumDecision,
   IntradayMomentumCloseAwaitingSnapshot,
   IntradayMomentumEntryAwaitingSnapshot,
   intradayMomentumCloseQuery,
   intradayMomentumEntryDisposition,
   intradayMomentumEntryQuery,
+  intradayMomentumPricingQuery,
 } from './intraday-momentum-decision'
 import { Pipeable } from '../pipeable'
 import type { ObserveAutonomousCycleInput, ObserveDecisionRuntime, ObserveStartupPreparation } from './model'
@@ -242,9 +220,8 @@ export class ExecutionCloseAwaitingMarketData extends Data.TaggedError('Executio
   readonly observedAt: string
 }> {}
 
-type LoadedSnapshotPublication = Effect.Success<ReturnType<MarketDataService['loadSnapshotPublication']>>
 type MarketCalendarRead = Effect.Success<ReturnType<BrokerReadShape['marketCalendar']>>
-type CycleCalendarQueryFailure = Result.Result.Failure<ReturnType<typeof marketCalendarQueryForSignal>>
+type CycleCalendarQueryFailure = Result.Result.Failure<ReturnType<typeof marketCalendarQueryFromSession>>
 
 type ObserveDecisionCompositionFailure = {
   readonly _tag: 'ObserveDecisionCompositionFailure'
@@ -258,6 +235,7 @@ type ObserveDecisionCompositionFailure = {
     | 'liquidation-binding'
     | 'risk-policy-hash'
     | 'shadow-risk-inputs'
+    | 'strategy-execution-eligibility'
   readonly message: string
   readonly cause?: unknown
 }
@@ -271,16 +249,10 @@ export type ObserveDecisionFailure =
   | ShadowDecisionError
   | TargetPlannerFailure
 
-type ObserveDecisionReadPreparation =
-  | {
-      readonly schemaVersion: 'bayn.observe-decision-read-preparation.v1'
-      readonly snapshotId: string
-      readonly marketCalendarQuery: MarketCalendarQuery
-    }
-  | {
-      readonly schemaVersion: 'bayn.observe-decision-read-preparation.v2'
-      readonly marketCalendarQuery: MarketCalendarQuery
-    }
+type ObserveDecisionReadPreparation = {
+  readonly schemaVersion: 'bayn.observe-decision-read-preparation.v2'
+  readonly marketCalendarQuery: MarketCalendarQuery
+}
 
 type ObserveDecisionCommonFacts = {
   readonly calendar: MarketCalendarRead
@@ -288,14 +260,9 @@ type ObserveDecisionCommonFacts = {
   readonly evaluatedAt: string
 }
 
-type ObserveDecisionFacts =
-  | (ObserveDecisionCommonFacts & {
-      readonly schemaVersion: 'bayn.observe-decision-facts.v1'
-      readonly snapshot: LoadedSnapshotPublication
-    })
-  | (ObserveDecisionCommonFacts & {
-      readonly schemaVersion: 'bayn.observe-decision-facts.v2'
-    })
+type ObserveDecisionFacts = ObserveDecisionCommonFacts & {
+  readonly schemaVersion: 'bayn.observe-decision-facts.v2'
+}
 
 type ObserveAuthorityObservation = {
   readonly authority: AuthorityState
@@ -367,7 +334,7 @@ const reconciliationOperationalError = (cause: ReconciliationPassError): Operati
 
 const operationalDecisionFailure = (
   component: OperationalError['component'],
-): CycleNotDueReconciliationError['failure'] => {
+): 'database' | 'market-data' | 'operational' => {
   switch (component) {
     case 'database':
       return 'database'
@@ -409,9 +376,10 @@ export const decisionBuildError = (cause: ObserveDecisionFailure): CycleDecision
   }
 }
 
-export const notDueReconciliationError = (cause: ReconciliationPassError): CycleNotDueReconciliationError => {
+export const reconciliationRunnerError = (cause: ReconciliationPassError): CycleRunnerError => {
   const operational = reconciliationOperationalError(cause)
-  return new CycleNotDueReconciliationError({
+  return new CycleRunnerError({
+    operation: 'reconcile',
     failure: operationalDecisionFailure(operational.component),
     message: operational.message,
     cause: operational,
@@ -497,7 +465,7 @@ const reconciledPositionLiquidationBinding = (
     }))
   const material = {
     schemaVersion: reconciledPositionLiquidationBindingSchemaVersion,
-    purpose: 'LIQUIDATION' as const,
+    purpose: IntradaySnapshotPurpose.Liquidation,
     source: 'alpaca-v2-positions' as const,
     sessionDate: cycle.identity.executionSessionDate,
     calendar,
@@ -571,86 +539,26 @@ const reconciledPositionReferencePrices = (
 export const prepareObserveDecisionReads = <R>(
   input: ObserveDecisionInput<R>,
 ): Result.Result<ObserveDecisionReadPreparation, CycleCalendarQueryFailure | ObserveDecisionCompositionFailure> => {
-  if (isIntradayAutonomousCycle(input.cycle)) {
-    return Result.map(
-      marketCalendarQueryFromSession(input.cycle.identity.executionSessionDate),
-      (marketCalendarQuery) => ({
-        schemaVersion: 'bayn.observe-decision-read-preparation.v2' as const,
-        marketCalendarQuery,
-      }),
-    )
+  if (!isIntradayAutonomousCycle(input.cycle)) {
+    return Result.fail(compositionFailure('cycle-binding', 'only current intraday cycles are executable'))
   }
-  if (!isLegacyAutonomousCycle(input.cycle)) {
-    return Result.fail(compositionFailure('cycle-binding', 'autonomous cycle has mismatched contract versions'))
-  }
-  const snapshotId = input.cycle.bindings.snapshotId
-  if (snapshotId === undefined) {
-    return Result.fail(compositionFailure('cycle-binding', 'active autonomous cycle has no immutable snapshot binding'))
-  }
-  return Result.map(marketCalendarQueryForSignal(input.cycle.identity.signalSessionDate), (marketCalendarQuery) => ({
-    schemaVersion: 'bayn.observe-decision-read-preparation.v1' as const,
-    snapshotId,
-    marketCalendarQuery,
-  }))
+  return Result.map(
+    marketCalendarQueryFromSession(input.cycle.identity.executionSessionDate),
+    (marketCalendarQuery) => ({
+      schemaVersion: 'bayn.observe-decision-read-preparation.v2' as const,
+      marketCalendarQuery,
+    }),
+  )
 }
 
 export const readObserveDecisionFacts = <R>(
   input: ObserveDecisionInput<R>,
   preparation: ObserveDecisionReadPreparation,
-): Effect.Effect<ObserveDecisionFacts, OperationalError, BrokerRead | MarketData | R> =>
+): Effect.Effect<ObserveDecisionFacts, OperationalError, BrokerRead | R> =>
   Effect.gen(function* () {
     const brokerRead = yield* BrokerRead
-    if (preparation.schemaVersion === 'bayn.observe-decision-read-preparation.v2') {
-      const [calendar, reconciliation] = yield* Effect.all(
-        [
-          brokerRead.marketCalendar(preparation.marketCalendarQuery).pipe(
-            Effect.mapError((cause) =>
-              operationalError({
-                component: 'market-data',
-                operation: 'market-calendar',
-                message: 'execution-session calendar read failed',
-                cause,
-              }),
-            ),
-          ),
-          input.reconcile.pipe(Effect.mapError(reconciliationOperationalError)),
-        ],
-        { concurrency: 2 },
-      )
-      const evaluatedAt = yield* currentUtcInstant
-      return {
-        schemaVersion: 'bayn.observe-decision-facts.v2' as const,
-        calendar,
-        reconciliation,
-        evaluatedAt,
-      }
-    }
-    if (!isLegacyAutonomousCycle(input.cycle)) {
-      return yield* operationalError({
-        component: 'strategy',
-        operation: 'current-decision',
-        message: 'legacy decision reads do not match the autonomous cycle contract',
-      })
-    }
-    const marketData = yield* MarketData
-    const [snapshot, calendar, reconciliation] = yield* Effect.all(
+    const [calendar, reconciliation] = yield* Effect.all(
       [
-        marketData
-          .loadSnapshotPublication({
-            snapshotId: preparation.snapshotId,
-            signalSessionDate: input.cycle.identity.signalSessionDate,
-            signalCalendarVersion: input.cycle.identity.signalCalendarVersion,
-          })
-          .pipe(
-            Effect.mapError((cause) =>
-              operationalError({
-                component: 'market-data',
-                operation: 'load-snapshot-publication',
-                message: 'bound cycle snapshot publication read failed',
-                cause,
-              }),
-            ),
-          ),
         brokerRead.marketCalendar(preparation.marketCalendarQuery).pipe(
           Effect.mapError((cause) =>
             operationalError({
@@ -663,12 +571,11 @@ export const readObserveDecisionFacts = <R>(
         ),
         input.reconcile.pipe(Effect.mapError(reconciliationOperationalError)),
       ],
-      { concurrency: 3 },
+      { concurrency: 2 },
     )
     const evaluatedAt = yield* currentUtcInstant
     return {
-      schemaVersion: 'bayn.observe-decision-facts.v1' as const,
-      snapshot,
+      schemaVersion: 'bayn.observe-decision-facts.v2' as const,
       calendar,
       reconciliation,
       evaluatedAt,
@@ -756,24 +663,13 @@ const prepareExecutionSessionBinding = <R>(
     calendar: facts.calendar.value,
     executionModel: input.executionModel,
   }
-  if (isIntradayAutonomousCycle(input.cycle) && facts.schemaVersion === 'bayn.observe-decision-facts.v2') {
-    return bindCycleExecutionSession({
-      ...common,
-      executionSessionDate: input.cycle.identity.executionSessionDate,
-    })
+  if (!isIntradayAutonomousCycle(input.cycle)) {
+    return Result.fail(compositionFailure('cycle-binding', 'only current intraday cycles are executable'))
   }
-  if (isLegacyAutonomousCycle(input.cycle) && facts.schemaVersion === 'bayn.observe-decision-facts.v1') {
-    const finalizedSnapshot = facts.snapshot.manifest.finalizedSnapshot
-    return bindCycleExecutionSession({
-      ...common,
-      signal: {
-        sessionDate: input.cycle.identity.signalSessionDate,
-        finalizedAt: finalizedSnapshot.finalizedAt,
-        contentHash: finalizedSnapshot.contentHash,
-      },
-    })
-  }
-  return Result.fail(compositionFailure('cycle-binding', 'decision facts do not match the autonomous cycle contract'))
+  return bindCycleExecutionSession({
+    ...common,
+    executionSessionDate: input.cycle.identity.executionSessionDate,
+  })
 }
 
 type CompiledObserveStrategyDecision = {
@@ -785,32 +681,10 @@ type CompiledObserveStrategyDecision = {
   readonly bidPriceMicros?: Readonly<Record<string, string>>
   readonly askPriceMicros?: Readonly<Record<string, string>>
   readonly maximumBuyQuantityMicros?: Readonly<Record<string, string>>
+  readonly maximumSellQuantityMicros?: Readonly<Record<string, string>>
+  readonly planningTargetWeights?: DecisionPlan['targetWeights']
+  readonly decisionMarketData?: import('../shadow-decision-contract').ExecutionMarketDataBinding
   readonly executionMarketData?: import('../shadow-decision-contract').ExecutionMarketDataBinding
-}
-
-const openingDriveDefinition = (
-  strategy: StrategyRuntime,
-): Result.Result<OpeningDriveStrategyDefinition, OperationalError> => {
-  const definition = strategyDefinition(strategy)
-  if (definition.name !== 'opening-drive-momentum' || definition.holdingPeriod !== 'INTRADAY') {
-    return Result.fail(
-      operationalError({
-        component: 'strategy',
-        operation: 'current-decision',
-        message: `strategy ${definition.name} is not the opening-drive intraday strategy`,
-      }),
-    )
-  }
-  return Result.mapError(
-    Result.map(decodeOpeningDriveProtocol(definition.parameters), makeOpeningDriveDefinition),
-    (cause) =>
-      operationalError({
-        component: 'strategy',
-        operation: 'current-decision',
-        message: 'opening-drive runtime parameters are invalid',
-        cause,
-      }),
-  )
 }
 
 const intradayMomentumDefinition = (
@@ -836,19 +710,6 @@ const intradayMomentumDefinition = (
         cause,
       }),
   )
-}
-
-const unwrapStrategyApplicationFailure = (cause: unknown): unknown => {
-  if (
-    typeof cause === 'object' &&
-    cause !== null &&
-    '_tag' in cause &&
-    cause._tag === 'StrategyApplicationFailure' &&
-    'cause' in cause
-  ) {
-    return cause.cause
-  }
-  return cause
 }
 
 const intradayArchiveMaterializationPending = (cause: unknown): cause is IntradaySnapshotFailure =>
@@ -877,178 +738,130 @@ const compileObserveStrategyDecision = <R>(
   facts: ObserveDecisionFacts,
   executionSession: ExecutionSessionBinding,
 ): Effect.Effect<CompiledObserveStrategyDecision, OperationalError | ObserveDecisionAwaitingSignal> => {
-  const definition = strategyDefinition(input.strategy)
-  if (definition.name === 'opening-drive-momentum') {
-    return Effect.gen(function* () {
-      const intradayMarketData = input.intradayMarketData
-      if (intradayMarketData === undefined) {
-        return yield* operationalError({
-          component: 'market-data',
-          operation: 'current-decision',
-          message: 'opening-drive runtime has no injected intraday archive reader',
-        })
-      }
-      const openingDefinition = yield* Effect.fromResult(openingDriveDefinition(input.strategy))
-      const query = yield* Effect.fromResult(
-        openingDriveEntryQuery(input.cycle, openingDefinition.parameters, executionSession.calendar, facts.evaluatedAt),
-      ).pipe(
-        Effect.mapError((cause) =>
-          operationalError({
-            component: 'market-data',
-            operation: 'current-decision',
-            message: cause.message,
-            cause,
-          }),
-        ),
-      )
-      const snapshot = yield* loadIntradaySnapshot(intradayMarketData, query).pipe(
-        Effect.mapError((cause) =>
-          classifyIntradayEntrySnapshotFailure(cause, facts.evaluatedAt, input.cycle.window.submissionCutoffAt),
-        ),
-      )
-      const compiled = yield* Effect.fromResult(
-        Result.flatMap(requireFreshIntradayPositionQuotes(snapshot, facts.reconciliation.brokerState.positions), () =>
-          compileOpeningDriveDecision(openingDefinition, input.cycle, snapshot),
-        ),
-      ).pipe(
-        Effect.mapError((cause) =>
-          operationalError({
-            component: 'strategy',
-            operation: 'current-decision',
-            message: cause.message,
-            cause,
-          }),
-        ),
-      )
-      if (
-        input.decisionFinalizationHeadroomMs !== undefined &&
-        openingDriveEntryDisposition(
-          compiled.decision,
-          input.cycle.window.submissionCutoffAt,
-          input.decisionFinalizationHeadroomMs,
-        ) === 'AWAIT_SIGNAL'
-      ) {
-        return yield* new ObserveDecisionAwaitingSignal({
-          message: 'opening-drive entry remains armed while a qualifying signal can still arrive',
-          observedAt: facts.evaluatedAt,
-          submissionCutoffAt: input.cycle.window.submissionCutoffAt,
-        })
-      }
-      return { ...compiled, signalDate: cycleAuthoritySessionDate(input.cycle.identity) }
-    })
-  }
-  if (definition.name === 'intraday-momentum') {
-    return Effect.gen(function* () {
-      const intradayMarketData = input.intradayMarketData
-      if (intradayMarketData === undefined) {
-        return yield* operationalError({
-          component: 'market-data',
-          operation: 'current-decision',
-          message: 'intraday-momentum runtime has no injected intraday archive reader',
-        })
-      }
-      const intradayDefinition = yield* Effect.fromResult(intradayMomentumDefinition(input.strategy))
-      const query = yield* Effect.fromResult(
-        intradayMomentumEntryQuery(
-          input.cycle,
-          intradayDefinition.parameters,
-          executionSession.calendar,
-          facts.evaluatedAt,
-        ),
-      ).pipe(
-        Effect.mapError((cause) =>
-          cause instanceof IntradayMomentumEntryAwaitingSnapshot
-            ? new ObserveDecisionAwaitingSignal({
-                message: cause.message,
-                observedAt: facts.evaluatedAt,
-                submissionCutoffAt: input.cycle.window.submissionCutoffAt,
-              })
-            : operationalError({
-                component: 'market-data',
-                operation: 'current-decision',
-                message: cause.message,
-                cause,
-              }),
-        ),
-      )
-      const snapshot = yield* loadIntradaySnapshot(intradayMarketData, query).pipe(
-        Effect.mapError((cause) =>
-          classifyIntradayEntrySnapshotFailure(cause, facts.evaluatedAt, input.cycle.window.submissionCutoffAt),
-        ),
-      )
-      const compiled = yield* Effect.fromResult(
-        Result.flatMap(requireFreshIntradayPositionQuotes(snapshot, facts.reconciliation.brokerState.positions), () =>
-          compileIntradayMomentumDecision(intradayDefinition, input.cycle, snapshot),
-        ),
-      ).pipe(
-        Effect.mapError((cause) =>
-          cause instanceof IntradayMomentumEntryAwaitingSnapshot
-            ? new ObserveDecisionAwaitingSignal({
-                message: cause.message,
-                observedAt: facts.evaluatedAt,
-                submissionCutoffAt: input.cycle.window.submissionCutoffAt,
-              })
-            : operationalError({
-                component: 'strategy',
-                operation: 'current-decision',
-                message: cause.message,
-                cause,
-              }),
-        ),
-      )
-      if (
-        input.decisionFinalizationHeadroomMs !== undefined &&
-        intradayMomentumEntryDisposition(
-          compiled.decision,
-          facts.reconciliation.brokerState.positions.some(({ quantityMicros }) => BigInt(quantityMicros) !== 0n),
-          input.cycle.window.submissionCutoffAt,
-          input.decisionFinalizationHeadroomMs,
-        ) === 'AWAIT_SIGNAL'
-      ) {
-        return yield* new ObserveDecisionAwaitingSignal({
-          message: 'full-session intraday entry remains armed while a qualifying signal can still arrive',
-          observedAt: facts.evaluatedAt,
-          submissionCutoffAt: input.cycle.window.submissionCutoffAt,
-        })
-      }
-      return { ...compiled, signalDate: cycleAuthoritySessionDate(input.cycle.identity) }
-    })
-  }
-  if (!isLegacyAutonomousCycle(input.cycle) || facts.schemaVersion !== 'bayn.observe-decision-facts.v1') {
-    return Effect.fail(
-      operationalError({
-        component: 'strategy',
+  return Effect.gen(function* () {
+    const intradayMarketData = input.intradayMarketData
+    if (intradayMarketData === undefined) {
+      return yield* operationalError({
+        component: 'market-data',
         operation: 'current-decision',
-        message: 'daily strategy requires a legacy cycle and finalized Signal snapshot',
-      }),
+        message: 'intraday-momentum runtime has no injected intraday archive reader',
+      })
+    }
+    const intradayDefinition = yield* Effect.fromResult(intradayMomentumDefinition(input.strategy))
+    const heldPositions = facts.reconciliation.brokerState.positions.filter(
+      (position) => BigInt(position.quantityMicros) !== 0n,
     )
-  }
-  return Effect.fromResult(
-    (() => {
-      const application = strategyApplication(input.strategy)
-      return pipe(
-        application.parseManifest(facts.snapshot.manifest),
-        Result.flatMap((manifest) =>
-          application.evaluateCurrentDecision(facts.snapshot.bars, manifest, executionSession),
-        ),
-        Result.map(
-          (compiled: CompiledStrategyDecision): CompiledObserveStrategyDecision => ({
-            ...compiled,
-            decision: compiled.decision as DecisionPlan,
-          }),
-        ),
-      )
-    })(),
-  ).pipe(
-    Effect.mapError((cause) =>
-      operationalError({
-        component: 'strategy',
-        operation: 'current-decision',
-        message: 'current strategy decision compilation failed',
-        cause: unwrapStrategyApplicationFailure(cause),
-      }),
-    ),
-  )
+    const strategyUniverse = new Set(intradayDefinition.parameters.universe)
+    const planningHeldPositions = heldPositions.filter((position) => strategyUniverse.has(position.symbol))
+    const heldSymbols = planningHeldPositions.map((position) => position.symbol)
+    const decisionQuery = yield* Effect.fromResult(
+      intradayMomentumEntryQuery(
+        input.cycle,
+        intradayDefinition.parameters,
+        executionSession.calendar,
+        facts.evaluatedAt,
+      ),
+    ).pipe(
+      Effect.mapError((cause) =>
+        cause instanceof IntradayMomentumEntryAwaitingSnapshot
+          ? new ObserveDecisionAwaitingSignal({
+              message: cause.message,
+              observedAt: facts.evaluatedAt,
+              submissionCutoffAt: input.cycle.window.submissionCutoffAt,
+            })
+          : operationalError({
+              component: 'market-data',
+              operation: 'current-decision',
+              message: cause.message,
+              cause,
+            }),
+      ),
+    )
+    const decisionSnapshot = yield* loadIntradaySnapshot(intradayMarketData, decisionQuery).pipe(
+      Effect.mapError((cause) =>
+        classifyIntradayEntrySnapshotFailure(cause, facts.evaluatedAt, input.cycle.window.submissionCutoffAt),
+      ),
+    )
+    const decision = yield* Effect.fromResult(
+      evaluateIntradayMomentumDecision(intradayDefinition, input.cycle, decisionSnapshot),
+    ).pipe(
+      Effect.mapError((cause) =>
+        cause instanceof IntradayMomentumEntryAwaitingSnapshot
+          ? new ObserveDecisionAwaitingSignal({
+              message: cause.message,
+              observedAt: facts.evaluatedAt,
+              submissionCutoffAt: input.cycle.window.submissionCutoffAt,
+            })
+          : operationalError({
+              component: 'strategy',
+              operation: 'current-decision',
+              message: cause.message,
+              cause,
+            }),
+      ),
+    )
+    const pricingSymbols = [...new Set([...Object.keys(decision.targetWeights), ...heldSymbols])].sort()
+    const pricingSnapshot =
+      pricingSymbols.length === 0
+        ? decisionSnapshot
+        : yield* Effect.gen(function* () {
+            const pricingQuery = yield* Effect.fromResult(
+              intradayMomentumPricingQuery(
+                input.cycle,
+                intradayDefinition.parameters,
+                executionSession.calendar,
+                facts.evaluatedAt,
+                decisionSnapshot.manifest.rangeEndAt,
+                pricingSymbols,
+              ),
+            ).pipe(
+              Effect.mapError((cause) =>
+                operationalError({
+                  component: 'market-data',
+                  operation: 'current-decision',
+                  message: cause.message,
+                  cause,
+                }),
+              ),
+            )
+            return yield* loadIntradaySnapshot(intradayMarketData, pricingQuery).pipe(
+              Effect.mapError((cause) =>
+                classifyIntradayEntrySnapshotFailure(cause, facts.evaluatedAt, input.cycle.window.submissionCutoffAt),
+              ),
+            )
+          })
+    const compiled = yield* Effect.fromResult(
+      Result.flatMap(
+        requireFreshIntradayPositionQuotes(pricingSnapshot, facts.reconciliation.brokerState.positions),
+        () => compileIntradayMomentumDecision(decision, decisionSnapshot, pricingSnapshot, planningHeldPositions),
+      ),
+    ).pipe(
+      Effect.mapError((cause) =>
+        operationalError({
+          component: 'strategy',
+          operation: 'current-decision',
+          message: cause.message,
+          cause,
+        }),
+      ),
+    )
+    if (
+      input.decisionFinalizationHeadroomMs !== undefined &&
+      intradayMomentumEntryDisposition(
+        compiled.decision,
+        heldPositions.length > 0,
+        input.cycle.window.submissionCutoffAt,
+        input.decisionFinalizationHeadroomMs,
+      ) === 'AWAIT_SIGNAL'
+    ) {
+      return yield* new ObserveDecisionAwaitingSignal({
+        message: 'full-session intraday entry remains armed while a qualifying signal can still arrive',
+        observedAt: facts.evaluatedAt,
+        submissionCutoffAt: input.cycle.window.submissionCutoffAt,
+      })
+    }
+    return { ...compiled, signalDate: cycleAuthoritySessionDate(input.cycle.identity) }
+  })
 }
 
 export const prepareObservePlanner = <R>(
@@ -1068,6 +881,24 @@ export const prepareObservePlanner = <R>(
             compiled.decision,
           ),
           (decisionHash): Result.Result<ObservePlannerPreparation, ObserveDecisionCompositionFailure> => {
+            if (!isQuoteBoundExecutionModel(input.executionModel)) {
+              return Result.fail(compositionFailure('cycle-binding', 'intraday runtime requires quote-bound execution'))
+            }
+            if (
+              compiled.executionMarketData === undefined ||
+              compiled.bidPriceMicros === undefined ||
+              compiled.askPriceMicros === undefined ||
+              compiled.maximumBuyQuantityMicros === undefined ||
+              compiled.maximumSellQuantityMicros === undefined ||
+              overrides.allocationCapitalMicros === undefined
+            ) {
+              return Result.fail(
+                compositionFailure(
+                  'cycle-binding',
+                  'quote-bound intraday planning requires exact market-data and allocation bindings',
+                ),
+              )
+            }
             const commonPlannerInput = {
               strategyName: input.cycle.identity.strategyName,
               cycleId: input.cycle.identity.cycleId,
@@ -1075,7 +906,8 @@ export const prepareObservePlanner = <R>(
               policyHash,
               accountId: input.cycle.identity.accountId,
               signalDate: compiled.signalDate,
-              targetWeights: overrides.targetWeights ?? compiled.decision.targetWeights,
+              targetWeights:
+                overrides.targetWeights ?? compiled.planningTargetWeights ?? compiled.decision.targetWeights,
               referencePrices: prices,
               brokerState: facts.reconciliation.brokerState,
               precision: input.executionModel.precision,
@@ -1083,64 +915,34 @@ export const prepareObservePlanner = <R>(
               submissionCutoffAt: overrides.submissionCutoffAt ?? input.cycle.window.submissionCutoffAt,
               observedAt: facts.evaluatedAt,
             }
-            if (isQuoteBoundExecutionModel(input.executionModel)) {
-              if (
-                compiled.executionMarketData === undefined ||
-                compiled.bidPriceMicros === undefined ||
-                compiled.askPriceMicros === undefined ||
-                compiled.maximumBuyQuantityMicros === undefined ||
-                overrides.allocationCapitalMicros === undefined
-              ) {
-                return Result.fail(
-                  compositionFailure(
-                    'cycle-binding',
-                    'quote-bound intraday planning requires exact market-data and allocation bindings',
-                  ),
-                )
-              }
-              const boundPrices = intradayReferencePrices(compiled.signalDate, compiled.executionMarketData, {
-                priceMicros: compiled.priceMicros,
-                bidPriceMicros: compiled.bidPriceMicros,
-                askPriceMicros: compiled.askPriceMicros,
-              })
-              if (Result.isFailure(boundPrices)) return Result.fail(boundPrices.failure)
-              const plannerInput: TargetPlannerInput = {
-                schemaVersion: quoteBoundTargetPlannerInputSchemaVersion,
-                ...commonPlannerInput,
-                referencePrices: boundPrices.success,
-                precision: {
-                  quantityIncrementMicros: '1000000',
-                  priceIncrementMicros: input.executionModel.precision.priceIncrementMicros,
-                  minimumBuyNotionalMicros: input.executionModel.precision.minimumBuyNotionalMicros,
-                },
-                allocationCapitalMicros: overrides.allocationCapitalMicros,
-                executionTerms: {
-                  orderType: OrderType.Limit,
-                  timeInForce: TimeInForce.ImmediateOrCancel,
-                  priceReference: 'verified-adverse-quote-boundary' as const,
-                  snapshotId: compiled.executionMarketData.snapshotId,
-                  snapshotContentHash: compiled.executionMarketData.contentHash,
-                  maximumBuyQuantityMicros: compiled.maximumBuyQuantityMicros,
-                },
-              }
-              return Result.succeed({
-                prices: boundPrices.success,
-                plannerInput,
-              })
+            const boundPrices = intradayReferencePrices(compiled.signalDate, compiled.executionMarketData, {
+              priceMicros: compiled.priceMicros,
+              bidPriceMicros: compiled.bidPriceMicros,
+              askPriceMicros: compiled.askPriceMicros,
+            })
+            if (Result.isFailure(boundPrices)) return Result.fail(boundPrices.failure)
+            const plannerInput: TargetPlannerInput = {
+              schemaVersion: quoteBoundTargetPlannerInputSchemaVersion,
+              ...commonPlannerInput,
+              referencePrices: boundPrices.success,
+              precision: {
+                quantityIncrementMicros: '1000000',
+                priceIncrementMicros: input.executionModel.precision.priceIncrementMicros,
+                minimumBuyNotionalMicros: input.executionModel.precision.minimumBuyNotionalMicros,
+              },
+              allocationCapitalMicros: overrides.allocationCapitalMicros,
+              executionTerms: {
+                orderType: OrderType.Limit,
+                timeInForce: TimeInForce.ImmediateOrCancel,
+                priceReference: 'verified-adverse-quote-boundary' as const,
+                snapshotId: compiled.executionMarketData.snapshotId,
+                snapshotContentHash: compiled.executionMarketData.contentHash,
+                maximumBuyQuantityMicros: compiled.maximumBuyQuantityMicros,
+                maximumSellQuantityMicros: compiled.maximumSellQuantityMicros,
+              },
             }
-            const plannerInput: TargetPlannerInput =
-              overrides.allocationCapitalMicros === undefined
-                ? {
-                    schemaVersion: legacyTargetPlannerInputV1SchemaVersion,
-                    ...commonPlannerInput,
-                  }
-                : {
-                    schemaVersion: legacyTargetPlannerInputV2SchemaVersion,
-                    ...commonPlannerInput,
-                    allocationCapitalMicros: overrides.allocationCapitalMicros,
-                  }
             return Result.succeed({
-              prices,
+              prices: boundPrices.success,
               plannerInput,
             })
           },
@@ -1261,32 +1063,48 @@ const reduceObserveRiskInputs = <R>(
 
 export const buildObserveCycleDecision = <R>(
   input: ObserveDecisionInput<R>,
-): Effect.Effect<ObserveShadowDecisionDocument, ObserveDecisionFailure, BrokerRead | MarketData | R> =>
-  buildCycleDecision(input, Authority.Observe)
+): Effect.Effect<ObserveShadowDecisionDocument, ObserveDecisionFailure, BrokerRead | R> =>
+  buildCycleDecision(input, { authorityRequirement: Authority.Observe, documentMode: Authority.Observe })
+
+type CycleDecisionRequirements =
+  | { readonly authorityRequirement: Authority.Observe; readonly documentMode: Authority.Observe }
+  | { readonly authorityRequirement: Authority.Execution; readonly documentMode: Authority.Execution }
 
 function buildCycleDecision<R>(
   input: ObserveDecisionInput<R>,
-  authorityRequirement: Authority.Observe,
-): Effect.Effect<ObserveShadowDecisionDocument, ObserveDecisionFailure, BrokerRead | MarketData | R>
+  requirements: { readonly authorityRequirement: Authority.Observe; readonly documentMode: Authority.Observe },
+): Effect.Effect<ObserveShadowDecisionDocument, ObserveDecisionFailure, BrokerRead | R>
 function buildCycleDecision<R>(
   input: ObserveDecisionInput<R>,
-  authorityRequirement: Authority.Execution,
-): Effect.Effect<ExecutionDecisionDocument, ObserveDecisionFailure, BrokerRead | MarketData | R>
+  requirements: { readonly authorityRequirement: Authority.Execution; readonly documentMode: Authority.Execution },
+): Effect.Effect<ExecutionDecisionDocument, ObserveDecisionFailure, BrokerRead | R>
 function buildCycleDecision<R>(
   input: ObserveDecisionInput<R>,
-  authorityRequirement: DecisionAuthorityRequirement,
-): Effect.Effect<CycleDecisionDocument, ObserveDecisionFailure, BrokerRead | MarketData | R> {
+  requirements: CycleDecisionRequirements,
+): Effect.Effect<CycleDecisionDocument, ObserveDecisionFailure, BrokerRead | R> {
   return Effect.gen(function* () {
     const readPreparation = yield* Effect.fromResult(prepareObserveDecisionReads(input))
     const facts = yield* readObserveDecisionFacts(input, readPreparation)
     const executionAuthority = yield* Effect.fromResult(
-      requireDecisionAuthority(facts.reconciliation, input.policy, input.authorityGenerationHash, authorityRequirement),
+      requireDecisionAuthority(
+        facts.reconciliation,
+        input.policy,
+        input.authorityGenerationHash,
+        requirements.authorityRequirement,
+      ),
     )
     const executionSession = yield* Effect.fromResult(prepareExecutionSessionBinding(input, facts))
     const compiled = yield* compileObserveStrategyDecision(input, facts, executionSession)
-    const allocationCapitalMicros =
-      authorityRequirement === Authority.Execution
-        ? yield* Effect.fromResult(
+    const planningTargetWeights = compiled.planningTargetWeights ?? compiled.decision.targetWeights
+    const allowedSymbols = new Set(input.policy.allowedSymbols)
+    const hasExternalPosition = facts.reconciliation.brokerState.positions.some(
+      ({ symbol, quantityMicros }) => BigInt(quantityMicros) !== 0n && !allowedSymbols.has(symbol),
+    )
+    let allocationCapitalMicros: bigint | undefined
+    if (requirements.authorityRequirement === Authority.Execution) {
+      allocationCapitalMicros = hasExternalPosition
+        ? 0n
+        : yield* Effect.fromResult(
             Result.flatMap(
               executionMandateAllocationCapitalMicros({
                 accountEquityMicros: BigInt(facts.reconciliation.brokerState.account.equityMicros),
@@ -1298,15 +1116,15 @@ function buildCycleDecision<R>(
                 positions: facts.reconciliation.brokerState.positions,
                 referencePriceMicros: compiled.priceMicros,
               }),
-              (allocationCapitalMicros) =>
+              (capitalMicros) =>
                 isQuoteBoundExecutionModel(input.executionModel)
                   ? constrainExecutionTargetAllocationCapitalMicros({
-                      allocationCapitalMicros,
+                      allocationCapitalMicros: capitalMicros,
                       maxOrderNotionalMicros: BigInt(input.policy.maxOrderNotionalMicros),
                       maxSymbolExposureMicros: BigInt(input.policy.maxSymbolExposureMicros),
-                      targetWeights: compiled.decision.targetWeights,
+                      targetWeights: planningTargetWeights,
                     })
-                  : Result.succeed(allocationCapitalMicros),
+                  : Result.succeed(capitalMicros),
             ),
           ).pipe(
             Effect.mapError((cause) =>
@@ -1317,23 +1135,19 @@ function buildCycleDecision<R>(
               ),
             ),
           )
-        : isQuoteBoundExecutionModel(input.executionModel)
-          ? BigInt(facts.reconciliation.brokerState.account.equityMicros)
-          : undefined
+    } else if (isQuoteBoundExecutionModel(input.executionModel)) {
+      allocationCapitalMicros = BigInt(facts.reconciliation.brokerState.account.equityMicros)
+    }
     const plannerPreparation = yield* Effect.fromResult(
-      prepareObservePlanner(
-        input,
-        facts,
-        compiled,
-        allocationCapitalMicros !== undefined ? { allocationCapitalMicros: allocationCapitalMicros.toString() } : {},
-      ),
+      prepareObservePlanner(input, facts, compiled, {
+        targetWeights: planningTargetWeights,
+        ...(allocationCapitalMicros === undefined
+          ? {}
+          : { allocationCapitalMicros: allocationCapitalMicros.toString() }),
+      }),
     )
     const targetPlan = yield* Effect.fromResult(planTargets(plannerPreparation.plannerInput))
-    const snapshotContentHash =
-      compiled.executionMarketData?.contentHash ??
-      (facts.schemaVersion === 'bayn.observe-decision-facts.v1'
-        ? facts.snapshot.manifest.finalizedSnapshot.contentHash
-        : undefined)
+    const snapshotContentHash = compiled.executionMarketData?.contentHash
     if (snapshotContentHash === undefined) {
       return yield* Effect.fail(
         compositionFailure('cycle-binding', 'decision has no immutable market-data snapshot binding'),
@@ -1350,16 +1164,15 @@ function buildCycleDecision<R>(
         compiled.executionMarketData,
       ),
     )
+    const decisionMarketData = compiled.decisionMarketData ?? compiled.executionMarketData
     const decisionSnapshot =
-      facts.schemaVersion === 'bayn.observe-decision-facts.v1'
-        ? facts.snapshot.manifest.finalizedSnapshot
-        : compiled.executionMarketData === undefined
-          ? undefined
-          : {
-              snapshotId: compiled.executionMarketData.snapshotId,
-              contentHash: compiled.executionMarketData.contentHash,
-              finalizedAt: compiled.executionMarketData.observedAt,
-            }
+      decisionMarketData === undefined
+        ? undefined
+        : {
+            snapshotId: decisionMarketData.snapshotId,
+            contentHash: decisionMarketData.contentHash,
+            finalizedAt: decisionMarketData.observedAt,
+          }
     if (decisionSnapshot === undefined) {
       return yield* Effect.fail(
         compositionFailure('cycle-binding', 'decision has no immutable market-data snapshot binding'),
@@ -1376,13 +1189,14 @@ function buildCycleDecision<R>(
       ...(compiled.decisionMarketDataRows === undefined
         ? {}
         : { decisionMarketDataRows: compiled.decisionMarketDataRows }),
+      ...(compiled.decisionMarketData === undefined ? {} : { decisionMarketData: compiled.decisionMarketData }),
       ...(compiled.executionMarketData === undefined ? {} : { executionMarketData: compiled.executionMarketData }),
       plannerInput: plannerPreparation.plannerInput,
       targetPlan,
       policy: input.policy,
       riskInputs,
     }
-    return authorityRequirement === Authority.Observe
+    return requirements.documentMode === Authority.Observe
       ? yield* buildObserveShadowDecision(decisionInput)
       : yield* buildExecutionDecision({
           ...decisionInput,
@@ -1394,103 +1208,34 @@ function buildCycleDecision<R>(
 
 export const buildMutationShadowCycleDecision = <R>(
   input: ObserveDecisionInput<R>,
-): Effect.Effect<ExecutionDecisionDocument, ObserveDecisionFailure, BrokerRead | MarketData | R> =>
-  buildCycleDecision(input, Authority.Execution)
-
-const makeClosingReferencePrices = (
-  entryDocument: ExecutionDecisionDocument,
-  positions: ReconciliationPassResult['brokerState']['positions'],
-  signalDate: SignalSessionReferencePrices['signalDate'],
-  observedAt: string,
-): Result.Result<SignalSessionReferencePrices, ObserveDecisionCompositionFailure> => {
-  const prices = new Map(entryDocument.targetPlan.targets.map((target) => [target.symbol, target.referencePriceMicros]))
-  for (const position of positions) {
-    const observedPrice = position.marketPriceMicros
-    const fallbackPrice = prices.get(position.symbol)
-    if (/^[1-9][0-9]*$/.test(observedPrice)) {
-      prices.set(position.symbol, observedPrice)
-    } else if (fallbackPrice === undefined) {
-      return Result.fail(
-        compositionFailure(
-          'reference-prices',
-          `close position ${position.symbol} has no positive persisted reference price`,
-        ),
-      )
-    }
-  }
-  return referencePrices(
-    signalDate,
-    observedAt,
-    Object.fromEntries([...prices.entries()].sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))),
-  )
-}
+): Effect.Effect<ExecutionDecisionDocument, ObserveDecisionFailure, BrokerRead | R> =>
+  buildCycleDecision(input, { authorityRequirement: Authority.Execution, documentMode: Authority.Execution })
 
 export const makeClosingDecisionPlan = (
   identity: {
     readonly strategyName: string
     readonly executionSessionDate: IsoDate
-    readonly signalSessionDate?: IsoDate
   },
   symbols: readonly string[],
 ): Result.Result<RuntimeStrategyDecision, ObserveDecisionCompositionFailure> => {
   const orderedSymbols = [...new Set(symbols)].sort()
-  if (identity.strategyName === 'opening-drive-momentum' || identity.strategyName === 'intraday-momentum') {
-    return Result.succeed({
-      schemaVersion: 'bayn.execution-flat-target.v1',
-      strategyName: identity.strategyName,
-      sessionDate: identity.executionSessionDate,
-      targetWeights: Object.fromEntries(orderedSymbols.map((symbol) => [symbol, 0])),
-      symbols: orderedSymbols,
-      reason: 'mandate-close',
-    })
-  }
-  if (identity.signalSessionDate === undefined) {
-    return Result.fail(compositionFailure('cycle-binding', 'legacy close decision has no Signal session identity'))
-  }
-  const signalDate = identity.signalSessionDate
-  const sessionsHash = canonicalHashV1Result({
-    schemaVersion: legacyCloseDecisionSessionsSchemaVersion,
-    signalDate,
-    symbols: orderedSymbols,
-  })
-  if (Result.isFailure(sessionsHash)) {
+  if (identity.strategyName !== 'intraday-momentum') {
     return Result.fail(
-      compositionFailure(
-        'compiled-decision-hash',
-        'close decision session identity is not canonicalizable',
-        sessionsHash.failure,
-      ),
+      compositionFailure('cycle-binding', 'only the active intraday strategy can build close decisions'),
     )
   }
   return Result.succeed({
-    schemaVersion: 'bayn.risk-balanced-trend-decision-plan.v1',
-    signalDate,
-    covarianceWindow: {
-      returnCount: 1,
-      firstSession: signalDate,
-      lastSession: signalDate,
-      sessionsHash: sessionsHash.success,
-    },
-    estimatedAnnualizedPortfolioVolatility: 0,
-    exposureScale: 0,
+    schemaVersion: 'bayn.execution-flat-target.v1',
+    strategyName: identity.strategyName,
+    sessionDate: identity.executionSessionDate,
     targetWeights: Object.fromEntries(orderedSymbols.map((symbol) => [symbol, 0])),
-    signals: orderedSymbols.map((symbol) => ({
-      symbol,
-      horizons: [{ horizonSessions: 1, return: 0, normalizedTrend: 0 }],
-      dailyVolatility: 0,
-      annualizedVolatility: 0,
-      compositeScore: 0,
-      positiveScore: 0,
-      eligible: false,
-      uncappedWeight: 0,
-      cappedWeight: 0,
-      targetWeight: 0,
-    })),
+    symbols: orderedSymbols,
+    reason: 'mandate-close',
   })
 }
 
 const recoverExecutionSession = (
-  preparation: ObserveStartupPreparation,
+  executionModel: CycleExecutionModel,
   cycle: AutonomousCycle,
   entryDocument: ExecutionDecisionDocument,
 ): Result.Result<ExecutionSessionBinding, ObserveDecisionCompositionFailure> => {
@@ -1499,117 +1244,49 @@ const recoverExecutionSession = (
       compositionFailure('cycle-binding', 'execution-session binding does not match its cycle', cause),
     )
   const persistedSession = entryDocument.executionSession
-  if (persistedSession !== undefined) {
-    return persistedSession.schemaVersion === 'bayn.execution-session-binding.v3'
-      ? bindRecoveredSession({
-          cycle,
-          executionSessionDate: persistedSession.executionSession.date,
-          planningBrokerState: persistedSession.planningBrokerState,
-          calendar: persistedSession.calendar,
-          executionModel: preparation.executionModel,
-        })
-      : bindRecoveredSession({
-          cycle,
-          signal: persistedSession.signal,
-          planningBrokerState: persistedSession.planningBrokerState,
-          calendar: persistedSession.calendar,
-          executionModel: preparation.executionModel,
-        })
+  if (
+    persistedSession === undefined ||
+    persistedSession.schemaVersion !== 'bayn.execution-session-binding.v3' ||
+    !isIntradayAutonomousCycle(cycle)
+  ) {
+    return Result.fail(
+      compositionFailure('cycle-binding', 'intraday close requires its persisted v3 execution-session binding'),
+    )
   }
-
-  const legacyCalendarMaterial = {
-    schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
-    source: 'alpaca-v2-calendar' as const,
-    requestedRange: {
-      start: isLegacyAutonomousCycle(cycle) ? cycle.identity.signalSessionDate : cycle.identity.executionSessionDate,
-      end: cycle.identity.executionSessionDate,
-    },
-    timeZone: 'UTC' as const,
-    sessions: [
-      {
-        date: cycle.window.executionSessionDate,
-        openAt: cycle.window.executionOpenAt,
-        closeAt: cycle.window.executionCloseAt,
-      },
-    ],
-  }
-  return Result.flatMap(
-    Result.mapError(canonicalHashV1Result(legacyCalendarMaterial), (cause) =>
-      compositionFailure('cycle-binding', 'legacy execution close calendar material is not canonicalizable', cause),
-    ),
-    (normalizedResponseHash) => {
-      const common = {
-        cycle,
-        planningBrokerState: {
-          observedAt: entryDocument.createdAt,
-          contentHash: entryDocument.bindings.planningBrokerStateHash,
-        },
-        calendar: { ...legacyCalendarMaterial, normalizedResponseHash },
-        executionModel: preparation.executionModel,
-      }
-      if (isIntradayAutonomousCycle(cycle)) {
-        return bindRecoveredSession({
-          ...common,
-          executionSessionDate: cycle.identity.executionSessionDate,
-        })
-      }
-      if (isLegacyAutonomousCycle(cycle)) {
-        return bindRecoveredSession({
-          ...common,
-          signal: {
-            sessionDate: cycle.identity.signalSessionDate,
-            finalizedAt: entryDocument.bindings.snapshotFinalizedAt,
-            contentHash: entryDocument.bindings.snapshotContentHash,
-          },
-        })
-      }
-      return Result.fail(compositionFailure('cycle-binding', 'close cycle has mismatched contract versions'))
-    },
-  )
+  return bindRecoveredSession({
+    cycle,
+    executionSessionDate: persistedSession.executionSession.date,
+    planningBrokerState: persistedSession.planningBrokerState,
+    calendar: persistedSession.calendar,
+    executionModel,
+  })
 }
 
-type ClosingSymbolScope =
-  | { readonly _tag: 'current-intraday'; readonly universe: readonly string[] }
-  | {
-      readonly _tag: 'opening-drive'
-      readonly universe: readonly string[]
-      readonly symbols: readonly string[]
-    }
-  | { readonly _tag: 'legacy'; readonly symbols: readonly string[] }
-
 export type ClosingSymbolPass = {
-  readonly kind: 'broker-position' | 'fractional' | 'quote-bound' | 'legacy'
+  readonly kind: 'broker-position' | 'fractional' | 'quote-bound'
   readonly symbols: readonly string[]
 }
 
 export const selectClosingSymbolPass = (
   positions: readonly Pick<Position, 'symbol' | 'quantityMicros'>[],
-  scope: ClosingSymbolScope,
+  universe: readonly string[],
 ): ClosingSymbolPass => {
   const activePositions = positions
     .filter(({ quantityMicros }) => BigInt(quantityMicros) !== 0n)
     .toSorted((left, right) => left.symbol.localeCompare(right.symbol))
 
-  if (scope._tag !== 'legacy') {
-    const universe = new Set(scope.universe)
-    const externalSymbols = activePositions.filter(({ symbol }) => !universe.has(symbol)).map(({ symbol }) => symbol)
-    if (externalSymbols.length > 0) return { kind: 'broker-position', symbols: externalSymbols }
-
-    const fractionalSymbols = activePositions
-      .filter(({ quantityMicros }) => BigInt(quantityMicros) % 1_000_000n !== 0n)
-      .map(({ symbol }) => symbol)
-    if (fractionalSymbols.length > 0) return { kind: 'fractional', symbols: fractionalSymbols }
-    return scope._tag === 'current-intraday'
-      ? { kind: 'quote-bound', symbols: activePositions.map(({ symbol }) => symbol) }
-      : { kind: 'legacy', symbols: scope.symbols }
-  }
+  const allowedSymbols = new Set(universe)
+  const externalSymbols = activePositions
+    .filter(({ symbol }) => !allowedSymbols.has(symbol))
+    .map(({ symbol }) => symbol)
+  if (externalSymbols.length > 0) return { kind: 'broker-position', symbols: externalSymbols }
 
   const fractionalSymbols = activePositions
     .filter(({ quantityMicros }) => BigInt(quantityMicros) % 1_000_000n !== 0n)
     .map(({ symbol }) => symbol)
   return fractionalSymbols.length > 0
     ? { kind: 'fractional', symbols: fractionalSymbols }
-    : { kind: 'legacy', symbols: scope.symbols }
+    : { kind: 'quote-bound', symbols: activePositions.map(({ symbol }) => symbol) }
 }
 
 export interface BuildClosingExecutionCycleDecisionInput {
@@ -1632,6 +1309,13 @@ export const buildClosingExecutionCycleDecision = (
 > => {
   const { input, preparation, policy, cycle, entryDocument, reconcile, closeExpiresAt, replanGenerationHash } = request
   return Effect.gen(function* () {
+    const executionModel = preparation.executionModel
+    if (executionModel.schemaVersion !== 'bayn.execution-model.v5' || !isIntradayAutonomousCycle(cycle)) {
+      return yield* mutationRunnerError({
+        message: 'execution close requires the active intraday execution contract',
+        failure: 'contract',
+      })
+    }
     const reconciliation = yield* reconcile.pipe(
       Effect.mapError((cause) => mutationRunnerError({ message: 'execution close reconciliation failed', cause })),
     )
@@ -1639,38 +1323,30 @@ export const buildClosingExecutionCycleDecision = (
     const executionAuthority = yield* Effect.fromResult(
       requireMutationAuthorityGeneration(reconciliation, policy, input.authorityGenerationHash),
     ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
-    const executionSession = yield* Effect.fromResult(recoverExecutionSession(preparation, cycle, entryDocument)).pipe(
+    const executionSession = yield* Effect.fromResult(
+      recoverExecutionSession(executionModel, cycle, entryDocument),
+    ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
+    const runtimeProtocolHash = makeStrategyProtocolHashResult(input.strategy.provenance.strategy)
+    const runtimeMatchesCycle =
+      Result.isSuccess(runtimeProtocolHash) &&
+      runtimeProtocolHash.success === cycle.identity.strategyProtocolHash &&
+      strategyDefinition(input.strategy).name === cycle.identity.strategyName
+    if (!runtimeMatchesCycle) {
+      return yield* mutationRunnerError({
+        message: 'execution close does not match the active intraday strategy identity',
+        failure: 'contract',
+      })
+    }
+    const intradayParameters = yield* Effect.fromResult(intradayMomentumDefinition(input.strategy)).pipe(
       Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
+      Effect.map((definition) => definition.parameters),
     )
-    const legacyCloseSymbols = [
-      ...entryDocument.targetPlan.targets.map((target) => target.symbol),
-      ...reconciliation.brokerState.positions.map((position) => position.symbol),
-    ]
-    const intradayParameters =
-      preparation.executionModel.schemaVersion === 'bayn.execution-model.v5'
-        ? yield* Effect.fromResult(intradayMomentumDefinition(input.strategy)).pipe(
-            Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
-            Effect.map((definition) => definition.parameters),
-          )
-        : undefined
-    const openingDriveParameters =
-      preparation.executionModel.schemaVersion === 'bayn.execution-model.v4'
-        ? yield* Effect.fromResult(openingDriveDefinition(input.strategy)).pipe(
-            Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
-            Effect.map((definition) => definition.parameters),
-          )
-        : undefined
+    const entryMarketData = entryDocument.bindings.executionMarketData
+    const persistedUniverse =
+      entryMarketData?.schemaVersion === 'bayn.execution-market-data-binding.v2' ? entryMarketData.universe : undefined
     const closingPass = selectClosingSymbolPass(
       reconciliation.brokerState.positions,
-      intradayParameters !== undefined
-        ? { _tag: 'current-intraday', universe: intradayParameters.universe }
-        : openingDriveParameters !== undefined
-          ? {
-              _tag: 'opening-drive',
-              universe: openingDriveParameters.universe,
-              symbols: legacyCloseSymbols,
-            }
-          : { _tag: 'legacy', symbols: legacyCloseSymbols },
+      persistedUniverse ?? intradayParameters.universe,
     )
     const symbols = closingPass.symbols
     const requiresFractionalClose = closingPass.kind === 'fractional'
@@ -1691,128 +1367,76 @@ export const buildClosingExecutionCycleDecision = (
           return [symbol, currentQuantity < 0n ? String(-currentQuantity) : '0']
         }),
     )
-    const closeExecutionMarketData = isQuoteBoundExecutionModel(preparation.executionModel)
-      ? yield* Effect.gen(function* () {
-          if (closingPass.kind === 'broker-position') {
-            const binding = yield* Effect.fromResult(
-              reconciledPositionLiquidationBinding(
-                cycle,
-                executionSession.calendar,
-                reconciliation.brokerState,
-                symbols,
-              ),
-            ).pipe(
-              Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
-            )
-            const referencePrices = yield* Effect.fromResult(
-              reconciledPositionReferencePrices(cycle.identity.executionSessionDate, binding),
-            ).pipe(
-              Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
-            )
-            return {
-              binding,
-              bidPriceMicros: referencePrices.bidPriceMicros,
-              askPriceMicros: referencePrices.askPriceMicros,
-              decisionMarketDataRows: undefined,
-            }
-          }
-          let sourceUniverse: readonly string[]
-          let queryEffect: Effect.Effect<IntradaySnapshotQuery, CycleRunnerError | ExecutionCloseAwaitingMarketData>
-          if (preparation.executionModel.schemaVersion === 'bayn.execution-model.v5') {
-            if (intradayParameters === undefined) {
-              return yield* mutationRunnerError({
-                message: 'intraday close has no decoded strategy parameters',
-                failure: 'contract',
-              })
-            }
-            sourceUniverse = intradayParameters.universe
-            queryEffect = Effect.fromResult(
-              intradayMomentumCloseQuery(cycle, intradayParameters, executionSession.calendar, evaluatedAt, symbols),
-            ).pipe(
-              Effect.mapError((cause) =>
-                cause instanceof IntradayMomentumCloseAwaitingSnapshot
-                  ? new ExecutionCloseAwaitingMarketData({ message: cause.message, observedAt: evaluatedAt })
-                  : mutationRunnerError({ message: cause.message, cause, failure: 'contract' }),
-              ),
-            )
-          } else {
-            const definition = yield* Effect.fromResult(openingDriveDefinition(input.strategy)).pipe(
-              Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
-            )
-            sourceUniverse = definition.parameters.universe
-            queryEffect = Effect.fromResult(
-              openingDriveCloseQuery(cycle, definition.parameters, executionSession.calendar, evaluatedAt, symbols),
-            ).pipe(
-              Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
-            )
-          }
-          if (symbols.some((symbol) => !sourceUniverse.includes(symbol))) {
-            const binding = yield* Effect.fromResult(
-              reconciledPositionLiquidationBinding(
-                cycle,
-                executionSession.calendar,
-                reconciliation.brokerState,
-                symbols,
-              ),
-            ).pipe(
-              Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
-            )
-            const referencePrices = yield* Effect.fromResult(
-              reconciledPositionReferencePrices(cycle.identity.executionSessionDate, binding),
-            ).pipe(
-              Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
-            )
-            return {
-              binding,
-              bidPriceMicros: referencePrices.bidPriceMicros,
-              askPriceMicros: referencePrices.askPriceMicros,
-              decisionMarketDataRows: undefined,
-            }
-          }
-          if (input.intradayMarketData === undefined) {
-            return yield* mutationRunnerError({
-              message: 'intraday close has no injected intraday archive reader',
-              failure: 'operational',
-            })
-          }
-          const query = yield* queryEffect
-          const snapshot = yield* loadIntradaySnapshot(input.intradayMarketData, query).pipe(
-            Effect.mapError((cause) =>
-              intradayArchiveMaterializationPending(cause.cause)
-                ? new ExecutionCloseAwaitingMarketData({ message: cause.message, observedAt: evaluatedAt })
-                : mutationRunnerError({ message: 'execution close market-data read failed', cause }),
-            ),
-          )
-          const quotePrices = yield* Effect.fromResult(adverseClosingQuotePrices(snapshot, symbols)).pipe(
-            Effect.mapError((cause) =>
-              cause.operation === 'close-quote-not-ready'
-                ? new ExecutionCloseAwaitingMarketData({ message: cause.message, observedAt: evaluatedAt })
-                : mutationRunnerError({ message: cause.message, cause, failure: 'contract' }),
-            ),
-          )
-          const binding = yield* Effect.fromResult(executionMarketDataBinding(snapshot)).pipe(
-            Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
-          )
-          const decisionMarketDataRows = yield* Effect.fromResult(persistIntradaySnapshotRows(snapshot)).pipe(
-            Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
-          )
-          return { binding, ...quotePrices, decisionMarketDataRows }
+    const maximumCloseSellQuantityMicros = Object.fromEntries(
+      Object.keys(closeDecision.targetWeights)
+        .sort()
+        .map((symbol) => {
+          const currentQuantity = positionQuantities.get(symbol) ?? 0n
+          return [symbol, currentQuantity > 0n ? String(currentQuantity) : '0']
+        }),
+    )
+    const closeExecutionMarketData = yield* Effect.gen(function* () {
+      if (closingPass.kind === 'broker-position') {
+        const binding = yield* Effect.fromResult(
+          reconciledPositionLiquidationBinding(cycle, executionSession.calendar, reconciliation.brokerState, symbols),
+        ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
+        const referencePrices = yield* Effect.fromResult(
+          reconciledPositionReferencePrices(cycle.identity.executionSessionDate, binding),
+        ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
+        return {
+          binding,
+          bidPriceMicros: referencePrices.bidPriceMicros,
+          askPriceMicros: referencePrices.askPriceMicros,
+          decisionMarketDataRows: undefined,
+        }
+      }
+      if (symbols.some((symbol) => !intradayParameters.universe.includes(symbol))) {
+        return yield* mutationRunnerError({
+          message: 'intraday close contains a position outside the active strategy universe',
+          failure: 'contract',
         })
-      : undefined
+      }
+      if (input.intradayMarketData === undefined) {
+        return yield* mutationRunnerError({
+          message: 'intraday close has no injected intraday archive reader',
+          failure: 'operational',
+        })
+      }
+      const query = yield* Effect.fromResult(
+        intradayMomentumCloseQuery(cycle, intradayParameters, executionSession.calendar, evaluatedAt, symbols),
+      ).pipe(
+        Effect.mapError((cause) =>
+          cause instanceof IntradayMomentumCloseAwaitingSnapshot
+            ? new ExecutionCloseAwaitingMarketData({ message: cause.message, observedAt: evaluatedAt })
+            : mutationRunnerError({ message: cause.message, cause, failure: 'contract' }),
+        ),
+      )
+      const snapshot = yield* loadIntradaySnapshot(input.intradayMarketData, query).pipe(
+        Effect.mapError((cause) =>
+          intradayArchiveMaterializationPending(cause.cause)
+            ? new ExecutionCloseAwaitingMarketData({ message: cause.message, observedAt: evaluatedAt })
+            : mutationRunnerError({ message: 'execution close market-data read failed', cause }),
+        ),
+      )
+      const quotePrices = yield* Effect.fromResult(adverseClosingQuotePrices(snapshot, symbols)).pipe(
+        Effect.mapError((cause) =>
+          cause.operation === 'close-quote-not-ready'
+            ? new ExecutionCloseAwaitingMarketData({ message: cause.message, observedAt: evaluatedAt })
+            : mutationRunnerError({ message: cause.message, cause, failure: 'contract' }),
+        ),
+      )
+      const binding = yield* Effect.fromResult(executionMarketDataBinding(snapshot)).pipe(
+        Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
+      )
+      const decisionMarketDataRows = yield* Effect.fromResult(persistIntradaySnapshotRows(snapshot)).pipe(
+        Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
+      )
+      return { binding, ...quotePrices, decisionMarketDataRows }
+    })
     const policyHash = yield* Effect.fromResult(
       hashObserveMaterial('risk-policy-hash', 'execution close risk policy is not canonicalizable', policy),
     ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
-    const plannerSessionDate = isIntradayAutonomousCycle(cycle)
-      ? cycle.identity.executionSessionDate
-      : isLegacyAutonomousCycle(cycle)
-        ? cycle.identity.signalSessionDate
-        : undefined
-    if (plannerSessionDate === undefined) {
-      return yield* mutationRunnerError({
-        message: 'close cycle has mismatched contract versions',
-        failure: 'contract',
-      })
-    }
+    const plannerSessionDate = cycle.identity.executionSessionDate
     const commonPlannerInput = {
       strategyName: cycle.identity.strategyName,
       cycleId: cycle.identity.cycleId,
@@ -1822,105 +1446,77 @@ export const buildClosingExecutionCycleDecision = (
       signalDate: plannerSessionDate,
       targetWeights: closeDecision.targetWeights,
       brokerState: reconciliation.brokerState,
-      precision: preparation.executionModel.precision,
+      precision: executionModel.precision,
       maximumInputAgeMs: Math.min(policy.maxBrokerStateAgeMs, policy.maxMarketDataAgeMs),
       submissionCutoffAt: closeExpiresAt,
       observedAt: evaluatedAt,
     }
-    let plannerInput: TargetPlannerInput
-    let prices: TargetPlannerInput['referencePrices']
-    if (isQuoteBoundExecutionModel(preparation.executionModel)) {
-      if (closeExecutionMarketData === undefined) {
-        return yield* mutationRunnerError({
-          message: 'quote-bound execution close has no verified intraday market-data binding',
-          failure: 'contract',
-        })
-      }
-      const reconciledPositionClose =
-        closeExecutionMarketData.binding.schemaVersion === reconciledPositionLiquidationBindingSchemaVersion
-      prices = yield* Effect.fromResult(
-        reconciledPositionClose
-          ? reconciledPositionReferencePrices(plannerSessionDate, closeExecutionMarketData.binding)
-          : intradayReferencePrices(plannerSessionDate, closeExecutionMarketData.binding, {
-              priceMicros: closeExecutionMarketData.askPriceMicros,
-              bidPriceMicros: closeExecutionMarketData.bidPriceMicros,
-              askPriceMicros: closeExecutionMarketData.askPriceMicros,
-            }),
-      ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
-      plannerInput = {
-        schemaVersion: quoteBoundTargetPlannerInputSchemaVersion,
-        ...commonPlannerInput,
-        referencePrices: prices,
-        precision: {
-          quantityIncrementMicros: requiresFractionalClose || reconciledPositionClose ? '1' : '1000000',
-          priceIncrementMicros: preparation.executionModel.precision.priceIncrementMicros,
-          minimumBuyNotionalMicros: preparation.executionModel.precision.minimumBuyNotionalMicros,
-        },
-        allocationCapitalMicros: '0',
-        executionTerms: reconciledPositionClose
+    const reconciledPositionClose =
+      closeExecutionMarketData.binding.schemaVersion === reconciledPositionLiquidationBindingSchemaVersion
+    const prices = yield* Effect.fromResult(
+      reconciledPositionClose
+        ? reconciledPositionReferencePrices(plannerSessionDate, closeExecutionMarketData.binding)
+        : intradayReferencePrices(plannerSessionDate, closeExecutionMarketData.binding, {
+            priceMicros: closeExecutionMarketData.askPriceMicros,
+            bidPriceMicros: closeExecutionMarketData.bidPriceMicros,
+            askPriceMicros: closeExecutionMarketData.askPriceMicros,
+          }),
+    ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
+    const plannerInput: TargetPlannerInput = {
+      schemaVersion: quoteBoundTargetPlannerInputSchemaVersion,
+      ...commonPlannerInput,
+      referencePrices: prices,
+      precision: {
+        quantityIncrementMicros: requiresFractionalClose || reconciledPositionClose ? '1' : '1000000',
+        priceIncrementMicros: executionModel.precision.priceIncrementMicros,
+        minimumBuyNotionalMicros: executionModel.precision.minimumBuyNotionalMicros,
+      },
+      allocationCapitalMicros: '0',
+      executionTerms: reconciledPositionClose
+        ? {
+            executionPurpose: 'forced-close',
+            orderType: OrderType.Market,
+            timeInForce: TimeInForce.Day,
+            priceReference: 'reconciled-broker-position-mark',
+            snapshotId: closeExecutionMarketData.binding.snapshotId,
+            snapshotContentHash: closeExecutionMarketData.binding.contentHash,
+            maximumBuyQuantityMicros: maximumCloseBuyQuantityMicros,
+            maximumSellQuantityMicros: maximumCloseSellQuantityMicros,
+          }
+        : requiresFractionalClose
           ? {
-              executionPurpose: 'forced-close',
+              executionPurpose: 'fractional-close',
               orderType: OrderType.Market,
               timeInForce: TimeInForce.Day,
-              priceReference: 'reconciled-broker-position-mark',
+              priceReference: 'verified-adverse-quote-boundary',
               snapshotId: closeExecutionMarketData.binding.snapshotId,
               snapshotContentHash: closeExecutionMarketData.binding.contentHash,
               maximumBuyQuantityMicros: maximumCloseBuyQuantityMicros,
+              maximumSellQuantityMicros: maximumCloseSellQuantityMicros,
             }
-          : requiresFractionalClose
-            ? {
-                executionPurpose: 'fractional-close',
-                orderType: OrderType.Market,
-                timeInForce: TimeInForce.Day,
-                priceReference: 'verified-adverse-quote-boundary',
-                snapshotId: closeExecutionMarketData.binding.snapshotId,
-                snapshotContentHash: closeExecutionMarketData.binding.contentHash,
-                maximumBuyQuantityMicros: maximumCloseBuyQuantityMicros,
-              }
-            : {
-                executionPurpose: 'forced-close',
-                orderType: OrderType.Limit,
-                timeInForce: TimeInForce.ImmediateOrCancel,
-                priceReference: 'verified-adverse-quote-boundary',
-                snapshotId: closeExecutionMarketData.binding.snapshotId,
-                snapshotContentHash: closeExecutionMarketData.binding.contentHash,
-                maximumBuyQuantityMicros: maximumCloseBuyQuantityMicros,
-              },
-      }
-    } else {
-      if (!isLegacyAutonomousCycle(cycle)) {
-        return yield* mutationRunnerError({
-          message: 'legacy execution model does not match the close cycle contract',
-          failure: 'contract',
-        })
-      }
-      prices = yield* Effect.fromResult(
-        makeClosingReferencePrices(
-          entryDocument,
-          reconciliation.brokerState.positions,
-          cycle.identity.signalSessionDate,
-          evaluatedAt,
-        ),
-      ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
-      plannerInput = {
-        schemaVersion: legacyTargetPlannerInputV1SchemaVersion,
-        ...commonPlannerInput,
-        referencePrices: prices,
-      }
+          : {
+              executionPurpose: 'forced-close',
+              orderType: OrderType.Limit,
+              timeInForce: TimeInForce.ImmediateOrCancel,
+              priceReference: 'verified-adverse-quote-boundary',
+              snapshotId: closeExecutionMarketData.binding.snapshotId,
+              snapshotContentHash: closeExecutionMarketData.binding.contentHash,
+              maximumBuyQuantityMicros: maximumCloseBuyQuantityMicros,
+              maximumSellQuantityMicros: maximumCloseSellQuantityMicros,
+            },
     }
     const targetPlan = yield* Effect.fromResult(planTargets(plannerInput)).pipe(
       Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
     )
     const riskInputs = yield* Effect.fromResult(
       reduceRiskInputs({
-        executionModel: preparation.executionModel,
+        executionModel,
         reconciliation,
         authorityObservation: executionAuthority,
         executionSession,
         targetPlan,
-        snapshotContentHash:
-          closeExecutionMarketData?.binding.contentHash ?? entryDocument.bindings.snapshotContentHash,
-        ...(closeExecutionMarketData === undefined ? {} : { executionMarketData: closeExecutionMarketData.binding }),
+        snapshotContentHash: closeExecutionMarketData.binding.contentHash,
+        executionMarketData: closeExecutionMarketData.binding,
         evaluatedAt,
         closeOnlyExpiresAt: closeExpiresAt,
       }),
@@ -1933,10 +1529,10 @@ export const buildClosingExecutionCycleDecision = (
         finalizedAt: entryDocument.bindings.snapshotFinalizedAt,
       },
       compiledDecision: closeDecision,
-      ...(closeExecutionMarketData?.decisionMarketDataRows === undefined
+      ...(closeExecutionMarketData.decisionMarketDataRows === undefined
         ? {}
         : { decisionMarketDataRows: closeExecutionMarketData.decisionMarketDataRows }),
-      ...(closeExecutionMarketData === undefined ? {} : { executionMarketData: closeExecutionMarketData.binding }),
+      executionMarketData: closeExecutionMarketData.binding,
       plannerInput,
       targetPlan,
       policy,
@@ -1961,8 +1557,7 @@ export const buildClosingExecutionCycleDecision = (
 export const observePass = (
   recordPass: Parameters<AutonomousCycleStartup>[0]['recordPass'],
   observation: CyclePassObservation,
-  cadence?: CycleRunContext['cadence'],
 ): Effect.Effect<AutonomousCyclePassObservation> => {
-  const retained = retainAutonomousCyclePassObservation(observation, cadence)
+  const retained = retainAutonomousCyclePassObservation(observation)
   return recordPass(retained).pipe(Effect.as(retained))
 }

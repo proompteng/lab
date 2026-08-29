@@ -1,321 +1,38 @@
 import { Effect, Option, pipe } from 'effect'
 
-import { BrokerRead, type MarketCalendarObservation } from '../../broker/alpaca'
-import type { OperationalError } from '../../errors'
-import { MarketData, type MarketDataInspection } from '../../market-data'
+import { BrokerRead } from '../../broker/alpaca'
 import { currentUtcInstant } from '../../time'
 import { CycleState, type AutonomousCycle } from '../model'
-import { bindFinalizedCyclePublication, runCyclePublicationReadiness, type CycleReadinessError } from '../readiness'
 import { selectCycleRecovery, type CycleRecoverySelection, type CycleRecoveryState } from '../recovery'
-import { CycleStore, type CycleDecisionBindingEvidence, type CycleStoreShape } from '../store'
+import { CycleStore, type CycleDecisionBindingEvidence } from '../store'
 import { isTerminalCycleState } from '../transitions'
 import {
-  beginCycleAuthoritySelection,
-  calendarCandidateFailureError,
   calendarQueryFailureError,
-  completeCycleAuthoritySelection,
   finishRecoveryResult,
   makeIntradayCycleDraft,
   marketCalendarQueryFromSession,
-  marketCalendarQueryForPublications,
-  readinessFailure,
-  reduceCycleAuthoritySelection,
-  selectCycleAcquisition,
-  selectCycleCalendarCandidate,
   selectIntradayExecutionSession,
   selectCyclePassContinuation,
-  selectDiscoveredPublications,
-  type CycleAcquireMaterial,
-  type CycleAuthoritySelection,
-  type CycleAuthoritySelectionState,
-  type CycleAuthoritySlot,
   type CyclePassProgress,
-  type NonEmptyPublications,
 } from './decisions'
-import {
-  runnerError,
-  type CycleBindingResult,
-  type CycleRunContext,
-  type CycleRunnerError,
-  type CycleRunResult,
-} from './model'
+import { runnerError, type CycleRunContext, type CycleRunnerError, type CycleRunResult } from './model'
 
 const currentIsoTime = currentUtcInstant
-
-const bindDiscoveredPublication = (
-  cycle: AutonomousCycle,
-  inspection: MarketDataInspection,
-  observedAt: string,
-): Effect.Effect<CycleBindingResult, CycleRunnerError, CycleStore> =>
-  bindFinalizedCyclePublication(cycle, inspection, observedAt).pipe(
-    Effect.mapError((cause: CycleReadinessError) =>
-      runnerError({
-        operation: 'bind-publication',
-        failure: cause.failure === 'store' ? 'store' : 'contract',
-        message: 'exact finalized Signal publication binding failed',
-        cause,
-      }),
-    ),
-    Effect.flatMap((readiness) =>
-      readiness.outcome === 'WAITING'
-        ? Effect.fail(
-            runnerError({
-              operation: 'bind-publication',
-              failure: 'contract',
-              message: 'discovered finalized Signal publication unexpectedly remained waiting',
-            }),
-          )
-        : Effect.succeed(readiness),
-    ),
-  )
-
-const readCycleAuthoritySlot = <R>(
-  store: CycleStoreShape,
-  context: CycleRunContext<R>,
-  publication: MarketDataInspection,
-): Effect.Effect<CycleAuthoritySlot, CycleRunnerError> => {
-  const signalSessionDate = publication.signalSession.session_date
-  return pipe(
-    store.readAuthoritySlot({
-      qualificationRunId: context.qualificationRunId,
-      accountId: context.accountId,
-      signalSessionDate,
-    }),
-    Effect.mapError((cause) =>
-      runnerError({
-        operation: 'read-authority-slot',
-        failure: 'store',
-        message: 'durable autonomous cycle authority-slot read failed',
-        cause,
-      }),
-    ),
-    Effect.map((existing) => ({ publication, existing: Option.getOrUndefined(existing) })),
-  )
-}
-
-const continueCycleAuthorityReads = <R>(
-  store: CycleStoreShape,
-  context: CycleRunContext<R>,
-  state: CycleAuthoritySelectionState,
-  publications: readonly MarketDataInspection[],
-): Effect.Effect<CycleAuthoritySelection, CycleRunnerError> => {
-  const [publication, ...remaining] = publications
-  if (publication === undefined) {
-    return Effect.succeed(completeCycleAuthoritySelection(state, context.cadence))
-  }
-  return pipe(
-    readCycleAuthoritySlot(store, context, publication),
-    Effect.flatMap((slot) => {
-      const reduction = reduceCycleAuthoritySelection(state, slot)
-      return reduction._tag === 'CONTINUE'
-        ? continueCycleAuthorityReads(store, context, reduction.state, remaining)
-        : Effect.succeed(reduction)
-    }),
-  )
-}
-
-const readCycleAuthoritySlots = <R>(
-  context: CycleRunContext<R>,
-  publications: NonEmptyPublications,
-): Effect.Effect<CycleAuthoritySelection, CycleRunnerError, CycleStore> =>
-  pipe(
-    CycleStore,
-    Effect.flatMap((store) => {
-      const [firstPublication, ...remainingPublications] = publications
-      return pipe(
-        readCycleAuthoritySlot(store, context, firstPublication),
-        Effect.flatMap((slot) => {
-          const initial = beginCycleAuthoritySelection(slot)
-          return initial._tag === 'CONTINUE'
-            ? continueCycleAuthorityReads(store, context, initial.state, remainingPublications)
-            : Effect.succeed(initial)
-        }),
-      )
-    }),
-  )
-
-const resumeDiscoveredPublication = (
-  selection: Extract<CycleAuthoritySelection, { readonly _tag: 'RESUME' }>,
-): Effect.Effect<CycleRunResult, CycleRunnerError, CycleStore> =>
-  pipe(
-    currentIsoTime,
-    Effect.flatMap((observedAt) =>
-      pipe(
-        bindDiscoveredPublication(selection.cycle, selection.publication, observedAt),
-        Effect.map(
-          (readiness): CycleRunResult => ({
-            outcome: 'RESUMED',
-            observedAt,
-            readiness,
-          }),
-        ),
-      ),
-    ),
-  )
-
-const acquireCycleCandidate = (
-  cadence: CycleRunContext['cadence'],
-  material: CycleAcquireMaterial,
-): Effect.Effect<CycleRunResult, CycleRunnerError, CycleStore> =>
-  pipe(
-    CycleStore,
-    Effect.flatMap((store) =>
-      pipe(
-        currentIsoTime,
-        Effect.flatMap((acquiredAt) => {
-          const admission = selectCycleAcquisition(cadence, material, acquiredAt)
-          if (admission._tag === 'NOT_DUE') return Effect.succeed(admission.result)
-          return pipe(
-            store.acquire(admission.material.draft, acquiredAt),
-            Effect.mapError((cause) =>
-              runnerError({
-                operation: 'acquire-cycle',
-                failure: 'store',
-                message: 'durable autonomous cycle acquisition failed',
-                cause,
-              }),
-            ),
-            Effect.flatMap((receipt) =>
-              pipe(
-                currentIsoTime,
-                Effect.flatMap((bindingObservedAt) =>
-                  pipe(
-                    bindDiscoveredPublication(receipt.cycle, material.publication, bindingObservedAt),
-                    Effect.map(
-                      (readiness): CycleRunResult => ({
-                        outcome: receipt.created ? 'ACQUIRED' : 'REACQUIRED',
-                        signalSessionDate: material.signalSessionDate,
-                        executionSessionDate: material.executionSessionDate,
-                        observedAt: bindingObservedAt,
-                        calendarResponseHash: material.calendarResponseHash,
-                        calendarReadContentHash: material.calendarReadContentHash,
-                        receipt,
-                        readiness,
-                      }),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          )
-        }),
-      ),
-    ),
-  )
-
-const interpretCycleCalendar = <R>(
-  context: CycleRunContext<R>,
-  publications: NonEmptyPublications,
-  observation: MarketCalendarObservation,
-  calendarReadContentHash: string,
-  observedAt: string,
-  knownMissedCapitalBootstrap: boolean,
-): Effect.Effect<CycleRunResult, CycleRunnerError, CycleStore> =>
-  Effect.fromResult(
-    selectCycleCalendarCandidate(
-      context,
-      publications,
-      observation,
-      calendarReadContentHash,
-      observedAt,
-      knownMissedCapitalBootstrap,
-    ),
-  ).pipe(
-    Effect.mapError(calendarCandidateFailureError),
-    Effect.flatMap((decision) =>
-      decision._tag === 'NOT_DUE'
-        ? Effect.succeed(decision.result)
-        : acquireCycleCandidate(context.cadence, decision.material),
-    ),
-  )
-
-const readCycleCalendar = <R>(
-  context: CycleRunContext<R>,
-  selection: Extract<CycleAuthoritySelection, { readonly _tag: 'READ_CALENDAR' }>,
-): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore> =>
-  pipe(
-    marketCalendarQueryForPublications(selection.publications),
-    Effect.fromResult,
-    Effect.mapError(calendarQueryFailureError),
-    Effect.flatMap((query) =>
-      pipe(
-        BrokerRead,
-        Effect.flatMap((broker) => broker.marketCalendar(query)),
-        Effect.mapError((cause) =>
-          runnerError({
-            operation: 'market-calendar',
-            failure: 'calendar-read',
-            message: 'authoritative broker calendar read failed',
-            cause,
-          }),
-        ),
-      ),
-    ),
-    Effect.flatMap((calendar) =>
-      pipe(
-        currentIsoTime,
-        Effect.flatMap((observedAt) =>
-          interpretCycleCalendar(
-            context,
-            selection.publications,
-            calendar.value,
-            calendar.evidence.contentHash,
-            observedAt,
-            selection.reason === 'MISSED_CAPITAL_BOOTSTRAP',
-          ),
-        ),
-      ),
-    ),
-  )
-
-const interpretCycleAuthoritySelection = <R>(
-  context: CycleRunContext<R>,
-  selection: CycleAuthoritySelection,
-  discoveryObservedAt: string,
-): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore> => {
-  switch (selection._tag) {
-    case 'RESUME':
-      return resumeDiscoveredPublication(selection)
-    case 'ALREADY_ACQUIRED':
-      return Effect.succeed({
-        outcome: 'ALREADY_ACQUIRED',
-        observedAt: discoveryObservedAt,
-        cycle: selection.cycle,
-      })
-    case 'ALREADY_TERMINAL':
-      return Effect.succeed({
-        outcome: 'ALREADY_TERMINAL',
-        observedAt: discoveryObservedAt,
-        cycle: selection.cycle,
-      })
-    case 'READ_CALENDAR':
-      return readCycleCalendar(context, selection)
-  }
-}
 
 const discoverIntradayCyclePass = <R>(
   context: CycleRunContext<R>,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore> => {
   const candidate =
-    context.strategyName === 'opening-drive-momentum' &&
-    context.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v2'
+    context.strategyName === 'intraday-momentum' &&
+    context.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v3'
       ? {
-          qualificationRunId: context.qualificationRunId,
+          cycleBindingId: context.cycleBindingId,
           strategyName: context.strategyName,
           strategyProtocolHash: context.strategyProtocolHash,
           accountId: context.accountId,
           executionPolicy: context.executionPolicy,
         }
-      : context.strategyName === 'intraday-momentum' &&
-          context.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v3'
-        ? {
-            qualificationRunId: context.qualificationRunId,
-            strategyName: context.strategyName,
-            strategyProtocolHash: context.strategyProtocolHash,
-            accountId: context.accountId,
-            executionPolicy: context.executionPolicy,
-          }
-        : undefined
+      : undefined
   if (candidate === undefined) {
     return Effect.fail(
       runnerError({
@@ -362,7 +79,7 @@ const discoverIntradayCyclePass = <R>(
     const store = yield* CycleStore
     const existing = yield* store
       .readAuthoritySlot({
-        qualificationRunId: context.qualificationRunId,
+        qualificationRunId: context.cycleBindingId,
         accountId: context.accountId,
         executionSessionDate: draft.identity.executionSessionDate,
       })
@@ -404,40 +121,7 @@ const discoverIntradayCyclePass = <R>(
 
 export const discoverAutonomousCyclePass = <R>(
   context: CycleRunContext<R>,
-): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | MarketData> =>
-  context.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v2' ||
-  context.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v3' ||
-  context.strategyName === 'opening-drive-momentum' ||
-  context.strategyName === 'intraday-momentum'
-    ? discoverIntradayCyclePass(context)
-    : pipe(
-        MarketData,
-        Effect.flatMap((marketData) => marketData.inspectCyclePublications),
-        Effect.mapError((cause: OperationalError) =>
-          runnerError({
-            operation: 'inspect-publication',
-            failure: 'market-data',
-            message: 'bounded finalized Signal publication discovery failed',
-            cause,
-          }),
-        ),
-        Effect.flatMap((discovery) =>
-          pipe(
-            selectDiscoveredPublications(discovery),
-            Effect.fromResult,
-            Effect.flatMap((decision) =>
-              decision._tag === 'NO_PUBLICATION'
-                ? Effect.succeed(decision.result)
-                : pipe(
-                    readCycleAuthoritySlots(context, decision.publications),
-                    Effect.flatMap((selection) =>
-                      interpretCycleAuthoritySelection(context, selection, decision.observedAt),
-                    ),
-                  ),
-            ),
-          ),
-        ),
-      )
+): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore> => discoverIntradayCyclePass(context)
 
 const chooseRecovery = (state: CycleRecoveryState): Effect.Effect<CycleRecoverySelection, CycleRunnerError> =>
   Effect.fromResult(selectCycleRecovery(state)).pipe(
@@ -454,8 +138,7 @@ const chooseRecovery = (state: CycleRecoveryState): Effect.Effect<CycleRecoveryS
 const recoverCycle = <R>(
   selection: CycleRecoverySelection,
   context: CycleRunContext<R>,
-  observedAt: string,
-): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | MarketData | R> => {
+): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | R> => {
   switch (selection.action) {
     case 'DISCOVER':
       return discoverAutonomousCyclePass(context)
@@ -480,35 +163,6 @@ const recoverCycle = <R>(
           }),
         ),
       )
-    case 'READ_PUBLICATION':
-      return runCyclePublicationReadiness(selection.cycle).pipe(
-        Effect.mapError((cause: CycleReadinessError) =>
-          runnerError({
-            operation: 'recover-cycle',
-            failure: readinessFailure(cause),
-            message: 'unfinished cycle publication recovery failed',
-            cause,
-          }),
-        ),
-        Effect.flatMap((readiness) =>
-          chooseRecovery({
-            qualificationRunId: context.qualificationRunId,
-            accountId: context.accountId,
-            strategyProtocolHash: context.strategyProtocolHash,
-            observedAt,
-            cycle: selection.cycle,
-            readiness,
-          }),
-        ),
-        Effect.flatMap((next) => recoverCycle(next, context, observedAt)),
-      )
-    case 'RETURN_READINESS':
-      return Effect.succeed({
-        outcome: 'RECOVERED',
-        action: selection.recoveryAction,
-        observedAt: selection.result.observedAt,
-        cycle: selection.result.cycle,
-      })
     case 'ACTIVATE':
       return pipe(
         CycleStore,
@@ -618,14 +272,14 @@ const recoverCycle = <R>(
             Effect.flatMap((decisionObservedAt) =>
               pipe(
                 chooseRecovery({
-                  qualificationRunId: context.qualificationRunId,
+                  cycleBindingId: context.cycleBindingId,
                   accountId: context.accountId,
                   strategyProtocolHash: context.strategyProtocolHash,
                   observedAt: decisionObservedAt,
                   cycle: selection.cycle,
                   decisionDocument: Option.getOrNull(document),
                 }),
-                Effect.flatMap((next) => recoverCycle(next, context, decisionObservedAt)),
+                Effect.flatMap((next) => recoverCycle(next, context)),
               ),
             ),
           ),
@@ -650,12 +304,12 @@ const recoverCycle = <R>(
 
 export const runAutonomousCyclePass = <R>(
   context: CycleRunContext<R>,
-): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | MarketData | R> =>
+): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | R> =>
   pipe(
     CycleStore,
     Effect.flatMap((store) =>
       store.readOldestUnfinished({
-        qualificationRunId: context.qualificationRunId,
+        qualificationRunId: context.cycleBindingId,
         accountId: context.accountId,
       }),
     ),
@@ -673,13 +327,13 @@ export const runAutonomousCyclePass = <R>(
         Effect.flatMap((observedAt) =>
           pipe(
             chooseRecovery({
-              qualificationRunId: context.qualificationRunId,
+              cycleBindingId: context.cycleBindingId,
               accountId: context.accountId,
               strategyProtocolHash: context.strategyProtocolHash,
               observedAt,
               cycle: Option.getOrUndefined(unfinished),
             }),
-            Effect.flatMap((selection) => recoverCycle(selection, context, observedAt)),
+            Effect.flatMap((selection) => recoverCycle(selection, context)),
           ),
         ),
       ),
@@ -693,7 +347,7 @@ const continueAutonomousCyclePass = <R>(
   context: CycleRunContext<R>,
   completedProgress: ReadonlySet<CyclePassProgress>,
   previousProgressKey?: string,
-): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | MarketData | R> =>
+): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | R> =>
   runAutonomousCyclePass(context).pipe(
     Effect.flatMap((result) => {
       const continuation = selectCyclePassContinuation(result)
@@ -723,5 +377,5 @@ const continueAutonomousCyclePass = <R>(
 
 export const runAutonomousCycleUntilSettled = <R>(
   context: CycleRunContext<R>,
-): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | MarketData | R> =>
+): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | R> =>
   continueAutonomousCyclePass(context, new Set())
