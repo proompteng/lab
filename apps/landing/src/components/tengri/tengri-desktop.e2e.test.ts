@@ -1239,6 +1239,7 @@ test('matches the Tahoe desktop at required production viewports', async ({ page
     fullPage: true,
   })
 
+  await page.evaluate(() => sessionStorage.clear())
   await page.setViewportSize({ width: 1728, height: 1117 })
   await page.goto('/')
   await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
