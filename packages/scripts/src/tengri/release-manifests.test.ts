@@ -1166,6 +1166,56 @@ ${rule}
     rmSync(paths.directory, { recursive: true, force: true })
   })
 
+  it('rejects malformed optional template inputs on every selector-admitted application', () => {
+    const drifts = [
+      ['                managedNamespaceMetadata: invalid\n', 'managedNamespaceMetadata must be a mapping'],
+      [
+        '                managedNamespaceMetadata:\n                  labels: invalid\n',
+        'managedNamespaceMetadata labels must be a string map',
+      ],
+      [
+        '                managedNamespaceMetadata:\n                  annotations: []\n',
+        'managedNamespaceMetadata annotations must be a string map',
+      ],
+      [
+        '                managedNamespaceMetadata:\n                  finalizers: {}\n',
+        'managedNamespaceMetadata may contain only labels and annotations',
+      ],
+      ['                ignoreDifferences: {}\n', 'selector-admitted ignoreDifferences must contain resource rules'],
+      ['                renderWithLovely: "false"\n', 'selector-admitted renderWithLovely must be a boolean'],
+      ['                kustomize: invalid\n', 'selector-admitted kustomize input must be a mapping'],
+      ['                namespace: Invalid_Name\n', 'selector-admitted namespace must be a valid Kubernetes namespace'],
+      ['                repoURL: []\n', 'selector-admitted repoURL must be a non-empty string'],
+      ['                targetRevision: {}\n', 'selector-admitted targetRevision must be a non-empty string'],
+      ['                project: ""\n', 'selector-admitted project must be a non-empty string'],
+      [
+        '                destinationName: another-cluster\n',
+        'selector-admitted elements must not override matrix inputs',
+      ],
+    ] as const
+
+    for (const [injected, message] of drifts) {
+      const paths = fixture()
+      const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+      const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+      writeFileSync(
+        paths.applicationSetPath,
+        readFileSync(paths.applicationSetPath, 'utf8').replace(
+          '                path: argocd/applications/cdi\n',
+          `                path: argocd/applications/cdi\n${injected}`,
+        ),
+      )
+      const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+
+      expect(() => validateTengriRelease(paths)).toThrow(message)
+      expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(message)
+      expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+      expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
+      expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
+      rmSync(paths.directory, { recursive: true, force: true })
+    }
+  })
+
   it('rejects selector requirements with invalid cardinality, types, or label syntax', () => {
     const drifts = [
       ['values: ["false", "False", "0"]', 'values: []'],

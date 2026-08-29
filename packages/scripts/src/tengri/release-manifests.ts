@@ -579,11 +579,90 @@ function assertApplicationElementCanRender(application: Record<string, unknown>)
   if (automation !== 'auto' && automation !== 'manual') {
     throw new Error('Tengri ApplicationSet selector-admitted elements must contain an auto or manual automation mode')
   }
+  if (!isValidKubernetesLabelValue(application.enabled)) {
+    throw new Error('Tengri ApplicationSet selector-admitted elements must contain a valid enabled selector value')
+  }
   if (
     !isPlainRecord(annotations) ||
     Object.entries(annotations).some(([key, value]) => !isValidKubernetesLabelKey(key) || typeof value !== 'string')
   ) {
     throw new Error('Tengri ApplicationSet selector-admitted elements must contain valid annotations')
+  }
+
+  const matrixOverrides = ['cluster', 'suffix', 'destinationServer', 'destinationName'].filter((field) =>
+    Object.hasOwn(application, field),
+  )
+  if (matrixOverrides.length > 0) {
+    throw new Error(
+      `Tengri ApplicationSet selector-admitted elements must not override matrix inputs; remove ${matrixOverrides.join(', ')}`,
+    )
+  }
+
+  if (
+    Object.hasOwn(application, 'namespace') &&
+    (typeof application.namespace !== 'string' ||
+      application.namespace.length > 63 ||
+      !kubernetesDnsLabelPattern.test(application.namespace))
+  ) {
+    throw new Error('Tengri ApplicationSet selector-admitted namespace must be a valid Kubernetes namespace')
+  }
+  for (const field of ['project', 'repoURL', 'targetRevision'] as const) {
+    if (
+      Object.hasOwn(application, field) &&
+      (typeof application[field] !== 'string' || application[field].length === 0)
+    ) {
+      throw new Error(`Tengri ApplicationSet selector-admitted ${field} must be a non-empty string`)
+    }
+  }
+  if (Object.hasOwn(application, 'renderWithLovely') && typeof application.renderWithLovely !== 'boolean') {
+    throw new Error('Tengri ApplicationSet selector-admitted renderWithLovely must be a boolean')
+  }
+  if (Object.hasOwn(application, 'kustomize') && !isPlainRecord(application.kustomize)) {
+    throw new Error('Tengri ApplicationSet selector-admitted kustomize input must be a mapping')
+  }
+  if (Object.hasOwn(application, 'managedNamespaceMetadata')) {
+    assertValidManagedNamespaceMetadata(application.managedNamespaceMetadata)
+  }
+  if (Object.hasOwn(application, 'ignoreDifferences')) {
+    assertValidIgnoreDifferencesRules(
+      application.ignoreDifferences,
+      'Tengri ApplicationSet selector-admitted ignoreDifferences',
+    )
+  }
+}
+
+function assertValidManagedNamespaceMetadata(value: unknown) {
+  if (!isPlainRecord(value)) {
+    throw new Error('Tengri ApplicationSet selector-admitted managedNamespaceMetadata must be a mapping')
+  }
+  if (Object.keys(value).some((field) => field !== 'labels' && field !== 'annotations')) {
+    throw new Error(
+      'Tengri ApplicationSet selector-admitted managedNamespaceMetadata may contain only labels and annotations',
+    )
+  }
+  if (!Object.hasOwn(value, 'labels') && !Object.hasOwn(value, 'annotations')) {
+    throw new Error('Tengri ApplicationSet selector-admitted managedNamespaceMetadata must not be empty')
+  }
+  if (Object.hasOwn(value, 'labels')) {
+    assertValidMetadataMap(value.labels, 'labels', true)
+  }
+  if (Object.hasOwn(value, 'annotations')) {
+    assertValidMetadataMap(value.annotations, 'annotations', false)
+  }
+}
+
+function assertValidMetadataMap(value: unknown, field: 'labels' | 'annotations', validateLabelValues: boolean) {
+  if (
+    !isPlainRecord(value) ||
+    Object.keys(value).length === 0 ||
+    Object.entries(value).some(
+      ([key, entry]) =>
+        !isValidKubernetesLabelKey(key) ||
+        typeof entry !== 'string' ||
+        (validateLabelValues && !isValidKubernetesLabelValue(entry)),
+    )
+  ) {
+    throw new Error(`Tengri ApplicationSet selector-admitted managedNamespaceMetadata ${field} must be a string map`)
   }
 }
 
@@ -624,10 +703,7 @@ function ignoreSelectorCanMatch(value: unknown, expected: string) {
 
 function assertGlobalIgnoreDifferencesDoNotMatchTengri(value: unknown) {
   if (value === undefined) return
-  if (!Array.isArray(value) || value.some((rule) => !isPlainRecord(rule))) {
-    throw new Error('Tengri ApplicationSet global ignoreDifferences must contain resource rules')
-  }
-  for (const rule of value) assertValidIgnoreDifferencesRule(rule)
+  assertValidIgnoreDifferencesRules(value, 'Tengri ApplicationSet global ignoreDifferences')
   const matchesTengriDeployment = value.some(
     (rule) =>
       isPlainRecord(rule) &&
@@ -641,7 +717,17 @@ function assertGlobalIgnoreDifferencesDoNotMatchTengri(value: unknown) {
   }
 }
 
-function assertValidIgnoreDifferencesRule(rule: Record<string, unknown>) {
+function assertValidIgnoreDifferencesRules(
+  value: unknown,
+  context: string,
+): asserts value is Record<string, unknown>[] {
+  if (!Array.isArray(value) || value.some((rule) => !isPlainRecord(rule))) {
+    throw new Error(`${context} must contain resource rules`)
+  }
+  for (const rule of value) assertValidIgnoreDifferencesRule(rule, context)
+}
+
+function assertValidIgnoreDifferencesRule(rule: Record<string, unknown>, context: string) {
   const allowedFields = new Set([
     'group',
     'kind',
@@ -652,20 +738,20 @@ function assertValidIgnoreDifferencesRule(rule: Record<string, unknown>) {
     'managedFieldsManagers',
   ])
   if (Object.keys(rule).some((field) => !allowedFields.has(field))) {
-    throw new Error('Tengri ApplicationSet global ignoreDifferences contains an unsupported field')
+    throw new Error(`${context} contains an unsupported field`)
   }
   if (typeof rule.kind !== 'string' || rule.kind.length === 0) {
-    throw new Error('Tengri ApplicationSet global ignoreDifferences rules must contain a kind')
+    throw new Error(`${context} rules must contain a kind`)
   }
   for (const field of ['group', 'name', 'namespace'] as const) {
     if (rule[field] !== undefined && typeof rule[field] !== 'string') {
-      throw new Error(`Tengri ApplicationSet global ignoreDifferences ${field} must be a string`)
+      throw new Error(`${context} ${field} must be a string`)
     }
   }
   for (const field of ['jsonPointers', 'jqPathExpressions', 'managedFieldsManagers'] as const) {
     const paths = rule[field]
     if (paths !== undefined && (!Array.isArray(paths) || paths.some((path) => typeof path !== 'string'))) {
-      throw new Error(`Tengri ApplicationSet global ignoreDifferences ${field} must be a string sequence`)
+      throw new Error(`${context} ${field} must be a string sequence`)
     }
   }
 }
