@@ -696,6 +696,32 @@ test('preserves terminal identity on reload and BFCache restore while isolating 
   await duplicate.close()
 })
 
+test('restores the desktop and terminal session when Web Locks are unavailable', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: undefined })
+  })
+  const terminalStore: TerminalStore = { sessions: [] }
+  const mock = await mockTengri(page, { terminalStore })
+  await page.goto('/')
+
+  await page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Terminal' }).click()
+  await expect(
+    page.getByRole('region', { name: 'Terminal window' }).getByText('Connected', { exact: true }),
+  ).toBeVisible()
+  const desktopId = await page.evaluate((agentId) => sessionStorage.getItem(`tengri:desktop:${agentId}`), readyAgent.id)
+
+  await page.reload()
+
+  await expect(page.getByRole('region', { name: 'Terminal window' })).toHaveCount(1)
+  await expect(
+    page.getByRole('region', { name: 'Terminal window' }).getByText('Connected', { exact: true }),
+  ).toBeVisible()
+  expect(await page.evaluate((agentId) => sessionStorage.getItem(`tengri:desktop:${agentId}`), readyAgent.id)).toBe(
+    desktopId,
+  )
+  expect(mock.actions.filter((action) => action.action === 'create-terminal')).toHaveLength(1)
+})
+
 test('migrates one legacy terminal resume state without sharing it across desktop tabs', async ({ page }) => {
   const windowId = 'terminal-3'
   const legacyStorageKey = `tengri:terminal:${readyAgent.id}:${windowId}`
@@ -924,6 +950,10 @@ test('sends a real agent turn and executes sleep, resume, and confirmed deletion
   await expect(dock).toBeVisible()
   await expect.poll(() => mock.getAgent()?.phase).toBe('ready')
 
+  await dock.getByRole('button', { name: 'Open Terminal' }).click()
+  await expect(
+    page.getByRole('region', { name: 'Terminal window' }).getByText('Connected', { exact: true }),
+  ).toBeVisible()
   await dock.getByRole('button', { name: 'Open Settings' }).click()
   await settings.getByRole('button', { name: 'Delete Agent' }).click()
   const deleteDialog = page.getByRole('alertdialog', { name: /Delete “Tengri”/ })
@@ -932,7 +962,26 @@ test('sends a real agent turn and executes sleep, resume, and confirmed deletion
   await expect(page.getByRole('dialog', { name: 'Spotlight' })).toHaveCount(0)
   await expect(deleteDialog).toBeVisible()
   await deleteDialog.getByRole('button', { name: 'Delete Agent' }).click()
-  await expect(page.getByRole('dialog', { name: 'Create your agent' })).toBeVisible()
+  const create = page.getByRole('dialog', { name: 'Create your agent' })
+  await expect(create).toBeVisible()
+  expect(
+    await page.evaluate(
+      (agentId) =>
+        Object.keys(sessionStorage).filter(
+          (key) =>
+            key === `tengri:desktop:${agentId}` ||
+            key.startsWith(`tengri:windows:${agentId}:`) ||
+            key.startsWith(`tengri:terminal:${agentId}:`) ||
+            key === `tengri:terminal-cleanup:${agentId}`,
+        ),
+      readyAgent.id,
+    ),
+  ).toEqual([])
+
+  await create.getByLabel('Agent name').fill('Replacement')
+  await create.getByRole('button', { name: 'Create Agent' }).click()
+  await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Terminal window' })).toHaveCount(0)
 })
 
 test('blocks lifecycle changes while Settings has a guest request in flight', async ({ page }) => {

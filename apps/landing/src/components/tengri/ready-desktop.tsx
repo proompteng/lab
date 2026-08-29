@@ -65,6 +65,24 @@ function desktopLayoutStorageKey(agentId: string, desktopId: string) {
   return `tengri:windows:${agentId}:${desktopId}`
 }
 
+function clearDeletedDesktopState(agentId: string, desktopId: string) {
+  try {
+    const terminalPrefix = `tengri:terminal:${agentId}:`
+    const keys = [
+      desktopLayoutStorageKey(agentId, desktopId),
+      `tengri:desktop:${agentId}`,
+      `tengri:terminal-cleanup:${agentId}`,
+    ]
+    for (let index = 0; index < sessionStorage.length; index += 1) {
+      const key = sessionStorage.key(index)
+      if (key?.startsWith(terminalPrefix)) keys.push(key)
+    }
+    for (const key of new Set(keys)) sessionStorage.removeItem(key)
+  } catch {
+    // Deleted guest state is still authoritative when session storage is unavailable.
+  }
+}
+
 function newDesktopId() {
   return crypto.randomUUID().replaceAll('-', '')
 }
@@ -103,7 +121,7 @@ function createDesktopIdentityLease(agentId: string): DesktopIdentityLease {
 
   const claimIdentity = (candidate: string) => {
     if (!navigator.locks) {
-      commitIdentity(newDesktopId())
+      commitIdentity(candidate)
       return
     }
     void navigator.locks
@@ -519,7 +537,11 @@ export function ReadyDesktop({
         onCommitted: (committedAction) => {
           committed = true
           setCommittedTransition(committedAction === 'sleep-agent' ? 'sleep' : 'delete')
-          if (committedAction === 'delete-agent') setConfirmOpen(false)
+          if (committedAction === 'delete-agent') {
+            for (const closeTerminal of terminalCloseHandlersRef.current.values()) closeTerminal()
+            if (desktopId) clearDeletedDesktopState(agent.id, desktopId)
+            setConfirmOpen(false)
+          }
         },
       })
       if (action === 'delete-agent') await onChanged()
@@ -583,6 +605,7 @@ export function ReadyDesktop({
   const terminalRunning = windowState.windows.some((candidate) => candidate.app === 'terminal')
   const activeWindow = windowState.windows.find((candidate) => candidate.id === windowState.activeWindowId)
   const activeApp = activeWindow?.app ?? windowState.activeApp
+  const layoutReady = desktopId !== null && hydratedDesktopId === desktopId
 
   if (committedTransition) {
     return (
@@ -591,6 +614,20 @@ export function ReadyDesktop({
         error={selectSleepRequestError(error, connectionWarning)}
         transition={committedTransition}
       />
+    )
+  }
+
+  if (!layoutReady) {
+    return (
+      <main className="font-inter relative h-[100dvh] min-h-[520px] w-screen overflow-hidden bg-[#050914] text-white">
+        <DesktopWallpaper />
+        <div ref={stageRef} className="absolute inset-x-0 top-[30px] bottom-0 grid place-items-center">
+          <p className="flex items-center gap-2 text-sm text-white/62" role="status">
+            <LoaderCircle aria-hidden="true" className="size-4 animate-spin motion-reduce:animate-none" />
+            Restoring desktop…
+          </p>
+        </div>
+      </main>
     )
   }
 
@@ -672,19 +709,12 @@ export function ReadyDesktop({
                   request={codeRequest?.targetWindowId === desktopWindow.id ? codeRequest : null}
                 />
               ) : desktopWindow.app === 'terminal' ? (
-                desktopId ? (
-                  <TerminalApp
-                    agentId={agent.id}
-                    desktopId={desktopId}
-                    registerCloseHandler={registerTerminalCloseHandler}
-                    windowId={desktopWindow.id}
-                  />
-                ) : (
-                  <div className="flex h-full items-center justify-center gap-2 text-sm text-zinc-300" role="status">
-                    <LoaderCircle aria-hidden="true" className="size-4 animate-spin" />
-                    Preparing Terminal…
-                  </div>
-                )
+                <TerminalApp
+                  agentId={agent.id}
+                  desktopId={desktopId}
+                  registerCloseHandler={registerTerminalCloseHandler}
+                  windowId={desktopWindow.id}
+                />
               ) : (
                 <SettingsApp
                   active={desktopWindow.id === windowState.activeWindowId}
