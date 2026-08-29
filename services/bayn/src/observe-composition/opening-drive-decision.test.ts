@@ -15,6 +15,7 @@ import {
 import { canonicalHashV1, sha256 } from '../hash'
 import {
   verifyIntradaySnapshot,
+  type ArchiveVerifiedIntradayMarketSnapshot,
   type IntradayMarketDataService,
   type IntradaySnapshotRequest,
   type IntradaySnapshotRows,
@@ -363,8 +364,9 @@ describe('opening-drive runtime decision boundary', () => {
       },
       loadSnapshot: (request) => {
         calls.push(`load:${request.archiveWatermarks[0]?.inclusiveLastOffset}`)
-        return Effect.succeed(snapshot)
+        return Effect.succeed(snapshot as ArchiveVerifiedIntradayMarketSnapshot)
       },
+      verifyArchiveSnapshot: (candidate) => Effect.succeed(candidate as ArchiveVerifiedIntradayMarketSnapshot),
     }
     const query = success(openingDriveCloseQuery(makeActiveCycle(), protocol, calendar, snapshot.manifest.observedAt))
 

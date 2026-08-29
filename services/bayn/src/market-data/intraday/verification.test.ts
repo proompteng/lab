@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test'
-import { Result } from 'effect'
+import { Effect, Result } from 'effect'
 
 import { canonicalHashV1, sha256 } from '../../hash'
-import type { IntradayMarketSnapshot, IntradaySnapshotRequest } from './model'
+import type { ArchiveVerifiedIntradayMarketSnapshot, IntradayMarketSnapshot, IntradaySnapshotRequest } from './model'
+import { verifyIntradayArchiveSnapshot } from './program'
 import type { IntradayBarRow, IntradayQuoteRow, IntradayTradeRow } from './rows'
 import { reverifyIntradayMarketSnapshot, verifyIntradaySnapshot, verifyIntradaySnapshotRequest } from './verification'
 
@@ -736,6 +737,42 @@ describe('immutable intraday market snapshot', () => {
         facts: { symbol: 'AMD' },
       })
     }
+  })
+
+  test('re-queries the immutable archive before accepting a self-rehashed lower-ranked winner', async () => {
+    const rows = makeRows()
+    const authoritative = success(verifyIntradaySnapshot(request, rows))
+    const firstQuote = rows.quotes[0]
+    if (firstQuote === undefined) throw new Error('quote fixture is incomplete')
+    const lowerRankedRows = {
+      ...rows,
+      quotes: rows.quotes.map((quote, index) =>
+        index === 0
+          ? {
+              ...firstQuote,
+              source_offset: '1',
+              bid_price: '99.50',
+              ask_price: '99.52',
+            }
+          : quote,
+      ),
+    }
+    const selfRehashed = success(verifyIntradaySnapshot(request, lowerRankedRows))
+    expect(success(reverifyIntradayMarketSnapshot(selfRehashed))).toEqual(selfRehashed)
+
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        verifyIntradayArchiveSnapshot(
+          () => Effect.succeed(authoritative as ArchiveVerifiedIntradayMarketSnapshot),
+          selfRehashed,
+        ),
+      ),
+    )
+
+    expect(failure).toMatchObject({
+      reason: 'hash',
+      message: 'intraday replay snapshot is not the canonical immutable archive winner',
+    })
   })
 
   test('returns a typed row failure for malformed replayed quote and trade timestamps', () => {

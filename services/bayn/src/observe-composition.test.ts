@@ -64,6 +64,7 @@ import { WriterFence, WriterFenceError, type WriterFenceService } from './execut
 import { canonicalHashV1 } from './hash'
 import {
   MarketData,
+  type ArchiveVerifiedIntradayMarketSnapshot,
   type IntradayMarketDataService,
   type IntradayMarketSnapshot,
   type IntradaySnapshotRequest,
@@ -468,7 +469,9 @@ const intradayMarketData = (protocol: OpeningDriveProtocol): IntradayMarketDataS
           inclusiveLastOffset: String(protocol.universe.length * protocol.openingRangeMinutes),
         })),
     ),
-  loadSnapshot: (request) => Effect.succeed(intradaySnapshot(protocol, request)),
+  loadSnapshot: (request) =>
+    Effect.succeed(intradaySnapshot(protocol, request) as ArchiveVerifiedIntradayMarketSnapshot),
+  verifyArchiveSnapshot: (snapshot) => Effect.succeed(snapshot as ArchiveVerifiedIntradayMarketSnapshot),
 })
 
 const account: AccountSnapshot = {

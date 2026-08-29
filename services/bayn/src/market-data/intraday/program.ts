@@ -3,7 +3,14 @@ import { Effect, Layer, type Result } from 'effect'
 
 import { operationalError } from '../../errors'
 import { marketDataOperationError } from '../errors'
-import { IntradayMarketData, IntradaySnapshotFailure, type IntradayMarketDataService } from './model'
+import {
+  IntradayMarketData,
+  IntradaySnapshotFailure,
+  type ArchiveVerifiedIntradayMarketSnapshot,
+  type IntradayMarketDataService,
+  type IntradayMarketSnapshot,
+  type IntradaySnapshotRequest,
+} from './model'
 import { intradayArchivePageSize, makeIntradayMarketDataQueries, type IntradayArchivePageCursor } from './queries'
 import {
   decodeIntradayBarRows,
@@ -19,6 +26,7 @@ import {
   verifyIntradaySnapshot,
   verifyIntradaySnapshotQuery,
   verifyIntradaySnapshotRequest,
+  reverifyIntradayMarketSnapshot,
 } from './verification'
 
 type IntradayPageRow = IntradayBarRow | IntradayQuoteRow | IntradayTradeRow
@@ -103,6 +111,57 @@ export const loadIntradayArchivePages = <E, R>(
     })
   })
 
+const requestFromSnapshot = (snapshot: IntradayMarketSnapshot): IntradaySnapshotRequest => {
+  const { manifest } = snapshot
+  return {
+    sessionDate: manifest.sessionDate,
+    calendar: manifest.calendar,
+    rangeStartAt: manifest.rangeStartAt,
+    rangeEndAt: manifest.rangeEndAt,
+    observedAt: manifest.observedAt,
+    universeId: manifest.universeId,
+    universeSymbolHash: manifest.universeSymbolHash,
+    universe: manifest.symbols,
+    feed: manifest.feed,
+    delayClass: manifest.delayClass,
+    sourceTopics: manifest.sourceTopics,
+    maximumQuoteAgeMs: manifest.maximumQuoteAgeMs,
+    minimumWatermarkLagMs: manifest.minimumWatermarkLagMs,
+    archiveWatermarks: manifest.archiveWatermarks,
+  }
+}
+
+/**
+ * Re-loads a caller-provided snapshot at its exact immutable watermarks. Pure
+ * envelope revalidation cannot establish which tied archive row won the
+ * canonical query, so any replay boundary must use this check before invoking
+ * a strategy artifact.
+ */
+export const verifyIntradayArchiveSnapshot = <E, R>(
+  loadSnapshot: (request: IntradaySnapshotRequest) => Effect.Effect<ArchiveVerifiedIntradayMarketSnapshot, E, R>,
+  snapshot: IntradayMarketSnapshot,
+): Effect.Effect<ArchiveVerifiedIntradayMarketSnapshot, E | IntradaySnapshotFailure, R> =>
+  Effect.fromResult(reverifyIntradayMarketSnapshot(snapshot)).pipe(
+    Effect.flatMap((bound) =>
+      loadSnapshot(requestFromSnapshot(bound)).pipe(
+        Effect.flatMap((authoritative) =>
+          authoritative.manifest.snapshotId === bound.manifest.snapshotId
+            ? Effect.succeed(authoritative)
+            : Effect.fail(
+                new IntradaySnapshotFailure({
+                  reason: 'hash',
+                  message: 'intraday replay snapshot is not the canonical immutable archive winner',
+                  facts: {
+                    boundSnapshotId: bound.manifest.snapshotId,
+                    authoritativeSnapshotId: authoritative.manifest.snapshotId,
+                  },
+                }),
+              ),
+        ),
+      ),
+    ),
+  )
+
 export const makeIntradayMarketData: Effect.Effect<
   IntradayMarketDataService,
   never,
@@ -119,6 +178,36 @@ export const makeIntradayMarketData: Effect.Effect<
           cause,
         })
       : marketDataOperationError('load', 'failed to load immutable intraday market snapshot', cause)
+  const loadSnapshot: IntradayMarketDataService['loadSnapshot'] = (request) =>
+    Effect.fromResult(verifyIntradaySnapshotRequest(request)).pipe(
+      Effect.flatMap((verified) =>
+        Effect.all(
+          {
+            archiveWatermarks: captureIntradayArchiveWatermarks(verified),
+            bars: loadIntradayArchivePages(
+              (after) => loadIntradayBars(verified, after),
+              decodeIntradayBarRows,
+              verified.universe.length *
+                ((Date.parse(verified.rangeEndAt) - Date.parse(verified.rangeStartAt)) / 60_000),
+            ),
+            quotes: loadIntradayArchivePages(
+              (after) => loadIntradayQuotes(verified, after),
+              decodeIntradayQuoteRows,
+              verified.universe.length,
+            ),
+            trades: loadIntradayArchivePages(
+              (after) => loadIntradayTrades(verified, after),
+              decodeIntradayTradeRows,
+              verified.universe.length,
+            ),
+          },
+          { concurrency: 4 },
+        ).pipe(Effect.map((rows) => ({ rows, verified }))),
+      ),
+      Effect.flatMap(({ rows, verified }) => Effect.fromResult(verifyIntradaySnapshot(verified, rows))),
+      Effect.map((snapshot) => snapshot as ArchiveVerifiedIntradayMarketSnapshot),
+      Effect.mapError(mapFailure),
+    )
   return {
     captureVersion: (query) =>
       Effect.fromResult(verifyIntradaySnapshotQuery(query)).pipe(
@@ -128,35 +217,9 @@ export const makeIntradayMarketData: Effect.Effect<
         Effect.flatMap(({ rows, verified }) => Effect.fromResult(verifyIntradayArchiveWatermarks(verified, rows))),
         Effect.mapError(mapFailure),
       ),
-    loadSnapshot: (request) =>
-      Effect.fromResult(verifyIntradaySnapshotRequest(request)).pipe(
-        Effect.flatMap((verified) =>
-          Effect.all(
-            {
-              archiveWatermarks: captureIntradayArchiveWatermarks(verified),
-              bars: loadIntradayArchivePages(
-                (after) => loadIntradayBars(verified, after),
-                decodeIntradayBarRows,
-                verified.universe.length *
-                  ((Date.parse(verified.rangeEndAt) - Date.parse(verified.rangeStartAt)) / 60_000),
-              ),
-              quotes: loadIntradayArchivePages(
-                (after) => loadIntradayQuotes(verified, after),
-                decodeIntradayQuoteRows,
-                verified.universe.length,
-              ),
-              trades: loadIntradayArchivePages(
-                (after) => loadIntradayTrades(verified, after),
-                decodeIntradayTradeRows,
-                verified.universe.length,
-              ),
-            },
-            { concurrency: 4 },
-          ).pipe(Effect.map((rows) => ({ rows, verified }))),
-        ),
-        Effect.flatMap(({ rows, verified }) => Effect.fromResult(verifyIntradaySnapshot(verified, rows))),
-        Effect.mapError(mapFailure),
-      ),
+    loadSnapshot,
+    verifyArchiveSnapshot: (snapshot) =>
+      verifyIntradayArchiveSnapshot(loadSnapshot, snapshot).pipe(Effect.mapError(mapFailure)),
   }
 })
 

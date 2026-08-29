@@ -121,6 +121,18 @@ export interface IntradayMarketSnapshot {
   readonly manifest: IntradaySnapshotManifest
 }
 
+declare const ArchiveVerifiedIntradayMarketSnapshotTypeId: unique symbol
+
+/**
+ * Opaque snapshot produced only after the immutable ClickHouse archive query
+ * has selected each canonical quote and trade winner at the bound watermarks.
+ * Persisted or caller-constructed snapshot documents must be reloaded through
+ * IntradayMarketData before they can cross this boundary.
+ */
+export type ArchiveVerifiedIntradayMarketSnapshot = IntradayMarketSnapshot & {
+  readonly [ArchiveVerifiedIntradayMarketSnapshotTypeId]: true
+}
+
 /**
  * Verified intraday market-data boundary. This service is introduced with the
  * verifier and its ClickHouse implementation so callers can never obtain a
@@ -130,7 +142,13 @@ export interface IntradayMarketDataService {
   readonly captureVersion: (
     query: IntradaySnapshotQuery,
   ) => Effect.Effect<readonly IntradayArchiveWatermark[], OperationalError>
-  readonly loadSnapshot: (request: IntradaySnapshotRequest) => Effect.Effect<IntradayMarketSnapshot, OperationalError>
+  readonly loadSnapshot: (
+    request: IntradaySnapshotRequest,
+  ) => Effect.Effect<ArchiveVerifiedIntradayMarketSnapshot, OperationalError>
+  /** Re-query the bound immutable archive and reject a caller-provided snapshot that is not the canonical result. */
+  readonly verifyArchiveSnapshot: (
+    snapshot: IntradayMarketSnapshot,
+  ) => Effect.Effect<ArchiveVerifiedIntradayMarketSnapshot, OperationalError>
 }
 
 export class IntradayMarketData extends Context.Service<IntradayMarketData, IntradayMarketDataService>()(
