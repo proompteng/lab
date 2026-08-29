@@ -67,6 +67,21 @@ and narrowly scoped PostgreSQL, TigerBeetle, ClickHouse, telemetry, DNS, and bro
 service-account token and accept Restate requests only from the `restate` namespace. The activation Job has no broker
 egress and its token-authenticated bootstrap call is made only by the labeled GitOps hook.
 
+### Research mandate rotation
+
+A sealed research-mandate rotation must update the request content hash, build lineage, and activation generation in one
+reviewed change. Argo replaces the Secret in wave `-2`, rolls the controller in wave `-1`, runs the idempotent activation
+hook in wave `0`, and rolls the read-only status service in wave `1`. The expected impact is one normal controller/status
+rollout and a drained Restate worker revision; the activation hook itself cannot reach the broker.
+
+After sync, require the SealedSecret to be current, the hook to succeed for the committed generation, the controller
+sequence to advance naturally, `/readyz` and `/v1/status` to report the intended effective authority, and reconciliation
+to remain exact with zero unresolved mutations. While the market is closed, also require zero new broker orders or
+fills. If validation fails before activation, revert the complete request/hash/generation change through reviewed GitOps.
+If activation has succeeded, first deactivate the native controller through reviewed GitOps and prove OBSERVE authority,
+exact reconciliation, and no broker-ledger advance before replacing the mandate. Never roll back only the Secret or
+invoke the activation handler manually.
+
 The reviewed `main` build publishes an immutable image, then the release workflow atomically advances the status,
 controller, and activation pins on `codex/bayn-deploy`. Argo watches that generated branch directly, so a second
 promotion pull request is neither required nor permitted. A release is held without advancing the branch when strategy
