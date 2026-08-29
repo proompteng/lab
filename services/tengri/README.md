@@ -26,14 +26,14 @@ Kubernetes control path and in-process ticket state are usable; deployment probe
 as ready to accept agent operations.
 
 `TENGRI_INTERNAL_HMAC_SECRET` normally contains one base64url key of at least 32 bytes. Rotate it without an
-authentication outage by publishing `new,current` in the same 1Password field first: the BFF signs with both keys and
-the controller accepts either while the two ExternalSecrets refresh independently. After both workloads observe the
-bundle, remove the previous key. More than two keys are rejected.
+authentication outage by sealing `new,current` into both namespace-scoped manifests in the same commit: the BFF signs
+with both keys and the controller accepts either while the two SealedSecrets reconcile independently. After both
+workloads observe the bundle, reseal both manifests with only the new key. More than two keys are rejected.
 
 The Deployment also mounts `tengri-runtime` as a projected Secret. Tengri compares those files with the values loaded
-into its environment and, without logging either value, deletes only its own control-plane Pod when an ExternalSecret
-refresh changes them. The Deployment then creates a replacement Pod with the refreshed environment; no manual restart
-or cluster-wide reloader is required.
+into its environment and, without logging either value, deletes only its own control-plane Pod when the SealedSecrets
+controller updates the generated Secret. The Deployment then creates a replacement Pod with the refreshed environment;
+no manual restart or cluster-wide reloader is required.
 
 Every valid signed request atomically consumes a hashed replay receipt in the pre-provisioned
 `tengri-auth-nonces` ConfigMap. Kubernetes `resourceVersion` compare-and-swap makes replay rejection consistent across
