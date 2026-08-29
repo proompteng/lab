@@ -18,10 +18,11 @@ import (
 )
 
 const (
-	bootIDPath              = "/proc/sys/kernel/random/boot_id"
-	codexBootstrapTimeout   = 9 * time.Minute
-	kernelReleasePath       = "/proc/sys/kernel/osrelease"
-	maxBootstrapOutputBytes = 4 << 10
+	bootIDPath                = "/proc/sys/kernel/random/boot_id"
+	codexBootstrapTimeout     = 9 * time.Minute
+	kernelReleasePath         = "/proc/sys/kernel/osrelease"
+	maxBootstrapOutputBytes   = 4 << 10
+	toolchainBootstrapTimeout = 2 * time.Minute
 )
 
 type evidence struct {
@@ -56,6 +57,16 @@ func run(logger *slog.Logger) error {
 	)
 	if err := bootstrapUserHome(homeRoot); err != nil {
 		return fmt.Errorf("bootstrap persistent user home: %w", err)
+	}
+	if err := configureToolchainEnvironment(homeRoot); err != nil {
+		return fmt.Errorf("configure persistent toolchain environment: %w", err)
+	}
+	if err := bootstrapToolchain(
+		context.Background(),
+		os.Getenv("TOOLCHAIN_BOOTSTRAP_COMMAND"),
+		toolchainBootstrapTimeout,
+	); err != nil {
+		return err
 	}
 	if err := bootstrapCodex(
 		context.Background(),
@@ -132,15 +143,29 @@ func run(logger *slog.Logger) error {
 }
 
 func bootstrapCodex(ctx context.Context, command string, timeout time.Duration) error {
+	return bootstrapPersistentInstall(ctx, command, timeout, "CODEX_BOOTSTRAP_COMMAND", "Codex")
+}
+
+func bootstrapToolchain(ctx context.Context, command string, timeout time.Duration) error {
+	return bootstrapPersistentInstall(ctx, command, timeout, "TOOLCHAIN_BOOTSTRAP_COMMAND", "toolchain")
+}
+
+func bootstrapPersistentInstall(
+	ctx context.Context,
+	command string,
+	timeout time.Duration,
+	environmentKey string,
+	component string,
+) error {
 	command = strings.TrimSpace(command)
 	if command == "" {
 		return nil
 	}
 	if !filepath.IsAbs(command) {
-		return errors.New("CODEX_BOOTSTRAP_COMMAND must be an absolute path")
+		return fmt.Errorf("%s must be an absolute path", environmentKey)
 	}
 	if timeout <= 0 {
-		return errors.New("Codex bootstrap timeout must be positive")
+		return fmt.Errorf("%s bootstrap timeout must be positive", component)
 	}
 
 	bootstrapCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -152,7 +177,7 @@ func bootstrapCodex(ctx context.Context, command string, timeout time.Duration) 
 		return nil
 	}
 	if errors.Is(bootstrapCtx.Err(), context.DeadlineExceeded) {
-		return errors.New("bootstrap persistent Codex install: timed out")
+		return fmt.Errorf("bootstrap persistent %s install: timed out", component)
 	}
 
 	message := strings.TrimSpace(string(output))
@@ -160,9 +185,9 @@ func bootstrapCodex(ctx context.Context, command string, timeout time.Duration) 
 		message = message[:maxBootstrapOutputBytes] + "..."
 	}
 	if message == "" {
-		return fmt.Errorf("bootstrap persistent Codex install: %w", err)
+		return fmt.Errorf("bootstrap persistent %s install: %w", component, err)
 	}
-	return fmt.Errorf("bootstrap persistent Codex install: %w: %s", err, message)
+	return fmt.Errorf("bootstrap persistent %s install: %w: %s", component, err, message)
 }
 
 func runtimeRoots(homeRoot string, workspaceRoot string) (string, string) {
@@ -177,6 +202,42 @@ func runtimeRoots(homeRoot string, workspaceRoot string) (string, string) {
 		workspaceRoot = homeRoot
 	}
 	return homeRoot, workspaceRoot
+}
+
+func configureToolchainEnvironment(home string) error {
+	if !filepath.IsAbs(home) {
+		return errors.New("toolchain home must be an absolute path")
+	}
+
+	prefix := filepath.Join(home, ".local")
+	path := prependPath(filepath.Join(prefix, "bin"), os.Getenv("PATH"))
+	for key, value := range map[string]string{
+		"BUN_INSTALL":       prefix,
+		"NPM_CONFIG_PREFIX": prefix,
+		"PATH":              path,
+	} {
+		if err := os.Setenv(key, value); err != nil {
+			return fmt.Errorf("set %s: %w", key, err)
+		}
+	}
+
+	return nil
+}
+
+func prependPath(entry string, existing string) string {
+	paths := make([]string, 0, len(filepath.SplitList(existing))+1)
+	seen := make(map[string]struct{})
+	for _, path := range append([]string{entry}, filepath.SplitList(existing)...) {
+		if path == "" {
+			continue
+		}
+		if _, duplicate := seen[path]; duplicate {
+			continue
+		}
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+	}
+	return strings.Join(paths, string(os.PathListSeparator))
 }
 
 func bootstrapUserHome(home string) error {
@@ -197,9 +258,12 @@ func bootstrapUserHome(home string) error {
 			return err
 		}
 	}
+	toolchainProfile := "export BUN_INSTALL=\"$HOME/.local\"\n" +
+		"export NPM_CONFIG_PREFIX=\"$HOME/.local\"\n" +
+		"export PATH=\"$HOME/.local/bin:$HOME/go/bin:$HOME/.cargo/bin:$PATH\"\n"
 	files := map[string]string{
-		".bashrc":  "export PATH=\"$HOME/.local/bin:$HOME/go/bin:$HOME/.cargo/bin:$PATH\"\ncd /workspace 2>/dev/null || true\n",
-		".profile": "export PATH=\"$HOME/.local/bin:$HOME/go/bin:$HOME/.cargo/bin:$PATH\"\n",
+		".bashrc":  toolchainProfile + "cd /workspace 2>/dev/null || true\n",
+		".profile": toolchainProfile,
 	}
 	for name, content := range files {
 		path := filepath.Join(home, name)

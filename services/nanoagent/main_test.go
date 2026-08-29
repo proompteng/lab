@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -65,6 +66,35 @@ func TestRuntimeRootsPreserveTheWritableKataCompatibilityMount(t *testing.T) {
 	}
 }
 
+func TestConfigureToolchainEnvironmentUsesOnePersistentGlobalPrefix(t *testing.T) {
+	home := t.TempDir()
+	localBin := filepath.Join(home, ".local", "bin")
+	t.Setenv("BUN_INSTALL", "/tmp/wrong-bun-prefix")
+	t.Setenv("NPM_CONFIG_PREFIX", "/tmp/wrong-npm-prefix")
+	t.Setenv("PATH", "/usr/bin"+string(os.PathListSeparator)+localBin)
+
+	if err := configureToolchainEnvironment(home); err != nil {
+		t.Fatalf("configureToolchainEnvironment() error = %v", err)
+	}
+
+	wantPrefix := filepath.Join(home, ".local")
+	if got := os.Getenv("BUN_INSTALL"); got != wantPrefix {
+		t.Fatalf("BUN_INSTALL = %q, want %q", got, wantPrefix)
+	}
+	if got := os.Getenv("NPM_CONFIG_PREFIX"); got != wantPrefix {
+		t.Fatalf("NPM_CONFIG_PREFIX = %q, want %q", got, wantPrefix)
+	}
+	if got := filepath.SplitList(os.Getenv("PATH")); len(got) != 2 || got[0] != localBin || got[1] != "/usr/bin" {
+		t.Fatalf("PATH = %#v, want persistent global bin followed by /usr/bin", got)
+	}
+}
+
+func TestConfigureToolchainEnvironmentRejectsRelativeHome(t *testing.T) {
+	if err := configureToolchainEnvironment("relative/home"); err == nil {
+		t.Fatal("configureToolchainEnvironment() accepted a relative home")
+	}
+}
+
 func TestBootstrapCodexUsesTheSanitizedChildEnvironment(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell bootstrap helper requires Unix")
@@ -89,10 +119,41 @@ test "$HOME" = '` + home + `'`
 	}
 }
 
+func TestBootstrapToolchainUsesTheSanitizedChildEnvironment(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell bootstrap helper requires Unix")
+	}
+	home := t.TempDir()
+	helper := filepath.Join(t.TempDir(), "toolchain-bootstrap-test")
+	script := `#!/bin/sh
+set -eu
+test "$1" = '--install-only'
+test -z "${MICROVM_BOOTSTRAP_TOKEN:-}"
+test -z "${MICROVM_BOOTSTRAP_TOKEN_FD:-}"
+test "$HOME" = '` + home + `'`
+	if err := os.WriteFile(helper, []byte(script), 0o700); err != nil {
+		t.Fatalf("write bootstrap helper: %v", err)
+	}
+	t.Setenv(bootstrapTokenEnvironmentKey, "must-not-reach-installer")
+	t.Setenv(bootstrapTokenFDEnvironmentKey, "7")
+	t.Setenv("HOME", home)
+
+	if err := bootstrapToolchain(context.Background(), helper, time.Second); err != nil {
+		t.Fatalf("bootstrapToolchain() error = %v", err)
+	}
+}
+
 func TestBootstrapCodexRejectsRelativeCommands(t *testing.T) {
 	t.Parallel()
 	if err := bootstrapCodex(context.Background(), "bootstrap-codex", time.Second); err == nil {
 		t.Fatal("bootstrapCodex() accepted a PATH-resolved command")
+	}
+}
+
+func TestBootstrapToolchainRejectsRelativeCommands(t *testing.T) {
+	t.Parallel()
+	if err := bootstrapToolchain(context.Background(), "bootstrap-toolchain", time.Second); err == nil {
+		t.Fatal("bootstrapToolchain() accepted a PATH-resolved command")
 	}
 }
 
@@ -215,6 +276,19 @@ func TestBootstrapUserHomeCreatesPersistentToolDirectories(t *testing.T) {
 	}
 	if string(content) != "preserve-me\n" {
 		t.Fatalf("existing bashrc was replaced: %q", content)
+	}
+	profile, err := os.ReadFile(filepath.Join(home, ".profile"))
+	if err != nil {
+		t.Fatalf("read generated profile: %v", err)
+	}
+	for _, expected := range []string{
+		"export BUN_INSTALL=\"$HOME/.local\"",
+		"export NPM_CONFIG_PREFIX=\"$HOME/.local\"",
+		"export PATH=\"$HOME/.local/bin:$HOME/go/bin:$HOME/.cargo/bin:$PATH\"",
+	} {
+		if !strings.Contains(string(profile), expected) {
+			t.Fatalf("generated profile is missing %q: %q", expected, profile)
+		}
 	}
 }
 
