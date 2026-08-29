@@ -35,6 +35,7 @@ ENV CODEX_BINARY=/home/nanoagent/.local/bin/codex \
     NANOAGENT_REEXEC_WRAPPER=/usr/bin/tini \
     NANOAGENT_WORKSPACE=/workspace \
     PATH=/home/nanoagent/.local/bin:/home/nanoagent/go/bin:/home/nanoagent/.cargo/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    TOOLCHAIN_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-toolchain \
     XDG_CACHE_HOME=/home/nanoagent/.cache
 
 RUN set -eux; \
@@ -143,4 +144,4 @@ RUN set -eux; \
 USER 1000:1000
 WORKDIR /home/nanoagent
 EXPOSE 8080
-ENTRYPOINT ["/usr/local/bin/bootstrap-toolchain", "--", "/usr/local/bin/nanoagent"]
+ENTRYPOINT ["/usr/local/bin/nanoagent"]

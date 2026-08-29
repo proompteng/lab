@@ -99,7 +99,8 @@ describe('Tengri release workflows', () => {
     expect(nanoagent).toContain(
       'COPY --from=toolchain-smoke /tmp/toolchain-version /usr/share/nanoagent/toolchain-version',
     )
-    expect(nanoagent).toContain('ENTRYPOINT ["/usr/local/bin/bootstrap-toolchain", "--", "/usr/local/bin/nanoagent"]')
+    expect(nanoagent).toContain('TOOLCHAIN_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-toolchain')
+    expect(nanoagent).toContain('ENTRYPOINT ["/usr/local/bin/nanoagent"]')
     expect(tengri).toContain('ARG DEBIAN_BASE_IMAGE=mirror.gcr.io/debian')
     expect(tengri).toContain('ARG RUST_BASE_IMAGE=mirror.gcr.io/rust')
   })

@@ -18,10 +18,11 @@ import (
 )
 
 const (
-	bootIDPath              = "/proc/sys/kernel/random/boot_id"
-	codexBootstrapTimeout   = 9 * time.Minute
-	kernelReleasePath       = "/proc/sys/kernel/osrelease"
-	maxBootstrapOutputBytes = 4 << 10
+	bootIDPath                = "/proc/sys/kernel/random/boot_id"
+	codexBootstrapTimeout     = 9 * time.Minute
+	kernelReleasePath         = "/proc/sys/kernel/osrelease"
+	maxBootstrapOutputBytes   = 4 << 10
+	toolchainBootstrapTimeout = 2 * time.Minute
 )
 
 type evidence struct {
@@ -56,6 +57,13 @@ func run(logger *slog.Logger) error {
 	)
 	if err := bootstrapUserHome(homeRoot); err != nil {
 		return fmt.Errorf("bootstrap persistent user home: %w", err)
+	}
+	if err := bootstrapToolchain(
+		context.Background(),
+		os.Getenv("TOOLCHAIN_BOOTSTRAP_COMMAND"),
+		toolchainBootstrapTimeout,
+	); err != nil {
+		return err
 	}
 	if err := bootstrapCodex(
 		context.Background(),
@@ -132,15 +140,29 @@ func run(logger *slog.Logger) error {
 }
 
 func bootstrapCodex(ctx context.Context, command string, timeout time.Duration) error {
+	return bootstrapPersistentInstall(ctx, command, timeout, "CODEX_BOOTSTRAP_COMMAND", "Codex")
+}
+
+func bootstrapToolchain(ctx context.Context, command string, timeout time.Duration) error {
+	return bootstrapPersistentInstall(ctx, command, timeout, "TOOLCHAIN_BOOTSTRAP_COMMAND", "toolchain")
+}
+
+func bootstrapPersistentInstall(
+	ctx context.Context,
+	command string,
+	timeout time.Duration,
+	environmentKey string,
+	component string,
+) error {
 	command = strings.TrimSpace(command)
 	if command == "" {
 		return nil
 	}
 	if !filepath.IsAbs(command) {
-		return errors.New("CODEX_BOOTSTRAP_COMMAND must be an absolute path")
+		return fmt.Errorf("%s must be an absolute path", environmentKey)
 	}
 	if timeout <= 0 {
-		return errors.New("Codex bootstrap timeout must be positive")
+		return fmt.Errorf("%s bootstrap timeout must be positive", component)
 	}
 
 	bootstrapCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -152,7 +174,7 @@ func bootstrapCodex(ctx context.Context, command string, timeout time.Duration) 
 		return nil
 	}
 	if errors.Is(bootstrapCtx.Err(), context.DeadlineExceeded) {
-		return errors.New("bootstrap persistent Codex install: timed out")
+		return fmt.Errorf("bootstrap persistent %s install: timed out", component)
 	}
 
 	message := strings.TrimSpace(string(output))
@@ -160,9 +182,9 @@ func bootstrapCodex(ctx context.Context, command string, timeout time.Duration) 
 		message = message[:maxBootstrapOutputBytes] + "..."
 	}
 	if message == "" {
-		return fmt.Errorf("bootstrap persistent Codex install: %w", err)
+		return fmt.Errorf("bootstrap persistent %s install: %w", component, err)
 	}
-	return fmt.Errorf("bootstrap persistent Codex install: %w: %s", err, message)
+	return fmt.Errorf("bootstrap persistent %s install: %w: %s", component, err, message)
 }
 
 func runtimeRoots(homeRoot string, workspaceRoot string) (string, string) {

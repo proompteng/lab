@@ -89,10 +89,41 @@ test "$HOME" = '` + home + `'`
 	}
 }
 
+func TestBootstrapToolchainUsesTheSanitizedChildEnvironment(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell bootstrap helper requires Unix")
+	}
+	home := t.TempDir()
+	helper := filepath.Join(t.TempDir(), "toolchain-bootstrap-test")
+	script := `#!/bin/sh
+set -eu
+test "$1" = '--install-only'
+test -z "${MICROVM_BOOTSTRAP_TOKEN:-}"
+test -z "${MICROVM_BOOTSTRAP_TOKEN_FD:-}"
+test "$HOME" = '` + home + `'`
+	if err := os.WriteFile(helper, []byte(script), 0o700); err != nil {
+		t.Fatalf("write bootstrap helper: %v", err)
+	}
+	t.Setenv(bootstrapTokenEnvironmentKey, "must-not-reach-installer")
+	t.Setenv(bootstrapTokenFDEnvironmentKey, "7")
+	t.Setenv("HOME", home)
+
+	if err := bootstrapToolchain(context.Background(), helper, time.Second); err != nil {
+		t.Fatalf("bootstrapToolchain() error = %v", err)
+	}
+}
+
 func TestBootstrapCodexRejectsRelativeCommands(t *testing.T) {
 	t.Parallel()
 	if err := bootstrapCodex(context.Background(), "bootstrap-codex", time.Second); err == nil {
 		t.Fatal("bootstrapCodex() accepted a PATH-resolved command")
+	}
+}
+
+func TestBootstrapToolchainRejectsRelativeCommands(t *testing.T) {
+	t.Parallel()
+	if err := bootstrapToolchain(context.Background(), "bootstrap-toolchain", time.Second); err == nil {
+		t.Fatal("bootstrapToolchain() accepted a PATH-resolved command")
 	}
 }
 
