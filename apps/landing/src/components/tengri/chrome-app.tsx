@@ -236,9 +236,15 @@ export function ChromeApp({
         >
           <ArrowRight className="h-4 w-4" aria-hidden="true" />
         </ToolbarButton>
-        <ToolbarButton label="Reload" onClick={() => dispatch({ type: 'reload' })}>
-          <RefreshCw className="h-4 w-4" aria-hidden="true" />
-        </ToolbarButton>
+        {address === activePage.displayUrl ? (
+          <ToolbarButton label="Reload" onClick={() => dispatch({ type: 'reload' })}>
+            <RefreshCw className="h-4 w-4" aria-hidden="true" />
+          </ToolbarButton>
+        ) : (
+          <ToolbarButton label="Go" type="submit">
+            <ArrowRight className="h-4 w-4" aria-hidden="true" />
+          </ToolbarButton>
+        )}
         <label className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-white/8 bg-black/25 px-3 py-1.5 text-xs shadow-inner focus-within:border-white/16">
           <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" />
           <span className="sr-only">Private Tengri address</span>
@@ -426,15 +432,17 @@ function ToolbarButton({
   disabled = false,
   label,
   onClick,
+  type = 'button',
 }: {
   children: ReactNode
   disabled?: boolean
   label: string
-  onClick: () => void
+  onClick?: () => void
+  type?: 'button' | 'submit'
 }) {
   return (
     <button
-      type="button"
+      type={type}
       aria-label={label}
       className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-white/48 outline-none hover:bg-white/8 hover:text-white/76 focus-visible:ring-2 focus-visible:ring-white/50 disabled:opacity-22"
       disabled={disabled}
