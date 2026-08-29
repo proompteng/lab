@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -62,6 +63,35 @@ func TestRuntimeRootsPreserveTheWritableKataCompatibilityMount(t *testing.T) {
 	home, workspace = runtimeRoots(" /home/nanoagent ", " /workspace ")
 	if home != "/home/nanoagent" || workspace != "/workspace" {
 		t.Fatalf("runtimeRoots(explicit) = (%q, %q)", home, workspace)
+	}
+}
+
+func TestConfigureToolchainEnvironmentUsesOnePersistentGlobalPrefix(t *testing.T) {
+	home := t.TempDir()
+	localBin := filepath.Join(home, ".local", "bin")
+	t.Setenv("BUN_INSTALL", "/tmp/wrong-bun-prefix")
+	t.Setenv("NPM_CONFIG_PREFIX", "/tmp/wrong-npm-prefix")
+	t.Setenv("PATH", "/usr/bin"+string(os.PathListSeparator)+localBin)
+
+	if err := configureToolchainEnvironment(home); err != nil {
+		t.Fatalf("configureToolchainEnvironment() error = %v", err)
+	}
+
+	wantPrefix := filepath.Join(home, ".local")
+	if got := os.Getenv("BUN_INSTALL"); got != wantPrefix {
+		t.Fatalf("BUN_INSTALL = %q, want %q", got, wantPrefix)
+	}
+	if got := os.Getenv("NPM_CONFIG_PREFIX"); got != wantPrefix {
+		t.Fatalf("NPM_CONFIG_PREFIX = %q, want %q", got, wantPrefix)
+	}
+	if got := filepath.SplitList(os.Getenv("PATH")); len(got) != 2 || got[0] != localBin || got[1] != "/usr/bin" {
+		t.Fatalf("PATH = %#v, want persistent global bin followed by /usr/bin", got)
+	}
+}
+
+func TestConfigureToolchainEnvironmentRejectsRelativeHome(t *testing.T) {
+	if err := configureToolchainEnvironment("relative/home"); err == nil {
+		t.Fatal("configureToolchainEnvironment() accepted a relative home")
 	}
 }
 
@@ -246,6 +276,19 @@ func TestBootstrapUserHomeCreatesPersistentToolDirectories(t *testing.T) {
 	}
 	if string(content) != "preserve-me\n" {
 		t.Fatalf("existing bashrc was replaced: %q", content)
+	}
+	profile, err := os.ReadFile(filepath.Join(home, ".profile"))
+	if err != nil {
+		t.Fatalf("read generated profile: %v", err)
+	}
+	for _, expected := range []string{
+		"export BUN_INSTALL=\"$HOME/.local\"",
+		"export NPM_CONFIG_PREFIX=\"$HOME/.local\"",
+		"export PATH=\"$HOME/.local/bin:$HOME/go/bin:$HOME/.cargo/bin:$PATH\"",
+	} {
+		if !strings.Contains(string(profile), expected) {
+			t.Fatalf("generated profile is missing %q: %q", expected, profile)
+		}
 	}
 }
 

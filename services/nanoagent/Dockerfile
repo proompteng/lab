@@ -30,10 +30,12 @@ FROM ${UBUNTU_BASE_IMAGE}:24.04 AS runtime
 ENV CODEX_BINARY=/home/nanoagent/.local/bin/codex \
     CODEX_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-codex \
     CODEX_HOME=/home/nanoagent/.codex \
+    BUN_INSTALL=/home/nanoagent/.local \
     HOME=/home/nanoagent \
     NANOAGENT_HOME=/home/nanoagent \
     NANOAGENT_REEXEC_WRAPPER=/usr/bin/tini \
     NANOAGENT_WORKSPACE=/workspace \
+    NPM_CONFIG_PREFIX=/home/nanoagent/.local \
     PATH=/home/nanoagent/.local/bin:/home/nanoagent/go/bin:/home/nanoagent/.cargo/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     TOOLCHAIN_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-toolchain \
     XDG_CACHE_HOME=/home/nanoagent/.cache
@@ -103,16 +105,21 @@ RUN test -x /usr/local/bin/bootstrap-toolchain && bootstrap-toolchain --validate
 
 FROM runtime-with-toolchain AS toolchain-smoke
 
-ENV HOME=/home/nanoagent/.toolchain-smoke
+ENV BUN_INSTALL=/home/nanoagent/.toolchain-smoke/.local \
+    HOME=/home/nanoagent/.toolchain-smoke \
+    NPM_CONFIG_PREFIX=/home/nanoagent/.toolchain-smoke/.local \
+    PATH=/home/nanoagent/.toolchain-smoke/.local/bin:/home/nanoagent/.local/bin:/home/nanoagent/go/bin:/home/nanoagent/.cargo/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 USER 1000:1000
 RUN mkdir -p "$HOME" && \
     bootstrap-toolchain --install-only && \
-    PATH="$HOME/.local/bin:$PATH" && \
-    export PATH && \
     test "$(node --version)" = 'v24.11.1' && \
     test "$(npm --version | cut -d. -f1)" -ge 10 && \
+    test "$(npm config get prefix)" = "$HOME/.local" && \
     test "$(bun --version)" = '1.4.0' && \
     test "$(bunx --version)" = '1.4.0' && \
+    mkdir -p "$BUN_INSTALL/install/global" && \
+    printf '{"name":"nanoagent-global"}\n' > "$BUN_INSTALL/install/global/package.json" && \
+    test "$(bun pm bin --global)" = "$HOME/.local/bin" && \
     printf 'node=%s bun=%s\n' "$(node --version)" "$(bun --version)" > /tmp/toolchain-version
 
 # Download and verify the pinned native Codex package during every image build. The

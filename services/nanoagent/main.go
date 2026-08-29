@@ -58,6 +58,9 @@ func run(logger *slog.Logger) error {
 	if err := bootstrapUserHome(homeRoot); err != nil {
 		return fmt.Errorf("bootstrap persistent user home: %w", err)
 	}
+	if err := configureToolchainEnvironment(homeRoot); err != nil {
+		return fmt.Errorf("configure persistent toolchain environment: %w", err)
+	}
 	if err := bootstrapToolchain(
 		context.Background(),
 		os.Getenv("TOOLCHAIN_BOOTSTRAP_COMMAND"),
@@ -201,6 +204,42 @@ func runtimeRoots(homeRoot string, workspaceRoot string) (string, string) {
 	return homeRoot, workspaceRoot
 }
 
+func configureToolchainEnvironment(home string) error {
+	if !filepath.IsAbs(home) {
+		return errors.New("toolchain home must be an absolute path")
+	}
+
+	prefix := filepath.Join(home, ".local")
+	path := prependPath(filepath.Join(prefix, "bin"), os.Getenv("PATH"))
+	for key, value := range map[string]string{
+		"BUN_INSTALL":       prefix,
+		"NPM_CONFIG_PREFIX": prefix,
+		"PATH":              path,
+	} {
+		if err := os.Setenv(key, value); err != nil {
+			return fmt.Errorf("set %s: %w", key, err)
+		}
+	}
+
+	return nil
+}
+
+func prependPath(entry string, existing string) string {
+	paths := make([]string, 0, len(filepath.SplitList(existing))+1)
+	seen := make(map[string]struct{})
+	for _, path := range append([]string{entry}, filepath.SplitList(existing)...) {
+		if path == "" {
+			continue
+		}
+		if _, duplicate := seen[path]; duplicate {
+			continue
+		}
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+	}
+	return strings.Join(paths, string(os.PathListSeparator))
+}
+
 func bootstrapUserHome(home string) error {
 	directories := []struct {
 		path string
@@ -219,9 +258,12 @@ func bootstrapUserHome(home string) error {
 			return err
 		}
 	}
+	toolchainProfile := "export BUN_INSTALL=\"$HOME/.local\"\n" +
+		"export NPM_CONFIG_PREFIX=\"$HOME/.local\"\n" +
+		"export PATH=\"$HOME/.local/bin:$HOME/go/bin:$HOME/.cargo/bin:$PATH\"\n"
 	files := map[string]string{
-		".bashrc":  "export PATH=\"$HOME/.local/bin:$HOME/go/bin:$HOME/.cargo/bin:$PATH\"\ncd /workspace 2>/dev/null || true\n",
-		".profile": "export PATH=\"$HOME/.local/bin:$HOME/go/bin:$HOME/.cargo/bin:$PATH\"\n",
+		".bashrc":  toolchainProfile + "cd /workspace 2>/dev/null || true\n",
+		".profile": toolchainProfile,
 	}
 	for name, content := range files {
 		path := filepath.Join(home, name)

@@ -56,7 +56,9 @@ compressed multi-architecture bundle for the pinned Node 24.11.1 and Bun 1.4.0 g
 After Nanoagent has moved its bootstrap credential through the one-use pipe and removed the transport variables from
 the process environment, `bootstrap-toolchain` atomically installs Node, npm, npx, Bun, and Bunx under the versioned
 per-architecture `~/.tengri/toolchains` directory. Stable links live in `~/.local/bin`, and subsequent boots validate
-and reuse the existing home-volume install.
+and reuse the existing home-volume install. Nanoagent configures both npm and Bun to use `~/.local` as their persistent
+global prefix, so globally installed package executables are immediately available from the existing
+`~/.local/bin` PATH.
 
 On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.149.0 package from the npm registry,
 verifies its pinned SHA-512 digest, and atomically installs the complete native package under the 16 GiB PVC-backed
