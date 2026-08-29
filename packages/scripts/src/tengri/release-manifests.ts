@@ -209,8 +209,9 @@ function findTengriApplicationBlock(contents: string) {
   if (document.get('apiVersion') !== 'argoproj.io/v1alpha1' || document.get('kind') !== 'ApplicationSet') {
     throw new Error('Platform application manifest must be an argoproj.io/v1alpha1 ApplicationSet')
   }
-  if (document.getIn(['metadata', 'name']) !== 'platform' || document.getIn(['metadata', 'namespace']) !== 'argocd') {
-    throw new Error('Platform ApplicationSet must be metadata.name=platform in namespace argocd')
+  const metadataNode = document.get('metadata', true)
+  if (!isMap(metadataNode) || !isDeepStrictEqual(metadataNode.toJSON(), { name: 'platform', namespace: 'argocd' })) {
+    throw new Error('Platform ApplicationSet must use canonical metadata.name=platform in namespace argocd')
   }
   const specNode = document.get('spec', true)
   if (!isMap(specNode)) {

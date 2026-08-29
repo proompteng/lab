@@ -310,15 +310,37 @@ spec:
       )
       const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
 
-      expect(() => validateTengriRelease(paths)).toThrow('must be metadata.name=platform in namespace argocd')
-      expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
-        'must be metadata.name=platform in namespace argocd',
-      )
+      expect(() => validateTengriRelease(paths)).toThrow('must use canonical metadata')
+      expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow('must use canonical metadata')
       expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
       expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
       expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
       rmSync(paths.directory, { recursive: true, force: true })
     }
+  })
+
+  it('rejects root ApplicationSet metadata that can bypass Argo reconciliation', () => {
+    const paths = fixture()
+    const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+    const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+    writeFileSync(
+      paths.applicationSetPath,
+      readFileSync(paths.applicationSetPath, 'utf8').replace(
+        '  namespace: argocd\n',
+        `  namespace: argocd
+  annotations:
+    argocd.argoproj.io/hook: Skip
+`,
+      ),
+    )
+    const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+
+    expect(() => validateTengriRelease(paths)).toThrow('must use canonical metadata')
+    expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow('must use canonical metadata')
+    expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+    expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
+    expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
+    rmSync(paths.directory, { recursive: true, force: true })
   })
 
   it('rejects additional top-level generators without mutating release manifests', () => {
