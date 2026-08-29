@@ -355,6 +355,7 @@ const intradayArchiveTopics = {
 const intradaySnapshot = (protocol: OpeningDriveProtocol, request: IntradaySnapshotRequest): IntradayMarketSnapshot => {
   const rangeStartEpoch = Date.parse(request.rangeStartAt)
   const rangeMinutes = (Date.parse(request.rangeEndAt) - rangeStartEpoch) / 60_000
+  const requestedSymbols = request.symbols ?? request.universe
   const identity = (
     symbol: string,
     sourceTopic: string,
@@ -378,7 +379,7 @@ const intradaySnapshot = (protocol: OpeningDriveProtocol, request: IntradaySnaps
   })
   const compareRecords = (left: { eventAt: string; symbol: string }, right: { eventAt: string; symbol: string }) =>
     left.eventAt.localeCompare(right.eventAt) || left.symbol.localeCompare(right.symbol)
-  const bars = protocol.universe
+  const bars = requestedSymbols
     .flatMap((symbol, symbolIndex) =>
       Array.from({ length: rangeMinutes }, (_, minute) => ({
         ...identity(
@@ -401,7 +402,7 @@ const intradaySnapshot = (protocol: OpeningDriveProtocol, request: IntradaySnaps
     )
     .toSorted(compareRecords)
   const quoteAt = utcInstantFromEpochMillis(Date.parse(request.rangeEndAt) + 500)
-  const quotes = protocol.universe
+  const quotes = requestedSymbols
     .map((symbol, index) => ({
       ...identity(symbol, intradayArchiveTopics.quotes, index + 1, quoteAt),
       bidPrice: 99.99,
@@ -411,7 +412,7 @@ const intradaySnapshot = (protocol: OpeningDriveProtocol, request: IntradaySnaps
     }))
     .toSorted(compareRecords)
   const tradeAt = utcInstantFromEpochMillis(Date.parse(request.rangeEndAt) + 400)
-  const trades = protocol.universe
+  const trades = requestedSymbols
     .map((symbol, index) => ({
       ...identity(symbol, intradayArchiveTopics.trades, index + 1, tradeAt),
       price: 100,
@@ -424,8 +425,8 @@ const intradaySnapshot = (protocol: OpeningDriveProtocol, request: IntradaySnaps
       sourceTopic,
       sourcePartition: 0,
       firstOffset: '1',
-      lastOffset: String(sourceTopic === intradayArchiveTopics.bars ? bars.length : protocol.universe.length),
-      recordCount: sourceTopic === intradayArchiveTopics.bars ? bars.length : protocol.universe.length,
+      lastOffset: String(sourceTopic === intradayArchiveTopics.bars ? bars.length : requestedSymbols.length),
+      recordCount: sourceTopic === intradayArchiveTopics.bars ? bars.length : requestedSymbols.length,
     }))
   const material = {
     schemaVersion: 'bayn.intraday-market-snapshot.v1' as const,
@@ -437,7 +438,7 @@ const intradaySnapshot = (protocol: OpeningDriveProtocol, request: IntradaySnaps
     universeId: request.universeId,
     universeSymbolHash: request.universeSymbolHash,
     ...(request.purpose === undefined ? {} : { universe: request.universe }),
-    symbols: [...(request.symbols ?? request.universe)].sort(),
+    symbols: [...requestedSymbols].sort(),
     ...(request.purpose === undefined ? {} : { purpose: request.purpose }),
     feed: request.feed,
     delayClass: request.delayClass,

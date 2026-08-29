@@ -33,6 +33,7 @@ import { canonicalHashV1Result } from '../hash'
 import {
   IntradaySnapshotFailure,
   MarketData,
+  persistIntradaySnapshotRows,
   type IntradaySnapshotQuery,
   type MarketDataService,
   type PersistedIntradaySnapshotRows,
@@ -1711,6 +1712,7 @@ export const buildClosingExecutionCycleDecision = (
               binding,
               bidPriceMicros: referencePrices.bidPriceMicros,
               askPriceMicros: referencePrices.askPriceMicros,
+              decisionMarketDataRows: undefined,
             }
           }
           let sourceUniverse: readonly string[]
@@ -1763,6 +1765,7 @@ export const buildClosingExecutionCycleDecision = (
               binding,
               bidPriceMicros: referencePrices.bidPriceMicros,
               askPriceMicros: referencePrices.askPriceMicros,
+              decisionMarketDataRows: undefined,
             }
           }
           if (input.intradayMarketData === undefined) {
@@ -1789,7 +1792,10 @@ export const buildClosingExecutionCycleDecision = (
           const binding = yield* Effect.fromResult(executionMarketDataBinding(snapshot)).pipe(
             Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
           )
-          return { binding, ...quotePrices }
+          const decisionMarketDataRows = yield* Effect.fromResult(persistIntradaySnapshotRows(snapshot)).pipe(
+            Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
+          )
+          return { binding, ...quotePrices, decisionMarketDataRows }
         })
       : undefined
     const policyHash = yield* Effect.fromResult(
@@ -1926,6 +1932,9 @@ export const buildClosingExecutionCycleDecision = (
         finalizedAt: entryDocument.bindings.snapshotFinalizedAt,
       },
       compiledDecision: closeDecision,
+      ...(closeExecutionMarketData?.decisionMarketDataRows === undefined
+        ? {}
+        : { decisionMarketDataRows: closeExecutionMarketData.decisionMarketDataRows }),
       ...(closeExecutionMarketData === undefined ? {} : { executionMarketData: closeExecutionMarketData.binding }),
       plannerInput,
       targetPlan,

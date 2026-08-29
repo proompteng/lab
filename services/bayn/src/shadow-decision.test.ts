@@ -70,7 +70,7 @@ import {
   type TargetPlannerInput,
 } from './target-planner'
 import type { DecisionPlan } from './types'
-import { executionMarketDataBinding } from './observe-composition/opening-drive-decision'
+import { adverseClosingQuotePrices, executionMarketDataBinding } from './observe-composition/opening-drive-decision'
 
 const hash = (character: string): string => character.repeat(64)
 const accountId = 'paper-account-1'
@@ -707,7 +707,19 @@ const currentEntryMarketDataBinding = (
   return decoded
 }
 
-const verifiedIntradayMomentumEvidence = (cycle: AutonomousCycle, selectedSymbol?: string) => {
+const verifiedIntradaySnapshotEvidence = (
+  cycle: AutonomousCycle,
+  selectedSymbol?: string,
+  window: {
+    readonly rangeStartAt: string
+    readonly rangeEndAt: string
+    readonly observedAt: string
+  } = {
+    rangeStartAt: '2026-07-22T15:40:00.000Z',
+    rangeEndAt: '2026-07-22T16:00:00.000Z',
+    observedAt: '2026-07-22T16:00:02.000Z',
+  },
+) => {
   const protocol = defaultIntradayMomentumProtocolDocument
   const calendarMaterial = {
     schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
@@ -723,9 +735,8 @@ const verifiedIntradayMomentumEvidence = (cycle: AutonomousCycle, selectedSymbol
     ],
   }
   const calendar = { ...calendarMaterial, normalizedResponseHash: canonicalHashV1(calendarMaterial) }
-  const rangeStartAt = '2026-07-22T15:40:00.000Z'
-  const rangeEndAt = '2026-07-22T16:00:00.000Z'
-  const observedAt = '2026-07-22T16:00:02.000Z'
+  const { rangeStartAt, rangeEndAt, observedAt } = window
+  const postRangeEvidenceAt = utcInstantFromEpochMillis(Date.parse(rangeEndAt) + 1_000)
   const bars = protocol.universe.flatMap((symbol, symbolIndex) =>
     Array.from({ length: protocol.lookbackMinutes }, (_, minute) => {
       const eventAt = utcInstantFromEpochMillis(Date.parse(rangeStartAt) + minute * 60_000)
@@ -766,8 +777,8 @@ const verifiedIntradayMomentumEvidence = (cycle: AutonomousCycle, selectedSymbol
       market_session: 'regular',
       delay_class: protocol.delayClass,
       symbol,
-      event_at: '2026-07-22T16:00:01.000Z',
-      ingested_at: '2026-07-22T16:00:01.000Z',
+      event_at: postRangeEvidenceAt,
+      ingested_at: postRangeEvidenceAt,
       source_topic: protocol.sourceTopics.quotes,
       source_partition: 0,
       source_offset: String(index + 1),
@@ -787,8 +798,8 @@ const verifiedIntradayMomentumEvidence = (cycle: AutonomousCycle, selectedSymbol
     market_session: 'regular',
     delay_class: protocol.delayClass,
     symbol,
-    event_at: '2026-07-22T16:00:01.000Z',
-    ingested_at: '2026-07-22T16:00:01.000Z',
+    event_at: postRangeEvidenceAt,
+    ingested_at: postRangeEvidenceAt,
     source_topic: protocol.sourceTopics.trades,
     source_partition: 0,
     source_offset: String(index + 1),
@@ -849,10 +860,19 @@ const verifiedIntradayMomentumEvidence = (cycle: AutonomousCycle, selectedSymbol
   if (executionMarketData.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
     throw new Error('verified intraday fixture must produce archive execution market data v2')
   }
+  return {
+    decisionMarketDataRows: resultValue(persistIntradaySnapshotRows(snapshot)),
+    executionMarketData,
+    snapshot,
+  }
+}
+
+const verifiedIntradayMomentumEvidence = (cycle: AutonomousCycle, selectedSymbol?: string) => {
+  const evidence = verifiedIntradaySnapshotEvidence(cycle, selectedSymbol)
   const compiledDecision = resultValue(
     decideIntradayMomentum(
       {
-        snapshot,
+        snapshot: evidence.snapshot,
         session: {
           sessionDate: executionDate,
           openAt: cycle.window.executionOpenAt,
@@ -860,13 +880,68 @@ const verifiedIntradayMomentumEvidence = (cycle: AutonomousCycle, selectedSymbol
           calendarHash: cycle.window.executionCalendarHash,
         },
       },
-      protocol,
+      defaultIntradayMomentumProtocolDocument,
     ),
   )
+  return { ...evidence, compiledDecision }
+}
+
+const verifiedLiquidationEvidence = (cycle: AutonomousCycle, symbols: readonly string[]) => {
+  const entry = verifiedIntradaySnapshotEvidence(cycle, undefined, {
+    rangeStartAt: '2026-07-22T13:30:00.000Z',
+    rangeEndAt: '2026-07-22T13:50:00.000Z',
+    observedAt: '2026-07-22T13:50:02.000Z',
+  })
+  const binding = entry.executionMarketData
+  const hasSelectedSymbol = (row: unknown): boolean =>
+    typeof row === 'object' &&
+    row !== null &&
+    'symbol' in row &&
+    typeof row.symbol === 'string' &&
+    symbols.includes(row.symbol)
+  const rows = {
+    bars: entry.decisionMarketDataRows.bars.filter(hasSelectedSymbol),
+    quotes: entry.decisionMarketDataRows.quotes.filter(hasSelectedSymbol),
+    trades: entry.decisionMarketDataRows.trades.filter(hasSelectedSymbol),
+  }
+  const snapshot = resultValue(
+    verifyIntradaySnapshot(
+      {
+        sessionDate: binding.sessionDate,
+        calendar: binding.calendar,
+        rangeStartAt: binding.rangeStartAt,
+        rangeEndAt: binding.rangeEndAt,
+        observedAt: binding.observedAt,
+        universeId: binding.universeId,
+        universeSymbolHash: binding.universeSymbolHash,
+        universe: binding.universe,
+        symbols,
+        purpose: 'LIQUIDATION',
+        feed: binding.feed,
+        delayClass: binding.delayClass,
+        sourceTopics: binding.sourceTopics,
+        maximumQuoteAgeMs: binding.maximumQuoteAgeMs,
+        minimumWatermarkLagMs: binding.minimumWatermarkLagMs,
+        archiveWatermarks: binding.archiveWatermarks,
+      },
+      {
+        archiveWatermarks: binding.archiveWatermarks.map((watermark) => ({
+          source_topic: watermark.sourceTopic,
+          source_partition: watermark.sourcePartition,
+          inclusive_last_offset: watermark.inclusiveLastOffset,
+        })),
+        ...rows,
+      },
+    ),
+  )
+  const executionMarketData = resultValue(executionMarketDataBinding(snapshot))
+  if (executionMarketData.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
+    throw new Error('verified liquidation fixture must produce archive execution market data v2')
+  }
   return {
-    compiledDecision,
     decisionMarketDataRows: resultValue(persistIntradaySnapshotRows(snapshot)),
     executionMarketData,
+    referencePrices: resultValue(adverseClosingQuotePrices(snapshot, executionMarketData.symbols)),
   }
 }
 
@@ -2006,7 +2081,8 @@ describe('OBSERVE shadow decision', () => {
     const input = makeOpeningDriveInput()
     const entryMarketData = input.executionMarketData
     if (entryMarketData === undefined) throw new Error('opening-drive fixture must include entry market data')
-    const closeMarketData = liquidationMarketDataBinding(input.cycle, hash('b'))
+    const liquidationEvidence = verifiedLiquidationEvidence(input.cycle, ['AMD', 'NVDA'])
+    const closeMarketData = liquidationEvidence.executionMarketData
     expect(closeMarketData.snapshotId).not.toBe(entryMarketData.snapshotId)
     const compiledDecision = {
       schemaVersion: 'bayn.execution-flat-target.v1' as const,
@@ -2020,8 +2096,12 @@ describe('OBSERVE shadow decision', () => {
     const brokerState = makeBrokerState()
     const closePriceMaterial = {
       ...input.plannerInput.referencePrices,
+      observedAt: closeMarketData.observedAt,
       snapshotId: closeMarketData.snapshotId,
       snapshotContentHash: closeMarketData.contentHash,
+      priceMicros: liquidationEvidence.referencePrices.askPriceMicros,
+      bidPriceMicros: liquidationEvidence.referencePrices.bidPriceMicros,
+      askPriceMicros: liquidationEvidence.referencePrices.askPriceMicros,
     }
     const { contentHash: _entryPriceHash, ...closePriceFields } = closePriceMaterial
     const plannerInput = {
@@ -2039,6 +2119,7 @@ describe('OBSERVE shadow decision', () => {
       decisionHash: canonicalHashV1(compiledDecision),
       targetWeights: compiledDecision.targetWeights,
       referencePrices: { ...closePriceFields, contentHash: canonicalHashV1(closePriceFields) },
+      observedAt: closeMarketData.observedAt,
       executionTerms: {
         orderType: OrderType.Limit as const,
         timeInForce: TimeInForce.ImmediateOrCancel as const,
@@ -2107,6 +2188,7 @@ describe('OBSERVE shadow decision', () => {
     const closeInput = {
       ...input,
       compiledDecision,
+      decisionMarketDataRows: liquidationEvidence.decisionMarketDataRows,
       executionMarketData: closeMarketData,
       plannerInput,
       targetPlan,
@@ -2138,6 +2220,36 @@ describe('OBSERVE shadow decision', () => {
       }),
     )
     const { contentHash: _documentContentHash, ...documentMaterial } = executionDocument
+    const persistedPlannerInput = documentMaterial.plannerInput
+    if (persistedPlannerInput?.referencePrices.schemaVersion !== 'bayn.intraday-snapshot-reference-prices.v1') {
+      throw new Error('quote-bound close fixture must persist intraday reference prices')
+    }
+    const { contentHash: _referencePriceHash, ...referencePriceMaterial } = persistedPlannerInput.referencePrices
+    const forgedAskPriceMicros = {
+      ...referencePriceMaterial.askPriceMicros,
+      AMD: (BigInt(referencePriceMaterial.askPriceMicros['AMD'] ?? '0') + 10_000n).toString(),
+    }
+    const forgedReferencePriceMaterial = {
+      ...referencePriceMaterial,
+      priceMicros: forgedAskPriceMicros,
+      askPriceMicros: forgedAskPriceMicros,
+    }
+    const forgedQuoteBoundClose = makeExecutionDecisionDocument({
+      ...documentMaterial,
+      plannerInput: {
+        ...persistedPlannerInput,
+        referencePrices: {
+          ...forgedReferencePriceMaterial,
+          contentHash: canonicalHashV1(forgedReferencePriceMaterial),
+        },
+      },
+    })
+    expect(Result.isFailure(forgedQuoteBoundClose)).toBe(true)
+    if (Result.isFailure(forgedQuoteBoundClose)) {
+      expect(String(forgedQuoteBoundClose.failure.cause)).toContain(
+        'quote-bound liquidation reference prices must match its exact verified archive rows',
+      )
+    }
     const { plannerInput: _plannerInput, ...closeWithoutPlannerInput } = documentMaterial
     const missingClosePlannerInput = makeExecutionDecisionDocument(closeWithoutPlannerInput)
     expect(Result.isFailure(missingClosePlannerInput)).toBe(true)

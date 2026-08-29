@@ -2,6 +2,7 @@ import { Data, Result, Schema } from 'effect'
 
 import { quantizeAlpacaLimitPriceMicros } from './broker/alpaca-price'
 import { makeExecutionCalendarObservation } from './cycle'
+import { numberToMicros } from './execution-model'
 import { intentIdForPlan, executionIntentIdForDecodedPlan } from './execution/intents/domain'
 import { ExecutionSessionBindingSchema } from './execution-session'
 import { canonicalHashV1Result, sha256 } from './hash'
@@ -614,6 +615,65 @@ const intradayMomentumSnapshotEvidenceIssues = (
       },
     ]
   }
+  const snapshot = verifyBoundIntradaySnapshot(binding, rows)
+  if (snapshot === undefined) {
+    return [
+      {
+        path: ['decisionMarketDataRows'],
+        issue: 'intraday-momentum archive rows must reproduce the exact bound market-data snapshot',
+      },
+    ]
+  }
+  const session = binding.calendar.sessions.find(({ date }) => date === binding.sessionDate)
+  const executionCalendar =
+    session === undefined
+      ? undefined
+      : makeExecutionCalendarObservation({
+          schemaVersion: binding.calendar.schemaVersion,
+          source: binding.calendar.source,
+          ...session,
+        })
+  if (session === undefined || executionCalendar === undefined || Result.isFailure(executionCalendar)) {
+    return [
+      {
+        path: ['bindings', 'executionMarketData', 'calendar'],
+        issue: 'intraday-momentum snapshot evidence requires its exact verified execution calendar',
+      },
+    ]
+  }
+  const reproduced = decideIntradayMomentum(
+    {
+      snapshot,
+      session: {
+        sessionDate: binding.sessionDate,
+        openAt: session.openAt,
+        closeAt: session.closeAt,
+        calendarHash: executionCalendar.success.executionCalendarHash,
+      },
+    },
+    defaultIntradayMomentumProtocolDocument,
+  )
+  const reproducedHash = Result.flatMap(reproduced, canonicalHashV1Result)
+  if (Result.isFailure(reproducedHash) || reproducedHash.success !== document.bindings.strategyDecisionHash) {
+    return [
+      {
+        path: ['strategyDecision'],
+        issue: 'intraday-momentum strategy decision must be reproduced from its exact verified archive rows',
+      },
+    ]
+  }
+  return []
+}
+
+type ArchiveExecutionMarketDataBinding = Extract<
+  ExecutionMarketDataBinding,
+  { readonly schemaVersion: 'bayn.execution-market-data-binding.v2' }
+>
+
+const verifyBoundIntradaySnapshot = (
+  binding: ArchiveExecutionMarketDataBinding,
+  rows: typeof PersistedIntradaySnapshotRowsSchema.Type,
+) => {
   const snapshot = verifyIntradaySnapshot(
     {
       sessionDate: binding.sessionDate,
@@ -642,55 +702,81 @@ const intradayMomentumSnapshotEvidenceIssues = (
       ...rows,
     },
   )
-  if (
-    Result.isFailure(snapshot) ||
-    snapshot.success.manifest.snapshotId !== binding.snapshotId ||
-    snapshot.success.manifest.contentHash !== binding.contentHash
-  ) {
+  return Result.isSuccess(snapshot) &&
+    snapshot.success.manifest.snapshotId === binding.snapshotId &&
+    snapshot.success.manifest.contentHash === binding.contentHash
+    ? snapshot.success
+    : undefined
+}
+
+const quoteBoundLiquidationSnapshotIssues = (
+  document: typeof ExecutionDecisionMaterialSchema.Type,
+  binding: ArchiveExecutionMarketDataBinding,
+): readonly Schema.FilterIssue[] => {
+  const rows = document.decisionMarketDataRows
+  if (rows === undefined) {
     return [
       {
         path: ['decisionMarketDataRows'],
-        issue: 'intraday-momentum archive rows must reproduce the exact bound market-data snapshot',
+        issue: 'quote-bound liquidation requires the exact archive rows that produced its reference prices',
       },
     ]
   }
-  const session = binding.calendar.sessions.find(({ date }) => date === binding.sessionDate)
-  const executionCalendar =
-    session === undefined
-      ? undefined
-      : makeExecutionCalendarObservation({
-          schemaVersion: binding.calendar.schemaVersion,
-          source: binding.calendar.source,
-          ...session,
-        })
-  if (session === undefined || executionCalendar === undefined || Result.isFailure(executionCalendar)) {
+  const snapshot = verifyBoundIntradaySnapshot(binding, rows)
+  if (snapshot === undefined) {
     return [
       {
-        path: ['bindings', 'executionMarketData', 'calendar'],
-        issue: 'intraday-momentum snapshot evidence requires its exact verified execution calendar',
+        path: ['decisionMarketDataRows'],
+        issue: 'quote-bound liquidation archive rows must reproduce the exact bound market-data snapshot',
       },
     ]
   }
-  const reproduced = decideIntradayMomentum(
-    {
-      snapshot: snapshot.success,
-      session: {
-        sessionDate: binding.sessionDate,
-        openAt: session.openAt,
-        closeAt: session.closeAt,
-        calendarHash: executionCalendar.success.executionCalendarHash,
-      },
-    },
-    defaultIntradayMomentumProtocolDocument,
-  )
-  const reproducedHash = Result.flatMap(reproduced, canonicalHashV1Result)
-  if (Result.isFailure(reproducedHash) || reproducedHash.success !== document.bindings.strategyDecisionHash) {
+  const referencePrices = document.plannerInput?.referencePrices
+  if (referencePrices?.schemaVersion !== 'bayn.intraday-snapshot-reference-prices.v1') {
     return [
       {
-        path: ['strategyDecision'],
-        issue: 'intraday-momentum strategy decision must be reproduced from its exact verified archive rows',
+        path: ['plannerInput', 'referencePrices'],
+        issue: 'quote-bound liquidation requires archive-bound intraday reference prices',
       },
     ]
+  }
+
+  for (const symbol of binding.symbols) {
+    const quote = snapshot.latestQuotes[symbol]
+    if (quote === undefined) {
+      return [
+        {
+          path: ['decisionMarketDataRows', 'quotes'],
+          issue: `quote-bound liquidation archive rows must include the verified closing quote for ${symbol}`,
+        },
+      ]
+    }
+    const converted = Result.all({
+      bid: numberToMicros(quote.bidPrice, `bid price for ${symbol}`),
+      ask: numberToMicros(quote.askPrice, `ask price for ${symbol}`),
+    })
+    if (Result.isFailure(converted) || converted.success.bid <= 0n || converted.success.ask <= 0n) {
+      return [
+        {
+          path: ['decisionMarketDataRows', 'quotes'],
+          issue: `quote-bound liquidation archive price for ${symbol} is outside the exact price domain`,
+        },
+      ]
+    }
+    const bid = quantizeAlpacaLimitPriceMicros(converted.success.bid, 'DOWN').toString()
+    const ask = quantizeAlpacaLimitPriceMicros(converted.success.ask, 'UP').toString()
+    if (
+      referencePrices.bidPriceMicros[symbol] !== bid ||
+      referencePrices.askPriceMicros[symbol] !== ask ||
+      referencePrices.priceMicros[symbol] !== ask
+    ) {
+      return [
+        {
+          path: ['plannerInput', 'referencePrices'],
+          issue: 'quote-bound liquidation reference prices must match its exact verified archive rows',
+        },
+      ]
+    }
   }
   return []
 }
@@ -924,6 +1010,13 @@ const executionMaterialIssues = (
         })
       }
     }
+  }
+  if (
+    executionMarketData?.schemaVersion === 'bayn.execution-market-data-binding.v2' &&
+    executionMarketData.purpose === 'LIQUIDATION' &&
+    targetExecutionTerms?.priceReference === 'verified-adverse-quote-boundary'
+  ) {
+    issues.push(...quoteBoundLiquidationSnapshotIssues(document, executionMarketData))
   }
   issues.push(...targetPlannerEvidenceIssues(document))
   const targetSymbols = document.targetPlan.targets.map(({ symbol }) => symbol)
