@@ -1548,21 +1548,21 @@ data:
           },
           "targets": [
             {
-              "expr": "max(bayn_accounting_gross_realized_pnl_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "expr": "max(bayn_accounting_gross_realized_pnl_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) (bayn_cycle_unfinished_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} >= bool 0) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "gross realized",
               "range": false,
               "refId": "A"
             },
             {
-              "expr": "max((bayn_accounting_state{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",state=\"idle\"} == 1) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "expr": "max((bayn_accounting_state{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",state=\"idle\"} == 1) and on(instance) (bayn_cycle_unfinished_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} >= bool 0) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "no fills",
               "range": false,
               "refId": "B"
             },
             {
-              "expr": "max(((bayn_accounting_state{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",state=\"gap\"} == 1) * on(instance) ((bayn_accounting_activity_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",kind=\"transactions\"} == 0) + 1)) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "expr": "max(((bayn_accounting_state{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",state=\"gap\"} == 1) * on(instance) ((bayn_accounting_activity_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",kind=\"transactions\"} == 0) + 1)) and on(instance) (bayn_cycle_unfinished_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} >= bool 0) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "fills awaiting accounting",
               "range": false,
@@ -1655,21 +1655,21 @@ data:
           },
           "targets": [
             {
-              "expr": "max(bayn_accounting_execution_fees_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "expr": "max(bayn_accounting_execution_fees_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) (bayn_cycle_unfinished_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} >= bool 0) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "fees",
               "range": false,
               "refId": "A"
             },
             {
-              "expr": "max((bayn_accounting_state{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",state=\"idle\"} == 1) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "expr": "max((bayn_accounting_state{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",state=\"idle\"} == 1) and on(instance) (bayn_cycle_unfinished_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} >= bool 0) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "no fills",
               "range": false,
               "refId": "B"
             },
             {
-              "expr": "max(((bayn_accounting_state{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",state=\"gap\"} == 1) * on(instance) ((bayn_accounting_activity_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",kind=\"transactions\"} == 0) + 1)) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "expr": "max(((bayn_accounting_state{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",state=\"gap\"} == 1) * on(instance) ((bayn_accounting_activity_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",kind=\"transactions\"} == 0) + 1)) and on(instance) (bayn_cycle_unfinished_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} >= bool 0) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "fills awaiting accounting",
               "range": false,
@@ -1762,21 +1762,21 @@ data:
           },
           "targets": [
             {
-              "expr": "max(bayn_accounting_net_realized_pnl_after_execution_fees_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "expr": "max(bayn_accounting_net_realized_pnl_after_execution_fees_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) (bayn_cycle_unfinished_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} >= bool 0) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "net realized",
               "range": false,
               "refId": "A"
             },
             {
-              "expr": "max((bayn_accounting_state{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",state=\"idle\"} == 1) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "expr": "max((bayn_accounting_state{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",state=\"idle\"} == 1) and on(instance) (bayn_cycle_unfinished_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} >= bool 0) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "no fills",
               "range": false,
               "refId": "B"
             },
             {
-              "expr": "max(((bayn_accounting_state{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",state=\"gap\"} == 1) * on(instance) ((bayn_accounting_activity_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",kind=\"transactions\"} == 0) + 1)) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "expr": "max(((bayn_accounting_state{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",state=\"gap\"} == 1) * on(instance) ((bayn_accounting_activity_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",kind=\"transactions\"} == 0) + 1)) and on(instance) (bayn_cycle_unfinished_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} >= bool 0) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "fills awaiting accounting",
               "range": false,
