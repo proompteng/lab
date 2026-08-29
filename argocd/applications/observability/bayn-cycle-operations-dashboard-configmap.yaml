@@ -749,10 +749,10 @@ data:
             "type": "prometheus",
             "uid": "prom"
           },
-          "description": "Exact planner outcome and reason for the current or latest terminal cycle.",
+          "description": "Exact planner outcome and reason for the current or latest terminal cycle. NO DECISION means cycle evidence exists but planning has not completed; NO CYCLE means no cycle evidence exists.",
           "fieldConfig": {
             "defaults": {
-              "noValue": "NO DECISION"
+              "noValue": "NO CYCLE"
             },
             "overrides": []
           },
@@ -785,6 +785,13 @@ data:
               "legendFormat": "{{status}} · {{reason}}",
               "range": false,
               "refId": "A"
+            },
+            {
+              "expr": "max(((bayn_cycle_unfinished_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} >= bool 0) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) unless on(instance) (bayn_cycle_target_plan_info{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})))",
+              "instant": true,
+              "legendFormat": "NO DECISION",
+              "range": false,
+              "refId": "B"
             }
           ],
           "title": "Target plan",
@@ -1123,28 +1130,28 @@ data:
           },
           "targets": [
             {
-              "expr": "max(bayn_cycle_submission_open_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) * 1000 > 0",
+              "expr": "max(bayn_cycle_submission_open_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) * 1000 > 0",
               "instant": true,
               "legendFormat": "submission opens",
               "range": false,
               "refId": "A"
             },
             {
-              "expr": "max(bayn_cycle_submission_cutoff_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) * 1000 > 0",
+              "expr": "max(bayn_cycle_submission_cutoff_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) * 1000 > 0",
               "instant": true,
               "legendFormat": "submission cutoff",
               "range": false,
               "refId": "B"
             },
             {
-              "expr": "max(bayn_cycle_execution_open_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) * 1000 > 0",
+              "expr": "max(bayn_cycle_execution_open_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) * 1000 > 0",
               "instant": true,
               "legendFormat": "execution opens",
               "range": false,
               "refId": "C"
             },
             {
-              "expr": "max(bayn_cycle_execution_close_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) * 1000 > 0",
+              "expr": "max(bayn_cycle_execution_close_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) * 1000 > 0",
               "instant": true,
               "legendFormat": "session close",
               "range": false,

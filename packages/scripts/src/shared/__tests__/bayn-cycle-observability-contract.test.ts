@@ -234,6 +234,7 @@ describe('Bayn cycle operations alert contract', () => {
         readonly targets?: readonly {
           readonly expr?: string
           readonly instant?: boolean
+          readonly legendFormat?: string
           readonly range?: boolean
           readonly refId?: string
         }[]
@@ -301,6 +302,15 @@ describe('Bayn cycle operations alert contract', () => {
     expect(targetsPanel?.description).toContain('NO CYCLE')
     expect(targetsPanel?.targets?.[0]?.expr).toContain('bayn_cycle_unfinished_count')
     expect(targetsPanel?.targets?.[0]?.expr).toContain('>= bool 0')
+    const targetPlanPanel = dashboard.panels.find(({ title }) => title === 'Target plan')
+    expect(targetPlanPanel?.fieldConfig?.defaults?.noValue).toBe('NO CYCLE')
+    expect(targetPlanPanel?.description).toContain('NO DECISION')
+    expect(targetPlanPanel?.description).toContain('NO CYCLE')
+    expect(targetPlanPanel?.targets?.map(({ refId }) => refId)).toEqual(['A', 'B'])
+    expect(targetPlanPanel?.targets?.[1]?.legendFormat).toBe('NO DECISION')
+    expect(targetPlanPanel?.targets?.[1]?.expr).toContain('bayn_cycle_unfinished_count')
+    expect(targetPlanPanel?.targets?.[1]?.expr).toContain('unless on(instance)')
+    expect(targetPlanPanel?.targets?.[1]?.expr).toContain('bayn_cycle_target_plan_info')
     for (const title of ['Gross realized P&L', 'Recorded costs', 'Net realized P&L']) {
       const panel = dashboard.panels.find((candidate) => candidate.title === title)
       expect(panel?.fieldConfig?.defaults?.noValue).toBe('NO CYCLE')
@@ -383,9 +393,10 @@ describe('Bayn cycle operations alert contract', () => {
         'max(bayn_forward_performance_net_realized_return_ratio{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"})) or (vector(NaN) and on() max((bayn_forward_performance_evidence{job="bayn",namespace="bayn",service="bayn",status="insufficient_evidence"} == 1) and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"})))',
         'max by (state) ((bayn_accounting_state{job="bayn",namespace="bayn",service="bayn"} == 1) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
         'max(bayn_unresolved_mutations{job="bayn",namespace="bayn",service="bayn"})',
-        'max(bayn_cycle_submission_open_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) * 1000 > 0',
-        'max(bayn_cycle_submission_cutoff_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) * 1000 > 0',
-        'max(bayn_cycle_execution_close_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) * 1000 > 0',
+        'max(bayn_cycle_submission_open_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"})) * 1000 > 0',
+        'max(bayn_cycle_submission_cutoff_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"})) * 1000 > 0',
+        'max(bayn_cycle_execution_open_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"})) * 1000 > 0',
+        'max(bayn_cycle_execution_close_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"})) * 1000 > 0',
         'max(bayn_oldest_unresolved_mutation_age_seconds{job="bayn",namespace="bayn",service="bayn"})',
         'max(bayn_reconciliation_age_seconds{job="bayn",namespace="bayn",service="bayn"})',
         'max(bayn_autonomous_cycle_loop_last_pass_age_seconds{job="bayn",namespace="bayn",service="bayn"})',
@@ -404,6 +415,12 @@ describe('Bayn cycle operations alert contract', () => {
       dashboardExpressions
         .find((expression) => expression.includes('bayn_cycle_target_plan_info'))
         ?.includes('and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds'),
+    ).toBe(true)
+    const sessionWindow = dashboard.panels.find(({ title }) => title === 'Session window')
+    expect(
+      sessionWindow?.targets?.every(({ expr }) =>
+        expr?.includes('and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds'),
+      ),
     ).toBe(true)
     for (const metric of [
       'bayn_cycle_snapshot_bound',
