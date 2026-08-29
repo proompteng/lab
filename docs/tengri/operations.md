@@ -137,6 +137,21 @@ Exact failure reasons are published in CR status. Do not infer success from a cr
    guest kernel isolation, fresh-image pull, interactive PTY, persistent file round trip, Codex event, and localhost
    preview WebSocket/HMR.
 
+### Storage-layout activation
+
+Storage-layout changes require two independently mergeable releases:
+
+1. Promote the compatibility controller while `TENGRI_NEW_AGENT_STORAGE_LAYOUT` is absent. It reads both legacy agents
+   and agents annotated with `runtime.proompteng.ai/storage-layout=home-workspace-v1`, but it creates only unmarked
+   legacy-layout agents.
+2. Verify the compatibility image is live and that newly created CRs remain unmarked.
+3. In a separate GitOps PR, set `TENGRI_NEW_AGENT_STORAGE_LAYOUT=home-workspace-v1`. New agents are then explicitly
+   marked and use the single-mount PVC layout; existing unmarked agents keep the legacy layout.
+
+To roll back activation, remove the environment variable through GitOps and keep the compatibility controller image.
+Do not restore a controller from before compatibility support while a marked `MicroVM` remains. Marked CRs and PVCs
+hard-expire four hours after creation, after which the older controller can be restored if still necessary.
+
 ### Proompteng desktop image promotions
 
 The generated product-image promotion updates the immutable `proompteng` digest in

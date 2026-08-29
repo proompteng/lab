@@ -63,6 +63,7 @@ async fn main() -> anyhow::Result<()> {
         &env_value("TENGRI_GUEST_ARCHITECTURE").unwrap_or_else(|| DEFAULT_ARCHITECTURE.to_owned()),
     )?;
     let default_image = required_env("TENGRI_DEFAULT_IMAGE")?;
+    let new_agent_storage_layout = env_value("TENGRI_NEW_AGENT_STORAGE_LAYOUT");
     let internal_hmac_secret = required_env("TENGRI_INTERNAL_HMAC_SECRET")?;
     let ticket_signing_secret = required_env("TENGRI_TICKET_SIGNING_SECRET")?;
     let runtime_secret_directory = env_value("TENGRI_RUNTIME_SECRET_DIRECTORY").map(PathBuf::from);
@@ -86,6 +87,7 @@ async fn main() -> anyhow::Result<()> {
         ControlPlaneConfig {
             namespace: namespace.clone(),
             default_image,
+            new_agent_storage_layout,
             architecture,
             internal_hmac_secret,
             ticket_signing_secret,
