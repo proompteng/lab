@@ -1406,16 +1406,25 @@ describePostgres('PostgreSQL cycle observability projection', () => {
           WHERE schemaname = 'public'
             AND indexname IN (
               'position_snapshots_account_ingestion_sequence_idx',
-              'broker_events_account_snapshot_order_idx'
+              'broker_events_account_snapshot_order_idx',
+              'broker_events_account_snapshot_clock_idx'
             )
           ORDER BY indexname
         `
       }),
     )
 
-    expect(indexes).toHaveLength(2)
-    expect(indexes[0]?.indexdef).toContain('(account_id, source_sequence DESC, observed_at DESC, event_id DESC)')
-    expect(indexes[1]?.indexdef).toContain('(account_id, ingestion_sequence DESC)')
+    expect(indexes).toHaveLength(3)
+    const byName = Object.fromEntries(indexes.map((index) => [index.indexname, index.indexdef]))
+    expect(byName['broker_events_account_snapshot_order_idx']).toContain(
+      '(account_id, source_sequence DESC, observed_at DESC, event_id DESC)',
+    )
+    expect(byName['broker_events_account_snapshot_clock_idx']).toContain(
+      '(account_id, observed_at DESC, source_sequence DESC, event_id DESC)',
+    )
+    expect(byName['position_snapshots_account_ingestion_sequence_idx']).toContain(
+      '(account_id, ingestion_sequence DESC)',
+    )
   })
 
   test('rejects ambiguous historical position-snapshot timestamp ties', async () => {
