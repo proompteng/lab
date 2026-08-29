@@ -35,6 +35,7 @@ use crate::{
         TerminalIdentityRegistry,
     },
     metrics,
+    pod::{SINGLE_MOUNT_STORAGE_LAYOUT, STORAGE_LAYOUT_ANNOTATION},
     tickets::TicketStore,
 };
 
@@ -265,6 +266,18 @@ fn agent_ready_for_guest(agent: &MicroVM) -> bool {
     })
 }
 
+fn apply_new_agent_metadata(microvm: &mut MicroVM, owner_hash: &str) {
+    microvm
+        .metadata
+        .labels
+        .get_or_insert_default()
+        .insert(OWNER_LABEL.to_owned(), owner_hash[..32].to_owned());
+    microvm.metadata.annotations.get_or_insert_default().insert(
+        STORAGE_LAYOUT_ANNOTATION.to_owned(),
+        SINGLE_MOUNT_STORAGE_LAYOUT.to_owned(),
+    );
+}
+
 #[tonic::async_trait]
 impl MicroVmControlPlane for ControlPlane {
     async fn create_agent(
@@ -310,10 +323,7 @@ impl MicroVmControlPlane for ControlPlane {
                 expires_at: (now + chrono::Duration::hours(LIFETIME_HOURS)).to_rfc3339(),
             },
         );
-        microvm.metadata.labels = Some(std::collections::BTreeMap::from([(
-            OWNER_LABEL.to_owned(),
-            principal.owner_hash[..32].to_owned(),
-        )]));
+        apply_new_agent_metadata(&mut microvm, &principal.owner_hash);
         let created = match api.create(&PostParams::default(), &microvm).await {
             Ok(created) => created,
             Err(kube::Error::Api(response)) if response.code == 409 => {
@@ -2812,6 +2822,33 @@ mod tests {
         let other = deterministic_agent_id(&owner_hash("github:43"));
         assert_eq!(first, second);
         assert_ne!(first, other);
+    }
+
+    #[test]
+    fn new_agents_are_marked_for_the_versioned_single_mount_layout() {
+        let hash = owner_hash("github:42");
+        let mut agent = provisional_terminal_test_agent(Utc::now());
+
+        apply_new_agent_metadata(&mut agent, &hash);
+
+        assert_eq!(
+            agent
+                .metadata
+                .labels
+                .as_ref()
+                .and_then(|labels| labels.get(OWNER_LABEL))
+                .map(String::as_str),
+            Some(&hash[..32]),
+        );
+        assert_eq!(
+            agent
+                .metadata
+                .annotations
+                .as_ref()
+                .and_then(|annotations| annotations.get(STORAGE_LAYOUT_ANNOTATION))
+                .map(String::as_str),
+            Some(SINGLE_MOUNT_STORAGE_LAYOUT),
+        );
     }
 
     #[test]
