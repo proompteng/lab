@@ -78,6 +78,7 @@ describe('Tengri desktop lifecycle gate', () => {
   test('polls transitions quickly and stable agents through controller deadlines', () => {
     const now = Date.parse('2026-08-26T00:00:00Z')
     expect(desktopRefreshDelay({ kind: 'transitioning', agent }, now)).toBe(2_000)
+    expect(desktopRefreshDelay({ kind: 'failed', agent: { ...agent, phase: 'failed' } }, now)).toBe(30_000)
     expect(desktopRefreshDelay({ kind: 'ready', agent }, now)).toBe(30_000)
     expect(desktopRefreshDelay({ kind: 'ready', agent: { ...agent, idleDeadline: '2026-08-26T00:00:01Z' } }, now)).toBe(
       1_250,
