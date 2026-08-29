@@ -137,6 +137,39 @@ Exact failure reasons are published in CR status. Do not infer success from a cr
    guest kernel isolation, fresh-image pull, interactive PTY, persistent file round trip, Codex event, and localhost
    preview WebSocket/HMR.
 
+### Proompteng desktop image promotions
+
+The generated product-image promotion updates the immutable `proompteng` digest in
+`argocd/applications/proompteng/kustomization.yaml`. The production Deployment has one replica with `maxSurge: 0` and
+`maxUnavailable: 1`, so Argo replaces the existing Pod without a surge Pod. A short interval with no ready web Pod is
+expected; an open desktop can show a reconnecting or degraded state until the replacement Pod passes its startup and
+readiness probes. The Firecracker guest Pod and its PVC continue running during this web-only rollout.
+
+After merging a promotion, require all of the following before calling the rollout complete:
+
+```bash
+set -euo pipefail
+
+argocd app get proompteng --hard-refresh
+argocd app wait proompteng --sync --health --timeout 300
+kubectl --context galactic-lan -n proompteng rollout status deployment/proompteng --timeout=5m
+kubectl --context galactic-lan -n proompteng get deployment/proompteng \
+  -o jsonpath='{.status.readyReplicas}/{.status.replicas}{"\n"}'
+kubectl --context galactic-lan -n proompteng get pod -l app=proompteng \
+  -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.containerStatuses[0].imageID}{"\n"}{end}'
+curl --fail --silent --show-error --output /dev/null https://proompteng.ai/
+```
+
+The image ID must match the promoted digest, the Deployment must return to `1/1`, and the Argo application must be
+`Synced` and `Healthy`. Finish with the built-in browser: reload `https://proompteng.ai`, require the authenticated
+desktop to return to `Connected`, and exercise the capability changed by the promoted source. Deployment health and an
+HTTP 200 alone are not sufficient product acceptance.
+
+If the replacement Pod does not become ready or the browser acceptance fails, open a normal follow-up PR that reverts
+the promotion commit or restores the previously proven digest in the same Kustomization. Let CI and Argo perform the
+rollback. Do not patch the live Deployment, delete the SealedSecrets, or change the running microVM while rolling the
+web image back.
+
 Do not deploy from a worktree, directly apply rendered manifests, cordon or drain a node, reboot a node, or create a
 permanent canary DaemonSet.
 
