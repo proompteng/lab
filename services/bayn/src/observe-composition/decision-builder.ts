@@ -1000,6 +1000,7 @@ const compileObserveStrategyDecision = <R>(
         input.decisionFinalizationHeadroomMs !== undefined &&
         intradayMomentumEntryDisposition(
           compiled.decision,
+          facts.reconciliation.brokerState.positions.some(({ quantityMicros }) => BigInt(quantityMicros) !== 0n),
           input.cycle.window.submissionCutoffAt,
           input.decisionFinalizationHeadroomMs,
         ) === 'AWAIT_SIGNAL'

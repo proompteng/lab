@@ -244,12 +244,17 @@ describe('intraday-momentum runtime decision boundary', () => {
   test('keeps an empty signal armed until finalization headroom, then terminalizes honestly', () => {
     const cutoffAt = '2026-08-18T19:00:00.000Z'
 
-    expect(intradayMomentumEntryDisposition(target('2026-08-18T18:00:00.000Z', false), cutoffAt, 60_000)).toBe(
+    expect(intradayMomentumEntryDisposition(target('2026-08-18T18:00:00.000Z', false), false, cutoffAt, 60_000)).toBe(
       'AWAIT_SIGNAL',
     )
-    expect(intradayMomentumEntryDisposition(target('2026-08-18T18:59:30.000Z', false), cutoffAt, 60_000)).toBe(
+    expect(intradayMomentumEntryDisposition(target('2026-08-18T18:59:30.000Z', false), false, cutoffAt, 60_000)).toBe(
       'NO_TRADE',
     )
-    expect(intradayMomentumEntryDisposition(target('2026-08-18T18:59:30.000Z', true), cutoffAt, 60_000)).toBe('EXECUTE')
+    expect(intradayMomentumEntryDisposition(target('2026-08-18T18:59:30.000Z', true), false, cutoffAt, 60_000)).toBe(
+      'EXECUTE',
+    )
+    expect(intradayMomentumEntryDisposition(target('2026-08-18T18:00:00.000Z', false), true, cutoffAt, 60_000)).toBe(
+      'EXECUTE',
+    )
   })
 })

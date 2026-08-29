@@ -147,10 +147,11 @@ export type IntradayMomentumEntryDisposition = 'AWAIT_SIGNAL' | 'EXECUTE' | 'NO_
 
 export const intradayMomentumEntryDisposition = (
   decision: IntradayMomentumTargetPortfolio,
+  positionsRequireContainment: boolean,
   submissionCutoffAt: string,
   finalizationHeadroomMs: number,
 ): IntradayMomentumEntryDisposition => {
-  if (decision.selectedSymbols.length > 0) return 'EXECUTE'
+  if (decision.selectedSymbols.length > 0 || positionsRequireContainment) return 'EXECUTE'
   const remainingMs = Date.parse(submissionCutoffAt) - Date.parse(decision.observedAt)
   return remainingMs > finalizationHeadroomMs ? 'AWAIT_SIGNAL' : 'NO_TRADE'
 }

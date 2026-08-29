@@ -3296,6 +3296,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
 
   test('admits an intraday decision only against exact durable authority and risk context', async () => {
     const draft = makeFullSessionIntradayDraft()
+    const forgedReconciledAt = '2026-03-09T16:58:00.000Z'
     const observedAt = '2026-03-09T17:00:00.000Z'
     const reconciliation = plannedPaperReconciliation(draft, observedAt)
     const reconciledRiskContext = reconciliation.riskContext
@@ -3370,10 +3371,16 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           INSERT INTO valuations (
             valuation_id, schema_version, account_id, source_hash, cash_micros,
             long_market_value_micros, short_market_value_micros, equity_micros, as_of
-          ) VALUES (
-            ${'d'.repeat(64)}, 'bayn.paper-valuation.v1', ${draft.identity.accountId}, ${'e'.repeat(64)},
-            ${riskContext.dayStartEquityMicros}, 0, 0, ${riskContext.dayStartEquityMicros}, ${observedAt}
-          )
+          ) VALUES
+            (
+              ${'1'.repeat(64)}, 'bayn.paper-valuation.v1', ${draft.identity.accountId}, ${'2'.repeat(64)},
+              ${riskContext.dayStartEquityMicros}, 0, 0, ${riskContext.dayStartEquityMicros},
+              ${forgedReconciledAt}
+            ),
+            (
+              ${'d'.repeat(64)}, 'bayn.paper-valuation.v1', ${draft.identity.accountId}, ${'e'.repeat(64)},
+              ${riskContext.dayStartEquityMicros}, 0, 0, ${riskContext.dayStartEquityMicros}, ${observedAt}
+            )
         `
         const durableReconciliation = reconciliation.report.reconciliation
         yield* sql`
@@ -3400,11 +3407,23 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
             },
           },
         })
-        return { exact, forged }
+        const forgedReconciliationCutoff = yield* queries.decisionEvidenceMatches({
+          ...document,
+          deltaRisk: [
+            {
+              facts: {
+                state: {
+                  reconciliation: { ...durableReconciliation, reconciledAt: forgedReconciledAt },
+                },
+              },
+            },
+          ],
+        } as unknown as ExecutionDecisionDocument)
+        return { exact, forged, forgedReconciliationCutoff }
       }),
     )
 
-    expect(observed).toEqual({ exact: true, forged: false })
+    expect(observed).toEqual({ exact: true, forged: false, forgedReconciliationCutoff: false })
   })
 
   test('fences standalone cycle mutations across ready execution runtimes and hands ownership off', async () => {

@@ -265,7 +265,8 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
       riskContext === undefined || riskState === undefined
         ? sql`${riskContext === undefined}`
         : sql`
-            EXISTS (
+            reconciliation.reconciled_at = ${riskState.reconciliation.reconciledAt}::timestamptz
+            AND EXISTS (
               SELECT 1
               FROM authority_state AS authority
               WHERE authority.singleton
