@@ -22,6 +22,7 @@ import {
   SupportedExecutionModelSchema,
 } from './execution-model-contract'
 import { strictParseOptions } from './schemas'
+import { intradayMomentumExecutionModel } from './strategy/intraday-momentum/protocol'
 import { openingDriveExecutionModel } from './strategy/opening-drive'
 
 const success = <A>(result: Result.Result<A, ExecutionModelFailure>): A => {
@@ -81,6 +82,38 @@ describe('explicit execution model', () => {
           order: {
             ...openingDriveExecutionModel.order,
             decisionAfterOpenMs: openingDriveExecutionModel.order.submissionCutoffAfterOpenMs,
+          },
+        }),
+      ),
+    ).toBeTrue()
+  })
+
+  test('binds rolling intraday execution to session-relative warmup and cutoff boundaries', () => {
+    const decodeExecutionModel = Schema.decodeUnknownResult(ExecutionModelSchema, strictParseOptions)
+    const decodeCycleExecutionModel = Schema.decodeUnknownResult(CycleExecutionModelSchema, strictParseOptions)
+
+    expect(intradayMomentumExecutionModel).toMatchObject({
+      schemaVersion: 'bayn.execution-model.v5',
+      venue: 'alpaca-us-equity',
+      order: {
+        type: 'limit',
+        timeInForce: 'ioc',
+        planAfter: 'verified-intraday-window',
+        warmupAfterOpenMs: 1_800_000,
+        submissionCutoffBeforeCloseMs: 3_600_000,
+      },
+      precision: { quantityIncrementMicros: '1000000' },
+    })
+    expect(Result.isSuccess(decodeExecutionModel(intradayMomentumExecutionModel))).toBeTrue()
+    expect(Result.isFailure(decodeCycleExecutionModel(intradayMomentumExecutionModel))).toBeTrue()
+    expect(
+      Result.isFailure(
+        decodeExecutionModel({
+          ...intradayMomentumExecutionModel,
+          order: {
+            ...intradayMomentumExecutionModel.order,
+            warmupAfterOpenMs: 5 * 60 * 60 * 1_000,
+            submissionCutoffBeforeCloseMs: 200 * 60 * 1_000,
           },
         }),
       ),

@@ -19,6 +19,7 @@ import {
   type IntradaySnapshotRequest,
   type IntradaySnapshotRows,
 } from '../market-data'
+import type { ArchiveVerifiedIntradayMarketSnapshot } from '../market-data/intraday/model'
 import {
   decodeDefaultOpeningDriveProtocol,
   makeOpeningDriveDefinition,
@@ -363,8 +364,9 @@ describe('opening-drive runtime decision boundary', () => {
       },
       loadSnapshot: (request) => {
         calls.push(`load:${request.archiveWatermarks[0]?.inclusiveLastOffset}`)
-        return Effect.succeed(snapshot)
+        return Effect.succeed(snapshot as ArchiveVerifiedIntradayMarketSnapshot)
       },
+      verifyArchiveSnapshot: (candidate) => Effect.succeed(candidate as ArchiveVerifiedIntradayMarketSnapshot),
     }
     const query = success(openingDriveCloseQuery(makeActiveCycle(), protocol, calendar, snapshot.manifest.observedAt))
 

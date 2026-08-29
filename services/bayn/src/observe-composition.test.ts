@@ -70,6 +70,7 @@ import {
   type MarketDataService,
   type MarketDataSnapshot,
 } from './market-data'
+import type { ArchiveVerifiedIntradayMarketSnapshot } from './market-data/intraday/model'
 import {
   decodeDefaultOpeningDriveProtocol,
   makeOpeningDriveDefinition,
@@ -468,7 +469,9 @@ const intradayMarketData = (protocol: OpeningDriveProtocol): IntradayMarketDataS
           inclusiveLastOffset: String(protocol.universe.length * protocol.openingRangeMinutes),
         })),
     ),
-  loadSnapshot: (request) => Effect.succeed(intradaySnapshot(protocol, request)),
+  loadSnapshot: (request) =>
+    Effect.succeed(intradaySnapshot(protocol, request) as ArchiveVerifiedIntradayMarketSnapshot),
+  verifyArchiveSnapshot: (snapshot) => Effect.succeed(snapshot as ArchiveVerifiedIntradayMarketSnapshot),
 })
 
 const account: AccountSnapshot = {

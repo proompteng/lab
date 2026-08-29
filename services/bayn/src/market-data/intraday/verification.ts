@@ -30,12 +30,77 @@ const minuteMs = 60_000
 const maximumWindowMs = 30 * minuteMs
 export const maximumIntradayObservationLagMs = 20 * minuteMs
 export const maximumIntradayQuoteAgeMs = 5 * minuteMs
+export const minimumIntradayQuoteAgeMs = 1_000
 const maximumUniverseSize = 64
 const numericStringPattern = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/
 const sourceTopicPattern = /^[A-Za-z0-9._-]+$/
 const isIsoDate = Schema.is(IsoDateSchema)
 const maximumNonNegativeInt32 = 2_147_483_647
 const maximumNonNegativeInt64 = 9_223_372_036_854_775_807n
+
+const ReplayArchiveWatermarkSchema = Schema.Struct({
+  sourceTopic: Schema.String,
+  sourcePartition: Schema.Finite,
+  inclusiveLastOffset: Schema.String,
+})
+
+const ReplayLineageSchema = Schema.Struct({
+  sourceTopic: Schema.String,
+  sourcePartition: Schema.Finite,
+  firstOffset: Schema.String,
+  lastOffset: Schema.String,
+  recordCount: Schema.Finite,
+})
+
+const ReplayCalendarSchema = Schema.Struct({
+  schemaVersion: Schema.String,
+  source: Schema.String,
+  requestedRange: Schema.Struct({ start: Schema.String, end: Schema.String }),
+  timeZone: Schema.String,
+  sessions: Schema.Array(
+    Schema.Struct({
+      date: Schema.String,
+      openAt: Schema.String,
+      closeAt: Schema.String,
+    }),
+  ),
+  normalizedResponseHash: Schema.String,
+})
+
+const ReplaySnapshotEnvelopeSchema = Schema.Struct({
+  bars: Schema.Array(Schema.Unknown),
+  quotes: Schema.Array(Schema.Unknown),
+  trades: Schema.Array(Schema.Unknown),
+  latestQuotes: Schema.Record(Schema.String, Schema.Unknown),
+  manifest: Schema.Struct({
+    schemaVersion: Schema.String,
+    sessionDate: Schema.String,
+    calendar: ReplayCalendarSchema,
+    rangeStartAt: Schema.String,
+    rangeEndAt: Schema.String,
+    observedAt: Schema.String,
+    universeId: Schema.String,
+    universeSymbolHash: Schema.String,
+    symbols: Schema.Array(Schema.String),
+    feed: Schema.String,
+    delayClass: Schema.String,
+    sourceTopics: Schema.Struct({ bars: Schema.String, quotes: Schema.String, trades: Schema.String }),
+    archiveWatermarks: Schema.Array(ReplayArchiveWatermarkSchema),
+    maximumQuoteAgeMs: Schema.Finite,
+    minimumWatermarkLagMs: Schema.Finite,
+    barCount: Schema.Finite,
+    quoteCount: Schema.Finite,
+    tradeCount: Schema.Finite,
+    barsContentHash: Schema.String,
+    quotesContentHash: Schema.String,
+    tradesContentHash: Schema.String,
+    lineage: Schema.Array(ReplayLineageSchema),
+    contentHash: Schema.String,
+    snapshotId: Schema.String,
+  }),
+})
+
+const decodeReplaySnapshotEnvelope = Schema.decodeUnknownResult(ReplaySnapshotEnvelopeSchema)
 
 // ClickHouse orders String values by their binary representation. Source topics
 // are restricted to Kafka's ASCII name domain, so code-unit comparison is the
@@ -168,7 +233,7 @@ const validateQuery = <T extends IntradaySnapshotQuery>(request: T): Result.Resu
   }
   if (
     !Number.isSafeInteger(request.maximumQuoteAgeMs) ||
-    request.maximumQuoteAgeMs < 1_000 ||
+    request.maximumQuoteAgeMs < minimumIntradayQuoteAgeMs ||
     request.maximumQuoteAgeMs > maximumIntradayQuoteAgeMs
   ) {
     return Result.fail(failure('request', 'maximum quote age must be between one second and five minutes'))
@@ -807,6 +872,83 @@ const archiveIdentityRow = (record: IntradayRecordIdentity) => ({
   schema_version: record.schemaVersion,
 })
 
+const eventPayloadKey = (record: IntradayQuote | IntradayTrade): Result.Result<string, IntradaySnapshotFailure> =>
+  Result.try({
+    try: () => `${record.symbol}\u0000${intradayInstantNanos(record.eventAt)}`,
+    catch: (cause) =>
+      failure('rows', 'intraday quote or trade timestamp does not match the archive contract', undefined, cause),
+  })
+
+const validateReplayPayload = <T extends IntradayQuote | IntradayTrade>(
+  record: T,
+  payload: (record: T) => readonly number[],
+): Result.Result<void, IntradaySnapshotFailure> =>
+  Result.try({
+    try: () => void JSON.stringify(payload(record)),
+    catch: (cause) =>
+      failure('rows', 'intraday quote or trade payload does not match the archive contract', undefined, cause),
+  })
+
+const replayCandidateKeys = <T extends IntradayQuote | IntradayTrade>(
+  records: readonly T[],
+  recordKind: 'quote' | 'trade',
+  payload: (record: T) => readonly number[],
+): Result.Result<ReadonlyMap<T, string>, IntradaySnapshotFailure> =>
+  Result.gen(function* () {
+    const keys = new Map<T, string>()
+    const observedSymbols = new Set<string>()
+    for (const record of records) {
+      const key = yield* eventPayloadKey(record)
+      yield* validateReplayPayload(record, payload)
+      if (observedSymbols.has(record.symbol)) {
+        return yield* Result.fail(
+          failure('rows', `intraday replay snapshot contains more than one ${recordKind} candidate for a symbol`, {
+            symbol: record.symbol,
+          }),
+        )
+      }
+      observedSymbols.add(record.symbol)
+      keys.set(record, key)
+    }
+    return keys
+  })
+
+const replaySnapshotEnvelope = (snapshot: unknown): Result.Result<IntradayMarketSnapshot, IntradaySnapshotFailure> =>
+  decodeReplaySnapshotEnvelope(snapshot).pipe(
+    Result.map(() => snapshot as IntradayMarketSnapshot),
+    Result.mapError((cause) =>
+      failure('rows', 'intraday replay snapshot and manifest do not match the archive contract', undefined, cause),
+    ),
+  )
+
+const replayedBarRow = (bar: IntradayBar): Result.Result<IntradayBarRow, IntradaySnapshotFailure> =>
+  Result.gen(function* () {
+    const candidate = yield* Result.try({
+      try: () => ({
+        ...archiveIdentityRow(bar),
+        channel: bar.channel,
+        is_final: bar.final ? 1 : 0,
+        open: bar.open,
+        high: bar.high,
+        low: bar.low,
+        close: bar.close,
+        volume: bar.volume,
+        vwap: bar.vwap,
+        trade_count: bar.tradeCount,
+      }),
+      catch: (cause) => failure('rows', 'intraday replayed bar does not match the archive contract', undefined, cause),
+    })
+    const decoded = yield* decodeIntradayBarRows([candidate]).pipe(
+      Result.mapError((cause) =>
+        failure('rows', 'intraday replayed bar does not match the archive contract', undefined, cause),
+      ),
+    )
+    const row = decoded[0]
+    return row === undefined
+      ? yield* Result.fail(failure('rows', 'intraday replayed bar does not match the archive contract'))
+      : row
+  })
+
 /**
  * Re-enters an already materialized snapshot through the authoritative row
  * verifier. This is intentionally stronger than rehashing caller-provided
@@ -817,7 +959,20 @@ export const reverifyIntradayMarketSnapshot = (
   snapshot: IntradayMarketSnapshot,
 ): Result.Result<IntradayMarketSnapshot, IntradaySnapshotFailure> =>
   Result.gen(function* () {
-    const { manifest } = snapshot
+    const replay = yield* replaySnapshotEnvelope(snapshot)
+    const { manifest } = replay
+    const collections = replay
+    const bars = yield* Result.all(collections.bars.map(replayedBarRow))
+    const quoteCandidateKeys = yield* replayCandidateKeys(collections.quotes, 'quote', (quote) => [
+      quote.bidPrice,
+      quote.bidSize,
+      quote.askPrice,
+      quote.askSize,
+    ])
+    const tradeCandidateKeys = yield* replayCandidateKeys(collections.trades, 'trade', (trade) => [
+      trade.price,
+      trade.size,
+    ])
     const request: IntradaySnapshotRequest = {
       sessionDate: manifest.sessionDate,
       calendar: manifest.calendar,
@@ -840,29 +995,18 @@ export const reverifyIntradayMarketSnapshot = (
         source_partition: watermark.sourcePartition,
         inclusive_last_offset: watermark.inclusiveLastOffset,
       })),
-      bars: snapshot.bars.map((bar) => ({
-        ...archiveIdentityRow(bar),
-        channel: bar.channel,
-        is_final: bar.final ? 1 : 0,
-        open: bar.open,
-        high: bar.high,
-        low: bar.low,
-        close: bar.close,
-        volume: bar.volume,
-        vwap: bar.vwap,
-        trade_count: bar.tradeCount,
-      })),
-      quotes: snapshot.quotes.map((quote) => ({
+      bars,
+      quotes: collections.quotes.map((quote) => ({
         ...archiveIdentityRow(quote),
-        latest_payload_variants: '1',
+        latest_payload_variants: quoteCandidateKeys.has(quote) ? '1' : '0',
         bid_price: quote.bidPrice,
         bid_size: quote.bidSize,
         ask_price: quote.askPrice,
         ask_size: quote.askSize,
       })),
-      trades: snapshot.trades.map((trade) => ({
+      trades: collections.trades.map((trade) => ({
         ...archiveIdentityRow(trade),
-        latest_payload_variants: '1',
+        latest_payload_variants: tradeCandidateKeys.has(trade) ? '1' : '0',
         price: trade.price,
         size: trade.size,
       })),
@@ -871,7 +1015,7 @@ export const reverifyIntradayMarketSnapshot = (
       expectedManifest: hash(verified.manifest, 'reverified manifest'),
       actualManifest: hash(manifest, 'bound manifest'),
       expectedLatestQuotes: hash(verified.latestQuotes, 'reverified latest quotes'),
-      actualLatestQuotes: hash(snapshot.latestQuotes, 'bound latest quotes'),
+      actualLatestQuotes: hash(replay.latestQuotes, 'bound latest quotes'),
     })
     if (
       boundHashes.expectedManifest !== boundHashes.actualManifest ||

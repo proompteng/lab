@@ -459,7 +459,7 @@ describe('opening-drive momentum strategy', () => {
     ).toMatchObject({ reason: 'snapshot-window' })
   })
 
-  test('uses the highest Kafka offset when trade timestamps tie', () => {
+  test('rejects conflicting same-partition payloads when trade timestamps tie', () => {
     const protocol = success(decodeDefaultOpeningDriveProtocol())
     const rows = makeRows()
     const amdTrade = rows.trades.find((trade) => trade.symbol === 'AMD')
@@ -481,10 +481,11 @@ describe('opening-drive momentum strategy', () => {
     const tiedSnapshot = verifyIntradaySnapshot({ ...request, archiveWatermarks }, tiedRows)
     if (Result.isFailure(tiedSnapshot)) throw new Error(JSON.stringify(tiedSnapshot.failure))
     const market = tiedSnapshot.success
-    const decision = success(decideOpeningDrive({ snapshot: market, session }, protocol))
-
-    expect(decision.selectedSymbols).not.toContain('AMD')
-    expect(decision.signals.find((signal) => signal.symbol === 'AMD')?.rejectionReasons).toContain('breakout')
+    expect(error(decideOpeningDrive({ snapshot: market, session }, protocol))).toMatchObject({
+      reason: 'snapshot-coverage',
+      message:
+        'opening-drive snapshot failed authoritative re-verification: intraday replay snapshot contains more than one trade candidate for a symbol',
+    })
   })
 
   test('rejects latest-trade timestamp ties across Kafka partitions', () => {
@@ -533,7 +534,8 @@ describe('opening-drive momentum strategy', () => {
 
     expect(error(decideOpeningDrive({ snapshot: market, session }, protocol))).toMatchObject({
       reason: 'snapshot-coverage',
-      symbol: 'AMD',
+      message:
+        'opening-drive snapshot failed authoritative re-verification: intraday replay snapshot contains more than one trade candidate for a symbol',
     })
   })
 
@@ -584,40 +586,28 @@ describe('opening-drive momentum strategy', () => {
 
     expect(error(decideOpeningDrive({ snapshot: market, session }, protocol))).toMatchObject({
       reason: 'snapshot-coverage',
-      symbol: 'AMD',
+      message:
+        'opening-drive snapshot failed authoritative re-verification: intraday replay snapshot contains more than one quote candidate for a symbol',
     })
   })
 
-  test('orders mixed-precision trade timestamps by their nanosecond instant', () => {
+  test('preserves a canonical mixed-precision trade timestamp', () => {
     const protocol = success(decodeDefaultOpeningDriveProtocol())
     const rows = makeRows()
-    const amdTrade = rows.trades.find((trade) => trade.symbol === 'AMD')
-    if (amdTrade === undefined) throw new Error('AMD trade fixture is missing')
-    const latestOffset = String(symbols.length * 7 + 1)
-    const archiveWatermarks = request.archiveWatermarks.map((watermark) =>
-      watermark.sourceTopic === tradesTopic ? { ...watermark, inclusiveLastOffset: latestOffset } : watermark,
-    )
     const mixedPrecisionRows = {
       ...rows,
-      archiveWatermarks: rows.archiveWatermarks.map((watermark) =>
-        watermark.source_topic === tradesTopic ? { ...watermark, inclusive_last_offset: latestOffset } : watermark,
+      trades: rows.trades.map((trade) =>
+        trade.symbol === 'AMD'
+          ? {
+              ...trade,
+              event_at: '2026-08-18T13:35:01.500999999Z',
+              ingested_at: '2026-08-18T13:35:01.600999999Z',
+              price: '95',
+            }
+          : trade,
       ),
-      trades: [
-        ...rows.trades.map((trade) =>
-          trade.symbol === 'AMD'
-            ? { ...trade, event_at: '2026-08-18T13:35:01.500Z', ingested_at: '2026-08-18T13:35:01.600Z' }
-            : trade,
-        ),
-        {
-          ...amdTrade,
-          event_at: '2026-08-18T13:35:01.500999999Z',
-          ingested_at: '2026-08-18T13:35:01.600999999Z',
-          source_offset: latestOffset,
-          price: '95',
-        },
-      ],
     }
-    const market = success(verifyIntradaySnapshot({ ...request, archiveWatermarks }, mixedPrecisionRows))
+    const market = success(verifyIntradaySnapshot(request, mixedPrecisionRows))
     const decision = success(decideOpeningDrive({ snapshot: market, session }, protocol))
 
     expect(decision.signals.find((signal) => signal.symbol === 'AMD')).toMatchObject({
