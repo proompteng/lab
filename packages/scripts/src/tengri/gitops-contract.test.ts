@@ -51,13 +51,15 @@ const services = documents<Service>('argocd/applications/tengri/services.yaml')
 const ingressRoutes = documents<IngressRoute>('argocd/applications/tengri/ingressroute.yaml')
 const networkPolicies = documents<NetworkPolicy>('argocd/applications/tengri/network-policies.yaml')
 
-test('Tengri can watch Secret and PVC deletion to completion', () => {
+test('Tengri can create and clean up agent Pods, Secrets, and PVCs', () => {
   const role = rbac.find((document) => document.kind === 'Role' && document.metadata?.name === 'tengri')
-  const cleanupRule = role?.rules?.find(
+  const podRule = role?.rules?.find((rule) => rule.resources?.includes('pods'))
+  const persistentResourceRule = role?.rules?.find(
     (rule) => rule.resources?.includes('persistentvolumeclaims') && rule.resources.includes('secrets'),
   )
 
-  expect(cleanupRule?.verbs).toEqual(['delete', 'get', 'list', 'patch', 'watch'])
+  expect(podRule?.verbs).toEqual(['create', 'delete', 'get', 'list', 'patch', 'watch'])
+  expect(persistentResourceRule?.verbs).toEqual(['create', 'delete', 'get', 'list', 'patch', 'watch'])
 })
 
 test('Tengri network isolation survives Application deletion', () => {
