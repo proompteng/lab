@@ -30,7 +30,13 @@ import {
 } from '../execution-session'
 import { OperationalError, operationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
-import { IntradaySnapshotFailure, MarketData, type IntradaySnapshotQuery, type MarketDataService } from '../market-data'
+import {
+  IntradaySnapshotFailure,
+  MarketData,
+  type IntradaySnapshotQuery,
+  type MarketDataService,
+  type PersistedIntradaySnapshotRows,
+} from '../market-data'
 import {
   constrainExecutionTargetAllocationCapitalMicros,
   executionMandateAllocationCapitalMicros,
@@ -771,6 +777,7 @@ const prepareExecutionSessionBinding = <R>(
 
 type CompiledObserveStrategyDecision = {
   readonly decision: RuntimeStrategyDecision
+  readonly decisionMarketDataRows?: PersistedIntradaySnapshotRows
   /** Compatibility identity for the existing planner; intraday decisions remain bound separately to execution date. */
   readonly signalDate: SignalSessionReferencePrices['signalDate']
   readonly priceMicros: Readonly<Record<string, string>>
@@ -1364,6 +1371,9 @@ function buildCycleDecision<R>(
         finalizedAt: decisionSnapshot.finalizedAt,
       },
       compiledDecision: compiled.decision,
+      ...(compiled.decisionMarketDataRows === undefined
+        ? {}
+        : { decisionMarketDataRows: compiled.decisionMarketDataRows }),
       ...(compiled.executionMarketData === undefined ? {} : { executionMarketData: compiled.executionMarketData }),
       plannerInput: plannerPreparation.plannerInput,
       targetPlan,

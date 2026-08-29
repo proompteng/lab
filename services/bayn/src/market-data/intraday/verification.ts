@@ -832,6 +832,8 @@ export interface IntradaySnapshotRows {
   readonly trades: readonly unknown[]
 }
 
+export type PersistedIntradaySnapshotRows = Omit<IntradaySnapshotRows, 'archiveWatermarks'>
+
 export const verifyIntradaySnapshot = (
   request: IntradaySnapshotRequest,
   rows: IntradaySnapshotRows,
@@ -991,6 +993,41 @@ const replayedBarRow = (bar: IntradayBar): Result.Result<IntradayBarRow, Intrada
       : row
   })
 
+export const persistIntradaySnapshotRows = (
+  snapshot: IntradayMarketSnapshot,
+): Result.Result<PersistedIntradaySnapshotRows, IntradaySnapshotFailure> =>
+  Result.gen(function* () {
+    const collections = yield* replaySnapshotEnvelope(snapshot)
+    const bars = yield* Result.all(collections.bars.map(replayedBarRow))
+    const quoteCandidateKeys = yield* replayCandidateKeys(collections.quotes, 'quote', (quote) => [
+      quote.bidPrice,
+      quote.bidSize,
+      quote.askPrice,
+      quote.askSize,
+    ])
+    const tradeCandidateKeys = yield* replayCandidateKeys(collections.trades, 'trade', (trade) => [
+      trade.price,
+      trade.size,
+    ])
+    return {
+      bars,
+      quotes: collections.quotes.map((quote) => ({
+        ...archiveIdentityRow(quote),
+        latest_payload_variants: quoteCandidateKeys.has(quote) ? '1' : '0',
+        bid_price: quote.bidPrice,
+        bid_size: quote.bidSize,
+        ask_price: quote.askPrice,
+        ask_size: quote.askSize,
+      })),
+      trades: collections.trades.map((trade) => ({
+        ...archiveIdentityRow(trade),
+        latest_payload_variants: tradeCandidateKeys.has(trade) ? '1' : '0',
+        price: trade.price,
+        size: trade.size,
+      })),
+    }
+  })
+
 /**
  * Re-enters an already materialized snapshot through the authoritative row
  * verifier. This is intentionally stronger than rehashing caller-provided
@@ -1003,18 +1040,7 @@ export const reverifyIntradayMarketSnapshot = (
   Result.gen(function* () {
     const replay = yield* replaySnapshotEnvelope(snapshot)
     const { manifest } = replay
-    const collections = replay
-    const bars = yield* Result.all(collections.bars.map(replayedBarRow))
-    const quoteCandidateKeys = yield* replayCandidateKeys(collections.quotes, 'quote', (quote) => [
-      quote.bidPrice,
-      quote.bidSize,
-      quote.askPrice,
-      quote.askSize,
-    ])
-    const tradeCandidateKeys = yield* replayCandidateKeys(collections.trades, 'trade', (trade) => [
-      trade.price,
-      trade.size,
-    ])
+    const rows = yield* persistIntradaySnapshotRows(replay)
     const request: IntradaySnapshotRequest = {
       sessionDate: manifest.sessionDate,
       calendar: manifest.calendar,
@@ -1039,21 +1065,7 @@ export const reverifyIntradayMarketSnapshot = (
         source_partition: watermark.sourcePartition,
         inclusive_last_offset: watermark.inclusiveLastOffset,
       })),
-      bars,
-      quotes: collections.quotes.map((quote) => ({
-        ...archiveIdentityRow(quote),
-        latest_payload_variants: quoteCandidateKeys.has(quote) ? '1' : '0',
-        bid_price: quote.bidPrice,
-        bid_size: quote.bidSize,
-        ask_price: quote.askPrice,
-        ask_size: quote.askSize,
-      })),
-      trades: collections.trades.map((trade) => ({
-        ...archiveIdentityRow(trade),
-        latest_payload_variants: tradeCandidateKeys.has(trade) ? '1' : '0',
-        price: trade.price,
-        size: trade.size,
-      })),
+      ...rows,
     })
     const boundHashes = yield* Result.all({
       expectedManifest: hash(verified.manifest, 'reverified manifest'),

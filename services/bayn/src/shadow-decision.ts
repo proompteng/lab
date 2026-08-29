@@ -18,6 +18,7 @@ import {
 } from './execution/intents/domain'
 import type { ExecutionSessionBinding } from './execution-session'
 import { canonicalHashV1Result } from './hash'
+import type { PersistedIntradaySnapshotRows } from './market-data'
 import {
   Authority,
   IntentSchema,
@@ -90,6 +91,7 @@ export interface ObserveShadowDecisionInput {
   readonly cycle: AutonomousCycle
   readonly snapshot: ShadowSnapshotBinding
   readonly compiledDecision: RuntimeStrategyDecision
+  readonly decisionMarketDataRows?: PersistedIntradaySnapshotRows
   readonly executionMarketData?: ExecutionMarketDataBinding
   readonly plannerInput: TargetPlannerInput
   readonly targetPlan: TargetPlanResult
@@ -133,6 +135,13 @@ const ObserveShadowDecisionInputSchema = Schema.Struct({
   cycle: AutonomousCycleSchema,
   snapshot: ShadowSnapshotBindingSchema,
   compiledDecision: Schema.Unknown,
+  decisionMarketDataRows: Schema.optionalKey(
+    Schema.Struct({
+      bars: Schema.Array(Schema.Unknown),
+      quotes: Schema.Array(Schema.Unknown),
+      trades: Schema.Array(Schema.Unknown),
+    }),
+  ),
   executionMarketData: Schema.optionalKey(Schema.Unknown),
   plannerInput: TargetPlannerInputSchema,
   targetPlan: TargetPlanResultSchema,
@@ -952,6 +961,7 @@ const assembleExecutionDecisionDocument = (
       },
       executionSession,
       strategyDecision: input.compiledDecision,
+      ...(input.decisionMarketDataRows === undefined ? {} : { decisionMarketDataRows: input.decisionMarketDataRows }),
       plannerInput: input.plannerInput,
       targetPlan: input.targetPlan,
       deltaRisk: reduction.deltaRisk,
@@ -975,6 +985,7 @@ export const buildExecutionDecision = (
         cycle: input.cycle,
         snapshot: input.snapshot,
         compiledDecision: input.compiledDecision,
+        ...(input.decisionMarketDataRows === undefined ? {} : { decisionMarketDataRows: input.decisionMarketDataRows }),
         ...(input.executionMarketData === undefined ? {} : { executionMarketData: input.executionMarketData }),
         plannerInput: input.plannerInput,
         targetPlan: input.targetPlan,

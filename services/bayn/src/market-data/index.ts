@@ -33,11 +33,13 @@ export { IntradayMarketData, IntradaySnapshotFailure } from './intraday/model'
 export { IntradayMarketDataLive, makeIntradayMarketData } from './intraday/program'
 export { compareIntradayInstants, intradayAgeNanos, intradayInstantNanos, millisecondsAsNanos } from './intraday/time'
 export {
+  persistIntradaySnapshotRows,
   reverifyIntradayMarketSnapshot,
   verifyIntradayArchiveWatermarks,
   verifyIntradaySnapshot,
   verifyIntradaySnapshotQuery,
   verifyIntradaySnapshotRequest,
+  type PersistedIntradaySnapshotRows,
   type IntradaySnapshotRows,
 } from './intraday/verification'
 export {

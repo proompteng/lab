@@ -5,6 +5,7 @@ import { makeExecutionCalendarObservation } from './cycle'
 import { intentIdForPlan, executionIntentIdForDecodedPlan } from './execution/intents/domain'
 import { ExecutionSessionBindingSchema } from './execution-session'
 import { canonicalHashV1Result, sha256 } from './hash'
+import { verifyIntradaySnapshot } from './market-data/intraday/verification'
 import { OrderSide, PositiveMicrosSchema, RiskOutcome } from './execution/contracts'
 import {
   legacyCycleDecisionSchemaVersion,
@@ -28,7 +29,7 @@ import {
 } from './schemas'
 import { TargetPlannerInputSchema, TargetPlanResultSchema, TargetPlanStatus, planTargets } from './target-planner'
 import { RuntimeStrategyDecisionSchema } from './strategy/runtime-decision'
-import { deriveIntradayMomentumSignalMetrics } from './strategy/intraday-momentum/decision'
+import { decideIntradayMomentum, deriveIntradayMomentumSignalMetrics } from './strategy/intraday-momentum/decision'
 import {
   intradayMomentumSignalRejectionReasons,
   selectCanonicalIntradayMomentumSignals,
@@ -429,6 +430,12 @@ const ExecutionRiskBlockSchema = Schema.Struct({
   reasonCodes: Schema.Array(StrictNonEmptyStringSchema).check(Schema.isMinLength(1), Schema.isUnique()),
 })
 
+const PersistedIntradaySnapshotRowsSchema = Schema.Struct({
+  bars: Schema.Array(Schema.Unknown),
+  quotes: Schema.Array(Schema.Unknown),
+  trades: Schema.Array(Schema.Unknown),
+})
+
 const ExecutionDecisionMaterialSchema = Schema.Struct({
   schemaVersion: Schema.Literal(legacyCycleDecisionSchemaVersion),
   mode: Schema.Literal(legacyExecutionAuthorityToken),
@@ -438,6 +445,8 @@ const ExecutionDecisionMaterialSchema = Schema.Struct({
   executionSession: Schema.optionalKey(ExecutionSessionBindingSchema),
   /** Persist the pure strategy output that authorized the targets; legacy documents remain decodable without it. */
   strategyDecision: Schema.optionalKey(RuntimeStrategyDecisionSchema),
+  /** Exact archive rows reverified before a durable intraday entry is accepted. */
+  decisionMarketDataRows: Schema.optionalKey(PersistedIntradaySnapshotRowsSchema),
   /** Persist validated planner facts so durable decoding can reproduce every quantity and reference price. */
   plannerInput: Schema.optionalKey(TargetPlannerInputSchema),
   targetPlan: TargetPlanResultSchema,
@@ -592,6 +601,100 @@ const intradayMomentumAllocationIssues = (
   return issues
 }
 
+const intradayMomentumSnapshotEvidenceIssues = (
+  document: typeof ExecutionDecisionMaterialSchema.Type,
+  binding: Extract<ExecutionMarketDataBinding, { readonly schemaVersion: 'bayn.execution-market-data-binding.v2' }>,
+): readonly Schema.FilterIssue[] => {
+  const rows = document.decisionMarketDataRows
+  if (rows === undefined) {
+    return [
+      {
+        path: ['decisionMarketDataRows'],
+        issue: 'intraday-momentum entry requires the exact archive rows that produced its strategy decision',
+      },
+    ]
+  }
+  const snapshot = verifyIntradaySnapshot(
+    {
+      sessionDate: binding.sessionDate,
+      calendar: binding.calendar,
+      rangeStartAt: binding.rangeStartAt,
+      rangeEndAt: binding.rangeEndAt,
+      observedAt: binding.observedAt,
+      universeId: binding.universeId,
+      universeSymbolHash: binding.universeSymbolHash,
+      universe: binding.universe,
+      symbols: binding.symbols,
+      ...(binding.purpose === undefined ? {} : { purpose: binding.purpose }),
+      feed: binding.feed,
+      delayClass: binding.delayClass,
+      sourceTopics: binding.sourceTopics,
+      maximumQuoteAgeMs: binding.maximumQuoteAgeMs,
+      minimumWatermarkLagMs: binding.minimumWatermarkLagMs,
+      archiveWatermarks: binding.archiveWatermarks,
+    },
+    {
+      archiveWatermarks: binding.archiveWatermarks.map((watermark) => ({
+        source_topic: watermark.sourceTopic,
+        source_partition: watermark.sourcePartition,
+        inclusive_last_offset: watermark.inclusiveLastOffset,
+      })),
+      ...rows,
+    },
+  )
+  if (
+    Result.isFailure(snapshot) ||
+    snapshot.success.manifest.snapshotId !== binding.snapshotId ||
+    snapshot.success.manifest.contentHash !== binding.contentHash
+  ) {
+    return [
+      {
+        path: ['decisionMarketDataRows'],
+        issue: 'intraday-momentum archive rows must reproduce the exact bound market-data snapshot',
+      },
+    ]
+  }
+  const session = binding.calendar.sessions.find(({ date }) => date === binding.sessionDate)
+  const executionCalendar =
+    session === undefined
+      ? undefined
+      : makeExecutionCalendarObservation({
+          schemaVersion: binding.calendar.schemaVersion,
+          source: binding.calendar.source,
+          ...session,
+        })
+  if (session === undefined || executionCalendar === undefined || Result.isFailure(executionCalendar)) {
+    return [
+      {
+        path: ['bindings', 'executionMarketData', 'calendar'],
+        issue: 'intraday-momentum snapshot evidence requires its exact verified execution calendar',
+      },
+    ]
+  }
+  const reproduced = decideIntradayMomentum(
+    {
+      snapshot: snapshot.success,
+      session: {
+        sessionDate: binding.sessionDate,
+        openAt: session.openAt,
+        closeAt: session.closeAt,
+        calendarHash: executionCalendar.success.executionCalendarHash,
+      },
+    },
+    defaultIntradayMomentumProtocolDocument,
+  )
+  const reproducedHash = Result.flatMap(reproduced, canonicalHashV1Result)
+  if (Result.isFailure(reproducedHash) || reproducedHash.success !== document.bindings.strategyDecisionHash) {
+    return [
+      {
+        path: ['strategyDecision'],
+        issue: 'intraday-momentum strategy decision must be reproduced from its exact verified archive rows',
+      },
+    ]
+  }
+  return []
+}
+
 const targetPlannerEvidenceIssues = (
   document: typeof ExecutionDecisionMaterialSchema.Type,
 ): readonly Schema.FilterIssue[] => {
@@ -721,6 +824,7 @@ const executionMaterialIssues = (
         issue: 'intraday-momentum entry requires execution market-data binding v2',
       })
     } else {
+      issues.push(...intradayMomentumSnapshotEvidenceIssues(document, executionMarketData))
       if (!executionBindingMatchesIntradayMomentumProtocol(executionMarketData)) {
         issues.push({
           path: ['bindings', 'executionMarketData'],

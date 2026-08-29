@@ -3,7 +3,12 @@ import { Data, Result } from 'effect'
 import type { MarketCalendarObservation } from '../broker/alpaca'
 import type { AutonomousCycle } from '../cycle'
 import { utcInstantFromEpochMillis } from '../time'
-import type { IntradayMarketSnapshot, IntradaySnapshotQuery } from '../market-data'
+import {
+  persistIntradaySnapshotRows,
+  type IntradayMarketSnapshot,
+  type IntradaySnapshotQuery,
+  type PersistedIntradaySnapshotRows,
+} from '../market-data'
 import type { ExecutionMarketDataBinding } from '../shadow-decision-contract'
 import {
   IntradayMomentumFailure,
@@ -152,6 +157,7 @@ export const intradayMomentumEntryDisposition = (
 
 export interface CompiledIntradayMomentumDecision {
   readonly decision: IntradayMomentumTargetPortfolio
+  readonly decisionMarketDataRows: PersistedIntradaySnapshotRows
   readonly priceMicros: Readonly<Record<string, string>>
   readonly bidPriceMicros: Readonly<Record<string, string>>
   readonly askPriceMicros: Readonly<Record<string, string>>
@@ -185,9 +191,11 @@ export const compileIntradayMomentumDecision = (
         snapshot,
         decision.signals.map((signal) => signal.symbol),
       )
+      const decisionMarketDataRows = yield* persistIntradaySnapshotRows(snapshot)
       const binding = yield* executionMarketDataBinding(snapshot)
       return {
         decision,
+        decisionMarketDataRows,
         priceMicros: quotePrices.askPriceMicros,
         ...quotePrices,
         maximumBuyQuantityMicros,
