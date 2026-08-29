@@ -95,6 +95,7 @@ jobs:
         run: |
           set -euo pipefail
           bash -n bootstrap-codex.sh
+          bash -n bootstrap-toolchain.sh
           bash bootstrap-codex.sh --validate-manifest
           test -z "$(gofmt -l .)"
           GOWORK=off go test -race ./...

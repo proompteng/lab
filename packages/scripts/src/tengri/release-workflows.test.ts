@@ -91,8 +91,20 @@ describe('Tengri release workflows', () => {
       expect(dockerfile).not.toContain('docker.io/')
     }
     expect(nanoagent).toContain('ARG GO_BASE_IMAGE=mirror.gcr.io/golang')
+    expect(nanoagent).toContain('ARG BUN_BASE_IMAGE=mirror.gcr.io/oven/bun')
+    expect(nanoagent).toContain('ARG NODE_BASE_IMAGE=mirror.gcr.io/node')
     expect(nanoagent).toContain('ARG UBUNTU_BASE_IMAGE=mirror.gcr.io/ubuntu')
     expect(nanoagent).toContain('ln -s /home/nanoagent/workspace /workspace')
+    expect(nanoagent).toContain('bootstrap-toolchain --install-only')
+    expect(nanoagent).toContain(
+      'COPY --from=toolchain-smoke /tmp/toolchain-version /usr/share/nanoagent/toolchain-version',
+    )
+    expect(nanoagent).toContain('TOOLCHAIN_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-toolchain')
+    expect(nanoagent).toContain('BUN_INSTALL=/home/nanoagent/.local')
+    expect(nanoagent).toContain('NPM_CONFIG_PREFIX=/home/nanoagent/.local')
+    expect(nanoagent).toContain('test "$(npm config get prefix)" = "$HOME/.local"')
+    expect(nanoagent).toContain('test "$(bun pm bin --global)" = "$HOME/.local/bin"')
+    expect(nanoagent).toContain('ENTRYPOINT ["/usr/local/bin/nanoagent"]')
     expect(tengri).toContain('ARG DEBIAN_BASE_IMAGE=mirror.gcr.io/debian')
     expect(tengri).toContain('ARG RUST_BASE_IMAGE=mirror.gcr.io/rust')
   })
