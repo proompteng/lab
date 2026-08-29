@@ -21,7 +21,7 @@ spec:
         app: torghut-ws
       annotations:
         kubectl.kubernetes.io/restartedAt: 2026-05-01T01:25:51.190Z
-        torghut.proompteng.ai/ws-config-generation: bayn-intraday-liquid-v1
+        torghut.proompteng.ai/ws-config-generation: bayn-intraday-symbol-budget-v2
     spec:
       serviceAccountName: torghut-runtime
       securityContext:

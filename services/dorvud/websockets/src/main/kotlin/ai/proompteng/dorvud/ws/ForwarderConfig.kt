@@ -241,9 +241,13 @@ data class ForwarderConfig(
         )
       val coreSubscriptionCount =
         if (jangarSymbolsUrl != null && symbolAllowlist.isNotEmpty()) symbolAllowlist.size else staticSymbols.size
-      val subscriptionCount = coreSubscriptionCount + observationSymbols.size * observationFeeds.size
-      if (subscriptionCount > 30) {
-        error("configured market-data feeds require $subscriptionCount symbol subscriptions; maximum is 30")
+      requireMarketDataSubscriptionBudget(alpacaFeed, coreSubscriptionCount, alpacaMarketDataChannels.size)
+      observationFeeds.forEach { observation ->
+        requireMarketDataSubscriptionBudget(
+          observation.feed.id,
+          observationSymbols.size,
+          defaultAlpacaMarketDataChannels(AlpacaMarketType.EQUITY).size,
+        )
       }
       val enableBarsBackfill = mergedEnv["ENABLE_BARS_BACKFILL"]?.toBooleanStrictOrNull() ?: false
       if (alpacaMarketType == AlpacaMarketType.OPTIONS && enableBarsBackfill) {
@@ -453,6 +457,20 @@ data class ForwarderConfig(
         error("market-data feed topics must be unique: ${duplicateTopics.sorted().joinToString(",")}")
       }
       return feeds
+    }
+
+    private fun requireMarketDataSubscriptionBudget(
+      feed: String,
+      symbolCount: Int,
+      channelCount: Int,
+    ) {
+      val subscriptionCount = symbolCount.toLong() * channelCount
+      if (subscriptionCount > 30) {
+        error(
+          "market-data feed $feed requires $subscriptionCount symbol-channel subscriptions " +
+            "($symbolCount symbols x $channelCount channels); maximum is 30",
+        )
+      }
     }
 
     private fun loadDotEnv(): Map<String, String> {

@@ -15,12 +15,12 @@ data:
   ALPACA_STREAM_URL: "wss://stream.data.alpaca.markets"
   ALPACA_TRADE_STREAM_URL: "wss://paper-api.alpaca.markets/stream"
   ALPACA_BASE_URL: "https://data.alpaca.markets"
-  # Full market-data mode (quotes enabled) stays inside the application's aggregate 30-subscription guard.
+  # Full market-data mode stays inside Alpaca Basic's 30 symbol-channel subscription limit.
   ALPACA_MARKET_DATA_CHANNELS: "trades,quotes,bars,updatedBars"
   OPTIONS_MARKET_HOLIDAYS: "2026-01-01,2026-01-19,2026-02-16,2026-04-03,2026-05-25,2026-06-19,2026-07-03,2026-09-07,2026-11-26,2026-12-25"
-  # Preserve the existing Torghut symbols and add the liquid prospective Bayn research set.
-  SYMBOLS: "AAPL,AMD,AMZN,AVGO,COHR,CRDO,IWM,LITE,MRVL,MU,NVDA,QQQ,SMH,SNDK,SPY,WDC"
-  SYMBOLS_ALLOWLIST: "AAPL,AMD,AMZN,AVGO,COHR,CRDO,IWM,LITE,MRVL,MU,NVDA,QQQ,SMH,SNDK,SPY,WDC"
+  # The active Bayn strategy reads these six candidates plus its SPY benchmark.
+  SYMBOLS: "AAPL,AMZN,IWM,NVDA,QQQ,SMH,SPY"
+  SYMBOLS_ALLOWLIST: "AAPL,AMZN,IWM,NVDA,QQQ,SMH,SPY"
   # Observation symbols and their versioned identity are supplied separately in deployment.yaml.
   # Neither static market-data path depends on Jangar.
   SYMBOLS_POLL_INTERVAL_MS: "30000"
