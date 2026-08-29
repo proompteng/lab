@@ -433,15 +433,15 @@ pub async fn patch_status(
     status: MicroVMStatus,
 ) -> Result<(), kube::Error> {
     let name = microvm.name_any();
+    // The controller is the sole status writer. Do not precondition status patches on the
+    // resource version because authenticated activity updates metadata independently and can
+    // otherwise make every reconcile fail with a harmless but noisy 409 conflict.
     api.patch_status(
         &name,
         &PatchParams::default(),
         &Patch::Merge(json!({
             "apiVersion": "runtime.proompteng.ai/v1alpha1",
             "kind": "MicroVM",
-            "metadata": {
-                "resourceVersion": microvm.resource_version(),
-            },
             "status": status,
         })),
     )
@@ -1195,6 +1195,58 @@ mod tests {
             finalizers_without_tengri(&microvm),
             vec!["storage.example/finalizer".to_owned()]
         );
+    }
+
+    #[tokio::test]
+    async fn status_patch_is_not_invalidated_by_independent_metadata_updates() {
+        let now = Utc::now();
+        let mut microvm = test_microvm(now);
+        microvm.metadata.namespace = Some("tengri".to_owned());
+        microvm.metadata.resource_version = Some("17".to_owned());
+        let response_microvm = microvm.clone();
+        let status = MicroVMStatus {
+            phase: MicroVMPhase::Ready,
+            guest_ready: true,
+            last_activity_at: Some(now.to_rfc3339()),
+            ..MicroVMStatus::default()
+        };
+        let (service, mut handle) =
+            tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
+        let client = Client::new(service, "tengri");
+        let microvms = Api::namespaced(client, "tengri");
+
+        let update = tokio::spawn(async move { patch_status(&microvms, &microvm, status).await });
+        let (request, response) = handle.next_request().await.expect("status patch");
+        assert_eq!(request.method(), http::Method::PATCH);
+        assert_eq!(
+            request.uri().path(),
+            "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent/status"
+        );
+        let body: serde_json::Value = serde_json::from_slice(
+            &request
+                .into_body()
+                .collect_bytes()
+                .await
+                .expect("status patch body"),
+        )
+        .expect("status patch JSON");
+        assert!(body.pointer("/metadata/resourceVersion").is_none());
+        assert_eq!(body["status"]["phase"], "Ready");
+        assert_eq!(body["status"]["guestReady"], true);
+        response.send_response(
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(KubeBody::from(
+                    serde_json::to_vec(&response_microvm).expect("MicroVM response JSON"),
+                ))
+                .expect("status patch response"),
+        );
+
+        update
+            .await
+            .expect("status patch task")
+            .expect("status patch result");
     }
 
     #[test]
