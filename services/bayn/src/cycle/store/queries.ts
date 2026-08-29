@@ -345,11 +345,24 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
                 AND snapshot.manifest ->> 'finalizedAt' = ${document.bindings.snapshotFinalizedAt}
             )
           `
-        : sql`
-            ${document.bindings.snapshotId} = ${executionMarketData.snapshotId}
-            AND ${document.bindings.snapshotContentHash} = ${executionMarketData.contentHash}
-            AND ${document.bindings.snapshotFinalizedAt} = ${executionMarketData.observedAt}
-          `
+        : executionMarketData.schemaVersion === 'bayn.execution-market-data-binding.v2'
+          ? sql`
+              ${document.bindings.snapshotId} = ${executionMarketData.snapshotId}
+              AND ${document.bindings.snapshotContentHash} = ${executionMarketData.contentHash}
+              AND ${document.bindings.snapshotFinalizedAt} = ${executionMarketData.observedAt}
+              AND EXISTS (
+                SELECT 1
+                FROM intraday_snapshot_references AS snapshot
+                WHERE snapshot.snapshot_id = ${executionMarketData.snapshotId}
+                  AND snapshot.content_hash = ${executionMarketData.contentHash}
+                  AND snapshot.observed_at = ${executionMarketData.observedAt}::timestamptz
+              )
+            `
+          : sql`
+              ${document.bindings.snapshotId} = ${executionMarketData.snapshotId}
+              AND ${document.bindings.snapshotContentHash} = ${executionMarketData.contentHash}
+              AND ${document.bindings.snapshotFinalizedAt} = ${executionMarketData.observedAt}
+            `
     return sql<Record<string, unknown>>`
       SELECT EXISTS (
         SELECT 1

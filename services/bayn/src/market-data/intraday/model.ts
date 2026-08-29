@@ -142,6 +142,23 @@ export type ArchiveVerifiedIntradayMarketSnapshot = IntradayMarketSnapshot & {
   readonly [ArchiveVerifiedIntradayMarketSnapshotTypeId]: true
 }
 
+declare const ArchiveVerifiedIntradaySnapshotReferenceTypeId: unique symbol
+
+/** Compact durable identity derived only from a snapshot reverified against the immutable archive. */
+export type ArchiveVerifiedIntradaySnapshotReference = {
+  readonly schemaVersion: 'bayn.intraday-snapshot-reference.v1'
+  readonly manifest: IntradaySnapshotManifest
+  readonly [ArchiveVerifiedIntradaySnapshotReferenceTypeId]: true
+}
+
+export const archiveVerifiedIntradaySnapshotReference = (
+  snapshot: ArchiveVerifiedIntradayMarketSnapshot,
+): ArchiveVerifiedIntradaySnapshotReference =>
+  Object.freeze({
+    schemaVersion: 'bayn.intraday-snapshot-reference.v1',
+    manifest: snapshot.manifest,
+  }) as ArchiveVerifiedIntradaySnapshotReference
+
 /**
  * Verified intraday market-data boundary. This service is introduced with the
  * verifier and its ClickHouse implementation so callers can never obtain a

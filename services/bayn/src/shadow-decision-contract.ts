@@ -660,7 +660,7 @@ const intradayMomentumSnapshotEvidenceIssues = (
       },
     ]
   }
-  const snapshot = verifyBoundIntradaySnapshot(binding, rows)
+  const snapshot = reconstructBoundIntradaySnapshot(binding, rows)
   if (snapshot === undefined) {
     return [
       {
@@ -715,7 +715,7 @@ type ArchiveExecutionMarketDataBinding = Extract<
   { readonly schemaVersion: 'bayn.execution-market-data-binding.v2' }
 >
 
-const verifyBoundIntradaySnapshot = (
+export const reconstructBoundIntradaySnapshot = (
   binding: ArchiveExecutionMarketDataBinding,
   rows: typeof PersistedIntradaySnapshotRowsSchema.Type,
 ) => {
@@ -796,7 +796,7 @@ const quoteBoundLiquidationSnapshotIssues = (
       },
     ]
   }
-  const snapshot = verifyBoundIntradaySnapshot(binding, rows)
+  const snapshot = reconstructBoundIntradaySnapshot(binding, rows)
   if (snapshot === undefined) {
     return [
       ...timingIssues,

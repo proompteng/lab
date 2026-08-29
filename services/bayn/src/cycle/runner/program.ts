@@ -7,7 +7,7 @@ import { currentUtcInstant } from '../../time'
 import { CycleState, type AutonomousCycle } from '../model'
 import { bindFinalizedCyclePublication, runCyclePublicationReadiness, type CycleReadinessError } from '../readiness'
 import { selectCycleRecovery, type CycleRecoverySelection, type CycleRecoveryState } from '../recovery'
-import { CycleStore, type CycleStoreShape } from '../store'
+import { CycleStore, type CycleDecisionBindingEvidence, type CycleStoreShape } from '../store'
 import { isTerminalCycleState } from '../transitions'
 import {
   beginCycleAuthoritySelection,
@@ -559,29 +559,41 @@ const recoverCycle = <R>(
                   }),
                 ),
           onSuccess: (document) =>
-            pipe(
-              currentIsoTime,
-              Effect.flatMap((bindObservedAt) =>
+            (context.buildDecisionEvidence?.(document) ?? Effect.succeed<CycleDecisionBindingEvidence>({})).pipe(
+              Effect.mapError((cause) =>
+                runnerError({
+                  operation: 'build-decision',
+                  failure: cause.failure === 'not-ready' ? 'contract' : cause.failure,
+                  message: cause.message,
+                  cause,
+                }),
+              ),
+              Effect.flatMap((evidence) =>
                 pipe(
-                  CycleStore,
-                  Effect.flatMap((store) =>
-                    store.bindDecision(selection.cycle.identity.cycleId, document, bindObservedAt),
-                  ),
-                  Effect.mapError((cause) =>
-                    runnerError({
-                      operation: 'recover-cycle',
-                      failure: 'store',
-                      message: 'durable shadow decision binding failed',
-                      cause,
-                    }),
-                  ),
-                  Effect.map(
-                    (binding): CycleRunResult => ({
-                      outcome: 'RECOVERED',
-                      action: binding.cycle.state === CycleState.Blocked ? 'BLOCKED' : 'BOUND_DECISION',
-                      observedAt: binding.cycle.updatedAt,
-                      cycle: binding.cycle,
-                    }),
+                  currentIsoTime,
+                  Effect.flatMap((bindObservedAt) =>
+                    pipe(
+                      CycleStore,
+                      Effect.flatMap((store) =>
+                        store.bindDecision(selection.cycle.identity.cycleId, document, bindObservedAt, evidence),
+                      ),
+                      Effect.mapError((cause) =>
+                        runnerError({
+                          operation: 'recover-cycle',
+                          failure: 'store',
+                          message: 'durable shadow decision binding failed',
+                          cause,
+                        }),
+                      ),
+                      Effect.map(
+                        (binding): CycleRunResult => ({
+                          outcome: 'RECOVERED',
+                          action: binding.cycle.state === CycleState.Blocked ? 'BLOCKED' : 'BOUND_DECISION',
+                          observedAt: binding.cycle.updatedAt,
+                          cycle: binding.cycle,
+                        }),
+                      ),
+                    ),
                   ),
                 ),
               ),

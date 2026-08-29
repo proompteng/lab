@@ -65,6 +65,7 @@ import { BlockedCycleIntentStore, BlockedCycleIntentStoreLive } from '../../exec
 import { canonicalHashV1, sha256 } from '../../hash'
 import { Journal, type JournalService } from '../../ledger'
 import {
+  type ArchiveVerifiedIntradaySnapshotReference,
   MarketData,
   type FinalizedPublicationInspection,
   type MarketDataService,
@@ -1328,6 +1329,7 @@ const makeShadowDecision = (
 }
 
 const makeIntradayShadowDecision = (draft: IntradayCycleDraft) => {
+  const universe = ['AMD', 'NVDA'] as const
   const sourceTopics = {
     bars: 'torghut.bars.1m.v1',
     quotes: 'torghut.quotes.v1',
@@ -1357,8 +1359,9 @@ const makeIntradayShadowDecision = (draft: IntradayCycleDraft) => {
     rangeEndAt: '2026-03-09T13:35:00.000Z',
     observedAt: draft.window.submissionOpenAt,
     universeId: 'opening-drive-fixture-v1',
-    universeSymbolHash: '7'.repeat(64),
-    symbols: ['AMD', 'NVDA'],
+    universeSymbolHash: sha256(universe.join(',')),
+    universe,
+    symbols: universe,
     feed: 'sip' as const,
     delayClass: 'real_time_consolidated' as const,
     sourceTopics,
@@ -1386,7 +1389,7 @@ const makeIntradayShadowDecision = (draft: IntradayCycleDraft) => {
   const contentHash = canonicalHashV1(snapshotMaterial)
   const { schemaVersion: snapshotSchemaVersion, ...material } = snapshotMaterial
   const executionMarketData = {
-    schemaVersion: 'bayn.execution-market-data-binding.v1' as const,
+    schemaVersion: 'bayn.execution-market-data-binding.v2' as const,
     snapshotSchemaVersion,
     ...material,
     contentHash,
@@ -1407,6 +1410,20 @@ const makeIntradayShadowDecision = (draft: IntradayCycleDraft) => {
   })
   if (Result.isFailure(result)) throw new Error(`${result.failure.message}: ${String(result.failure.cause)}`)
   return result.success
+}
+
+const makeIntradaySnapshotReference = (
+  document: ReturnType<typeof makeIntradayShadowDecision>,
+): ArchiveVerifiedIntradaySnapshotReference => {
+  const binding = document.bindings.executionMarketData
+  if (binding?.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
+    return expect.unreachable('intraday store fixture requires archive market-data binding v2')
+  }
+  const { schemaVersion: _bindingSchemaVersion, snapshotSchemaVersion, ...manifest } = binding
+  return {
+    schemaVersion: 'bayn.intraday-snapshot-reference.v1',
+    manifest: { schemaVersion: snapshotSchemaVersion, ...manifest },
+  } as unknown as ArchiveVerifiedIntradaySnapshotReference
 }
 
 const makePaperNoTradeDecision = (
@@ -3124,6 +3141,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
   test('persists and recovers the versioned intraday cycle without changing legacy rows', async () => {
     const draft = makeIntradayDraft()
     const document = makeIntradayShadowDecision(draft)
+    const snapshotReference = makeIntradaySnapshotReference(document)
     const observed = await runtime.runPromise(
       Effect.gen(function* () {
         const store = yield* CycleStore
@@ -3133,8 +3151,22 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         )
         const activated = yield* store.activate(draft.identity.cycleId, draft.window.submissionOpenAt)
         yield* insertShadowReconciliation(draft)
-        const bound = yield* store.bindDecision(draft.identity.cycleId, document, document.createdAt)
+        const missingReference = yield* Effect.exit(
+          store.bindDecision(draft.identity.cycleId, document, document.createdAt),
+        )
+        const bound = yield* store.bindDecision(draft.identity.cycleId, document, document.createdAt, {
+          intradaySnapshotReferences: [snapshotReference],
+        })
         const replay = yield* store.bindDecision(draft.identity.cycleId, structuredClone(document), document.createdAt)
+        const conflictingReference = {
+          ...snapshotReference,
+          manifest: { ...snapshotReference.manifest, contentHash: 'f'.repeat(64) },
+        } as ArchiveVerifiedIntradaySnapshotReference
+        const conflictingEvidence = yield* Effect.exit(
+          store.bindDecision(draft.identity.cycleId, structuredClone(document), document.createdAt, {
+            intradaySnapshotReferences: [conflictingReference],
+          }),
+        )
         const authoritySlot = yield* store.readAuthoritySlot({
           qualificationRunId: draft.identity.qualificationRunId,
           accountId: draft.identity.accountId,
@@ -3160,11 +3192,20 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           FROM snapshot_references
           WHERE snapshot_id = ${document.bindings.snapshotId}
         `
+        const [intradayReference] = yield* sql<{ count: number }>`
+          SELECT count(*)::integer AS count
+          FROM intraday_snapshot_references
+          WHERE snapshot_id = ${document.bindings.snapshotId}
+            AND content_hash = ${document.bindings.snapshotContentHash}
+        `
         return {
           activated,
           authoritySlot,
           bound,
+          conflictingEvidence,
           dailyReferenceCount: dailyReference.count,
+          intradayReferenceCount: intradayReference.count,
+          missingReference,
           receipt,
           replay,
           row,
@@ -3194,6 +3235,12 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     })
     expect(Exit.isFailure(observed.standaloneSnapshot)).toBe(true)
     expect(observed.activated).toMatchObject({ changed: true, cycle: { state: CycleState.Active, bindings: {} } })
+    expect(Exit.isFailure(observed.missingReference)).toBe(true)
+    if (Exit.isFailure(observed.missingReference)) {
+      expect(Cause.pretty(observed.missingReference.cause)).toContain(
+        'decision does not match its durable market-data and exact reconciliation evidence',
+      )
+    }
     expect(observed.bound).toMatchObject({
       changed: true,
       cycle: {
@@ -3206,8 +3253,15 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       },
     })
     expect(observed.replay).toEqual({ changed: false, cycle: observed.bound.cycle })
+    expect(Exit.isFailure(observed.conflictingEvidence)).toBe(true)
+    if (Exit.isFailure(observed.conflictingEvidence)) {
+      expect(Cause.pretty(observed.conflictingEvidence.cause)).toContain(
+        'stored intraday snapshot reference diverged from the archive-verified manifest',
+      )
+    }
     expect(observed.authoritySlot).toEqual(Option.some(observed.bound.cycle))
     expect(observed.dailyReferenceCount).toBe(0)
+    expect(observed.intradayReferenceCount).toBe(1)
     expect(observed.row).toEqual({
       schema_version: 'bayn.autonomous-cycle.v3',
       execution_policy_schema_version: 'bayn.autonomous-cycle-execution-policy.v2',

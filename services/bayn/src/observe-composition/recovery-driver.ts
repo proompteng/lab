@@ -15,12 +15,14 @@ import {
 } from '../cycle/runner'
 import { validateCycleLoopInterval } from '../cycle/runner/decisions'
 import { type ReconciliationCadenceState } from '../cycle/runner/model'
+import type { CycleDecisionBindingEvidence } from '../cycle/store'
 import { OperationalError, operationalError } from '../errors'
+import { archiveVerifiedIntradaySnapshotReference, type IntradayMarketDataService } from '../market-data'
 import { type ReconciliationPassResult } from '../reconciler'
 import { type Policy } from '../risk'
 import { currentUtcInstant } from '../time'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
-import type { CycleDecisionDocument } from '../shadow-decision-contract'
+import { reconstructBoundIntradaySnapshot, type CycleDecisionDocument } from '../shadow-decision-contract'
 import { strategyDefinition } from '../strategy'
 import { restrictMutationLoopFailure } from './mutation-interpreter'
 import type {
@@ -55,6 +57,48 @@ type RecoveryFirstDecisionBuilder = (
   cycle: AutonomousCycle,
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
 ) => Effect.Effect<CycleDecisionDocument, CycleDecisionBuildError, ObserveDecisionRuntime>
+
+const verifyDecisionBindingEvidence = (
+  marketData: IntradayMarketDataService | undefined,
+  document: CycleDecisionDocument,
+): Effect.Effect<CycleDecisionBindingEvidence, CycleDecisionBuildError> => {
+  const binding = document.bindings.executionMarketData
+  if (binding?.schemaVersion !== 'bayn.execution-market-data-binding.v2') return Effect.succeed({})
+  if (
+    marketData === undefined ||
+    !('decisionMarketDataRows' in document) ||
+    document.decisionMarketDataRows === undefined
+  ) {
+    return Effect.fail(
+      new CycleDecisionBuildError({
+        failure: 'contract',
+        message: 'intraday decision has no archive reader or persisted rows for external verification',
+      }),
+    )
+  }
+  const snapshot = reconstructBoundIntradaySnapshot(binding, document.decisionMarketDataRows)
+  if (snapshot === undefined) {
+    return Effect.fail(
+      new CycleDecisionBuildError({
+        failure: 'contract',
+        message: 'intraday decision rows do not reconstruct their bound archive snapshot',
+      }),
+    )
+  }
+  return marketData.verifyArchiveSnapshot(snapshot).pipe(
+    Effect.map((verified) => ({
+      intradaySnapshotReferences: [archiveVerifiedIntradaySnapshotReference(verified)],
+    })),
+    Effect.mapError(
+      (cause) =>
+        new CycleDecisionBuildError({
+          failure: 'market-data',
+          message: 'intraday decision does not match the immutable archive at its bound watermarks',
+          cause,
+        }),
+    ),
+  )
+}
 
 const observeMutationPass = (
   startup: Parameters<AutonomousCycleStartup>[0],
@@ -250,6 +294,7 @@ const makeRecoveryFirstCycleDriverEffect = (
         accountId: input.accountId,
         executionPolicy: preparation.executionPolicy,
         buildDecision: (cycle) => buildDecision(cycle, reconcile),
+        buildDecisionEvidence: (document) => verifyDecisionBindingEvidence(input.intradayMarketData, document),
       }
       const result = yield* runMutationPassWithinTimeout(
         runRecoveryFirstCyclePass(input, preparation, policy, context, reconcile, capability),
