@@ -56,6 +56,16 @@ const expectedProjectTemplate = '{{ if hasKey . "project" }}{{ .project }}{{ els
 const expectedApplicationNameTemplate = '{{ .name }}{{ .suffix }}'
 const expectedDestinationNamespaceTemplate =
   '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
+const expectedTemplateSyncPolicy = {
+  syncOptions: [
+    'CreateNamespace=true',
+    'ServerSideApply=true',
+    'RespectIgnoreDifferences=true',
+    'ApplyOutOfSyncOnly=true',
+    'PruneLast=true',
+    'ClientSideApplyMigration=false',
+  ],
+} as const
 export const TENGRI_APPLICATION_TEMPLATE_PATCH = `{{- if .annotations }}
 metadata:
   annotations:
@@ -310,7 +320,36 @@ function findTengriApplicationBlock(contents: string) {
   const selector = selectorNode === undefined ? undefined : isMap(selectorNode) ? selectorNode.toJSON() : null
   assertSelectorAdmitsTengri(selector, application)
 
-  const templateMetadataNode = document.getIn(['spec', 'template', 'metadata'], true)
+  const templateNode = document.getIn(['spec', 'template'], true)
+  if (!isMap(templateNode)) {
+    throw new Error('Tengri ApplicationSet template must be a mapping')
+  }
+  const unsupportedTemplateFields = Object.keys(templateNode.toJSON()).filter(
+    (field) => field !== 'metadata' && field !== 'spec',
+  )
+  if (unsupportedTemplateFields.length > 0) {
+    throw new Error(
+      `Tengri ApplicationSet template contains unsupported fields; remove ${unsupportedTemplateFields.join(', ')}`,
+    )
+  }
+  const templateSpecNode = templateNode.get('spec', true)
+  if (!isMap(templateSpecNode)) {
+    throw new Error('Tengri ApplicationSet template spec must be a mapping')
+  }
+  if (templateSpecNode.has('sources')) {
+    throw new Error('Tengri ApplicationSet template must use one verified source and must not define sources')
+  }
+  const verifiedTemplateSpecFields = new Set(['project', 'destination', 'source', 'syncPolicy', 'ignoreDifferences'])
+  const unsupportedTemplateSpecFields = Object.keys(templateSpecNode.toJSON()).filter(
+    (field) => !verifiedTemplateSpecFields.has(field),
+  )
+  if (unsupportedTemplateSpecFields.length > 0) {
+    throw new Error(
+      `Tengri ApplicationSet template spec contains unsupported fields; remove ${unsupportedTemplateSpecFields.join(', ')}`,
+    )
+  }
+
+  const templateMetadataNode = templateNode.get('metadata', true)
   if (!isMap(templateMetadataNode) || templateMetadataNode.get('name') !== expectedApplicationNameTemplate) {
     throw new Error(`Tengri ApplicationSet template must name applications ${expectedApplicationNameTemplate}`)
   }
@@ -321,9 +360,6 @@ function findTengriApplicationBlock(contents: string) {
   const destination = isMap(destinationNode) ? destinationNode.toJSON() : null
   if (!isDeepStrictEqual(destination, { namespace: expectedDestinationNamespaceTemplate })) {
     throw new Error('Tengri ApplicationSet base destination must contain only the verified namespace projection')
-  }
-  if (document.getIn(['spec', 'template', 'spec', 'sources'], true) !== undefined) {
-    throw new Error('Tengri ApplicationSet template must use one verified source and must not define sources')
   }
   const sourceNode = document.getIn(['spec', 'template', 'spec', 'source'], true)
   if (!isMap(sourceNode)) {
@@ -353,6 +389,14 @@ function findTengriApplicationBlock(contents: string) {
   }
   if (project !== 'default' && project !== expectedProjectTemplate) {
     throw new Error('Tengri ApplicationSet template must resolve Tengri to the default project')
+  }
+
+  const templateSyncPolicyNode = templateSpecNode.get('syncPolicy', true)
+  if (
+    !isMap(templateSyncPolicyNode) ||
+    !isDeepStrictEqual(templateSyncPolicyNode.toJSON(), expectedTemplateSyncPolicy)
+  ) {
+    throw new Error('Tengri ApplicationSet template must preserve the verified sync options')
   }
 
   const globalIgnoreDifferencesNode = document.getIn(['spec', 'template', 'spec', 'ignoreDifferences'], true)
