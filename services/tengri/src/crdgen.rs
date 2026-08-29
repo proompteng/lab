@@ -34,7 +34,7 @@ fn production_crd() -> anyhow::Result<CustomResourceDefinition> {
             {"name": "Phase", "type": "string", "jsonPath": ".status.phase"},
             {"name": "Node", "type": "string", "jsonPath": ".status.nodeName"},
             {"name": "Guest Ready", "type": "boolean", "jsonPath": ".status.guestReady"},
-            {"name": "Expires", "type": "date", "jsonPath": ".spec.expiresAt"}
+            {"name": "Expires", "type": "string", "jsonPath": ".spec.expiresAt"}
         ]),
     )?;
     insert(
@@ -146,6 +146,11 @@ mod tests {
         assert_eq!(
             crd.pointer("/spec/versions/0/additionalPrinterColumns/2/jsonPath"),
             Some(&json!(".status.guestReady"))
+        );
+        assert_eq!(
+            crd.pointer("/spec/versions/0/additionalPrinterColumns/3/type"),
+            Some(&json!("string")),
+            "future expiry timestamps must not use kubectl's age-oriented date renderer"
         );
         assert_eq!(
             crd.pointer(
