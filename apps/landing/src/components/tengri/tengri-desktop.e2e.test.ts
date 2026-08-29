@@ -79,6 +79,8 @@ type MockOptions = {
 
 async function mockTengri(page: Page, options: MockOptions = {}) {
   let agent = options.agent === undefined ? readyAgent : options.agent
+  let snapshotFailuresRemaining = 0
+  let snapshotRequests = 0
   const authenticated = options.authenticated ?? true
   const actions: Record<string, unknown>[] = []
   let resumeThreadRequests = 0
@@ -198,6 +200,16 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   await page.route('**/api/tengri', async (route) => {
     const request = route.request()
     if (request.method() === 'GET') {
+      snapshotRequests += 1
+      if (snapshotFailuresRemaining > 0) {
+        snapshotFailuresRemaining -= 1
+        await route.fulfill({
+          status: 503,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'Tengri control plane is temporarily unavailable' }),
+        })
+        return
+      }
       if (
         options.failSnapshotAfterAction &&
         actions.some((action) => action.action === options.failSnapshotAfterAction)
@@ -416,12 +428,19 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
 
   return {
     actions,
+    failNextSnapshots: (count: number) => {
+      snapshotFailuresRemaining = count
+    },
     getAgent: () => agent,
     getMaxConcurrentSearchRequests: () => maxConcurrentSearchRequests,
     getResumeThreadResponseCount: () => resumeThreadResponses,
+    getSnapshotRequestCount: () => snapshotRequests,
     releaseHeldCodexAccount,
     releaseHeldLifecycleAction,
     releaseHeldResume,
+    setAgent: (nextAgent: typeof readyAgent | null) => {
+      agent = nextAgent
+    },
     waitForHeldLifecycleAction: () => heldLifecycleActionStarted,
     waitForHeldCodexAccount: () => heldCodexAccountStarted,
     waitForHeldResume: () => heldResumeStarted,
@@ -664,7 +683,7 @@ test('preserves terminal identity on reload and BFCache restore while isolating 
   ).toBeVisible()
 
   await page.reload()
-  await openTerminal(page)
+  await expect(page.getByRole('region', { name: 'Terminal window' })).toHaveCount(1)
   await expect(
     page.getByRole('region', { name: 'Terminal window' }).getByText('Connected', { exact: true }),
   ).toBeVisible()
@@ -692,6 +711,55 @@ test('preserves terminal identity on reload and BFCache restore while isolating 
     duplicateMock.actions.find((action) => action.action === 'create-terminal')?.creationId,
   )
   expect(duplicateCreationId).not.toBe(originalCreationId)
+  expect(terminalStore.sessions).toHaveLength(2)
+  await duplicate.close()
+})
+
+test('restores and isolates desktop sessions without Web Locks or BroadcastChannel', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: undefined })
+    Object.defineProperty(globalThis, 'BroadcastChannel', { configurable: true, value: undefined })
+  })
+  const terminalStore: TerminalStore = { sessions: [] }
+  const mock = await mockTengri(page, { terminalStore })
+  await page.goto('/')
+
+  await page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Terminal' }).click()
+  await expect(
+    page.getByRole('region', { name: 'Terminal window' }).getByText('Connected', { exact: true }),
+  ).toBeVisible()
+  const desktopId = await page.evaluate((agentId) => sessionStorage.getItem(`tengri:desktop:${agentId}`), readyAgent.id)
+
+  await page.reload()
+
+  await expect(page.getByRole('region', { name: 'Terminal window' })).toHaveCount(1)
+  await expect(
+    page.getByRole('region', { name: 'Terminal window' }).getByText('Connected', { exact: true }),
+  ).toBeVisible()
+  expect(await page.evaluate((agentId) => sessionStorage.getItem(`tengri:desktop:${agentId}`), readyAgent.id)).toBe(
+    desktopId,
+  )
+  expect(mock.actions.filter((action) => action.action === 'create-terminal')).toHaveLength(1)
+
+  const originalCreationId = String(mock.actions.find((action) => action.action === 'create-terminal')?.creationId)
+  const inheritedSessionStorage = await page.evaluate(() => Object.entries(sessionStorage))
+  const duplicate = await page.context().newPage()
+  await duplicate.addInitScript((entries: Array<[string, string]>) => {
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: undefined })
+    Object.defineProperty(globalThis, 'BroadcastChannel', { configurable: true, value: undefined })
+    for (const [key, value] of entries) sessionStorage.setItem(key, value)
+  }, inheritedSessionStorage)
+  const duplicateMock = await mockTengri(duplicate, { terminalStore })
+  await duplicate.goto('/')
+  await duplicate.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Terminal' }).click()
+  await expect.poll(() => duplicateMock.actions.filter((action) => action.action === 'create-terminal').length).toBe(1)
+  const duplicateCreationId = String(
+    duplicateMock.actions.find((action) => action.action === 'create-terminal')?.creationId,
+  )
+  expect(duplicateCreationId).not.toBe(originalCreationId)
+  expect(
+    await duplicate.evaluate((agentId) => sessionStorage.getItem(`tengri:desktop:${agentId}`), readyAgent.id),
+  ).not.toBe(desktopId)
   expect(terminalStore.sessions).toHaveLength(2)
   await duplicate.close()
 })
@@ -924,6 +992,10 @@ test('sends a real agent turn and executes sleep, resume, and confirmed deletion
   await expect(dock).toBeVisible()
   await expect.poll(() => mock.getAgent()?.phase).toBe('ready')
 
+  await dock.getByRole('button', { name: 'Open Terminal' }).click()
+  await expect(
+    page.getByRole('region', { name: 'Terminal window' }).getByText('Connected', { exact: true }),
+  ).toBeVisible()
   await dock.getByRole('button', { name: 'Open Settings' }).click()
   await settings.getByRole('button', { name: 'Delete Agent' }).click()
   const deleteDialog = page.getByRole('alertdialog', { name: /Delete “Tengri”/ })
@@ -932,7 +1004,108 @@ test('sends a real agent turn and executes sleep, resume, and confirmed deletion
   await expect(page.getByRole('dialog', { name: 'Spotlight' })).toHaveCount(0)
   await expect(deleteDialog).toBeVisible()
   await deleteDialog.getByRole('button', { name: 'Delete Agent' }).click()
+  const create = page.getByRole('dialog', { name: 'Create your agent' })
+  await expect(create).toBeVisible()
+  expect(
+    await page.evaluate(
+      (agentId) =>
+        Object.keys(sessionStorage).filter(
+          (key) =>
+            key === `tengri:desktop:${agentId}` ||
+            key.startsWith(`tengri:windows:${agentId}:`) ||
+            key.startsWith(`tengri:terminal:${agentId}:`) ||
+            key === `tengri:terminal-cleanup:${agentId}`,
+        ),
+      readyAgent.id,
+    ),
+  ).toEqual([])
+
+  await create.getByLabel('Agent name').fill('Replacement')
+  await create.getByRole('button', { name: 'Create Agent' }).click()
+  await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Terminal window' })).toHaveCount(0)
+})
+
+test('propagates deletion cleanup to every open desktop tab', async ({ page }) => {
+  const terminalStore: TerminalStore = { sessions: [] }
+  await mockTengri(page, { terminalStore })
+  await page.goto('/')
+
+  const duplicate = await page.context().newPage()
+  await mockTengri(duplicate, { terminalStore })
+  await duplicate.goto('/')
+  await duplicate.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Terminal' }).click()
+  await expect(
+    duplicate.getByRole('region', { name: 'Terminal window' }).getByText('Connected', { exact: true }),
+  ).toBeVisible()
+  expect(
+    await duplicate.evaluate(
+      (agentId) =>
+        Object.keys(sessionStorage).some(
+          (key) => key.startsWith(`tengri:windows:${agentId}:`) || key.startsWith(`tengri:terminal:${agentId}:`),
+        ),
+      readyAgent.id,
+    ),
+  ).toBe(true)
+
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  await dock.getByRole('button', { name: 'Open Settings' }).click()
+  const settings = page.getByRole('region', { name: 'Settings window' })
+  await settings.getByRole('button', { name: 'Delete Agent' }).click()
+  await page
+    .getByRole('alertdialog', { name: /Delete “Tengri”/ })
+    .getByRole('button', { name: 'Delete Agent' })
+    .click()
+
   await expect(page.getByRole('dialog', { name: 'Create your agent' })).toBeVisible()
+  await expect(duplicate.getByRole('heading', { name: 'Deleting Tengri' })).toBeVisible()
+  await expect
+    .poll(() =>
+      duplicate.evaluate(
+        (agentId) =>
+          Object.keys(sessionStorage).filter(
+            (key) =>
+              key === `tengri:desktop:${agentId}` ||
+              key.startsWith(`tengri:windows:${agentId}:`) ||
+              key.startsWith(`tengri:terminal:${agentId}:`) ||
+              key === `tengri:terminal-cleanup:${agentId}`,
+          ),
+        readyAgent.id,
+      ),
+    )
+    .toEqual([])
+  await duplicate.close()
+})
+
+test('retries cross-tab deletion refreshes after a transient failure', async ({ page }) => {
+  const failedAgent = {
+    ...readyAgent,
+    phase: 'failed',
+    message: 'Guest startup failed.',
+  }
+  await mockTengri(page, { agent: failedAgent })
+  await page.goto('/')
+
+  const duplicate = await page.context().newPage()
+  const duplicateMock = await mockTengri(duplicate, { agent: failedAgent })
+  await duplicate.goto('/')
+  await expect(duplicate.getByRole('heading', { name: 'Agent could not start' })).toBeVisible()
+
+  const snapshotRequestsBeforeDeletion = duplicateMock.getSnapshotRequestCount()
+  duplicateMock.setAgent(null)
+  duplicateMock.failNextSnapshots(1)
+  await page.getByRole('button', { name: 'Delete Failed Agent' }).click()
+  await page
+    .getByRole('alertdialog', { name: /Delete “Tengri”/ })
+    .getByRole('button', { name: 'Delete Agent' })
+    .click()
+
+  await expect(page.getByRole('dialog', { name: 'Create your agent' })).toBeVisible()
+  await expect
+    .poll(() => duplicateMock.getSnapshotRequestCount())
+    .toBeGreaterThanOrEqual(snapshotRequestsBeforeDeletion + 2)
+  await expect(duplicate.getByRole('dialog', { name: 'Create your agent' })).toBeVisible({ timeout: 6_000 })
+  await duplicate.close()
 })
 
 test('blocks lifecycle changes while Settings has a guest request in flight', async ({ page }) => {
@@ -1189,6 +1362,16 @@ test('renders truthful booting, sleeping, and failed lifecycle states', async ({
     agent: { ...readyAgent, phase: 'failed', message: 'Guest readiness probe failed without fabricated progress.' },
   })
   await page.reload()
+  const staleDesktopId = '0123456789abcdef0123456789abcdef'
+  await page.evaluate(
+    ({ agentId, desktopId }) => {
+      sessionStorage.setItem(`tengri:desktop:${agentId}`, desktopId)
+      sessionStorage.setItem(`tengri:windows:${agentId}:${desktopId}`, '{"windows":[]}')
+      sessionStorage.setItem(`tengri:terminal:${agentId}:${desktopId}:terminal-4`, '{"sessionId":"stale"}')
+      sessionStorage.setItem(`tengri:terminal-cleanup:${agentId}`, '[]')
+    },
+    { agentId: readyAgent.id, desktopId: staleDesktopId },
+  )
   const failed = page.getByRole('dialog', { name: 'Agent could not start' })
   await expect(failed).toContainText('Guest readiness probe failed without fabricated progress.')
   await failed.getByRole('button', { name: 'Delete Failed Agent' }).click()
@@ -1197,6 +1380,19 @@ test('renders truthful booting, sleeping, and failed lifecycle states', async ({
     .getByRole('button', { name: 'Delete Agent' })
     .click()
   await expect(page.getByRole('dialog', { name: 'Create your agent' })).toBeVisible()
+  expect(
+    await page.evaluate(
+      (agentId) =>
+        Object.keys(sessionStorage).filter(
+          (key) =>
+            key === `tengri:desktop:${agentId}` ||
+            key.startsWith(`tengri:windows:${agentId}:`) ||
+            key.startsWith(`tengri:terminal:${agentId}:`) ||
+            key === `tengri:terminal-cleanup:${agentId}`,
+        ),
+      readyAgent.id,
+    ),
+  ).toEqual([])
 })
 
 test('shows native-feeling unauthenticated and create-agent states', async ({ page }) => {
@@ -1239,6 +1435,7 @@ test('matches the Tahoe desktop at required production viewports', async ({ page
     fullPage: true,
   })
 
+  await page.evaluate(() => sessionStorage.clear())
   await page.setViewportSize({ width: 1728, height: 1117 })
   await page.goto('/')
   await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()

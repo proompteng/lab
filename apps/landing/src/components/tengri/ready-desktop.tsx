@@ -23,6 +23,7 @@ import {
   type Bounds,
   type DesktopWindow,
   type TengriApp,
+  type WindowManagerState,
   windowIdForOpen,
   windowReducer,
 } from '@/lib/tengri/window-manager'
@@ -38,6 +39,12 @@ import { CodeEditor } from './code-editor'
 import { type CodeOpenRequest, updateDirtyCodeWindows } from './code-editor-model'
 import { ConfirmationDialog } from './confirmation-dialog'
 import { DesktopWindowFrame } from './desktop-window'
+import {
+  clearDeletedDesktopState,
+  createDesktopCoordinationChannel,
+  publishDeletedDesktopState,
+  subscribeDeletedDesktopState,
+} from './desktop-session-storage'
 import { FinderApp, type FinderOpenRequest } from './finder-app'
 import { MenuBar } from './menu-bar'
 import { SettingsApp } from './settings-app'
@@ -60,12 +67,18 @@ const getServerGuestOperationSnapshot = () => false
 const DESKTOP_ID_PATTERN = /^[0-9a-f]{32}$/
 const desktopIdentityLeases = new Map<string, DesktopIdentityLease>()
 
+function desktopLayoutStorageKey(agentId: string, desktopId: string) {
+  return `tengri:windows:${agentId}:${desktopId}`
+}
+
 function newDesktopId() {
   return crypto.randomUUID().replaceAll('-', '')
 }
 
 function createDesktopIdentityLease(agentId: string): DesktopIdentityLease {
   let released = false
+  let committedId = ''
+  let pendingCandidate = ''
   let resolveIdentity: (id: string) => void = () => {}
   const identity = new Promise<string>((resolve) => {
     resolveIdentity = resolve
@@ -77,6 +90,18 @@ function createDesktopIdentityLease(agentId: string): DesktopIdentityLease {
     releaseTimer: null,
   }
   let handlePageHide: (event: PageTransitionEvent) => void = () => {}
+  const pendingPresence = new Map<string, { present: () => void; timer: ReturnType<typeof setTimeout> }>()
+  let coordination: ReturnType<typeof createDesktopCoordinationChannel>
+  coordination = createDesktopCoordinationChannel(agentId, (message) => {
+    if (
+      message.type === 'identity-probe' &&
+      (committedId === message.desktopId || pendingCandidate === message.desktopId)
+    ) {
+      coordination.post({ type: 'identity-present', desktopId: message.desktopId, requestId: message.requestId })
+      return
+    }
+    if (message.type === 'identity-present') pendingPresence.get(message.requestId)?.present()
+  })
   const storageKey = `tengri:desktop:${agentId}`
   let storedId = ''
   try {
@@ -88,6 +113,7 @@ function createDesktopIdentityLease(agentId: string): DesktopIdentityLease {
 
   const commitIdentity = (id: string) => {
     if (released) return
+    committedId = id
     try {
       sessionStorage.setItem(storageKey, id)
     } catch {
@@ -98,7 +124,30 @@ function createDesktopIdentityLease(agentId: string): DesktopIdentityLease {
 
   const claimIdentity = (candidate: string) => {
     if (!navigator.locks) {
-      commitIdentity(newDesktopId())
+      if (!coordination.available) {
+        const navigation = performance.getEntriesByType('navigation').at(0) as PerformanceNavigationTiming | undefined
+        commitIdentity(storedId && navigation?.type === 'reload' ? candidate : newDesktopId())
+        return
+      }
+      const requestId = newDesktopId()
+      pendingCandidate = candidate
+      const timer = setTimeout(() => {
+        pendingPresence.delete(requestId)
+        pendingCandidate = ''
+        commitIdentity(candidate)
+      }, 120)
+      pendingPresence.set(requestId, {
+        timer,
+        present: () => {
+          const probe = pendingPresence.get(requestId)
+          if (!probe) return
+          clearTimeout(probe.timer)
+          pendingPresence.delete(requestId)
+          pendingCandidate = ''
+          claimIdentity(newDesktopId())
+        },
+      })
+      coordination.post({ type: 'identity-probe', desktopId: candidate, requestId })
       return
     }
     void navigator.locks
@@ -120,6 +169,9 @@ function createDesktopIdentityLease(agentId: string): DesktopIdentityLease {
       released = true
       globalThis.removeEventListener('pagehide', handlePageHide)
       if (desktopIdentityLeases.get(agentId) === lease) desktopIdentityLeases.delete(agentId)
+      for (const probe of pendingPresence.values()) clearTimeout(probe.timer)
+      pendingPresence.clear()
+      coordination.close()
       resolve()
     }
   })
@@ -188,12 +240,24 @@ export function ReadyDesktop({
   const [committedTransition, setCommittedTransition] = useState<CommittedTransition | null>(null)
   const [spotlightOpen, setSpotlightOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
+  const [hydratedDesktopId, setHydratedDesktopId] = useState<string | null>(null)
   const desktopId = useDesktopIdentity(agent.id)
   const codeRequestIdRef = useRef(0)
   const finderRequestIdRef = useRef(0)
   const lifecycleTransitionReleaseRef = useRef<(() => void) | null>(null)
   const terminalCloseHandlersRef = useRef(new Map<string, () => void>())
   const reducedMotion = useReducedMotion()
+
+  useEffect(
+    () =>
+      subscribeDeletedDesktopState(agent.id, () => {
+        for (const closeTerminal of terminalCloseHandlersRef.current.values()) closeTerminal()
+        clearDeletedDesktopState(agent.id)
+        setCommittedTransition('delete')
+        void onChanged()
+      }),
+    [agent.id, onChanged],
+  )
 
   const subscribeGuestOperations = useCallback(
     (listener: () => void) => subscribeTengriGuestOperations(agent.id, listener),
@@ -255,12 +319,39 @@ export function ReadyDesktop({
 
   useLayoutEffect(() => {
     const measuredViewport = viewport()
+    if (!desktopId) {
+      setHydratedDesktopId(null)
+      dispatch({
+        type: 'hydrate',
+        state: initialWindowState(measuredViewport, ['finder', 'chrome']),
+        viewport: measuredViewport,
+      })
+      return
+    }
+
+    let state: WindowManagerState = initialWindowState(measuredViewport, ['finder', 'chrome'])
+    try {
+      const persisted = sessionStorage.getItem(desktopLayoutStorageKey(agent.id, desktopId))
+      if (persisted) state = JSON.parse(persisted) as WindowManagerState
+    } catch {
+      // A malformed or unavailable session store falls back to a clean desktop.
+    }
     dispatch({
       type: 'hydrate',
-      state: initialWindowState(measuredViewport, ['finder', 'chrome']),
+      state,
       viewport: measuredViewport,
     })
-  }, [viewport])
+    setHydratedDesktopId(desktopId)
+  }, [agent.id, desktopId, viewport])
+
+  useEffect(() => {
+    if (!desktopId || hydratedDesktopId !== desktopId) return
+    try {
+      sessionStorage.setItem(desktopLayoutStorageKey(agent.id, desktopId), JSON.stringify(windowState))
+    } catch {
+      // The live desktop remains usable when session storage is unavailable.
+    }
+  }, [agent.id, desktopId, hydratedDesktopId, windowState])
 
   useEffect(
     () => () => {
@@ -486,7 +577,11 @@ export function ReadyDesktop({
         onCommitted: (committedAction) => {
           committed = true
           setCommittedTransition(committedAction === 'sleep-agent' ? 'sleep' : 'delete')
-          if (committedAction === 'delete-agent') setConfirmOpen(false)
+          if (committedAction === 'delete-agent') {
+            for (const closeTerminal of terminalCloseHandlersRef.current.values()) closeTerminal()
+            publishDeletedDesktopState(agent.id)
+            setConfirmOpen(false)
+          }
         },
       })
       if (action === 'delete-agent') await onChanged()
@@ -550,6 +645,7 @@ export function ReadyDesktop({
   const terminalRunning = windowState.windows.some((candidate) => candidate.app === 'terminal')
   const activeWindow = windowState.windows.find((candidate) => candidate.id === windowState.activeWindowId)
   const activeApp = activeWindow?.app ?? windowState.activeApp
+  const layoutReady = desktopId !== null && hydratedDesktopId === desktopId
 
   if (committedTransition) {
     return (
@@ -558,6 +654,20 @@ export function ReadyDesktop({
         error={selectSleepRequestError(error, connectionWarning)}
         transition={committedTransition}
       />
+    )
+  }
+
+  if (!layoutReady) {
+    return (
+      <main className="font-inter relative h-[100dvh] min-h-[520px] w-screen overflow-hidden bg-[#050914] text-white">
+        <DesktopWallpaper />
+        <div ref={stageRef} className="absolute inset-x-0 top-[30px] bottom-0 grid place-items-center">
+          <p className="flex items-center gap-2 text-sm text-white/62" role="status">
+            <LoaderCircle aria-hidden="true" className="size-4 animate-spin motion-reduce:animate-none" />
+            Restoring desktop…
+          </p>
+        </div>
+      </main>
     )
   }
 
@@ -639,19 +749,12 @@ export function ReadyDesktop({
                   request={codeRequest?.targetWindowId === desktopWindow.id ? codeRequest : null}
                 />
               ) : desktopWindow.app === 'terminal' ? (
-                desktopId ? (
-                  <TerminalApp
-                    agentId={agent.id}
-                    desktopId={desktopId}
-                    registerCloseHandler={registerTerminalCloseHandler}
-                    windowId={desktopWindow.id}
-                  />
-                ) : (
-                  <div className="flex h-full items-center justify-center gap-2 text-sm text-zinc-300" role="status">
-                    <LoaderCircle aria-hidden="true" className="size-4 animate-spin" />
-                    Preparing Terminal…
-                  </div>
-                )
+                <TerminalApp
+                  agentId={agent.id}
+                  desktopId={desktopId}
+                  registerCloseHandler={registerTerminalCloseHandler}
+                  windowId={desktopWindow.id}
+                />
               ) : (
                 <SettingsApp
                   active={desktopWindow.id === windowState.activeWindowId}
