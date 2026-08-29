@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -17,8 +18,10 @@ import (
 )
 
 const (
-	bootIDPath        = "/proc/sys/kernel/random/boot_id"
-	kernelReleasePath = "/proc/sys/kernel/osrelease"
+	bootIDPath              = "/proc/sys/kernel/random/boot_id"
+	codexBootstrapTimeout   = 9 * time.Minute
+	kernelReleasePath       = "/proc/sys/kernel/osrelease"
+	maxBootstrapOutputBytes = 4 << 10
 )
 
 type evidence struct {
@@ -47,6 +50,20 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	homeRoot, workspaceRoot := runtimeRoots(
+		os.Getenv("NANOAGENT_HOME"),
+		os.Getenv("NANOAGENT_WORKSPACE"),
+	)
+	if err := bootstrapUserHome(homeRoot); err != nil {
+		return fmt.Errorf("bootstrap persistent user home: %w", err)
+	}
+	if err := bootstrapCodex(
+		context.Background(),
+		os.Getenv("CODEX_BOOTSTRAP_COMMAND"),
+		codexBootstrapTimeout,
+	); err != nil {
+		return err
+	}
 	current, err := collectEvidence(microVMID, bootstrapToken, os.ReadFile, time.Now().UTC())
 	if err != nil {
 		return err
@@ -61,13 +78,6 @@ func run(logger *slog.Logger) error {
 	listenAddress := strings.TrimSpace(os.Getenv("LISTEN_ADDRESS"))
 	if listenAddress == "" {
 		listenAddress = ":8080"
-	}
-	homeRoot, workspaceRoot := runtimeRoots(
-		os.Getenv("NANOAGENT_HOME"),
-		os.Getenv("NANOAGENT_WORKSPACE"),
-	)
-	if err := bootstrapUserHome(homeRoot); err != nil {
-		return fmt.Errorf("bootstrap persistent user home: %w", err)
 	}
 	codexBinary := strings.TrimSpace(os.Getenv("CODEX_BINARY"))
 	if codexBinary == "" {
@@ -119,6 +129,40 @@ func run(logger *slog.Logger) error {
 		}
 		return fmt.Errorf("serve HTTP: %w", err)
 	}
+}
+
+func bootstrapCodex(ctx context.Context, command string, timeout time.Duration) error {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return nil
+	}
+	if !filepath.IsAbs(command) {
+		return errors.New("CODEX_BOOTSTRAP_COMMAND must be an absolute path")
+	}
+	if timeout <= 0 {
+		return errors.New("Codex bootstrap timeout must be positive")
+	}
+
+	bootstrapCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	process := exec.CommandContext(bootstrapCtx, command, "--install-only")
+	process.Env = childEnvironment()
+	output, err := process.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	if errors.Is(bootstrapCtx.Err(), context.DeadlineExceeded) {
+		return errors.New("bootstrap persistent Codex install: timed out")
+	}
+
+	message := strings.TrimSpace(string(output))
+	if len(message) > maxBootstrapOutputBytes {
+		message = message[:maxBootstrapOutputBytes] + "..."
+	}
+	if message == "" {
+		return fmt.Errorf("bootstrap persistent Codex install: %w", err)
+	}
+	return fmt.Errorf("bootstrap persistent Codex install: %w: %s", err, message)
 }
 
 func runtimeRoots(homeRoot string, workspaceRoot string) (string, string) {

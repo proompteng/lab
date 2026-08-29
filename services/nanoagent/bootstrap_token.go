@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -15,6 +16,7 @@ import (
 const (
 	bootstrapTokenEnvironmentKey   = "MICROVM_BOOTSTRAP_TOKEN"
 	bootstrapTokenFDEnvironmentKey = "MICROVM_BOOTSTRAP_TOKEN_FD"
+	reexecWrapperEnvironmentKey    = "NANOAGENT_REEXEC_WRAPPER"
 	maxBootstrapTokenBytes         = 4 << 10
 )
 
@@ -67,13 +69,24 @@ func reexecWithBootstrapToken(token string) error {
 	if err != nil {
 		return fmt.Errorf("resolve Nanoagent executable: %w", err)
 	}
+	reexecTarget := executable
+	reexecArguments := os.Args
+	wrapper := strings.TrimSpace(os.Getenv(reexecWrapperEnvironmentKey))
+	if wrapper != "" {
+		if !filepath.IsAbs(wrapper) {
+			return errors.New("NANOAGENT_REEXEC_WRAPPER must be an absolute path")
+		}
+		reexecTarget = wrapper
+		reexecArguments = append([]string{wrapper, "-s", "--", executable}, os.Args[1:]...)
+	}
 	environment := environmentWithoutKeys(
 		os.Environ(),
 		bootstrapTokenEnvironmentKey,
 		bootstrapTokenFDEnvironmentKey,
+		reexecWrapperEnvironmentKey,
 	)
 	environment = append(environment, fmt.Sprintf("%s=%d", bootstrapTokenFDEnvironmentKey, reader.Fd()))
-	if err := syscall.Exec(executable, os.Args, environment); err != nil {
+	if err := syscall.Exec(reexecTarget, reexecArguments, environment); err != nil {
 		return fmt.Errorf("replace Nanoagent bootstrap process: %w", err)
 	}
 	return errors.New("Nanoagent bootstrap re-exec returned unexpectedly")
@@ -90,6 +103,7 @@ func readBootstrapTokenFD(rawFD string) (string, error) {
 	}
 	defer file.Close()
 	_ = os.Unsetenv(bootstrapTokenFDEnvironmentKey)
+	_ = os.Unsetenv(reexecWrapperEnvironmentKey)
 	info, err := file.Stat()
 	if err != nil {
 		return "", fmt.Errorf("inspect bootstrap token pipe: %w", err)
