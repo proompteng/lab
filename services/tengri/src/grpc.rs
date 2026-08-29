@@ -2723,6 +2723,9 @@ fn map_guest_error(error: GuestError) -> Status {
         GuestError::Api { status, message } if status == reqwest::StatusCode::FORBIDDEN => {
             Status::permission_denied(message)
         }
+        GuestError::MissingCodexSnapshotCursor => Status::failed_precondition(
+            "This agent cannot safely restore Codex threads; save the workspace, then delete and recreate the agent",
+        ),
         other => Status::internal(other.to_string()),
     }
 }
@@ -2738,6 +2741,16 @@ mod tests {
     use http::{Response as HttpResponse, StatusCode as HttpStatusCode};
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
     use kube::client::Body as KubeBody;
+
+    #[test]
+    fn missing_codex_snapshot_cursor_reports_the_destructive_recovery() {
+        let status = map_guest_error(GuestError::MissingCodexSnapshotCursor);
+        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+        assert_eq!(
+            status.message(),
+            "This agent cannot safely restore Codex threads; save the workspace, then delete and recreate the agent"
+        );
+    }
 
     #[test]
     fn caller_cannot_select_resource_policy() {
