@@ -1183,7 +1183,12 @@ describePostgres('PostgreSQL cycle observability projection', () => {
         const sql = yield* PgClient.PgClient
         yield* seedSafetyState()
 
-        const insertAccountSnapshot = (eventId: string, observedAt: string, cashMicros: string) =>
+        const insertAccountSnapshot = (
+          eventId: string,
+          sourceSequence: number,
+          observedAt: string,
+          cashMicros: string,
+        ) =>
           sql.withTransaction(
             Effect.gen(function* () {
               yield* sql`
@@ -1192,7 +1197,7 @@ describePostgres('PostgreSQL cycle observability projection', () => {
                   source_event_id, source_sequence, occurred_at, observed_at
                 ) VALUES (
                   ${eventId}, 'bayn.paper-broker-event.v1', ${eventId}, 'ACCOUNT', 'ALPACA',
-                  ${accountId}, ${`account-${eventId}`}, 1, ${observedAt}, ${observedAt}
+                  ${accountId}, ${`account-${eventId}`}, ${sourceSequence}, ${observedAt}, ${observedAt}
                 )
               `
               yield* sql`
@@ -1207,8 +1212,8 @@ describePostgres('PostgreSQL cycle observability projection', () => {
             }),
           )
 
-        yield* insertAccountSnapshot('a'.repeat(64), '2026-03-06T21:00:02.000Z', '2000000')
-        yield* insertAccountSnapshot('b'.repeat(64), '2099-03-06T21:00:02.000Z', '9000000')
+        yield* insertAccountSnapshot('a'.repeat(64), 1, '2026-03-06T21:00:02.000Z', '2000000')
+        yield* insertAccountSnapshot('b'.repeat(64), 2, '2099-03-06T21:00:02.000Z', '9000000')
         yield* sql`
           INSERT INTO position_snapshots (
             snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash
