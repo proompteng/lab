@@ -6,11 +6,11 @@ import { MICROS, numberToMicros } from '../execution-model'
 import {
   intradayAgeNanos,
   millisecondsAsNanos,
-  type ArchiveVerifiedIntradayMarketSnapshot,
   type IntradayMarketDataService,
   type IntradayMarketSnapshot,
   type IntradaySnapshotQuery,
 } from '../market-data'
+import type { ArchiveVerifiedIntradayMarketSnapshot } from '../market-data/intraday/model'
 import { strictParseOptions } from '../schemas'
 import { ExecutionMarketDataBindingSchema, type ExecutionMarketDataBinding } from '../shadow-decision-contract'
 

@@ -1,5 +1,6 @@
 import { canonicalHashV1 } from '../../hash'
-import type { ArchiveVerifiedIntradayMarketSnapshot, IntradaySnapshotRequest } from '../../market-data'
+import type { IntradaySnapshotRequest } from '../../market-data'
+import type { ArchiveVerifiedIntradayMarketSnapshot } from '../../market-data/intraday/model'
 import { utcInstantFromEpochMillis } from '../../time'
 import type { IntradayMomentumProtocol } from './protocol'
 
