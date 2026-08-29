@@ -32,6 +32,12 @@ const StatusRow = Schema.Struct({
 })
 const StatusRows = Schema.Array(StatusRow).check(Schema.isMaxLength(1))
 
+const normalizePreCutoverPassObservation = (candidate: unknown): unknown => {
+  if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate)) return candidate
+  if (!Object.hasOwn(candidate, 'cadence') || Reflect.get(candidate, 'cadence') !== 'EVERY_SESSION') return candidate
+  return Object.fromEntries(Object.entries(candidate).filter(([key]) => key !== 'cadence'))
+}
+
 const storeError = (
   operation: ExecutionControllerStatusStoreError['operation'],
   failure: ExecutionControllerStatusStoreError['failure'],
@@ -91,7 +97,7 @@ const statusFromRow = (
           lastReceiptHash: row.last_receipt_hash,
           completedAt: row.completed_at,
           ...(row.next_due_at === null ? {} : { nextDueAt: row.next_due_at }),
-          ...(row.last_pass === null ? {} : { lastPass: row.last_pass }),
+          ...(row.last_pass === null ? {} : { lastPass: normalizePreCutoverPassObservation(row.last_pass) }),
         }),
   }).pipe(Effect.mapError((cause) => storeError('read', 'decode', 'controller status row failed decoding', cause)))
 }

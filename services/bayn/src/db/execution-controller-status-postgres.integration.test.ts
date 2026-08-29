@@ -138,4 +138,64 @@ describePostgres('PostgreSQL execution controller status', () => {
     expect(result.activated).toEqual({ _tag: 'Applied', status: next })
     expect(result.stored).toEqual(next)
   })
+
+  test('normalizes the exact pre-cutover every-session pass observation at the persistence boundary', async () => {
+    const stored = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`
+          INSERT INTO execution_controller_status (
+            controller_key,
+            plan_hash,
+            active,
+            epoch,
+            next_sequence,
+            last_sequence,
+            last_outcome,
+            last_receipt_hash,
+            completed_at,
+            next_due_at,
+            last_pass
+          ) VALUES (
+            'historical',
+            ${'f'.repeat(64)},
+            true,
+            3,
+            9,
+            8,
+            'Blocked',
+            ${'a'.repeat(64)},
+            '2026-08-13T17:00:00.000Z',
+            '2026-08-13T17:00:30.000Z',
+            ${sql.json({
+              result: 'SUCCESS',
+              observedAt: '2026-08-13T17:00:00.000Z',
+              outcome: 'RECOVERED',
+              cadence: 'EVERY_SESSION',
+            })}
+          )
+        `
+        return yield* (yield* ExecutionControllerStatusStore).read('historical')
+      }),
+    )
+
+    expect(stored).toEqual({
+      schemaVersion: 1,
+      controllerKey: 'historical',
+      planHash: 'f'.repeat(64),
+      active: true,
+      epoch: 3,
+      nextSequence: 9,
+      lastSequence: 8,
+      lastOutcome: ExecutionControllerOutcome.Blocked,
+      lastReceiptHash: 'a'.repeat(64),
+      completedAt: '2026-08-13T17:00:00.000Z',
+      nextDueAt: '2026-08-13T17:00:30.000Z',
+      lastPass: {
+        result: 'SUCCESS',
+        observedAt: '2026-08-13T17:00:00.000Z',
+        outcome: 'RECOVERED',
+      },
+    })
+  })
 })
