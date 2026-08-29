@@ -16,6 +16,8 @@ import {
   type AutonomousCycle,
 } from './cycle'
 import { defaultExecutionModel } from './execution-model'
+import { makeExecutionIntentFromDecodedPlan } from './execution/intents/domain'
+import { legacyIntentPlanSchemaVersion } from './execution/legacy-wire'
 import { bindExecutionSession, type BindExecutionSessionInput } from './execution-session'
 import { canonicalHashV1, sha256 } from './hash'
 import {
@@ -38,7 +40,7 @@ import {
   type Reconciliation,
 } from './execution/contracts'
 import { reconciledStateHash } from './reconciliation'
-import { BrokerMode, Gate, PolicySchema, Reason, StateSchema, type Policy, type State } from './risk'
+import { BrokerMode, Gate, PolicySchema, Reason, StateSchema, evaluate, type Policy, type State } from './risk'
 import { strictParseOptions } from './schemas'
 import {
   decodeObserveShadowDecisionDocument,
@@ -1185,8 +1187,29 @@ const makeIntradayExecutionFixture = (
     dayStartEquityMicros: '1000000000',
     peakEquityMicros: '1000000000',
   },
+  positions?: readonly Position[],
 ) => {
-  const input = makeIntradayMomentumInput(undefined, selectedSymbol)
+  const baseInput = makeIntradayMomentumInput(undefined, selectedSymbol)
+  const input =
+    positions === undefined
+      ? baseInput
+      : (() => {
+          const brokerState = makeBrokerState(positions)
+          const plannerInput: QuoteBoundTargetPlannerInput = {
+            ...baseInput.plannerInput,
+            brokerState: {
+              account: brokerState.account,
+              positions: brokerState.positions,
+              positionsObservedAt: brokerObservedAt,
+              orders: brokerState.orders,
+              ordersObservedAt: brokerObservedAt,
+              accountingHash,
+              reconciliation: brokerState.reconciliation,
+              unknownOrderCount: 0,
+            },
+          }
+          return { ...baseInput, plannerInput, targetPlan: planTargetsSuccess(plannerInput) }
+        })()
   const executionMarketData = input.executionMarketData
   if (executionMarketData?.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
     throw new Error('intraday execution fixture must include archive execution market data v2')
@@ -2172,6 +2195,66 @@ describe('OBSERVE shadow decision', () => {
       ...material,
       dispatchable: true,
       deltaRisk: forgedDeltaRisk,
+    })
+
+    expect(Result.isFailure(forged)).toBe(true)
+    if (Result.isFailure(forged)) {
+      expect(String(forged.failure.cause)).toContain('must reproduce the exact persisted risk gates')
+    }
+  })
+
+  test('reconstructs held positions before replaying persisted entry risk', async () => {
+    const selectedSymbol = defaultIntradayMomentumProtocolDocument.universe[0]
+    if (selectedSymbol === undefined) throw new Error('intraday execution fixture requires a non-empty universe')
+    const { input, executionSession, riskInputs } = makeIntradayExecutionFixture(
+      selectedSymbol,
+      { dayStartEquityMicros: '1000000000', peakEquityMicros: '1000000000' },
+      [position(selectedSymbol)],
+    )
+    const authorityGenerationHash = hash('6')
+    const document = await Effect.runPromise(
+      buildExecutionDecision({
+        ...input,
+        riskInputs,
+        authorityGenerationHash,
+        executionSession,
+      }),
+    )
+    const target = document.targetPlan.intentTargets[0]
+    const risk = document.deltaRisk[0]
+    if (target === undefined || risk?.facts === undefined) {
+      throw new Error('held-position fixture requires one persisted execution risk input')
+    }
+    expect(risk.facts.proposedPositions).toHaveLength(1)
+
+    const executionIntent = Result.getOrThrow(
+      makeExecutionIntentFromDecodedPlan(
+        {
+          schemaVersion: legacyIntentPlanSchemaVersion,
+          ...target,
+          notionalLimitMicros: risk.notionalLimitMicros,
+        },
+        authorityGenerationHash,
+      ),
+    )
+    const forgedEvaluation = Result.getOrThrow(
+      evaluate({
+        intent: executionIntent,
+        state: risk.facts.state,
+        policy: input.policy,
+        proposedPositions: [],
+      }),
+    )
+    const { contentHash: _contentHash, ...material } = document
+    const forged = makeExecutionDecisionDocument({
+      ...material,
+      deltaRisk: [
+        {
+          ...risk,
+          facts: { ...risk.facts, proposedPositions: [] },
+          evaluation: forgedEvaluation,
+        },
+      ],
     })
 
     expect(Result.isFailure(forged)).toBe(true)

@@ -11,12 +11,13 @@ import {
 import { ExecutionSessionBindingSchema } from './execution-session'
 import { canonicalHashV1Result, sha256 } from './hash'
 import { verifyIntradaySnapshot } from './market-data/intraday/verification'
-import { OrderSide, PositionSchema, PositiveMicrosSchema, RiskOutcome } from './execution/contracts'
+import { OrderSide, PositionSchema, PositiveMicrosSchema, RiskOutcome, type Position } from './execution/contracts'
 import {
   legacyCycleDecisionSchemaVersion,
   legacyExecutionAuthorityToken,
   legacyIntentPlanSchemaVersion,
   legacyObserveAuthorityToken,
+  legacyPositionSchemaVersion,
 } from './execution/legacy-wire'
 import { reconciledStateHash } from './reconciliation'
 import { EvaluationSchema, PolicySchema, Reason, StateSchema, evaluate, isAuthorityNotGrantedReason } from './risk'
@@ -32,7 +33,15 @@ import {
   UtcInstantSchema,
   strictParseOptions,
 } from './schemas'
-import { TargetPlannerInputSchema, TargetPlanResultSchema, TargetPlanStatus, planTargets } from './target-planner'
+import {
+  TargetPlannerInputSchema,
+  TargetPlanResultSchema,
+  TargetPlanStatus,
+  planTargets,
+  quoteBoundTargetPlannerInputSchemaVersion,
+  type PlannedTargetQuantity,
+  type TargetPlannerInput,
+} from './target-planner'
 import { RuntimeStrategyDecisionSchema } from './strategy/runtime-decision'
 import {
   deriveIntradayMomentumSignalMetrics,
@@ -862,6 +871,84 @@ const targetPlannerEvidenceIssues = (
   return issues
 }
 
+const quantityScale = 1_000_000n
+const absoluteMicros = (value: bigint): bigint => (value < 0n ? -value : value)
+const dividePositionMicrosAwayFromZero = (numerator: bigint): bigint => {
+  const magnitude = absoluteMicros(numerator)
+  const rounded = magnitude === 0n ? 0n : (magnitude + quantityScale - 1n) / quantityScale
+  return numerator < 0n ? -rounded : rounded
+}
+const comparePositionSymbols = (left: Position, right: Position): number => {
+  if (left.symbol < right.symbol) return -1
+  if (left.symbol > right.symbol) return 1
+  return 0
+}
+
+const revaluePosition = (position: Position, referencePriceMicros: string): Position => {
+  const quantity = BigInt(position.quantityMicros)
+  const referencePrice = BigInt(referencePriceMicros)
+  const averageEntryPrice = BigInt(position.averageEntryPriceMicros)
+  return {
+    ...position,
+    marketPriceMicros: referencePriceMicros,
+    marketValueMicros: dividePositionMicrosAwayFromZero(quantity * referencePrice).toString(),
+    unrealizedPnlMicros: dividePositionMicrosAwayFromZero(quantity * (referencePrice - averageEntryPrice)).toString(),
+  }
+}
+
+const projectTargetPosition = (
+  positions: readonly Position[],
+  target: PlannedTargetQuantity,
+  accountId: string,
+  observedAt: string,
+): readonly Position[] => {
+  const retained = positions.filter((position) => position.symbol !== target.symbol)
+  const quantity = BigInt(target.targetQuantityMicros)
+  if (quantity === 0n) return retained
+
+  const previous = positions.find((position) => position.symbol === target.symbol)
+  const referencePrice = BigInt(target.referencePriceMicros)
+  const averageEntryPrice = BigInt(previous?.averageEntryPriceMicros ?? target.referencePriceMicros)
+  const projected: Position = {
+    schemaVersion: legacyPositionSchemaVersion,
+    accountId: previous?.accountId ?? accountId,
+    symbol: target.symbol,
+    quantityMicros: target.targetQuantityMicros,
+    averageEntryPriceMicros: averageEntryPrice.toString(),
+    marketPriceMicros: target.referencePriceMicros,
+    marketValueMicros: dividePositionMicrosAwayFromZero(quantity * referencePrice).toString(),
+    unrealizedPnlMicros: dividePositionMicrosAwayFromZero(quantity * (referencePrice - averageEntryPrice)).toString(),
+    observedAt: previous?.observedAt ?? observedAt,
+  }
+  return [...retained, projected].sort(comparePositionSymbols)
+}
+
+const reconstructProposedPositionSequence = (
+  input: TargetPlannerInput,
+  targetPlan: typeof TargetPlanResultSchema.Type,
+): readonly (readonly Position[])[] | undefined => {
+  const preserveUnselectedMarks =
+    input.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
+    input.executionTerms.executionPurpose !== undefined
+  const initial: Position[] = []
+  for (const position of input.brokerState.positions) {
+    const referencePrice = input.referencePrices.priceMicros[position.symbol]
+    if (referencePrice === undefined && !preserveUnselectedMarks) return undefined
+    initial.push(referencePrice === undefined ? position : revaluePosition(position, referencePrice))
+  }
+
+  const targetsBySymbol = new Map(targetPlan.targets.map((target) => [target.symbol, target]))
+  const sequence: (readonly Position[])[] = []
+  let projected: readonly Position[] = initial.sort(comparePositionSymbols)
+  for (const intent of targetPlan.intentTargets) {
+    sequence.push(projected)
+    const target = targetsBySymbol.get(intent.symbol)
+    if (target === undefined) return undefined
+    projected = projectTargetPosition(projected, target, input.accountId, input.brokerState.positionsObservedAt)
+  }
+  return sequence
+}
+
 const executionMaterialIssues = (
   document: typeof ExecutionDecisionMaterialSchema.Type,
 ): readonly Schema.FilterIssue[] => {
@@ -1092,6 +1179,16 @@ const executionMaterialIssues = (
   const targets = document.targetPlan.intentTargets
   const riskBlocked = document.riskBlock !== undefined
   const riskCount = document.deltaRisk.length
+  const proposedPositionSequence =
+    document.plannerInput === undefined
+      ? undefined
+      : reconstructProposedPositionSequence(document.plannerInput, document.targetPlan)
+  if (requiresDurableRiskFacts && proposedPositionSequence === undefined) {
+    issues.push({
+      path: ['deltaRisk', 'facts', 'proposedPositions'],
+      issue: 'must be reconstructable from the exact target-planning broker state and ordered target deltas',
+    })
+  }
   if (
     document.orderedIntentIds.length !== riskCount ||
     (planned && !riskBlocked && riskCount !== targets.length) ||
@@ -1157,14 +1254,28 @@ const executionMaterialIssues = (
     if (requiresDurableRiskFacts) {
       const policy = document.riskPolicy
       const executionIntent = makeExecutionIntentFromDecodedPlan(plan, document.bindings.authorityGenerationHash)
+      const expectedProposedPositions = proposedPositionSequence?.[index]
+      const expectedProposedPositionsHash =
+        expectedProposedPositions === undefined ? undefined : canonicalHashV1Result(expectedProposedPositions)
+      const recordedProposedPositionsHash =
+        facts === undefined ? undefined : canonicalHashV1Result(facts.proposedPositions)
+      const proposedPositionsMatch =
+        expectedProposedPositionsHash !== undefined &&
+        recordedProposedPositionsHash !== undefined &&
+        Result.isSuccess(expectedProposedPositionsHash) &&
+        Result.isSuccess(recordedProposedPositionsHash) &&
+        expectedProposedPositionsHash.success === recordedProposedPositionsHash.success
       const reproduced =
-        facts === undefined || policy === undefined || Result.isFailure(executionIntent)
+        facts === undefined ||
+        policy === undefined ||
+        expectedProposedPositions === undefined ||
+        Result.isFailure(executionIntent)
           ? undefined
           : evaluate({
               intent: executionIntent.success,
               state: facts.state,
               policy,
-              proposedPositions: facts.proposedPositions,
+              proposedPositions: expectedProposedPositions,
             })
       const reproducedHash =
         reproduced === undefined || Result.isFailure(reproduced) ? undefined : canonicalHashV1Result(reproduced.success)
@@ -1172,6 +1283,7 @@ const executionMaterialIssues = (
       if (
         facts === undefined ||
         policy === undefined ||
+        !proposedPositionsMatch ||
         Result.isFailure(executionIntent) ||
         reproduced === undefined ||
         Result.isFailure(reproduced) ||
