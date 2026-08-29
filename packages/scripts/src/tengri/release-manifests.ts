@@ -319,6 +319,15 @@ function findTengriApplicationBlock(contents: string) {
   const selectorNode = applicationGenerator.get('selector', true)
   const selector = selectorNode === undefined ? undefined : isMap(selectorNode) ? selectorNode.toJSON() : null
   assertSelectorAdmitsTengri(selector, application)
+  for (const applicationElement of applicationElements.items) {
+    if (!isMap(applicationElement)) {
+      throw new Error('Tengri ApplicationSet application generator elements must be mappings')
+    }
+    const candidate = applicationElement.toJSON() as Record<string, unknown>
+    if (selectorAdmitsApplication(selector, candidate)) {
+      assertApplicationElementCanRender(candidate)
+    }
+  }
 
   const templateNode = document.getIn(['spec', 'template'], true)
   if (!isMap(templateNode)) {
@@ -466,8 +475,8 @@ function assertSafeTemplatePatch(templatePatch: unknown) {
   }
 }
 
-function assertSelectorAdmitsTengri(selector: unknown, application: Record<string, unknown>) {
-  if (selector === undefined) return
+function selectorAdmitsApplication(selector: unknown, candidate: Record<string, unknown>) {
+  if (selector === undefined) return true
   if (!isPlainRecord(selector)) {
     throw new Error('Tengri ApplicationSet application selector must be a label selector')
   }
@@ -476,7 +485,7 @@ function assertSelectorAdmitsTengri(selector: unknown, application: Record<strin
     throw new Error('Tengri ApplicationSet application selector contains an invalid field')
   }
 
-  const candidate = { ...application, enabled: 'true' }
+  let admitsCandidate = true
   if (selector.matchLabels !== undefined) {
     if (!isPlainRecord(selector.matchLabels)) {
       throw new Error('Tengri ApplicationSet application selector matchLabels must be a mapping')
@@ -486,7 +495,7 @@ function assertSelectorAdmitsTengri(selector: unknown, application: Record<strin
         throw new Error('Tengri ApplicationSet application selector contains an invalid label')
       }
       if (candidate[key] !== value) {
-        throw new Error('Tengri ApplicationSet application selector must include the enabled Tengri entry')
+        admitsCandidate = false
       }
     }
   }
@@ -537,9 +546,43 @@ function assertSelectorAdmitsTengri(selector: unknown, application: Record<strin
           throw new Error(`Tengri ApplicationSet application selector uses unsupported operator ${expression.operator}`)
       }
       if (!admits) {
-        throw new Error('Tengri ApplicationSet application selector must include the enabled Tengri entry')
+        admitsCandidate = false
       }
     }
+  }
+  return admitsCandidate
+}
+
+function assertSelectorAdmitsTengri(selector: unknown, application: Record<string, unknown>) {
+  if (!selectorAdmitsApplication(selector, { ...application, enabled: 'true' })) {
+    throw new Error('Tengri ApplicationSet application selector must include the enabled Tengri entry')
+  }
+}
+
+function assertApplicationElementCanRender(application: Record<string, unknown>) {
+  const name = application.name
+  const path = application.path
+  const automation = application.automation
+  const annotations = application.annotations
+  if (
+    typeof name !== 'string' ||
+    name.length === 0 ||
+    name.length > 253 ||
+    !name.split('.').every((segment) => segment.length <= 63 && kubernetesDnsLabelPattern.test(segment))
+  ) {
+    throw new Error('Tengri ApplicationSet selector-admitted elements must contain a valid Application name')
+  }
+  if (typeof path !== 'string' || path.length === 0) {
+    throw new Error('Tengri ApplicationSet selector-admitted elements must contain a source path')
+  }
+  if (automation !== 'auto' && automation !== 'manual') {
+    throw new Error('Tengri ApplicationSet selector-admitted elements must contain an auto or manual automation mode')
+  }
+  if (
+    !isPlainRecord(annotations) ||
+    Object.entries(annotations).some(([key, value]) => !isValidKubernetesLabelKey(key) || typeof value !== 'string')
+  ) {
+    throw new Error('Tengri ApplicationSet selector-admitted elements must contain valid annotations')
   }
 }
 
@@ -583,6 +626,7 @@ function assertGlobalIgnoreDifferencesDoNotMatchTengri(value: unknown) {
   if (!Array.isArray(value) || value.some((rule) => !isPlainRecord(rule))) {
     throw new Error('Tengri ApplicationSet global ignoreDifferences must contain resource rules')
   }
+  for (const rule of value) assertValidIgnoreDifferencesRule(rule)
   const matchesTengriDeployment = value.some(
     (rule) =>
       isPlainRecord(rule) &&
@@ -593,6 +637,35 @@ function assertGlobalIgnoreDifferencesDoNotMatchTengri(value: unknown) {
   )
   if (matchesTengriDeployment) {
     throw new Error('Tengri ApplicationSet global ignoreDifferences must not match the Tengri Deployment')
+  }
+}
+
+function assertValidIgnoreDifferencesRule(rule: Record<string, unknown>) {
+  const allowedFields = new Set([
+    'group',
+    'kind',
+    'name',
+    'namespace',
+    'jsonPointers',
+    'jqPathExpressions',
+    'managedFieldsManagers',
+  ])
+  if (Object.keys(rule).some((field) => !allowedFields.has(field))) {
+    throw new Error('Tengri ApplicationSet global ignoreDifferences contains an unsupported field')
+  }
+  if (typeof rule.kind !== 'string' || rule.kind.length === 0) {
+    throw new Error('Tengri ApplicationSet global ignoreDifferences rules must contain a kind')
+  }
+  for (const field of ['group', 'name', 'namespace'] as const) {
+    if (rule[field] !== undefined && typeof rule[field] !== 'string') {
+      throw new Error(`Tengri ApplicationSet global ignoreDifferences ${field} must be a string`)
+    }
+  }
+  for (const field of ['jsonPointers', 'jqPathExpressions', 'managedFieldsManagers'] as const) {
+    const paths = rule[field]
+    if (paths !== undefined && (!Array.isArray(paths) || paths.some((path) => typeof path !== 'string'))) {
+      throw new Error(`Tengri ApplicationSet global ignoreDifferences ${field} must be a string sequence`)
+    }
   }
 }
 

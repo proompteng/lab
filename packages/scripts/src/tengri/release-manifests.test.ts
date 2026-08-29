@@ -59,6 +59,9 @@ spec:
           - list:
               elements:
               - name: kata
+                path: argocd/applications/kata
+                annotations: {}
+                automation: auto
                 enabled: "true"
               - name: tengri
                 path: argocd/applications/tengri
@@ -82,6 +85,9 @@ spec:
                   annotations:
                     argocd.argoproj.io/sync-options: Prune=false,Delete=false
               - name: cdi
+                path: argocd/applications/cdi
+                annotations: {}
+                automation: auto
                 enabled: "true"
             selector:
               matchExpressions:
@@ -785,11 +791,57 @@ spec:
     rmSync(paths.directory, { recursive: true, force: true })
   })
 
+  it('rejects malformed global ignore-difference rules', () => {
+    const rules = [
+      `        - group: apps
+          namespace: other
+          jsonPointers:
+            - /spec/replicas`,
+      `        - group: apps
+          kind: Deployment
+          namespace: other
+          jsonPointers: /spec/replicas`,
+      `        - group: apps
+          kind: Deployment
+          namespace: other
+          jsonPointers:
+            - /spec/replicas
+          unsupported: true`,
+    ] as const
+
+    for (const rule of rules) {
+      const paths = fixture()
+      const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+      const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+      writeFileSync(
+        paths.applicationSetPath,
+        readFileSync(paths.applicationSetPath, 'utf8').replace(
+          '  templatePatch: |\n',
+          `      ignoreDifferences:
+${rule}
+  templatePatch: |
+`,
+        ),
+      )
+      const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+
+      expect(() => validateTengriRelease(paths)).toThrow('global ignoreDifferences')
+      expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow('global ignoreDifferences')
+      expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+      expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
+      expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
+      rmSync(paths.directory, { recursive: true, force: true })
+    }
+  })
+
   it('rejects a Tengri ApplicationSet entry that targets a different application', () => {
     const driftedTargets = [
       ['path: argocd/applications/tengri', 'path: argocd/applications/other'],
       ['namespace: tengri', 'namespace: other'],
-      ['automation: auto', 'automation: manual'],
+      [
+        '                automation: auto\n                enabled: "false"\n                ignoreDifferences:',
+        '                automation: manual\n                enabled: "false"\n                ignoreDifferences:',
+      ],
     ] as const
 
     for (const [expected, drifted] of driftedTargets) {
@@ -1065,6 +1117,26 @@ spec:
     expect(() => validateTengriRelease(paths)).toThrow('selector must include the enabled Tengri entry')
     expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
       'selector must include the enabled Tengri entry',
+    )
+    expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+    expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
+    expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
+    rmSync(paths.directory, { recursive: true, force: true })
+  })
+
+  it('rejects selector-admitted application elements that cannot render the shared template', () => {
+    const paths = fixture()
+    const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+    const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+    writeFileSync(
+      paths.applicationSetPath,
+      readFileSync(paths.applicationSetPath, 'utf8').replace('                path: argocd/applications/cdi\n', ''),
+    )
+    const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+
+    expect(() => validateTengriRelease(paths)).toThrow('selector-admitted elements must contain a source path')
+    expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
+      'selector-admitted elements must contain a source path',
     )
     expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
     expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
