@@ -28,6 +28,10 @@ import {
 } from './schemas'
 import { TargetPlannerInputSchema, TargetPlanResultSchema, TargetPlanStatus, planTargets } from './target-planner'
 import { RuntimeStrategyDecisionSchema } from './strategy/runtime-decision'
+import {
+  intradayMomentumSignalRejectionReasons,
+  selectCanonicalIntradayMomentumSignals,
+} from './strategy/intraday-momentum/model'
 import { defaultIntradayMomentumProtocolDocument } from './strategy/intraday-momentum/protocol'
 import { utcInstantFromEpochMillis } from './time'
 
@@ -274,6 +278,9 @@ export const ExecutionMarketDataBindingSchema = Schema.Union([
 ])
 export type ExecutionMarketDataBinding = typeof ExecutionMarketDataBindingSchema.Type
 
+const sameStrings = (left: readonly string[], right: readonly string[]): boolean =>
+  left.length === right.length && left.every((value, index) => value === right[index])
+
 const ShadowDecisionBindingsSchema = Schema.Struct({
   strategyName: StrictNonEmptyStringSchema,
   cycleId: Sha256Schema,
@@ -465,6 +472,45 @@ const intradayMomentumAllocationIssues = (
   >,
 ): readonly Schema.FilterIssue[] => {
   const issues: Schema.FilterIssue[] = []
+  const signalSymbols = strategyDecision.signals.map(({ symbol }) => symbol)
+  if (!sameStrings(signalSymbols, defaultIntradayMomentumProtocolDocument.universe)) {
+    issues.push({
+      path: ['strategyDecision', 'signals'],
+      issue: 'intraday-momentum signals must cover the source-controlled universe in canonical order',
+    })
+  }
+
+  const canonicalSignals = strategyDecision.signals.map((signal, index) => {
+    const rejectionReasons = intradayMomentumSignalRejectionReasons(
+      signal,
+      strategyDecision.observedAt,
+      defaultIntradayMomentumProtocolDocument,
+    )
+    const eligible = rejectionReasons.length === 0
+    if (!sameStrings(signal.rejectionReasons, rejectionReasons) || signal.eligible !== eligible) {
+      issues.push({
+        path: ['strategyDecision', 'signals', index, 'eligible'],
+        issue: 'intraday-momentum eligibility must match source-controlled thresholds and persisted signal evidence',
+      })
+    }
+    return Object.freeze({ ...signal, eligible, rejectionReasons, rank: null })
+  })
+  const canonicalSelection = selectCanonicalIntradayMomentumSignals(
+    canonicalSignals,
+    defaultIntradayMomentumProtocolDocument.maximumPositions,
+  )
+  const canonicalSelectedSymbols = canonicalSelection.map(({ symbol }) => symbol)
+  const canonicalRankBySymbol = new Map(canonicalSelectedSymbols.map((symbol, index) => [symbol, index + 1]))
+  if (
+    !sameStrings(strategyDecision.selectedSymbols, canonicalSelectedSymbols) ||
+    strategyDecision.signals.some(({ symbol, rank }) => rank !== (canonicalRankBySymbol.get(symbol) ?? null))
+  ) {
+    issues.push({
+      path: ['strategyDecision', 'selectedSymbols'],
+      issue: 'intraday-momentum selection and ranks must match the canonical source-controlled signal ranking',
+    })
+  }
+
   if (targetPlan.status !== TargetPlanStatus.Blocked) {
     const targetSymbols = targetPlan.targets.map(({ symbol }) => symbol).toSorted()
     const decisionSymbols = Object.keys(strategyDecision.targetWeights).toSorted()

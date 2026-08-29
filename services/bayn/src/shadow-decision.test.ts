@@ -595,6 +595,8 @@ const intradayMomentumDecision = (calendarHash: string, boundSnapshotId: string)
       rangeLowPriceMicros: '99000000',
       bidPriceMicros: '100000000',
       askPriceMicros: '100100000',
+      bidSizeMicros: '1000000',
+      askSizeMicros: '1000000',
       quoteObservedAt: '2026-07-22T16:00:01.000Z',
       confirmationTradePriceMicros: '100000000',
       confirmationTradeObservedAt: '2026-07-22T16:00:01.000Z',
@@ -603,7 +605,7 @@ const intradayMomentumDecision = (calendarHash: string, boundSnapshotId: string)
       rangeLocationPpm: 500_000,
       spreadBps: 10,
       eligible: false,
-      rejectionReasons: ['lookback-return'] as const,
+      rejectionReasons: ['lookback-return', 'breakout', 'range-location'] as const,
       rank: null,
     })),
   }
@@ -1300,7 +1302,7 @@ describe('OBSERVE shadow decision', () => {
     })
     expect(Result.isFailure(forgedTargetSelection)).toBe(true)
     if (Result.isFailure(forgedTargetSelection)) {
-      expect(String(forgedTargetSelection.failure.cause)).toContain('persisted selected signals')
+      expect(String(forgedTargetSelection.failure.cause)).toContain('canonical source-controlled signal ranking')
     }
 
     const strategyBindingForgeries = [
@@ -1662,6 +1664,9 @@ describe('OBSERVE shadow decision', () => {
               rangeLowPriceMicros: '49000000',
               bidPriceMicros: '49900000',
               askPriceMicros: '50000000',
+              lookbackReturnBps: 20,
+              breakoutBps: 5,
+              rangeLocationPpm: 800_000,
               eligible: true,
               rejectionReasons: [],
               rank: 1,
