@@ -142,6 +142,32 @@ class ForwarderSubscriptionTest {
   }
 
   @Test
+  fun `market data websocket status accepts channel-specific symbol coverage`() {
+    val nowMs = Instant.parse("2026-07-07T14:00:00Z").toEpochMilli()
+    val decisionSymbols = listOf("AAPL", "NVDA")
+    val status =
+      AlpacaSubscription(
+        trades = decisionSymbols,
+        quotes = decisionSymbols,
+        bars1m = listOf("AAPL", "AMD", "NVDA"),
+      ).toMarketDataWebsocketStatus(
+        previous = AlpacaMarketDataWebsocketStatus(errorClass = "previous_error"),
+        desiredSymbolsByChannel =
+          mapOf(
+            "trades" to decisionSymbols,
+            "quotes" to decisionSymbols,
+            "bars" to listOf("AAPL", "AMD", "NVDA"),
+          ),
+        authOk = true,
+        nowMs = nowMs,
+      )
+
+    assertTrue(status.subscriptionOk)
+    assertEquals(emptyMap(), status.missingSubscriptionSymbolsByChannel)
+    assertEquals(null, status.errorClass)
+  }
+
+  @Test
   fun `subscription updates unsubscribe before subscribing to avoid transient provider cap breaches`() {
     val updates =
       subscriptionUpdates(

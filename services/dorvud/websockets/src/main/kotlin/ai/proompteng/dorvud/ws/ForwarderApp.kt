@@ -678,33 +678,47 @@ class ForwarderApp(
         }
       }
 
-      suspend fun applySubscribe(symbols: List<String>) {
-        if (symbols.isEmpty()) return
-        val channels = feed.config.channels
-        symbols.chunked(config.subscribeBatchSize).forEach { batch ->
-          val subscribe =
+      suspend fun applySubscription(
+        action: String,
+        symbolsByChannel: Map<String, Collection<String>>,
+      ) {
+        val batchesByChannel =
+          feed.config.channels.associateWith { channel ->
+            symbolsByChannel[channel]
+              .orEmpty()
+              .map { it.trim().uppercase() }
+              .filter { it.isNotEmpty() }
+              .distinct()
+              .chunked(config.subscribeBatchSize)
+          }
+        val batchCount = batchesByChannel.values.maxOfOrNull { it.size } ?: 0
+        repeat(batchCount) { batchIndex ->
+          val request =
             buildJsonObject {
-              put("action", "subscribe")
-              val symbolsJson = buildJsonArray { batch.forEach { add(JsonPrimitive(it)) } }
-              channels.forEach { channel -> put(channel, symbolsJson) }
+              put("action", action)
+              batchesByChannel.forEach { (channel, batches) ->
+                val batch = batches.getOrNull(batchIndex) ?: return@forEach
+                put(channel, buildJsonArray { batch.forEach { add(JsonPrimitive(it)) } })
+              }
             }
-          sendSerialized(subscribe)
+          sendSerialized(request)
         }
       }
 
-      suspend fun applyUnsubscribe(symbols: List<String>) {
-        if (symbols.isEmpty()) return
-        val channels = feed.config.channels
-        symbols.chunked(config.subscribeBatchSize).forEach { batch ->
-          val unsubscribe =
-            buildJsonObject {
-              put("action", "unsubscribe")
-              val symbolsJson = buildJsonArray { batch.forEach { add(JsonPrimitive(it)) } }
-              channels.forEach { channel -> put(channel, symbolsJson) }
-            }
-          sendSerialized(unsubscribe)
-        }
-      }
+      suspend fun applySubscribe(symbols: List<String>) =
+        applySubscription(
+          "subscribe",
+          feed.config.desiredSymbolsByChannel(symbols),
+        )
+
+      suspend fun applySubscribeByChannel(symbolsByChannel: Map<String, Collection<String>>) =
+        applySubscription("subscribe", symbolsByChannel)
+
+      suspend fun applyUnsubscribe(symbols: List<String>) =
+        applySubscription(
+          "unsubscribe",
+          feed.config.channels.associateWith { symbols },
+        )
 
       suspend fun desiredSymbols(): SymbolsRefreshResult {
         val refreshed = symbolsTracker.refresh()
@@ -727,10 +741,11 @@ class ForwarderApp(
       }
 
       awaitAuthOrThrow()
-      applySubscribe(initial)
+      val initialSymbolsByChannel = feed.config.desiredSymbolsByChannel(initial)
+      applySubscribeByChannel(initialSymbolsByChannel)
       if (feed.config.core) {
-        maybeBackfillTrades(producer, feed.sequence, initial)
-        maybeBackfillBars(producer, feed.sequence, initial)
+        maybeBackfillTrades(producer, feed.sequence, initialSymbolsByChannel["trades"].orEmpty())
+        maybeBackfillBars(producer, feed.sequence, initialSymbolsByChannel["bars"].orEmpty())
       }
 
       val poller =
@@ -831,13 +846,14 @@ class ForwarderApp(
                 val channels = feed.config.channels
                 val actualSubscribedByChannel = msg.subscribedSymbolsByChannel(channels)
                 val actualSubscribed = actualSubscribedByChannel.values.flatten().toSet()
-                val missingByChannel = missingDesiredSymbolsByChannel(symbolsTracker.current(), actualSubscribedByChannel, channels)
+                val desiredSymbolsByChannel = feed.config.desiredSymbolsByChannel(symbolsTracker.current())
+                val missingByChannel =
+                  missingDesiredSymbolsByChannel(desiredSymbolsByChannel, actualSubscribedByChannel)
                 val missing = missingByChannel.values.flatten().distinct()
                 val wsStatus =
                   msg.toMarketDataWebsocketStatus(
                     previous = feed.websocketStatus.get(),
-                    channels = channels,
-                    desiredSymbols = symbolsTracker.current(),
+                    desiredSymbolsByChannel = desiredSymbolsByChannel,
                     authOk = authOk,
                     nowMs = nowMs(),
                   )
@@ -870,7 +886,7 @@ class ForwarderApp(
                     "alpaca subscription missing desired symbols channels=$missingSummary symbols=$missing " +
                       "subscribed_channels=$subscribedSummary subscribed_count=${actualSubscribed.size}"
                   }
-                  applySubscribe(missing)
+                  applySubscribeByChannel(missingByChannel)
                 }
                 publishOptionsWsStatus(
                   producer = producer,

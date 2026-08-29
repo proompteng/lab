@@ -54,6 +54,7 @@ data class ForwarderConfig(
   val alpacaBaseUrl: String,
   val alpacaTradeStreamUrl: String?,
   val alpacaMarketDataChannels: List<String>,
+  val alpacaMarketDataSymbolOverrides: Map<String, List<String>> = emptyMap(),
   val optionsMarketHolidays: Set<LocalDate> = emptySet(),
   val jangarSymbolsUrl: String?,
   val staticSymbols: List<String>,
@@ -169,10 +170,41 @@ data class ForwarderConfig(
             "for market type ${alpacaMarketType.name.lowercase()} (allowed: $allowed)",
         )
       }
+      val symbolOverrideEnvironmentByChannel =
+        mapOf(
+          "trades" to "ALPACA_MARKET_DATA_TRADES_SYMBOLS",
+          "quotes" to "ALPACA_MARKET_DATA_QUOTES_SYMBOLS",
+          "bars" to "ALPACA_MARKET_DATA_BARS_SYMBOLS",
+          "updatedBars" to "ALPACA_MARKET_DATA_UPDATED_BARS_SYMBOLS",
+        )
+      val configuredSymbolOverrides =
+        symbolOverrideEnvironmentByChannel
+          .mapNotNull { (channel, environmentName) ->
+            val raw = mergedEnv[environmentName] ?: return@mapNotNull null
+            val symbols = raw.split(",").map { it.trim().uppercase() }.filter { it.isNotEmpty() }
+            if (symbols.isEmpty()) error("$environmentName must include at least one symbol")
+            if (symbols.distinct() != symbols) error("$environmentName must contain unique symbols")
+            if (channel !in alpacaMarketDataChannels) {
+              error("$environmentName requires $channel in ALPACA_MARKET_DATA_CHANNELS")
+            }
+            channel to symbols
+          }.toMap()
+      val staticSymbolSet = staticSymbols.map { it.trim().uppercase() }.filter { it.isNotEmpty() }.toSet()
+      configuredSymbolOverrides.forEach { (channel, symbols) ->
+        val unknownSymbols = symbols.filterNot { it in staticSymbolSet }
+        if (unknownSymbols.isNotEmpty()) {
+          val environmentName = requireNotNull(symbolOverrideEnvironmentByChannel[channel])
+          error("$environmentName contains symbols not present in SYMBOLS: ${unknownSymbols.joinToString(",")}")
+        }
+      }
+      val alpacaMarketDataSymbolOverrides = configuredSymbolOverrides
       val optionsMarketHolidays = parseIsoDateSet(mergedEnv["OPTIONS_MARKET_HOLIDAYS"])
 
       val jangarSymbolsUrl =
         mergedEnv["JANGAR_SYMBOLS_URL"]?.trim()?.takeIf { it.isNotEmpty() }
+      if (jangarSymbolsUrl != null && alpacaMarketDataSymbolOverrides.isNotEmpty()) {
+        error("per-channel market-data symbols cannot be combined with JANGAR_SYMBOLS_URL")
+      }
 
       if (jangarSymbolsUrl == null && staticSymbols.isEmpty()) {
         error("JANGAR_SYMBOLS_URL or SYMBOLS must be set")
@@ -241,9 +273,17 @@ data class ForwarderConfig(
         )
       val coreSubscriptionCount =
         if (jangarSymbolsUrl != null && symbolAllowlist.isNotEmpty()) symbolAllowlist.size else staticSymbols.size
-      val subscriptionCount = coreSubscriptionCount + observationSymbols.size * observationFeeds.size
-      if (subscriptionCount > 30) {
-        error("configured market-data feeds require $subscriptionCount symbol subscriptions; maximum is 30")
+      requireMarketDataSubscriptionBudget(
+        alpacaFeed,
+        alpacaMarketDataChannels.associateWith { channel ->
+          alpacaMarketDataSymbolOverrides[channel]?.size ?: coreSubscriptionCount
+        },
+      )
+      observationFeeds.forEach { observation ->
+        requireMarketDataSubscriptionBudget(
+          observation.feed.id,
+          defaultAlpacaMarketDataChannels(AlpacaMarketType.EQUITY).associateWith { observationSymbols.size },
+        )
       }
       val enableBarsBackfill = mergedEnv["ENABLE_BARS_BACKFILL"]?.toBooleanStrictOrNull() ?: false
       if (alpacaMarketType == AlpacaMarketType.OPTIONS && enableBarsBackfill) {
@@ -328,6 +368,7 @@ data class ForwarderConfig(
         alpacaBaseUrl = mergedEnv["ALPACA_BASE_URL"] ?: "https://data.alpaca.markets",
         alpacaTradeStreamUrl = mergedEnv["ALPACA_TRADE_STREAM_URL"]?.trim()?.takeIf { it.isNotEmpty() },
         alpacaMarketDataChannels = alpacaMarketDataChannels,
+        alpacaMarketDataSymbolOverrides = alpacaMarketDataSymbolOverrides,
         optionsMarketHolidays = optionsMarketHolidays,
         jangarSymbolsUrl = jangarSymbolsUrl,
         staticSymbols = staticSymbols,
@@ -453,6 +494,21 @@ data class ForwarderConfig(
         error("market-data feed topics must be unique: ${duplicateTopics.sorted().joinToString(",")}")
       }
       return feeds
+    }
+
+    private fun requireMarketDataSubscriptionBudget(
+      feed: String,
+      symbolCountsByChannel: Map<String, Int>,
+    ) {
+      val subscriptionCount = symbolCountsByChannel.values.sumOf(Int::toLong)
+      if (subscriptionCount > 30) {
+        val detail =
+          symbolCountsByChannel.entries.sortedBy { it.key }.joinToString(",") { (channel, count) -> "$channel=$count" }
+        error(
+          "market-data feed $feed requires $subscriptionCount symbol-channel subscriptions " +
+            "($detail); maximum is 30",
+        )
+      }
     }
 
     private fun loadDotEnv(): Map<String, String> {

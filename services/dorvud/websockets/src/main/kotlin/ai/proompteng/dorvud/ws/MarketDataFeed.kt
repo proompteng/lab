@@ -52,9 +52,15 @@ data class FeedRuntimeConfig(
   val channels: List<String>,
   val topics: TopicConfig,
   val symbols: List<String>,
+  val symbolOverridesByChannel: Map<String, List<String>> = emptyMap(),
   val symbolAllowlist: Set<String>,
   val core: Boolean,
 )
+
+internal fun FeedRuntimeConfig.desiredSymbolsByChannel(symbols: Collection<String>): Map<String, List<String>> {
+  val normalized = symbols.map { it.trim().uppercase() }.filter { it.isNotEmpty() }.distinct()
+  return channels.associateWith { channel -> symbolOverridesByChannel[channel] ?: normalized }
+}
 
 internal fun FeedRuntimeConfig.topicFor(
   channel: String,
@@ -119,6 +125,7 @@ internal fun ForwarderConfig.marketDataFeedConfigs(): List<FeedRuntimeConfig> {
       channels = alpacaMarketDataChannels,
       topics = topics,
       symbols = staticSymbols,
+      symbolOverridesByChannel = alpacaMarketDataSymbolOverrides,
       symbolAllowlist = symbolAllowlist,
       core = true,
     )

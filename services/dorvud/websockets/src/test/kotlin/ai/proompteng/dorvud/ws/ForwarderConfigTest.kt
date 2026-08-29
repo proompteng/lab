@@ -12,11 +12,11 @@ import kotlin.test.assertNull
 class ForwarderConfigTest {
   private val authoritativeUniverse =
     mapOf(
-      "SYMBOLS" to "AMD,AVGO,COHR,CRDO,LITE,MRVL,MU,NVDA,WDC",
-      "SYMBOLS_ALLOWLIST" to "AMD,AVGO,COHR,CRDO,LITE,MRVL,MU,NVDA,WDC",
+      "SYMBOLS" to "AAPL,AMZN,IWM,NVDA,QQQ,SMH,SPY",
+      "SYMBOLS_ALLOWLIST" to "AAPL,AMZN,IWM,NVDA,QQQ,SMH,SPY",
       "MARKET_DATA_UNIVERSE_ID" to "equity-infrastructure-v1",
       "MARKET_DATA_UNIVERSE_SYMBOL_HASH" to
-        "ddcc8adc04dc29822969cddf02b821ea8110856162cca20a7ff28c1c43263e18",
+        canonicalSymbolHash(listOf("AAPL", "AMZN", "IWM", "NVDA", "QQQ", "SMH", "SPY")),
     )
 
   private val observationTopics =
@@ -96,7 +96,7 @@ class ForwarderConfigTest {
 
   @Test
   fun `keeps core trading symbols separate from the observation universe`() {
-    val coreSymbols = listOf("AMD", "AVGO", "COHR", "CRDO", "LITE", "MRVL", "MU", "NVDA", "WDC")
+    val coreSymbols = listOf("AAPL", "AMZN", "IWM", "NVDA", "QQQ", "SMH", "SPY")
     val observationSymbols = listOf("DBC", "EFA", "IEF", "SPY", "VNQ")
     val cfg =
       ForwarderConfig.fromEnv(
@@ -173,16 +173,16 @@ class ForwarderConfigTest {
         )
       }.message,
     )
-    val oversizedUniverse = ('A'..'K').map { it.toString() }
+    val oversizedObservationUniverse = ('A'..'H').map { it.toString() }
     assertEquals(
-      "configured market-data feeds require 33 symbol subscriptions; maximum is 30",
+      "market-data feed delayed_sip requires 32 symbol-channel subscriptions " +
+        "(bars=8,quotes=8,trades=8,updatedBars=8); maximum is 30",
       assertFailsWith<IllegalStateException> {
         ForwarderConfig.fromEnv(
           base +
             mapOf(
-              "SYMBOLS" to oversizedUniverse.joinToString(","),
-              "SYMBOLS_ALLOWLIST" to oversizedUniverse.joinToString(","),
-              "MARKET_DATA_UNIVERSE_SYMBOL_HASH" to canonicalSymbolHash(oversizedUniverse),
+              "ALPACA_OBSERVATION_SYMBOLS" to oversizedObservationUniverse.joinToString(","),
+              "MARKET_DATA_UNIVERSE_SYMBOL_HASH" to canonicalSymbolHash(oversizedObservationUniverse),
             ),
         )
       }.message,
@@ -238,6 +238,7 @@ class ForwarderConfigTest {
         mapOf(
           "ALPACA_KEY_ID" to "key",
           "ALPACA_SECRET_KEY" to "secret",
+          "ALPACA_MARKET_DATA_CHANNELS" to "bars",
           "SYMBOLS" to symbols,
           "SYMBOLS_ALLOWLIST" to symbols,
           "MARKET_DATA_UNIVERSE_ID" to "equity-infrastructure-v1",
@@ -356,7 +357,7 @@ class ForwarderConfigTest {
   }
 
   @Test
-  fun `accepts the production core and observation symbols within the global subscription budget`() {
+  fun `accepts the production bar and decision symbols within each feed budget`() {
     val coreSymbols =
       listOf(
         "AAPL",
@@ -376,6 +377,7 @@ class ForwarderConfigTest {
         "SPY",
         "WDC",
       )
+    val decisionSymbols = listOf("AAPL", "AMZN", "IWM", "NVDA", "QQQ", "SMH", "SPY")
     val observationSymbols = listOf("DBC", "EFA", "IEF", "SPY", "VNQ")
     val cfg =
       ForwarderConfig.fromEnv(
@@ -384,6 +386,9 @@ class ForwarderConfigTest {
           "ALPACA_SECRET_KEY" to "secret",
           "ALPACA_OBSERVATION_FEEDS" to "delayed_sip",
           "ALPACA_OBSERVATION_SYMBOLS" to observationSymbols.joinToString(","),
+          "ALPACA_MARKET_DATA_CHANNELS" to "trades,quotes,bars",
+          "ALPACA_MARKET_DATA_TRADES_SYMBOLS" to decisionSymbols.joinToString(","),
+          "ALPACA_MARKET_DATA_QUOTES_SYMBOLS" to decisionSymbols.joinToString(","),
           "SYMBOLS" to coreSymbols.joinToString(","),
           "SYMBOLS_ALLOWLIST" to coreSymbols.joinToString(","),
           "MARKET_DATA_UNIVERSE_ID" to "cross-asset-taa-v2",
@@ -393,16 +398,25 @@ class ForwarderConfigTest {
 
     assertEquals(coreSymbols, cfg.staticSymbols)
     assertEquals(coreSymbols.toSet(), cfg.symbolAllowlist)
+    assertEquals(
+      mapOf("trades" to decisionSymbols, "quotes" to decisionSymbols),
+      cfg.alpacaMarketDataSymbolOverrides,
+    )
     assertEquals(observationSymbols, cfg.observationSymbols)
     assertEquals(listOf(coreSymbols, observationSymbols), cfg.marketDataFeedConfigs().map { it.symbols })
+    assertEquals(
+      mapOf("trades" to decisionSymbols, "quotes" to decisionSymbols, "bars" to coreSymbols),
+      cfg.marketDataFeedConfigs().first().desiredSymbolsByChannel(coreSymbols),
+    )
   }
 
   @Test
-  fun `rejects a core-only universe over the global subscription budget`() {
-    val symbols = (1..31).map { "S$it" }
+  fun `rejects a core feed over its symbol-channel subscription budget`() {
+    val symbols = (1..8).map { "S$it" }
 
     assertEquals(
-      "configured market-data feeds require 31 symbol subscriptions; maximum is 30",
+      "market-data feed iex requires 32 symbol-channel subscriptions " +
+        "(bars=8,quotes=8,trades=8,updatedBars=8); maximum is 30",
       assertFailsWith<IllegalStateException> {
         ForwarderConfig.fromEnv(
           mapOf(
@@ -417,11 +431,12 @@ class ForwarderConfigTest {
   }
 
   @Test
-  fun `rejects a dynamic allowlist over the global subscription budget`() {
-    val symbols = (1..31).map { "S$it" }
+  fun `rejects a dynamic allowlist over its symbol-channel subscription budget`() {
+    val symbols = (1..8).map { "S$it" }
 
     assertEquals(
-      "configured market-data feeds require 31 symbol subscriptions; maximum is 30",
+      "market-data feed iex requires 32 symbol-channel subscriptions " +
+        "(bars=8,quotes=8,trades=8,updatedBars=8); maximum is 30",
       assertFailsWith<IllegalStateException> {
         ForwarderConfig.fromEnv(
           mapOf(
