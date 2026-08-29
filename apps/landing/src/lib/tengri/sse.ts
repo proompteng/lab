@@ -17,6 +17,7 @@ type StreamSource<Value> = {
 type ServerSentEvent = { data: unknown; id?: number | string; event?: string }
 
 const HEARTBEAT_INTERVAL_MS = 15_000
+const CONNECTED_COMMENT = ': connected\n\n'
 
 export function acquireTengriEventStreamSlot(subject: string): (() => void) | null {
   const state = globalThis as typeof globalThis & { tengriActiveStreams?: Map<string, number> }
@@ -96,6 +97,7 @@ export function createTengriEventStream<Value>(
       source.on('end', onEnd)
       source.on('error', onError)
       signal.addEventListener('abort', onAbort, { once: true })
+      controller.enqueue(encoder.encode(CONNECTED_COMMENT))
       heartbeat = setInterval(() => {
         if (!disposed && !paused && (controller.desiredSize ?? 0) > 0) {
           controller.enqueue(encoder.encode(': heartbeat\n\n'))

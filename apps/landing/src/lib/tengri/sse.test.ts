@@ -43,6 +43,9 @@ describe('Tengri SSE bridge', () => {
     )
     const reader = stream.getReader()
 
+    const connected = await reader.read()
+    expect(new TextDecoder().decode(connected.value)).toBe(': connected\n\n')
+
     upstream.source.emit('data', { sequence: 7 })
     const frame = await reader.read()
     expect(new TextDecoder().decode(frame.value)).toBe('id: 7\ndata: {"sequence":7}\n\n')
@@ -60,6 +63,8 @@ describe('Tengri SSE bridge', () => {
     const controller = new AbortController()
     const reader = createTengriEventStream(upstream.source, controller.signal, (value) => ({ data: value })).getReader()
 
+    const connected = await reader.read()
+    expect(new TextDecoder().decode(connected.value)).toBe(': connected\n\n')
     controller.abort()
     expect(await reader.read()).toEqual({ done: true, value: undefined })
     expect(upstream.stats().cancellations).toBe(1)
