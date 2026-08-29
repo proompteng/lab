@@ -51,6 +51,8 @@ spec:
                   fieldPath: metadata.namespace
             - name: TENGRI_GUEST_ARCHITECTURE
               value: amd64
+            - name: TENGRI_NEW_AGENT_STORAGE_LAYOUT
+              value: home-workspace-v1
             - name: TENGRI_DEFAULT_IMAGE
               valueFrom:
                 configMapKeyRef:
