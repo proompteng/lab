@@ -3,12 +3,8 @@ import { Result, Schema } from 'effect'
 
 import { makeExecutionCalendarObservation } from '../../cycle'
 import { canonicalHashV1, sha256 } from '../../hash'
-import {
-  verifyIntradaySnapshot,
-  type ArchiveVerifiedIntradayMarketSnapshot,
-  type IntradayMarketSnapshot,
-  type IntradaySnapshotRows,
-} from '../../market-data'
+import { verifyIntradaySnapshot, type IntradayMarketSnapshot, type IntradaySnapshotRows } from '../../market-data'
+import type { ArchiveVerifiedIntradayMarketSnapshot } from '../../market-data/intraday/model'
 import { strictParseOptions } from '../../schemas'
 import { decideIntradayMomentum, makeIntradayMomentumDefinition } from './decision'
 import {

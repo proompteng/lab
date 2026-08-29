@@ -64,13 +64,13 @@ import { WriterFence, WriterFenceError, type WriterFenceService } from './execut
 import { canonicalHashV1 } from './hash'
 import {
   MarketData,
-  type ArchiveVerifiedIntradayMarketSnapshot,
   type IntradayMarketDataService,
   type IntradayMarketSnapshot,
   type IntradaySnapshotRequest,
   type MarketDataService,
   type MarketDataSnapshot,
 } from './market-data'
+import type { ArchiveVerifiedIntradayMarketSnapshot } from './market-data/intraday/model'
 import {
   decodeDefaultOpeningDriveProtocol,
   makeOpeningDriveDefinition,

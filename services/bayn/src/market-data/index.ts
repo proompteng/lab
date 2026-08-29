@@ -15,7 +15,6 @@ export type { SignalBarRow, SignalManifestRow, SignalSessionRow, SnapshotRows } 
 export { marketDataOperationError } from './errors'
 export { makeMarketData, MarketDataLive } from './program'
 export type {
-  ArchiveVerifiedIntradayMarketSnapshot,
   IntradayArchiveWatermark,
   IntradayBar,
   IntradayDelayClass,

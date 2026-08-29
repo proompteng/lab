@@ -15,11 +15,11 @@ import {
 import { canonicalHashV1, sha256 } from '../hash'
 import {
   verifyIntradaySnapshot,
-  type ArchiveVerifiedIntradayMarketSnapshot,
   type IntradayMarketDataService,
   type IntradaySnapshotRequest,
   type IntradaySnapshotRows,
 } from '../market-data'
+import type { ArchiveVerifiedIntradayMarketSnapshot } from '../market-data/intraday/model'
 import {
   decodeDefaultOpeningDriveProtocol,
   makeOpeningDriveDefinition,
