@@ -3528,3 +3528,149 @@ data:
               summary: Critical Argo CD application is degraded
               description: A critical Kafka, dependent-service, or observability Argo CD application is not Healthy for 10 minutes.
               runbook_url: docs/incidents/2026-06-20-kafka-broker-disk-full-and-service-recovery.md
+      - name: tengri-production.rules
+        rules:
+          - record: tengri_rollout_enabled
+            expr: |
+              max(
+                kube_argocd_application_deployment_history_info{
+                  namespace="argocd",
+                  application="tengri"
+                }
+              )
+          - alert: TengriArgoApplicationDegraded
+            expr: |
+              argocd_app_info{
+                name="tengri",
+                health_status!="Healthy"
+              } == 1
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: tengri
+              notify: email
+            annotations:
+              summary: The Tengri Argo CD application is degraded
+              description: Argo CD has reported the Tengri application unhealthy for five minutes.
+              runbook_url: docs/tengri/operations.md
+          - alert: TengriMetricsUnavailable
+            expr: |
+              (
+                (
+                  sum(up{job="tengri",namespace="tengri"}) < 1
+                )
+                or
+                absent(up{job="tengri",namespace="tengri"})
+              )
+              and on()
+              (tengri_rollout_enabled == 1)
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: tengri
+              notify: email
+            annotations:
+              summary: Tengri control-plane metrics are unavailable
+              description: The Tengri control plane has not produced a healthy metrics scrape for five minutes.
+              runbook_url: docs/tengri/operations.md
+          - alert: TengriAgentFailed
+            expr: |
+              max(
+                tengri_agents{
+                  job="tengri",
+                  namespace="tengri",
+                  state="failed"
+                }
+              ) > 0
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: tengri
+              notify: email
+            annotations:
+              summary: Tengri has a failed microVM agent
+              description: At least one Tengri microVM has remained in the failed state for five minutes.
+              runbook_url: docs/tengri/operations.md
+          - alert: TengriGuestFailureBurst
+            expr: |
+              sum(
+                increase(
+                  tengri_guest_failures_total{
+                    job="tengri",
+                    namespace="tengri"
+                  }[15m]
+                )
+              ) > 2
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: tengri
+            annotations:
+              summary: Tengri guest operations are repeatedly failing
+              description: Tengri recorded more than two guest API or readiness failures during the last 15 minutes.
+              runbook_url: docs/tengri/operations.md
+          - alert: TengriBootLatencyHigh
+            expr: |
+              (
+                sum(rate(tengri_agent_boot_latency_seconds_sum{job="tengri",namespace="tengri"}[15m]))
+                /
+                clamp_min(
+                  sum(rate(tengri_agent_boot_latency_seconds_count{job="tengri",namespace="tengri"}[15m])),
+                  0.001
+                )
+              ) > 120
+              and
+              sum(increase(tengri_agent_boot_latency_seconds_count{job="tengri",namespace="tengri"}[15m])) >= 2
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: tengri
+            annotations:
+              summary: Tengri agent boot latency is high
+              description: Average guest boot latency has exceeded two minutes across at least two boots in 15 minutes.
+              runbook_url: docs/tengri/operations.md
+          - alert: TengriResumeLatencyHigh
+            expr: |
+              (
+                sum(rate(tengri_agent_resume_latency_seconds_sum{job="tengri",namespace="tengri"}[15m]))
+                /
+                clamp_min(
+                  sum(rate(tengri_agent_resume_latency_seconds_count{job="tengri",namespace="tengri"}[15m])),
+                  0.001
+                )
+              ) > 60
+              and
+              sum(increase(tengri_agent_resume_latency_seconds_count{job="tengri",namespace="tengri"}[15m])) >= 2
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: tengri
+            annotations:
+              summary: Tengri agent resume latency is high
+              description: Average guest resume latency has exceeded one minute across at least two resumes in 15 minutes.
+              runbook_url: docs/tengri/operations.md
+          - alert: TengriQuotaRejections
+            expr: |
+              sum(
+                increase(
+                  tengri_quota_rejections_total{
+                    job="tengri",
+                    namespace="tengri"
+                  }[15m]
+                )
+              ) > 0
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: tengri
+            annotations:
+              summary: Tengri is rejecting agent creation at the global quota
+              description: At least one agent creation request was rejected because the six-agent quota was exhausted.
+              runbook_url: docs/tengri/operations.md

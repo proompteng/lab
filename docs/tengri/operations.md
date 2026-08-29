@@ -158,6 +158,40 @@ test -z "$(kubectl --context galactic-lan -n kata get pod,secret \
 The verifier creates one unprivileged, digest-pinned Nanoagent Pod at a time, captures guest and host evidence, and
 deletes the Pod plus its unique bootstrap Secret through an exit trap. It never changes node scheduling or Talos.
 
+## Observability
+
+The cluster does not install the Prometheus Operator monitoring CRDs. The shared observability Alloy collector is the
+authoritative equivalent of a ServiceMonitor: it scrapes only `up` and bounded `tengri_*` metrics from
+`tengri-gateway.tengri.svc.cluster.local:8080`, then remote-writes them to Mimir. The Tengri NetworkPolicy permits this
+single observability-namespace path and does not expose the preview listener to the collector.
+
+Mimir alerts cover a missing control-plane scrape, failed microVM agents, repeated guest failures, high boot and resume
+latency, and global quota rejection. All Tengri alerts link back to this runbook and use bounded labels; owner hashes,
+agent IDs, terminal IDs, prompts, file contents, and ticket material must never appear in metrics.
+
+After the observability application reconciles, verify collection and rule loading without exposing user data:
+
+```bash
+set -euo pipefail
+
+kubectl --context galactic-lan -n observability port-forward \
+  service/observability-mimir-gateway 19090:80 &
+tengri_mimir_port_forward_pid=$!
+trap 'kill "$tengri_mimir_port_forward_pid" 2>/dev/null || true' EXIT INT TERM
+
+curl --fail --silent --show-error --get \
+  --header 'X-Scope-OrgID: anonymous' \
+  --data-urlencode 'query=up{job="tengri",namespace="tengri"}' \
+  http://127.0.0.1:19090/prometheus/api/v1/query
+curl --fail --silent --show-error --get \
+  --header 'X-Scope-OrgID: anonymous' \
+  --data-urlencode 'query=tengri_agents{job="tengri",namespace="tengri"}' \
+  http://127.0.0.1:19090/prometheus/api/v1/query
+curl --fail --silent --show-error \
+  --header 'X-Scope-OrgID: anonymous' \
+  http://127.0.0.1:19090/prometheus/config/v1/rules/lab/tengri-production.rules
+```
+
 ## Validation
 
 ```bash
