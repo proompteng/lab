@@ -141,6 +141,30 @@ prometheus.scrape "bayn" {
 	forward_to      = [prometheus.relabel.bayn_metrics.receiver]
 }
 
+prometheus.relabel "tengri_metrics" {
+	forward_to = [prometheus.remote_write.mimir.receiver]
+
+	rule {
+		action        = "keep"
+		source_labels = ["__name__"]
+		regex         = "up|tengri_.*"
+	}
+}
+
+prometheus.scrape "tengri" {
+	job_name = "tengri"
+	targets  = [
+		{
+			"__address__" = "tengri-gateway.tengri.svc.cluster.local:8080",
+			"namespace"   = "tengri",
+			"service"     = "tengri",
+		},
+	]
+	scrape_interval = "30s"
+	scrape_timeout  = "10s"
+	forward_to      = [prometheus.relabel.tengri_metrics.receiver]
+}
+
 prometheus.relabel "restate_metrics" {
 	forward_to = [prometheus.remote_write.mimir.receiver]
 
