@@ -13,7 +13,7 @@ use kube::{Api, Client, api::PostParams};
 use prost::Message;
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex as AsyncMutex;
-use tonic::{GrpcMethod, Request, Status};
+use tonic::{Request, Status};
 
 const SUBJECT_HEADER: &str = "x-tengri-subject";
 const TIMESTAMP_HEADER: &str = "x-tengri-timestamp";
@@ -81,7 +81,11 @@ impl Authenticator {
         })
     }
 
-    pub async fn authorize<T: Message>(&self, request: &Request<T>) -> Result<Principal, Status> {
+    pub async fn authorize<T: Message>(
+        &self,
+        request: &Request<T>,
+        rpc_path: &str,
+    ) -> Result<Principal, Status> {
         let subject = metadata(request, SUBJECT_HEADER)?;
         let timestamp = metadata(request, TIMESTAMP_HEADER)?;
         let nonce = metadata(request, NONCE_HEADER)?;
@@ -108,13 +112,8 @@ impl Authenticator {
             .map(|signature| decode_hex(signature))
             .collect::<Option<Vec<_>>>()
             .ok_or_else(|| Status::unauthenticated("invalid request signature"))?;
-        let grpc_method = request
-            .extensions()
-            .get::<GrpcMethod<'static>>()
-            .ok_or_else(|| Status::unauthenticated("missing authenticated RPC identity"))?;
-        let rpc_path = format!("/{}/{}", grpc_method.service(), grpc_method.method());
         let body_hash = encode_hex(&Sha256::digest(request.get_ref().encode_to_vec()));
-        let payload = signing_payload(&subject, &timestamp, &nonce, &rpc_path, &body_hash);
+        let payload = signing_payload(&subject, &timestamp, &nonce, rpc_path, &body_hash);
         let mut valid = false;
         for secret in self.secrets.iter() {
             for signature in &signatures {
@@ -360,6 +359,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn accepts_explicit_rpc_identity_without_tonic_extensions() {
+        let secret = "s".repeat(32);
+        let auth = Authenticator::new_for_tests(secret.clone()).expect("authenticator");
+        let request = signed_request(&secret, None, "nonce-explicit-rpc");
+
+        assert!(request.extensions().is_empty());
+        assert!(
+            auth.authorize(
+                &request,
+                "/proompteng.runtime.v1.MicroVMControlPlane/GetAgent",
+            )
+            .await
+            .is_ok()
+        );
+    }
+
+    #[tokio::test]
     async fn rejects_replayed_signed_request_across_authenticator_instances() {
         let secret = "s".repeat(32);
         let nonces = NonceStore::Memory(Arc::new(Mutex::new(HashMap::new())));
@@ -383,10 +399,6 @@ mod tests {
         let signature = encode_hex(&mac.finalize().into_bytes());
         let request = || {
             let mut request = Request::new(body.clone());
-            request.extensions_mut().insert(GrpcMethod::new(
-                "proompteng.runtime.v1.MicroVMControlPlane",
-                "GetAgent",
-            ));
             request
                 .metadata_mut()
                 .insert(SUBJECT_HEADER, subject.parse().expect("subject"));
@@ -401,10 +413,10 @@ mod tests {
                 .insert(SIGNATURE_HEADER, signature.parse().expect("signature"));
             request
         };
-        assert!(auth.authorize(&request()).await.is_ok());
+        assert!(auth.authorize(&request(), rpc_path).await.is_ok());
         assert_eq!(
             replacement
-                .authorize(&request())
+                .authorize(&request(), rpc_path)
                 .await
                 .expect_err("replay")
                 .code(),
@@ -508,12 +520,8 @@ mod tests {
         let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("hmac");
         mac.update(signing_payload(subject, &timestamp, nonce, signed_path, &body_hash).as_bytes());
         let signature = encode_hex(&mac.finalize().into_bytes());
-        let request = |body: TestRequest, method: &'static str| {
+        let request = |body: TestRequest| {
             let mut request = Request::new(body);
-            request.extensions_mut().insert(GrpcMethod::new(
-                "proompteng.runtime.v1.MicroVMControlPlane",
-                method,
-            ));
             request
                 .metadata_mut()
                 .insert(SUBJECT_HEADER, subject.parse().expect("subject"));
@@ -530,25 +538,28 @@ mod tests {
         };
 
         assert_eq!(
-            auth.authorize(&request(body.clone(), "DeleteAgent"))
-                .await
-                .expect_err("method substitution")
-                .code(),
+            auth.authorize(
+                &request(body.clone()),
+                "/proompteng.runtime.v1.MicroVMControlPlane/DeleteAgent",
+            )
+            .await
+            .expect_err("method substitution")
+            .code(),
             tonic::Code::Unauthenticated,
         );
         assert_eq!(
-            auth.authorize(&request(
-                TestRequest {
+            auth.authorize(
+                &request(TestRequest {
                     id: "agent-2".to_owned(),
-                },
-                "GetAgent",
-            ))
+                }),
+                signed_path,
+            )
             .await
             .expect_err("body substitution")
             .code(),
             tonic::Code::Unauthenticated,
         );
-        assert!(auth.authorize(&request(body, "GetAgent")).await.is_ok());
+        assert!(auth.authorize(&request(body), signed_path).await.is_ok());
     }
 
     #[tokio::test]
@@ -563,7 +574,10 @@ mod tests {
             signed_request(&current, Some(&previous), "nonce-new-1234567");
         assert!(
             old_verifier
-                .authorize(&request_from_new_signer)
+                .authorize(
+                    &request_from_new_signer,
+                    "/proompteng.runtime.v1.MicroVMControlPlane/GetAgent",
+                )
                 .await
                 .is_ok()
         );
@@ -571,7 +585,10 @@ mod tests {
         let request_from_old_signer = signed_request(&previous, None, "nonce-old-1234567");
         assert!(
             rotating_verifier
-                .authorize(&request_from_old_signer)
+                .authorize(
+                    &request_from_old_signer,
+                    "/proompteng.runtime.v1.MicroVMControlPlane/GetAgent",
+                )
                 .await
                 .is_ok()
         );
@@ -610,10 +627,6 @@ mod tests {
         };
 
         let mut request = Request::new(body);
-        request.extensions_mut().insert(GrpcMethod::new(
-            "proompteng.runtime.v1.MicroVMControlPlane",
-            "GetAgent",
-        ));
         request
             .metadata_mut()
             .insert(SUBJECT_HEADER, subject.parse().expect("subject"));
