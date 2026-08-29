@@ -331,22 +331,22 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
             ),
             EnvVar {
                 name: "CODEX_BINARY".to_owned(),
-                value: Some("/workspace/.local/bin/codex".to_owned()),
+                value: Some("/home/nanoagent/.local/bin/codex".to_owned()),
                 ..EnvVar::default()
             },
             EnvVar {
                 name: "CODEX_HOME".to_owned(),
-                value: Some("/workspace/.codex".to_owned()),
+                value: Some("/home/nanoagent/.codex".to_owned()),
                 ..EnvVar::default()
             },
             EnvVar {
                 name: "HOME".to_owned(),
-                value: Some("/workspace".to_owned()),
+                value: Some("/home/nanoagent".to_owned()),
                 ..EnvVar::default()
             },
             EnvVar {
                 name: "NANOAGENT_HOME".to_owned(),
-                value: Some("/workspace".to_owned()),
+                value: Some("/home/nanoagent".to_owned()),
                 ..EnvVar::default()
             },
             EnvVar {
@@ -357,14 +357,14 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
             EnvVar {
                 name: "PATH".to_owned(),
                 value: Some(
-                    "/workspace/.local/bin:/workspace/go/bin:/workspace/.cargo/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+                    "/home/nanoagent/.local/bin:/home/nanoagent/go/bin:/home/nanoagent/.cargo/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
                         .to_owned(),
                 ),
                 ..EnvVar::default()
             },
             EnvVar {
                 name: "XDG_CACHE_HOME".to_owned(),
-                value: Some("/workspace/.cache".to_owned()),
+                value: Some("/home/nanoagent/.cache".to_owned()),
                 ..EnvVar::default()
             },
         ]),
@@ -402,7 +402,7 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
         volume_mounts: Some(vec![
             VolumeMount {
                 name: "home".to_owned(),
-                mount_path: "/workspace".to_owned(),
+                mount_path: "/tengri".to_owned(),
                 ..VolumeMount::default()
             },
             VolumeMount {
@@ -424,9 +424,9 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
                 ..VolumeMount::default()
             },
         ]),
-        // The PVC remains mounted once at the existing volume-root workspace path. The
-        // generated passwd file makes UID 1000 resolve its home there, while the read-only
-        // /home/nanoagent symlink preserves absolute paths written by older guest images.
+        // Mount the PVC once at a neutral path. The generated /home/nanoagent alias and
+        // volume-root workspace symlink preserve both historical absolute paths without
+        // forming a reverse link through the mount destination.
         working_dir: Some("/workspace".to_owned()),
         ..Container::default()
     }
@@ -435,31 +435,15 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
 fn build_identity_init_container(microvm: &MicroVM) -> Container {
     let fixed = BTreeMap::from([
         ("cpu".to_owned(), Quantity("10m".to_owned())),
-        ("memory".to_owned(), Quantity("16Mi".to_owned())),
+        ("memory".to_owned(), Quantity("64Mi".to_owned())),
     ]);
 
     Container {
         name: "prepare-runtime-identity".to_owned(),
         image: Some(microvm.spec.image.clone()),
         image_pull_policy: Some("IfNotPresent".to_owned()),
-        command: Some(vec!["/bin/sh".to_owned(), "-ceu".to_owned()]),
-        args: Some(vec![format!(
-            r#"temporary='{RUNTIME_PASSWD_PATH}.tmp'
-: > "$temporary"
-rm -f /runtime-home-alias/nanoagent
-ln -s /workspace /runtime-home-alias/nanoagent
-found=
-while IFS=: read -r name password uid gid gecos home shell; do
-  if [ "$uid" = '{GUEST_UID}' ]; then
-    home=/workspace
-    found=1
-  fi
-  printf '%s:%s:%s:%s:%s:%s:%s\n' "$name" "$password" "$uid" "$gid" "$gecos" "$home" "$shell" >> "$temporary"
-done < /etc/passwd
-test "$found" = 1
-chmod 0444 "$temporary"
-mv "$temporary" '{RUNTIME_PASSWD_PATH}'"#
-        )]),
+        command: Some(vec!["/usr/bin/python3".to_owned(), "-c".to_owned()]),
+        args: Some(vec![runtime_identity_script()]),
         resources: Some(ResourceRequirements {
             limits: Some(fixed.clone()),
             requests: Some(fixed),
@@ -484,6 +468,11 @@ mv "$temporary" '{RUNTIME_PASSWD_PATH}'"#
         }),
         volume_mounts: Some(vec![
             VolumeMount {
+                name: "home".to_owned(),
+                mount_path: "/runtime-home".to_owned(),
+                ..VolumeMount::default()
+            },
+            VolumeMount {
                 name: RUNTIME_HOME_ALIAS_VOLUME.to_owned(),
                 mount_path: "/runtime-home-alias".to_owned(),
                 ..VolumeMount::default()
@@ -496,6 +485,80 @@ mv "$temporary" '{RUNTIME_PASSWD_PATH}'"#
         ]),
         ..Container::default()
     }
+}
+
+fn runtime_identity_script() -> String {
+    format!(
+        r#"from pathlib import Path
+import os
+
+persistent = Path('/runtime-home')
+workspace = persistent / 'workspace'
+migration = persistent / '.tengri-workspace-migration'
+
+def present(path):
+    return path.exists() or path.is_symlink()
+
+if present(migration):
+    if migration.is_symlink() or not migration.is_dir() or present(workspace):
+        raise RuntimeError('invalid interrupted workspace migration state')
+    source = migration
+elif workspace.is_symlink():
+    if os.readlink(workspace) != '.':
+        raise RuntimeError('workspace symlink must target the persistent volume root')
+    source = None
+elif workspace.exists():
+    if not workspace.is_dir():
+        raise RuntimeError('workspace path is not a directory')
+    conflicts = [
+        entry.name
+        for entry in workspace.iterdir()
+        if entry.name == migration.name or present(persistent / entry.name)
+    ]
+    if conflicts:
+        raise RuntimeError('workspace migration conflicts with persistent home entries: ' + ', '.join(sorted(conflicts)))
+    workspace.rename(migration)
+    source = migration
+else:
+    source = None
+
+if source is not None:
+    for entry in list(source.iterdir()):
+        destination = persistent / entry.name
+        if present(destination):
+            raise RuntimeError('interrupted workspace migration conflict: ' + entry.name)
+        entry.rename(destination)
+    source.rmdir()
+
+if not present(workspace):
+    workspace.symlink_to('.', target_is_directory=True)
+
+alias = Path('/runtime-home-alias/nanoagent')
+if alias.is_symlink():
+    alias.unlink()
+elif alias.exists():
+    raise RuntimeError('legacy home alias path is occupied')
+alias.symlink_to('/tengri', target_is_directory=True)
+
+passwd_lines = []
+found = False
+for line in Path('/etc/passwd').read_text(encoding='utf-8').splitlines():
+    fields = line.split(':')
+    if len(fields) != 7:
+        raise RuntimeError('invalid passwd entry')
+    if fields[2] == '{GUEST_UID}':
+        fields[5] = '/home/nanoagent'
+        found = True
+    passwd_lines.append(':'.join(fields))
+if not found:
+    raise RuntimeError('guest image has no UID {GUEST_UID} passwd entry')
+
+temporary = Path('{RUNTIME_PASSWD_PATH}.tmp')
+temporary.write_text('\n'.join(passwd_lines) + '\n', encoding='utf-8')
+temporary.chmod(0o444)
+temporary.replace('{RUNTIME_PASSWD_PATH}')
+"#
+    )
 }
 
 fn secret_env(name: &str, secret_name: &str, key: &str) -> EnvVar {
@@ -653,16 +716,16 @@ mod tests {
         );
         let env = container.env.as_ref().expect("environment");
         for (name, value) in [
-            ("CODEX_BINARY", "/workspace/.local/bin/codex"),
-            ("CODEX_HOME", "/workspace/.codex"),
-            ("HOME", "/workspace"),
-            ("NANOAGENT_HOME", "/workspace"),
+            ("CODEX_BINARY", "/home/nanoagent/.local/bin/codex"),
+            ("CODEX_HOME", "/home/nanoagent/.codex"),
+            ("HOME", "/home/nanoagent"),
+            ("NANOAGENT_HOME", "/home/nanoagent"),
             ("NANOAGENT_WORKSPACE", "/workspace"),
             (
                 "PATH",
-                "/workspace/.local/bin:/workspace/go/bin:/workspace/.cargo/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "/home/nanoagent/.local/bin:/home/nanoagent/go/bin:/home/nanoagent/.cargo/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
             ),
-            ("XDG_CACHE_HOME", "/workspace/.cache"),
+            ("XDG_CACHE_HOME", "/home/nanoagent/.cache"),
         ] {
             assert!(
                 env.iter()
@@ -677,7 +740,7 @@ mod tests {
             .filter(|mount| mount.name == "home")
             .collect::<Vec<_>>();
         assert_eq!(home_mounts.len(), 1);
-        assert_eq!(home_mounts[0].mount_path, "/workspace");
+        assert_eq!(home_mounts[0].mount_path, "/tengri");
         let legacy_home_mount = container
             .volume_mounts
             .as_ref()
@@ -706,15 +769,26 @@ mod tests {
         assert_eq!(init.image, container.image);
         assert_eq!(
             init.command.as_deref(),
-            Some(&["/bin/sh".to_owned(), "-ceu".to_owned()][..])
+            Some(&["/usr/bin/python3".to_owned(), "-c".to_owned()][..])
         );
         assert!(init.args.as_ref().is_some_and(|args| {
             args.len() == 1
-                && args[0].contains("home=/workspace")
-                && args[0].contains(&format!("[ \"$uid\" = '{GUEST_UID}' ]"))
+                && args[0].contains("workspace.symlink_to('.', target_is_directory=True)")
+                && args[0].contains("workspace migration conflicts")
+                && args[0].contains("alias.symlink_to('/tengri', target_is_directory=True)")
+                && args[0].contains("fields[5] = '/home/nanoagent'")
+                && args[0].contains(&format!("fields[2] == '{GUEST_UID}'"))
                 && args[0].contains(RUNTIME_PASSWD_PATH)
-                && args[0].contains("ln -s /workspace /runtime-home-alias/nanoagent")
         }));
+        let init_home_mounts = init
+            .volume_mounts
+            .as_ref()
+            .expect("init volume mounts")
+            .iter()
+            .filter(|mount| mount.name == "home")
+            .collect::<Vec<_>>();
+        assert_eq!(init_home_mounts.len(), 1);
+        assert_eq!(init_home_mounts[0].mount_path, "/runtime-home");
         let init_security = init
             .security_context
             .as_ref()
