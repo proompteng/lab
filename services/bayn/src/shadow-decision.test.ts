@@ -23,11 +23,13 @@ import {
   type AccountSnapshot,
   type Reconciliation,
 } from './execution/contracts'
+import { makeExecutionIntentFromDecodedPlan } from './execution/intents/domain'
+import { legacyIntentPlanSchemaVersion } from './execution/legacy-wire'
 import { bindCycleExecutionSession } from './execution-session'
 import { canonicalHashV1 } from './hash'
 import { IntradaySnapshotPurpose, persistIntradaySnapshotRows, type IntradaySnapshotRequest } from './market-data'
 import { reconciledStateHash } from './reconciliation'
-import { BrokerMode, Gate, PolicySchema, Reason, decodeState, type Policy } from './risk'
+import { BrokerMode, Gate, PolicySchema, Reason, decodeState, evaluate, type Policy } from './risk'
 import { strictParseOptions } from './schemas'
 import {
   buildExecutionDecision,
@@ -777,6 +779,168 @@ describe('intraday shadow decision', () => {
     expect(
       document.deltaRisk.some(({ evaluation }) => evaluation.gates.some(({ name }) => name === Gate.DailyLoss)),
     ).toBeTrue()
+  })
+
+  test('rejects a fully rehashed evaluation whose durable risk context differs from the bound planner state', async () => {
+    const selectedSymbol = protocol.candidateSymbols[0]
+    if (selectedSymbol === undefined) throw new Error('intraday fixture requires one candidate symbol')
+    const input = fixture({ [protocol.benchmarkSymbol]: 0.005, [selectedSymbol]: 0.02 })
+    const authorityGenerationHash = hash('6')
+    const document = await Effect.runPromise(
+      buildExecutionDecision({
+        ...input,
+        authorityGenerationHash,
+        executionSession: executionSession(input),
+      }),
+    )
+    const target = document.targetPlan.intentTargets[0]
+    const risk = document.deltaRisk[0]
+    if (target === undefined || risk?.facts === undefined) {
+      throw new Error('risk-context fixture requires one persisted execution risk input')
+    }
+    const intent = value(
+      makeExecutionIntentFromDecodedPlan(
+        {
+          schemaVersion: legacyIntentPlanSchemaVersion,
+          ...target,
+          notionalLimitMicros: risk.notionalLimitMicros,
+        },
+        authorityGenerationHash,
+      ),
+    )
+    const forgedState = {
+      ...risk.facts.state,
+      dayStartEquityMicros: (BigInt(risk.facts.state.dayStartEquityMicros) + 1n).toString(),
+    }
+    const forgedEvaluation = value(
+      evaluate({
+        intent,
+        state: forgedState,
+        policy: input.policy,
+        proposedPositions: risk.facts.proposedPositions,
+      }),
+    )
+    const { contentHash: _contentHash, ...material } = document
+    const forged = makeExecutionDecisionDocument({
+      ...material,
+      deltaRisk: [{ ...risk, facts: { ...risk.facts, state: forgedState }, evaluation: forgedEvaluation }],
+    })
+
+    expect(Result.isFailure(forged)).toBeTrue()
+    if (Result.isFailure(forged)) {
+      expect(String(forged.failure.cause)).toContain('must match the exact planner, authority, market-data')
+    }
+  })
+
+  test('rejects a fully rehashed evaluation whose authority version differs from the bound state', async () => {
+    const selectedSymbol = protocol.candidateSymbols[0]
+    if (selectedSymbol === undefined) throw new Error('intraday fixture requires one candidate symbol')
+    const input = fixture({ [protocol.benchmarkSymbol]: 0.005, [selectedSymbol]: 0.02 })
+    const authorityGenerationHash = hash('6')
+    const document = await Effect.runPromise(
+      buildExecutionDecision({
+        ...input,
+        authorityGenerationHash,
+        executionSession: executionSession(input),
+      }),
+    )
+    const target = document.targetPlan.intentTargets[0]
+    const risk = document.deltaRisk[0]
+    if (target === undefined || risk?.facts === undefined) {
+      throw new Error('authority fixture requires one persisted execution risk input')
+    }
+    const intent = value(
+      makeExecutionIntentFromDecodedPlan(
+        {
+          schemaVersion: legacyIntentPlanSchemaVersion,
+          ...target,
+          notionalLimitMicros: risk.notionalLimitMicros,
+        },
+        authorityGenerationHash,
+      ),
+    )
+    const forgedState = {
+      ...risk.facts.state,
+      authority: { ...risk.facts.state.authority, version: risk.facts.state.authority.version + 1 },
+    }
+    const forgedEvaluation = value(
+      evaluate({
+        intent,
+        state: forgedState,
+        policy: input.policy,
+        proposedPositions: risk.facts.proposedPositions,
+      }),
+    )
+    const { contentHash: _contentHash, ...material } = document
+    const forged = makeExecutionDecisionDocument({
+      ...material,
+      deltaRisk: [{ ...risk, facts: { ...risk.facts, state: forgedState }, evaluation: forgedEvaluation }],
+    })
+
+    expect(Result.isFailure(forged)).toBeTrue()
+    if (Result.isFailure(forged)) {
+      expect(String(forged.failure.cause)).toContain('must match the exact planner, authority, market-data')
+    }
+  })
+
+  test('recomputes quote-bound execution pricing before admitting a rehashed evaluation', async () => {
+    const selectedSymbol = protocol.candidateSymbols[0]
+    if (selectedSymbol === undefined) throw new Error('intraday fixture requires one candidate symbol')
+    const input = fixture({ [protocol.benchmarkSymbol]: 0.005, [selectedSymbol]: 0.02 })
+    const authorityGenerationHash = hash('6')
+    const document = await Effect.runPromise(
+      buildExecutionDecision({
+        ...input,
+        authorityGenerationHash,
+        executionSession: executionSession(input),
+      }),
+    )
+    const target = document.targetPlan.intentTargets[0]
+    const risk = document.deltaRisk[0]
+    if (target === undefined || risk?.facts === undefined) {
+      throw new Error('pricing fixture requires one persisted execution risk input')
+    }
+    const forgedNotionalLimitMicros = (BigInt(risk.notionalLimitMicros) + 1n).toString()
+    const intent = value(
+      makeExecutionIntentFromDecodedPlan(
+        {
+          schemaVersion: legacyIntentPlanSchemaVersion,
+          ...target,
+          notionalLimitMicros: forgedNotionalLimitMicros,
+        },
+        authorityGenerationHash,
+      ),
+    )
+    const forgedState = {
+      ...risk.facts.state,
+      expectedExecutionPriceMicros: (BigInt(risk.facts.state.expectedExecutionPriceMicros) + 1n).toString(),
+    }
+    const forgedEvaluation = value(
+      evaluate({
+        intent,
+        state: forgedState,
+        policy: input.policy,
+        proposedPositions: risk.facts.proposedPositions,
+      }),
+    )
+    const { contentHash: _contentHash, ...material } = document
+    const forged = makeExecutionDecisionDocument({
+      ...material,
+      orderedIntentIds: [intent.intentId],
+      deltaRisk: [
+        {
+          ...risk,
+          notionalLimitMicros: forgedNotionalLimitMicros,
+          facts: { ...risk.facts, state: forgedState },
+          evaluation: forgedEvaluation,
+        },
+      ],
+    })
+
+    expect(Result.isFailure(forged)).toBeTrue()
+    if (Result.isFailure(forged)) {
+      expect(String(forged.failure.cause)).toContain('must reproduce the exact persisted risk gates')
+    }
   })
 
   test('fails closed when market data is absent, incomplete, or bound to another calendar', async () => {

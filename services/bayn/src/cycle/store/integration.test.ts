@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Layer, ManagedRuntime, Option, Redacted, Result } from 'effect'
+import { Effect, Layer, ManagedRuntime, Option, Redacted, Result, Schema } from 'effect'
 
 import {
   CycleState,
@@ -17,14 +17,18 @@ import {
 } from '../index'
 import { PostgresClientLive } from '../../db/postgres-client'
 import { postgresMigrations } from '../../db/postgres-migrations'
+import { Authority, KillState } from '../../execution/contracts'
 import { canonicalHashV1 } from '../../hash'
+import type { ExecutionDecisionDocument } from '../../shadow-decision-contract'
 import { intradayMomentumExecutionModel } from '../../strategy/intraday-momentum/protocol'
 import { baynTestPostgresUrl } from '../../test-environment.test-support'
 import { config as fixtureConfig } from '../../testing/runtime-fixtures'
 import { CycleStore, CycleStoreLive } from '.'
+import { makeCycleQueries } from './queries'
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
+const encodeSqlJson = Schema.encodeSync(Schema.UnknownFromJsonString)
 const accountId = 'paper-account-intraday-store'
 const qualificationRunId = '1'.repeat(64)
 const sessionDate = '2026-08-28' as const
@@ -190,5 +194,113 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     expect(result.authorityConflict).toMatchObject({ operation: 'acquire', failure: 'conflict' })
     expect(result.backwardActivation).toMatchObject({ operation: 'activate', failure: 'conflict' })
     expect(result.prematureCompletion).toMatchObject({ operation: 'finish', failure: 'invariant' })
+  })
+
+  test('admits persisted execution evidence only against the exact durable authority and risk context', async () => {
+    const authorityGenerationHash = '2'.repeat(64)
+    const authorityUpdatedAt = '2026-08-28T14:58:00.000Z'
+    const reconciledAt = '2026-08-28T14:59:00.000Z'
+    const observedAt = '2026-08-28T15:00:00.000Z'
+    const stateHash = '3'.repeat(64)
+    const reconciliationId = '4'.repeat(64)
+    const reconciliationHash = '5'.repeat(64)
+    const snapshotId = '6'.repeat(64)
+    const snapshotContentHash = '7'.repeat(64)
+    const equityMicros = '100000000000'
+    const riskContext = {
+      authority: {
+        schemaVersion: 'bayn.paper-authority.v1' as const,
+        generationHash: authorityGenerationHash,
+        maximum: Authority.Observe,
+        effective: Authority.Observe,
+        kill: KillState.Clear,
+        version: 1,
+        updatedAt: authorityUpdatedAt,
+      },
+      authorityObservedAt: reconciledAt,
+      unknownMutationCount: 0,
+      dailyTradedNotionalMicros: '0',
+      dayStartEquityMicros: equityMicros,
+      peakEquityMicros: equityMicros,
+    }
+    const document = {
+      mode: 'PAPER',
+      createdAt: observedAt,
+      bindings: {
+        accountId,
+        snapshotId,
+        snapshotContentHash,
+        snapshotFinalizedAt: observedAt,
+        planningBrokerStateHash: stateHash,
+        reconciliationId,
+        reconciliationHash,
+        decisionMarketData: { snapshotId, contentHash: snapshotContentHash, observedAt },
+        riskContext,
+      },
+      deltaRisk: [{ facts: { state: { reconciliation: { reconciledAt } } } }],
+    } as unknown as ExecutionDecisionDocument
+
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`
+          INSERT INTO authority_generations (
+            generation_hash, schema_version, previous_generation_hash, maximum,
+            authority_version, activated_at
+          ) VALUES (
+            ${authorityGenerationHash}, 'bayn.authority-generation-history.v1', NULL,
+            ${Authority.Observe}, 1, ${authorityUpdatedAt}
+          )
+        `
+        yield* sql`
+          INSERT INTO authority_state (
+            schema_version, generation_hash, maximum, effective, kill_state, reason, version, updated_at
+          ) VALUES (
+            'bayn.paper-authority.v1', ${authorityGenerationHash}, ${Authority.Observe}, ${Authority.Observe},
+            ${KillState.Clear}, NULL, 1, ${authorityUpdatedAt}
+          )
+        `
+        yield* sql`
+          INSERT INTO valuations (
+            valuation_id, schema_version, account_id, source_hash, cash_micros,
+            long_market_value_micros, short_market_value_micros, equity_micros, as_of
+          ) VALUES (
+            ${'8'.repeat(64)}, 'bayn.paper-valuation.v1', ${accountId}, ${'9'.repeat(64)},
+            ${equityMicros}, 0, 0, ${equityMicros}, ${reconciledAt}
+          )
+        `
+        yield* sql`
+          INSERT INTO reconciliations (
+            reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+            content_hash, status, discrepancies, reconciled_at
+          ) VALUES (
+            ${reconciliationId}, 'bayn.paper-reconciliation.v1', ${accountId}, ${stateHash}, ${stateHash},
+            ${reconciliationHash}, 'EXACT', ${sql.json(encodeSqlJson([]))}, ${reconciledAt}
+          )
+        `
+        const queries = makeCycleQueries(sql)
+        const exact = yield* queries.decisionEvidenceMatches(document)
+        const forgedAuthority = yield* queries.decisionEvidenceMatches({
+          ...document,
+          bindings: {
+            ...document.bindings,
+            riskContext: {
+              ...riskContext,
+              authority: { ...riskContext.authority, version: riskContext.authority.version + 1 },
+            },
+          },
+        })
+        const forgedEquity = yield* queries.decisionEvidenceMatches({
+          ...document,
+          bindings: {
+            ...document.bindings,
+            riskContext: { ...riskContext, dayStartEquityMicros: (BigInt(equityMicros) + 1n).toString() },
+          },
+        })
+        return { exact, forgedAuthority, forgedEquity }
+      }),
+    )
+
+    expect(result).toEqual({ exact: true, forgedAuthority: false, forgedEquity: false })
   })
 })

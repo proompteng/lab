@@ -63,6 +63,7 @@ import {
 } from './strategy/intraday-momentum/model'
 import {
   defaultIntradayMomentumProtocolDocument,
+  intradayMomentumExecutionModel,
   intradayMomentumSnapshotSymbols,
 } from './strategy/intraday-momentum/protocol'
 import { utcInstantFromEpochMillis } from './time'

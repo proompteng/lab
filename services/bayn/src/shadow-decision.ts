@@ -1004,6 +1004,18 @@ const assembleExecutionDecisionDocument = (
         reconciliationId: input.plannerInput.brokerState.reconciliation.reconciliationId,
         reconciliationHash: input.plannerInput.brokerState.reconciliation.contentHash,
         authorityGenerationHash,
+        ...(initialRiskState === undefined
+          ? {}
+          : {
+              riskContext: {
+                authority: initialRiskState.authority,
+                authorityObservedAt: initialRiskState.authorityObservedAt,
+                unknownMutationCount: initialRiskState.unknownMutationCount,
+                dailyTradedNotionalMicros: initialRiskState.dailyTradedNotionalMicros,
+                dayStartEquityMicros: initialRiskState.dayStartEquityMicros,
+                peakEquityMicros: initialRiskState.peakEquityMicros,
+              },
+            }),
         ...(input.decisionMarketData === undefined ? {} : { decisionMarketData: input.decisionMarketData }),
         ...(input.executionMarketData === undefined ? {} : { executionMarketData: input.executionMarketData }),
       },
