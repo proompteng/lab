@@ -192,15 +192,6 @@ const loadReplaySessions = (
         },
         { concurrency: 2 },
       ).pipe(
-        Effect.flatMap(({ opening, exit }) =>
-          Effect.all(
-            {
-              opening: marketData.verifyArchiveSnapshot(opening),
-              exit: marketData.verifyArchiveSnapshot(exit),
-            },
-            { concurrency: 2 },
-          ),
-        ),
         Effect.map(({ opening, exit }) =>
           Object.freeze({ opening: Object.freeze({ snapshot: opening, session }), exit }),
         ),
