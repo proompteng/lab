@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     future::Future,
     pin::Pin,
     sync::{Arc, Weak},
@@ -599,8 +599,8 @@ impl MicroVmControlPlane for ControlPlane {
         let guest = self.guest(&principal, &request.agent_id).await?;
         let creation_guard = self
             .provisional_terminal_leases
-            .lock_creation(&request.agent_id)
-            .await;
+            .lock_new_creation(&request.agent_id)
+            .await?;
         if request.creation_id.is_empty() {
             let creation_id = compatible_terminal_creation_id("");
             let existing_sessions = guest.list_terminals().await.map_err(map_guest_error)?;
@@ -1666,6 +1666,7 @@ struct ProvisionalTerminalLeaseManager {
     terminal_identities: TerminalIdentityRegistry,
     registry: ProvisionalTerminalLeaseRegistry,
     creation_intents: ProvisionalTerminalLeaseRegistry,
+    recovered_creation_intents: Arc<Mutex<HashSet<(String, String)>>>,
     creation_locks: Arc<Mutex<HashMap<String, Weak<Mutex<()>>>>>,
 }
 
@@ -1681,6 +1682,7 @@ impl ProvisionalTerminalLeaseManager {
             terminal_identities,
             registry: ProvisionalTerminalLeaseRegistry::default(),
             creation_intents: ProvisionalTerminalLeaseRegistry::default(),
+            recovered_creation_intents: Arc::new(Mutex::new(HashSet::new())),
             creation_locks: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -1698,6 +1700,25 @@ impl ProvisionalTerminalLeaseManager {
             }
         };
         lock.lock_owned().await
+    }
+
+    async fn lock_new_creation(
+        &self,
+        agent_id: &str,
+    ) -> Result<tokio::sync::OwnedMutexGuard<()>, Status> {
+        let guard = self.lock_creation(agent_id).await;
+        if self
+            .recovered_creation_intents
+            .lock()
+            .await
+            .iter()
+            .any(|(tracked_agent_id, _)| tracked_agent_id == agent_id)
+        {
+            return Err(Status::failed_precondition(
+                "a previous terminal creation is still reconciling; retry shortly",
+            ));
+        }
+        Ok(guard)
     }
 
     async fn begin_creation(
@@ -1807,6 +1828,10 @@ impl ProvisionalTerminalLeaseManager {
                     .await;
             }
             for intent in recoverable_provisional_terminal_creation_intents(&agent, now) {
+                self.recovered_creation_intents
+                    .lock()
+                    .await
+                    .insert((intent.agent_id.clone(), intent.creation_id.clone()));
                 self.terminal_identities.restore_legacy_creation(
                     &intent.agent_id,
                     &intent.creation_id,
@@ -2034,6 +2059,10 @@ impl ProvisionalTerminalLeaseManager {
         if cleared {
             self.terminal_identities
                 .remove_creation(agent_id, creation_id);
+            self.recovered_creation_intents
+                .lock()
+                .await
+                .remove(&(agent_id.to_owned(), creation_id.to_owned()));
         }
         cleared
     }
@@ -2052,7 +2081,7 @@ impl ProvisionalTerminalLeaseManager {
             let manager = self.clone();
             let confirmation_agent_id = agent_id.to_owned();
             let confirmation_creation_id = creation_id.to_owned();
-            return self
+            let confirmed = self
                 .creation_intents
                 .issue_and_confirm(agent_id, creation_id, move |tracked| async move {
                     let issued = issue()?;
@@ -2068,7 +2097,12 @@ impl ProvisionalTerminalLeaseManager {
                     }
                     Ok(issued)
                 })
-                .await;
+                .await?;
+            self.recovered_creation_intents
+                .lock()
+                .await
+                .remove(&(agent_id.to_owned(), creation_id.to_owned()));
+            return Ok(confirmed);
         }
 
         let manager = self.clone();
@@ -2132,7 +2166,12 @@ impl ProvisionalTerminalLeaseManager {
                     }
                 },
             )
+            .await?;
+        self.recovered_creation_intents
+            .lock()
             .await
+            .remove(&(agent_id.to_owned(), creation_id.to_owned()));
+        Ok(())
     }
 
     async fn patch_annotation(
@@ -2723,6 +2762,9 @@ fn map_guest_error(error: GuestError) -> Status {
         GuestError::Api { status, message } if status == reqwest::StatusCode::FORBIDDEN => {
             Status::permission_denied(message)
         }
+        GuestError::MissingCodexSnapshotCursor => Status::failed_precondition(
+            "This agent cannot safely restore Codex threads; save the workspace, then delete and recreate the agent",
+        ),
         other => Status::internal(other.to_string()),
     }
 }
@@ -2738,6 +2780,16 @@ mod tests {
     use http::{Response as HttpResponse, StatusCode as HttpStatusCode};
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
     use kube::client::Body as KubeBody;
+
+    #[test]
+    fn missing_codex_snapshot_cursor_reports_the_destructive_recovery() {
+        let status = map_guest_error(GuestError::MissingCodexSnapshotCursor);
+        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+        assert_eq!(
+            status.message(),
+            "This agent cannot safely restore Codex threads; save the workspace, then delete and recreate the agent"
+        );
+    }
 
     #[test]
     fn caller_cannot_select_resource_policy() {
@@ -4503,6 +4555,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn live_creation_awaiting_ticket_does_not_block_another_create() {
+        let (service, _handle) =
+            tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+        let manager = ProvisionalTerminalLeaseManager::new(
+            Client::new(service, "tengri"),
+            Arc::<str>::from("tengri"),
+            TerminalIdentityRegistry::default(),
+        );
+        let creation_id = "legacy-grpc-0123456789abcdef0123456789abcdef";
+        manager
+            .schedule_creation(
+                "agent-legacy",
+                creation_id,
+                Duration::from_secs(60),
+                provisional_creation_record(Utc::now(), Vec::new(), None),
+                true,
+            )
+            .await;
+        manager
+            .settle_ambiguous_creation("agent-legacy", creation_id)
+            .await
+            .expect("live creation settlement");
+
+        let guard = manager
+            .lock_new_creation("agent-legacy")
+            .await
+            .expect("a live creation awaiting its ticket must not block another create");
+        drop(guard);
+        assert!(
+            manager
+                .creation_intents
+                .clear("agent-legacy", creation_id)
+                .await
+        );
+    }
+
+    #[tokio::test]
     async fn restart_restores_legacy_identity_before_ticket_confirmation() {
         let now = Utc::now();
         let creation_id = "legacy-grpc-fedcba9876543210fedcba9876543210";
@@ -4555,6 +4644,21 @@ mod tests {
             .expect("recovery task")
             .expect("creation intent recovery");
 
+        let admission_error = match manager.lock_new_creation("agent-legacy").await {
+            Ok(_) => panic!("a recovered creation intent must block a later creation"),
+            Err(error) => error,
+        };
+        assert_eq!(admission_error.code(), tonic::Code::FailedPrecondition);
+        assert_eq!(
+            admission_error.message(),
+            "a previous terminal creation is still reconciling; retry shortly"
+        );
+        let unrelated_guard = manager
+            .lock_new_creation("agent-other")
+            .await
+            .expect("another agent must remain independent");
+        drop(unrelated_guard);
+
         let mut sessions = vec![guest_terminal_session(terminal_id, "", "/workspace")];
         terminal_identities.reconcile("agent-legacy", &mut sessions);
         assert_eq!(sessions[0].creation_id, creation_id);
@@ -4599,6 +4703,10 @@ mod tests {
                 .expect("ticket confirmation"),
             "terminal-ticket"
         );
+        manager
+            .lock_new_creation("agent-legacy")
+            .await
+            .expect("ticket confirmation must release creation admission");
     }
 
     #[tokio::test]
