@@ -1137,11 +1137,18 @@ data:
               "refId": "B"
             },
             {
+              "expr": "max(bayn_cycle_execution_open_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) * 1000 > 0",
+              "instant": true,
+              "legendFormat": "execution opens",
+              "range": false,
+              "refId": "C"
+            },
+            {
               "expr": "max(bayn_cycle_execution_close_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) * 1000 > 0",
               "instant": true,
               "legendFormat": "session close",
               "range": false,
-              "refId": "C"
+              "refId": "D"
             }
           ],
           "title": "Session window",
