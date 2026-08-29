@@ -346,6 +346,14 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
                 ..EnvVar::default()
             },
             EnvVar {
+                name: "PATH".to_owned(),
+                value: Some(
+                    "/workspace/.local/bin:/workspace/go/bin:/workspace/.cargo/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+                        .to_owned(),
+                ),
+                ..EnvVar::default()
+            },
+            EnvVar {
                 name: "XDG_CACHE_HOME".to_owned(),
                 value: Some("/workspace/.cache".to_owned()),
                 ..EnvVar::default()
@@ -626,6 +634,10 @@ mod tests {
             ("HOME", "/workspace"),
             ("NANOAGENT_HOME", "/workspace"),
             ("NANOAGENT_WORKSPACE", "/workspace"),
+            (
+                "PATH",
+                "/workspace/.local/bin:/workspace/go/bin:/workspace/.cargo/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            ),
             ("XDG_CACHE_HOME", "/workspace/.cache"),
         ] {
             assert!(
