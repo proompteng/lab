@@ -1176,6 +1176,38 @@ describePostgres('PostgreSQL cycle observability projection', () => {
     })
   })
 
+  test('fails closed when a later trusted position snapshot regresses its observation clock', async () => {
+    const projection = await runtime.runPromise(
+      Effect.gen(function* () {
+        const observability = yield* CycleObservability
+        const sql = yield* PgClient.PgClient
+        yield* seedSafetyState()
+        yield* sql`
+          INSERT INTO position_snapshots (
+            snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash
+          ) VALUES
+            (
+              ${'f'.repeat(64)}, 'bayn.paper-position-snapshot.v1', ${accountId}, ${'3'.repeat(64)},
+              '2026-03-06T21:00:02.000Z', 1, ${'4'.repeat(64)}
+            ),
+            (
+              ${'0'.repeat(64)}, 'bayn.paper-position-snapshot.v1', ${accountId}, ${'5'.repeat(64)},
+              '2026-03-06T21:00:01.000Z', 0, ${'6'.repeat(64)}
+            )
+        `
+        return yield* observability.read(qualificationRunId, accountId)
+      }),
+    )
+
+    expect(projection.execution).toMatchObject({
+      positionSnapshotObservedAt: null,
+      positionCount: null,
+      grossExposureMicros: null,
+      netExposureMicros: null,
+      unrealizedPnlMicros: null,
+    })
+  })
+
   test('ignores future-dated broker snapshots when selecting the latest observable state', async () => {
     const projection = await runtime.runPromise(
       Effect.gen(function* () {

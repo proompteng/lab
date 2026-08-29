@@ -528,25 +528,50 @@ const makeCycleObservability = Effect.gen(function* () {
             ORDER BY events.observed_at DESC, events.source_sequence DESC, snapshot.event_id DESC
             LIMIT 1
           ),
-          latest_position_snapshot_time AS (
+          latest_trusted_position_snapshot AS (
+            SELECT snapshot.*
+            FROM position_snapshots AS snapshot
+            WHERE snapshot.account_id = (SELECT account_id FROM selected_account)
+              AND snapshot.ingestion_order_trusted
+              AND snapshot.observed_at <= CURRENT_TIMESTAMP
+            ORDER BY snapshot.ingestion_sequence DESC
+            LIMIT 1
+          ),
+          trusted_position_snapshot_clock_regressed AS (
+            SELECT EXISTS (
+              SELECT 1
+              FROM position_snapshots AS previous
+              JOIN latest_trusted_position_snapshot AS latest
+                ON previous.account_id = latest.account_id
+              WHERE previous.ingestion_order_trusted
+                AND previous.ingestion_sequence < latest.ingestion_sequence
+                AND previous.observed_at <= CURRENT_TIMESTAMP
+                AND previous.observed_at > latest.observed_at
+            ) AS regressed
+          ),
+          latest_legacy_position_snapshot_time AS (
             SELECT max(snapshot.observed_at) AS observed_at
             FROM position_snapshots AS snapshot
             WHERE snapshot.account_id = (SELECT account_id FROM selected_account)
+              AND NOT snapshot.ingestion_order_trusted
               AND snapshot.observed_at <= CURRENT_TIMESTAMP
+              AND NOT EXISTS (SELECT 1 FROM latest_trusted_position_snapshot)
           ),
-          latest_position_snapshot_candidates AS (
+          latest_legacy_position_snapshot_candidates AS (
             SELECT snapshot.*
             FROM position_snapshots AS snapshot
-            JOIN latest_position_snapshot_time AS latest ON latest.observed_at = snapshot.observed_at
+            JOIN latest_legacy_position_snapshot_time AS latest ON latest.observed_at = snapshot.observed_at
             WHERE snapshot.account_id = (SELECT account_id FROM selected_account)
+              AND NOT snapshot.ingestion_order_trusted
           ),
           latest_position_snapshot AS (
             SELECT snapshot.*
-            FROM latest_position_snapshot_candidates AS snapshot
-            WHERE snapshot.ingestion_order_trusted
-              OR (SELECT count(*) FROM latest_position_snapshot_candidates) = 1
-            ORDER BY snapshot.ingestion_order_trusted DESC, snapshot.ingestion_sequence DESC
-            LIMIT 1
+            FROM latest_trusted_position_snapshot AS snapshot
+            WHERE NOT (SELECT regressed FROM trusted_position_snapshot_clock_regressed)
+            UNION ALL
+            SELECT snapshot.*
+            FROM latest_legacy_position_snapshot_candidates AS snapshot
+            WHERE (SELECT count(*) FROM latest_legacy_position_snapshot_candidates) = 1
           ),
           current_positions AS (
             SELECT position.*
