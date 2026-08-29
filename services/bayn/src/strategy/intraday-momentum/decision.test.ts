@@ -3,7 +3,12 @@ import { Result, Schema } from 'effect'
 
 import { makeExecutionCalendarObservation } from '../../cycle'
 import { canonicalHashV1, sha256 } from '../../hash'
-import { verifyIntradaySnapshot, type IntradaySnapshotRows } from '../../market-data'
+import {
+  verifyIntradaySnapshot,
+  type ArchiveVerifiedIntradayMarketSnapshot,
+  type IntradayMarketSnapshot,
+  type IntradaySnapshotRows,
+} from '../../market-data'
 import { strictParseOptions } from '../../schemas'
 import { decideIntradayMomentum, makeIntradayMomentumDefinition } from './decision'
 import {
@@ -195,12 +200,24 @@ const marketContextAt = (options: FixtureOptions) => {
     quotes,
     trades,
   } satisfies IntradaySnapshotRows
-  return Object.freeze({ snapshot: success(verifyIntradaySnapshot(request, rows)), session: boundSession })
+  const snapshot = success(verifyIntradaySnapshot(request, rows)) as ArchiveVerifiedIntradayMarketSnapshot
+  return Object.freeze({ snapshot, session: boundSession })
 }
 
 const qualifyingReturns = Object.freeze({ AMD: 50, AVGO: 45, NVDA: 40 })
 
 describe('intraday momentum strategy', () => {
+  test('requires an archive-verified snapshot at the pure decision boundary', () => {
+    type DecisionSnapshot = Parameters<typeof decideIntradayMomentum>[0]['snapshot']
+    const acceptsArchiveVerified: ArchiveVerifiedIntradayMarketSnapshot extends DecisionSnapshot ? true : false = true
+    const rejectsEnvelopeOnly: IntradayMarketSnapshot extends DecisionSnapshot ? false : true = true
+
+    expect({ acceptsArchiveVerified, rejectsEnvelopeOnly }).toEqual({
+      acceptsArchiveVerified: true,
+      rejectsEnvelopeOnly: true,
+    })
+  })
+
   test('binds one small result-blind protocol to the full-session execution model', () => {
     const protocol = success(decodeDefaultIntradayMomentumProtocol())
     expect(protocol).toEqual(defaultIntradayMomentumProtocolDocument)

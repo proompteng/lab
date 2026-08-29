@@ -4,7 +4,6 @@ import { makeExecutionCalendarObservation } from '../../cycle/construction'
 import { sha256 } from '../../hash'
 import type { IntradayBar, IntradayQuote, IntradayTrade } from '../../market-data/intraday/model'
 import { compareIntradayInstants, intradayInstantNanos } from '../../market-data/intraday/time'
-import { reverifyIntradayMarketSnapshot } from '../../market-data/intraday/verification'
 import { strictParseOptions, UtcInstantSchema } from '../../schemas'
 import type { VerifiedStrategyContext } from '../core'
 import {
@@ -319,20 +318,7 @@ export const decideIntradayMomentum = (
   protocol: IntradayMomentumProtocol,
 ): Result.Result<IntradayMomentumTargetPortfolio, IntradayMomentumFailure> =>
   Result.gen(function* () {
-    const snapshot = yield* Result.mapError(
-      reverifyIntradayMarketSnapshot(context.snapshot),
-      (cause) =>
-        new IntradayMomentumFailure({
-          reason:
-            cause.reason === 'identity'
-              ? 'snapshot-identity'
-              : cause.reason === 'request'
-                ? 'snapshot-window'
-                : 'snapshot-coverage',
-          message: `intraday snapshot failed authoritative re-verification: ${cause.message}`,
-          cause,
-        }),
-    )
+    const snapshot = context.snapshot
     yield* validateSnapshot({ ...context, snapshot }, protocol)
     const signals = yield* Result.all(
       protocol.universe.map((symbol) => {
