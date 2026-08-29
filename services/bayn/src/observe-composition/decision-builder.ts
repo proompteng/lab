@@ -849,6 +849,7 @@ const compileObserveStrategyDecision = <R>(
       input.decisionFinalizationHeadroomMs !== undefined &&
       intradayMomentumEntryDisposition(
         compiled.decision,
+        heldPositions.length > 0,
         input.cycle.window.submissionCutoffAt,
         input.decisionFinalizationHeadroomMs,
       ) === 'AWAIT_SIGNAL'

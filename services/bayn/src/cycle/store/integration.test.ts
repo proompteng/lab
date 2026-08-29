@@ -199,6 +199,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
   test('admits persisted execution evidence only against the exact durable authority and risk context', async () => {
     const authorityGenerationHash = '2'.repeat(64)
     const authorityUpdatedAt = '2026-08-28T14:58:00.000Z'
+    const forgedReconciledAt = '2026-08-28T14:57:00.000Z'
     const reconciledAt = '2026-08-28T14:59:00.000Z'
     const observedAt = '2026-08-28T15:00:00.000Z'
     const stateHash = '3'.repeat(64)
@@ -264,10 +265,15 @@ describePostgres('PostgreSQL intraday cycle store', () => {
           INSERT INTO valuations (
             valuation_id, schema_version, account_id, source_hash, cash_micros,
             long_market_value_micros, short_market_value_micros, equity_micros, as_of
-          ) VALUES (
-            ${'8'.repeat(64)}, 'bayn.paper-valuation.v1', ${accountId}, ${'9'.repeat(64)},
-            ${equityMicros}, 0, 0, ${equityMicros}, ${reconciledAt}
-          )
+          ) VALUES
+            (
+              ${'a'.repeat(64)}, 'bayn.paper-valuation.v1', ${accountId}, ${'b'.repeat(64)},
+              ${equityMicros}, 0, 0, ${equityMicros}, ${forgedReconciledAt}
+            ),
+            (
+              ${'8'.repeat(64)}, 'bayn.paper-valuation.v1', ${accountId}, ${'9'.repeat(64)},
+              ${equityMicros}, 0, 0, ${equityMicros}, ${reconciledAt}
+            )
         `
         yield* sql`
           INSERT INTO reconciliations (
@@ -297,10 +303,19 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             riskContext: { ...riskContext, dayStartEquityMicros: (BigInt(equityMicros) + 1n).toString() },
           },
         })
-        return { exact, forgedAuthority, forgedEquity }
+        const forgedReconciliationCutoff = yield* queries.decisionEvidenceMatches({
+          ...document,
+          deltaRisk: [{ facts: { state: { reconciliation: { reconciledAt: forgedReconciledAt } } } }],
+        } as unknown as ExecutionDecisionDocument)
+        return { exact, forgedAuthority, forgedEquity, forgedReconciliationCutoff }
       }),
     )
 
-    expect(result).toEqual({ exact: true, forgedAuthority: false, forgedEquity: false })
+    expect(result).toEqual({
+      exact: true,
+      forgedAuthority: false,
+      forgedEquity: false,
+      forgedReconciliationCutoff: false,
+    })
   })
 })
