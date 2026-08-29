@@ -96,7 +96,7 @@ const safeInteger = (value: bigint, field: string, symbol: string): Result.Resul
       })
     : Result.succeed(Number(value))
 
-interface SignalPrices {
+export interface IntradayMomentumSignalPrices {
   readonly reference: bigint
   readonly high: bigint
   readonly low: bigint
@@ -105,8 +105,8 @@ interface SignalPrices {
   readonly trade: bigint
 }
 
-const deriveSignalMetrics = (
-  prices: SignalPrices,
+export const deriveIntradayMomentumSignalMetrics = (
+  prices: IntradayMomentumSignalPrices,
   symbol: string,
 ): Result.Result<
   {
@@ -288,7 +288,7 @@ const signalFor = (
       bidSize: scaledInteger(quote.bidSize, 'quote-bid-size', symbol, false),
       askSize: scaledInteger(quote.askSize, 'quote-ask-size', symbol, false),
     })
-    const metrics = yield* deriveSignalMetrics(prices, symbol)
+    const metrics = yield* deriveIntradayMomentumSignalMetrics(prices, symbol)
     const evidence = {
       symbol,
       referencePriceMicros: String(prices.reference),

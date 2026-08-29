@@ -51,6 +51,7 @@ import {
   type ShadowDeltaRiskInput,
 } from './shadow-decision'
 import { FlatExecutionTargetSchema, runtimeDecisionMatchesStrategy } from './strategy/runtime-decision'
+import { deriveIntradayMomentumSignalMetrics } from './strategy/intraday-momentum/decision'
 import type { IntradayMomentumTargetPortfolio } from './strategy/intraday-momentum/model'
 import {
   defaultIntradayMomentumProtocolDocument,
@@ -600,9 +601,9 @@ const intradayMomentumDecision = (calendarHash: string, boundSnapshotId: string)
       quoteObservedAt: '2026-07-22T16:00:01.000Z',
       confirmationTradePriceMicros: '100000000',
       confirmationTradeObservedAt: '2026-07-22T16:00:01.000Z',
-      lookbackReturnBps: 0,
+      lookbackReturnBps: 5,
       breakoutBps: -100,
-      rangeLocationPpm: 500_000,
+      rangeLocationPpm: 525_000,
       spreadBps: 10,
       eligible: false,
       rejectionReasons: ['lookback-return', 'breakout', 'range-location'] as const,
@@ -1278,6 +1279,24 @@ describe('OBSERVE shadow decision', () => {
     if (Result.isFailure(missingPlannerInput)) {
       expect(String(missingPlannerInput.failure.cause)).toContain('requires persisted target-planner evidence')
     }
+    const forgedMetricDecision = {
+      ...input.compiledDecision,
+      signals: input.compiledDecision.signals.map((signal, index) =>
+        index === 0 ? { ...signal, lookbackReturnBps: signal.lookbackReturnBps + 1 } : signal,
+      ),
+    }
+    const forgedMetricDocument = makeExecutionDecisionDocument({
+      ...material,
+      bindings: {
+        ...material.bindings,
+        strategyDecisionHash: canonicalHashV1(forgedMetricDecision),
+      },
+      strategyDecision: forgedMetricDecision,
+    })
+    expect(Result.isFailure(forgedMetricDocument)).toBe(true)
+    if (Result.isFailure(forgedMetricDocument)) {
+      expect(String(forgedMetricDocument.failure.cause)).toContain('signal metrics must match persisted price evidence')
+    }
     const forgedSelectedSymbol = defaultIntradayMomentumProtocolDocument.universe[0]
     const forgedStrategyDecision = {
       ...input.compiledDecision,
@@ -1651,6 +1670,15 @@ describe('OBSERVE shadow decision', () => {
     const targetWeights = Object.fromEntries(
       defaultIntradayMomentumProtocolDocument.universe.map((symbol) => [symbol, symbol === selectedSymbol ? 0.1 : 0]),
     )
+    const selectedSignalPrices = {
+      reference: 49_000_000n,
+      high: 49_800_000n,
+      low: 49_000_000n,
+      bid: 49_950_000n,
+      ask: 50_000_000n,
+      trade: 100_000_000n,
+    }
+    const selectedSignalMetrics = resultValue(deriveIntradayMomentumSignalMetrics(selectedSignalPrices, selectedSymbol))
     const compiledDecision = {
       ...input.compiledDecision,
       selectedSymbols: [selectedSymbol],
@@ -1659,14 +1687,13 @@ describe('OBSERVE shadow decision', () => {
         signal.symbol === selectedSymbol
           ? {
               ...signal,
-              referencePriceMicros: '50000000',
-              rangeHighPriceMicros: '51000000',
-              rangeLowPriceMicros: '49000000',
-              bidPriceMicros: '49900000',
-              askPriceMicros: '50000000',
-              lookbackReturnBps: 20,
-              breakoutBps: 5,
-              rangeLocationPpm: 800_000,
+              referencePriceMicros: String(selectedSignalPrices.reference),
+              rangeHighPriceMicros: String(selectedSignalPrices.high),
+              rangeLowPriceMicros: String(selectedSignalPrices.low),
+              bidPriceMicros: String(selectedSignalPrices.bid),
+              askPriceMicros: String(selectedSignalPrices.ask),
+              confirmationTradePriceMicros: String(selectedSignalPrices.trade),
+              ...selectedSignalMetrics,
               eligible: true,
               rejectionReasons: [],
               rank: 1,
@@ -1679,7 +1706,7 @@ describe('OBSERVE shadow decision', () => {
       defaultIntradayMomentumProtocolDocument.universe.map((symbol) => [symbol, '50000000']),
     )
     const bidPriceMicros = Object.fromEntries(
-      defaultIntradayMomentumProtocolDocument.universe.map((symbol) => [symbol, '49900000']),
+      defaultIntradayMomentumProtocolDocument.universe.map((symbol) => [symbol, '49950000']),
     )
     const referencePrices = {
       ...referencePriceMaterial,

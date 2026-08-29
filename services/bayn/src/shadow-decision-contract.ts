@@ -28,6 +28,7 @@ import {
 } from './schemas'
 import { TargetPlannerInputSchema, TargetPlanResultSchema, TargetPlanStatus, planTargets } from './target-planner'
 import { RuntimeStrategyDecisionSchema } from './strategy/runtime-decision'
+import { deriveIntradayMomentumSignalMetrics } from './strategy/intraday-momentum/decision'
 import {
   intradayMomentumSignalRejectionReasons,
   selectCanonicalIntradayMomentumSignals,
@@ -481,8 +482,33 @@ const intradayMomentumAllocationIssues = (
   }
 
   const canonicalSignals = strategyDecision.signals.map((signal, index) => {
+    const metrics = deriveIntradayMomentumSignalMetrics(
+      {
+        reference: BigInt(signal.referencePriceMicros),
+        high: BigInt(signal.rangeHighPriceMicros),
+        low: BigInt(signal.rangeLowPriceMicros),
+        bid: BigInt(signal.bidPriceMicros),
+        ask: BigInt(signal.askPriceMicros),
+        trade: BigInt(signal.confirmationTradePriceMicros),
+      },
+      signal.symbol,
+    )
+    const canonicalMetrics = Result.isFailure(metrics) ? undefined : metrics.success
+    if (
+      canonicalMetrics === undefined ||
+      signal.lookbackReturnBps !== canonicalMetrics.lookbackReturnBps ||
+      signal.breakoutBps !== canonicalMetrics.breakoutBps ||
+      signal.rangeLocationPpm !== canonicalMetrics.rangeLocationPpm ||
+      signal.spreadBps !== canonicalMetrics.spreadBps
+    ) {
+      issues.push({
+        path: ['strategyDecision', 'signals', index],
+        issue: 'intraday-momentum signal metrics must match persisted price evidence',
+      })
+    }
+    const canonicalSignal = canonicalMetrics === undefined ? signal : { ...signal, ...canonicalMetrics }
     const rejectionReasons = intradayMomentumSignalRejectionReasons(
-      signal,
+      canonicalSignal,
       strategyDecision.observedAt,
       defaultIntradayMomentumProtocolDocument,
     )
@@ -493,7 +519,7 @@ const intradayMomentumAllocationIssues = (
         issue: 'intraday-momentum eligibility must match source-controlled thresholds and persisted signal evidence',
       })
     }
-    return Object.freeze({ ...signal, eligible, rejectionReasons, rank: null })
+    return Object.freeze({ ...canonicalSignal, eligible, rejectionReasons, rank: null })
   })
   const canonicalSelection = selectCanonicalIntradayMomentumSignals(
     canonicalSignals,
