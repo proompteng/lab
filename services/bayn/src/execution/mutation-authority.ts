@@ -882,7 +882,11 @@ const validateExecutionCapitalLimitsDataFirst = (
     })
   }
 
-  if (projectedNetExposure > BigInt(context.maxNetExposureMicros) && projectedNetExposure >= currentNetExposure) {
+  if (
+    !exposureReducingClose &&
+    projectedNetExposure > BigInt(context.maxNetExposureMicros) &&
+    projectedNetExposure >= currentNetExposure
+  ) {
     return Result.fail({
       _tag: 'NetExposureLimitExceeded',
       limitMicros: context.maxNetExposureMicros,

@@ -615,6 +615,35 @@ describe('final broker mutation authority', () => {
     expect(observed.submits).toBe(1)
   })
 
+  test('keeps a gross-reducing hedge close eligible when temporary net exposure exceeds the cap', async () => {
+    const observed = await runLiveSubmit({
+      brokerAccount: account({ buyingPowerMicros: '0' }),
+      positions: [
+        position({
+          side: PositionSide.Short,
+          quantityMicros: '-1500000',
+          marketValueMicros: '-150000000',
+        }),
+        position({
+          assetId: '7781125b-04ba-4fcb-903f-ad4c34eb6832',
+          symbol: 'NVDA',
+          quantityMicros: '1500000',
+          marketValueMicros: '150000000',
+        }),
+      ],
+      proposedIntent: intent({
+        side: OrderSide.Buy,
+        quantityMicros: '1500000',
+        notionalLimitMicros: '150000000',
+      }),
+      maxNetExposureMicros: '100000000',
+      closeOnly: true,
+    })
+
+    expect(observed.exit._tag).toBe('Success')
+    expect(observed.submits).toBe(1)
+  })
+
   test('rejects a close-only buy that is not a strictly reducing short cover', async () => {
     const observed = await runLiveSubmit({
       positions: [],
