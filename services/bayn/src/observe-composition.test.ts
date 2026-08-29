@@ -3775,6 +3775,32 @@ describe('OBSERVE runtime composition', () => {
         },
       ],
     })
+    const closeMarketData = wholePass.bindings.executionMarketData
+    if (closeMarketData?.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
+      return expect.unreachable('quote-bound close fixture requires archived intraday market data')
+    }
+    const { contentHash: _wholePassHash, ...wholePassMaterial } = wholePass
+    const forgedClose = (material: typeof wholePassMaterial, expectedFailure: string) => {
+      const result = decodeExecutionDecisionDocument({ ...material, contentHash: canonicalHashV1(material) })
+      expect(Result.isFailure(result)).toBeTrue()
+      if (Result.isFailure(result)) expect(String(result.failure.cause)).toContain(expectedFailure)
+    }
+    forgedClose(
+      { ...wholePassMaterial, createdAt: utcInstantFromEpochMillis(Date.parse(wholePass.createdAt) + 1_000) },
+      'observation must equal the close decision instant',
+    )
+    forgedClose(
+      {
+        ...wholePassMaterial,
+        createdAt: utcInstantFromEpochMillis(Date.parse(wholePass.createdAt) + 60_000),
+      },
+      'must bind the exact completed one-minute window',
+    )
+    const { executionSession: _executionSession, ...withoutExecutionSession } = wholePassMaterial
+    forgedClose(
+      withoutExecutionSession as typeof wholePassMaterial,
+      'must match the persisted execution session and calendar',
+    )
     const withExecutionTerms = (
       targetPlan: typeof close.targetPlan,
       executionTerms: Readonly<Record<string, string>>,

@@ -739,9 +739,10 @@ const verifiedIntradaySnapshotEvidence = (
   }
   const calendar = { ...calendarMaterial, normalizedResponseHash: canonicalHashV1(calendarMaterial) }
   const { rangeStartAt, rangeEndAt, observedAt } = window
+  const rangeMinutes = (Date.parse(rangeEndAt) - Date.parse(rangeStartAt)) / 60_000
   const postRangeEvidenceAt = utcInstantFromEpochMillis(Date.parse(rangeEndAt) + 1_000)
   const bars = protocol.universe.flatMap((symbol, symbolIndex) =>
-    Array.from({ length: protocol.lookbackMinutes }, (_, minute) => {
+    Array.from({ length: rangeMinutes }, (_, minute) => {
       const eventAt = utcInstantFromEpochMillis(Date.parse(rangeStartAt) + minute * 60_000)
       const selected = symbol === selectedSymbol
       return {
@@ -756,7 +757,7 @@ const verifiedIntradaySnapshotEvidence = (
         ingested_at: utcInstantFromEpochMillis(Date.parse(eventAt) + 60_000),
         source_topic: protocol.sourceTopics.bars,
         source_partition: 0,
-        source_offset: String(symbolIndex * protocol.lookbackMinutes + minute + 1),
+        source_offset: String(symbolIndex * rangeMinutes + minute + 1),
         schema_version: 1,
         channel: 'bars',
         is_final: 1,
@@ -891,7 +892,7 @@ const verifiedIntradayMomentumEvidence = (cycle: AutonomousCycle, selectedSymbol
 
 const verifiedLiquidationEvidence = (cycle: AutonomousCycle, symbols: readonly string[]) => {
   const entry = verifiedIntradaySnapshotEvidence(cycle, undefined, {
-    rangeStartAt: '2026-07-22T13:30:00.000Z',
+    rangeStartAt: '2026-07-22T13:49:00.000Z',
     rangeEndAt: '2026-07-22T13:50:00.000Z',
     observedAt: '2026-07-22T13:50:02.000Z',
   })

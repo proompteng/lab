@@ -758,9 +758,38 @@ const quoteBoundLiquidationSnapshotIssues = (
   document: typeof ExecutionDecisionMaterialSchema.Type,
   binding: ArchiveExecutionMarketDataBinding,
 ): readonly Schema.FilterIssue[] => {
+  const executionSession = document.executionSession
+  const observedAtEpoch = Date.parse(document.createdAt)
+  const rangeEndEpoch = Math.floor(observedAtEpoch / 60_000) * 60_000
+  const expectedRangeEndAt = utcInstantFromEpochMillis(rangeEndEpoch)
+  const expectedRangeStartAt = utcInstantFromEpochMillis(rangeEndEpoch - 60_000)
+  const timingIssues: Schema.FilterIssue[] = []
+  if (binding.observedAt !== document.createdAt) {
+    timingIssues.push({
+      path: ['bindings', 'executionMarketData', 'observedAt'],
+      issue: 'quote-bound liquidation observation must equal the close decision instant',
+    })
+  }
+  if (binding.rangeStartAt !== expectedRangeStartAt || binding.rangeEndAt !== expectedRangeEndAt) {
+    timingIssues.push({
+      path: ['bindings', 'executionMarketData', 'rangeEndAt'],
+      issue: 'quote-bound liquidation must bind the exact completed one-minute window at the close decision instant',
+    })
+  }
+  if (
+    executionSession === undefined ||
+    binding.sessionDate !== executionSession.executionSession.date ||
+    binding.calendar.normalizedResponseHash !== executionSession.calendar.normalizedResponseHash
+  ) {
+    timingIssues.push({
+      path: ['bindings', 'executionMarketData', 'calendar'],
+      issue: 'quote-bound liquidation market data must match the persisted execution session and calendar',
+    })
+  }
   const rows = document.decisionMarketDataRows
   if (rows === undefined) {
     return [
+      ...timingIssues,
       {
         path: ['decisionMarketDataRows'],
         issue: 'quote-bound liquidation requires the exact archive rows that produced its reference prices',
@@ -770,6 +799,7 @@ const quoteBoundLiquidationSnapshotIssues = (
   const snapshot = verifyBoundIntradaySnapshot(binding, rows)
   if (snapshot === undefined) {
     return [
+      ...timingIssues,
       {
         path: ['decisionMarketDataRows'],
         issue: 'quote-bound liquidation archive rows must reproduce the exact bound market-data snapshot',
@@ -779,6 +809,7 @@ const quoteBoundLiquidationSnapshotIssues = (
   const referencePrices = document.plannerInput?.referencePrices
   if (referencePrices?.schemaVersion !== 'bayn.intraday-snapshot-reference-prices.v1') {
     return [
+      ...timingIssues,
       {
         path: ['plannerInput', 'referencePrices'],
         issue: 'quote-bound liquidation requires archive-bound intraday reference prices',
@@ -790,6 +821,7 @@ const quoteBoundLiquidationSnapshotIssues = (
     const quote = snapshot.latestQuotes[symbol]
     if (quote === undefined) {
       return [
+        ...timingIssues,
         {
           path: ['decisionMarketDataRows', 'quotes'],
           issue: `quote-bound liquidation archive rows must include the verified closing quote for ${symbol}`,
@@ -802,6 +834,7 @@ const quoteBoundLiquidationSnapshotIssues = (
     })
     if (Result.isFailure(converted) || converted.success.bid <= 0n || converted.success.ask <= 0n) {
       return [
+        ...timingIssues,
         {
           path: ['decisionMarketDataRows', 'quotes'],
           issue: `quote-bound liquidation archive price for ${symbol} is outside the exact price domain`,
@@ -816,6 +849,7 @@ const quoteBoundLiquidationSnapshotIssues = (
       referencePrices.priceMicros[symbol] !== ask
     ) {
       return [
+        ...timingIssues,
         {
           path: ['plannerInput', 'referencePrices'],
           issue: 'quote-bound liquidation reference prices must match its exact verified archive rows',
@@ -823,7 +857,7 @@ const quoteBoundLiquidationSnapshotIssues = (
       ]
     }
   }
-  return []
+  return timingIssues
 }
 
 const targetPlannerEvidenceIssues = (
