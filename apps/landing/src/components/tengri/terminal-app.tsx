@@ -370,7 +370,8 @@ export function TerminalApp({
             action: 'create-terminal',
             agentId,
             creationId,
-            cwd: '/workspace',
+            // Nanoagent confines `/` to the guest's physical `/workspace`; callers never address the guest rootfs.
+            cwd: '/',
             columns,
             rows,
           },

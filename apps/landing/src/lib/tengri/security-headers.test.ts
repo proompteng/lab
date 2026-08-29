@@ -11,6 +11,7 @@ describe('Tengri browser security headers', () => {
     const developmentPolicy = buildContentSecurityPolicy({ development: true })
 
     expect(productionPolicy).not.toContain("'unsafe-eval'")
+    expect(productionPolicy).toContain("script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'")
     expect(productionPolicy).not.toContain('http://localhost:')
     expect(productionPolicy).not.toContain('ws://127.0.0.1:')
     expect(productionPolicy).toContain('https://convex.proompteng.ai wss://convex.proompteng.ai')
@@ -19,6 +20,7 @@ describe('Tengri browser security headers', () => {
     expect(productionPolicy).toContain("font-src 'self' data: https://fonts.gstatic.com")
     expect(productionPolicy).toContain('upgrade-insecure-requests')
     expect(developmentPolicy).toContain("'unsafe-eval'")
+    expect(developmentPolicy).not.toContain("'wasm-unsafe-eval'")
     expect(developmentPolicy).toContain('http://127.0.0.1:*')
     expect(developmentPolicy).toContain('http://*.localhost:*')
     expect(developmentPolicy).not.toContain('upgrade-insecure-requests')
