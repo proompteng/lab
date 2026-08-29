@@ -638,6 +638,7 @@ test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and win
   await expect.poll(() => mock.actions.filter((action) => action.action === 'create-terminal').length).toBe(2)
   const terminalCreations = mock.actions.filter((action) => action.action === 'create-terminal')
   expect(new Set(terminalCreations.map((action) => action.creationId)).size).toBe(2)
+  expect(terminalCreations.every((action) => action.cwd === '/')).toBe(true)
   const creationIdPattern = new RegExp(`^tengri-${readyAgent.id}-[0-9a-f]{32}-terminal-[0-9]+$`)
   expect(terminalCreations.every((action) => creationIdPattern.test(String(action.creationId)))).toBe(true)
   await page.getByRole('button', { name: 'Close Terminal' }).last().click()
