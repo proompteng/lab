@@ -24,13 +24,12 @@ bounded acceptance operation, not a continuously scheduled workload.
 
 ## Required secrets and configuration
 
-Before enabling or promoting Tengri, create exactly one item named `tengri-runtime` in the 1Password `infra` vault.
-Both production ExternalSecrets read that same item:
+Tengri stores production credentials in two strict-scope SealedSecrets:
 
-- `tengri/tengri-runtime` creates the controller Secret `tengri-runtime`.
-- `proompteng/tengri-bff` creates the web BFF Secret `tengri-bff`.
+- `argocd/applications/tengri/sealed-secret.yaml` creates `tengri/tengri-runtime`.
+- `argocd/applications/proompteng/sealed-secret.yaml` creates `proompteng/tengri-bff`.
 
-The item must contain these case-sensitive fields:
+The plaintext inputs are these case-sensitive environment variables:
 
 - `BETTER_AUTH_SECRET`: at least 32 random bytes for encrypted, stateless web sessions.
 - `GITHUB_CLIENT_ID`: the Tengri GitHub OAuth application client ID.
@@ -39,65 +38,59 @@ The item must contain these case-sensitive fields:
   controller and BFF must receive the same value.
 - `TENGRI_TICKET_SIGNING_SECRET`: at least 32 random bytes for one-use terminal and preview tickets.
 
-The BFF reads the first four fields. The controller reads the final two. Never duplicate the HMAC value into separate
-1Password items because the independently refreshed workloads must retain the same signing bundle.
+The BFF reads the first four values. The controller reads the final two. Both manifests must be generated in one run so
+the controller and BFF receive the same HMAC signing bundle. The sealing script validates every input, keeps plaintext
+out of command arguments and files, uses namespace/name-bound strict scope, and writes only encrypted manifests.
 
-Verify the item and all required fields without printing their values before merging the first promotion:
+Generate or rotate both manifests from the repository root. The local landing environment supplies the first four
+values; the ticket key is generated only for this rotation and is never written in plaintext:
 
 ```bash
-(
-  set -euo pipefail
-  set +x
+set -euo pipefail
+set +x
 
-  test "$(op item list --vault infra --format json | jq '[.[] | select(.title == "tengri-runtime")] | length')" -eq 1
-
-  for field in \
-    BETTER_AUTH_SECRET \
-    GITHUB_CLIENT_ID \
-    GITHUB_CLIENT_SECRET \
-    TENGRI_INTERNAL_HMAC_SECRET \
-    TENGRI_TICKET_SIGNING_SECRET; do
-    value="$(op item get tengri-runtime --vault infra --fields "label=$field" --reveal)"
-    test -n "$value"
-    case "$field" in
-      BETTER_AUTH_SECRET | TENGRI_TICKET_SIGNING_SECRET)
-        test "${#value}" -ge 32
-        ;;
-      TENGRI_INTERNAL_HMAC_SECRET)
-        if [[ "$value" == ,* || "$value" == *, || "$value" == *,,* ]]; then
-          echo "TENGRI_INTERNAL_HMAC_SECRET contains an empty key" >&2
-          exit 1
-        fi
-        IFS=',' read -r -a hmac_keys <<<"$value"
-        test "${#hmac_keys[@]}" -ge 1
-        test "${#hmac_keys[@]}" -le 2
-        for key in "${hmac_keys[@]}"; do
-          [[ "$key" =~ ^[A-Za-z0-9_-]{32,}$ ]]
-        done
-        unset hmac_keys key
-        ;;
-    esac
-  done
-  unset value field
-)
+export TENGRI_TICKET_SIGNING_SECRET="$(openssl rand -base64 48 | tr -d '\n')"
+bun --env-file=apps/landing/.env.local scripts/seal-tengri-runtime.ts
+unset TENGRI_TICKET_SIGNING_SECRET
 ```
 
-After Argo creates both ExternalSecrets, require both provider reads and both target Secrets to succeed before treating
-the release as available:
+Validate the ciphertext against the active controller before committing:
+
+```bash
+set -euo pipefail
+
+for manifest in \
+  argocd/applications/tengri/sealed-secret.yaml \
+  argocd/applications/proompteng/sealed-secret.yaml; do
+  kubeseal --validate \
+    --controller-name sealed-secrets \
+    --controller-namespace sealed-secrets \
+    < "$manifest"
+done
+```
+
+After Argo reconciles both applications, require both SealedSecrets, their target Secrets, and both Deployments to be
+ready before treating the release as available:
 
 ```bash
 set -euo pipefail
 
 kubectl --context galactic-lan -n tengri wait \
-  --for=condition=Ready externalsecret/tengri-runtime --timeout=5m
+  --for=condition=Synced sealedsecret/tengri-runtime --timeout=5m
 kubectl --context galactic-lan -n proompteng wait \
-  --for=condition=Ready externalsecret/tengri-bff --timeout=5m
-kubectl --context galactic-lan -n tengri get secret tengri-runtime
-kubectl --context galactic-lan -n proompteng get secret tengri-bff
+  --for=condition=Synced sealedsecret/tengri-bff --timeout=5m
+
+test "$(kubectl --context galactic-lan -n tengri get secret tengri-runtime -o json | jq -r '.data | keys | sort | join(",")')" = \
+  'TENGRI_INTERNAL_HMAC_SECRET,TENGRI_TICKET_SIGNING_SECRET'
+test "$(kubectl --context galactic-lan -n proompteng get secret tengri-bff -o json | jq -r '.data | keys | sort | join(",")')" = \
+  'BETTER_AUTH_SECRET,GITHUB_CLIENT_ID,GITHUB_CLIENT_SECRET,TENGRI_INTERNAL_HMAC_SECRET'
+
+kubectl --context galactic-lan -n tengri rollout status deployment/tengri --timeout=5m
+kubectl --context galactic-lan -n proompteng rollout status deployment/proompteng --timeout=5m
 ```
 
-Do not merge or retry a rollout while either ExternalSecret reports `SecretSyncedError`; fix the 1Password item first.
-The Deployments intentionally remain unavailable rather than booting with missing or mismatched credentials.
+Do not merge ciphertext that fails `kubeseal --validate`. The Deployments intentionally remain unavailable rather than
+booting with missing or mismatched credentials.
 
 The controller Deployment also configures the namespace, public gateway URL, preview host template, desktop origin,
 fixed guest image, and controller limits. The browser never receives these secrets, Kubernetes credentials, or guest
