@@ -802,7 +802,30 @@ describe('immutable intraday market snapshot', () => {
     for (const malformed of malformedSnapshots) {
       expect(error(reverifyIntradayMarketSnapshot(malformed))).toMatchObject({
         reason: 'rows',
-        message: 'intraday snapshot collections must be arrays',
+        message: 'intraday replay snapshot and manifest do not match the archive contract',
+      })
+    }
+  })
+
+  test('decodes the replay envelope before reading nested manifest fields', () => {
+    const verified = success(verifyIntradaySnapshot(request, makeRows()))
+    const malformedSnapshots: readonly IntradayMarketSnapshot[] = [
+      null as never,
+      { ...verified, manifest: null as never },
+      {
+        ...verified,
+        manifest: { ...verified.manifest, archiveWatermarks: null as never },
+      },
+      {
+        ...verified,
+        manifest: { ...verified.manifest, calendar: { ...verified.manifest.calendar, sessions: null as never } },
+      },
+    ]
+
+    for (const malformed of malformedSnapshots) {
+      expect(error(reverifyIntradayMarketSnapshot(malformed))).toMatchObject({
+        reason: 'rows',
+        message: 'intraday replay snapshot and manifest do not match the archive contract',
       })
     }
   })

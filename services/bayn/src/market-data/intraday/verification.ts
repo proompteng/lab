@@ -38,6 +38,70 @@ const isIsoDate = Schema.is(IsoDateSchema)
 const maximumNonNegativeInt32 = 2_147_483_647
 const maximumNonNegativeInt64 = 9_223_372_036_854_775_807n
 
+const ReplayArchiveWatermarkSchema = Schema.Struct({
+  sourceTopic: Schema.String,
+  sourcePartition: Schema.Finite,
+  inclusiveLastOffset: Schema.String,
+})
+
+const ReplayLineageSchema = Schema.Struct({
+  sourceTopic: Schema.String,
+  sourcePartition: Schema.Finite,
+  firstOffset: Schema.String,
+  lastOffset: Schema.String,
+  recordCount: Schema.Finite,
+})
+
+const ReplayCalendarSchema = Schema.Struct({
+  schemaVersion: Schema.String,
+  source: Schema.String,
+  requestedRange: Schema.Struct({ start: Schema.String, end: Schema.String }),
+  timeZone: Schema.String,
+  sessions: Schema.Array(
+    Schema.Struct({
+      date: Schema.String,
+      openAt: Schema.String,
+      closeAt: Schema.String,
+    }),
+  ),
+  normalizedResponseHash: Schema.String,
+})
+
+const ReplaySnapshotEnvelopeSchema = Schema.Struct({
+  bars: Schema.Array(Schema.Unknown),
+  quotes: Schema.Array(Schema.Unknown),
+  trades: Schema.Array(Schema.Unknown),
+  latestQuotes: Schema.Record(Schema.String, Schema.Unknown),
+  manifest: Schema.Struct({
+    schemaVersion: Schema.String,
+    sessionDate: Schema.String,
+    calendar: ReplayCalendarSchema,
+    rangeStartAt: Schema.String,
+    rangeEndAt: Schema.String,
+    observedAt: Schema.String,
+    universeId: Schema.String,
+    universeSymbolHash: Schema.String,
+    symbols: Schema.Array(Schema.String),
+    feed: Schema.String,
+    delayClass: Schema.String,
+    sourceTopics: Schema.Struct({ bars: Schema.String, quotes: Schema.String, trades: Schema.String }),
+    archiveWatermarks: Schema.Array(ReplayArchiveWatermarkSchema),
+    maximumQuoteAgeMs: Schema.Finite,
+    minimumWatermarkLagMs: Schema.Finite,
+    barCount: Schema.Finite,
+    quoteCount: Schema.Finite,
+    tradeCount: Schema.Finite,
+    barsContentHash: Schema.String,
+    quotesContentHash: Schema.String,
+    tradesContentHash: Schema.String,
+    lineage: Schema.Array(ReplayLineageSchema),
+    contentHash: Schema.String,
+    snapshotId: Schema.String,
+  }),
+})
+
+const decodeReplaySnapshotEnvelope = Schema.decodeUnknownResult(ReplaySnapshotEnvelopeSchema)
+
 // ClickHouse orders String values by their binary representation. Source topics
 // are restricted to Kafka's ASCII name domain, so code-unit comparison is the
 // exact in-process equivalent and cannot vary with the host locale.
@@ -852,14 +916,13 @@ const payloadVariantCounts = <T extends IntradayQuote | IntradayTrade>(
     }
   })
 
-const snapshotCollections = (
-  snapshot: IntradayMarketSnapshot,
-): Result.Result<Pick<IntradayMarketSnapshot, 'bars' | 'quotes' | 'trades'>, IntradaySnapshotFailure> => {
-  if (!Array.isArray(snapshot.bars) || !Array.isArray(snapshot.quotes) || !Array.isArray(snapshot.trades)) {
-    return Result.fail(failure('rows', 'intraday snapshot collections must be arrays'))
-  }
-  return Result.succeed({ bars: snapshot.bars, quotes: snapshot.quotes, trades: snapshot.trades })
-}
+const replaySnapshotEnvelope = (snapshot: unknown): Result.Result<IntradayMarketSnapshot, IntradaySnapshotFailure> =>
+  decodeReplaySnapshotEnvelope(snapshot).pipe(
+    Result.map(() => snapshot as IntradayMarketSnapshot),
+    Result.mapError((cause) =>
+      failure('rows', 'intraday replay snapshot and manifest do not match the archive contract', undefined, cause),
+    ),
+  )
 
 const replayedBarRow = (bar: IntradayBar): Result.Result<IntradayBarRow, IntradaySnapshotFailure> =>
   Result.gen(function* () {
@@ -899,8 +962,9 @@ export const reverifyIntradayMarketSnapshot = (
   snapshot: IntradayMarketSnapshot,
 ): Result.Result<IntradayMarketSnapshot, IntradaySnapshotFailure> =>
   Result.gen(function* () {
-    const { manifest } = snapshot
-    const collections = yield* snapshotCollections(snapshot)
+    const replay = yield* replaySnapshotEnvelope(snapshot)
+    const { manifest } = replay
+    const collections = replay
     const bars = yield* Result.all(collections.bars.map(replayedBarRow))
     const quotePayloadVariants = yield* payloadVariantCounts(collections.quotes, (quote) => [
       quote.bidPrice,
@@ -955,7 +1019,7 @@ export const reverifyIntradayMarketSnapshot = (
       expectedManifest: hash(verified.manifest, 'reverified manifest'),
       actualManifest: hash(manifest, 'bound manifest'),
       expectedLatestQuotes: hash(verified.latestQuotes, 'reverified latest quotes'),
-      actualLatestQuotes: hash(snapshot.latestQuotes, 'bound latest quotes'),
+      actualLatestQuotes: hash(replay.latestQuotes, 'bound latest quotes'),
     })
     if (
       boundHashes.expectedManifest !== boundHashes.actualManifest ||
