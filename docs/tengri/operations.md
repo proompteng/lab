@@ -24,14 +24,80 @@ bounded acceptance operation, not a continuously scheduled workload.
 
 ## Required secrets and configuration
 
-The `tengri-runtime` ExternalSecret reads these fields through the existing 1Password ClusterSecretStore:
+Before enabling or promoting Tengri, create exactly one item named `tengri-runtime` in the 1Password `infra` vault.
+Both production ExternalSecrets read that same item:
 
-- `TENGRI_INTERNAL_HMAC_SECRET`: one base64url signing key of at least 32 bytes, or `new,current` during rotation.
-- `TENGRI_TICKET_SIGNING_SECRET`: at least 32 bytes for one-use terminal and preview tickets.
+- `tengri/tengri-runtime` creates the controller Secret `tengri-runtime`.
+- `proompteng/tengri-bff` creates the web BFF Secret `tengri-bff`.
 
-The Deployment also configures the namespace, public gateway URL, preview host template, desktop origin, fixed guest
-image, and controller limits. The browser never receives either secret, Kubernetes credentials, or guest bootstrap
-tokens.
+The item must contain these case-sensitive fields:
+
+- `BETTER_AUTH_SECRET`: at least 32 random bytes for encrypted, stateless web sessions.
+- `GITHUB_CLIENT_ID`: the Tengri GitHub OAuth application client ID.
+- `GITHUB_CLIENT_SECRET`: the matching GitHub OAuth application client secret.
+- `TENGRI_INTERNAL_HMAC_SECRET`: one base64url signing key of at least 32 bytes, or `new,current` during rotation. The
+  controller and BFF must receive the same value.
+- `TENGRI_TICKET_SIGNING_SECRET`: at least 32 random bytes for one-use terminal and preview tickets.
+
+The BFF reads the first four fields. The controller reads the final two. Never duplicate the HMAC value into separate
+1Password items because the independently refreshed workloads must retain the same signing bundle.
+
+Verify the item and all required fields without printing their values before merging the first promotion:
+
+```bash
+(
+  set -euo pipefail
+  set +x
+
+  test "$(op item list --vault infra --format json | jq '[.[] | select(.title == "tengri-runtime")] | length')" -eq 1
+
+  for field in \
+    BETTER_AUTH_SECRET \
+    GITHUB_CLIENT_ID \
+    GITHUB_CLIENT_SECRET \
+    TENGRI_INTERNAL_HMAC_SECRET \
+    TENGRI_TICKET_SIGNING_SECRET; do
+    value="$(op item get tengri-runtime --vault infra --fields "label=$field" --reveal)"
+    test -n "$value"
+    case "$field" in
+      BETTER_AUTH_SECRET | TENGRI_TICKET_SIGNING_SECRET)
+        test "${#value}" -ge 32
+        ;;
+      TENGRI_INTERNAL_HMAC_SECRET)
+        IFS=',' read -r -a hmac_keys <<<"$value"
+        test "${#hmac_keys[@]}" -ge 1
+        test "${#hmac_keys[@]}" -le 2
+        for key in "${hmac_keys[@]}"; do
+          [[ "$key" =~ ^[A-Za-z0-9_-]{32,}$ ]]
+        done
+        unset hmac_keys key
+        ;;
+    esac
+  done
+  unset value field
+)
+```
+
+After Argo creates both ExternalSecrets, require both provider reads and both target Secrets to succeed before treating
+the release as available:
+
+```bash
+set -euo pipefail
+
+kubectl --context galactic-lan -n tengri wait \
+  --for=condition=Ready externalsecret/tengri-runtime --timeout=5m
+kubectl --context galactic-lan -n proompteng wait \
+  --for=condition=Ready externalsecret/tengri-bff --timeout=5m
+kubectl --context galactic-lan -n tengri get secret tengri-runtime
+kubectl --context galactic-lan -n proompteng get secret tengri-bff
+```
+
+Do not merge or retry a rollout while either ExternalSecret reports `SecretSyncedError`; fix the 1Password item first.
+The Deployments intentionally remain unavailable rather than booting with missing or mismatched credentials.
+
+The controller Deployment also configures the namespace, public gateway URL, preview host template, desktop origin,
+fixed guest image, and controller limits. The browser never receives these secrets, Kubernetes credentials, or guest
+bootstrap tokens.
 
 ## Lifecycle behavior
 
