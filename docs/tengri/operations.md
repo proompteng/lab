@@ -139,20 +139,21 @@ Exact failure reasons are published in CR status. Do not infer success from a cr
 
 ### Storage-layout activation
 
-Storage-layout changes require two independently mergeable releases:
+Storage layouts are explicit and coupled to the published Nanoagent image:
 
-1. Promote the compatibility controller while `TENGRI_NEW_AGENT_STORAGE_LAYOUT` is absent. It reads both legacy agents
-   and agents annotated with `runtime.proompteng.ai/storage-layout=home-workspace-v1`, but it creates only unmarked
-   legacy-layout agents.
-2. Verify the compatibility image is live and that newly created CRs remain unmarked.
-3. In a separate GitOps PR, set `TENGRI_NEW_AGENT_STORAGE_LAYOUT=home-workspace-v1`. New agents are then explicitly
-   marked and mount their PVC exactly once at `/home/nanoagent`. The Nanoagent image exposes the persistent
+1. The controller reads both existing unmarked agents and agents annotated with
+   `runtime.proompteng.ai/storage-layout=home-workspace-v1`.
+2. Every newly created CR is marked `home-workspace-v1`, even when `TENGRI_NEW_AGENT_STORAGE_LAYOUT` is absent. If the
+   environment variable is present, it must equal `home-workspace-v1`. This prevents a new image from entering the
+   legacy dual-mount topology.
+3. Marked agents mount their PVC exactly once at `/home/nanoagent`. The Nanoagent image exposes the persistent
    `/home/nanoagent/workspace` directory through `/workspace`; no init container or synthetic passwd volume is used.
-   Existing unmarked agents keep the legacy layout.
+4. Existing unmarked agents retain their legacy topology and immutable image.
 
-To roll back activation, remove the environment variable through GitOps and keep the compatibility controller image.
-Do not restore a controller from before compatibility support while a marked `MicroVM` remains. Marked CRs and PVCs
-hard-expire four hours after creation, after which the older controller can be restored if still necessary.
+Roll back the controller and Nanoagent digests together through GitOps. Removing `TENGRI_NEW_AGENT_STORAGE_LAYOUT` is
+not a rollback because the safe default remains `home-workspace-v1`. Do not restore a controller from before versioned
+layout support while a marked `MicroVM` remains. Marked CRs and PVCs hard-expire four hours after creation, after which
+the older controller can be restored if still necessary.
 
 ### Proompteng desktop image promotions
 

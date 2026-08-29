@@ -93,18 +93,20 @@ perform the same `Recreate` rollout to the last known-good revision. Do not use 
 manifests because GitOps would overwrite that state. During rollback, leave existing MicroVM Pods and PVCs intact;
 verify the restored Pod, Service endpoint, `/livez`, and `/readyz` with the same commands above.
 
-Storage-layout changes use two releases so activation always has a safe rollback:
+Storage layouts are explicit and image-coupled:
 
-1. Promote a compatibility controller that reads both legacy agents and agents annotated with
-   `runtime.proompteng.ai/storage-layout=home-workspace-v1`. Leave `TENGRI_NEW_AGENT_STORAGE_LAYOUT` unset so newly
-   created agents remain on the legacy layout.
-2. After the compatibility image is live, enable `TENGRI_NEW_AGENT_STORAGE_LAYOUT=home-workspace-v1` in a separate
-   GitOps PR. Rolling back this activation removes the environment variable while retaining the compatibility image.
+1. The controller reads both existing unmarked agents and agents annotated with
+   `runtime.proompteng.ai/storage-layout=home-workspace-v1`.
+2. Every newly created agent is marked `home-workspace-v1`, even when `TENGRI_NEW_AGENT_STORAGE_LAYOUT` is absent. If
+   the environment variable is set, it must equal `home-workspace-v1`; this prevents a newly published Nanoagent image
+   from being paired with the legacy dual-mount topology.
+3. Existing unmarked agents retain the exact legacy topology and immutable image they were created with.
 
 Do not roll back past the compatibility image while a marked `MicroVM` exists. Marked agents mount the PVC exactly once
 at `/home/nanoagent`; the Nanoagent image exposes its persistent `workspace/` subdirectory at `/workspace`. The Pod has
 no init container, so Firecracker's block-backed root filesystem is created only once. Marked agents must remain
-readable until their four-hour hard expiry deletes the CR and PVC.
+readable until their four-hour hard expiry deletes the CR and PVC. Roll back the controller and Nanoagent digests
+together; removing `TENGRI_NEW_AGENT_STORAGE_LAYOUT` is not a layout rollback.
 
 ## Local validation
 

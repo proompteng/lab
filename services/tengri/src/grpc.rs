@@ -77,7 +77,7 @@ pub struct ControlPlane {
     client: Client,
     namespace: Arc<str>,
     default_image: Arc<str>,
-    new_agent_storage_layout: Option<Arc<str>>,
+    new_agent_storage_layout: Arc<str>,
     architecture: MicroVMArchitecture,
     auth: Authenticator,
     tickets: TicketStore,
@@ -97,15 +97,13 @@ pub struct ControlPlaneConfig {
     pub public_url: String,
 }
 
-fn validate_new_agent_storage_layout(
-    storage_layout: Option<String>,
-) -> anyhow::Result<Option<Arc<str>>> {
+fn validate_new_agent_storage_layout(storage_layout: Option<String>) -> anyhow::Result<Arc<str>> {
     match storage_layout {
-        Some(layout) if layout == SINGLE_MOUNT_STORAGE_LAYOUT => Ok(Some(layout.into())),
+        Some(layout) if layout == SINGLE_MOUNT_STORAGE_LAYOUT => Ok(layout.into()),
         Some(layout) => anyhow::bail!(
             "TENGRI_NEW_AGENT_STORAGE_LAYOUT must be {SINGLE_MOUNT_STORAGE_LAYOUT}, got {layout}"
         ),
-        None => Ok(None),
+        None => Ok(SINGLE_MOUNT_STORAGE_LAYOUT.into()),
     }
 }
 
@@ -283,18 +281,16 @@ fn agent_ready_for_guest(agent: &MicroVM) -> bool {
     })
 }
 
-fn apply_new_agent_metadata(microvm: &mut MicroVM, owner_hash: &str, storage_layout: Option<&str>) {
+fn apply_new_agent_metadata(microvm: &mut MicroVM, owner_hash: &str, storage_layout: &str) {
     microvm
         .metadata
         .labels
         .get_or_insert_default()
         .insert(OWNER_LABEL.to_owned(), owner_hash[..32].to_owned());
-    if let Some(storage_layout) = storage_layout {
-        microvm.metadata.annotations.get_or_insert_default().insert(
-            STORAGE_LAYOUT_ANNOTATION.to_owned(),
-            storage_layout.to_owned(),
-        );
-    }
+    microvm.metadata.annotations.get_or_insert_default().insert(
+        STORAGE_LAYOUT_ANNOTATION.to_owned(),
+        storage_layout.to_owned(),
+    );
 }
 
 #[tonic::async_trait]
@@ -345,7 +341,7 @@ impl MicroVmControlPlane for ControlPlane {
         apply_new_agent_metadata(
             &mut microvm,
             &principal.owner_hash,
-            self.new_agent_storage_layout.as_deref(),
+            &self.new_agent_storage_layout,
         );
         let created = match api.create(&PostParams::default(), &microvm).await {
             Ok(created) => created,
@@ -2852,7 +2848,7 @@ mod tests {
         let hash = owner_hash("github:42");
         let mut agent = provisional_terminal_test_agent(Utc::now());
 
-        apply_new_agent_metadata(&mut agent, &hash, Some(SINGLE_MOUNT_STORAGE_LAYOUT));
+        apply_new_agent_metadata(&mut agent, &hash, SINGLE_MOUNT_STORAGE_LAYOUT);
 
         assert_eq!(
             agent
@@ -2875,30 +2871,36 @@ mod tests {
     }
 
     #[test]
-    fn compatibility_rollout_leaves_new_agents_on_the_legacy_layout() {
+    fn missing_activation_environment_still_marks_new_agents() {
         let hash = owner_hash("github:42");
         let mut agent = provisional_terminal_test_agent(Utc::now());
         agent.metadata.annotations = None;
+        let layout = validate_new_agent_storage_layout(None).expect("default storage layout");
 
-        apply_new_agent_metadata(&mut agent, &hash, None);
+        apply_new_agent_metadata(&mut agent, &hash, &layout);
 
-        assert!(
+        assert_eq!(
             agent
                 .metadata
                 .annotations
                 .as_ref()
-                .is_none_or(|annotations| { !annotations.contains_key(STORAGE_LAYOUT_ANNOTATION) })
+                .and_then(|annotations| annotations.get(STORAGE_LAYOUT_ANNOTATION))
+                .map(String::as_str),
+            Some(SINGLE_MOUNT_STORAGE_LAYOUT),
         );
     }
 
     #[test]
     fn storage_layout_activation_accepts_only_the_supported_layout() {
-        assert!(validate_new_agent_storage_layout(None).unwrap().is_none());
+        assert_eq!(
+            validate_new_agent_storage_layout(None).unwrap().as_ref(),
+            SINGLE_MOUNT_STORAGE_LAYOUT,
+        );
         assert_eq!(
             validate_new_agent_storage_layout(Some(SINGLE_MOUNT_STORAGE_LAYOUT.to_owned()))
                 .unwrap()
-                .as_deref(),
-            Some(SINGLE_MOUNT_STORAGE_LAYOUT),
+                .as_ref(),
+            SINGLE_MOUNT_STORAGE_LAYOUT,
         );
         assert!(validate_new_agent_storage_layout(Some("future-layout".to_owned())).is_err());
     }
