@@ -239,7 +239,12 @@ describePostgres('PostgreSQL intraday cycle store', () => {
         reconciliationId,
         reconciliationHash,
         policyHash,
-        decisionMarketData: { snapshotId, contentHash: snapshotContentHash, observedAt },
+        decisionMarketData: {
+          schemaVersion: 'bayn.execution-market-data-binding.v2',
+          snapshotId,
+          contentHash: snapshotContentHash,
+          observedAt,
+        },
         riskContext,
       },
       deltaRisk: [{ facts: { state: { reconciliation: { reconciledAt } } } }],
@@ -356,7 +361,37 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             )
         `
         const queries = makeCycleQueries(sql)
+        const missingArchiveReference = yield* queries.decisionEvidenceMatches(document)
+        yield* sql`
+          INSERT INTO intraday_snapshot_references (
+            snapshot_id, schema_version, content_hash, observed_at, manifest
+          ) VALUES (
+            ${snapshotId}, 'bayn.intraday-snapshot-reference.v1', ${snapshotContentHash}, ${observedAt},
+            ${sql.json({
+              schemaVersion: 'bayn.intraday-market-snapshot.v1',
+              snapshotId,
+              contentHash: snapshotContentHash,
+              observedAt,
+            })}
+          )
+        `
         const exact = yield* queries.decisionEvidenceMatches(document)
+        const unverifiedSnapshotId = 'd'.repeat(64)
+        const unverifiedSnapshotContentHash = 'e'.repeat(64)
+        const unverifiedArchiveReference = yield* queries.decisionEvidenceMatches({
+          ...document,
+          bindings: {
+            ...document.bindings,
+            snapshotId: unverifiedSnapshotId,
+            snapshotContentHash: unverifiedSnapshotContentHash,
+            decisionMarketData: {
+              schemaVersion: 'bayn.execution-market-data-binding.v2',
+              snapshotId: unverifiedSnapshotId,
+              contentHash: unverifiedSnapshotContentHash,
+              observedAt,
+            },
+          },
+        } as unknown as ExecutionDecisionDocument)
         const forgedAuthority = yield* queries.decisionEvidenceMatches({
           ...document,
           bindings: {
@@ -382,12 +417,22 @@ describePostgres('PostgreSQL intraday cycle store', () => {
           ...document,
           bindings: { ...document.bindings, policyHash: 'c'.repeat(64) },
         } as unknown as ExecutionDecisionDocument)
-        return { exact, forgedAuthority, forgedEquity, forgedPolicyHash, forgedReconciliationCutoff }
+        return {
+          missingArchiveReference,
+          exact,
+          unverifiedArchiveReference,
+          forgedAuthority,
+          forgedEquity,
+          forgedPolicyHash,
+          forgedReconciliationCutoff,
+        }
       }),
     )
 
     expect(result).toEqual({
+      missingArchiveReference: false,
       exact: true,
+      unverifiedArchiveReference: false,
       forgedAuthority: false,
       forgedEquity: false,
       forgedPolicyHash: false,
