@@ -15,12 +15,15 @@ data:
   ALPACA_STREAM_URL: "wss://stream.data.alpaca.markets"
   ALPACA_TRADE_STREAM_URL: "wss://paper-api.alpaca.markets/stream"
   ALPACA_BASE_URL: "https://data.alpaca.markets"
-  # Full market-data mode stays inside Alpaca Basic's 30 symbol-channel subscription limit.
-  ALPACA_MARKET_DATA_CHANNELS: "trades,quotes,bars,updatedBars"
+  # Preserve the 16-symbol bar archive while keeping Bayn's complete decision feed at Alpaca Basic's 30-unit limit:
+  # 16 bar subscriptions + 7 quote subscriptions + 7 trade subscriptions = 30. Bayn does not consume updatedBars.
+  ALPACA_MARKET_DATA_CHANNELS: "trades,quotes,bars"
+  ALPACA_MARKET_DATA_TRADES_SYMBOLS: "AAPL,AMZN,IWM,NVDA,QQQ,SMH,SPY"
+  ALPACA_MARKET_DATA_QUOTES_SYMBOLS: "AAPL,AMZN,IWM,NVDA,QQQ,SMH,SPY"
   OPTIONS_MARKET_HOLIDAYS: "2026-01-01,2026-01-19,2026-02-16,2026-04-03,2026-05-25,2026-06-19,2026-07-03,2026-09-07,2026-11-26,2026-12-25"
-  # The active Bayn strategy reads these six candidates plus its SPY benchmark.
-  SYMBOLS: "AAPL,AMZN,IWM,NVDA,QQQ,SMH,SPY"
-  SYMBOLS_ALLOWLIST: "AAPL,AMZN,IWM,NVDA,QQQ,SMH,SPY"
+  # Full bar universe for Bayn and the existing Torghut scheduler. Quote/trade overrides are the Bayn decision set.
+  SYMBOLS: "AAPL,AMD,AMZN,AVGO,COHR,CRDO,IWM,LITE,MRVL,MU,NVDA,QQQ,SMH,SNDK,SPY,WDC"
+  SYMBOLS_ALLOWLIST: "AAPL,AMD,AMZN,AVGO,COHR,CRDO,IWM,LITE,MRVL,MU,NVDA,QQQ,SMH,SNDK,SPY,WDC"
   # Observation symbols and their versioned identity are supplied separately in deployment.yaml.
   # Neither static market-data path depends on Jangar.
   SYMBOLS_POLL_INTERVAL_MS: "30000"

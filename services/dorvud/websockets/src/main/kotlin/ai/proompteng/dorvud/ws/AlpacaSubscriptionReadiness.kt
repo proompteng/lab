@@ -24,7 +24,22 @@ internal fun AlpacaSubscription.toMarketDataWebsocketStatus(
   desiredSymbols: Collection<String>,
   authOk: Boolean,
   nowMs: Long,
+): AlpacaMarketDataWebsocketStatus =
+  toMarketDataWebsocketStatus(
+    previous = previous,
+    desiredSymbolsByChannel =
+      channels.mapNotNull(::canonicalMarketDataChannel).distinct().associateWith { desiredSymbols },
+    authOk = authOk,
+    nowMs = nowMs,
+  )
+
+internal fun AlpacaSubscription.toMarketDataWebsocketStatus(
+  previous: AlpacaMarketDataWebsocketStatus,
+  desiredSymbolsByChannel: Map<String, Collection<String>>,
+  authOk: Boolean,
+  nowMs: Long,
 ): AlpacaMarketDataWebsocketStatus {
+  val channels = desiredSymbolsByChannel.keys
   val subscribedByChannel = subscribedSymbolsByChannel(channels)
   val subscribedSymbols =
     subscribedByChannel
@@ -32,7 +47,7 @@ internal fun AlpacaSubscription.toMarketDataWebsocketStatus(
       .flatten()
       .toSet()
       .sorted()
-  val missingByChannel = missingDesiredSymbolsByChannel(desiredSymbols, subscribedByChannel, channels)
+  val missingByChannel = missingDesiredSymbolsByChannel(desiredSymbolsByChannel, subscribedByChannel)
   val subscriptionOk = subscribedSymbols.isNotEmpty() && missingByChannel.isEmpty()
   return previous.copy(
     authOk = authOk,
@@ -58,17 +73,24 @@ internal fun missingDesiredSymbolsByChannel(
   desired: Collection<String>,
   subscribedByChannel: Map<String, Set<String>>,
   channels: Collection<String>,
-): Map<String, List<String>> {
-  val normalizedDesired = desired.map { it.trim().uppercase() }.filter { it.isNotEmpty() }.distinct()
-  return channels
-    .mapNotNull(::canonicalMarketDataChannel)
-    .distinct()
-    .mapNotNull { channel ->
-      val subscribed = subscribedByChannel[channel].orEmpty()
+): Map<String, List<String>> =
+  missingDesiredSymbolsByChannel(
+    channels.mapNotNull(::canonicalMarketDataChannel).distinct().associateWith { desired },
+    subscribedByChannel,
+  )
+
+internal fun missingDesiredSymbolsByChannel(
+  desiredSymbolsByChannel: Map<String, Collection<String>>,
+  subscribedByChannel: Map<String, Set<String>>,
+): Map<String, List<String>> =
+  desiredSymbolsByChannel
+    .mapNotNull { (channel, desired) ->
+      val canonicalChannel = canonicalMarketDataChannel(channel) ?: return@mapNotNull null
+      val normalizedDesired = desired.map { it.trim().uppercase() }.filter { it.isNotEmpty() }.distinct()
+      val subscribed = subscribedByChannel[canonicalChannel].orEmpty()
       val missing = normalizedDesired.filter { it !in subscribed }
-      if (missing.isEmpty()) null else channel to missing
+      if (missing.isEmpty()) null else canonicalChannel to missing
     }.toMap()
-}
 
 internal enum class SubscriptionAction {
   Unsubscribe,
