@@ -310,23 +310,33 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
                 BOOTSTRAP_TOKEN_KEY,
             ),
             EnvVar {
+                name: "CODEX_BINARY".to_owned(),
+                value: Some("/workspace/.local/bin/codex".to_owned()),
+                ..EnvVar::default()
+            },
+            EnvVar {
                 name: "CODEX_HOME".to_owned(),
-                value: Some("/home/nanoagent/.codex".to_owned()),
+                value: Some("/workspace/.codex".to_owned()),
                 ..EnvVar::default()
             },
             EnvVar {
                 name: "HOME".to_owned(),
-                value: Some("/home/nanoagent".to_owned()),
+                value: Some("/workspace".to_owned()),
                 ..EnvVar::default()
             },
             EnvVar {
                 name: "NANOAGENT_HOME".to_owned(),
-                value: Some("/home/nanoagent".to_owned()),
+                value: Some("/workspace".to_owned()),
                 ..EnvVar::default()
             },
             EnvVar {
                 name: "NANOAGENT_WORKSPACE".to_owned(),
                 value: Some("/workspace".to_owned()),
+                ..EnvVar::default()
+            },
+            EnvVar {
+                name: "XDG_CACHE_HOME".to_owned(),
+                value: Some("/workspace/.cache".to_owned()),
                 ..EnvVar::default()
             },
         ]),
@@ -364,7 +374,7 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
         volume_mounts: Some(vec![
             VolumeMount {
                 name: "home".to_owned(),
-                mount_path: "/home/nanoagent".to_owned(),
+                mount_path: "/workspace".to_owned(),
                 ..VolumeMount::default()
             },
             VolumeMount {
@@ -373,9 +383,9 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
                 ..VolumeMount::default()
             },
         ]),
-        // Mount the PVC once. The guest image maps /workspace to /home/nanoagent so
-        // existing volume-root workspaces and persistent home state remain visible.
-        working_dir: Some("/home/nanoagent".to_owned()),
+        // Mount the PVC once at the existing volume-root workspace path. Pointing the
+        // runtime home there also preserves persistent user state for every pinned image.
+        working_dir: Some("/workspace".to_owned()),
         ..Container::default()
     }
 }
@@ -520,7 +530,7 @@ mod tests {
                     .is_some_and(|claim| claim.claim_name == "agent-home")))
         );
         let container = &spec.containers[0];
-        assert_eq!(container.working_dir.as_deref(), Some("/home/nanoagent"));
+        assert_eq!(container.working_dir.as_deref(), Some("/workspace"));
         let resources = container.resources.as_ref().expect("resources");
         assert_eq!(resources.requests, resources.limits);
         let security = container.security_context.as_ref().expect("security");
@@ -533,15 +543,20 @@ mod tests {
                 .as_ref()
                 .is_some_and(|env| env.iter().all(|value| value.name != "OPENAI_API_KEY"))
         );
-        assert!(
-            container
-                .env
-                .as_ref()
-                .is_some_and(|env| env.iter().any(|value| {
-                    value.name == "NANOAGENT_WORKSPACE"
-                        && value.value.as_deref() == Some("/workspace")
-                }))
-        );
+        let env = container.env.as_ref().expect("environment");
+        for (name, value) in [
+            ("CODEX_BINARY", "/workspace/.local/bin/codex"),
+            ("CODEX_HOME", "/workspace/.codex"),
+            ("HOME", "/workspace"),
+            ("NANOAGENT_HOME", "/workspace"),
+            ("NANOAGENT_WORKSPACE", "/workspace"),
+            ("XDG_CACHE_HOME", "/workspace/.cache"),
+        ] {
+            assert!(
+                env.iter()
+                    .any(|entry| { entry.name == name && entry.value.as_deref() == Some(value) })
+            );
+        }
         let home_mounts = container
             .volume_mounts
             .as_ref()
@@ -550,13 +565,12 @@ mod tests {
             .filter(|mount| mount.name == "home")
             .collect::<Vec<_>>();
         assert_eq!(home_mounts.len(), 1);
-        assert_eq!(home_mounts[0].mount_path, "/home/nanoagent");
-        assert!(
-            container
-                .volume_mounts
-                .as_ref()
-                .is_some_and(|mounts| mounts.iter().all(|mount| mount.mount_path != "/workspace"))
-        );
+        assert_eq!(home_mounts[0].mount_path, "/workspace");
+        assert!(container.volume_mounts.as_ref().is_some_and(|mounts| {
+            mounts
+                .iter()
+                .all(|mount| mount.mount_path != "/home/nanoagent")
+        }));
     }
 
     #[test]

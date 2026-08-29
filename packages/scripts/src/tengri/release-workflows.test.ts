@@ -92,8 +92,6 @@ describe('Tengri release workflows', () => {
     }
     expect(nanoagent).toContain('ARG GO_BASE_IMAGE=mirror.gcr.io/golang')
     expect(nanoagent).toContain('ARG UBUNTU_BASE_IMAGE=mirror.gcr.io/ubuntu')
-    expect(nanoagent).toContain('ln -s /home/nanoagent /workspace;')
-    expect(nanoagent).not.toContain('ln -s /home/nanoagent/workspace /workspace;')
     expect(tengri).toContain('ARG DEBIAN_BASE_IMAGE=mirror.gcr.io/debian')
     expect(tengri).toContain('ARG RUST_BASE_IMAGE=mirror.gcr.io/rust')
   })
