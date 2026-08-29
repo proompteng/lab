@@ -77,7 +77,6 @@ pub struct ControlPlane {
     client: Client,
     namespace: Arc<str>,
     default_image: Arc<str>,
-    new_agent_storage_layout: Arc<str>,
     architecture: MicroVMArchitecture,
     auth: Authenticator,
     tickets: TicketStore,
@@ -90,21 +89,10 @@ pub struct ControlPlane {
 pub struct ControlPlaneConfig {
     pub namespace: String,
     pub default_image: String,
-    pub new_agent_storage_layout: Option<String>,
     pub architecture: MicroVMArchitecture,
     pub internal_hmac_secret: String,
     pub ticket_signing_secret: String,
     pub public_url: String,
-}
-
-fn validate_new_agent_storage_layout(storage_layout: Option<String>) -> anyhow::Result<Arc<str>> {
-    match storage_layout {
-        Some(layout) if layout == SINGLE_MOUNT_STORAGE_LAYOUT => Ok(layout.into()),
-        Some(layout) => anyhow::bail!(
-            "TENGRI_NEW_AGENT_STORAGE_LAYOUT must be {SINGLE_MOUNT_STORAGE_LAYOUT}, got {layout}"
-        ),
-        None => Ok(SINGLE_MOUNT_STORAGE_LAYOUT.into()),
-    }
 }
 
 impl ControlPlane {
@@ -114,8 +102,6 @@ impl ControlPlane {
         activity: ActivityTracker,
     ) -> anyhow::Result<Self> {
         validate_digest_pinned_image(&config.default_image)?;
-        let new_agent_storage_layout =
-            validate_new_agent_storage_layout(config.new_agent_storage_layout)?;
         let auth = Authenticator::new(
             client.clone(),
             config.namespace.clone(),
@@ -132,7 +118,6 @@ impl ControlPlane {
             client,
             namespace,
             default_image: config.default_image.into(),
-            new_agent_storage_layout,
             architecture: config.architecture,
             auth,
             tickets: TicketStore::new(config.public_url, config.ticket_signing_secret)?,
@@ -341,7 +326,7 @@ impl MicroVmControlPlane for ControlPlane {
         apply_new_agent_metadata(
             &mut microvm,
             &principal.owner_hash,
-            &self.new_agent_storage_layout,
+            SINGLE_MOUNT_STORAGE_LAYOUT,
         );
         let created = match api.create(&PostParams::default(), &microvm).await {
             Ok(created) => created,
@@ -2868,41 +2853,6 @@ mod tests {
                 .map(String::as_str),
             Some(SINGLE_MOUNT_STORAGE_LAYOUT),
         );
-    }
-
-    #[test]
-    fn missing_activation_environment_still_marks_new_agents() {
-        let hash = owner_hash("github:42");
-        let mut agent = provisional_terminal_test_agent(Utc::now());
-        agent.metadata.annotations = None;
-        let layout = validate_new_agent_storage_layout(None).expect("default storage layout");
-
-        apply_new_agent_metadata(&mut agent, &hash, &layout);
-
-        assert_eq!(
-            agent
-                .metadata
-                .annotations
-                .as_ref()
-                .and_then(|annotations| annotations.get(STORAGE_LAYOUT_ANNOTATION))
-                .map(String::as_str),
-            Some(SINGLE_MOUNT_STORAGE_LAYOUT),
-        );
-    }
-
-    #[test]
-    fn storage_layout_activation_accepts_only_the_supported_layout() {
-        assert_eq!(
-            validate_new_agent_storage_layout(None).unwrap().as_ref(),
-            SINGLE_MOUNT_STORAGE_LAYOUT,
-        );
-        assert_eq!(
-            validate_new_agent_storage_layout(Some(SINGLE_MOUNT_STORAGE_LAYOUT.to_owned()))
-                .unwrap()
-                .as_ref(),
-            SINGLE_MOUNT_STORAGE_LAYOUT,
-        );
-        assert!(validate_new_agent_storage_layout(Some("future-layout".to_owned())).is_err());
     }
 
     #[test]

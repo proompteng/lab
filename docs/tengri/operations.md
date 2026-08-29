@@ -137,23 +137,18 @@ Exact failure reasons are published in CR status. Do not infer success from a cr
    guest kernel isolation, fresh-image pull, interactive PTY, persistent file round trip, Codex event, and localhost
    preview WebSocket/HMR.
 
-### Storage-layout activation
+### Storage layout
 
-Storage layouts are explicit and coupled to the published Nanoagent image:
+Tengri supports only `runtime.proompteng.ai/storage-layout=home-workspace-v2`:
 
-1. The controller reads both existing unmarked agents and agents annotated with
-   `runtime.proompteng.ai/storage-layout=home-workspace-v1`.
-2. Every newly created CR is marked `home-workspace-v1`, even when `TENGRI_NEW_AGENT_STORAGE_LAYOUT` is absent. If the
-   environment variable is present, it must equal `home-workspace-v1`. This prevents a new image from entering the
-   legacy dual-mount topology.
-3. Marked agents mount their PVC exactly once at `/home/nanoagent`. The Nanoagent image exposes the persistent
-   `/home/nanoagent/workspace` directory through `/workspace`; no init container or synthetic passwd volume is used.
-4. Existing unmarked agents retain their legacy topology and immutable image.
+1. Every new CR is marked with that layout directly; there is no activation flag.
+2. The Pod mounts its PVC exactly once at `/home/nanoagent`. The Nanoagent image exposes
+   `/home/nanoagent/workspace` through `/workspace`; there is no init container or synthetic identity volume.
+3. Any CR with a missing or different layout is rejected and must be deleted and recreated. The failed
+   `home-workspace-v1` experiment never produced a working guest, so there is no migration or fallback path.
 
-Roll back the controller and Nanoagent digests together through GitOps. Removing `TENGRI_NEW_AGENT_STORAGE_LAYOUT` is
-not a rollback because the safe default remains `home-workspace-v1`. Do not restore a controller from before versioned
-layout support while a marked `MicroVM` remains. Marked CRs and PVCs hard-expire four hours after creation, after which
-the older controller can be restored if still necessary.
+Promote or roll back the controller and Nanoagent digests together through GitOps. Do not mix a controller and guest
+image from different releases.
 
 ### Proompteng desktop image promotions
 

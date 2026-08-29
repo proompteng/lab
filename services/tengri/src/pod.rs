@@ -24,7 +24,7 @@ pub const FINALIZER_NAME: &str = "runtime.proompteng.ai/finalizer";
 pub const BOOTSTRAP_TOKEN_KEY: &str = "token";
 pub const STORAGE_CLASS: &str = "rook-ceph-block";
 pub const STORAGE_LAYOUT_ANNOTATION: &str = "runtime.proompteng.ai/storage-layout";
-pub const SINGLE_MOUNT_STORAGE_LAYOUT: &str = "home-workspace-v1";
+pub const SINGLE_MOUNT_STORAGE_LAYOUT: &str = "home-workspace-v2";
 const GUEST_UID: i64 = 1_000;
 const MAX_DNS_LABEL_LENGTH: usize = 63;
 const MAX_DNS_SUBDOMAIN_LENGTH: usize = 253;
@@ -169,7 +169,6 @@ pub fn build_pod(
     home_claim: &str,
 ) -> Pod {
     let name = microvm.name_any();
-    let single_mount_layout = uses_single_mount_layout(microvm);
     let mut node_selector = BTreeMap::from([(
         "runtime.proompteng.ai/kata-fc".to_owned(),
         "ready".to_owned(),
@@ -178,16 +177,16 @@ pub fn build_pod(
         "kubernetes.io/arch".to_owned(),
         microvm.spec.architecture.kubernetes_label().to_owned(),
     );
-    let mut annotations = BTreeMap::from([(
-        "runtime.proompteng.ai/isolation".to_owned(),
-        "firecracker".to_owned(),
-    )]);
-    if single_mount_layout {
-        annotations.insert(
+    let annotations = BTreeMap::from([
+        (
+            "runtime.proompteng.ai/isolation".to_owned(),
+            "firecracker".to_owned(),
+        ),
+        (
             STORAGE_LAYOUT_ANNOTATION.to_owned(),
             SINGLE_MOUNT_STORAGE_LAYOUT.to_owned(),
-        );
-    }
+        ),
+    ]);
 
     Pod {
         metadata: ObjectMeta {
@@ -196,11 +195,7 @@ pub fn build_pod(
         },
         spec: Some(PodSpec {
             automount_service_account_token: Some(false),
-            containers: vec![build_container(
-                microvm,
-                bootstrap_secret,
-                single_mount_layout,
-            )],
+            containers: vec![build_container(microvm, bootstrap_secret)],
             enable_service_links: Some(false),
             node_selector: Some(node_selector),
             restart_policy: Some("Always".to_owned()),
@@ -239,13 +234,14 @@ pub fn build_pod(
     }
 }
 
-fn uses_single_mount_layout(microvm: &MicroVM) -> bool {
+pub fn has_current_storage_layout(microvm: &MicroVM) -> bool {
     microvm
         .metadata
         .annotations
         .as_ref()
         .and_then(|annotations| annotations.get(STORAGE_LAYOUT_ANNOTATION))
-        .is_some_and(|layout| layout == SINGLE_MOUNT_STORAGE_LAYOUT)
+        .map(String::as_str)
+        == Some(SINGLE_MOUNT_STORAGE_LAYOUT)
 }
 
 fn build_volumes(home_claim: &str) -> Vec<Volume> {
@@ -302,11 +298,7 @@ fn managed_metadata(microvm: &MicroVM, namespace: &str, name: &str) -> ObjectMet
     }
 }
 
-fn build_container(
-    microvm: &MicroVM,
-    bootstrap_secret: &str,
-    single_mount_layout: bool,
-) -> Container {
+fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
     let resources = &microvm.spec.resources;
     let fixed = BTreeMap::from([
         (
@@ -356,66 +348,38 @@ fn build_container(
             ..EnvVar::default()
         },
     ];
-    if single_mount_layout {
-        env.extend([
-            EnvVar {
-                name: "CODEX_BINARY".to_owned(),
-                value: Some("/home/nanoagent/.local/bin/codex".to_owned()),
-                ..EnvVar::default()
-            },
-            EnvVar {
-                name: "PATH".to_owned(),
-                value: Some(
-                    "/home/nanoagent/.local/bin:/home/nanoagent/go/bin:/home/nanoagent/.cargo/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-                        .to_owned(),
-                ),
-                ..EnvVar::default()
-            },
-            EnvVar {
-                name: "XDG_CACHE_HOME".to_owned(),
-                value: Some("/home/nanoagent/.cache".to_owned()),
-                ..EnvVar::default()
-            },
-        ]);
-    }
-    let (volume_mounts, working_dir) = if single_mount_layout {
-        (
-            vec![
-                VolumeMount {
-                    name: "home".to_owned(),
-                    mount_path: "/home/nanoagent".to_owned(),
-                    ..VolumeMount::default()
-                },
-                VolumeMount {
-                    name: "tmp".to_owned(),
-                    mount_path: "/tmp".to_owned(),
-                    ..VolumeMount::default()
-                },
-            ],
-            "/home/nanoagent",
-        )
-    } else {
-        (
-            vec![
-                VolumeMount {
-                    name: "home".to_owned(),
-                    mount_path: "/home/nanoagent".to_owned(),
-                    ..VolumeMount::default()
-                },
-                VolumeMount {
-                    name: "home".to_owned(),
-                    mount_path: "/workspace".to_owned(),
-                    ..VolumeMount::default()
-                },
-                VolumeMount {
-                    name: "tmp".to_owned(),
-                    mount_path: "/tmp".to_owned(),
-                    ..VolumeMount::default()
-                },
-            ],
-            "/home/nanoagent",
-        )
-    };
+    env.extend([
+        EnvVar {
+            name: "CODEX_BINARY".to_owned(),
+            value: Some("/home/nanoagent/.local/bin/codex".to_owned()),
+            ..EnvVar::default()
+        },
+        EnvVar {
+            name: "PATH".to_owned(),
+            value: Some(
+                "/home/nanoagent/.local/bin:/home/nanoagent/go/bin:/home/nanoagent/.cargo/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+                    .to_owned(),
+            ),
+            ..EnvVar::default()
+        },
+        EnvVar {
+            name: "XDG_CACHE_HOME".to_owned(),
+            value: Some("/home/nanoagent/.cache".to_owned()),
+            ..EnvVar::default()
+        },
+    ]);
+    let volume_mounts = vec![
+        VolumeMount {
+            name: "home".to_owned(),
+            mount_path: "/home/nanoagent".to_owned(),
+            ..VolumeMount::default()
+        },
+        VolumeMount {
+            name: "tmp".to_owned(),
+            mount_path: "/tmp".to_owned(),
+            ..VolumeMount::default()
+        },
+    ];
 
     Container {
         name: "nanoagent".to_owned(),
@@ -454,7 +418,7 @@ fn build_container(
             ..SecurityContext::default()
         }),
         volume_mounts: Some(volume_mounts),
-        working_dir: Some(working_dir.to_owned()),
+        working_dir: Some("/home/nanoagent".to_owned()),
         ..Container::default()
     }
 }
@@ -657,41 +621,18 @@ mod tests {
     }
 
     #[test]
-    fn unmarked_agents_keep_the_legacy_dual_mount_layout_without_data_mutation() {
+    fn stale_or_missing_storage_layouts_are_rejected_instead_of_falling_back() {
         let mut microvm = test_microvm();
-        microvm.metadata.annotations = None;
+        assert!(has_current_storage_layout(&microvm));
 
-        let pod = build_pod(&microvm, "tengri", "agent-bootstrap", "agent-home");
-        assert!(
-            pod.metadata
-                .annotations
-                .as_ref()
-                .is_some_and(|annotations| !annotations.contains_key(STORAGE_LAYOUT_ANNOTATION))
-        );
-        let spec = pod.spec.expect("legacy pod spec");
-        assert!(spec.init_containers.is_none());
-        let container = &spec.containers[0];
-        assert_eq!(container.working_dir.as_deref(), Some("/home/nanoagent"));
-        let home_mounts = container
-            .volume_mounts
-            .as_ref()
-            .expect("legacy volume mounts")
-            .iter()
-            .filter(|mount| mount.name == "home")
-            .map(|mount| mount.mount_path.as_str())
-            .collect::<Vec<_>>();
-        assert_eq!(home_mounts, vec!["/home/nanoagent", "/workspace"]);
-        assert_eq!(container.volume_mounts.as_ref().map(Vec::len), Some(3));
-        assert!(spec.volumes.as_ref().is_some_and(|volumes| {
-            volumes.len() == 2
-                && volumes
-                    .iter()
-                    .all(|volume| volume.name == "home" || volume.name == "tmp")
-        }));
-        let env = container.env.as_ref().expect("legacy environment");
-        for name in ["CODEX_BINARY", "PATH", "XDG_CACHE_HOME"] {
-            assert!(env.iter().all(|entry| entry.name != name));
-        }
+        microvm.metadata.annotations = Some(BTreeMap::from([(
+            STORAGE_LAYOUT_ANNOTATION.to_owned(),
+            "home-workspace-v1".to_owned(),
+        )]));
+        assert!(!has_current_storage_layout(&microvm));
+
+        microvm.metadata.annotations = None;
+        assert!(!has_current_storage_layout(&microvm));
     }
 
     #[test]
