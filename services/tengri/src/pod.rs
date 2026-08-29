@@ -368,18 +368,13 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
                 ..VolumeMount::default()
             },
             VolumeMount {
-                name: "home".to_owned(),
-                mount_path: "/workspace".to_owned(),
-                ..VolumeMount::default()
-            },
-            VolumeMount {
                 name: "tmp".to_owned(),
                 mount_path: "/tmp".to_owned(),
                 ..VolumeMount::default()
             },
         ]),
-        // Preserve the volume-root workspace mapping used by existing immutable guest
-        // images and PVCs. A future split requires an explicit, versioned data migration.
+        // Mount the PVC once. The immutable guest image maps /workspace to
+        // /home/nanoagent/workspace, keeping both paths on the persistent home volume.
         working_dir: Some("/home/nanoagent".to_owned()),
         ..Container::default()
     }
@@ -547,14 +542,21 @@ mod tests {
                         && value.value.as_deref() == Some("/workspace")
                 }))
         );
-        assert!(container.volume_mounts.as_ref().is_some_and(|mounts| {
-            mounts
-                .iter()
-                .any(|mount| mount.name == "home" && mount.mount_path == "/home/nanoagent")
-                && mounts
-                    .iter()
-                    .any(|mount| mount.name == "home" && mount.mount_path == "/workspace")
-        }));
+        let home_mounts = container
+            .volume_mounts
+            .as_ref()
+            .expect("volume mounts")
+            .iter()
+            .filter(|mount| mount.name == "home")
+            .collect::<Vec<_>>();
+        assert_eq!(home_mounts.len(), 1);
+        assert_eq!(home_mounts[0].mount_path, "/home/nanoagent");
+        assert!(
+            container
+                .volume_mounts
+                .as_ref()
+                .is_some_and(|mounts| mounts.iter().all(|mount| mount.mount_path != "/workspace"))
+        );
     }
 
     #[test]
