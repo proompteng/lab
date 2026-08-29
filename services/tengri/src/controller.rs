@@ -165,13 +165,7 @@ async fn reconcile(
             return Err(error.into());
         }
     };
-    let desired_pod = build_pod(&microvm, &namespace, &bootstrap_secret, &home_claim);
-    let pod = match pods
-        .patch(
-            &name,
-            &PatchParams::apply(MANAGER_NAME).force(),
-            &Patch::Apply(&desired_pod),
-        )
+    let pod = match ensure_runtime_pod(&pods, &microvm, &namespace, &bootstrap_secret, &home_claim)
         .await
     {
         Ok(pod) => pod,
@@ -214,6 +208,44 @@ async fn reconcile(
     }
 
     Ok(Action::requeue(next_requeue(&microvm, now)))
+}
+
+async fn ensure_runtime_pod(
+    pods: &Api<Pod>,
+    microvm: &MicroVM,
+    namespace: &str,
+    bootstrap_secret: &str,
+    home_claim: &str,
+) -> Result<Pod, kube::Error> {
+    let name = microvm.name_any();
+    if let Some(existing) = pods.get_opt(&name).await? {
+        if is_controlled_by_microvm(&existing, microvm) {
+            // Pod templates are immutable. Keep the current Firecracker guest through a
+            // controller rollout; the next normal sleep/resume boundary creates the new
+            // template without disrupting an active or still-booting agent.
+            return Ok(existing);
+        }
+        return Err(kube::Error::Api(
+            kube::core::Status {
+                code: 422,
+                reason: "Invalid".to_owned(),
+                message: format!(
+                    "Pod {name} already exists and is not controlled by MicroVM {}",
+                    microvm.name_any()
+                ),
+                ..kube::core::Status::default()
+            }
+            .boxed(),
+        ));
+    }
+
+    let desired = build_pod(microvm, namespace, bootstrap_secret, home_claim);
+    pods.patch(
+        &name,
+        &PatchParams::apply(MANAGER_NAME).force(),
+        &Patch::Apply(&desired),
+    )
+    .await
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -619,9 +651,14 @@ fn derive_status(
 ) -> MicroVMStatus {
     let pod_status = pod.status.as_ref();
     let ready = pod_is_ready(pod);
-    let failed = pod_status
-        .and_then(|status| status.container_statuses.as_ref())
-        .and_then(|statuses| statuses.iter().find_map(container_failure));
+    let failed = pod_status.and_then(|status| {
+        status
+            .init_container_statuses
+            .iter()
+            .flatten()
+            .chain(status.container_statuses.iter().flatten())
+            .find_map(container_failure)
+    });
     let scheduling_failure = pod_status
         .and_then(|status| status.conditions.as_ref())
         .and_then(|conditions| {
@@ -786,10 +823,12 @@ fn container_failure(status: &ContainerStatus) -> Option<(String, String)> {
             .reason
             .clone()
             .unwrap_or_else(|| "GuestExited".to_owned());
-        let message = terminated
-            .message
-            .clone()
-            .unwrap_or_else(|| format!("Nanoagent exited with code {}", terminated.exit_code));
+        let message = terminated.message.clone().unwrap_or_else(|| {
+            format!(
+                "Container {} exited with code {}",
+                status.name, terminated.exit_code
+            )
+        });
         return Some((reason, message));
     }
     None
@@ -801,7 +840,7 @@ mod tests {
     use crate::crd::{IDLE_MINUTES, MicroVMArchitecture, MicroVMResources, MicroVMSpec};
     use http::{Request, Response, StatusCode};
     use k8s_openapi::api::core::v1::{
-        ContainerState, ContainerStateWaiting, PodCondition, PodStatus,
+        ContainerState, ContainerStateTerminated, ContainerStateWaiting, PodCondition, PodStatus,
     };
     use kube::client::Body as KubeBody;
 
@@ -1007,6 +1046,42 @@ mod tests {
         assert_eq!(
             status.message.as_deref(),
             Some("bootstrap Secret is missing")
+        );
+    }
+
+    #[test]
+    fn reports_init_container_failure_precisely() {
+        let now = Utc::now();
+        let pod = Pod {
+            status: Some(PodStatus {
+                phase: Some("Pending".to_owned()),
+                init_container_statuses: Some(vec![ContainerStatus {
+                    name: "prepare-runtime-identity".to_owned(),
+                    image: "registry.example/nanoagent".to_owned(),
+                    image_id: "registry.example/nanoagent@sha256:abc".to_owned(),
+                    ready: false,
+                    restart_count: 1,
+                    state: Some(ContainerState {
+                        terminated: Some(ContainerStateTerminated {
+                            exit_code: 1,
+                            reason: Some("Error".to_owned()),
+                            ..ContainerStateTerminated::default()
+                        }),
+                        ..ContainerState::default()
+                    }),
+                    ..ContainerStatus::default()
+                }]),
+                ..PodStatus::default()
+            }),
+            ..Pod::default()
+        };
+
+        let status = derive_status(&test_microvm(now), &pod, "agent-home", now);
+        assert_eq!(status.phase, MicroVMPhase::Failed);
+        assert_eq!(status.failure_reason.as_deref(), Some("Error"));
+        assert_eq!(
+            status.message.as_deref(),
+            Some("Container prepare-runtime-identity exited with code 1")
         );
     }
 
@@ -1259,6 +1334,67 @@ mod tests {
         );
 
         assert!(!check.await.expect("guest check task").expect("Pod lookup"));
+    }
+
+    #[tokio::test]
+    async fn controller_rollout_preserves_an_owned_booting_pod() {
+        let now = Utc::now();
+        let microvm = test_microvm(now);
+        let response_pod: Pod = serde_json::from_value(json!({
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "name": "agent",
+                "namespace": "tengri",
+                "ownerReferences": [{
+                    "apiVersion": "runtime.proompteng.ai/v1alpha1",
+                    "kind": "MicroVM",
+                    "name": "agent",
+                    "uid": "microvm-uid",
+                    "controller": true,
+                }],
+            },
+            "status": {"phase": "Pending"},
+        }))
+        .expect("booting Pod");
+        let (service, mut handle) =
+            tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
+        let client = Client::new(service, "tengri");
+        let pods = Api::namespaced(client, "tengri");
+        let ensure = tokio::spawn(async move {
+            ensure_runtime_pod(&pods, &microvm, "tengri", "agent-bootstrap", "agent-home").await
+        });
+
+        let (request, response) = handle.next_request().await.expect("existing Pod lookup");
+        assert_eq!(request.method(), http::Method::GET);
+        assert_eq!(request.uri().path(), "/api/v1/namespaces/tengri/pods/agent");
+        response.send_response(
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(KubeBody::from(
+                    serde_json::to_vec(&response_pod).expect("Pod response JSON"),
+                ))
+                .expect("Pod response"),
+        );
+
+        let pod = ensure
+            .await
+            .expect("ensure task")
+            .expect("owned Pod is preserved");
+        assert_eq!(
+            pod.status.and_then(|status| status.phase).as_deref(),
+            Some("Pending")
+        );
+        if let Ok(Some((request, _))) =
+            tokio::time::timeout(Duration::from_millis(25), handle.next_request()).await
+        {
+            panic!(
+                "owned Pod must not be reapplied: {} {}",
+                request.method(),
+                request.uri()
+            );
+        }
     }
 
     #[test]
