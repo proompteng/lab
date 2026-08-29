@@ -157,10 +157,26 @@ const selectSellLiquidityBlock = (
     : undefined
 }
 
+const selectBuyLiquidityBlock = (
+  facts: TargetPlannerFacts,
+  targetFacts: readonly PlannedTargetFact[],
+): BlockedOutputMaterial | undefined =>
+  targetFacts.some(({ blockedReason }) => blockedReason === TargetPlanReason.InsufficientBuyLiquidity)
+    ? blocked(
+        facts.input,
+        facts.inputHash,
+        TargetPlanReason.InsufficientBuyLiquidity,
+        facts.input.brokerState.account.buyingPowerMicros,
+        targetFacts.map(({ target }) => target),
+      )
+    : undefined
+
 const assembleExecutableTargetPlan = (
   facts: TargetPlannerFacts,
   targetFacts: readonly PlannedTargetFact[],
 ): OutputMaterial => {
+  const buyLiquidityBlock = selectBuyLiquidityBlock(facts, targetFacts)
+  if (buyLiquidityBlock !== undefined) return buyLiquidityBlock
   const sellLiquidityBlock = selectSellLiquidityBlock(facts, targetFacts)
   if (sellLiquidityBlock !== undefined) return sellLiquidityBlock
   const targets = targetFacts.map((fact) => fact.target)

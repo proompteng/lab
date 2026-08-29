@@ -197,7 +197,10 @@ describePostgres('PostgreSQL intraday cycle store', () => {
   })
 
   test('admits persisted execution evidence only against the exact durable authority and risk context', async () => {
+    const parentAuthorityGenerationHash = '1'.repeat(64)
     const authorityGenerationHash = '2'.repeat(64)
+    const policyHash = 'a'.repeat(64)
+    const parentAuthorityUpdatedAt = '2026-08-28T14:57:30.000Z'
     const authorityUpdatedAt = '2026-08-28T14:58:00.000Z'
     const forgedReconciledAt = '2026-08-28T14:57:00.000Z'
     const reconciledAt = '2026-08-28T14:59:00.000Z'
@@ -212,10 +215,10 @@ describePostgres('PostgreSQL intraday cycle store', () => {
       authority: {
         schemaVersion: 'bayn.paper-authority.v1' as const,
         generationHash: authorityGenerationHash,
-        maximum: Authority.Observe,
-        effective: Authority.Observe,
+        maximum: Authority.Execution,
+        effective: Authority.Execution,
         kill: KillState.Clear,
-        version: 1,
+        version: 2,
         updatedAt: authorityUpdatedAt,
       },
       authorityObservedAt: reconciledAt,
@@ -235,6 +238,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
         planningBrokerStateHash: stateHash,
         reconciliationId,
         reconciliationHash,
+        policyHash,
         decisionMarketData: { snapshotId, contentHash: snapshotContentHash, observedAt },
         riskContext,
       },
@@ -245,21 +249,60 @@ describePostgres('PostgreSQL intraday cycle store', () => {
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
         yield* sql`
+          INSERT INTO reconciliations (
+            reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+            content_hash, status, discrepancies, reconciled_at
+          ) VALUES (
+            ${reconciliationId}, 'bayn.paper-reconciliation.v1', ${accountId}, ${stateHash}, ${stateHash},
+            ${reconciliationHash}, 'EXACT', ${sql.json(encodeSqlJson([]))}, ${reconciledAt}
+          )
+        `
+        yield* sql`
           INSERT INTO authority_generations (
             generation_hash, schema_version, previous_generation_hash, maximum,
             authority_version, activated_at
           ) VALUES (
-            ${authorityGenerationHash}, 'bayn.authority-generation-history.v1', NULL,
-            ${Authority.Observe}, 1, ${authorityUpdatedAt}
+            ${parentAuthorityGenerationHash}, 'bayn.authority-generation-history.v1', NULL,
+            ${Authority.Observe}, 1, ${parentAuthorityUpdatedAt}
+          )
+        `
+        yield* sql`
+          INSERT INTO authority_generations (
+            generation_hash, schema_version, activation_schema_version, previous_generation_hash,
+            maximum, authority_version, activation_source_revision, activation_image_repository,
+            activation_image_digest, strategy_name, strategy_behavior_hash, strategy_parameter_hash,
+            strategy_parameter_schema_version, strategy_protocol_hash, account_id,
+            broker_identity_schema_version, broker_identity_hash, broker_provider, broker_environment,
+            risk_policy_hash, proof_plan_hash, reconciliation_id, reconciliation_content_hash,
+            research_plan_hash, activated_at
+          ) VALUES (
+            ${authorityGenerationHash}, 'bayn.authority-generation-history.v1',
+            'bayn.paper-authority-generation.v3', ${parentAuthorityGenerationHash}, ${Authority.Execution}, 2,
+            ${'3'.repeat(40)}, 'registry.example.test/lab/bayn', ${`sha256:${'4'.repeat(64)}`},
+            'intraday-momentum', ${'5'.repeat(64)}, ${'6'.repeat(64)},
+            'bayn.intraday-momentum.protocol.v2', ${'7'.repeat(64)}, ${accountId},
+            'bayn.broker-identity.v2', ${'8'.repeat(64)}, 'alpaca', 'sandbox', ${policyHash},
+            ${'9'.repeat(64)}, ${reconciliationId}, ${reconciliationHash}, ${'b'.repeat(64)},
+            ${authorityUpdatedAt}
           )
         `
         yield* sql`
           INSERT INTO authority_state (
             schema_version, generation_hash, maximum, effective, kill_state, reason, version, updated_at
           ) VALUES (
-            'bayn.paper-authority.v1', ${authorityGenerationHash}, ${Authority.Observe}, ${Authority.Observe},
-            ${KillState.Clear}, NULL, 1, ${authorityUpdatedAt}
+            'bayn.paper-authority.v1', ${parentAuthorityGenerationHash}, ${Authority.Observe}, ${Authority.Observe},
+            ${KillState.Clear}, NULL, 1, ${parentAuthorityUpdatedAt}
           )
+        `
+        yield* sql`
+          UPDATE authority_state
+          SET
+            generation_hash = ${authorityGenerationHash},
+            maximum = ${Authority.Execution},
+            effective = ${Authority.Execution},
+            version = 2,
+            updated_at = ${authorityUpdatedAt}
+          WHERE singleton
         `
         const intentId = 'c'.repeat(64)
         const mutationId = 'd'.repeat(64)
@@ -271,7 +314,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             quantity_micros, notional_limit_micros, state, terminal_outcome, state_version, created_at, updated_at
           ) VALUES (
             ${intentId}, 'bayn.paper-intent.v3', ${authorityGenerationHash}, NULL, 'intraday-momentum',
-            ${'f'.repeat(64)}, ${'0'.repeat(64)}, ${'1'.repeat(64)}, ${accountId}, 'bayn-risk-cutoff-test',
+            ${'f'.repeat(64)}, ${'0'.repeat(64)}, ${policyHash}, ${accountId}, 'bayn-risk-cutoff-test',
             'SPY', 'BUY', 'LIMIT', 'IOC', 1000000, 1000000, 'PLANNED', NULL, 1,
             '2026-08-28T14:58:30.000Z', '2026-08-28T14:58:30.000Z'
           )
@@ -312,15 +355,6 @@ describePostgres('PostgreSQL intraday cycle store', () => {
               ${equityMicros}, 0, 0, ${equityMicros}, ${reconciledAt}
             )
         `
-        yield* sql`
-          INSERT INTO reconciliations (
-            reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
-            content_hash, status, discrepancies, reconciled_at
-          ) VALUES (
-            ${reconciliationId}, 'bayn.paper-reconciliation.v1', ${accountId}, ${stateHash}, ${stateHash},
-            ${reconciliationHash}, 'EXACT', ${sql.json(encodeSqlJson([]))}, ${reconciledAt}
-          )
-        `
         const queries = makeCycleQueries(sql)
         const exact = yield* queries.decisionEvidenceMatches(document)
         const forgedAuthority = yield* queries.decisionEvidenceMatches({
@@ -344,7 +378,11 @@ describePostgres('PostgreSQL intraday cycle store', () => {
           ...document,
           deltaRisk: [{ facts: { state: { reconciliation: { reconciledAt: forgedReconciledAt } } } }],
         } as unknown as ExecutionDecisionDocument)
-        return { exact, forgedAuthority, forgedEquity, forgedReconciliationCutoff }
+        const forgedPolicyHash = yield* queries.decisionEvidenceMatches({
+          ...document,
+          bindings: { ...document.bindings, policyHash: 'c'.repeat(64) },
+        } as unknown as ExecutionDecisionDocument)
+        return { exact, forgedAuthority, forgedEquity, forgedPolicyHash, forgedReconciliationCutoff }
       }),
     )
 
@@ -352,6 +390,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
       exact: true,
       forgedAuthority: false,
       forgedEquity: false,
+      forgedPolicyHash: false,
       forgedReconciliationCutoff: false,
     })
   })

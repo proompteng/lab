@@ -77,6 +77,7 @@ export interface PlannedTargetFact {
   readonly target: PlannedTargetQuantity
   readonly referencePrice: bigint
   readonly delta: bigint
+  readonly blockedReason?: TargetPlanReason.InsufficientBuyLiquidity
 }
 
 const plannerInputHash = (
@@ -346,11 +347,13 @@ export const derivePlannedTargetFacts = (
           return Result.flatMap(selectedTarget, (selected) => {
             const desiredDelta = selected.quantity - currentQuantity
             const maximumBuyQuantity = facts.maximumBuyQuantities.get(symbol)
-            if (
+            const buyLiquidityUnavailable =
               facts.input.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
               desiredDelta > 0n &&
               maximumBuyQuantity === 0n
-            ) {
+            const buyLiquidityBlocked =
+              buyLiquidityUnavailable && facts.positionQuantities.some((quantity) => quantity !== 0n)
+            if (buyLiquidityUnavailable && !buyLiquidityBlocked) {
               return Result.fail(
                 deriveTargetsFailure({
                   reason: 'precision',
@@ -364,8 +367,9 @@ export const derivePlannedTargetFacts = (
                 }),
               )
             }
-            const targetQuantity =
-              desiredDelta > 0n && maximumBuyQuantity !== undefined && desiredDelta > maximumBuyQuantity
+            const targetQuantity = buyLiquidityBlocked
+              ? currentQuantity
+              : desiredDelta > 0n && maximumBuyQuantity !== undefined && desiredDelta > maximumBuyQuantity
                 ? currentQuantity + maximumBuyQuantity
                 : selected.quantity
             return Result.succeed([
@@ -373,6 +377,7 @@ export const derivePlannedTargetFacts = (
               {
                 referencePrice: selected.referencePrice,
                 delta: targetQuantity - currentQuantity,
+                ...(buyLiquidityBlocked ? { blockedReason: TargetPlanReason.InsufficientBuyLiquidity } : {}),
                 target: {
                   symbol,
                   targetWeight,

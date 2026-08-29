@@ -267,6 +267,28 @@ const planSuccess = (input: TargetPlannerInput): TargetPlanResult => {
 }
 
 describe('causal target planner', () => {
+  test('binds absent whole-share ask capacity as a durable close-only block when holdings exist', () => {
+    const blocked = planSuccess(
+      fixture({
+        quoteBound: true,
+        positions: [position('AMD', '1000000')],
+        priceMicros: { AMD: '100000000' },
+        targetWeights: { AMD: 1 },
+        maximumBuyQuantityMicros: { AMD: '0' },
+      }),
+    )
+
+    expect(blocked).toMatchObject({
+      schemaVersion: referenceTargetPlanSchemaVersion,
+      status: TargetPlanStatus.Blocked,
+      reason: TargetPlanReason.InsufficientBuyLiquidity,
+      targets: [{ symbol: 'AMD', currentQuantityMicros: '1000000', targetQuantityMicros: '1000000' }],
+      intentTargets: [],
+      requiredReferenceBuyNotionalMicros: '0',
+    })
+    expect(Result.isSuccess(decodeTargetPlanResult(blocked))).toBe(true)
+  })
+
   test('binds insufficient entry sell liquidity as a durable close-only block', () => {
     const blocked = planSuccess(
       fixture({

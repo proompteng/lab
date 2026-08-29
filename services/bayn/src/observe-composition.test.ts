@@ -978,6 +978,20 @@ describe('OBSERVE runtime composition', () => {
     ).toBe(true)
     expect(
       blockedEntryRequiresCloseOnlyContainment(
+        blocked(TargetPlanReason.InsufficientBuyLiquidity),
+        [{ symbol: 'AAPL', quantityMicros: '500000' }],
+        ['AAPL'],
+      ),
+    ).toBe(true)
+    expect(
+      blockedEntryRequiresCloseOnlyContainment(
+        blocked(TargetPlanReason.InsufficientBuyLiquidity),
+        [{ symbol: 'AAPL', quantityMicros: '0' }],
+        ['AAPL'],
+      ),
+    ).toBe(false)
+    expect(
+      blockedEntryRequiresCloseOnlyContainment(
         blocked(TargetPlanReason.InsufficientSellLiquidity),
         [{ symbol: 'AAPL', quantityMicros: '1000000' }],
         ['AAPL'],

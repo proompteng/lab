@@ -158,6 +158,8 @@ export const blockedEntryRequiresCloseOnlyContainment = (
       )
     case TargetPlanReason.IdentityMismatch:
       return positions.some(({ symbol, quantityMicros }) => !universeSet.has(symbol) && BigInt(quantityMicros) !== 0n)
+    case TargetPlanReason.InsufficientBuyLiquidity:
+      return positions.some(({ symbol, quantityMicros }) => universeSet.has(symbol) && BigInt(quantityMicros) !== 0n)
     case TargetPlanReason.InsufficientSellLiquidity:
       return positions.some(({ symbol, quantityMicros }) => universeSet.has(symbol) && BigInt(quantityMicros) > 0n)
     default:
@@ -707,6 +709,7 @@ const executeBoundExecutionCycle = (
       (document.targetPlan.reason === TargetPlanReason.ShortPositionNotAllowed ||
         document.targetPlan.reason === TargetPlanReason.InputMismatch ||
         document.targetPlan.reason === TargetPlanReason.IdentityMismatch ||
+        document.targetPlan.reason === TargetPlanReason.InsufficientBuyLiquidity ||
         document.targetPlan.reason === TargetPlanReason.InsufficientSellLiquidity)
     const entryRequiresCloseOnlyContainment = closeOnlyContainmentReason
       ? yield* reconcile.pipe(

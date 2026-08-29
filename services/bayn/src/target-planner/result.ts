@@ -231,6 +231,7 @@ const targetPlanStatusIssues = (
     result.status === TargetPlanStatus.Blocked &&
     result.targets.length > 0 &&
     result.reason !== TargetPlanReason.BelowMinimumBuyNotional &&
+    result.reason !== TargetPlanReason.InsufficientBuyLiquidity &&
     result.reason !== TargetPlanReason.InsufficientBuyingPower
   ) {
     issues.push({ path: ['targets'], issue: 'blocked target evidence is valid only for notional failures' })
