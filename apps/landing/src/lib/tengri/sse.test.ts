@@ -5,13 +5,17 @@ void mock.module('server-only', () => ({}))
 const { MAX_EVENT_STREAMS_PER_SUBJECT } = await import('./limits')
 const { acquireTengriEventStreamSlot, createTengriEventStream } = await import('./sse')
 
-function fakeSource() {
+function fakeSource(options: { emitCancellationError?: boolean } = {}) {
   let cancellations = 0
   let pauses = 0
   let resumes = 0
+  const emitCancellationError = options.emitCancellationError ?? true
   const source = Object.assign(new EventEmitter(), {
     cancel() {
       cancellations += 1
+      if (emitCancellationError) {
+        queueMicrotask(() => source.emit('error', new Error('1 CANCELLED: Cancelled on client')))
+      }
     },
     pause() {
       pauses += 1
@@ -27,7 +31,7 @@ function fakeSource() {
 }
 
 describe('Tengri SSE bridge', () => {
-  test('serializes event IDs and removes upstream listeners when the client disconnects', async () => {
+  test('serializes event IDs and absorbs the upstream cancellation error when the client disconnects', async () => {
     const upstream = fakeSource()
     let releases = 0
     const stream = createTengriEventStream(
@@ -51,6 +55,7 @@ describe('Tengri SSE bridge', () => {
     expect(new TextDecoder().decode(frame.value)).toBe('id: 7\ndata: {"sequence":7}\n\n')
 
     await reader.cancel()
+    await Promise.resolve()
     expect(upstream.stats().cancellations).toBe(1)
     expect(upstream.source.listenerCount('data')).toBe(0)
     expect(upstream.source.listenerCount('end')).toBe(0)
