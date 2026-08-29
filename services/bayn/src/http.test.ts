@@ -350,11 +350,84 @@ describe('Bayn HTTP pure decisions', () => {
       ...readyState(),
       cycle: {
         ...readyState().cycle,
+        current: {
+          cycleId: '1'.repeat(64),
+          accountId: 'paper-account-1',
+          signalSessionDate: '2026-08-31',
+          executionSessionDate: '2026-09-01',
+          phase: CycleState.Active,
+          snapshotId: '2'.repeat(64),
+          decisionHash: '3'.repeat(64),
+          terminalReason: null,
+          submissionOpenAt: '2026-09-01T13:30:00.000Z',
+          submissionCutoffAt: '2026-09-01T14:00:00.000Z',
+          executionOpenAt: '2026-09-01T13:30:00.000Z',
+          executionCloseAt: '2026-09-01T20:00:00.000Z',
+          createdAt: '2026-09-01T13:30:00.000Z',
+          updatedAt: '2026-09-01T13:35:08.000Z',
+          terminalAt: null,
+        },
+        unfinishedCycleCount: 1,
+        condition: CycleOperationsCondition.Running,
+        reason: CycleOperationsReason.Active,
         mutations: {
           ...readyState().cycle.mutations,
           recoveryFoundCount: 185,
           approvedIntentCount: 3,
           acknowledgedIntentCount: 1,
+        },
+        execution: {
+          decision: {
+            createdAt: '2026-09-01T13:35:05.000Z',
+            marketDataObservedAt: '2026-09-01T13:35:05.000Z',
+            barCount: 50,
+            quoteCount: 10,
+            tradeCount: 10,
+            targetPlanStatus: 'PLANNED' as const,
+            targetPlanReason: null,
+            targetCount: 2,
+            orderedIntentCount: 2,
+            dispatchable: true,
+            riskBlockReason: null,
+            riskBlockReasonCount: 0,
+          },
+          intentCount: 2,
+          plannedIntentCount: 0,
+          approvedIntentCount: 0,
+          ioStartedIntentCount: 0,
+          acknowledgedIntentCount: 2,
+          unknownIntentCount: 0,
+          terminalIntentCount: 2,
+          recoveredIntentCount: 0,
+          filledIntentCount: 2,
+          canceledIntentCount: 0,
+          expiredIntentCount: 0,
+          rejectedIntentCount: 0,
+          blockedIntentCount: 0,
+          orderCount: 2,
+          openOrderCount: 0,
+          filledOrderCount: 2,
+          executedOrderCount: 2,
+          canceledOrderCount: 0,
+          expiredOrderCount: 0,
+          rejectedOrderCount: 0,
+          fillCount: 3,
+          buyFillCount: 3,
+          sellFillCount: 0,
+          latestIntentAt: '2026-09-01T13:35:06.000Z',
+          latestOrderAt: '2026-09-01T13:35:07.000Z',
+          latestFillAt: '2026-09-01T13:35:08.000Z',
+          maximumOrderAcknowledgementLatencyMs: 1_000,
+          maximumFillLatencyMs: 2_000,
+          positionSnapshotObservedAt: '2026-09-01T13:35:08.000Z',
+          positionCount: 2,
+          grossExposureMicros: '800000000',
+          netExposureMicros: '800000000',
+          unrealizedPnlMicros: '1250000',
+          accountObservedAt: '2026-09-01T13:35:08.000Z',
+          cashMicros: '99200000000',
+          equityMicros: '100001250000',
+          buyingPowerMicros: '396800000000',
         },
       },
       capitalActivation: {
@@ -388,9 +461,205 @@ describe('Bayn HTTP pure decisions', () => {
     expect(metrics).toContain('bayn_broker_orders_enabled 1')
     expect(metrics).toContain('bayn_capital_promotion_enabled 1')
     expect(metrics).toContain('bayn_mutation_recovery_found_events_total 185')
-    expect(metrics).toContain('bayn_intents{state="approved"} 3')
-    expect(metrics).toContain('bayn_intents{state="acknowledged"} 1')
+    expect(metrics).toContain('bayn_cycle_target_plan_info{status="planned",reason="none"} 1')
+    expect(metrics).toContain('bayn_execution_funnel_count{stage="targets"} 2')
+    expect(metrics).toContain('bayn_execution_funnel_count{stage="fills"} 2')
+    expect(metrics).toContain('bayn_cycle_intents{state="acknowledged"} 2')
+    expect(metrics).toContain('bayn_cycle_orders{status="filled"} 2')
+    expect(metrics).toContain('bayn_cycle_orders{status="canceled"} 0')
+    expect(metrics).toContain('bayn_cycle_orders{status="expired"} 0')
+    expect(metrics).toContain('bayn_cycle_fills{side="buy"} 3')
+    expect(metrics).toContain('bayn_broker_position_count 2')
+    expect(metrics).toContain('bayn_broker_position_snapshot_observed_timestamp_seconds ')
+    expect(metrics).toContain('bayn_broker_gross_exposure_dollars 800.000000')
+    expect(metrics).toContain('bayn_broker_unrealized_pnl_dollars 1.250000')
+    expect(metrics).toContain('bayn_broker_account_dollars{kind="buying_power"} 396800.000000')
     expect(metrics).toContain('bayn_capital_activation_recovery_only 0')
+
+    const noCycleMetrics = renderPrometheusMetrics(
+      {
+        ...realized,
+        cycle: {
+          ...realized.cycle,
+          current: null,
+          last: null,
+          condition: CycleOperationsCondition.Waiting,
+          reason: CycleOperationsReason.NoCycleRecorded,
+          unfinishedCycleCount: 0,
+          attemptAgeMs: null,
+        },
+      },
+      config,
+      provenance,
+      'embedded',
+    )
+    expect(noCycleMetrics).toContain('bayn_cycle_observation_available 1')
+    expect(noCycleMetrics).toContain('bayn_cycle_reason{reason="no_cycle_recorded"} 1')
+    expect(noCycleMetrics).not.toContain('bayn_cycle_unfinished_count ')
+    expect(noCycleMetrics).not.toContain('bayn_execution_funnel_count{')
+    expect(noCycleMetrics).not.toContain('bayn_cycle_intents{')
+    expect(noCycleMetrics).not.toContain('bayn_cycle_orders{')
+    expect(noCycleMetrics).not.toContain('bayn_cycle_fills{')
+    expect(noCycleMetrics).toContain('bayn_broker_position_count 2')
+    expect(noCycleMetrics).toContain('bayn_broker_account_dollars{kind="equity"} 100001.250000')
+
+    const terminalOnlyMetrics = renderPrometheusMetrics(
+      {
+        ...realized,
+        cycle: {
+          ...realized.cycle,
+          current: null,
+          last: {
+            ...realized.cycle.current,
+            phase: CycleState.Completed,
+            terminalReason: null,
+            terminalAt: '2026-09-01T13:36:00.000Z',
+          },
+          unfinishedCycleCount: 0,
+        },
+      },
+      config,
+      provenance,
+      'embedded',
+    )
+    expect(terminalOnlyMetrics).toContain('bayn_cycle_unfinished_count 0')
+    expect(terminalOnlyMetrics).toContain('bayn_cycle_last_terminal_timestamp_seconds ')
+    expect(terminalOnlyMetrics).not.toContain('bayn_cycle_snapshot_bound ')
+    expect(terminalOnlyMetrics).not.toContain('bayn_cycle_decision_bound ')
+    expect(terminalOnlyMetrics).not.toContain('bayn_cycle_attempt_age_seconds ')
+    expect(terminalOnlyMetrics).not.toContain('bayn_cycle_submission_open_timestamp_seconds ')
+    expect(terminalOnlyMetrics).not.toContain('bayn_cycle_execution_close_timestamp_seconds ')
+
+    const awaitingDecisionMetrics = renderPrometheusMetrics(
+      {
+        ...realized,
+        cycle: {
+          ...realized.cycle,
+          current: {
+            ...realized.cycle.current,
+            decisionHash: null,
+          },
+          execution: {
+            ...realized.cycle.execution,
+            decision: null,
+          },
+        },
+      },
+      config,
+      provenance,
+      'embedded',
+    )
+    expect(awaitingDecisionMetrics).not.toContain('bayn_execution_funnel_count{stage="targets"}')
+    expect(awaitingDecisionMetrics).toContain('bayn_execution_funnel_count{stage="intents"} 2')
+
+    const missingPositionSnapshotMetrics = renderPrometheusMetrics(
+      {
+        ...realized,
+        cycle: {
+          ...realized.cycle,
+          execution: {
+            ...realized.cycle.execution,
+            positionSnapshotObservedAt: null,
+            positionCount: null,
+            grossExposureMicros: null,
+            netExposureMicros: null,
+            unrealizedPnlMicros: null,
+          },
+        },
+      },
+      config,
+      provenance,
+      'embedded',
+    )
+    expect(missingPositionSnapshotMetrics).not.toContain('bayn_broker_position_count ')
+    expect(missingPositionSnapshotMetrics).not.toContain('bayn_broker_gross_exposure_dollars ')
+    expect(missingPositionSnapshotMetrics).not.toContain('bayn_broker_net_exposure_dollars ')
+    expect(missingPositionSnapshotMetrics).not.toContain('bayn_broker_unrealized_pnl_dollars ')
+
+    const flatPositionSnapshotMetrics = renderPrometheusMetrics(
+      {
+        ...realized,
+        cycle: {
+          ...realized.cycle,
+          execution: {
+            ...realized.cycle.execution,
+            positionCount: 0,
+            grossExposureMicros: '0',
+            netExposureMicros: '0',
+            unrealizedPnlMicros: '0',
+          },
+        },
+      },
+      config,
+      provenance,
+      'embedded',
+    )
+    expect(flatPositionSnapshotMetrics).toContain('bayn_broker_position_count 0')
+    expect(flatPositionSnapshotMetrics).toContain('bayn_broker_gross_exposure_dollars 0.000000')
+
+    const missingLatencyMetrics = renderPrometheusMetrics(
+      {
+        ...realized,
+        cycle: {
+          ...realized.cycle,
+          execution: {
+            ...realized.cycle.execution,
+            maximumOrderAcknowledgementLatencyMs: null,
+            maximumFillLatencyMs: null,
+          },
+        },
+      },
+      config,
+      provenance,
+      'embedded',
+    )
+    expect(missingLatencyMetrics).not.toContain('bayn_cycle_order_acknowledgement_latency_seconds ')
+    expect(missingLatencyMetrics).not.toContain('bayn_cycle_fill_latency_seconds ')
+
+    const missingExecutionTimestampMetrics = renderPrometheusMetrics(
+      {
+        ...realized,
+        cycle: {
+          ...realized.cycle,
+          execution: {
+            ...realized.cycle.execution,
+            latestIntentAt: null,
+            latestOrderAt: null,
+            latestFillAt: null,
+          },
+        },
+      },
+      config,
+      provenance,
+      'embedded',
+    )
+    expect(missingExecutionTimestampMetrics).not.toContain('bayn_cycle_latest_intent_timestamp_seconds ')
+    expect(missingExecutionTimestampMetrics).not.toContain('bayn_cycle_latest_order_timestamp_seconds ')
+    expect(missingExecutionTimestampMetrics).not.toContain('bayn_cycle_latest_fill_timestamp_seconds ')
+
+    const missingMarketDataMetrics = renderPrometheusMetrics(
+      {
+        ...realized,
+        cycle: {
+          ...realized.cycle,
+          execution: {
+            ...realized.cycle.execution,
+            decision: {
+              ...realized.cycle.execution.decision,
+              marketDataObservedAt: null,
+              barCount: 0,
+              quoteCount: 0,
+              tradeCount: 0,
+            },
+          },
+        },
+      },
+      config,
+      provenance,
+      'embedded',
+    )
+    expect(missingMarketDataMetrics).not.toContain('bayn_cycle_decision_market_data_records')
+    expect(missingMarketDataMetrics).not.toContain('bayn_cycle_market_data_observed_timestamp_seconds ')
 
     const restrictedMetrics = renderPrometheusMetrics(
       {
@@ -441,8 +710,33 @@ describe('Bayn HTTP pure decisions', () => {
     const idleMetrics = renderPrometheusMetrics(idle, config, provenance, 'embedded')
     expect(idleMetrics).toContain('bayn_accounting_state{state="idle"} 1')
     expect(idleMetrics).toContain('bayn_accounting_activity_count{kind="fills"} 0')
+    expect(idleMetrics).toContain('bayn_runtime_projection_timestamp_seconds ')
+    expect(idleMetrics).not.toContain('bayn_accounting_gross_realized_pnl_dollars ')
+    expect(idleMetrics).not.toContain('bayn_accounting_execution_fees_dollars ')
+    expect(idleMetrics).not.toContain('bayn_accounting_net_realized_pnl_after_execution_fees_dollars ')
     expect(idleMetrics).toContain('bayn_forward_performance_receipt_available 0')
     expect(idleMetrics).not.toContain('bayn_forward_performance_net_realized_pnl_after_costs_dollars ')
+
+    const uncoveredFill: RuntimeState = {
+      ...idle,
+      cycle: {
+        ...idle.cycle,
+        economics: {
+          accounting: {
+            ...idle.cycle.economics!.accounting,
+            fillCount: 1,
+            unaccountedFillCount: 1,
+          },
+          forwardPerformance: null,
+        },
+      },
+    }
+    const uncoveredFillMetrics = renderPrometheusMetrics(uncoveredFill, config, provenance, 'embedded')
+    expect(uncoveredFillMetrics).toContain('bayn_accounting_state{state="gap"} 1')
+    expect(uncoveredFillMetrics).toContain('bayn_accounting_uncovered{kind="fills"} 1')
+    expect(uncoveredFillMetrics).not.toContain('bayn_accounting_gross_realized_pnl_dollars ')
+    expect(uncoveredFillMetrics).not.toContain('bayn_accounting_execution_fees_dollars ')
+    expect(uncoveredFillMetrics).not.toContain('bayn_accounting_net_realized_pnl_after_execution_fees_dollars ')
 
     const completed: RuntimeState = {
       ...idle,
@@ -1802,6 +2096,10 @@ describe('Bayn HTTP probes', () => {
     const brokerReadCleared = render(healthy)
     const brokerBindingInjected = render(brokerBindingFailure)
     const brokerBindingCleared = render(healthy)
+    const brokerExecutionEligible = render({
+      ...healthy,
+      broker: { ...broker, executionEligible: true, executionDisabledReason: null },
+    })
 
     expect(metricValue(healthyBefore, 'bayn_runtime_ready')).toBe(1)
     expect(metricValue(loopInjected, 'bayn_runtime_ready')).toBe(0)
@@ -1818,6 +2116,8 @@ describe('Bayn HTTP probes', () => {
     expect(metricValue(brokerBindingInjected, 'bayn_broker_account_bound')).toBe(0)
     expect(metricValue(brokerBindingCleared, 'bayn_runtime_ready')).toBe(1)
     expect(metricValue(brokerBindingCleared, 'bayn_broker_account_bound')).toBe(1)
+    expect(metricValue(healthyBefore, 'bayn_broker_execution_eligible')).toBe(0)
+    expect(metricValue(brokerExecutionEligible, 'bayn_broker_execution_eligible')).toBe(1)
   })
 
   test('renders the exact bounded terminal reason behind the canonical blocked condition', () => {

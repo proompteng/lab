@@ -313,6 +313,67 @@ export interface MutationObservation {
   readonly latestOccurredAt: string | null
 }
 
+export type ObservedTargetPlanStatus = 'PLANNED' | 'NO_TRADE' | 'BLOCKED'
+
+export interface CycleDecisionObservation {
+  readonly createdAt: string
+  readonly marketDataObservedAt: string | null
+  readonly barCount: number
+  readonly quoteCount: number
+  readonly tradeCount: number
+  readonly targetPlanStatus: ObservedTargetPlanStatus
+  readonly targetPlanReason: string | null
+  readonly targetCount: number
+  readonly orderedIntentCount: number
+  readonly dispatchable: boolean
+  readonly riskBlockReason: string | null
+  readonly riskBlockReasonCount: number
+}
+
+export interface CycleExecutionFunnelObservation {
+  /** Execution facts are scoped to the current cycle, or the latest terminal cycle when idle. */
+  readonly decision: CycleDecisionObservation | null
+  readonly intentCount: number
+  readonly plannedIntentCount: number
+  readonly approvedIntentCount: number
+  readonly ioStartedIntentCount: number
+  readonly acknowledgedIntentCount: number
+  readonly unknownIntentCount: number
+  readonly terminalIntentCount: number
+  readonly recoveredIntentCount: number
+  readonly filledIntentCount: number
+  readonly canceledIntentCount: number
+  readonly expiredIntentCount: number
+  readonly rejectedIntentCount: number
+  readonly blockedIntentCount: number
+  readonly orderCount: number
+  readonly openOrderCount: number
+  readonly filledOrderCount: number
+  /** Distinct broker orders with at least one durable fill, independent of latest order status. */
+  readonly executedOrderCount: number
+  readonly canceledOrderCount: number
+  readonly expiredOrderCount: number
+  readonly rejectedOrderCount: number
+  readonly fillCount: number
+  readonly buyFillCount: number
+  readonly sellFillCount: number
+  readonly latestIntentAt: string | null
+  readonly latestOrderAt: string | null
+  readonly latestFillAt: string | null
+  readonly maximumOrderAcknowledgementLatencyMs: number | null
+  readonly maximumFillLatencyMs: number | null
+  /** Null means no complete broker position snapshot has been observed. */
+  readonly positionSnapshotObservedAt: string | null
+  readonly positionCount: number | null
+  readonly grossExposureMicros: string | null
+  readonly netExposureMicros: string | null
+  readonly unrealizedPnlMicros: string | null
+  readonly accountObservedAt: string | null
+  readonly cashMicros: string | null
+  readonly equityMicros: string | null
+  readonly buyingPowerMicros: string | null
+}
+
 export interface AccountingEconomicsObservation {
   readonly fillCount: number
   readonly transactionCount: number
@@ -352,6 +413,7 @@ export interface CycleOperationsProjection {
   readonly authority: DurableAuthorityObservation | null
   readonly reconciliation: ReconciliationObservation | null
   readonly mutations: MutationObservation
+  readonly execution?: CycleExecutionFunnelObservation
   readonly economics?: CycleEconomicsObservation
 }
 

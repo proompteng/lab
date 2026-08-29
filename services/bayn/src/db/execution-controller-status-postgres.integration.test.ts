@@ -1,10 +1,9 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 
 import { NodeServices } from '@effect/platform-node'
-import { PgClient } from '@effect/sql-pg'
+import { PgClient, PgMigrator } from '@effect/sql-pg'
 import { Effect, Layer, ManagedRuntime, Redacted, Result } from 'effect'
 
-import accountNeutralRuntimeCompatibility from '../../migrations/0037_account_neutral_runtime_compatibility'
 import executionControllerPlanStatus from '../../migrations/0042_execution_controller_plan_status'
 import executionControllerActivationProjection from '../../migrations/0043_execution_controller_activation_projection'
 import executionControllerPassObservation from '../../migrations/0044_execution_controller_pass_observation'
@@ -16,6 +15,7 @@ import { decideExecutionControllerActivation, decideExecutionControllerDeactivat
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { EvidenceStore, EvidenceStoreFromPostgres, PostgresClientLive } from './evidence-store'
 import { ExecutionControllerStatusStoreLive } from './execution-controller-status-postgres'
+import { migrationLoader } from './migrations'
 
 const postgresUrl = baynTestPostgresUrl
 const testUrl = postgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
@@ -25,6 +25,9 @@ const config = {
   operationTimeoutMs: 5_000,
   postgres: { url: Redacted.make(testUrl), tls: false, caPath: '/unused' },
 }
+const migrationLoaderThroughExecutionControllerPlan = migrationLoader.pipe(
+  Effect.map((migrations) => migrations.filter(([migrationId]) => migrationId <= 42)),
+)
 
 const makeRuntime = () => {
   const postgres = PostgresClientLive(config)
@@ -435,27 +438,12 @@ describePostgres('PostgreSQL execution controller status projection', () => {
     const v42 = await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
-        yield* sql`
-          ALTER TABLE execution_controller_status
-          DROP CONSTRAINT execution_controller_status_completion_evidence,
-          DROP COLUMN last_pass,
-          DROP COLUMN next_sequence,
-          ALTER COLUMN last_sequence SET NOT NULL,
-          ALTER COLUMN last_outcome SET NOT NULL,
-          ALTER COLUMN last_receipt_hash SET NOT NULL,
-          ALTER COLUMN completed_at SET NOT NULL
-        `
-        yield* sql`ALTER TABLE execution_controller_status DROP COLUMN plan_hash`
-        yield* accountNeutralRuntimeCompatibility
-        yield* executionControllerPlanStatus
-        yield* sql`
-          DROP TABLE
-            opening_drive_qualification_session_replays,
-            opening_drive_qualification_replay_versions,
-            opening_drive_qualification_results,
-            opening_drive_qualification_locks
-        `
-        yield* sql`DELETE FROM schema_migrations WHERE migration_id IN (43, 44, 45, 46, 47, 48, 49, 50)`
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+        yield* PgMigrator.run({
+          loader: migrationLoaderThroughExecutionControllerPlan,
+          table: 'schema_migrations',
+        }).pipe(Effect.provide(NodeServices.layer))
         yield* sql`
           INSERT INTO execution_controller_status (
             controller_key,
@@ -480,7 +468,9 @@ describePostgres('PostgreSQL execution controller status projection', () => {
           )
         `
         const [migration] = yield* sql<{ migration_id: number; name: string }>`
-          SELECT migration_id, name FROM schema_migrations ORDER BY migration_id DESC LIMIT 1
+          SELECT migration_id, name
+          FROM schema_migrations
+          WHERE migration_id = 42
         `
         const [trigger] = yield* sql<{ definition: string }>`
           SELECT pg_get_functiondef(oid) AS definition
@@ -525,7 +515,7 @@ describePostgres('PostgreSQL execution controller status projection', () => {
         }),
       )
 
-      expect(migrated.migration).toEqual({ migration_id: 50, name: 'preserve_failure_rearm_cycle' })
+      expect(migrated.migration).toEqual({ migration_id: 52, name: 'position_snapshot_observability_index' })
       expect(migrated.column).toEqual({ is_nullable: 'NO' })
       expect(migrated.row).toEqual({ next_sequence: '9' })
       expect(migrated.triggerDefinition).toContain('NEW.last_pass')

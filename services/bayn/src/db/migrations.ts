@@ -50,6 +50,8 @@ import openingDriveQualificationEvidence from '../../migrations/0047_opening_dri
 import researchReconciliationRearm from '../../migrations/0048_research_reconciliation_rearm'
 import preserveReconciliationCycle from '../../migrations/0049_preserve_reconciliation_cycle'
 import preserveFailureRearmCycle from '../../migrations/0050_preserve_failure_rearm_cycle'
+import positionSnapshotIngestionOrder from '../../migrations/0051_position_snapshot_ingestion_order'
+import positionSnapshotObservabilityIndex from '../../migrations/0052_position_snapshot_observability_index'
 
 export const migrationLoader = PgMigrator.fromRecord({
   '1_initial_schema': initialSchema,
@@ -102,4 +104,6 @@ export const migrationLoader = PgMigrator.fromRecord({
   '48_research_reconciliation_rearm': researchReconciliationRearm,
   '49_preserve_reconciliation_cycle': preserveReconciliationCycle,
   '50_preserve_failure_rearm_cycle': preserveFailureRearmCycle,
+  '51_position_snapshot_ingestion_order': positionSnapshotIngestionOrder,
+  '52_position_snapshot_observability_index': positionSnapshotObservabilityIndex,
 })

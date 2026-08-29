@@ -651,6 +651,7 @@ const renderPrometheusMetricsDataFirst = (
   const publicBroker = publicBrokerState(state)
   const runtimeReady = runtimeReadyOverride ?? isReady(state)
   const cycleObservationAvailable = state.cycle.condition !== CycleOperationsCondition.Unknown
+  const cycleRecorded = state.cycle.current !== null || state.cycle.last !== null
   const cyclePhase =
     cycleObservationAvailable === false
       ? 'unknown'
@@ -712,6 +713,8 @@ const renderPrometheusMetricsDataFirst = (
     state.cycle.authority?.maximum === Authority.Execution &&
     state.cycle.authority.effective === Authority.Observe &&
     state.cycle.alerts.killActive
+  const executionFunnel = state.cycle.execution
+  const cycleDecision = executionFunnel?.decision ?? null
   const economics = state.cycle.economics
   const accounting = economics?.accounting
   const forwardPerformance = economics?.forwardPerformance ?? null
@@ -737,6 +740,13 @@ const renderPrometheusMetricsDataFirst = (
     '# HELP bayn_runtime_ready Whether the bounded runtime state and required dependencies are operationally ready.',
     '# TYPE bayn_runtime_ready gauge',
     `bayn_runtime_ready ${runtimeReady ? 1 : 0}`,
+    ...(state.health.checkedAt === null
+      ? []
+      : [
+          '# HELP bayn_runtime_projection_timestamp_seconds Observation time of the runtime projection rendered by this scrape.',
+          '# TYPE bayn_runtime_projection_timestamp_seconds gauge',
+          `bayn_runtime_projection_timestamp_seconds ${prometheusNumber(epochSeconds(state.health.checkedAt))}`,
+        ]),
     '# HELP bayn_cycle_observation_available Whether the bounded PostgreSQL cycle projection is current.',
     '# TYPE bayn_cycle_observation_available gauge',
     `bayn_cycle_observation_available ${cycleObservationAvailable ? 1 : 0}`,
@@ -759,32 +769,80 @@ const renderPrometheusMetricsDataFirst = (
     ...terminalReasons.map(
       (reason) => `bayn_cycle_terminal_reason{reason="${reason}"} ${cycleTerminalReason === reason ? 1 : 0}`,
     ),
-    ...(cycleObservationAvailable
+    ...(cycleObservationAvailable && cycleRecorded
       ? [
           '# HELP bayn_cycle_unfinished_count Number of unfinished cycles for the bound qualification run.',
           '# TYPE bayn_cycle_unfinished_count gauge',
           `bayn_cycle_unfinished_count ${state.cycle.unfinishedCycleCount}`,
-          '# HELP bayn_cycle_attempt_age_seconds Age of the current cycle state transition.',
-          '# TYPE bayn_cycle_attempt_age_seconds gauge',
-          `bayn_cycle_attempt_age_seconds ${prometheusNumber((state.cycle.attemptAgeMs ?? 0) / 1_000)}`,
-          '# HELP bayn_cycle_decision_bound Whether the current durable cycle has an immutable decision binding.',
-          '# TYPE bayn_cycle_decision_bound gauge',
-          `bayn_cycle_decision_bound ${cycleDecisionBound ? 1 : 0}`,
-          '# HELP bayn_cycle_submission_open_timestamp_seconds Bound broker submission-open time.',
-          '# TYPE bayn_cycle_submission_open_timestamp_seconds gauge',
-          `bayn_cycle_submission_open_timestamp_seconds ${prometheusNumber(epochSeconds(state.cycle.current?.submissionOpenAt))}`,
-          '# HELP bayn_cycle_submission_cutoff_timestamp_seconds Bound broker submission cutoff.',
-          '# TYPE bayn_cycle_submission_cutoff_timestamp_seconds gauge',
-          `bayn_cycle_submission_cutoff_timestamp_seconds ${prometheusNumber(epochSeconds(state.cycle.current?.submissionCutoffAt))}`,
-          '# HELP bayn_cycle_execution_open_timestamp_seconds Bound current execution-session open.',
-          '# TYPE bayn_cycle_execution_open_timestamp_seconds gauge',
-          `bayn_cycle_execution_open_timestamp_seconds ${prometheusNumber(epochSeconds(state.cycle.current?.executionOpenAt))}`,
-          '# HELP bayn_cycle_execution_close_timestamp_seconds Bound current execution-session close.',
-          '# TYPE bayn_cycle_execution_close_timestamp_seconds gauge',
-          `bayn_cycle_execution_close_timestamp_seconds ${prometheusNumber(epochSeconds(state.cycle.current?.executionCloseAt))}`,
+          ...(state.cycle.current === null
+            ? []
+            : [
+                '# HELP bayn_cycle_attempt_age_seconds Age of the current cycle state transition.',
+                '# TYPE bayn_cycle_attempt_age_seconds gauge',
+                `bayn_cycle_attempt_age_seconds ${prometheusNumber((state.cycle.attemptAgeMs ?? 0) / 1_000)}`,
+                '# HELP bayn_cycle_decision_bound Whether the current durable cycle has an immutable decision binding.',
+                '# TYPE bayn_cycle_decision_bound gauge',
+                `bayn_cycle_decision_bound ${cycleDecisionBound ? 1 : 0}`,
+                '# HELP bayn_cycle_snapshot_bound Whether the current durable cycle has an immutable market-data snapshot binding.',
+                '# TYPE bayn_cycle_snapshot_bound gauge',
+                `bayn_cycle_snapshot_bound ${state.cycle.current.snapshotId === null ? 0 : 1}`,
+                '# HELP bayn_cycle_submission_open_timestamp_seconds Bound broker submission-open time.',
+                '# TYPE bayn_cycle_submission_open_timestamp_seconds gauge',
+                `bayn_cycle_submission_open_timestamp_seconds ${prometheusNumber(epochSeconds(state.cycle.current.submissionOpenAt))}`,
+                '# HELP bayn_cycle_submission_cutoff_timestamp_seconds Bound broker submission cutoff.',
+                '# TYPE bayn_cycle_submission_cutoff_timestamp_seconds gauge',
+                `bayn_cycle_submission_cutoff_timestamp_seconds ${prometheusNumber(epochSeconds(state.cycle.current.submissionCutoffAt))}`,
+                '# HELP bayn_cycle_execution_open_timestamp_seconds Bound current execution-session open.',
+                '# TYPE bayn_cycle_execution_open_timestamp_seconds gauge',
+                `bayn_cycle_execution_open_timestamp_seconds ${prometheusNumber(epochSeconds(state.cycle.current.executionOpenAt))}`,
+                '# HELP bayn_cycle_execution_close_timestamp_seconds Bound current execution-session close.',
+                '# TYPE bayn_cycle_execution_close_timestamp_seconds gauge',
+                `bayn_cycle_execution_close_timestamp_seconds ${prometheusNumber(epochSeconds(state.cycle.current.executionCloseAt))}`,
+              ]),
           '# HELP bayn_cycle_last_terminal_timestamp_seconds Latest terminal cycle timestamp.',
           '# TYPE bayn_cycle_last_terminal_timestamp_seconds gauge',
           `bayn_cycle_last_terminal_timestamp_seconds ${prometheusNumber(epochSeconds(state.cycle.last?.terminalAt))}`,
+          ...(cycleDecision === null
+            ? []
+            : [
+                '# HELP bayn_cycle_target_plan_info Exact target-plan status and bounded reason for the observed cycle.',
+                '# TYPE bayn_cycle_target_plan_info gauge',
+                `bayn_cycle_target_plan_info{status="${cycleDecision.targetPlanStatus.toLowerCase()}",reason="${prometheusLabel((cycleDecision.targetPlanReason ?? 'none').toLowerCase())}"} 1`,
+                '# HELP bayn_cycle_decision_dispatchable Whether the observed decision is eligible for broker dispatch.',
+                '# TYPE bayn_cycle_decision_dispatchable gauge',
+                `bayn_cycle_decision_dispatchable ${cycleDecision.dispatchable ? 1 : 0}`,
+                '# HELP bayn_cycle_decision_target_count Number of nonzero target deltas in the observed decision.',
+                '# TYPE bayn_cycle_decision_target_count gauge',
+                `bayn_cycle_decision_target_count ${cycleDecision.targetCount}`,
+                '# HELP bayn_cycle_decision_ordered_intent_count Number of canonical ordered intents in the observed decision.',
+                '# TYPE bayn_cycle_decision_ordered_intent_count gauge',
+                `bayn_cycle_decision_ordered_intent_count ${cycleDecision.orderedIntentCount}`,
+                '# HELP bayn_cycle_decision_timestamp_seconds Creation time of the observed immutable decision.',
+                '# TYPE bayn_cycle_decision_timestamp_seconds gauge',
+                `bayn_cycle_decision_timestamp_seconds ${prometheusNumber(epochSeconds(cycleDecision.createdAt))}`,
+                ...(cycleDecision.marketDataObservedAt === null
+                  ? []
+                  : [
+                      '# HELP bayn_cycle_decision_market_data_records Verified intraday market-data records bound to the observed decision.',
+                      '# TYPE bayn_cycle_decision_market_data_records gauge',
+                      `bayn_cycle_decision_market_data_records{kind="bars"} ${cycleDecision.barCount}`,
+                      `bayn_cycle_decision_market_data_records{kind="quotes"} ${cycleDecision.quoteCount}`,
+                      `bayn_cycle_decision_market_data_records{kind="trades"} ${cycleDecision.tradeCount}`,
+                      '# HELP bayn_cycle_market_data_observed_timestamp_seconds Observation time of the market-data snapshot bound to the decision.',
+                      '# TYPE bayn_cycle_market_data_observed_timestamp_seconds gauge',
+                      `bayn_cycle_market_data_observed_timestamp_seconds ${prometheusNumber(epochSeconds(cycleDecision.marketDataObservedAt))}`,
+                    ]),
+                ...(cycleDecision.riskBlockReason === null
+                  ? []
+                  : [
+                      '# HELP bayn_cycle_risk_block_info First bounded risk reason that stopped dispatch for the observed decision.',
+                      '# TYPE bayn_cycle_risk_block_info gauge',
+                      `bayn_cycle_risk_block_info{reason="${prometheusLabel(cycleDecision.riskBlockReason.toLowerCase())}"} 1`,
+                    ]),
+                '# HELP bayn_cycle_risk_block_reason_count Number of distinct risk reasons that stopped dispatch.',
+                '# TYPE bayn_cycle_risk_block_reason_count gauge',
+                `bayn_cycle_risk_block_reason_count ${cycleDecision.riskBlockReasonCount}`,
+              ]),
         ]
       : []),
     '# HELP bayn_cycle_stall_threshold_seconds Configured attempt-stall threshold.',
@@ -883,16 +941,129 @@ const renderPrometheusMetricsDataFirst = (
           '# HELP bayn_mutation_recovery_found_events_total Durable broker recovery-found event count.',
           '# TYPE bayn_mutation_recovery_found_events_total counter',
           `bayn_mutation_recovery_found_events_total ${state.cycle.mutations.recoveryFoundCount}`,
-          '# HELP bayn_intents Durable execution intent count by active state.',
-          '# TYPE bayn_intents gauge',
-          `bayn_intents{state="approved"} ${state.cycle.mutations.approvedIntentCount}`,
-          `bayn_intents{state="acknowledged"} ${state.cycle.mutations.acknowledgedIntentCount}`,
           '# HELP bayn_unresolved_mutations Durable unresolved broker mutation count.',
           '# TYPE bayn_unresolved_mutations gauge',
           `bayn_unresolved_mutations ${state.cycle.mutations.unresolvedCount}`,
           '# HELP bayn_oldest_unresolved_mutation_age_seconds Age of the oldest unresolved broker mutation.',
           '# TYPE bayn_oldest_unresolved_mutation_age_seconds gauge',
           `bayn_oldest_unresolved_mutation_age_seconds ${prometheusNumber((state.cycle.oldestUnresolvedMutationAgeMs ?? 0) / 1_000)}`,
+        ]
+      : []),
+    ...(cycleObservationAvailable && cycleRecorded && executionFunnel !== undefined
+      ? [
+          '# HELP bayn_execution_funnel_count Current or latest terminal cycle count by opportunity-to-fill stage.',
+          '# TYPE bayn_execution_funnel_count gauge',
+          ...(cycleDecision === null
+            ? []
+            : [`bayn_execution_funnel_count{stage="targets"} ${cycleDecision.targetCount}`]),
+          `bayn_execution_funnel_count{stage="intents"} ${executionFunnel.intentCount}`,
+          `bayn_execution_funnel_count{stage="orders"} ${executionFunnel.orderCount}`,
+          `bayn_execution_funnel_count{stage="fills"} ${executionFunnel.executedOrderCount}`,
+          '# HELP bayn_cycle_intents Current or latest terminal cycle intent count by durable state.',
+          '# TYPE bayn_cycle_intents gauge',
+          `bayn_cycle_intents{state="planned"} ${executionFunnel.plannedIntentCount}`,
+          `bayn_cycle_intents{state="approved"} ${executionFunnel.approvedIntentCount}`,
+          `bayn_cycle_intents{state="io_started"} ${executionFunnel.ioStartedIntentCount}`,
+          `bayn_cycle_intents{state="acknowledged"} ${executionFunnel.acknowledgedIntentCount}`,
+          `bayn_cycle_intents{state="unknown"} ${executionFunnel.unknownIntentCount}`,
+          `bayn_cycle_intents{state="terminal"} ${executionFunnel.terminalIntentCount}`,
+          `bayn_cycle_intents{state="recovered"} ${executionFunnel.recoveredIntentCount}`,
+          '# HELP bayn_cycle_terminal_intents Current or latest terminal cycle intent count by terminal outcome.',
+          '# TYPE bayn_cycle_terminal_intents gauge',
+          `bayn_cycle_terminal_intents{outcome="filled"} ${executionFunnel.filledIntentCount}`,
+          `bayn_cycle_terminal_intents{outcome="canceled"} ${executionFunnel.canceledIntentCount}`,
+          `bayn_cycle_terminal_intents{outcome="expired"} ${executionFunnel.expiredIntentCount}`,
+          `bayn_cycle_terminal_intents{outcome="rejected"} ${executionFunnel.rejectedIntentCount}`,
+          `bayn_cycle_terminal_intents{outcome="blocked"} ${executionFunnel.blockedIntentCount}`,
+          '# HELP bayn_cycle_orders Current or latest terminal cycle broker-order count by outcome group.',
+          '# TYPE bayn_cycle_orders gauge',
+          `bayn_cycle_orders{status="all"} ${executionFunnel.orderCount}`,
+          `bayn_cycle_orders{status="open"} ${executionFunnel.openOrderCount}`,
+          `bayn_cycle_orders{status="filled"} ${executionFunnel.filledOrderCount}`,
+          `bayn_cycle_orders{status="canceled"} ${executionFunnel.canceledOrderCount}`,
+          `bayn_cycle_orders{status="expired"} ${executionFunnel.expiredOrderCount}`,
+          `bayn_cycle_orders{status="rejected"} ${executionFunnel.rejectedOrderCount}`,
+          '# HELP bayn_cycle_fills Current or latest terminal cycle broker-fill count by side.',
+          '# TYPE bayn_cycle_fills gauge',
+          `bayn_cycle_fills{side="all"} ${executionFunnel.fillCount}`,
+          `bayn_cycle_fills{side="buy"} ${executionFunnel.buyFillCount}`,
+          `bayn_cycle_fills{side="sell"} ${executionFunnel.sellFillCount}`,
+          ...(executionFunnel.latestIntentAt === null
+            ? []
+            : [
+                '# HELP bayn_cycle_latest_intent_timestamp_seconds Latest current-cycle intent creation time.',
+                '# TYPE bayn_cycle_latest_intent_timestamp_seconds gauge',
+                `bayn_cycle_latest_intent_timestamp_seconds ${prometheusNumber(epochSeconds(executionFunnel.latestIntentAt))}`,
+              ]),
+          ...(executionFunnel.latestOrderAt === null
+            ? []
+            : [
+                '# HELP bayn_cycle_latest_order_timestamp_seconds Latest current-cycle broker-order observation time.',
+                '# TYPE bayn_cycle_latest_order_timestamp_seconds gauge',
+                `bayn_cycle_latest_order_timestamp_seconds ${prometheusNumber(epochSeconds(executionFunnel.latestOrderAt))}`,
+              ]),
+          ...(executionFunnel.latestFillAt === null
+            ? []
+            : [
+                '# HELP bayn_cycle_latest_fill_timestamp_seconds Latest current-cycle broker-fill observation time.',
+                '# TYPE bayn_cycle_latest_fill_timestamp_seconds gauge',
+                `bayn_cycle_latest_fill_timestamp_seconds ${prometheusNumber(epochSeconds(executionFunnel.latestFillAt))}`,
+              ]),
+          ...(executionFunnel.maximumOrderAcknowledgementLatencyMs === null
+            ? []
+            : [
+                '# HELP bayn_cycle_order_acknowledgement_latency_seconds Maximum current-cycle intent-to-order acknowledgement latency.',
+                '# TYPE bayn_cycle_order_acknowledgement_latency_seconds gauge',
+                `bayn_cycle_order_acknowledgement_latency_seconds ${prometheusNumber(executionFunnel.maximumOrderAcknowledgementLatencyMs / 1_000)}`,
+              ]),
+          ...(executionFunnel.maximumFillLatencyMs === null
+            ? []
+            : [
+                '# HELP bayn_cycle_fill_latency_seconds Maximum current-cycle intent-to-fill latency.',
+                '# TYPE bayn_cycle_fill_latency_seconds gauge',
+                `bayn_cycle_fill_latency_seconds ${prometheusNumber(executionFunnel.maximumFillLatencyMs / 1_000)}`,
+              ]),
+        ]
+      : []),
+    ...(cycleObservationAvailable && executionFunnel !== undefined
+      ? [
+          ...(executionFunnel.positionSnapshotObservedAt === null ||
+          executionFunnel.positionCount === null ||
+          executionFunnel.grossExposureMicros === null ||
+          executionFunnel.netExposureMicros === null ||
+          executionFunnel.unrealizedPnlMicros === null
+            ? []
+            : [
+                '# HELP bayn_broker_position_snapshot_observed_timestamp_seconds Observation time of the latest complete broker position snapshot.',
+                '# TYPE bayn_broker_position_snapshot_observed_timestamp_seconds gauge',
+                `bayn_broker_position_snapshot_observed_timestamp_seconds ${prometheusNumber(epochSeconds(executionFunnel.positionSnapshotObservedAt))}`,
+                '# HELP bayn_broker_position_count Open positions in the latest complete broker position snapshot.',
+                '# TYPE bayn_broker_position_count gauge',
+                `bayn_broker_position_count ${executionFunnel.positionCount}`,
+                '# HELP bayn_broker_gross_exposure_dollars Gross market exposure in the latest complete broker position snapshot.',
+                '# TYPE bayn_broker_gross_exposure_dollars gauge',
+                `bayn_broker_gross_exposure_dollars ${microsToPrometheusDollars(executionFunnel.grossExposureMicros)}`,
+                '# HELP bayn_broker_net_exposure_dollars Net market exposure in the latest complete broker position snapshot.',
+                '# TYPE bayn_broker_net_exposure_dollars gauge',
+                `bayn_broker_net_exposure_dollars ${microsToPrometheusDollars(executionFunnel.netExposureMicros)}`,
+                '# HELP bayn_broker_unrealized_pnl_dollars Unrealized PnL in the latest complete broker position snapshot.',
+                '# TYPE bayn_broker_unrealized_pnl_dollars gauge',
+                `bayn_broker_unrealized_pnl_dollars ${microsToPrometheusDollars(executionFunnel.unrealizedPnlMicros)}`,
+              ]),
+          ...(executionFunnel.cashMicros === null ||
+          executionFunnel.equityMicros === null ||
+          executionFunnel.buyingPowerMicros === null
+            ? []
+            : [
+                '# HELP bayn_broker_account_dollars Latest broker account value by kind.',
+                '# TYPE bayn_broker_account_dollars gauge',
+                `bayn_broker_account_dollars{kind="cash"} ${microsToPrometheusDollars(executionFunnel.cashMicros)}`,
+                `bayn_broker_account_dollars{kind="equity"} ${microsToPrometheusDollars(executionFunnel.equityMicros)}`,
+                `bayn_broker_account_dollars{kind="buying_power"} ${microsToPrometheusDollars(executionFunnel.buyingPowerMicros)}`,
+                '# HELP bayn_broker_account_observed_timestamp_seconds Observation time of the latest broker account snapshot.',
+                '# TYPE bayn_broker_account_observed_timestamp_seconds gauge',
+                `bayn_broker_account_observed_timestamp_seconds ${prometheusNumber(epochSeconds(executionFunnel.accountObservedAt))}`,
+              ]),
         ]
       : []),
     '# HELP bayn_zero_mutation_confirmed Whether the current projection confirms zero durable mutation events.',
@@ -938,15 +1109,19 @@ const renderPrometheusMetricsDataFirst = (
           ...(['idle', 'exact', 'gap'] as const).map(
             (state) => `bayn_accounting_state{state="${state}"} ${accountingState === state ? 1 : 0}`,
           ),
-          '# HELP bayn_accounting_gross_realized_pnl_dollars Running gross realized PnL from durable accounting transactions.',
-          '# TYPE bayn_accounting_gross_realized_pnl_dollars gauge',
-          `bayn_accounting_gross_realized_pnl_dollars ${microsToPrometheusDollars(accounting.grossRealizedPnlMicros)}`,
-          '# HELP bayn_accounting_execution_fees_dollars Running broker execution fees from durable accounting transactions.',
-          '# TYPE bayn_accounting_execution_fees_dollars gauge',
-          `bayn_accounting_execution_fees_dollars ${microsToPrometheusDollars(accounting.executionFeesMicros)}`,
-          '# HELP bayn_accounting_net_realized_pnl_after_execution_fees_dollars Running realized PnL after recorded execution fees; terminal all-cost proof is separate.',
-          '# TYPE bayn_accounting_net_realized_pnl_after_execution_fees_dollars gauge',
-          `bayn_accounting_net_realized_pnl_after_execution_fees_dollars ${microsToPrometheusDollars(accounting.netRealizedPnlAfterExecutionFeesMicros)}`,
+          ...(accounting.transactionCount === 0
+            ? []
+            : [
+                '# HELP bayn_accounting_gross_realized_pnl_dollars Running gross realized PnL from durable accounting transactions.',
+                '# TYPE bayn_accounting_gross_realized_pnl_dollars gauge',
+                `bayn_accounting_gross_realized_pnl_dollars ${microsToPrometheusDollars(accounting.grossRealizedPnlMicros)}`,
+                '# HELP bayn_accounting_execution_fees_dollars Running broker execution fees from durable accounting transactions.',
+                '# TYPE bayn_accounting_execution_fees_dollars gauge',
+                `bayn_accounting_execution_fees_dollars ${microsToPrometheusDollars(accounting.executionFeesMicros)}`,
+                '# HELP bayn_accounting_net_realized_pnl_after_execution_fees_dollars Running realized PnL after recorded execution fees; terminal all-cost proof is separate.',
+                '# TYPE bayn_accounting_net_realized_pnl_after_execution_fees_dollars gauge',
+                `bayn_accounting_net_realized_pnl_after_execution_fees_dollars ${microsToPrometheusDollars(accounting.netRealizedPnlAfterExecutionFeesMicros)}`,
+              ]),
           '# HELP bayn_forward_performance_receipt_available Whether an immutable terminal all-cost performance receipt exists.',
           '# TYPE bayn_forward_performance_receipt_available gauge',
           `bayn_forward_performance_receipt_available ${forwardPerformance === null ? 0 : 1}`,
@@ -1050,6 +1225,9 @@ const renderPrometheusMetricsDataFirst = (
     '# HELP bayn_broker_account_bound Whether the observed Alpaca account matches the configured identity.',
     '# TYPE bayn_broker_account_bound gauge',
     `bayn_broker_account_bound ${booleanMetric(publicBroker.accountBound)}`,
+    '# HELP bayn_broker_execution_eligible Whether the verified broker binding is eligible for execution.',
+    '# TYPE bayn_broker_execution_eligible gauge',
+    `bayn_broker_execution_eligible ${booleanMetric(publicBroker.executionEligible)}`,
     '# HELP bayn_broker_orders_enabled Whether broker mutation dispatch is enabled in this runtime.',
     '# TYPE bayn_broker_orders_enabled gauge',
     `bayn_broker_orders_enabled ${effectiveBrokerMutation ? 1 : 0}`,

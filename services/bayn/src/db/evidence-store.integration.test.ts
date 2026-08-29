@@ -1158,11 +1158,72 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             AND table_name = 'autonomous_cycle_shadow_decisions'
             AND column_name = 'decision_hash'
         `
-        return { decisionHashColumn, tables, migrations }
+        const observabilityIndexes = yield* sql<{ indexdef: string; indexname: string }>`
+          SELECT indexdef, indexname
+          FROM pg_indexes
+          WHERE schemaname = 'public'
+            AND indexname IN (
+              'position_snapshots_account_observed_at_idx',
+              'position_snapshots_account_ingestion_sequence_idx',
+              'broker_events_account_snapshot_order_idx',
+              'broker_events_account_snapshot_clock_idx',
+              'intents_account_cycle_idx',
+              'orders_account_intent_idx',
+              'fills_account_intent_idx'
+            )
+          ORDER BY indexname
+        `
+        return { decisionHashColumn, migrations, observabilityIndexes, tables }
       }),
     )
 
     expect(schema.decisionHashColumn).toEqual({ is_generated: 'ALWAYS' })
+    expect(schema.observabilityIndexes).toHaveLength(7)
+    expect(schema.observabilityIndexes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ indexname: 'position_snapshots_account_observed_at_idx' }),
+        expect.objectContaining({ indexname: 'position_snapshots_account_ingestion_sequence_idx' }),
+        expect.objectContaining({ indexname: 'broker_events_account_snapshot_order_idx' }),
+        expect.objectContaining({ indexname: 'broker_events_account_snapshot_clock_idx' }),
+        expect.objectContaining({ indexname: 'intents_account_cycle_idx' }),
+        expect.objectContaining({ indexname: 'orders_account_intent_idx' }),
+        expect.objectContaining({ indexname: 'fills_account_intent_idx' }),
+      ]),
+    )
+    expect(
+      schema.observabilityIndexes.find(({ indexname }) => indexname === 'position_snapshots_account_observed_at_idx')
+        ?.indexdef,
+    ).toContain('(account_id, observed_at DESC)')
+    expect(
+      schema.observabilityIndexes.find(
+        ({ indexname }) => indexname === 'position_snapshots_account_ingestion_sequence_idx',
+      )?.indexdef,
+    ).toContain('(account_id, ingestion_sequence DESC)')
+    expect(
+      schema.observabilityIndexes.find(({ indexname }) => indexname === 'broker_events_account_snapshot_order_idx')
+        ?.indexdef,
+    ).toContain('(account_id, source_sequence DESC, observed_at DESC, event_id DESC)')
+    expect(
+      schema.observabilityIndexes.find(({ indexname }) => indexname === 'broker_events_account_snapshot_order_idx')
+        ?.indexdef,
+    ).toContain("WHERE (event_kind = 'ACCOUNT'::text)")
+    expect(
+      schema.observabilityIndexes.find(({ indexname }) => indexname === 'broker_events_account_snapshot_clock_idx')
+        ?.indexdef,
+    ).toContain('(account_id, observed_at DESC, source_sequence DESC, event_id DESC)')
+    expect(
+      schema.observabilityIndexes.find(({ indexname }) => indexname === 'broker_events_account_snapshot_clock_idx')
+        ?.indexdef,
+    ).toContain("WHERE (event_kind = 'ACCOUNT'::text)")
+    expect(
+      schema.observabilityIndexes.find(({ indexname }) => indexname === 'intents_account_cycle_idx')?.indexdef,
+    ).toContain('(account_id, cycle_id)')
+    expect(
+      schema.observabilityIndexes.find(({ indexname }) => indexname === 'orders_account_intent_idx')?.indexdef,
+    ).toContain('(account_id, intent_id)')
+    expect(
+      schema.observabilityIndexes.find(({ indexname }) => indexname === 'fills_account_intent_idx')?.indexdef,
+    ).toContain('(account_id, intent_id)')
     expect(schema.tables.map((row) => row.table_name)).toEqual([
       'account_snapshots',
       'accounting_receipts',
@@ -1257,6 +1318,8 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 48, name: 'research_reconciliation_rearm' },
       { migration_id: 49, name: 'preserve_reconciliation_cycle' },
       { migration_id: 50, name: 'preserve_failure_rearm_cycle' },
+      { migration_id: 51, name: 'position_snapshot_ingestion_order' },
+      { migration_id: 52, name: 'position_snapshot_observability_index' },
     ])
   })
 

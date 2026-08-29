@@ -30,6 +30,7 @@ import type { IsoDate } from '../../types'
 import { defaultOpeningDriveProtocolHash, openingDriveExecutionModel } from '../../strategy/opening-drive'
 import { CycleObservability, CycleObservabilityLive } from './observability'
 import { CycleStore, CycleStoreLive } from '.'
+import positionSnapshotIngestionOrder from '../../../migrations/0051_position_snapshot_ingestion_order'
 
 const encodeSqlJson = Schema.encodeSync(Schema.UnknownFromJsonString)
 const postgresUrl = baynTestPostgresUrl
@@ -738,6 +739,160 @@ const seedTerminalRejectedMutation = Effect.gen(function* () {
   )
 })
 
+const seedOrderLifecycle = (cycleId: string) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    const intentId = '1'.repeat(64)
+    const clientOrderId = 'bayn-observability-ack-latency'
+    const brokerOrderId = 'broker-observability-ack-latency'
+
+    yield* sql`
+      INSERT INTO intents (
+        intent_id, schema_version, authority_generation_hash, risk_decision_id, strategy_name, cycle_id,
+        decision_hash, policy_hash, account_id, client_order_id,
+        symbol, side, order_type, time_in_force, quantity_micros, notional_limit_micros,
+        state, terminal_outcome, state_version, created_at, updated_at
+      ) VALUES (
+        ${intentId}, 'bayn.paper-intent.v3', ${'f'.repeat(64)}, NULL,
+        'opening-drive-momentum', ${cycleId}, ${'2'.repeat(64)}, ${'3'.repeat(64)},
+        ${accountId}, ${clientOrderId}, 'NVDA', 'BUY', 'MARKET', 'DAY',
+        1000000, 1000000, 'PLANNED', NULL, 1,
+        '2026-03-09T13:31:00.000Z', '2026-03-09T13:31:00.000Z'
+      )
+    `
+
+    const insertOrder = (
+      eventId: string,
+      sourceEventId: string,
+      sourceSequence: number,
+      status: 'NEW' | 'FILLED',
+      observedAt: string,
+      filledQuantityMicros: string,
+    ) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          yield* sql`
+            INSERT INTO broker_events (
+              event_id, schema_version, content_hash, event_kind, broker, account_id,
+              source_event_id, source_sequence, occurred_at, observed_at
+            ) VALUES (
+              ${eventId}, 'bayn.paper-broker-event.v1', ${eventId}, 'ORDER', 'ALPACA',
+              ${accountId}, ${sourceEventId}, ${sourceSequence}, ${observedAt}, ${observedAt}
+            )
+          `
+          yield* sql`
+            INSERT INTO orders (
+              event_id, account_id, schema_version, broker_order_id, client_order_id, intent_id, symbol,
+              side, order_type, time_in_force, quantity_micros, filled_quantity_micros, status
+            ) VALUES (
+              ${eventId}, ${accountId}, 'bayn.paper-order.v1', ${brokerOrderId},
+              ${clientOrderId}, ${intentId}, 'NVDA', 'BUY', 'MARKET', 'DAY', 1000000,
+              ${filledQuantityMicros}, ${status}
+            )
+          `
+        }),
+      )
+
+    yield* insertOrder('4'.repeat(64), 'order-acknowledged', 100, 'NEW', '2026-03-09T13:31:02.000Z', '0')
+    yield* insertOrder('5'.repeat(64), 'order-filled', 101, 'FILLED', '2026-04-08T13:31:00.000Z', '1000000')
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`
+          INSERT INTO broker_events (
+            event_id, schema_version, content_hash, event_kind, broker, account_id,
+            source_event_id, source_sequence, occurred_at, observed_at
+          ) VALUES (
+            ${'6'.repeat(64)}, 'bayn.paper-broker-event.v1', ${'6'.repeat(64)}, 'FILL', 'ALPACA',
+            ${accountId}, 'fill-after-long-recovery', 102,
+            '2026-04-08T13:31:00.000Z', '2026-04-08T13:31:00.000Z'
+          )
+        `
+        yield* sql`
+          INSERT INTO fills (
+            event_id, account_id, schema_version, fill_id, broker_order_id, client_order_id, intent_id,
+            symbol, side, quantity_micros, price_micros, fee_micros, source_timestamp
+          ) VALUES (
+            ${'6'.repeat(64)}, ${accountId}, 'bayn.paper-fill.v1', 'fill-after-long-recovery',
+            ${brokerOrderId}, ${clientOrderId}, ${intentId}, 'NVDA', 'BUY', 1000000, 100000000, 0,
+            '2026-04-08T13:31:00.000000000Z'
+          )
+        `
+      }),
+    )
+
+    const insertTerminalOrder = (ordinal: '7' | '8', status: 'CANCELED' | 'EXPIRED', observedAt: string) => {
+      const terminalIntentId = ordinal.repeat(64)
+      const terminalClientOrderId = `bayn-observability-${status.toLowerCase()}`
+      const terminalBrokerOrderId = `broker-observability-${status.toLowerCase()}`
+      const terminalSymbol = ordinal === '7' ? 'AAPL' : 'MSFT'
+      return sql.withTransaction(
+        Effect.gen(function* () {
+          yield* sql`
+            INSERT INTO intents (
+              intent_id, schema_version, authority_generation_hash, risk_decision_id, strategy_name, cycle_id,
+              decision_hash, policy_hash, account_id, client_order_id,
+              symbol, side, order_type, time_in_force, quantity_micros, notional_limit_micros,
+              state, terminal_outcome, state_version, created_at, updated_at
+            ) VALUES (
+              ${terminalIntentId}, 'bayn.paper-intent.v3', ${'f'.repeat(64)}, NULL,
+              'opening-drive-momentum', ${cycleId}, ${'2'.repeat(64)}, ${'3'.repeat(64)},
+              ${accountId}, ${terminalClientOrderId}, ${terminalSymbol}, 'BUY', 'MARKET', 'DAY',
+              1000000, 1000000, 'PLANNED', NULL, 1, ${observedAt}, ${observedAt}
+            )
+          `
+          yield* sql`
+            INSERT INTO broker_events (
+              event_id, schema_version, content_hash, event_kind, broker, account_id,
+              source_event_id, source_sequence, occurred_at, observed_at
+            ) VALUES (
+              ${terminalIntentId}, 'bayn.paper-broker-event.v1', ${terminalIntentId}, 'ORDER', 'ALPACA',
+              ${accountId}, ${`order-${status.toLowerCase()}`}, ${status === 'CANCELED' ? 103 : 104},
+              ${observedAt}, ${observedAt}
+            )
+          `
+          yield* sql`
+            INSERT INTO orders (
+              event_id, account_id, schema_version, broker_order_id, client_order_id, intent_id, symbol,
+              side, order_type, time_in_force, quantity_micros, filled_quantity_micros, status
+            ) VALUES (
+              ${terminalIntentId}, ${accountId}, 'bayn.paper-order.v1', ${terminalBrokerOrderId},
+              ${terminalClientOrderId}, ${terminalIntentId}, ${terminalSymbol}, 'BUY', 'MARKET', 'DAY', 1000000, 0,
+              ${status}
+            )
+          `
+        }),
+      )
+    }
+
+    yield* insertTerminalOrder('7', 'CANCELED', '2026-04-08T13:32:00.000Z')
+    yield* insertTerminalOrder('8', 'EXPIRED', '2026-04-08T13:33:00.000Z')
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        const partialFillEventId = '9'.repeat(64)
+        yield* sql`
+          INSERT INTO broker_events (
+            event_id, schema_version, content_hash, event_kind, broker, account_id,
+            source_event_id, source_sequence, occurred_at, observed_at
+          ) VALUES (
+            ${partialFillEventId}, 'bayn.paper-broker-event.v1', ${partialFillEventId}, 'FILL', 'ALPACA',
+            ${accountId}, 'partial-fill-before-cancel', 105,
+            '2026-04-08T13:31:30.000Z', '2026-04-08T13:31:30.000Z'
+          )
+        `
+        yield* sql`
+          INSERT INTO fills (
+            event_id, account_id, schema_version, fill_id, broker_order_id, client_order_id, intent_id,
+            symbol, side, quantity_micros, price_micros, fee_micros, source_timestamp
+          ) VALUES (
+            ${partialFillEventId}, ${accountId}, 'bayn.paper-fill.v1', 'partial-fill-before-cancel',
+            'broker-observability-canceled', 'bayn-observability-canceled', ${'7'.repeat(64)},
+            'AAPL', 'BUY', 500000, 100000000, 0, '2026-04-08T13:31:30.000000000Z'
+          )
+        `
+      }),
+    )
+  })
+
 describePostgres('PostgreSQL cycle observability projection', () => {
   let runtime: ReturnType<typeof makeRuntime>
 
@@ -775,6 +930,15 @@ describePostgres('PostgreSQL cycle observability projection', () => {
         const sql = yield* PgClient.PgClient
         yield* seedSafetyState()
         const empty = yield* observability.read(qualificationRunId, accountId)
+        yield* sql`
+          INSERT INTO position_snapshots (
+            snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash
+          ) VALUES (
+            ${'0'.repeat(64)}, 'bayn.paper-position-snapshot.v1', ${accountId}, ${'1'.repeat(64)},
+            '2026-03-06T21:00:01.000Z', 0, ${'2'.repeat(64)}
+          )
+        `
+        const emptyWithPositionSnapshot = yield* observability.read(qualificationRunId, accountId)
         yield* store.acquire(draft, '2026-03-06T21:01:00.000Z')
 
         const current = yield* observability.read(qualificationRunId, accountId)
@@ -798,7 +962,7 @@ describePostgres('PostgreSQL cycle observability projection', () => {
             (SELECT count(*)::integer FROM mutation_events) AS mutations,
             (SELECT count(*)::integer FROM reconciliations) AS reconciliations
         `
-        return { blocked, blockedReplay, counts, current, empty }
+        return { blocked, blockedReplay, counts, current, empty, emptyWithPositionSnapshot }
       }),
     )
 
@@ -820,6 +984,25 @@ describePostgres('PostgreSQL cycle observability projection', () => {
         },
         forwardPerformance: null,
       },
+      execution: {
+        decision: null,
+        intentCount: 0,
+        orderCount: 0,
+        fillCount: 0,
+        positionSnapshotObservedAt: null,
+        positionCount: null,
+        grossExposureMicros: null,
+        netExposureMicros: null,
+        unrealizedPnlMicros: null,
+        accountObservedAt: null,
+      },
+    })
+    expect(result.emptyWithPositionSnapshot.execution).toMatchObject({
+      positionSnapshotObservedAt: '2026-03-06T21:00:01.000Z',
+      positionCount: 0,
+      grossExposureMicros: '0',
+      netExposureMicros: '0',
+      unrealizedPnlMicros: '0',
     })
     expect(result.current).toMatchObject({
       current: {
@@ -853,6 +1036,12 @@ describePostgres('PostgreSQL cycle observability projection', () => {
         oldestUnresolvedAt: null,
         latestOccurredAt: null,
       },
+      execution: {
+        decision: null,
+        intentCount: 0,
+        orderCount: 0,
+        fillCount: 0,
+      },
     })
     expect(result.blocked).toMatchObject({
       current: null,
@@ -869,6 +1058,12 @@ describePostgres('PostgreSQL cycle observability projection', () => {
         unresolvedCount: 1,
         oldestUnresolvedAt: '2026-03-06T21:02:00.000Z',
         latestOccurredAt: '2026-03-06T21:02:00.000Z',
+      },
+      execution: {
+        decision: null,
+        intentCount: 0,
+        orderCount: 0,
+        fillCount: 0,
       },
     })
     expect(result.blockedReplay).toEqual(result.blocked)
@@ -896,6 +1091,480 @@ describePostgres('PostgreSQL cycle observability projection', () => {
       submissionCutoffAt: draft.window.submissionCutoffAt,
     })
     expect(projection.unfinishedCycleCount).toBe(1)
+  })
+
+  test('uses broker source ordering to break tied account-snapshot timestamps', async () => {
+    const projection = await runtime.runPromise(
+      Effect.gen(function* () {
+        const observability = yield* CycleObservability
+        const sql = yield* PgClient.PgClient
+        yield* seedSafetyState()
+
+        const insertAccountSnapshot = (
+          eventId: string,
+          sourceSequence: number,
+          cashMicros: string,
+          buyingPowerMicros: string,
+        ) =>
+          sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`
+                INSERT INTO broker_events (
+                  event_id, schema_version, content_hash, event_kind, broker, account_id,
+                  source_event_id, source_sequence, occurred_at, observed_at
+                ) VALUES (
+                  ${eventId}, 'bayn.paper-broker-event.v1', ${eventId}, 'ACCOUNT', 'ALPACA',
+                  ${accountId}, ${`account-${sourceSequence}`}, ${sourceSequence},
+                  '2026-03-06T20:59:59.000Z', '2026-03-06T21:00:01.000Z'
+                )
+              `
+              yield* sql`
+                INSERT INTO account_snapshots (
+                  event_id, account_id, schema_version, status, currency,
+                  cash_micros, equity_micros, buying_power_micros
+                ) VALUES (
+                  ${eventId}, ${accountId}, 'bayn.paper-account-snapshot.v1', 'ACTIVE', 'USD',
+                  ${cashMicros}, ${cashMicros}, ${buyingPowerMicros}
+                )
+              `
+            }),
+          )
+
+        yield* insertAccountSnapshot('f'.repeat(64), 1, '1000000', '2000000')
+        yield* insertAccountSnapshot('0'.repeat(64), 2, '3000000', '4000000')
+        return yield* observability.read(qualificationRunId, accountId)
+      }),
+    )
+
+    expect(projection.execution).toMatchObject({
+      accountObservedAt: '2026-03-06T21:00:01.000Z',
+      cashMicros: '3000000',
+      equityMicros: '3000000',
+      buyingPowerMicros: '4000000',
+    })
+  })
+
+  test('fails closed when a newer account snapshot regresses its observation clock', async () => {
+    const projection = await runtime.runPromise(
+      Effect.gen(function* () {
+        const observability = yield* CycleObservability
+        const sql = yield* PgClient.PgClient
+        yield* seedSafetyState()
+
+        const insertAccountSnapshot = (
+          eventId: string,
+          sourceSequence: number,
+          observedAt: string,
+          cashMicros: string,
+        ) =>
+          sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`
+                INSERT INTO broker_events (
+                  event_id, schema_version, content_hash, event_kind, broker, account_id,
+                  source_event_id, source_sequence, occurred_at, observed_at
+                ) VALUES (
+                  ${eventId}, 'bayn.paper-broker-event.v1', ${eventId}, 'ACCOUNT', 'ALPACA',
+                  ${accountId}, ${`account-${sourceSequence}`}, ${sourceSequence}, ${observedAt}, ${observedAt}
+                )
+              `
+              yield* sql`
+                INSERT INTO account_snapshots (
+                  event_id, account_id, schema_version, status, currency,
+                  cash_micros, equity_micros, buying_power_micros
+                ) VALUES (
+                  ${eventId}, ${accountId}, 'bayn.paper-account-snapshot.v1', 'ACTIVE', 'USD',
+                  ${cashMicros}, ${cashMicros}, ${cashMicros}
+                )
+              `
+            }),
+          )
+
+        yield* insertAccountSnapshot('e'.repeat(64), 1, '2026-03-06T21:00:02.000Z', '1000000')
+        yield* insertAccountSnapshot('d'.repeat(64), 2, '2026-03-06T21:00:01.000Z', '2000000')
+        return yield* observability.read(qualificationRunId, accountId)
+      }),
+    )
+
+    expect(projection.execution).toMatchObject({
+      accountObservedAt: null,
+      cashMicros: null,
+      equityMicros: null,
+      buyingPowerMicros: null,
+    })
+  })
+
+  test('uses durable ingestion ordering to break tied position-snapshot timestamps', async () => {
+    const projection = await runtime.runPromise(
+      Effect.gen(function* () {
+        const observability = yield* CycleObservability
+        const sql = yield* PgClient.PgClient
+        yield* seedSafetyState()
+        yield* sql`
+          INSERT INTO position_snapshots (
+            snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash
+          ) VALUES
+            (
+              ${'f'.repeat(64)}, 'bayn.paper-position-snapshot.v1', ${accountId}, ${'3'.repeat(64)},
+              '2026-03-06T21:00:01.000Z', 1, ${'4'.repeat(64)}
+            ),
+            (
+              ${'0'.repeat(64)}, 'bayn.paper-position-snapshot.v1', ${accountId}, ${'5'.repeat(64)},
+              '2026-03-06T21:00:01.000Z', 0, ${'6'.repeat(64)}
+            )
+        `
+        return yield* observability.read(qualificationRunId, accountId)
+      }),
+    )
+
+    expect(projection.execution).toMatchObject({
+      positionSnapshotObservedAt: '2026-03-06T21:00:01.000Z',
+      positionCount: 0,
+      grossExposureMicros: '0',
+      netExposureMicros: '0',
+      unrealizedPnlMicros: '0',
+    })
+  })
+
+  test('fails closed when a later trusted position snapshot regresses its observation clock', async () => {
+    const projection = await runtime.runPromise(
+      Effect.gen(function* () {
+        const observability = yield* CycleObservability
+        const sql = yield* PgClient.PgClient
+        yield* seedSafetyState()
+        yield* sql`
+          INSERT INTO position_snapshots (
+            snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash
+          ) VALUES
+            (
+              ${'f'.repeat(64)}, 'bayn.paper-position-snapshot.v1', ${accountId}, ${'3'.repeat(64)},
+              '2026-03-06T21:00:02.000Z', 1, ${'4'.repeat(64)}
+            ),
+            (
+              ${'0'.repeat(64)}, 'bayn.paper-position-snapshot.v1', ${accountId}, ${'5'.repeat(64)},
+              '2026-03-06T21:00:01.000Z', 0, ${'6'.repeat(64)}
+            )
+        `
+        return yield* observability.read(qualificationRunId, accountId)
+      }),
+    )
+
+    expect(projection.execution).toMatchObject({
+      positionSnapshotObservedAt: null,
+      positionCount: null,
+      grossExposureMicros: null,
+      netExposureMicros: null,
+      unrealizedPnlMicros: null,
+    })
+  })
+
+  test('fails closed when the first trusted position snapshot regresses the legacy clock', async () => {
+    const projection = await runtime.runPromise(
+      Effect.gen(function* () {
+        const observability = yield* CycleObservability
+        const sql = yield* PgClient.PgClient
+        yield* seedSafetyState()
+        yield* sql`
+          INSERT INTO position_snapshots (
+            snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash,
+            ingestion_order_trusted
+          ) VALUES
+            (
+              ${'e'.repeat(64)}, 'bayn.paper-position-snapshot.v1', ${accountId}, ${'3'.repeat(64)},
+              '2026-03-06T21:00:02.000Z', 1, ${'4'.repeat(64)}, false
+            ),
+            (
+              ${'d'.repeat(64)}, 'bayn.paper-position-snapshot.v1', ${accountId}, ${'5'.repeat(64)},
+              '2026-03-06T21:00:01.000Z', 0, ${'6'.repeat(64)}, true
+            )
+        `
+        return yield* observability.read(qualificationRunId, accountId)
+      }),
+    )
+
+    expect(projection.execution).toMatchObject({
+      positionSnapshotObservedAt: null,
+      positionCount: null,
+      grossExposureMicros: null,
+      netExposureMicros: null,
+      unrealizedPnlMicros: null,
+    })
+  })
+
+  test('ignores future-dated broker snapshots when selecting the latest observable state', async () => {
+    const projection = await runtime.runPromise(
+      Effect.gen(function* () {
+        const observability = yield* CycleObservability
+        const sql = yield* PgClient.PgClient
+        yield* seedSafetyState()
+
+        const insertAccountSnapshot = (
+          eventId: string,
+          sourceSequence: number,
+          observedAt: string,
+          cashMicros: string,
+        ) =>
+          sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`
+                INSERT INTO broker_events (
+                  event_id, schema_version, content_hash, event_kind, broker, account_id,
+                  source_event_id, source_sequence, occurred_at, observed_at
+                ) VALUES (
+                  ${eventId}, 'bayn.paper-broker-event.v1', ${eventId}, 'ACCOUNT', 'ALPACA',
+                  ${accountId}, ${`account-${eventId}`}, ${sourceSequence}, ${observedAt}, ${observedAt}
+                )
+              `
+              yield* sql`
+                INSERT INTO account_snapshots (
+                  event_id, account_id, schema_version, status, currency,
+                  cash_micros, equity_micros, buying_power_micros
+                ) VALUES (
+                  ${eventId}, ${accountId}, 'bayn.paper-account-snapshot.v1', 'ACTIVE', 'USD',
+                  ${cashMicros}, ${cashMicros}, ${cashMicros}
+                )
+              `
+            }),
+          )
+
+        yield* insertAccountSnapshot('a'.repeat(64), 1, '2026-03-06T21:00:02.000Z', '2000000')
+        yield* insertAccountSnapshot('b'.repeat(64), 2, '2099-03-06T21:00:02.000Z', '9000000')
+        yield* sql`
+          INSERT INTO position_snapshots (
+            snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash
+          ) VALUES
+            (
+              ${'c'.repeat(64)}, 'bayn.paper-position-snapshot.v1', ${accountId}, ${'d'.repeat(64)},
+              '2026-03-06T21:00:02.000Z', 0, ${'e'.repeat(64)}
+            ),
+            (
+              ${'f'.repeat(64)}, 'bayn.paper-position-snapshot.v1', ${accountId}, ${'0'.repeat(64)},
+              '2099-03-06T21:00:02.000Z', 0, ${'1'.repeat(64)}
+            )
+        `
+        return yield* observability.read(qualificationRunId, accountId)
+      }),
+    )
+
+    expect(projection.execution).toMatchObject({
+      positionSnapshotObservedAt: '2026-03-06T21:00:02.000Z',
+      positionCount: 0,
+      accountObservedAt: '2026-03-06T21:00:02.000Z',
+      cashMicros: '2000000',
+    })
+  })
+
+  test('marks only post-upgrade position-snapshot ordering as trusted', async () => {
+    const rows = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        return yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`
+              CREATE TEMPORARY TABLE position_snapshots (
+                snapshot_id text PRIMARY KEY,
+                observed_at timestamptz NOT NULL
+              ) ON COMMIT DROP
+            `
+            yield* sql`
+              INSERT INTO position_snapshots (snapshot_id, observed_at)
+              VALUES ('legacy-a', '2026-03-06T21:00:01.000Z'), ('legacy-b', '2026-03-06T21:00:01.000Z')
+            `
+            yield* positionSnapshotIngestionOrder
+            yield* sql`
+              INSERT INTO position_snapshots (snapshot_id, observed_at)
+              VALUES ('current', '2026-03-06T21:00:01.000Z')
+            `
+            return yield* sql<{
+              snapshot_id: string
+              ingestion_sequence: string
+              ingestion_order_trusted: boolean
+            }>`
+              SELECT snapshot_id, ingestion_sequence::text, ingestion_order_trusted
+              FROM position_snapshots
+              ORDER BY ingestion_sequence
+            `
+          }),
+        )
+      }),
+    )
+
+    expect(rows).toEqual([
+      { snapshot_id: 'legacy-a', ingestion_sequence: '1', ingestion_order_trusted: false },
+      { snapshot_id: 'legacy-b', ingestion_sequence: '2', ingestion_order_trusted: false },
+      { snapshot_id: 'current', ingestion_sequence: '3', ingestion_order_trusted: true },
+    ])
+  })
+
+  test('indexes recurring account snapshot lookups by their durable sequence', async () => {
+    const indexes = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        return yield* sql<{ indexname: string; indexdef: string }>`
+          SELECT indexname, indexdef
+          FROM pg_indexes
+          WHERE schemaname = 'public'
+            AND indexname IN (
+              'position_snapshots_account_ingestion_sequence_idx',
+              'broker_events_account_snapshot_order_idx',
+              'broker_events_account_snapshot_clock_idx'
+            )
+          ORDER BY indexname
+        `
+      }),
+    )
+
+    expect(indexes).toHaveLength(3)
+    const byName = Object.fromEntries(indexes.map((index) => [index.indexname, index.indexdef]))
+    expect(byName['broker_events_account_snapshot_order_idx']).toContain(
+      '(account_id, source_sequence DESC, observed_at DESC, event_id DESC)',
+    )
+    expect(byName['broker_events_account_snapshot_clock_idx']).toContain(
+      '(account_id, observed_at DESC, source_sequence DESC, event_id DESC)',
+    )
+    expect(byName['position_snapshots_account_ingestion_sequence_idx']).toContain(
+      '(account_id, ingestion_sequence DESC)',
+    )
+  })
+
+  test('rejects ambiguous historical position-snapshot timestamp ties', async () => {
+    const projection = await runtime.runPromise(
+      Effect.gen(function* () {
+        const observability = yield* CycleObservability
+        const sql = yield* PgClient.PgClient
+        yield* seedSafetyState()
+        yield* sql`
+          INSERT INTO position_snapshots (
+            snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash,
+            ingestion_order_trusted
+          ) VALUES
+            (
+              ${'f'.repeat(64)}, 'bayn.paper-position-snapshot.v1', ${accountId}, ${'3'.repeat(64)},
+              '2026-03-06T21:00:01.000Z', 1, ${'4'.repeat(64)}, false
+            ),
+            (
+              ${'0'.repeat(64)}, 'bayn.paper-position-snapshot.v1', ${accountId}, ${'5'.repeat(64)},
+              '2026-03-06T21:00:01.000Z', 0, ${'6'.repeat(64)}, false
+            )
+        `
+        return yield* observability.read(qualificationRunId, accountId)
+      }),
+    )
+
+    expect(projection.execution).toMatchObject({
+      positionSnapshotObservedAt: null,
+      positionCount: null,
+      grossExposureMicros: null,
+      netExposureMicros: null,
+      unrealizedPnlMicros: null,
+    })
+  })
+
+  test('counts blocked nonzero target deltas before intent planning', async () => {
+    const draft = makeIntradayDraft()
+    const projection = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const observability = yield* CycleObservability
+        const sql = yield* PgClient.PgClient
+        yield* seedSafetyState()
+        yield* store.acquire(draft, '2026-03-09T13:00:00.000Z')
+        yield* store.activate(draft.identity.cycleId, draft.window.submissionOpenAt)
+        const createdAt = new Date(Date.parse(draft.window.submissionOpenAt) + 60_000).toISOString()
+        const contentHash = '7'.repeat(64)
+        const snapshotId = '8'.repeat(64)
+        const document = {
+          schemaVersion: 'bayn.observe-shadow-decision.v1',
+          mode: 'OBSERVE',
+          dispatchable: false,
+          contentHash,
+          createdAt,
+          bindings: {
+            cycleId: draft.identity.cycleId,
+            snapshotId,
+            executionMarketData: {
+              observedAt: createdAt,
+              barCount: 210,
+              quoteCount: 7,
+              tradeCount: 7,
+            },
+          },
+          targetPlan: {
+            status: 'BLOCKED',
+            reason: 'INSUFFICIENT_BUYING_POWER',
+            targets: [
+              {
+                symbol: 'AAPL',
+                currentQuantityMicros: '0',
+                targetQuantityMicros: '1000000',
+              },
+              {
+                symbol: 'SPY',
+                currentQuantityMicros: '1000000',
+                targetQuantityMicros: '1000000',
+              },
+            ],
+            intentTargets: [],
+          },
+          orderedIntentIds: [],
+          riskBlock: { reasonCodes: [] },
+        }
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`
+              INSERT INTO autonomous_cycle_shadow_decisions (
+                cycle_id, schema_version, document, created_at
+              ) VALUES (
+                ${draft.identity.cycleId}, 'bayn.observe-shadow-decision.v1',
+                ${sql.json(encodeSqlJson(document))}, ${createdAt}
+              )
+            `
+            yield* sql`
+              UPDATE autonomous_cycles
+              SET
+                snapshot_id = ${snapshotId},
+                decision_hash = ${contentHash},
+                state_version = state_version + 1,
+                updated_at = ${createdAt}
+              WHERE cycle_id = ${draft.identity.cycleId}
+            `
+          }),
+        )
+        return yield* observability.read(qualificationRunId, accountId)
+      }),
+    )
+
+    expect(projection.execution?.decision).toMatchObject({
+      targetPlanStatus: 'BLOCKED',
+      targetPlanReason: 'INSUFFICIENT_BUYING_POWER',
+      targetCount: 1,
+      orderedIntentCount: 0,
+    })
+  })
+
+  test('counts partial fills on canceled orders and preserves order latencies wider than int32', async () => {
+    const draft = makeIntradayDraft()
+    const projection = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const observability = yield* CycleObservability
+        yield* seedSafetyState()
+        yield* store.acquire(draft, '2026-03-09T13:00:00.000Z')
+        yield* seedOrderLifecycle(draft.identity.cycleId)
+        return yield* observability.read(qualificationRunId, accountId)
+      }),
+    )
+
+    expect(projection.execution).toMatchObject({
+      orderCount: 3,
+      filledOrderCount: 1,
+      executedOrderCount: 2,
+      canceledOrderCount: 1,
+      expiredOrderCount: 1,
+      latestOrderAt: '2026-04-08T13:33:00.000Z',
+      maximumOrderAcknowledgementLatencyMs: 2_000,
+      maximumFillLatencyMs: 2_592_000_000,
+    })
   })
 
   test('projects open-recovery pressure and approved intent backlog as queryable counts', async () => {
