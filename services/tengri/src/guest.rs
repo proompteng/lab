@@ -44,6 +44,8 @@ pub enum GuestError {
     InvalidUtf8,
     #[error("Nanoagent returned invalid JSON: {0}")]
     InvalidJson(#[from] serde_json::Error),
+    #[error("Nanoagent does not support atomic Codex snapshot cursors")]
+    MissingCodexSnapshotCursor,
     #[error("Nanoagent response exceeded the {0}-byte limit")]
     ResponseTooLarge(usize),
 }
@@ -338,7 +340,8 @@ pub struct CodexEvent {
 #[serde(rename_all = "camelCase")]
 struct CodexCallResponse {
     result: Value,
-    event_sequence: u64,
+    #[serde(default)]
+    event_sequence: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -660,7 +663,7 @@ impl GuestClient {
     }
 
     pub async fn codex_call(&self, method: &str, params: Value) -> Result<Value, GuestError> {
-        Ok(self.codex_call_with_sequence(method, params).await?.result)
+        Ok(self.codex_call_response(method, params).await?.result)
     }
 
     pub async fn codex_call_with_sequence(
@@ -668,16 +671,25 @@ impl GuestClient {
         method: &str,
         params: Value,
     ) -> Result<CodexCallResult, GuestError> {
-        let response: CodexCallResponse = self
-            .json(
-                self.request(Method::POST, "/v1/codex/call")
-                    .json(&serde_json::json!({"method": method, "params": params})),
-            )
-            .await?;
+        let response = self.codex_call_response(method, params).await?;
         Ok(CodexCallResult {
             result: response.result,
-            event_sequence: response.event_sequence,
+            event_sequence: response
+                .event_sequence
+                .ok_or(GuestError::MissingCodexSnapshotCursor)?,
         })
+    }
+
+    async fn codex_call_response(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<CodexCallResponse, GuestError> {
+        self.json(
+            self.request(Method::POST, "/v1/codex/call")
+                .json(&serde_json::json!({"method": method, "params": params})),
+        )
+        .await
     }
 
     pub async fn resolve_codex_approval(
@@ -850,7 +862,10 @@ mod tests {
         atomic::{AtomicBool, AtomicUsize, Ordering},
     };
 
-    use axum::{Json, Router, routing::get};
+    use axum::{
+        Json, Router,
+        routing::{get, post},
+    };
     use tokio::sync::Notify;
 
     fn legacy_terminal_json() -> Value {
@@ -937,6 +952,48 @@ mod tests {
         assert!(result.truncated);
         assert_eq!(result.entries.len(), 1);
         assert_eq!(result.entries[0].path, "/workspace/main.rs");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn legacy_codex_calls_without_snapshot_cursors_remain_compatible() {
+        let router = Router::new().route(
+            "/v1/codex/call",
+            post(|| async { Json(serde_json::json!({"result": {"authenticated": true}})) }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind legacy Nanoagent Codex fixture");
+        let address = listener
+            .local_addr()
+            .expect("legacy Nanoagent Codex address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router)
+                .await
+                .expect("serve legacy Nanoagent Codex fixture");
+        });
+        let client = GuestClient {
+            http: reqwest::Client::new(),
+            base_url: format!("http://{address}"),
+            token: "test-bootstrap-token".to_owned(),
+            agent_id: "agent-legacy".to_owned(),
+            terminal_identities: TerminalIdentityRegistry::default(),
+        };
+
+        let account = client
+            .codex_call("account/read", serde_json::json!({}))
+            .await
+            .expect("legacy non-snapshot call");
+        assert_eq!(account["authenticated"], true);
+        assert!(matches!(
+            client
+                .codex_call_with_sequence(
+                    "thread/resume",
+                    serde_json::json!({"threadId": "thread"})
+                )
+                .await,
+            Err(GuestError::MissingCodexSnapshotCursor)
+        ));
         server.abort();
     }
 
