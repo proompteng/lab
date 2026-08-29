@@ -3,31 +3,24 @@ import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer, Redacted } from 'effect'
 
-import type { ApplicationDependencies, ApplicationIdentity, ApplicationPlanFor } from '../app'
+import type { ApplicationIdentity, ApplicationPlanFor } from '../app'
 import { AlpacaBrokerResourcesLive } from '../broker/alpaca/composition'
 import { live as BrokerReadOnlyResourcesLive } from '../broker/alpaca/session'
 import type { LoadedRuntimeConfig } from '../config'
 import { CycleObservability, CycleObservabilityLive, CycleStoreLive, WriterFencedCycleStoreLive } from '../cycle/store'
 import { ExecutionControllerStatusStoreLive } from '../db/execution-controller-status-postgres'
 import { ExecutionCycleClosureStoreLive as ExecutionCycleClosureStorePostgresLive } from '../db/execution-cycle-closure-postgres'
-import { EvidenceStore, EvidenceStoreFromPostgres, PostgresClientLive } from '../db/evidence-store'
-import { makeEvidenceStore } from '../db/evidence-store/postgres'
+import { PostgresClientLive, postgresHealthCheck } from '../db/postgres-client'
+import { PostgresMigrationsLive } from '../db/postgres-migrations'
 import { ForwardPerformanceReceiptStoreLive } from '../db/forward-performance-receipt-postgres'
 import { ExecutionStoreLive } from '../db/execution-store'
 import { PersistedCapitalGrantStoreLive } from '../db/persisted-capital-grant'
 import { BlockedCycleIntentStoreLive, IntentStoreLive } from '../execution/intents'
 import { MutationStoreLive } from '../execution/mutations'
-import { WriterFence, WriterFenceLive, type WriterFenceService } from '../execution/writer-fence'
-import { ExecutionPrepareStoreLive } from '../execution-prepare'
+import { WriterFenceLive } from '../execution/writer-fence'
 import { HttpServerLive } from '../http'
 import { Journal, JournalLive } from '../ledger'
-import {
-  IntradayMarketData,
-  IntradayMarketDataLive,
-  MarketData,
-  MarketDataLive,
-  type IntradayMarketDataService,
-} from '../market-data'
+import { IntradayMarketData, IntradayMarketDataLive, type IntradayMarketDataService } from '../market-data'
 import { sqlResource } from '../operations'
 
 type PostgresResourceConfig = Pick<LoadedRuntimeConfig, 'operationTimeoutMs' | 'postgres'>
@@ -44,10 +37,6 @@ export const ClickHouseClientResourceLive = (config: LoadedRuntimeConfig) =>
 
 export const PostgresClientResourceLive = (config: PostgresResourceConfig) => PostgresClientLive(config)
 
-export const EvidenceStoreResourceLive = (config: PostgresResourceConfig) => EvidenceStoreFromPostgres(config)
-
-export const MarketDataResourceLive = (plan: ApplicationIdentity) => MarketDataLive(plan.config, plan.protocol)
-
 export const JournalResourceLive = (config: LoadedRuntimeConfig) => JournalLive(config)
 
 export const CycleObservabilityResourceLive = CycleObservabilityLive
@@ -55,7 +44,7 @@ export const CycleObservabilityResourceLive = CycleObservabilityLive
 export const ExecutionStoreResourceLive = (config: LoadedRuntimeConfig) => ExecutionStoreLive(config)
 
 export const ExecutionControllerStatusResourceLive = (config: PostgresResourceConfig) => {
-  const postgres = PostgresAuthorityLive(config)
+  const postgres = PostgresLive(config)
   return Layer.merge(postgres, ExecutionControllerStatusStoreLive.pipe(Layer.provide(postgres))).pipe(
     Layer.provideMerge(ApplicationPlatformLive),
   )
@@ -77,24 +66,17 @@ const HttpApplicationPlatformLive = (config: LoadedRuntimeConfig) =>
 
 const SignalMarketDataLive = (plan: ApplicationIdentity) => {
   const clickHouse = sqlResource(ClickHouseClientResourceLive(plan.config))
-  return Layer.merge(MarketDataResourceLive(plan), IntradayMarketDataLive).pipe(Layer.provide(clickHouse))
+  return IntradayMarketDataLive.pipe(Layer.provide(clickHouse))
 }
 
-const PostgresAuthorityLive = (config: PostgresResourceConfig) =>
-  sqlResource(EvidenceStoreResourceLive(config).pipe(Layer.provideMerge(PostgresClientResourceLive(config))))
-
-export const BrokerlessApplicationResourcesLive = (plan: ApplicationPlanFor<'BrokerlessService'>) => {
-  const postgres = PostgresAuthorityLive(plan.config)
-  return Layer.mergeAll(
-    SignalMarketDataLive(plan),
-    postgres,
-    JournalResourceLive(plan.config),
-    CycleObservabilityResourceLive.pipe(Layer.provide(postgres)),
-  ).pipe(Layer.provideMerge(HttpApplicationPlatformLive(plan.config)))
+const PostgresLive = (config: PostgresResourceConfig) => {
+  const client = sqlResource(PostgresClientResourceLive(config))
+  const migrations = PostgresMigrationsLive(config).pipe(Layer.provide(client))
+  return Layer.merge(client, migrations)
 }
 
 export const AutonomousApplicationResourcesLive = (plan: ApplicationPlanFor<'AutonomousService'>) => {
-  const postgres = PostgresAuthorityLive(plan.config)
+  const postgres = PostgresLive(plan.config)
   const journal = JournalResourceLive(plan.config)
   return Layer.mergeAll(
     SignalMarketDataLive(plan),
@@ -106,15 +88,11 @@ export const AutonomousApplicationResourcesLive = (plan: ApplicationPlanFor<'Aut
 
 /** Read-only resources for the public status service. Mutation stores and the transaction writer fence are absent. */
 export const AutonomousStatusApplicationResourcesLive = (plan: ApplicationPlanFor<'AutonomousService'>) => {
-  const postgres = sqlResource(PostgresClientResourceLive(plan.config))
-  const evidence = Layer.effect(EvidenceStore, Effect.map(PgClient.PgClient, makeEvidenceStore)).pipe(
-    Layer.provide(postgres),
-  )
+  const postgres = PostgresLive(plan.config)
   const controllerStatus = ExecutionControllerStatusStoreLive.pipe(Layer.provide(postgres))
   const cycleObservability = CycleObservabilityResourceLive.pipe(Layer.provide(postgres))
   return Layer.mergeAll(
     postgres,
-    evidence,
     controllerStatus,
     cycleObservability,
     SignalMarketDataLive(plan),
@@ -124,7 +102,7 @@ export const AutonomousStatusApplicationResourcesLive = (plan: ApplicationPlanFo
 }
 
 export const AutonomousWorkerApplicationResourcesLive = (plan: ApplicationPlanFor<'AutonomousService'>) => {
-  const postgres = PostgresAuthorityLive(plan.config)
+  const postgres = PostgresLive(plan.config)
   const journal = JournalResourceLive(plan.config)
   return Layer.mergeAll(
     SignalMarketDataLive(plan),
@@ -155,63 +133,20 @@ export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlanFor<'Autonom
   ).pipe(Layer.provideMerge(ApplicationPlatformLive))
 }
 
-export const ExecutionCandidateDiscoveryResourcesLive = (plan: ApplicationPlanFor<'ExecutionCandidateDiscovery'>) => {
-  const postgres = sqlResource(PostgresClientResourceLive(plan.config))
-  return Layer.mergeAll(
-    postgres,
-    CycleObservabilityResourceLive.pipe(Layer.provide(postgres)),
-    CycleStoreResourceLive.pipe(Layer.provide(postgres)),
-    BrokerSessionResourceLive(plan.config),
-  ).pipe(Layer.provideMerge(ApplicationPlatformLive))
-}
-
-export const ExecutionPrepareValidationResourcesLive = (plan: ApplicationPlanFor<'ExecutionPrepare'>) => {
-  const postgres = sqlResource(PostgresClientResourceLive(plan.config))
-  const evidenceStore = EvidenceStoreResourceLive(plan.config).pipe(Layer.provide(postgres))
-  return Layer.mergeAll(postgres, evidenceStore).pipe(Layer.provideMerge(ApplicationPlatformLive))
-}
-
-export const ExecutionPrepareExecutionResourcesLive = (plan: ApplicationPlanFor<'ExecutionPrepare'>) => {
-  const postgres = sqlResource(PostgresClientResourceLive(plan.config))
-  const writerFence = WriterFenceResourceLive.pipe(Layer.provide(postgres))
-  const executionPrepareStore = ExecutionPrepareStoreLive(plan.config).pipe(
-    Layer.provide(writerFence),
-    Layer.provide(postgres),
-  )
-  return Layer.mergeAll(postgres, writerFence, executionPrepareStore, BrokerSessionResourceLive(plan.config)).pipe(
-    Layer.provideMerge(ApplicationPlatformLive),
-  )
-}
-
-/** Read-only market data plus migration-governed PostgreSQL evidence for the offline opening-drive qualifier. */
-export const OpeningDriveQualificationResourcesLive = (config: LoadedRuntimeConfig) => {
-  const postgresClient = sqlResource(PostgresClientResourceLive(config))
-  const postgres = EvidenceStoreResourceLive(config).pipe(Layer.provideMerge(postgresClient))
-  const clickhouse = sqlResource(ClickHouseClientResourceLive(config))
-  const intraday = IntradayMarketDataLive.pipe(Layer.provideMerge(clickhouse))
-  return Layer.mergeAll(postgres, intraday).pipe(Layer.provideMerge(ApplicationPlatformLive))
-}
-
-export const QualifiedCapitalActivationStoreLive = (
-  config: LoadedRuntimeConfig,
-  sql: PgClient.PgClient,
-  writerFence: WriterFenceService,
-) =>
-  ExecutionPrepareStoreLive(config).pipe(
-    Layer.provide(Layer.mergeAll(Layer.succeed(PgClient.PgClient, sql), Layer.succeed(WriterFence, writerFence))),
-  )
-
-// Kept for the existing entrypoint export; validation uses the separate layer above.
-export const ExecutionPrepareResourcesLive = ExecutionPrepareExecutionResourcesLive
-
 export const applicationDependencies: Effect.Effect<
-  ApplicationDependencies & { readonly intradayMarketData: IntradayMarketDataService },
+  {
+    readonly marketData: IntradayMarketDataService
+    readonly intradayMarketData: IntradayMarketDataService
+    readonly journal: import('../ledger').JournalService
+    readonly postgresql: ReturnType<typeof postgresHealthCheck>
+    readonly cycleObservability: import('../cycle/store').CycleObservabilityShape
+  },
   never,
-  MarketData | IntradayMarketData | Journal | EvidenceStore | CycleObservability
+  IntradayMarketData | Journal | PgClient.PgClient | CycleObservability
 > = Effect.all({
-  marketData: MarketData,
+  marketData: IntradayMarketData,
   intradayMarketData: IntradayMarketData,
   journal: Journal,
-  evidenceStore: EvidenceStore,
+  postgresql: Effect.map(PgClient.PgClient, postgresHealthCheck),
   cycleObservability: CycleObservability,
 })

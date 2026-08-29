@@ -6,8 +6,6 @@ import type {
   AccountingReceipt,
   Authority,
   AuthorityState,
-  CapitalGrantGeneration,
-  CapitalGrantProofBinding,
   ResearchCapitalGrantGeneration,
   ResearchCapitalGrantProofBinding,
   Valuation,
@@ -32,11 +30,6 @@ export interface EnsureAuthorityGenerationInput {
   readonly generationHash: string
   readonly maximum: Authority
   readonly preserveCyclePlanHash?: string
-}
-
-export interface PreparedCapitalGrantActivation {
-  readonly generationHash: string
-  readonly sourceGenerationHash: string
 }
 
 export interface AuthorityGenerationLineage {
@@ -92,9 +85,6 @@ export interface AuthorityGenerationStoreShape {
   ) => Effect.Effect<AuthorityState, ExecutionStoreError>
   /** Read-only recovery view used to resume a durable execution close lease after process restart. */
   readonly readAuthorityState?: Effect.Effect<AuthorityState, ExecutionStoreError>
-  readonly readAuthorityGeneration?: (
-    generationHash: string,
-  ) => Effect.Effect<CapitalGrantGeneration | undefined, ExecutionStoreError>
   readonly readResearchAuthorityGeneration?: (
     generationHash: string,
   ) => Effect.Effect<ResearchCapitalGrantGeneration | undefined, ExecutionStoreError>
@@ -105,30 +95,6 @@ export interface AuthorityGenerationStoreShape {
 
 /** Domain operations; the live Layer captures the transaction-scoped PostgreSQL writer fence. */
 export interface CapitalGrantLifecycleStoreShape {
-  /**
-   * PREPARE operation: transactionally derives the stable canonical capital-grant generation identity plus current
-   * reconciliation evidence without writing authority state or history. Commit only its generationHash to the later
-   * capital-access configuration.
-   */
-  readonly prepareCapitalGrant: (
-    proof: CapitalGrantProofBinding,
-  ) => Effect.Effect<CapitalGrantGeneration, ExecutionStoreError>
-  /**
-   * SUBMIT activation operation: transactionally re-derives the stable generation identity
-   * from the same proof binding, requires its hash to equal the configured generationHash, and records the latest
-   * fresh exact reconciliation as immutable activation evidence. This is the sole supported cross-generation
-   * writer; application code and operators must not issue direct DML against authority_state or
-   * authority_generations.
-   */
-  readonly activateCapitalGrant: (proof: CapitalGrantProofBinding) => Effect.Effect<AuthorityState, ExecutionStoreError>
-  /**
-   * Activates an application PREPARE result. Both the prepared generation and its OBSERVE source are checked while
-   * the authority row is locked, before any execution history or authority write can commit.
-   */
-  readonly activatePreparedCapitalGrant: (
-    proof: CapitalGrantProofBinding,
-    prepared: PreparedCapitalGrantActivation,
-  ) => Effect.Effect<AuthorityState, ExecutionStoreError>
   /**
    * Atomically derives a reconciliation-bound research generation, records it, and activates execution authority. The
    * static request intentionally cannot predict this generation hash because reconciliation continues until the
@@ -187,7 +153,7 @@ export interface ExecutionPersistence extends ReconciliationPersistence {
 
 export type ExecutionStoreRuntimeConfig = Pick<
   RuntimeConfig,
-  'build' | 'execution' | 'qualificationRunId' | 'reconciliationStaleThresholdMs' | 'tigerBeetle'
+  'build' | 'execution' | 'reconciliationStaleThresholdMs' | 'tigerBeetle'
 > & {
   readonly alpaca?:
     | Pick<NonNullable<RuntimeConfig['alpaca']>, 'expectedAccountId' | 'authorityGenerationHash'>

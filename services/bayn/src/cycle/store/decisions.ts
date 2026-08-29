@@ -256,12 +256,14 @@ const decideDecisionBindingDataFirst = (
     })
   }
   const executionMarketData = document.bindings.executionMarketData
+  const decisionMarketData = document.bindings.decisionMarketData ?? executionMarketData
   const snapshotMatches = isIntradayAutonomousCycle(cycle)
     ? cycle.bindings.snapshotId === undefined &&
       executionMarketData !== undefined &&
-      document.bindings.snapshotId === executionMarketData.snapshotId &&
-      document.bindings.snapshotContentHash === executionMarketData.contentHash &&
-      document.bindings.snapshotFinalizedAt === executionMarketData.observedAt
+      decisionMarketData !== undefined &&
+      document.bindings.snapshotId === decisionMarketData.snapshotId &&
+      document.bindings.snapshotContentHash === decisionMarketData.contentHash &&
+      document.bindings.snapshotFinalizedAt === decisionMarketData.observedAt
     : document.bindings.snapshotId === cycle.bindings.snapshotId
   if (
     document.bindings.cycleId !== cycle.identity.cycleId ||

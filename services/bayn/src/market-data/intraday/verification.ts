@@ -16,7 +16,7 @@ import type {
   IntradaySnapshotRequest,
   IntradayTrade,
 } from './model'
-import { IntradaySnapshotFailure, intradaySnapshotSymbols } from './model'
+import { IntradaySnapshotFailure, IntradaySnapshotPurpose, intradaySnapshotSymbols } from './model'
 import type { IntradayArchiveWatermarkRow, IntradayBarRow, IntradayQuoteRow, IntradayTradeRow } from './rows'
 import {
   decodeIntradayArchiveWatermarkRows,
@@ -35,6 +35,7 @@ const maximumUniverseSize = 64
 const numericStringPattern = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/
 const sourceTopicPattern = /^[A-Za-z0-9._-]+$/
 const isIsoDate = Schema.is(IsoDateSchema)
+const isIntradaySnapshotPurpose = Schema.is(Schema.Enum(IntradaySnapshotPurpose))
 const maximumNonNegativeInt32 = 2_147_483_647
 const maximumNonNegativeInt64 = 9_223_372_036_854_775_807n
 
@@ -253,7 +254,7 @@ const validateQuery = <T extends IntradaySnapshotQuery>(request: T): Result.Resu
   }
   const requestedSymbols = intradaySnapshotSymbols(request)
   const canonicalSymbols = [...new Set(requestedSymbols)].sort()
-  if (request.purpose !== undefined && request.purpose !== 'LIQUIDATION') {
+  if (request.purpose !== undefined && !isIntradaySnapshotPurpose(request.purpose)) {
     return Result.fail(failure('request', 'intraday snapshot purpose is not supported'))
   }
   if (
@@ -267,8 +268,8 @@ const validateQuery = <T extends IntradaySnapshotQuery>(request: T): Result.Resu
       failure('request', 'intraday snapshot symbols must be a non-empty canonical subset of the bound universe'),
     )
   }
-  if (request.purpose === 'LIQUIDATION' && request.symbols === undefined) {
-    return Result.fail(failure('request', 'liquidation snapshots require an explicit canonical symbol subset'))
+  if (request.purpose !== undefined && request.symbols === undefined) {
+    return Result.fail(failure('request', 'quote-only snapshots require an explicit canonical symbol subset'))
   }
   if (request.universeId.length === 0 || request.universeId.trim() !== request.universeId) {
     return Result.fail(failure('request', 'intraday universe ID must be non-empty and canonical'))
@@ -642,7 +643,7 @@ const validateBarCoverage = (
       }),
     )
   }
-  if (request.purpose !== 'LIQUIDATION') {
+  if (request.purpose === undefined) {
     const completionEventAt = rangeEndNanos - minuteNanos
     for (const symbol of requestedSymbols) {
       if (!observed.has(`${symbol}\u0000${completionEventAt}`)) {
@@ -755,14 +756,14 @@ const latestQuotes = (
       )
     }
     if (
-      request.purpose !== 'LIQUIDATION' &&
+      request.purpose === undefined &&
       (trade === undefined || intradayInstantNanos(trade.eventAt) < intradayInstantNanos(request.rangeEndAt))
     ) {
       return Result.fail(
         failure('not-ready', 'intraday snapshot lacks a post-range trade for every symbol', { symbol }),
       )
     }
-    for (const evidence of request.purpose === 'LIQUIDATION' ? [quote] : [quote, trade]) {
+    for (const evidence of request.purpose === undefined ? [quote, trade] : [quote]) {
       if (evidence === undefined) continue
       const availabilityDelay = intradayAgeNanos(evidence.ingestedAt, evidence.eventAt)
       if (availabilityDelay < minimumDelay || availabilityDelay > maximumDelay) {

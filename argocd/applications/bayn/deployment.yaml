@@ -64,9 +64,11 @@ spec:
                 fieldRef:
                   apiVersion: v1
                   fieldPath: metadata.namespace
-            # This is the immutable plan announced by the currently registered
-            # execution worker. A cutover must update this binding atomically
-            # with the worker image and activation generation.
+            # Main carries the reviewed candidate identity, while Argo reads the generated
+            # codex/bayn-deploy branch. An identity-changing build is published but promotion
+            # intentionally holds until a follow-up rotates the sealed activation request to
+            # the exact merged source and image digest; the renderer then updates this service,
+            # the execution worker, and its activation Job atomically.
             - name: BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH
               value: "a4894282066826ab3516bda712267f285e7b6b107f7b8946436eecbcb49de761"
             - name: BAYN_IMAGE_REPOSITORY
@@ -74,17 +76,17 @@ spec:
             - name: BAYN_IMAGE_DIGEST
               value: sha256:f13e0ae90b3136161759d8021fe63053aa1fe835a5df840d93fac138ebd27ddb
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "6644f644d83bda5104de9c7bbcf4ec6d5a7db4b5e7ab43b82dc27df0b1fdb94e"
+              value: "9b85a04413b635b35ad3dea33fcfc5e5bf3dd5590c1564390b454f1092988fa2"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "3a6ee606f44434b968579fd2a7e8da4dd2aab26c99a3cc8c9e70433be16c6329"
+              value: "88f4bf9a18fd881226a123ba277a65daaaf92aba76acfde86072d03d143624ef"
             # Reviewed activation identity pins used by the release verifier. Runtime derives the same
             # identity from its compiled strategy contract before serving.
             - name: BAYN_STRATEGY_NAME
-              value: opening-drive-momentum
+              value: intraday-momentum
             - name: BAYN_STRATEGY_PROTOCOL_HASH
-              value: "23cbcd451a16c515ab9e9c28c5f8d47064bfbd38d60a21c7b45e998956847b5a"
+              value: "b2cb0303849ff30d64214f0faeea689b78bcb93554eb517251f914001ec50318"
             - name: BAYN_EXECUTION_RISK_POLICY_HASH
-              value: "667ad270624ec0804cf68b47b77e6488b8c8230d587df8534bb4d65eaccfa53f"
+              value: "2e60270036900493a121a87c73730960154278778a8aa71b663b138effd82227"
             - name: BAYN_CAPITAL_ACTIVATION_REQUEST
               valueFrom:
                 secretKeyRef:

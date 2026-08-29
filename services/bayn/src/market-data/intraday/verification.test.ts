@@ -2,7 +2,12 @@ import { describe, expect, test } from 'bun:test'
 import { Effect, Result } from 'effect'
 
 import { canonicalHashV1, sha256 } from '../../hash'
-import type { ArchiveVerifiedIntradayMarketSnapshot, IntradayMarketSnapshot, IntradaySnapshotRequest } from './model'
+import {
+  IntradaySnapshotPurpose,
+  type ArchiveVerifiedIntradayMarketSnapshot,
+  type IntradayMarketSnapshot,
+  type IntradaySnapshotRequest,
+} from './model'
 import { verifyIntradayArchiveSnapshot } from './program'
 import type { IntradayBarRow, IntradayQuoteRow, IntradayTradeRow } from './rows'
 import { reverifyIntradayMarketSnapshot, verifyIntradaySnapshot, verifyIntradaySnapshotRequest } from './verification'
@@ -147,7 +152,11 @@ describe('immutable intraday market snapshot', () => {
 
   test('verifies quote-led liquidation evidence without requiring a range-completion bar or trade', () => {
     const rows = makeRows()
-    const liquidationRequest = { ...request, symbols: ['AMD'], purpose: 'LIQUIDATION' as const }
+    const liquidationRequest = {
+      ...request,
+      symbols: ['AMD'],
+      purpose: IntradaySnapshotPurpose.Liquidation,
+    }
     const liquidationRows = {
       archiveWatermarks: rows.archiveWatermarks,
       bars: rows.bars.filter((row) => row.symbol === 'AMD').slice(0, -1),
@@ -160,7 +169,7 @@ describe('immutable intraday market snapshot', () => {
       universe: request.universe,
       universeSymbolHash: request.universeSymbolHash,
       symbols: ['AMD'],
-      purpose: 'LIQUIDATION',
+      purpose: IntradaySnapshotPurpose.Liquidation,
       barCount: 4,
       quoteCount: 1,
       tradeCount: 0,
@@ -176,7 +185,7 @@ describe('immutable intraday market snapshot', () => {
     const liquidationRequest: IntradaySnapshotRequest = {
       ...request,
       symbols: ['AMD'],
-      purpose: 'LIQUIDATION',
+      purpose: IntradaySnapshotPurpose.Liquidation,
     }
     const liquidationRows = {
       archiveWatermarks: rows.archiveWatermarks,
@@ -199,8 +208,34 @@ describe('immutable intraday market snapshot', () => {
       universe: request.universe,
       universeSymbolHash: request.universeSymbolHash,
       symbols: ['AMD'],
-      purpose: 'LIQUIDATION',
+      purpose: IntradaySnapshotPurpose.Liquidation,
     })
+  })
+
+  test('verifies quote-only entry pricing without promoting held symbols into signal evidence', () => {
+    const rows = makeRows()
+    const pricingRequest = {
+      ...request,
+      symbols: ['AMD'],
+      purpose: IntradaySnapshotPurpose.EntryPricing,
+    }
+    const pricingRows = {
+      archiveWatermarks: rows.archiveWatermarks,
+      bars: [],
+      quotes: rows.quotes.filter((row) => row.symbol === 'AMD'),
+      trades: [],
+    }
+    const snapshot = success(verifyIntradaySnapshot(pricingRequest, pricingRows))
+
+    expect(snapshot.manifest).toMatchObject({
+      universe: request.universe,
+      symbols: ['AMD'],
+      purpose: IntradaySnapshotPurpose.EntryPricing,
+      barCount: 0,
+      quoteCount: 1,
+      tradeCount: 0,
+    })
+    expect(success(reverifyIntradayMarketSnapshot(snapshot))).toEqual(snapshot)
   })
 
   test('publishes detached immutable archive watermarks', () => {

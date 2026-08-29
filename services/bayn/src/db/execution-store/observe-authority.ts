@@ -7,12 +7,7 @@ import {
   decodePersistedBrokerIdentity,
   type BrokerIdentity,
 } from '../../broker/identity'
-import {
-  Authority,
-  type AuthorityState,
-  type CapitalGrantGeneration,
-  type ResearchCapitalGrantGeneration,
-} from '../../execution/contracts'
+import { Authority, type AuthorityState, type ResearchCapitalGrantGeneration } from '../../execution/contracts'
 import {
   executionActivationExpiredRestrictionReason,
   executionMandateCompletedRestrictionReason,
@@ -31,7 +26,6 @@ import {
 } from '../../execution/capital-grant-algebra'
 import {
   authorityStateFromRow,
-  capitalGrantGenerationFromRow,
   researchCapitalGrantGenerationFromRow,
   type AuthorityPostgres,
 } from './authority-shared'
@@ -135,9 +129,6 @@ export interface ObserveAuthorityInterpreter {
     input: EnsureAuthorityGenerationInput,
   ) => Effect.Effect<AuthorityState, ExecutionStoreError>
   readonly readAuthorityState: Effect.Effect<AuthorityState, ExecutionStoreError>
-  readonly readAuthorityGeneration: (
-    generationHash: string,
-  ) => Effect.Effect<CapitalGrantGeneration | undefined, ExecutionStoreError>
   readonly readResearchAuthorityGeneration: (
     generationHash: string,
   ) => Effect.Effect<ResearchCapitalGrantGeneration | undefined, ExecutionStoreError>
@@ -545,24 +536,6 @@ const makeObserveAuthorityInterpreterDataFirst = (
     ),
   )
 
-  const readAuthorityGeneration = (generationHash: string) =>
-    runExecutionOperation(
-      'authority',
-      authority.readGeneration(generationHash).pipe(
-        Effect.flatMap((rows) => {
-          const row = rows[0]
-          if (
-            row === undefined ||
-            row.maximum !== Authority.Execution ||
-            row.activation_schema_version !== 'bayn.paper-authority-generation.v2'
-          ) {
-            return Effect.as(Effect.void, undefined)
-          }
-          return capitalGrantGenerationFromRow(row).pipe(Effect.map((generation) => generation))
-        }),
-      ),
-    )
-
   const readResearchAuthorityGeneration = (generationHash: string) =>
     runExecutionOperation(
       'authority',
@@ -602,7 +575,6 @@ const makeObserveAuthorityInterpreterDataFirst = (
     ensureAuthorityGeneration,
     readOrInitializeObserveAuthority,
     readAuthorityState,
-    readAuthorityGeneration,
     readResearchAuthorityGeneration,
     readAuthorityGenerationLineage,
   }

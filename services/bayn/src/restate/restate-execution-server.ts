@@ -5,7 +5,6 @@ import * as restate from '@restatedev/restate-sdk'
 import { Config, Data, Effect, Layer, Option, Redacted, Schema } from 'effect'
 
 import { loadApplicationPlan } from '../application-plan'
-import type { ApplicationPlan, ApplicationPlanFor } from '../app'
 import { acquireNativeExecutionRuntime } from '../composition/native-execution-runtime'
 import { resolveOptionalExecutionControllerBinding } from '../execution/controller'
 import { acquireRestateHttp2Server } from './restate-http2-server'
@@ -45,17 +44,6 @@ const RestateRequestIdentityKeysSchema = Schema.Array(RestateRequestIdentityKeyS
 export const decodeRestateRequestIdentityKeys = (candidate: string) =>
   Schema.decodeUnknownResult(RestateRequestIdentityKeysSchema, strictParseOptions)(candidate.split(','))
 
-export const requireAutonomousApplicationPlan = (
-  plan: ApplicationPlan,
-): Effect.Effect<ApplicationPlanFor<'AutonomousService'>, RestateExecutionServerError> =>
-  plan._tag === 'AutonomousService'
-    ? Effect.succeed(plan)
-    : Effect.fail(
-        new RestateExecutionServerError({
-          message: 'native Restate execution requires the autonomous service runtime mode',
-        }),
-      )
-
 export const makeRestateExecutionEndpointHandler = (
   config: ExecutionControllerConfig,
   runtime: NativeExecutionRuntime,
@@ -70,10 +58,7 @@ export const makeRestateExecutionEndpointHandler = (
 
 export const restateExecutionServerProgram = Effect.gen(function* () {
   const [{ bootstrapToken, port, previousPlanHash, previousSourceRevision, requestIdentityKeys }, plan] =
-    yield* Effect.all([
-      restateExecutionServerConfig,
-      loadApplicationPlan.pipe(Effect.flatMap(requireAutonomousApplicationPlan)),
-    ])
+    yield* Effect.all([restateExecutionServerConfig, loadApplicationPlan])
   const bootstrapAuthorizationHash = yield* Effect.fromResult(
     executionBootstrapAuthorizationHash(Redacted.value(bootstrapToken)),
   ).pipe(

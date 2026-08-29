@@ -2,7 +2,7 @@ import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { Effect, Layer, Stdio, Stream } from 'effect'
 
 import { loadConfig } from './config'
-import { PostgresClientLive } from './db/evidence-store'
+import { PostgresClientLive } from './db/postgres-client'
 import { canonicalJsonV1Result, renderCanonicalJsonFailure } from './hash'
 import { runForwardPerformance, ForwardPerformanceProgramError } from './forward-performance'
 import { makeConfiguredTelemetryRuntimeLayer, withObservedSpan } from './telemetry'

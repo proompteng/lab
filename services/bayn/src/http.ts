@@ -1,34 +1,19 @@
 import { createServer } from 'node:http'
 
-import { NodeHttpServer, NodeHttpServerRequest } from '@effect/platform-node'
-import { Clock, Deferred, Effect, Option, Ref, Result, Scope } from 'effect'
+import { NodeHttpServer } from '@effect/platform-node'
+import { Clock, Effect, Ref, Scope } from 'effect'
 import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http'
 
 import type { RuntimeBuildMetadata, RuntimeConfig } from './config'
 import type { RuntimeProvenance } from './contracts'
-import {
-  CycleOperationsCondition,
-  CycleOperationsReason,
-  MonthEndCadenceCondition,
-  MonthEndCadenceReason,
-  projectAutonomousCycleCadenceObservation,
-  retainedAutonomousCycleCadenceDecision,
-  type AutonomousCycleCadenceFreshness,
-} from './cycle/observability'
+import { CycleOperationsCondition, CycleOperationsReason } from './cycle/observability'
 import { CycleState, CycleTerminalReason } from './cycle'
-import { CycleNotDueReason } from './cycle/runner/model'
-import type { DatabaseError, EvidenceStoreService } from './db/evidence-store'
-import type { OperationalError } from './errors'
 import { BrokerAccess, CapitalAuthorityKind } from './execution/authority'
 import type { ExecutionPolicy } from './execution/configuration'
 import { executionControllerStatusHasCompletion } from './execution/controller-status'
-import { databaseOperation, withinDeadline } from './operations'
 import { Authority, KillState, ReconciliationStatus } from './execution/contracts'
-import { makeQualificationDiagnosisResult } from './qualification-diagnosis'
 import { isReady, type DependencyHealth, type RuntimeState } from './runtime-state'
 import { Pipeable } from './pipeable'
-
-type ReadEvidence = EvidenceStoreService['read']
 
 export type HttpResponseDecision =
   | {
@@ -44,10 +29,6 @@ export type HttpResponseDecision =
       readonly contentType: string
       readonly headers?: Readonly<Record<string, string>>
     }
-
-export type HistoricalRunRequestDecision =
-  | { readonly _tag: 'ReadEvidence'; readonly runId: string }
-  | { readonly _tag: 'Respond'; readonly response: HttpResponseDecision }
 
 const jsonDecision = (
   body: unknown,
@@ -67,13 +48,13 @@ const textDecision = (
   ...(headers === undefined ? {} : { headers }),
 })
 
-const verifiedState = (state: RuntimeState, dependency: DependencyHealth) => {
-  if (state.evidence === null || dependency.status === 'UNKNOWN') return 'UNKNOWN'
+const verifiedState = (dependency: DependencyHealth) => {
+  if (dependency.status === 'UNKNOWN') return 'UNKNOWN'
   return dependency.status === 'AVAILABLE' ? 'CURRENT' : 'INVALID'
 }
 
 const accountingState = (state: RuntimeState) => {
-  if (state.evidence === null || state.health.dependencies.tigerBeetle.status === 'UNKNOWN') return 'UNKNOWN'
+  if (state.health.dependencies.tigerBeetle.status === 'UNKNOWN') return 'UNKNOWN'
   return state.health.dependencies.tigerBeetle.status === 'AVAILABLE' ? 'EXACT' : 'UNAVAILABLE'
 }
 
@@ -142,35 +123,12 @@ const publicDependencies = (state: RuntimeState) => ({
   },
 })
 
-const autonomousCycleCadenceFreshness = (state: RuntimeState): AutonomousCycleCadenceFreshness => {
-  const dependency = state.health.dependencies.cycleRunner
-  if (dependency.status === 'AVAILABLE') return 'AVAILABLE'
-  return dependency.error?.startsWith('autonomous cycle loop has not completed a successful pass for ') === true ||
-    dependency.error?.startsWith('Restate execution controller is overdue by ') === true
-    ? 'STALE'
-    : 'UNAVAILABLE'
-}
-
-const autonomousCycleCadenceObservation = (state: RuntimeState) => {
-  const lastPass = state.autonomousCycleLoop.lastPass
-  const cadenceDecision = retainedAutonomousCycleCadenceDecision(lastPass)
-  return projectAutonomousCycleCadenceObservation({
-    configured: state.autonomousCycleLoop.configured,
-    lastPassResult: lastPass?.result ?? null,
-    lastPassOutcome: lastPass?.result === 'SUCCESS' ? lastPass.outcome : null,
-    freshness: autonomousCycleCadenceFreshness(state),
-    ...(lastPass?.cadence === undefined ? {} : { cadence: lastPass.cadence }),
-    ...(cadenceDecision === undefined ? {} : { cadenceDecision }),
-  })
-}
-
 const publicAutonomousCycleLoop = (state: RuntimeState) => {
   const lastPass = state.autonomousCycleLoop.lastPass
   return {
     configured: state.autonomousCycleLoop.configured,
     owner: state.autonomousCycleLoop.owner ?? 'Process',
     startedAt: state.autonomousCycleLoop.startedAt,
-    cadence: autonomousCycleCadenceObservation(state),
     lastPass:
       lastPass === null
         ? null
@@ -179,15 +137,12 @@ const publicAutonomousCycleLoop = (state: RuntimeState) => {
               result: lastPass.result,
               observedAt: lastPass.observedAt,
               outcome: lastPass.outcome,
-              ...(lastPass.cadence === undefined ? {} : { cadence: lastPass.cadence }),
-              ...(lastPass.notDueReason === undefined ? {} : { notDueReason: lastPass.notDueReason }),
             }
           : {
               result: lastPass.result,
               observedAt: lastPass.observedAt,
               operation: lastPass.operation,
               failure: lastPass.failure,
-              ...(lastPass.cadence === undefined ? {} : { cadence: lastPass.cadence }),
               reasonCode: 'AUTONOMOUS_CYCLE_PASS_FAILED',
             },
   } as const
@@ -366,11 +321,6 @@ const statusFactsDataFirst = (
   const capitalActivationRealized = state.capitalActivation?._tag === 'Realized'
   const effectiveBrokerAccess = capitalActivationRealized ? BrokerAccess.Mutation : BrokerAccess.ReadOnly
   const effectiveCapitalAuthority = capitalActivationRealized ? CapitalAuthorityKind.Granted : CapitalAuthorityKind.None
-  const diagnosis =
-    state.evidence === null
-      ? null
-      : makeQualificationDiagnosisResult(state.evidence.evaluation, state.evidence.qualification)
-  const publicDiagnosis = diagnosis === null || Result.isFailure(diagnosis) ? null : diagnosis.success
   return {
     service: 'bayn',
     operational: {
@@ -381,31 +331,11 @@ const statusFactsDataFirst = (
     },
     dependencies,
     data: {
-      status: verifiedState(state, state.health.dependencies.signal),
-      input: state.evidence?.evaluation.input ?? null,
-    },
-    evidence: {
-      status: verifiedState(state, state.health.dependencies.evidence),
-      runId: state.evidence?.evaluation.runId ?? null,
-      startupMode: state.evidence?.startupMode ?? null,
-      persistence: state.evidence?.persistence ?? null,
-    },
-    economic: {
-      verdict: state.evidence?.qualification.evaluationVerdict ?? null,
-    },
-    qualification: {
-      verdict: state.evidence?.qualification.verdict ?? null,
-      lockId: state.evidence?.qualification.lockId ?? null,
-      resultHash: state.evidence?.qualification.resultHash ?? null,
-      analysisHash: state.evidence?.qualification.analysis.analysisHash ?? null,
-      candidateOrdinal: state.evidence?.qualification.analysis.candidateOrdinal ?? null,
-      reasonCodes: state.evidence?.qualification.reasonCodes ?? [],
-      diagnosis: publicDiagnosis,
-      executionProvenance: state.evidence?.provenance ?? null,
+      status: verifiedState(state.health.dependencies.signal),
     },
     accounting: {
       status: accountingState(state),
-      reconciliation: state.evidence?.reconciliation ?? null,
+      economics: state.cycle.economics ?? null,
     },
     cycle: publicCycleState(state),
     autonomousCycleLoop: publicAutonomousCycleLoop(state),
@@ -548,51 +478,6 @@ export const readinessResponseDecision = (
   )
 }
 
-export const validateHistoricalRunRequest = (runId: string | undefined): HistoricalRunRequestDecision =>
-  runId !== undefined && /^[0-9a-f]{64}$/.test(runId)
-    ? { _tag: 'ReadEvidence', runId }
-    : { _tag: 'Respond', response: jsonDecision({ error: 'invalid_run_id' }, 400) }
-
-export const historicalEvidenceResponseDecision = (stored: Option.Option<unknown>): HttpResponseDecision =>
-  Option.match(stored, {
-    onNone: () => jsonDecision({ error: 'evaluation_not_found' }, 404),
-    onSome: (evidence) => jsonDecision(evidence),
-  })
-
-const historicalReadFailureDecisionDataFirst = (runId: string, error: OperationalError) =>
-  ({
-    response: jsonDecision({ error: 'evidence_unavailable' }, 503),
-    log: {
-      message: 'Bayn historical evidence read failed',
-      cause: error,
-      annotations: {
-        service: 'bayn',
-        runId,
-        component: error.component,
-        operation: error.operation,
-        retryable: error.retryable,
-        error: error.message,
-      },
-    },
-  }) as const
-
-export const historicalReadFailureDecision = Pipeable.dual(2, historicalReadFailureDecisionDataFirst)
-
-const readHistoricalEvidenceDataFirst = <A, R>(
-  read: Effect.Effect<Option.Option<A>, DatabaseError, R>,
-  timeoutMs: number,
-): Effect.Effect<Option.Option<A>, OperationalError, R> =>
-  withinDeadline(databaseOperation(read, 'read-evidence'), timeoutMs, 'database', 'read-evidence')
-
-export const readHistoricalEvidence = Pipeable.generic<
-  <A, R>(
-    timeoutMs: number,
-  ) => (
-    read: Effect.Effect<Option.Option<A>, DatabaseError, R>,
-  ) => Effect.Effect<Option.Option<A>, OperationalError, R>,
-  typeof readHistoricalEvidenceDataFirst
->(2, readHistoricalEvidenceDataFirst)
-
 export const fallbackResponseDecision = (method: string): HttpResponseDecision =>
   method === 'GET'
     ? jsonDecision({ error: 'not_found' }, 404)
@@ -671,11 +556,6 @@ const renderPrometheusMetricsDataFirst = (
   const sessionPreflightReady = executionSessionPreflightReady(state, runtimeReady)
   const loopResults = ['unknown', 'success', 'failure'] as const
   const loopResult = state.autonomousCycleLoop.lastPass?.result.toLowerCase() ?? 'unknown'
-  const notDueReasons = ['unknown', 'none', ...Object.values(CycleNotDueReason).map((reason) => reason.toLowerCase())]
-  const loopNotDueReason =
-    state.autonomousCycleLoop.lastPass?.result === 'SUCCESS' && state.autonomousCycleLoop.lastPass.outcome === 'NOT_DUE'
-      ? (state.autonomousCycleLoop.lastPass.notDueReason?.toLowerCase() ?? 'unknown')
-      : 'none'
   const capitalActivationRealized = state.capitalActivation?._tag === 'Realized'
   const effectiveBrokerMutation = capitalActivationRealized
   const effectiveCapitalPromotion = capitalActivationRealized
@@ -684,10 +564,6 @@ const renderPrometheusMetricsDataFirst = (
       ? 'not_configured'
       : state.capitalActivation._tag.toLowerCase()
   const capitalActivationStates = ['not_configured', 'pending', 'realized', 'completed'] as const
-  const cadence = autonomousCycleCadenceObservation(state)
-  const cadenceConditions = Object.values(MonthEndCadenceCondition)
-  const cadenceReasons = Object.values(MonthEndCadenceReason)
-  const nextEligibilityStatuses = ['proven', 'unknown'] as const
   const loopHealthy =
     state.autonomousCycleLoop.configured &&
     state.health.dependencies.cycleRunner.status === 'AVAILABLE' &&
@@ -771,7 +647,7 @@ const renderPrometheusMetricsDataFirst = (
     ),
     ...(cycleObservationAvailable && cycleRecorded
       ? [
-          '# HELP bayn_cycle_unfinished_count Number of unfinished cycles for the bound qualification run.',
+          '# HELP bayn_cycle_unfinished_count Number of unfinished cycles for the active execution binding.',
           '# TYPE bayn_cycle_unfinished_count gauge',
           `bayn_cycle_unfinished_count ${state.cycle.unfinishedCycleCount}`,
           ...(state.cycle.current === null
@@ -900,11 +776,6 @@ const renderPrometheusMetricsDataFirst = (
     ...loopResults.map(
       (result) => `bayn_autonomous_cycle_loop_last_pass{result="${result}"} ${loopResult === result ? 1 : 0}`,
     ),
-    '# HELP bayn_autonomous_cycle_not_due_reason Exact bounded reason for the latest NOT_DUE pass.',
-    '# TYPE bayn_autonomous_cycle_not_due_reason gauge',
-    ...notDueReasons.map(
-      (reason) => `bayn_autonomous_cycle_not_due_reason{reason="${reason}"} ${loopNotDueReason === reason ? 1 : 0}`,
-    ),
     ...(state.autonomousCycleLoop.lastPass === null
       ? []
       : [
@@ -915,24 +786,6 @@ const renderPrometheusMetricsDataFirst = (
           '# TYPE bayn_autonomous_cycle_loop_last_pass_age_seconds gauge',
           `bayn_autonomous_cycle_loop_last_pass_age_seconds ${prometheusNumber((loopLastPassAgeMs ?? 0) / 1_000)}`,
         ]),
-    '# HELP bayn_autonomous_cycle_cadence_condition Exact bounded month-end cadence interpretation of the latest pass.',
-    '# TYPE bayn_autonomous_cycle_cadence_condition gauge',
-    ...cadenceConditions.map(
-      (condition) =>
-        `bayn_autonomous_cycle_cadence_condition{condition="${condition.toLowerCase()}"} ${cadence.condition === condition ? 1 : 0}`,
-    ),
-    '# HELP bayn_autonomous_cycle_cadence_reason Stable bounded reason for the latest cadence interpretation.',
-    '# TYPE bayn_autonomous_cycle_cadence_reason gauge',
-    ...cadenceReasons.map(
-      (reason) =>
-        `bayn_autonomous_cycle_cadence_reason{reason="${reason.toLowerCase()}"} ${cadence.reason === reason ? 1 : 0}`,
-    ),
-    '# HELP bayn_autonomous_cycle_next_eligibility Whether current retained evidence proves the next eligible session.',
-    '# TYPE bayn_autonomous_cycle_next_eligibility gauge',
-    ...nextEligibilityStatuses.map(
-      (status) =>
-        `bayn_autonomous_cycle_next_eligibility{status="${status}"} ${cadence.nextEligibility.status.toLowerCase() === status ? 1 : 0}`,
-    ),
     ...(cycleObservationAvailable
       ? [
           '# HELP bayn_mutation_events_total Durable broker mutation event count.',
@@ -1271,48 +1124,6 @@ const interpretResponseDecision = (
         }),
       )
 
-const interpretHistoricalReadFailure = (
-  runId: string,
-  error: OperationalError,
-): Effect.Effect<HttpServerResponse.HttpServerResponse> => {
-  const decision = historicalReadFailureDecision(runId, error)
-  return Effect.logError(decision.log.message, decision.log.cause).pipe(
-    Effect.annotateLogs(decision.log.annotations),
-    Effect.andThen(interpretResponseDecision(decision.response)),
-  )
-}
-
-const clientDisconnect = (request: HttpServerRequest.HttpServerRequest): Effect.Effect<never> => {
-  const incoming = NodeHttpServerRequest.toIncomingMessage(request)
-  const socket = incoming.socket
-  return Effect.scoped(
-    Deferred.make<void>().pipe(
-      Effect.flatMap((disconnected) => {
-        const onDisconnect = () => {
-          Deferred.doneUnsafe(disconnected, Effect.void)
-        }
-        return Effect.acquireRelease(
-          Effect.sync(() => {
-            incoming.once('aborted', onDisconnect)
-            socket.once('close', onDisconnect)
-            if (incoming.aborted || socket.destroyed) onDisconnect()
-          }),
-          () =>
-            Effect.sync(() => {
-              incoming.off('aborted', onDisconnect)
-              socket.off('close', onDisconnect)
-            }),
-        ).pipe(Effect.andThen(Deferred.await(disconnected)), Effect.andThen(Effect.interrupt))
-      }),
-    ),
-  )
-}
-
-const interruptOnClientDisconnect = <A, E, R>(
-  request: HttpServerRequest.HttpServerRequest,
-  effect: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E, R> => Effect.raceFirst(effect, clientDisconnect(request)).pipe(Effect.interruptible)
-
 type HttpConfig = Pick<
   RuntimeConfig,
   | 'cycleStallThresholdMs'
@@ -1333,7 +1144,6 @@ const registerHttpRoutes = (
   state: Ref.Ref<RuntimeState>,
   provenance: RuntimeProvenance,
   provenanceVerification: RuntimeBuildMetadata['verification'],
-  readEvidence: ReadEvidence,
   router: HttpRouter.HttpRouter,
   currentTimeMillis: Effect.Effect<number>,
 ): Effect.Effect<void> => {
@@ -1373,22 +1183,6 @@ const registerHttpRoutes = (
     ),
     Effect.flatMap(interpretResponseDecision),
   )
-  const historicalEvaluation = Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
-    HttpRouter.params.pipe(
-      Effect.map(({ runId }) => validateHistoricalRunRequest(runId)),
-      Effect.flatMap((decision) => {
-        if (decision._tag === 'Respond') return interpretResponseDecision(decision.response)
-        return interruptOnClientDisconnect(
-          request,
-          readHistoricalEvidence(readEvidence(decision.runId), config.operationTimeoutMs),
-        ).pipe(
-          Effect.map(historicalEvidenceResponseDecision),
-          Effect.flatMap(interpretResponseDecision),
-          Effect.catch((error) => interpretHistoricalReadFailure(decision.runId, error)),
-        )
-      }),
-    ),
-  )
   const fallback = (
     request: HttpServerRequest.HttpServerRequest,
   ): Effect.Effect<HttpServerResponse.HttpServerResponse> =>
@@ -1398,7 +1192,6 @@ const registerHttpRoutes = (
     yield* router.add('GET', '/readyz', ready)
     yield* router.add('GET', '/metrics', metrics)
     yield* router.add('GET', '/v1/status', status)
-    yield* router.add('GET', '/v1/evaluations/:runId', historicalEvaluation)
     yield* router.add('*', '*', fallback)
   })
 }
@@ -1408,34 +1201,24 @@ const serveHttpDataFirst = (
   state: Ref.Ref<RuntimeState>,
   provenance: RuntimeProvenance,
   provenanceVerification: RuntimeBuildMetadata['verification'],
-  readEvidence: ReadEvidence,
   currentTimeMillis: Effect.Effect<number> = Clock.currentTimeMillis,
 ): Effect.Effect<void, never, HttpServer.HttpServer | Scope.Scope> =>
   Effect.gen(function* () {
     const router = yield* HttpRouter.make
-    yield* registerHttpRoutes(
-      config,
-      state,
-      provenance,
-      provenanceVerification,
-      readEvidence,
-      router,
-      currentTimeMillis,
-    )
+    yield* registerHttpRoutes(config, state, provenance, provenanceVerification, router, currentTimeMillis)
     // The router API erases the closed route error set to unknown; the total fallback makes any residue a defect.
     // @effect-diagnostics-next-line anyUnknownInErrorContext:off
     const handler = router.asHttpEffect().pipe(Effect.orDie)
     yield* HttpServer.serveEffect(handler)
   })
 
-export const serveHttp = Pipeable.dual(5, serveHttpDataFirst)
+export const serveHttp = Pipeable.dual(4, serveHttpDataFirst)
 
 export const serveHttpWithCurrentTime = (
   config: HttpConfig,
   state: Ref.Ref<RuntimeState>,
   provenance: RuntimeProvenance,
   provenanceVerification: RuntimeBuildMetadata['verification'],
-  readEvidence: ReadEvidence,
   currentTimeMillis: Effect.Effect<number>,
 ): Effect.Effect<void, never, HttpServer.HttpServer | Scope.Scope> =>
-  serveHttpDataFirst(config, state, provenance, provenanceVerification, readEvidence, currentTimeMillis)
+  serveHttpDataFirst(config, state, provenance, provenanceVerification, currentTimeMillis)

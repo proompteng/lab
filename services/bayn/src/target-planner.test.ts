@@ -51,6 +51,7 @@ interface FixtureOptions {
   readonly equityMicros?: string
   readonly maximumInputAgeMs?: number
   readonly maximumBuyQuantityMicros?: Readonly<Record<string, string>>
+  readonly maximumSellQuantityMicros?: Readonly<Record<string, string>>
   readonly observedAt?: string
   readonly orders?: readonly Order[]
   readonly ordersObservedAt?: string
@@ -244,6 +245,9 @@ const fixture = (options: FixtureOptions = {}): TargetPlannerInput => {
             maximumBuyQuantityMicros:
               options.maximumBuyQuantityMicros ??
               Object.fromEntries(Object.keys(prices).map((symbol) => [symbol, '1000000000000'])),
+            maximumSellQuantityMicros:
+              options.maximumSellQuantityMicros ??
+              Object.fromEntries(Object.keys(prices).map((symbol) => [symbol, '1000000000000'])),
           },
         }
       })()
@@ -263,6 +267,28 @@ const planSuccess = (input: TargetPlannerInput): TargetPlanResult => {
 }
 
 describe('causal target planner', () => {
+  test('binds insufficient entry sell liquidity as a durable close-only block', () => {
+    const blocked = planSuccess(
+      fixture({
+        quoteBound: true,
+        positions: [position('AMD', '2000000')],
+        priceMicros: { AMD: '100000000' },
+        targetWeights: { AMD: 0 },
+        maximumSellQuantityMicros: { AMD: '1000000' },
+      }),
+    )
+
+    expect(blocked).toMatchObject({
+      schemaVersion: referenceTargetPlanSchemaVersion,
+      status: TargetPlanStatus.Blocked,
+      reason: TargetPlanReason.InsufficientSellLiquidity,
+      targets: [],
+      intentTargets: [],
+      requiredReferenceBuyNotionalMicros: '0',
+    })
+    expect(Result.isSuccess(decodeTargetPlanResult(blocked))).toBe(true)
+  })
+
   test('plans whole-share LIMIT/IOC deltas against an immutable adverse quote boundary', () => {
     const result = planSuccess(
       fixture({
@@ -390,6 +416,7 @@ describe('causal target planner', () => {
         snapshotId: input.executionTerms.snapshotId,
         snapshotContentHash: input.executionTerms.snapshotContentHash,
         maximumBuyQuantityMicros: { AMD: '0' },
+        maximumSellQuantityMicros: { AMD: '500000' },
       },
     })
 
@@ -447,6 +474,7 @@ describe('causal target planner', () => {
       priceMicros: { AMD: '100000000' },
       targetWeights: { AMD: 0 },
       maximumBuyQuantityMicros: { AMD: '2000000' },
+      maximumSellQuantityMicros: { AMD: '0' },
     })
     if (input.schemaVersion !== quoteBoundTargetPlannerInputSchemaVersion) {
       return expect.unreachable('forced close fixture requires quote-bound planning')
@@ -479,6 +507,25 @@ describe('causal target planner', () => {
     })
   })
 
+  test('defers an entry-time short position to close-only containment', () => {
+    const result = planSuccess(
+      fixture({
+        quoteBound: true,
+        allocationCapitalMicros: '1000000000',
+        positions: [position('AMD', '-2000000')],
+        priceMicros: { AMD: '100000000' },
+        targetWeights: { AMD: 0 },
+        maximumBuyQuantityMicros: { AMD: '10000000' },
+      }),
+    )
+
+    expect(result).toMatchObject({
+      status: TargetPlanStatus.Blocked,
+      reason: TargetPlanReason.ShortPositionNotAllowed,
+      intentTargets: [],
+    })
+  })
+
   test('caps only buy deltas at the verified whole-share ask quantity', () => {
     const result = planSuccess(
       fixture({
@@ -495,6 +542,47 @@ describe('causal target planner', () => {
       targets: [{ symbol: 'AMD', currentQuantityMicros: '20000000', targetQuantityMicros: '30000000' }],
       intentTargets: [{ symbol: 'AMD', side: OrderSide.Buy, quantityMicros: '10000000' }],
     })
+  })
+
+  test('keeps sell-only reductions executable without whole-share ask capacity', () => {
+    const result = planSuccess(
+      fixture({
+        quoteBound: true,
+        allocationCapitalMicros: '1000000000',
+        positions: [position('AMD', '20000000')],
+        priceMicros: { AMD: '10000000' },
+        targetWeights: { AMD: 0.1 },
+        maximumBuyQuantityMicros: { AMD: '0' },
+      }),
+    )
+
+    expect(result).toMatchObject({
+      status: TargetPlanStatus.Planned,
+      targets: [{ symbol: 'AMD', currentQuantityMicros: '20000000', targetQuantityMicros: '10000000' }],
+      intentTargets: [{ symbol: 'AMD', side: OrderSide.Sell, quantityMicros: '10000000' }],
+    })
+  })
+
+  test('fails closed when a positive buy delta has no whole-share ask capacity', () => {
+    const result = planTargets(
+      fixture({
+        quoteBound: true,
+        allocationCapitalMicros: '1000000000',
+        positions: [],
+        priceMicros: { AMD: '10000000' },
+        targetWeights: { AMD: 1 },
+        maximumBuyQuantityMicros: { AMD: '0' },
+      }),
+    )
+
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toMatchObject({
+        operation: 'derive-targets',
+        message: 'quote-bound buy target has no executable displayed ask capacity',
+        facts: { symbol: 'AMD' },
+      })
+    }
   })
 
   test('sizes an immutable execution target against its bounded allocation instead of full account equity', () => {

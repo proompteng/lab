@@ -8,7 +8,12 @@ import type {
   IntradayQuote,
   IntradayTrade,
 } from '../../market-data/intraday/model'
-import { compareIntradayInstants, intradayInstantNanos } from '../../market-data/intraday/time'
+import {
+  compareIntradayInstants,
+  intradayAgeNanos,
+  intradayInstantNanos,
+  millisecondsAsNanos,
+} from '../../market-data/intraday/time'
 import { strictParseOptions, UtcInstantSchema } from '../../schemas'
 import type { VerifiedStrategyContext } from '../core'
 import {
@@ -20,13 +25,17 @@ import {
   type IntradayMomentumStrategyDefinition,
   type IntradayMomentumTargetPortfolio,
 } from './model'
-import { intradayMomentumSessionHasDecisionInterval, type IntradayMomentumProtocol } from './protocol'
+import {
+  intradayMomentumSessionHasDecisionInterval,
+  intradayMomentumSnapshotSymbols,
+  type IntradayMomentumProtocol,
+} from './protocol'
 
 const micros = 1_000_000
 const weightScale = 1_000_000
 const minuteMs = 60_000
 
-export const intradayMomentumBehaviorVersion = 'bayn.intraday-momentum.behavior.v4' as const
+export const intradayMomentumBehaviorVersion = 'bayn.intraday-momentum.behavior.v9' as const
 export const intradayMomentumBehaviorHash = sha256(intradayMomentumBehaviorVersion)
 
 const compareCanonicalText = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
@@ -110,22 +119,50 @@ export interface IntradayMomentumSignalPrices {
   readonly trade: bigint
 }
 
+export type IntradayMomentumBenchmarkPrices = Pick<IntradayMomentumSignalPrices, 'reference' | 'bid' | 'ask'>
+
+interface ExactRatio {
+  readonly numerator: bigint
+  readonly denominator: bigint
+}
+
 export const deriveIntradayMomentumSignalMetrics = (
   prices: IntradayMomentumSignalPrices,
   symbol: string,
+  benchmarkPrices: IntradayMomentumBenchmarkPrices,
 ): Result.Result<
   {
-    readonly lookbackReturnBps: number
-    readonly breakoutBps: number
-    readonly spreadBps: number
-    readonly rangeLocationPpm: number
+    readonly metrics: {
+      readonly lookbackReturnBps: number
+      readonly benchmarkReturnBps: number
+      readonly excessReturnBps: number
+      readonly breakoutBps: number
+      readonly spreadBps: number
+      readonly rangeLocationPpm: number
+    }
+    readonly excessReturn: ExactRatio
   },
   IntradayMomentumFailure
 > => {
   const doubledMidpoint = prices.bid + prices.ask
   const doubledReference = 2n * prices.reference
+  const doubledBenchmarkMidpoint = benchmarkPrices.bid + benchmarkPrices.ask
+  const doubledBenchmarkReference = 2n * benchmarkPrices.reference
   const breakoutReference = prices.ask < prices.trade ? prices.ask : prices.trade
   const lookbackReturnBps = floorDivide((doubledMidpoint - doubledReference) * 10_000n, doubledReference)
+  const benchmarkReturnBps = floorDivide(
+    (doubledBenchmarkMidpoint - doubledBenchmarkReference) * 10_000n,
+    doubledBenchmarkReference,
+  )
+  // Preserve the exact candidate and benchmark ratios until after subtraction. Subtracting two independently
+  // rounded basis-point values can admit a residual that is below the configured threshold.
+  const excessReturn = Object.freeze({
+    numerator:
+      (doubledMidpoint - doubledReference) * benchmarkPrices.reference -
+      (doubledBenchmarkMidpoint - doubledBenchmarkReference) * prices.reference,
+    denominator: 2n * prices.reference * benchmarkPrices.reference,
+  })
+  const excessReturnBps = floorDivide(excessReturn.numerator * 10_000n, excessReturn.denominator)
   const breakoutBps = floorDivide((breakoutReference - prices.high) * 10_000n, prices.high)
   const spreadBps = ceilDivide((prices.ask - prices.bid) * 20_000n, doubledMidpoint)
   const rangeLocation =
@@ -133,12 +170,17 @@ export const deriveIntradayMomentumSignalMetrics = (
       ? 0n
       : floorDivide((doubledMidpoint - 2n * prices.low) * 1_000_000n, 2n * (prices.high - prices.low))
   const boundedRangeLocation = rangeLocation < 0n ? 0n : rangeLocation > 1_000_000n ? 1_000_000n : rangeLocation
-  return Result.all({
-    lookbackReturnBps: safeInteger(lookbackReturnBps, 'lookback-return-bps', symbol),
-    breakoutBps: safeInteger(breakoutBps, 'breakout-bps', symbol),
-    spreadBps: safeInteger(spreadBps, 'spread-bps', symbol),
-    rangeLocationPpm: safeInteger(boundedRangeLocation, 'range-location-ppm', symbol),
-  })
+  return Result.map(
+    Result.all({
+      lookbackReturnBps: safeInteger(lookbackReturnBps, 'lookback-return-bps', symbol),
+      benchmarkReturnBps: safeInteger(benchmarkReturnBps, 'benchmark-return-bps', symbol),
+      excessReturnBps: safeInteger(excessReturnBps, 'excess-return-bps', symbol),
+      breakoutBps: safeInteger(breakoutBps, 'breakout-bps', symbol),
+      spreadBps: safeInteger(spreadBps, 'spread-bps', symbol),
+      rangeLocationPpm: safeInteger(boundedRangeLocation, 'range-location-ppm', symbol),
+    }),
+    (metrics) => ({ metrics, excessReturn }),
+  )
 }
 
 type IntradayMomentumEnvelopeContext = {
@@ -152,6 +194,7 @@ const validateSnapshot = (
 ): Result.Result<void, IntradayMomentumFailure> => {
   const { session, snapshot } = context
   const { manifest } = snapshot
+  const snapshotSymbols = intradayMomentumSnapshotSymbols(protocol)
   const boundSession = manifest.calendar.sessions.find(({ date }) => date === manifest.sessionDate)
   const selectedCalendar =
     boundSession === undefined
@@ -170,8 +213,11 @@ const validateSnapshot = (
     manifest.sourceTopics.quotes !== protocol.sourceTopics.quotes ||
     manifest.sourceTopics.trades !== protocol.sourceTopics.trades ||
     manifest.maximumQuoteAgeMs !== protocol.maximumQuoteAgeMs ||
-    manifest.symbols.length !== protocol.universe.length ||
-    manifest.symbols.some((symbol, index) => symbol !== protocol.universe[index])
+    manifest.universe === undefined ||
+    manifest.universe.length !== protocol.universe.length ||
+    manifest.universe.some((symbol, index) => symbol !== protocol.universe[index]) ||
+    snapshotSymbols.some((symbol) => !manifest.symbols.includes(symbol)) ||
+    manifest.symbols.some((symbol) => !protocol.universe.includes(symbol))
   ) {
     return fail('snapshot-identity', 'intraday snapshot does not match the intraday-momentum protocol')
   }
@@ -227,7 +273,7 @@ const validateSnapshot = (
     manifest.barCount !== snapshot.bars.length ||
     manifest.quoteCount !== snapshot.quotes.length ||
     manifest.tradeCount !== snapshot.trades.length ||
-    snapshot.bars.length > protocol.universe.length * protocol.lookbackMinutes ||
+    snapshot.bars.length > manifest.symbols.length * protocol.lookbackMinutes ||
     snapshot.bars.some((bar) => !bar.final)
   ) {
     return fail('snapshot-coverage', 'intraday snapshot exceeds the bounded rolling decision evidence')
@@ -235,7 +281,7 @@ const validateSnapshot = (
 
   const rangeEndNanos = intradayInstantNanos(manifest.rangeEndAt)
   const observedNanos = intradayInstantNanos(manifest.observedAt)
-  for (const symbol of protocol.universe) {
+  for (const symbol of snapshotSymbols) {
     const bars = snapshot.bars
       .filter((bar) => bar.symbol === symbol)
       .toSorted((left, right) => compareIntradayInstants(left.eventAt, right.eventAt))
@@ -276,6 +322,7 @@ const signalFor = (
   trade: IntradayTrade,
   protocol: IntradayMomentumProtocol,
   observedAt: string,
+  benchmarkPrices: IntradayMomentumBenchmarkPrices,
 ): Result.Result<IntradayMomentumSignal, IntradayMomentumFailure> => {
   const ordered = bars.toSorted((left, right) => compareIntradayInstants(left.eventAt, right.eventAt))
   const first = ordered[0]
@@ -298,7 +345,7 @@ const signalFor = (
       bidSize: scaledInteger(quote.bidSize, 'quote-bid-size', symbol, false),
       askSize: scaledInteger(quote.askSize, 'quote-ask-size', symbol, false),
     })
-    const metrics = yield* deriveIntradayMomentumSignalMetrics(prices, symbol)
+    const { metrics, excessReturn } = yield* deriveIntradayMomentumSignalMetrics(prices, symbol, benchmarkPrices)
     const evidence = {
       symbol,
       referencePriceMicros: String(prices.reference),
@@ -311,6 +358,8 @@ const signalFor = (
       quoteObservedAt: quote.eventAt,
       confirmationTradePriceMicros: String(prices.trade),
       confirmationTradeObservedAt: trade.eventAt,
+      excessReturnNumerator: String(excessReturn.numerator),
+      excessReturnDenominator: String(excessReturn.denominator),
       ...metrics,
     }
     const rejectionReasons = intradayMomentumSignalRejectionReasons(evidence, observedAt, protocol)
@@ -330,8 +379,44 @@ const decideIntradayMomentumFromEnvelope = (
   Result.gen(function* () {
     const snapshot = context.snapshot
     yield* validateSnapshot({ ...context, snapshot }, protocol)
-    const signals = yield* Result.all(
-      protocol.universe.map((symbol) => {
+    const benchmarkBars = snapshot.bars.filter((bar) => bar.symbol === protocol.benchmarkSymbol)
+    const benchmarkQuote = snapshot.latestQuotes[protocol.benchmarkSymbol]
+    const benchmarkFirst = benchmarkBars.toSorted((left, right) =>
+      compareIntradayInstants(left.eventAt, right.eventAt),
+    )[0]
+    if (benchmarkFirst === undefined || benchmarkQuote === undefined) {
+      return yield* fail('snapshot-coverage', 'intraday decision lacks benchmark bars or quote', {
+        symbol: protocol.benchmarkSymbol,
+      })
+    }
+    if (
+      intradayAgeNanos(snapshot.manifest.observedAt, benchmarkQuote.eventAt) >
+      millisecondsAsNanos(protocol.maximumQuoteAgeMs)
+    ) {
+      return yield* fail('snapshot-coverage', 'intraday benchmark quote exceeds the protocol freshness bound', {
+        symbol: protocol.benchmarkSymbol,
+      })
+    }
+    if (benchmarkQuote.bidSize <= 0 || benchmarkQuote.askSize <= 0) {
+      return yield* fail('snapshot-coverage', 'intraday benchmark quote has no executable displayed liquidity', {
+        symbol: protocol.benchmarkSymbol,
+      })
+    }
+    const benchmarkPrices = yield* Result.gen(function* () {
+      const reference = yield* scaledInteger(benchmarkFirst.open, 'benchmark-lookback-open', protocol.benchmarkSymbol)
+      const bid = yield* scaledInteger(benchmarkQuote.bidPrice, 'benchmark-quote-bid', protocol.benchmarkSymbol)
+      const ask = yield* scaledInteger(benchmarkQuote.askPrice, 'benchmark-quote-ask', protocol.benchmarkSymbol)
+      const bidSize = yield* scaledInteger(benchmarkQuote.bidSize, 'benchmark-quote-bid-size', protocol.benchmarkSymbol)
+      const askSize = yield* scaledInteger(benchmarkQuote.askSize, 'benchmark-quote-ask-size', protocol.benchmarkSymbol)
+      if (ask < bid) {
+        return yield* fail('market-value', 'intraday benchmark quote is crossed', {
+          symbol: protocol.benchmarkSymbol,
+        })
+      }
+      return { reference, bid, ask, bidSize, askSize }
+    })
+    const candidates = yield* Result.all(
+      protocol.candidateSymbols.map((symbol) => {
         const quote = snapshot.latestQuotes[symbol]
         const trade = snapshot.trades.filter((candidate) => candidate.symbol === symbol).toSorted(compareLatest)[0]
         return quote === undefined || trade === undefined
@@ -343,14 +428,15 @@ const decideIntradayMomentumFromEnvelope = (
               trade,
               protocol,
               snapshot.manifest.observedAt,
+              benchmarkPrices,
             )
       }),
     )
-    const selected = selectCanonicalIntradayMomentumSignals(signals, protocol.maximumPositions)
-    const selectedSymbols = Object.freeze(selected.map((signal) => signal.symbol))
+    const selected = selectCanonicalIntradayMomentumSignals(candidates, protocol.maximumPositions)
+    const selectedSymbols = Object.freeze(selected.map(({ symbol }) => symbol))
     const rankBySymbol = new Map(selectedSymbols.map((symbol, index) => [symbol, index + 1]))
     const rankedSignals = Object.freeze(
-      signals.map((signal) => Object.freeze({ ...signal, rank: rankBySymbol.get(signal.symbol) ?? null })),
+      candidates.map((signal) => Object.freeze({ ...signal, rank: rankBySymbol.get(signal.symbol) ?? null })),
     )
     const targetWeight =
       selectedSymbols.length === 0
@@ -361,15 +447,26 @@ const decideIntradayMomentumFromEnvelope = (
           ) / weightScale
     const selectedSet = new Set(selectedSymbols)
     return Object.freeze({
-      schemaVersion: 'bayn.intraday-momentum.target.v1',
+      schemaVersion: 'bayn.intraday-momentum.target.v2',
       strategy: 'intraday-momentum',
       sessionDate: snapshot.manifest.sessionDate,
       snapshotId: snapshot.manifest.snapshotId,
       observedAt: snapshot.manifest.observedAt,
       calendarHash: context.session.calendarHash,
+      benchmark: Object.freeze({
+        symbol: protocol.benchmarkSymbol,
+        referencePriceMicros: String(benchmarkPrices.reference),
+        bidPriceMicros: String(benchmarkPrices.bid),
+        askPriceMicros: String(benchmarkPrices.ask),
+        bidSizeMicros: String(benchmarkPrices.bidSize),
+        askSizeMicros: String(benchmarkPrices.askSize),
+        quoteObservedAt: benchmarkQuote.eventAt,
+      }),
       selectedSymbols,
       targetWeights: Object.freeze(
-        Object.fromEntries(protocol.universe.map((symbol) => [symbol, selectedSet.has(symbol) ? targetWeight : 0])),
+        Object.fromEntries(
+          protocol.candidateSymbols.map((symbol) => [symbol, selectedSet.has(symbol) ? targetWeight : 0]),
+        ),
       ),
       signals: rankedSignals,
     })

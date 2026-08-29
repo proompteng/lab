@@ -406,9 +406,7 @@ const startRuntimePreparation = (plan: ApplicationPlanFor<'AutonomousService'>, 
   makeAutonomousServiceRuntime(plan, {
     ownCycleDriver: captureRecoveryFirstCycleDriver(slot),
   }).pipe(
-    Effect.flatMap(({ dependencies, runtime }) =>
-      prepareAutonomousApplication(plan.config, plan.strategy, dependencies, runtime),
-    ),
+    Effect.flatMap(({ runtime }) => prepareAutonomousApplication(runtime)),
     Effect.flatMap(({ cycleFiber }) =>
       Fiber.await(cycleFiber).pipe(
         Effect.flatMap((exit) =>

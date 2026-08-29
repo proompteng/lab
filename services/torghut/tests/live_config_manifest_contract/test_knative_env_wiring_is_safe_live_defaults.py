@@ -12,6 +12,7 @@ from tests.live_config_manifest_contract.support import (
     _assert_chip_universe,
     _assert_exact_live_execution_chip_universe,
     _assert_exact_quote_covered_paper_strategy_universe,
+    _assert_exact_websocket_subscription_universe,
     _container_env,
     _csv_symbols,
     _csv_values,
@@ -317,7 +318,7 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
             context="sim runtime universe allowlist",
         )
         ws_symbols = _csv_symbols(cast(Mapping[str, object], ws_data).get("SYMBOLS"))
-        _assert_exact_quote_covered_paper_strategy_universe(
+        _assert_exact_websocket_subscription_universe(
             self,
             ws_symbols,
             context="websocket core subscription universe",

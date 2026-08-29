@@ -36,7 +36,6 @@ describe('Bayn cycle operations alert contract', () => {
       'BaynExecutionWorkerUnavailable',
       'BaynExecutionWorkerReplicaTargetMissed',
       'BaynExecutionControllerOverdue',
-      'BaynExecutionSessionAdmissionMissed',
       'BaynExecutionWindowUnready',
       'BaynExecutionDecisionLagging',
       'BaynCycleObservationUnavailable',
@@ -64,10 +63,6 @@ describe('Bayn cycle operations alert contract', () => {
       'bayn_execution_controller_next_due_timestamp_seconds{',
     )
     expect(expressions.BaynExecutionControllerOverdue).toContain('bayn_cycle_stall_threshold_seconds{')
-    expect(expressions.BaynExecutionSessionAdmissionMissed).toContain('bayn_autonomous_cycle_not_due_reason{')
-    expect(expressions.BaynExecutionSessionAdmissionMissed).toContain('reason="stale_capital_bootstrap"')
-    expect(expressions.BaynExecutionSessionAdmissionMissed).toContain('bayn_capital_activation_state{')
-    expect(expressions.BaynExecutionSessionAdmissionMissed).toContain('state="realized"')
     expect(expressions.BaynExecutionWindowUnready).toContain('bayn_execution_session_preflight_ready{')
     expect(expressions.BaynExecutionWindowUnready).toContain('bayn_cycle_decision_bound{')
     expect(expressions.BaynExecutionWindowUnready).toContain('bayn_cycle_submission_open_timestamp_seconds{')

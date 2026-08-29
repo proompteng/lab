@@ -1,13 +1,12 @@
 import assert from 'node:assert/strict'
 
 import { describe, expect, test } from 'bun:test'
-import { Cause, Effect, Exit, Redacted, Result } from 'effect'
+import { Cause, Effect, Exit, Result } from 'effect'
 import { CreateAccountStatus, CreateTransferStatus, type Account, type Transfer } from 'tigerbeetle-node'
 
 import { prepareAccounting, rebuildAccountingLedger } from './accounting/domain'
 import type { RuntimeConfig } from './config'
 import { provideTestLayer } from './effect-test-support'
-import { BrokerAccess, noCapitalAuthority } from './execution/authority'
 import { OrderSide, type Fill } from './execution/contracts'
 import {
   assembleAccountPlan,
@@ -31,8 +30,8 @@ import {
   type TigerBeetleClient,
 } from './ledger'
 import { LEDGER_BATCH_MAX } from './ledger-plan'
-import { evaluateRiskBalancedTrend } from './risk-balanced-trend'
-import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
+import { makeLedgerInput } from './testing/ledger-fixture'
+import { config as fixtureConfig } from './testing/runtime-fixtures'
 import type { FillEvent } from './types'
 
 const assertSuccess = <A, E>(result: Result.Result<A, E>): A => {
@@ -105,10 +104,7 @@ const paperPlan = (fillId: string, accountId = 'paper-account') =>
   ).ledger
 
 const evaluationPlan = () => {
-  const snapshot = makeSnapshot()
-  const result = assertSuccess(
-    evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance()),
-  )
+  const result = makeLedgerInput()
   return { result, plan: assertSuccess(buildLedgerPlan(result, journalConfig.tigerBeetle.ledger)) }
 }
 
@@ -358,17 +354,14 @@ describe('TigerBeetle ledger decisions', () => {
 
 describe('TigerBeetle simulation journal', () => {
   test('plans deterministic double-entry transfers and reconciles exact sets and balances', () => {
-    const snapshot = makeSnapshot()
-    const result = assertSuccess(
-      evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance()),
-    )
+    const result = makeLedgerInput()
     const first = assertSuccess(buildLedgerPlan(result, 7001))
     const second = assertSuccess(buildLedgerPlan(result, 7001))
     expect(first).toEqual(second)
     expect(hashPlan(first)).toMatch(/^[a-f0-9]{64}$/)
     expect(hashPlan(first)).toBe(hashPlan(second))
     expect(hashPlan(first)).not.toBe(hashPlan(assertSuccess(buildLedgerPlan(result, 7002))))
-    expect(first.accounts).toHaveLength(fixtureProtocol.universe.length + 6)
+    expect(first.accounts).toHaveLength(result.inputManifest.symbols.length + 6)
     expect(first.transfers.length).toBeGreaterThan(1)
     expect(
       Result.isSuccess(reconcileLedgerPlan(first, materializeAccounts(first), materializeTransfers(first))),
@@ -376,10 +369,7 @@ describe('TigerBeetle simulation journal', () => {
   })
 
   test('fails closed on extra transfers or mismatched balances', () => {
-    const snapshot = makeSnapshot()
-    const result = assertSuccess(
-      evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance()),
-    )
+    const result = makeLedgerInput()
     const plan = assertSuccess(buildLedgerPlan(result, 7001))
     const accounts = materializeAccounts(plan)
     const transfers = materializeTransfers(plan)
@@ -398,10 +388,7 @@ describe('TigerBeetle simulation journal', () => {
   })
 
   test('creates an empty target exactly once and verifies an idempotent replay', async () => {
-    const snapshot = makeSnapshot()
-    const result = assertSuccess(
-      evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance()),
-    )
+    const result = makeLedgerInput()
     const plan = assertSuccess(buildLedgerPlan(result, journalConfig.tigerBeetle.ledger))
     const target = makeLedgerClient()
 
@@ -972,10 +959,7 @@ describe('TigerBeetle simulation journal', () => {
   })
 
   test('rejects a mismatched existing account before creating transfers', async () => {
-    const snapshot = makeSnapshot()
-    const result = assertSuccess(
-      evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance()),
-    )
+    const result = makeLedgerInput()
     const plan = assertSuccess(buildLedgerPlan(result, journalConfig.tigerBeetle.ledger))
     const target = makeLedgerClient()
     target.accounts.set(plan.accounts[0].id, { ...plan.accounts[0], code: plan.accounts[0].code + 1, timestamp: 1n })
@@ -989,11 +973,7 @@ describe('TigerBeetle simulation journal', () => {
   })
 
   test('checks the persisted run read-only and rejects changed TigerBeetle balances', async () => {
-    const snapshot = makeSnapshot()
-    const provenance = makeTestProvenance()
-    const result = assertSuccess(
-      evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance),
-    )
+    const result = makeLedgerInput()
     const plan = assertSuccess(buildLedgerPlan(result, 7001))
     let accounts = materializeAccounts(plan)
     const transfers = materializeTransfers(plan)
@@ -1012,37 +992,9 @@ describe('TigerBeetle simulation journal', () => {
       destroy: () => undefined,
     })
     const config: RuntimeConfig = {
-      host: '127.0.0.1',
-      port: 0,
-      execution: {
-        brokerIdentity: undefined,
-        brokerAccess: BrokerAccess.ReadOnly,
-        capitalAuthority: noCapitalAuthority,
-      },
-      build: {
-        sourceRevision: provenance.sourceRevision,
-        imageRepository: provenance.image.repository,
-        imageDigest: provenance.image.digest,
-        strategyBehaviorHash: provenance.strategy.behaviorHash,
-        strategyParameterHash: provenance.strategy.parameterHash,
-        verification: 'embedded',
-      },
-      healthIntervalMs: 30_000,
+      ...fixtureConfig,
       operationTimeoutMs: 1_000,
-      cycleStallThresholdMs: 300_000,
-      reconciliationStaleThresholdMs: 120_000,
-      unknownMutationThresholdMs: 300_000,
-      clickhouse: {
-        url: 'http://clickhouse.test',
-        username: 'bayn',
-        password: Redacted.make('unused'),
-        snapshotId: snapshot.manifest.finalizedSnapshot.snapshotId,
-        publicationAsOf: snapshot.manifest.finalizedSnapshot.asOfSession,
-        calendarVersion: snapshot.manifest.finalizedSnapshot.calendarVersion,
-        bounds: snapshot.manifest.bounds,
-      },
-      postgres: { url: Redacted.make('postgresql://unused'), tls: false, caPath: '/unused' },
-      tigerBeetle: { clusterId: 2001n, replicaAddresses: ['3000'], ledger: 7001 },
+      tigerBeetle: { ...fixtureConfig.tigerBeetle, ledger: 7001 },
     }
     const check = (journal: JournalService) =>
       journal.checkRun({

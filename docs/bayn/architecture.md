@@ -2,215 +2,143 @@
 
 ## Boundary
 
-Bayn is a single-writer quantitative research and execution runtime. It evaluates one compiled `risk-balanced-trend`
-candidate against one immutable Signal snapshot, journals deterministic simulation, verifies accounting, and exposes
-qualification evidence. The same intent, risk, recovery, reconciliation, and mutation core is used regardless of
-whether the broker adapter targets sandbox or live. The deployed controller currently has read-only broker access and
-no capital authority, so it cannot submit or cancel orders. A bounded `ExecutionMandate` exists only when a separately
-reviewed durable capital grant and mutation-capable broker binding are both present.
+Bayn is a single-writer intraday trading service. The execution path is account-neutral: sandbox and live accounts use
+the same strategy, intent, risk, mutation, recovery, accounting, and reconciliation code. Broker environment and a
+durable capital activation determine where an otherwise identical execution plan may run.
 
-The runtime has three external I/O boundaries:
+The active runtime contains one strategy, `intraday-momentum`, using
+`bayn.intraday-momentum.protocol.v2`. Historical strategy and decision schemas remain readable only where persisted
+records require them; they are not runtime fallbacks and cannot start new cycles.
 
-- Signal ClickHouse, read-only, for the configured finalized publication;
-- a dedicated Bayn TigerBeetle cluster for deterministic simulation accounting; and
-- the existing `EvidenceStore` interface for durable qualification evidence.
+## Ownership
 
-Alpaca is reachable only through the configured CONNECT proxy; the current sandbox adapter uses
-`paper-api.alpaca.markets`. Credentials provide runtime-decoded GET-only broker access in the deployed configuration.
-The canonical autonomous loop performs same-pass reconciliation when it builds a decision, and no broker mutation
-capability is composed while broker access is read-only and capital authority is none.
-Exact asset reads retain status, tradability, fractionability, and normalized attributes as policy-neutral evidence.
+- The account-keyed Restate `BaynExecutionController` exclusively owns scheduling, serialization, durable retries,
+  delayed ticks, and worker-version routing.
+- Pure TypeScript owns market-data verification, the strategy decision, target planning, risk decisions, and cycle
+  transitions.
+- Effect owns bounded external I/O, typed failures, resource acquisition, logging, and tracing for one execution pass.
+- PostgreSQL is the authoritative ledger for activations, cycles, decisions, intents, mutations, reconciliation, and
+  the compact controller status projection.
+- TigerBeetle is the authoritative accounting ledger for cash, fees, cost basis, and realized P&L.
+- ClickHouse is the read-only retained intraday archive populated from Alpaca WebSocket events through Kafka and
+  Dorvud/Flink.
+- The broker adapter performs account-environment-neutral reads and mutations through the restricted egress proxy.
+- The public Bayn deployment serves read-only liveness, readiness, status, metrics, and traces. It does not schedule
+  execution or own broker mutation authority.
 
-The implementation behind `EvidenceStore` is deliberately outside this document. Non-database cleanup must preserve
-that interface and every persisted evidence contract.
+## Intraday flow
 
-## Runtime flow
+1. Restate invokes one bounded `advanceExecutionOnce` pass for the canonical account-binding hash.
+2. The pass reconciles persisted intents and broker state before considering new exposure. Any unknown mutation,
+   discrepancy, stale observation, or identity drift blocks new orders.
+3. During an eligible regular-market window, Bayn reads a finalized rolling intraday snapshot from ClickHouse. The
+   snapshot binds exact archive rows, Kafka topic watermarks, calendar, universe, feed, delay class, observation time,
+   and content hashes.
+4. The pure strategy returns a target portfolio or a typed no-trade result. Missing or late data is a lifecycle
+   blocker, not `NO_TRADE`.
+5. The target planner derives whole-share deltas from the reconciled account and verified execution prices. The
+   strategy decision, exact decision rows, planner input, target plan, risk decisions, and deterministic intent IDs are
+   committed before broker I/O.
+6. The mutation interpreter submits only committed, unexpired intents. Ambiguous outcomes remain unresolved until
+   deterministic client-order-ID lookup and reconciliation recover them.
+7. The controller schedules exactly one successor tick. Restate delivery does not replace database idempotency or the
+   persisted broker-mutation state machine.
+8. Before the close, the same cycle enters close-only operation. Completion requires a flat account, no open orders or
+   unresolved mutations, exact PostgreSQL/TigerBeetle reconciliation, and a persisted net-of-cost performance receipt.
 
-1. The composition root loads Effect Config, decodes the compiled protocol, verifies its parameter hash against the
-   build, verifies the compiled behavior identity, and constructs one pure `Strategy` value.
-2. Startup inspects the configured finalized Signal V2 publication before loading bars. The manifest must match the
-   compiled universe, symbol hash, feed, adjustment, calendar, and evaluation bounds.
-3. Bayn derives the candidate identity and opens the immutable qualification lock through the existing evidence
-   boundary. A terminal result is recovered; an incomplete lock fails closed.
-4. For a new candidate, Bayn loads the locked bars, evaluates the strategy and benchmarks, journals the simulation to
-   TigerBeetle, and requires exact reconciliation.
-5. The evaluation graph and one terminal qualification result are committed through the existing evidence boundary.
-6. A health probe then verifies Signal identity, TigerBeetle state, durable evidence, and dependency connectivity.
-   Readiness opens only when startup evidence exists and every probe is available.
+## Active strategy
 
-`BAYN_QUALIFICATION_RUN_ID` selects the recovery path. That path verifies the stored strategy, Signal, and execution
-bindings and does not load bars, open a new lock, evaluate, journal, or persist. Continuous health checks still verify
-the recovered run after startup.
+After a 60-minute warmup and until 60 minutes before the regular-session close, Bayn evaluates the latest fully
+elapsed 30-minute IEX window. It compares AAPL, AMZN, IWM, NVDA, QQQ, and SMH with SPY and requires positive candidate
+momentum, non-negative benchmark momentum, at least 10 basis points of excess momentum, top-quartile range location,
+a spread no wider than 5 basis points, displayed liquidity, and complete fresh bars, quotes, and trades.
 
-A strategy rejection is terminal economic evidence, not an operational crash. ClickHouse and PostgreSQL layer
-acquisition retry a transient SQL failure twice at one-second intervals. PostgreSQL connection failures reported by
-the driver as `UnknownError` are retryable only when the `connect` operation carries `ECONNREFUSED`; authentication,
-TLS configuration, and other terminal failures fail immediately. A transient startup dependency failure that remains
-after bounded acquisition escapes the scoped runtime, closes HTTP and acquired clients, and lets the Deployment
-restart the process. A deterministic contract or evidence failure enters `FAILED` and keeps HTTP available for
-diagnosis with readiness closed.
+The strategy selects at most one long position and caps it at 10% of mandate allocation. Entry uses whole-share IOC
+limit orders at the verified adverse quote boundary. Bayn begins flattening 30 minutes before the close and must be
+flat 15 minutes before the close. The protocol, universe, thresholds, feed contract, and execution model are
+source-controlled and included in the image's verified behavior, parameter, and protocol hashes.
 
-## Execution mutation boundary
+## Mutation and risk boundary
 
-Execution mutation uses one deliberately small transaction/I/O boundary, shared by sandbox and live adapters:
+Mutation is capability-gated, not account-type-gated:
 
-1. A committed approved intent and current `ExecutionMandate` acquire the single-writer fence.
-2. PostgreSQL records `SUBMIT_STARTED`, the exact request hash, deterministic client-order ID, and immutable broker
-   consistency delay before the first POST.
-3. The coordinator rechecks the committed risk-decision expiry with the Effect clock immediately before POST or
-   DELETE. The interval is half-open, so the exact cutoff instant makes zero broker mutations.
-4. Exactly one Alpaca request is made. Decoded 4xx rejections are terminal; a timeout, interruption, malformed response,
-   server response, or post-send crash remains `UNKNOWN`.
-5. Recovery waits the committed delay and performs `GET /v2/orders:by_client_order_id`. It never wraps POST or DELETE
-   in a generic retry.
-6. Cancel targets only a recorded broker order ID. A kill may permit that cancellation, but it cannot authorize a new
-   exposure-increasing intent.
+1. Static broker-access and capital-authority configuration set the maximum possible capability.
+2. A current durable activation bound to source revision, image digest, strategy hashes, account reference, and risk
+   policy must be realized before the runtime composes mutation capability.
+3. PostgreSQL records `SUBMIT_STARTED`, the canonical request hash, deterministic client-order ID, and recovery delay
+   before the first broker POST.
+4. The coordinator rechecks authority, kill state, reconciliation, freshness, limits, and the half-open submission
+   interval immediately before broker I/O.
+5. Decoded broker rejections are terminal. Timeouts, malformed responses, server errors, interruption, or a post-send
+   crash remain unknown and block new exposure.
+6. Recovery performs deterministic read-by-client-order-ID. Broker POST and DELETE operations are never wrapped in a
+   generic retry.
 
-`mutation_events` is append-only and enforces the transition sequence, request identity, response identity, broker
-order identity, and consistency delay in PostgreSQL. Any unresolved submit or cancel blocks later exposure-increasing
-intents; terminal recovery releases that block. There is no scheduler, public order route, arbitrary order API, blind
-flatten, runtime registry, or alternate writer.
-
-This boundary is capability-gated rather than account-type-gated. The deployed controller currently composes only
-GET-capable broker access, so `BrokerMutation` is unavailable and capital authority is none. When a reviewed mandate
-is present, the same coordinator, intent store, mutation store, risk logic, and recovery path are used for sandbox or
-live; only the injected broker adapter/configuration differs.
+Execution is long-only. Sells cannot exceed reconciled inventory. Symbol exposure, gross and net exposure, turnover,
+loss, drawdown, open-order count, slippage, staleness, and cutoff limits fail closed.
 
 ## Effect composition
 
-Effect is used at resource and failure boundaries, not as a container for ordinary TypeScript:
+Effect is used at capability and failure boundaries, not as a wrapper around pure calculations:
 
-- `Strategy`, protocol values, calculations, hashing, and qualification analysis are plain immutable values and pure
-  functions.
-- `MarketData`, `Journal`, and `EvidenceStore` are Effect services because they own external I/O and resource
-  lifecycles.
-- `src/index.ts` is the status/service process entry point; the native Restate worker and activation command have
-  dedicated process entry points. They share the same application-plan/configuration and Effect resource composition
-  rather than constructing parallel execution engines.
-- `run` owns one scoped lifetime. It starts the HTTP layer, performs initialization, and forks the repeating health
-  monitor with `forkScoped`; scope closure releases the server and clients.
-- `startup.ts` and `health.ts` own lifecycle decisions; `ledger-plan.ts` is deterministic accounting, while
-  `tigerbeetle-client.ts` owns DNS, client acquisition, invalidation, and release.
-- Versioned protocol and evidence types come from their Effect Schemas. `types.ts` is a compatibility export surface,
-  not a second hand-written contract.
-- Operational timeouts and typed `OperationalError` values are applied where an external operation enters the
-  lifecycle. Domain functions throw only inside an `Effect.try` boundary that assigns the owning component and
-  operation.
-- HTTP receives the runtime state and the narrow evidence-read callback it needs. It does not depend on the strategy or
-  the complete evidence service.
-- The Alpaca adapter enters runtime composition with an explicit `BrokerEnvironment` and `BrokerAccess`. The deployed
-  binding is GET-only. `WriterFence`, intent/mutation stores, and the coordinator are composed only when the decoded
-  execution policy grants their capabilities; sandbox/live selection does not change core decisions.
+- strategy calculations, hashing, market-data validation, target planning, risk rules, and state transitions are pure
+  immutable functions;
+- database, ClickHouse, TigerBeetle, broker, telemetry, and HTTP resources are scoped Effect services;
+- the execution worker owns one process-scoped `ManagedRuntime`, while each Restate handler runs one bounded pass;
+- typed domain blockers return durable outcomes and continue the reconciliation cadence; transient infrastructure
+  failures use bounded Restate retries; and
+- credentials, plaintext account identity, raw broker payloads, and strategy data never enter logs, metrics, traces, or
+  public status.
 
-Do not introduce a `Context.Service` or `Layer` for a pure value merely to make it injectable. Add an Effect service
-only when a capability needs acquisition, release, configuration, retry, concurrency, or typed I/O failure.
+Do not introduce repositories, registries, plugins, events, or dependency-injection wrappers for pure values. Add a
+service only for a real acquired capability, external I/O boundary, or typed lifecycle.
 
-## Runtime state and probes
+## Runtime state and HTTP
 
-The internal operational states are `STARTING`, `READY`, `DEGRADED`, and `FAILED`. Each health observation
-records one sequence number and independent `UNKNOWN`, `AVAILABLE`, or `UNAVAILABLE` results for PostgreSQL,
-Signal, TigerBeetle, and durable evidence. Readiness requires:
+Internal operational states are `STARTING`, `READY`, `DEGRADED`, and `FAILED`. The health projection independently
+tracks PostgreSQL, Signal/ClickHouse, TigerBeetle, cycle state, and the cycle runner as `UNKNOWN`, `AVAILABLE`, or
+`UNAVAILABLE`.
 
-- operational state `READY`;
-- an active evaluation or recovered qualification; and
-- every dependency result `AVAILABLE`.
+`GET /readyz` is ready only when all of the following are true:
 
-The monitor runs immediately after initialization and then at `BAYN_HEALTH_INTERVAL_MS`. A transient defect moves a
-previously ready runtime to `DEGRADED`; a later complete probe can reopen readiness without discarding the last valid
-evidence. `BAYN_OPERATION_TIMEOUT_MS` bounds every external startup and health operation.
+- operational status is `READY` and the health observation is within its freshness lease;
+- no capital activation is pending;
+- the cycle condition is neither `UNKNOWN`, `STALLED`, nor `FAILED`;
+- the most recent controller pass is not a failure;
+- every required dependency is `AVAILABLE`; and
+- when a broker is configured, its account binding and read capability are both verified.
 
-`GET /livez` proves only that the process and HTTP server are alive. `GET /readyz` exposes the current readiness
-decision. `GET /v1/status` keeps operational health, data identity, evidence, economic verdict, qualification,
-accounting, build provenance, and fixed authority separate. `economic.verdict` is the economic gate result;
-`qualification.verdict` is the terminal qualification result. Neither field implies execution authority, which is
-fixed exclusively by `authority`.
+`GET /v1/status` reports operational health, dependencies, data state, accounting and economics, the current or latest
+cycle, controller loop and durable Restate projection, capital activation, redacted broker state, effective authority,
+verified build identity, and the current blocker. It does not expose the removed evaluation or qualification
+projections. `authority.brokerOrders` and `authority.capitalPromotion` become true only after the exact durable capital
+activation is realized; configuration alone is not authority.
 
-## Strategy and economic contract
+`GET /livez` proves only that the HTTP process is alive. A ready status pod, a healthy Restate deployment, or an Argo
+`Synced/Healthy` result alone does not prove that a trading decision, broker order, fill, or profit occurred.
 
-The compiled `bayn.risk-balanced-trend.protocol.v3` precommit uses the exact `cross-asset-taa-v1` universe:
+## Delivery and recovery
 
-`DBC, EFA, IEF, SPY, VNQ`.
+Normal delivery is immutable and GitOps-only:
 
-The cross-asset Signal history is finalized and accepted. The explicit M2.2 release removes the terminal
-`equity-infrastructure-v1` M2.1 runtime run-ID pin while preserving the historical PostgreSQL graph, ephemeral operator
-audit output, and TigerBeetle journal unchanged. Runtime recovery reads the durable EvidenceStore graph by run ID; no
-dossier file is mounted.
+1. merge reviewed source to `main`;
+2. build and publish the exact multi-architecture image;
+3. advance the generated Bayn deployment pins only when source, image, strategy, activation, and risk identities agree;
+4. let Argo reconcile the public status service, execution worker, and source-versioned activation hook; and
+5. verify the exact source and image live before accepting controller or broker evidence.
 
-The released cross-asset run is terminal `REJECTED` but non-authorizing because its execution contract was not
-live-causal. Its retrospective audit also fails closed: ClickHouse records pre-lock Bayn/operator reads of the bars
-table, but cannot prove after the fact that the results contained only bounded publication count/hash evidence. The
-audit therefore fails candidate-bar chronology and principal checks. GitOps may pin that terminal run ID for immutable
-database recovery under `OBSERVE`; the pin clears no qualification or mutation gate.
+The public status Deployment may surge because it has no execution authority. Multiple execution-worker replicas are
+safe because Restate serializes the account-keyed virtual object and PostgreSQL enforces the writer fence for every
+trading-state transaction. Intents and deterministic client-order IDs remain the protection across retries, worker
+replacement, and ambiguous broker responses.
 
-At each month-end close, the strategy computes volatility-normalized returns over 21, 63, 126, and 252 sessions,
-clips each score to `[-2, 2]`, and uses the median as the composite. A sleeve is eligible only when at least three of
-four horizons are positive and the median is positive. Eligible sleeves are weighted by positive conviction per unit
-annualized volatility, redistributed under a 35% per-symbol cap, quantized deterministically, and scaled down when
-estimated portfolio volatility exceeds 10%. Residual exposure remains cash.
+Rollback must deactivate the current controller epoch and prove the writer fence clear before activating another
+source/image identity. Direct deployment and manual broker orders are not valid rollout or trading proof.
 
-The v3 execution model is live-causal. Once the signal session is finalized, planning uses that session's close-price
-vector and a content-hashed reconciled broker state observed before planning. The bounded Alpaca calendar response
-binds its request range, source/version, complete normalized session set, response hash, and the selected future
-session's exact UTC open and close. Decoding revalidates the response hash and requires that selected session to be the
-first post-signal session in the bound observation.
-Ordinary non-extended `DAY` market orders may be submitted only after the plan is committed and before a fixed
-15-minute pre-open cutoff. Risk approval is valid in `[submissionOpenAt, submissionCutoffAt)`. Planned buys reserve
-aggregate pre-submit buying power and cannot spend planned sell proceeds. The selected session open is a fill outcome:
-changing it may alter fills, gaps, slippage, shortfall, and performance, but cannot alter planned quantities.
+## Completion evidence
 
-The source-controlled v4 precommit identities are behavior
-`dde55f6292080b185554148cbfe4380e729626df1d11cbb47392645a80ce6c46` and parameters
-`150f22c28829c60d6c5947ee44361de1e4c53c18269fa3585e3a81cb5b3e3d1b`. They do not relabel the terminal v3
-rejection and do not constitute a new qualification. GitOps must hold this changed identity until a finalized snapshot
-newer than the observed 2026-07-24 snapshot is available.
-
-The evaluator compares the candidate with buy-and-hold, direct-volatility timing, and doubled-cost results over aligned
-dates. Qualification also applies the committed statistical and walk-forward policy. Every decision, benchmark,
-execution assumption, gate, and result remains bound to the run identity; refactoring composition must not alter those
-values.
-
-## Reproducibility and failure semantics
-
-The executable embeds the source revision, image repository, strategy behavior hash, and parameter hash. Production
-startup rejects absent or mismatched embedded facts. GitOps supplies the immutable image-index digest, and the run ID
-also binds the complete decoded protocol, finalized Signal provenance, calendar, and explicit bounds.
-
-The local `dev` and `start` scripts select `development-configured` provenance because those artifacts do not
-contain production build metadata. This changes only how provenance is verified and reported; it does not disable
-evaluation, journaling, health checks, or fail-closed behavior.
-
-Repeated execution of the same inputs is deterministic and must either recover exact terminal evidence or reproduce
-the same journal objects. Any mismatched manifest, universe, build identity, lock, journal object, reconciliation,
-qualification, or durable evidence closes readiness and never expands authority.
-
-## Deployment contract
-
-GitOps owns the read/status `apps/v1 Deployment`, the native Restate execution worker, and a dedicated three-replica
-TigerBeetle cluster. The status Deployment may use `maxSurge: 1` because it does not own autonomous execution;
-per-account execution serialization is owned by the Restate virtual object. The worker deployment may run multiple
-ready replicas because the PostgreSQL writer fence is transaction-scoped rather than process-scoped: each durable
-trading-state transaction acquires the same advisory transaction lock and releases it with the transaction or failed
-connection. Restate still chooses one serialized account command at a time, while persisted mutation intents and
-deterministic client order IDs protect external broker effects across retries and worker replacement. The pods have no
-Kubernetes API token. A broker Secret does not expand authority. Scaling the status Deployment to zero is a maintenance
-state, not a second execution mode.
-
-Every promoted image requires live acceptance against one coherent writer: the pod spec's digest-pinned image reference
-must match the GitOps OCI index digest. The runtime image ID is supporting evidence: its digest must be either that same
-index digest or the matching platform manifest declared by that index for the scheduled node architecture. Startup must
-produce or recover durable terminal evidence, readiness must remain open across continuous probes, all dependencies
-must remain available, accounting must be exact, and HTTP status must retain observe-only authority. An Argo
-`Synced/Healthy` result without those observations is not sufficient.
-
-Outside an explicit one-shot qualification release, GitOps pins `BAYN_QUALIFICATION_RUN_ID` to one terminal run. The
-release writer preserves that pin while compiled strategy identity, Signal identity and bounds, TigerBeetle cluster
-ID, and TigerBeetle ledger remain identical. TigerBeetle replica addresses are transport routing, not qualification
-identity, so an explicit reviewed candidate may change them without relabeling terminal evidence. A cluster-ID or
-ledger change still requires a fresh Signal snapshot. The writer has no source-coded current snapshot: ordinary image
-promotion reads the deployed runtime, while a qualification transition must supply the complete candidate runtime.
-After a fresh snapshot removes the pin, the complete deployed candidate becomes immutable: source, image digest,
-compiled strategy, Signal and TigerBeetle runtime may only be replayed exactly until its terminal run is pinned. A
-controlled invocation may install the exact independently accepted terminal run only for that deployed candidate. It
-cannot replace an old pin and advance to a fresh candidate in the same change. A later pinned operational release may
-change source while preserving identical compiled strategy and qualification identity. Automatic image promotion
-never creates a qualification pin.
+Operational rollout requires the exact reviewed source/image live, fresh controller ticks after worker replacement,
+fresh status projections, exact reconciliation, and zero unresolved mutations. Autonomous trading requires additional
+natural-session evidence: a verified decision, deterministic broker intents, broker-confirmed fills when the strategy
+trades, close/flat completion, exact accounting, all costs, and realized return. A valid `NO_TRADE` is reported as such;
+profit is never inferred from infrastructure health.

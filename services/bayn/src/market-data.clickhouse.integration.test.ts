@@ -4,10 +4,10 @@ import { NodeHttpClient } from '@effect/platform-node'
 import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { Cause, Effect, Exit, Layer, ManagedRuntime } from 'effect'
 
-import { config } from './app-test-support'
+import { persistedMarketDataContract } from './testing/persisted-snapshot-fixture'
+import { config } from './testing/runtime-fixtures'
 import { makeMarketDataQueries } from './market-data/queries'
 import { baynTestClickhouseGuardToken, baynTestClickhouseUrl } from './test-environment.test-support'
-import { fixtureProtocol } from './test-fixtures'
 
 const clickhouseUrl = baynTestClickhouseUrl
 const describeClickhouse = clickhouseUrl === undefined ? describe.skip : describe
@@ -102,19 +102,19 @@ describeClickhouse('Bayn ClickHouse market-data query contract', () => {
               publisher_source_revision: '2'.repeat(40),
               publisher_image_repository: 'registry.example.test/lab/signal-publisher',
               publisher_image_digest: `sha256:${'3'.repeat(64)}`,
-              universe_id: fixtureProtocol.universeId,
-              universe_symbol_hash: fixtureProtocol.universeSymbolHash,
+              universe_id: persistedMarketDataContract.universeId,
+              universe_symbol_hash: persistedMarketDataContract.universeSymbolHash,
               provider: 'alpaca',
               source_feed: 'sip',
               adjustment: 'all',
               calendar_version: calendarVersion,
-              requested_start: fixtureProtocol.historyStart,
+              requested_start: persistedMarketDataContract.historyStart,
               publication_asof: publicationDate,
-              first_session: fixtureProtocol.historyStart,
+              first_session: persistedMarketDataContract.historyStart,
               last_session: publicationDate,
-              symbol_count: fixtureProtocol.universe.length,
+              symbol_count: persistedMarketDataContract.universe.length,
               session_count: 1,
-              bar_count: fixtureProtocol.universe.length,
+              bar_count: persistedMarketDataContract.universe.length,
               bars_content_hash: '4'.repeat(64),
               sessions_content_hash: '5'.repeat(64),
               manifest_content_hash: '6'.repeat(64),
@@ -145,7 +145,7 @@ describeClickhouse('Bayn ClickHouse market-data query contract', () => {
         return yield* Effect.exit(sql`
           SELECT toString(requested_start) AS requested_start
           FROM signal.snapshot_manifests_v2
-          WHERE requested_start = toDate(${sql.param('String', fixtureProtocol.historyStart)})
+          WHERE requested_start = toDate(${sql.param('String', persistedMarketDataContract.historyStart)})
         `)
       }),
     )
@@ -164,7 +164,7 @@ describeClickhouse('Bayn ClickHouse market-data query contract', () => {
     const rows = await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* ClickhouseClient.ClickhouseClient
-        return yield* makeMarketDataQueries(sql, { clickhouse: config.clickhouse }, fixtureProtocol)
+        return yield* makeMarketDataQueries(sql, { clickhouse: config.clickhouse }, persistedMarketDataContract)
           .loadCyclePublicationManifests
       }),
     )
@@ -172,9 +172,9 @@ describeClickhouse('Bayn ClickHouse market-data query contract', () => {
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({
       snapshot_id: snapshotId,
-      universe_id: fixtureProtocol.universeId,
-      universe_symbol_hash: fixtureProtocol.universeSymbolHash,
-      requested_start: fixtureProtocol.historyStart,
+      universe_id: persistedMarketDataContract.universeId,
+      universe_symbol_hash: persistedMarketDataContract.universeSymbolHash,
+      requested_start: persistedMarketDataContract.historyStart,
       publication_asof: publicationDate,
       calendar_version: calendarVersion,
     })

@@ -46,12 +46,6 @@ Bayn remains fail-closed. A healthy pod, a clear alert, or a terminal cycle does
   `GET /v1/status`, then inspect Restate for a paused or retrying `BaynExecutionController/.../tick` invocation. Ready
   worker replicas do not prove durable execution progress. Restore the existing Restate invocation path; never create
   a replacement scheduler or bypass the PostgreSQL writer fence.
-- `BaynExecutionSessionAdmissionMissed`: inspect `autonomousCycleLoop.lastPass` in `GET /v1/status` and require the
-  durable Restate pass to report `NOT_DUE / STALE_CAPITAL_BOOTSTRAP` with the expected signal and execution session.
-  Confirm the research-capital activation is still realized, then verify whether the finalized signal publication
-  arrived before that session's publication/submission-open deadline. Do not force late admission, move the deadline,
-  or synthesize a cycle after the cutoff. Preserve the missed-session evidence and repair publication/bootstrap timing
-  so the next eligible session is admitted normally; repeated misses are an execution-liveness incident.
 - `BaynExecutionWindowUnready`: inspect the current ACTIVE cycle, its immutable `submissionOpenAt`, and
   `bayn_execution_session_preflight_ready`. From ten minutes before submission opens until its cutoff, preflight
   requires the realized capital activation, durable execution authority with clear kill state, exact reconciliation

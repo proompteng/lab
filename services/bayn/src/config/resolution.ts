@@ -1,9 +1,8 @@
 import { Redacted, Result, Schema } from 'effect'
 
 import { decodeBrokerConnection, type BrokerConnection } from '../broker/connection'
-import { BrokerEnvironment } from '../broker/identity'
 import { EmbeddedBuildMetadataSchema, type EmbeddedBuildMetadata } from '../build'
-import { BrokerAccess, CapitalAuthorityKind } from '../execution/authority'
+import { BrokerAccess } from '../execution/authority'
 import { CapitalAuthoritySelection, resolveExecutionPolicy, type ExecutionPolicy } from '../execution/configuration'
 import { strictParseOptions as StrictParseOptions } from '../schemas'
 import {
@@ -84,7 +83,7 @@ const decodeAlpaca = (
 ): Result.Result<AlpacaRuntimeConfig | undefined, RuntimeConfigResolutionFailure> => {
   const configured = credentialPresence(parsed)
   const count = configuredCredentialCount(configured)
-  if (count === 0) return Result.succeed(undefined)
+  if (count === 0) return fail({ _tag: 'MissingAlpacaCredentials' })
   if (count !== 3) return fail({ _tag: 'IncompleteAlpacaCredentials', configured })
   if (parsed.authorityGenerationHash === undefined) return fail({ _tag: 'MissingAlpacaAuthorityGeneration' })
 
@@ -129,35 +128,6 @@ const resolvePolicy = (
   return Result.isFailure(policy)
     ? fail({ _tag: 'InvalidExecutionPolicy', cause: policy.failure })
     : Result.succeed(policy.success)
-}
-
-const validateOperation = (
-  parsed: ParsedRuntimeConfig,
-  policy: ExecutionPolicy,
-  alpaca: AlpacaRuntimeConfig | undefined,
-): Result.Result<void, RuntimeConfigResolutionFailure> => {
-  if (parsed.configuredOperation === undefined) return Result.succeed(undefined)
-  if (policy.brokerAccess !== BrokerAccess.ReadOnly || policy.capitalAuthority._tag !== CapitalAuthorityKind.None) {
-    return fail({
-      _tag: 'ExecutionCandidateDiscoveryRequiresReadOnlyNoCapital',
-      brokerAccess: parsed.brokerAccess,
-      capitalAuthority: parsed.capitalAuthority,
-    })
-  }
-  if (parsed.qualificationRunId === undefined) {
-    return fail({ _tag: 'ExecutionCandidateDiscoveryRequiresQualificationRun' })
-  }
-  if (alpaca === undefined) return fail({ _tag: 'ExecutionCandidateDiscoveryRequiresAlpacaBinding' })
-  if (parsed.configuredOperation === 'ExecutionPrepare') {
-    if (parsed.executionPrepareRequest === undefined) return fail({ _tag: 'ExecutionPrepareRequiresRequest' })
-    if (alpaca.environment !== BrokerEnvironment.Sandbox) {
-      return fail({
-        _tag: 'ExecutionPrepareRequiresSandboxBroker',
-        brokerEnvironment: alpaca.environment,
-      })
-    }
-  }
-  return Result.succeed(undefined)
 }
 
 const validateProvenanceMode = (
@@ -234,7 +204,6 @@ const baseConfig = (
 ) => ({
   host: parsed.host,
   port: parsed.port,
-  qualificationRunId: parsed.qualificationRunId,
   capitalActivationRequestJson: parsed.capitalActivationRequestJson,
   researchCapitalBuildLineageJson: parsed.researchCapitalBuildLineageJson,
   execution,
@@ -256,67 +225,13 @@ const loadedConfig = (
   parsed: ParsedRuntimeConfig,
   execution: ExecutionPolicy,
   build: RuntimeBuildMetadata,
-  alpaca: AlpacaRuntimeConfig | undefined,
+  alpaca: AlpacaRuntimeConfig,
 ): Result.Result<LoadedRuntimeConfig, RuntimeConfigResolutionFailure> => {
   const common = baseConfig(parsed, execution, build, alpaca)
-  if (parsed.configuredOperation === 'ExecutionCandidateDiscovery') {
-    const qualificationRunId = parsed.qualificationRunId
-    if (qualificationRunId === undefined) {
-      return fail({ _tag: 'ExecutionCandidateDiscoveryRequiresQualificationRun' })
-    }
-    if (alpaca === undefined) {
-      return fail({ _tag: 'ExecutionCandidateDiscoveryRequiresAlpacaBinding' })
-    }
-    return Result.succeed({
-      ...common,
-      runtimeMode: 'ExecutionCandidateDiscovery',
-      qualificationRunId,
-      execution: execution as Extract<
-        LoadedRuntimeConfig,
-        { readonly runtimeMode: 'ExecutionCandidateDiscovery' }
-      >['execution'],
-      alpaca,
-    })
-  }
-  if (parsed.configuredOperation === 'ExecutionPrepare') {
-    const qualificationRunId = parsed.qualificationRunId
-    if (qualificationRunId === undefined) {
-      return fail({ _tag: 'ExecutionCandidateDiscoveryRequiresQualificationRun' })
-    }
-    if (alpaca === undefined) {
-      return fail({ _tag: 'ExecutionCandidateDiscoveryRequiresAlpacaBinding' })
-    }
-    const executionPrepareRequest = parsed.executionPrepareRequest
-    if (executionPrepareRequest === undefined) {
-      return fail({ _tag: 'ExecutionPrepareRequiresRequest' })
-    }
-    if (alpaca.environment !== BrokerEnvironment.Sandbox) {
-      return fail({
-        _tag: 'ExecutionPrepareRequiresSandboxBroker',
-        brokerEnvironment: alpaca.environment,
-      })
-    }
-    return Result.succeed({
-      ...common,
-      runtimeMode: 'ExecutionPrepare',
-      qualificationRunId,
-      executionPrepareRequest,
-      execution: execution as Extract<LoadedRuntimeConfig, { readonly runtimeMode: 'ExecutionPrepare' }>['execution'],
-      alpaca,
-    })
-  }
-  if (alpaca === undefined) {
-    return Result.succeed({
-      ...common,
-      runtimeMode: 'BrokerlessService',
-      execution: execution as Extract<LoadedRuntimeConfig, { readonly runtimeMode: 'BrokerlessService' }>['execution'],
-      alpaca: undefined,
-    })
-  }
   return Result.succeed({
     ...common,
     runtimeMode: 'AutonomousService',
-    execution: execution as Extract<LoadedRuntimeConfig, { readonly runtimeMode: 'AutonomousService' }>['execution'],
+    execution: execution as LoadedRuntimeConfig['execution'],
     alpaca,
   })
 }
@@ -331,12 +246,11 @@ export const resolveRuntimeConfig = (
   if (Result.isFailure(timing)) return Result.fail(timing.failure)
   const alpaca = decodeAlpaca(parsed)
   if (Result.isFailure(alpaca)) return Result.fail(alpaca.failure)
+  if (alpaca.success === undefined) return Result.fail({ _tag: 'MissingAlpacaCredentials' })
   const execution = resolvePolicy(parsed, alpaca.success)
   if (Result.isFailure(execution)) return Result.fail(execution.failure)
   const reconciliationTiming = validateExecutionReconciliationTiming(parsed, execution.success, alpaca.success)
   if (Result.isFailure(reconciliationTiming)) return Result.fail(reconciliationTiming.failure)
-  const operation = validateOperation(parsed, execution.success, alpaca.success)
-  if (Result.isFailure(operation)) return Result.fail(operation.failure)
   const provenance = validateProvenanceMode(parsed, input.embeddedBuildMetadata)
   if (Result.isFailure(provenance)) return Result.fail(provenance.failure)
   const postgresTls = validatePostgresTls(parsed)
@@ -350,10 +264,7 @@ export const redactedConfigSummary = (config: LoadedRuntimeConfig) => ({
   ...config,
   clickhouse: { ...config.clickhouse, password: Redacted.make('[REDACTED]') },
   postgres: { ...config.postgres, url: Redacted.make('[REDACTED]') },
-  alpaca:
-    config.alpaca === undefined
-      ? undefined
-      : { ...config.alpaca, key: Redacted.make('[REDACTED]'), secret: Redacted.make('[REDACTED]') },
+  alpaca: { ...config.alpaca, key: Redacted.make('[REDACTED]'), secret: Redacted.make('[REDACTED]') },
 })
 
 export type { BrokerConnection }

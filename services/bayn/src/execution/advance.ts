@@ -1,38 +1,15 @@
 import { Data, Effect } from 'effect'
 
-import type { CycleRunnerError } from '../cycle/runner'
 import { CycleState } from '../cycle/model'
-import type { CycleBindingResult, CycleNotDueReason, CycleRunResult } from '../cycle/runner/model'
+import type { CycleRunnerError } from '../cycle/runner'
+import type { CycleRunResult } from '../cycle/runner/model'
 import { canonicalHashV1Result } from '../hash'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
 import { withObservedSpan } from '../telemetry'
 
-type AdvanceCycleResult =
-  | Pick<Extract<CycleRunResult, { readonly outcome: 'RECOVERED' }>, 'outcome' | 'action'>
-  | {
-      readonly outcome: Extract<CycleRunResult, { readonly outcome: 'ACQUIRED' | 'REACQUIRED' }>['outcome']
-      readonly readiness?: Pick<CycleBindingResult, 'outcome'>
-    }
-  | {
-      readonly outcome: 'RESUMED'
-      readonly readiness: {
-        readonly outcome: Extract<CycleRunResult, { readonly outcome: 'RESUMED' }>['readiness']['outcome']
-      }
-    }
-  | {
-      readonly outcome: 'ALREADY_TERMINAL'
-      readonly cycle: Pick<Extract<CycleRunResult, { readonly outcome: 'ALREADY_TERMINAL' }>['cycle'], 'state'>
-    }
-  | {
-      readonly outcome: Exclude<
-        CycleRunResult['outcome'],
-        'ACQUIRED' | 'ALREADY_TERMINAL' | 'REACQUIRED' | 'RECOVERED' | 'RESUMED'
-      >
-    }
-
 interface AdvancePass {
   readonly observation: AutonomousCyclePassObservation
-  readonly result?: AdvanceCycleResult
+  readonly result?: CycleRunResult
   readonly nextDelayMs?: number
 }
 
@@ -45,8 +22,7 @@ export interface AdvanceExecutionCommand {
 }
 
 export type ExecutionBlocker =
-  | { readonly _tag: 'NoPublication' }
-  | { readonly _tag: 'NotDue'; readonly reason?: CycleNotDueReason }
+  | { readonly _tag: 'WindowClosed' }
   | { readonly _tag: 'RecoveryWaiting' }
   | { readonly _tag: 'CycleBlocked' }
   | {
@@ -91,17 +67,8 @@ const classifyAdvance = ({ observation, result }: AdvancePass): UnhashedAdvanceO
       },
     }
   }
-  if (observation.outcome === 'NO_PUBLICATION') {
-    return { _tag: 'Blocked', reason: { _tag: 'NoPublication' } }
-  }
-  if (observation.outcome === 'NOT_DUE') {
-    return {
-      _tag: 'Blocked',
-      reason: {
-        _tag: 'NotDue',
-        ...(observation.notDueReason === undefined ? {} : { reason: observation.notDueReason }),
-      },
-    }
+  if (observation.outcome === 'WINDOW_CLOSED') {
+    return { _tag: 'Blocked', reason: { _tag: 'WindowClosed' } }
   }
   if (result?.outcome === 'RECOVERED' && result.action === 'WAITING') {
     return { _tag: 'Blocked', reason: { _tag: 'RecoveryWaiting' } }
@@ -110,9 +77,6 @@ const classifyAdvance = ({ observation, result }: AdvancePass): UnhashedAdvanceO
     return { _tag: 'Blocked', reason: { _tag: 'CycleBlocked' } }
   }
   if (result?.outcome === 'ALREADY_TERMINAL' && result.cycle.state === CycleState.Blocked) {
-    return { _tag: 'Blocked', reason: { _tag: 'CycleBlocked' } }
-  }
-  if (result !== undefined && 'readiness' in result && result.readiness.outcome === 'BLOCKED') {
     return { _tag: 'Blocked', reason: { _tag: 'CycleBlocked' } }
   }
   return { _tag: 'Completed' }
@@ -140,16 +104,12 @@ const hashOutcome = (
             result: observation.result,
             outcome: observation.outcome,
             observedAt: observation.observedAt,
-            ...(observation.cadence === undefined ? {} : { cadence: observation.cadence }),
-            ...(observation.notDueReason === undefined ? {} : { notDueReason: observation.notDueReason }),
-            ...(observation.cadenceDecision === undefined ? {} : { cadenceDecision: observation.cadenceDecision }),
           }
         : {
             result: observation.result,
             operation: observation.operation,
             failure: observation.failure,
             observedAt: observation.observedAt,
-            ...(observation.cadence === undefined ? {} : { cadence: observation.cadence }),
           },
     cycleResult:
       result === undefined
@@ -157,7 +117,6 @@ const hashOutcome = (
         : {
             outcome: result.outcome,
             ...(result.outcome === 'RECOVERED' ? { action: result.action } : {}),
-            ...('readiness' in result ? { readinessOutcome: result.readiness.outcome } : {}),
           },
     nextDelayMs,
   }

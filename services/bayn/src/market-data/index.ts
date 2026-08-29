@@ -30,7 +30,12 @@ export type {
   IntradaySnapshotRequest,
   IntradayTrade,
 } from './intraday/model'
-export { archiveVerifiedIntradaySnapshotReference, IntradayMarketData, IntradaySnapshotFailure } from './intraday/model'
+export {
+  archiveVerifiedIntradaySnapshotReference,
+  IntradayMarketData,
+  IntradaySnapshotFailure,
+  IntradaySnapshotPurpose,
+} from './intraday/model'
 export { IntradayMarketDataLive, makeIntradayMarketData } from './intraday/program'
 export { compareIntradayInstants, intradayAgeNanos, intradayInstantNanos, millisecondsAsNanos } from './intraday/time'
 export {

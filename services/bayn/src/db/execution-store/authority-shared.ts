@@ -3,10 +3,8 @@ import { Effect, Schema } from 'effect'
 
 import {
   decodeAuthorityState,
-  decodeCapitalGrantGeneration,
   decodeResearchCapitalGrantGeneration,
   type AuthorityState,
-  type CapitalGrantGeneration,
   type ResearchCapitalGrantGeneration,
 } from '../../execution/contracts'
 import {
@@ -41,63 +39,6 @@ export const authorityStateFromRow = (
     ...(row.reason === null ? {} : { reason: row.reason }),
     version,
     updatedAt: row.updated_at.toISOString(),
-  })
-}
-
-export const capitalGrantGenerationFromRow = (
-  row: AuthorityGenerationRow,
-): Effect.Effect<CapitalGrantGeneration, ExecutionStoreError | Schema.SchemaError> => {
-  if (
-    row.activation_schema_version !== 'bayn.paper-authority-generation.v2' ||
-    row.previous_generation_hash === null ||
-    row.qualification_run_id === null ||
-    row.qualification_lock_id === null ||
-    row.qualification_result_hash === null ||
-    row.protocol_hash === null ||
-    row.qualification_execution_policy_hash === null ||
-    row.qualification_source_revision === null ||
-    row.qualification_image_repository === null ||
-    row.qualification_image_digest === null ||
-    row.activation_source_revision === null ||
-    row.activation_image_repository === null ||
-    row.activation_image_digest === null ||
-    row.strategy_name === null ||
-    row.strategy_behavior_hash === null ||
-    row.strategy_parameter_hash === null ||
-    row.strategy_parameter_schema_version === null ||
-    row.account_id === null ||
-    row.risk_policy_hash === null ||
-    row.proof_plan_hash === null ||
-    row.reconciliation_id === null ||
-    row.reconciliation_content_hash === null
-  ) {
-    return failExecutionStore('authority', 'invariant', 'capital grant generation history is incomplete')
-  }
-  return decodeCapitalGrantGeneration({
-    schemaVersion: row.activation_schema_version,
-    generationHash: row.generation_hash,
-    maximum: row.maximum,
-    previousGenerationHash: row.previous_generation_hash,
-    qualificationRunId: row.qualification_run_id,
-    qualificationLockId: row.qualification_lock_id,
-    qualificationResultHash: row.qualification_result_hash,
-    protocolHash: row.protocol_hash,
-    qualificationExecutionPolicyHash: row.qualification_execution_policy_hash,
-    qualificationSourceRevision: row.qualification_source_revision,
-    qualificationImageRepository: row.qualification_image_repository,
-    qualificationImageDigest: row.qualification_image_digest,
-    activationSourceRevision: row.activation_source_revision,
-    activationImageRepository: row.activation_image_repository,
-    activationImageDigest: row.activation_image_digest,
-    strategyName: row.strategy_name,
-    strategyBehaviorHash: row.strategy_behavior_hash,
-    strategyParameterHash: row.strategy_parameter_hash,
-    strategyParameterSchemaVersion: row.strategy_parameter_schema_version,
-    accountId: row.account_id,
-    riskPolicyHash: row.risk_policy_hash,
-    proofPlanHash: row.proof_plan_hash,
-    reconciliationId: row.reconciliation_id,
-    reconciliationContentHash: row.reconciliation_content_hash,
   })
 }
 

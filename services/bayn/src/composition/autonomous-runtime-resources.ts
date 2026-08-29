@@ -19,7 +19,7 @@ import { PersistedCapitalGrantStore } from '../db/persisted-capital-grant'
 import { BlockedCycleIntentStore, IntentStore } from '../execution/intents'
 import { MutationStore } from '../execution/mutations'
 import { WriterFence } from '../execution/writer-fence'
-import { MarketData, type MarketDataService } from '../market-data'
+import { IntradayMarketData, type IntradayMarketDataService } from '../market-data'
 
 export const autonomousRuntimeServices = Effect.all({
   pgClient: PgClient.PgClient,
@@ -46,11 +46,11 @@ export type AutonomousRuntimeServices = Effect.Success<typeof autonomousRuntimeS
 
 export const makeAutonomousCycleResources = (
   runtimeServices: AutonomousRuntimeServices,
-  marketData: MarketDataService,
+  marketData: IntradayMarketDataService,
 ) =>
   Layer.mergeAll(
     Layer.succeed(BrokerRead, runtimeServices.session.read),
-    Layer.succeed(MarketData, marketData),
+    Layer.succeed(IntradayMarketData, marketData),
     Layer.succeed(CycleStore, runtimeServices.cycleStore),
     Layer.succeed(BrokerEventStore, runtimeServices.brokerEventStore),
     Layer.succeed(FillAccountingStore, runtimeServices.fillAccountingStore),

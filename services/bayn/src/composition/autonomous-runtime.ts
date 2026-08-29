@@ -21,9 +21,7 @@ import { readFinalExecutionRiskContext } from '../db/reconciliation'
 import { BrokerAccess } from '../execution/authority'
 import { Authority, KillState } from '../execution/contracts'
 import {
-  capitalActivationRequiresQualificationEvidence,
-  isResearchCapitalActivationRequest,
-  type CapitalActivationRequest,
+  type ResearchCapitalActivationRequest,
   type ResearchCapitalBuildContinuation,
   type ResearchCapitalBuildLineage,
 } from '../execution/configuration'
@@ -44,7 +42,7 @@ import {
 } from '../observe-composition'
 import { runOnce } from '../reconciler'
 import { currentUtcInstant } from '../time'
-import type { RuntimeEvidence, RuntimeState } from '../runtime-state'
+import type { RuntimeState } from '../runtime-state'
 import { scopedAcquisition } from '../resource-boundary'
 import { autonomousRuntimeServices, makeAutonomousCycleResources } from './autonomous-runtime-resources'
 import { AutonomousRuntimeResourcesLive, applicationDependencies } from './resources'
@@ -58,12 +56,9 @@ import {
 } from './lifecycle'
 import {
   capitalActivationOperationalError,
-  capitalActivationRequestIsCurrent,
   completedCapitalActivation,
   decodeConfiguredCapitalActivation,
   pendingCapitalActivation,
-  prepareCapitalActivation,
-  prepareOrRecoverQualifiedCapitalActivation,
   prepareOrRecoverResearchCapitalActivation,
   readCompletedExecutionLifecycle,
   readOnlyExecutionPolicy,
@@ -90,7 +85,7 @@ export interface AutonomousServiceRuntimeOptions {
 
 export const recoverPendingCapitalActivationToObserve = (
   state: Ref.Ref<RuntimeState>,
-  request: CapitalActivationRequest,
+  request: ResearchCapitalActivationRequest,
   currentObserveRuntime: Effect.Effect<AutonomousRuntime<never, never>, OperationalError>,
   unavailableRuntime: AutonomousRuntime<never, never>,
 ): Effect.Effect<AutonomousRuntime<never, never>> =>
@@ -118,7 +113,6 @@ export const makeAutonomousServiceRuntime = (
     } as Extract<LoadedRuntimeConfig, { readonly runtimeMode: 'AutonomousService' }>
     const observePlan = makeApplicationPlan({
       config: observeConfig,
-      protocol: plan.protocol,
       parameterHash: plan.parameterHash,
       strategy: plan.strategy,
       strategyProtocolHash: plan.strategyProtocolHash,
@@ -128,16 +122,11 @@ export const makeAutonomousServiceRuntime = (
       serializedRequest === undefined
         ? Result.succeed(null)
         : decodeConfiguredCapitalActivation(serializedRequest, plan.config.researchCapitalBuildLineageJson)
-    const requiresQualificationEvidence =
-      Result.isSuccess(decodedActivation) &&
-      decodedActivation.success !== null &&
-      capitalActivationRequiresQualificationEvidence(decodedActivation.success.request)
     const noCycle = (
       _startup: AutonomousCycleStartupInput,
     ): Effect.Effect<Effect.Effect<void, never, never>, OperationalError, never> => Effect.succeed(Effect.never)
     const pendingRuntime = () => ({
       _tag: 'AutonomousRead' as const,
-      requiresQualificationEvidence,
       cycleBindingId: null,
       brokerConfiguration: {
         expectedAccountId: observePlan.config.alpaca.expectedAccountId,
@@ -150,10 +139,9 @@ export const makeAutonomousServiceRuntime = (
       const validateStaticRequest: Effect.Effect<
         Result.Result<
           {
-            readonly request: CapitalActivationRequest | null
+            readonly request: ResearchCapitalActivationRequest | null
             readonly buildContinuation: ResearchCapitalBuildContinuation | null
             readonly buildLineage: ResearchCapitalBuildLineage | null
-            readonly evidence: RuntimeEvidence | null
           },
           string
         >,
@@ -167,26 +155,20 @@ export const makeAutonomousServiceRuntime = (
         const request = configured?.request ?? null
         const buildContinuation = configured?.buildContinuation ?? null
         const buildLineage = configured?.buildLineage ?? null
-        const current = yield* Ref.get(state)
         if (request === null) {
           if (plan.config.execution.brokerAccess === BrokerAccess.Mutation) {
             yield* pendingCapitalActivation(state, null, 'REQUEST_INVALID')
             return Result.fail('configured granted capital requires an immutable execution mandate request')
           }
-          return Result.succeed({ request, buildContinuation, buildLineage, evidence: current.evidence })
+          return Result.succeed({ request, buildContinuation, buildLineage })
         }
         const observedAt = yield* currentUtcInstant
-        const validation = isResearchCapitalActivationRequest(request)
-          ? researchCapitalRecoveryRequestIsCompatible(request, observePlan, observedAt, true)
-          : capitalActivationRequestIsCurrent(request, observePlan, current.evidence, observedAt, {
-              allowCloseRecovery: true,
-              buildContinuation,
-            })
+        const validation = researchCapitalRecoveryRequestIsCompatible(request, observePlan, observedAt, true)
         if (Result.isFailure(validation)) {
           yield* pendingCapitalActivation(state, request, 'PREPARATION_FAILED')
           return Result.fail(validation.failure)
         }
-        return Result.succeed({ request, buildContinuation, buildLineage, evidence: current.evidence })
+        return Result.succeed({ request, buildContinuation, buildLineage })
       })
       return validateStaticRequest.pipe(
         Effect.flatMap((validated): Effect.Effect<AutonomousRuntime<never, never>, never, Scope.Scope> => {
@@ -237,11 +219,8 @@ export const makeAutonomousServiceRuntime = (
                           )
                         const readRuntime = (): AutonomousRuntime<never, never> => ({
                           _tag: 'AutonomousRead' as const,
-                          requiresQualificationEvidence: capitalActivationRequiresQualificationEvidence(request),
                           broker: runtimeBroker(observePlan, runtimeServices.session.read, false),
-                          ...(request !== null && isResearchCapitalActivationRequest(request)
-                            ? { cycleBindingId: null, cycleObservationId: request.grant.planHash }
-                            : {}),
+                          ...(request === null ? {} : { cycleBindingId: null }),
                           startCycle: readStartCycle,
                         })
                         const readCurrentObserveRuntime = (): Effect.Effect<
@@ -274,9 +253,7 @@ export const makeAutonomousServiceRuntime = (
                               ),
                               Effect.map((cycleBindingId) => ({
                                 ...readRuntime(),
-                                requiresQualificationEvidence: false,
                                 cycleBindingId,
-                                cycleObservationId: cycleBindingId,
                               })),
                             )
                         }
@@ -349,13 +326,6 @@ export const makeAutonomousServiceRuntime = (
                               Effect.map(Option.map((receipt) => receipt.receiptHash)),
                             ),
                         )
-                        const evidence = validated.success.evidence
-                        if (evidence === null && !isResearchCapitalActivationRequest(request)) {
-                          return recoverBlockedGeneration.pipe(
-                            Effect.andThen(pendingCapitalActivation(state, request, 'STARTUP_EVIDENCE_UNAVAILABLE')),
-                            Effect.as(readRuntime()),
-                          )
-                        }
                         const prepareOrRecover: Effect.Effect<CapitalActivationStartupResolution, OperationalError> =
                           currentUtcInstant.pipe(
                             Effect.flatMap(
@@ -366,7 +336,6 @@ export const makeAutonomousServiceRuntime = (
                                       request,
                                       buildContinuation,
                                       buildLineage,
-                                      evidence,
                                       runtimeServices.authorityGenerationStore,
                                       runtimeServices.authorityRestrictionStore,
                                       runtimeServices.writerFence,
@@ -382,47 +351,24 @@ export const makeAutonomousServiceRuntime = (
                                         request,
                                         buildContinuation,
                                         buildLineage,
-                                        evidence,
                                         runtimeServices.authorityGenerationStore,
                                         runtimeServices.authorityRestrictionStore,
                                         runtimeServices.writerFence,
                                       ).pipe(Effect.map((generation) => ({ _tag: 'Mutation' as const, generation })))
-                                    : isResearchCapitalActivationRequest(request)
-                                      ? prepareOrRecoverResearchCapitalActivation(
-                                          observePlan,
-                                          request,
-                                          buildContinuation,
-                                          buildLineage,
-                                          runtimeServices.session,
-                                          runtimeServices.authorityGenerationStore,
-                                          runtimeServices.capitalGrantLifecycleStore,
-                                          runOnce.pipe(
-                                            // @effect-diagnostics-next-line strictEffectProvide:off -- value-only cycle services have no resource lifetime
-                                            Effect.provide(cycleResources),
-                                          ),
-                                          observePlan.config.operationTimeoutMs,
-                                        ).pipe(Effect.map((generation) => ({ _tag: 'Mutation' as const, generation })))
-                                      : evidence === null
-                                        ? Effect.fail(
-                                            capitalActivationOperationalError(
-                                              'qualified capital activation evidence is unavailable',
-                                            ),
-                                          )
-                                        : prepareOrRecoverQualifiedCapitalActivation(
-                                            observePlan,
-                                            evidence,
-                                            request,
-                                            runtimeServices.authorityGenerationStore,
-                                            prepareCapitalActivation(
-                                              observePlan,
-                                              evidence,
-                                              request,
-                                              runtimeServices.pgClient,
-                                              runtimeServices.writerFence,
-                                            ),
-                                          ).pipe(
-                                            Effect.map((generation) => ({ _tag: 'Mutation' as const, generation })),
-                                          ),
+                                    : prepareOrRecoverResearchCapitalActivation(
+                                        observePlan,
+                                        request,
+                                        buildContinuation,
+                                        buildLineage,
+                                        runtimeServices.session,
+                                        runtimeServices.authorityGenerationStore,
+                                        runtimeServices.capitalGrantLifecycleStore,
+                                        runOnce.pipe(
+                                          // @effect-diagnostics-next-line strictEffectProvide:off -- value-only cycle services have no resource lifetime
+                                          Effect.provide(cycleResources),
+                                        ),
+                                        observePlan.config.operationTimeoutMs,
+                                      ).pipe(Effect.map((generation) => ({ _tag: 'Mutation' as const, generation }))),
                             ),
                           )
                         const resolveReceiptFinalization = (
@@ -519,7 +465,6 @@ export const makeAutonomousServiceRuntime = (
                             return {
                               ...readRuntime(),
                               cycleBindingId: prepared.generation.generationHash,
-                              cycleObservationId: prepared.generation.generationHash,
                               startCycle,
                             }
                           })
@@ -567,13 +512,9 @@ export const makeAutonomousServiceRuntime = (
                               const realizedConfig = {
                                 ...plan.config,
                                 execution: realizedPolicy.success,
-                                ...(isResearchCapitalActivationRequest(request)
-                                  ? { qualificationRunId: request.grant.planHash }
-                                  : {}),
                               } as Extract<LoadedRuntimeConfig, { readonly runtimeMode: 'AutonomousService' }>
                               const realizedPlan = makeApplicationPlan({
                                 config: realizedConfig,
-                                protocol: plan.protocol,
                                 parameterHash: plan.parameterHash,
                                 strategy: plan.strategy,
                                 strategyProtocolHash: plan.strategyProtocolHash,
@@ -704,11 +645,8 @@ export const makeAutonomousServiceRuntime = (
                                         )
                                       const runtime = {
                                         _tag: 'AutonomousMutation' as const,
-                                        requiresQualificationEvidence:
-                                          capitalActivationRequiresQualificationEvidence(request),
                                         broker: runtimeBroker(realizedPlan, runtimeServices.session.read, true),
                                         cycleBindingId,
-                                        cycleObservationId: cycleBindingId,
                                         executionProgram,
                                         startCycle,
                                       }
@@ -716,7 +654,6 @@ export const makeAutonomousServiceRuntime = (
                                         state,
                                         request,
                                         prepared.generation.generationHash,
-                                        capitalGrant._tag,
                                       ).pipe(Effect.as(runtime))
                                       if (!restricted) return activate
 
@@ -780,7 +717,7 @@ export const makeAutonomousServiceRuntime = (
                                         )
                                       return startCycle(
                                         {
-                                          qualificationRunId: cycleBindingId,
+                                          cycleBindingId,
                                           recordPass: (observation) => recordAutonomousCyclePass(state, observation),
                                         },
                                         recover,

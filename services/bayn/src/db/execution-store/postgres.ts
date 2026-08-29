@@ -58,14 +58,10 @@ export const makeExecutionPersistence = (config: ExecutionStoreRuntimeConfig) =>
         readOrInitializeObserveAuthority: (input) =>
           fenceAuthorityMutation(observeAuthority.readOrInitializeObserveAuthority(input), writerFence),
         readAuthorityState: observeAuthority.readAuthorityState,
-        readAuthorityGeneration: observeAuthority.readAuthorityGeneration,
         readResearchAuthorityGeneration: observeAuthority.readResearchAuthorityGeneration,
         readAuthorityGenerationLineage: observeAuthority.readAuthorityGenerationLineage,
       },
       capitalGrantLifecycle: {
-        prepareCapitalGrant: capitalGrant.prepareCapitalGrant,
-        activateCapitalGrant: capitalGrant.activateCapitalGrant,
-        activatePreparedCapitalGrant: capitalGrant.activatePreparedCapitalGrant,
         activateResearchCapitalGrant: capitalGrant.activateResearchCapitalGrant,
       },
       authorityRestriction: {

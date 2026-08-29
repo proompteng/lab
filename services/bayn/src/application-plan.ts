@@ -6,7 +6,7 @@ import {
   activeStrategyName,
   loadActiveStrategyProtocol,
   makeActiveStrategyRuntime,
-  type OpeningDriveProtocol,
+  type IntradayMomentumProtocol,
   type StrategyRuntime,
 } from './strategy'
 import { verifyBehaviorHash, verifyParameterHash } from './build'
@@ -19,7 +19,6 @@ import {
 } from './contracts'
 import { operationalError } from './errors'
 import { canonicalHashV1Result, type CanonicalJsonFailure } from './hash'
-import { loadDefaultProtocol, type CausalProtocol } from './protocol'
 
 type RuntimeIdentityFailure =
   | {
@@ -37,9 +36,7 @@ type RuntimeIdentityFailure =
 
 type RuntimeSeed = {
   readonly config: LoadedRuntimeConfig
-  /** Retained for v1 history and legacy strategy reads; v2 opening-drive cycles use the intraday archive. */
-  readonly protocol: CausalProtocol
-  readonly strategyProtocol: OpeningDriveProtocol
+  readonly strategyProtocol: IntradayMomentumProtocol
 }
 
 type ParameterizedRuntime = RuntimeSeed & { readonly parameterHash: string }
@@ -97,7 +94,6 @@ const addStrategyProtocolHash = (
     ),
     Result.map((strategyProtocolHash) => ({
       config: runtime.config,
-      protocol: runtime.protocol,
       parameterHash: runtime.parameterHash,
       strategy: runtime.strategy,
       strategyProtocolHash,
@@ -158,7 +154,6 @@ const verifyRuntimeIdentity = (
 export const loadApplicationPlan = pipe(
   Effect.all({
     config: loadConfig(),
-    protocol: loadDefaultProtocol,
     strategyProtocol: Effect.fromResult(loadActiveStrategyProtocol()),
   }),
   Effect.flatMap(flow(makeRuntimeIdentity, Effect.fromResult, Effect.mapError(runtimeIdentityError))),

@@ -20,9 +20,26 @@ const PartsPerMillionSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0),
 const IntradayMinuteOffsetSchema = PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(24 * 60))
 
 const coreUniverse = {
-  id: 'torghut-core-equity-v1',
-  symbols: ['AMD', 'AVGO', 'COHR', 'CRDO', 'LITE', 'MRVL', 'MU', 'NVDA', 'SNDK', 'WDC'],
-  symbolHash: '8c6b71d066bce38f6f61d5264bb7ebdd45f44ee0c606b92ecf6bc68b81e1d49d',
+  id: 'torghut-core-equity-v2',
+  symbols: [
+    'AAPL',
+    'AMD',
+    'AMZN',
+    'AVGO',
+    'COHR',
+    'CRDO',
+    'IWM',
+    'LITE',
+    'MRVL',
+    'MU',
+    'NVDA',
+    'QQQ',
+    'SMH',
+    'SNDK',
+    'SPY',
+    'WDC',
+  ],
+  symbolHash: '12d8e7ad3e0087e85c39f47896e77adde6bb8e029724a70aae1ef5fd393bddf1',
 } as const
 
 export const intradayMomentumSourceTopics = Object.freeze({
@@ -30,6 +47,9 @@ export const intradayMomentumSourceTopics = Object.freeze({
   quotes: 'torghut.quotes.v1',
   trades: 'torghut.trades.v1',
 } as const)
+
+const prospectiveCandidates = ['AAPL', 'AMZN', 'IWM', 'NVDA', 'QQQ', 'SMH'] as const
+const prospectiveBenchmark = 'SPY' as const
 
 export const intradayMomentumExecutionModel: Extract<
   ExecutionModel,
@@ -48,7 +68,7 @@ export const intradayMomentumExecutionModel: Extract<
     planningBrokerStateReference: 'reconciled-pre-plan-broker-state',
     fillPriceReference: 'limit-or-better',
     buyingPowerPolicy: 'pre-submit-cash-without-sell-proceeds',
-    warmupAfterOpenMs: 30 * 60_000,
+    warmupAfterOpenMs: 60 * 60_000,
     submissionCutoffBeforeCloseMs: 60 * 60_000,
   }),
   precision: Object.freeze({
@@ -58,10 +78,12 @@ export const intradayMomentumExecutionModel: Extract<
 })
 
 const IntradayMomentumProtocolBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.intraday-momentum.protocol.v1'),
-  universeId: Schema.Literal('torghut-core-equity-v1'),
+  schemaVersion: Schema.Literal('bayn.intraday-momentum.protocol.v2'),
+  universeId: Schema.Literal('torghut-core-equity-v2'),
   universeSymbolHash: Sha256Schema,
   universe: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isMaxLength(64)),
+  candidateSymbols: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isMaxLength(16)),
+  benchmarkSymbol: SymbolSchema,
   feed: Schema.Literal('iex'),
   delayClass: Schema.Literal('real_time_exchange_only'),
   sourceTopics: Schema.Struct({
@@ -82,6 +104,8 @@ const IntradayMomentumProtocolBase = Schema.Struct({
   maximumGrossWeight: PositiveUnitIntervalSchema,
   maximumSymbolWeight: PositiveUnitIntervalSchema,
   minimumLookbackReturnBps: BasisPointsSchema,
+  minimumBenchmarkReturnBps: Schema.Int.check(Schema.isBetween({ minimum: -10_000, maximum: 10_000 })),
+  minimumExcessReturnBps: BasisPointsSchema,
   minimumBreakoutBps: BasisPointsSchema,
   minimumRangeLocationPpm: PartsPerMillionSchema,
   maximumSpreadBps: BasisPointsSchema,
@@ -92,6 +116,7 @@ const IntradayMomentumProtocolBase = Schema.Struct({
 const protocolIssues = (protocol: typeof IntradayMomentumProtocolBase.Type): readonly Schema.FilterIssue[] => {
   const issues: Schema.FilterIssue[] = []
   const canonicalUniverse = [...new Set(protocol.universe)].sort()
+  const canonicalCandidates = [...new Set(protocol.candidateSymbols)].sort()
   if (
     canonicalUniverse.length !== protocol.universe.length ||
     canonicalUniverse.some((symbol, index) => symbol !== protocol.universe[index])
@@ -106,6 +131,28 @@ const protocolIssues = (protocol: typeof IntradayMomentumProtocolBase.Type): rea
     protocol.universe.join(',') !== coreUniverse.symbols.join(',')
   ) {
     issues.push({ path: ['universeId'], issue: 'must bind the exact source-controlled universe' })
+  }
+  if (
+    canonicalCandidates.length !== protocol.candidateSymbols.length ||
+    canonicalCandidates.some((symbol, index) => symbol !== protocol.candidateSymbols[index])
+  ) {
+    issues.push({ path: ['candidateSymbols'], issue: 'must be unique and sorted in canonical order' })
+  }
+  if (
+    protocol.candidateSymbols.join(',') !== prospectiveCandidates.join(',') ||
+    protocol.benchmarkSymbol !== prospectiveBenchmark
+  ) {
+    issues.push({ path: ['candidateSymbols'], issue: 'must bind the immutable prospective trial universe' })
+  }
+  if (
+    protocol.candidateSymbols.some((symbol) => !protocol.universe.includes(symbol)) ||
+    !protocol.universe.includes(protocol.benchmarkSymbol) ||
+    protocol.candidateSymbols.includes(protocol.benchmarkSymbol)
+  ) {
+    issues.push({
+      path: ['benchmarkSymbol'],
+      issue: 'benchmark and candidates must be disjoint members of the universe',
+    })
   }
   if (protocol.lookbackMinutes > 30) {
     issues.push({ path: ['lookbackMinutes'], issue: 'must fit the verified bounded intraday archive window' })
@@ -145,8 +192,8 @@ const protocolIssues = (protocol: typeof IntradayMomentumProtocolBase.Type): rea
       issue: 'entry cutoff, flatten, and hard-flat boundaries must be ordered before the close',
     })
   }
-  if (protocol.maximumPositions > protocol.universe.length) {
-    issues.push({ path: ['maximumPositions'], issue: 'must not exceed the universe size' })
+  if (protocol.maximumPositions > protocol.candidateSymbols.length) {
+    issues.push({ path: ['maximumPositions'], issue: 'must not exceed the candidate universe size' })
   }
   if (protocol.maximumSymbolWeight > protocol.maximumGrossWeight) {
     issues.push({ path: ['maximumSymbolWeight'], issue: 'must not exceed maximum gross weight' })
@@ -190,30 +237,37 @@ export const intradayMomentumSessionHasDecisionInterval = (
   )
 }
 
+export const intradayMomentumSnapshotSymbols = (protocol: IntradayMomentumProtocol): readonly string[] =>
+  Object.freeze([...protocol.candidateSymbols, protocol.benchmarkSymbol].sort())
+
 export const defaultIntradayMomentumProtocolDocument = Object.freeze({
-  schemaVersion: 'bayn.intraday-momentum.protocol.v1',
+  schemaVersion: 'bayn.intraday-momentum.protocol.v2',
   universeId: coreUniverse.id,
   universeSymbolHash: coreUniverse.symbolHash,
   universe: coreUniverse.symbols,
+  candidateSymbols: prospectiveCandidates,
+  benchmarkSymbol: prospectiveBenchmark,
   feed: 'iex',
   delayClass: 'real_time_exchange_only',
   sourceTopics: intradayMomentumSourceTopics,
   positionPolicy: 'long-only',
-  lookbackMinutes: 20,
+  lookbackMinutes: 30,
   decisionDelaySeconds: 2,
   maximumDecisionLagMs: 60_000,
   maximumQuoteAgeMs: 2_000,
-  warmupMinutesAfterOpen: 30,
+  warmupMinutesAfterOpen: 60,
   entryCutoffMinutesBeforeClose: 60,
   flattenBeforeCloseMinutes: 30,
   hardFlatBeforeCloseMinutes: 15,
-  maximumPositions: 3,
-  maximumGrossWeight: 0.3,
+  maximumPositions: 1,
+  maximumGrossWeight: 0.1,
   maximumSymbolWeight: 0.1,
   minimumLookbackReturnBps: 15,
-  minimumBreakoutBps: 2,
+  minimumBenchmarkReturnBps: 0,
+  minimumExcessReturnBps: 10,
+  minimumBreakoutBps: 0,
   minimumRangeLocationPpm: 750_000,
-  maximumSpreadBps: 15,
+  maximumSpreadBps: 5,
   allocation: 'equal-weight',
   executionModel: intradayMomentumExecutionModel,
 } as const)

@@ -32,6 +32,11 @@ const presentRuntimeConfigFailure = (failure: RuntimeConfigResolutionFailure): R
         operation: 'broker-connection',
         message: 'Alpaca account ID, key ID, and secret key must be configured together',
       }
+    case 'MissingAlpacaCredentials':
+      return {
+        operation: 'broker-connection',
+        message: 'the autonomous service requires an Alpaca account ID, key ID, and secret key',
+      }
     case 'MissingAlpacaAuthorityGeneration':
       return {
         operation: 'authority-generation',
@@ -41,31 +46,6 @@ const presentRuntimeConfigFailure = (failure: RuntimeConfigResolutionFailure): R
       return { operation: 'broker-connection', message: renderBrokerConnectionDecodeFailure(failure.cause) }
     case 'InvalidExecutionPolicy':
       return { operation: 'execution-authority', message: renderExecutionPolicyFailure(failure.cause) }
-    case 'ExecutionCandidateDiscoveryRequiresReadOnlyNoCapital':
-      return {
-        operation: 'operation',
-        message: 'execution candidate discovery requires read-only broker access and no capital authority',
-      }
-    case 'ExecutionCandidateDiscoveryRequiresQualificationRun':
-      return {
-        operation: 'operation',
-        message: 'execution candidate discovery requires a pinned terminal qualification run',
-      }
-    case 'ExecutionCandidateDiscoveryRequiresAlpacaBinding':
-      return {
-        operation: 'operation',
-        message: 'execution candidate discovery requires a complete Alpaca read binding',
-      }
-    case 'ExecutionPrepareRequiresRequest':
-      return {
-        operation: 'operation',
-        message: 'EXECUTION_PREPARE requires an explicit content-hashed request',
-      }
-    case 'ExecutionPrepareRequiresSandboxBroker':
-      return {
-        operation: 'operation',
-        message: 'EXECUTION_PREPARE requires the Alpaca sandbox broker environment',
-      }
     case 'ProductionProvenanceRequiresEmbeddedMetadata':
       return {
         operation: 'provenance',

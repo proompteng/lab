@@ -170,8 +170,13 @@ export const makeIntradayMarketData: Effect.Effect<
   never,
   ClickhouseClient.ClickhouseClient
 > = Effect.map(ClickhouseClient.ClickhouseClient, (sql): IntradayMarketDataService => {
-  const { captureIntradayArchiveWatermarks, loadIntradayBars, loadIntradayQuotes, loadIntradayTrades } =
-    makeIntradayMarketDataQueries(sql)
+  const {
+    checkIntradayArchive,
+    captureIntradayArchiveWatermarks,
+    loadIntradayBars,
+    loadIntradayQuotes,
+    loadIntradayTrades,
+  } = makeIntradayMarketDataQueries(sql)
   const mapFailure = (cause: unknown) =>
     cause instanceof IntradaySnapshotFailure
       ? operationalError({
@@ -212,6 +217,11 @@ export const makeIntradayMarketData: Effect.Effect<
       Effect.mapError(mapFailure),
     )
   return {
+    check: checkIntradayArchive.pipe(
+      Effect.mapError((cause) =>
+        marketDataOperationError('check', 'failed to check the intraday market archive', cause),
+      ),
+    ),
     captureVersion: (query) =>
       Effect.fromResult(verifyIntradaySnapshotQuery(query)).pipe(
         Effect.flatMap((verified) =>

@@ -10,7 +10,6 @@ import {
   type ExecutionPolicy,
   type ExecutionPolicyResolutionFailure,
 } from '../execution/configuration'
-import type { ExecutionPrepareRequest } from '../execution-prepare/model'
 
 export const minimumOperationalThresholdMs = 1_000
 export const maximumOperationalThresholdMs = 86_400_000
@@ -23,7 +22,6 @@ export interface RuntimeBuildMetadata extends EmbeddedBuildMetadata {
 export interface RuntimeConfig {
   readonly host: string
   readonly port: number
-  readonly qualificationRunId?: string | undefined
   readonly capitalActivationRequestJson?: string | undefined
   readonly researchCapitalBuildLineageJson?: string | undefined
   readonly execution: ExecutionPolicy
@@ -65,57 +63,24 @@ export interface AutonomousCycleRuntimeConfig {
   readonly cyclePollIntervalMs: number
 }
 
-export type RuntimeOperation = 'ExecutionCandidateDiscovery' | 'ExecutionPrepare'
-
 export type AlpacaRuntimeConfig = NonNullable<RuntimeConfig['alpaca']>
 
-type LoadedRuntimeConfigBase = Omit<RuntimeConfig, 'alpaca' | 'qualificationRunId'> & AutonomousCycleRuntimeConfig
+type LoadedRuntimeConfigBase = Omit<RuntimeConfig, 'alpaca'> & AutonomousCycleRuntimeConfig
 
-export type LoadedRuntimeConfig = LoadedRuntimeConfigBase &
-  (
-    | {
-        readonly runtimeMode: 'BrokerlessService'
-        readonly qualificationRunId?: string | undefined
-        readonly execution: Extract<ExecutionPolicy, { readonly brokerIdentity?: undefined }>
-        readonly alpaca?: undefined
-      }
-    | {
-        readonly runtimeMode: 'AutonomousService'
-        readonly qualificationRunId?: string | undefined
-        readonly execution: Exclude<ExecutionPolicy, { readonly brokerIdentity?: undefined }>
-        readonly alpaca: AlpacaRuntimeConfig
-      }
-    | {
-        readonly runtimeMode: 'ExecutionCandidateDiscovery'
-        readonly qualificationRunId: string
-        readonly execution: Extract<
-          ExecutionPolicy,
-          { readonly brokerAccess: import('../execution/authority').BrokerAccess.ReadOnly }
-        > & { readonly brokerIdentity: import('../broker/identity').BrokerIdentity }
-        readonly alpaca: AlpacaRuntimeConfig
-      }
-    | {
-        readonly runtimeMode: 'ExecutionPrepare'
-        readonly qualificationRunId: string
-        readonly executionPrepareRequest: ExecutionPrepareRequest
-        readonly execution: Extract<
-          ExecutionPolicy,
-          { readonly brokerAccess: import('../execution/authority').BrokerAccess.ReadOnly }
-        > & { readonly brokerIdentity: import('../broker/identity').BrokerIdentity }
-        readonly alpaca: AlpacaRuntimeConfig
-      }
-  )
+/** The deployed binary has one runtime mode: an account-bound autonomous service. */
+export type LoadedRuntimeConfig = LoadedRuntimeConfigBase & {
+  readonly runtimeMode: 'AutonomousService'
+  readonly execution: Exclude<ExecutionPolicy, { readonly brokerIdentity?: undefined }>
+  readonly alpaca: AlpacaRuntimeConfig
+}
 
 export const CapitalAuthoritySelectionSchema = Schema.Enum(CapitalAuthoritySelection)
 
 export interface ParsedRuntimeConfig {
   readonly host: string
   readonly port: number
-  readonly qualificationRunId: string | undefined
   readonly capitalActivationRequestJson?: string | undefined
   readonly researchCapitalBuildLineageJson?: string | undefined
-  readonly configuredOperation: RuntimeOperation | undefined
-  readonly executionPrepareRequest: ExecutionPrepareRequest | undefined
   readonly brokerAccess: BrokerAccess
   readonly capitalAuthority: CapitalAuthoritySelection
   readonly persistedCapitalGrantHash: string | undefined
@@ -180,6 +145,9 @@ export type RuntimeConfigResolutionFailure =
       readonly configured: AlpacaCredentialPresence
     }
   | {
+      readonly _tag: 'MissingAlpacaCredentials'
+    }
+  | {
       readonly _tag: 'MissingAlpacaAuthorityGeneration'
     }
   | {
@@ -189,24 +157,6 @@ export type RuntimeConfigResolutionFailure =
   | {
       readonly _tag: 'InvalidExecutionPolicy'
       readonly cause: ExecutionPolicyResolutionFailure
-    }
-  | {
-      readonly _tag: 'ExecutionCandidateDiscoveryRequiresReadOnlyNoCapital'
-      readonly brokerAccess: BrokerAccess
-      readonly capitalAuthority: CapitalAuthoritySelection
-    }
-  | {
-      readonly _tag: 'ExecutionCandidateDiscoveryRequiresQualificationRun'
-    }
-  | {
-      readonly _tag: 'ExecutionCandidateDiscoveryRequiresAlpacaBinding'
-    }
-  | {
-      readonly _tag: 'ExecutionPrepareRequiresRequest'
-    }
-  | {
-      readonly _tag: 'ExecutionPrepareRequiresSandboxBroker'
-      readonly brokerEnvironment: BrokerEnvironment
     }
   | {
       readonly _tag: 'ProductionProvenanceRequiresEmbeddedMetadata'

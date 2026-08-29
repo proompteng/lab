@@ -137,10 +137,32 @@ const selectTargetNotionalBlock = (
     : undefined
 }
 
+const selectSellLiquidityBlock = (
+  facts: TargetPlannerFacts,
+  targetFacts: readonly PlannedTargetFact[],
+): BlockedOutputMaterial | undefined => {
+  if (facts.input.schemaVersion !== quoteBoundTargetPlannerInputSchemaVersion) return undefined
+  const exceedsBound = targetFacts.some(({ delta, target }) => {
+    if (delta >= 0n) return false
+    const maximumSellQuantity = facts.maximumSellQuantities.get(target.symbol)
+    return maximumSellQuantity === undefined || -delta > maximumSellQuantity
+  })
+  return exceedsBound
+    ? blocked(
+        facts.input,
+        facts.inputHash,
+        TargetPlanReason.InsufficientSellLiquidity,
+        facts.input.brokerState.account.buyingPowerMicros,
+      )
+    : undefined
+}
+
 const assembleExecutableTargetPlan = (
   facts: TargetPlannerFacts,
   targetFacts: readonly PlannedTargetFact[],
 ): OutputMaterial => {
+  const sellLiquidityBlock = selectSellLiquidityBlock(facts, targetFacts)
+  if (sellLiquidityBlock !== undefined) return sellLiquidityBlock
   const targets = targetFacts.map((fact) => fact.target)
   const intents = makeReferenceTargetIntents(facts.input, targetFacts)
   const requiredReferenceBuyNotionals = targetFacts

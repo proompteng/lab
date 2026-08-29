@@ -1,38 +1,30 @@
 import { Result } from 'effect'
 
-import {
-  CycleState,
-  CycleTerminalReason,
-  isIntradayAutonomousCycle,
-  isLegacyAutonomousCycle,
-  type AutonomousCycle,
-} from '../model'
+import { CycleState, CycleTerminalReason, isIntradayAutonomousCycle, type AutonomousCycle } from '../model'
 import { isTerminalCycleState } from '../transitions'
 import { selectBoundDecision } from './recovery-decision-binding'
 import {
   decodeCycleRecoveryStateResult,
   decodeRecoveryStateFailure,
   selectRecoveryFailure,
-  type AlreadyBoundReadiness,
   type CycleRecoveryFailure,
   type CycleRecoverySelection,
   type DecodedCycleRecoveryState,
 } from './recovery-model'
-import { correlatedReadinessOf, validateReadiness } from './recovery-readiness'
 
 const validateRecoveryCycleContext = (
   state: DecodedCycleRecoveryState,
   cycle: AutonomousCycle,
 ): Result.Result<void, CycleRecoveryFailure> => {
-  if (cycle.identity.qualificationRunId !== state.qualificationRunId || cycle.identity.accountId !== state.accountId) {
+  if (cycle.identity.qualificationRunId !== state.cycleBindingId || cycle.identity.accountId !== state.accountId) {
     return Result.fail(
       selectRecoveryFailure({
         reason: 'scope',
         message: 'unfinished cycle does not match the configured recovery scope',
         facts: {
           cycleId: cycle.identity.cycleId,
-          expectedQualificationRunId: state.qualificationRunId,
-          actualQualificationRunId: cycle.identity.qualificationRunId,
+          expectedCycleBindingId: state.cycleBindingId,
+          actualCycleBindingId: cycle.identity.qualificationRunId,
           expectedAccountId: state.accountId,
           actualAccountId: cycle.identity.accountId,
           cycleState: cycle.state,
@@ -51,6 +43,15 @@ const validateRecoveryCycleContext = (
           cycleId: cycle.identity.cycleId,
           state: cycle.state,
         },
+      }),
+    )
+  }
+  if (!isIntradayAutonomousCycle(cycle)) {
+    return Result.fail(
+      selectRecoveryFailure({
+        reason: 'state-evidence',
+        message: 'retired strategy cycles are not executable after the intraday cutover',
+        facts: { cycleId: cycle.identity.cycleId, schemaVersion: cycle.schemaVersion },
       }),
     )
   }
@@ -76,60 +77,16 @@ const selectDecisionBoundRecovery = (
   state: DecodedCycleRecoveryState,
   cycle: AutonomousCycle,
 ): Result.Result<CycleRecoverySelection, CycleRecoveryFailure> => {
-  if (state.readiness !== undefined) {
-    return Result.fail(
-      selectRecoveryFailure({
-        reason: 'state-evidence',
-        message: 'active cycle recovery does not accept publication readiness',
-        facts: {
-          cycleId: cycle.identity.cycleId,
-        },
-      }),
-    )
-  }
   return selectBoundDecision(cycle, state.decisionDocument, state.observedAt)
-}
-
-const freshestRecoveryObservationAt = (
-  state: DecodedCycleRecoveryState,
-  readiness: AlreadyBoundReadiness | undefined,
-): string =>
-  readiness !== undefined && readiness.observedAt > state.observedAt ? readiness.observedAt : state.observedAt
-
-const pendingSnapshotBindingAt = (
-  cycle: AutonomousCycle,
-  readiness: AlreadyBoundReadiness | undefined,
-): string | undefined => {
-  if (cycle.state !== CycleState.Pending) return undefined
-  if (cycle.bindings.snapshotId !== undefined) return cycle.updatedAt
-  return readiness?.cycle.updatedAt
 }
 
 const selectDeadlineOrProvenance = (
   state: DecodedCycleRecoveryState,
   cycle: AutonomousCycle,
 ): CycleRecoverySelection | undefined => {
-  const correlatedReadiness = correlatedReadinessOf(state, cycle)
-  const observedAt = freshestRecoveryObservationAt(state, correlatedReadiness)
-  const pendingBindingEffectiveAt = pendingSnapshotBindingAt(cycle, correlatedReadiness)
+  const observedAt = state.observedAt
   if (
-    cycle.state === CycleState.Pending &&
-    cycle.window.schemaVersion !== 'bayn.autonomous-cycle-window.v3' &&
-    (pendingBindingEffectiveAt === undefined
-      ? observedAt >= cycle.window.publicationDeadlineAt
-      : pendingBindingEffectiveAt >= cycle.window.publicationDeadlineAt)
-  ) {
-    return {
-      action: 'BLOCK',
-      cycleId: cycle.identity.cycleId,
-      observedAt,
-      reason: CycleTerminalReason.MissedPublication,
-    }
-  }
-  if (
-    (cycle.state === CycleState.Active ||
-      pendingBindingEffectiveAt !== undefined ||
-      (cycle.state === CycleState.Pending && isIntradayAutonomousCycle(cycle))) &&
+    (cycle.state === CycleState.Active || cycle.state === CycleState.Pending) &&
     observedAt >= cycle.window.submissionCutoffAt
   ) {
     return {
@@ -154,17 +111,6 @@ const selectActiveRecovery = (
   state: DecodedCycleRecoveryState,
   cycle: AutonomousCycle,
 ): Result.Result<CycleRecoverySelection, CycleRecoveryFailure> => {
-  if (state.readiness !== undefined) {
-    return Result.fail(
-      selectRecoveryFailure({
-        reason: 'state-evidence',
-        message: 'active cycle recovery does not accept publication readiness',
-        facts: {
-          cycleId: cycle.identity.cycleId,
-        },
-      }),
-    )
-  }
   if (state.decisionDocument !== undefined) {
     return Result.fail(
       selectRecoveryFailure({
@@ -181,28 +127,6 @@ const selectActiveRecovery = (
     : Result.succeed({ action: 'BUILD_DECISION', cycle })
 }
 
-const selectPendingReadiness = (
-  cycle: AutonomousCycle,
-  recoveryObservedAt: string,
-  readiness: NonNullable<DecodedCycleRecoveryState['readiness']>,
-): Result.Result<CycleRecoverySelection, CycleRecoveryFailure> =>
-  Result.map(validateReadiness(cycle, recoveryObservedAt, readiness), () => {
-    switch (readiness.outcome) {
-      case 'WAITING':
-        return { action: 'RETURN_READINESS', recoveryAction: 'WAITING', result: readiness }
-      case 'BLOCKED':
-        return { action: 'RETURN_READINESS', recoveryAction: 'BLOCKED', result: readiness }
-      case 'BOUND':
-        return {
-          action: 'RETURN_READINESS',
-          recoveryAction: 'BOUND_SNAPSHOT',
-          result: { ...readiness, outcome: 'BOUND' },
-        }
-      case 'ALREADY_BOUND':
-        return { action: 'ACTIVATE', cycleId: readiness.cycle.identity.cycleId, observedAt: readiness.observedAt }
-    }
-  })
-
 const selectPendingRecovery = (
   state: DecodedCycleRecoveryState,
   cycle: AutonomousCycle,
@@ -218,30 +142,7 @@ const selectPendingRecovery = (
       }),
     )
   }
-  if (isIntradayAutonomousCycle(cycle)) {
-    if (state.readiness !== undefined) {
-      return Result.fail(
-        selectRecoveryFailure({
-          reason: 'state-evidence',
-          message: 'intraday pending cycles do not accept daily publication readiness',
-          facts: { cycleId: cycle.identity.cycleId },
-        }),
-      )
-    }
-    return Result.succeed({ action: 'ACTIVATE', cycleId: cycle.identity.cycleId, observedAt: state.observedAt })
-  }
-  if (!isLegacyAutonomousCycle(cycle)) {
-    return Result.fail(
-      selectRecoveryFailure({
-        reason: 'state-evidence',
-        message: 'cycle contract versions are not correlated',
-        facts: { cycleId: cycle.identity.cycleId },
-      }),
-    )
-  }
-  return state.readiness === undefined
-    ? Result.succeed({ action: 'READ_PUBLICATION', cycle })
-    : selectPendingReadiness(cycle, state.observedAt, state.readiness)
+  return Result.succeed({ action: 'ACTIVATE', cycleId: cycle.identity.cycleId, observedAt: state.observedAt })
 }
 
 const selectDecodedCycleRecovery = (
@@ -249,7 +150,7 @@ const selectDecodedCycleRecovery = (
 ): Result.Result<CycleRecoverySelection, CycleRecoveryFailure> => {
   const { cycle } = state
   if (cycle === undefined) {
-    if (state.readiness !== undefined || state.decisionDocument !== undefined) {
+    if (state.decisionDocument !== undefined) {
       return Result.fail(
         selectRecoveryFailure({
           reason: 'evidence-without-cycle',

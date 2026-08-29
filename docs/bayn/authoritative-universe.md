@@ -49,11 +49,12 @@ publication and qualification stages are allowed to fail. Missing symbol-session
 - the market-data archive identity for delayed-SIP and overnight observations; and
 - the adjusted-daily Signal publisher universe, history start, and feed.
 
-The WebSocket Deployment remains one replica with `Recreate`. Its core IEX topics retain the ten-symbol Torghut trading
-universe, while `ALPACA_OBSERVATION_SYMBOLS` binds only the delayed-SIP feed to Bayn's five symbols. The resulting 15
-symbol-feed subscriptions remain below the Alpaca Basic limit of 30. The archive selects universe metadata per feed:
-the Torghut IEX topic retains its separate `torghut-core-equity-v1` contract, while delayed-SIP and overnight topics use
-the exact Bayn contract above. The archive and publisher remain the existing services; Bayn does not gain a data writer.
+The WebSocket Deployment remains one replica with `Recreate`. Its core IEX topics use the 16-symbol
+`torghut-core-equity-v2` contract, preserving the original Torghut symbols while adding the liquid Bayn prospective
+research set. `ALPACA_OBSERVATION_SYMBOLS` still binds only the delayed-SIP feed to Bayn's five-symbol daily universe.
+The resulting 21 symbol-feed subscriptions remain below the application's aggregate limit of 30. The archive selects
+universe metadata per feed: core IEX rows use the v2 contract, while delayed-SIP and overnight topics use the exact Bayn
+contract above. The archive and publisher remain the existing services; Bayn does not gain a data writer.
 The Signal publisher alone writes the three publication tables and
 finalizes a snapshot only after exact readback. Bayn retains explicit `SELECT` grants only.
 
