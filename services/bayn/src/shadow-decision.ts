@@ -945,6 +945,7 @@ const assembleExecutionDecisionDocument = (
     (cause) => error('contract', 'planning broker state hash could not be derived', cause),
   )
   if (Result.isFailure(planningBrokerStateHash)) return Result.fail(planningBrokerStateHash.failure)
+  const initialRiskState = input.riskInputs[0]?.state
   return Result.mapError(
     makeExecutionDecisionDocument({
       schemaVersion: legacyCycleDecisionSchemaVersion,
@@ -965,6 +966,18 @@ const assembleExecutionDecisionDocument = (
         reconciliationId: input.plannerInput.brokerState.reconciliation.reconciliationId,
         reconciliationHash: input.plannerInput.brokerState.reconciliation.contentHash,
         authorityGenerationHash,
+        ...(input.plannerInput.strategyName !== 'intraday-momentum' || initialRiskState === undefined
+          ? {}
+          : {
+              riskContext: {
+                authority: initialRiskState.authority,
+                authorityObservedAt: initialRiskState.authorityObservedAt,
+                unknownMutationCount: initialRiskState.unknownMutationCount,
+                dailyTradedNotionalMicros: initialRiskState.dailyTradedNotionalMicros,
+                dayStartEquityMicros: initialRiskState.dayStartEquityMicros,
+                peakEquityMicros: initialRiskState.peakEquityMicros,
+              },
+            }),
         ...(input.executionMarketData === undefined ? {} : { executionMarketData: input.executionMarketData }),
       },
       executionSession,

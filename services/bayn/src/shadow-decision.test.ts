@@ -2200,6 +2200,172 @@ describe('OBSERVE shadow decision', () => {
     }
   })
 
+  test('binds durable risk context before replaying a fully rehashed evaluation', async () => {
+    const selectedSymbol = defaultIntradayMomentumProtocolDocument.universe[0]
+    if (selectedSymbol === undefined) throw new Error('intraday execution fixture requires a non-empty universe')
+    const { input, executionSession, riskInputs } = makeIntradayExecutionFixture(selectedSymbol, {
+      dayStartEquityMicros: '1200000000',
+      peakEquityMicros: '1000000000',
+    })
+    const authorityGenerationHash = hash('6')
+    const document = await Effect.runPromise(
+      buildExecutionDecision({ ...input, riskInputs, authorityGenerationHash, executionSession }),
+    )
+    const target = document.targetPlan.intentTargets[0]
+    const risk = document.deltaRisk[0]
+    if (target === undefined || risk?.facts === undefined) {
+      throw new Error('risk-context fixture requires one persisted execution risk input')
+    }
+    const executionIntent = Result.getOrThrow(
+      makeExecutionIntentFromDecodedPlan(
+        {
+          schemaVersion: legacyIntentPlanSchemaVersion,
+          ...target,
+          notionalLimitMicros: risk.notionalLimitMicros,
+        },
+        authorityGenerationHash,
+      ),
+    )
+    const forgedState = {
+      ...risk.facts.state,
+      dayStartEquityMicros: '1000000000',
+    }
+    const forgedEvaluation = Result.getOrThrow(
+      evaluate({
+        intent: executionIntent,
+        state: forgedState,
+        policy: input.policy,
+        proposedPositions: risk.facts.proposedPositions,
+      }),
+    )
+    const { contentHash: _contentHash, riskBlock: _riskBlock, ...material } = document
+    const forged = makeExecutionDecisionDocument({
+      ...material,
+      dispatchable: true,
+      deltaRisk: [
+        {
+          ...risk,
+          facts: { ...risk.facts, state: forgedState },
+          evaluation: forgedEvaluation,
+        },
+      ],
+    })
+
+    expect(Result.isFailure(forged)).toBe(true)
+    if (Result.isFailure(forged)) {
+      expect(String(forged.failure.cause)).toContain('must match the exact planner, authority, market-data')
+    }
+  })
+
+  test('binds the complete authority state before replaying a rehashed evaluation', async () => {
+    const selectedSymbol = defaultIntradayMomentumProtocolDocument.universe[0]
+    if (selectedSymbol === undefined) throw new Error('intraday execution fixture requires a non-empty universe')
+    const { input, executionSession, riskInputs } = makeIntradayExecutionFixture(selectedSymbol)
+    const authorityGenerationHash = hash('6')
+    const document = await Effect.runPromise(
+      buildExecutionDecision({ ...input, riskInputs, authorityGenerationHash, executionSession }),
+    )
+    const target = document.targetPlan.intentTargets[0]
+    const risk = document.deltaRisk[0]
+    if (target === undefined || risk?.facts === undefined) {
+      throw new Error('authority fixture requires one persisted execution risk input')
+    }
+    const executionIntent = Result.getOrThrow(
+      makeExecutionIntentFromDecodedPlan(
+        {
+          schemaVersion: legacyIntentPlanSchemaVersion,
+          ...target,
+          notionalLimitMicros: risk.notionalLimitMicros,
+        },
+        authorityGenerationHash,
+      ),
+    )
+    const forgedState = {
+      ...risk.facts.state,
+      authority: { ...risk.facts.state.authority, version: risk.facts.state.authority.version + 1 },
+    }
+    const forgedEvaluation = Result.getOrThrow(
+      evaluate({
+        intent: executionIntent,
+        state: forgedState,
+        policy: input.policy,
+        proposedPositions: risk.facts.proposedPositions,
+      }),
+    )
+    const { contentHash: _contentHash, ...material } = document
+    const forged = makeExecutionDecisionDocument({
+      ...material,
+      deltaRisk: [
+        {
+          ...risk,
+          facts: { ...risk.facts, state: forgedState },
+          evaluation: forgedEvaluation,
+        },
+      ],
+    })
+
+    expect(Result.isFailure(forged)).toBe(true)
+    if (Result.isFailure(forged)) {
+      expect(String(forged.failure.cause)).toContain('must match the exact planner, authority, market-data')
+    }
+  })
+
+  test('recomputes quote-bound execution pricing before admitting a rehashed evaluation', async () => {
+    const selectedSymbol = defaultIntradayMomentumProtocolDocument.universe[0]
+    if (selectedSymbol === undefined) throw new Error('intraday execution fixture requires a non-empty universe')
+    const { input, executionSession, riskInputs } = makeIntradayExecutionFixture(selectedSymbol)
+    const authorityGenerationHash = hash('6')
+    const document = await Effect.runPromise(
+      buildExecutionDecision({ ...input, riskInputs, authorityGenerationHash, executionSession }),
+    )
+    const target = document.targetPlan.intentTargets[0]
+    const risk = document.deltaRisk[0]
+    if (target === undefined || risk?.facts === undefined) {
+      throw new Error('pricing fixture requires one persisted execution risk input')
+    }
+    const forgedNotionalLimitMicros = (BigInt(risk.notionalLimitMicros) + 1n).toString()
+    const executionIntent = Result.getOrThrow(
+      makeExecutionIntentFromDecodedPlan(
+        {
+          schemaVersion: legacyIntentPlanSchemaVersion,
+          ...target,
+          notionalLimitMicros: forgedNotionalLimitMicros,
+        },
+        authorityGenerationHash,
+      ),
+    )
+    const forgedState = {
+      ...risk.facts.state,
+      expectedExecutionPriceMicros: (BigInt(risk.facts.state.expectedExecutionPriceMicros) + 1n).toString(),
+    }
+    const forgedEvaluation = Result.getOrThrow(
+      evaluate({
+        intent: executionIntent,
+        state: forgedState,
+        policy: input.policy,
+        proposedPositions: risk.facts.proposedPositions,
+      }),
+    )
+    const { contentHash: _contentHash, ...material } = document
+    const forged = makeExecutionDecisionDocument({
+      ...material,
+      orderedIntentIds: [executionIntent.intentId],
+      deltaRisk: [
+        {
+          ...risk,
+          notionalLimitMicros: forgedNotionalLimitMicros,
+          facts: { ...risk.facts, state: forgedState },
+          evaluation: forgedEvaluation,
+        },
+      ],
+    })
+
+    expect(Result.isFailure(forged)).toBe(true)
+    if (Result.isFailure(forged)) {
+      expect(String(forged.failure.cause)).toContain('must reproduce the exact persisted risk gates')
+    }
+  })
+
   test('reconstructs held positions before replaying persisted entry risk', async () => {
     const selectedSymbol = defaultIntradayMomentumProtocolDocument.universe[0]
     if (selectedSymbol === undefined) throw new Error('intraday execution fixture requires a non-empty universe')

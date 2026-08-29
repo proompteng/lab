@@ -11,7 +11,15 @@ import {
 import { ExecutionSessionBindingSchema } from './execution-session'
 import { canonicalHashV1Result, sha256 } from './hash'
 import { verifyIntradaySnapshot } from './market-data/intraday/verification'
-import { OrderSide, PositionSchema, PositiveMicrosSchema, RiskOutcome, type Position } from './execution/contracts'
+import {
+  AuthorityStateSchema,
+  OrderSide,
+  PositionSchema,
+  PositiveMicrosSchema,
+  RiskOutcome,
+  type Position,
+} from './execution/contracts'
+import { deriveExecutionIntentPricing } from './execution/intent-pricing'
 import {
   legacyCycleDecisionSchemaVersion,
   legacyExecutionAuthorityToken,
@@ -51,7 +59,10 @@ import {
   intradayMomentumSignalRejectionReasons,
   selectCanonicalIntradayMomentumSignals,
 } from './strategy/intraday-momentum/model'
-import { defaultIntradayMomentumProtocolDocument } from './strategy/intraday-momentum/protocol'
+import {
+  defaultIntradayMomentumProtocolDocument,
+  intradayMomentumExecutionModel,
+} from './strategy/intraday-momentum/protocol'
 import { utcInstantFromEpochMillis } from './time'
 
 const ExecutionCalendarObservationSchema = Schema.Struct({
@@ -445,6 +456,16 @@ const ExecutionDecisionBindingsSchema = Schema.Struct({
   ...ShadowDecisionBindingsSchema.fields,
   qualificationRunId: Sha256Schema,
   authorityGenerationHash: Sha256Schema,
+  riskContext: Schema.optionalKey(
+    Schema.Struct({
+      authority: AuthorityStateSchema,
+      authorityObservedAt: UtcInstantSchema,
+      unknownMutationCount: NonNegativeIntegerSchema,
+      dailyTradedNotionalMicros: UnsignedMicrosSchema,
+      dayStartEquityMicros: SignedMicrosSchema,
+      peakEquityMicros: SignedMicrosSchema,
+    }),
+  ),
 })
 
 const ExecutionRiskBlockSchema = Schema.Struct({
@@ -955,6 +976,21 @@ const executionMaterialIssues = (
   const issues: Schema.FilterIssue[] = []
   const planned = document.targetPlan.status === TargetPlanStatus.Planned
   const requiresDurableRiskFacts = document.bindings.strategyName === 'intraday-momentum' && planned
+  const riskContext = document.bindings.riskContext
+  if (requiresDurableRiskFacts && riskContext === undefined) {
+    issues.push({
+      path: ['bindings', 'riskContext'],
+      issue: 'intraday execution requires externally verifiable authority and risk-context bindings',
+    })
+  } else if (
+    riskContext !== undefined &&
+    riskContext.authority.generationHash !== document.bindings.authorityGenerationHash
+  ) {
+    issues.push({
+      path: ['bindings', 'riskContext', 'authority', 'generationHash'],
+      issue: 'must match the execution authority generation',
+    })
+  }
   if (document.expiresAt !== document.submissionCutoffAt) {
     issues.push({ path: ['expiresAt'], issue: 'must equal the immutable cycle submission cutoff' })
   }
@@ -1259,6 +1295,18 @@ const executionMaterialIssues = (
       const policy = document.riskPolicy
       const executionIntent = makeExecutionIntentFromDecodedPlan(plan, document.bindings.authorityGenerationHash)
       const expectedProposedPositions = proposedPositionSequence?.[index]
+      const plannedTarget = document.targetPlan.targets.find(({ symbol }) => symbol === target.symbol)
+      const pricing =
+        plannedTarget === undefined
+          ? undefined
+          : deriveExecutionIntentPricing({
+              side: target.side,
+              orderType: target.orderType,
+              timeInForce: target.timeInForce,
+              quantityMicros: BigInt(target.quantityMicros),
+              referencePriceMicros: BigInt(plannedTarget.referencePriceMicros),
+              executionModel: intradayMomentumExecutionModel,
+            })
       const expectedProposedPositionsHash =
         expectedProposedPositions === undefined ? undefined : canonicalHashV1Result(expectedProposedPositions)
       const recordedProposedPositionsHash =
@@ -1287,6 +1335,11 @@ const executionMaterialIssues = (
       if (
         facts === undefined ||
         policy === undefined ||
+        riskContext === undefined ||
+        pricing === undefined ||
+        Result.isFailure(pricing) ||
+        risk.notionalLimitMicros !== pricing.success.notionalLimitMicros.toString() ||
+        facts.state.expectedExecutionPriceMicros !== pricing.success.expectedExecutionPriceMicros.toString() ||
         !proposedPositionsMatch ||
         Result.isFailure(executionIntent) ||
         reproduced === undefined ||
@@ -1311,13 +1364,24 @@ const executionMaterialIssues = (
         })
         const expectedMarketDataHash = executionMarketData?.contentHash ?? document.bindings.snapshotContentHash
         const previousEvaluation = document.deltaRisk[index - 1]?.evaluation
+        const expectedAuthorityHash = canonicalHashV1Result(riskContext.authority)
+        const recordedAuthorityHash = canonicalHashV1Result(facts.state.authority)
+        const expectedDailyTradedNotionalMicros =
+          previousEvaluation?.metrics.dailyTradedNotionalMicros ?? riskContext.dailyTradedNotionalMicros
         if (
           Result.isFailure(brokerStateHash) ||
           brokerStateHash.success !== document.bindings.planningBrokerStateHash ||
           facts.state.reconciliation.reconciliationId !== document.bindings.reconciliationId ||
           facts.state.reconciliation.contentHash !== document.bindings.reconciliationHash ||
           facts.state.evaluatedAt !== document.createdAt ||
-          facts.state.authority.generationHash !== document.bindings.authorityGenerationHash ||
+          Result.isFailure(expectedAuthorityHash) ||
+          Result.isFailure(recordedAuthorityHash) ||
+          expectedAuthorityHash.success !== recordedAuthorityHash.success ||
+          facts.state.authorityObservedAt !== riskContext.authorityObservedAt ||
+          facts.state.unknownMutationCount !== riskContext.unknownMutationCount ||
+          facts.state.dailyTradedNotionalMicros !== expectedDailyTradedNotionalMicros ||
+          facts.state.dayStartEquityMicros !== riskContext.dayStartEquityMicros ||
+          facts.state.peakEquityMicros !== riskContext.peakEquityMicros ||
           facts.state.marketDataSymbol !== target.symbol ||
           facts.state.marketDataHash !== expectedMarketDataHash ||
           facts.state.executionMarketDataHash !== executionMarketData?.contentHash ||

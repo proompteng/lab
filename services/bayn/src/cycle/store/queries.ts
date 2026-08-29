@@ -1,6 +1,7 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect } from 'effect'
 
+import { legacyExecutionAuthorityToken } from '../../execution/legacy-wire'
 import type { CycleDecisionDocument, ExecutionDecisionDocument } from '../../shadow-decision-contract'
 import { CycleState, type AutonomousCycle } from '../model'
 import { attachCycleDecisionStoreEvidence } from './decision-contract'
@@ -258,6 +259,76 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
 
   const decisionEvidenceMatches: CycleQueries['decisionEvidenceMatches'] = (document) => {
     const executionMarketData = document.bindings.executionMarketData
+    const riskContext = document.mode === legacyExecutionAuthorityToken ? document.bindings.riskContext : undefined
+    const riskState = document.mode === legacyExecutionAuthorityToken ? document.deltaRisk[0]?.facts?.state : undefined
+    const riskContextEvidence =
+      riskContext === undefined || riskState === undefined
+        ? sql`${riskContext === undefined}`
+        : sql`
+            EXISTS (
+              SELECT 1
+              FROM authority_state AS authority
+              WHERE authority.singleton
+                AND authority.schema_version = ${riskContext.authority.schemaVersion}
+                AND authority.generation_hash = ${riskContext.authority.generationHash}
+                AND authority.maximum = ${riskContext.authority.maximum}
+                AND authority.effective = ${riskContext.authority.effective}
+                AND authority.kill_state = ${riskContext.authority.kill}
+                AND authority.reason IS NOT DISTINCT FROM ${riskContext.authority.reason ?? null}::text
+                AND authority.version = ${riskContext.authority.version}
+                AND authority.updated_at = ${riskContext.authority.updatedAt}::timestamptz
+            )
+            AND ${riskContext.authorityObservedAt}::timestamptz <= ${document.createdAt}::timestamptz
+            AND coalesce((
+              SELECT sum(transaction.notional_micros)::text
+              FROM accounting_transactions AS transaction
+              WHERE transaction.account_id = ${document.bindings.accountId}
+                AND transaction.occurred_at <= ${riskState.reconciliation.reconciledAt}::timestamptz
+                AND (transaction.occurred_at AT TIME ZONE 'America/New_York')::date =
+                  (${riskState.reconciliation.reconciledAt}::timestamptz AT TIME ZONE 'America/New_York')::date
+            ), '0') = ${riskContext.dailyTradedNotionalMicros}
+            AND (
+              SELECT valuation.equity_micros::text
+              FROM valuations AS valuation
+              WHERE valuation.account_id = ${document.bindings.accountId}
+                AND valuation.as_of <= ${riskState.reconciliation.reconciledAt}::timestamptz
+                AND (valuation.as_of AT TIME ZONE 'America/New_York')::date =
+                  (${riskState.reconciliation.reconciledAt}::timestamptz AT TIME ZONE 'America/New_York')::date
+              ORDER BY valuation.as_of, valuation.valuation_id COLLATE "C"
+              LIMIT 1
+            ) = ${riskContext.dayStartEquityMicros}
+            AND (
+              SELECT max(valuation.equity_micros)::text
+              FROM valuations AS valuation
+              WHERE valuation.account_id = ${document.bindings.accountId}
+                AND valuation.as_of <= ${riskState.reconciliation.reconciledAt}::timestamptz
+            ) = ${riskContext.peakEquityMicros}
+            AND (
+              SELECT count(*)::integer
+              FROM intents AS intent
+              JOIN LATERAL (
+                SELECT event.operation, event.event_type
+                FROM mutation_events AS event
+                WHERE event.intent_id = intent.intent_id
+                ORDER BY
+                  CASE event.operation WHEN 'CANCEL' THEN 1 ELSE 0 END DESC,
+                  event.sequence DESC
+                LIMIT 1
+              ) AS latest ON true
+              WHERE intent.account_id = ${document.bindings.accountId}
+                AND (
+                  latest.event_type IN (
+                    'SUBMIT_STARTED', 'SUBMIT_UNKNOWN', 'RECOVERY_NOT_FOUND', 'RECOVERY_UNKNOWN',
+                    'CANCEL_STARTED', 'CANCEL_ACCEPTED', 'CANCEL_UNKNOWN'
+                  )
+                  OR (
+                    latest.operation = 'CANCEL'
+                    AND latest.event_type = 'RECOVERY_FOUND'
+                    AND intent.state <> 'TERMINAL'
+                  )
+                )
+            ) = ${riskContext.unknownMutationCount}
+          `
     const snapshotEvidence =
       executionMarketData === undefined
         ? sql`
@@ -279,6 +350,7 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
         SELECT 1
         FROM reconciliations AS reconciliation
         WHERE ${snapshotEvidence}
+          AND ${riskContextEvidence}
           AND reconciliation.reconciliation_id = ${document.bindings.reconciliationId}
           AND reconciliation.account_id = ${document.bindings.accountId}
           AND reconciliation.expected_hash = ${document.bindings.planningBrokerStateHash}

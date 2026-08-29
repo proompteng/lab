@@ -127,6 +127,7 @@ import { PostgresClientLive } from '../../db/evidence-store'
 import { migrationLoader } from '../../db/migrations'
 import { ensureSnapshotReference } from '../../db/snapshot-reference'
 import { CycleStore, CycleStoreLive, WriterFencedCycleStoreLive, type CycleStoreShape } from '.'
+import { makeCycleQueries } from './queries'
 
 const encodeSqlJson = Schema.encodeSync(Schema.UnknownFromJsonString)
 const migrationLoaderBeforeIntradayNativeCycles = migrationLoader.pipe(
@@ -3291,6 +3292,119 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       warmup_after_open_ms: 1_800_000,
       submission_cutoff_before_close_ms: 3_600_000,
     })
+  })
+
+  test('admits an intraday decision only against exact durable authority and risk context', async () => {
+    const draft = makeFullSessionIntradayDraft()
+    const observedAt = '2026-03-09T17:00:00.000Z'
+    const reconciliation = plannedPaperReconciliation(draft, observedAt)
+    const reconciledRiskContext = reconciliation.riskContext
+    if (reconciledRiskContext.authority === null || reconciledRiskContext.authorityObservedAt === null) {
+      throw new Error('intraday risk-context fixture requires execution authority')
+    }
+    const authorityUpdatedAt = '2026-03-09T16:59:00.000Z'
+    const authorityGenerationHash = 'f'.repeat(64)
+    const riskContext = {
+      ...reconciledRiskContext,
+      authority: {
+        ...reconciledRiskContext.authority,
+        generationHash: authorityGenerationHash,
+        maximum: Authority.Observe,
+        effective: Authority.Observe,
+        version: 1,
+        updatedAt: authorityUpdatedAt,
+      },
+      authorityObservedAt: authorityUpdatedAt,
+    }
+    const snapshotId = 'b'.repeat(64)
+    const snapshotContentHash = 'c'.repeat(64)
+    const document = {
+      mode: 'PAPER',
+      createdAt: observedAt,
+      bindings: {
+        accountId: draft.identity.accountId,
+        snapshotId,
+        snapshotContentHash,
+        snapshotFinalizedAt: observedAt,
+        planningBrokerStateHash: reconciliation.report.reconciliation.observedHash,
+        reconciliationId: reconciliation.report.reconciliation.reconciliationId,
+        reconciliationHash: reconciliation.report.reconciliation.contentHash,
+        executionMarketData: { snapshotId, contentHash: snapshotContentHash, observedAt },
+        riskContext,
+      },
+      deltaRisk: [{ facts: { state: { reconciliation: reconciliation.report.reconciliation } } }],
+    } as unknown as ExecutionDecisionDocument
+
+    const observed = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const brokerIdentity = Result.getOrThrow(
+          makeBrokerIdentity({
+            schemaVersion: 'bayn.broker-identity.v2',
+            provider: BrokerProvider.Alpaca,
+            environment: BrokerEnvironment.Sandbox,
+            accountId: draft.identity.accountId,
+          }),
+        )
+        yield* sql`
+          INSERT INTO authority_generations (
+            generation_hash, schema_version, previous_generation_hash, maximum,
+            authority_version, account_id, broker_identity_schema_version,
+            broker_identity_hash, broker_provider, broker_environment, activated_at
+          ) VALUES (
+            ${authorityGenerationHash}, 'bayn.authority-generation-history.v1', NULL, 'OBSERVE', 1,
+            ${draft.identity.accountId}, ${brokerIdentity.schemaVersion}, ${brokerIdentity.identityHash},
+            ${brokerIdentity.provider}, ${brokerIdentity.environment}, ${authorityUpdatedAt}
+          )
+        `
+        yield* sql`
+          INSERT INTO authority_state (
+            singleton, schema_version, generation_hash, maximum, effective, kill_state,
+            reason, version, updated_at
+          ) VALUES (
+            true, ${riskContext.authority.schemaVersion}, ${authorityGenerationHash},
+            'OBSERVE', 'OBSERVE', ${riskContext.authority.kill}, NULL, 1, ${authorityUpdatedAt}
+          )
+        `
+        yield* sql`
+          INSERT INTO valuations (
+            valuation_id, schema_version, account_id, source_hash, cash_micros,
+            long_market_value_micros, short_market_value_micros, equity_micros, as_of
+          ) VALUES (
+            ${'d'.repeat(64)}, 'bayn.paper-valuation.v1', ${draft.identity.accountId}, ${'e'.repeat(64)},
+            ${riskContext.dayStartEquityMicros}, 0, 0, ${riskContext.dayStartEquityMicros}, ${observedAt}
+          )
+        `
+        const durableReconciliation = reconciliation.report.reconciliation
+        yield* sql`
+          INSERT INTO reconciliations (
+            reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+            content_hash, status, discrepancies, reconciled_at
+          ) VALUES (
+            ${durableReconciliation.reconciliationId}, ${durableReconciliation.schemaVersion},
+            ${durableReconciliation.accountId}, ${durableReconciliation.expectedHash},
+            ${durableReconciliation.observedHash}, ${durableReconciliation.contentHash},
+            ${durableReconciliation.status}, ${sql.json(encodeSqlJson(durableReconciliation.discrepancies))},
+            ${durableReconciliation.reconciledAt}
+          )
+        `
+        const queries = makeCycleQueries(sql)
+        const exact = yield* queries.decisionEvidenceMatches(document)
+        const forged = yield* queries.decisionEvidenceMatches({
+          ...document,
+          bindings: {
+            ...document.bindings,
+            riskContext: {
+              ...riskContext,
+              authority: { ...riskContext.authority, version: riskContext.authority.version + 1 },
+            },
+          },
+        })
+        return { exact, forged }
+      }),
+    )
+
+    expect(observed).toEqual({ exact: true, forged: false })
   })
 
   test('fences standalone cycle mutations across ready execution runtimes and hands ownership off', async () => {
