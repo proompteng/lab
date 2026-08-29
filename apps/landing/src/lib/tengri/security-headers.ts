@@ -25,7 +25,7 @@ export function buildRuntimeContentSecurityPolicy(environment: SecurityPolicyEnv
 export function buildContentSecurityPolicy(options: BrowserSecurityPolicyOptions): string {
   const scriptSource = options.development
     ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
-    : "script-src 'self' 'unsafe-inline'"
+    : "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'"
   const gatewayOrigin = configuredOrigin(options.tengriPublicUrl, DEFAULT_TENGRI_PUBLIC_URL, options.development)
   const convexOrigin = configuredOrigin(options.convexUrl, DEFAULT_CONVEX_URL, options.development)
   const previewFrameSource = configuredFrameSource(
