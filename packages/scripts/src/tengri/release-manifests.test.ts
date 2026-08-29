@@ -490,6 +490,39 @@ spec:
     rmSync(paths.directory, { recursive: true, force: true })
   })
 
+  it('rejects unverified top-level ApplicationSet reconciliation controls', () => {
+    const controls = [
+      `  ignoreApplicationDifferences:
+    - name: tengri
+      jsonPointers:
+        - /spec/source
+`,
+      `  syncPolicy:
+    preserveResourcesOnDeletion: true
+`,
+    ] as const
+
+    for (const control of controls) {
+      const paths = fixture()
+      const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+      const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+      writeFileSync(
+        paths.applicationSetPath,
+        readFileSync(paths.applicationSetPath, 'utf8').replace('  generators:\n', `${control}  generators:\n`),
+      )
+      const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+
+      expect(() => validateTengriRelease(paths)).toThrow('spec contains unsupported reconciliation fields')
+      expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
+        'spec contains unsupported reconciliation fields',
+      )
+      expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+      expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
+      expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
+      rmSync(paths.directory, { recursive: true, force: true })
+    }
+  })
+
   it('rejects selectors that filter the matrix before the verified application selector', () => {
     const selectorPlacements = [
       [

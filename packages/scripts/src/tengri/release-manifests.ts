@@ -203,7 +203,10 @@ function findTengriApplicationBlock(contents: string) {
     throw new Error('Platform ApplicationSet must be metadata.name=platform in namespace argocd')
   }
   const specNode = document.get('spec', true)
-  if (isMap(specNode) && containsMergeKey(specNode.toJSON())) {
+  if (!isMap(specNode)) {
+    throw new Error('Platform ApplicationSet spec must be a mapping')
+  }
+  if (containsMergeKey(specNode.toJSON())) {
     throw new Error('Tengri ApplicationSet spec must not contain YAML merge keys')
   }
 
@@ -217,6 +220,13 @@ function findTengriApplicationBlock(contents: string) {
   }
   if (document.getIn(['spec', 'strategy'], true) !== undefined) {
     throw new Error('Tengri ApplicationSet must not define a rollout strategy that can hold the verified release')
+  }
+  const verifiedSpecFields = new Set(['goTemplate', 'goTemplateOptions', 'generators', 'template', 'templatePatch'])
+  const unsupportedSpecFields = Object.keys(specNode.toJSON()).filter((field) => !verifiedSpecFields.has(field))
+  if (unsupportedSpecFields.length > 0) {
+    throw new Error(
+      `Tengri ApplicationSet spec contains unsupported reconciliation fields; remove ${unsupportedSpecFields.join(', ')}`,
+    )
   }
 
   const topLevelGenerators = document.getIn(['spec', 'generators'], true)
