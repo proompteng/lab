@@ -21,6 +21,7 @@ const indentedTemplatePatch = TENGRI_APPLICATION_TEMPLATE_PATCH.split('\n')
 function fixture(tengri = ZERO_DIGEST, nanoagent = ZERO_DIGEST, enabled = false, bffEnabled = enabled) {
   const directory = mkdtempSync(join(tmpdir(), 'tengri-release-'))
   const kustomizationPath = join(directory, 'kustomization.yaml')
+  const rootApplicationPath = join(directory, 'root.yaml')
   const applicationSetPath = join(directory, 'platform.yaml')
   const bffDeploymentPath = join(directory, 'deployment.yaml')
   const tengriDeploymentPath = join(directory, 'tengri-deployment.yaml')
@@ -36,6 +37,28 @@ images:
   - name: registry.ide-newton.ts.net/lab/tengri
     newName: registry.ide-newton.ts.net/lab/tengri
     digest: ${tengri}
+`,
+  )
+  writeFileSync(
+    rootApplicationPath,
+    `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/proompteng/lab.git
+    targetRevision: main
+    path: argocd/applicationsets
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
 `,
   )
   writeFileSync(
@@ -143,7 +166,14 @@ spec:
           image: registry.ide-newton.ts.net/lab/tengri
 `,
   )
-  return { directory, kustomizationPath, applicationSetPath, bffDeploymentPath, tengriDeploymentPath }
+  return {
+    directory,
+    kustomizationPath,
+    rootApplicationPath,
+    applicationSetPath,
+    bffDeploymentPath,
+    tengriDeploymentPath,
+  }
 }
 
 describe('Tengri release manifests', () => {
@@ -269,6 +299,34 @@ spec:
     const paths = fixture(tengriDigest, nanoagentDigest, true)
     expect(readTengriRelease(paths).enabled).toBe(true)
     rmSync(paths.directory, { recursive: true, force: true })
+  })
+
+  it('rejects a root Application that no longer reconciles the platform ApplicationSet', () => {
+    const drifts = [
+      ['https://github.com/proompteng/lab.git', 'https://github.com/example/fork.git'],
+      ['targetRevision: main', 'targetRevision: stale'],
+      ['path: argocd/applicationsets', 'path: argocd/other'],
+    ] as const
+
+    for (const [expected, replacement] of drifts) {
+      const paths = fixture()
+      const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+      const beforeApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+      const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+      writeFileSync(
+        paths.rootApplicationPath,
+        readFileSync(paths.rootApplicationPath, 'utf8').replace(expected, replacement),
+      )
+
+      expect(() => validateTengriRelease(paths)).toThrow('root Application must reconcile argocd/applicationsets')
+      expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
+        'root Application must reconcile argocd/applicationsets',
+      )
+      expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+      expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(beforeApplicationSet)
+      expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
+      rmSync(paths.directory, { recursive: true, force: true })
+    }
   })
 
   it('rejects a platform manifest that is not the canonical ApplicationSet resource', () => {

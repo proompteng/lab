@@ -15,6 +15,7 @@ const digestPattern = /^sha256:[0-9a-f]{64}$/
 const kubernetesLabelNamePattern = /^[A-Za-z0-9](?:[-A-Za-z0-9_.]*[A-Za-z0-9])?$/
 const kubernetesDnsLabelPattern = /^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$/
 const defaultKustomizationPath = 'argocd/applications/tengri/kustomization.yaml'
+const defaultRootApplicationPath = 'argocd/root.yaml'
 const defaultApplicationSetPath = 'argocd/applicationsets/platform.yaml'
 const defaultBffDeploymentPath = 'argocd/applications/proompteng/deployment.yaml'
 const defaultTengriDeploymentPath = 'argocd/applications/tengri/deployment.yaml'
@@ -147,9 +148,32 @@ export type TengriRelease = {
 
 export type TengriReleasePaths = {
   kustomizationPath?: string
+  rootApplicationPath?: string
   applicationSetPath?: string
   bffDeploymentPath?: string
   tengriDeploymentPath?: string
+}
+
+function assertRootApplicationSource(contents: string) {
+  const root = YAML.parse(contents)
+  const expected = {
+    apiVersion: 'argoproj.io/v1alpha1',
+    kind: 'Application',
+    metadata: { name: 'root', namespace: 'argocd' },
+    spec: {
+      project: 'default',
+      source: {
+        repoURL: expectedRepository,
+        targetRevision: expectedRevision,
+        path: 'argocd/applicationsets',
+      },
+      destination: { server: expectedDestinationServer, namespace: 'argocd' },
+      syncPolicy: { automated: { prune: true, selfHeal: true } },
+    },
+  }
+  if (!isDeepStrictEqual(root, expected)) {
+    throw new Error('Argo root Application must reconcile argocd/applicationsets from proompteng/lab main')
+  }
 }
 
 const absolutePath = (path: string) => (path.startsWith('/') ? path : resolve(repoRoot, path))
@@ -1016,10 +1040,12 @@ function assertTengriDeploymentImage(contents: string) {
 
 export function readTengriRelease(paths: TengriReleasePaths = {}): TengriRelease {
   const kustomizationPath = absolutePath(paths.kustomizationPath ?? defaultKustomizationPath)
+  const rootApplicationPath = absolutePath(paths.rootApplicationPath ?? defaultRootApplicationPath)
   const applicationSetPath = absolutePath(paths.applicationSetPath ?? defaultApplicationSetPath)
   const bffDeploymentPath = absolutePath(paths.bffDeploymentPath ?? defaultBffDeploymentPath)
   const tengriDeploymentPath = absolutePath(paths.tengriDeploymentPath ?? defaultTengriDeploymentPath)
   const images = parseKustomization(readFileSync(kustomizationPath, 'utf8'))
+  assertRootApplicationSource(readFileSync(rootApplicationPath, 'utf8'))
   const application = findTengriApplicationBlock(readFileSync(applicationSetPath, 'utf8'))
   const bffEndpoint = parseBffEndpoint(readFileSync(bffDeploymentPath, 'utf8'))
   assertTengriDeploymentImage(readFileSync(tengriDeploymentPath, 'utf8'))
@@ -1067,12 +1093,14 @@ export function updateTengriRelease(
   }
 
   const kustomizationPath = absolutePath(paths.kustomizationPath ?? defaultKustomizationPath)
+  const rootApplicationPath = absolutePath(paths.rootApplicationPath ?? defaultRootApplicationPath)
   const applicationSetPath = absolutePath(paths.applicationSetPath ?? defaultApplicationSetPath)
   const bffDeploymentPath = absolutePath(paths.bffDeploymentPath ?? defaultBffDeploymentPath)
   const tengriDeploymentPath = absolutePath(paths.tengriDeploymentPath ?? defaultTengriDeploymentPath)
   const originalKustomization = readFileSync(kustomizationPath, 'utf8')
   const originalApplicationSet = readFileSync(applicationSetPath, 'utf8')
   const originalBffDeployment = readFileSync(bffDeploymentPath, 'utf8')
+  assertRootApplicationSource(readFileSync(rootApplicationPath, 'utf8'))
   assertTengriDeploymentImage(readFileSync(tengriDeploymentPath, 'utf8'))
 
   let nextKustomization = replaceExactlyOnce(
