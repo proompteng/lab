@@ -64,6 +64,10 @@ Verify the item and all required fields without printing their values before mer
         test "${#value}" -ge 32
         ;;
       TENGRI_INTERNAL_HMAC_SECRET)
+        if [[ "$value" == ,* || "$value" == *, || "$value" == *,,* ]]; then
+          echo "TENGRI_INTERNAL_HMAC_SECRET contains an empty key" >&2
+          exit 1
+        fi
         IFS=',' read -r -a hmac_keys <<<"$value"
         test "${#hmac_keys[@]}" -ge 1
         test "${#hmac_keys[@]}" -le 2
