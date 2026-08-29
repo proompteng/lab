@@ -312,6 +312,7 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
                 SELECT event.operation, event.event_type
                 FROM mutation_events AS event
                 WHERE event.intent_id = intent.intent_id
+                  AND event.occurred_at <= ${riskState.reconciliation.reconciledAt}::timestamptz
                 ORDER BY
                   CASE event.operation WHEN 'CANCEL' THEN 1 ELSE 0 END DESC,
                   event.sequence DESC

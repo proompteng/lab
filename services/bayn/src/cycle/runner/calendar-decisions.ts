@@ -1,6 +1,7 @@
 import { DateTime, Option, Result } from 'effect'
 
 import type { MarketCalendarObservation, MarketCalendarQuery, MarketCalendarSession } from '../../broker/alpaca'
+import { defaultIntradayMomentumProtocolDocument } from '../../strategy/intraday-momentum/protocol'
 import {
   makeCycleDraft,
   makeCycleIdentity,
@@ -94,7 +95,11 @@ export const selectIntradayExecutionSession = (
   return observation.sessions.reduce<MarketCalendarSession | undefined>((selected, session) => {
     const openAtMillis = Date.parse(session.openAt)
     const cutoffAtMillis = Date.parse(session.closeAt) - executionPolicy.submissionCutoffBeforeCloseMs
-    const hasExecutableWindow = openAtMillis + executionPolicy.warmupAfterOpenMs < cutoffAtMillis
+    const hasExecutableWindow =
+      openAtMillis +
+        executionPolicy.warmupAfterOpenMs +
+        defaultIntradayMomentumProtocolDocument.decisionDelaySeconds * 1_000 <
+      cutoffAtMillis
     if (!Number.isFinite(cutoffAtMillis) || !hasExecutableWindow || observedAtMillis >= cutoffAtMillis) return selected
     return selected === undefined || session.date < selected.date ? session : selected
   }, undefined)
