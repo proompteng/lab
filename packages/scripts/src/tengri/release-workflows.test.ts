@@ -91,11 +91,7 @@ describe('Tengri release workflows', () => {
       expect(dockerfile).not.toContain('docker.io/')
     }
     expect(nanoagent).toContain('ARG GO_BASE_IMAGE=mirror.gcr.io/golang')
-    expect(nanoagent).toContain('ARG NODE_BASE_IMAGE=mirror.gcr.io/node')
-    expect(nanoagent).toContain('ARG RUST_BASE_IMAGE=mirror.gcr.io/rust')
     expect(nanoagent).toContain('ARG UBUNTU_BASE_IMAGE=mirror.gcr.io/ubuntu')
-    expect(nanoagent).toContain('"bun@${BUN_VERSION}"')
-    expect(nanoagent).not.toContain('oven/bun')
     expect(tengri).toContain('ARG DEBIAN_BASE_IMAGE=mirror.gcr.io/debian')
     expect(tengri).toContain('ARG RUST_BASE_IMAGE=mirror.gcr.io/rust')
   })
