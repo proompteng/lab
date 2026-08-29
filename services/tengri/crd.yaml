@@ -27,7 +27,7 @@ spec:
       type: boolean
     - jsonPath: .spec.expiresAt
       name: Expires
-      type: date
+      type: string
     name: v1alpha1
     schema:
       openAPIV3Schema:
