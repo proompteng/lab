@@ -617,8 +617,8 @@ function assertApplicationElementCanRender(application: Record<string, unknown>)
   if (Object.hasOwn(application, 'renderWithLovely') && typeof application.renderWithLovely !== 'boolean') {
     throw new Error('Tengri ApplicationSet selector-admitted renderWithLovely must be a boolean')
   }
-  if (Object.hasOwn(application, 'kustomize') && !isPlainRecord(application.kustomize)) {
-    throw new Error('Tengri ApplicationSet selector-admitted kustomize input must be a mapping')
+  if (Object.hasOwn(application, 'kustomize')) {
+    assertValidKustomizeInput(application.kustomize)
   }
   if (Object.hasOwn(application, 'managedNamespaceMetadata')) {
     assertValidManagedNamespaceMetadata(application.managedNamespaceMetadata)
@@ -663,6 +663,111 @@ function assertValidMetadataMap(value: unknown, field: 'labels' | 'annotations',
     )
   ) {
     throw new Error(`Tengri ApplicationSet selector-admitted managedNamespaceMetadata ${field} must be a string map`)
+  }
+}
+
+function assertValidKustomizeInput(value: unknown) {
+  if (!isPlainRecord(value)) {
+    throw new Error('Tengri ApplicationSet selector-admitted kustomize input must be a mapping')
+  }
+  const stringFields = ['namePrefix', 'nameSuffix', 'namespace', 'version'] as const
+  const booleanFields = [
+    'commonAnnotationsEnvsubst',
+    'forceCommonAnnotations',
+    'forceCommonLabels',
+    'labelWithoutSelector',
+  ] as const
+  const stringMapFields = ['commonAnnotations', 'commonLabels'] as const
+  const stringSequenceFields = ['components', 'images'] as const
+  const allowedFields = new Set([
+    ...stringFields,
+    ...booleanFields,
+    ...stringMapFields,
+    ...stringSequenceFields,
+    'patches',
+    'replicas',
+  ])
+  if (Object.keys(value).some((field) => !allowedFields.has(field))) {
+    throw new Error('Tengri ApplicationSet selector-admitted kustomize input contains an unsupported field')
+  }
+
+  for (const field of stringFields) {
+    if (value[field] !== undefined && typeof value[field] !== 'string') {
+      throw new Error(`Tengri ApplicationSet selector-admitted kustomize.${field} must be a string`)
+    }
+  }
+  for (const field of booleanFields) {
+    if (value[field] !== undefined && typeof value[field] !== 'boolean') {
+      throw new Error(`Tengri ApplicationSet selector-admitted kustomize.${field} must be a boolean`)
+    }
+  }
+  for (const field of stringMapFields) {
+    const map = value[field]
+    if (map !== undefined && (!isPlainRecord(map) || Object.values(map).some((entry) => typeof entry !== 'string'))) {
+      throw new Error(`Tengri ApplicationSet selector-admitted kustomize.${field} must be a string map`)
+    }
+  }
+  for (const field of stringSequenceFields) {
+    const sequence = value[field]
+    if (sequence !== undefined && (!Array.isArray(sequence) || sequence.some((entry) => typeof entry !== 'string'))) {
+      throw new Error(`Tengri ApplicationSet selector-admitted kustomize.${field} must be a string sequence`)
+    }
+  }
+  if (value.patches !== undefined) assertValidKustomizePatches(value.patches)
+  if (value.replicas !== undefined) assertValidKustomizeReplicas(value.replicas)
+}
+
+function assertValidKustomizePatches(value: unknown) {
+  if (!Array.isArray(value)) {
+    throw new Error('Tengri ApplicationSet selector-admitted kustomize.patches must contain patch mappings')
+  }
+  const targetFields = new Set(['annotationSelector', 'group', 'kind', 'labelSelector', 'name', 'namespace', 'version'])
+  for (const patch of value) {
+    if (!isPlainRecord(patch)) {
+      throw new Error('Tengri ApplicationSet selector-admitted kustomize.patches must contain patch mappings')
+    }
+    if (Object.keys(patch).some((field) => !['options', 'patch', 'path', 'target'].includes(field))) {
+      throw new Error('Tengri ApplicationSet selector-admitted kustomize.patches contains an unsupported field')
+    }
+    for (const field of ['patch', 'path'] as const) {
+      if (patch[field] !== undefined && typeof patch[field] !== 'string') {
+        throw new Error(`Tengri ApplicationSet selector-admitted kustomize.patches.${field} must be a string`)
+      }
+    }
+    if (
+      patch.options !== undefined &&
+      (!isPlainRecord(patch.options) || Object.values(patch.options).some((entry) => typeof entry !== 'boolean'))
+    ) {
+      throw new Error('Tengri ApplicationSet selector-admitted kustomize.patches.options must be a boolean map')
+    }
+    if (patch.target !== undefined) {
+      if (
+        !isPlainRecord(patch.target) ||
+        Object.keys(patch.target).some((field) => !targetFields.has(field)) ||
+        Object.values(patch.target).some((entry) => typeof entry !== 'string')
+      ) {
+        throw new Error('Tengri ApplicationSet selector-admitted kustomize.patches.target must be a string mapping')
+      }
+    }
+  }
+}
+
+function assertValidKustomizeReplicas(value: unknown) {
+  if (!Array.isArray(value)) {
+    throw new Error('Tengri ApplicationSet selector-admitted kustomize.replicas must contain replica mappings')
+  }
+  for (const replica of value) {
+    if (!isPlainRecord(replica)) {
+      throw new Error('Tengri ApplicationSet selector-admitted kustomize.replicas must contain replica mappings')
+    }
+    const count = replica.count
+    if (
+      Object.keys(replica).some((field) => field !== 'count' && field !== 'name') ||
+      typeof replica.name !== 'string' ||
+      (typeof count !== 'string' && !Number.isInteger(count))
+    ) {
+      throw new Error('Tengri ApplicationSet selector-admitted kustomize.replicas must contain name and count')
+    }
   }
 }
 

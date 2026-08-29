@@ -1184,6 +1184,26 @@ ${rule}
       ['                ignoreDifferences: {}\n', 'selector-admitted ignoreDifferences must contain resource rules'],
       ['                renderWithLovely: "false"\n', 'selector-admitted renderWithLovely must be a boolean'],
       ['                kustomize: invalid\n', 'selector-admitted kustomize input must be a mapping'],
+      [
+        '                kustomize:\n                  images: invalid\n',
+        'selector-admitted kustomize.images must be a string sequence',
+      ],
+      [
+        '                kustomize:\n                  commonAnnotations:\n                    example.com/value: false\n',
+        'selector-admitted kustomize.commonAnnotations must be a string map',
+      ],
+      [
+        '                kustomize:\n                  patches:\n                    - target: invalid\n',
+        'selector-admitted kustomize.patches.target must be a string mapping',
+      ],
+      [
+        '                kustomize:\n                  replicas:\n                    - name: example\n                      count: false\n',
+        'selector-admitted kustomize.replicas must contain name and count',
+      ],
+      [
+        '                kustomize:\n                  unsupported: true\n',
+        'selector-admitted kustomize input contains an unsupported field',
+      ],
       ['                namespace: Invalid_Name\n', 'selector-admitted namespace must be a valid Kubernetes namespace'],
       ['                repoURL: []\n', 'selector-admitted repoURL must be a non-empty string'],
       ['                targetRevision: {}\n', 'selector-admitted targetRevision must be a non-empty string'],
