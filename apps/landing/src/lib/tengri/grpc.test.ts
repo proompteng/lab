@@ -146,6 +146,16 @@ beforeAll(async () => {
         truncated: true,
       })
     },
+    watchFiles(call: grpc.ServerWritableStream<Record<string, unknown>, Record<string, unknown>>) {
+      receivedMetadata = call.metadata
+      receivedRequest = call.request
+      call.write({
+        sequence: '1',
+        kind: 'FILE_EVENT_KIND_RESET',
+        path: String(call.request.path),
+      })
+      call.end()
+    },
     resolveCodexApproval(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
@@ -254,6 +264,32 @@ describe('Tengri gRPC BFF transport', () => {
       ],
       truncated: true,
     })
+  })
+
+  test('canonicalizes proto3 scalar defaults before signing streaming requests', async () => {
+    const { watchFiles } = await import('./grpc')
+    const stream = watchFiles('github:42', 'agent-test', '/workspace', 0)
+    await new Promise<void>((resolve, reject) => {
+      stream.on('error', reject)
+      stream.on('end', resolve)
+      stream.resume()
+    })
+
+    expect(receivedRequest).toMatchObject({ agentId: 'agent-test', path: '/workspace', afterSequence: '0' })
+    const subject = metadataValue('x-tengri-subject')
+    const timestamp = metadataValue('x-tengri-timestamp')
+    const nonce = metadataValue('x-tengri-nonce')
+    const method = descriptor.proompteng.runtime.v1.MicroVMControlPlane.service.WatchFiles
+    const canonicalBody = method.requestSerialize({ agentId: 'agent-test', path: '/workspace' })
+    const noncanonicalBody = method.requestSerialize({ agentId: 'agent-test', path: '/workspace', afterSequence: 0 })
+    expect(noncanonicalBody.equals(canonicalBody)).toBeFalse()
+    const bodyHash = createHash('sha256').update(canonicalBody).digest('hex')
+
+    expect(metadataValue('x-tengri-signature')).toBe(
+      createHmac('sha256', secret)
+        .update(`${subject}\n${timestamp}\n${nonce}\n${method.path}\n${bodyHash}`)
+        .digest('hex'),
+    )
   })
 
   test('projects terminal creation identity and cancels gRPC when the browser request aborts', async () => {

@@ -344,6 +344,7 @@ async function unary<Response = RawRecord>(
   const client = getClient()
   const method = client[methodName] as UnaryMethod
   if (typeof method !== 'function') throw new TengriUnavailableError(`Tengri method ${methodName} is unavailable`)
+  const canonicalRequest = canonicalizeProto3Request(request)
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(abortedRequestError())
@@ -359,8 +360,8 @@ async function unary<Response = RawRecord>(
     }
     call = method.call(
       client,
-      request,
-      metadata(subject, methodName, request),
+      canonicalRequest,
+      metadata(subject, methodName, canonicalRequest),
       callOptions(deadlineMs),
       (error, response) => {
         if (settled) return
@@ -385,7 +386,24 @@ function stream(methodName: string, request: RawRecord, subject: string) {
   const client = getClient()
   const method = client[methodName] as StreamMethod
   if (typeof method !== 'function') throw new TengriUnavailableError(`Tengri method ${methodName} is unavailable`)
-  return method.call(client, request, metadata(subject, methodName, request), callOptions(0))
+  const canonicalRequest = canonicalizeProto3Request(request)
+  return method.call(client, canonicalRequest, metadata(subject, methodName, canonicalRequest), callOptions(0))
+}
+
+function canonicalizeProto3Request(request: RawRecord) {
+  return Object.fromEntries(Object.entries(request).filter(([, value]) => !isProto3ScalarDefault(value)))
+}
+
+function isProto3ScalarDefault(value: unknown) {
+  return (
+    value === undefined ||
+    value === null ||
+    value === '' ||
+    value === false ||
+    value === 0 ||
+    (Array.isArray(value) && value.length === 0) ||
+    (ArrayBuffer.isView(value) && value.byteLength === 0)
+  )
 }
 
 function getClient(): TengriGrpcClient {
