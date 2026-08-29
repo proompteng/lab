@@ -225,6 +225,8 @@ jobs:
               bun test scripts/hermes/*.test.ts
               bun run scripts/kube-router/validate-production.ts
               bun test scripts/kube-router/*.test.ts
+              bunx oxlint --config .oxlintrc.json scripts/seal-tengri-runtime.ts scripts/seal-tengri-runtime.test.ts
+              bunx oxfmt --check scripts/seal-tengri-runtime.ts scripts/seal-tengri-runtime.test.ts
               bun test scripts/seal-tengri-runtime.test.ts
               ;;
             sag)
