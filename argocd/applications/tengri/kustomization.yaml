@@ -3,7 +3,7 @@ kind: Kustomization
 namespace: tengri
 resources:
   - crd.yaml
-  - external-secret.yaml
+  - sealed-secret.yaml
   - service-account.yaml
   - auth-nonces.yaml
   - rbac.yaml
