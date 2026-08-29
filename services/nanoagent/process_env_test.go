@@ -28,6 +28,7 @@ func TestChildProcessEnvironmentPreservesSimilarKeys(t *testing.T) {
 			"HOME=/root",
 			bootstrapTokenEnvironmentKey + "=guest-secret",
 			bootstrapTokenFDEnvironmentKey + "=7",
+			reexecWrapperEnvironmentKey + "=/usr/bin/tini",
 			"MICROVM_BOOTSTRAP_TOKEN_SUFFIX=retained",
 		},
 		"TERM=xterm-256color",
@@ -38,6 +39,9 @@ func TestChildProcessEnvironmentPreservesSimilarKeys(t *testing.T) {
 	}
 	if slices.Contains(environment, bootstrapTokenFDEnvironmentKey+"=7") {
 		t.Fatal("bootstrap token transport descriptor remained in the child environment")
+	}
+	if slices.Contains(environment, reexecWrapperEnvironmentKey+"=/usr/bin/tini") {
+		t.Fatal("bootstrap re-exec wrapper remained in the child environment")
 	}
 	for _, expected := range []string{
 		"PATH=/usr/bin",

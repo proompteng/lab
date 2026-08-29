@@ -47,6 +47,22 @@ delivered event streams without duplication. Device login and thread state persi
 `.codex` directory. Events and approvals are typed, bounded, and replayable after reconnect; Nanoagent does not inject
 a shared `OPENAI_API_KEY`.
 
+## Firecracker rootfs and persistent tools
+
+Kata's Firecracker snapshotter extracts the guest OCI image into a 512 MiB blockfile. The Dockerfile therefore enforces
+a 480 MiB uncompressed-rootfs ceiling and keeps toolchain payloads out of the immutable image. The image contains a
+minimal Ubuntu 24.04 shell environment and Nanoagent itself.
+
+On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.149.0 package from the npm registry,
+verifies its pinned SHA-512 digest, and atomically installs the complete native package under the 16 GiB PVC-backed
+`~/.tengri/codex` directory. Subsequent boots reuse that verified install. Nanoagent does not become ready until the
+Codex app server is available, and the `MicroVM` startup probe allows ten minutes for a cold download. Image builds run
+the same verified bootstrap without copying its payload into the final image, so a bad checksum or package layout fails
+CI before publication. Nanoagent invokes the installer only after its bootstrap credential has moved through the
+one-use pipe and been removed from the process environment, so downloader and archive child processes cannot inherit
+the credential. The initial Nanoagent process also starts `tini` only through that sanitized re-exec; PID 1 never
+retains the Kubernetes Secret environment value.
+
 The owner-scoped browser-to-guest flow, replay behavior, and live acceptance procedure are documented in
 [`../../docs/tengri/agent-chat.md`](../../docs/tengri/agent-chat.md).
 
@@ -54,6 +70,8 @@ The owner-scoped browser-to-guest flow, replay behavior, and live acceptance pro
 
 ```bash
 cd services/nanoagent
+bash -n bootstrap-codex.sh
+bash bootstrap-codex.sh --validate-manifest
 gofmt -w *.go
 go vet ./...
 go test ./...

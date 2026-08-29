@@ -21,7 +21,11 @@ func childProcessEnvironment(source []string, extra ...string) []string {
 	for _, item := range source {
 		key, _, found := strings.Cut(item, "=")
 		_, overridden := overrides[key]
-		if found && (key == bootstrapTokenEnvironmentKey || key == bootstrapTokenFDEnvironmentKey || overridden) {
+		if found &&
+			(key == bootstrapTokenEnvironmentKey ||
+				key == bootstrapTokenFDEnvironmentKey ||
+				key == reexecWrapperEnvironmentKey ||
+				overridden) {
 			continue
 		}
 		environment = append(environment, item)

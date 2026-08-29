@@ -337,7 +337,7 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
             ..ContainerPort::default()
         }]),
         readiness_probe: Some(http_probe("/readyz", 5, 3)),
-        startup_probe: Some(http_probe("/readyz", 2, 90)),
+        startup_probe: Some(http_probe("/readyz", 5, 120)),
         liveness_probe: Some(http_probe("/livez", 15, 3)),
         resources: Some(ResourceRequirements {
             limits: Some(fixed.clone()),
@@ -577,6 +577,9 @@ mod tests {
             probe_path(container.startup_probe.as_ref().expect("startup probe")),
             Some("/readyz"),
         );
+        let startup_probe = container.startup_probe.as_ref().expect("startup probe");
+        assert_eq!(startup_probe.period_seconds, Some(5));
+        assert_eq!(startup_probe.failure_threshold, Some(120));
         assert_eq!(
             probe_path(container.liveness_probe.as_ref().expect("liveness probe")),
             Some("/livez"),
