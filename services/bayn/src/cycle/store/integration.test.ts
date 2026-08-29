@@ -3316,6 +3316,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         updatedAt: authorityUpdatedAt,
       },
       authorityObservedAt: authorityUpdatedAt,
+      unknownMutationCount: 1,
     }
     const snapshotId = 'b'.repeat(64)
     const snapshotContentHash = 'c'.repeat(64)
@@ -3365,6 +3366,43 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           ) VALUES (
             true, ${riskContext.authority.schemaVersion}, ${authorityGenerationHash},
             'OBSERVE', 'OBSERVE', ${riskContext.authority.kill}, NULL, 1, ${authorityUpdatedAt}
+          )
+        `
+        const intentId = '1'.repeat(64)
+        const mutationId = '2'.repeat(64)
+        const mutationRequestHash = '3'.repeat(64)
+        yield* sql`
+          INSERT INTO intents (
+            intent_id, schema_version, authority_generation_hash, risk_decision_id, strategy_name, cycle_id,
+            decision_hash, policy_hash, account_id, client_order_id, symbol, side, order_type, time_in_force,
+            quantity_micros, notional_limit_micros, state, terminal_outcome, state_version, created_at, updated_at
+          ) VALUES (
+            ${intentId}, 'bayn.paper-intent.v3', ${authorityGenerationHash}, NULL, 'intraday-momentum',
+            ${draft.identity.cycleId}, ${'4'.repeat(64)}, ${'5'.repeat(64)}, ${draft.identity.accountId},
+            'bayn-risk-cutoff-test', 'SPY', 'BUY', 'LIMIT', 'IOC', 1000000, 1000000,
+            'PLANNED', NULL, 1, '2026-03-09T16:59:30.000Z', '2026-03-09T16:59:30.000Z'
+          )
+        `
+        yield* sql`
+          INSERT INTO mutation_events (
+            event_id, schema_version, mutation_id, intent_id, sequence, operation, event_type,
+            request_hash, consistency_delay_ms, broker_order_id, request_id, response_status,
+            response_content_hash, occurred_at
+          ) VALUES (
+            ${'6'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${mutationId}, ${intentId}, 1,
+            'SUBMIT', 'SUBMIT_STARTED', ${mutationRequestHash}, 1000, NULL, NULL, NULL, NULL,
+            '2026-03-09T16:59:30.000Z'
+          )
+        `
+        yield* sql`
+          INSERT INTO mutation_events (
+            event_id, schema_version, mutation_id, intent_id, sequence, operation, event_type,
+            request_hash, consistency_delay_ms, broker_order_id, request_id, response_status,
+            response_content_hash, occurred_at
+          ) VALUES (
+            ${'7'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${mutationId}, ${intentId}, 2,
+            'SUBMIT', 'SUBMIT_REJECTED', ${mutationRequestHash}, 1000, NULL, 'risk-cutoff-rejection', 422,
+            ${'8'.repeat(64)}, '2026-03-09T17:00:30.000Z'
           )
         `
         yield* sql`
