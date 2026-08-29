@@ -80,6 +80,8 @@ export interface IntradayMomentumSignal {
 
 type IntradayMomentumSignalEvidence = Omit<IntradayMomentumSignal, 'eligible' | 'rank' | 'rejectionReasons'>
 
+const compareCanonicalText = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
+
 export const intradayMomentumSignalRejectionReasons = (
   signal: IntradayMomentumSignalEvidence,
   observedAt: string,
@@ -107,7 +109,7 @@ export const compareIntradayMomentumSignalStrength = (
   right.lookbackReturnBps - left.lookbackReturnBps ||
   right.breakoutBps - left.breakoutBps ||
   right.rangeLocationPpm - left.rangeLocationPpm ||
-  left.symbol.localeCompare(right.symbol)
+  compareCanonicalText(left.symbol, right.symbol)
 
 export const selectCanonicalIntradayMomentumSignals = (
   signals: readonly IntradayMomentumSignal[],

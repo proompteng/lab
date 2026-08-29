@@ -6,7 +6,11 @@ import { canonicalHashV1, sha256 } from '../../hash'
 import { verifyIntradaySnapshot, type IntradaySnapshotRows } from '../../market-data'
 import { strictParseOptions } from '../../schemas'
 import { decideIntradayMomentum, makeIntradayMomentumDefinition } from './decision'
-import { IntradayMomentumTargetPortfolioSchema, type IntradayMomentumRejectionReason } from './model'
+import {
+  compareIntradayMomentumSignalStrength,
+  IntradayMomentumTargetPortfolioSchema,
+  type IntradayMomentumRejectionReason,
+} from './model'
 import {
   decodeDefaultIntradayMomentumProtocol,
   decodeIntradayMomentumProtocol,
@@ -285,6 +289,36 @@ describe('intraday momentum strategy', () => {
     expect(
       Schema.decodeUnknownResult(IntradayMomentumTargetPortfolioSchema, strictParseOptions)(decision),
     ).toMatchObject({ _tag: 'Success' })
+  })
+
+  test('breaks equally scored signal ties by canonical code-unit order', () => {
+    const protocol = success(decodeDefaultIntradayMomentumProtocol())
+    const decision = success(
+      decideIntradayMomentum(
+        marketContextAt({ rangeEndAt: '2026-08-18T16:00:00.000Z', returnBps: qualifyingReturns }),
+        protocol,
+      ),
+    )
+    const signal = decision.signals.find(({ symbol }) => symbol === 'AMD')!
+    const mrvl = { ...signal, symbol: 'MRVL' }
+    const mu = { ...signal, symbol: 'MU' }
+    const localeCompare = Object.getOwnPropertyDescriptor(String.prototype, 'localeCompare')
+    if (localeCompare === undefined) throw new Error('String.localeCompare descriptor is unavailable')
+
+    try {
+      Object.defineProperty(String.prototype, 'localeCompare', {
+        configurable: true,
+        value: () => {
+          throw new Error('strategy ordering must not consult the process locale')
+        },
+      })
+      expect([mu, mrvl].toSorted(compareIntradayMomentumSignalStrength).map(({ symbol }) => symbol)).toEqual([
+        'MRVL',
+        'MU',
+      ])
+    } finally {
+      Object.defineProperty(String.prototype, 'localeCompare', localeCompare)
+    }
   })
 
   test('uses the bound early-close duration and rejects only impossible decision intervals', () => {
