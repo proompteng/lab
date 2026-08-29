@@ -88,7 +88,7 @@ export const AutonomousApplicationResourcesLive = (plan: ApplicationPlanFor<'Aut
 
 /** Read-only resources for the public status service. Mutation stores and the transaction writer fence are absent. */
 export const AutonomousStatusApplicationResourcesLive = (plan: ApplicationPlanFor<'AutonomousService'>) => {
-  const postgres = PostgresLive(plan.config)
+  const postgres = sqlResource(PostgresClientResourceLive(plan.config))
   const controllerStatus = ExecutionControllerStatusStoreLive.pipe(Layer.provide(postgres))
   const cycleObservability = CycleObservabilityResourceLive.pipe(Layer.provide(postgres))
   return Layer.mergeAll(
