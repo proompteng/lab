@@ -1191,7 +1191,7 @@ data:
           },
           "targets": [
             {
-              "expr": "max(bayn_broker_position_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) ((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) <= on(instance) bayn_reconciliation_stale_threshold_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "expr": "max(bayn_broker_position_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) (((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) >= 0) and on(instance) ((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) <= on(instance) bayn_reconciliation_stale_threshold_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "positions",
               "range": false,
@@ -1239,7 +1239,7 @@ data:
           },
           "targets": [
             {
-              "expr": "max(bayn_broker_gross_exposure_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) ((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) <= on(instance) bayn_reconciliation_stale_threshold_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "expr": "max(bayn_broker_gross_exposure_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) (((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) >= 0) and on(instance) ((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) <= on(instance) bayn_reconciliation_stale_threshold_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "gross",
               "range": false,
@@ -1287,7 +1287,7 @@ data:
           },
           "targets": [
             {
-              "expr": "max(bayn_broker_net_exposure_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) ((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) <= on(instance) bayn_reconciliation_stale_threshold_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "expr": "max(bayn_broker_net_exposure_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) (((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) >= 0) and on(instance) ((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) <= on(instance) bayn_reconciliation_stale_threshold_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "net",
               "range": false,
@@ -1335,7 +1335,7 @@ data:
           },
           "targets": [
             {
-              "expr": "max(bayn_broker_account_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",kind=\"buying_power\"} and on(instance) ((time() - bayn_broker_account_observed_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) <= on(instance) bayn_reconciliation_stale_threshold_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "expr": "max(bayn_broker_account_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",kind=\"buying_power\"} and on(instance) (((time() - bayn_broker_account_observed_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) >= 0) and on(instance) ((time() - bayn_broker_account_observed_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) <= on(instance) bayn_reconciliation_stale_threshold_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "buying power",
               "range": false,
@@ -1383,7 +1383,7 @@ data:
           },
           "targets": [
             {
-              "expr": "max(bayn_broker_unrealized_pnl_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) ((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) <= on(instance) bayn_reconciliation_stale_threshold_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "expr": "max(bayn_broker_unrealized_pnl_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) (((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) >= 0) and on(instance) ((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) <= on(instance) bayn_reconciliation_stale_threshold_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "unrealized",
               "range": false,
