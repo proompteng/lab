@@ -768,6 +768,28 @@ describe('immutable intraday market snapshot', () => {
     }
   })
 
+  test('returns a typed row failure for malformed replayed bar rows', () => {
+    const verified = success(verifyIntradaySnapshot(request, makeRows()))
+
+    const malformedSnapshots: readonly IntradayMarketSnapshot[] = [
+      {
+        ...verified,
+        bars: [null as never, ...verified.bars.slice(1)],
+      },
+      {
+        ...verified,
+        bars: verified.bars.map((bar, index) => (index === 0 ? { ...bar, open: Number.NaN } : bar)),
+      },
+    ]
+
+    for (const malformed of malformedSnapshots) {
+      expect(error(reverifyIntradayMarketSnapshot(malformed))).toMatchObject({
+        reason: 'rows',
+        message: 'intraday replayed bar does not match the archive contract',
+      })
+    }
+  })
+
   test('returns a typed row failure for malformed replayed snapshot collections', () => {
     const verified = success(verifyIntradaySnapshot(request, makeRows()))
 

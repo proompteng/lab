@@ -861,6 +861,34 @@ const snapshotCollections = (
   return Result.succeed({ bars: snapshot.bars, quotes: snapshot.quotes, trades: snapshot.trades })
 }
 
+const replayedBarRow = (bar: IntradayBar): Result.Result<IntradayBarRow, IntradaySnapshotFailure> =>
+  Result.gen(function* () {
+    const candidate = yield* Result.try({
+      try: () => ({
+        ...archiveIdentityRow(bar),
+        channel: bar.channel,
+        is_final: bar.final ? 1 : 0,
+        open: bar.open,
+        high: bar.high,
+        low: bar.low,
+        close: bar.close,
+        volume: bar.volume,
+        vwap: bar.vwap,
+        trade_count: bar.tradeCount,
+      }),
+      catch: (cause) => failure('rows', 'intraday replayed bar does not match the archive contract', undefined, cause),
+    })
+    const decoded = yield* decodeIntradayBarRows([candidate]).pipe(
+      Result.mapError((cause) =>
+        failure('rows', 'intraday replayed bar does not match the archive contract', undefined, cause),
+      ),
+    )
+    const row = decoded[0]
+    return row === undefined
+      ? yield* Result.fail(failure('rows', 'intraday replayed bar does not match the archive contract'))
+      : row
+  })
+
 /**
  * Re-enters an already materialized snapshot through the authoritative row
  * verifier. This is intentionally stronger than rehashing caller-provided
@@ -873,6 +901,7 @@ export const reverifyIntradayMarketSnapshot = (
   Result.gen(function* () {
     const { manifest } = snapshot
     const collections = yield* snapshotCollections(snapshot)
+    const bars = yield* Result.all(collections.bars.map(replayedBarRow))
     const quotePayloadVariants = yield* payloadVariantCounts(collections.quotes, (quote) => [
       quote.bidPrice,
       quote.bidSize,
@@ -902,18 +931,7 @@ export const reverifyIntradayMarketSnapshot = (
         source_partition: watermark.sourcePartition,
         inclusive_last_offset: watermark.inclusiveLastOffset,
       })),
-      bars: collections.bars.map((bar) => ({
-        ...archiveIdentityRow(bar),
-        channel: bar.channel,
-        is_final: bar.final ? 1 : 0,
-        open: bar.open,
-        high: bar.high,
-        low: bar.low,
-        close: bar.close,
-        volume: bar.volume,
-        vwap: bar.vwap,
-        trade_count: bar.tradeCount,
-      })),
+      bars,
       quotes: collections.quotes.map((quote) => ({
         ...archiveIdentityRow(quote),
         latest_payload_variants: String(
