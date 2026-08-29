@@ -1,6 +1,7 @@
 import { Data, Schema } from 'effect'
 
 import type { IntradayMarketSnapshot } from '../../market-data/intraday/model'
+import { intradayAgeNanos, millisecondsAsNanos } from '../../market-data/intraday/time'
 import {
   IsoDateSchema,
   PositiveIntegerSchema,
@@ -10,6 +11,7 @@ import {
   UnitIntervalSchema,
   UtcInstantSchema,
   UtcOrderTimestampSchema,
+  UnsignedMicrosSchema,
 } from '../../schemas'
 import type { IsoDate } from '../../types'
 import type { StrategyDefinition, TargetPortfolio } from '../core'
@@ -41,6 +43,8 @@ export const IntradayMomentumSignalSchema = Schema.Struct({
   rangeLowPriceMicros: PositiveMicrosSchema,
   bidPriceMicros: PositiveMicrosSchema,
   askPriceMicros: PositiveMicrosSchema,
+  bidSizeMicros: UnsignedMicrosSchema,
+  askSizeMicros: UnsignedMicrosSchema,
   quoteObservedAt: IntradayEvidenceTimestampSchema,
   confirmationTradePriceMicros: PositiveMicrosSchema,
   confirmationTradeObservedAt: IntradayEvidenceTimestampSchema,
@@ -60,6 +64,8 @@ export interface IntradayMomentumSignal {
   readonly rangeLowPriceMicros: string
   readonly bidPriceMicros: string
   readonly askPriceMicros: string
+  readonly bidSizeMicros: string
+  readonly askSizeMicros: string
   readonly quoteObservedAt: string
   readonly confirmationTradePriceMicros: string
   readonly confirmationTradeObservedAt: string
@@ -71,6 +77,48 @@ export interface IntradayMomentumSignal {
   readonly rejectionReasons: readonly IntradayMomentumRejectionReason[]
   readonly rank: number | null
 }
+
+type IntradayMomentumSignalEvidence = Omit<IntradayMomentumSignal, 'eligible' | 'rank' | 'rejectionReasons'>
+
+export const intradayMomentumSignalRejectionReasons = (
+  signal: IntradayMomentumSignalEvidence,
+  observedAt: string,
+  protocol: IntradayMomentumProtocol,
+): readonly IntradayMomentumRejectionReason[] => {
+  const reasons: IntradayMomentumRejectionReason[] = []
+  if (signal.lookbackReturnBps < protocol.minimumLookbackReturnBps) reasons.push('lookback-return')
+  if (signal.breakoutBps < protocol.minimumBreakoutBps) reasons.push('breakout')
+  if (signal.rangeLocationPpm < protocol.minimumRangeLocationPpm) reasons.push('range-location')
+  if (signal.spreadBps > protocol.maximumSpreadBps) reasons.push('spread')
+  if (signal.bidSizeMicros === '0' || signal.askSizeMicros === '0') reasons.push('displayed-liquidity')
+  const maximumAge = millisecondsAsNanos(protocol.maximumQuoteAgeMs)
+  const quoteAge = intradayAgeNanos(observedAt, signal.quoteObservedAt)
+  const tradeAge = intradayAgeNanos(observedAt, signal.confirmationTradeObservedAt)
+  if (quoteAge < 0n || quoteAge > maximumAge || tradeAge < 0n || tradeAge > maximumAge) {
+    reasons.push('market-data-freshness')
+  }
+  return Object.freeze(reasons)
+}
+
+export const compareIntradayMomentumSignalStrength = (
+  left: IntradayMomentumSignal,
+  right: IntradayMomentumSignal,
+): number =>
+  right.lookbackReturnBps - left.lookbackReturnBps ||
+  right.breakoutBps - left.breakoutBps ||
+  right.rangeLocationPpm - left.rangeLocationPpm ||
+  left.symbol.localeCompare(right.symbol)
+
+export const selectCanonicalIntradayMomentumSignals = (
+  signals: readonly IntradayMomentumSignal[],
+  maximumPositions: number,
+): readonly IntradayMomentumSignal[] =>
+  Object.freeze(
+    signals
+      .filter(({ eligible }) => eligible)
+      .toSorted(compareIntradayMomentumSignalStrength)
+      .slice(0, maximumPositions),
+  )
 
 export interface IntradayMomentumTargetPortfolio extends TargetPortfolio {
   readonly schemaVersion: 'bayn.intraday-momentum.target.v1'

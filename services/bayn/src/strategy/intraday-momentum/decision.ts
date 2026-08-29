@@ -3,19 +3,15 @@ import { Result, Schema } from 'effect'
 import { makeExecutionCalendarObservation } from '../../cycle/construction'
 import { sha256 } from '../../hash'
 import type { IntradayBar, IntradayQuote, IntradayTrade } from '../../market-data/intraday/model'
-import {
-  compareIntradayInstants,
-  intradayAgeNanos,
-  intradayInstantNanos,
-  millisecondsAsNanos,
-} from '../../market-data/intraday/time'
+import { compareIntradayInstants, intradayInstantNanos } from '../../market-data/intraday/time'
 import { reverifyIntradayMarketSnapshot } from '../../market-data/intraday/verification'
 import { strictParseOptions, UtcInstantSchema } from '../../schemas'
 import type { VerifiedStrategyContext } from '../core'
 import {
+  intradayMomentumSignalRejectionReasons,
   IntradayMomentumFailure,
+  selectCanonicalIntradayMomentumSignals,
   type IntradayMomentumMarketContext,
-  type IntradayMomentumRejectionReason,
   type IntradayMomentumSignal,
   type IntradayMomentumStrategyDefinition,
   type IntradayMomentumTargetPortfolio,
@@ -26,7 +22,7 @@ const micros = 1_000_000
 const weightScale = 1_000_000
 const minuteMs = 60_000
 
-export const intradayMomentumBehaviorVersion = 'bayn.intraday-momentum.behavior.v3' as const
+export const intradayMomentumBehaviorVersion = 'bayn.intraday-momentum.behavior.v4' as const
 export const intradayMomentumBehaviorHash = sha256(intradayMomentumBehaviorVersion)
 
 const compareCanonicalText = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
@@ -281,8 +277,6 @@ const signalFor = (
     const lows = yield* Result.all(ordered.map((bar) => finite(bar.low, 'bar-low', symbol, true)))
     const bid = yield* finite(quote.bidPrice, 'quote-bid', symbol, true)
     const ask = yield* finite(quote.askPrice, 'quote-ask', symbol, true)
-    const bidSize = yield* finite(quote.bidSize, 'quote-bid-size', symbol, false)
-    const askSize = yield* finite(quote.askSize, 'quote-ask-size', symbol, false)
     const tradePrice = yield* finite(trade.price, 'trade-price', symbol, true)
     if (ask < bid) return yield* fail('market-value', 'intraday quote is crossed', { symbol })
     const prices = yield* Result.all({
@@ -292,44 +286,33 @@ const signalFor = (
       bid: scaledInteger(bid, 'quote-bid', symbol),
       ask: scaledInteger(ask, 'quote-ask', symbol),
       trade: scaledInteger(tradePrice, 'trade-price', symbol),
+      bidSize: scaledInteger(quote.bidSize, 'quote-bid-size', symbol, false),
+      askSize: scaledInteger(quote.askSize, 'quote-ask-size', symbol, false),
     })
     const metrics = yield* deriveSignalMetrics(prices, symbol)
-    const rejectionReasons: IntradayMomentumRejectionReason[] = []
-    if (metrics.lookbackReturnBps < protocol.minimumLookbackReturnBps) rejectionReasons.push('lookback-return')
-    if (metrics.breakoutBps < protocol.minimumBreakoutBps) rejectionReasons.push('breakout')
-    if (metrics.rangeLocationPpm < protocol.minimumRangeLocationPpm) rejectionReasons.push('range-location')
-    if (metrics.spreadBps > protocol.maximumSpreadBps) rejectionReasons.push('spread')
-    if (bidSize === 0 || askSize === 0) rejectionReasons.push('displayed-liquidity')
-    const maximumAge = millisecondsAsNanos(protocol.maximumQuoteAgeMs)
-    if (
-      intradayAgeNanos(observedAt, quote.eventAt) > maximumAge ||
-      intradayAgeNanos(observedAt, trade.eventAt) > maximumAge
-    ) {
-      rejectionReasons.push('market-data-freshness')
-    }
-    return Object.freeze({
+    const evidence = {
       symbol,
       referencePriceMicros: String(prices.reference),
       rangeHighPriceMicros: String(prices.high),
       rangeLowPriceMicros: String(prices.low),
       bidPriceMicros: String(prices.bid),
       askPriceMicros: String(prices.ask),
+      bidSizeMicros: String(prices.bidSize),
+      askSizeMicros: String(prices.askSize),
       quoteObservedAt: quote.eventAt,
       confirmationTradePriceMicros: String(prices.trade),
       confirmationTradeObservedAt: trade.eventAt,
       ...metrics,
+    }
+    const rejectionReasons = intradayMomentumSignalRejectionReasons(evidence, observedAt, protocol)
+    return Object.freeze({
+      ...evidence,
       eligible: rejectionReasons.length === 0,
-      rejectionReasons: Object.freeze(rejectionReasons),
+      rejectionReasons,
       rank: null,
     })
   })
 }
-
-const compareEligible = (left: IntradayMomentumSignal, right: IntradayMomentumSignal): number =>
-  right.lookbackReturnBps - left.lookbackReturnBps ||
-  right.breakoutBps - left.breakoutBps ||
-  right.rangeLocationPpm - left.rangeLocationPpm ||
-  left.symbol.localeCompare(right.symbol)
 
 export const decideIntradayMomentum = (
   context: IntradayMomentumMarketContext,
@@ -367,10 +350,7 @@ export const decideIntradayMomentum = (
             )
       }),
     )
-    const selected = signals
-      .filter((signal) => signal.eligible)
-      .toSorted(compareEligible)
-      .slice(0, protocol.maximumPositions)
+    const selected = selectCanonicalIntradayMomentumSignals(signals, protocol.maximumPositions)
     const selectedSymbols = Object.freeze(selected.map((signal) => signal.symbol))
     const rankBySymbol = new Map(selectedSymbols.map((symbol, index) => [symbol, index + 1]))
     const rankedSignals = Object.freeze(
