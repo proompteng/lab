@@ -43,13 +43,6 @@ impl ActivityTracker {
                 &Patch::Merge(activity_metadata_patch(now)),
             )
             .await?;
-        agents
-            .patch_status(
-                agent_id,
-                &PatchParams::default(),
-                &Patch::Merge(json!({"status": {"lastActivityAt": now.to_rfc3339()}})),
-            )
-            .await?;
         Ok(())
     }
 
@@ -143,6 +136,8 @@ mod tests {
     use crate::crd::{
         MicroVMArchitecture, MicroVMDesiredState, MicroVMResources, MicroVMSpec, MicroVMStatus,
     };
+    use http::{Request, Response, StatusCode};
+    use kube::client::Body as KubeBody;
 
     fn test_microvm(now: DateTime<Utc>) -> MicroVM {
         MicroVM::new(
@@ -174,6 +169,63 @@ mod tests {
             Some(&json!(now.to_rfc3339())),
         );
         assert!(patch.get("spec").is_none());
+    }
+
+    #[tokio::test]
+    async fn activity_heartbeat_has_one_metadata_writer() {
+        let now = Utc::now();
+        let response_microvm = test_microvm(now);
+        let (service, mut handle) =
+            tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
+        let client = Client::new(service, "tengri");
+        let tracker = ActivityTracker::new(client, "tengri".to_owned());
+
+        let heartbeat = tokio::spawn(async move { tracker.touch_now("agent", now).await });
+        let (request, response) = handle
+            .next_request()
+            .await
+            .expect("activity metadata patch");
+        assert_eq!(request.method(), http::Method::PATCH);
+        assert_eq!(
+            request.uri().path(),
+            "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent"
+        );
+        let body: serde_json::Value = serde_json::from_slice(
+            &request
+                .into_body()
+                .collect_bytes()
+                .await
+                .expect("activity patch body"),
+        )
+        .expect("activity patch JSON");
+        assert_eq!(
+            body.pointer(&format!(
+                "/metadata/annotations/{}",
+                LAST_ACTIVITY_ANNOTATION.replace('/', "~1")
+            )),
+            Some(&json!(now.to_rfc3339())),
+        );
+        assert!(body.get("status").is_none());
+        response.send_response(
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(KubeBody::from(
+                    serde_json::to_vec(&response_microvm).expect("MicroVM response JSON"),
+                ))
+                .expect("activity patch response"),
+        );
+
+        heartbeat
+            .await
+            .expect("activity heartbeat task")
+            .expect("activity heartbeat result");
+        match tokio::time::timeout(Duration::from_millis(50), handle.next_request()).await {
+            Err(_) | Ok(None) => {}
+            Ok(Some(_)) => {
+                panic!("activity heartbeat must not race the controller on the status subresource")
+            }
+        }
     }
 
     #[test]
