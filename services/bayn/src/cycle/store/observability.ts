@@ -524,6 +524,7 @@ const makeCycleObservability = Effect.gen(function* () {
             WHERE snapshot.account_id = (SELECT account_id FROM selected_account)
               AND events.account_id = (SELECT account_id FROM selected_account)
               AND events.event_kind = 'ACCOUNT'
+              AND events.observed_at <= CURRENT_TIMESTAMP
             ORDER BY events.observed_at DESC, events.source_sequence DESC, snapshot.event_id DESC
             LIMIT 1
           ),
@@ -531,6 +532,7 @@ const makeCycleObservability = Effect.gen(function* () {
             SELECT max(snapshot.observed_at) AS observed_at
             FROM position_snapshots AS snapshot
             WHERE snapshot.account_id = (SELECT account_id FROM selected_account)
+              AND snapshot.observed_at <= CURRENT_TIMESTAMP
           ),
           latest_position_snapshot_candidates AS (
             SELECT snapshot.*

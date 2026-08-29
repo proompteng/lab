@@ -1176,6 +1176,64 @@ describePostgres('PostgreSQL cycle observability projection', () => {
     })
   })
 
+  test('ignores future-dated broker snapshots when selecting the latest observable state', async () => {
+    const projection = await runtime.runPromise(
+      Effect.gen(function* () {
+        const observability = yield* CycleObservability
+        const sql = yield* PgClient.PgClient
+        yield* seedSafetyState()
+
+        const insertAccountSnapshot = (eventId: string, observedAt: string, cashMicros: string) =>
+          sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`
+                INSERT INTO broker_events (
+                  event_id, schema_version, content_hash, event_kind, broker, account_id,
+                  source_event_id, source_sequence, occurred_at, observed_at
+                ) VALUES (
+                  ${eventId}, 'bayn.paper-broker-event.v1', ${eventId}, 'ACCOUNT', 'ALPACA',
+                  ${accountId}, ${`account-${eventId}`}, 1, ${observedAt}, ${observedAt}
+                )
+              `
+              yield* sql`
+                INSERT INTO account_snapshots (
+                  event_id, account_id, schema_version, status, currency,
+                  cash_micros, equity_micros, buying_power_micros
+                ) VALUES (
+                  ${eventId}, ${accountId}, 'bayn.paper-account-snapshot.v1', 'ACTIVE', 'USD',
+                  ${cashMicros}, ${cashMicros}, ${cashMicros}
+                )
+              `
+            }),
+          )
+
+        yield* insertAccountSnapshot('a'.repeat(64), '2026-03-06T21:00:02.000Z', '2000000')
+        yield* insertAccountSnapshot('b'.repeat(64), '2099-03-06T21:00:02.000Z', '9000000')
+        yield* sql`
+          INSERT INTO position_snapshots (
+            snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash
+          ) VALUES
+            (
+              ${'c'.repeat(64)}, 'bayn.paper-position-snapshot.v1', ${accountId}, ${'d'.repeat(64)},
+              '2026-03-06T21:00:02.000Z', 0, ${'e'.repeat(64)}
+            ),
+            (
+              ${'f'.repeat(64)}, 'bayn.paper-position-snapshot.v1', ${accountId}, ${'0'.repeat(64)},
+              '2099-03-06T21:00:02.000Z', 0, ${'1'.repeat(64)}
+            )
+        `
+        return yield* observability.read(qualificationRunId, accountId)
+      }),
+    )
+
+    expect(projection.execution).toMatchObject({
+      positionSnapshotObservedAt: '2026-03-06T21:00:02.000Z',
+      positionCount: 0,
+      accountObservedAt: '2026-03-06T21:00:02.000Z',
+      cashMicros: '2000000',
+    })
+  })
+
   test('marks only post-upgrade position-snapshot ordering as trusted', async () => {
     const rows = await runtime.runPromise(
       Effect.gen(function* () {
