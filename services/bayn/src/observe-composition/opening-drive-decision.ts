@@ -9,11 +9,11 @@ import { utcInstantFromEpochMillis } from '../time'
 import {
   intradayAgeNanos,
   millisecondsAsNanos,
-  type ArchiveVerifiedIntradayMarketSnapshot,
   type IntradayMarketDataService,
   type IntradayMarketSnapshot,
   type IntradaySnapshotQuery,
 } from '../market-data'
+import type { ArchiveVerifiedIntradayMarketSnapshot } from '../market-data/intraday/model'
 import { ExecutionMarketDataBindingSchema, type ExecutionMarketDataBinding } from '../shadow-decision-contract'
 import { strictParseOptions } from '../schemas'
 import type {

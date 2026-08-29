@@ -12,7 +12,7 @@ import {
   type AutonomousCycle,
 } from '../cycle'
 import { canonicalHashV1, sha256 } from '../hash'
-import type { ArchiveVerifiedIntradayMarketSnapshot } from '../market-data'
+import type { ArchiveVerifiedIntradayMarketSnapshot } from '../market-data/intraday/model'
 import { IntradayMomentumFailure, type IntradayMomentumTargetPortfolio } from '../strategy/intraday-momentum/model'
 import { makeIntradayMomentumDefinition } from '../strategy/intraday-momentum/decision'
 import {

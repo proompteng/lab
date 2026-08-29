@@ -20,11 +20,8 @@ import { makeExecutionIntentFromDecodedPlan } from './execution/intents/domain'
 import { legacyIntentPlanSchemaVersion } from './execution/legacy-wire'
 import { bindExecutionSession, type BindExecutionSessionInput } from './execution-session'
 import { canonicalHashV1, sha256 } from './hash'
-import {
-  persistIntradaySnapshotRows,
-  verifyIntradaySnapshot,
-  type ArchiveVerifiedIntradayMarketSnapshot,
-} from './market-data'
+import { persistIntradaySnapshotRows, verifyIntradaySnapshot } from './market-data'
+import type { ArchiveVerifiedIntradayMarketSnapshot } from './market-data/intraday/model'
 import { utcInstantFromEpochMillis } from './time'
 import {
   AccountStatus,

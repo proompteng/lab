@@ -5,10 +5,10 @@ import type { AutonomousCycle } from '../cycle'
 import { utcInstantFromEpochMillis } from '../time'
 import {
   persistIntradaySnapshotRows,
-  type ArchiveVerifiedIntradayMarketSnapshot,
   type IntradaySnapshotQuery,
   type PersistedIntradaySnapshotRows,
 } from '../market-data'
+import type { ArchiveVerifiedIntradayMarketSnapshot } from '../market-data/intraday/model'
 import type { ExecutionMarketDataBinding } from '../shadow-decision-contract'
 import {
   IntradayMomentumFailure,
