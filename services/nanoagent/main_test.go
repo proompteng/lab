@@ -218,6 +218,31 @@ func TestBootstrapUserHomeCreatesPersistentToolDirectories(t *testing.T) {
 	}
 }
 
+func TestBootstrapUserHomeMakesTheWorkspaceSymlinkUsableAfterTheHomeMountHidesImageData(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	workspaceAlias := filepath.Join(t.TempDir(), "workspace")
+	if err := os.Symlink(filepath.Join(home, "workspace"), workspaceAlias); err != nil {
+		t.Fatalf("create workspace symlink: %v", err)
+	}
+
+	if err := bootstrapUserHome(home); err != nil {
+		t.Fatalf("bootstrapUserHome() error = %v", err)
+	}
+	workspace, err := newWorkspace(workspaceAlias)
+	if err != nil {
+		t.Fatalf("newWorkspace() error = %v", err)
+	}
+	t.Cleanup(func() { _ = workspace.close() })
+	want, err := filepath.EvalSymlinks(filepath.Join(home, "workspace"))
+	if err != nil {
+		t.Fatalf("resolve persistent workspace: %v", err)
+	}
+	if workspace.realRoot != want {
+		t.Fatalf("workspace root = %q, want persistent home workspace", workspace.realRoot)
+	}
+}
+
 func TestBeginShutdownClosesStreamingSubscriptions(t *testing.T) {
 	server := testAPIServer(t)
 	_, fileEvents, err := server.fileWatcher.subscribe(0, "/", "")

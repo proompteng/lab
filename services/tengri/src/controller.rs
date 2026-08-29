@@ -23,7 +23,7 @@ use crate::{
     metrics,
     pod::{
         FINALIZER_NAME, MANAGER_NAME, bootstrap_secret_name, build_pod, ensure_bootstrap_secret,
-        ensure_pvc, is_controlled_by_microvm, pvc_name,
+        ensure_pvc, has_current_storage_layout, is_controlled_by_microvm, pvc_name,
     },
     tickets::TicketStore,
 };
@@ -232,6 +232,20 @@ async fn ensure_runtime_pod(
                 message: format!(
                     "Pod {name} already exists and is not controlled by MicroVM {}",
                     microvm.name_any()
+                ),
+                ..kube::core::Status::default()
+            }
+            .boxed(),
+        ));
+    }
+
+    if !has_current_storage_layout(microvm) {
+        return Err(kube::Error::Api(
+            kube::core::Status {
+                code: 422,
+                reason: "Invalid".to_owned(),
+                message: format!(
+                    "MicroVM {name} uses an unsupported storage layout; delete and recreate the agent"
                 ),
                 ..kube::core::Status::default()
             }

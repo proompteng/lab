@@ -137,20 +137,28 @@ Exact failure reasons are published in CR status. Do not infer success from a cr
    guest kernel isolation, fresh-image pull, interactive PTY, persistent file round trip, Codex event, and localhost
    preview WebSocket/HMR.
 
-### Storage-layout activation
+### Storage layout
 
-Storage-layout changes require two independently mergeable releases:
+Tengri supports only `runtime.proompteng.ai/storage-layout=home-workspace-v2`:
 
-1. Promote the compatibility controller while `TENGRI_NEW_AGENT_STORAGE_LAYOUT` is absent. It reads both legacy agents
-   and agents annotated with `runtime.proompteng.ai/storage-layout=home-workspace-v1`, but it creates only unmarked
-   legacy-layout agents.
-2. Verify the compatibility image is live and that newly created CRs remain unmarked.
-3. In a separate GitOps PR, set `TENGRI_NEW_AGENT_STORAGE_LAYOUT=home-workspace-v1`. New agents are then explicitly
-   marked and use the single-mount PVC layout; existing unmarked agents keep the legacy layout.
+1. Every new CR is marked with that layout directly; there is no activation flag.
+2. The Pod mounts its PVC exactly once at `/home/nanoagent`. The Nanoagent image exposes
+   `/home/nanoagent/workspace` through `/workspace`; there is no init container or synthetic identity volume.
+3. Any CR with a missing or different layout is rejected and must be deleted and recreated. The failed
+   `home-workspace-v1` experiment never produced a working guest, so there is no migration or fallback path.
 
-To roll back activation, remove the environment variable through GitOps and keep the compatibility controller image.
-Do not restore a controller from before compatibility support while a marked `MicroVM` remains. Marked CRs and PVCs
-hard-expire four hours after creation, after which the older controller can be restored if still necessary.
+The Deployment temporarily retains `TENGRI_NEW_AGENT_STORAGE_LAYOUT=home-workspace-v1` only to keep the pinned
+pre-v2 controller stable between the source merge and image promotion. The v2 controller ignores the variable and
+always writes `home-workspace-v2`; remove the inert variable in a later GitOps cleanup after v2 is live.
+
+Promote or roll back the controller and Nanoagent digests together through GitOps. Do not mix a controller and guest
+image from different releases. A controller predating `home-workspace-v2` cannot safely resume a v2 guest. Before
+reverting past v2, let every v2 agent expire or delete it through Tengri, then require this zero-result check:
+
+```bash
+kubectl --context galactic-lan -n tengri get microvms.runtime.proompteng.ai -o json \
+  | jq -e '[.items[] | select(.metadata.annotations["runtime.proompteng.ai/storage-layout"] == "home-workspace-v2")] | length == 0'
+```
 
 ### Proompteng desktop image promotions
 

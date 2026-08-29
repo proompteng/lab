@@ -88,21 +88,24 @@ ApplicationSet and BFF together:
 5. Confirm the pre-rollout `MicroVM` count and phases are unchanged, then exercise one authenticated read-only control
    plane request. Do not create a canary DaemonSet or mutate node scheduling to verify this rollout.
 
-If the replacement cannot become ready, revert the manifest or image-digest commit through a follow-up PR and let Argo
-perform the same `Recreate` rollout to the last known-good revision. Do not use `kubectl rollout undo` or directly apply
-manifests because GitOps would overwrite that state. During rollback, leave existing MicroVM Pods and PVCs intact;
-verify the restored Pod, Service endpoint, `/livez`, and `/readyz` with the same commands above.
+If the replacement cannot become ready, use a follow-up PR and let Argo perform the same `Recreate` rollout. Do not use
+`kubectl rollout undo` or directly apply manifests because GitOps would overwrite that state. Never revert to a
+controller predating `home-workspace-v2` while any v2 `MicroVM` exists: the predecessor cannot safely resume those
+guests. Let every v2 agent expire or delete it through Tengri, verify that no v2 CR remains, and only then revert both
+signed image digests together. Verify the restored Pod, Service endpoint, `/livez`, and `/readyz` with the commands
+above.
 
-Storage-layout changes use two releases so activation always has a safe rollback:
+Tengri supports one storage layout:
+`runtime.proompteng.ai/storage-layout=home-workspace-v2`. Every new agent receives that annotation, mounts its PVC
+exactly once at `/home/nanoagent`, and exposes the persistent `workspace/` subdirectory through `/workspace`. The Pod
+has one application container and no init container, so Firecracker creates only one block-backed container rootfs.
 
-1. Promote a compatibility controller that reads both legacy agents and agents annotated with
-   `runtime.proompteng.ai/storage-layout=home-workspace-v1`. Leave `TENGRI_NEW_AGENT_STORAGE_LAYOUT` unset so newly
-   created agents remain on the legacy layout.
-2. After the compatibility image is live, enable `TENGRI_NEW_AGENT_STORAGE_LAYOUT=home-workspace-v1` in a separate
-   GitOps PR. Rolling back this activation removes the environment variable while retaining the compatibility image.
-
-Do not roll back past the compatibility image while a marked `MicroVM` exists. Marked agents use the single-mount PVC
-layout and must remain readable until their four-hour hard expiry deletes the CR and PVC.
+The failed `home-workspace-v1` experiment never produced a working guest and is not a compatibility contract. A CR with
+any other layout is rejected and must be deleted and recreated; Tengri does not migrate or fall back to the broken
+topology. The Deployment temporarily retains the predecessor's `TENGRI_NEW_AGENT_STORAGE_LAYOUT=home-workspace-v1`
+environment variable so the still-pinned predecessor remains stable until the v2 image promotion lands. The v2
+controller does not read that variable and always creates `home-workspace-v2`. Remove the inert variable in a later
+GitOps-only cleanup after the v2 controller is live. Never roll back past the v2 controller while a v2 CR exists.
 
 ## Local validation
 

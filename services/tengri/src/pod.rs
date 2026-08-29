@@ -24,11 +24,8 @@ pub const FINALIZER_NAME: &str = "runtime.proompteng.ai/finalizer";
 pub const BOOTSTRAP_TOKEN_KEY: &str = "token";
 pub const STORAGE_CLASS: &str = "rook-ceph-block";
 pub const STORAGE_LAYOUT_ANNOTATION: &str = "runtime.proompteng.ai/storage-layout";
-pub const SINGLE_MOUNT_STORAGE_LAYOUT: &str = "home-workspace-v1";
+pub const SINGLE_MOUNT_STORAGE_LAYOUT: &str = "home-workspace-v2";
 const GUEST_UID: i64 = 1_000;
-const RUNTIME_HOME_ALIAS_VOLUME: &str = "runtime-home-alias";
-const RUNTIME_IDENTITY_VOLUME: &str = "runtime-identity";
-const RUNTIME_PASSWD_PATH: &str = "/runtime-identity/passwd";
 const MAX_DNS_LABEL_LENGTH: usize = 63;
 const MAX_DNS_SUBDOMAIN_LENGTH: usize = 253;
 const MAX_LABEL_VALUE_LENGTH: usize = 63;
@@ -172,7 +169,6 @@ pub fn build_pod(
     home_claim: &str,
 ) -> Pod {
     let name = microvm.name_any();
-    let single_mount_layout = uses_single_mount_layout(microvm);
     let mut node_selector = BTreeMap::from([(
         "runtime.proompteng.ai/kata-fc".to_owned(),
         "ready".to_owned(),
@@ -181,16 +177,16 @@ pub fn build_pod(
         "kubernetes.io/arch".to_owned(),
         microvm.spec.architecture.kubernetes_label().to_owned(),
     );
-    let mut annotations = BTreeMap::from([(
-        "runtime.proompteng.ai/isolation".to_owned(),
-        "firecracker".to_owned(),
-    )]);
-    if single_mount_layout {
-        annotations.insert(
+    let annotations = BTreeMap::from([
+        (
+            "runtime.proompteng.ai/isolation".to_owned(),
+            "firecracker".to_owned(),
+        ),
+        (
             STORAGE_LAYOUT_ANNOTATION.to_owned(),
             SINGLE_MOUNT_STORAGE_LAYOUT.to_owned(),
-        );
-    }
+        ),
+    ]);
 
     Pod {
         metadata: ObjectMeta {
@@ -199,14 +195,8 @@ pub fn build_pod(
         },
         spec: Some(PodSpec {
             automount_service_account_token: Some(false),
-            containers: vec![build_container(
-                microvm,
-                bootstrap_secret,
-                single_mount_layout,
-            )],
+            containers: vec![build_container(microvm, bootstrap_secret)],
             enable_service_links: Some(false),
-            init_containers: single_mount_layout
-                .then(|| vec![build_identity_init_container(microvm)]),
             node_selector: Some(node_selector),
             restart_policy: Some("Always".to_owned()),
             runtime_class_name: Some("kata-fc".to_owned()),
@@ -237,24 +227,25 @@ pub fn build_pod(
                 when_unsatisfiable: "ScheduleAnyway".to_owned(),
                 ..TopologySpreadConstraint::default()
             }]),
-            volumes: Some(build_volumes(home_claim, single_mount_layout)),
+            volumes: Some(build_volumes(home_claim)),
             ..PodSpec::default()
         }),
         ..Pod::default()
     }
 }
 
-fn uses_single_mount_layout(microvm: &MicroVM) -> bool {
+pub fn has_current_storage_layout(microvm: &MicroVM) -> bool {
     microvm
         .metadata
         .annotations
         .as_ref()
         .and_then(|annotations| annotations.get(STORAGE_LAYOUT_ANNOTATION))
-        .is_some_and(|layout| layout == SINGLE_MOUNT_STORAGE_LAYOUT)
+        .map(String::as_str)
+        == Some(SINGLE_MOUNT_STORAGE_LAYOUT)
 }
 
-fn build_volumes(home_claim: &str, single_mount_layout: bool) -> Vec<Volume> {
-    let mut volumes = vec![
+fn build_volumes(home_claim: &str) -> Vec<Volume> {
+    vec![
         Volume {
             name: "home".to_owned(),
             persistent_volume_claim: Some(PersistentVolumeClaimVolumeSource {
@@ -271,28 +262,7 @@ fn build_volumes(home_claim: &str, single_mount_layout: bool) -> Vec<Volume> {
             }),
             ..Volume::default()
         },
-    ];
-    if single_mount_layout {
-        volumes.extend([
-            Volume {
-                name: RUNTIME_HOME_ALIAS_VOLUME.to_owned(),
-                empty_dir: Some(EmptyDirVolumeSource {
-                    medium: Some("Memory".to_owned()),
-                    size_limit: Some(Quantity("64Ki".to_owned())),
-                }),
-                ..Volume::default()
-            },
-            Volume {
-                name: RUNTIME_IDENTITY_VOLUME.to_owned(),
-                empty_dir: Some(EmptyDirVolumeSource {
-                    medium: Some("Memory".to_owned()),
-                    size_limit: Some(Quantity("64Ki".to_owned())),
-                }),
-                ..Volume::default()
-            },
-        ]);
-    }
-    volumes
+    ]
 }
 
 pub fn managed_labels(microvm_name: &str) -> BTreeMap<String, String> {
@@ -328,11 +298,7 @@ fn managed_metadata(microvm: &MicroVM, namespace: &str, name: &str) -> ObjectMet
     }
 }
 
-fn build_container(
-    microvm: &MicroVM,
-    bootstrap_secret: &str,
-    single_mount_layout: bool,
-) -> Container {
+fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
     let resources = &microvm.spec.resources;
     let fixed = BTreeMap::from([
         (
@@ -382,79 +348,38 @@ fn build_container(
             ..EnvVar::default()
         },
     ];
-    if single_mount_layout {
-        env.extend([
-            EnvVar {
-                name: "CODEX_BINARY".to_owned(),
-                value: Some("/home/nanoagent/.local/bin/codex".to_owned()),
-                ..EnvVar::default()
-            },
-            EnvVar {
-                name: "PATH".to_owned(),
-                value: Some(
-                    "/home/nanoagent/.local/bin:/home/nanoagent/go/bin:/home/nanoagent/.cargo/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-                        .to_owned(),
-                ),
-                ..EnvVar::default()
-            },
-            EnvVar {
-                name: "XDG_CACHE_HOME".to_owned(),
-                value: Some("/home/nanoagent/.cache".to_owned()),
-                ..EnvVar::default()
-            },
-        ]);
-    }
-    let (volume_mounts, working_dir) = if single_mount_layout {
-        (
-            vec![
-                VolumeMount {
-                    name: "home".to_owned(),
-                    mount_path: "/tengri".to_owned(),
-                    ..VolumeMount::default()
-                },
-                VolumeMount {
-                    name: "tmp".to_owned(),
-                    mount_path: "/tmp".to_owned(),
-                    ..VolumeMount::default()
-                },
-                VolumeMount {
-                    name: RUNTIME_HOME_ALIAS_VOLUME.to_owned(),
-                    mount_path: "/home".to_owned(),
-                    read_only: Some(true),
-                    ..VolumeMount::default()
-                },
-                VolumeMount {
-                    name: RUNTIME_IDENTITY_VOLUME.to_owned(),
-                    mount_path: "/etc/passwd".to_owned(),
-                    read_only: Some(true),
-                    sub_path: Some("passwd".to_owned()),
-                    ..VolumeMount::default()
-                },
-            ],
-            "/workspace",
-        )
-    } else {
-        (
-            vec![
-                VolumeMount {
-                    name: "home".to_owned(),
-                    mount_path: "/home/nanoagent".to_owned(),
-                    ..VolumeMount::default()
-                },
-                VolumeMount {
-                    name: "home".to_owned(),
-                    mount_path: "/workspace".to_owned(),
-                    ..VolumeMount::default()
-                },
-                VolumeMount {
-                    name: "tmp".to_owned(),
-                    mount_path: "/tmp".to_owned(),
-                    ..VolumeMount::default()
-                },
-            ],
-            "/home/nanoagent",
-        )
-    };
+    env.extend([
+        EnvVar {
+            name: "CODEX_BINARY".to_owned(),
+            value: Some("/home/nanoagent/.local/bin/codex".to_owned()),
+            ..EnvVar::default()
+        },
+        EnvVar {
+            name: "PATH".to_owned(),
+            value: Some(
+                "/home/nanoagent/.local/bin:/home/nanoagent/go/bin:/home/nanoagent/.cargo/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+                    .to_owned(),
+            ),
+            ..EnvVar::default()
+        },
+        EnvVar {
+            name: "XDG_CACHE_HOME".to_owned(),
+            value: Some("/home/nanoagent/.cache".to_owned()),
+            ..EnvVar::default()
+        },
+    ]);
+    let volume_mounts = vec![
+        VolumeMount {
+            name: "home".to_owned(),
+            mount_path: "/home/nanoagent".to_owned(),
+            ..VolumeMount::default()
+        },
+        VolumeMount {
+            name: "tmp".to_owned(),
+            mount_path: "/tmp".to_owned(),
+            ..VolumeMount::default()
+        },
+    ];
 
     Container {
         name: "nanoagent".to_owned(),
@@ -493,85 +418,9 @@ fn build_container(
             ..SecurityContext::default()
         }),
         volume_mounts: Some(volume_mounts),
-        working_dir: Some(working_dir.to_owned()),
+        working_dir: Some("/home/nanoagent".to_owned()),
         ..Container::default()
     }
-}
-
-fn build_identity_init_container(microvm: &MicroVM) -> Container {
-    let fixed = BTreeMap::from([
-        ("cpu".to_owned(), Quantity("10m".to_owned())),
-        ("memory".to_owned(), Quantity("64Mi".to_owned())),
-    ]);
-
-    Container {
-        name: "prepare-runtime-identity".to_owned(),
-        image: Some(microvm.spec.image.clone()),
-        image_pull_policy: Some("IfNotPresent".to_owned()),
-        command: Some(vec![
-            "/bin/sh".to_owned(),
-            "-ec".to_owned(),
-            runtime_identity_script(),
-        ]),
-        resources: Some(ResourceRequirements {
-            limits: Some(fixed.clone()),
-            requests: Some(fixed),
-            ..ResourceRequirements::default()
-        }),
-        security_context: Some(SecurityContext {
-            allow_privilege_escalation: Some(false),
-            capabilities: Some(Capabilities {
-                drop: Some(vec!["ALL".to_owned()]),
-                ..Capabilities::default()
-            }),
-            privileged: Some(false),
-            read_only_root_filesystem: Some(true),
-            run_as_non_root: Some(true),
-            run_as_group: Some(GUEST_UID),
-            run_as_user: Some(GUEST_UID),
-            seccomp_profile: Some(SeccompProfile {
-                type_: "RuntimeDefault".to_owned(),
-                ..SeccompProfile::default()
-            }),
-            ..SecurityContext::default()
-        }),
-        volume_mounts: Some(vec![
-            VolumeMount {
-                name: "home".to_owned(),
-                mount_path: "/runtime-storage".to_owned(),
-                ..VolumeMount::default()
-            },
-            VolumeMount {
-                name: RUNTIME_HOME_ALIAS_VOLUME.to_owned(),
-                mount_path: "/runtime-home-alias".to_owned(),
-                ..VolumeMount::default()
-            },
-            VolumeMount {
-                name: RUNTIME_IDENTITY_VOLUME.to_owned(),
-                mount_path: "/runtime-identity".to_owned(),
-                ..VolumeMount::default()
-            },
-        ]),
-        ..Container::default()
-    }
-}
-
-fn runtime_identity_script() -> String {
-    format!(
-        r#"install -d -m 0750 /runtime-storage/home /runtime-storage/workspace
-test ! -e /runtime-home-alias/nanoagent
-test ! -L /runtime-home-alias/nanoagent
-ln -s /tengri/home /runtime-home-alias/nanoagent
-awk -F: -v OFS=: -v uid='{GUEST_UID}' '
-  BEGIN {{ found = 0 }}
-  $3 == uid {{ $6 = "/home/nanoagent"; found = 1 }}
-  {{ print }}
-  END {{ if (!found) exit 42 }}
-' /etc/passwd > '{RUNTIME_PASSWD_PATH}.tmp'
-chmod 0444 '{RUNTIME_PASSWD_PATH}.tmp'
-mv '{RUNTIME_PASSWD_PATH}.tmp' '{RUNTIME_PASSWD_PATH}'
-"#
-    )
 }
 
 fn secret_env(name: &str, secret_name: &str, key: &str) -> EnvVar {
@@ -726,7 +575,7 @@ mod tests {
                     .is_some_and(|claim| claim.claim_name == "agent-home")))
         );
         let container = &spec.containers[0];
-        assert_eq!(container.working_dir.as_deref(), Some("/workspace"));
+        assert_eq!(container.working_dir.as_deref(), Some("/home/nanoagent"));
         let resources = container.resources.as_ref().expect("resources");
         assert_eq!(resources.requests, resources.limits);
         let security = container.security_context.as_ref().expect("security");
@@ -765,118 +614,25 @@ mod tests {
             .filter(|mount| mount.name == "home")
             .collect::<Vec<_>>();
         assert_eq!(home_mounts.len(), 1);
-        assert_eq!(home_mounts[0].mount_path, "/tengri");
-        let legacy_home_mount = container
-            .volume_mounts
-            .as_ref()
-            .expect("volume mounts")
-            .iter()
-            .find(|mount| mount.mount_path == "/home")
-            .expect("legacy home alias mount");
-        assert_eq!(legacy_home_mount.name, RUNTIME_HOME_ALIAS_VOLUME);
-        assert_eq!(legacy_home_mount.read_only, Some(true));
-        let passwd_mount = container
-            .volume_mounts
-            .as_ref()
-            .expect("volume mounts")
-            .iter()
-            .find(|mount| mount.mount_path == "/etc/passwd")
-            .expect("generated passwd mount");
-        assert_eq!(passwd_mount.name, RUNTIME_IDENTITY_VOLUME);
-        assert_eq!(passwd_mount.sub_path.as_deref(), Some("passwd"));
-        assert_eq!(passwd_mount.read_only, Some(true));
-
-        let init = spec
-            .init_containers
-            .as_ref()
-            .and_then(|containers| containers.first())
-            .expect("runtime identity init container");
-        assert_eq!(init.image, container.image);
-        let init_command = init.command.as_ref().expect("init command");
-        assert_eq!(&init_command[..2], &["/bin/sh", "-ec"]);
-        assert!(
-            init_command[2]
-                .contains("install -d -m 0750 /runtime-storage/home /runtime-storage/workspace")
-        );
-        assert!(init_command[2].contains("ln -s /tengri/home /runtime-home-alias/nanoagent"));
-        assert!(init_command[2].contains("$6 = \"/home/nanoagent\""));
-        assert!(init_command[2].contains(&format!("-v uid='{GUEST_UID}'")));
-        assert!(init_command[2].contains(RUNTIME_PASSWD_PATH));
-        assert!(!init_command[2].contains("migration"));
-        assert!(init.args.is_none());
-        let init_home_mounts = init
-            .volume_mounts
-            .as_ref()
-            .expect("init volume mounts")
-            .iter()
-            .filter(|mount| mount.name == "home")
-            .collect::<Vec<_>>();
-        assert_eq!(init_home_mounts.len(), 1);
-        assert_eq!(init_home_mounts[0].mount_path, "/runtime-storage");
-        let init_security = init
-            .security_context
-            .as_ref()
-            .expect("init security context");
-        assert_eq!(init_security.run_as_user, Some(GUEST_UID));
-        assert_eq!(init_security.read_only_root_filesystem, Some(true));
-        let init_resources = init.resources.as_ref().expect("init resources");
-        assert_eq!(init_resources.requests, init_resources.limits);
+        assert_eq!(home_mounts[0].mount_path, "/home/nanoagent");
+        assert!(spec.init_containers.is_none());
         let volumes = spec.volumes.as_ref().expect("volumes");
-        for name in [RUNTIME_HOME_ALIAS_VOLUME, RUNTIME_IDENTITY_VOLUME] {
-            assert!(volumes.iter().any(|volume| {
-                volume.name == name
-                    && volume.empty_dir.as_ref().is_some_and(|source| {
-                        source.medium.as_deref() == Some("Memory")
-                            && source
-                                .size_limit
-                                .as_ref()
-                                .is_some_and(|size| size.0 == "64Ki")
-                    })
-            }));
-        }
+        assert_eq!(volumes.len(), 2);
     }
 
     #[test]
-    fn unmarked_agents_keep_the_legacy_dual_mount_layout_without_data_mutation() {
+    fn stale_or_missing_storage_layouts_are_rejected_instead_of_falling_back() {
         let mut microvm = test_microvm();
-        microvm.metadata.annotations = None;
+        assert!(has_current_storage_layout(&microvm));
 
-        let pod = build_pod(&microvm, "tengri", "agent-bootstrap", "agent-home");
-        assert!(
-            pod.metadata
-                .annotations
-                .as_ref()
-                .is_some_and(|annotations| !annotations.contains_key(STORAGE_LAYOUT_ANNOTATION))
-        );
-        let spec = pod.spec.expect("legacy pod spec");
-        assert!(spec.init_containers.is_none());
-        let container = &spec.containers[0];
-        assert_eq!(container.working_dir.as_deref(), Some("/home/nanoagent"));
-        let home_mounts = container
-            .volume_mounts
-            .as_ref()
-            .expect("legacy volume mounts")
-            .iter()
-            .filter(|mount| mount.name == "home")
-            .map(|mount| mount.mount_path.as_str())
-            .collect::<Vec<_>>();
-        assert_eq!(home_mounts, vec!["/home/nanoagent", "/workspace"]);
-        assert!(container.volume_mounts.as_ref().is_some_and(|mounts| {
-            mounts.iter().all(|mount| {
-                mount.name != RUNTIME_HOME_ALIAS_VOLUME && mount.name != RUNTIME_IDENTITY_VOLUME
-            })
-        }));
-        assert!(spec.volumes.as_ref().is_some_and(|volumes| {
-            volumes.len() == 2
-                && volumes.iter().all(|volume| {
-                    volume.name != RUNTIME_HOME_ALIAS_VOLUME
-                        && volume.name != RUNTIME_IDENTITY_VOLUME
-                })
-        }));
-        let env = container.env.as_ref().expect("legacy environment");
-        for name in ["CODEX_BINARY", "PATH", "XDG_CACHE_HOME"] {
-            assert!(env.iter().all(|entry| entry.name != name));
-        }
+        microvm.metadata.annotations = Some(BTreeMap::from([(
+            STORAGE_LAYOUT_ANNOTATION.to_owned(),
+            "home-workspace-v1".to_owned(),
+        )]));
+        assert!(!has_current_storage_layout(&microvm));
+
+        microvm.metadata.annotations = None;
+        assert!(!has_current_storage_layout(&microvm));
     }
 
     #[test]
