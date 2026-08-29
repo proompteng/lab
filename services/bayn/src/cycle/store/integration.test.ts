@@ -310,8 +310,12 @@ describePostgres('PostgreSQL intraday cycle store', () => {
           WHERE singleton
         `
         const intentId = 'c'.repeat(64)
-        const mutationId = 'd'.repeat(64)
-        const mutationRequestHash = 'e'.repeat(64)
+        const riskDecisionId = 'f'.repeat(64)
+        const submitMutationId = 'd'.repeat(64)
+        const cancelMutationId = 'e'.repeat(64)
+        const submitRequestHash = '8'.repeat(64)
+        const cancelRequestHash = '9'.repeat(64)
+        const brokerOrderId = 'risk-cutoff-order'
         yield* sql`
           INSERT INTO intents (
             intent_id, schema_version, authority_generation_hash, risk_decision_id, strategy_name, cycle_id,
@@ -324,15 +328,41 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             '2026-08-28T14:58:30.000Z', '2026-08-28T14:58:30.000Z'
           )
         `
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`
+              INSERT INTO risk_decisions (
+                decision_id, schema_version, input_hash, intent_id, policy_hash, outcome,
+                reason_codes, decided_at, expires_at
+              ) VALUES (
+                ${riskDecisionId}, 'bayn.paper-risk-decision.v1', ${'b'.repeat(64)}, ${intentId},
+                ${policyHash}, 'APPROVED', ARRAY[]::text[],
+                '2026-08-28T14:58:31.000Z', '2099-01-01T00:00:00.000Z'
+              )
+            `
+            yield* sql`
+              UPDATE intents
+              SET
+                risk_decision_id = ${riskDecisionId}, state = 'APPROVED', state_version = 2,
+                updated_at = '2026-08-28T14:58:31.000Z'
+              WHERE intent_id = ${intentId}
+            `
+          }),
+        )
+        yield* sql`
+          UPDATE intents
+          SET state = 'IO_STARTED', state_version = 3, updated_at = '2026-08-28T14:58:32.000Z'
+          WHERE intent_id = ${intentId}
+        `
         yield* sql`
           INSERT INTO mutation_events (
             event_id, schema_version, mutation_id, intent_id, sequence, operation, event_type,
             request_hash, consistency_delay_ms, broker_order_id, request_id, response_status,
             response_content_hash, occurred_at
           ) VALUES (
-            ${'2'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${mutationId}, ${intentId}, 1,
-            'SUBMIT', 'SUBMIT_STARTED', ${mutationRequestHash}, 1000, NULL, NULL, NULL, NULL,
-            '2026-08-28T14:58:30.000Z'
+            ${'0'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${submitMutationId}, ${intentId}, 1,
+            'SUBMIT', 'SUBMIT_STARTED', ${submitRequestHash}, 1000, NULL, NULL, NULL, NULL,
+            '2026-08-28T14:58:33.000Z'
           )
         `
         yield* sql`
@@ -341,10 +371,55 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             request_hash, consistency_delay_ms, broker_order_id, request_id, response_status,
             response_content_hash, occurred_at
           ) VALUES (
-            ${'3'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${mutationId}, ${intentId}, 2,
-            'SUBMIT', 'SUBMIT_REJECTED', ${mutationRequestHash}, 1000, NULL, 'risk-cutoff-rejection', 422,
-            ${'4'.repeat(64)}, '2026-08-28T15:00:30.000Z'
+            ${'1'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${submitMutationId}, ${intentId}, 2,
+            'SUBMIT', 'SUBMIT_ACCEPTED', ${submitRequestHash}, 1000, ${brokerOrderId},
+            'risk-cutoff-submit', 200, ${'a'.repeat(64)}, '2026-08-28T14:58:34.000Z'
           )
+        `
+        yield* sql`
+          UPDATE intents
+          SET state = 'ACKNOWLEDGED', state_version = 4, updated_at = '2026-08-28T14:58:35.000Z'
+          WHERE intent_id = ${intentId}
+        `
+        yield* sql`
+          INSERT INTO mutation_events (
+            event_id, schema_version, mutation_id, intent_id, sequence, operation, event_type,
+            request_hash, consistency_delay_ms, broker_order_id, request_id, response_status,
+            response_content_hash, occurred_at
+          ) VALUES (
+            ${'2'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${cancelMutationId}, ${intentId}, 1,
+            'CANCEL', 'CANCEL_STARTED', ${cancelRequestHash}, 1000, ${brokerOrderId}, NULL, NULL, NULL,
+            '2026-08-28T14:58:36.000Z'
+          )
+        `
+        yield* sql`
+          INSERT INTO mutation_events (
+            event_id, schema_version, mutation_id, intent_id, sequence, operation, event_type,
+            request_hash, consistency_delay_ms, broker_order_id, request_id, response_status,
+            response_content_hash, occurred_at
+          ) VALUES (
+            ${'3'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${cancelMutationId}, ${intentId}, 2,
+            'CANCEL', 'CANCEL_ACCEPTED', ${cancelRequestHash}, 1000, ${brokerOrderId},
+            'risk-cutoff-cancel', 204, ${'b'.repeat(64)}, '2026-08-28T14:58:37.000Z'
+          )
+        `
+        yield* sql`
+          INSERT INTO mutation_events (
+            event_id, schema_version, mutation_id, intent_id, sequence, operation, event_type,
+            request_hash, consistency_delay_ms, broker_order_id, request_id, response_status,
+            response_content_hash, occurred_at
+          ) VALUES (
+            ${'4'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${cancelMutationId}, ${intentId}, 3,
+            'CANCEL', 'RECOVERY_FOUND', ${cancelRequestHash}, 1000, ${brokerOrderId},
+            'risk-cutoff-recovery', 200, ${'c'.repeat(64)}, '2026-08-28T14:58:38.000Z'
+          )
+        `
+        yield* sql`
+          UPDATE intents
+          SET
+            state = 'TERMINAL', terminal_outcome = 'CANCELED', state_version = 5,
+            updated_at = '2026-08-28T15:00:30.000Z'
+          WHERE intent_id = ${intentId}
         `
         yield* sql`
           INSERT INTO valuations (

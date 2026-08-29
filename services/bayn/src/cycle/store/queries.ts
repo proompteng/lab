@@ -330,7 +330,10 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
                   OR (
                     latest.operation = 'CANCEL'
                     AND latest.event_type = 'RECOVERY_FOUND'
-                    AND intent.state <> 'TERMINAL'
+                    AND (
+                      intent.state <> 'TERMINAL'
+                      OR intent.updated_at > ${riskState.reconciliation.reconciledAt}::timestamptz
+                    )
                   )
                 )
             ) = ${riskContext.unknownMutationCount}
