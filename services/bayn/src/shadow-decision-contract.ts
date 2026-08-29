@@ -699,7 +699,21 @@ const targetPlannerEvidenceIssues = (
   document: typeof ExecutionDecisionMaterialSchema.Type,
 ): readonly Schema.FilterIssue[] => {
   const input = document.plannerInput
-  if (input === undefined) return []
+  const executionMarketData = document.bindings.executionMarketData
+  const requiresQuoteBoundLiquidationEvidence =
+    executionMarketData?.schemaVersion === 'bayn.execution-market-data-binding.v2' &&
+    executionMarketData.purpose === 'LIQUIDATION' &&
+    document.targetPlan.executionTerms?.priceReference === 'verified-adverse-quote-boundary'
+  if (input === undefined) {
+    return requiresQuoteBoundLiquidationEvidence
+      ? [
+          {
+            path: ['plannerInput'],
+            issue: 'quote-bound liquidation requires persisted target-planner evidence',
+          },
+        ]
+      : []
+  }
 
   const issues: Schema.FilterIssue[] = []
   if (

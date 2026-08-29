@@ -2138,6 +2138,14 @@ describe('OBSERVE shadow decision', () => {
       }),
     )
     const { contentHash: _documentContentHash, ...documentMaterial } = executionDocument
+    const { plannerInput: _plannerInput, ...closeWithoutPlannerInput } = documentMaterial
+    const missingClosePlannerInput = makeExecutionDecisionDocument(closeWithoutPlannerInput)
+    expect(Result.isFailure(missingClosePlannerInput)).toBe(true)
+    if (Result.isFailure(missingClosePlannerInput)) {
+      expect(String(missingClosePlannerInput.failure.cause)).toContain(
+        'quote-bound liquidation requires persisted target-planner evidence',
+      )
+    }
     const replacementCloseBinding = liquidationMarketDataBinding(input.cycle, hash('e'))
     const mismatchedPersistedClose = makeExecutionDecisionDocument({
       ...documentMaterial,
