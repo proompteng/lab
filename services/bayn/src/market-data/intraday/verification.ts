@@ -852,6 +852,15 @@ const payloadVariantCounts = <T extends IntradayQuote | IntradayTrade>(
     }
   })
 
+const snapshotCollections = (
+  snapshot: IntradayMarketSnapshot,
+): Result.Result<Pick<IntradayMarketSnapshot, 'bars' | 'quotes' | 'trades'>, IntradaySnapshotFailure> => {
+  if (!Array.isArray(snapshot.bars) || !Array.isArray(snapshot.quotes) || !Array.isArray(snapshot.trades)) {
+    return Result.fail(failure('rows', 'intraday snapshot collections must be arrays'))
+  }
+  return Result.succeed({ bars: snapshot.bars, quotes: snapshot.quotes, trades: snapshot.trades })
+}
+
 /**
  * Re-enters an already materialized snapshot through the authoritative row
  * verifier. This is intentionally stronger than rehashing caller-provided
@@ -863,13 +872,14 @@ export const reverifyIntradayMarketSnapshot = (
 ): Result.Result<IntradayMarketSnapshot, IntradaySnapshotFailure> =>
   Result.gen(function* () {
     const { manifest } = snapshot
-    const quotePayloadVariants = yield* payloadVariantCounts(snapshot.quotes, (quote) => [
+    const collections = yield* snapshotCollections(snapshot)
+    const quotePayloadVariants = yield* payloadVariantCounts(collections.quotes, (quote) => [
       quote.bidPrice,
       quote.bidSize,
       quote.askPrice,
       quote.askSize,
     ])
-    const tradePayloadVariants = yield* payloadVariantCounts(snapshot.trades, (trade) => [trade.price, trade.size])
+    const tradePayloadVariants = yield* payloadVariantCounts(collections.trades, (trade) => [trade.price, trade.size])
     const request: IntradaySnapshotRequest = {
       sessionDate: manifest.sessionDate,
       calendar: manifest.calendar,
@@ -892,7 +902,7 @@ export const reverifyIntradayMarketSnapshot = (
         source_partition: watermark.sourcePartition,
         inclusive_last_offset: watermark.inclusiveLastOffset,
       })),
-      bars: snapshot.bars.map((bar) => ({
+      bars: collections.bars.map((bar) => ({
         ...archiveIdentityRow(bar),
         channel: bar.channel,
         is_final: bar.final ? 1 : 0,
@@ -904,7 +914,7 @@ export const reverifyIntradayMarketSnapshot = (
         vwap: bar.vwap,
         trade_count: bar.tradeCount,
       })),
-      quotes: snapshot.quotes.map((quote) => ({
+      quotes: collections.quotes.map((quote) => ({
         ...archiveIdentityRow(quote),
         latest_payload_variants: String(
           quotePayloadVariants.counts.get(quotePayloadVariants.keys.get(quote) ?? '') ?? 0,
@@ -914,7 +924,7 @@ export const reverifyIntradayMarketSnapshot = (
         ask_price: quote.askPrice,
         ask_size: quote.askSize,
       })),
-      trades: snapshot.trades.map((trade) => ({
+      trades: collections.trades.map((trade) => ({
         ...archiveIdentityRow(trade),
         latest_payload_variants: String(
           tradePayloadVariants.counts.get(tradePayloadVariants.keys.get(trade) ?? '') ?? 0,

@@ -768,6 +768,23 @@ describe('immutable intraday market snapshot', () => {
     }
   })
 
+  test('returns a typed row failure for malformed replayed snapshot collections', () => {
+    const verified = success(verifyIntradaySnapshot(request, makeRows()))
+
+    const malformedSnapshots: readonly IntradayMarketSnapshot[] = [
+      { ...verified, bars: null as never },
+      { ...verified, quotes: null as never },
+      { ...verified, trades: undefined as never },
+    ]
+
+    for (const malformed of malformedSnapshots) {
+      expect(error(reverifyIntradayMarketSnapshot(malformed))).toMatchObject({
+        reason: 'rows',
+        message: 'intraday snapshot collections must be arrays',
+      })
+    }
+  })
+
   test('returns a typed row failure for non-serializable replayed quote and trade payloads', () => {
     const verified = success(verifyIntradaySnapshot(request, makeRows()))
 
