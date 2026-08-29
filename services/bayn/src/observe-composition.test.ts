@@ -3417,6 +3417,7 @@ describe('OBSERVE runtime composition', () => {
               cause: snapshotFailure,
             }),
           ),
+        verifyArchiveSnapshot: () => Effect.die('failed entry load must not verify an archive snapshot'),
       }
       return Effect.runPromise(
         Effect.gen(function* () {
@@ -3562,6 +3563,7 @@ describe('OBSERVE runtime composition', () => {
     const unusedArchive: IntradayMarketDataService = {
       captureVersion: () => Effect.die('out-of-universe liquidation must not query the strategy archive'),
       loadSnapshot: () => Effect.die('out-of-universe liquidation must not load a strategy snapshot'),
+      verifyArchiveSnapshot: () => Effect.die('out-of-universe liquidation must not verify a strategy snapshot'),
     }
     const outOfUniverseClose = await Effect.runPromise(
       buildCloseProgram(outOfUniversePosition, { ...input, intradayMarketData: unusedArchive }),
@@ -3603,6 +3605,7 @@ describe('OBSERVE runtime composition', () => {
           }),
         ),
       loadSnapshot: () => Effect.die('not-ready capture must not load snapshot rows'),
+      verifyArchiveSnapshot: () => Effect.die('not-ready capture must not verify an archive snapshot'),
     }
     const waiting = await Effect.runPromise(
       buildCloseProgram(openPosition, { ...input, intradayMarketData: waitingArchive }).pipe(Effect.flip),
@@ -3622,6 +3625,7 @@ describe('OBSERVE runtime composition', () => {
             cause: closeReplicaLag,
           }),
         ),
+      verifyArchiveSnapshot: () => Effect.die('failed close load must not verify an archive snapshot'),
     }
     const waitingForReplica = await Effect.runPromise(
       buildCloseProgram(openPosition, { ...input, intradayMarketData: laggingCloseArchive }).pipe(Effect.flip),
@@ -3641,6 +3645,7 @@ describe('OBSERVE runtime composition', () => {
             cause: closeTopologyMismatch,
           }),
         ),
+      verifyArchiveSnapshot: () => Effect.die('mismatched close load must not verify an archive snapshot'),
     }
     const fatalCloseMismatch = await Effect.runPromise(
       buildCloseProgram(openPosition, { ...input, intradayMarketData: mismatchedCloseArchive }).pipe(Effect.flip),
