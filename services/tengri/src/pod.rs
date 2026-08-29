@@ -373,8 +373,8 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
                 ..VolumeMount::default()
             },
         ]),
-        // Mount the PVC once. The immutable guest image maps /workspace to
-        // /home/nanoagent/workspace, keeping both paths on the persistent home volume.
+        // Mount the PVC once. The guest image maps /workspace to /home/nanoagent so
+        // existing volume-root workspaces and persistent home state remain visible.
         working_dir: Some("/home/nanoagent".to_owned()),
         ..Container::default()
     }
