@@ -1893,11 +1893,16 @@ describe('OBSERVE runtime composition', () => {
       _tag: 'Complete',
       observedAt: reconciliationCompletedAt,
     })
-    expect(decideReconciledExecutionCycleTerminalization(flatReconciliation, false)).toEqual({
+    expect(decideReconciledExecutionCycleTerminalization(flatReconciliation, 'COMPLETE')).toEqual({
       _tag: 'Complete',
       observedAt: reconciliationCompletedAt,
     })
-    expect(decideReconciledExecutionCycleTerminalization(flatReconciliation, true)).toEqual({
+    expect(decideReconciledExecutionCycleTerminalization(flatReconciliation, 'MISSING')).toEqual({
+      _tag: 'Block',
+      reason: CycleTerminalReason.MissedSubmission,
+      observedAt: reconciliationCompletedAt,
+    })
+    expect(decideReconciledExecutionCycleTerminalization(flatReconciliation, 'UNSUCCESSFUL')).toEqual({
       _tag: 'Block',
       reason: CycleTerminalReason.Risk,
       observedAt: reconciliationCompletedAt,

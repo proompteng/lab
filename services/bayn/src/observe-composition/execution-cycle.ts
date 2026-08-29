@@ -270,20 +270,30 @@ export const decideReconciledExecutionCycleCompletion = (
 
 export const decideReconciledExecutionCycleTerminalization = (
   facts: ReconciliationPassResult,
-  entryHasUnsuccessfulIntent: boolean,
+  entryIntentEvidence: EntryExecutionCycleIntentEvidence,
 ):
   | { readonly _tag: 'Complete'; readonly observedAt: string }
-  | { readonly _tag: 'Block'; readonly reason: CycleTerminalReason.Risk; readonly observedAt: string }
+  | {
+      readonly _tag: 'Block'
+      readonly reason: CycleTerminalReason.MissedSubmission | CycleTerminalReason.Risk
+      readonly observedAt: string
+    }
   | undefined => {
   const completion = decideReconciledExecutionCycleCompletion(facts)
-  if (completion === undefined || !entryHasUnsuccessfulIntent) return completion
-  return { _tag: 'Block', reason: CycleTerminalReason.Risk, observedAt: completion.observedAt }
+  if (completion === undefined || entryIntentEvidence === 'COMPLETE') return completion
+  return {
+    _tag: 'Block',
+    reason: entryIntentEvidence === 'MISSING' ? CycleTerminalReason.MissedSubmission : CycleTerminalReason.Risk,
+    observedAt: completion.observedAt,
+  }
 }
 
-const entryExecutionCycleHasUnsuccessfulIntent = (
+type EntryExecutionCycleIntentEvidence = 'COMPLETE' | 'MISSING' | 'UNSUCCESSFUL'
+
+const entryExecutionCycleIntentEvidence = (
   document: ExecutionDecisionDocument,
   orders: ReconciliationPassResult['brokerState']['orders'],
-): Effect.Effect<boolean, CycleRunnerError, IntentStore | MutationStore> =>
+): Effect.Effect<EntryExecutionCycleIntentEvidence, CycleRunnerError, IntentStore | MutationStore> =>
   Effect.gen(function* () {
     const intentStore = yield* IntentStore
     const mutationStore = yield* MutationStore
@@ -300,7 +310,8 @@ const entryExecutionCycleHasUnsuccessfulIntent = (
         ),
       { concurrency: 1 },
     )
-    return records.some(({ intent: maybeIntent, latestSubmit }) => {
+    if (records.some(({ intent }) => Option.isNone(intent))) return 'MISSING'
+    const unsuccessful = records.some(({ intent: maybeIntent, latestSubmit }) => {
       const record = Option.getOrUndefined(maybeIntent)
       return (
         record !== undefined &&
@@ -312,6 +323,7 @@ const entryExecutionCycleHasUnsuccessfulIntent = (
         }) === 'UNSUCCESSFUL'
       )
     })
+    return unsuccessful ? 'UNSUCCESSFUL' : 'COMPLETE'
   })
 
 type ExecutionCycleClosureResult =
@@ -350,7 +362,7 @@ const ensureExecutionCycleClosure = (
       if (completion !== undefined) {
         const terminalization = decideReconciledExecutionCycleTerminalization(
           closeReconciliation,
-          yield* entryExecutionCycleHasUnsuccessfulIntent(entryDocument, closeReconciliation.brokerState.orders),
+          yield* entryExecutionCycleIntentEvidence(entryDocument, closeReconciliation.brokerState.orders),
         )
         if (terminalization !== undefined) return terminalization
       }
@@ -775,20 +787,23 @@ const executeBoundExecutionCycle = (
     if (step._tag !== 'Execute') {
       if (step._tag !== 'Complete') return step
       const entryCutoffAt = closeWindow?.startAt
-      const entryHasUnsuccessfulIntent =
+      const entryIntentEvidence: EntryExecutionCycleIntentEvidence =
         closeOnly || (entryCutoffAt !== undefined && observedAt >= entryCutoffAt)
           ? yield* reconcile.pipe(
               Effect.mapError((cause) =>
                 mutationRunnerError({ message: 'entry execution terminal reconciliation failed', cause }),
               ),
-              Effect.flatMap((facts) => entryExecutionCycleHasUnsuccessfulIntent(document, facts.brokerState.orders)),
+              Effect.flatMap((facts) => entryExecutionCycleIntentEvidence(document, facts.brokerState.orders)),
             )
-          : false
+          : 'COMPLETE'
+      if (entryIntentEvidence === 'MISSING') {
+        return { _tag: 'Block', reason: CycleTerminalReason.MissedSubmission, observedAt: step.observedAt }
+      }
       const terminalization = decideExecutionMandateCycleTerminalization({
         closeOnly,
         observedAt,
         ...(entryCutoffAt === undefined ? {} : { entryCutoffAt }),
-        entryHasUnsuccessfulIntent,
+        entryHasUnsuccessfulIntent: entryIntentEvidence === 'UNSUCCESSFUL',
       })
       switch (terminalization._tag) {
         case 'WaitForClose':

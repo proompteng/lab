@@ -1269,6 +1269,13 @@ describe('OBSERVE shadow decision', () => {
     )
     const { contentHash: _contentHash, ...material } = document
     expect(material.strategyDecision).toEqual(input.compiledDecision)
+    expect(material.plannerInput).toEqual(input.plannerInput)
+    const { plannerInput: _plannerInput, ...withoutPlannerInput } = material
+    const missingPlannerInput = makeExecutionDecisionDocument(withoutPlannerInput)
+    expect(Result.isFailure(missingPlannerInput)).toBe(true)
+    if (Result.isFailure(missingPlannerInput)) {
+      expect(String(missingPlannerInput.failure.cause)).toContain('requires persisted target-planner evidence')
+    }
     const forgedSelectedSymbol = defaultIntradayMomentumProtocolDocument.universe[0]
     const forgedStrategyDecision = {
       ...input.compiledDecision,
@@ -1631,7 +1638,7 @@ describe('OBSERVE shadow decision', () => {
     expect(String(failure.cause.cause)).toContain('maximum position count')
   })
 
-  test('rejects durable intraday target plans that omit zero-weight universe members', async () => {
+  test('binds durable intraday target quantities, prices, and zero-weight universe members to planner evidence', async () => {
     const input = makeIntradayMomentumInput()
     const executionMarketData = input.executionMarketData
     if (executionMarketData?.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
@@ -1753,6 +1760,47 @@ describe('OBSERVE shadow decision', () => {
     if (zeroWeightSymbol === undefined) throw new Error('intraday target fixture requires a zero-weight symbol')
     const { contentHash: _contentHash, ...material } = document
     const { outputHash: _outputHash, ...targetPlanMaterial } = material.targetPlan
+    const rehashTargetPlan = (targets: typeof targetPlanMaterial.targets) => {
+      const forgedTargetPlanMaterial = { ...targetPlanMaterial, targets }
+      return { ...forgedTargetPlanMaterial, outputHash: canonicalHashV1(forgedTargetPlanMaterial) }
+    }
+    const selectedTarget = targetPlanMaterial.targets.find(({ symbol }) => symbol === selectedSymbol)
+    if (selectedTarget === undefined) throw new Error('intraday target fixture is missing its selected target')
+    const quantityShift = 1_000_000n
+    const forgedQuantities = makeExecutionDecisionDocument({
+      ...material,
+      targetPlan: rehashTargetPlan(
+        targetPlanMaterial.targets.map((target) =>
+          target.symbol === selectedTarget.symbol
+            ? {
+                ...target,
+                currentQuantityMicros: (BigInt(target.currentQuantityMicros) + quantityShift).toString(),
+                targetQuantityMicros: (BigInt(target.targetQuantityMicros) + quantityShift).toString(),
+              }
+            : target,
+        ),
+      ),
+    })
+    expect(Result.isFailure(forgedQuantities)).toBe(true)
+    if (Result.isFailure(forgedQuantities)) {
+      expect(String(forgedQuantities.failure.cause)).toContain('persisted target-planner evidence')
+    }
+
+    const forgedReferencePrice = makeExecutionDecisionDocument({
+      ...material,
+      targetPlan: rehashTargetPlan(
+        targetPlanMaterial.targets.map((target) =>
+          target.symbol === zeroWeightSymbol
+            ? { ...target, referencePriceMicros: (BigInt(target.referencePriceMicros) + 1n).toString() }
+            : target,
+        ),
+      ),
+    })
+    expect(Result.isFailure(forgedReferencePrice)).toBe(true)
+    if (Result.isFailure(forgedReferencePrice)) {
+      expect(String(forgedReferencePrice.failure.cause)).toContain('persisted target-planner evidence')
+    }
+
     const reducedTargetPlanMaterial = {
       ...targetPlanMaterial,
       targets: targetPlanMaterial.targets.filter(({ symbol }) => symbol !== zeroWeightSymbol),

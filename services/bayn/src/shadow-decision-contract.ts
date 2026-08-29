@@ -12,6 +12,7 @@ import {
   legacyIntentPlanSchemaVersion,
   legacyObserveAuthorityToken,
 } from './execution/legacy-wire'
+import { reconciledStateHash } from './reconciliation'
 import { EvaluationSchema, Reason, isAuthorityNotGrantedReason } from './risk'
 import {
   IsoDateSchema,
@@ -25,7 +26,7 @@ import {
   UtcInstantSchema,
   strictParseOptions,
 } from './schemas'
-import { TargetPlanResultSchema, TargetPlanStatus } from './target-planner'
+import { TargetPlannerInputSchema, TargetPlanResultSchema, TargetPlanStatus, planTargets } from './target-planner'
 import { RuntimeStrategyDecisionSchema } from './strategy/runtime-decision'
 import { defaultIntradayMomentumProtocolDocument } from './strategy/intraday-momentum/protocol'
 import { utcInstantFromEpochMillis } from './time'
@@ -429,6 +430,8 @@ const ExecutionDecisionMaterialSchema = Schema.Struct({
   executionSession: Schema.optionalKey(ExecutionSessionBindingSchema),
   /** Persist the pure strategy output that authorized the targets; legacy documents remain decodable without it. */
   strategyDecision: Schema.optionalKey(RuntimeStrategyDecisionSchema),
+  /** Persist validated planner facts so durable decoding can reproduce every quantity and reference price. */
+  plannerInput: Schema.optionalKey(TargetPlannerInputSchema),
   targetPlan: TargetPlanResultSchema,
   deltaRisk: Schema.Array(DeltaRiskEvaluationSchema),
   orderedIntentIds: Schema.Array(Sha256Schema),
@@ -517,6 +520,58 @@ const intradayMomentumAllocationIssues = (
   return issues
 }
 
+const targetPlannerEvidenceIssues = (
+  document: typeof ExecutionDecisionMaterialSchema.Type,
+): readonly Schema.FilterIssue[] => {
+  const input = document.plannerInput
+  if (input === undefined) return []
+
+  const issues: Schema.FilterIssue[] = []
+  if (
+    input.strategyName !== document.bindings.strategyName ||
+    input.cycleId !== document.bindings.cycleId ||
+    input.decisionHash !== document.bindings.strategyDecisionHash ||
+    input.policyHash !== document.bindings.policyHash ||
+    input.accountId !== document.bindings.accountId ||
+    input.observedAt !== document.createdAt ||
+    input.submissionCutoffAt !== document.submissionCutoffAt
+  ) {
+    issues.push({
+      path: ['plannerInput'],
+      issue: 'persisted target-planner evidence must match the execution decision identity and timing',
+    })
+  }
+
+  const planningBrokerStateHash = reconciledStateHash({
+    account: input.brokerState.account,
+    positions: input.brokerState.positions,
+    positionsObservedAt: input.brokerState.positionsObservedAt,
+    orders: input.brokerState.orders,
+    ordersObservedAt: input.brokerState.ordersObservedAt,
+    accountingHash: input.brokerState.accountingHash,
+  })
+  if (
+    Result.isFailure(planningBrokerStateHash) ||
+    planningBrokerStateHash.success !== document.bindings.planningBrokerStateHash ||
+    input.brokerState.reconciliation.reconciliationId !== document.bindings.reconciliationId ||
+    input.brokerState.reconciliation.contentHash !== document.bindings.reconciliationHash
+  ) {
+    issues.push({
+      path: ['plannerInput', 'brokerState'],
+      issue: 'persisted target-planner evidence must match the exact reconciled broker state',
+    })
+  }
+
+  const reproducedPlan = planTargets(input)
+  if (Result.isFailure(reproducedPlan) || reproducedPlan.success.outputHash !== document.targetPlan.outputHash) {
+    issues.push({
+      path: ['targetPlan'],
+      issue: 'persisted target-planner evidence must reproduce the exact target plan',
+    })
+  }
+  return issues
+}
+
 const executionMaterialIssues = (
   document: typeof ExecutionDecisionMaterialSchema.Type,
 ): readonly Schema.FilterIssue[] => {
@@ -574,6 +629,12 @@ const executionMaterialIssues = (
     })
   }
   if (document.bindings.strategyName === 'intraday-momentum' && !isClosePlan) {
+    if (document.plannerInput === undefined) {
+      issues.push({
+        path: ['plannerInput'],
+        issue: 'intraday-momentum entry requires persisted target-planner evidence',
+      })
+    }
     if (strategyDecision?.schemaVersion !== 'bayn.intraday-momentum.target.v1') {
       issues.push({
         path: ['strategyDecision'],
@@ -674,6 +735,7 @@ const executionMaterialIssues = (
       }
     }
   }
+  issues.push(...targetPlannerEvidenceIssues(document))
   const targetSymbols = document.targetPlan.targets.map(({ symbol }) => symbol)
   if (usesLiquidationMarketData && executionMarketData !== undefined) {
     const bindsTargetSymbols =

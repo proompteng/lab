@@ -952,6 +952,7 @@ const assembleExecutionDecisionDocument = (
       },
       executionSession,
       strategyDecision: input.compiledDecision,
+      plannerInput: input.plannerInput,
       targetPlan: input.targetPlan,
       deltaRisk: reduction.deltaRisk,
       orderedIntentIds: reduction.deltaRisk.map((risk) => risk.evaluation.input.intentId),
