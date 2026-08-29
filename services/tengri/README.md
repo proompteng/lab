@@ -88,10 +88,12 @@ ApplicationSet and BFF together:
 5. Confirm the pre-rollout `MicroVM` count and phases are unchanged, then exercise one authenticated read-only control
    plane request. Do not create a canary DaemonSet or mutate node scheduling to verify this rollout.
 
-If the replacement cannot become ready, revert the manifest or image-digest commit through a follow-up PR and let Argo
-perform the same `Recreate` rollout to the last known-good revision. Do not use `kubectl rollout undo` or directly apply
-manifests because GitOps would overwrite that state. During rollback, leave existing MicroVM Pods and PVCs intact;
-verify the restored Pod, Service endpoint, `/livez`, and `/readyz` with the same commands above.
+If the replacement cannot become ready, use a follow-up PR and let Argo perform the same `Recreate` rollout. Do not use
+`kubectl rollout undo` or directly apply manifests because GitOps would overwrite that state. Never revert to a
+controller predating `home-workspace-v2` while any v2 `MicroVM` exists: the predecessor cannot safely resume those
+guests. Let every v2 agent expire or delete it through Tengri, verify that no v2 CR remains, and only then revert both
+signed image digests together. Verify the restored Pod, Service endpoint, `/livez`, and `/readyz` with the commands
+above.
 
 Tengri supports one storage layout:
 `runtime.proompteng.ai/storage-layout=home-workspace-v2`. Every new agent receives that annotation, mounts its PVC
@@ -103,7 +105,7 @@ any other layout is rejected and must be deleted and recreated; Tengri does not 
 topology. The Deployment temporarily retains the predecessor's `TENGRI_NEW_AGENT_STORAGE_LAYOUT=home-workspace-v1`
 environment variable so the still-pinned predecessor remains stable until the v2 image promotion lands. The v2
 controller does not read that variable and always creates `home-workspace-v2`. Remove the inert variable in a later
-GitOps-only cleanup after the v2 controller is live. Promote or roll back the controller and Nanoagent digests together.
+GitOps-only cleanup after the v2 controller is live. Never roll back past the v2 controller while a v2 CR exists.
 
 ## Local validation
 

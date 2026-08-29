@@ -218,7 +218,9 @@ describe('Tengri release workflows', () => {
     expect(steps[createIndex]?.with?.body).toContain('steps.final-release.outputs.was_enabled')
     expect(steps[createIndex]?.with?.body).toContain('singleton `Recreate` rollout')
     expect(steps[createIndex]?.with?.body).toContain('kubectl --context galactic-lan')
-    expect(steps[createIndex]?.with?.body).toContain('Roll back by reverting this promotion commit')
+    expect(steps[createIndex]?.with?.body).toContain('controller predating `home-workspace-v2`')
+    expect(steps[createIndex]?.with?.body).toContain('no v2 `MicroVM` CR remains')
+    expect(steps[createIndex]?.with?.body).toContain('Roll back both signed image digests together')
     expect(steps[createIndex]?.with?.body).not.toContain('The application remains absent')
   })
 

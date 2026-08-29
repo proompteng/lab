@@ -152,7 +152,13 @@ pre-v2 controller stable between the source merge and image promotion. The v2 co
 always writes `home-workspace-v2`; remove the inert variable in a later GitOps cleanup after v2 is live.
 
 Promote or roll back the controller and Nanoagent digests together through GitOps. Do not mix a controller and guest
-image from different releases.
+image from different releases. A controller predating `home-workspace-v2` cannot safely resume a v2 guest. Before
+reverting past v2, let every v2 agent expire or delete it through Tengri, then require this zero-result check:
+
+```bash
+kubectl --context galactic-lan -n tengri get microvms.runtime.proompteng.ai -o json \
+  | jq -e '[.items[] | select(.metadata.annotations["runtime.proompteng.ai/storage-layout"] == "home-workspace-v2")] | length == 0'
+```
 
 ### Proompteng desktop image promotions
 
