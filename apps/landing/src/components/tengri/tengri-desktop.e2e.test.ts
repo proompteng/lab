@@ -79,6 +79,8 @@ type MockOptions = {
 
 async function mockTengri(page: Page, options: MockOptions = {}) {
   let agent = options.agent === undefined ? readyAgent : options.agent
+  let snapshotFailuresRemaining = 0
+  let snapshotRequests = 0
   const authenticated = options.authenticated ?? true
   const actions: Record<string, unknown>[] = []
   let resumeThreadRequests = 0
@@ -198,6 +200,16 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   await page.route('**/api/tengri', async (route) => {
     const request = route.request()
     if (request.method() === 'GET') {
+      snapshotRequests += 1
+      if (snapshotFailuresRemaining > 0) {
+        snapshotFailuresRemaining -= 1
+        await route.fulfill({
+          status: 503,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'Tengri control plane is temporarily unavailable' }),
+        })
+        return
+      }
       if (
         options.failSnapshotAfterAction &&
         actions.some((action) => action.action === options.failSnapshotAfterAction)
@@ -416,12 +428,19 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
 
   return {
     actions,
+    failNextSnapshots: (count: number) => {
+      snapshotFailuresRemaining = count
+    },
     getAgent: () => agent,
     getMaxConcurrentSearchRequests: () => maxConcurrentSearchRequests,
     getResumeThreadResponseCount: () => resumeThreadResponses,
+    getSnapshotRequestCount: () => snapshotRequests,
     releaseHeldCodexAccount,
     releaseHeldLifecycleAction,
     releaseHeldResume,
+    setAgent: (nextAgent: typeof readyAgent | null) => {
+      agent = nextAgent
+    },
     waitForHeldLifecycleAction: () => heldLifecycleActionStarted,
     waitForHeldCodexAccount: () => heldCodexAccountStarted,
     waitForHeldResume: () => heldResumeStarted,
@@ -1055,6 +1074,37 @@ test('propagates deletion cleanup to every open desktop tab', async ({ page }) =
       ),
     )
     .toEqual([])
+  await duplicate.close()
+})
+
+test('retries cross-tab deletion refreshes after a transient failure', async ({ page }) => {
+  const failedAgent = {
+    ...readyAgent,
+    phase: 'failed',
+    message: 'Guest startup failed.',
+  }
+  await mockTengri(page, { agent: failedAgent })
+  await page.goto('/')
+
+  const duplicate = await page.context().newPage()
+  const duplicateMock = await mockTengri(duplicate, { agent: failedAgent })
+  await duplicate.goto('/')
+  await expect(duplicate.getByRole('heading', { name: 'Agent could not start' })).toBeVisible()
+
+  const snapshotRequestsBeforeDeletion = duplicateMock.getSnapshotRequestCount()
+  duplicateMock.setAgent(null)
+  duplicateMock.failNextSnapshots(1)
+  await page.getByRole('button', { name: 'Delete Failed Agent' }).click()
+  await page
+    .getByRole('alertdialog', { name: /Delete “Tengri”/ })
+    .getByRole('button', { name: 'Delete Agent' })
+    .click()
+
+  await expect(page.getByRole('dialog', { name: 'Create your agent' })).toBeVisible()
+  await expect
+    .poll(() => duplicateMock.getSnapshotRequestCount())
+    .toBeGreaterThanOrEqual(snapshotRequestsBeforeDeletion + 2)
+  await expect(duplicate.getByRole('dialog', { name: 'Create your agent' })).toBeVisible({ timeout: 6_000 })
   await duplicate.close()
 })
 

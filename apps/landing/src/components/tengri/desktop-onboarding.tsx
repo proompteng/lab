@@ -26,6 +26,7 @@ export default function DesktopOnboarding() {
   const requestSequence = useRef(0)
   const [snapshot, setSnapshot] = useState<TengriDesktopSnapshot | null>(null)
   const [snapshotError, setSnapshotError] = useState('')
+  const [pendingDeletion, setPendingDeletion] = useState<{ agentId: string; createdAt: string } | null>(null)
 
   const refresh = useCallback(async () => {
     const sequence = ++requestSequence.current
@@ -33,6 +34,11 @@ export default function DesktopOnboarding() {
       const next = await getDesktopSnapshot()
       if (!mounted.current || sequence !== requestSequence.current) return
       setSnapshot(next)
+      setPendingDeletion((pending) => {
+        if (!pending) return null
+        const observed = next.agents.find((agent) => agent.id === pending.agentId)
+        return observed?.createdAt === pending.createdAt ? pending : null
+      })
       setSnapshotError('')
     } catch (cause) {
       if (!mounted.current || sequence !== requestSequence.current) return
@@ -49,21 +55,59 @@ export default function DesktopOnboarding() {
     }
   }, [refresh])
 
-  const gate = resolveDesktopGate(snapshot, snapshotError)
-  const agentId = snapshot?.agent?.id
+  const snapshotGate = resolveDesktopGate(snapshot, snapshotError)
+  const currentAgent = snapshot?.agents[0]
+  const pendingDeletionAgent = pendingDeletion
+    ? snapshot?.agents.find(
+        (agent) => agent.id === pendingDeletion.agentId && agent.createdAt === pendingDeletion.createdAt,
+      )
+    : undefined
+  const currentAgentId = currentAgent?.id
+  const currentAgentCreatedAt = currentAgent?.createdAt
+  const pendingDeletionAgentId = pendingDeletionAgent?.id
+  const pendingDeletionAgentCreatedAt = pendingDeletionAgent?.createdAt
+  const gate: DesktopGateState = pendingDeletionAgent
+    ? {
+        kind: 'transitioning',
+        agent: { ...pendingDeletionAgent, phase: 'terminating', message: 'Waiting for controller state' },
+      }
+    : snapshotGate
+
+  const beginAgentDeletion = useCallback((agent: TengriAgent) => {
+    clearDeletedDesktopState(agent.id)
+    setPendingDeletion({ agentId: agent.id, createdAt: agent.createdAt })
+  }, [])
+
   useEffect(() => {
-    if (!agentId || gate.kind === 'ready') return
-    return subscribeDeletedDesktopState(agentId, () => {
-      clearDeletedDesktopState(agentId)
-      void refresh()
+    if (!currentAgentId || !currentAgentCreatedAt || snapshotGate.kind === 'ready') return
+    return subscribeDeletedDesktopState(currentAgentId, () => {
+      clearDeletedDesktopState(currentAgentId)
+      setPendingDeletion({ agentId: currentAgentId, createdAt: currentAgentCreatedAt })
     })
-  }, [agentId, gate.kind, refresh])
+  }, [currentAgentCreatedAt, currentAgentId, snapshotGate.kind])
   useEffect(() => {
+    if (!pendingDeletionAgentId || !pendingDeletionAgentCreatedAt) return
+    let cancelled = false
+    let timer: number | undefined
+
+    const pollUntilDeleted = async () => {
+      await refresh()
+      if (!cancelled) timer = window.setTimeout(() => void pollUntilDeleted(), 2_000)
+    }
+    void pollUntilDeleted()
+
+    return () => {
+      cancelled = true
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  }, [pendingDeletionAgentCreatedAt, pendingDeletionAgentId, refresh])
+  useEffect(() => {
+    if (pendingDeletionAgentId) return
     const refreshDelay = desktopRefreshDelay(gate, Date.now())
     if (refreshDelay === null) return
     const timer = window.setTimeout(() => void refresh(), refreshDelay)
     return () => window.clearTimeout(timer)
-  }, [gate, refresh])
+  }, [gate, pendingDeletionAgentId, refresh])
 
   if (gate.kind === 'ready' && snapshot?.user) {
     return (
@@ -96,14 +140,22 @@ export default function DesktopOnboarding() {
       </header>
       <div className="relative z-10 grid min-h-[100svh] place-items-center px-5 pt-12 pb-8">
         <AnimatePresence mode="wait">
-          <DesktopGate key={gate.kind} gate={gate} onRefresh={refresh} />
+          <DesktopGate key={gate.kind} gate={gate} onAgentDeleted={beginAgentDeletion} onRefresh={refresh} />
         </AnimatePresence>
       </div>
     </main>
   )
 }
 
-function DesktopGate({ gate, onRefresh }: { gate: DesktopGateState; onRefresh: () => Promise<void> }) {
+function DesktopGate({
+  gate,
+  onAgentDeleted,
+  onRefresh,
+}: {
+  gate: DesktopGateState
+  onAgentDeleted: (agent: TengriAgent) => void
+  onRefresh: () => Promise<void>
+}) {
   if (gate.kind === 'loading') {
     return (
       <StatusWindow
@@ -157,7 +209,7 @@ function DesktopGate({ gate, onRefresh }: { gate: DesktopGateState; onRefresh: (
     )
   }
   if (gate.kind === 'sleeping') return <SleepingAgentWindow agent={gate.agent} onChanged={onRefresh} />
-  if (gate.kind === 'failed') return <FailedAgentWindow agent={gate.agent} onChanged={onRefresh} />
+  if (gate.kind === 'failed') return <FailedAgentWindow agent={gate.agent} onDeleted={onAgentDeleted} />
   if (gate.kind === 'unknown') {
     return (
       <ActionWindow
@@ -321,7 +373,7 @@ function SleepingAgentWindow({ agent, onChanged }: { agent: TengriAgent; onChang
   )
 }
 
-function FailedAgentWindow({ agent, onChanged }: { agent: TengriAgent; onChanged: () => Promise<void> }) {
+function FailedAgentWindow({ agent, onDeleted }: { agent: TengriAgent; onDeleted: (agent: TengriAgent) => void }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
@@ -331,9 +383,9 @@ function FailedAgentWindow({ agent, onChanged }: { agent: TengriAgent; onChanged
     setError('')
     try {
       await runTengriAction<null>({ action: 'delete-agent', agentId: agent.id })
+      onDeleted(agent)
       publishDeletedDesktopState(agent.id)
       setConfirmOpen(false)
-      await onChanged()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'The failed agent could not be deleted')
     } finally {
