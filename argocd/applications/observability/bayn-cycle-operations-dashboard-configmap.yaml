@@ -1159,11 +1159,11 @@ data:
             "type": "prometheus",
             "uid": "prom"
           },
-          "description": "Nonzero positions in the latest complete broker position snapshot.",
+          "description": "Nonzero positions from the latest complete broker snapshot. Hidden when that snapshot is older than the configured reconciliation freshness threshold.",
           "fieldConfig": {
             "defaults": {
               "decimals": 0,
-              "noValue": "NO POSITION SNAPSHOT"
+              "noValue": "STALE / NO SNAPSHOT"
             },
             "overrides": []
           },
@@ -1191,7 +1191,7 @@ data:
           },
           "targets": [
             {
-              "expr": "max(bayn_broker_position_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "expr": "max(bayn_broker_position_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) ((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) <= on(instance) bayn_reconciliation_stale_threshold_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "positions",
               "range": false,
@@ -1206,11 +1206,11 @@ data:
             "type": "prometheus",
             "uid": "prom"
           },
-          "description": "Absolute market exposure from the latest complete broker position snapshot.",
+          "description": "Absolute market exposure from the latest complete broker snapshot. Hidden when that snapshot is stale.",
           "fieldConfig": {
             "defaults": {
               "decimals": 2,
-              "noValue": "NO POSITION SNAPSHOT",
+              "noValue": "STALE / NO SNAPSHOT",
               "unit": "currencyUSD"
             },
             "overrides": []
@@ -1239,7 +1239,7 @@ data:
           },
           "targets": [
             {
-              "expr": "max(bayn_broker_gross_exposure_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "expr": "max(bayn_broker_gross_exposure_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) ((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) <= on(instance) bayn_reconciliation_stale_threshold_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "gross",
               "range": false,
@@ -1254,11 +1254,11 @@ data:
             "type": "prometheus",
             "uid": "prom"
           },
-          "description": "Signed market exposure from the latest complete broker position snapshot.",
+          "description": "Signed market exposure from the latest complete broker snapshot. Hidden when that snapshot is stale.",
           "fieldConfig": {
             "defaults": {
               "decimals": 2,
-              "noValue": "NO POSITION SNAPSHOT",
+              "noValue": "STALE / NO SNAPSHOT",
               "unit": "currencyUSD"
             },
             "overrides": []
@@ -1287,7 +1287,7 @@ data:
           },
           "targets": [
             {
-              "expr": "max(bayn_broker_net_exposure_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "expr": "max(bayn_broker_net_exposure_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) ((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) <= on(instance) bayn_reconciliation_stale_threshold_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "net",
               "range": false,
@@ -1350,11 +1350,11 @@ data:
             "type": "prometheus",
             "uid": "prom"
           },
-          "description": "Unrealized P&L from the latest complete broker position snapshot.",
+          "description": "Unrealized P&L from the latest complete broker snapshot. Hidden when that snapshot is stale.",
           "fieldConfig": {
             "defaults": {
               "decimals": 2,
-              "noValue": "NO POSITION SNAPSHOT",
+              "noValue": "STALE / NO SNAPSHOT",
               "unit": "currencyUSD"
             },
             "overrides": []
@@ -1383,7 +1383,7 @@ data:
           },
           "targets": [
             {
-              "expr": "max(bayn_broker_unrealized_pnl_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "expr": "max(bayn_broker_unrealized_pnl_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) ((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) <= on(instance) bayn_reconciliation_stale_threshold_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "unrealized",
               "range": false,
