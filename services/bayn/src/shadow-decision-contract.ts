@@ -991,8 +991,12 @@ const executionMaterialIssues = (
       : undefined
   const usesLiquidationMarketData = executionMarketData?.purpose === 'LIQUIDATION'
   const targetExecutionTerms = document.targetPlan.executionTerms
-  const isClosePlan = targetExecutionTerms?.executionPurpose !== undefined
-  if (usesLiquidationMarketData !== isClosePlan) {
+  const usesExtendedCloseLease =
+    document.executionSession !== undefined &&
+    document.submissionCutoffAt > document.executionSession.submissionCutoffAt
+  const isClosePlan = strategyDecision?.schemaVersion === 'bayn.execution-flat-target.v1' || usesExtendedCloseLease
+  const requiresLiquidationMarketData = targetExecutionTerms?.executionPurpose !== undefined
+  if (usesLiquidationMarketData !== requiresLiquidationMarketData) {
     issues.push({
       path: ['bindings', 'executionMarketData', 'purpose'],
       issue: 'liquidation market data must bind a close-only target plan and must not bind an entry plan',
