@@ -2180,6 +2180,36 @@ describe('OBSERVE shadow decision', () => {
     }
   })
 
+  test('rejects liquidation exemptions forged into an intraday entry risk state', async () => {
+    const selectedSymbol = defaultIntradayMomentumProtocolDocument.universe[0]
+    if (selectedSymbol === undefined) throw new Error('intraday execution fixture requires a non-empty universe')
+    const { input, executionSession, riskInputs } = makeIntradayExecutionFixture(selectedSymbol)
+    const closeOnlyRiskInputs = riskInputs.map((riskInput) => ({
+      ...riskInput,
+      state: decodeState({
+        ...riskInput.state,
+        closeOnly: true,
+        closeOnlyExpiresAt: input.cycle.window.submissionCutoffAt,
+      }),
+    }))
+
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        buildExecutionDecision({
+          ...input,
+          riskInputs: closeOnlyRiskInputs,
+          authorityGenerationHash: hash('6'),
+          executionSession,
+        }),
+      ),
+    )
+
+    expect(failure.failure).toBe('contract')
+    expect(failure.cause).toBeInstanceOf(ShadowDecisionContractFailure)
+    if (!(failure.cause instanceof ShadowDecisionContractFailure)) return expect.unreachable()
+    expect(String(failure.cause.cause)).toContain('must bind non-close-only entry state or the exact close-only lease')
+  })
+
   test('binds full-session intraday decisions to the exact rolling snapshot and cycle calendar', async () => {
     const input = makeIntradayMomentumInput()
     const accepted = await build(input)
@@ -2349,6 +2379,29 @@ describe('OBSERVE shadow decision', () => {
       }),
     )
     const { contentHash: _documentContentHash, ...documentMaterial } = executionDocument
+    const mismatchedCloseLease = makeExecutionDecisionDocument({
+      ...documentMaterial,
+      deltaRisk: documentMaterial.deltaRisk.map((risk) => ({
+        ...risk,
+        ...(risk.facts === undefined
+          ? {}
+          : {
+              facts: {
+                ...risk.facts,
+                state: {
+                  ...risk.facts.state,
+                  closeOnlyExpiresAt: '2026-07-22T19:46:00.000Z',
+                },
+              },
+            }),
+      })),
+    })
+    expect(Result.isFailure(mismatchedCloseLease)).toBe(true)
+    if (Result.isFailure(mismatchedCloseLease)) {
+      expect(String(mismatchedCloseLease.failure.cause)).toContain(
+        'must bind non-close-only entry state or the exact close-only lease',
+      )
+    }
     const persistedPlannerInput = documentMaterial.plannerInput
     if (persistedPlannerInput?.referencePrices.schemaVersion !== 'bayn.intraday-snapshot-reference-prices.v1') {
       throw new Error('quote-bound close fixture must persist intraday reference prices')

@@ -1142,8 +1142,19 @@ const executionMaterialIssues = (
     if (risk.evaluation.input.intentId !== document.orderedIntentIds[index]) {
       issues.push({ path: ['deltaRisk', index], issue: 'must bind the corresponding ordered intent identity' })
     }
+    const facts = risk.facts
+    if (
+      facts !== undefined &&
+      (isClosePlan
+        ? facts.state.closeOnly !== true || facts.state.closeOnlyExpiresAt !== document.expiresAt
+        : facts.state.closeOnly === true || facts.state.closeOnlyExpiresAt !== undefined)
+    ) {
+      issues.push({
+        path: ['deltaRisk', index, 'facts', 'state', 'closeOnly'],
+        issue: 'must bind non-close-only entry state or the exact close-only lease to the target-plan phase',
+      })
+    }
     if (requiresDurableRiskFacts) {
-      const facts = risk.facts
       const policy = document.riskPolicy
       const executionIntent = makeExecutionIntentFromDecodedPlan(plan, document.bindings.authorityGenerationHash)
       const reproduced =
