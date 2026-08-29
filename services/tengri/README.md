@@ -93,6 +93,17 @@ perform the same `Recreate` rollout to the last known-good revision. Do not use 
 manifests because GitOps would overwrite that state. During rollback, leave existing MicroVM Pods and PVCs intact;
 verify the restored Pod, Service endpoint, `/livez`, and `/readyz` with the same commands above.
 
+Storage-layout changes use two releases so activation always has a safe rollback:
+
+1. Promote a compatibility controller that reads both legacy agents and agents annotated with
+   `runtime.proompteng.ai/storage-layout=home-workspace-v1`. Leave `TENGRI_NEW_AGENT_STORAGE_LAYOUT` unset so newly
+   created agents remain on the legacy layout.
+2. After the compatibility image is live, enable `TENGRI_NEW_AGENT_STORAGE_LAYOUT=home-workspace-v1` in a separate
+   GitOps PR. Rolling back this activation removes the environment variable while retaining the compatibility image.
+
+Do not roll back past the compatibility image while a marked `MicroVM` exists. Marked agents use the single-mount PVC
+layout and must remain readable until their four-hour hard expiry deletes the CR and PVC.
+
 ## Local validation
 
 ```bash
