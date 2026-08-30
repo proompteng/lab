@@ -7,7 +7,8 @@ It is intentionally independent of the Kubernetes clusters it manages, so an Omn
 
 - Omni `v1.10.4` runs with host networking, embedded etcd, SQLite secondary storage, and direct TUN access.
 - The existing NUC Tailscale node is the only Omni network edge:
-  - Tailscale Serve terminates private HTTPS for the UI/API, machine API, and Kubernetes proxy.
+  - Tailscale Serve terminates private HTTPS for the UI/API and Kubernetes proxy and forwards the machine API as raw
+    TCP.
   - SideroLink WireGuard binds directly to the NUC tail IP on UDP `50180`.
 - `tsidp v0.0.15` provides Tailscale OIDC as a separate unprivileged container and persistent tsnet identity.
 - Workload proxy and the unauthenticated local resource service are disabled.
@@ -21,7 +22,7 @@ Tailscale interface and a direct UDP path.
 | Endpoint | Exposure | Purpose |
 | --- | --- | --- |
 | `https://nuc.ide-newton.ts.net/` | Tailnet only | Omni UI and API |
-| `https://nuc.ide-newton.ts.net:8090/` | Tailnet only | Machine/SideroLink API |
+| `grpc://100.78.240.108:8090` | Tailnet only | Raw TCP Machine/SideroLink API |
 | `https://nuc.ide-newton.ts.net:8100/` | Tailnet only | Kubernetes API proxy |
 | `100.78.240.108:50180/udp` | Tailnet only | SideroLink WireGuard |
 | `127.0.0.1:8180` | NUC loopback | Cleartext Omni origin behind Serve |
@@ -122,9 +123,19 @@ docker compose --env-file .env logs --tail 100 omni
 docker compose --env-file .env logs --tail 100 tsidp
 ```
 
-`verify.sh` proves both containers are running, both private HTTPS endpoints answer, the checked-in Serve config is
-active, Omni owns UDP `50180` on the expected tail IP, and the local cluster-etcd backup directory is mounted from
-`/var/lib/omni/cluster-etcd-backups` on the NUC.
+`verify.sh` proves both containers are running, the loopback origins answer, the checked-in Serve route model is
+active, Omni owns its loopback API ports and UDP `50180` on the expected tail IP, and the local cluster-etcd backup
+directory is mounted from `/var/lib/omni/cluster-etcd-backups` on the NUC. Tailscale 1.102 no longer accepts the legacy
+Serve JSON through `serve set-config`; the deployment script treats that file as the desired route model and applies
+the three routes through the supported imperative CLI.
+
+Host-originated connections to the NUC's own Tailscale address can bypass Tailscale Serve and reach another listener
+on the same host. Prove the actual tailnet route from a different peer after deployment:
+
+```bash
+curl --fail --silent --show-error --output /dev/null https://nuc.ide-newton.ts.net/
+omnictl cluster status galactic
+```
 
 ### Managed-cluster etcd backups
 

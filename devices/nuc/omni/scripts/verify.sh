@@ -7,13 +7,13 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib.sh"
 
-for command in curl docker jq ss tailscale; do
+for command in curl docker jq ss sudo tailscale; do
   require_command "${command}"
 done
 
 load_omni_env
 
-require_https_endpoint() {
+require_http_endpoint() {
   local name=$1
   local url=$2
   local status
@@ -37,12 +37,11 @@ cluster_backup_source=$(docker inspect --format \
   die 'Omni cluster etcd backup directory is not mounted from persistent NUC storage'
 
 curl --fail --silent --show-error --output /dev/null http://127.0.0.1:8180/
-require_https_endpoint 'Omni UI/API' "https://${OMNI_HOST}/"
-require_https_endpoint 'Omni machine API' "https://${OMNI_HOST}:8090/"
-require_https_endpoint 'Omni Kubernetes proxy' "https://${OMNI_HOST}:8100/"
+require_http_endpoint 'Omni Kubernetes proxy loopback' 'http://127.0.0.1:8100/'
 curl --fail --silent --show-error --output /dev/null \
   "${OIDC_ISSUER_URL}/.well-known/openid-configuration"
 
+ss -H -lntp | grep -Fq '127.0.0.1:8090' || die 'Omni machine API is not listening on loopback port 8090'
 ss -H -lunp | grep -Fq "${NUC_TAILSCALE_IP}:50180" || die 'Omni is not listening for SideroLink WireGuard on the NUC tail IP'
 
 current=$(mktemp)
@@ -51,9 +50,10 @@ cleanup() {
   rm -f -- "${current}" "${expected}"
 }
 trap cleanup EXIT
-tailscale serve get-config --all | jq --sort-keys . >"${current}"
-jq --sort-keys . "${OMNI_DIR}/tailscale-serve.json" >"${expected}"
+sudo tailscale serve status --json | jq --sort-keys . >"${current}"
+jq 'del(.version)' "${OMNI_DIR}/tailscale-serve.json" | jq --sort-keys . >"${expected}"
 cmp --silent "${current}" "${expected}" || die 'Tailscale Serve configuration drifted'
 
 printf 'Omni runtime verification passed\n'
+printf 'Verify the tailnet HTTPS routes from another tailnet peer; self-access can bypass Tailscale Serve.\n'
 printf 'Open https://%s/ and complete the EULA as the named user; this deployment does not accept it for you.\n' "${OMNI_HOST}"
