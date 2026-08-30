@@ -48,7 +48,7 @@ if [[ "$BODY_WAS_PROVIDED" == false ]]; then
     exit 2
   fi
 
-  "$EDITOR_COMMAND" "$BODY_FILE"
+  /bin/sh -c "$EDITOR_COMMAND \"\$1\"" editor "$BODY_FILE"
 fi
 
 if [[ ! -s "$BODY_FILE" ]]; then
