@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: restate-cluster
+  labels:
+    app: restate
+    app.kubernetes.io/name: restate
+    app.kubernetes.io/version: "1.7.2"
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: restate
+  ports:
+    - name: node
+      port: 5122
+      targetPort: node

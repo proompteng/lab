@@ -1,0 +1,243 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  labels:
+    app.kubernetes.io/part-of: argocd
+data:
+  url: https://argocd.proompteng.ai
+  kustomize.buildOptions: --enable-helm
+  application.resourceTrackingMethod: annotation
+  timeout.reconciliation: 180s
+  resource.customizations.health.bitnami.com_SealedSecret: |
+    hs = {}
+
+    local metadata = obj.metadata or {}
+    local annotations = metadata.annotations or {}
+    if annotations["argocd.proompteng.ai/wait-for-sealed-secret"] ~= "true" then
+      hs.status = "Healthy"
+      hs.message = "SealedSecret health is ignored; decryption is handled by the sealed-secrets controller."
+      return hs
+    end
+
+    local status = obj.status or {}
+    local generation = metadata.generation
+    local observedGeneration = status.observedGeneration
+    if generation == nil or observedGeneration == nil or generation ~= observedGeneration then
+      hs.status = "Progressing"
+      hs.message = "Waiting for the sealed-secrets controller to observe the current generation."
+      return hs
+    end
+
+    local conditions = status.conditions or {}
+    for _, condition in ipairs(conditions) do
+      if condition.type == "Synced" then
+        if condition.status == "True" then
+          hs.status = "Healthy"
+          hs.message = "The sealed-secrets controller produced the current Secret generation."
+          return hs
+        end
+
+        if condition.status == "False" then
+          hs.status = "Degraded"
+          hs.message = condition.message or "The sealed-secrets controller rejected the current generation."
+          return hs
+        end
+      end
+    end
+
+    hs.status = "Progressing"
+    hs.message = "Waiting for the sealed-secrets controller to report the current generation."
+    return hs
+  resource.customizations.health.restate.dev_RestateDeployment: |
+    hs = {}
+
+    local metadata = obj.metadata or {}
+    local status = obj.status or {}
+    local generation = metadata.generation
+    local observedGeneration = status.observedGeneration
+    if generation == nil or observedGeneration == nil or generation ~= observedGeneration then
+      hs.status = "Progressing"
+      hs.message = "Waiting for the Restate operator to observe the current generation."
+      return hs
+    end
+
+    local conditions = status.conditions or {}
+    for _, condition in ipairs(conditions) do
+      if condition.type == "Ready" then
+        if condition.status == "False" then
+          hs.status = "Progressing"
+          hs.message = condition.message or "Waiting for the Restate deployment to become ready."
+          return hs
+        end
+
+        if condition.status == "Unknown" then
+          local message = condition.message or "Waiting for the Restate operator to determine deployment readiness."
+          local retryableFailedReconcilePrefixes = {
+            "Kube Error:",
+            "The RestateCloudEnvironment ",
+            "The Secret ",
+          }
+          local retryable = condition.reason ~= "FailedReconcile"
+          for _, prefix in ipairs(retryableFailedReconcilePrefixes) do
+            if string.sub(message, 1, string.len(prefix)) == prefix then
+              retryable = true
+            end
+          end
+
+          hs.status = retryable and "Progressing" or "Degraded"
+          hs.message = message
+          return hs
+        end
+
+        if condition.status == "True" then
+          local deploymentId = status.deploymentId or ""
+          local desiredReplicas = status.desiredReplicas
+          local readyReplicas = status.readyReplicas
+          if deploymentId == "" or desiredReplicas == nil or readyReplicas == nil or readyReplicas < desiredReplicas then
+            hs.status = "Progressing"
+            hs.message = "Waiting for the Restate deployment registration and replicas to become ready."
+            return hs
+          end
+
+          hs.status = "Healthy"
+          hs.message = "The Restate operator registered the current deployment generation."
+          return hs
+        end
+      end
+    end
+
+    hs.status = "Progressing"
+    hs.message = "Waiting for the Restate operator to report deployment readiness."
+    return hs
+  resource.customizations.useOpenLibs.restate.dev_RestateDeployment: "true"
+  resource.customizations.health.batch_CronJob: |
+    hs = {}
+    local metadata = obj.metadata or {}
+    local labels = metadata.labels or {}
+    local spec = obj.spec or {}
+    local status = obj.status or {}
+    local active = status.active or {}
+
+    if metadata.namespace == "torghut" and labels["app.kubernetes.io/name"] == "torghut" then
+      if #active > 0 then
+        hs.status = "Progressing"
+        hs.message = "Torghut CronJob has active run(s); runtime rollout checks remain authoritative."
+        return hs
+      end
+
+      hs.status = "Healthy"
+      hs.message = "Torghut CronJob schedule is reconciled; scheduled job results are monitored outside Argo app health."
+      return hs
+    end
+
+    if spec.suspend == true then
+      hs.status = "Suspended"
+      hs.message = "CronJob is suspended."
+      return hs
+    end
+
+    if #active > 0 then
+      hs.status = "Progressing"
+      hs.message = "CronJob has active run(s)."
+      return hs
+    end
+
+    if status.lastScheduleTime ~= nil and status.lastSuccessfulTime == nil then
+      hs.status = "Degraded"
+      hs.message = "CronJob has not completed its last execution successfully."
+      return hs
+    end
+
+    local lastRunFailed = status.lastScheduleTime ~= nil and
+      status.lastSuccessfulTime ~= nil and
+      status.lastScheduleTime > status.lastSuccessfulTime
+    if lastRunFailed then
+      hs.status = "Degraded"
+      hs.message = "CronJob has not completed its last execution successfully."
+      return hs
+    end
+
+    hs.status = "Healthy"
+    hs.message = "CronJob is healthy."
+    return hs
+  resource.customizations.health.flink.apache.org_FlinkDeployment: |
+    hs = {}
+    local spec = obj.spec or {}
+    local status = obj.status or {}
+    local jobSpec = spec.job or {}
+    local jobStatus = status.jobStatus or {}
+    local reconciliation = status.reconciliationStatus or {}
+    local desiredState = jobSpec.state or ""
+    local jobManagerStatus = status.jobManagerDeploymentStatus or ""
+    local lifecycleState = status.lifecycleState or ""
+    local reconciliationState = reconciliation.state or ""
+    local currentJobState = jobStatus.state or ""
+
+    if desiredState == "suspended" then
+      local suspendedJobReady = currentJobState == "" or currentJobState == "CANCELED" or currentJobState == "FINISHED" or currentJobState == "SUSPENDED"
+      local suspendedLifecycleReady = lifecycleState == "" or lifecycleState == "STABLE" or lifecycleState == "UPGRADING" or lifecycleState == "SUSPENDED"
+      local suspendedReconciliationReady = reconciliationState == "" or reconciliationState == "DEPLOYED" or reconciliationState == "UPGRADING"
+      local suspendedJobManagerReady = jobManagerStatus == "READY" or jobManagerStatus == "MISSING"
+
+      if suspendedJobManagerReady and suspendedJobReady and suspendedLifecycleReady and suspendedReconciliationReady then
+        hs.status = "Healthy"
+        hs.message = "FlinkDeployment is intentionally suspended and ready for activation."
+        return hs
+      end
+
+      hs.status = "Progressing"
+      hs.message = "FlinkDeployment is converging on the suspended state."
+      return hs
+    end
+
+    if jobManagerStatus == "READY" and currentJobState == "RUNNING" and (lifecycleState == "STABLE" or lifecycleState == "DEPLOYED" or reconciliationState == "DEPLOYED") then
+      hs.status = "Healthy"
+      hs.message = "FlinkDeployment is running."
+      return hs
+    end
+
+    if lifecycleState == "FAILED" or reconciliationState == "FAILED" or currentJobState == "FAILED" then
+      hs.status = "Degraded"
+      hs.message = "FlinkDeployment reported a failed state."
+      return hs
+    end
+
+    hs.status = "Progressing"
+    hs.message = "FlinkDeployment is reconciling."
+    return hs
+  users.session.duration: "168h"
+  dex.config: |
+    issuer: https://argocd.proompteng.ai/api/dex
+    storage:
+      type: kubernetes
+      config:
+        inCluster: true
+    web:
+      http: 0.0.0.0:5556
+    telemetry:
+      http: 0.0.0.0:5558
+    grpc:
+      addr: 0.0.0.0:5557
+    enablePasswordDB: true
+    connectors: []
+    staticClients:
+      - id: argo-workflows-sso
+        name: Argo Workflows
+        redirectURIs:
+          - https://workflows.proompteng.ai/oauth2/callback
+          - https://workflows.k8s.proompteng.ai/oauth2/callback
+        secretEnv: ARGO_WORKFLOWS_SSO_CLIENT_SECRET
+      - id: kargo-ui
+        name: Kargo UI
+        public: true
+        redirectURIs:
+          - https://kargo.ide-newton.ts.net/login
+      - id: kargo-cli
+        name: Kargo CLI
+        public: true
+    staticPasswords:
+      - email: admin@proompteng.ai
+        hashFromEnv: ARGO_WORKFLOWS_SSO_PASSWORD_HASH
+        username: admin
+        userID: 86c47abf-4b23-4818-9b4c-76a2d17e7c98

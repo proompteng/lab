@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: restate
+resources:
+  - serviceaccount.yaml
+  - request-identity-sealedsecret.yaml
+  - objectbucketclaim.yaml
+  - service-cluster.yaml
+  - service.yaml
+  - admin-tailscale-ingress.yaml
+  - statefulset.yaml
+  - poddisruptionbudget.yaml
+  - networkpolicy.yaml
+  - resilience-scripts-configmap.yaml
+  - snapshot-bootstrap-job.yaml
+  - replication-migration-job.yaml
+  - snapshot-restore-proof-job.yaml
+  - snapshot-restore-drill-cronjob.yaml

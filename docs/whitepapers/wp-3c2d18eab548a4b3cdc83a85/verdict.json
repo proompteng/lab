@@ -1,0 +1,40 @@
+{
+  "run_id": "wp-3c2d18eab548a4b3cdc83a85",
+  "verdict": "conditional_implement",
+  "score": 0.63,
+  "confidence": 0.83,
+  "decision_policy": "whitepaper_v1",
+  "gating": {
+    "full_paper_review_completed": true,
+    "implementation_ready_design_doc_present": true,
+    "machine_readable_artifacts_present": true,
+    "methodology_clarity": "high",
+    "empirical_rigor": "medium_low",
+    "reproducibility": "medium_low",
+    "external_validity": "medium",
+    "repository_fit": "medium",
+    "recommended_mode": "research_and_paper_trading_only"
+  },
+  "rationale": "AlphaAgentEvo provides a clear, implementation-usable architecture for trajectory-level alpha evolution with explicit reward decomposition and strong reported benchmark outcomes. The current repository has compatible deterministic trading-research and gating infrastructure, but lacks key paper-parity components (AST expression evolution runtime and ARL training loop). Because statistical uncertainty and deterministic replay details are insufficiently specified in-paper, adoption should proceed as a controlled research implementation rather than immediate autonomous production promotion.",
+  "rejection_reasons": [
+    "Reject immediate autonomous production deployment due to missing confidence intervals and repeated-seed significance evidence for headline metrics.",
+    "Reject production promotion without deterministic replay manifests (prompt/config/seed/data hashes) that can reproduce key tables exactly.",
+    "Reject parity claims until AST-expression evolution and multi-turn ARL training components exist in the current Torghut runtime.",
+    "Reject broad market generalization claims until additional regime and universe robustness checks are completed."
+  ],
+  "recommendations": [
+    "Implement AlphaAgentEvo concepts as a deterministic research extension inside Torghut's existing backtest/evaluation lane.",
+    "Prioritize trajectory logging, AST similarity controls, and reward-term auditability before model-scale optimization.",
+    "Add uncertainty-aware reporting and explicit promotion gates in autonomy policy checks.",
+    "Keep operational mode at research/paper trading with human oversight until robustness and reproducibility gates pass."
+  ],
+  "requires_followup": true,
+  "follow_up_actions": [
+    "Create an evaluate-factor-compatible interface and deterministic trajectory schema in services/torghut.",
+    "Implement and test Eq. 5 reward components with cap handling and replay determinism.",
+    "Run repeated-seed evaluations and publish confidence intervals for pass-rate and performance metrics.",
+    "Expand evaluation across additional markets and post-paper windows before any promotion decision."
+  ],
+  "approved_by": null,
+  "approved_at": null
+}

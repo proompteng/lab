@@ -1,0 +1,25 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "strictNullChecks": true,
+    "types": ["bun-types"],
+    "paths": {
+      "@/*": ["./src/*"],
+      "~/*": ["./src/*"],
+      "@proompteng/agent-contracts": ["../../packages/agent-contracts/src/index.ts"],
+      "@proompteng/codex": ["../../packages/codex/src/index.ts"],
+      "@proompteng/codex/*": ["../../packages/codex/src/*"],
+      "@proompteng/otel": ["../../packages/otel/src/index.ts"],
+      "@proompteng/otel/*": ["../../packages/otel/src/*.ts"],
+      "@proompteng/temporal-bun-sdk": ["../../packages/temporal-bun-sdk/src/index.ts"],
+      "@proompteng/temporal-bun-sdk/*": [
+        "../../packages/temporal-bun-sdk/src/*/index.ts",
+        "../../packages/temporal-bun-sdk/src/*.ts"
+      ]
+    }
+  },
+  "include": ["./src/**/*", "./scripts/**/*", "./vite.config.ts", "./vitest.config.ts"]
+}

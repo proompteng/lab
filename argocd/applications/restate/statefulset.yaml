@@ -1,0 +1,278 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: restate
+  labels:
+    app: restate
+    app.kubernetes.io/name: restate
+    app.kubernetes.io/version: "1.7.2"
+spec:
+  serviceName: restate-cluster
+  replicas: 3
+  revisionHistoryLimit: 10
+  podManagementPolicy: Parallel
+  updateStrategy:
+    type: RollingUpdate
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  selector:
+    matchLabels:
+      app: restate
+  template:
+    metadata:
+      labels:
+        app: restate
+      annotations:
+        kubectl.kubernetes.io/default-container: restate
+    spec:
+      serviceAccountName: restate
+      terminationGracePeriodSeconds: 90
+      securityContext:
+        fsGroup: 2000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - labelSelector:
+            matchLabels:
+              app: restate
+          maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: restate
+              topologyKey: kubernetes.io/hostname
+      initContainers:
+        - name: snapshot-scale-up-gate
+          image: docker.restate.dev/restatedev/restate:1.7.2
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/bash
+            - -ceu
+            - |
+              set -o pipefail
+              data_dir=${RESTATE_DATA_DIR:-/restate-data}
+              case "$POD_NAME" in
+                restate-0)
+                  echo "Singleton seed does not require the follower snapshot gate"
+                  exit 0
+                  ;;
+                restate-1|restate-2)
+                  shopt -s nullglob dotglob
+                  retained_entries=("$data_dir"/*)
+                  for entry in "${retained_entries[@]}"; do
+                    [ "${entry##*/}" = lost+found ] && continue
+                    echo "Retained follower storage is already initialized; skipping first-time snapshot gate"
+                    exit 0
+                  done
+                  ;;
+                *)
+                  echo "Unexpected Restate StatefulSet ordinal: $POD_NAME" >&2
+                  exit 1
+                  ;;
+              esac
+
+              address=http://restate-0.restate-cluster:5122
+              snapshots_ready() {
+                local partitions
+                partitions="$(restatectl --address "$address" partitions list 2>&1)" || return 1
+                printf '%s\n' "$partitions"
+                printf '%s\n' "$partitions" | awk '
+                  $1 ~ /^[0-9]+$/ {
+                    seen[$1] = 1
+                    if ($8 ~ /^[1-9][0-9]*$/) archived[$1] = 1
+                  }
+                  END {
+                    for (i = 0; i < 24; i += 1) if (!(i in seen) || !(i in archived)) exit 1
+                  }
+                '
+              }
+
+              for attempt in $(seq 1 180); do
+                if restatectl --address "$address" status >/dev/null 2>&1; then
+                  if snapshots_ready; then
+                    echo "Follower startup admitted after all 24 partitions have archived snapshot coverage"
+                    exit 0
+                  fi
+                  if [ "$POD_NAME" = restate-1 ]; then
+                    partitions="$(restatectl --address "$address" partitions list 2>/dev/null || true)"
+                    missing="$(printf '%s\n' "$partitions" | awk '
+                      $1 ~ /^[0-9]+$/ {
+                        seen[$1] = 1
+                        if ($8 ~ /^[1-9][0-9]*$/) archived[$1] = 1
+                      }
+                      END {
+                        for (i = 0; i < 24; i += 1) if (!(i in seen) || !(i in archived)) print i
+                      }
+                    ')"
+                    while IFS= read -r partition; do
+                      [ -n "$partition" ] || continue
+                      output="$(restatectl --address "$address" snapshots create "$partition" 2>&1)" || true
+                      printf '%s\n' "$output"
+                    done <<<"$missing"
+                  fi
+                fi
+                [ "$attempt" -lt 180 ] || break
+                sleep 5
+              done
+
+              echo "Follower startup refused because the singleton seed lacks complete archived snapshot coverage" >&2
+              exit 1
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.name
+          volumeMounts:
+            - mountPath: /restate-data
+              name: storage
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsGroup: 3000
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+      containers:
+        - name: restate
+          image: docker.restate.dev/restatedev/restate:1.7.2
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsGroup: 3000
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 500m
+              memory: 2Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          ports:
+            - containerPort: 9070
+              name: admin
+            - containerPort: 8080
+              name: ingress
+            - containerPort: 5122
+              name: node
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.name
+            - name: SERVICE_NAME
+              value: restate-cluster
+            - name: RESTATE_NODE_NAME
+              value: $(POD_NAME)
+            - name: RESTATE_LOG_FILTER
+              value: info
+            - name: RESTATE_ADVERTISED_ADDRESS
+              value: http://$(POD_NAME).$(SERVICE_NAME):5122
+            - name: RESTATE_LOG_FORMAT
+              value: json
+            - name: RESTATE_TRACING_ENDPOINT
+              value: otlp+http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
+            - name: RESTATE_TRACING_FILTER
+              value: info
+            - name: RESTATE_CLUSTER_NAME
+              value: proompteng-self-hosted
+            - name: RESTATE_AUTO_PROVISION
+              value: "false"
+            - name: RESTATE_METADATA_CLIENT__ADDRESSES
+              value: '["http://restate-0.restate-cluster:5122","http://restate-1.restate-cluster:5122","http://restate-2.restate-cluster:5122"]'
+            - name: RESTATE_DEFAULT_REPLICATION
+              value: "1"
+            - name: RESTATE_SHUTDOWN_TIMEOUT
+              value: 60s
+            - name: RESTATE_ROCKSDB_TOTAL_MEMORY_SIZE
+              value: 1Gi
+            - name: RESTATE_LISTEN_MODE
+              value: tcp
+            - name: RESTATE_WORKER__SNAPSHOTS__DESTINATION
+              value: s3://restate-snapshots/partitions
+            - name: RESTATE_WORKER__SNAPSHOTS__SNAPSHOT_INTERVAL
+              value: 30m
+            - name: RESTATE_WORKER__SNAPSHOTS__NUM_RETAINED
+              value: "2"
+            - name: RESTATE_WORKER__SNAPSHOTS__AWS_REGION
+              valueFrom:
+                configMapKeyRef:
+                  name: restate-snapshots
+                  key: BUCKET_REGION
+            - name: RESTATE_WORKER__SNAPSHOTS__AWS_ENDPOINT_URL
+              value: http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local
+            - name: RESTATE_WORKER__SNAPSHOTS__AWS_ALLOW_HTTP
+              value: "true"
+            - name: RESTATE_WORKER__SNAPSHOTS__AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: restate-snapshots
+                  key: AWS_ACCESS_KEY_ID
+            - name: RESTATE_WORKER__SNAPSHOTS__AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: restate-snapshots
+                  key: AWS_SECRET_ACCESS_KEY
+            - name: RESTATE_WORKER__INVOKER__REQUEST_IDENTITY_PRIVATE_KEY_PEM_FILE
+              value: /var/run/secrets/restate/request-identity/private.pem
+          readinessProbe:
+            httpGet:
+              path: /restate/health
+              port: ingress
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - mountPath: /restate-data
+              name: storage
+            - mountPath: /tmp
+              name: tmp
+            - mountPath: /var/run/secrets/restate/request-identity
+              name: request-identity
+              readOnly: true
+      volumes:
+        - name: request-identity
+          secret:
+            secretName: restate-request-identity
+            defaultMode: 0440
+        - name: tmp
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: storage
+        labels:
+          app: restate
+          app.kubernetes.io/name: restate
+      spec:
+        storageClassName: rook-ceph-block
+        volumeMode: Filesystem
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 16Gi

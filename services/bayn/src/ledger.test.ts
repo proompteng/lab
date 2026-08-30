@@ -1,0 +1,1137 @@
+import assert from 'node:assert/strict'
+
+import { describe, expect, test } from 'bun:test'
+import { Cause, Effect, Exit, Result } from 'effect'
+import { CreateAccountStatus, CreateTransferStatus, type Account, type Transfer } from 'tigerbeetle-node'
+
+import { prepareAccounting, rebuildAccountingLedger } from './accounting/domain'
+import type { RuntimeConfig } from './config'
+import { provideTestLayer } from './effect-test-support'
+import { OrderSide, type Fill } from './execution/contracts'
+import {
+  assembleAccountPlan,
+  buildLedgerPlan,
+  classifyAccountCreateBatch,
+  classifyTransferCreateBatch,
+  hashLedgerPlanResult,
+  Journal,
+  JournalLive,
+  JournalValidationError,
+  LedgerValidationError,
+  ReplicaAddressOperationalError,
+  reconcileLedgerPlan,
+  resolveReplicaAddresses,
+  TigerBeetleTransportError,
+  transactionTransferQuery,
+  validatePersistedRunEvidence,
+  type JournalService,
+  type LedgerCreateResult,
+  type LedgerPlan,
+  type TigerBeetleClient,
+} from './ledger'
+import { LEDGER_BATCH_MAX } from './ledger-plan'
+import { makeLedgerInput } from './testing/ledger-fixture'
+import { config as fixtureConfig } from './testing/runtime-fixtures'
+import type { FillEvent } from './types'
+
+const assertSuccess = <A, E>(result: Result.Result<A, E>): A => {
+  assert(Result.isSuccess(result), 'strategy evaluation fixture must succeed')
+  return result.success
+}
+
+const assertFailure = <A, E>(result: Result.Result<A, E>): E => {
+  assert(Result.isFailure(result), 'ledger decision fixture must fail')
+  return result.failure
+}
+
+const hashPlan = (plan: LedgerPlan): string => assertSuccess(hashLedgerPlanResult(plan))
+
+const materializeAccounts = (plan: LedgerPlan): Account[] => {
+  const balances = new Map(plan.accounts.map((account) => [account.id, { debits: 0n, credits: 0n }]))
+  const balance = (accountId: bigint) => {
+    const value = balances.get(accountId)
+    if (value === undefined) throw new Error(`ledger fixture has no account ${accountId}`)
+    return value
+  }
+  for (const transfer of plan.transfers) {
+    balance(transfer.debit_account_id).debits += transfer.amount
+    balance(transfer.credit_account_id).credits += transfer.amount
+  }
+  return plan.accounts.map((account) => ({
+    ...account,
+    debits_posted: balance(account.id).debits,
+    credits_posted: balance(account.id).credits,
+    timestamp: 1n,
+  }))
+}
+
+const materializeTransfers = (plan: LedgerPlan): Transfer[] =>
+  plan.transfers.map((transfer) => ({ ...transfer, timestamp: 1n }))
+
+const createResult = (outcome: LedgerCreateResult['outcome'], status: number, timestamp = 1n): LedgerCreateResult => ({
+  timestamp,
+  outcome,
+  status,
+})
+
+const journalConfig = {
+  operationTimeoutMs: 1_000,
+  tigerBeetle: { clusterId: 222397790944575595450310052784555675227n, replicaAddresses: ['3000'], ledger: 7_001 },
+} satisfies Pick<RuntimeConfig, 'operationTimeoutMs' | 'tigerBeetle'>
+
+const paperFill = (fillId: string, accountId = 'paper-account'): Fill => ({
+  schemaVersion: 'bayn.paper-fill.v1',
+  accountId,
+  fillId,
+  brokerOrderId: `broker-${fillId}`,
+  clientOrderId: `client-${fillId}`,
+  symbol: 'NVDA',
+  side: OrderSide.Buy,
+  quantityMicros: '1000000',
+  priceMicros: '100000000',
+  feeMicros: '100',
+  occurredAt: '2026-07-22T15:30:00.000Z',
+})
+
+const paperPlan = (fillId: string, accountId = 'paper-account') =>
+  assertSuccess(
+    prepareAccounting(
+      fillId.padEnd(64, fillId[0] ?? 'a').slice(0, 64),
+      paperFill(fillId, accountId),
+      { quantityMicros: '0', costMicros: '0' },
+      journalConfig.tigerBeetle.ledger,
+    ),
+  ).ledger
+
+const evaluationPlan = () => {
+  const result = makeLedgerInput()
+  return { result, plan: assertSuccess(buildLedgerPlan(result, journalConfig.tigerBeetle.ledger)) }
+}
+
+const makeTigerBeetleClient = (overrides: Partial<TigerBeetleClient> = {}): TigerBeetleClient => ({
+  createAccounts: async () => [],
+  createTransfers: async () => [],
+  lookupAccounts: async () => [],
+  lookupTransfers: async () => [],
+  queryAccounts: async () => [],
+  queryTransfers: async () => [],
+  destroy: () => undefined,
+  ...overrides,
+})
+
+const makeLedgerClient = () => {
+  const accounts = new Map<bigint, Account>()
+  const transfers = new Map<bigint, Transfer>()
+  const client: TigerBeetleClient = {
+    createAccounts: async (batch) =>
+      batch.map((account) => {
+        if (accounts.has(account.id)) return createResult('exists', CreateAccountStatus.exists)
+        accounts.set(account.id, { ...account, timestamp: 1n })
+        return createResult('created', CreateAccountStatus.created)
+      }),
+    createTransfers: async (batch) =>
+      batch.map((transfer) => {
+        if (transfers.has(transfer.id)) return createResult('exists', CreateTransferStatus.exists)
+        const debit = accounts.get(transfer.debit_account_id)
+        const credit = accounts.get(transfer.credit_account_id)
+        if (debit === undefined || credit === undefined) throw new Error('transfer references an unknown account')
+        accounts.set(debit.id, { ...debit, debits_posted: debit.debits_posted + transfer.amount })
+        accounts.set(credit.id, { ...credit, credits_posted: credit.credits_posted + transfer.amount })
+        transfers.set(transfer.id, { ...transfer, timestamp: 1n })
+        return createResult('created', CreateTransferStatus.created)
+      }),
+    lookupAccounts: async (ids) =>
+      ids.flatMap((id) => {
+        const account = accounts.get(id)
+        return account === undefined ? [] : [account]
+      }),
+    lookupTransfers: async (ids) =>
+      ids.flatMap((id) => {
+        const transfer = transfers.get(id)
+        return transfer === undefined ? [] : [transfer]
+      }),
+    queryAccounts: async (filter) =>
+      [...accounts.values()]
+        .filter(
+          (account) =>
+            account.ledger === filter.ledger &&
+            (filter.user_data_128 === 0n || account.user_data_128 === filter.user_data_128),
+        )
+        .slice(0, filter.limit),
+    queryTransfers: async (filter) =>
+      [...transfers.values()]
+        .filter(
+          (transfer) =>
+            transfer.ledger === filter.ledger &&
+            (filter.user_data_128 === 0n || transfer.user_data_128 === filter.user_data_128) &&
+            (filter.user_data_64 === 0n || transfer.user_data_64 === filter.user_data_64),
+        )
+        .slice(0, filter.limit),
+    destroy: () => undefined,
+  }
+  return { accounts, transfers, client }
+}
+
+const withJournal = <A, E>(client: TigerBeetleClient, use: (journal: JournalService) => Effect.Effect<A, E>) =>
+  Effect.gen(function* () {
+    return yield* use(yield* Journal)
+  }).pipe(
+    provideTestLayer(
+      JournalLive(journalConfig, {
+        createClient: () => client,
+        resolveReplicaAddresses: () => Effect.succeed(['3000']),
+      }),
+    ),
+  )
+
+describe('TigerBeetle ledger decisions', () => {
+  test('classifies account and transfer create batches without losing request order or rejection material', () => {
+    const plan = paperPlan('a')
+    const accounts = plan.accounts.slice(0, 2)
+    const accountDecision = classifyAccountCreateBatch(accounts, [
+      createResult('exists', CreateAccountStatus.exists),
+      createResult('created', CreateAccountStatus.created, 2n),
+    ])
+    expect(assertSuccess(accountDecision)).toEqual([accounts[0]])
+
+    const rejectedAccount = assertFailure(
+      classifyAccountCreateBatch(accounts, [
+        createResult('created', CreateAccountStatus.created),
+        createResult('rejected', CreateAccountStatus.exists_with_different_code, 2n),
+      ]),
+    )
+    expect(rejectedAccount).toBeInstanceOf(LedgerValidationError)
+    expect(rejectedAccount).toMatchObject({
+      operation: 'verify-account-results',
+      reason: 'create-rejected',
+      material: {
+        kind: 'account',
+        id: accounts[1].id,
+        status: CreateAccountStatus.exists_with_different_code,
+      },
+    })
+
+    const transfers = plan.transfers.slice(0, 2)
+    expect(
+      assertSuccess(
+        classifyTransferCreateBatch(transfers, [
+          createResult('created', CreateTransferStatus.created),
+          createResult('exists', CreateTransferStatus.exists, 2n),
+        ]),
+      ),
+    ).toEqual([transfers[1]])
+
+    const incomplete = assertFailure(classifyTransferCreateBatch(transfers, []))
+    expect(incomplete).toMatchObject({
+      operation: 'verify-transfer-results',
+      reason: 'batch-result-count',
+      material: { kind: 'transfer', expectedCount: transfers.length, actualCount: 0 },
+    })
+  })
+
+  test('builds one exact transaction query and rejects empty or mixed transaction plans', () => {
+    const plan = paperPlan('a')
+    const query = assertSuccess(transactionTransferQuery(plan))
+    expect(query).toEqual({
+      user_data_128: plan.transfers[0].user_data_128,
+      user_data_64: 0n,
+      user_data_32: 0,
+      ledger: journalConfig.tigerBeetle.ledger,
+      code: 0,
+      timestamp_min: 0n,
+      timestamp_max: 0n,
+      limit: plan.transfers.length + 1,
+      flags: 0,
+    })
+
+    const empty = assertFailure(transactionTransferQuery({ ...plan, accounts: [], transfers: [] }))
+    expect(empty).toMatchObject({ operation: 'post', reason: 'empty-plan' })
+
+    const atLimit = assertFailure(
+      transactionTransferQuery({
+        ...plan,
+        accounts: Array.from({ length: LEDGER_BATCH_MAX }, () => plan.accounts[0]),
+      }),
+    )
+    expect(atLimit).toMatchObject({
+      operation: 'post',
+      reason: 'batch-limit',
+      material: { accountCount: LEDGER_BATCH_MAX, limit: LEDGER_BATCH_MAX },
+    })
+
+    const mixed = assertFailure(
+      transactionTransferQuery({
+        ...plan,
+        transfers: [plan.transfers[0], { ...plan.transfers[1], user_data_128: plan.transfers[0].user_data_128 + 1n }],
+      }),
+    )
+    expect(mixed).toMatchObject({
+      operation: 'build-transaction-transfer-query',
+      reason: 'invalid-transaction',
+    })
+  })
+
+  test('assembles paper account plans with exact deduplication and duplicate-transfer rejection', () => {
+    const first = paperPlan('a')
+    const second = paperPlan('b')
+    const assembled = assertSuccess(assembleAccountPlan('paper-account', [first, second]))
+
+    expect(assembled.runKey).toBe(first.runKey)
+    expect(assembled.runTag).toBe(first.runTag)
+    expect(assembled.accounts).toEqual(first.accounts)
+    expect(assembled.transfers.map((transfer) => transfer.id)).toEqual(
+      [...first.transfers, ...second.transfers]
+        .map((transfer) => transfer.id)
+        .sort((left, right) => (left < right ? -1 : 1)),
+    )
+
+    const duplicate = assertFailure(assembleAccountPlan('paper-account', [first, first]))
+    expect(duplicate).toMatchObject({
+      operation: 'build-account-reconciliation',
+      reason: 'duplicate-transfer',
+      material: { accountId: 'paper-account', transferId: first.transfers[0].id },
+    })
+
+    const wrongAccount = assertFailure(assembleAccountPlan('paper-account', [paperPlan('c', 'other-account')]))
+    expect(wrongAccount).toMatchObject({
+      operation: 'build-account-reconciliation',
+      reason: 'wrong-account',
+      material: { accountId: 'paper-account' },
+    })
+  })
+
+  test('folds exact plan and locally verifiable persisted-run balances into Result failures', () => {
+    const { result, plan } = evaluationPlan()
+    const accounts = materializeAccounts(plan)
+    const transfers = materializeTransfers(plan)
+
+    expect(Result.isSuccess(reconcileLedgerPlan(plan, accounts, transfers))).toBeTrue()
+    expect(
+      Result.isSuccess(
+        validatePersistedRunEvidence(
+          {
+            runId: result.runId,
+            accountCount: accounts.length,
+            transferCount: transfers.length,
+            exact: true,
+          },
+          journalConfig.tigerBeetle.ledger,
+          accounts,
+          transfers,
+        ),
+      ),
+    ).toBeTrue()
+
+    const drifted = [{ ...accounts[0], debits_posted: accounts[0].debits_posted + 1n }, ...accounts.slice(1)]
+    const reconciliationFailure = assertFailure(reconcileLedgerPlan(plan, drifted, transfers))
+    expect(reconciliationFailure).toMatchObject({
+      operation: 'reconcile',
+      reason: 'invalid-balance',
+      material: { account: drifted[0] },
+    })
+
+    const duplicateAccounts = [...accounts.slice(0, -1), accounts[0]]
+    const persistedFailure = assertFailure(
+      validatePersistedRunEvidence(
+        {
+          runId: result.runId,
+          accountCount: accounts.length,
+          transferCount: transfers.length,
+          exact: true,
+        },
+        journalConfig.tigerBeetle.ledger,
+        duplicateAccounts,
+        transfers,
+      ),
+    )
+    expect(persistedFailure).toMatchObject({
+      operation: 'check-run',
+      reason: 'duplicate-account',
+      material: { runId: result.runId, accountId: accounts[0].id },
+    })
+  })
+})
+
+describe('TigerBeetle simulation journal', () => {
+  test('plans deterministic double-entry transfers and reconciles exact sets and balances', () => {
+    const result = makeLedgerInput()
+    const first = assertSuccess(buildLedgerPlan(result, 7001))
+    const second = assertSuccess(buildLedgerPlan(result, 7001))
+    expect(first).toEqual(second)
+    expect(hashPlan(first)).toMatch(/^[a-f0-9]{64}$/)
+    expect(hashPlan(first)).toBe(hashPlan(second))
+    expect(hashPlan(first)).not.toBe(hashPlan(assertSuccess(buildLedgerPlan(result, 7002))))
+    expect(first.accounts).toHaveLength(result.inputManifest.symbols.length + 6)
+    expect(first.transfers.length).toBeGreaterThan(1)
+    expect(
+      Result.isSuccess(reconcileLedgerPlan(first, materializeAccounts(first), materializeTransfers(first))),
+    ).toBeTrue()
+  })
+
+  test('fails closed on extra transfers or mismatched balances', () => {
+    const result = makeLedgerInput()
+    const plan = assertSuccess(buildLedgerPlan(result, 7001))
+    const accounts = materializeAccounts(plan)
+    const transfers = materializeTransfers(plan)
+    expect(
+      assertFailure(reconcileLedgerPlan(plan, accounts, [...transfers, { ...transfers[0], id: transfers[0].id + 1n }])),
+    ).toMatchObject({ reason: 'record-set-mismatch' })
+    expect(
+      assertFailure(
+        reconcileLedgerPlan(
+          plan,
+          [{ ...accounts[0], debits_posted: accounts[0].debits_posted + 1n }, ...accounts.slice(1)],
+          transfers,
+        ),
+      ),
+    ).toMatchObject({ reason: 'invalid-balance' })
+  })
+
+  test('creates an empty target exactly once and verifies an idempotent replay', async () => {
+    const result = makeLedgerInput()
+    const plan = assertSuccess(buildLedgerPlan(result, journalConfig.tigerBeetle.ledger))
+    const target = makeLedgerClient()
+
+    const reconciliations = await Effect.runPromise(
+      withJournal(target.client, (journal) =>
+        Effect.all([journal.journalAndReconcile(result), journal.journalAndReconcile(result)]),
+      ),
+    )
+
+    expect(reconciliations[0]).toEqual(reconciliations[1])
+    expect(reconciliations[0]).toEqual({
+      runId: result.runId,
+      accountCount: plan.accounts.length,
+      transferCount: plan.transfers.length,
+      exact: true,
+    })
+    expect(target.accounts.size).toBe(plan.accounts.length)
+    expect(target.transfers.size).toBe(plan.transfers.length)
+  })
+
+  test('keeps pure validation failures separate from retryable TigerBeetle I/O failures', async () => {
+    const plan = paperPlan('d')
+    let transferCreates = 0
+    const rejectedClient = makeTigerBeetleClient({
+      createAccounts: async (accounts) =>
+        accounts.map((_, index) => ({
+          timestamp: 1n,
+          outcome: index === 0 ? 'rejected' : 'created',
+          status: index === 0 ? CreateAccountStatus.exists_with_different_code : CreateAccountStatus.created,
+        })),
+      createTransfers: async () => {
+        transferCreates += 1
+        return []
+      },
+    })
+
+    const rejected = await Effect.runPromise(Effect.flip(withJournal(rejectedClient, (journal) => journal.post(plan))))
+    expect(rejected).toBeInstanceOf(JournalValidationError)
+    expect(rejected.retryable).toBeFalse()
+    expect(rejected.cause).toBeInstanceOf(LedgerValidationError)
+    expect(rejected.cause).toMatchObject({
+      operation: 'verify-account-results',
+      reason: 'create-rejected',
+      material: { kind: 'account', id: plan.accounts[0].id },
+    })
+    expect(transferCreates).toBe(0)
+
+    const ioCause = new Error('TigerBeetle transport unavailable')
+    const unavailableClient = makeTigerBeetleClient({
+      createAccounts: async () => {
+        throw ioCause
+      },
+      createTransfers: async () => {
+        transferCreates += 1
+        return []
+      },
+    })
+    const unavailable = await Effect.runPromise(
+      Effect.flip(withJournal(unavailableClient, (journal) => journal.post(plan))),
+    )
+    expect(unavailable).toBeInstanceOf(TigerBeetleTransportError)
+    expect(unavailable.retryable).toBeTrue()
+    expect(unavailable.cause).toBe(ioCause)
+    expect(transferCreates).toBe(0)
+  })
+
+  test('retains the exact typed ledger-plan failure without starting TigerBeetle writes', async () => {
+    const { result } = evaluationPlan()
+    let writes = 0
+    const client = makeTigerBeetleClient({
+      createAccounts: async () => {
+        writes += 1
+        return []
+      },
+      createTransfers: async () => {
+        writes += 1
+        return []
+      },
+    })
+
+    const error = await Effect.runPromise(
+      Effect.flip(
+        withJournal(client, (journal) =>
+          journal.journalAndReconcile({
+            ...result,
+            events: [],
+          }),
+        ),
+      ),
+    )
+
+    expect(error.retryable).toBeFalse()
+    expect(error.cause).toBeInstanceOf(LedgerValidationError)
+    if (error.cause instanceof LedgerValidationError) {
+      expect(error.cause).toMatchObject({
+        operation: 'build-plan',
+        reason: 'ledger-plan-failure',
+        material: {
+          ledger: journalConfig.tigerBeetle.ledger,
+          failure: { kind: 'no-fill-events', runId: result.runId, eventCount: 0 },
+        },
+      })
+      expect(error.cause.cause).toEqual({
+        kind: 'no-fill-events',
+        runId: result.runId,
+        eventCount: 0,
+      })
+    }
+    expect(writes).toBe(0)
+  })
+
+  test('retains hostile event access inside the non-retryable journal boundary', async () => {
+    const { result } = evaluationPlan()
+    const fill = result.events.find((event): event is FillEvent => event.kind === 'fill')
+    assert(fill, 'evaluation fixture must contain a fill event')
+    const cause = new TypeError('ledger-plan event kind is unavailable')
+    const hostileFill = new Proxy(fill, {
+      get: (target, property, receiver) => {
+        if (property === 'kind') throw cause
+        return Reflect.get(target, property, receiver)
+      },
+    })
+    let writes = 0
+    const client = makeTigerBeetleClient({
+      createAccounts: async () => {
+        writes += 1
+        return []
+      },
+      createTransfers: async () => {
+        writes += 1
+        return []
+      },
+    })
+
+    const error = await Effect.runPromise(
+      Effect.flip(withJournal(client, (journal) => journal.journalAndReconcile({ ...result, events: [hostileFill] }))),
+    )
+
+    expect(error.retryable).toBeFalse()
+    expect(error.cause).toBeInstanceOf(LedgerValidationError)
+    if (error.cause instanceof LedgerValidationError) {
+      expect(error.cause).toMatchObject({
+        operation: 'build-plan',
+        reason: 'ledger-plan-failure',
+        material: {
+          ledger: journalConfig.tigerBeetle.ledger,
+          failure: { kind: 'input-access-failed', field: 'event.kind', eventIndex: 0, cause },
+        },
+        cause,
+      })
+    }
+    expect(writes).toBe(0)
+  })
+
+  test('rejects hostile event identity before TigerBeetle writes or failure rendering', async () => {
+    const { result } = evaluationPlan()
+    const fill = result.events.find((event): event is FillEvent => event.kind === 'fill')
+    assert(fill, 'evaluation fixture must contain a fill event')
+    let writes = 0
+    const client = makeTigerBeetleClient({
+      createAccounts: async () => {
+        writes += 1
+        return []
+      },
+      createTransfers: async () => {
+        writes += 1
+        return []
+      },
+    })
+
+    const error = await Effect.runPromise(
+      Effect.flip(
+        withJournal(client, (journal) =>
+          journal.journalAndReconcile({
+            ...result,
+            events: [{ ...fill, id: Symbol('fill-id') as unknown as string }],
+          }),
+        ),
+      ),
+    )
+
+    expect(error.retryable).toBeFalse()
+    expect(error.operation).toBe('build-plan')
+    expect(error.cause).toBeInstanceOf(LedgerValidationError)
+    if (error.cause instanceof LedgerValidationError) {
+      expect(error.cause).toMatchObject({
+        operation: 'build-plan',
+        reason: 'ledger-plan-failure',
+        message: 'TigerBeetle build-plan failed: fill.id is not a valid string',
+        material: {
+          ledger: journalConfig.tigerBeetle.ledger,
+          failure: {
+            kind: 'input-value-invalid',
+            field: 'fill.id',
+            expected: 'string',
+            actualType: 'symbol',
+            index: 0,
+            eventKind: 'fill',
+          },
+        },
+      })
+    }
+    expect(writes).toBe(0)
+  })
+
+  test('reuses the validated run identity after writes without reading mutable input again', async () => {
+    const { result, plan } = evaluationPlan()
+    const target = makeLedgerClient()
+    let runIdReads = 0
+    const secondReadCause = new TypeError('ledger run identity was read after the plan committed')
+    const input = {
+      initialCapitalMicros: result.initialCapitalMicros,
+      inputManifest: result.inputManifest,
+      events: result.events,
+      get runId(): string {
+        runIdReads += 1
+        if (runIdReads > 1) throw secondReadCause
+        return result.runId
+      },
+    }
+
+    const reconciled = await Effect.runPromise(
+      withJournal(target.client, (journal) => journal.journalAndReconcile(input)),
+    )
+
+    expect(reconciled).toEqual({
+      runId: result.runId,
+      accountCount: plan.accounts.length,
+      transferCount: plan.transfers.length,
+      exact: true,
+    })
+    expect(runIdReads).toBe(1)
+  })
+
+  test('retains hostile amount coercion inside the non-retryable journal boundary', async () => {
+    const { result } = evaluationPlan()
+    const fill = result.events.find((event): event is FillEvent => event.kind === 'fill')
+    assert(fill, 'evaluation fixture must contain a fill event')
+    const cause = new TypeError('ledger-plan amount coercion is unavailable')
+    const hostileAmount = {
+      [Symbol.toPrimitive]: () => {
+        throw cause
+      },
+    }
+    let writes = 0
+    const client = makeTigerBeetleClient({
+      createAccounts: async () => {
+        writes += 1
+        return []
+      },
+      createTransfers: async () => {
+        writes += 1
+        return []
+      },
+    })
+
+    const error = await Effect.runPromise(
+      Effect.flip(
+        withJournal(client, (journal) =>
+          journal.journalAndReconcile({
+            ...result,
+            events: [{ ...fill, notionalMicros: hostileAmount as unknown as string }],
+          }),
+        ),
+      ),
+    )
+
+    expect(error.retryable).toBeFalse()
+    expect(error.operation).toBe('build-plan')
+    expect(error.cause).toBeInstanceOf(LedgerValidationError)
+    if (error.cause instanceof LedgerValidationError) {
+      expect(error.cause).toMatchObject({
+        operation: 'build-plan',
+        message: 'TigerBeetle build-plan failed: fill.notionalMicros is not an integer micros value (object)',
+        material: {
+          ledger: journalConfig.tigerBeetle.ledger,
+          failure: {
+            kind: 'amount-parse-failed',
+            field: 'fill.notionalMicros',
+            actualType: 'object',
+            eventId: fill.id,
+            cause,
+          },
+        },
+        cause,
+      })
+    }
+    expect(writes).toBe(0)
+  })
+
+  test('keeps event canonicalization failures under the build-plan journal operation', async () => {
+    const { result } = evaluationPlan()
+    const fill = result.events.find((event): event is FillEvent => event.kind === 'fill')
+    assert(fill, 'evaluation fixture must contain a fill event')
+    const nonCanonicalFill = { ...fill, unsupported: undefined } as FillEvent
+    let writes = 0
+    const client = makeTigerBeetleClient({
+      createAccounts: async () => {
+        writes += 1
+        return []
+      },
+      createTransfers: async () => {
+        writes += 1
+        return []
+      },
+    })
+
+    const error = await Effect.runPromise(
+      Effect.flip(
+        withJournal(client, (journal) => journal.journalAndReconcile({ ...result, events: [nonCanonicalFill] })),
+      ),
+    )
+
+    expect(error.retryable).toBeFalse()
+    expect(error.operation).toBe('build-plan')
+    expect(error.cause).toBeInstanceOf(LedgerValidationError)
+    if (error.cause instanceof LedgerValidationError) {
+      expect(error.cause.operation).toBe('build-plan')
+      expect(error.cause.material).toMatchObject({
+        ledger: journalConfig.tigerBeetle.ledger,
+        failure: {
+          kind: 'canonicalization-failed',
+          canonicalizationOperation: 'event-transfer',
+          eventId: fill.id,
+          leg: 'buy',
+        },
+      })
+    }
+    expect(writes).toBe(0)
+  })
+
+  test('does not turn an unexpected account-reconciliation defect into a false verification result', async () => {
+    const plan = paperPlan('e')
+    const accounts = materializeAccounts(plan)
+    const defect = new Error('account reconciliation accessor defect')
+    const defectiveAccount = new Proxy(accounts[0], {
+      get: (target, property, receiver) => {
+        if (property === 'code') throw defect
+        return Reflect.get(target, property, receiver)
+      },
+    })
+    const client = makeTigerBeetleClient({
+      queryAccounts: async () => [defectiveAccount, ...accounts.slice(1)],
+      queryTransfers: async () => materializeTransfers(plan),
+    })
+
+    const exit = await Effect.runPromiseExit(
+      withJournal(client, (journal) => journal.verifyAccount('paper-account', [plan])),
+    )
+    expect(Exit.isFailure(exit)).toBeTrue()
+    if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBe(defect)
+  })
+
+  test('replays a committed transfer batch after an unknown result without another transfer mutation', async () => {
+    const plan = paperPlan('f')
+    const target = makeLedgerClient()
+    const unknownCause = new Error('connection rejected after TigerBeetle committed the transfer batch')
+    let transferMutationCalls = 0
+    const committedThenUnknownClient: TigerBeetleClient = {
+      ...target.client,
+      createTransfers: async (batch) => {
+        transferMutationCalls += 1
+        await target.client.createTransfers(batch)
+        throw unknownCause
+      },
+    }
+
+    const unknown = await Effect.runPromise(
+      Effect.flip(withJournal(committedThenUnknownClient, (journal) => journal.post(plan))),
+    )
+    expect(unknown.retryable).toBeTrue()
+    expect(unknown.cause).toBe(unknownCause)
+    expect(transferMutationCalls).toBe(1)
+    expect(target.transfers.size).toBe(plan.transfers.length)
+
+    let replayTransferMutationCalls = 0
+    const replayClient: TigerBeetleClient = {
+      ...target.client,
+      createTransfers: async (batch) => {
+        replayTransferMutationCalls += 1
+        return target.client.createTransfers(batch)
+      },
+    }
+    const reconciled = await Effect.runPromise(
+      withJournal(replayClient, (journal) =>
+        journal.post(plan).pipe(Effect.andThen(journal.verifyAccount('paper-account', [plan]))),
+      ),
+    )
+
+    expect(reconciled).toBeTrue()
+    expect(replayTransferMutationCalls).toBe(0)
+    expect(transferMutationCalls).toBe(1)
+    expect(target.transfers.size).toBe(plan.transfers.length)
+  })
+
+  test('preflights every deterministic transfer and creates only missing records in request order', async () => {
+    const plan = paperPlan('1')
+    const target = makeLedgerClient()
+    const existing = plan.transfers.at(-1)
+    assert(existing, 'paper ledger fixture must contain a transfer')
+    for (const account of plan.accounts) target.accounts.set(account.id, { ...account, timestamp: 1n })
+    await target.client.createTransfers([existing])
+
+    const lookupBatches: bigint[][] = []
+    const createBatches: bigint[][] = []
+    const client: TigerBeetleClient = {
+      ...target.client,
+      lookupTransfers: async (ids) => {
+        lookupBatches.push([...ids])
+        return target.client.lookupTransfers(ids)
+      },
+      createTransfers: async (batch) => {
+        createBatches.push(batch.map((transfer) => transfer.id))
+        return target.client.createTransfers(batch)
+      },
+    }
+
+    await Effect.runPromise(withJournal(client, (journal) => journal.post(plan)))
+
+    expect(lookupBatches[0]).toEqual(plan.transfers.map((transfer) => transfer.id))
+    expect(createBatches).toEqual([
+      plan.transfers.filter((transfer) => transfer.id !== existing.id).map((transfer) => transfer.id),
+    ])
+
+    const conflict = makeLedgerClient()
+    conflict.transfers.set(plan.transfers[0].id, {
+      ...plan.transfers[0],
+      amount: plan.transfers[0].amount + 1n,
+      timestamp: 1n,
+    })
+    let conflictingCreates = 0
+    let conflictingLookup: readonly bigint[] = []
+    const conflictingClient: TigerBeetleClient = {
+      ...conflict.client,
+      lookupTransfers: async (ids) => {
+        conflictingLookup = [...ids]
+        return conflict.client.lookupTransfers(ids)
+      },
+      createTransfers: async (batch) => {
+        conflictingCreates += 1
+        return conflict.client.createTransfers(batch)
+      },
+    }
+    const mismatch = await Effect.runPromise(
+      Effect.flip(withJournal(conflictingClient, (journal) => journal.post(plan))),
+    )
+
+    expect(mismatch.message).toContain('does not match its plan')
+    expect(conflictingLookup).toEqual(plan.transfers.map((transfer) => transfer.id))
+    expect(conflictingCreates).toBe(0)
+  })
+
+  test('posts one paper fill idempotently and rejects a conflicting transfer', async () => {
+    const fill: Fill = {
+      schemaVersion: 'bayn.paper-fill.v1',
+      accountId: 'paper-account',
+      fillId: 'activity-1',
+      brokerOrderId: 'broker-order-1',
+      clientOrderId: 'client-order-1',
+      symbol: 'NVDA',
+      side: OrderSide.Buy,
+      quantityMicros: '1000000',
+      priceMicros: '100000000',
+      feeMicros: '100',
+      occurredAt: '2026-07-22T15:30:00.000Z',
+    }
+    const plan = assertSuccess(
+      prepareAccounting(
+        'a'.repeat(64),
+        fill,
+        { quantityMicros: '0', costMicros: '0' },
+        journalConfig.tigerBeetle.ledger,
+      ),
+    ).ledger
+    const invalidTarget = makeLedgerClient()
+    const invalidPlan = {
+      ...plan,
+      transfers: plan.transfers.map((transfer, index) => (index === 0 ? { ...transfer, user_data_128: 0n } : transfer)),
+    }
+    const invalid = await Effect.runPromise(
+      Effect.flip(withJournal(invalidTarget.client, (journal) => journal.post(invalidPlan))),
+    )
+    expect(invalid.message).toContain('nonzero transaction tag')
+    expect(invalidTarget.accounts.size).toBe(0)
+    expect(invalidTarget.transfers.size).toBe(0)
+
+    const target = makeLedgerClient()
+
+    const exact = await Effect.runPromise(
+      withJournal(target.client, (journal) =>
+        journal
+          .post(plan)
+          .pipe(Effect.andThen(journal.post(plan)), Effect.andThen(journal.verifyAccount(fill.accountId, [plan]))),
+      ),
+    )
+    expect(exact).toBeTrue()
+    expect(target.accounts.size).toBe(plan.accounts.length)
+    expect(target.transfers.size).toBe(plan.transfers.length)
+
+    const conflict = makeLedgerClient()
+    conflict.transfers.set(plan.transfers[0].id, {
+      ...plan.transfers[0],
+      amount: plan.transfers[0].amount + 1n,
+      timestamp: 1n,
+    })
+    const error = await Effect.runPromise(Effect.flip(withJournal(conflict.client, (journal) => journal.post(plan))))
+    expect(error.message).toContain('does not match its plan')
+
+    target.transfers.set(plan.transfers[0].id + 1n, { ...plan.transfers[0], id: plan.transfers[0].id + 1n })
+    const postWithExtra = await Effect.runPromise(
+      Effect.flip(withJournal(target.client, (journal) => journal.post(plan))),
+    )
+    expect(postWithExtra.message).toContain('transfer set mismatch')
+    const extra = await Effect.runPromise(
+      withJournal(target.client, (journal) => journal.verifyAccount(fill.accountId, [plan])),
+    )
+    expect(extra).toBeFalse()
+
+    const unavailable = makeTigerBeetleClient({
+      queryAccounts: async () => {
+        throw new Error('unavailable')
+      },
+    })
+    const failure = await Effect.runPromise(
+      Effect.flip(withJournal(unavailable, (journal) => journal.verifyAccount(fill.accountId, [plan]))),
+    )
+    expect(failure.message).toContain('TigerBeetle verify-account-accounts failed')
+  })
+
+  test('rebuilds a paper transaction into the exact read-only ledger plan', () => {
+    const fill: Fill = {
+      schemaVersion: 'bayn.paper-fill.v1',
+      accountId: 'paper-account',
+      fillId: 'activity-2',
+      brokerOrderId: 'broker-order-2',
+      clientOrderId: 'client-order-2',
+      symbol: 'AMD',
+      side: OrderSide.Buy,
+      quantityMicros: '2000000',
+      priceMicros: '50000000',
+      feeMicros: '0',
+      occurredAt: '2026-07-22T15:31:00.000Z',
+    }
+    const prepared = assertSuccess(
+      prepareAccounting(
+        'b'.repeat(64),
+        fill,
+        { quantityMicros: '0', costMicros: '0' },
+        journalConfig.tigerBeetle.ledger,
+      ),
+    )
+
+    expect(assertSuccess(rebuildAccountingLedger(prepared.transaction, journalConfig.tigerBeetle.ledger))).toEqual(
+      prepared.ledger,
+    )
+    expect(
+      assertFailure(
+        rebuildAccountingLedger(
+          { ...prepared.transaction, contentHash: 'c'.repeat(64) },
+          journalConfig.tigerBeetle.ledger,
+        ),
+      ),
+    ).toMatchObject({
+      _tag: 'AccountingTransactionContentHashMismatch',
+      transactionId: prepared.transaction.transactionId,
+      observedContentHash: 'c'.repeat(64),
+    })
+  })
+
+  test('rejects a mismatched existing account before creating transfers', async () => {
+    const result = makeLedgerInput()
+    const plan = assertSuccess(buildLedgerPlan(result, journalConfig.tigerBeetle.ledger))
+    const target = makeLedgerClient()
+    target.accounts.set(plan.accounts[0].id, { ...plan.accounts[0], code: plan.accounts[0].code + 1, timestamp: 1n })
+
+    const error = await Effect.runPromise(
+      Effect.flip(withJournal(target.client, (journal) => journal.journalAndReconcile(result))),
+    )
+
+    expect(error.message).toContain('does not match its plan')
+    expect(target.transfers.size).toBe(0)
+  })
+
+  test('checks the persisted run read-only and rejects changed TigerBeetle balances', async () => {
+    const result = makeLedgerInput()
+    const plan = assertSuccess(buildLedgerPlan(result, 7001))
+    let accounts = materializeAccounts(plan)
+    const transfers = materializeTransfers(plan)
+    let writes = 0
+    const client = makeTigerBeetleClient({
+      queryAccounts: async () => accounts,
+      queryTransfers: async () => transfers,
+      createAccounts: async () => {
+        writes += 1
+        return []
+      },
+      createTransfers: async () => {
+        writes += 1
+        return []
+      },
+      destroy: () => undefined,
+    })
+    const config: RuntimeConfig = {
+      ...fixtureConfig,
+      operationTimeoutMs: 1_000,
+      tigerBeetle: { ...fixtureConfig.tigerBeetle, ledger: 7001 },
+    }
+    const check = (journal: JournalService) =>
+      journal.checkRun({
+        runId: result.runId,
+        accountCount: accounts.length,
+        transferCount: transfers.length,
+        exact: true,
+      })
+    const useJournal = <A, E>(body: (journal: JournalService) => Effect.Effect<A, E>) =>
+      Effect.gen(function* () {
+        return yield* body(yield* Journal)
+      }).pipe(
+        provideTestLayer(
+          JournalLive(config, {
+            createClient: () => client,
+            resolveReplicaAddresses: () => Effect.succeed(['3000']),
+          }),
+        ),
+      )
+
+    await Effect.runPromise(useJournal(check))
+    expect(writes).toBe(0)
+
+    accounts = [{ ...accounts[0], debits_posted: accounts[0].debits_posted + 1n }, ...accounts.slice(1)]
+    const error = await Effect.runPromise(Effect.flip(useJournal(check)))
+    expect(error.message).toContain('balance does not reconcile locally')
+    expect(writes).toBe(0)
+  })
+
+  test('rejects exact query-limit ceilings before issuing TigerBeetle reads', async () => {
+    const plan = paperPlan('0')
+    const atLimit = {
+      ...plan,
+      accounts: Array.from({ length: LEDGER_BATCH_MAX }, (_, index) => ({
+        ...plan.accounts[0],
+        id: BigInt(index + 1),
+      })),
+      transfers: [],
+    }
+    let reads = 0
+    const client = makeTigerBeetleClient({
+      queryAccounts: async () => {
+        reads += 1
+        return []
+      },
+      queryTransfers: async () => {
+        reads += 1
+        return []
+      },
+    })
+
+    const [runError, accountError] = await Effect.runPromise(
+      withJournal(client, (journal) =>
+        Effect.all([
+          Effect.flip(
+            journal.checkRun({
+              runId: 'a'.repeat(64),
+              accountCount: LEDGER_BATCH_MAX,
+              transferCount: 0,
+              exact: true,
+            }),
+          ),
+          Effect.flip(journal.verifyAccount('paper-account', [atLimit])),
+        ]),
+      ),
+    )
+
+    expect(runError).toMatchObject({
+      operation: 'check-run',
+      retryable: false,
+      cause: { _tag: 'LedgerValidationError', reason: 'batch-limit' },
+    })
+    expect(accountError).toMatchObject({
+      operation: 'verify-account',
+      retryable: false,
+      cause: { _tag: 'LedgerValidationError', reason: 'batch-limit' },
+    })
+    expect(reads).toBe(0)
+  })
+})
+
+describe('TigerBeetle replica addresses', () => {
+  test('resolves ordinal hostnames in configured order and preserves numeric addresses', async () => {
+    const lookups: string[] = []
+    const addresses = await Effect.runPromise(
+      resolveReplicaAddresses(
+        [
+          'bayn-tigerbeetle-0.bayn-tigerbeetle-headless.bayn.svc.cluster.local:3000',
+          'bayn-tigerbeetle-1.bayn-tigerbeetle-headless.bayn.svc.cluster.local:3000',
+          '10.244.5.236:3000',
+          '127.0.0.1',
+          '3001',
+        ],
+        (hostname) =>
+          Effect.sync(() => {
+            lookups.push(hostname)
+            return [hostname.includes('-0.') ? '10.244.5.234' : '10.244.5.235']
+          }),
+      ),
+    )
+
+    expect(lookups).toEqual([
+      'bayn-tigerbeetle-0.bayn-tigerbeetle-headless.bayn.svc.cluster.local',
+      'bayn-tigerbeetle-1.bayn-tigerbeetle-headless.bayn.svc.cluster.local',
+    ])
+    expect(addresses).toEqual(['10.244.5.234:3000', '10.244.5.235:3000', '10.244.5.236:3000', '127.0.0.1', '3001'])
+  })
+
+  test('rejects malformed, out-of-range, and IPv6-only endpoints', async () => {
+    const malformed = await Effect.runPromise(
+      Effect.flip(resolveReplicaAddresses(['missing-port'], () => Effect.succeed(['10.0.0.1']))),
+    )
+    expect(malformed).toBeInstanceOf(ReplicaAddressOperationalError)
+    if (malformed instanceof ReplicaAddressOperationalError) {
+      expect(malformed.validation.reason).toBe('invalid-address')
+    }
+    expect(
+      Effect.runPromise(resolveReplicaAddresses(['missing-port'], () => Effect.succeed(['10.0.0.1']))),
+    ).rejects.toThrow('invalid TigerBeetle replica address')
+    expect(
+      Effect.runPromise(resolveReplicaAddresses(['replica:70000'], () => Effect.succeed(['10.0.0.1']))),
+    ).rejects.toThrow('invalid TigerBeetle replica port')
+    expect(Effect.runPromise(resolveReplicaAddresses(['replica:3000'], () => Effect.succeed(['::1'])))).rejects.toThrow(
+      'has no IPv4 address',
+    )
+    expect(Effect.runPromise(resolveReplicaAddresses(['::1']))).rejects.toThrow(
+      'IPv6 TigerBeetle replica addresses are not supported',
+    )
+    expect(
+      Effect.runPromise(
+        resolveReplicaAddresses(['unordered-headless-service:3000'], () => Effect.succeed(['10.0.0.1', '10.0.0.2'])),
+      ),
+    ).rejects.toThrow('must resolve to exactly one IPv4 address')
+    expect(
+      Effect.runPromise(
+        resolveReplicaAddresses(['replica-0:3000', 'replica-1:3000'], () => Effect.succeed(['10.0.0.1'])),
+      ),
+    ).rejects.toThrow('resolved to duplicate IPv4 addresses')
+  })
+})

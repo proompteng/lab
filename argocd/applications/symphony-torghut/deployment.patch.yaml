@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: symphony
+spec:
+  revisionHistoryLimit: 2
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/restartedAt: "2026-08-27T21:16:35Z"
+    spec:
+      serviceAccountName: symphony-torghut
+      containers:
+        - name: symphony
+          env:
+            - name: LINEAR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: symphony-linear-api-key-torghut
+                  key: LINEAR_API_KEY
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: github-token-torghut
+                  key: token
+                  optional: true
+            - name: GH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: github-token-torghut
+                  key: token
+                  optional: true
+            - name: SYMPHONY_LEADER_ELECTION_LEASE_NAME
+              value: symphony-torghut-leader
+      volumes:
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: symphony-workspace-torghut
+        - name: workflow
+          configMap:
+            name: symphony-workflow-torghut
+        - name: codex-auth
+          secret:
+            secretName: codex-auth
