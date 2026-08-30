@@ -140,7 +140,8 @@ Ready and schedulable after acceptance.
 
 ## Correction history
 
-Only r4 is accepted. The earlier artifacts remain immutable but are superseded:
+This section records the historical r0-r4 correction chain. R4 remains accepted on Turin and Altra; Ryzen's accepted
+r5 persistent-block extension is recorded above. The earlier artifacts remain immutable but are superseded:
 
 1. the initial build exposed a non-empty Dragonball firmware value that runtime-rs rejects;
 2. r1 cleared Dragonball firmware on both architectures;

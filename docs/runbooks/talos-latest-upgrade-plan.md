@@ -81,7 +81,13 @@ the custom extension to that digest:
 
 ```bash
 export FACTORY='http://100.100.244.148:8081'
-export EXPECTED_KATA_DIGEST='sha256:b7384435ad1393288e0235d8e467303348b252c2feb73973d309d07fee9afc44'
+export TALOS_NODE='<target Talos API address>'
+
+case "$TALOS_NODE" in
+  100.100.244.141) export EXPECTED_KATA_DIGEST='sha256:8d34965e669a53d3f7d7565d674fbe140acc0874422676601bb5638c705f8e8d' ;;
+  100.100.244.190 | 100.100.244.142) export EXPECTED_KATA_DIGEST='sha256:b7384435ad1393288e0235d8e467303348b252c2feb73973d309d07fee9afc44' ;;
+  *) echo "no accepted Kata extension for $TALOS_NODE" >&2; exit 2 ;;
+esac
 
 curl -fsS "$FACTORY/version/v1.13.9/extensions/official" \
   | jq -er '.[] | select(.name == "proompteng/talos-kata-runtimes") | .digest' \
@@ -92,6 +98,10 @@ An unchanged schematic ID does **not** prove that a rebuilt installer contains a
 derives the ID from the customization request, including the ordered extension names, while the catalog tag can later
 resolve those names to a different digest. An installer already cached under the same schematic and Talos version can
 therefore predate the current catalog.
+
+This gate is intentionally target-specific: Ryzen's accepted installer contains r5, while the currently accepted Turin
+and Altra installers contain r4. If the live factory catalog does not resolve the target's accepted digest, stop; do
+not validate a different release and then install the target image.
 
 For the exact target machine, retain all of the following before allowing Omni to reboot it:
 
