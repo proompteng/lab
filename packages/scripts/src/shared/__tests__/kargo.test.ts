@@ -51,13 +51,17 @@ const helmApplicationSet = YAML.parse(readRepoFile('argocd/applicationsets/helm-
 const helmApplicationElements = helmApplicationSet.spec.generators[0].matrix.generators[1].list.elements as Array<
   Record<string, any>
 >
-const kargoHelmValues = helmApplicationElements.find((element) => element.name === 'kargo')?.valuesObject as Record<
-  string,
-  any
->
+const kargoHelmElement = helmApplicationElements.find((element) => element.name === 'kargo')
+const kargoHelmValues = kargoHelmElement?.valuesObject as Record<string, any>
 const argoCDConfigMap = YAML.parse(readRepoFile('argocd/applications/argocd/overlays/argocd-cm.yaml')) as Manifest & {
   data?: Record<string, string>
 }
+const argoCDCommandParameters = YAML.parse(
+  readRepoFile('argocd/applications/argocd/overlays/argocd-cmd-params-cm.yaml'),
+) as Manifest & { data?: Record<string, string> }
+const argoCDControllerStatefulSetPatch = YAML.parse(
+  readRepoFile('argocd/applications/argocd/overlays/argocd-application-controller-statefulset.yaml'),
+) as Manifest
 const dexConfig = YAML.parse(argoCDConfigMap.data?.['dex.config'] ?? '') as Record<string, any>
 const argoCDIngressRoute = YAML.parse(readRepoFile('argocd/applications/argocd/base/ingressroute.yaml')) as Manifest
 const kargoDexCORSMiddleware = YAML.parse(
@@ -118,6 +122,7 @@ const productImageCommonInputs = [
   'nix/ci-run-timed.sh',
   'nix/oci-inspect-archive.sh',
   '.github/workflows/nix-oci-build-common.yml',
+  'packages/scripts/src/shared/oci.ts',
   'nix/oci-push.sh',
   'flake.nix',
   'flake.lock',
@@ -184,6 +189,7 @@ const expected = {
       'packages/temporal-bun-sdk',
       'nix/images/bumba.nix',
       '.github/workflows/nix-oci-build-common.yml',
+      'packages/scripts/src/shared/oci.ts',
       'nix/oci-push.sh',
       'argocd/applications/bumba',
     ],
@@ -197,6 +203,7 @@ const expected = {
       'packages/discord',
       'nix/images/oirat.nix',
       '.github/workflows/nix-oci-build-common.yml',
+      'packages/scripts/src/shared/oci.ts',
       'nix/oci-push.sh',
       'argocd/applications/oirat',
     ],
@@ -213,6 +220,7 @@ const expected = {
       'packages/otel',
       'nix/images/froussard.nix',
       '.github/workflows/nix-oci-build-common.yml',
+      'packages/scripts/src/shared/oci.ts',
       'nix/oci-push.sh',
       'argocd/applications/froussard',
     ],
@@ -226,6 +234,7 @@ const expected = {
       'nix/cache-doctor.sh',
       'nix/oci-doctor.sh',
       '.github/workflows/nix-oci-build-common.yml',
+      'packages/scripts/src/shared/oci.ts',
       'nix/oci-push.sh',
       'nix/toolchain-doctor.sh',
       'argocd/applications/arc',
@@ -240,6 +249,7 @@ const expected = {
       'docs/nix-cache.md',
       'docs/nix-oci-real-image-build-adoption-plan.md',
       '.github/workflows/nix-oci-build-common.yml',
+      'packages/scripts/src/shared/oci.ts',
       'nix/oci-push.sh',
       'argocd/applications/attic',
     ],
@@ -251,6 +261,7 @@ const expected = {
     includePaths: [
       '.github/workflows/headlamp-ci.yml',
       '.github/workflows/nix-oci-build-common.yml',
+      'packages/scripts/src/shared/oci.ts',
       'nix/oci-push.sh',
       'nix/verify-headlamp-image-assets.sh',
       'services/headlamp',
@@ -266,6 +277,7 @@ const expected = {
       '.github/actions/setup-nix-toolchain',
       '.github/workflows/hermes-toolchain-build-push.yml',
       '.github/workflows/nix-oci-build-common.yml',
+      'packages/scripts/src/shared/oci.ts',
       'flake.lock',
       'flake.nix',
       'nix/ci-nix-oci-summary.sh',
@@ -289,6 +301,7 @@ const expected = {
       'services/bumba',
       'nix/images/jangar.nix',
       '.github/workflows/nix-oci-build-common.yml',
+      'packages/scripts/src/shared/oci.ts',
       '.github/workflows/jangar-post-deploy-verify.yml',
       'nix/oci-push.sh',
       'argocd/applications/jangar',
@@ -302,6 +315,7 @@ const expected = {
       'services/symphony',
       'nix/images/symphony.nix',
       '.github/workflows/nix-oci-build-common.yml',
+      'packages/scripts/src/shared/oci.ts',
       '.github/workflows/symphony-post-deploy-verify.yml',
       'nix/oci-push.sh',
       'argocd/applications/symphony',
@@ -346,6 +360,7 @@ const expected = {
       'bun.lock',
       'package.json',
       '.github/workflows/nix-oci-build-common.yml',
+      'packages/scripts/src/shared/oci.ts',
       '.github/workflows/torghut-post-deploy-verify.yml',
       'nix/oci-push.sh',
       'argocd/applications/torghut',
@@ -369,6 +384,7 @@ const expected = {
       'nix/images/dorvud-jvm-service.nix',
       'nix/images/torghut-hyperliquid-feed.nix',
       '.github/workflows/nix-oci-build-common.yml',
+      'packages/scripts/src/shared/oci.ts',
       'nix/oci-push.sh',
       'argocd/applications/torghut-hyperliquid-feed',
     ],
@@ -460,6 +476,18 @@ const byName = (manifests: Manifest[]): Map<string, Manifest> =>
   new Map(manifests.map((manifest) => [manifest.metadata?.name ?? '', manifest]))
 
 describe('Kargo direct-push GitOps contract', () => {
+  it('uses the current Kargo patch and persists Argo resource health for Stage checks', () => {
+    expect(kargoHelmElement?.version).toBe('1.11.2')
+    expect(argoCDCommandParameters.data?.['controller.resource.health.persist']).toBe('true')
+    expect(argoCDControllerStatefulSetPatch.spec?.template).toMatchObject({
+      metadata: {
+        annotations: {
+          'gitops.proompteng.ai/config-revision': 'controller-resource-health-persist-v1',
+        },
+      },
+    })
+  })
+
   it('exposes the Kargo UI over Tailscale with Dex SSO and no built-in admin', () => {
     expect(kargoHelmValues.api).toMatchObject({
       enabled: true,
@@ -522,7 +550,7 @@ describe('Kargo direct-push GitOps contract', () => {
         },
       },
     })
-    const dexRoute = (argoCDIngressRoute.spec?.routes as Array<Record<string, any>>).find((route) =>
+    const dexRoute = ((argoCDIngressRoute.spec?.routes ?? []) as Array<Record<string, any>>).find((route) =>
       route.match?.includes('PathPrefix(`/api/dex`)'),
     )
     expect(dexRoute?.middlewares).toEqual([{ name: 'kargo-dex-cors' }])

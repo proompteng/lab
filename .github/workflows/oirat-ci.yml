@@ -9,6 +9,7 @@ on:
       - 'packages/discord/**'
       - 'nix/images/oirat.nix'
       - '.github/workflows/nix-oci-build-common.yml'
+      - 'packages/scripts/src/shared/oci.ts'
       - 'nix/oci-push.sh'
       - 'argocd/applications/oirat/**'
   pull_request:
@@ -16,6 +17,7 @@ on:
       - 'services/oirat/**'
       - 'nix/images/oirat.nix'
       - '.github/workflows/nix-oci-build-common.yml'
+      - 'packages/scripts/src/shared/oci.ts'
       - 'nix/oci-push.sh'
       - 'argocd/applications/oirat/**'
   workflow_dispatch:

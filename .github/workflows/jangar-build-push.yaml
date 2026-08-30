@@ -12,6 +12,7 @@ on:
       - 'services/bumba/**'
       - 'nix/images/jangar.nix'
       - '.github/workflows/nix-oci-build-common.yml'
+      - 'packages/scripts/src/shared/oci.ts'
       - '.github/workflows/jangar-post-deploy-verify.yml'
       - 'nix/oci-push.sh'
       - 'argocd/applications/jangar/**'
