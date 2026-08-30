@@ -9,6 +9,8 @@ type SecurityPolicyEnvironment = Readonly<Record<string, string | undefined>>
 
 const DEFAULT_TENGRI_PUBLIC_URL = 'https://tengri.proompteng.ai'
 const DEFAULT_CONVEX_URL = 'https://convex.proompteng.ai'
+const CLOUDFLARE_BEACON_SCRIPT_ORIGIN = 'https://static.cloudflareinsights.com'
+const CLOUDFLARE_BEACON_REPORT_ORIGIN = 'https://cloudflareinsights.com'
 // CSP cannot express the current `tengri-{session}` label prefix. Deployments with a dedicated
 // preview DNS zone should override this with a narrower wildcard such as https://*.preview.example.com.
 const DEFAULT_TENGRI_PREVIEW_FRAME_SOURCE = 'https://*.proompteng.ai'
@@ -25,7 +27,7 @@ export function buildRuntimeContentSecurityPolicy(environment: SecurityPolicyEnv
 export function buildContentSecurityPolicy(options: BrowserSecurityPolicyOptions): string {
   const scriptSource = options.development
     ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
-    : "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'"
+    : `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' ${CLOUDFLARE_BEACON_SCRIPT_ORIGIN}`
   const gatewayOrigin = configuredOrigin(options.tengriPublicUrl, DEFAULT_TENGRI_PUBLIC_URL, options.development)
   const convexOrigin = configuredOrigin(options.convexUrl, DEFAULT_CONVEX_URL, options.development)
   const previewFrameSource = configuredFrameSource(
@@ -38,6 +40,8 @@ export function buildContentSecurityPolicy(options: BrowserSecurityPolicyOptions
   if (convexOrigin) connections.push(convexOrigin, websocketOrigin(convexOrigin))
   if (options.development) {
     connections.push('http://localhost:*', 'http://127.0.0.1:*', 'ws://localhost:*', 'ws://127.0.0.1:*')
+  } else {
+    connections.push(CLOUDFLARE_BEACON_REPORT_ORIGIN)
   }
   const frames = ["'self'"]
   if (gatewayOrigin) frames.push(gatewayOrigin)
