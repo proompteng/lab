@@ -52,7 +52,8 @@ a shared `OPENAI_API_KEY`.
 Kata's Firecracker snapshotter extracts the guest OCI image into a 512 MiB blockfile. The Dockerfile therefore enforces
 a 480 MiB uncompressed-rootfs ceiling. The image contains a minimal Ubuntu 24.04 shell environment, Nanoagent, and a
 compressed multi-architecture bundle for the pinned Node 24.11.1, Bun 1.4.0, uv 0.11.14, Go 1.25.5, and Rust/Cargo
-1.90.0 guest toolchain.
+1.90.0 guest toolchain. Ubuntu's system `bubblewrap` package satisfies Codex's Linux sandbox prerequisite instead of
+showing a bundled-helper fallback warning after device login.
 
 After Nanoagent has moved its bootstrap credential through the one-use pipe and removed the transport variables from
 the process environment, `bootstrap-toolchain` atomically installs Node, npm, npx, Bun, Bunx, uv, Go, gofmt, rustc,

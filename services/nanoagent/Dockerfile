@@ -77,6 +77,7 @@ RUN set -eux; \
     apt-get update -o Acquire::Retries=3; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       bash \
+      bubblewrap \
       ca-certificates \
       curl \
       file \
@@ -180,6 +181,7 @@ ENV BUN_INSTALL=/home/nanoagent/.toolchain-smoke/.local \
 USER 1000:1000
 RUN mkdir -p "$HOME" && \
     bootstrap-toolchain --install-only && \
+    test "$(command -v bwrap)" = '/usr/bin/bwrap' && \
     test "$(node --version)" = 'v24.11.1' && \
     test "$(npm --version | cut -d. -f1)" -ge 10 && \
     test "$(npm config get prefix)" = "$HOME/.local" && \
