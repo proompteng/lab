@@ -1,5 +1,5 @@
 diff --git a/src/agent/src/storage/block_handler.rs b/src/agent/src/storage/block_handler.rs
-index 133d48595..f20cd1fea 100644
+index 133d48595..765e9b63b 100644
 --- a/src/agent/src/storage/block_handler.rs
 +++ b/src/agent/src/storage/block_handler.rs
 @@ -19 +19,4 @@ use kata_types::device::{
@@ -104,7 +104,7 @@ index 133d48595..f20cd1fea 100644
 +    Ok(token)
 +}
 +
-@@ -128,0 +219,191 @@ async fn ensure_block_filesystem(logger: &Logger, storage: &Storage) -> Result<(
+@@ -128,0 +219,204 @@ async fn ensure_block_filesystem(logger: &Logger, storage: &Storage) -> Result<(
 +async fn run_block_command(
 +    program: &str,
 +    args: &[&str],
@@ -250,12 +250,23 @@ index 133d48595..f20cd1fea 100644
 +    }
 +
 +    let marker = persistent_block_initialization_marker(&storage.source).await?;
++    let has_ext4_filesystem = block_device_has_ext4_filesystem(&storage.source).await?;
 +    if let Some(token) = initialization_token {
 +        match &marker {
 +            PersistentBlockInitializationMarker::Blank => {}
++            PersistentBlockInitializationMarker::Consumed(consumed_token)
++                if consumed_token == token =>
++            {
++                if !has_ext4_filesystem {
++                    return Err(anyhow!(
++                        "refusing to reinitialize {}: the matching initialization token was already consumed but ext4 magic is absent",
++                        storage.source
++                    ));
++                }
++            }
 +            PersistentBlockInitializationMarker::Consumed(_) => {
 +                return Err(anyhow!(
-+                    "refusing to reuse a consumed persistent block initialization token for {}",
++                    "refusing to initialize {} with a token that does not match the consumed provisioning token",
 +                    storage.source
 +                ));
 +            }
@@ -269,14 +280,16 @@ index 133d48595..f20cd1fea 100644
 +        validate_persistent_initialization_token(token)?;
 +    }
 +
-+    if block_device_has_ext4_filesystem(&storage.source).await? {
++    if has_ext4_filesystem {
 +        info!(logger, "checking persistent block filesystem";
 +            "source" => storage.source.as_str(),
 +            "fstype" => storage.fstype.as_str(),
 +        );
 +        check_ext4_filesystem(&storage.source).await?;
-+        if let Some(token) = initialization_token {
-+            record_persistent_block_initialization_token(&storage.source, token).await?;
++        if matches!(marker, PersistentBlockInitializationMarker::Blank) {
++            if let Some(token) = initialization_token {
++                record_persistent_block_initialization_token(&storage.source, token).await?;
++            }
 +        }
 +        return Ok(());
 +    }
@@ -296,7 +309,7 @@ index 133d48595..f20cd1fea 100644
 +    record_persistent_block_initialization_token(&storage.source, token).await
 +}
 +
-@@ -133,17 +414,8 @@ async fn ensure_ext4_filesystem(logger: &Logger, source: &str) -> Result<()> {
+@@ -133,17 +427,8 @@ async fn ensure_ext4_filesystem(logger: &Logger, source: &str) -> Result<()> {
 -    let output = {
 -        // Keep the agent SIGCHLD handler from reaping this child before
 -        // tokio::process observes it.
@@ -322,19 +335,19 @@ index 133d48595..f20cd1fea 100644
 +    let mut args = vec!["-F"];
 +    args.extend(BLOCK_EMPTYDIR_EXT4_MKFS_OPTS);
 +    let output = run_block_command(MKFS_EXT4, &args, source).await?;
-@@ -168,0 +441,2 @@ mod tests {
+@@ -168,0 +454,2 @@ mod tests {
 +    const TEST_INITIALIZATION_TOKEN: &str = "provisioning-generation-0001";
 +
-@@ -186,0 +461,2 @@ mod tests {
+@@ -186,0 +474,2 @@ mod tests {
 +                should_ensure_filesystem: false,
 +                initialization_token: None,
-@@ -201,0 +478,2 @@ mod tests {
+@@ -201,0 +491,2 @@ mod tests {
 +                should_ensure_filesystem: false,
 +                initialization_token: None,
-@@ -219,0 +498,2 @@ mod tests {
+@@ -219,0 +511,2 @@ mod tests {
 +                should_ensure_filesystem: false,
 +                initialization_token: None,
-@@ -231,0 +512,174 @@ mod tests {
+@@ -231,0 +525,221 @@ mod tests {
 +
 +    #[test]
 +    fn block_storage_options_allow_persistent_filesystem_ensure() {
@@ -466,14 +479,30 @@ index 133d48595..f20cd1fea 100644
 +    }
 +
 +    #[tokio::test]
-+    async fn persistent_storage_rejects_replayed_initialization_token() {
-+        use std::io::{Seek, SeekFrom, Write};
++    async fn persistent_storage_accepts_idempotent_initialization_retry() {
++        let file = tempfile::NamedTempFile::new().unwrap();
++        file.as_file().set_len(16 * 1024 * 1024).unwrap();
++        let source = file.path().to_str().unwrap();
++        create_persistent_ext4_filesystem(source).await.unwrap();
++        record_persistent_block_initialization_token(source, TEST_INITIALIZATION_TOKEN)
++            .await
++            .unwrap();
++        let storage = Storage {
++            source: source.to_owned(),
++            fstype: "ext4".to_owned(),
++            ..Default::default()
++        };
++        let logger = Logger::root(slog::Discard, o!());
 +
-+        let mut file = tempfile::NamedTempFile::new().unwrap();
++        ensure_persistent_block_filesystem(&logger, &storage, Some(TEST_INITIALIZATION_TOKEN))
++            .await
++            .unwrap();
++    }
++
++    #[tokio::test]
++    async fn persistent_storage_rejects_consumed_token_when_ext4_is_missing() {
++        let file = tempfile::NamedTempFile::new().unwrap();
 +        file.as_file().set_len(4096).unwrap();
-+        file.seek(SeekFrom::Start(EXT4_MAGIC_OFFSET)).unwrap();
-+        file.write_all(&EXT4_MAGIC).unwrap();
-+        file.flush().unwrap();
 +        let source = file.path().to_str().unwrap();
 +        record_persistent_block_initialization_token(source, TEST_INITIALIZATION_TOKEN)
 +            .await
@@ -490,7 +519,38 @@ index 133d48595..f20cd1fea 100644
 +                .await
 +                .unwrap_err();
 +
-+        assert!(err.to_string().contains("consumed"));
++        assert!(err.to_string().contains("already consumed"));
++        assert!(err.to_string().contains("ext4 magic is absent"));
++        assert_eq!(
++            persistent_block_initialization_marker(source)
++                .await
++                .unwrap(),
++            PersistentBlockInitializationMarker::Consumed(TEST_INITIALIZATION_TOKEN.to_owned())
++        );
++    }
++
++    #[tokio::test]
++    async fn persistent_storage_rejects_mismatched_initialization_token() {
++        const DIFFERENT_TOKEN: &str = "provisioning-generation-0002";
++
++        let file = tempfile::NamedTempFile::new().unwrap();
++        file.as_file().set_len(4096).unwrap();
++        let source = file.path().to_str().unwrap();
++        record_persistent_block_initialization_token(source, TEST_INITIALIZATION_TOKEN)
++            .await
++            .unwrap();
++        let storage = Storage {
++            source: source.to_owned(),
++            fstype: "ext4".to_owned(),
++            ..Default::default()
++        };
++        let logger = Logger::root(slog::Discard, o!());
++
++        let err = ensure_persistent_block_filesystem(&logger, &storage, Some(DIFFERENT_TOKEN))
++            .await
++            .unwrap_err();
++
++        assert!(err.to_string().contains("does not match"));
 +    }
 +
 +    #[tokio::test]
