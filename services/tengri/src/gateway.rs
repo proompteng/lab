@@ -154,7 +154,7 @@ pub struct GatewayState {
 }
 
 #[derive(Clone)]
-struct PreviewOrigin {
+pub(crate) struct PreviewOrigin {
     desktop_origin: Arc<str>,
     domain: Arc<str>,
     template: Arc<str>,
@@ -187,13 +187,12 @@ struct PreviewBootstrapRequest {
 }
 
 impl GatewayState {
-    pub fn new(
+    pub(crate) fn new(
         client: Client,
         namespace: String,
         tickets: TicketStore,
         activity: ActivityTracker,
-        preview_url_template: String,
-        desktop_origin: String,
+        preview_origin: PreviewOrigin,
     ) -> anyhow::Result<Self> {
         Ok(Self {
             client,
@@ -204,7 +203,7 @@ impl GatewayState {
                 .redirect(Policy::none())
                 .connect_timeout(Duration::from_secs(5))
                 .build()?,
-            preview_origin: PreviewOrigin::parse(preview_url_template, desktop_origin)?,
+            preview_origin,
             preview_guests: Arc::new(Mutex::new(HashMap::new())),
         })
     }
@@ -279,7 +278,7 @@ impl PreviewGuestBinding {
 }
 
 impl PreviewOrigin {
-    fn parse(template: String, desktop_origin: String) -> anyhow::Result<Self> {
+    pub(crate) fn parse(template: String, desktop_origin: String) -> anyhow::Result<Self> {
         let template = template.trim().trim_end_matches('/');
         anyhow::ensure!(
             template.matches(PREVIEW_SESSION_MARKER).count() == 1,
@@ -340,7 +339,7 @@ impl PreviewOrigin {
         })
     }
 
-    fn origin(&self, session_id: &str) -> String {
+    pub(crate) fn origin(&self, session_id: &str) -> String {
         self.template.replace(PREVIEW_SESSION_MARKER, session_id)
     }
 
@@ -1285,8 +1284,11 @@ mod tests {
             "tengri".to_owned(),
             tickets,
             ActivityTracker::new(client, "tengri".to_owned()),
-            "https://tengri-{session}.proompteng.ai".to_owned(),
-            "https://proompteng.ai".to_owned(),
+            PreviewOrigin::parse(
+                "https://tengri-{session}.proompteng.ai".to_owned(),
+                "https://proompteng.ai".to_owned(),
+            )
+            .expect("preview origin"),
         )
         .expect("gateway state")
     }

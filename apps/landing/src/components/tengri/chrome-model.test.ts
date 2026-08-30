@@ -10,6 +10,7 @@ import {
   parsePreviewBridgeMessage,
   PREVIEW_BRIDGE_CHANNEL,
   safePreviewLaunchUrl,
+  safePreviewSessionOrigin,
 } from './chrome-model'
 
 describe('Tengri Chrome tabs', () => {
@@ -231,6 +232,25 @@ describe('Tengri Chrome addresses', () => {
       `https://attacker.example/v1/preview/open#${ticket}`,
     ]) {
       expect(safePreviewLaunchUrl(value, productionOrigin)).toBe('')
+    }
+  })
+
+  test('accepts only the isolated origin assigned to the preview session', () => {
+    const sessionId = 'abc123abc123abc123abc123'
+    expect(safePreviewSessionOrigin(`https://tengri-${sessionId}.proompteng.ai`, sessionId)).toBe(
+      `https://tengri-${sessionId}.proompteng.ai`,
+    )
+    expect(safePreviewSessionOrigin(`http://tengri-${sessionId}.localhost:8081`, sessionId)).toBe(
+      `http://tengri-${sessionId}.localhost:8081`,
+    )
+    for (const value of [
+      'javascript:alert(1)',
+      'https://tengri-other.proompteng.ai',
+      `https://tengri-${sessionId}.attacker.example/path`,
+      `http://tengri-${sessionId}.proompteng.ai`,
+      `https://user:secret@tengri-${sessionId}.proompteng.ai`,
+    ]) {
+      expect(safePreviewSessionOrigin(value, sessionId)).toBe('')
     }
   })
 })
