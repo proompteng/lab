@@ -32,6 +32,7 @@ spec:
           - nix/ci-run-timed.sh
           - nix/oci-inspect-archive.sh
           - .github/workflows/nix-oci-build-common.yml
+          - packages/scripts/src/shared/oci.ts
           - nix/oci-push.sh
           - flake.nix
           - flake.lock
@@ -79,6 +80,7 @@ spec:
           - nix/ci-run-timed.sh
           - nix/oci-inspect-archive.sh
           - .github/workflows/nix-oci-build-common.yml
+          - packages/scripts/src/shared/oci.ts
           - nix/oci-push.sh
           - flake.nix
           - flake.lock
@@ -126,6 +128,7 @@ spec:
           - nix/ci-run-timed.sh
           - nix/oci-inspect-archive.sh
           - .github/workflows/nix-oci-build-common.yml
+          - packages/scripts/src/shared/oci.ts
           - nix/oci-push.sh
           - flake.nix
           - flake.lock
@@ -173,6 +176,7 @@ spec:
           - nix/ci-run-timed.sh
           - nix/oci-inspect-archive.sh
           - .github/workflows/nix-oci-build-common.yml
+          - packages/scripts/src/shared/oci.ts
           - nix/oci-push.sh
           - flake.nix
           - flake.lock
@@ -214,6 +218,7 @@ spec:
           - packages/temporal-bun-sdk
           - nix/images/bumba.nix
           - .github/workflows/nix-oci-build-common.yml
+          - packages/scripts/src/shared/oci.ts
           - nix/oci-push.sh
           - argocd/applications/bumba
     - image:
@@ -252,6 +257,7 @@ spec:
           - packages/discord
           - nix/images/oirat.nix
           - .github/workflows/nix-oci-build-common.yml
+          - packages/scripts/src/shared/oci.ts
           - nix/oci-push.sh
           - argocd/applications/oirat
     - image:
@@ -293,6 +299,7 @@ spec:
           - packages/otel
           - nix/images/froussard.nix
           - .github/workflows/nix-oci-build-common.yml
+          - packages/scripts/src/shared/oci.ts
           - nix/oci-push.sh
           - argocd/applications/froussard
     - image:
@@ -331,6 +338,7 @@ spec:
           - nix/cache-doctor.sh
           - nix/oci-doctor.sh
           - .github/workflows/nix-oci-build-common.yml
+          - packages/scripts/src/shared/oci.ts
           - nix/oci-push.sh
           - nix/toolchain-doctor.sh
           - argocd/applications/arc
@@ -370,6 +378,7 @@ spec:
           - docs/nix-cache.md
           - docs/nix-oci-real-image-build-adoption-plan.md
           - .github/workflows/nix-oci-build-common.yml
+          - packages/scripts/src/shared/oci.ts
           - nix/oci-push.sh
           - argocd/applications/attic
     - image:
@@ -406,6 +415,7 @@ spec:
         includePaths:
           - .github/workflows/headlamp-ci.yml
           - .github/workflows/nix-oci-build-common.yml
+          - packages/scripts/src/shared/oci.ts
           - nix/oci-push.sh
           - nix/verify-headlamp-image-assets.sh
           - services/headlamp
@@ -446,6 +456,7 @@ spec:
           - .github/actions/setup-nix-toolchain
           - .github/workflows/hermes-toolchain-build-push.yml
           - .github/workflows/nix-oci-build-common.yml
+          - packages/scripts/src/shared/oci.ts
           - flake.lock
           - flake.nix
           - nix/ci-nix-oci-summary.sh
@@ -496,6 +507,7 @@ spec:
           - services/bumba
           - nix/images/jangar.nix
           - .github/workflows/nix-oci-build-common.yml
+          - packages/scripts/src/shared/oci.ts
           - .github/workflows/jangar-post-deploy-verify.yml
           - nix/oci-push.sh
           - argocd/applications/jangar
@@ -534,6 +546,7 @@ spec:
           - services/symphony
           - nix/images/symphony.nix
           - .github/workflows/nix-oci-build-common.yml
+          - packages/scripts/src/shared/oci.ts
           - .github/workflows/symphony-post-deploy-verify.yml
           - nix/oci-push.sh
           - argocd/applications/symphony
@@ -605,6 +618,7 @@ spec:
           - bun.lock
           - package.json
           - .github/workflows/nix-oci-build-common.yml
+          - packages/scripts/src/shared/oci.ts
           - .github/workflows/torghut-post-deploy-verify.yml
           - nix/oci-push.sh
           - argocd/applications/torghut
@@ -691,6 +705,7 @@ spec:
           - nix/images/dorvud-jvm-service.nix
           - nix/images/torghut-hyperliquid-feed.nix
           - .github/workflows/nix-oci-build-common.yml
+          - packages/scripts/src/shared/oci.ts
           - nix/oci-push.sh
           - argocd/applications/torghut-hyperliquid-feed
     - image:
