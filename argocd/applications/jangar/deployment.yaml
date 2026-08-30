@@ -1,0 +1,454 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jangar
+  namespace: jangar
+  labels:
+    app: jangar
+    app.kubernetes.io/name: jangar
+    app.kubernetes.io/part-of: lab
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+    deploy.knative.dev/rollout: 2026-08-27T21:26:59Z
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: jangar
+  template:
+    metadata:
+      labels:
+        app: jangar
+        app.kubernetes.io/name: jangar
+        app.kubernetes.io/part-of: lab
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      serviceAccountName: jangar-inspector
+      initContainers:
+        - name: bootstrap-workspace
+          image: registry.ide-newton.ts.net/lab/jangar:640cb586@sha256:78913053b4bd222d01d2351eb19136edfda3fa4cb8253541b4ac0736f092ac26
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+          args:
+            - >
+              set -eu
+
+              if [ ! -d /workspace/lab/.git ]; then
+                rm -rf /workspace/lab
+                git clone --depth 1 https://github.com/proompteng/lab.git /workspace/lab
+              fi
+
+              mkdir -p /workspace/lab/.worktrees /workspace/lab/torghut /workspace/.bun-install-cache
+              /workspace/.ovscode
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+      containers:
+        - name: app
+          image: registry.ide-newton.ts.net/lab/jangar:640cb586@sha256:78913053b4bd222d01d2351eb19136edfda3fa4cb8253541b4ac0736f092ac26
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: UI_PORT
+              value: "8080"
+            - name: JANGAR_SOURCE_HEAD_SHA
+              value: c9e7e812e662f56fe32d69eefe03db1230d04155
+            - name: JANGAR_GITOPS_REVISION
+              value: c9e7e812e662f56fe32d69eefe03db1230d04155
+            - name: JANGAR_HTTP_IDLE_TIMEOUT_SECONDS
+              value: "120"
+            - name: JANGAR_CONTROL_PLANE_STATUS_CACHE_TTL_MS
+              value: "10000"
+            - name: JANGAR_CONTROL_PLANE_STATUS_CACHE_MAX_ENTRIES
+              value: "32"
+            - name: JANGAR_BUMBA_TASK_QUEUE
+              value: jangar
+            - name: AGENTS_SERVICE_BASE_URL
+              value: http://agents.agents.svc.cluster.local
+            - name: TEMPORAL_OTEL_ENABLED
+              value: "true"
+            - name: TEMPORAL_METRICS_EXPORTER
+              value: otlp
+            - name: TEMPORAL_METRICS_ENDPOINT
+              value: http://observability-mimir-gateway.observability.svc.cluster.local/otlp/v1/metrics
+            - name: OTEL_SERVICE_NAME
+              value: jangar
+            - name: OTEL_SERVICE_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: OTEL_SERVICE_INSTANCE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: grpc
+            - name: OTEL_EXPORTER_OTLP_TRACES_PROTOCOL
+              value: grpc
+            - name: OTEL_EXPORTER_OTLP_METRICS_PROTOCOL
+              value: grpc
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              value: http://observability-tempo-gateway.observability.svc.cluster.local:4317
+            - name: OTEL_EXPORTER_OTLP_TRACES_TIMEOUT
+              value: "20000"
+            - name: OTEL_METRICS_EXPORTER
+              value: otlp
+            - name: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+              value: http://jangar-alloy.jangar.svc.cluster.local:4317
+            - name: OTEL_EXPORTER_OTLP_METRICS_TIMEOUT
+              value: "20000"
+            - name: OTEL_LOGS_EXPORTER
+              value: none
+            - name: BUN_INSTALL_CACHE_DIR
+              value: /workspace/.bun-install-cache
+            - name: CODEX_REPO_SLUG
+              value: proompteng/lab
+            - name: CODEX_REPO_URL
+              value: https://github.com/proompteng/lab.git
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: github-token
+                  key: token
+                  optional: true
+            - name: JANGAR_WHITEPAPER_OUTPUT_FETCH_ATTEMPTS
+              value: "12"
+            - name: JANGAR_WHITEPAPER_OUTPUT_FETCH_DELAY_MS
+              value: "5000"
+            - name: JANGAR_MODELS
+              value: qwen36-flamingo
+            - name: JANGAR_DEFAULT_MODEL
+              value: qwen36-flamingo
+            - name: JANGAR_GIT_LOCK_RETRY_ATTEMPTS
+              value: "6"
+            - name: JANGAR_GIT_LOCK_RETRY_DELAY_MS
+              value: "1000"
+            - name: JANGAR_GIT_PR_LOCK_STALE_MS
+              value: "5000"
+            - name: JANGAR_GITHUB_MIN_REQUEST_SPACING_MS
+              value: "1000"
+            - name: JANGAR_GITHUB_REPOS_ALLOWED
+              value: proompteng/lab
+            - name: JANGAR_GITHUB_REVIEWS_WRITE
+              value: "false"
+            - name: JANGAR_GITHUB_MERGE_WRITE
+              value: "false"
+            - name: JANGAR_GITHUB_MERGE_FORCE
+              value: "false"
+            - name: JANGAR_CI_MAX_WAIT_MS
+              value: "3600000"
+            - name: JANGAR_REVIEW_MAX_WAIT_MS
+              value: "3600000"
+            - name: MINIO_ENDPOINT
+              value: http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: rook-ceph-rgw-jangar
+                  key: accesskey
+                  optional: true
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: rook-ceph-rgw-jangar
+                  key: secretkey
+                  optional: true
+            - name: MINIO_SECURE
+              value: "false"
+            - name: AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION
+              value: codex-system-improvement
+            - name: AGENTS_SYSTEM_IMPROVEMENT_ORCHESTRATION_NAMESPACE
+              value: agents
+            - name: DISCORD_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: discord-codex-bot
+                  key: bot-token
+                  optional: true
+            - name: DISCORD_SUCCESS_CHANNEL_ID
+              valueFrom:
+                secretKeyRef:
+                  name: discord-success-channel
+                  key: channel-id
+                  optional: true
+            - name: CODEX_BOOTSTRAP_REPO
+              value: "1"
+            - name: CODEX_INTERNAL_ORIGINATOR_OVERRIDE
+              value: codex
+            - name: JANGAR_STATEFUL_CHAT_MODE
+              value: "1"
+            - name: JANGAR_REDIS_URL
+              value: redis://jangar-openwebui-redis:6379/1
+            - name: NATS_URL
+              value: nats://nats.nats.svc.cluster.local:4222
+            - name: NATS_USER
+              valueFrom:
+                secretKeyRef:
+                  name: nats-jangar-credentials
+                  key: username
+                  optional: true
+            - name: NATS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: nats-jangar-credentials
+                  key: password
+                  optional: true
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: jangar-db-app
+                  key: uri
+            - name: TORGHUT_DB_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-app
+                  key: uri
+                  optional: true
+            - name: TORGHUT_DB_SSLMODE
+              value: verify-ca
+            - name: TORGHUT_DB_CA_CERT
+              value: /etc/ssl/certs/torghut-db/ca.crt
+            - name: PGSSLMODE
+              value: require
+            - name: JANGAR_DB_CA_CERT
+              value: /etc/ssl/certs/jangar-db/ca.crt
+            - name: JANGAR_TORGHUT_QUANT_CONTROL_PLANE_ENABLED
+              value: "true"
+            - name: JANGAR_TORGHUT_QUANT_CONTROL_PLANE_ENABLED_FLAG_KEY
+              value: jangar.torghut.quant_control_plane.enabled
+            - name: JANGAR_TORGHUT_QUANT_COMPUTE_INTERVAL_MS
+              value: "1000"
+            - name: JANGAR_TORGHUT_QUANT_HEAVY_COMPUTE_INTERVAL_MS
+              value: "30000"
+            - name: JANGAR_TORGHUT_QUANT_LATEST_SAMPLING_MS
+              value: "10000"
+            - name: JANGAR_TORGHUT_QUANT_HEALTH_SAMPLING_MS
+              value: "5000"
+            - name: JANGAR_TORGHUT_QUANT_STREAM_HEARTBEAT_MS
+              value: "15000"
+            - name: JANGAR_TORGHUT_QUANT_MAX_STALENESS_SECONDS
+              value: "15"
+            - name: JANGAR_TORGHUT_QUANT_ALERTS_ENABLED
+              value: "true"
+            - name: JANGAR_TORGHUT_QUANT_ALERTS_ENABLED_FLAG_KEY
+              value: jangar.torghut.quant_alerts.enabled
+            - name: JANGAR_TORGHUT_QUANT_POLICY_MAX_DRAWDOWN_1D
+              value: "0.05"
+            - name: JANGAR_TORGHUT_QUANT_POLICY_MIN_SHARPE_5D
+              value: "0"
+            - name: JANGAR_TORGHUT_QUANT_POLICY_MAX_SLIPPAGE_BPS_15M
+              value: "50"
+            - name: JANGAR_TORGHUT_QUANT_POLICY_MAX_REJECT_RATE_15M
+              value: "0.02"
+            - name: JANGAR_TORGHUT_QUANT_POLICY_MAX_PIPELINE_LAG_SECONDS
+              value: "15"
+            - name: JANGAR_TORGHUT_QUANT_POLICY_MAX_TA_FRESHNESS_SECONDS
+              value: "120"
+            - name: JANGAR_TORGHUT_QUANT_HEALTH_MISSING_UPDATE_SECONDS
+              value: "15"
+            - name: JANGAR_FEATURE_FLAGS_URL
+              value: http://feature-flags.feature-flags.svc.cluster.local:8013
+            - name: JANGAR_FEATURE_FLAGS_TIMEOUT_MS
+              value: "500"
+            - name: JANGAR_MARKET_CONTEXT_ENABLED
+              value: "true"
+            - name: JANGAR_MARKET_CONTEXT_ENABLED_FLAG_KEY
+              value: jangar_market_context_enabled
+            - name: JANGAR_MARKET_CONTEXT_CACHE_SECONDS
+              value: "60"
+            - name: JANGAR_MARKET_CONTEXT_MAX_STALENESS_SECONDS
+              value: "300"
+            - name: JANGAR_MARKET_CONTEXT_PROVIDER_CHAIN
+              value: codex-spark,codex
+            - name: JANGAR_MARKET_CONTEXT_PROVIDER_FAILURE_THRESHOLD
+              value: "3"
+            - name: JANGAR_MARKET_CONTEXT_PROVIDER_COOLDOWN_SECONDS
+              value: "900"
+            - name: JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_ENABLED
+              value: "false"
+            - name: JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_COOLDOWN_SECONDS
+              value: "900"
+            - name: JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_ACTIVE_RUN_SECONDS
+              value: "3600"
+            - name: JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_NAMESPACE
+              value: agents
+            - name: JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_SERVICE_ACCOUNT_NAME
+              value: agents-sa
+            - name: JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_CALLBACK_URL
+              value: http://jangar.jangar.svc.cluster.local/api/torghut/market-context
+            - name: JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_TTL_SECONDS
+              value: "7200"
+            - name: JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_REPOSITORY
+              value: proompteng/lab
+            - name: JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_BASE_BRANCH
+              value: main
+            - name: JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_HEAD_BRANCH
+              value: main
+            - name: JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_VCS_REF_NAME
+              value: github
+            - name: JANGAR_MARKET_CONTEXT_REQUIRE_TECHNICALS_SOURCE_HEALTH
+              value: "true"
+            - name: JANGAR_MARKET_CONTEXT_TECHNICALS_MAX_FRESHNESS_SECONDS
+              value: "300"
+            - name: JANGAR_MARKET_CONTEXT_REGIME_MAX_FRESHNESS_SECONDS
+              value: "300"
+            - name: JANGAR_MARKET_CONTEXT_BATCH_REQUIRE_OPEN_SESSION
+              value: "true"
+            - name: JANGAR_MARKET_CONTEXT_BATCH_TRADING_STATUS_URL
+              value: http://torghut.torghut.svc.cluster.local/trading/status
+            - name: JANGAR_MARKET_CONTEXT_BATCH_TRADING_STATUS_TIMEOUT_MS
+              value: "5000"
+            - name: JANGAR_MARKET_CONTEXT_INGEST_ALLOW_SERVICE_ACCOUNT_TOKEN
+              value: "true"
+            - name: JANGAR_MARKET_CONTEXT_INGEST_ALLOWED_SERVICE_ACCOUNT_PREFIXES
+              value: system:serviceaccount:agents:agents-sa
+            - name: JANGAR_TORGHUT_DECISION_ENGINE_ENABLED
+              value: "true"
+            - name: JANGAR_TORGHUT_DECISION_ENGINE_ENABLED_FLAG_KEY
+              value: jangar_torghut_decision_engine_enabled
+            - name: JANGAR_TORGHUT_DECISION_RUN_TIMEOUT_MS
+              value: "120000"
+            - name: JANGAR_TORGHUT_DECISION_STREAM_HEARTBEAT_MS
+              value: "10000"
+            - name: JANGAR_TORGHUT_DECISION_RUN_RETENTION_MS
+              value: "900000"
+            - name: CH_HOST
+              value: torghut-clickhouse.torghut.svc
+            - name: CH_PORT
+              value: "8123"
+            - name: CH_DATABASE
+              value: torghut
+            - name: CH_SECURE
+              value: "false"
+            - name: CH_USER
+              value: torghut
+            - name: CH_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-clickhouse-auth
+                  key: torghut_password
+            - name: VSCODE_DATA_DIR
+              value: /workspace/.ovscode
+            - name: VSCODE_DEFAULT_FOLDER
+              value: /workspace/lab
+            - name: DOCKER_HOST
+              value: unix:///var/run/docker.sock
+            - name: DOCKER_TLS_VERIFY
+              value: ""
+            - name: DOCKER_ENABLED
+              value: "1"
+            - name: OPENAI_API_BASE_URL
+              value: http://flamingo.flamingo.svc.cluster.local/v1
+            - name: OPENAI_EMBEDDING_API_BASE_URL
+              value: http://saigak.saigak.svc.cluster.local:11434/v1
+            - name: OPENAI_EMBEDDING_MODEL
+              value: qwen3-embedding-saigak:8b
+            - name: OPENAI_EMBEDDING_DIMENSION
+              value: "4096"
+            - name: OPENAI_EMBEDDING_TIMEOUT_MS
+              value: "60000"
+            - name: ATLAS_CODE_SEARCH_EMBEDDING_MODEL
+              value: qwen3-embedding-saigak:8b
+            - name: ATLAS_CODE_SEARCH_EMBEDDING_DIMENSION
+              value: "1024"
+            - name: ATLAS_CODE_SEARCH_STATEMENT_TIMEOUT_MS
+              value: "5000"
+            - name: JANGAR_SOURCE_CI_RUN_ID
+              value: "33113350200"
+            - name: JANGAR_SOURCE_CI_CONCLUSION
+              value: success
+            - name: JANGAR_MANIFEST_IMAGE_DIGEST
+              value: sha256:37a1de689f56a3614b4051063c1d14c797dc1c4552c73d7711dd25ebda517bfa
+            - name: JANGAR_SERVING_BUILD_COMMIT
+              value: c9e7e812e662f56fe32d69eefe03db1230d04155
+            - name: JANGAR_SERVING_IMAGE_DIGEST
+              value: sha256:37a1de689f56a3614b4051063c1d14c797dc1c4552c73d7711dd25ebda517bfa
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: vscode
+              containerPort: 8081
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            timeoutSeconds: 5
+            failureThreshold: 6
+            successThreshold: 1
+          resources:
+            requests:
+              cpu: "2"
+              memory: 6Gi
+            limits:
+              cpu: "2"
+              memory: 6Gi
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+            - name: docker-lib
+              mountPath: /var/lib/docker
+              readOnly: true
+            - name: docker-sock
+              mountPath: /var/run
+            - name: jangar-db-ca
+              mountPath: /etc/ssl/certs/jangar-db
+              readOnly: true
+            - name: torghut-db-ca
+              mountPath: /etc/ssl/certs/torghut-db
+              readOnly: true
+            - name: codex-auth
+              mountPath: /root/.codex/auth.json
+              subPath: auth.json
+              readOnly: true
+        - name: docker
+          image: docker:25.0-dind
+          imagePullPolicy: IfNotPresent
+          command:
+            - dockerd-entrypoint.sh
+          args:
+            - --host=unix:///var/run/docker.sock
+          env:
+            - name: DOCKER_TLS_CERTDIR
+              value: ""
+            - name: XDG_RUNTIME_DIR
+              value: /tmp/docker-runtime
+          securityContext:
+            privileged: true
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          volumeMounts:
+            - name: docker-lib
+              mountPath: /var/lib/docker
+            - name: docker-sock
+              mountPath: /var/run
+      volumes:
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: jangar-workspace
+        - name: docker-lib
+          emptyDir: {}
+        - name: docker-sock
+          emptyDir: {}
+        - name: jangar-db-ca
+          secret:
+            secretName: jangar-db-ca
+        - name: torghut-db-ca
+          secret:
+            secretName: torghut-db-ca
+            optional: true
+        - name: codex-auth
+          secret:
+            secretName: codex-auth

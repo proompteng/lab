@@ -1,0 +1,65 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "strict": true,
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false,
+    "exactOptionalPropertyTypes": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "noUncheckedSideEffectImports": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "verbatimModuleSyntax": true,
+    "types": ["bun", "node"],
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "diagnostics": true,
+        "includeSuggestionsInTsc": true,
+        "ignoreEffectSuggestionsInTscExitCode": false,
+        "ignoreEffectErrorsInTscExitCode": false,
+        "ignoreEffectWarningsInTscExitCode": false,
+        "diagnosticSeverity": {
+          "anyUnknownInErrorContext": "error",
+          "globalDateInEffect": "error",
+          "globalErrorInEffectCatch": "error",
+          "globalErrorInEffectFailure": "error",
+          "multipleEffectProvide": "error",
+          "schemaNumber": "error",
+          "scopeInLayerEffect": "error",
+          "strictBooleanExpressions": "error",
+          "strictEffectProvide": "error",
+          "unsafeEffectTypeAssertion": "error",
+          "unknownInEffectCatch": "error"
+        },
+        "overrides": [
+          {
+            "include": ["src/**/*.test.ts", "src/**/*test-support.ts"],
+            "options": {
+              "diagnosticSeverity": {
+                "anyUnknownInErrorContext": "off",
+                "globalDateInEffect": "off",
+                "globalErrorInEffectCatch": "off",
+                "globalErrorInEffectFailure": "off",
+                "multipleEffectProvide": "off",
+                "schemaNumber": "off",
+                "scopeInLayerEffect": "off",
+                "strictBooleanExpressions": "off",
+                "strictEffectProvide": "off",
+                "unsafeEffectTypeAssertion": "off",
+                "unknownInEffectCatch": "off"
+              }
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "include": ["src", "migrations"]
+}

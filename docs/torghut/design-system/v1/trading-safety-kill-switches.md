@@ -1,0 +1,102 @@
+# Trading Safety Kill Switches
+
+## Status
+
+- Version: `v1`
+- Last updated: **2026-02-08**
+- Source of truth (config): `argocd/applications/torghut/**`
+- Implementation status: `Implemented` (verified with code + tests + runtime/config on 2026-02-21)
+
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
+
+
+## Purpose
+
+Document the explicit kill switches that allow oncall to rapidly reduce risk during incidents, including:
+
+- stopping trading,
+- forcing paper-only mode,
+- disabling AI advisory,
+- and reducing blast radius while maintaining auditability.
+
+## Non-goals
+
+- “Secret” or undocumented kill switches.
+- Using AI as a kill switch.
+
+## Terminology
+
+- **Kill switch:** Deterministic setting that stops risky behavior immediately.
+- **Degrade mode:** Keep system running but disable risky operations (e.g., trading).
+
+## Current kill switches (pointers)
+
+- Env settings contract: `services/torghut/app/config.py`
+- Deployed values: `argocd/applications/torghut/knative-service.yaml`
+
+## Kill switch model
+
+```mermaid
+flowchart TD
+  Incident["Incident detected"] --> DisableTrading["TRADING_ENABLED=false"]
+  Incident --> ForcePaper["TRADING_MODE=paper"]
+  Incident --> DisableAI["LLM_ENABLED=false"]
+  DisableTrading --> Stable["System stable; audit continues"]
+```
+
+## Primary switches (v1)
+
+| Switch                       | Effect                             | When to use                                              |
+| ---------------------------- | ---------------------------------- | -------------------------------------------------------- |
+| `TRADING_ENABLED=false`      | stops decision execution loop      | any uncertainty about signal correctness or broker state |
+| `TRADING_MODE=paper`         | forces paper context               | default; always during initial rollout                   |
+| `TRADING_SIMPLE_SUBMIT_ENABLED=false` | blocks broker submission | safety backstop                                          |
+| `LLM_ENABLED=false`          | disables AI advisory calls         | LLM outages, cost spikes, or suspicious behavior         |
+| `LLM_SHADOW_MODE=true`       | log reviews but do not veto/adjust | evaluation without impact                                |
+
+### Rollout/verification (paper-default + emergency-stop posture)
+
+- Keep `TRADING_MODE=paper` as the default deployment posture.
+- Keep `TRADING_KILL_SWITCH_ENABLED=true` so hard order blocking remains enabled by default until an approved GitOps change disables it.
+- Keep `TRADING_EMERGENCY_STOP_ENABLED=true` so emergency stop remains ready.
+- Verify by checking:
+  - `kubectl -n torghut get ksvc torghut -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name==\"TRADING_KILL_SWITCH_ENABLED\")].value}{"\\n"}{.spec.template.spec.containers[0].env[?(@.name==\"TRADING_EMERGENCY_STOP_ENABLED\")].value}{"\\n"}'` shows `true`.
+  - `/trading/status` shows `kill_switches`/`emergency_stop` are active and paper-gated.
+  - audit log and executions do not contain live broker transitions.
+
+## Operational workflow (GitOps)
+
+1. Make kill-switch changes via PR (preferred) or emergency GitOps procedure.
+2. Sync ArgoCD.
+3. Verify `/trading/status` and audit tables reflect new state.
+
+## Failure modes and recovery
+
+| Failure                 | Symptoms                          | Detection                  | Recovery                                                      |
+| ----------------------- | --------------------------------- | -------------------------- | ------------------------------------------------------------- |
+| Kill switch not applied | trading continues during incident | audit shows new executions | confirm Argo sync; verify env vars in pod; roll back revision |
+
+## Security considerations
+
+- Kill switches are security controls; restrict who can change them.
+- Ensure toggles are audited (Git history + runtime status).
+
+## Decisions (ADRs)
+
+### ADR-35-1: Trading kill switches are configuration-only (no code deploy required)
+
+- **Decision:** All kill switches are controlled through environment/config in GitOps.
+- **Rationale:** Fast incident response without rebuilds.
+- **Consequences:** Requires careful config review and drift detection.

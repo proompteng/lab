@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+"""Run Torghut v3 deterministic autonomous lane (research -> gates -> paper patch)."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+from pathlib import Path
+
+from app.trading.autonomy.lane import run_autonomous_lane
+
+
+def _run_git_rev_parse() -> subprocess.CompletedProcess[str]:
+    if Path("/usr/bin/git").exists():
+        return subprocess.run(
+            ["/usr/bin/git", "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    if Path("/usr/local/bin/git").exists():
+        return subprocess.run(
+            ["/usr/local/bin/git", "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    if Path("/opt/homebrew/bin/git").exists():
+        return subprocess.run(
+            ["/opt/homebrew/bin/git", "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    raise FileNotFoundError("git not found in expected paths")
+
+
+def _resolve_git_sha() -> str:
+    try:
+        result = _run_git_rev_parse()
+    except (subprocess.SubprocessError, FileNotFoundError):
+        return "unknown"
+    return result.stdout.strip() or "unknown"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Run deterministic autonomous Torghut lane."
+    )
+    parser.add_argument(
+        "--signals", type=Path, required=True, help="Path to signal fixture JSON."
+    )
+    parser.add_argument(
+        "--strategy-config",
+        type=Path,
+        required=True,
+        help="Path to runtime strategy YAML/JSON.",
+    )
+    parser.add_argument(
+        "--gate-policy", type=Path, required=True, help="Path to gate policy JSON."
+    )
+    parser.add_argument(
+        "--output-dir", type=Path, required=True, help="Artifact output directory."
+    )
+    parser.add_argument(
+        "--repository", type=str, default=None, help="Repository context for this run."
+    )
+    parser.add_argument("--base", type=str, default=None, help="Base reference.")
+    parser.add_argument("--head", type=str, default=None, help="Head reference.")
+    parser.add_argument(
+        "--artifact-path",
+        type=Path,
+        default=None,
+        help="Optional artifact root for execution-context notes and governance artifact path.",
+    )
+    parser.add_argument(
+        "--artifactPath",
+        type=Path,
+        default=None,
+        help="CamelCase alias for --artifact-path",
+    )
+    parser.add_argument(
+        "--priority-id",
+        type=str,
+        default=None,
+        help="Priority identifier for lane execution and governance output.",
+    )
+    parser.add_argument(
+        "--priorityId",
+        type=str,
+        default=None,
+        help="CamelCase alias for --priority-id",
+    )
+    parser.add_argument(
+        "--design-doc",
+        type=str,
+        default=None,
+        help="Optional design document reference (for governance contract and evidence provenance).",
+    )
+    parser.add_argument(
+        "--promotion-target", choices=("shadow", "paper", "live"), default="paper"
+    )
+    parser.add_argument(
+        "--alpha-train-prices",
+        type=Path,
+        default=None,
+        help="Optional CSV used to run the strategy-factory sidecar on train data.",
+    )
+    parser.add_argument(
+        "--alpha-test-prices",
+        type=Path,
+        default=None,
+        help="Optional CSV used to run the strategy-factory sidecar on test data.",
+    )
+    parser.add_argument(
+        "--alpha-gate-policy",
+        type=Path,
+        default=None,
+        help="Optional gate policy JSON for the strategy-factory sidecar.",
+    )
+    parser.add_argument(
+        "--strategy-configmap",
+        type=Path,
+        default=Path("argocd/applications/torghut/strategy-configmap.yaml"),
+        help="GitOps strategy configmap source for candidate patch generation.",
+    )
+    parser.add_argument(
+        "--approval-token",
+        type=str,
+        help="Required for live target when enabled by policy.",
+    )
+    parser.add_argument(
+        "--persist-results",
+        dest="persist_results",
+        action="store_true",
+        help="Persist strategy-spec lineage and research ledger rows.",
+    )
+    parser.add_argument(
+        "--no-persist-results",
+        dest="persist_results",
+        action="store_false",
+        help="Skip persistence and emit artifacts only.",
+    )
+    parser.set_defaults(persist_results=True)
+    args = parser.parse_args()
+
+    result = run_autonomous_lane(
+        signals_path=args.signals,
+        strategy_config_path=args.strategy_config,
+        gate_policy_path=args.gate_policy,
+        output_dir=args.output_dir,
+        repository=args.repository,
+        base=args.base,
+        head=args.head,
+        artifact_path=str(args.artifact_path)
+        if args.artifact_path is not None
+        else None,
+        artifactPath=str(args.artifactPath) if args.artifactPath is not None else None,
+        priority_id=args.priority_id,
+        priorityId=args.priorityId,
+        design_doc=args.design_doc,
+        promotion_target=args.promotion_target,
+        strategy_configmap_path=args.strategy_configmap,
+        code_version=_resolve_git_sha(),
+        approval_token=args.approval_token,
+        persist_results=args.persist_results,
+        alpha_train_prices_path=args.alpha_train_prices,
+        alpha_test_prices_path=args.alpha_test_prices,
+        alpha_gate_policy_path=args.alpha_gate_policy,
+    )
+
+    payload = {
+        "run_id": result.run_id,
+        "candidate_id": result.candidate_id,
+        "output_dir": str(result.output_dir),
+        "gate_report_path": str(result.gate_report_path),
+        "actuation_intent_path": str(result.actuation_intent_path)
+        if result.actuation_intent_path
+        else None,
+        "paper_patch_path": str(result.paper_patch_path)
+        if result.paper_patch_path
+        else None,
+        "candidate_spec_path": str(result.candidate_spec_path),
+        "candidate_generation_manifest_path": str(
+            result.candidate_generation_manifest_path
+        ),
+        "evaluation_manifest_path": str(result.evaluation_manifest_path),
+        "recommendation_manifest_path": str(result.recommendation_manifest_path),
+        "profitability_manifest_path": str(result.profitability_manifest_path),
+        "recommendation_artifact_path": str(result.recommendation_artifact_path),
+        "benchmark_parity_path": str(result.benchmark_parity_path),
+        "stage_trace_ids": result.stage_trace_ids,
+        "stage_lineage_root": result.stage_lineage_root,
+        "profitability_benchmark_path": str(
+            result.output_dir / "gates" / "profitability-benchmark-v4.json"
+        ),
+        "profitability_evidence_path": str(
+            result.output_dir / "gates" / "profitability-evidence-v4.json"
+        ),
+        "profitability_validation_path": str(
+            result.output_dir / "gates" / "profitability-evidence-validation.json"
+        ),
+        "janus_event_car_path": str(
+            result.output_dir / "gates" / "janus-event-car-v1.json"
+        ),
+        "janus_hgrm_reward_path": str(
+            result.output_dir / "gates" / "janus-hgrm-reward-v1.json"
+        ),
+        "promotion_gate_path": str(
+            result.output_dir / "gates" / "promotion-evidence-gate.json"
+        ),
+    }
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

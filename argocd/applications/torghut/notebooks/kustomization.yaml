@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: torghut
+resources:
+  - sealed-secrets.yaml
+patches:
+  - path: hub-secrets.patch.yaml
+  - path: proxy-secret.patch.yaml
+helmCharts:
+  - name: jupyterhub
+    repo: https://hub.jupyter.org/helm-chart/
+    version: 4.4.0
+    releaseName: torghut-notebooks
+    namespace: torghut
+    valuesFile: values.yaml

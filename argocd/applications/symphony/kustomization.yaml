@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: jangar
+configMapGenerator:
+  - name: symphony-workflow
+    files:
+      - WORKFLOW.md
+resources:
+  - ../symphony-base
+  - linear-api-key-sealedsecret.yaml
+  - target-argocd-role.yaml
+  - target-argocd-rolebinding.yaml
+patches:
+  - path: deployment.patch.yaml
+  - path: pvc.patch.yaml
+images:
+  - name: registry.ide-newton.ts.net/lab/symphony
+    newName: registry.ide-newton.ts.net/lab/symphony
+    newTag: kargo-sha-bbbaa168c46e6e167a5775d0f516789b13dc689d
+    digest: sha256:b3cdb1175c89316d2e7ef2b4e7beeb9379a9f87a51150f8d0790bb2235159a3b
