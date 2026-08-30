@@ -232,6 +232,7 @@ spec:
                 path: argocd/applications/symphony-torghut
                 namespace: torghut
                 targetRevision: kargo/symphony
+                cascadeResourcesOnDeletion: true
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
                   kargo.akuity.io/authorized-stage: lab-delivery:symphony
@@ -431,6 +432,7 @@ spec:
                 namespace: torghut
                 renderWithLovely: false
                 targetRevision: kargo/torghut
+                cascadeResourcesOnDeletion: true
                 annotations:
                   argocd.argoproj.io/sync-wave: "7"
                   kargo.akuity.io/authorized-stage: lab-delivery:torghut
@@ -441,6 +443,7 @@ spec:
                 namespace: torghut
                 renderWithLovely: false
                 targetRevision: kargo/torghut-hyperliquid-feed
+                cascadeResourcesOnDeletion: true
                 annotations:
                   argocd.argoproj.io/sync-wave: "7"
                   kargo.akuity.io/authorized-stage: lab-delivery:torghut-hyperliquid-feed
@@ -451,6 +454,7 @@ spec:
                 namespace: torghut
                 renderWithLovely: false
                 targetRevision: kargo/torghut
+                cascadeResourcesOnDeletion: true
                 annotations:
                   argocd.argoproj.io/sync-wave: "8"
                   kargo.akuity.io/authorized-stage: lab-delivery:torghut
