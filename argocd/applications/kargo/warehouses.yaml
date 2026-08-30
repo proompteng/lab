@@ -18,6 +18,7 @@ spec:
         branch: main
         commitSelectionStrategy: NewestFromBranch
         discoveryLimit: 20
+        blobless: true
         strictSemvers: true
         includePaths:
           - apps/landing
@@ -41,7 +42,7 @@ spec:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/proompteng
         imageSelectionStrategy: NewestBuild
-        discoveryLimit: 20
+        discoveryLimit: 1
         strictSemvers: true
         allowTagsRegexes:
           - '^kargo-sha-[0-9a-f]{40}$'

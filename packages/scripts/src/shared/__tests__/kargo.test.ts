@@ -635,6 +635,7 @@ describe('Kargo direct-push GitOps contract', () => {
         discoveryLimit: 20,
         strictSemvers: true,
       })
+      expect(git?.blobless).toBe(stageName === 'proompteng' ? true : undefined)
       expect(git?.includePaths).toEqual(contract.includePaths)
       if (contract.excludePaths) expect(git?.excludePaths).toEqual(contract.excludePaths)
       else expect(git?.excludePaths).toBeUndefined()
@@ -645,7 +646,7 @@ describe('Kargo direct-push GitOps contract', () => {
       expect(imageSubscriptions.map((image) => image.repoURL)).toEqual(contract.images)
       for (const image of imageSubscriptions) {
         expect(image.imageSelectionStrategy).toBe(contract.imageStrategy ?? 'NewestBuild')
-        expect(image.discoveryLimit).toBe(20)
+        expect(image.discoveryLimit).toBe(stageName === 'proompteng' ? 1 : 20)
         expect(image.strictSemvers).toBe(true)
         if (contract.imageStrategy === 'Digest') {
           expect(image.constraint).toBe('latest')
