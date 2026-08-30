@@ -37,6 +37,27 @@ built both architectures, generated provenance and an SBOM, and keylessly signed
 main-branch `nanoagent.yaml` workflow identity. The image runs as UID 65532, retains Nanoagent as its entrypoint, and
 contains BusyBox `/bin/sh` plus a writable `/workspace` for direct `kubectl exec` inspection.
 
+## Published r5 candidate (not installed or accepted)
+
+Main-branch run [33304758749](https://github.com/proompteng/lab/actions/runs/33304758749) built, signed, and verified
+the persistent-block r5 candidate from merge commit
+[`a0d7a0dcf5c1fe4f743850906cbe85700853d748`](https://github.com/proompteng/lab/commit/a0d7a0dcf5c1fe4f743850906cbe85700853d748).
+
+| Artifact                  | Platform                     | Immutable reference                                                                                                          |
+| ------------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Kata runtime extension r5 | `linux/amd64`, `linux/arm64` | `registry.ide-newton.ts.net/lab/talos-kata-runtimes@sha256:8d34965e669a53d3f7d7565d674fbe140acc0874422676601bb5638c705f8e8d` |
+| Ryzen installer r5        | `linux/amd64`                | `registry.ide-newton.ts.net/lab/talos-kata-runtimes@sha256:d489b3d7fc198d98dfbef8a8754933a5ce68f78920e4ce251f41a34594259def` |
+| Turin installer r5        | `linux/amd64`                | `registry.ide-newton.ts.net/lab/talos-kata-runtimes@sha256:f4c47111721884fcc486fb2478ba51d904b227a53ea2174ee795a070e101894d` |
+| Altra installer r5        | `linux/arm64`                | `registry.ide-newton.ts.net/lab/talos-kata-runtimes@sha256:33f3f2be96b06a049507381c3b142f1bba93f88af82990950313697a8aabd027` |
+
+Every reference passed keyless Cosign verification with the main-branch Kata workflow identity and GitHub Actions
+OIDC issuer. These receipts prove publication only. No Galactic node currently carries the r5 persistent-block
+extension or the r5-only `runtime.proompteng.ai/kata-fc-persistent-block` activation label. The four unversioned
+`runtime.proompteng.ai/kata-{qemu,clh,fc,dragonball}` labels still record accepted r4 proof. A separately authorized r5
+rollout must remove all four labels from the target before changing its installer and restore each label only after
+that runtime passes fresh r5 acceptance. The candidate digests must not replace the accepted r4 installer references
+above until that installation and live persistent-block acceptance are recorded.
+
 The original 12-runtime evidence rows below were captured before the rename with the immutable predecessor canary
 `ghcr.io/proompteng/microvm-agent@sha256:5573551391d01240297680da6ac172d3c819b57d493c3c3e2e11fa1388b06640`.
 That reference is retained only to preserve the historical proof chain; active GitOps uses Nanoagent.
