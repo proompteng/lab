@@ -324,7 +324,8 @@ describe('createOciIndex', () => {
     }
     let annotationsApplied = false
     let kargoTagCreated = false
-    Bun.which = ((binary: string) => (binary === 'crane' ? '/bin/crane' : null)) as typeof Bun.which
+    Bun.which = ((binary: string) =>
+      binary === 'crane' || binary === 'regctl' ? `/bin/${binary}` : null) as typeof Bun.which
     __private.setSpawnSync(((command: Parameters<typeof Bun.spawnSync>[0]) => {
       const joined = typeof command === 'string' ? command : command.join(' ')
       calls.push(joined)
@@ -337,13 +338,7 @@ describe('createOciIndex', () => {
       }
       if (
         joined ===
-        'crane index append -m registry.example/lab/example@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -m registry.example/lab/example@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc -t registry.example/lab/example:sha-123'
-      ) {
-        return spawnResult(0)
-      }
-      if (
-        joined ===
-        'crane mutate registry.example/lab/example:sha-123 --annotation ai.proompteng.github-actions-build-conclusion=success --annotation ai.proompteng.github-actions-run-id=123456 --tag registry.example/lab/example:sha-123'
+        'regctl index create registry.example/lab/example:sha-123 --digest sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --digest sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc --annotation ai.proompteng.github-actions-build-conclusion=success --annotation ai.proompteng.github-actions-run-id=123456'
       ) {
         annotationsApplied = true
         return spawnResult(0)
@@ -392,6 +387,7 @@ describe('createOciIndex', () => {
     })
     expect(result.platformDigests).toHaveLength(2)
     expect(annotationsApplied).toBe(true)
+    expect(calls.some((call) => call.startsWith('crane mutate '))).toBe(false)
     expect(calls).toContain('crane tag registry.example/lab/example:sha-123 latest')
     expect(calls).toContain(`crane digest ${kargoReference}`)
     expect(calls).toContain(`crane tag registry.example/lab/example:sha-123 ${kargoTag}`)
@@ -410,14 +406,12 @@ describe('createOciIndex', () => {
       'org.opencontainers.image.source': 'https://github.com/proompteng/lab',
     }
     const receiptReference = `registry.example/lab/example:receipt-${kargoTag}`
-    Bun.which = ((binary: string) => (binary === 'crane' ? '/bin/crane' : null)) as typeof Bun.which
+    Bun.which = ((binary: string) =>
+      binary === 'crane' || binary === 'regctl' ? `/bin/${binary}` : null) as typeof Bun.which
     __private.setSpawnSync(((command: Parameters<typeof Bun.spawnSync>[0]) => {
       const joined = typeof command === 'string' ? command : command.join(' ')
       calls.push(joined)
-      if (joined.startsWith('crane index append ') && joined.endsWith(`-t ${receiptReference}`)) {
-        return spawnResult(0)
-      }
-      if (joined.startsWith(`crane mutate ${receiptReference} `)) {
+      if (joined.startsWith(`regctl index create ${receiptReference} `)) {
         return spawnResult(0)
       }
       if (joined === `crane manifest ${receiptReference}`) {
@@ -568,13 +562,14 @@ describe('createOciIndex', () => {
   })
 
   it('fails closed when an existing Kargo tag cannot be inspected', () => {
-    Bun.which = ((binary: string) => (binary === 'crane' ? '/bin/crane' : null)) as typeof Bun.which
+    Bun.which = ((binary: string) =>
+      binary === 'crane' || binary === 'regctl' ? `/bin/${binary}` : null) as typeof Bun.which
     __private.setSpawnSync(((command: Parameters<typeof Bun.spawnSync>[0]) => {
       const joined = typeof command === 'string' ? command : command.join(' ')
       if (joined.startsWith('crane digest registry.example/lab/example:sha-123-')) {
         return spawnResult(0, 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
       }
-      if (joined.startsWith('crane index append ')) {
+      if (joined.startsWith('regctl index create ')) {
         return spawnResult(0)
       }
       if (joined === 'crane digest registry.example/lab/example:sha-123') {
