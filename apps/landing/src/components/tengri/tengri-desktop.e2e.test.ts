@@ -8,6 +8,9 @@ const user = {
   image: null,
 }
 
+const desktopOrigin =
+  process.env.TENGRI_PLAYWRIGHT_BASE_URL ?? `http://127.0.0.1:${process.env.TENGRI_PLAYWRIGHT_PORT ?? '3000'}`
+
 const readyAgent = {
   id: 'microvm-ada',
   displayName: 'Tengri',
@@ -58,6 +61,27 @@ const sourceEntries = [
 
 function previewTicket(sequence: number) {
   return `${'a'.repeat(47)}${sequence.toString(36)}.${'b'.repeat(43)}`
+}
+
+function embeddedPreviewDocument() {
+  return `<!doctype html><title>Tengri preview</title><main>Live microVM preview</main><script>
+    (() => {
+      const channel = 'tengri-preview-v1';
+      const desktopOrigin = ${JSON.stringify(desktopOrigin)};
+      const match = window.location.hostname.match(/^tengri-([a-z0-9]{24})\\./);
+      if (!match || window.parent === window) return;
+      const sessionId = match[1];
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+      const send = (message) => window.parent.postMessage({ channel, sessionId, ...message }, desktopOrigin);
+      window.addEventListener('message', (event) => {
+        const message = event.data;
+        if (event.source !== window.parent || event.origin !== desktopOrigin || !message || message.channel !== channel || message.sessionId !== sessionId || message.type !== 'restore-fragment') return;
+        history.replaceState(history.state, '', window.location.pathname + window.location.search + message.fragment);
+        send({ type: 'navigation', mode: 'load', url: window.location.href });
+      });
+      window.addEventListener('pageshow', () => send({ type: 'navigation', mode: 'load', url: window.location.href }));
+    })();
+  </script>`
 }
 
 type TerminalStore = { sessions: Record<string, unknown>[] }
@@ -232,8 +256,8 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
     }
     await route.fulfill({
       contentType: 'text/html',
-      headers: { 'content-security-policy': 'frame-ancestors http://127.0.0.1:3000' },
-      body: '<!doctype html><title>Tengri preview</title><main>Live microVM preview</main>',
+      headers: { 'content-security-policy': `frame-ancestors ${desktopOrigin}` },
+      body: embeddedPreviewDocument(),
     })
   })
 
@@ -1017,18 +1041,35 @@ test('persists real Finder changes into Code and exposes a localhost preview fro
   const previewDocument = await previewElement?.contentFrame()
   expect(previewDocument).not.toBeNull()
   const embeddedSessionId = new URL(previewDocument!.url()).hostname.slice('tengri-'.length, -'.proompteng.ai'.length)
-  await previewDocument!.evaluate((sessionId) => {
-    window.parent.postMessage(
-      {
-        channel: 'tengri-preview-v1',
-        sessionId,
-        type: 'navigation',
-        mode: 'replace',
-        url: `${window.location.origin}${window.location.pathname}${window.location.search}#bridge-ready`,
-      },
-      '*',
-    )
-  }, embeddedSessionId)
+  await previewDocument!.evaluate(
+    ({ sessionId, desktopOrigin }) => {
+      window.parent.postMessage(
+        {
+          channel: 'tengri-preview-v1',
+          sessionId,
+          type: 'navigation',
+          mode: 'replace',
+          url: `${window.location.origin}${window.location.pathname}${window.location.search}#bridge-ready`,
+        },
+        desktopOrigin,
+      )
+    },
+    { sessionId: embeddedSessionId, desktopOrigin },
+  )
+  await expect(chrome.getByLabel('Address')).toHaveValue('http://localhost:4321/app?mode=dev#bridge-ready')
+  const embeddedPreviewHash = async () => {
+    const frameElement = await chrome.getByTitle('localhost:4321').elementHandle()
+    const frame = await frameElement?.contentFrame()
+    return frame ? new URL(frame.url()).hash : ''
+  }
+  await chrome.getByRole('button', { name: 'Reload' }).click()
+  await expect.poll(embeddedPreviewHash).toBe('#bridge-ready')
+  await expect(chrome.getByLabel('Address')).toHaveValue('http://localhost:4321/app?mode=dev#bridge-ready')
+
+  await chrome.getByRole('button', { name: 'Back' }).click()
+  await expect(chrome.getByLabel('Address')).toHaveValue('tengri://agent')
+  await chrome.getByRole('button', { name: 'Forward' }).click()
+  await expect.poll(embeddedPreviewHash).toBe('#bridge-ready')
   await expect(chrome.getByLabel('Address')).toHaveValue('http://localhost:4321/app?mode=dev#bridge-ready')
   await expect
     .poll(() =>
@@ -1037,6 +1078,11 @@ test('persists real Finder changes into Code and exposes a localhost preview fro
       ),
     )
     .toBe(true)
+  expect(
+    mock.actions
+      .filter((action) => action.action === 'preview-session' && action.port === 4321)
+      .every((action) => !String(action.path).includes('#')),
+  ).toBe(true)
 
   const previewSessionCount = () =>
     mock.actions.filter(

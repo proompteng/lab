@@ -114,13 +114,16 @@ const OPEN_PREVIEW_BOOTSTRAP_SCRIPT: &str = r#"(() => {
     });
 })();
 "#;
-const PREVIEW_BRIDGE_SCRIPT: &str = r#"(() => {
+const PREVIEW_DESKTOP_ORIGIN_MARKER: &str = "__TENGRI_DESKTOP_ORIGIN_JSON__";
+const PREVIEW_BRIDGE_SCRIPT_TEMPLATE: &str = r#"(() => {
   const channel = 'tengri-preview-v1';
+  const desktopOrigin = __TENGRI_DESKTOP_ORIGIN_JSON__;
   const match = window.location.hostname.match(/^tengri-([a-z0-9]{24})\./);
   if (!match || window.parent === window) return;
   const sessionId = match[1];
-  const send = (message) => window.parent.postMessage({ channel, sessionId, ...message }, '*');
+  const send = (message) => window.parent.postMessage({ channel, sessionId, ...message }, desktopOrigin);
   const notify = (mode) => send({ type: 'navigation', mode, url: window.location.href });
+  const replaceState = window.history.replaceState;
   for (const [method, mode] of [['pushState', 'push'], ['replaceState', 'replace']]) {
     const original = window.history[method];
     window.history[method] = function (...args) {
@@ -132,6 +135,15 @@ const PREVIEW_BRIDGE_SCRIPT: &str = r#"(() => {
   window.addEventListener('pageshow', () => notify('load'));
   window.addEventListener('popstate', () => notify('load'));
   window.addEventListener('hashchange', () => notify('load'));
+  window.addEventListener('message', (event) => {
+    if (event.source !== window.parent || event.origin !== desktopOrigin) return;
+    const message = event.data;
+    if (!message || typeof message !== 'object' || message.channel !== channel || message.sessionId !== sessionId || message.type !== 'restore-fragment') return;
+    const fragment = message.fragment;
+    if (typeof fragment !== 'string' || !fragment.startsWith('#') || new TextEncoder().encode(fragment).byteLength > 4096 || /[\u0000-\u001f\u007f]/.test(fragment)) return;
+    Reflect.apply(replaceState, window.history, [window.history.state, '', `${window.location.pathname}${window.location.search}${fragment}`]);
+    notify('load');
+  });
   window.addEventListener('keydown', (event) => {
     const key = event.key.toLowerCase();
     if (!event.metaKey || event.altKey || event.ctrlKey || event.shiftKey || !['l', 'r', 't', 'w'].includes(key)) return;
@@ -591,18 +603,33 @@ async fn serve_preview_bootstrap_script(
     script_response(PREVIEW_BOOTSTRAP_SCRIPT)
 }
 
-async fn serve_preview_bridge_script() -> axum::response::Response {
-    script_response(PREVIEW_BRIDGE_SCRIPT)
+async fn serve_preview_bridge_script(
+    State(state): State<GatewayState>,
+    request: Request<Body>,
+) -> axum::response::Response {
+    let Some(authority) = request_authority(&request) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if state.preview_origin.session_id(&authority).is_none() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    script_response(preview_bridge_script(&state.preview_origin.desktop_origin))
 }
 
-fn script_response(script: &'static str) -> axum::response::Response {
+fn preview_bridge_script(desktop_origin: &str) -> String {
+    let desktop_origin =
+        serde_json::to_string(desktop_origin).expect("string serialization cannot fail");
+    PREVIEW_BRIDGE_SCRIPT_TEMPLATE.replace(PREVIEW_DESKTOP_ORIGIN_MARKER, &desktop_origin)
+}
+
+fn script_response(script: impl Into<String>) -> axum::response::Response {
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/javascript; charset=utf-8")
         .header(header::CACHE_CONTROL, "no-store")
         .header("Referrer-Policy", "no-referrer")
         .header("X-Content-Type-Options", "nosniff")
-        .body(Body::from(script))
+        .body(Body::from(script.into()))
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
@@ -1347,13 +1374,38 @@ mod tests {
         .await;
         assert_eq!(control_preview_script.status(), StatusCode::NOT_FOUND);
 
-        let preview_script =
-            router_response(preview_router(state), "/_tengri/bootstrap.js", preview_host).await;
+        let preview_script = router_response(
+            preview_router(state.clone()),
+            "/_tengri/bootstrap.js",
+            preview_host,
+        )
+        .await;
         assert_eq!(preview_script.status(), StatusCode::OK);
         assert_eq!(
             preview_script.headers().get(header::CONTENT_TYPE),
             Some(&HeaderValue::from_static("text/javascript; charset=utf-8"))
         );
+
+        let preview_bridge = router_response(
+            preview_router(state.clone()),
+            "/_tengri/bridge.js",
+            preview_host,
+        )
+        .await;
+        assert_eq!(preview_bridge.status(), StatusCode::OK);
+        let bridge_body = to_bytes(preview_bridge.into_body(), 16 * 1024)
+            .await
+            .expect("preview bridge body");
+        let bridge = std::str::from_utf8(&bridge_body).expect("UTF-8 preview bridge");
+        assert!(bridge.contains("const desktopOrigin = \"https://proompteng.ai\""));
+
+        let bridge_on_control_host = router_response(
+            preview_router(state),
+            "/_tengri/bridge.js",
+            "tengri.proompteng.ai",
+        )
+        .await;
+        assert_eq!(bridge_on_control_host.status(), StatusCode::NOT_FOUND);
     }
 
     async fn readiness_for_kubernetes_responses(
@@ -1732,9 +1784,15 @@ mod tests {
             html.find("/_tengri/bridge.js").expect("bridge script")
                 < html.find("</head>").expect("head close")
         );
-        assert!(PREVIEW_BRIDGE_SCRIPT.contains("tengri-preview-v1"));
-        assert!(PREVIEW_BRIDGE_SCRIPT.contains("pushState"));
-        assert!(PREVIEW_BRIDGE_SCRIPT.contains("stopImmediatePropagation"));
+        let bridge = preview_bridge_script("https://proompteng.ai");
+        assert!(bridge.contains("tengri-preview-v1"));
+        assert!(bridge.contains("pushState"));
+        assert!(bridge.contains("stopImmediatePropagation"));
+        assert!(bridge.contains("event.origin !== desktopOrigin"));
+        assert!(bridge.contains("message.type !== 'restore-fragment'"));
+        assert!(bridge.contains("postMessage({ channel, sessionId, ...message }, desktopOrigin)"));
+        assert!(!bridge.contains("postMessage({ channel, sessionId, ...message }, '*')"));
+        assert!(!bridge.contains(PREVIEW_DESKTOP_ORIGIN_MARKER));
     }
 
     #[test]

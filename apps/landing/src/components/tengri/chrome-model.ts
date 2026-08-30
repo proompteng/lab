@@ -3,6 +3,7 @@ import { normalizePreviewGatewayOrigin } from '@/lib/tengri/preview-origin'
 export const MAX_CHROME_TABS = 8
 const MAX_CHROME_HISTORY = 30
 const MAX_PREVIEW_PATH_BYTES = 4096
+const MAX_PREVIEW_FRAGMENT_BYTES = 4096
 const PREVIEW_TICKET_PATTERN = /^[A-Za-z0-9_-]{16,128}\.[A-Za-z0-9_-]{16,128}$/
 export const PREVIEW_BRIDGE_CHANNEL = 'tengri-preview-v1'
 
@@ -11,7 +12,7 @@ export type ChromePreviewNavigationMode = 'load' | 'push' | 'replace'
 
 export type ChromePage =
   | { kind: 'agent'; title: string; displayUrl: 'tengri://agent' }
-  | { kind: 'preview'; title: string; displayUrl: string; port: number; path: string }
+  | { kind: 'preview'; title: string; displayUrl: string; port: number; path: string; fragment: string }
 
 export type ChromeLoadRequest = { page: ChromePage; revision: number }
 
@@ -152,9 +153,6 @@ export function parseChromeAddress(raw: string): ParsedChromeAddress {
   if (url.protocol !== 'http:') {
     return { kind: 'invalid', message: 'MicroVM previews currently use HTTP localhost addresses.' }
   }
-  if (url.hash) {
-    return { kind: 'invalid', message: 'Remove the URL fragment before opening a microVM preview.' }
-  }
   const port = Number(url.port || 80)
   if (!Number.isInteger(port) || port < 1024 || port > 65535) {
     return { kind: 'invalid', message: 'MicroVM preview ports must be between 1024 and 65535.' }
@@ -166,6 +164,10 @@ export function parseChromeAddress(raw: string): ParsedChromeAddress {
   if (utf8ByteLength(path) > MAX_PREVIEW_PATH_BYTES) {
     return { kind: 'invalid', message: 'MicroVM preview paths must not exceed 4096 bytes.' }
   }
+  const fragment = url.hash
+  if (!validPreviewFragment(fragment)) {
+    return { kind: 'invalid', message: 'MicroVM preview fragments must not exceed 4096 bytes.' }
+  }
   return {
     kind: 'preview',
     page: {
@@ -174,6 +176,7 @@ export function parseChromeAddress(raw: string): ParsedChromeAddress {
       displayUrl: url.toString(),
       port,
       path,
+      fragment,
     },
   }
 }
@@ -214,11 +217,13 @@ export function parsePreviewBridgeMessage(
     }
     const path = `${url.pathname}${url.search}`
     if (utf8ByteLength(path) > MAX_PREVIEW_PATH_BYTES || hasControlCharacters(path)) return null
-    const displayUrl = `http://localhost:${port}${path}${url.hash}`
+    const fragment = url.hash
+    if (!validPreviewFragment(fragment)) return null
+    const displayUrl = `http://localhost:${port}${path}${fragment}`
     return {
       kind: 'navigation',
       mode: message.mode as ChromePreviewNavigationMode,
-      page: { kind: 'preview', title: `localhost:${port}`, displayUrl, port, path },
+      page: { kind: 'preview', title: `localhost:${port}`, displayUrl, port, path, fragment },
     }
   } catch {
     return null
@@ -330,6 +335,14 @@ function hasControlCharacters(value: string) {
     const codePoint = character.codePointAt(0) ?? 0
     return codePoint <= 31 || codePoint === 127
   })
+}
+
+function validPreviewFragment(value: string) {
+  return (
+    (!value || value.startsWith('#')) &&
+    utf8ByteLength(value) <= MAX_PREVIEW_FRAGMENT_BYTES &&
+    !hasControlCharacters(value)
+  )
 }
 
 function utf8ByteLength(value: string) {

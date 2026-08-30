@@ -35,14 +35,28 @@ describe('Tengri Chrome tabs', () => {
     for (let port = 3000; port < 3032; port++) {
       state = chromeReducer(state, {
         type: 'navigate',
-        page: { kind: 'preview', title: `localhost:${port}`, displayUrl: `http://localhost:${port}/`, port, path: '/' },
+        page: {
+          kind: 'preview',
+          title: `localhost:${port}`,
+          displayUrl: `http://localhost:${port}/`,
+          port,
+          path: '/',
+          fragment: '',
+        },
       })
     }
     expect(activeChromeTab(state).history).toHaveLength(30)
     state = chromeReducer(state, { type: 'history', offset: -1 })
     state = chromeReducer(state, {
       type: 'navigate',
-      page: { kind: 'preview', title: 'replacement', displayUrl: 'http://localhost:4000/', port: 4000, path: '/' },
+      page: {
+        kind: 'preview',
+        title: 'replacement',
+        displayUrl: 'http://localhost:4000/',
+        port: 4000,
+        path: '/',
+        fragment: '',
+      },
     })
     const active = activeChromeTab(state)
     expect(currentChromePage(active).title).toBe('replacement')
@@ -65,7 +79,14 @@ describe('Tengri Chrome tabs', () => {
     let state = initialChromeState()
     state = chromeReducer(state, {
       type: 'navigate',
-      page: { kind: 'preview', title: 'localhost:3000', displayUrl: 'http://localhost:3000/', port: 3000, path: '/' },
+      page: {
+        kind: 'preview',
+        title: 'localhost:3000',
+        displayUrl: 'http://localhost:3000/',
+        port: 3000,
+        path: '/',
+        fragment: '',
+      },
     })
     const liveLoad = activeChromeTab(state).load
     state = chromeReducer(state, {
@@ -78,6 +99,7 @@ describe('Tengri Chrome tabs', () => {
         displayUrl: 'http://localhost:3000/dashboard',
         port: 3000,
         path: '/dashboard',
+        fragment: '',
       },
     })
     expect(currentChromePage(activeChromeTab(state)).displayUrl).toBe('http://localhost:3000/dashboard')
@@ -87,7 +109,14 @@ describe('Tengri Chrome tabs', () => {
       type: 'frame-navigate',
       id: state.activeId,
       mode: 'load',
-      page: { kind: 'preview', title: 'localhost:3000', displayUrl: 'http://localhost:3000/', port: 3000, path: '/' },
+      page: {
+        kind: 'preview',
+        title: 'localhost:3000',
+        displayUrl: 'http://localhost:3000/',
+        port: 3000,
+        path: '/',
+        fragment: '',
+      },
     })
     expect(activeChromeTab(state).historyIndex).toBe(1)
     expect(activeChromeTab(state).load).toBe(liveLoad)
@@ -98,14 +127,15 @@ describe('Tengri Chrome addresses', () => {
   test('routes the agent home and safe loopback HTTP addresses internally', () => {
     expect(parseChromeAddress('')).toMatchObject({ kind: 'agent' })
     expect(parseChromeAddress('TENGRI://AGENT')).toMatchObject({ kind: 'agent' })
-    expect(parseChromeAddress('localhost:3000/app?q=1')).toEqual({
+    expect(parseChromeAddress('localhost:3000/app?q=1#editor')).toEqual({
       kind: 'preview',
       page: {
         kind: 'preview',
         title: 'localhost:3000',
-        displayUrl: 'http://localhost:3000/app?q=1',
+        displayUrl: 'http://localhost:3000/app?q=1#editor',
         port: 3000,
         path: '/app?q=1',
+        fragment: '#editor',
       },
     })
     expect(parseChromeAddress('http://[::1]:4321/')).toMatchObject({ kind: 'preview', page: { port: 4321 } })
@@ -119,13 +149,12 @@ describe('Tengri Chrome addresses', () => {
     })
   })
 
-  test('rejects reserved, privileged, credentialed, fragmented, and active-content addresses', () => {
+  test('rejects reserved, privileged, credentialed, oversized, and active-content addresses', () => {
     for (const address of [
       'localhost:80',
       'localhost:8080',
       'https://localhost:3000',
       'http://user:secret@localhost:3000',
-      'http://localhost:3000/#secret',
       'javascript:alert(1)',
       'data:text/html,hello',
       'ftp://example.com/file',
@@ -133,6 +162,7 @@ describe('Tengri Chrome addresses', () => {
       'custom:payload',
       `https://example.com/${'x'.repeat(4096)}`,
       `http://localhost:3000/${'😀'.repeat(500)}`,
+      `http://localhost:3000/#${'😀'.repeat(1100)}`,
     ]) {
       expect(parseChromeAddress(address).kind).toBe('invalid')
     }
@@ -164,6 +194,7 @@ describe('Tengri Chrome addresses', () => {
         displayUrl: 'http://localhost:3000/workspace?q=1#editor',
         port: 3000,
         path: '/workspace?q=1',
+        fragment: '#editor',
       },
     })
     expect(
@@ -200,6 +231,21 @@ describe('Tengri Chrome addresses', () => {
           url: `https://tengri-${sessionId}.attacker.example/`,
         },
         `https://tengri-${sessionId}.attacker.example`,
+        origin,
+        sessionId,
+        3000,
+      ),
+    ).toBeNull()
+    expect(
+      parsePreviewBridgeMessage(
+        {
+          channel: PREVIEW_BRIDGE_CHANNEL,
+          sessionId,
+          type: 'navigation',
+          mode: 'load',
+          url: `${origin}/#${'a'.repeat(4097)}`,
+        },
+        origin,
         origin,
         sessionId,
         3000,
