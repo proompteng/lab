@@ -27,9 +27,10 @@ renders must not contain `Namespace` resources.
 Useful read-only checks:
 
 ```bash
-kubectl -n argocd get application root
-kubectl -n argocd get applicationsets
-kubectl -n argocd get applications.argoproj.io
+GALACTIC_CONTEXT=galactic-lan # or galactic-tailscale
+kubectl --context "$GALACTIC_CONTEXT" -n argocd get application root
+kubectl --context "$GALACTIC_CONTEXT" -n argocd get applicationsets
+kubectl --context "$GALACTIC_CONTEXT" -n argocd get applications.argoproj.io
 ```
 
 ## Initial bootstrap
@@ -42,7 +43,8 @@ Only during that first bootstrap, install the large ApplicationSet CRD server-si
 CD:
 
 ```bash
-kubectl --context galactic-lan apply --server-side --force-conflicts \
+GALACTIC_CONTEXT=galactic-lan # or galactic-tailscale
+kubectl --context "$GALACTIC_CONTEXT" apply --server-side --force-conflicts \
   -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.2/manifests/crds/applicationset-crd.yaml
 ```
 
@@ -50,7 +52,7 @@ If the server-side apply cannot create a missing CRD, the create-only fallback i
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.2/manifests/crds/applicationset-crd.yaml \
-  | kubectl --context galactic-lan create -f -
+  | kubectl --context "$GALACTIC_CONTEXT" create -f -
 ```
 
 Do not use either command as routine reconciliation after `argocd/root.yaml` is healthy.
@@ -58,9 +60,9 @@ Do not use either command as routine reconciliation after `argocd/root.yaml` is 
 After the Argo CD control plane is ready, perform the one-time handoff to the repository root Application:
 
 ```bash
-kubectl --context galactic-lan -n argocd apply -f argocd/root.yaml
-kubectl --context galactic-lan -n argocd get application root
-kubectl --context galactic-lan -n argocd get applicationsets
+kubectl --context "$GALACTIC_CONTEXT" -n argocd apply -f argocd/root.yaml
+kubectl --context "$GALACTIC_CONTEXT" -n argocd get application root
+kubectl --context "$GALACTIC_CONTEXT" -n argocd get applicationsets
 ```
 
 The repository is public, so this root handoff does not require a manually registered repository credential. Once the

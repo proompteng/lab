@@ -5,10 +5,16 @@ This runbook documents how to bring up Argo CD on the `galactic` cluster in a wa
 ## Prereqs
 
 1. `kubectl` can reach the cluster through context `galactic-lan` or `galactic-tailscale`; see
-   `docs/runbooks/galactic-kubernetes-access.md`.
+   `docs/runbooks/galactic-kubernetes-access.md`. Select the reachable context once for the commands below:
+
+   ```bash
+   GALACTIC_CONTEXT=galactic-lan # or galactic-tailscale
+   kubectl --context "$GALACTIC_CONTEXT" get nodes
+   ```
+
 1. Core components are healthy:
-   - `kubectl get nodes`
-   - `kubectl -n kube-system get pods | rg -n 'coredns|kube-flannel|kube-proxy'`
+   - `kubectl --context "$GALACTIC_CONTEXT" get nodes`
+   - `kubectl --context "$GALACTIC_CONTEXT" -n kube-system get pods | rg -n 'coredns|kube-flannel|kube-proxy'`
 
 If Argo CD pods are failing with Redis timeouts or probe failures, fix networking first:
 
@@ -30,7 +36,7 @@ This is typically caused by `kubectl apply` trying to store the full object in t
 Recommended (server-side apply, avoids last-applied annotation):
 
 ```bash
-kubectl --context galactic-lan apply --server-side --force-conflicts \
+kubectl --context "$GALACTIC_CONTEXT" apply --server-side --force-conflicts \
   -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.2/manifests/crds/applicationset-crd.yaml
 ```
 
@@ -38,13 +44,13 @@ Fallback (create-only, avoids last-applied annotation):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.2/manifests/crds/applicationset-crd.yaml \
-  | kubectl --context galactic-lan create -f -
+  | kubectl --context "$GALACTIC_CONTEXT" create -f -
 ```
 
 Verify:
 
 ```bash
-kubectl --context galactic-lan get crd applicationsets.argoproj.io
+kubectl --context "$GALACTIC_CONTEXT" get crd applicationsets.argoproj.io
 ```
 
 ## Install Traefik CRDs (required by this repo's Argo CD manifests)
@@ -58,13 +64,14 @@ On a fresh cluster, applying `argocd/applications/argocd` will fail until the Tr
 Install the CRDs (pinned to the chart version we deploy):
 
 ```bash
-kubectl apply --server-side --force-conflicts -k https://github.com/traefik/traefik-helm-chart/traefik/crds/?ref=v39.0.9
+kubectl --context "$GALACTIC_CONTEXT" apply --server-side --force-conflicts \
+  -k https://github.com/traefik/traefik-helm-chart/traefik/crds/?ref=v39.0.9
 ```
 
 Verify:
 
 ```bash
-kubectl get crd ingressroutes.traefik.io
+kubectl --context "$GALACTIC_CONTEXT" get crd ingressroutes.traefik.io
 ```
 
 ## Deploy Argo CD
@@ -72,15 +79,16 @@ kubectl get crd ingressroutes.traefik.io
 Apply the repo-managed Argo CD manifests:
 
 ```bash
-kubectl apply --server-side --force-conflicts -k argocd/applications/argocd
+kubectl --context "$GALACTIC_CONTEXT" -n argocd apply --server-side --force-conflicts \
+  -k argocd/applications/argocd
 ```
 
 Wait for Argo CD control plane to be up:
 
 ```bash
-kubectl -n argocd get pods
-kubectl -n argocd rollout status deploy/argocd-server --timeout=180s
-kubectl -n argocd rollout status deploy/argocd-repo-server --timeout=300s
+kubectl --context "$GALACTIC_CONTEXT" -n argocd get pods
+kubectl --context "$GALACTIC_CONTEXT" -n argocd rollout status deploy/argocd-server --timeout=180s
+kubectl --context "$GALACTIC_CONTEXT" -n argocd rollout status deploy/argocd-repo-server --timeout=300s
 ```
 
 ## Access the UI (no ingress)
@@ -88,7 +96,7 @@ kubectl -n argocd rollout status deploy/argocd-repo-server --timeout=300s
 Port-forward:
 
 ```bash
-kubectl -n argocd port-forward svc/argocd-server 8080:80
+kubectl --context "$GALACTIC_CONTEXT" -n argocd port-forward svc/argocd-server 8080:80
 ```
 
 Then open `http://127.0.0.1:8080`.
