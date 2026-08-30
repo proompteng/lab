@@ -1170,7 +1170,7 @@ describe('native OCI build workflows', () => {
     expect(pushTrigger).not.toContain('- main')
     expect(pushTrigger).toContain("- 'argocd/applications/symphony/**'")
     expect(pushTrigger).toContain("- 'argocd/applications/symphony-jangar/**'")
-    expect(pushTrigger).toContain("- 'argocd/applications/symphony-torghut/**'")
+    expect(pushTrigger).not.toContain('symphony-torghut')
     expect(symphonyPostDeployVerifyWorkflow).toContain('contents: read')
     expect(symphonyPostDeployVerifyWorkflow).toContain('Verify Symphony fleet deployment health and digest')
     expect(symphonyPostDeployVerifyWorkflow).toContain('--expected-revision "${GITHUB_SHA}"')
