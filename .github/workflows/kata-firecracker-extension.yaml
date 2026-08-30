@@ -63,7 +63,6 @@ jobs:
             clang \
             libmount-dev \
             libseccomp-dev \
-            libsystemd-dev \
             pkg-config \
             protobuf-compiler
 
