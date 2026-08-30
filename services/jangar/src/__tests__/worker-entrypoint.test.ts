@@ -1,0 +1,73 @@
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { describe, expect, it } from 'vitest'
+
+describe('worker entrypoint', () => {
+  it('uses a runtime-resolvable local import for worker config', () => {
+    const workerUrl = new URL('../worker.ts', import.meta.url)
+    const workerPath = fileURLToPath(workerUrl)
+    const source = readFileSync(workerUrl, 'utf8')
+    const importMatch = source.match(/from '(\.\/server\/runtime-entry-config(?:\.ts)?)'/)
+    const importPath = importMatch?.[1]
+
+    expect(importPath).toBe('./server/runtime-entry-config')
+    expect(existsSync(resolve(dirname(workerPath), `${importPath!}.ts`))).toBe(true)
+  })
+
+  it('avoids tsconfig path aliases that bun cannot resolve at runtime', () => {
+    const source = readFileSync(new URL('../worker.ts', import.meta.url), 'utf8')
+
+    expect(source).not.toContain("from '~/")
+    expect(source).not.toContain('from "~/')
+    expect(source).not.toContain("from '@/")
+    expect(source).not.toContain('from "@/')
+  })
+
+  it('loads Bumba workflows from a file so strict Bun guards can inspect them', () => {
+    const workerUrl = new URL('../worker.ts', import.meta.url)
+    const source = readFileSync(workerUrl, 'utf8')
+    const workflowsPath = fileURLToPath(new URL('../../bumba/src/workflows/index.ts', workerUrl))
+
+    expect(existsSync(workflowsPath)).toBe(true)
+    expect(source).toContain(
+      "workflowsPath: fileURLToPath(new URL('../../bumba/src/workflows/index.ts', import.meta.url))",
+    )
+    expect(source).not.toContain('workflows: workflows')
+  })
+
+  it('copies worker runtime config into both runtime images', () => {
+    const dockerfile = readFileSync(new URL('../../Dockerfile', import.meta.url), 'utf8')
+    const copyDirective =
+      'COPY --from=jangar-build /app/services/jangar/src/server/runtime-entry-config.ts ./src/server/runtime-entry-config.ts'
+    const matches = dockerfile.match(new RegExp(copyDirective.replaceAll('/', '\\/'), 'g')) ?? []
+
+    expect(matches).toHaveLength(2)
+  })
+
+  it('exposes hoisted dependencies to the copied bumba workspace in both runtime images', () => {
+    const dockerfile = readFileSync(new URL('../../Dockerfile', import.meta.url), 'utf8')
+    const bumbaCopy = 'COPY --from=jangar-build /app/services/bumba ./services/bumba'
+    const nodeModulesLink = 'ln -s /app/node_modules /app/services/bumba/node_modules'
+
+    const runtimeBumbaCopies = dockerfile.match(new RegExp(bumbaCopy.replaceAll('/', '\\/'), 'g')) ?? []
+    const dependencyLinks = dockerfile.match(new RegExp(nodeModulesLink.replaceAll('/', '\\/'), 'g')) ?? []
+
+    expect(runtimeBumbaCopies).toHaveLength(2)
+    expect(dependencyLinks).toHaveLength(2)
+  })
+
+  it('installs workspace tool build dependencies with dev dependencies enabled', () => {
+    const dockerfile = readFileSync(new URL('../../Dockerfile', import.meta.url), 'utf8')
+    const workspaceToolsStage = dockerfile.match(
+      /FROM tools AS workspace-tools-deps[\s\S]*?FROM workspace-tools-deps AS codex-build/,
+    )?.[0]
+
+    expect(workspaceToolsStage).toBeDefined()
+    expect(workspaceToolsStage!.indexOf('ENV NODE_ENV=development')).toBeLessThan(
+      workspaceToolsStage!.indexOf('bun install --no-save --ignore-scripts --linker=hoisted'),
+    )
+    expect(workspaceToolsStage).toContain('bun install --no-save --ignore-scripts --linker=hoisted')
+    expect(workspaceToolsStage).toContain('--filter @proompteng/codex')
+  })
+})

@@ -1,0 +1,13 @@
+apiVersion: devices.harvesterhci.io/v1beta1
+kind: PCIDeviceClaim
+metadata:
+  name: altra-000c01001
+  ownerReferences:
+    - apiVersion: devices.harvesterhci.io/v1beta1
+      kind: PCIDevice
+      name: altra-000c01001
+      uid: a849796e-d72a-4c09-ae30-40760e1c9b74
+spec:
+  address: 000c:01:00.1
+  nodeName: altra
+  userName: admin

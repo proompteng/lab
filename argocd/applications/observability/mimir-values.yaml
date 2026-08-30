@@ -1,0 +1,145 @@
+global:
+  extraEnv:
+    - name: OBS_S3_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: rook-ceph-rgw-loki
+          key: AccessKey
+    - name: OBS_S3_SECRET_KEY
+      valueFrom:
+        secretKeyRef:
+          name: rook-ceph-rgw-loki
+          key: SecretKey
+    - name: OBS_S3_REGION
+      value: us-east-1
+
+mimir:
+  structuredConfig:
+    alertmanager:
+      external_url: https://mimir.ide-newton.ts.net/alertmanager
+    limits:
+      ingestion_rate: 20000
+      ingestion_burst_size: 400000
+    blocks_storage:
+      backend: s3
+      bucket_store:
+        sync_dir: /data/tsdb-sync
+      s3:
+        endpoint: rook-ceph-rgw-objectstore.rook-ceph.svc:80
+        bucket_name: mimir-blocks
+        access_key_id: ${OBS_S3_ACCESS_KEY}
+        secret_access_key: ${OBS_S3_SECRET_KEY}
+        region: ${OBS_S3_REGION}
+        insecure: true
+        bucket_lookup_type: path
+    alertmanager_storage:
+      backend: s3
+      s3:
+        endpoint: rook-ceph-rgw-objectstore.rook-ceph.svc:80
+        bucket_name: mimir-alertmanager
+        access_key_id: ${OBS_S3_ACCESS_KEY}
+        secret_access_key: ${OBS_S3_SECRET_KEY}
+        region: ${OBS_S3_REGION}
+        insecure: true
+        bucket_lookup_type: path
+    ruler_storage:
+      backend: s3
+      s3:
+        endpoint: rook-ceph-rgw-objectstore.rook-ceph.svc:80
+        bucket_name: mimir-ruler
+        access_key_id: ${OBS_S3_ACCESS_KEY}
+        secret_access_key: ${OBS_S3_SECRET_KEY}
+        region: ${OBS_S3_REGION}
+        insecure: true
+        bucket_lookup_type: path
+    ruler:
+      # /data/ruler is the writable working directory used by the ruler.
+      # Rule groups are stored in object storage via ruler_storage (S3 backend).
+      rule_path: /data/ruler
+    usage_stats:
+      enabled: false
+      installation_mode: helm
+  runtimeConfig:
+    overrides:
+      anonymous:
+        ingestion_rate: 20000
+        ingestion_burst_size: 400000
+
+rollout_operator:
+  enabled: false
+
+admin_api:
+  replicas: 1
+
+distributor:
+  replicas: 2
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+
+ingester:
+  replicas: 3
+  zoneAwareReplication:
+    enabled: false
+  persistentVolume:
+    enabled: true
+    size: 20Gi
+    storageClass: rook-ceph-block
+
+querier:
+  replicas: 1
+
+query_frontend:
+  replicas: 1
+
+query_scheduler:
+  replicas: 1
+
+ruler:
+  replicas: 1
+
+store_gateway:
+  replicas: 1
+  zoneAwareReplication:
+    enabled: false
+  persistentVolume:
+    enabled: true
+    size: 20Gi
+    storageClass: rook-ceph-block
+
+compactor:
+  replicas: 1
+  persistentVolume:
+    enabled: true
+    size: 20Gi
+    storageClass: rook-ceph-block
+
+alertmanager:
+  replicas: 1
+  zoneAwareReplication:
+    enabled: false
+  fallbackConfig: |
+    # Real fallback config is rendered by External Secrets into the
+    # observability-alertmanager-email Secret and mounted over this file.
+    route:
+      receiver: default-receiver
+    receivers:
+      - name: default-receiver
+  persistence:
+    enabled: true
+    storageClass: rook-ceph-block
+    size: 5Gi
+
+kafka:
+  persistence:
+    enabled: true
+    size: 20Gi
+    storageClassName: rook-ceph-block
+
+metaMonitoring:
+  dashboards:
+    enabled: false
+
+minio:
+  enabled: false

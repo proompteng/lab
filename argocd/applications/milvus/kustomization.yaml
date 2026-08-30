@@ -1,0 +1,58 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: milvus
+
+resources:
+  - external-service.yaml
+  - milvus-kafka-sasl-secret.yaml
+  - minio-bucket-job.yaml
+  - milvus-external-minio-secret.yaml
+
+helmCharts:
+  - name: milvus
+    repo: https://zilliztech.github.io/milvus-helm
+    version: 5.0.0
+    releaseName: milvus
+    namespace: milvus
+    valuesInline:
+      kafka:
+        enabled: false
+        external:
+          enabled: true
+          brokers:
+            - kafka-kafka-bootstrap.kafka.svc.cluster.local:9092
+          sasl:
+            enabled: true
+            mechanism: scram-sha-512
+            username: user1
+            passwordFromExistingSecret:
+              name: milvus-kafka-sasl
+              key: password
+      pulsar:
+        enabled: false
+      pulsarv3:
+        enabled: false
+      etcd:
+        enabled: true
+        replicaCount: 1
+        persistence:
+          enabled: true
+          storageClass: rook-ceph-block
+          size: 10Gi
+      minio:
+        enabled: false
+      externalS3:
+        enabled: true
+        host: minio.minio.svc.cluster.local
+        port: 9000
+        accessKeyIDFromSecret:
+          name: milvus-external-minio
+          key: accesskey
+        secretAccessKeyFromSecret:
+          name: milvus-external-minio
+          key: secretkey
+        useSSL: false
+        bucketName: milvus-bucket
+        rootPath: file
+        useIAM: false
+        useVirtualHost: false
