@@ -33,6 +33,7 @@ const kustomization = YAML.parse(readRepoFile('argocd/applications/kargo/kustomi
 const stagesSource = readRepoFile('argocd/applications/kargo/stages.yaml')
 const torghutMigrationJob = YAML.parse(readRepoFile('argocd/applications/torghut/db-migrations-job.yaml')) as Manifest
 const torghutVerifierWorkflow = readRepoFile('.github/workflows/torghut-post-deploy-verify.yml')
+const agentsBuildWorkflow = YAML.parse(readRepoFile('.github/workflows/agents-build-push.yml')) as Record<string, any>
 const productNixWorkflow = YAML.parse(readRepoFile('.github/workflows/product-nix-images.yml')) as Record<string, any>
 const analysisKustomization = readRepoFile('argocd/applications/analysis/kustomization.yaml')
 const pullRequestWorkflow = readRepoFile('.github/workflows/pull-request.yml')
@@ -391,6 +392,7 @@ const expected = {
       'packages/cx-tools',
       'packages/otel',
       'packages/scripts/src/agents/update-values.ts',
+      'packages/scripts/src/shared/oci.ts',
       'packages/temporal-bun-sdk',
       'services/agents',
       'charts/agents/crds',
@@ -611,6 +613,22 @@ describe('Kargo direct-push GitOps contract', () => {
       const buildPaths = buildFilters[product]?.map((path) => path.replace(/\/\*\*$/, ''))
       expect(warehousePaths).toEqual(buildPaths)
     }
+  })
+
+  it('aligns the Agents Warehouse source paths with its exact image build trigger', () => {
+    const warehouse = byName(warehouses).get('agents')
+    const subscriptions = warehouse?.spec?.subscriptions as Array<Record<string, any>>
+    const git = subscriptions.find((subscription) => subscription.git)?.git
+    const buildPaths = agentsBuildWorkflow.on?.push?.paths as string[]
+    const includePaths = buildPaths.filter((path) => !path.startsWith('!')).map((path) => path.replace(/\/\*\*$/, ''))
+    const excludePaths = buildPaths
+      .filter((path) => path.startsWith('!'))
+      .map((path) => path.slice(1))
+      .map((path) => (path.endsWith('/**') && !path.slice(0, -3).includes('*') ? path.slice(0, -3) : path))
+      .map((path) => (path.includes('*') ? `glob:${path}` : path))
+
+    expect(git?.includePaths).toEqual(includePaths)
+    expect(git?.excludePaths).toEqual(excludePaths)
   })
 
   it('keeps every stage direct, automatic, branch-backed, and free of pull-request promotion', () => {

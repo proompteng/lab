@@ -727,6 +727,7 @@ spec:
           - packages/cx-tools
           - packages/otel
           - packages/scripts/src/agents/update-values.ts
+          - packages/scripts/src/shared/oci.ts
           - packages/temporal-bun-sdk
           - services/agents
           - charts/agents/crds
