@@ -38,6 +38,7 @@ const bunWorkspaceServiceModule = readRepoFile('nix/images/bun-workspace-service
 const agentsBuildWorkflow = readRepoFile('.github/workflows/agents-build-push.yml')
 const agentsCiWorkflow = readRepoFile('.github/workflows/agents-ci.yml')
 const arcRunnerBuildWorkflow = readRepoFile('.github/workflows/arc-runner-build-push.yml')
+const hermesToolchainBuildWorkflow = readRepoFile('.github/workflows/hermes-toolchain-build-push.yml')
 const jangarBuildWorkflow = readRepoFile('.github/workflows/jangar-build-push.yaml')
 const jangarPostDeployVerifyWorkflow = readRepoFile('.github/workflows/jangar-post-deploy-verify.yml')
 const symphonyBuildWorkflow = readRepoFile('.github/workflows/symphony-build-push.yaml')
@@ -48,6 +49,7 @@ const jangarReleaseMetadataScript = readRepoFile('packages/scripts/src/jangar/re
 const sagBuildWorkflow = readRepoFile('.github/workflows/sag-build-push.yaml')
 const sagPostDeployVerifyWorkflow = readRepoFile('.github/workflows/sag-post-deploy-verify.yml')
 const torghutBuildWorkflow = readRepoFile('.github/workflows/torghut-build-push.yaml')
+const torghutNotebookBuildWorkflow = readRepoFile('.github/workflows/torghut-notebook-build-push.yaml')
 const torghutTaBuildWorkflow = readRepoFile('.github/workflows/torghut-ta-build-push.yaml')
 const torghutWsBuildWorkflow = readRepoFile('.github/workflows/torghut-ws-build-push.yaml')
 const torghutHyperliquidFeedBuildWorkflow = readRepoFile('.github/workflows/torghut-hyperliquid-feed-build-push.yaml')
@@ -56,6 +58,7 @@ const oiratWorkflow = readRepoFile('.github/workflows/oirat-ci.yml')
 const bumbaWorkflow = readRepoFile('.github/workflows/bumba-ci.yml')
 const froussardWorkflow = readRepoFile('.github/workflows/froussard-ci.yml')
 const headlampWorkflow = readRepoFile('.github/workflows/headlamp-ci.yml')
+const signalPublisherBuildWorkflow = readRepoFile('.github/workflows/signal-publisher-build-push.yml')
 const headlampValues = readRepoFile('argocd/applications/headlamp/values.yaml')
 const headlampStaticCopyPatch = readRepoFile('services/headlamp/patches/0004-static-copy-writable.patch')
 const froussardKnativeService = readRepoFile('argocd/applications/froussard/knative-service.yaml')
@@ -324,7 +327,8 @@ describe('createOciIndex', () => {
     }
     let annotationsApplied = false
     let kargoTagCreated = false
-    Bun.which = ((binary: string) => (binary === 'crane' ? '/bin/crane' : null)) as typeof Bun.which
+    Bun.which = ((binary: string) =>
+      binary === 'crane' || binary === 'regctl' ? `/bin/${binary}` : null) as typeof Bun.which
     __private.setSpawnSync(((command: Parameters<typeof Bun.spawnSync>[0]) => {
       const joined = typeof command === 'string' ? command : command.join(' ')
       calls.push(joined)
@@ -337,13 +341,7 @@ describe('createOciIndex', () => {
       }
       if (
         joined ===
-        'crane index append -m registry.example/lab/example@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -m registry.example/lab/example@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc -t registry.example/lab/example:sha-123'
-      ) {
-        return spawnResult(0)
-      }
-      if (
-        joined ===
-        'crane mutate registry.example/lab/example:sha-123 --annotation ai.proompteng.github-actions-build-conclusion=success --annotation ai.proompteng.github-actions-run-id=123456 --tag registry.example/lab/example:sha-123'
+        'regctl index create registry.example/lab/example:sha-123 --digest sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --digest sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc --annotation ai.proompteng.github-actions-build-conclusion=success --annotation ai.proompteng.github-actions-run-id=123456'
       ) {
         annotationsApplied = true
         return spawnResult(0)
@@ -392,6 +390,7 @@ describe('createOciIndex', () => {
     })
     expect(result.platformDigests).toHaveLength(2)
     expect(annotationsApplied).toBe(true)
+    expect(calls.some((call) => call.startsWith('crane mutate '))).toBe(false)
     expect(calls).toContain('crane tag registry.example/lab/example:sha-123 latest')
     expect(calls).toContain(`crane digest ${kargoReference}`)
     expect(calls).toContain(`crane tag registry.example/lab/example:sha-123 ${kargoTag}`)
@@ -410,14 +409,12 @@ describe('createOciIndex', () => {
       'org.opencontainers.image.source': 'https://github.com/proompteng/lab',
     }
     const receiptReference = `registry.example/lab/example:receipt-${kargoTag}`
-    Bun.which = ((binary: string) => (binary === 'crane' ? '/bin/crane' : null)) as typeof Bun.which
+    Bun.which = ((binary: string) =>
+      binary === 'crane' || binary === 'regctl' ? `/bin/${binary}` : null) as typeof Bun.which
     __private.setSpawnSync(((command: Parameters<typeof Bun.spawnSync>[0]) => {
       const joined = typeof command === 'string' ? command : command.join(' ')
       calls.push(joined)
-      if (joined.startsWith('crane index append ') && joined.endsWith(`-t ${receiptReference}`)) {
-        return spawnResult(0)
-      }
-      if (joined.startsWith(`crane mutate ${receiptReference} `)) {
+      if (joined.startsWith(`regctl index create ${receiptReference} `)) {
         return spawnResult(0)
       }
       if (joined === `crane manifest ${receiptReference}`) {
@@ -568,13 +565,14 @@ describe('createOciIndex', () => {
   })
 
   it('fails closed when an existing Kargo tag cannot be inspected', () => {
-    Bun.which = ((binary: string) => (binary === 'crane' ? '/bin/crane' : null)) as typeof Bun.which
+    Bun.which = ((binary: string) =>
+      binary === 'crane' || binary === 'regctl' ? `/bin/${binary}` : null) as typeof Bun.which
     __private.setSpawnSync(((command: Parameters<typeof Bun.spawnSync>[0]) => {
       const joined = typeof command === 'string' ? command : command.join(' ')
       if (joined.startsWith('crane digest registry.example/lab/example:sha-123-')) {
         return spawnResult(0, 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
       }
-      if (joined.startsWith('crane index append ')) {
+      if (joined.startsWith('regctl index create ')) {
         return spawnResult(0)
       }
       if (joined === 'crane digest registry.example/lab/example:sha-123') {
@@ -866,7 +864,7 @@ describe('native OCI build workflows', () => {
     expect(symphonyReleaseMetadataScript).not.toContain('sourceSha.slice(0, 8)')
   })
 
-  it('rebuilds migrated image builds when the shared OCI workflow changes', () => {
+  it('rebuilds Kargo-enrolled image builds when the shared OCI implementation changes', () => {
     const migratedImageWorkflows = [
       atticWorkflow,
       arcRunnerBuildWorkflow,
@@ -875,9 +873,13 @@ describe('native OCI build workflows', () => {
       froussardWorkflow,
       productNixWorkflow,
       agentsBuildWorkflow,
+      headlampWorkflow,
+      hermesToolchainBuildWorkflow,
       jangarBuildWorkflow,
+      signalPublisherBuildWorkflow,
       symphonyBuildWorkflow,
       torghutBuildWorkflow,
+      torghutNotebookBuildWorkflow,
       torghutTaBuildWorkflow,
       torghutWsBuildWorkflow,
       torghutHyperliquidFeedBuildWorkflow,
@@ -885,9 +887,13 @@ describe('native OCI build workflows', () => {
 
     for (const workflow of migratedImageWorkflows) {
       expect(workflow).toContain("- '.github/workflows/nix-oci-build-common.yml'")
+      expect(workflow).toContain("- 'packages/scripts/src/shared/oci.ts'")
       expect(workflow).toContain("- 'nix/oci-push.sh'")
-      expect(workflow).not.toContain("- '.github/actions/setup-nix-toolchain/**'")
+      if (workflow !== hermesToolchainBuildWorkflow) {
+        expect(workflow).not.toContain("- '.github/actions/setup-nix-toolchain/**'")
+      }
     }
+    expect(hermesToolchainBuildWorkflow).toContain("- '.github/actions/setup-nix-toolchain/**'")
   })
 
   it('does not fan out service CI on image workflow-only changes', () => {

@@ -12,6 +12,7 @@ on:
       - 'packages/otel/**'
       - 'nix/images/froussard.nix'
       - '.github/workflows/nix-oci-build-common.yml'
+      - 'packages/scripts/src/shared/oci.ts'
       - 'nix/oci-push.sh'
       - 'argocd/applications/froussard/**'
   pull_request:
@@ -20,6 +21,7 @@ on:
       - 'packages/agent-contracts/**'
       - 'nix/images/froussard.nix'
       - '.github/workflows/nix-oci-build-common.yml'
+      - 'packages/scripts/src/shared/oci.ts'
       - 'nix/oci-push.sh'
       - 'argocd/applications/froussard/**'
   workflow_dispatch:
