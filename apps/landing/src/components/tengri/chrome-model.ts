@@ -2,8 +2,10 @@ import { normalizePreviewGatewayOrigin } from '@/lib/tengri/preview-origin'
 
 export const MAX_CHROME_TABS = 8
 const MAX_CHROME_HISTORY = 30
+const MAX_EXTERNAL_ADDRESS_BYTES = 4096
 const MAX_PREVIEW_PATH_BYTES = 4096
 const MAX_PREVIEW_FRAGMENT_BYTES = 4096
+const MAX_PREVIEW_ADDRESS_CHARACTERS = MAX_PREVIEW_PATH_BYTES + MAX_PREVIEW_FRAGMENT_BYTES + 64
 const PREVIEW_TICKET_PATTERN = /^[A-Za-z0-9_-]{16,128}\.[A-Za-z0-9_-]{16,128}$/
 export const PREVIEW_BRIDGE_CHANNEL = 'tengri-preview-v1'
 
@@ -126,7 +128,7 @@ export function currentChromePage(tab: ChromeTab) {
 export function parseChromeAddress(raw: string): ParsedChromeAddress {
   const value = raw.trim()
   if (!value || value.toLowerCase() === 'tengri://agent') return { kind: 'agent', page: CHROME_AGENT_PAGE }
-  if (value.length > 4096 || hasControlCharacters(value)) {
+  if (value.length > MAX_PREVIEW_ADDRESS_CHARACTERS || hasControlCharacters(value)) {
     return { kind: 'invalid', message: 'The address is invalid.' }
   }
   if (/^(?:about|blob|data|file|javascript|mailto|tel):/i.test(value)) {
@@ -149,7 +151,12 @@ export function parseChromeAddress(raw: string): ParsedChromeAddress {
   }
 
   const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname.toLowerCase())
-  if (!loopback) return { kind: 'external', url: url.toString() }
+  if (!loopback) {
+    if (utf8ByteLength(url.toString()) > MAX_EXTERNAL_ADDRESS_BYTES) {
+      return { kind: 'invalid', message: 'External addresses must not exceed 4096 bytes.' }
+    }
+    return { kind: 'external', url: url.toString() }
+  }
   if (url.protocol !== 'http:') {
     return { kind: 'invalid', message: 'MicroVM previews currently use HTTP localhost addresses.' }
   }

@@ -149,6 +149,16 @@ describe('Tengri Chrome addresses', () => {
     })
   })
 
+  test('accepts independent maximum-size preview paths and fragments', () => {
+    const path = `/${'p'.repeat(4095)}`
+    const fragment = `#${'f'.repeat(4095)}`
+
+    expect(parseChromeAddress(`http://localhost:4173${path}${fragment}`)).toMatchObject({
+      kind: 'preview',
+      page: { path, fragment },
+    })
+  })
+
   test('rejects reserved, privileged, credentialed, oversized, and active-content addresses', () => {
     for (const address of [
       'localhost:80',
