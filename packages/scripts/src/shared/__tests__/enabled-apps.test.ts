@@ -13,7 +13,9 @@ import {
 const inventory = loadEnabledAppInventory()
 const platformApplicationSet = readFileSync('argocd/applicationsets/platform.yaml', 'utf8')
 const bootstrapApplicationSet = readFileSync('argocd/applicationsets/bootstrap.yaml', 'utf8')
+const applicationSetsReadme = readFileSync('argocd/applicationsets/README.md', 'utf8')
 const argoCdKustomization = readFileSync('argocd/applications/argocd/kustomization.yaml', 'utf8')
+const argoCdReadme = readFileSync('argocd/applications/argocd/README.md', 'utf8')
 const argoCdApplicationSetCrdOverlay = readFileSync(
   'argocd/applications/argocd/overlays/argocd-applicationset-crd.yaml',
   'utf8',
@@ -368,7 +370,12 @@ describe('enabled app inventory', () => {
   })
 
   it('pins the Argo control-plane upgrade wave and applies its large CRD server-side', () => {
-    expect(argoCdKustomization).toContain('argo-cd/v3.4.6/manifests/ha/install.yaml')
+    expect(argoCdKustomization).toContain('argo-cd/v3.5.2/manifests/ha/install.yaml')
+    expect(argoCdKustomization).not.toContain('argo-cd/v3.4.6/')
+    expect(applicationSetsReadme.split('argo-cd/v3.5.2/manifests/crds/applicationset-crd.yaml')).toHaveLength(3)
+    expect(applicationSetsReadme).not.toContain('argo-cd/v3.4.6/')
+    expect(argoCdReadme).toContain('## Argo CD v3.5.2 upgrade')
+    expect(argoCdReadme).toContain('first normal Kargo promotion')
     expect(argoCdKustomization).not.toContain('argocd-image-updater')
     expect(argoCdLovelyPluginOverlay).toContain('ghcr.io/crumbhole/lovely:1.2.5')
     expect(argoCdApplicationSetCrdOverlay).toContain(
