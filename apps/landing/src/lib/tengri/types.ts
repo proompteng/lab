@@ -136,6 +136,7 @@ export type TengriPreviewSession = {
   id: string
   launchUrl: string
   expiresAt: string
+  previewOrigin: string
 }
 
 export type TengriAction =

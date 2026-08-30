@@ -30,6 +30,7 @@ use crate::{
         IDLE_MINUTES, LIFETIME_HOURS, MicroVM, MicroVMArchitecture, MicroVMDesiredState,
         MicroVMPhase, MicroVMResources, MicroVMSpec,
     },
+    gateway::PreviewOrigin,
     guest::{
         GuestClient, GuestError, TerminalCreation as GuestTerminalCreation,
         TerminalIdentityRegistry,
@@ -80,6 +81,7 @@ pub struct ControlPlane {
     architecture: MicroVMArchitecture,
     auth: Authenticator,
     tickets: TicketStore,
+    preview_origin: PreviewOrigin,
     activity: ActivityTracker,
     create_lock: Arc<Mutex<()>>,
     terminal_identities: TerminalIdentityRegistry,
@@ -93,6 +95,7 @@ pub struct ControlPlaneConfig {
     pub internal_hmac_secret: String,
     pub ticket_signing_secret: String,
     pub public_url: String,
+    pub preview_origin: PreviewOrigin,
 }
 
 impl ControlPlane {
@@ -121,6 +124,7 @@ impl ControlPlane {
             architecture: config.architecture,
             auth,
             tickets: TicketStore::new(config.public_url, config.ticket_signing_secret)?,
+            preview_origin: config.preview_origin,
             activity,
             create_lock: Arc::new(Mutex::new(())),
             terminal_identities,
@@ -1038,10 +1042,12 @@ impl MicroVmControlPlane for ControlPlane {
             self.tickets
                 .issue_preview(&principal.owner_hash, &request.agent_id, port, &path)?;
         metrics::global().record_preview_session();
+        let preview_origin = self.preview_origin.origin(&issued.id);
         Ok(Response::new(PreviewSession {
             id: issued.id,
             launch_url: issued.url,
             expires_at: issued.expires_at,
+            preview_origin,
         }))
     }
 

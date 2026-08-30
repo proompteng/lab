@@ -247,6 +247,28 @@ export function safePreviewLaunchUrl(value: string, previewGatewayOrigin: string
   }
 }
 
+export function safePreviewSessionOrigin(value: string, sessionId: string) {
+  try {
+    const url = new URL(value)
+    const expectedLabel = `tengri-${sessionId}.`
+    const localHttp = url.protocol === 'http:' && url.hostname.endsWith('.localhost')
+    if (
+      (!localHttp && url.protocol !== 'https:') ||
+      !url.hostname.startsWith(expectedLabel) ||
+      url.username ||
+      url.password ||
+      url.pathname !== '/' ||
+      url.search ||
+      url.hash
+    ) {
+      return ''
+    }
+    return url.origin
+  } catch {
+    return ''
+  }
+}
+
 function closeTab(state: ChromeState, id: string): ChromeState {
   const index = state.tabs.findIndex((tab) => tab.id === id)
   if (index < 0) return state
