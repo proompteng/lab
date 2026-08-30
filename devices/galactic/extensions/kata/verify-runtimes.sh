@@ -30,6 +30,27 @@ runtime_class_for_vmm() {
   esac
 }
 
+canary_daemonsets() {
+  local namespace="$1"
+  local daemonsets=''
+  local matches=''
+  local status=0
+
+  daemonsets="$(kubectl --context "$KUBE_CONTEXT" -n "$namespace" get daemonsets -o name)" || {
+    status=$?
+    return "$status"
+  }
+  if matches="$(rg '/(microvm-agent|nanoagent)-(qemu|clh|fc|dragonball)$' <<<"$daemonsets")"; then
+    while IFS= read -r daemonset; do
+      [[ -n "$daemonset" ]] && printf '%s/%s\n' "$namespace" "$daemonset"
+    done <<<"$matches"
+    return 0
+  else
+    status=$?
+    [[ "$status" -eq 1 ]] || return "$status"
+  fi
+}
+
 if [[ $# -lt 1 || $# -gt 3 || "$1" != /* ]]; then
   usage
   exit 2
@@ -62,22 +83,14 @@ kubectl --context "$KUBE_CONTEXT" get runtimeclass -o yaml >"$evidence_dir/runti
 kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" get daemonset -o yaml \
   >"$evidence_dir/existing-daemonsets.yaml"
 
-permanent_canary_daemonsets="$(
-  kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" get daemonsets -o name \
-    | rg '/(microvm-agent|nanoagent)-(qemu|clh|fc|dragonball)$' \
-    | sed "s#^#$NAMESPACE/#" || true
-)"
+permanent_canary_daemonsets="$(canary_daemonsets "$NAMESPACE")"
 retired_namespace="$(
   kubectl --context "$KUBE_CONTEXT" get namespace "$RETIRED_NAMESPACE" --ignore-not-found -o name
 )"
 if [[ -n "$retired_namespace" ]]; then
   kubectl --context "$KUBE_CONTEXT" -n "$RETIRED_NAMESPACE" get daemonset -o yaml \
     >"$evidence_dir/retired-daemonsets.yaml"
-  retired_canary_daemonsets="$(
-    kubectl --context "$KUBE_CONTEXT" -n "$RETIRED_NAMESPACE" get daemonsets -o name \
-      | rg '/(microvm-agent|nanoagent)-(qemu|clh|fc|dragonball)$' \
-      | sed "s#^#$RETIRED_NAMESPACE/#" || true
-  )"
+  retired_canary_daemonsets="$(canary_daemonsets "$RETIRED_NAMESPACE")"
   permanent_canary_daemonsets="${permanent_canary_daemonsets}${permanent_canary_daemonsets:+$'\n'}${retired_canary_daemonsets}"
 fi
 if [[ -n "$permanent_canary_daemonsets" ]]; then
