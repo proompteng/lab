@@ -95,6 +95,10 @@ type GitHubCommit = {
   }
 }
 
+type GitHubCompare = {
+  status: 'ahead' | 'behind' | 'diverged' | 'identical'
+}
+
 type GitHubPullsResponse = GitHubPullRequest[]
 
 type KubernetesResponse = {
@@ -471,20 +475,49 @@ export const makeDeliveryServiceLayer = (logger: Logger) =>
         ).pipe(Effect.map((response) => response.workflow_runs))
       }
 
+      const compareCommits = (repo: string, base: string, head: string) => {
+        const parsedRepo = parseRepo(repo)
+        return githubRequest<GitHubCompare>(
+          repo,
+          `/repos/${parsedRepo.owner}/${parsedRepo.name}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`,
+        )
+      }
+
       const findKargoBranchPromotion = (repo: string, branch: string, sourceSha: string, config: SymphonyConfig) => {
         const parsedRepo = parseRepo(repo)
+        const findCoveringPromotion = (
+          promotions: DeliveryKargoObservation[],
+          index = 0,
+        ): Effect.Effect<DeliveryKargoObservation | null, OrchestratorError> => {
+          const promotion = promotions[index]
+          if (!promotion) return Effect.succeed(null)
+          if (promotion.sourceSha === sourceSha) return Effect.succeed(promotion)
+
+          return compareCommits(repo, sourceSha, promotion.sourceSha).pipe(
+            Effect.flatMap(({ status }) =>
+              status === 'ahead' || status === 'identical'
+                ? Effect.succeed(promotion)
+                : findCoveringPromotion(promotions, index + 1),
+            ),
+          )
+        }
+
         const findPage = (page: number): Effect.Effect<DeliveryKargoObservation | null, OrchestratorError> =>
           githubRequest<GitHubCommit[]>(
             repo,
             `/repos/${parsedRepo.owner}/${parsedRepo.name}/commits?sha=${encodeURIComponent(branch)}&per_page=100&page=${page}`,
           ).pipe(
             Effect.flatMap((pageCommits) => {
-              const promotion =
-                pageCommits
-                  .map((commit) => parseKargoPromotion(commit, config))
-                  .find((candidate) => candidate?.sourceSha === sourceSha) ?? null
-              if (promotion || pageCommits.length < 100) return Effect.succeed(promotion)
-              return findPage(page + 1)
+              const promotions = pageCommits
+                .map((commit) => parseKargoPromotion(commit, config))
+                .filter((promotion): promotion is DeliveryKargoObservation => promotion !== null)
+
+              return findCoveringPromotion(promotions).pipe(
+                Effect.flatMap((promotion) => {
+                  if (promotion || pageCommits.length < 100) return Effect.succeed(promotion)
+                  return findPage(page + 1)
+                }),
+              )
             }),
           )
 

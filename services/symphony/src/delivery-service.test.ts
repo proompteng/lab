@@ -182,14 +182,17 @@ describe('delivery transaction stages', () => {
     })
   })
 
-  test('revalidates a paginated Kargo re-promotion and verifier without searching for a promotion PR', async () => {
+  test('revalidates a paginated superseding Kargo promotion and verifier without searching for a promotion PR', async () => {
     const originalFetch = globalThis.fetch
     const originalGhToken = process.env.GH_TOKEN
     process.env.GH_TOKEN = 'test-token'
 
     const sourceSha = 'abcdef0123456789abcdef0123456789abcdef01'
+    const supersedingSourceSha = '2222222222222222222222222222222222222222'
+    const divergedSourceSha = '3333333333333333333333333333333333333333'
     const previousKargoRevision = '1111111111111111111111111111111111111111'
     const kargoRevision = 'fedcba9876543210fedcba9876543210fedcba98'
+    const divergedKargoRevision = '4444444444444444444444444444444444444444'
     const config = makeTestConfig({
       release: {
         mode: 'kargo_auto',
@@ -289,10 +292,19 @@ describe('delivery transaction stages', () => {
         return new Response(
           JSON.stringify([
             {
+              sha: divergedKargoRevision,
+              html_url: `https://github.com/proompteng/lab/commit/${divergedKargoRevision}`,
+              commit: {
+                message: `kargo(symphony): promote freight-diverged\n\nSource commit: ${divergedSourceSha}`,
+                author: { date: '2026-08-29T23:07:00.000Z' },
+                committer: { date: '2026-08-29T23:07:00.000Z' },
+              },
+            },
+            {
               sha: kargoRevision,
               html_url: `https://github.com/proompteng/lab/commit/${kargoRevision}`,
               commit: {
-                message: `kargo(symphony): promote freight-abc\n\nSource commit: ${sourceSha}`,
+                message: `kargo(symphony): promote freight-abc\n\nSource commit: ${supersedingSourceSha}`,
                 author: { date: '2026-08-29T23:06:00.000Z' },
                 committer: { date: '2026-08-29T23:06:00.000Z' },
               },
@@ -300,6 +312,18 @@ describe('delivery transaction stages', () => {
           ]),
           { status: 200, headers: { 'content-type': 'application/json' } },
         )
+      }
+      if (url.includes(`/compare/${sourceSha}...${divergedSourceSha}`)) {
+        return new Response(JSON.stringify({ status: 'diverged' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (url.includes(`/compare/${sourceSha}...${supersedingSourceSha}`)) {
+        return new Response(JSON.stringify({ status: 'ahead' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
       }
       if (url.includes(`/actions/runs?head_sha=${kargoRevision}`)) {
         return new Response(
@@ -384,7 +408,7 @@ describe('delivery transaction stages', () => {
         promotionPr: null,
         rollbackPr: null,
         releaseContract: {
-          sourceSha,
+          sourceSha: supersedingSourceSha,
           reason: 'kargo_freight',
         },
         kargo: {
@@ -393,7 +417,7 @@ describe('delivery transaction stages', () => {
           stages: ['symphony'],
           branch: 'kargo/symphony',
           revision: kargoRevision,
-          sourceSha,
+          sourceSha: supersedingSourceSha,
           freight: 'freight-abc',
         },
         postDeploy: {
@@ -406,6 +430,8 @@ describe('delivery transaction stages', () => {
       expect(requestedUrls.filter((url) => url.includes('/pulls?'))).toHaveLength(1)
       expect(requestedUrls.some((url) => url.includes('/commits?sha=kargo%2Fsymphony&per_page=100&page=1'))).toBe(true)
       expect(requestedUrls.some((url) => url.includes('/commits?sha=kargo%2Fsymphony&per_page=100&page=2'))).toBe(true)
+      expect(requestedUrls.some((url) => url.includes(`/compare/${sourceSha}...${divergedSourceSha}`))).toBe(true)
+      expect(requestedUrls.some((url) => url.includes(`/compare/${sourceSha}...${supersedingSourceSha}`))).toBe(true)
     } finally {
       globalThis.fetch = originalFetch
       if (originalGhToken === undefined) {
