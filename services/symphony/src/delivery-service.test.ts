@@ -182,12 +182,13 @@ describe('delivery transaction stages', () => {
     })
   })
 
-  test('tracks a Kargo promotion and verifier without searching for a promotion PR', async () => {
+  test('revalidates a paginated Kargo re-promotion and verifier without searching for a promotion PR', async () => {
     const originalFetch = globalThis.fetch
     const originalGhToken = process.env.GH_TOKEN
     process.env.GH_TOKEN = 'test-token'
 
     const sourceSha = 'abcdef0123456789abcdef0123456789abcdef01'
+    const previousKargoRevision = '1111111111111111111111111111111111111111'
     const kargoRevision = 'fedcba9876543210fedcba9876543210fedcba98'
     const config = makeTestConfig({
       release: {
@@ -355,7 +356,21 @@ describe('delivery transaction stages', () => {
               lastError: null,
               tracked: { lastKnownState: 'In Progress' },
               runHistory: [],
-              delivery: null,
+              delivery: {
+                ...createEmptyDeliveryTransaction('argo_rollout_pending'),
+                mergedCommitSha: sourceSha,
+                kargo: {
+                  project: 'lab-delivery',
+                  warehouse: 'symphony',
+                  stages: ['symphony'],
+                  branch: 'kargo/symphony',
+                  revision: previousKargoRevision,
+                  sourceSha,
+                  freight: 'freight-old',
+                  url: `https://github.com/proompteng/lab/commit/${previousKargoRevision}`,
+                  observedAt: '2026-08-29T22:00:00.000Z',
+                },
+              },
               updatedAt: '2026-08-29T23:00:00.000Z',
             },
             config,

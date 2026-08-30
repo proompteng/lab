@@ -31,6 +31,8 @@ const kustomization = YAML.parse(readRepoFile('argocd/applications/kargo/kustomi
   resources?: string[]
 }
 const stagesSource = readRepoFile('argocd/applications/kargo/stages.yaml')
+const torghutMigrationJob = YAML.parse(readRepoFile('argocd/applications/torghut/db-migrations-job.yaml')) as Manifest
+const torghutVerifierWorkflow = readRepoFile('.github/workflows/torghut-post-deploy-verify.yml')
 const analysisKustomization = readRepoFile('argocd/applications/analysis/kustomization.yaml')
 const pullRequestWorkflow = readRepoFile('.github/workflows/pull-request.yml')
 const helmApplicationSet = YAML.parse(readRepoFile('argocd/applicationsets/helm-apps.yaml')) as any
@@ -640,7 +642,10 @@ describe('Kargo direct-push GitOps contract', () => {
       ])
 
       const argocdUpdate = steps.at(-1)
-      expect(argocdUpdate?.retry).toEqual({ timeout: '20m', errorThreshold: 3 })
+      expect(argocdUpdate?.retry).toEqual({
+        timeout: stageName === 'torghut' ? '105m' : '20m',
+        errorThreshold: 3,
+      })
       const apps = argocdUpdate?.config?.apps as Array<Record<string, any>>
       expect(apps.map((app) => app.name)).toEqual(contract.apps)
       for (const app of apps) {
@@ -667,6 +672,19 @@ describe('Kargo direct-push GitOps contract', () => {
         expect(steps[0].uses).toBe('git-clone')
       }
     }
+  })
+
+  it('lets the Torghut Kargo sync outlast its migration and verifier windows', () => {
+    const torghut = byName(stages).get('torghut')
+    const steps = torghut?.spec?.promotionTemplate?.spec?.steps as Array<Record<string, any>>
+    const timeout = String(steps.find((step) => step.uses === 'argocd-update')?.retry?.timeout ?? '')
+    const timeoutMinutes = Number(timeout.match(/^(\d+)m$/)?.[1])
+    const timeoutSeconds = timeoutMinutes * 60
+    const migrationDeadlineSeconds = Number(torghutMigrationJob.spec?.activeDeadlineSeconds)
+    const verifierTimeoutSeconds = Number(torghutVerifierWorkflow.match(/ARGO_SYNC_TIMEOUT_SECONDS=(\d+)/)?.[1])
+
+    expect(timeoutSeconds).toBeGreaterThanOrEqual(migrationDeadlineSeconds + 900)
+    expect(timeoutSeconds).toBeGreaterThanOrEqual(verifierTimeoutSeconds + 600)
   })
 
   it('uses Kargo to write image and provenance data, never live Argo image overrides', () => {

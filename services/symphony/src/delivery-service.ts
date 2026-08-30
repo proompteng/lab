@@ -471,22 +471,28 @@ export const makeDeliveryServiceLayer = (logger: Logger) =>
         ).pipe(Effect.map((response) => response.workflow_runs))
       }
 
-      const listKargoBranchCommits = (repo: string, branch: string) => {
+      const findKargoBranchPromotion = (repo: string, branch: string, sourceSha: string, config: SymphonyConfig) => {
         const parsedRepo = parseRepo(repo)
-        const listPage = (page: number, commits: GitHubCommit[]): Effect.Effect<GitHubCommit[], OrchestratorError> =>
+        const findPage = (page: number): Effect.Effect<DeliveryKargoObservation | null, OrchestratorError> =>
           githubRequest<GitHubCommit[]>(
             repo,
             `/repos/${parsedRepo.owner}/${parsedRepo.name}/commits?sha=${encodeURIComponent(branch)}&per_page=100&page=${page}`,
           ).pipe(
             Effect.flatMap((pageCommits) => {
-              const allCommits = [...commits, ...pageCommits]
-              return pageCommits.length < 100 ? Effect.succeed(allCommits) : listPage(page + 1, allCommits)
+              const promotion =
+                pageCommits
+                  .map((commit) => parseKargoPromotion(commit, config))
+                  .find((candidate) => candidate?.sourceSha === sourceSha) ?? null
+              if (promotion || pageCommits.length < 100) return Effect.succeed(promotion)
+              return findPage(page + 1)
             }),
           )
 
-        return listPage(1, []).pipe(
+        return findPage(1).pipe(
           Effect.catchAll((error) =>
-            error.message.endsWith(': 404') ? Effect.succeed<GitHubCommit[]>([]) : Effect.fail(error),
+            error.message.endsWith(': 404')
+              ? Effect.succeed<DeliveryKargoObservation | null>(null)
+              : Effect.fail(error),
           ),
         )
       }
@@ -705,26 +711,9 @@ export const makeDeliveryServiceLayer = (logger: Logger) =>
         repo: string,
         sourceSha: string | null,
         config: SymphonyConfig,
-        previous: DeliveryKargoObservation | null,
       ): Effect.Effect<DeliveryKargoObservation | null, OrchestratorError, never> => {
         if (!sourceSha || !config.release.kargoBranch) return Effect.succeed(null)
-        if (
-          previous?.sourceSha === sourceSha &&
-          previous.branch === config.release.kargoBranch &&
-          previous.project === config.release.kargoProject &&
-          previous.warehouse === config.release.kargoWarehouse
-        ) {
-          return Effect.succeed(previous)
-        }
-
-        return listKargoBranchCommits(repo, config.release.kargoBranch).pipe(
-          Effect.map(
-            (commits) =>
-              commits
-                .map((commit) => parseKargoPromotion(commit, config))
-                .find((promotion) => promotion?.sourceSha === sourceSha) ?? null,
-          ),
-        )
+        return findKargoBranchPromotion(repo, config.release.kargoBranch, sourceSha, config)
       }
 
       const findRollbackPr = (
@@ -788,9 +777,7 @@ export const makeDeliveryServiceLayer = (logger: Logger) =>
                 baseDelivery.promotionPr?.number ?? null,
               )
           const promotionPr = promotionPrPayload ? toPullRequestRef(promotionPrPayload) : null
-          const kargo = isKargoRelease
-            ? yield* findKargoPromotion(config.target.repo, mergedCommitSha, config, baseDelivery.kargo)
-            : null
+          const kargo = isKargoRelease ? yield* findKargoPromotion(config.target.repo, mergedCommitSha, config) : null
           const releaseContract = kargo
             ? {
                 sourceSha: kargo.sourceSha,
