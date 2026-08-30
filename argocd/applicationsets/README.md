@@ -38,5 +38,22 @@ A new cluster necessarily has a short bootstrap interval before Argo CD can own 
 `devices/galactic/docs/bootstrap-argocd.md` for that bounded procedure, including CRD ordering and the initial
 `argocd/root.yaml` handoff. Once the root Application is healthy, return to the normal GitOps path above.
 
+Only during that first bootstrap, install the large ApplicationSet CRD server-side before handing ownership to Argo
+CD:
+
+```bash
+kubectl --context galactic-lan apply --server-side --force-conflicts \
+  -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.2/manifests/crds/applicationset-crd.yaml
+```
+
+If the server-side apply cannot create a missing CRD, the create-only fallback is:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.2/manifests/crds/applicationset-crd.yaml \
+  | kubectl --context galactic-lan create -f -
+```
+
+Do not use either command as routine reconciliation after `argocd/root.yaml` is healthy.
+
 The former Harvester preparation command and manual child-ApplicationSet workflow were removed from this runbook. Their
 retained files are tracked for evidence-gated retirement in `docs/repository-cleanup-todo.md`.
