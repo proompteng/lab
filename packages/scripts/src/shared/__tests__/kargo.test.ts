@@ -23,6 +23,16 @@ const readManifests = (path: string): Manifest[] =>
     return document.toJSON() as Manifest
   })
 
+const parseHmsDurationSeconds = (duration: string): number => {
+  const match = duration.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/)
+  if (!match || match.slice(1).every((value) => value === undefined)) {
+    throw new Error(`Unsupported duration: ${duration}`)
+  }
+
+  const [, hours = '0', minutes = '0', seconds = '0'] = match
+  return Number(hours) * 3600 + Number(minutes) * 60 + Number(seconds)
+}
+
 const warehouses = readManifests('argocd/applications/kargo/warehouses.yaml')
 const stages = readManifests('argocd/applications/kargo/stages.yaml')
 const project = YAML.parse(readRepoFile('argocd/applications/kargo/project.yaml')) as Manifest
@@ -545,7 +555,7 @@ describe('Kargo direct-push GitOps contract', () => {
       const warehouse = warehouseMap.get(stageName)
       expect(warehouse).toBeDefined()
       expect(warehouse?.metadata?.namespace).toBe('lab-delivery')
-      expect(warehouse?.spec?.interval).toBe('1m')
+      expect(warehouse?.spec?.interval).toBe('1m0s')
       expect(warehouse?.spec?.freightCreationPolicy).toBe('Automatic')
       const criteria = warehouse?.spec?.freightCreationCriteria as { expression?: string } | undefined
       if (contract.creationCriteria === 'external') {
@@ -699,7 +709,7 @@ describe('Kargo direct-push GitOps contract', () => {
 
       const argocdUpdate = steps.at(-1)
       expect(argocdUpdate?.retry).toEqual({
-        timeout: stageName === 'torghut' ? '105m' : '20m',
+        timeout: stageName === 'torghut' ? '1h45m0s' : '20m0s',
         errorThreshold: 3,
       })
       const apps = argocdUpdate?.config?.apps as Array<Record<string, any>>
@@ -734,8 +744,7 @@ describe('Kargo direct-push GitOps contract', () => {
     const torghut = byName(stages).get('torghut')
     const steps = torghut?.spec?.promotionTemplate?.spec?.steps as Array<Record<string, any>>
     const timeout = String(steps.find((step) => step.uses === 'argocd-update')?.retry?.timeout ?? '')
-    const timeoutMinutes = Number(timeout.match(/^(\d+)m$/)?.[1])
-    const timeoutSeconds = timeoutMinutes * 60
+    const timeoutSeconds = parseHmsDurationSeconds(timeout)
     const migrationDeadlineSeconds = Number(torghutMigrationJob.spec?.activeDeadlineSeconds)
     const verifierTimeoutSeconds = Number(torghutVerifierWorkflow.match(/ARGO_SYNC_TIMEOUT_SECONDS=(\d+)/)?.[1])
 

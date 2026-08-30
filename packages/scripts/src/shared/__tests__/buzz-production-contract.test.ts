@@ -66,6 +66,8 @@ describe('Buzz production GitOps contract', () => {
     expect(workflow).toContain('any(.manifests[]?; .platform.os == "linux"')
     expect(workflow).toContain('org.opencontainers.image.created=${SOURCE_TIMESTAMP}')
     expect(workflow).toContain('org.opencontainers.image.revision=${SOURCE_SHA}')
+    expect(workflow).toContain('crane mutate --platform "linux/${architecture}"')
+    expect(workflow).toContain('crane config --platform "linux/${architecture}"')
     expect(workflow).toContain('--annotation "index:org.opencontainers.image.source=${SOURCE_URL}"')
     expect(workflow).toContain('--annotation "index:org.opencontainers.image.revision=${SOURCE_SHA}"')
     expect(workflow).toContain('.annotations["org.opencontainers.image.source"] == $source_url')

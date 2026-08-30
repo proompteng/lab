@@ -8,7 +8,7 @@ describe('froussard Nix image contract', () => {
   it('pins the dependency closures observed by both native builders', () => {
     const image = readFileSync(join(repoRoot, 'nix/images/froussard.nix'), 'utf8')
 
-    expect(image).toContain('x86_64-linux = "sha256-oKTSsF0H8dh8vk9CvJruJUOUH+IdMNQN9s8TystgE0Q="')
-    expect(image).toContain('aarch64-linux = "sha256-dWXUZxQh/trI9XCDgqy1qfpDU6gf+hqkALR0WRfmZ5Y="')
+    expect(image).toContain('x86_64-linux = "sha256-9on/zsdBMotxhAJ2Ul0oOjC9nca+7UUl2qrB/oMewrw="')
+    expect(image).toContain('aarch64-linux = "sha256-Bt4N43CNpc5TBgFaBBzmnq7qPznc4kl4Ut/h7PG95RI="')
   })
 })
