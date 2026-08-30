@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- postgres-cluster.yaml
+- objectbucketclaim.yaml
+- synthesis-env-sealedsecret.yaml
+- deployment.yaml
+- service.yaml
+- tailscale-service.yaml
+- networkpolicy.yaml
+- agents-domain
+images:
+- name: registry.ide-newton.ts.net/lab/synthesis
+  digest: sha256:1b460a02861cd1e07e9749deac4e787a376be07259e8236e848f6eb98c1e0f6b

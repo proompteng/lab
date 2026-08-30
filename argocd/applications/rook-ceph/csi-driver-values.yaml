@@ -1,0 +1,247 @@
+# Rook-compatible Ceph-CSI values preserving the existing live driver behavior.
+operatorConfig:
+  name: ceph-csi-operator-config
+  namespace: rook-ceph
+  create: true
+  log: null
+  driverSpecDefaults:
+    log: null
+    imageSet:
+      name: rook-csi-operator-image-set-configmap
+    clusterName: rook-ceph
+    enableMetadata: false
+    enableFencing: false
+    # Preserve the live Rook v1.19 sidecar timeout during ownership transfer.
+    grpcTimeout: 150
+    snapshotPolicy: volumeSnapshot
+    generateOMapInfo: false
+    fsGroupPolicy: File
+    attachRequired: true
+    deployCsiAddons: false
+    cephFsClientType: autodetect
+    kernelMountOptions: {}
+    fuseMountOptions: {}
+    nodePlugin:
+      priorityClassName: system-node-critical
+      kubeletDirPath: /var/lib/kubelet
+      enableSeLinuxHostMount: false
+      affinity:
+        nodeAffinity: {}
+      # Turin is intentionally a control-plane node and needs CSI node plugins
+      # so GPU workloads pinned there can mount rook-ceph-block PVCs.
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      imagePullPolicy: IfNotPresent
+    controllerPlugin:
+      hostNetwork: true
+      replicas: 2
+      deploymentStrategy:
+        type: Recreate
+      priorityClassName: system-cluster-critical
+      affinity:
+        nodeAffinity: {}
+      tolerations: []
+      imagePullPolicy: IfNotPresent
+
+drivers:
+  rbd:
+    name: rook-ceph.rbd.csi.ceph.com
+    enabled: true
+    log: null
+    imageSet:
+      name: rook-csi-operator-image-set-configmap
+    clusterName: rook-ceph
+    enableMetadata: false
+    enableFencing: false
+    grpcTimeout: 150
+    snapshotPolicy: volumeSnapshot
+    generateOMapInfo: false
+    fsGroupPolicy: File
+    attachRequired: true
+    deployCsiAddons: false
+    cephFsClientType: autodetect
+    kernelMountOptions: {}
+    fuseMountOptions: {}
+    nodePlugin:
+      # Node pods contain the mount processes, so roll them one node at a time.
+      updateStrategy:
+        type: OnDelete
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      # Leave driver-level ownership unchanged during adoption. The effective
+      # IfNotPresent default continues to come from OperatorConfig.
+      imagePullPolicy: ""
+      topology:
+        domainLabels:
+          - kubernetes.io/hostname
+      resources:
+        registrar:
+          limits:
+            memory: 256Mi
+          requests:
+            cpu: 50m
+            memory: 128Mi
+        liveness:
+          limits:
+            memory: 256Mi
+          requests:
+            cpu: 50m
+            memory: 128Mi
+        plugin:
+          limits:
+            memory: 1Gi
+          requests:
+            cpu: 250m
+            memory: 512Mi
+    controllerPlugin:
+      hostNetwork: true
+      replicas: 2
+      tolerations: []
+      imagePullPolicy: ""
+      resources:
+        attacher:
+          limits:
+            memory: 256Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+        liveness:
+          limits:
+            memory: 256Mi
+          requests:
+            cpu: 50m
+            memory: 128Mi
+        snapshotter:
+          limits:
+            memory: 256Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+        resizer:
+          limits:
+            memory: 256Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+        provisioner:
+          limits:
+            memory: 256Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+        omapGenerator:
+          limits:
+            memory: 1Gi
+          requests:
+            cpu: 250m
+            memory: 512Mi
+        plugin:
+          limits:
+            memory: 1Gi
+          requests:
+            memory: 512Mi
+
+  cephfs:
+    name: rook-ceph.cephfs.csi.ceph.com
+    enabled: true
+    log: null
+    imageSet:
+      name: rook-csi-operator-image-set-configmap
+    clusterName: rook-ceph
+    enableMetadata: false
+    enableFencing: false
+    grpcTimeout: 150
+    snapshotPolicy: volumeGroupSnapshot
+    generateOMapInfo: false
+    fsGroupPolicy: File
+    attachRequired: true
+    deployCsiAddons: false
+    cephFsClientType: autodetect
+    kernelMountOptions: {}
+    fuseMountOptions: {}
+    nodePlugin:
+      # FUSE mount processes live inside this pod. Preserve OnDelete even though
+      # current consumers use the kernel client, and roll nodes explicitly.
+      updateStrategy:
+        type: OnDelete
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      imagePullPolicy: ""
+      topology:
+        domainLabels:
+          - kubernetes.io/hostname
+      resources:
+        registrar:
+          limits:
+            memory: 256Mi
+          requests:
+            cpu: 50m
+            memory: 128Mi
+        liveness:
+          limits:
+            memory: 256Mi
+          requests:
+            cpu: 50m
+            memory: 128Mi
+        plugin:
+          limits:
+            memory: 4Gi
+          requests:
+            cpu: 250m
+            memory: 1Gi
+    controllerPlugin:
+      hostNetwork: true
+      replicas: 2
+      tolerations: []
+      imagePullPolicy: ""
+      resources:
+        attacher:
+          limits:
+            memory: 256Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+        liveness:
+          limits:
+            memory: 256Mi
+          requests:
+            cpu: 50m
+            memory: 128Mi
+        snapshotter:
+          limits:
+            memory: 256Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+        resizer:
+          limits:
+            memory: 256Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+        provisioner:
+          limits:
+            memory: 256Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+        plugin:
+          limits:
+            memory: 1Gi
+          requests:
+            cpu: 250m
+            memory: 512Mi
+
+  nfs:
+    name: rook-ceph.nfs.csi.ceph.com
+    enabled: false
+
+  nvmeof:
+    name: rook-ceph.nvmeof.csi.ceph.com
+    enabled: false

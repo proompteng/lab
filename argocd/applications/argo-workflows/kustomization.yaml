@@ -1,0 +1,130 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - rbac.yaml
+  - codex-workflow-serviceaccount.yaml
+  - codex-workflow-rbac.yaml
+  - ingressroute.yaml
+  - middleware-workflows-canonical-host.yaml
+  - ingressroute-private.yaml
+  - objectbucketclaim.yaml
+  - alloy-rbac.yaml
+  - alloy-configmap.yaml
+  - alloy-deployment.yaml
+
+patches:
+  - target:
+      kind: ServiceAccount
+      name: argo-workflows-crd-install
+      namespace: argo-workflows
+    patch: |-
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-delete-policy
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-weight
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "-2"
+  - target:
+      kind: ClusterRole
+      name: argo-workflows-crd-install
+    patch: |-
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-delete-policy
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-weight
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "-2"
+  - target:
+      kind: ClusterRoleBinding
+      name: argo-workflows-crd-install
+    patch: |-
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-delete-policy
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-weight
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "-2"
+  - target:
+      kind: Job
+      name: argo-workflows-crd-install
+      namespace: argo-workflows
+    patch: |-
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-delete-policy
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-weight
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-options
+        value: Force=true,Replace=true
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "-1"
+
+helmCharts:
+  - name: argo-workflows
+    repo: https://argoproj.github.io/argo-helm
+    version: 1.0.23
+    releaseName: argo-workflows
+    namespace: argo-workflows
+    valuesInline:
+      controller:
+        workflowNamespaces:
+          - argo-workflows
+          - agents
+          - jangar
+        workflowDefaults:
+          spec:
+            ttlStrategy:
+              secondsAfterSuccess: 259200 # 3d retention for successful runs
+              secondsAfterFailure: 604800 # 7d retention to keep failure diagnostics
+              secondsAfterCompletion: 604800
+      server:
+        secure: false
+        authModes:
+          - sso
+        sso:
+          enabled: true
+          issuer: https://argocd.proompteng.ai/api/dex
+          clientId:
+            name: argo-workflows-sso
+            key: client-id
+          clientSecret:
+            name: argo-workflows-sso
+            key: client-secret
+          redirectUrl: https://workflows.k8s.proompteng.ai/oauth2/callback
+          scopes:
+            - openid
+            - profile
+            - email
+          rbac:
+            enabled: true
+          insecureSkipVerify: true
+      workflow:
+        serviceAccount:
+          create: true
+          name: argo-workflows-workflow
+      useStaticCredentials: true
+      artifactRepository:
+        archiveLogs: true
+        s3:
+          bucket: argo-workflows
+          endpoint: rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80
+          insecure: true
+          accessKeySecret:
+            name: argo-workflows
+            key: AWS_ACCESS_KEY_ID
+          secretKeySecret:
+            name: argo-workflows
+            key: AWS_SECRET_ACCESS_KEY
+          useSDKCreds: false

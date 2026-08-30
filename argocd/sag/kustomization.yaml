@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: sag
+resources:
+  - serviceaccount.yaml
+  - rbac.yaml
+  - codex-auth-externalsecret.yaml
+  - postgres-cluster.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingressroute.yaml
+images:
+  - name: registry.ide-newton.ts.net/lab/sag
+    newName: registry.ide-newton.ts.net/lab/sag
+    digest: sha256:92e4c73af461fec91d2727e798e7e67eabdc03c243565560977d63f7e9410057

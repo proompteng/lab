@@ -1,0 +1,370 @@
+{
+  "info": {
+    "name": "proompteng",
+    "description": "Graf CRUD, complement, clean, and automation routes keyed for the lab platform and a domain-agnostic knowledge base. Import this collection into Postman, set the base URL + bearer token variables, and run the requests in order to prime the Neo4j persistence layer and automation workflows.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "_postman_id": "bf5e7016-b5a6-4c6d-aa67-3f7abe7f8531"
+  },
+  "item": [
+    {
+      "name": "Upsert entities",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{graf_token}}",
+            "type": "text",
+            "description": "Token from graf-api secret (e.g., graf-api/bearer-tokens entry)."
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"entities\": [\n    {\n      \"id\": \"acme-inc\",\n      \"label\": \"Company\",\n      \"properties\": {\n        \"name\": \"Acme Inc\",\n        \"focus\": \"Supply chain intelligence\",\n        \"hq\": \"Austin\"\n      },\n      \"streamId\": \"neutral-core\",\n      \"artifactId\": \"temporal://streams/neutral-core/2025-11-09\"\n    },\n    {\n      \"id\": \"pulse-labs\",\n      \"label\": \"ResearchLab\",\n      \"properties\": {\n        \"name\": \"Pulse Labs\",\n        \"focus\": \"global logistics\"\n      },\n      \"streamId\": \"neutral-core\",\n      \"artifactId\": \"temporal://streams/neutral-core/2025-11-09\"\n    }\n  ]\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{graf_base_url}}/v1/entities",
+          "host": ["{{graf_base_url}}"],
+          "path": ["v1", "entities"]
+        },
+        "description": "Creates or updates the nodes that the AutoResearch agent and downstream services will inspect. Returns 200 OK with batch results."
+      },
+      "response": []
+    },
+    {
+      "name": "Upsert relationships",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{graf_token}}",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"relationships\": [\n    {\n      \"id\": \"acme-pulse\",\n      \"type\": \"PARTNER_WITH\",\n      \"fromId\": \"acme-inc\",\n      \"toId\": \"pulse-labs\",\n      \"properties\": {\n        \"since\": \"2023\",\n        \"notes\": \"Collaboration on logistics automation\"\n      },\n      \"artifactId\": \"temporal://streams/neutral-core/2025-11-09\"\n    }\n  ]\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{graf_base_url}}/v1/relationships",
+          "host": ["{{graf_base_url}}"],
+          "path": ["v1", "relationships"]
+        },
+        "description": "Heartbeats a relationship or installs a new edge between nodes; returns 200 OK with batch IDs."
+      },
+      "response": []
+    },
+    {
+      "name": "Patch entity",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{graf_token}}",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"set\": {\n    \"hq\": \"Austin, TX\",\n    \"sector\": \"Manufacturing\"\n  },\n  \"remove\": [\"deprecatedTag\"],\n  \"artifactId\": \"temporal://streams/neutral-core/2025-11-10\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{graf_base_url}}/v1/entities/nvidia",
+          "host": ["{{graf_base_url}}"],
+          "path": ["v1", "entities", "nvidia"]
+        },
+        "description": "Updates `nvidia` properties by merging `set` and pruning keys listed in `remove`; returns 200 OK."
+      },
+      "response": []
+    },
+    {
+      "name": "Patch relationship",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{graf_token}}",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"set\": {\n    \"confidence\": \"high\",\n    \"evidence\": \"Operational playbook 2025\"\n  },\n  \"remove\": [],\n  \"artifactId\": \"temporal://streams/neutral-core/2025-11-10\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{graf_base_url}}/v1/relationships/nvidia-openai",
+          "host": ["{{graf_base_url}}"],
+          "path": ["v1", "relationships", "nvidia-openai"]
+        },
+        "description": "Patch metadata on an existing relationship ID `nvidia-openai`; returns 200 OK indicating success."
+      },
+      "response": []
+    },
+    {
+      "name": "Delete entity",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{graf_token}}",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"artifactId\": \"temporal://streams/ecosystem-west/2025-11-11\",\n  \"reason\": \"Retiring stale vendor record\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{graf_base_url}}/v1/entities/obsolete-node",
+          "host": ["{{graf_base_url}}"],
+          "path": ["v1", "entities", "obsolete-node"]
+        },
+        "description": "Soft deletes a node by adding metadata; response is 200 OK and preserves Neo4j audit fields."
+      },
+      "response": []
+    },
+    {
+      "name": "Delete relationship",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{graf_token}}",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"artifactId\": \"temporal://streams/ecosystem-west/2025-11-11\",\n  \"reason\": \"Relationship no longer relevant\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{graf_base_url}}/v1/relationships/obsolete-edge",
+          "host": ["{{graf_base_url}}"],
+          "path": ["v1", "relationships", "obsolete-edge"]
+        },
+        "description": "Marks the relationship record as deleted without dropping it; response is 200 OK."
+      },
+      "response": []
+    },
+    {
+      "name": "Complement entity",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{graf_token}}",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"id\": \"nvidia\",\n  \"hints\": {\n    \"goal\": \"Surface new research partners for AI\",\n    \"confidence\": \"draft\"\n  },\n  \"artifactId\": \"temporal://streams/ecosystem-west/2025-11-11\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{graf_base_url}}/v1/complement",
+          "host": ["{{graf_base_url}}"],
+          "path": ["v1", "complement"]
+        },
+        "description": "Asks the complement helper to add hints for the entity before an AutoResearch run; returns 200 OK with complement details."
+      },
+      "response": []
+    },
+    {
+      "name": "Run clean",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{graf_token}}",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"artifactId\": \"temporal://streams/cleanup/2025-11-11\",\n  \"olderThanHours\": 72\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{graf_base_url}}/v1/clean",
+          "host": ["{{graf_base_url}}"],
+          "path": ["v1", "clean"]
+        },
+        "description": "Cleans stale records or artifacts, returning 200 OK and the `affected` count."
+      },
+      "response": []
+    },
+    {
+      "name": "Codex research workflow",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{graf_token}}",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"prompt\": \"Summarize the February release notes for the renewable energy partner graph\",\n  \"metadata\": {\n    \"source\": \"ops-dashboard\"\n  }\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{graf_base_url}}/v1/codex-research",
+          "host": ["{{graf_base_url}}"],
+          "path": ["v1", "codex-research"]
+        },
+        "description": "Starts the Codex research Argo workflow; returns 202 Accepted with workflow/run IDs and MinIO artifact reference."
+      },
+      "response": []
+    },
+    {
+      "name": "AutoResearch workflow",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{graf_token}}",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"user_prompt\": \"Catalog how the energy supply chain ecosystem is shifting across EMEA\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{graf_base_url}}/v1/autoresearch",
+          "host": ["{{graf_base_url}}"],
+          "path": ["v1", "autoresearch"]
+        },
+        "description": "Triggers the AutoResearch Codex workflow. Graf injects a knowledge-base specific, stage-aware prompt that tells the Codex runner to call /usr/local/bin/codex-graf for every entity/relationship, tags each payload with the configured streamId (AUTO_RESEARCH_STREAM_ID defaults to auto-research), and surfaces the AUTO_RESEARCH_STAGE label before returning 202 Accepted with Temporal/Argo metadata."
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "graf_base_url",
+      "value": "https://graf.proompteng.ai",
+      "type": "string",
+      "description": "Graf service ingress (override when targeting local/alternate clusters)."
+    },
+    {
+      "key": "graf_token",
+      "value": "",
+      "type": "string",
+      "description": "Bearer token from the graf-api secret (matches graf-api/bearer-tokens)."
+    }
+  ]
+}

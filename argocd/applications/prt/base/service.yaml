@@ -1,0 +1,55 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: prt
+  namespace: prt
+  labels:
+    app.kubernetes.io/name: prt
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: lab
+  annotations:
+    autoscaling.knative.dev/minScale: "1"
+    serving.knative.dev/rollout-duration: "10s"
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "1"
+        autoscaling.knative.dev/target: "80"
+    spec:
+      containerConcurrency: 0
+      timeoutSeconds: 60
+      serviceAccountName: default
+      containers:
+        - name: prt
+          image: prt
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: http1
+          env:
+            - name: ADDRESS
+              value: '0.0.0.0'
+            - name: PORT
+              value: "8080"
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          livenessProbe:
+            httpGet:
+              path: /health/liveness
+          readinessProbe:
+            httpGet:
+              path: /health/readiness
+          resources:
+            limits:
+              cpu: 500m
+              memory: 256Mi
+            requests:
+              cpu: 250m
+              memory: 128Mi

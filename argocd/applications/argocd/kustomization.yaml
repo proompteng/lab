@@ -1,0 +1,63 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: argocd
+resources:
+  - https://raw.githubusercontent.com/argoproj/argo-cd/v3.4.6/manifests/ha/install.yaml
+  - base/ingressroute.yaml
+  - base/ingressroute-private.yaml
+  - base/kargo-dex-cors-middleware.yaml
+  - base/secrets.yaml
+  - base/argo-workflows-sso-sealedsecret.yaml
+  - base/tsag-repo-sealedsecret.yaml
+  - alloy-rbac.yaml
+  - alloy-configmap.yaml
+  - alloy-deployment.yaml
+patches:
+  - path: overlays/argocd-cm.yaml
+  - path: overlays/argocd-cmd-params-cm.yaml
+  - path: overlays/argocd-lovely-plugin.yaml
+    target:
+      kind: Deployment
+      name: argocd-repo-server
+  - path: overlays/argocd-server-deployment.yaml
+    target:
+      kind: Deployment
+      name: argocd-server
+  - path: overlays/argocd-repo-server-deployment.yaml
+    target:
+      kind: Deployment
+      name: argocd-repo-server
+  - path: overlays/argocd-repo-server-two-node-affinity.yaml
+    target:
+      kind: Deployment
+      name: argocd-repo-server
+  - path: overlays/argocd-redis-ha-haproxy-deployment.yaml
+    target:
+      kind: Deployment
+      name: argocd-redis-ha-haproxy
+  - path: overlays/argocd-redis-ha-haproxy-two-node-affinity.yaml
+    target:
+      kind: Deployment
+      name: argocd-redis-ha-haproxy
+  - path: overlays/argocd-redis-ha-server-recovery.yaml
+    target:
+      kind: StatefulSet
+      name: argocd-redis-ha-server
+  - path: overlays/argocd-application-controller-statefulset.yaml
+    target:
+      kind: StatefulSet
+      name: argocd-application-controller
+  - path: overlays/argocd-applicationset-controller-deployment.yaml
+    target:
+      kind: Deployment
+      name: argocd-applicationset-controller
+  - path: overlays/argocd-dex-server-deployment.yaml
+    target:
+      kind: Deployment
+      name: argocd-dex-server
+  - path: overlays/argocd-dex-network-policy.yaml
+    target:
+      kind: NetworkPolicy
+      name: argocd-dex-server-network-policy
+  - path: overlays/argocd-applicationset-crd.yaml

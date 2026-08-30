@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: miel
+  labels:
+    app.kubernetes.io/name: miel
+    app.kubernetes.io/part-of: miel
+spec:
+  selector:
+    app.kubernetes.io/name: miel
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      protocol: TCP

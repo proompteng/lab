@@ -1,0 +1,126 @@
+adminUser: admin
+adminPassword: changeme
+replicas: 1
+deploymentStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 0
+    maxUnavailable: 1
+service:
+  type: ClusterIP
+persistence:
+  enabled: true
+  storageClassName: rook-ceph-block
+  size: 10Gi
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Loki
+        uid: loki
+        type: loki
+        access: proxy
+        url: http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local
+        isDefault: false
+        jsonData:
+          derivedFields:
+            - datasourceUid: tempo
+              matcherRegex: '"trace_id"\s*:\s*"([0-9a-f]{32})"'
+              name: TraceID
+              url: '$${__value.raw}'
+              urlDisplayLabel: View trace
+      - name: Mimir
+        uid: prom
+        type: prometheus
+        access: proxy
+        url: http://observability-mimir-gateway.observability.svc.cluster.local/prometheus
+        isDefault: true
+      - name: Tempo
+        uid: tempo
+        type: tempo
+        access: proxy
+        url: http://observability-tempo-query-frontend.observability.svc.cluster.local:3200
+        isDefault: false
+        jsonData:
+          tracesToLogsV2:
+            datasourceUid: loki
+            spanStartTimeShift: '-5s'
+            spanEndTimeShift: '5s'
+            tags:
+              - key: service.name
+                value: service
+              - key: k8s.namespace.name
+                value: namespace
+            filterByTraceID: false
+            filterBySpanID: false
+            customQuery: true
+            query: '{$${__tags}} |= "$${__trace.traceId}"'
+          lokiSearch:
+            datasourceUid: loki
+          tracesToMetrics:
+            datasourceUid: prom
+          serviceMap:
+            datasourceUid: prom
+testFramework:
+  enabled: false
+
+dashboardsConfigMaps:
+  graf-graf-dashboard: graf-graf-dashboard
+  graf-bumba-dashboard: graf-bumba-dashboard
+  codex-pipeline-dashboard: codex-pipeline-dashboard
+  torghut-execution-recovery-dashboard: torghut-execution-recovery-dashboard
+  arc-runner-capacity-dashboard: arc-runner-capacity-dashboard
+  bayn-cycle-operations-dashboard: bayn-cycle-operations-dashboard
+
+dashboardProviders:
+  dashboardproviders.yaml:
+    apiVersion: 1
+    providers:
+      - name: graf-graf-dashboard
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/graf-graf-dashboard
+      - name: graf-bumba-dashboard
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/graf-bumba-dashboard
+      - name: codex-pipeline-dashboard
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/codex-pipeline-dashboard
+      - name: torghut-execution-recovery-dashboard
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/torghut-execution-recovery-dashboard
+      - name: arc-runner-capacity-dashboard
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/arc-runner-capacity-dashboard
+      - name: bayn-cycle-operations-dashboard
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/bayn-cycle-operations-dashboard
