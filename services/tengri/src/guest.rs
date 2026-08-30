@@ -332,15 +332,16 @@ impl GuestClient {
             Ok(response) => response,
             Err(error) => {
                 return self
-                    .reconcile_terminal_creation_error(creation_id, error)
+                    .reconcile_terminal_creation_error(creation_id, error, false)
                     .await;
             }
         };
+        let created = response.status() == StatusCode::CREATED;
         match terminal_creation(response, creation_id).await {
             Ok(creation) => Ok(creation),
             Err(error @ GuestError::TerminalCreationIdentityMismatch { .. }) => Err(error),
             Err(error) => {
-                self.reconcile_terminal_creation_error(creation_id, error)
+                self.reconcile_terminal_creation_error(creation_id, error, created)
                     .await
             }
         }
@@ -350,16 +351,14 @@ impl GuestClient {
         &self,
         creation_id: &str,
         original_error: GuestError,
+        created: bool,
     ) -> Result<TerminalCreation, GuestError> {
         if let Ok(sessions) = self.list_terminals().await
             && let Some(session) = sessions
                 .into_iter()
                 .find(|session| session.creation_id == creation_id)
         {
-            return Ok(TerminalCreation {
-                session,
-                created: false,
-            });
+            return Ok(TerminalCreation { session, created });
         }
         Err(original_error)
     }
@@ -761,7 +760,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn terminal_creation_reconciliation_does_not_claim_a_new_session() {
+    async fn terminal_creation_reconciliation_preserves_a_known_created_session() {
         const CREATION_ID: &str = "terminal-creation-timeout";
         let created = Arc::new(AtomicBool::new(false));
         let creation_state = Arc::clone(&created);
@@ -813,7 +812,7 @@ mod tests {
             .await
             .expect("created terminal is reconciled after its response times out");
 
-        assert!(!creation.created);
+        assert!(creation.created);
         assert_eq!(creation.session.id, "abcdefghijklmnopqrstuvwx");
         assert_eq!(creation.session.creation_id, CREATION_ID);
         server.abort();
