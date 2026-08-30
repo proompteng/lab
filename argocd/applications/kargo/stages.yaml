@@ -68,7 +68,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -147,7 +147,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -226,7 +226,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -305,7 +305,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -390,7 +390,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -469,7 +469,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -548,7 +548,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -631,7 +631,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -720,7 +720,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -799,7 +799,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -878,7 +878,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -979,7 +979,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -1078,7 +1078,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -1415,7 +1415,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 105m
+            timeout: 1h45m0s
             errorThreshold: 3
           config:
             apps:
@@ -1516,7 +1516,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -1595,7 +1595,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -1674,7 +1674,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -1808,7 +1808,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -1902,7 +1902,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:
@@ -1983,7 +1983,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m
+            timeout: 20m0s
             errorThreshold: 3
           config:
             apps:

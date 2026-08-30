@@ -6,7 +6,7 @@ metadata:
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
-  interval: 1m
+  interval: 1m0s
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
@@ -51,7 +51,7 @@ metadata:
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
-  interval: 1m
+  interval: 1m0s
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
@@ -94,7 +94,7 @@ metadata:
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
-  interval: 1m
+  interval: 1m0s
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
@@ -137,7 +137,7 @@ metadata:
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
-  interval: 1m
+  interval: 1m0s
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
@@ -180,7 +180,7 @@ metadata:
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
-  interval: 1m
+  interval: 1m0s
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
@@ -214,7 +214,7 @@ metadata:
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
-  interval: 1m
+  interval: 1m0s
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
@@ -248,7 +248,7 @@ metadata:
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
-  interval: 1m
+  interval: 1m0s
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
@@ -285,7 +285,7 @@ metadata:
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
-  interval: 1m
+  interval: 1m0s
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
@@ -320,7 +320,7 @@ metadata:
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
-  interval: 1m
+  interval: 1m0s
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
@@ -354,7 +354,7 @@ metadata:
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
-  interval: 1m
+  interval: 1m0s
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
@@ -389,7 +389,7 @@ metadata:
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
-  interval: 1m
+  interval: 1m0s
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
@@ -430,7 +430,7 @@ metadata:
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
-  interval: 1m
+  interval: 1m0s
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
@@ -469,7 +469,7 @@ metadata:
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
-  interval: 1m
+  interval: 1m0s
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
@@ -506,7 +506,7 @@ metadata:
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
-  interval: 1m
+  interval: 1m0s
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
@@ -603,7 +603,7 @@ metadata:
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
-  interval: 1m
+  interval: 1m0s
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
@@ -643,7 +643,7 @@ metadata:
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
-  interval: 1m
+  interval: 1m0s
   freightCreationPolicy: Automatic
   subscriptions:
     - git:
@@ -668,7 +668,7 @@ metadata:
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
-  interval: 1m
+  interval: 1m0s
   freightCreationPolicy: Automatic
   subscriptions:
     - git:
@@ -691,7 +691,7 @@ metadata:
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
-  interval: 1m
+  interval: 1m0s
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
@@ -786,7 +786,7 @@ metadata:
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
-  interval: 1m
+  interval: 1m0s
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
@@ -831,7 +831,7 @@ metadata:
   labels:
     delivery.proompteng.ai/managed-by: kargo
 spec:
-  interval: 1m
+  interval: 1m0s
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
