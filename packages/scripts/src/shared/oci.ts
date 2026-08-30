@@ -21,9 +21,24 @@ export type CreateOciIndexOptions = {
   annotations?: Record<string, string>
   latest?: boolean
   kargoTag?: string
+  deferKargoTag?: boolean
 }
 
 export type CreateOciIndexResult = {
+  image: string
+  tag: string
+  reference: string
+  digest: string
+  platformDigests: OciPlatformDigest[]
+}
+
+export type PublishOciKargoTagOptions = {
+  image: string
+  reference: string
+  kargoTag: string
+}
+
+export type PublishOciKargoTagResult = {
   image: string
   tag: string
   reference: string
@@ -126,6 +141,63 @@ const normalizeAnnotations = (annotations: Record<string, string> | undefined): 
     }
   }
   return entries
+}
+
+const validateKargoReceipt = (kargoTag: string | undefined, annotations: Array<[string, string]>): void => {
+  const annotationMap = new Map(annotations)
+  const kargoTagMatch = kargoTag?.match(/^kargo-sha-([0-9a-f]{40})(?:-run-([1-9][0-9]*))?$/)
+  if (kargoTag && !kargoTagMatch) {
+    throw new Error('Kargo tag must match kargo-sha-<40 lowercase hex>[-run-<positive integer>]: ' + kargoTag)
+  }
+
+  const tagRunId = kargoTagMatch?.[2]
+  const receiptRunId = annotationMap.get('ai.proompteng.github-actions-run-id')
+  const receiptConclusion = annotationMap.get('ai.proompteng.github-actions-build-conclusion')
+  const hasReceiptMetadata = receiptRunId !== undefined || receiptConclusion !== undefined
+  if (hasReceiptMetadata) {
+    if (!receiptRunId || !receiptConclusion) {
+      throw new Error('OCI build receipt annotations must include both run ID and build conclusion')
+    }
+    if (!/^[1-9][0-9]*$/.test(receiptRunId)) {
+      throw new Error(`OCI build receipt run ID must be a positive integer: ${receiptRunId}`)
+    }
+    if (receiptConclusion !== 'success') {
+      throw new Error(`OCI build receipt conclusion must be success: ${receiptConclusion}`)
+    }
+    if (!tagRunId) {
+      throw new Error('OCI build receipt annotations require a run-qualified immutable Kargo tag')
+    }
+    if (tagRunId !== receiptRunId) {
+      throw new Error(`Kargo tag run ID ${tagRunId} does not match OCI build receipt run ID ${receiptRunId}`)
+    }
+  } else if (tagRunId) {
+    throw new Error('A run-qualified immutable Kargo tag requires OCI build receipt annotations')
+  }
+
+  const sourceRevision = annotationMap.get('org.opencontainers.image.revision')
+  if (sourceRevision && kargoTagMatch && sourceRevision !== kargoTagMatch[1]) {
+    throw new Error(`Kargo tag source revision ${kargoTagMatch[1]} does not match OCI annotation ${sourceRevision}`)
+  }
+}
+
+const publishImmutableKargoTag = (image: string, reference: string, digest: string, kargoTag: string): void => {
+  const kargoReference = imageReference(image, kargoTag)
+  const existingDigest = probeDigest(kargoReference)
+  if (existingDigest && existingDigest !== digest) {
+    throw new Error(
+      `Refusing to move immutable Kargo tag ${kargoReference}: existing digest ${existingDigest} differs from ${digest}`,
+    )
+  }
+  if (!existingDigest) {
+    runRequired('crane', ['tag', reference, kargoTag])
+  }
+  const observedKargoDigest = probeDigest(kargoReference)
+  if (!observedKargoDigest) {
+    throw new Error(`Kargo tag ${kargoReference} was not found after creation`)
+  }
+  if (observedKargoDigest !== digest) {
+    throw new Error(`Kargo tag ${kargoReference} resolved to ${observedKargoDigest}, expected ${digest}`)
+  }
 }
 
 const stripTagOrDigest = (reference: string): string => {
@@ -249,42 +321,10 @@ export const createOciIndex = (options: CreateOciIndexOptions): CreateOciIndexRe
 
   const reference = imageReference(options.image, options.tag)
   const annotations = normalizeAnnotations(options.annotations)
-  const annotationMap = new Map(annotations)
   const kargoTag = options.kargoTag
-  const kargoTagMatch = kargoTag?.match(/^kargo-sha-([0-9a-f]{40})(?:-run-([1-9][0-9]*))?$/)
-  if (kargoTag && !kargoTagMatch) {
-    throw new Error(
-      'createOciIndex kargoTag must match kargo-sha-<40 lowercase hex>[-run-<positive integer>]: ' + kargoTag,
-    )
-  }
-
-  const tagRunId = kargoTagMatch?.[2]
-  const receiptRunId = annotationMap.get('ai.proompteng.github-actions-run-id')
-  const receiptConclusion = annotationMap.get('ai.proompteng.github-actions-build-conclusion')
-  const hasReceiptMetadata = receiptRunId !== undefined || receiptConclusion !== undefined
-  if (hasReceiptMetadata) {
-    if (!receiptRunId || !receiptConclusion) {
-      throw new Error('OCI build receipt annotations must include both run ID and build conclusion')
-    }
-    if (!/^[1-9][0-9]*$/.test(receiptRunId)) {
-      throw new Error(`OCI build receipt run ID must be a positive integer: ${receiptRunId}`)
-    }
-    if (receiptConclusion !== 'success') {
-      throw new Error(`OCI build receipt conclusion must be success: ${receiptConclusion}`)
-    }
-    if (!tagRunId) {
-      throw new Error('OCI build receipt annotations require a run-qualified immutable Kargo tag')
-    }
-    if (tagRunId !== receiptRunId) {
-      throw new Error(`Kargo tag run ID ${tagRunId} does not match OCI build receipt run ID ${receiptRunId}`)
-    }
-  } else if (tagRunId) {
-    throw new Error('A run-qualified immutable Kargo tag requires OCI build receipt annotations')
-  }
-
-  const sourceRevision = annotationMap.get('org.opencontainers.image.revision')
-  if (sourceRevision && kargoTagMatch && sourceRevision !== kargoTagMatch[1]) {
-    throw new Error(`Kargo tag source revision ${kargoTagMatch[1]} does not match OCI annotation ${sourceRevision}`)
+  validateKargoReceipt(kargoTag, annotations)
+  if (options.deferKargoTag && !kargoTag) {
+    throw new Error('createOciIndex deferKargoTag requires kargoTag')
   }
   const args = ['index', 'append']
 
@@ -322,29 +362,49 @@ export const createOciIndex = (options: CreateOciIndexOptions): CreateOciIndexRe
   const platformDigests = kargoTag
     ? assertOciPlatforms(reference, ['linux/amd64', 'linux/arm64'])
     : inspectOciPlatforms(reference)
-  if (kargoTag) {
-    const kargoReference = imageReference(options.image, kargoTag)
-    const existingDigest = probeDigest(kargoReference)
-    if (existingDigest && existingDigest !== digest) {
-      throw new Error(
-        `Refusing to move immutable Kargo tag ${kargoReference}: existing digest ${existingDigest} differs from ${digest}`,
-      )
-    }
-    if (!existingDigest) {
-      runRequired('crane', ['tag', reference, kargoTag])
-    }
-    const observedKargoDigest = probeDigest(kargoReference)
-    if (!observedKargoDigest) {
-      throw new Error(`Kargo tag ${kargoReference} was not found after creation`)
-    }
-    if (observedKargoDigest !== digest) {
-      throw new Error(`Kargo tag ${kargoReference} resolved to ${observedKargoDigest}, expected ${digest}`)
-    }
+  if (kargoTag && !options.deferKargoTag) {
+    publishImmutableKargoTag(options.image, reference, digest, kargoTag)
   }
 
   return {
     image: options.image,
     tag: options.tag,
+    reference: `${options.image}@${digest}`,
+    digest,
+    platformDigests,
+  }
+}
+
+export const publishOciKargoTag = (options: PublishOciKargoTagOptions): PublishOciKargoTagResult => {
+  const digestMatch = options.reference.match(/@(?<digest>sha256:[0-9a-f]{64})$/)
+  const expectedDigest = digestMatch?.groups?.digest
+  if (!expectedDigest || stripTagOrDigest(options.reference) !== options.image) {
+    throw new Error(`publishOciKargoTag reference must be an exact digest in ${options.image}: ${options.reference}`)
+  }
+
+  const digest = runRequired('crane', ['digest', options.reference])
+  if (digest !== expectedDigest) {
+    throw new Error(`OCI reference ${options.reference} resolved to ${digest}, expected ${expectedDigest}`)
+  }
+
+  const manifest = JSON.parse(runRequired('crane', ['manifest', options.reference])) as {
+    annotations?: Record<string, string>
+  }
+  const annotations = normalizeAnnotations(manifest.annotations)
+  const annotationMap = new Map(annotations)
+  validateKargoReceipt(options.kargoTag, annotations)
+  if (!annotationMap.get('org.opencontainers.image.source')) {
+    throw new Error(`OCI receipt ${options.reference} is missing org.opencontainers.image.source`)
+  }
+  if (!annotationMap.get('org.opencontainers.image.revision')) {
+    throw new Error(`OCI receipt ${options.reference} is missing org.opencontainers.image.revision`)
+  }
+  const platformDigests = assertOciPlatforms(options.reference, ['linux/amd64', 'linux/arm64'])
+  publishImmutableKargoTag(options.image, options.reference, digest, options.kargoTag)
+
+  return {
+    image: options.image,
+    tag: options.kargoTag,
     reference: `${options.image}@${digest}`,
     digest,
     platformDigests,
@@ -410,6 +470,7 @@ const runCreateIndexCli = (args: string[]): void => {
   let tag = ''
   let latest = false
   let kargoTag = ''
+  let deferKargoTag = false
   const archTags: OciArchTag[] = []
   const annotations: Record<string, string> = {}
 
@@ -429,6 +490,8 @@ const runCreateIndexCli = (args: string[]): void => {
     } else if (arg === '--kargo-tag') {
       kargoTag = takeValue(args, index, arg)
       index += 1
+    } else if (arg === '--defer-kargo-tag') {
+      deferKargoTag = true
     } else if (arg === '--annotation') {
       const [key, value] = parseAnnotation(takeValue(args, index, arg))
       if (Object.hasOwn(annotations, key)) {
@@ -455,9 +518,44 @@ const runCreateIndexCli = (args: string[]): void => {
     annotations: Object.keys(annotations).length > 0 ? annotations : undefined,
     latest,
     kargoTag: kargoTag || undefined,
+    deferKargoTag,
   })
   writeGithubOutput(result)
   console.log(JSON.stringify(result, null, 2))
+}
+
+const runPublishKargoTagCli = (args: string[]): void => {
+  let image = ''
+  let reference = ''
+  let kargoTag = ''
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]
+    if (arg === '--image') {
+      image = takeValue(args, index, arg)
+      index += 1
+    } else if (arg === '--reference') {
+      reference = takeValue(args, index, arg)
+      index += 1
+    } else if (arg === '--kargo-tag') {
+      kargoTag = takeValue(args, index, arg)
+      index += 1
+    } else {
+      throw new Error(`Unknown publish-kargo-tag argument: ${arg}`)
+    }
+  }
+
+  if (!image) {
+    throw new Error('publish-kargo-tag requires --image')
+  }
+  if (!reference) {
+    throw new Error('publish-kargo-tag requires --reference')
+  }
+  if (!kargoTag) {
+    throw new Error('publish-kargo-tag requires --kargo-tag')
+  }
+
+  console.log(JSON.stringify(publishOciKargoTag({ image, reference, kargoTag }), null, 2))
 }
 
 const runInspectCli = (args: string[]): void => {
@@ -498,12 +596,14 @@ if (import.meta.main) {
   try {
     if (command === 'create-index') {
       runCreateIndexCli(args)
+    } else if (command === 'publish-kargo-tag') {
+      runPublishKargoTagCli(args)
     } else if (command === 'inspect') {
       runInspectCli(args)
     } else if (command === 'assert') {
       runAssertCli(args)
     } else {
-      throw new Error('Usage: oci.ts <create-index|inspect|assert> [options]')
+      throw new Error('Usage: oci.ts <create-index|publish-kargo-tag|inspect|assert> [options]')
     }
   } catch (error) {
     fatal(error instanceof Error ? error.message : String(error))

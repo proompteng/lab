@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 
 import { afterEach, describe, expect, it } from 'bun:test'
 
-import { __private, assertOciPlatforms, createOciIndex, inspectOciPlatforms } from '../oci'
+import { __private, assertOciPlatforms, createOciIndex, inspectOciPlatforms, publishOciKargoTag } from '../oci'
 
 const originalWhich = Bun.which
 const repoRoot = new URL('../../../../../', import.meta.url)
@@ -395,6 +395,143 @@ describe('createOciIndex', () => {
     expect(calls).toContain('crane tag registry.example/lab/example:sha-123 latest')
     expect(calls).toContain(`crane digest ${kargoReference}`)
     expect(calls).toContain(`crane tag registry.example/lab/example:sha-123 ${kargoTag}`)
+  })
+
+  it('prepares an exact receipt index without exposing its deferred Kargo tag', () => {
+    const calls: string[] = []
+    const sourceSha = '1'.repeat(40)
+    const runId = '123456'
+    const kargoTag = `kargo-sha-${sourceSha}-run-${runId}`
+    const digest = 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
+    const annotations = {
+      'ai.proompteng.github-actions-build-conclusion': 'success',
+      'ai.proompteng.github-actions-run-id': runId,
+      'org.opencontainers.image.revision': sourceSha,
+      'org.opencontainers.image.source': 'https://github.com/proompteng/lab',
+    }
+    const receiptReference = `registry.example/lab/example:receipt-${kargoTag}`
+    Bun.which = ((binary: string) => (binary === 'crane' ? '/bin/crane' : null)) as typeof Bun.which
+    __private.setSpawnSync(((command: Parameters<typeof Bun.spawnSync>[0]) => {
+      const joined = typeof command === 'string' ? command : command.join(' ')
+      calls.push(joined)
+      if (joined.startsWith('crane index append ') && joined.endsWith(`-t ${receiptReference}`)) {
+        return spawnResult(0)
+      }
+      if (joined.startsWith(`crane mutate ${receiptReference} `)) {
+        return spawnResult(0)
+      }
+      if (joined === `crane manifest ${receiptReference}`) {
+        return spawnResult(0, JSON.stringify({ ...JSON.parse(manifestList), annotations }))
+      }
+      if (joined === `crane digest ${receiptReference}`) {
+        return spawnResult(0, digest)
+      }
+      return spawnResult(1, '', `unexpected call: ${joined}`)
+    }) as typeof Bun.spawnSync)
+
+    const result = createOciIndex({
+      image: 'registry.example/lab/example',
+      tag: `receipt-${kargoTag}`,
+      archTags: [
+        {
+          platform: 'linux/amd64',
+          tag: 'registry.example/lab/example@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        },
+        {
+          platform: 'linux/arm64',
+          tag: 'registry.example/lab/example@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+        },
+      ],
+      annotations,
+      kargoTag,
+      deferKargoTag: true,
+    })
+
+    expect(result.reference).toBe(`registry.example/lab/example@${digest}`)
+    expect(calls.some((call) => call.includes(`example:${kargoTag}`))).toBe(false)
+    expect(calls.some((call) => call.startsWith('crane tag '))).toBe(false)
+  })
+
+  it('publishes only a validated exact receipt digest under an immutable Kargo tag', () => {
+    const calls: string[] = []
+    const sourceSha = '1'.repeat(40)
+    const runId = '123456'
+    const kargoTag = `kargo-sha-${sourceSha}-run-${runId}`
+    const digest = 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
+    const reference = `registry.example/lab/example@${digest}`
+    const kargoReference = `registry.example/lab/example:${kargoTag}`
+    const annotations = {
+      'ai.proompteng.github-actions-build-conclusion': 'success',
+      'ai.proompteng.github-actions-run-id': runId,
+      'org.opencontainers.image.revision': sourceSha,
+      'org.opencontainers.image.source': 'https://github.com/proompteng/lab',
+    }
+    let published = false
+    Bun.which = ((binary: string) => (binary === 'crane' ? '/bin/crane' : null)) as typeof Bun.which
+    __private.setSpawnSync(((command: Parameters<typeof Bun.spawnSync>[0]) => {
+      const joined = typeof command === 'string' ? command : command.join(' ')
+      calls.push(joined)
+      if (joined === `crane digest ${reference}`) {
+        return spawnResult(0, digest)
+      }
+      if (joined === `crane manifest ${reference}`) {
+        return spawnResult(0, JSON.stringify({ ...JSON.parse(manifestList), annotations }))
+      }
+      if (joined === `crane digest ${kargoReference}`) {
+        return published ? spawnResult(0, digest) : spawnResult(1, '', 'MANIFEST_UNKNOWN: manifest unknown')
+      }
+      if (joined === `crane tag ${reference} ${kargoTag}`) {
+        published = true
+        return spawnResult(0)
+      }
+      return spawnResult(1, '', `unexpected call: ${joined}`)
+    }) as typeof Bun.spawnSync)
+
+    expect(
+      publishOciKargoTag({
+        image: 'registry.example/lab/example',
+        reference,
+        kargoTag,
+      }),
+    ).toMatchObject({ reference, digest, tag: kargoTag })
+    expect(published).toBe(true)
+    expect(calls).toContain(`crane tag ${reference} ${kargoTag}`)
+  })
+
+  it('refuses to publish a receipt digest without complete source provenance', () => {
+    const sourceSha = '1'.repeat(40)
+    const runId = '123456'
+    const digest = 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
+    const reference = `registry.example/lab/example@${digest}`
+    Bun.which = ((binary: string) => (binary === 'crane' ? '/bin/crane' : null)) as typeof Bun.which
+    __private.setSpawnSync(((command: Parameters<typeof Bun.spawnSync>[0]) => {
+      const joined = typeof command === 'string' ? command : command.join(' ')
+      if (joined === `crane digest ${reference}`) {
+        return spawnResult(0, digest)
+      }
+      if (joined === `crane manifest ${reference}`) {
+        return spawnResult(
+          0,
+          JSON.stringify({
+            ...JSON.parse(manifestList),
+            annotations: {
+              'ai.proompteng.github-actions-build-conclusion': 'success',
+              'ai.proompteng.github-actions-run-id': runId,
+              'org.opencontainers.image.revision': sourceSha,
+            },
+          }),
+        )
+      }
+      return spawnResult(1, '', `unexpected call: ${joined}`)
+    }) as typeof Bun.spawnSync)
+
+    expect(() =>
+      publishOciKargoTag({
+        image: 'registry.example/lab/example',
+        reference,
+        kargoTag: `kargo-sha-${sourceSha}-run-${runId}`,
+      }),
+    ).toThrow('missing org.opencontainers.image.source')
   })
 
   it('requires receipt annotations and the immutable Kargo tag to identify the same Actions run', () => {
@@ -931,12 +1068,13 @@ describe('native OCI build workflows', () => {
       torghutWsBuildWorkflow,
       torghutHyperliquidFeedBuildWorkflow,
       headlampWorkflow,
-      agentsBuildWorkflow,
       atticWorkflow,
     ]) {
       expect(workflow).toContain('publish_kargo_tag: true')
       expect(workflow).not.toContain('release_artifact_name:')
     }
+    expect(agentsBuildWorkflow).toContain('publish_kargo_tag: false')
+    expect(agentsBuildWorkflow).toContain('publish-kargo-tag')
     expect(nixOciWorkflow).toContain('default: false')
     expect(nixOciWorkflow).toContain('PUBLISH_KARGO_TAG}')
     expect(nixOciWorkflow).toContain('GITHUB_REF}" = "refs/heads/main"')
@@ -1188,9 +1326,22 @@ describe('native OCI build workflows', () => {
       expect(agentsBuildWorkflow).toContain(`image_name: ${imageName}`)
       expect(agentsBuildWorkflow).toContain(`package_attr: ${packageAttr}`)
     }
-    expect(agentsBuildWorkflow).toContain('publish_kargo_tag: true')
-    expect(agentsBuildWorkflow.match(/kargo_tag_include_run_id: true/g)).toHaveLength(4)
+    expect(agentsBuildWorkflow.match(/publish_kargo_tag: false/g)).toHaveLength(4)
+    expect(agentsBuildWorkflow).not.toContain('kargo_tag_include_run_id: true')
     expect(agentsBuildWorkflow).not.toContain('release_artifact_name:')
+
+    const uploadValuesIndex = agentsBuildWorkflow.indexOf('name: Upload rendered Agents values')
+    const publishReceiptsIndex = agentsBuildWorkflow.indexOf('name: Publish complete Agents receipt set for Kargo')
+    expect(uploadValuesIndex).toBeGreaterThan(-1)
+    expect(publishReceiptsIndex).toBeGreaterThan(uploadValuesIndex)
+    expect(agentsBuildWorkflow.match(/--defer-kargo-tag/g)).toHaveLength(4)
+    expect(agentsBuildWorkflow).toContain('bun run packages/scripts/src/shared/oci.ts publish-kargo-tag')
+    expect(agentsBuildWorkflow).toContain('KARGO_TAG: kargo-sha-${{ github.sha }}-run-${{ github.run_id }}')
+    expect(agentsBuildWorkflow).toContain('CONTROLLER_DIGEST: ${{ steps.controller-receipt.outputs.digest }}')
+    expect(agentsBuildWorkflow).toContain('CONTROL_PLANE_DIGEST: ${{ steps.control-plane-receipt.outputs.digest }}')
+    expect(agentsBuildWorkflow).toContain('AGENTS_SHELL_DIGEST: ${{ steps.agents-shell-receipt.outputs.digest }}')
+    expect(agentsBuildWorkflow).toContain('RUNNER_DIGEST: ${{ steps.runner-receipt.outputs.digest }}')
+    expect(agentsBuildWorkflow).toContain("'packages/scripts/src/shared/oci.ts'")
 
     expect(flake).toContain('import ./nix/images/agents.nix')
     expect(agentsImageModule).toContain('import ./openai-codex-cli.nix')

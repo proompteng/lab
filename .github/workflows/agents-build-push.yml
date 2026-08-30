@@ -13,6 +13,7 @@ on:
       - 'packages/cx-tools/**'
       - 'packages/otel/**'
       - 'packages/scripts/src/agents/update-values.ts'
+      - 'packages/scripts/src/shared/oci.ts'
       - 'packages/temporal-bun-sdk/**'
       - 'services/agents/**'
       - '!services/agents/agentctl/**'
@@ -47,8 +48,7 @@ jobs:
       image_name: agents-controller
       package_attr: agents-controller-image
       tag: sha-${{ github.sha }}
-      publish_kargo_tag: true
-      kargo_tag_include_run_id: true
+      publish_kargo_tag: false
       pr_number: ${{ github.event.pull_request.number || '' }}
     secrets: inherit
 
@@ -59,8 +59,7 @@ jobs:
       image_name: agents-control-plane
       package_attr: agents-control-plane-image
       tag: sha-${{ github.sha }}
-      publish_kargo_tag: true
-      kargo_tag_include_run_id: true
+      publish_kargo_tag: false
       pr_number: ${{ github.event.pull_request.number || '' }}
     secrets: inherit
 
@@ -71,8 +70,7 @@ jobs:
       image_name: agents-shell
       package_attr: agents-shell-image
       tag: sha-${{ github.sha }}
-      publish_kargo_tag: true
-      kargo_tag_include_run_id: true
+      publish_kargo_tag: false
       pr_number: ${{ github.event.pull_request.number || '' }}
     secrets: inherit
 
@@ -83,8 +81,7 @@ jobs:
       image_name: agents-codex-runner
       package_attr: agents-codex-runner-image
       tag: sha-${{ github.sha }}
-      publish_kargo_tag: true
-      kargo_tag_include_run_id: true
+      publish_kargo_tag: false
       pr_number: ${{ github.event.pull_request.number || '' }}
     secrets: inherit
 
@@ -112,13 +109,97 @@ jobs:
             substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
             extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
 
+      - name: Prepare controller receipt index
+        id: controller-receipt
+        env:
+          IMAGE: registry.ide-newton.ts.net/lab/agents-controller
+          PLATFORM_DIGEST_AMD64: ${{ needs.controller-image.outputs.platform_digest_amd64 }}
+          PLATFORM_DIGEST_ARM64: ${{ needs.controller-image.outputs.platform_digest_arm64 }}
+        run: |
+          set -euo pipefail
+          kargo_tag="kargo-sha-${GITHUB_SHA}-run-${GITHUB_RUN_ID}"
+          bun run packages/scripts/src/shared/oci.ts create-index \
+            --image "${IMAGE}" \
+            --tag "receipt-${kargo_tag}" \
+            --arch-tag "linux/amd64=${IMAGE}@${PLATFORM_DIGEST_AMD64}" \
+            --arch-tag "linux/arm64=${IMAGE}@${PLATFORM_DIGEST_ARM64}" \
+            --annotation "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --annotation "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --annotation "ai.proompteng.github-actions-run-id=${GITHUB_RUN_ID}" \
+            --annotation "ai.proompteng.github-actions-build-conclusion=success" \
+            --kargo-tag "${kargo_tag}" \
+            --defer-kargo-tag
+
+      - name: Prepare control-plane receipt index
+        id: control-plane-receipt
+        env:
+          IMAGE: registry.ide-newton.ts.net/lab/agents-control-plane
+          PLATFORM_DIGEST_AMD64: ${{ needs.control-plane-image.outputs.platform_digest_amd64 }}
+          PLATFORM_DIGEST_ARM64: ${{ needs.control-plane-image.outputs.platform_digest_arm64 }}
+        run: |
+          set -euo pipefail
+          kargo_tag="kargo-sha-${GITHUB_SHA}-run-${GITHUB_RUN_ID}"
+          bun run packages/scripts/src/shared/oci.ts create-index \
+            --image "${IMAGE}" \
+            --tag "receipt-${kargo_tag}" \
+            --arch-tag "linux/amd64=${IMAGE}@${PLATFORM_DIGEST_AMD64}" \
+            --arch-tag "linux/arm64=${IMAGE}@${PLATFORM_DIGEST_ARM64}" \
+            --annotation "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --annotation "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --annotation "ai.proompteng.github-actions-run-id=${GITHUB_RUN_ID}" \
+            --annotation "ai.proompteng.github-actions-build-conclusion=success" \
+            --kargo-tag "${kargo_tag}" \
+            --defer-kargo-tag
+
+      - name: Prepare Agents shell receipt index
+        id: agents-shell-receipt
+        env:
+          IMAGE: registry.ide-newton.ts.net/lab/agents-shell
+          PLATFORM_DIGEST_AMD64: ${{ needs.agents-shell-image.outputs.platform_digest_amd64 }}
+          PLATFORM_DIGEST_ARM64: ${{ needs.agents-shell-image.outputs.platform_digest_arm64 }}
+        run: |
+          set -euo pipefail
+          kargo_tag="kargo-sha-${GITHUB_SHA}-run-${GITHUB_RUN_ID}"
+          bun run packages/scripts/src/shared/oci.ts create-index \
+            --image "${IMAGE}" \
+            --tag "receipt-${kargo_tag}" \
+            --arch-tag "linux/amd64=${IMAGE}@${PLATFORM_DIGEST_AMD64}" \
+            --arch-tag "linux/arm64=${IMAGE}@${PLATFORM_DIGEST_ARM64}" \
+            --annotation "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --annotation "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --annotation "ai.proompteng.github-actions-run-id=${GITHUB_RUN_ID}" \
+            --annotation "ai.proompteng.github-actions-build-conclusion=success" \
+            --kargo-tag "${kargo_tag}" \
+            --defer-kargo-tag
+
+      - name: Prepare runner receipt index
+        id: runner-receipt
+        env:
+          IMAGE: registry.ide-newton.ts.net/lab/agents-codex-runner
+          PLATFORM_DIGEST_AMD64: ${{ needs.runner-image.outputs.platform_digest_amd64 }}
+          PLATFORM_DIGEST_ARM64: ${{ needs.runner-image.outputs.platform_digest_arm64 }}
+        run: |
+          set -euo pipefail
+          kargo_tag="kargo-sha-${GITHUB_SHA}-run-${GITHUB_RUN_ID}"
+          bun run packages/scripts/src/shared/oci.ts create-index \
+            --image "${IMAGE}" \
+            --tag "receipt-${kargo_tag}" \
+            --arch-tag "linux/amd64=${IMAGE}@${PLATFORM_DIGEST_AMD64}" \
+            --arch-tag "linux/arm64=${IMAGE}@${PLATFORM_DIGEST_ARM64}" \
+            --annotation "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --annotation "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --annotation "ai.proompteng.github-actions-run-id=${GITHUB_RUN_ID}" \
+            --annotation "ai.proompteng.github-actions-build-conclusion=success" \
+            --kargo-tag "${kargo_tag}" \
+            --defer-kargo-tag
+
       - name: Write rendered Agents values
         env:
           TAG: sha-${{ github.sha }}
-          CONTROLLER_DIGEST: ${{ needs.controller-image.outputs.digest }}
-          CONTROL_PLANE_DIGEST: ${{ needs.control-plane-image.outputs.digest }}
-          AGENTS_SHELL_DIGEST: ${{ needs.agents-shell-image.outputs.digest }}
-          RUNNER_DIGEST: ${{ needs.runner-image.outputs.digest }}
+          CONTROLLER_DIGEST: ${{ steps.controller-receipt.outputs.digest }}
+          CONTROL_PLANE_DIGEST: ${{ steps.control-plane-receipt.outputs.digest }}
+          AGENTS_SHELL_DIGEST: ${{ steps.agents-shell-receipt.outputs.digest }}
+          RUNNER_DIGEST: ${{ steps.runner-receipt.outputs.digest }}
         run: |
           set -euo pipefail
           test -n "${RUNNER_DIGEST}"
@@ -145,3 +226,29 @@ jobs:
           path: argocd/applications/agents/values.yaml
           if-no-files-found: error
           retention-days: 3
+
+      - name: Publish complete Agents receipt set for Kargo
+        env:
+          KARGO_TAG: kargo-sha-${{ github.sha }}-run-${{ github.run_id }}
+          CONTROLLER_IMAGE: registry.ide-newton.ts.net/lab/agents-controller
+          CONTROLLER_REFERENCE: ${{ steps.controller-receipt.outputs.reference }}
+          CONTROL_PLANE_IMAGE: registry.ide-newton.ts.net/lab/agents-control-plane
+          CONTROL_PLANE_REFERENCE: ${{ steps.control-plane-receipt.outputs.reference }}
+          AGENTS_SHELL_IMAGE: registry.ide-newton.ts.net/lab/agents-shell
+          AGENTS_SHELL_REFERENCE: ${{ steps.agents-shell-receipt.outputs.reference }}
+          RUNNER_IMAGE: registry.ide-newton.ts.net/lab/agents-codex-runner
+          RUNNER_REFERENCE: ${{ steps.runner-receipt.outputs.reference }}
+        run: |
+          set -euo pipefail
+          publish_receipt() {
+            local image="$1"
+            local reference="$2"
+            bun run packages/scripts/src/shared/oci.ts publish-kargo-tag \
+              --image "${image}" \
+              --reference "${reference}" \
+              --kargo-tag "${KARGO_TAG}"
+          }
+          publish_receipt "${CONTROLLER_IMAGE}" "${CONTROLLER_REFERENCE}"
+          publish_receipt "${CONTROL_PLANE_IMAGE}" "${CONTROL_PLANE_REFERENCE}"
+          publish_receipt "${AGENTS_SHELL_IMAGE}" "${AGENTS_SHELL_REFERENCE}"
+          publish_receipt "${RUNNER_IMAGE}" "${RUNNER_REFERENCE}"
