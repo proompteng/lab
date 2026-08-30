@@ -65,6 +65,8 @@ const READY_TIMEOUT: Duration = Duration::from_secs(120);
 const TERMINAL_TICKET_TIMEOUT: Duration = Duration::from_secs(30);
 const PROVISIONAL_TERMINAL_CLEANUP_RETRY: Duration = Duration::from_secs(2);
 const PROVISIONAL_TERMINAL_ANNOTATION_PREFIX: &str = "runtime.proompteng.ai/provisional-terminal-";
+const RETIRED_PROVISIONAL_TERMINAL_CREATION_ANNOTATION_PREFIX: &str =
+    "runtime.proompteng.ai/provisional-terminal-create-";
 
 #[derive(Clone)]
 pub struct ControlPlane {
@@ -1798,6 +1800,9 @@ fn recoverable_provisional_terminal_leases(
         .iter()
         .flat_map(|annotations| annotations.iter())
         .filter_map(|(key, value)| {
+            if key.starts_with(RETIRED_PROVISIONAL_TERMINAL_CREATION_ANNOTATION_PREFIX) {
+                return None;
+            }
             let terminal_id = key.strip_prefix(PROVISIONAL_TERMINAL_ANNOTATION_PREFIX)?;
             if terminal_id.is_empty()
                 || terminal_id.len() > 128
@@ -3119,6 +3124,34 @@ mod tests {
                 .expect("recovered cleanup timeout")
                 .expect("recovered cleanup result"),
             "terminal-recovered"
+        );
+    }
+
+    #[test]
+    fn replacement_registry_ignores_a_retired_terminal_creation_intent() {
+        let now = Utc::now();
+        let mut agent = provisional_terminal_test_agent(now);
+        agent.metadata.annotations = Some(std::collections::BTreeMap::from([
+            (
+                format!(
+                    "{RETIRED_PROVISIONAL_TERMINAL_CREATION_ANNOTATION_PREFIX}legacy-grpc-0123456789abcdef"
+                ),
+                r#"{"expires_at":"2026-08-30T19:00:00Z","cwd":"/workspace","existing_session_ids":[]}"#
+                    .to_owned(),
+            ),
+            (
+                provisional_terminal_annotation_key("terminal-recovered"),
+                (now + chrono::Duration::seconds(30)).to_rfc3339(),
+            ),
+        ]));
+
+        assert_eq!(
+            recoverable_provisional_terminal_leases(&agent, now),
+            vec![RecoverableProvisionalTerminalLease {
+                agent_id: "agent-current".to_owned(),
+                terminal_id: "terminal-recovered".to_owned(),
+                delay: Duration::from_secs(30),
+            }],
         );
     }
 }
