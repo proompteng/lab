@@ -1,0 +1,445 @@
+from __future__ import annotations
+
+import hashlib
+from collections.abc import Iterator
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import MagicMock, patch
+from unittest import TestCase
+
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
+
+from app.config import settings
+from app import db as app_db
+from app.db import check_account_scope_invariants
+from app.models import Base
+
+
+class TestDbAccountScopeInvariants(TestCase):
+    def setUp(self) -> None:
+        self._original_multi_account_enabled = settings.trading_multi_account_enabled
+        settings.trading_multi_account_enabled = True
+
+        self.engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+        Base.metadata.create_all(self.engine)
+        self.session_local = sessionmaker(
+            bind=self.engine, expire_on_commit=False, future=True
+        )
+
+    def tearDown(self) -> None:
+        settings.trading_multi_account_enabled = self._original_multi_account_enabled
+        self.engine.dispose()
+
+    def test_account_scope_invariants_pass_for_migrated_schema(self) -> None:
+        with self.session_local() as session:
+            status = check_account_scope_invariants(session)
+
+        self.assertTrue(status["account_scope_ready"])
+        self.assertTrue(status["execution_has_account_scoped_unique_order_id"])
+        self.assertTrue(status["execution_has_account_scoped_unique_client_order_id"])
+        self.assertFalse(status["legacy_executions_single_account_indexes_present"])
+        self.assertFalse(status["legacy_trade_cursor_source_only_index_present"])
+
+    def test_account_scope_invariants_reuses_session_connection_for_inspector(
+        self,
+    ) -> None:
+        inspected_connections: list[object] = []
+        original_inspect = app_db.inspect
+
+        with self.session_local() as session:
+            expected_connection = session.connection()
+
+            def inspect_connection(connection: object) -> object:
+                inspected_connections.append(connection)
+                return original_inspect(connection)
+
+            with patch("app.db.inspect", side_effect=inspect_connection):
+                status = check_account_scope_invariants(session)
+
+        self.assertTrue(status["account_scope_ready"])
+        self.assertEqual(inspected_connections, [expected_connection])
+
+    def test_account_scope_invariants_detects_legacy_single_account_constraints(
+        self,
+    ) -> None:
+        with self.engine.begin() as conn:
+            conn.execute(
+                text("DROP INDEX IF EXISTS uq_executions_account_alpaca_order_id")
+            )
+            conn.execute(
+                text("DROP INDEX IF EXISTS uq_executions_account_client_order_id")
+            )
+            conn.execute(
+                text("DROP INDEX IF EXISTS uq_trade_decisions_account_decision_hash")
+            )
+            conn.execute(text("DROP INDEX IF EXISTS uq_trade_cursor_source_account"))
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX legacy_exec_order_id ON executions(alpaca_order_id)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX legacy_exec_client_order_id ON executions(client_order_id)"
+                )
+            )
+            conn.execute(
+                text("CREATE UNIQUE INDEX legacy_cursor_source ON trade_cursor(source)")
+            )
+
+        with self.session_local() as session:
+            status = check_account_scope_invariants(session)
+
+        self.assertFalse(status["account_scope_ready"])
+        self.assertIn(
+            "legacy unique constraint/index detected for executions.alpaca_order_id",
+            status["account_scope_errors"],
+        )
+        self.assertIn(
+            "legacy unique constraint/index detected for trade_cursor.source",
+            status["account_scope_errors"],
+        )
+        self.assertTrue(status["legacy_executions_single_account_indexes_present"])
+        self.assertTrue(status["legacy_trade_cursor_source_only_index_present"])
+
+
+class TestDbSchemaCurrent(TestCase):
+    def test_check_schema_current_normalizes_and_signs_expected_heads(self) -> None:
+        engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        Base.metadata.create_all(bind=engine)
+
+        with (
+            patch(
+                "app.db._get_expected_schema_heads",
+                return_value=("0011_demo_alpha", "0012_demo_beta"),
+            ),
+            patch(
+                "app.db._get_expected_schema_graph",
+                return_value={
+                    "expected_schema_graph_signature": "graph-signature-demo",
+                    "expected_migration_roots": ["0001_demo_root"],
+                    "expected_migration_branch_count": 2,
+                    "expected_migration_parent_forks": {
+                        "0010_demo_parent": [
+                            "0011_demo_alpha",
+                            "0011_demo_beta",
+                        ]
+                    },
+                    "expected_migration_duplicate_revisions": {},
+                    "expected_migration_orphan_parents": [],
+                },
+            ),
+            patch("app.db.MigrationContext") as mock_migration_context,
+        ):
+            context_instance = MagicMock()
+            context_instance.get_current_heads.return_value = [
+                "0011_demo_alpha",
+                "0012_demo_gamma",
+                "0011_demo_alpha",
+            ]
+            mock_migration_context.configure.return_value = context_instance
+
+            with session_local() as session:
+                status = app_db.check_schema_current(session)
+
+        self.assertEqual(
+            status["current_heads"],
+            ["0011_demo_alpha", "0011_demo_alpha", "0012_demo_gamma"],
+        )
+        self.assertEqual(
+            status["expected_heads"], ["0011_demo_alpha", "0012_demo_beta"]
+        )
+        self.assertFalse(status["schema_current"])
+        self.assertEqual(
+            status["expected_heads_signature"],
+            hashlib.sha256(
+                "0011_demo_alpha,0012_demo_beta".encode("utf-8")
+            ).hexdigest(),
+        )
+        self.assertEqual(status["schema_missing_heads"], ["0012_demo_beta"])
+        self.assertEqual(status["schema_unexpected_heads"], ["0012_demo_gamma"])
+        self.assertEqual(status["schema_head_count_expected"], 2)
+        self.assertEqual(status["schema_head_count_current"], 3)
+        self.assertEqual(status["schema_head_delta_count"], 2)
+        self.assertEqual(status["schema_graph_signature"], "graph-signature-demo")
+        self.assertEqual(status["schema_graph_roots"], ["0001_demo_root"])
+        self.assertEqual(status["schema_graph_branch_count"], 2)
+        self.assertEqual(
+            status["schema_graph_parent_forks"],
+            {"0010_demo_parent": ["0011_demo_alpha", "0011_demo_beta"]},
+        )
+        self.assertEqual(status["schema_graph_duplicate_revisions"], {})
+        self.assertEqual(status["schema_graph_orphan_parents"], [])
+
+    def test_check_schema_current_reads_postgres_alembic_heads_directly(
+        self,
+    ) -> None:
+        class FakeScalarResult:
+            def __init__(self, values: list[str]) -> None:
+                self._values = values
+
+            def __iter__(self) -> Iterator[str]:
+                return iter(self._values)
+
+        class FakeResult:
+            def __init__(
+                self,
+                *,
+                scalar_value: object | None = None,
+                scalar_values: list[str] | None = None,
+            ) -> None:
+                self._scalar_value = scalar_value
+                self._scalar_values = scalar_values or []
+
+            def scalar_one(self) -> int:
+                return 1
+
+            def scalar(self) -> object | None:
+                return self._scalar_value
+
+            def scalars(self) -> FakeScalarResult:
+                return FakeScalarResult(self._scalar_values)
+
+        class FakeDialect:
+            name = "postgresql"
+
+        class FakeConnection:
+            dialect = FakeDialect()
+
+            def __init__(self) -> None:
+                self.statements: list[str] = []
+
+            def execute(self, statement: object) -> FakeResult:
+                sql = str(statement)
+                self.statements.append(sql)
+                if "SET LOCAL statement_timeout" in sql:
+                    return FakeResult()
+                if "to_regclass('alembic_version')" in sql:
+                    return FakeResult(scalar_value="alembic_version")
+                if "SELECT version_num FROM alembic_version" in sql:
+                    return FakeResult(
+                        scalar_values=["0012_demo_beta", "0011_demo_alpha"]
+                    )
+                raise AssertionError(f"unexpected SQL: {sql}")
+
+        class FakeSession:
+            def __init__(self) -> None:
+                self.connection_obj = FakeConnection()
+
+            def execute(self, statement: object) -> FakeResult:
+                sql = str(statement)
+                if sql == "SELECT 1":
+                    return FakeResult(scalar_value=1)
+                raise AssertionError(f"unexpected session SQL: {sql}")
+
+            def connection(self) -> FakeConnection:
+                return self.connection_obj
+
+        fake_session = FakeSession()
+        with (
+            patch(
+                "app.db._get_expected_schema_heads",
+                return_value=("0011_demo_alpha", "0012_demo_beta"),
+            ),
+            patch(
+                "app.db._get_expected_schema_graph",
+                return_value={
+                    "expected_schema_graph_signature": "graph-signature-demo",
+                    "expected_migration_roots": [],
+                    "expected_migration_branch_count": 1,
+                    "expected_migration_parent_forks": {},
+                    "expected_migration_duplicate_revisions": {},
+                    "expected_migration_orphan_parents": [],
+                },
+            ),
+            patch("app.db.MigrationContext") as mock_migration_context,
+        ):
+            status = app_db.check_schema_current(fake_session)
+
+        self.assertTrue(status["schema_current"])
+        self.assertEqual(status["current_heads"], ["0011_demo_alpha", "0012_demo_beta"])
+        mock_migration_context.configure.assert_not_called()
+        joined_sql = "\n".join(fake_session.connection_obj.statements)
+        self.assertIn("SET LOCAL statement_timeout = 750", joined_sql)
+        self.assertNotIn("statement_timeout = 150", joined_sql)
+        self.assertIn("SELECT to_regclass('alembic_version')", joined_sql)
+        self.assertIn("SELECT version_num FROM alembic_version", joined_sql)
+        self.assertNotIn("pg_catalog.pg_class", joined_sql)
+
+    def test_check_schema_current_treats_missing_postgres_alembic_table_as_empty(
+        self,
+    ) -> None:
+        class FakeResult:
+            def __init__(self, *, scalar_value: object | None = None) -> None:
+                self._scalar_value = scalar_value
+
+            def scalar_one(self) -> int:
+                return 1
+
+            def scalar(self) -> object | None:
+                return self._scalar_value
+
+        class FakeDialect:
+            name = "postgresql"
+
+        class FakeConnection:
+            dialect = FakeDialect()
+
+            def execute(self, statement: object) -> FakeResult:
+                sql = str(statement)
+                if "SET LOCAL statement_timeout" in sql:
+                    return FakeResult()
+                if "to_regclass('alembic_version')" in sql:
+                    return FakeResult(scalar_value=None)
+                raise AssertionError(f"unexpected SQL: {sql}")
+
+        class FakeSession:
+            def __init__(self) -> None:
+                self.connection_obj = FakeConnection()
+
+            def execute(self, statement: object) -> FakeResult:
+                sql = str(statement)
+                if sql == "SELECT 1":
+                    return FakeResult(scalar_value=1)
+                raise AssertionError(f"unexpected session SQL: {sql}")
+
+            def connection(self) -> FakeConnection:
+                return self.connection_obj
+
+        with (
+            patch("app.db._get_expected_schema_heads", return_value=("0011_demo",)),
+            patch(
+                "app.db._get_expected_schema_graph",
+                return_value={
+                    "expected_schema_graph_signature": "graph-signature-demo",
+                    "expected_migration_roots": [],
+                    "expected_migration_branch_count": 1,
+                    "expected_migration_parent_forks": {},
+                    "expected_migration_duplicate_revisions": {},
+                    "expected_migration_orphan_parents": [],
+                },
+            ),
+            patch("app.db.MigrationContext") as mock_migration_context,
+        ):
+            status = app_db.check_schema_current(FakeSession())
+
+        self.assertEqual(status["current_heads"], [])
+        self.assertEqual(status["schema_missing_heads"], ["0011_demo"])
+        mock_migration_context.configure.assert_not_called()
+
+    def test_alembic_config_requires_migrations_directory(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            base_dir = Path(tmpdir)
+            ini_path = base_dir / "alembic.ini"
+            ini_path.write_text("[alembic]\n", encoding="utf-8")
+
+            with (
+                patch("app.db._ALEMBIC_INI_PATH", ini_path),
+                patch("app.db._ALEMBIC_MIGRATIONS_PATH", base_dir / "missing"),
+                self.assertRaisesRegex(RuntimeError, "Alembic migrations directory"),
+            ):
+                app_db._alembic_config()
+
+    def test_expected_schema_heads_cached(self) -> None:
+        app_db._get_expected_schema_heads.cache_clear()
+        with patch("app.db.ScriptDirectory.from_config") as mock_from_config:
+            script_directory = MagicMock()
+            script_directory.get_heads.return_value = [
+                "0012_demo_beta",
+                "0011_demo_alpha",
+            ]
+            mock_from_config.return_value = script_directory
+
+            first = app_db._get_expected_schema_heads()
+            second = app_db._get_expected_schema_heads()
+
+        self.assertEqual(first, ("0011_demo_alpha", "0012_demo_beta"))
+        self.assertEqual(second, first)
+        self.assertEqual(mock_from_config.call_count, 1)
+
+
+class TestDbMigrationGraphParsing(TestCase):
+    def test_parse_migration_graph_infers_roots_heads_forks_and_stable_signature(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            versions_dir = Path(tmpdir)
+            (versions_dir / "0001_root.py").write_text(
+                "revision: str = '0001_root'\ndown_revision = None\n",
+                encoding="utf-8",
+            )
+            (versions_dir / "0002_alpha.py").write_text(
+                "revision = '0002_alpha'\ndown_revision = '0001_root'\n",
+                encoding="utf-8",
+            )
+            (versions_dir / "0002_beta.py").write_text(
+                "revision = '0002_beta'\ndown_revision = '0001_root'\n",
+                encoding="utf-8",
+            )
+
+            first = app_db._parse_migration_graph(versions_dir)
+            second = app_db._parse_migration_graph(versions_dir)
+
+        self.assertEqual(first["expected_migration_roots"], ["0001_root"])
+        self.assertEqual(
+            first["expected_migration_heads"],
+            ["0002_alpha", "0002_beta"],
+        )
+        self.assertEqual(first["expected_migration_branch_count"], 2)
+        self.assertEqual(
+            first["expected_migration_parent_forks"],
+            {"0001_root": ["0002_alpha", "0002_beta"]},
+        )
+        self.assertEqual(first["expected_migration_duplicate_revisions"], {})
+        self.assertEqual(first["expected_migration_orphan_parents"], [])
+        self.assertEqual(
+            first["expected_schema_graph_signature"],
+            second["expected_schema_graph_signature"],
+        )
+
+    def test_parse_migration_graph_reports_duplicate_revisions_and_orphans(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            versions_dir = Path(tmpdir)
+            (versions_dir / "0001_first.py").write_text(
+                "revision = '0001_first'\ndown_revision = '0000_missing'\n",
+                encoding="utf-8",
+            )
+            (versions_dir / "0001_duplicate.py").write_text(
+                "revision = '0001_first'\ndown_revision = None\n",
+                encoding="utf-8",
+            )
+
+            summary = app_db._parse_migration_graph(versions_dir)
+
+        self.assertEqual(
+            summary["expected_migration_duplicate_revisions"],
+            {"0001_first": ["0001_duplicate.py", "0001_first.py"]},
+        )
+        self.assertEqual(summary["expected_migration_orphan_parents"], ["0000_missing"])
+
+    def test_parse_migration_revision_rejects_missing_and_empty_revision(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            versions_dir = Path(tmpdir)
+            missing_revision = versions_dir / "missing_revision.py"
+            missing_revision.write_text("down_revision = None\n", encoding="utf-8")
+            empty_revision = versions_dir / "empty_revision.py"
+            empty_revision.write_text(
+                "revision = '   '\ndown_revision = None\n", encoding="utf-8"
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "missing string revision"):
+                app_db._parse_migration_revision(missing_revision)
+            with self.assertRaisesRegex(RuntimeError, "empty revision"):
+                app_db._parse_migration_revision(empty_revision)
+
+    def test_parse_migration_graph_rejects_versions_path_file(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            versions_path = Path(tmpdir) / "versions.py"
+            versions_path.write_text("", encoding="utf-8")
+
+            with self.assertRaisesRegex(RuntimeError, "not a directory"):
+                app_db._parse_migration_graph(versions_path)

@@ -1,0 +1,251 @@
+operatorNamespace: rook-ceph
+clusterName: rook-ceph
+
+pspEnable: false
+
+monitoring:
+  # Metrics are scraped directly from rook-ceph-mgr by the cluster Alloy.
+  # This cluster does not install the Prometheus Operator ServiceMonitor CRD.
+  enabled: false
+  createPrometheusRules: false
+
+cephImage:
+  repository: quay.io/ceph/ceph
+  # Restate snapshots require RGW ETag conditional PUT support. Pin the full
+  # Tentacle build that also carries the updated ARM64 unwinder required by
+  # the cluster's Ampere monitor host.
+  tag: v20.2.3-20260804
+  allowUnsupported: false
+
+toolbox:
+  enabled: true
+  resources:
+    limits:
+      memory: 1Gi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+  priorityClassName: system-cluster-critical
+
+cephClusterSpec:
+  # Stop the major-version OSD rollout before it starts if any PG is not clean.
+  upgradeOSDRequiresHealthyPGs: true
+  cephConfig:
+    global:
+      # This cluster currently runs OSDs on 2 hosts, so the default replicated pool size must be 2.
+      # Pools without an explicit size (e.g. `.mgr`) inherit these defaults.
+      osd_pool_default_size: "2"
+      osd_pool_default_min_size: "1"
+      mon_data_avail_warn: "15"
+      # Prefer msgr2 CRC mode on the trusted in-cluster storage path. This avoids
+      # secure-mode CPU cost while keeping msgr2 and wire CRCs.
+      rbd_default_map_options: "ms_mode=prefer-crc"
+    osd:
+      bluestore_cache_autotune: "true"
+      # Steady-state client-ops posture. Temporary recovery-surge overrides belong
+      # only in an active maintenance window and must be removed after recovery is clean.
+      osd_mclock_profile: "high_client_ops"
+      # Fallback for future HDD OSDs. Current OSDs have per-daemon measured overrides below.
+      osd_mclock_max_capacity_iops_hdd: "275"
+      # Seagate Exos X24 24TB HDDs advertise 285 MB/s / 272 MiB/s sustained transfer.
+      # Keep the mClock HDD bandwidth model explicit so client/recovery QoS is not based on the conservative default.
+      osd_mclock_max_sequential_bandwidth_hdd: "285212672"
+      osd_memory_target: "8589934592"
+      # Automatically repair small scrub inconsistencies. Larger damage still requires operator review.
+      osd_scrub_auto_repair: "true"
+      osd_scrub_auto_repair_num_errors: "5"
+      # Keep client fsync latency ahead of maintenance on the shared two-host HDD path.
+      # Scrub-debt alerts remain enabled, so deferred work cannot accumulate silently.
+      osd_max_scrubs: "1"
+    # Per-OSD mClock HDD IOPS capacity, measured with Ceph's documented 4 KiB OSD bench path on 2026-07-07.
+    osd.0:
+      osd_mclock_max_capacity_iops_hdd: "210"
+    osd.1:
+      osd_mclock_max_capacity_iops_hdd: "250"
+    osd.2:
+      osd_mclock_max_capacity_iops_hdd: "260"
+    osd.3:
+      osd_mclock_max_capacity_iops_hdd: "200"
+    osd.4:
+      osd_mclock_max_capacity_iops_hdd: "220"
+    osd.5:
+      osd_mclock_max_capacity_iops_hdd: "240"
+    mgr:
+      # Keep PG movement conservative during normal client operations and keep PG
+      # shard deviation tight without enabling read-primary balancing while pre-Reef clients exist.
+      target_max_misplaced_ratio: "0.03"
+      mgr/balancer/upmap_max_deviation: "1"
+
+  dataDirHostPath: /var/lib/rook
+
+  mon:
+    count: 3
+    # Run monitors across the available control-plane nodes. Turin replaces the old
+    # ampone/talos-192-168-1-203 control-plane slot.
+    allowMultiplePerNode: false
+
+  # Keep talos-192-168-1-194 as control-plane only (mon node, no OSDs).
+  placement:
+    mon:
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: kubernetes.io/hostname
+                  operator: In
+                  values:
+                    - talos-192-168-1-85
+                    - talos-192-168-1-194
+                    - turin
+    # Turin is a control-plane node with local OSD disks, so Rook needs the
+    # same taint tolerance for both the prepare job and the OSD daemons.
+    prepareosd:
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+    osd:
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+
+  mgr:
+    count: 2
+    allowMultiplePerNode: false
+    modules:
+      - name: stats
+        enabled: true
+      - name: balancer
+        enabled: true
+        settings:
+          # Keep capacity balancing active without pg-upmap-primary while kernel
+          # RBD clients still advertise pre-Reef/luminous feature bits.
+          balancerMode: upmap
+
+  dashboard:
+    enabled: true
+    ssl: false
+
+  network:
+    connections:
+      encryption:
+        enabled: false
+      compression:
+        enabled: false
+      requireMsgr2: true
+
+  priorityClassNames:
+    mon: system-node-critical
+    osd: system-node-critical
+    mgr: system-cluster-critical
+
+  resources:
+    osd:
+      limits:
+        memory: 12Gi
+      requests:
+        cpu: 1000m
+        memory: 8Gi
+
+  csi:
+    cephfs:
+      # The CSI-operator path sources per-cluster mount defaults from the CephCluster.
+      kernelMountOptions: "ms_mode=crc"
+    readAffinity:
+      enabled: true
+      crushLocationLabels:
+        - kubernetes.io/hostname
+
+  storage:
+    # Scope OSDs to dedicated storage nodes
+    useAllNodes: false
+    useAllDevices: false
+    deviceFilter: ""
+    nodes:
+      - name: talos-192-168-1-85
+        config:
+          metadataDevice: /dev/disk/by-id/nvme-CT4000P3PSSD8_2402E88D0863
+        devices:
+          - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA12R7C
+          - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0LKW9
+          - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0HS7E
+      - name: turin
+        devices:
+          - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0NL5D
+            config:
+              metadataDevice: /dev/disk/by-id/nvme-KINGSTON_SNV3S1000G_50026B76878F0B27
+              databaseSizeMB: "300000"
+          - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0MZ1M
+            config:
+              metadataDevice: /dev/ceph-10525ca6-66f7-48fd-a13a-7f7063dcc31b/osd-db-zxa0mz1m
+              databaseSizeMB: "300000"
+          - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0LVM9
+            config:
+              metadataDevice: /dev/ceph-10525ca6-66f7-48fd-a13a-7f7063dcc31b/osd-db-osd1
+              databaseSizeMB: "300000"
+
+  disruptionManagement:
+    managePodBudgets: true
+    osdMaintenanceTimeout: 30
+
+  healthCheck:
+    daemonHealth:
+      mon:
+        interval: 45s
+      osd:
+        interval: 60s
+      status:
+        interval: 60s
+
+# Disable chart-managed default block/filesystem classes to avoid duplicates.
+# Canonical classes are managed in storageclasses.yaml as:
+# - rook-ceph-block (RWO)
+# - rook-ceph-block-nbd-canary (RWO, non-default rbd-nbd proof lane)
+# - rook-cephfs (RWX, kernel-capable nodes only)
+# - rook-cephfs-fuse (RWX on Talos-compatible nodes)
+# - CephFilesystem details such as MDS resources
+cephBlockPools: []
+cephFileSystems: []
+
+cephObjectStores:
+  - name: objectstore
+    spec:
+      metadataPool:
+        failureDomain: host
+        replicated:
+          size: 2
+      dataPool:
+        failureDomain: host
+        replicated:
+          size: 2
+        parameters:
+          bulk: "true"
+          pg_num_min: "128"
+      preservePoolsOnDelete: true
+      gateway:
+        port: 80
+        instances: 2
+        priorityClassName: system-cluster-critical
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: "2"
+            memory: 3Gi
+    storageClass:
+      enabled: true
+      name: rook-ceph-bucket
+      reclaimPolicy: Retain
+      volumeBindingMode: Immediate
+      parameters:
+        region: us-east-1
+    ingress:
+      enabled: false
+    route:
+      enabled: false
