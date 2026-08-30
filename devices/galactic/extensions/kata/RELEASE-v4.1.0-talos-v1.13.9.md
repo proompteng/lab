@@ -1,9 +1,10 @@
 # Kata 4.1.0 / Talos v1.13.9 release receipt
 
-Recorded on 2026-08-24. Status: **complete**. All three Galactic control-plane nodes run the signed r4 extension,
+Recorded on 2026-08-24 and updated on 2026-08-30. Status: **r4 complete on all three nodes; r5 accepted on Ryzen**.
+Ryzen runs the signed r5 persistent-block extension, while Turin and Altra retain the signed r4 extension. All three
 retain their machine-specific extensions, are Ready and schedulable, and pass all four native Kubernetes Kata
-RuntimeClasses. This receipt separates artifact publication, node installation, and live guest acceptance; only the
-last state proves that a runtime works.
+RuntimeClasses at their recorded release. This receipt separates artifact publication, node installation, and live
+guest acceptance; only the last state proves that a runtime works.
 
 ## Final r4 artifact chain
 
@@ -37,7 +38,7 @@ built both architectures, generated provenance and an SBOM, and keylessly signed
 main-branch `nanoagent.yaml` workflow identity. The image runs as UID 65532, retains Nanoagent as its entrypoint, and
 contains BusyBox `/bin/sh` plus a writable `/workspace` for direct `kubectl exec` inspection.
 
-## Published r5 candidate (not installed or accepted)
+## Published r5 artifacts and Ryzen acceptance
 
 Main-branch run [33304758749](https://github.com/proompteng/lab/actions/runs/33304758749) built, signed, and verified
 the persistent-block r5 candidate from merge commit
@@ -51,12 +52,53 @@ the persistent-block r5 candidate from merge commit
 | Altra installer r5        | `linux/arm64`                | `registry.ide-newton.ts.net/lab/talos-kata-runtimes@sha256:33f3f2be96b06a049507381c3b142f1bba93f88af82990950313697a8aabd027` |
 
 Every reference passed keyless Cosign verification with the main-branch Kata workflow identity and GitHub Actions
-OIDC issuer. These receipts prove publication only. No Galactic node currently carries the r5 persistent-block
-extension or the r5-only `runtime.proompteng.ai/kata-fc-persistent-block` activation label. The four unversioned
-`runtime.proompteng.ai/kata-{qemu,clh,fc,dragonball}` labels still record accepted r4 proof. A separately authorized r5
-rollout must remove all four labels from the target before changing its installer and restore each label only after
-that runtime passes fresh r5 acceptance. The candidate digests must not replace the accepted r4 installer references
-above until that installation and live persistent-block acceptance are recorded.
+OIDC issuer. Publication alone is not acceptance. On 2026-08-30, Ryzen installed and accepted its r5 installer; Turin
+and Altra remain on their accepted r4 installers. Each remaining r5 target still requires separate authorization and
+must remove its four runtime labels before installation, then restore each label only after that runtime passes fresh
+r5 acceptance.
+
+### Ryzen r5 one-node acceptance
+
+Ryzen (`talos-192-168-1-194`, Talos endpoint `100.100.244.141`) was the only node changed. Before the drain, Omni had
+no active upgrade, all three etcd members were healthy non-learners, Ryzen was not the etcd leader, `/dev/kvm` was
+present, and the PDB-blocked workload controllers were healthy. The authorized maintenance drain used
+`--disable-eviction`; `--force` was not used. A pre-change etcd snapshot taken from Turin recorded hash `dfc7c229`,
+revision `567055794`, size `504295456` bytes, and SHA-256
+`061194ac112d5c22dc1b4834d6b456fc1c0d700c388b1ad74c358d819ddf4fc1`.
+
+The exact Ryzen r5 installer
+`registry.ide-newton.ts.net/lab/talos-kata-runtimes@sha256:d489b3d7fc198d98dfbef8a8754933a5ce68f78920e4ce251f41a34594259def`
+was installed with `--drain=false --no-reboot`. One planned `powercycle` changed the host boot ID from
+`f414aaa0-6697-48ba-9417-8984d9069dd3` to `18de7247-a600-46a4-94c6-8d598986deca`. Talos then reported
+`kata-runtimes` version `4.1.0-r5`, plus the preserved AMDGPU, AMD microcode, glibc, and Tailscale extensions. CRI,
+kubelet, etcd, and the Kubernetes node all returned healthy while Ryzen remained cordoned.
+
+Fresh r5 runtime proofs used `verify-runtimes.sh` and restored each capability label only after its row passed:
+
+| Runtime          | Guest boot ID                          | Guest kernel | MicroVM ID                             |
+| ---------------- | -------------------------------------- | ------------ | -------------------------------------- |
+| QEMU             | `01f121ab-e65e-493e-a73a-ae11e00abdd0` | `6.18.35`    | `62b617a9-1482-4787-8d7a-e4570c89a51e` |
+| Cloud Hypervisor | `195c8254-d983-4218-9912-2ef848ab476d` | `6.18.35`    | `9f4786c3-7517-4cce-9106-eb29edd2547a` |
+| Firecracker      | `d26d6565-76f8-4203-b822-f0f57e15741d` | `6.18.35`    | `f46f50a9-be73-4766-9518-5cdd6068f57b` |
+| Dragonball       | `a9c9727f-14b7-439c-8302-0788f07971b1` | `6.18.35`    | `9c8131df-7a95-4c01-8999-44e579133002` |
+
+The persistent-block acceptance used the fixed Tengri profile: a 16 GiB `rook-ceph-block` RWO raw-block PVC, 2 CPU,
+4 GiB RAM, `kata-fc`, and Nanoagent digest
+`registry.ide-newton.ts.net/lab/nanoagent@sha256:eca441df2babc69c6d52633905a2e796b2647d4f9a0f1e9efa98cec9958b7236`.
+The first guest initialized `/dev/vdd` as ext4 at `/home/nanoagent` and wrote marker checksum
+`4db70c68a4be20fc100c47ddc90fce92568f9002344aa7f19cd2f2b3ad045fbf` on guest boot
+`a972f907-7f01-48b2-9b4a-fb31fae92006`. After deleting that Pod, a new Firecracker guest booted as
+`28ce3b40-5bfd-463a-9647-7ccf68f5524c` on the same PVC with no initialization token and read the identical checksum.
+A preliminary undersized harness was discarded and is not acceptance evidence.
+
+After the temporary proof resources were deleted, Ryzen received
+`runtime.proompteng.ai/kata-fc-persistent-block=ready` and was uncordoned. The production Tengri MicroVM
+`agent-ca54ce88bbd7b553b257e3b8bed54093` then became `Ready` on Ryzen; its PVC recorded initialization `complete`,
+the live Pod omitted the initialization token, and Nanoagent reported Firecracker guest boot
+`8db18914-4c94-4449-8510-ecf24a0a25e5`. Post-rollout evidence showed all three nodes Ready and schedulable, three
+healthy etcd voters, Torghut DB at two of two Ready, Restate at three of three Ready, and Ceph `HEALTH_OK` with all
+three monitors in quorum. The local evidence bundle was `/tmp/galactic-kata-ryzen-r5.OX1bRA`; it is ephemeral and
+must be reproduced from this procedure rather than copied into Git.
 
 The original 12-runtime evidence rows below were captured before the rename with the immutable predecessor canary
 `ghcr.io/proompteng/microvm-agent@sha256:5573551391d01240297680da6ac172d3c819b57d493c3c3e2e11fa1388b06640`.
@@ -98,7 +140,8 @@ Ready and schedulable after acceptance.
 
 ## Correction history
 
-Only r4 is accepted. The earlier artifacts remain immutable but are superseded:
+This section records the historical r0-r4 correction chain. R4 remains accepted on Turin and Altra; Ryzen's accepted
+r5 persistent-block extension is recorded above. The earlier artifacts remain immutable but are superseded:
 
 1. the initial build exposed a non-empty Dragonball firmware value that runtime-rs rejects;
 2. r1 cleared Dragonball firmware on both architectures;
