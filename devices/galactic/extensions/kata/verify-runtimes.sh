@@ -4,6 +4,7 @@ set -euo pipefail
 
 readonly KUBE_CONTEXT='galactic-lan'
 readonly NAMESPACE='kata'
+readonly RETIRED_NAMESPACE='microvm-system'
 readonly NANOAGENT_IMAGE='ghcr.io/proompteng/nanoagent@sha256:78b7b6e52e9b3f6003d2663a5e85fbfb55eabba018a6ee61f6b39a722f71ad7c'
 
 usage() {
@@ -63,10 +64,21 @@ kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" get daemonset -o yaml \
 
 permanent_canary_daemonsets="$(
   kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" get daemonsets -o name \
-    | rg '/(microvm-agent|nanoagent)-(qemu|clh|fc|dragonball)$' || true
+    | rg '/(microvm-agent|nanoagent)-(qemu|clh|fc|dragonball)$' \
+    | sed "s#^#$NAMESPACE/#" || true
 )"
+if kubectl --context "$KUBE_CONTEXT" get namespace "$RETIRED_NAMESPACE" >/dev/null 2>&1; then
+  kubectl --context "$KUBE_CONTEXT" -n "$RETIRED_NAMESPACE" get daemonset -o yaml \
+    >"$evidence_dir/retired-daemonsets.yaml"
+  retired_canary_daemonsets="$(
+    kubectl --context "$KUBE_CONTEXT" -n "$RETIRED_NAMESPACE" get daemonsets -o name \
+      | rg '/(microvm-agent|nanoagent)-(qemu|clh|fc|dragonball)$' \
+      | sed "s#^#$RETIRED_NAMESPACE/#" || true
+  )"
+  permanent_canary_daemonsets="${permanent_canary_daemonsets}${permanent_canary_daemonsets:+$'\n'}${retired_canary_daemonsets}"
+fi
 if [[ -n "$permanent_canary_daemonsets" ]]; then
-  echo 'permanent Kata canary DaemonSets remain; sync kata with pruning enabled:' >&2
+  echo 'permanent Kata canary DaemonSets remain in an active or retired namespace; finish pruning:' >&2
   echo "$permanent_canary_daemonsets" >&2
   exit 1
 fi
