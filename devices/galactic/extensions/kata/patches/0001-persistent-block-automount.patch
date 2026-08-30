@@ -870,3 +870,11 @@ index 689805427..c034f3b5d 100644
 +        --connect-timeout 30 --max-time 300 \
 +        "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_${ORAS_ARCH}.tar.gz" \
 +        -o /tmp/oras.tar.gz && \
+diff --git a/tools/packaging/static-build/agent/build.sh b/tools/packaging/static-build/agent/build.sh
+index 992b14ca4..aa58b2738 100755
+--- a/tools/packaging/static-build/agent/build.sh
++++ b/tools/packaging/static-build/agent/build.sh
+@@ -21,0 +22 @@ docker pull "${container_image}" || \
++		--network=host \
+@@ -28,0 +30 @@ docker run --rm -i -v "${repo_root_dir}:${repo_root_dir}" \
++	--network=host \
