@@ -12,6 +12,8 @@ describe('Tengri browser security headers', () => {
 
     expect(productionPolicy).not.toContain("'unsafe-eval'")
     expect(productionPolicy).toContain("script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'")
+    expect(productionPolicy).toContain('https://static.cloudflareinsights.com')
+    expect(productionPolicy).toContain('https://cloudflareinsights.com')
     expect(productionPolicy).not.toContain('http://localhost:')
     expect(productionPolicy).not.toContain('ws://127.0.0.1:')
     expect(productionPolicy).toContain('https://convex.proompteng.ai wss://convex.proompteng.ai')
@@ -21,6 +23,7 @@ describe('Tengri browser security headers', () => {
     expect(productionPolicy).toContain('upgrade-insecure-requests')
     expect(developmentPolicy).toContain("'unsafe-eval'")
     expect(developmentPolicy).not.toContain("'wasm-unsafe-eval'")
+    expect(developmentPolicy).not.toContain('cloudflareinsights.com')
     expect(developmentPolicy).toContain('http://127.0.0.1:*')
     expect(developmentPolicy).toContain('http://*.localhost:*')
     expect(developmentPolicy).not.toContain('upgrade-insecure-requests')
