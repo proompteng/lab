@@ -6,6 +6,8 @@ readonly BUN_VERSION='1.4.0'
 readonly UV_VERSION='0.11.14'
 readonly GO_VERSION='1.25.5'
 readonly RUST_VERSION='1.90.0'
+readonly C_COMPILER_MAJOR='13'
+readonly C_COMPILER_VERSION='13.3.0'
 readonly TOOLCHAIN_BUNDLE='/usr/share/nanoagent/development-toolchain.tar.xz'
 
 platform=''
@@ -50,6 +52,7 @@ validate_manifest() {
   [[ "$UV_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail 'invalid uv version'
   [[ "$GO_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail 'invalid Go version'
   [[ "$RUST_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail 'invalid Rust version'
+  [[ "$C_COMPILER_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail 'invalid C compiler version'
   [[ -r "$TOOLCHAIN_BUNDLE" ]] || fail "toolchain bundle is unavailable: $TOOLCHAIN_BUNDLE"
 }
 
@@ -66,6 +69,15 @@ validate_install() {
   [[ -x "$install_root/uv/bin/uvx" ]] || fail "uvx install is incomplete: $install_root"
   [[ -x "$install_root/go/bin/go" ]] || fail "Go install is incomplete: $install_root"
   [[ -x "$install_root/go/bin/gofmt" ]] || fail "gofmt install is incomplete: $install_root"
+  [[ -x "$install_root/c/bin/${linux_triplet}-gcc-${C_COMPILER_MAJOR}" ]] || fail "C compiler install is incomplete: $install_root"
+  [[ -x "$install_root/c/bin/${linux_triplet}-as" ]] || fail "C assembler install is incomplete: $install_root"
+  [[ -x "$install_root/c/bin/${linux_triplet}-ld.bfd" ]] || fail "C linker install is incomplete: $install_root"
+  [[ -x "$install_root/c/bin/as" ]] || fail "C assembler shim is incomplete: $install_root"
+  [[ -x "$install_root/c/bin/ld" ]] || fail "C linker shim is incomplete: $install_root"
+  [[ -x "$install_root/c/libexec/gcc/$linux_triplet/$C_COMPILER_MAJOR/cc1" ]] || fail "C compiler frontend is incomplete: $install_root"
+  [[ -f "$install_root/c/sysroot/usr/include/stdlib.h" ]] || fail "C compiler headers are incomplete: $install_root"
+  [[ -f "$install_root/c/sysroot/usr/lib/$linux_triplet/Scrt1.o" ]] || fail "C compiler sysroot is incomplete: $install_root"
+  [[ "$(<"$install_root/c/compiler-version")" == "$C_COMPILER_VERSION" ]] || fail 'C compiler version mismatch'
   [[ -x "$install_root/rust/bin/rustc" ]] || fail "rustc install is incomplete: $install_root"
   [[ -x "$install_root/rust/bin/cargo" ]] || fail "Cargo install is incomplete: $install_root"
   [[ -x "$install_root/rust/bin/rustdoc" ]] || fail "rustdoc install is incomplete: $install_root"
@@ -82,6 +94,38 @@ validate_install() {
   [[ "$("$install_root/rust/bin/rustc" --version | cut -d' ' -f2)" == "$RUST_VERSION" ]] || fail 'Rust version mismatch'
   [[ "$("$install_root/rust/bin/cargo" --version | cut -d' ' -f2)" == "$RUST_VERSION" ]] || fail 'Cargo version mismatch'
   [[ "$("$install_root/rust/bin/rustdoc" --version | cut -d' ' -f2)" == "$RUST_VERSION" ]] || fail 'rustdoc version mismatch'
+}
+
+write_c_compiler_wrapper() {
+  local destination="$1"
+  local compiler_root="$2"
+  local temporary_wrapper="${destination}.tmp.$$"
+
+  rm -f -- "$temporary_wrapper"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'set -euo pipefail\n'
+    # The parameter expansion is intentionally emitted into the generated wrapper.
+    # shellcheck disable=SC2016
+    printf 'export LD_LIBRARY_PATH=%q"${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\n' "$compiler_root/runtime"
+    printf 'exec %q --sysroot=%q -B%q -B%q -B%q "$@"\n' \
+      "$compiler_root/bin/${linux_triplet}-gcc-${C_COMPILER_MAJOR}" \
+      "$compiler_root/sysroot" \
+      "$compiler_root/libexec/gcc/$linux_triplet/$C_COMPILER_MAJOR/" \
+      "$compiler_root/bin/" \
+      "$compiler_root/lib/gcc/$linux_triplet/$C_COMPILER_MAJOR/"
+  } > "$temporary_wrapper"
+  chmod 0700 "$temporary_wrapper"
+  mv -Tf "$temporary_wrapper" "$destination"
+}
+
+prepare_c_compiler() {
+  local install_root="$1"
+  local compiler_root="$install_root/c"
+  local compiler_wrapper="$HOME/.local/bin/gcc"
+
+  write_c_compiler_wrapper "$compiler_wrapper" "$compiler_root"
+  link_binary "$compiler_wrapper" "$HOME/.local/bin/cc"
 }
 
 link_binary() {
@@ -194,9 +238,9 @@ install_toolchain() {
 
   umask 077
   local toolchain_root="$HOME/.tengri/toolchains"
-  local install_name="node-${NODE_VERSION}-bun-${BUN_VERSION}-uv-${UV_VERSION}-go-${GO_VERSION}-rust-${RUST_VERSION}-${platform}"
+  local install_name="node-${NODE_VERSION}-bun-${BUN_VERSION}-uv-${UV_VERSION}-go-${GO_VERSION}-rust-${RUST_VERSION}-gcc-${C_COMPILER_VERSION}-${platform}"
   local install_root="$toolchain_root/$install_name"
-  local expected_marker="node=${NODE_VERSION} bun=${BUN_VERSION} uv=${UV_VERSION} go=${GO_VERSION} rust=${RUST_VERSION} platform=${platform}"
+  local expected_marker="node=${NODE_VERSION} bun=${BUN_VERSION} uv=${UV_VERSION} go=${GO_VERSION} rust=${RUST_VERSION} gcc=${C_COMPILER_VERSION} platform=${platform}"
 
   mkdir -p "$toolchain_root" "$HOME/.local/bin"
   chmod 0700 "$HOME/.tengri" "$toolchain_root" "$HOME/.local" "$HOME/.local/bin"
@@ -231,6 +275,7 @@ install_toolchain() {
   link_binary "$install_root/go/bin/go" "$HOME/.local/bin/go"
   link_binary "$install_root/go/bin/gofmt" "$HOME/.local/bin/gofmt"
   link_binary "$install_root/rust/bin/cargo" "$HOME/.local/bin/cargo"
+  prepare_c_compiler "$install_root"
   prepare_rust_linker "$install_root"
 }
 
