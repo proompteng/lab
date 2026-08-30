@@ -194,7 +194,6 @@ type ReplayCorpusReport = {
     readonly historyEventTypes?: readonly string[]
     readonly temporalServerVersions?: readonly string[]
     readonly sdkVersions?: readonly string[]
-    readonly bunVersions?: readonly string[]
     readonly payloadCodecProfiles?: readonly string[]
   }
 }
