@@ -88,8 +88,8 @@ on:
         type: boolean
         default: true
 concurrency:
-  group: product-nix-images-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: product-nix-images-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changes:

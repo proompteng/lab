@@ -33,6 +33,7 @@ const kustomization = YAML.parse(readRepoFile('argocd/applications/kargo/kustomi
 const stagesSource = readRepoFile('argocd/applications/kargo/stages.yaml')
 const torghutMigrationJob = YAML.parse(readRepoFile('argocd/applications/torghut/db-migrations-job.yaml')) as Manifest
 const torghutVerifierWorkflow = readRepoFile('.github/workflows/torghut-post-deploy-verify.yml')
+const productNixWorkflow = YAML.parse(readRepoFile('.github/workflows/product-nix-images.yml')) as Record<string, any>
 const analysisKustomization = readRepoFile('argocd/applications/analysis/kustomization.yaml')
 const pullRequestWorkflow = readRepoFile('.github/workflows/pull-request.yml')
 const helmApplicationSet = YAML.parse(readRepoFile('argocd/applicationsets/helm-apps.yaml')) as any
@@ -94,18 +95,7 @@ const receiptCriteriaExpression = (images: readonly string[]): string => {
   return clauses.join(' && ')
 }
 
-const productImageInputs = [
-  'apps/app',
-  'apps/docs',
-  'apps/landing',
-  'apps/synthesis',
-  'packages/backend',
-  'packages/design',
-  'services/tengri/proto',
-  'nix/images/app.nix',
-  'nix/images/docs.nix',
-  'nix/images/proompteng.nix',
-  'nix/images/synthesis.nix',
+const productImageCommonInputs = [
   'nix/images/bun-workspace-service.nix',
   'nix/packages.nix',
   'nix/cache-push.sh',
@@ -124,25 +114,51 @@ const expected = {
     creationCriteria: 'single',
     images: [imageRepo('proompteng')],
     apps: ['proompteng'],
-    includePaths: [...productImageInputs, 'argocd/applications/proompteng'],
+    includePaths: [
+      'apps/landing',
+      'packages/backend',
+      'packages/design',
+      'services/tengri/proto',
+      'nix/images/proompteng.nix',
+      ...productImageCommonInputs,
+      'argocd/applications/proompteng',
+    ],
   },
   app: {
     creationCriteria: 'single',
     images: [imageRepo('app')],
     apps: ['app'],
-    includePaths: [...productImageInputs, 'argocd/applications/app'],
+    includePaths: [
+      'apps/app',
+      'packages/design',
+      'nix/images/app.nix',
+      ...productImageCommonInputs,
+      'argocd/applications/app',
+    ],
   },
   synthesis: {
     creationCriteria: 'single',
     images: [imageRepo('synthesis')],
     apps: ['synthesis'],
-    includePaths: [...productImageInputs, 'argocd/applications/synthesis'],
+    includePaths: [
+      'apps/synthesis',
+      'packages/design',
+      'nix/images/synthesis.nix',
+      ...productImageCommonInputs,
+      'argocd/applications/synthesis',
+    ],
   },
   docs: {
     creationCriteria: 'single',
     images: [imageRepo('docs')],
     apps: ['docs'],
-    includePaths: [...productImageInputs, 'argocd/applications/docs'],
+    includePaths: [
+      'apps/docs',
+      'packages/design',
+      'nix/images/docs.nix',
+      ...productImageCommonInputs,
+      'argocd/applications/docs',
+    ],
   },
   bumba: {
     creationCriteria: 'single',
@@ -572,6 +588,28 @@ describe('Kargo direct-push GitOps contract', () => {
           expect(image.allowTagsRegexes).toEqual([contract.tagRegex ?? '^kargo-sha-[0-9a-f]{40}$'])
         }
       }
+    }
+  })
+
+  it('aligns each product Warehouse source paths with its exact image build filter', () => {
+    expect(productNixWorkflow.concurrency).toEqual({
+      group: 'product-nix-images-${{ github.event.pull_request.number || github.run_id }}',
+      'cancel-in-progress': "${{ github.event_name == 'pull_request' }}",
+    })
+
+    const filtersSource = productNixWorkflow.jobs?.changes?.steps?.find(
+      (step: Record<string, any>) => step.id === 'filter',
+    )?.with?.filters
+    expect(typeof filtersSource).toBe('string')
+    const buildFilters = YAML.parse(filtersSource) as Record<string, string[]>
+    const warehouseMap = byName(warehouses)
+
+    for (const product of ['proompteng', 'app', 'synthesis', 'docs']) {
+      const warehouse = warehouseMap.get(product)
+      const subscriptions = warehouse?.spec?.subscriptions as Array<Record<string, any>>
+      const warehousePaths = subscriptions.find((subscription) => subscription.git)?.git?.includePaths
+      const buildPaths = buildFilters[product]?.map((path) => path.replace(/\/\*\*$/, ''))
+      expect(warehousePaths).toEqual(buildPaths)
     }
   })
 

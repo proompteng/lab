@@ -18,17 +18,11 @@ spec:
         branch: main
         commitSelectionStrategy: NewestFromBranch
         includePaths:
-          - apps/app
-          - apps/docs
           - apps/landing
-          - apps/synthesis
           - packages/backend
           - packages/design
           - services/tengri/proto
-          - nix/images/app.nix
-          - nix/images/docs.nix
           - nix/images/proompteng.nix
-          - nix/images/synthesis.nix
           - nix/images/bun-workspace-service.nix
           - nix/packages.nix
           - nix/cache-push.sh
@@ -70,16 +64,8 @@ spec:
         commitSelectionStrategy: NewestFromBranch
         includePaths:
           - apps/app
-          - apps/docs
-          - apps/landing
-          - apps/synthesis
-          - packages/backend
           - packages/design
-          - services/tengri/proto
           - nix/images/app.nix
-          - nix/images/docs.nix
-          - nix/images/proompteng.nix
-          - nix/images/synthesis.nix
           - nix/images/bun-workspace-service.nix
           - nix/packages.nix
           - nix/cache-push.sh
@@ -120,16 +106,8 @@ spec:
         branch: main
         commitSelectionStrategy: NewestFromBranch
         includePaths:
-          - apps/app
-          - apps/docs
-          - apps/landing
           - apps/synthesis
-          - packages/backend
           - packages/design
-          - services/tengri/proto
-          - nix/images/app.nix
-          - nix/images/docs.nix
-          - nix/images/proompteng.nix
           - nix/images/synthesis.nix
           - nix/images/bun-workspace-service.nix
           - nix/packages.nix
@@ -171,17 +149,9 @@ spec:
         branch: main
         commitSelectionStrategy: NewestFromBranch
         includePaths:
-          - apps/app
           - apps/docs
-          - apps/landing
-          - apps/synthesis
-          - packages/backend
           - packages/design
-          - services/tengri/proto
-          - nix/images/app.nix
           - nix/images/docs.nix
-          - nix/images/proompteng.nix
-          - nix/images/synthesis.nix
           - nix/images/bun-workspace-service.nix
           - nix/packages.nix
           - nix/cache-push.sh
