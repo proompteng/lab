@@ -64,22 +64,23 @@ function previewTicket(sequence: number) {
 }
 
 function embeddedPreviewDocument() {
-  return `<!doctype html><title>Tengri preview</title><main>Live microVM preview</main><script>
+  return `<!doctype html><title>Tengri preview</title><main>Live microVM preview</main><p data-preview-route></p><script>
     (() => {
       const channel = 'tengri-preview-v1';
       const desktopOrigin = ${JSON.stringify(desktopOrigin)};
       const match = window.location.hostname.match(/^tengri-([a-z0-9]{24})\\./);
-      if (!match || window.parent === window) return;
-      const sessionId = match[1];
-      history.replaceState(null, '', window.location.pathname + window.location.search);
-      const send = (message) => window.parent.postMessage({ channel, sessionId, ...message }, desktopOrigin);
-      window.addEventListener('message', (event) => {
-        const message = event.data;
-        if (event.source !== window.parent || event.origin !== desktopOrigin || !message || message.channel !== channel || message.sessionId !== sessionId || message.type !== 'restore-fragment') return;
-        history.replaceState(history.state, '', window.location.pathname + window.location.search + message.fragment);
-        send({ type: 'navigation', mode: 'load', url: window.location.href });
-      });
-      window.addEventListener('pageshow', () => send({ type: 'navigation', mode: 'load', url: window.location.href }));
+      const renderRoute = () => {
+        document.querySelector('[data-preview-route]').textContent = window.location.hash === '#bridge-ready'
+          ? 'Editor route ready'
+          : 'Default route ready';
+      };
+      renderRoute();
+      window.addEventListener('hashchange', renderRoute);
+      if (match && window.parent !== window) {
+        const sessionId = match[1];
+        const send = (message) => window.parent.postMessage({ channel, sessionId, ...message }, desktopOrigin);
+        window.addEventListener('pageshow', () => send({ type: 'navigation', mode: 'load', url: window.location.href }));
+      }
     })();
   </script>`
 }
@@ -117,7 +118,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   const readFileFailures = new Map<string, number>()
   let previewSessionSequence = 0
   let holdNextPreviewSession = false
-  const pendingPreviewLaunches: Array<{ id: string; path: string; ticket: string }> = []
+  const pendingPreviewLaunches: Array<{ id: string; path: string; fragment: string; ticket: string }> = []
   let releaseHeldResume = () => {}
   let markHeldResumeStarted = () => {}
   let releaseHeldCodexAccount = () => {}
@@ -240,7 +241,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
     const launchLocations = Object.fromEntries(
       pendingPreviewLaunches.map((session) => [
         session.ticket,
-        `https://tengri-${session.id}.proompteng.ai${session.path}#${session.ticket}`,
+        `https://tengri-${session.id}.proompteng.ai${session.path}${session.fragment}`,
       ]),
     )
     await route.fulfill({
@@ -402,7 +403,12 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         }
         const previewSessionId = `preview${String(previewSessionSequence).padStart(17, '0')}`
         const ticket = previewTicket(previewSessionSequence)
-        pendingPreviewLaunches.push({ id: previewSessionId, path: String(action.path), ticket })
+        pendingPreviewLaunches.push({
+          id: previewSessionId,
+          path: String(action.path),
+          fragment: String(action.fragment),
+          ticket,
+        })
         result = {
           id: previewSessionId,
           launchUrl: `http://localhost:8080/v1/preview/open#${ticket}`,
@@ -1064,6 +1070,7 @@ test('persists real Finder changes into Code and exposes a localhost preview fro
   }
   await chrome.getByRole('button', { name: 'Reload' }).click()
   await expect.poll(embeddedPreviewHash).toBe('#bridge-ready')
+  await expect(chrome.getByTitle('localhost:4321').contentFrame().getByText('Editor route ready')).toBeVisible()
   await expect(chrome.getByLabel('Address')).toHaveValue('http://localhost:4321/app?mode=dev#bridge-ready')
 
   await chrome.getByRole('button', { name: 'Back' }).click()
@@ -1083,6 +1090,15 @@ test('persists real Finder changes into Code and exposes a localhost preview fro
       .filter((action) => action.action === 'preview-session' && action.port === 4321)
       .every((action) => !String(action.path).includes('#')),
   ).toBe(true)
+  expect(
+    mock.actions.some(
+      (action) =>
+        action.action === 'preview-session' &&
+        action.port === 4321 &&
+        action.path === '/app?mode=dev' &&
+        action.fragment === '#bridge-ready',
+    ),
+  ).toBe(true)
 
   const previewSessionCount = () =>
     mock.actions.filter(
@@ -1094,11 +1110,10 @@ test('persists real Finder changes into Code and exposes a localhost preview fro
     chrome.getByRole('button', { name: 'Open current preview in browser' }).click(),
   ])
   await expect.poll(previewSessionCount).toBe(previewCountBeforeExternalOpen + 1)
-  await expect(external).toHaveURL(
-    /^https:\/\/tengri-[a-z0-9]{24}\.proompteng\.ai\/app\?mode=dev#[A-Za-z0-9_-]{16,128}\.[A-Za-z0-9_-]{16,128}$/,
-  )
+  await expect(external).toHaveURL(/^https:\/\/tengri-[a-z0-9]{24}\.proompteng\.ai\/app\?mode=dev#bridge-ready$/)
   const externalSessionId = new URL(external.url()).hostname.slice('tengri-'.length, -'.proompteng.ai'.length)
   await expect(external.getByText('Live microVM preview')).toBeVisible()
+  await expect(external.getByText('Editor route ready')).toBeVisible()
   await page.getByRole('button', { name: 'Close Chrome' }).click()
   await expect(page.getByRole('region', { name: 'Chrome window' })).toHaveCount(0)
   await external.reload()
@@ -1135,9 +1150,7 @@ test('tracks an external preview that finishes opening after virtual Chrome clos
   await page.getByRole('button', { name: 'Close Chrome' }).click()
   mock.releaseHeldPreviewSession()
 
-  await expect(external).toHaveURL(
-    /^https:\/\/tengri-[a-z0-9]{24}\.proompteng\.ai\/delayed#[A-Za-z0-9_-]{16,128}\.[A-Za-z0-9_-]{16,128}$/,
-  )
+  await expect(external).toHaveURL(/^https:\/\/tengri-[a-z0-9]{24}\.proompteng\.ai\/delayed$/)
   await expect(external.getByText('Live microVM preview')).toBeVisible()
   const externalSessionId = new URL(external.url()).hostname.slice('tengri-'.length, -'.proompteng.ai'.length)
   expect(

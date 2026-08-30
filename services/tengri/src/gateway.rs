@@ -81,9 +81,11 @@ const PREVIEW_BOOTSTRAP_SCRIPT: &str = r#"(() => {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ token }),
   })
-    .then((response) => {
+    .then(async (response) => {
       if (!response.ok) throw new Error('preview session rejected');
-      window.location.reload();
+      const payload = await response.json();
+      if (typeof payload.fragment !== 'string') throw new Error('preview fragment missing');
+      window.location.replace(`${target}${payload.fragment}`);
     })
     .catch(() => {
       document.body.textContent = 'Preview session is missing or expired.';
@@ -123,7 +125,6 @@ const PREVIEW_BRIDGE_SCRIPT_TEMPLATE: &str = r#"(() => {
   const sessionId = match[1];
   const send = (message) => window.parent.postMessage({ channel, sessionId, ...message }, desktopOrigin);
   const notify = (mode) => send({ type: 'navigation', mode, url: window.location.href });
-  const replaceState = window.history.replaceState;
   for (const [method, mode] of [['pushState', 'push'], ['replaceState', 'replace']]) {
     const original = window.history[method];
     window.history[method] = function (...args) {
@@ -135,15 +136,6 @@ const PREVIEW_BRIDGE_SCRIPT_TEMPLATE: &str = r#"(() => {
   window.addEventListener('pageshow', () => notify('load'));
   window.addEventListener('popstate', () => notify('load'));
   window.addEventListener('hashchange', () => notify('load'));
-  window.addEventListener('message', (event) => {
-    if (event.source !== window.parent || event.origin !== desktopOrigin) return;
-    const message = event.data;
-    if (!message || typeof message !== 'object' || message.channel !== channel || message.sessionId !== sessionId || message.type !== 'restore-fragment') return;
-    const fragment = message.fragment;
-    if (typeof fragment !== 'string' || !fragment.startsWith('#') || new TextEncoder().encode(fragment).byteLength > 4096 || /[\u0000-\u001f\u007f]/.test(fragment)) return;
-    Reflect.apply(replaceState, window.history, [window.history.state, '', `${window.location.pathname}${window.location.search}${fragment}`]);
-    notify('load');
-  });
   window.addEventListener('keydown', (event) => {
     const key = event.key.toLowerCase();
     if (!event.metaKey || event.altKey || event.ctrlKey || event.shiftKey || !['l', 'r', 't', 'w'].includes(key)) return;
@@ -577,15 +569,17 @@ async fn preview_bootstrap(
         session.token,
     );
     (
-        StatusCode::NO_CONTENT,
+        StatusCode::OK,
         [
             (header::SET_COOKIE, cookie),
+            (header::CONTENT_TYPE, "application/json".to_owned()),
             (header::CACHE_CONTROL, "no-store".to_owned()),
             (
                 HeaderName::from_static("referrer-policy"),
                 "no-referrer".to_owned(),
             ),
         ],
+        serde_json::json!({"fragment": session.initial_fragment}).to_string(),
     )
         .into_response()
 }
@@ -1408,6 +1402,49 @@ mod tests {
         assert_eq!(bridge_on_control_host.status(), StatusCode::NOT_FOUND);
     }
 
+    #[tokio::test]
+    async fn preview_bootstrap_returns_the_fragment_for_normal_guest_navigation() {
+        let (service, _handle) = tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
+        let state = test_gateway_state(Client::new(service, "tengri"));
+        let ticket = state
+            .tickets
+            .issue_preview(&"a".repeat(64), "agent", 4321, "/app?mode=dev", "#editor")
+            .expect("preview ticket");
+        let session = state
+            .tickets
+            .consume_preview(&ticket.token)
+            .expect("preview session");
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/_tengri/bootstrap")
+            .header(header::HOST, format!("tengri-{}.proompteng.ai", session.id))
+            .body(Body::from(
+                serde_json::json!({"token": session.token}).to_string(),
+            ))
+            .expect("preview bootstrap request");
+
+        let response = preview_bootstrap(State(state), request)
+            .await
+            .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE),
+            Some(&HeaderValue::from_static("application/json")),
+        );
+        assert!(response.headers().contains_key(header::SET_COOKIE));
+        let body = to_bytes(response.into_body(), 1_024)
+            .await
+            .expect("preview bootstrap body");
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).expect("preview bootstrap JSON"),
+            serde_json::json!({"fragment": "#editor"}),
+        );
+        assert!(
+            PREVIEW_BOOTSTRAP_SCRIPT
+                .contains("window.location.replace(`${target}${payload.fragment}`)")
+        );
+    }
+
     async fn readiness_for_kubernetes_responses(
         agent_response: (StatusCode, &str),
         nonce_response: Option<(StatusCode, &str)>,
@@ -1643,6 +1680,7 @@ mod tests {
             agent_id: "agent-a".to_owned(),
             port: 3000,
             initial_path: "/".to_owned(),
+            initial_fragment: String::new(),
             expires_at: SystemTime::now() + Duration::from_secs(60),
         };
         let binding = PreviewGuestBinding::new(&session);
@@ -1672,6 +1710,7 @@ mod tests {
             agent_id: "agent-a".to_owned(),
             port: 3000,
             initial_path: "/".to_owned(),
+            initial_fragment: String::new(),
             expires_at: SystemTime::now() + Duration::from_secs(60),
         };
         let stale_binding = PreviewGuestBinding::new(&session);
@@ -1788,10 +1827,9 @@ mod tests {
         assert!(bridge.contains("tengri-preview-v1"));
         assert!(bridge.contains("pushState"));
         assert!(bridge.contains("stopImmediatePropagation"));
-        assert!(bridge.contains("event.origin !== desktopOrigin"));
-        assert!(bridge.contains("message.type !== 'restore-fragment'"));
         assert!(bridge.contains("postMessage({ channel, sessionId, ...message }, desktopOrigin)"));
         assert!(!bridge.contains("postMessage({ channel, sessionId, ...message }, '*')"));
+        assert!(!bridge.contains("restore-fragment"));
         assert!(!bridge.contains(PREVIEW_DESKTOP_ORIGIN_MARKER));
     }
 

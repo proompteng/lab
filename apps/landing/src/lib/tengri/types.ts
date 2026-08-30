@@ -173,5 +173,5 @@ export type TengriAction =
         | 'approve-network-policy-amendment'
         | 'deny'
     }
-  | { action: 'preview-session'; agentId: string; port: number; path: string }
+  | { action: 'preview-session'; agentId: string; port: number; path: string; fragment: string }
   | { action: 'revoke-preview-session'; agentId: string; sessionId: string }
