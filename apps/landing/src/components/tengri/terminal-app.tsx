@@ -3,7 +3,7 @@
 import '@xterm/xterm/css/xterm.css'
 
 import type { SearchAddon } from '@xterm/addon-search'
-import type { Terminal } from '@xterm/xterm'
+import type { ITerminalAddon, Terminal } from '@xterm/xterm'
 import { AlertTriangle, ChevronDown, ChevronUp, LoaderCircle, RotateCw, Search, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
@@ -99,6 +99,7 @@ export function TerminalApp({
     let creationPromise: Promise<TengriTerminalSession> | null = null
     const controller = new AbortController()
     const disposables: Array<{ dispose(): void }> = []
+    const terminalAddons: ITerminalAddon[] = []
     const requestSignal = () => AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)])
 
     const updateConnection = (next: ConnectionState) => {
@@ -565,13 +566,17 @@ export function TerminalApp({
         },
       })
       terminalRef.current = terminal
+      const loadAddon = (addon: ITerminalAddon) => {
+        terminalAddons.push(addon)
+        terminal.loadAddon(addon)
+      }
       const fitAddon = new fitModule.FitAddon()
       const searchAddon = new search.SearchAddon()
       searchAddonRef.current = searchAddon
-      terminal.loadAddon(fitAddon)
-      terminal.loadAddon(searchAddon)
+      loadAddon(fitAddon)
+      loadAddon(searchAddon)
       const unicodeAddon = new unicode.Unicode11Addon()
-      terminal.loadAddon(unicodeAddon)
+      loadAddon(unicodeAddon)
       terminal.unicode.activeVersion = '11'
       terminal.open(hostRef.current)
 
@@ -584,7 +589,7 @@ export function TerminalApp({
       if (disposed) return
       if (canvasModule.status === 'fulfilled') {
         try {
-          terminal.loadAddon(new canvasModule.value.CanvasAddon())
+          loadAddon(new canvasModule.value.CanvasAddon())
           setRenderer('canvas')
         } catch (cause) {
           console.warn('[tengri-terminal] canvas renderer unavailable; using DOM fallback', cause)
@@ -596,7 +601,7 @@ export function TerminalApp({
       }
       if (clipboardModule.status === 'fulfilled') {
         try {
-          terminal.loadAddon(new clipboardModule.value.ClipboardAddon())
+          loadAddon(new clipboardModule.value.ClipboardAddon())
         } catch (cause) {
           console.warn('[tengri-terminal] clipboard addon unavailable', cause)
         }
@@ -605,7 +610,7 @@ export function TerminalApp({
       }
       if (imageModule.status === 'fulfilled') {
         try {
-          terminal.loadAddon(new imageModule.value.ImageAddon())
+          loadAddon(new imageModule.value.ImageAddon())
         } catch (cause) {
           console.warn('[tengri-terminal] image addon unavailable', cause)
         }
@@ -614,7 +619,7 @@ export function TerminalApp({
       }
       if (webLinksModule.status === 'fulfilled') {
         try {
-          terminal.loadAddon(
+          loadAddon(
             new webLinksModule.value.WebLinksAddon((_event, uri) => window.open(uri, '_blank', 'noopener,noreferrer')),
           )
         } catch (cause) {
@@ -714,7 +719,7 @@ export function TerminalApp({
       searchAddonRef.current = null
       const terminal = terminalRef.current
       terminalRef.current = null
-      safelyDisposeTerminal(terminal)
+      safelyDisposeTerminal(terminal, terminalAddons)
       const current = session
       if (current && !terminalEnded && !closeRequested) {
         storeSession(current, false)
