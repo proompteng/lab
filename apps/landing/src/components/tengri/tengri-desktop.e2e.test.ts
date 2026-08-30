@@ -92,6 +92,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   let maxConcurrentSearchRequests = 0
   const readFileFailures = new Map<string, number>()
   let previewSessionSequence = 0
+  let holdNextPreviewSession = false
   const pendingPreviewLaunches: Array<{ id: string; path: string; ticket: string }> = []
   let releaseHeldResume = () => {}
   let markHeldResumeStarted = () => {}
@@ -99,6 +100,8 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   let markHeldCodexAccountStarted = () => {}
   let releaseHeldLifecycleAction = () => {}
   let markHeldLifecycleActionStarted = () => {}
+  let releaseHeldPreviewSession = () => {}
+  let markHeldPreviewSessionStarted = () => {}
   const heldResume = new Promise<void>((resolve) => {
     releaseHeldResume = resolve
   })
@@ -116,6 +119,12 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   })
   const heldLifecycleActionStarted = new Promise<void>((resolve) => {
     markHeldLifecycleActionStarted = resolve
+  })
+  const heldPreviewSession = new Promise<void>((resolve) => {
+    releaseHeldPreviewSession = resolve
+  })
+  const heldPreviewSessionStarted = new Promise<void>((resolve) => {
+    markHeldPreviewSessionStarted = resolve
   })
   let files = [...workspaceEntries, ...sourceEntries, ...(options.extraFiles ?? [])]
   const terminalStore = options.terminalStore ?? { sessions: [] }
@@ -362,6 +371,11 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
       }
       case 'preview-session':
         previewSessionSequence += 1
+        if (holdNextPreviewSession) {
+          holdNextPreviewSession = false
+          markHeldPreviewSessionStarted()
+          await heldPreviewSession
+        }
         const previewSessionId = `preview${String(previewSessionSequence).padStart(17, '0')}`
         const ticket = previewTicket(previewSessionSequence)
         pendingPreviewLaunches.push({ id: previewSessionId, path: String(action.path), ticket })
@@ -483,8 +497,12 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
     getMaxConcurrentSearchRequests: () => maxConcurrentSearchRequests,
     getResumeThreadResponseCount: () => resumeThreadResponses,
     getSnapshotRequestCount: () => snapshotRequests,
+    holdNextPreviewSession: () => {
+      holdNextPreviewSession = true
+    },
     releaseHeldCodexAccount,
     releaseHeldLifecycleAction,
+    releaseHeldPreviewSession,
     releaseHeldResume,
     setAgent: (nextAgent: typeof readyAgent | null) => {
       agent = nextAgent
@@ -492,6 +510,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
     waitForHeldLifecycleAction: () => heldLifecycleActionStarted,
     waitForHeldCodexAccount: () => heldCodexAccountStarted,
     waitForHeldResume: () => heldResumeStarted,
+    waitForHeldPreviewSession: () => heldPreviewSessionStarted,
   }
 }
 
@@ -1034,6 +1053,51 @@ test('persists real Finder changes into Code and exposes a localhost preview fro
   )
   const externalSessionId = new URL(external.url()).hostname.slice('tengri-'.length, -'.proompteng.ai'.length)
   await expect(external.getByText('Live microVM preview')).toBeVisible()
+  await page.getByRole('button', { name: 'Close Chrome' }).click()
+  await expect(page.getByRole('region', { name: 'Chrome window' })).toHaveCount(0)
+  await external.reload()
+  await expect(external.getByText('Live microVM preview')).toBeVisible()
+  await page.waitForTimeout(300)
+  expect(
+    mock.actions.some((action) => action.action === 'revoke-preview-session' && action.sessionId === externalSessionId),
+  ).toBe(false)
+  await external.close()
+  await expect
+    .poll(() =>
+      mock.actions.some(
+        (action) => action.action === 'revoke-preview-session' && action.sessionId === externalSessionId,
+      ),
+    )
+    .toBe(true)
+})
+
+test('tracks an external preview that finishes opening after virtual Chrome closes', async ({ page }) => {
+  const mock = await mockTengri(page)
+  await page.goto('/')
+
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  await chrome.getByLabel('Address').fill('localhost:4321/delayed')
+  await chrome.getByRole('button', { name: 'Go' }).click()
+  await expect(chrome.getByTitle('localhost:4321').contentFrame().getByText('Live microVM preview')).toBeVisible()
+  mock.holdNextPreviewSession()
+
+  const [external] = await Promise.all([
+    page.waitForEvent('popup'),
+    chrome.getByRole('button', { name: 'Open current preview in browser' }).click(),
+  ])
+  await mock.waitForHeldPreviewSession()
+  await page.getByRole('button', { name: 'Close Chrome' }).click()
+  mock.releaseHeldPreviewSession()
+
+  await expect(external).toHaveURL(
+    /^https:\/\/tengri-[a-z0-9]{24}\.proompteng\.ai\/delayed#[A-Za-z0-9_-]{16,128}\.[A-Za-z0-9_-]{16,128}$/,
+  )
+  await expect(external.getByText('Live microVM preview')).toBeVisible()
+  const externalSessionId = new URL(external.url()).hostname.slice('tengri-'.length, -'.proompteng.ai'.length)
+  expect(
+    mock.actions.some((action) => action.action === 'revoke-preview-session' && action.sessionId === externalSessionId),
+  ).toBe(false)
+
   await external.close()
   await expect
     .poll(() =>
