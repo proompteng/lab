@@ -5,7 +5,7 @@
 ```bash
 git status --short --branch
 git rev-parse HEAD
-gh auth status
+gh auth status --active --hostname github.com
 gh pr view --json number,url,headRefName,headRefOid,baseRefName,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup
 ```
 

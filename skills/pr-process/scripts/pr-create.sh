@@ -15,6 +15,7 @@ REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
   echo "Run this helper from inside a Git repository" >&2
   exit 1
 }
+CALLER_DIR=$(pwd -P)
 
 TEMPLATE="$REPO_ROOT/.github/PULL_REQUEST_TEMPLATE.md"
 if [[ ! -f "$TEMPLATE" ]]; then
@@ -24,7 +25,12 @@ fi
 
 BODY_WAS_PROVIDED=false
 if [[ -n "${PR_BODY_PATH:-}" ]]; then
-  BODY_FILE=$PR_BODY_PATH
+  if [[ "$PR_BODY_PATH" = /* ]]; then
+    BODY_FILE=$PR_BODY_PATH
+  else
+    BODY_FILE="$CALLER_DIR/$PR_BODY_PATH"
+  fi
+
   if [[ -f "$BODY_FILE" ]]; then
     BODY_WAS_PROVIDED=true
   else
@@ -55,6 +61,5 @@ if cmp -s "$TEMPLATE" "$BODY_FILE"; then
   exit 1
 fi
 
-gh auth status >/dev/null
 cd "$REPO_ROOT"
 exec gh pr create --body-file "$BODY_FILE" "$@"
