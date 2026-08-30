@@ -45,6 +45,7 @@ compose stop --timeout 60 omni tsidp
 sudo tar --numeric-owner --create --gzip --file "${temporary}" \
   --directory / \
   "${data_root_relative}/etcd" \
+  "${data_root_relative}/cluster-etcd-backups" \
   "${data_root_relative}/sqlite" \
   "${data_root_relative}/tsidp" \
   "${data_root_relative}/secrets" \

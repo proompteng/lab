@@ -35,6 +35,7 @@ services:
       - ${OMNI_DATA_ROOT:-/var/lib/omni}/secrets/omni.asc:/run/secrets/omni.asc:ro
       - ${OMNI_DATA_ROOT:-/var/lib/omni}/etcd:/var/lib/omni/etcd
       - ${OMNI_DATA_ROOT:-/var/lib/omni}/sqlite:/var/lib/omni/sqlite
+      - ${OMNI_DATA_ROOT:-/var/lib/omni}/cluster-etcd-backups:/var/lib/omni/cluster-etcd-backups
     command:
       - --config-path=/etc/omni/omni.yaml
       - --account-id=${OMNI_ACCOUNT_UUID:-}
