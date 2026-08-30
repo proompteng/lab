@@ -161,11 +161,11 @@ jobs:
           [[ "${SOURCE_SHA}" == "${GITHUB_SHA}" ]]
           for architecture in amd64 arm64; do
             reference="${IMAGE_REPOSITORY}:sha-${SOURCE_SHA}-${architecture}"
-            crane mutate "${reference}" \
+            crane mutate --platform "linux/${architecture}" "${reference}" \
               --label "org.opencontainers.image.created=${SOURCE_TIMESTAMP}" \
               --label "org.opencontainers.image.revision=${SOURCE_SHA}" \
               --tag "${reference}" >/dev/null
-            crane config "${reference}" | jq -e \
+            crane config --platform "linux/${architecture}" "${reference}" | jq -e \
               --arg source_timestamp "${SOURCE_TIMESTAMP}" \
               --arg source_sha "${SOURCE_SHA}" \
               '.config.Labels["org.opencontainers.image.created"] == $source_timestamp and
