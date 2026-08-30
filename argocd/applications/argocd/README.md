@@ -44,11 +44,14 @@ for application in arc-controller kargo restate-operator restate-operator-crds; 
   argocd app get "$application" --hard-refresh
 done
 
-# Force new browser-based OIDC exchanges; do not accept a cached pre-upgrade token as proof.
+# Force new authentication exchanges; do not accept a cached pre-upgrade token as proof.
+# Argo CD uses its local admin account. This Dex instance is the external OIDC issuer for Kargo and Argo Workflows,
+# not an Argo CD SSO connector.
 argocd logout argocd.proompteng.ai || true
-argocd login argocd.proompteng.ai --sso --grpc-web
+argocd login argocd.proompteng.ai --username admin --grpc-web
 argocd account get-user-info --server argocd.proompteng.ai --grpc-web
 
+# Kargo must complete a new browser-based OIDC exchange through the Argo-hosted Dex issuer.
 kargo login https://kargo.ide-newton.ts.net --sso
 kargo get stages --project lab-delivery
 
