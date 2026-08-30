@@ -30,6 +30,8 @@ describe('Tengri image workflow', () => {
     expect(source).toContain("jq -er '.digest'")
     expect(source).toContain('org.opencontainers.image.created=${SOURCE_TIMESTAMP}')
     expect(source).toContain('org.opencontainers.image.revision=${SOURCE_SHA}')
+    expect(source).toContain('crane mutate --platform "linux/${architecture}"')
+    expect(source).toContain('crane config --platform "linux/${architecture}"')
     expect(source).toContain('--annotation "index:org.opencontainers.image.source=${SOURCE_URL}"')
     expect(source).toContain('--annotation "index:org.opencontainers.image.revision=${SOURCE_SHA}"')
     expect(source).toContain('.annotations["org.opencontainers.image.source"] == $source_url')
