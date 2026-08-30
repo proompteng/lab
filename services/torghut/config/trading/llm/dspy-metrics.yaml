@@ -1,0 +1,28 @@
+schemaVersion: torghut.dspy.metrics.v1
+policy:
+  schemaValidRateMin: 0.995
+  vetoAlignmentRateMinDelta: 0.02
+  falseVetoRateMax: 0.03
+  latencyP95MsMax: 1800
+  gateCompatibilityRequired: pass
+  reproducibility:
+    algorithm: sha256
+    requiredKeys:
+      - dataset_hash
+      - compiled_prompt_hash
+      - artifact_hash
+      - reproducibility_hash
+  promotion:
+    defaultRecommendation: hold
+    allowedTargets:
+      - paper
+      - shadow
+      - constrained_live
+      - scaled_live
+    requireApprovalToken: true
+agentrun:
+  namespace: agents
+  agentRefName: codex-agent
+  vcsRefName: github
+  vcsPolicyMode: read-write
+  ttlSecondsAfterFinished: 14400

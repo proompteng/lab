@@ -1,0 +1,20 @@
+{
+  "run_id": "wp-31d99237c0476416d468d446",
+  "verdict": "conditional_implement",
+  "score": 0.58,
+  "confidence": 0.83,
+  "decision_policy": "whitepaper_v1",
+  "rationale": "DiffLOB is a credible research direction for regime-conditioned counterfactual LOB simulation, but current Torghut contracts and infrastructure are insufficient for direct production integration. The paper's empirical scope is narrow and does not support immediate live-trading promotion. A phased research-first implementation is viable if full LOB data contracts and offline diffusion pipelines are added with deterministic artifact governance.",
+  "rejection_reasons": [
+    "Reject immediate production rollout: current repository runtime does not expose the full-depth LOB trajectory contract required by the method.",
+    "Reject immediate in-service model deployment: diffusion training/inference infrastructure is not present in the current Torghut service profile.",
+    "Reject direct policy coupling without additional evidence: paper evaluation window/universe is too limited for robust external validity."
+  ],
+  "recommendations": [
+    "Implement a deterministic DiffLOB artifact contract first (hash-anchored manifest, seed, snapshot lineage, metric bundle).",
+    "Run diffusion training and counterfactual generation offline, then ingest outputs as read-only evidence artifacts.",
+    "Add walk-forward, stress-regime, and out-of-sample gates aligned to Torghut promotion policy before any execution-policy integration.",
+    "Keep the feature in simulation and paper-trading contexts until robustness thresholds pass repeatedly."
+  ],
+  "requires_followup": true
+}

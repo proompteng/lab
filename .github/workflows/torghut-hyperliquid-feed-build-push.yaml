@@ -1,0 +1,41 @@
+name: torghut-hyperliquid-feed-build-push
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'services/dorvud/gradle/**'
+      - 'services/dorvud/gradlew'
+      - 'services/dorvud/gradle.properties'
+      - 'services/dorvud/settings.gradle.kts'
+      - 'services/dorvud/build.gradle.kts'
+      - 'services/dorvud/platform/**'
+      - 'services/dorvud/hyperliquid-feed/**'
+      - 'nix/images/dorvud-jvm-service.nix'
+      - 'nix/images/torghut-hyperliquid-feed.nix'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - 'packages/scripts/src/shared/oci.ts'
+      - 'nix/oci-push.sh'
+      - 'argocd/applications/torghut-hyperliquid-feed/**'
+  workflow_dispatch:
+
+concurrency:
+  group: torghut-hyperliquid-feed-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nix-image:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: torghut-hyperliquid-feed
+      package_attr: torghut-hyperliquid-feed-image
+      tag: sha-${{ github.sha }}
+      publish_kargo_tag: true
+      pr_number: ${{ github.event.pull_request.number || '' }}
+      latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
+    secrets: inherit

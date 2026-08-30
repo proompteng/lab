@@ -1,0 +1,38 @@
+name: jangar-build-push
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'services/jangar/**'
+      - 'services/bumba/**'
+      - 'nix/images/jangar.nix'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - 'packages/scripts/src/shared/oci.ts'
+      - '.github/workflows/jangar-post-deploy-verify.yml'
+      - 'nix/oci-push.sh'
+      - 'argocd/applications/jangar/**'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nix-image:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: jangar
+      package_attr: jangar-image
+      tag: sha-${{ github.sha }}
+      publish_kargo_tag: true
+      kargo_tag_include_run_id: true
+      pr_number: ${{ github.event.pull_request.number || '' }}
+      image_build_timeout: 12m
+      latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
+    secrets: inherit

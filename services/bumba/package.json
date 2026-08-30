@@ -1,0 +1,50 @@
+{
+  "name": "@proompteng/bumba",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./atlas/file-eligibility": "./src/atlas/file-eligibility.ts",
+    "./atlas/reconciliation": "./src/atlas/reconciliation.ts"
+  },
+  "scripts": {
+    "dev": "bun --hot src/worker.ts",
+    "start": "bun src/worker.ts",
+    "lint": "bunx oxfmt --check src",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json .",
+    "test": "bun test --parallel=1",
+    "tsc": "bunx tsc --noEmit"
+  },
+  "dependencies": {
+    "@effect/schema": "^0.75.5",
+    "@proompteng/temporal-bun-sdk": "workspace:*",
+    "@tree-sitter-grammars/tree-sitter-hcl": "^1.2.0",
+    "@tree-sitter-grammars/tree-sitter-kotlin": "^1.1.0",
+    "@tree-sitter-grammars/tree-sitter-toml": "^0.7.0",
+    "@tree-sitter-grammars/tree-sitter-yaml": "^0.7.1",
+    "@tree-sitter-grammars/tree-sitter-zig": "^1.1.2",
+    "effect": "^3.21.2",
+    "tree-sitter-bash": "^0.25.1",
+    "tree-sitter-c": "^0.24.1",
+    "tree-sitter-css": "^0.25.0",
+    "tree-sitter-embedded-template": "^0.25.0",
+    "tree-sitter-go": "^0.25.0",
+    "tree-sitter-html": "^0.23.2",
+    "tree-sitter-javascript": "^0.25.0",
+    "tree-sitter-jinja2": "^0.2.0",
+    "tree-sitter-json": "^0.24.8",
+    "tree-sitter-properties": "^0.3.0",
+    "tree-sitter-python": "^0.25.0",
+    "tree-sitter-ruby": "^0.23.1",
+    "tree-sitter-rust": "^0.24.0",
+    "tree-sitter-typescript": "^0.23.2",
+    "web-tree-sitter": "^0.26.8",
+    "yaml": "^2.8.4"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.0",
+    "typescript": "^7.0.2"
+  },
+  "packageManager": "bun@1.4.0"
+}

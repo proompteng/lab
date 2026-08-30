@@ -1,0 +1,97 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rook-ceph-rbd-canary-scripts
+  namespace: rook-ceph-benchmarks
+data:
+  run-rbd-canary.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    mount_dir="${1:?mount dir required}"
+    result_dir="${2:?result dir required}"
+    class_name="${3:?storage class required}"
+
+    mkdir -p "${mount_dir}" "${result_dir}"
+
+    echo "storageClass=${class_name}" | tee "${result_dir}/suite.info"
+    date -u +"startedAt=%Y-%m-%dT%H:%M:%SZ" | tee -a "${result_dir}/suite.info"
+
+    fio \
+      --name=randread \
+      --directory="${mount_dir}" \
+      --rw=randread \
+      --bs=4k \
+      --size=1g \
+      --numjobs=2 \
+      --iodepth=16 \
+      --direct=1 \
+      --runtime=45 \
+      --time_based=1 \
+      --group_reporting=1 \
+      --output-format=json \
+      --output="${result_dir}/fio-randread.json"
+
+    fio \
+      --name=randrw-mixed \
+      --directory="${mount_dir}" \
+      --rw=randrw \
+      --rwmixread=70 \
+      --bs=4k \
+      --size=1g \
+      --numjobs=2 \
+      --iodepth=16 \
+      --direct=1 \
+      --runtime=45 \
+      --time_based=1 \
+      --group_reporting=1 \
+      --output-format=json \
+      --output="${result_dir}/fio-randrw.json"
+
+    fio \
+      --name=seq-write \
+      --directory="${mount_dir}" \
+      --rw=write \
+      --bs=1m \
+      --size=1g \
+      --numjobs=1 \
+      --iodepth=8 \
+      --direct=1 \
+      --runtime=0 \
+      --group_reporting=1 \
+      --output-format=json \
+      --output="${result_dir}/fio-seq-write.json"
+
+    sync
+    echo "canary-readback-${class_name}" > "${mount_dir}/readback.txt"
+    test "$(cat "${mount_dir}/readback.txt")" = "canary-readback-${class_name}"
+
+    date -u +"finishedAt=%Y-%m-%dT%H:%M:%SZ" | tee -a "${result_dir}/suite.info"
+    ls -lah "${result_dir}"
+    for result in \
+      "${result_dir}/fio-randread.json" \
+      "${result_dir}/fio-randrw.json" \
+      "${result_dir}/fio-seq-write.json"; do
+      echo "==== ${result##*/} ===="
+      python3 - "${result}" <<'PY'
+    import json
+    import sys
+    from pathlib import Path
+
+    data = json.loads(Path(sys.argv[1]).read_text(encoding="ascii"))
+    job = data["jobs"][0]
+    read = job.get("read", {})
+    write = job.get("write", {})
+    print(json.dumps({
+      "job": job["jobname"],
+      "read_iops": read.get("iops"),
+      "read_bw_bytes": read.get("bw_bytes"),
+      "read_clat_ns_p95": read.get("clat_ns", {}).get("percentile", {}).get("95.000000"),
+      "read_clat_ns_p99": read.get("clat_ns", {}).get("percentile", {}).get("99.000000"),
+      "write_iops": write.get("iops"),
+      "write_bw_bytes": write.get("bw_bytes"),
+      "write_clat_ns_p95": write.get("clat_ns", {}).get("percentile", {}).get("95.000000"),
+      "write_clat_ns_p99": write.get("clat_ns", {}).get("percentile", {}).get("99.000000"),
+    }, indent=2))
+    PY
+    done

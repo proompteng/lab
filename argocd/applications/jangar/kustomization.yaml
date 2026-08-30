@@ -1,0 +1,44 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: jangar
+resources:
+  - torghut-db-ca-reflected-secret.yaml
+  - rook-ceph-rgw-jangar-sealedsecret.yaml
+  - cnpg-jangar-db-objectbucketclaim.yaml
+  - deployment.yaml
+  - service.yaml
+  - github-token.yaml
+  - codex-auth-externalsecret.yaml
+  - discord-codex-bot-sealedsecret.yaml
+  - discord-success-channel-sealedsecret.yaml
+  - app-tailscale-service.yaml
+  - tailscale-service.yaml
+  - ingressroute-jangar-k8s-private.yaml
+  - ingressroute-openwebui-k8s-private.yaml
+  - postgres-cluster.yaml
+  - postgres-scheduled-backup.yaml
+  - openwebui-redis.yaml
+  - pvc-rwo.yaml
+  - vscode-tailscale-service.yaml
+  - alloy-rbac.yaml
+  - alloy-configmap.yaml
+  - alloy-service.yaml
+  - alloy-deployment.yaml
+  - serviceaccount.yaml
+  - post-deploy-verifier-rbac.yaml
+  - clusterrolebinding.yaml
+  - limitrange-defaults.yaml
+helmCharts:
+  - name: open-webui
+    repo: https://helm.openwebui.com
+    version: 16.0.0
+    releaseName: jangar-openwebui
+    namespace: jangar
+    valuesFile: openwebui-values.yaml
+images:
+  - name: ghcr.io/open-webui/open-webui
+    newTag: v0.11.0
+    digest: sha256:72c0ba641ba75e7aa52655cb242570906ececd09b1140fb736483038a22b3228
+  - name: registry.ide-newton.ts.net/lab/jangar
+    newTag: kargo-sha-bbbaa168c46e6e167a5775d0f516789b13dc689d-run-33299054701
+    digest: sha256:31fb95677f6fec08998d6c40a2db01e893ec19623193539af2f0b212b0adfd43

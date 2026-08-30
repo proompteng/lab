@@ -1,0 +1,3643 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: graf-mimir-rules
+  namespace: observability
+data:
+  graf-rules.yaml: |
+    groups:
+      - name: buzz-production.rules
+        rules:
+          - record: buzz_rollout_enabled
+            expr: |
+              max(
+                kube_argocd_application_deployment_history_info{
+                  namespace="argocd",
+                  application="buzz"
+                }
+              )
+          - alert: BuzzRelayUnavailable
+            expr: |
+              (
+                (
+                  sum(up{job="buzz-relay",namespace="buzz"}) < 1
+                )
+                or
+                absent(up{job="buzz-relay",namespace="buzz"})
+              )
+              and on()
+              (buzz_rollout_enabled == 1)
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: buzz
+              notify: email
+            annotations:
+              summary: Buzz relay is unavailable
+              description: No Buzz relay metrics target has been healthy for five minutes.
+              runbook_url: docs/runbooks/buzz-production.md
+          - alert: BuzzRelayReplicaDegraded
+            expr: |
+              (
+                sum(up{job="buzz-relay",namespace="buzz"} == 1) < 2
+              )
+              and on()
+              (buzz_rollout_enabled == 1)
+            for: 10m
+            labels:
+              severity: warning
+              team: platform
+              service: buzz
+            annotations:
+              summary: Buzz relay has fewer than two healthy replicas
+              description: Buzz has lost its two-replica availability target for ten minutes.
+              runbook_url: docs/runbooks/buzz-production.md
+          - alert: BuzzContainerRestarting
+            expr: |
+              (
+                sum by (container) (
+                  increase(
+                    kube_pod_container_status_restarts_total{
+                      namespace="buzz",
+                      pod=~"buzz-.*"
+                    }[15m]
+                  )
+                )
+                > 0
+              )
+              and on()
+              (buzz_rollout_enabled == 1)
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: buzz
+            annotations:
+              summary: Buzz container is restarting
+              description: Buzz container {{ $labels.container }} restarted during the last 15 minutes.
+              runbook_url: docs/runbooks/buzz-production.md
+          - alert: BuzzRedisUnavailable
+            expr: |
+              (
+                (
+                  max(redis_up{job="buzz-redis",namespace="buzz"}) < 1
+                )
+                or
+                absent(redis_up{job="buzz-redis",namespace="buzz"})
+              )
+              and on()
+              (buzz_rollout_enabled == 1)
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: buzz-redis
+              notify: email
+            annotations:
+              summary: Buzz Redis is unavailable
+              description: The authenticated Buzz Redis instance has been unavailable for five minutes.
+              runbook_url: docs/runbooks/buzz-production.md
+          - alert: BuzzRedisMemoryHigh
+            expr: |
+              (
+                max(redis_memory_used_bytes{job="buzz-redis",namespace="buzz"})
+                /
+                clamp_min(max(redis_memory_max_bytes{job="buzz-redis",namespace="buzz"}), 1)
+                > 0.85
+              )
+              and on()
+              (buzz_rollout_enabled == 1)
+            for: 15m
+            labels:
+              severity: warning
+              team: platform
+              service: buzz-redis
+            annotations:
+              summary: Buzz Redis memory is above 85 percent
+              description: Redis memory use has exceeded 85 percent of its configured maximum for 15 minutes.
+              runbook_url: docs/runbooks/buzz-production.md
+          - alert: BuzzPostgresReplicaDegraded
+            expr: |
+              (
+                (
+                  sum(up{job="cnpg-postgres",namespace="buzz",cluster="buzz-db"} == 1) < 3
+                )
+                or
+                absent(up{job="cnpg-postgres",namespace="buzz",cluster="buzz-db"})
+              )
+              and on()
+              (buzz_rollout_enabled == 1)
+            for: 10m
+            labels:
+              severity: critical
+              team: platform
+              service: buzz-postgres
+              notify: email
+            annotations:
+              summary: Buzz PostgreSQL has fewer than three healthy instances
+              description: The Buzz CNPG cluster has not met its three-instance availability target for ten minutes.
+              runbook_url: docs/runbooks/buzz-production.md
+          - alert: BuzzPostgresBackupStale
+            expr: |
+              (
+                (
+                  time()
+                  -
+                  max(
+                    kube_cnpg_backup_stopped_at{
+                      namespace="buzz",
+                      cluster="buzz-db",
+                      phase="completed"
+                    }
+                  )
+                ) > 129600
+                or
+                absent(
+                  kube_cnpg_backup_stopped_at{
+                    namespace="buzz",
+                    cluster="buzz-db",
+                    phase="completed"
+                  }
+                )
+              )
+              and on()
+              (buzz_rollout_enabled == 1)
+            for: 15m
+            labels:
+              severity: critical
+              team: platform
+              service: buzz-postgres
+              notify: email
+            annotations:
+              summary: Buzz PostgreSQL backup is stale
+              description: Buzz has no successful CNPG backup from the last 36 hours.
+              runbook_url: docs/runbooks/buzz-production.md
+      - name: hermes-production.rules
+        rules:
+          - record: hermes_rollout_enabled
+            expr: |
+              max(
+                kube_argocd_application_deployment_history_info{
+                  namespace="argocd",
+                  application="hermes"
+                }
+              )
+          - alert: HermesGatewayUnavailable
+            expr: |
+              (
+                (
+                  kube_statefulset_status_replicas_ready{
+                    namespace="hermes",
+                    statefulset="hermes"
+                  } < 1
+                )
+                or
+                absent(
+                  kube_statefulset_status_replicas_ready{
+                    namespace="hermes",
+                    statefulset="hermes"
+                  }
+                )
+              )
+              and on()
+              (hermes_rollout_enabled == 1)
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: hermes
+            annotations:
+              summary: Hermes production gateway is unavailable
+              description: The Hermes StatefulSet has no ready replica for five minutes.
+              runbook_url: docs/runbooks/hermes-production-rollout.md
+          - alert: HermesEgressProxyUnavailable
+            expr: |
+              (
+                (
+                  kube_deployment_status_replicas_available{
+                    namespace="hermes",
+                    deployment="hermes-egress-proxy"
+                  } < 1
+                )
+                or
+                absent(
+                  kube_deployment_status_replicas_available{
+                    namespace="hermes",
+                    deployment="hermes-egress-proxy"
+                  }
+                )
+              )
+              and on()
+              (hermes_rollout_enabled == 1)
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: hermes
+            annotations:
+              summary: Hermes allowlisted egress proxy is unavailable
+              description: The Hermes egress proxy has no available replica for five minutes.
+              runbook_url: docs/runbooks/hermes-production-rollout.md
+          - alert: HermesContainerRestarting
+            expr: |
+              sum by (container) (
+                increase(
+                  kube_pod_container_status_restarts_total{
+                    namespace="hermes",
+                    pod=~"hermes-.*"
+                  }[15m]
+                )
+              ) > 0
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: hermes
+            annotations:
+              summary: Hermes container restarted
+              description: Hermes container {{ $labels.container }} restarted during the last 15 minutes.
+              runbook_url: docs/runbooks/hermes-production-rollout.md
+          - alert: HermesBackupStale
+            expr: |
+              (
+                (
+                  time() - kube_cronjob_status_last_successful_time{
+                    namespace="hermes",
+                    cronjob="hermes-backup"
+                  } > 93600
+                )
+                or
+                (
+                  (
+                    time() - kube_cronjob_created{
+                      namespace="hermes",
+                      cronjob="hermes-backup"
+                    } > 93600
+                  )
+                  unless on (namespace, cronjob)
+                  kube_cronjob_status_last_successful_time{
+                    namespace="hermes",
+                    cronjob="hermes-backup"
+                  }
+                )
+                or
+                absent(
+                  kube_cronjob_created{
+                    namespace="hermes",
+                    cronjob="hermes-backup"
+                  }
+                )
+              )
+              and on()
+              (hermes_rollout_enabled == 1)
+            for: 30m
+            labels:
+              severity: critical
+              team: platform
+              service: hermes
+            annotations:
+              summary: Hermes backup is stale
+              description: The Hermes backup CronJob is missing or has no successful completion within its 26-hour freshness window; inspect its Job logs and verified archives.
+              runbook_url: docs/runbooks/hermes-production-rollout.md
+      - name: kube-router-network-policy.rules
+        rules:
+          - record: kube_router_rollout_enabled
+            expr: |
+              max(
+                kube_argocd_application_deployment_history_info{
+                  namespace="argocd",
+                  application="kube-router"
+                }
+              )
+          - alert: KubeRouterDaemonSetUnavailable
+            expr: |
+              (
+                (
+                  kube_daemonset_status_number_ready{
+                    namespace="kube-system",
+                    daemonset="kube-router"
+                  }
+                  <
+                  kube_daemonset_status_desired_number_scheduled{
+                    namespace="kube-system",
+                    daemonset="kube-router"
+                  }
+                )
+                or
+                absent(
+                  kube_daemonset_status_number_ready{
+                    namespace="kube-system",
+                    daemonset="kube-router"
+                  }
+                )
+              )
+              and on()
+              (kube_router_rollout_enabled == 1)
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: kube-router
+            annotations:
+              summary: kube-router is unavailable on one or more nodes
+              description: The NetworkPolicy controller is not ready on every desired Linux node for five minutes.
+              runbook_url: docs/runbooks/kube-router-network-policy-rollout.md
+          - alert: KubeRouterMetricsMissing
+            expr: |
+              (
+                max(up{job="kube-router"} == 0) == 1
+                or
+                count(up{job="kube-router"})
+                  <
+                max(
+                  kube_daemonset_status_desired_number_scheduled{
+                    namespace="kube-system",
+                    daemonset="kube-router"
+                  }
+                )
+                or
+                absent(up{job="kube-router"})
+              )
+              and on()
+              (kube_router_rollout_enabled == 1)
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: kube-router
+            annotations:
+              summary: kube-router policy metrics are incomplete
+              description: At least one desired kube-router controller is not being scraped successfully.
+              runbook_url: docs/runbooks/kube-router-network-policy-rollout.md
+          - alert: KubeRouterContainerRestarting
+            expr: |
+              sum by (pod) (
+                increase(
+                  kube_pod_container_status_restarts_total{
+                    namespace="kube-system",
+                    pod=~"kube-router-.*",
+                    container="kube-router"
+                  }[15m]
+                )
+              ) > 0
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: kube-router
+            annotations:
+              summary: kube-router is restarting
+              description: NetworkPolicy controller Pod {{ $labels.pod }} restarted in the last 15 minutes.
+              runbook_url: docs/runbooks/kube-router-network-policy-rollout.md
+      - name: graf-telemetry.rules
+        rules:
+          - alert: GrafHigh5xxRate
+            expr: |
+              sum(rate(graf_http_server_requests_count{http_status_code=~"5.."}[5m])) /
+              clamp_min(sum(rate(graf_http_server_requests_count[5m])), 1) > 0.05
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: Graf API is returning >5% 5xx responses
+              description: Graf is emitting more than 5% 5xx errors over the last 5 minutes.
+          - alert: GrafServiceDown
+            expr: up{job="graf"} == 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Graf service is unreachable
+              description: The graf job is not reporting metrics (up metric is 0) for 5 minutes.
+          - alert: GrafNoRequests
+            expr: sum(rate(graf_http_server_requests_count[5m])) < 0.01
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Graf has not processed any requests
+              description: The Graf HTTP counter has not incremented in the last 10 minutes.
+      - name: froussard-linear-webhook.rules
+        rules:
+          - alert: FroussardLinearWebhookVerificationFailures
+            expr: sum(increase(froussard_linear_webhook_verification_failures_total[10m])) > 5
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: froussard
+            annotations:
+              summary: Froussard is repeatedly rejecting Linear webhook verification
+              description: More than five Linear deliveries failed bounded verification in ten minutes.
+          - alert: FroussardLinearWebhookDeliveryLatency
+            expr: |
+              histogram_quantile(
+                0.95,
+                sum by (le) (rate(froussard_linear_webhook_delivery_latency_ms_bucket[10m]))
+              ) > 4000
+            for: 10m
+            labels:
+              severity: warning
+              team: platform
+              service: froussard
+            annotations:
+              summary: Linear webhook p95 latency is approaching its five-second deadline
+              description: Froussard Linear webhook p95 response latency exceeded four seconds for ten minutes.
+          - alert: FroussardLinearAgentRunSubmissionFailures
+            expr: sum(increase(froussard_linear_webhook_downstream_failures_total{dependency="agents"}[15m])) > 2
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: froussard
+              notify: email
+            annotations:
+              summary: Froussard cannot submit Linear AgentRuns
+              description: More than two verified Linear deliveries failed Agents submission in fifteen minutes.
+          - alert: FroussardLinearWebhookKafkaFailures
+            expr: sum(increase(froussard_linear_webhook_downstream_failures_total{dependency="kafka"}[15m])) > 2
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: froussard
+              notify: email
+            annotations:
+              summary: Froussard cannot audit Linear webhook deliveries
+              description: More than two verified Linear deliveries failed Kafka audit publication in fifteen minutes.
+      - name: codex-pipeline-observability.rules
+        rules:
+          - alert: CodexNatsAgentCommsLagHigh
+            expr: |
+              max(
+                jetstream_consumer_num_pending{consumer_name="jangar-agent-comms", stream_name="agent-comms"} or
+                jetstream_consumer_num_pending{consumer="jangar-agent-comms", stream="agent-comms"}
+              ) > 1000
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: NATS agent comms consumer lag is elevated
+              description: The jangar-agent-comms JetStream consumer has >1000 pending messages for 15 minutes.
+          - alert: CodexJangarAgentCommsStalled
+            expr: |
+              (
+                sum(rate(jetstream_stream_last_seq{stream_name="agent-comms"}[10m])) or
+                sum(rate(jetstream_stream_last_seq{stream="agent-comms"}[10m]))
+              ) > 0
+              and sum(rate(jangar_agent_comms_inserted_total[10m])) == 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Jangar agent comms ingestion stalled
+              description: Agent comms are publishing, but Jangar has not inserted any messages in 10 minutes.
+          - alert: CodexJangarSseErrorRate
+            expr: sum(rate(jangar_sse_errors_total[10m])) > 0.05
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Jangar SSE error rate elevated
+              description: SSE error responses exceed 0.05/sec for 10 minutes across Jangar streams.
+      - name: agents-log-collection.rules
+        rules:
+          - alert: AgentsAlloyDeploymentUnavailable
+            expr: |
+              sum(
+                kube_deployment_status_replicas_available{
+                  namespace="agents",
+                  deployment="agents-alloy"
+                }
+              ) < 1
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Agents Alloy log collector is unavailable
+              description: |
+                The agents-alloy deployment has no available replicas for 5 minutes.
+                AgentRun Job logs in the agents namespace are at risk of being missed.
+              runbook_url: docs/runbooks/agents-log-observability.md
+          - alert: AgentsAlloyContainerRestarts
+            expr: |
+              sum(
+                increase(
+                  kube_pod_container_status_restarts_total{
+                    namespace="agents",
+                    pod=~"agents-alloy-.*",
+                    container="alloy"
+                  }[15m]
+                )
+              ) > 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: Agents Alloy collector is restarting
+              description: |
+                The agents-alloy container restarted in the last 15 minutes.
+                Verify collector health and Loki push connectivity.
+              runbook_url: docs/runbooks/agents-log-observability.md
+          - alert: AgentsJobsRunningWithoutLogCollector
+            expr: |
+              sum(
+                kube_pod_status_phase{
+                  namespace="agents",
+                  phase="Running",
+                  pod=~".*-step-.*"
+                }
+              ) > 0
+              and
+              sum(
+                kube_deployment_status_replicas_available{
+                  namespace="agents",
+                  deployment="agents-alloy"
+                }
+              ) < 1
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: AgentRun jobs are running without a log collector
+              description: |
+                AgentRun step pods are active while agents-alloy has no available replicas.
+                Logs can be lost once Job pods terminate.
+              runbook_url: docs/runbooks/agents-log-observability.md
+      - name: arc-runner-capacity.rules
+        rules:
+          - alert: ArcRunnerResourceMetricsMissing
+            expr: |
+              absent(container_cpu_usage_seconds_total{namespace="arc"}) or
+              absent(kube_pod_container_resource_requests{namespace="arc"})
+            for: 10m
+            labels:
+              severity: warning
+              team: platform
+              service: arc
+            annotations:
+              summary: ARC runner resource metrics are missing
+              description: |
+                Mimir is not receiving ARC container CPU metrics or Kubernetes resource request metrics.
+                Check observability-cluster-metrics-alloy and observability-kube-state-metrics in the observability app.
+          - alert: ArcRunnerPodsPending
+            expr: |
+              sum(
+                kube_pod_status_phase{
+                  namespace="arc",
+                  pod=~"arc-(amd64|arm64).*runner.*",
+                  phase="Pending"
+                }
+              ) > 0
+            for: 10m
+            labels:
+              severity: warning
+              team: platform
+              service: arc
+            annotations:
+              summary: ARC runner pods are pending
+              description: |
+                One or more lab ARC runner pods have been Pending for 10 minutes.
+                Compare requested CPU and memory against node allocatable capacity in the ARC Runner Capacity dashboard.
+          - alert: ArcArm64RequestedCpuSaturated
+            expr: |
+              max by (node) (
+                sum by (node) (kube_pod_container_resource_requests{resource="cpu",node!="",node="talos-192-168-1-85"}) /
+                sum by (node) (kube_node_status_allocatable{resource="cpu",node="talos-192-168-1-85"})
+              ) > 0.9
+            for: 15m
+            labels:
+              severity: warning
+              team: platform
+              service: arc
+            annotations:
+              summary: Altra requested CPU is saturated
+              description: |
+                Requested CPU on the arm64 runner node is above 90% of allocatable CPU for 15 minutes.
+                ARC arm64 runner scale-out may be blocked even if live CPU usage is low.
+      - name: torghut-storage-baseline.rules
+        interval: 30s
+        rules:
+          - record: torghut_postgres:wal_bytes_per_second:rate5m
+            expr: |
+              max(
+                rate(
+                  cnpg_collector_wal_bytes{
+                    cluster="torghut-db",
+                    job="cnpg-postgres",
+                    role="primary"
+                  }[5m]
+                )
+              )
+          - record: torghut_postgres:requested_checkpoint_ratio:rate1h
+            expr: |
+              sum(
+                rate(
+                  cnpg_pg_stat_checkpointer_checkpoints_req{
+                    cluster="torghut-db",
+                    job="cnpg-postgres",
+                    role="primary"
+                  }[1h]
+                )
+              ) /
+              clamp_min(
+                sum(
+                  rate(
+                    cnpg_pg_stat_checkpointer_checkpoints_req{
+                      cluster="torghut-db",
+                      job="cnpg-postgres",
+                      role="primary"
+                    }[1h]
+                  )
+                ) +
+                sum(
+                  rate(
+                    cnpg_pg_stat_checkpointer_checkpoints_timed{
+                      cluster="torghut-db",
+                      job="cnpg-postgres",
+                      role="primary"
+                    }[1h]
+                  )
+                ),
+                0.000001
+              )
+          - record: ceph_storage:osd_commit_latency_ms:max
+            expr: max(ceph_osd_commit_latency_ms{job="ceph-storage"})
+          - record: ceph_storage:osd_apply_latency_ms:max
+            expr: max(ceph_osd_apply_latency_ms{job="ceph-storage"})
+          - record: ceph_storage:pool_write_bytes_per_second:rate5m
+            expr: sum(rate(ceph_pool_wr_bytes{job="ceph-storage"}[5m]))
+          - record: ceph_storage:pool_read_bytes_per_second:rate5m
+            expr: sum(rate(ceph_pool_rd_bytes{job="ceph-storage"}[5m]))
+          - record: ceph_storage:scrubbing_pgs:sum
+            # ceph_pg_deep is a subset of ceph_pg_scrubbing. Adding both counts
+            # every deep-scrubbing PG twice and overstates live concurrency.
+            expr: sum(ceph_pg_scrubbing{job="ceph-storage"})
+          - record: ceph_storage:rbd_pod_write_bytes_per_second:rate5m
+            expr: |
+              sum by (namespace, pod, device) (
+                rate(
+                  container_fs_writes_bytes_total{
+                    container="",
+                    device=~"/dev/rbd[0-9]+",
+                    pod!=""
+                  }[5m]
+                )
+              )
+          - record: ceph_storage:rbd_pod_write_iops:rate5m
+            expr: |
+              sum by (namespace, pod, device) (
+                rate(
+                  container_fs_writes_total{
+                    container="",
+                    device=~"/dev/rbd[0-9]+",
+                    pod!=""
+                  }[5m]
+                )
+              )
+      - name: torghut-storage-alerts.rules
+        rules:
+          - alert: TorghutPostgresMetricsMissing
+            expr: |
+              min(up{cluster="torghut-db",job="cnpg-postgres"}) < 1 or
+              absent(up{cluster="torghut-db",job="cnpg-postgres"})
+            for: 10m
+            labels:
+              severity: warning
+              service: torghut-postgres
+              team: platform
+            annotations:
+              summary: Torghut PostgreSQL storage metrics are missing
+              description: CloudNativePG metrics for torghut-db have been absent or failing for 10 minutes.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: CephStorageMetricsMissing
+            expr: |
+              min(up{job="ceph-storage"}) < 1 or
+              absent(up{job="ceph-storage"})
+            for: 10m
+            labels:
+              severity: warning
+              service: ceph-storage
+              team: platform
+            annotations:
+              summary: Ceph storage metrics are missing
+              description: The Rook Ceph manager metrics endpoint has been absent or failing for 10 minutes.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: CloudNativePgWalArchiveBacklog
+            expr: |
+              max by (namespace, cluster) (
+                cnpg_collector_pg_wal_archive_status{
+                  job="cnpg-postgres",
+                  value="ready"
+                }
+              ) > 4
+            for: 15m
+            labels:
+              severity: warning
+              service: cnpg-postgres
+              team: platform
+            annotations:
+              summary: CloudNativePG WAL archive backlog is growing
+              description: |
+                {{ $labels.namespace }}/{{ $labels.cluster }} has more than four WAL segments waiting to archive for 15 minutes.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: CloudNativePgReplicationSlotWalRetentionHigh
+            expr: |
+              max by (namespace, cluster, slot_name) (
+                cnpg_pg_replication_slots_pg_wal_lsn_diff{
+                  job="cnpg-postgres",
+                  slot_type="logical"
+                }
+              ) > 2147483648
+            for: 15m
+            labels:
+              severity: warning
+              service: cnpg-postgres
+              team: platform
+            annotations:
+              summary: CloudNativePG logical replication slot is retaining WAL
+              description: |
+                {{ $labels.namespace }}/{{ $labels.cluster }} slot {{ $labels.slot_name }} has retained more than 2 GiB of WAL for 15 minutes.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: PersistentVolumeFreeLowWarning
+            expr: |
+              (
+                min by (namespace, persistentvolumeclaim) (
+                  kubelet_volume_stats_available_bytes{persistentvolumeclaim!=""}
+                ) /
+                min by (namespace, persistentvolumeclaim) (
+                  kubelet_volume_stats_capacity_bytes{persistentvolumeclaim!=""}
+                )
+              ) < 0.15
+              and
+              (
+                min by (namespace, persistentvolumeclaim) (
+                  kubelet_volume_stats_available_bytes{persistentvolumeclaim!=""}
+                ) /
+                min by (namespace, persistentvolumeclaim) (
+                  kubelet_volume_stats_capacity_bytes{persistentvolumeclaim!=""}
+                )
+              ) >= 0.05
+            for: 30m
+            labels:
+              severity: warning
+              service: kubernetes-storage
+              team: platform
+            annotations:
+              summary: Persistent volume free space is low
+              description: |
+                {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} has less than 15% free space for 30 minutes.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: PersistentVolumeFreeLowCritical
+            expr: |
+              min by (namespace, persistentvolumeclaim) (
+                kubelet_volume_stats_available_bytes{persistentvolumeclaim!=""}
+              ) /
+              min by (namespace, persistentvolumeclaim) (
+                kubelet_volume_stats_capacity_bytes{persistentvolumeclaim!=""}
+              ) < 0.05
+            for: 10m
+            labels:
+              severity: critical
+              service: kubernetes-storage
+              team: platform
+            annotations:
+              summary: Persistent volume free space is critically low
+              description: |
+                {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} has less than 5% free space for 10 minutes.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: CephClusterHealthWarning
+            expr: ceph_health_status{job="ceph-storage"} == 1
+            for: 10m
+            labels:
+              severity: warning
+              service: ceph-storage
+              team: platform
+            annotations:
+              summary: Ceph cluster reports HEALTH_WARN
+              description: Ceph has reported HEALTH_WARN continuously for 10 minutes.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: CephClusterHealthError
+            expr: ceph_health_status{job="ceph-storage"} >= 2
+            for: 5m
+            labels:
+              severity: critical
+              service: ceph-storage
+              team: platform
+            annotations:
+              summary: Ceph cluster reports HEALTH_ERR
+              description: Ceph has reported HEALTH_ERR continuously for 5 minutes.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: CephSlowOps
+            expr: ceph_healthcheck_slow_ops{job="ceph-storage"} > 0
+            for: 5m
+            labels:
+              severity: critical
+              service: ceph-storage
+              team: platform
+            annotations:
+              summary: Ceph reports slow operations
+              description: Ceph has reported one or more slow operations continuously for 5 minutes.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: CephOsdCommitLatencyHigh
+            expr: ceph_storage:osd_commit_latency_ms:max > 75
+            for: 15m
+            labels:
+              severity: warning
+              service: ceph-storage
+              team: platform
+            annotations:
+              summary: Ceph OSD commit latency exceeds 75 ms
+              description: The slowest Ceph OSD has sustained commit latency above 75 ms for 15 minutes.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: CephOsdCommitLatencyCritical
+            expr: ceph_storage:osd_commit_latency_ms:max > 150
+            for: 5m
+            labels:
+              severity: critical
+              service: ceph-storage
+              team: platform
+            annotations:
+              summary: Ceph OSD commit latency exceeds 150 ms
+              description: The slowest Ceph OSD has sustained commit latency above 150 ms for 5 minutes.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: CephScrubDebt
+            expr: |
+              max(
+                ceph_health_detail{
+                  job="ceph-storage",
+                  name=~"PG_NOT_(DEEP_)?SCRUBBED"
+                }
+              ) > 0
+            for: 30m
+            labels:
+              severity: warning
+              service: ceph-storage
+              team: platform
+            annotations:
+              summary: Ceph scrub debt is overdue
+              description: Ceph has reported overdue scrub or deep-scrub placement groups for 30 minutes.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: CephScrubbingDisabled
+            expr: |
+              max(ceph_osd_flag_noscrub{job="ceph-storage"}) > 0 or
+              max(ceph_osd_flag_nodeep_scrub{job="ceph-storage"}) > 0
+            for: 30m
+            labels:
+              severity: warning
+              service: ceph-storage
+              team: platform
+            annotations:
+              summary: Ceph scrub protection flags remain enabled
+              description: noscrub or nodeep-scrub has remained set for 30 minutes.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: TorghutPostgresForcedCheckpointsHigh
+            expr: |
+              torghut_postgres:requested_checkpoint_ratio:rate1h > 0.25
+              and
+              sum(
+                increase(
+                  cnpg_pg_stat_checkpointer_checkpoints_req{
+                    cluster="torghut-db",
+                    job="cnpg-postgres",
+                    role="primary"
+                  }[1h]
+                )
+              ) >= 4
+            for: 30m
+            labels:
+              severity: warning
+              service: torghut-postgres
+              team: platform
+            annotations:
+              summary: Torghut PostgreSQL is forcing checkpoints
+              description: More than 25% of checkpoints were requested and at least four were forced in the last hour.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: TorghutPostgresWalBuffersFull
+            expr: |
+              increase(
+                cnpg_collector_wal_buffers_full{
+                  cluster="torghut-db",
+                  job="cnpg-postgres",
+                  role="primary"
+                }[15m]
+              ) > 0
+            for: 15m
+            labels:
+              severity: warning
+              service: torghut-postgres
+              team: platform
+            annotations:
+              summary: Torghut PostgreSQL WAL buffers are saturating
+              description: PostgreSQL has exhausted WAL buffers during every evaluation for 15 minutes.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+      - name: torghut-clickhouse.guardrails.rules
+        rules:
+          - alert: TorghutClickHouseDiskFreeLowWarning
+            expr: |
+              min by (namespace, service) (
+                torghut_clickhouse_guardrails_disk_free_ratio{
+                  namespace="torghut",
+                  service="torghut-clickhouse-guardrails-exporter"
+                }
+              ) < 0.15
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut ClickHouse disk free < 15%
+              description: |
+                Torghut ClickHouse is below 15% free disk for 10 minutes.
+
+                First safe action: pause TA writes to stop the retry storm and prevent disk exhaustion.
+                Follow-up guidance: v1/component-clickhouse-capacity-ttl-and-disk-guardrails.md.
+              runbook_url: docs/torghut/design-system/v1/operations-pause-ta-writes.md
+          - alert: TorghutClickHouseDiskFreeLowCritical
+            expr: |
+              min by (namespace, service) (
+                torghut_clickhouse_guardrails_disk_free_ratio{
+                  namespace="torghut",
+                  service="torghut-clickhouse-guardrails-exporter"
+                }
+              ) < 0.08
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut ClickHouse disk free < 8%
+              description: |
+                Torghut ClickHouse is below 8% free disk for 5 minutes (imminent out-of-space risk).
+
+                Stop the bleeding: immediately pause TA writes.
+              runbook_url: docs/torghut/design-system/v1/operations-pause-ta-writes.md
+          - alert: TorghutClickHouseReplicaReadOnly
+            expr: |
+              max by (namespace, service) (
+                torghut_clickhouse_guardrails_any_replica_readonly{
+                  namespace="torghut",
+                  service="torghut-clickhouse-guardrails-exporter"
+                }
+              ) >= 1
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut ClickHouse replica is read-only
+              description: |
+                At least one Torghut ClickHouse replicated table reports read-only, which will cause TA JDBC writes to fail.
+
+                Stop the bleeding: pause TA writes first (v1/operations-pause-ta-writes.md), then follow replica recovery
+                (v1/operations-clickhouse-replica-and-keeper.md).
+              runbook_url: docs/torghut/design-system/v1/operations-clickhouse-replica-and-keeper.md
+          - alert: TorghutClickHouseGuardrailsExporterDown
+            expr: |
+              up{
+                job="torghut",
+                namespace="torghut",
+                service="torghut-clickhouse-guardrails-exporter"
+              } == 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut ClickHouse guardrails exporter is down
+              description: Guardrails metrics are not being scraped, so disk/read-only alerts may not fire.
+          - alert: TorghutClickHouseGuardrailsScrapeFailing
+            expr: |
+              torghut_clickhouse_guardrails_last_scrape_success{
+                namespace="torghut",
+                service="torghut-clickhouse-guardrails-exporter"
+              } == 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut ClickHouse guardrails scrape failing
+              description: Guardrails exporter is up but cannot query ClickHouse successfully.
+          - alert: TorghutClickHouseFreshnessQueryFallbacks
+            expr: |
+              increase(
+                torghut_clickhouse_guardrails_freshness_fallback_total{
+                  namespace="torghut",
+                  service="torghut-clickhouse-guardrails-exporter"
+                }[15m]
+              ) > 0
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut ClickHouse freshness queries are using fallback mode
+              description: |
+                Guardrails freshness checks are falling back from precise to low-memory mode.
+                This usually indicates ClickHouse query pressure or tight memory headroom.
+              runbook_url: docs/torghut/design-system/v1/component-clickhouse-capacity-ttl-and-disk-guardrails.md
+      - name: symphony-fleet.rules
+        rules:
+          - alert: SymphonyNoLeader
+            expr: |
+              max by (instance) (
+                symphony_leader_state{
+                  instance=~"symphony|symphony-jangar|symphony-torghut"
+                }
+              ) != 1
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Symphony instance has no active leader
+              description: |
+                One Symphony instance has not reported an active leader for 5 minutes.
+                Dispatch and reconciliation for that lane are likely stalled.
+          - alert: SymphonyPollStalled
+            expr: |
+              time() - max by (instance) (
+                symphony_last_successful_poll_timestamp_seconds{
+                  instance=~"symphony|symphony-jangar|symphony-torghut"
+                }
+              ) > 300
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: Symphony polling is stalled
+              description: |
+                A Symphony instance has not completed a successful poll tick for more than 5 minutes.
+          - alert: SymphonyRetryBacklogStuck
+            expr: |
+              max by (instance) (
+                symphony_retry_queue_size{
+                  instance=~"symphony|symphony-jangar|symphony-torghut"
+                }
+              ) > 0
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: Symphony retry backlog is stuck
+              description: |
+                A Symphony instance has had retry work queued continuously for 15 minutes.
+          - alert: SymphonyWorkerFailuresHigh
+            expr: |
+              sum by (instance) (
+                increase(
+                  symphony_worker_outcomes_total{
+                    instance=~"symphony|symphony-jangar|symphony-torghut",
+                    outcome=~"failed|stalled"
+                  }[15m]
+                )
+              ) >= 3
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: Symphony worker failures are elevated
+              description: |
+                A Symphony instance has recorded at least 3 failed or stalled worker outcomes in the last 15 minutes.
+          - alert: SymphonyTargetHealthBlocked
+            expr: |
+              max by (instance) (
+                symphony_target_health_ready{
+                  instance=~"symphony|symphony-jangar|symphony-torghut"
+                }
+              ) == 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Symphony dispatch is blocked by target health
+              description: |
+                A Symphony instance has reported target health not ready for dispatch for 10 minutes.
+      - name: torghut-ws.rules
+        rules:
+          - alert: TorghutWSForwarderDown
+            expr: |
+              up{
+                job="torghut",
+                namespace="torghut",
+                service="torghut-ws"
+              } == 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut WS forwarder is down
+              description: |
+                torghut-ws is not being scraped (up=0) for 5 minutes. Market data will not flow into Kafka, and TA will stall.
+              runbook_url: docs/torghut/design-system/v1/operations-ws-connection-limit-and-auth.md
+          - alert: TorghutWSForwarderNotReady
+            expr: |
+              torghut_ws_readyz_status{
+                namespace="torghut",
+                service="torghut-ws"
+              } == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut WS forwarder not ready
+              description: |
+                torghut-ws /readyz is failing for 2 minutes (Alpaca/Kafka gates not healthy).
+              runbook_url: docs/torghut/design-system/v1/operations-ws-connection-limit-and-auth.md
+          - alert: TorghutWSRestartsOrOOM
+            expr: |
+              (
+                sum(
+                  increase(
+                    kube_pod_container_status_restarts_total{
+                      namespace="torghut",
+                      pod=~"torghut-ws-.*",
+                      container="torghut-ws"
+                    }[10m]
+                  )
+                ) > 0
+              )
+              or
+              (
+                max(
+                  max_over_time(
+                    kube_pod_container_status_last_terminated_reason{
+                      namespace="torghut",
+                      pod=~"torghut-ws-.*",
+                      container="torghut-ws",
+                      reason="OOMKilled"
+                    }[10m]
+                  )
+                ) >= 1
+              )
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut WS container restarted or OOMKilled
+              description: |
+                torghut-ws restarted in the last 10 minutes or terminated with OOMKilled.
+                Inspect /readyz gates, recent ws logs, and JVM heap settings before market-hour impact grows.
+              runbook_url: docs/torghut/design-system/v1/operations-ws-connection-limit-and-auth.md
+          - alert: TorghutWSDesiredSymbolsFetchFailing
+            expr: |
+              max_over_time(
+                torghut_ws_desired_symbols_fetch_degraded{
+                  namespace="torghut",
+                  service="torghut-ws"
+                }[15m]
+              ) >= 1
+              and on()
+              (
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
+              )
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut WS desired-symbol polling degraded
+              description: |
+                torghut-ws has failed desired symbol polls for at least 15 minutes and is running on cached symbols.
+                Verify Jangar symbols endpoint health and recent symbol updates.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutWSKafkaSendErrors
+            expr: |
+              rate(
+                torghut_ws_kafka_send_errors_total{
+                  namespace="torghut",
+                  service="torghut-ws"
+                }[5m]
+              ) > 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut WS Kafka send errors
+              description: torghut-ws is reporting Kafka send errors over the last 10 minutes.
+          - alert: TorghutWSKafkaSendsStalledDuringMarketHours
+            expr: |
+              (
+                sum(
+                  rate(
+                    torghut_ws_kafka_send_latency_seconds_count{
+                      namespace="torghut",
+                      service="torghut-ws"
+                    }[5m]
+                  )
+                ) == 0
+              )
+              and on()
+              (
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
+              )
+            for: 8m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut WS is not publishing Kafka records (market hours)
+              description: |
+                torghut-ws has published 0 records/sec for 8 minutes during market hours (UTC schedule).
+
+                This usually means the Alpaca WS isn't receiving events or subscriptions are broken.
+              runbook_url: docs/torghut/design-system/v1/operations-ws-connection-limit-and-auth.md
+      - name: torghut-ta.rules
+        rules:
+          - alert: TorghutTAJobmanagerDown
+            expr: |
+              up{
+                job="torghut",
+                namespace="torghut",
+                service="torghut-ta-metrics"
+              } == 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut TA jobmanager metrics endpoint is down
+              description: TA jobmanager is not being scraped (up=0) for 5 minutes.
+              runbook_url: docs/torghut/design-system/v1/operations-ta-replay-and-recovery.md
+          - alert: TorghutTACheckpointsStalled
+            expr: |
+              (
+                time()
+                - max(
+                  flink_jobmanager_job_lastCheckpointCompletedTimestamp{
+                    namespace="torghut",
+                    service="torghut-ta-metrics"
+                  }
+                ) / 1000
+              ) > 180
+            for: 10m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut TA checkpoints appear stalled
+              description: |
+                Flink last checkpoint completed timestamp is older than 3 minutes for 10 minutes.
+                This strongly indicates the TA job is stuck or failing to checkpoint.
+              runbook_url: docs/torghut/design-system/v1/operations-ta-replay-and-recovery.md
+      - name: torghut-trading.rules
+        rules:
+          - alert: TorghutApiServiceMissing
+            expr: |
+              absent(
+                kube_service_info{
+                  namespace="torghut",
+                  service="torghut"
+                }
+              ) == 1
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut API service is missing
+              description: |
+                The stable Knative API Service is absent from Kubernetes inventory.
+                The Torghut metrics scrape uses this Service to reach the current revision.
+              runbook_url: docs/torghut/design-system/v1/operations-knative-revision-failures.md
+          - alert: TorghutActiveApiRevisionMetricsDown
+            expr: |
+              max(
+                up{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut"
+                }
+              ) == 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Active Torghut API revision metrics endpoint is down
+              description: |
+                The stable Knative route to the current stateless API revision has reported up=0 for 5 minutes.
+              runbook_url: docs/torghut/design-system/v1/operations-knative-revision-failures.md
+          - alert: TorghutSchedulerMetricsMissing
+            expr: |
+              (
+                kube_deployment_spec_replicas{
+                  namespace="torghut",
+                  deployment="torghut-scheduler"
+                } > 0
+              )
+              unless on (namespace)
+              max by (namespace) (
+                up{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-scheduler"
+                }
+              )
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut scheduler metrics are missing
+              description: |
+                The scheduler Deployment expects a writer, but no torghut-scheduler metrics target exists.
+                Keep trading contained and inspect the Deployment, Service endpoints, and Alloy discovery.
+              runbook_url: docs/torghut/design-system/v1/operations-knative-revision-failures.md
+          - alert: TorghutSchedulerMetricsDown
+            expr: |
+              max by (namespace) (
+                up{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-scheduler"
+                }
+              ) == 0
+              and on (namespace)
+              kube_deployment_spec_replicas{
+                namespace="torghut",
+                deployment="torghut-scheduler"
+              } > 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut scheduler metrics endpoint is down
+              description: |
+                The scheduler writer should be active, but its metrics endpoint has been down for 5 minutes.
+                Keep trading contained until the writer and leadership state are healthy.
+              runbook_url: docs/torghut/design-system/v1/operations-knative-revision-failures.md
+          - alert: TorghutSchedulerWriterCountInvalid
+            expr: |
+              (
+                (
+                  sum by (namespace) (
+                    torghut_scheduler_leadership_acquired{
+                      job="torghut",
+                      namespace="torghut",
+                      service="torghut-scheduler"
+                    }
+                  )
+                  or on (namespace)
+                  0 * kube_deployment_spec_replicas{
+                    namespace="torghut",
+                    deployment="torghut-scheduler"
+                  }
+                ) != 1
+              )
+              and on (namespace)
+              kube_deployment_spec_replicas{
+                namespace="torghut",
+                deployment="torghut-scheduler"
+              } > 0
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut scheduler does not have exactly one writer
+              description: |
+                Exactly one scheduler must hold the durable leadership lock whenever the Deployment is enabled.
+                Keep trading contained until the acquired-leadership gauge sums to one.
+              runbook_url: docs/torghut/design-system/v1/operations-knative-revision-failures.md
+          - alert: TorghutSchedulerLeadershipUnhealthy
+            expr: |
+              (
+                (
+                  sum by (namespace) (
+                    torghut_scheduler_leadership_healthy{
+                      job="torghut",
+                      namespace="torghut",
+                      service="torghut-scheduler"
+                    }
+                  )
+                  or on (namespace)
+                  0 * kube_deployment_spec_replicas{
+                    namespace="torghut",
+                    deployment="torghut-scheduler"
+                  }
+                ) != 1
+              )
+              and on (namespace)
+              kube_deployment_spec_replicas{
+                namespace="torghut",
+                deployment="torghut-scheduler"
+              } > 0
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut scheduler leadership is unhealthy
+              description: |
+                The enabled scheduler does not report exactly one healthy durable-leadership holder.
+                Cancel broker-affecting work and restore the database leadership session before resuming.
+              runbook_url: docs/torghut/design-system/v1/operations-knative-revision-failures.md
+      - name: torghut-llm.rules
+        rules:
+          - alert: TorghutLLMErrorRateHigh
+            expr: |
+              (
+                rate(
+                  torghut_llm_error_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut-llm-guardrails-exporter"
+                  }[10m]
+                )
+                /
+                clamp_min(
+                  rate(
+                    torghut_llm_requests_total{
+                      job="torghut",
+                      namespace="torghut",
+                      service="torghut-llm-guardrails-exporter"
+                    }[10m]
+                  ),
+                  1
+                )
+              ) > 0.1
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut LLM error rate is elevated
+              description: LLM review errors exceed 10% of requests for 10 minutes.
+              runbook_url: docs/torghut/design-system/v1/ai-layer-circuit-breakers-and-fallbacks.md
+          - alert: TorghutLLMTokensSpike
+            expr: |
+              (
+                (
+                  rate(
+                    torghut_llm_tokens_prompt_total{
+                      job="torghut",
+                      namespace="torghut",
+                      service="torghut-llm-guardrails-exporter"
+                    }[5m]
+                  )
+                  +
+                  rate(
+                    torghut_llm_tokens_completion_total{
+                      job="torghut",
+                      namespace="torghut",
+                      service="torghut-llm-guardrails-exporter"
+                    }[5m]
+                  )
+                )
+                /
+                clamp_min(
+                  avg_over_time(
+                    (
+                      rate(
+                        torghut_llm_tokens_prompt_total{
+                          job="torghut",
+                          namespace="torghut",
+                          service="torghut-llm-guardrails-exporter"
+                        }[5m]
+                      )
+                      +
+                      rate(
+                        torghut_llm_tokens_completion_total{
+                          job="torghut",
+                          namespace="torghut",
+                          service="torghut-llm-guardrails-exporter"
+                        }[5m]
+                      )
+                    )[1h:5m]
+                  ),
+                  1
+                )
+              ) > 3
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut LLM token usage spiked
+              description: LLM token rate is >3x the trailing 1h baseline for 10 minutes.
+              runbook_url: docs/torghut/design-system/v1/cost-model-and-budgets.md
+          - alert: TorghutLLMTelemetryMissing
+            expr: |
+              absent(
+                torghut_llm_requests_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }
+              ) == 1
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut LLM telemetry missing
+              description: torghut LLM review metrics are not being scraped for 15 minutes.
+              runbook_url: docs/torghut/design-system/v1/observability-metrics-logs-traces.md
+      - name: torghut-mrm.rules
+        rules:
+          - alert: TorghutLLMGuardrailsExporterDown
+            expr: |
+              max(
+                up{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }
+              ) == 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut LLM guardrails exporter is down
+              description: LLM guardrails metrics are not being scraped (up=0) for 5 minutes.
+              runbook_url: docs/torghut/design-system/v1/ai-layer-model-risk-management.md
+          - alert: TorghutLLMGuardrailsScrapeFailing
+            expr: |
+              torghut_llm_guardrails_last_scrape_success{
+                job="torghut",
+                namespace="torghut",
+                service="torghut-llm-guardrails-exporter"
+              } == 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut LLM guardrails scrape failing
+              description: |
+                The LLM guardrails exporter cannot read /trading/status.
+                Review torghut service health and network policies.
+              runbook_url: docs/torghut/design-system/v1/ai-layer-model-risk-management.md
+          - alert: TorghutLLMGuardrailsBlocking
+            expr: |
+              increase(
+                torghut_llm_guardrail_block_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }[10m]
+              ) > 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut LLM guardrails are blocking reviews
+              description: |
+                Model risk management guardrails are blocking LLM review requests.
+                Check the configured evaluation evidence, inventory, and prompt version.
+              runbook_url: docs/torghut/design-system/v1/ai-layer-model-risk-management.md
+          - alert: TorghutLLMErrorRatioAlert
+            expr: |
+              max(
+                torghut_llm_error_ratio_alert{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }
+              ) == 1
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut LLM error ratio breached rollout threshold
+              description: |
+                LLM error ratio is above the configured rollout alert threshold.
+                Keep deterministic risk as final authority and investigate provider stability.
+              runbook_url: docs/torghut/design-system/v3/full-loop/15-llm-advisory-rollout-spec.md
+          - alert: TorghutLLMCircuitAlertActive
+            expr: |
+              max(
+                torghut_llm_circuit_open_alert{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }
+              ) == 1
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut LLM circuit alert threshold exceeded
+              description: |
+                LLM circuit is open with cooldown posture above threshold.
+                Keep advisory in shadow and validate upstream LLM health.
+              runbook_url: docs/torghut/design-system/v3/full-loop/15-llm-advisory-rollout-spec.md
+          - alert: TorghutLLMStagePolicyViolationActive
+            expr: |
+              max(
+                torghut_llm_stage_policy_violation_active{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }
+              ) == 1
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut LLM rollout stage policy is violated
+              description: |
+                Runtime policy resolution reports rollout-stage policy violations.
+                Reconcile LLM_ROLLOUT_STAGE, fail mode, and shadow controls immediately.
+              runbook_url: docs/torghut/design-system/v3/full-loop/15-llm-advisory-rollout-spec.md
+          - alert: TorghutLLMGovernanceEvidenceMissing
+            expr: |
+              max by (job, namespace, service) (
+                torghut_llm_governance_evidence_complete{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }
+              ) == 0
+              and
+              sum by (job, namespace, service) (
+                torghut_llm_rollout_stage_info{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter",
+                  stage=~"stage2|stage3"
+                }
+              ) >= 1
+              and
+              max by (job, namespace, service) (
+                torghut_llm_enabled{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }
+              ) == 1
+            for: 10m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut LLM governance evidence incomplete for advanced stage
+              description: |
+                Stage 2/3 rollout is active without complete governance evidence.
+                Revert to shadow-only posture until evaluation, challenge, shadow completion, and model lock are present.
+              runbook_url: docs/torghut/design-system/v3/full-loop/15-llm-advisory-rollout-spec.md
+          - alert: TorghutLLMParseErrorRateHigh
+            expr: |
+              (
+                rate(
+                  torghut_llm_parse_error_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut-llm-guardrails-exporter"
+                  }[15m]
+                )
+                /
+                rate(
+                  torghut_llm_requests_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut-llm-guardrails-exporter"
+                  }[15m]
+                )
+              ) > 0.05
+              and
+              rate(
+                torghut_llm_requests_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }[15m]
+              ) > 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut LLM parse error rate elevated
+              description: |
+                LLM responses are failing JSON parsing over the last 15 minutes.
+                This is a model risk incident; consider disabling LLM or tightening prompts.
+              runbook_url: docs/torghut/design-system/v1/ai-layer-model-risk-management.md
+          - alert: TorghutLLMVetoRateSpike
+            expr: |
+              (
+                rate(
+                  torghut_llm_veto_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut-llm-guardrails-exporter"
+                  }[30m]
+                )
+                /
+                rate(
+                  torghut_llm_requests_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut-llm-guardrails-exporter"
+                  }[30m]
+                )
+              )
+              > (
+                max(
+                  torghut_llm_veto_rate_baseline{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut-llm-guardrails-exporter"
+                  }
+                ) * 1.5
+              )
+              and
+              rate(
+                torghut_llm_requests_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }[30m]
+              ) > 0
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut LLM veto rate spiked versus baseline
+              description: |
+                LLM veto rate is 1.5x higher than baseline. Investigate drift, prompt changes,
+                or upstream signal integrity. Keep AI in shadow mode until resolved.
+              runbook_url: docs/torghut/design-system/v1/ai-layer-model-risk-management.md
+          - alert: TorghutLLMCircuitOpened
+            expr: |
+              increase(
+                torghut_llm_circuit_open_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }[10m]
+              ) > 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut LLM circuit breaker opened recently
+              description: Circuit breaker events indicate repeated LLM failures or timeouts in the last 10 minutes.
+              runbook_url: docs/torghut/design-system/v1/ai-layer-model-risk-management.md
+          - alert: TorghutLLMCircuitOpenTooLong
+            expr: |
+              max(
+                torghut_llm_circuit_open_alert{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }
+              ) == 1
+            for: 10m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut LLM circuit stuck open
+              description: |
+                The LLM circuit breaker has remained open for longer than 10 minutes.
+                Keep deterministic-only behavior and investigate upstream LLM failures.
+              runbook_url: docs/torghut/design-system/v1/ai-layer-model-risk-management.md
+          - alert: TorghutLLMFailModeOverridesSpike
+            expr: |
+              increase(
+                torghut_llm_fail_mode_override_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }[15m]
+              ) > 5
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut LLM fail-mode overrides are frequent
+              description: |
+                Stage controls are repeatedly overriding configured fail mode.
+                Verify rollout stage and live/paper configuration consistency.
+              runbook_url: docs/torghut/design-system/v3/full-loop/15-llm-advisory-rollout-spec.md
+          - alert: TorghutLLMTokenBudgetExceeded
+            expr: |
+              (
+                increase(
+                  torghut_llm_tokens_prompt_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut-llm-guardrails-exporter"
+                  }[30m]
+                )
+                +
+                increase(
+                  torghut_llm_tokens_completion_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut-llm-guardrails-exporter"
+                  }[30m]
+                )
+              )
+              /
+              increase(
+                torghut_llm_requests_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }[30m]
+              )
+              > max(
+                torghut_llm_tokens_per_request_budget{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }
+              )
+              and
+              increase(
+                torghut_llm_requests_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }[30m]
+              ) > 0
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut LLM token budget exceeded
+              description: |
+                Average LLM tokens per request are above the configured budget.
+                Consider shortening prompts or lowering max tokens.
+              runbook_url: docs/torghut/design-system/v1/ai-layer-model-risk-management.md
+      - name: torghut-freshness.rules
+        rules:
+          - alert: TorghutSignalsStaleDuringMarketHours
+            expr: |
+              (
+                (
+                  time()
+                  - max(
+                    torghut_clickhouse_guardrails_ta_signals_max_event_ts_seconds{
+                      namespace="torghut",
+                      service="torghut-clickhouse-guardrails-exporter"
+                    }
+                  )
+                ) > 600
+              )
+              and on()
+              (
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
+              )
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut signals are stale (market hours)
+              description: |
+                ClickHouse ta_signals max(event_ts) is older than 10 minutes during market hours (UTC schedule).
+
+                First checks:
+                - torghut-ws readiness and Kafka publishing
+                - torghut-ta checkpointing and ClickHouse JDBC sink health
+              runbook_url: docs/torghut/design-system/v1/operations-ta-replay-and-recovery.md
+          - alert: TorghutMicrobarsStaleDuringMarketHours
+            expr: |
+              (
+                (
+                  time()
+                  - max(
+                    torghut_clickhouse_guardrails_ta_microbars_max_window_end_seconds{
+                      namespace="torghut",
+                      service="torghut-clickhouse-guardrails-exporter"
+                    }
+                  )
+                ) > 240
+              )
+              and on()
+              (
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
+              )
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut microbars are stale (market hours)
+              description: |
+                ClickHouse ta_microbars max(window_end) is older than 4 minutes during market hours (UTC schedule).
+              runbook_url: docs/torghut/design-system/v1/operations-ta-replay-and-recovery.md
+      - name: torghut-quant-control-plane.rules
+        rules:
+          - alert: TorghutQuantDecisionsStalledDuringMarketHours
+            expr: |
+              (
+                (
+                  sum(
+                    rate(
+                      torghut_trading_decisions_total{
+                        job="torghut",
+                        namespace="torghut",
+                        service="torghut-scheduler"
+                      }[5m]
+                    )
+                  )
+                  or on()
+                  (
+                    0
+                    * max(
+                      up{
+                        job="torghut",
+                        namespace="torghut",
+                        service="torghut-scheduler"
+                      } == 1
+                    )
+                  )
+                ) == 0
+              )
+              and
+              (
+                (
+                  sum(
+                    rate(
+                      torghut_trading_strategy_events_total{
+                        job="torghut",
+                        namespace="torghut",
+                        service="torghut-scheduler"
+                      }[5m]
+                    )
+                  )
+                  or on()
+                  (
+                    0
+                    * max(
+                      up{
+                        job="torghut",
+                        namespace="torghut",
+                        service="torghut-scheduler"
+                      } == 1
+                    )
+                  )
+                ) == 0
+              )
+              and
+              (
+                (
+                  sum(
+                    increase(
+                      torghut_trading_rejected_signal_reason_total{
+                        job="torghut",
+                        namespace="torghut",
+                        service="torghut-scheduler",
+                        reason=~"missing_executable_quote|spread_bps_exceeded"
+                      }[5m]
+                    )
+                  )
+                  or on()
+                  (
+                    0
+                    * max(
+                      up{
+                        job="torghut",
+                        namespace="torghut",
+                        service="torghut-scheduler"
+                      } == 1
+                    )
+                  )
+                ) == 0
+              )
+              and on()
+              (
+                max(
+                  up{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut-scheduler"
+                  }
+                ) == 1
+              )
+              and on()
+              (
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
+              )
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut trading decisions stalled (market hours)
+              description: |
+                No Torghut trading decisions, strategy evaluation events, or executable quote-quality rejections have
+                been recorded for 15 minutes during market hours (UTC schedule). This indicates a stalled decision
+                pipeline rather than a valid fail-closed quote-quality rejection.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutExecutableQuoteCoverageDegradedDuringMarketHours
+            expr: |
+              (
+                sum(
+                  increase(
+                    torghut_trading_rejected_signal_reason_total{
+                      job="torghut",
+                      namespace="torghut",
+                      service="torghut-scheduler",
+                      reason=~"missing_executable_quote|spread_bps_exceeded"
+                    }[10m]
+                  )
+                ) >= 10
+              )
+              and
+              (
+                sum(
+                  rate(
+                    torghut_trading_decisions_total{
+                      job="torghut",
+                      namespace="torghut",
+                      service="torghut-scheduler"
+                    }[10m]
+                  )
+                ) == 0
+              )
+              and on()
+              (
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
+              )
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut executable quote coverage is degraded
+              description: |
+                At least ten candidate signals failed executable quote validation in ten minutes while no decision was
+                produced. Check quote-source entitlement and venue coverage; do not weaken spread or freshness gates.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutAutonomyNoSignalStreakDuringMarketHours
+            expr: |
+              (
+                increase(
+                  torghut_trading_no_signal_windows_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut-scheduler"
+                  }[10m]
+                ) >= 2
+              )
+              and on()
+              (
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
+              )
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut autonomy no-signal streak (market hours)
+              description: |
+                Autonomy ingest returned empty windows for consecutive cycles for 10 minutes in market hours.
+                Check TA signal chain health, Jangar symbol feed, and autonomy cursor state.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutAutonomyCursorAheadOfStreamDuringMarketHours
+            expr: |
+              (
+                increase(
+                  torghut_trading_no_signal_reason_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut-scheduler",
+                    reason="cursor_ahead_of_stream"
+                  }[10m]
+                ) >= 2
+              )
+              and on()
+              (
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
+              )
+            for: 10m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut autonomy cursor is ahead of stream (market hours)
+              description: |
+                Autonomy ingest reports repeated cursor_ahead_of_stream for 10 minutes during market hours.
+                This indicates the TA pipeline is not advancing or ingestion is behind.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutSignalContinuityActionableDuringMarketHours
+            expr: |
+              (
+                max_over_time(
+                  torghut_trading_signal_continuity_actionable{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut-scheduler"
+                  }[10m]
+                ) >= 1
+              )
+              and on()
+              (
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
+              )
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut signal continuity is actionable (market hours)
+              description: |
+                Torghut continuity classifier has remained actionable for 10 minutes during market hours.
+                Treat this as a source-chain reliability regression until continuity returns to expected state.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutUniverseFailSafeBlocksDuringMarketHours
+            expr: |
+              (
+                increase(
+                  torghut_trading_universe_fail_safe_reason_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut-scheduler"
+                  }[10m]
+                ) > 0
+              )
+              and on()
+              (
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
+              )
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut authoritative universe fail-safe blocking (market hours)
+              description: |
+                Torghut has entered universe fail-safe blocking due to unresolved or empty authoritative Jangar symbols.
+                Keep autonomy/trading blocked until Jangar universe continuity is restored.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutSignalStalenessAlertsSustainedDuringMarketHours
+            expr: |
+              (
+                increase(
+                  torghut_trading_signal_staleness_alert_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut-scheduler"
+                  }[15m]
+                ) >= 3
+              )
+              and on()
+              (
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
+              )
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut signal staleness alerts sustained (market hours)
+              description: |
+                Torghut emitted at least 3 signal freshness/continuity alerts in the last 15 minutes during market hours.
+                Validate stream restart recovery and ta_signals cursor continuity before scaling execution.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutLeanFallbackRateElevated
+            expr: |
+              (
+                rate(
+                  torghut_trading_execution_fallback_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut-scheduler",
+                    from="lean",
+                    to="alpaca"
+                  }[15m]
+                )
+                /
+                clamp_min(
+                  rate(
+                    torghut_trading_execution_requests_total{
+                      job="torghut",
+                      namespace="torghut",
+                      service="torghut-scheduler",
+                      adapter="lean"
+                    }[15m]
+                  ),
+                  0.001
+                )
+              ) > 0.15
+              and
+              rate(
+                torghut_trading_execution_requests_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-scheduler",
+                  adapter="lean"
+                }[15m]
+              ) > 0.01
+            for: 15m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut LEAN route fallback rate elevated
+              description: |
+                LEAN to Alpaca fallback transitions exceeded 15% of LEAN execution requests for 15 minutes.
+                Route provenance continuity is degraded; keep fallback policy enabled and investigate LEAN runner stability.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutRouteProvenanceCoverageDegraded
+            expr: |
+              torghut_trading_route_provenance_coverage_ratio{
+                job="torghut",
+                namespace="torghut",
+                service="torghut-scheduler"
+              } < 0.98
+              and
+              torghut_trading_route_provenance_total{
+                job="torghut",
+                namespace="torghut",
+                service="torghut-scheduler"
+              } >= 20
+            for: 15m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut route provenance continuity degraded
+              description: |
+                Route provenance coverage over recent executions dropped below 98% while traffic is active.
+                Expected/actual adapter fields are missing on recent rows, breaking route audit continuity.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutEvidenceContinuityFailuresDetected
+            expr: |
+              increase(
+                torghut_trading_evidence_continuity_failures_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-scheduler"
+                }[2h]
+              ) > 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut evidence continuity check failed
+              description: |
+                Latest autonomy evidence reconciliation found missing research ledger rows
+                across research_candidates/fold_metrics/stress_metrics/promotions.
+                Halt promotions until artifact continuity is restored.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutQuantOrderRejectionRateHigh
+            expr: |
+              (
+                rate(
+                  torghut_trading_orders_rejected_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut-scheduler"
+                  }[15m]
+                )
+                /
+                clamp_min(
+                  rate(
+                    torghut_trading_orders_submitted_total{
+                      job="torghut",
+                      namespace="torghut",
+                      service="torghut-scheduler"
+                    }[15m]
+                  ),
+                  1
+                )
+              ) > 0.2
+              and
+              rate(
+                torghut_trading_orders_submitted_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-scheduler"
+                }[15m]
+              ) > 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut order rejection rate elevated
+              description: |
+                Rejected orders exceed 20% of submitted orders for 10 minutes. This impacts execution quality
+                and will degrade quant control-plane performance metrics.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutQuantExecutionCleanRatioLow
+            expr: |
+              min_over_time(
+                torghut_trading_execution_clean_ratio{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-scheduler"
+                }[15m]
+              ) < 0.75
+              and
+              increase(
+                torghut_trading_decisions_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-scheduler"
+                }[15m]
+              ) > 20
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut clean execution ratio degraded
+              description: |
+                Clean execution ratio is below 75% for 10 minutes while decision traffic is active.
+                Hold live promotion gates and investigate dominant rejection classes before scaling.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutSignalBatchOrderViolationDetected
+            expr: |
+              increase(
+                torghut_trading_signal_batch_order_violation_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-scheduler"
+                }[5m]
+              ) > 0
+            for: 0m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut signal batch ordering violation detected
+              description: |
+                Feature-quality rejected at least one live batch for non-monotonic progression in the last 5 minutes.
+                Halt live promotion and inspect ClickHouse ordering, cursor state, and ingest logs immediately.
+              runbook_url: docs/torghut/design-system/v1/operations-ta-replay-and-recovery.md
+          - alert: TorghutExecutionValidationMismatchDetected
+            expr: |
+              increase(
+                torghut_trading_execution_validation_mismatch_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-scheduler"
+                }[5m]
+              ) > 0
+            for: 0m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut decision and execution validation diverged
+              description: |
+                The persisted decision quantity contract disagreed with pre-submit execution validation in the last 5 minutes.
+                Treat this as a production correctness incident and stop promotion until resolved.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutExecutionAttemptsWithoutAcceptedOrders
+            expr: |
+              sum(
+                increase(
+                  torghut_trading_execution_submit_attempt_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut-scheduler"
+                  }[15m]
+                )
+              ) > 0
+              and
+              sum(
+                increase(
+                  torghut_trading_execution_submit_result_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut-scheduler",
+                    status="accepted"
+                  }[15m]
+                )
+              ) == 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut submit attempts are not reaching accepted orders
+              description: |
+                Submit attempts occurred in the last 15 minutes but none were accepted.
+                Check local reject taxonomy, execution adapter behavior, and simulation/live routing parity.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutExecutionLocalRejectRateHigh
+            expr: |
+              (
+                sum(
+                  increase(
+                    torghut_trading_execution_local_reject_total{
+                      job="torghut",
+                      namespace="torghut",
+                      service="torghut-scheduler"
+                    }[5m]
+                  )
+                )
+                /
+                clamp_min(
+                  sum(
+                    increase(
+                      torghut_trading_execution_submit_attempt_total{
+                        job="torghut",
+                        namespace="torghut",
+                        service="torghut-scheduler"
+                      }[5m]
+                    )
+                  ),
+                  1
+                )
+              ) > 0.1
+              and
+              sum(
+                increase(
+                  torghut_trading_execution_submit_attempt_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut-scheduler"
+                  }[5m]
+                )
+              ) >= 5
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut local execution reject rate elevated
+              description: |
+                More than 10% of submit attempts were rejected locally over the last 5 minutes.
+                Inspect quantity resolution metrics, sell inventory context, and pre-submit reject payloads.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutDecisionsWithoutExecutionAttempts
+            expr: |
+              increase(
+                torghut_trading_decisions_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-scheduler"
+                }[15m]
+              ) > 10
+              and
+              sum(
+                increase(
+                  torghut_trading_execution_submit_attempt_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut-scheduler"
+                  }[15m]
+                )
+              ) == 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut decisions are not reaching execution attempts
+              description: |
+                Decision traffic is active but no execution submit attempts were recorded in the last 15 minutes.
+                Check pipeline gating, order firewall, and execution request generation before market exposure increases.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutQuantQtyBelowMinRatioHigh
+            expr: |
+              (
+                increase(
+                  torghut_trading_decision_reject_reason_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut-scheduler",
+                    reason="qty_below_min"
+                  }[30m]
+                )
+                /
+                clamp_min(
+                  increase(
+                    torghut_trading_decisions_total{
+                      job="torghut",
+                      namespace="torghut",
+                      service="torghut-scheduler"
+                    }[30m]
+                  ),
+                  1
+                )
+              ) > 0.03
+              and
+              increase(
+                torghut_trading_decisions_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-scheduler"
+                }[30m]
+              ) > 25
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut qty_below_min ratio above recovery gate
+              description: |
+                qty_below_min exceeds 3% of recent decisions.
+                Check sizing diagnostics and limiting constraints before allowing canary progression.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutQuantLlmUnavailableRejectRatioHigh
+            expr: |
+              (
+                sum(
+                  increase(
+                    torghut_trading_decision_reject_reason_total{
+                      job="torghut",
+                      namespace="torghut",
+                      service="torghut-scheduler",
+                      reason=~"llm_unavailable_.*"
+                    }[30m]
+                  )
+                )
+                /
+                clamp_min(
+                  increase(
+                    torghut_trading_decisions_total{
+                      job="torghut",
+                      namespace="torghut",
+                      service="torghut-scheduler"
+                    }[30m]
+                  ),
+                  1
+                )
+              ) > 0.02
+              and
+              increase(
+                torghut_trading_decisions_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-scheduler"
+                }[30m]
+              ) > 25
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut LLM unavailable rejects above recovery gate
+              description: |
+                LLM-unavailable veto reasons exceed 2% of recent decisions.
+                Keep deterministic risk controls authoritative and rollback canary if this persists.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutQuantLLMErrorRateHigh
+            expr: |
+              (
+                rate(
+                  torghut_trading_llm_error_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut-scheduler"
+                  }[15m]
+                )
+                /
+                clamp_min(
+                  rate(
+                    torghut_trading_llm_requests_total{
+                      job="torghut",
+                      namespace="torghut",
+                      service="torghut-scheduler"
+                    }[15m]
+                  ),
+                  1
+                )
+              ) > 0.1
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut LLM error rate elevated (trading metrics)
+              description: |
+                LLM errors exceed 10% of trading review requests for 10 minutes. Consider forcing LLM shadow-only
+                to keep control-plane metrics stable while investigating.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+      - name: torghut-quant-jangar.rules
+        rules:
+          - alert: JangarQuantControlPlaneStreamErrors
+            expr: |
+              sum(rate(jangar_sse_errors_total{stream="torghut-quant"}[10m])) > 0.05
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Jangar control-plane SSE errors elevated
+              description: |
+                Control-plane SSE errors exceed 0.05/sec for 10 minutes. Quant dashboards may show stale data
+                or disconnects even if the pipeline is healthy.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: JangarTorghutQuantFramesMissingDuringMarketHours
+            expr: |
+              (
+                sum(increase(jangar_torghut_quant_frames_total{window="1d"}[2m])) == 0
+              )
+              and on()
+              (
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
+              )
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Jangar torghut quant control-plane frames missing (market hours)
+              description: |
+                No new quant metric frames were computed for 5 minutes during market hours (UTC schedule).
+                Dashboards will show stale data; investigate Jangar Torghut DB connectivity and runtime health.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: JangarTorghutQuantComputeErrors
+            expr: |
+              sum(increase(jangar_torghut_quant_compute_errors_total[10m])) > 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Jangar torghut quant compute errors detected
+              description: |
+                The quant control-plane compute loop is encountering errors. This may stall updates or drop windows.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: JangarTorghutQuantStaleFramesDuringMarketHours
+            expr: |
+              (
+                sum(increase(jangar_torghut_quant_stale_frames_total{window="1d"}[5m])) > 0
+              )
+              and on()
+              (
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
+              )
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Jangar torghut quant frames are stale (market hours)
+              description: |
+                Quant frames are being computed but are stale according to the configured max staleness threshold.
+                This typically indicates upstream Torghut decisions/executions are not updating.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+      - name: torghut-market-context.rules
+        rules:
+          - alert: JangarTorghutMarketContextIngestUnauthorized
+            expr: |
+              sum(increase(jangar_torghut_market_context_ingest_requests_total{outcome="unauthorized"}[10m])) > 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: Jangar market-context ingest is rejecting callbacks (401)
+              description: |
+                Market-context provider callbacks are failing authorization. This blocks fundamentals/news snapshots
+                and can force Torghut into low-quality market context mode.
+              runbook_url: docs/runbooks/torghut-market-context-ingest.md
+          - alert: JangarTorghutMarketContextIngestSuccessRateLow
+            expr: |
+              (
+                sum(rate(jangar_torghut_market_context_ingest_requests_total{outcome="accepted"}[15m]))
+                /
+                clamp_min(sum(rate(jangar_torghut_market_context_ingest_requests_total[15m])), 0.001)
+              ) < 0.6
+              and sum(rate(jangar_torghut_market_context_ingest_requests_total[15m])) > 0.01
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: Jangar market-context callback success rate is degraded
+              description: |
+                Accepted market-context ingest callbacks are below 60% of total callbacks over 15 minutes.
+                Provider snapshots may stop refreshing and Torghut market-context quality can drop below gate thresholds.
+              runbook_url: docs/runbooks/torghut-market-context-ingest.md
+          - alert: JangarTorghutMarketContextDispatchErrors
+            expr: |
+              sum(increase(jangar_torghut_market_context_dispatch_attempts_total{outcome="dispatch_error"}[15m])) > 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Jangar market-context dispatch errors detected
+              description: |
+                Jangar failed to submit one or more market-context AgentRuns in the last 15 minutes.
+                Fundamentals/news backfill can stall until dispatch recovers.
+              runbook_url: docs/runbooks/torghut-market-context-ingest.md
+          - alert: JangarTorghutMarketContextDispatchStuck
+            expr: |
+              sum(increase(jangar_torghut_market_context_dispatch_stuck_total[15m])) > 0
+            for: 10m
+            labels:
+              severity: critical
+            annotations:
+              summary: Jangar market-context dispatch is stuck in submitted state
+              description: |
+                Market-context dispatch state has remained submitted past configured stuck thresholds.
+                This indicates callback ingest and/or runner completion handoff is blocked.
+              runbook_url: docs/runbooks/torghut-market-context-ingest.md
+          - alert: JangarTorghutMarketContextBatchFailureRateHigh
+            expr: |
+              (
+                sum(rate(jangar_torghut_market_context_batch_runs_total{outcome=~"failed|partial"}[30m]))
+                /
+                clamp_min(sum(rate(jangar_torghut_market_context_batch_runs_total[30m])), 0.001)
+              ) > 0.4
+              and sum(rate(jangar_torghut_market_context_batch_runs_total[30m])) > 0.005
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: Jangar market-context batch outcomes are degraded
+              description: |
+                Failed/partial batch outcomes exceed 40% for 15 minutes.
+                Treat this as a canary blocker for Torghut live promotion until freshness recovers.
+              runbook_url: docs/runbooks/torghut-market-context-ingest.md
+          - alert: JangarTorghutMarketContextSkippedDuringMarketHours
+            expr: |
+              (
+                sum(increase(jangar_torghut_market_context_batch_runs_total{outcome="skipped_market_closed"}[30m])) > 0
+              )
+              and on()
+              (
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
+              )
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Jangar market-context batch unexpectedly skipped during market hours
+              description: |
+                Batch runs are reporting market-closed skips during expected market-open windows.
+                Validate Torghut trading status probe semantics and pre-open probe contracts.
+              runbook_url: docs/runbooks/torghut-market-context-ingest.md
+      - name: restate-control-plane.rules
+        rules:
+          - alert: RestateServerMetricsUnavailable
+            expr: |
+              absent(up{job="restate-server", namespace="restate", service="restate"})
+              or
+              sum(up{job="restate-server", namespace="restate", service="restate"}) < 3
+            for: 2m
+            labels:
+              severity: critical
+              service: restate
+              notify: email
+            annotations:
+              summary: Restate server metrics are unavailable
+              description: Fewer than three Restate NodeCtl metrics endpoints have been reachable for two minutes.
+              runbook_url: argocd/applications/restate/README.md
+          - alert: RestateNodeHealthDegraded
+            expr: |
+              max(restate_failure_detector_nodes_total{
+                job="restate-server",
+                state=~"dead|suspect|failing_over"
+              }) > 0
+            for: 2m
+            labels:
+              severity: critical
+              service: restate
+              notify: email
+            annotations:
+              summary: Restate failure detector reports an unhealthy node
+              description: At least one Restate node has remained dead, suspect, or failing over for two minutes.
+              runbook_url: argocd/applications/restate/README.md
+          - alert: RestateMetadataQuorumUnavailable
+            expr: |
+              absent(restate_metadata_server_replicated_committed_lsn{job="restate-server"})
+              or
+              count(restate_metadata_server_replicated_committed_lsn{job="restate-server"}) < 2
+            for: 2m
+            labels:
+              severity: critical
+              service: restate
+              notify: email
+            annotations:
+              summary: Restate metadata quorum telemetry is unavailable
+              description: Fewer than two metadata Raft members are exporting committed LSN state.
+              runbook_url: argocd/applications/restate/README.md
+          - alert: RestateMetadataApplyLag
+            expr: |
+              max(
+                restate_metadata_server_replicated_committed_lsn{job="restate-server"}
+                - restate_metadata_server_replicated_applied_lsn{job="restate-server"}
+              ) > 0
+            for: 5m
+            labels:
+              severity: warning
+              service: restate
+              notify: email
+            annotations:
+              summary: Restate metadata Raft apply state is lagging
+              description: At least one metadata member has not applied its committed Raft LSN for five minutes.
+              runbook_url: argocd/applications/restate/README.md
+          - alert: RestateSnapshotMissing
+            expr: absent(restate_partition_snapshot_age_seconds{job="restate-server"})
+            for: 15m
+            labels:
+              severity: critical
+              service: restate
+              notify: email
+            annotations:
+              summary: Restate partition snapshot telemetry is missing
+              description: No partition snapshot-age metric has been exported for fifteen minutes.
+              runbook_url: argocd/applications/restate/README.md
+          - alert: RestateSnapshotStale
+            expr: |
+              max by (namespace, service) (
+                min by (namespace, service, partition) (
+                  restate_partition_snapshot_age_seconds{
+                    job="restate-server",
+                    namespace="restate",
+                    service="restate"
+                  }
+                )
+              ) > 3600
+            for: 10m
+            labels:
+              severity: critical
+              service: restate
+              notify: email
+            annotations:
+              summary: Restate partition snapshot is stale
+              description: No Restate replica has completed a snapshot for at least one partition within one hour despite the 30-minute schedule.
+              runbook_url: argocd/applications/restate/README.md
+          - alert: RestateSnapshotUploadFailure
+            expr: |
+              sum by (namespace, service) (
+                increase(restate_partition_store_snapshots_upload_failed_total{
+                  job="restate-server",
+                  namespace="restate",
+                  service="restate"
+                }[15m])
+              ) > 0
+            labels:
+              severity: critical
+              service: restate
+              notify: email
+            annotations:
+              summary: Restate partition snapshot upload failed
+              description: The Restate cluster reported at least one snapshot-upload failure in the last fifteen minutes.
+              runbook_url: argocd/applications/restate/README.md
+          - alert: RestateSnapshotRestoreDrillStale
+            expr: |
+              time() - kube_cronjob_status_last_successful_time{
+                namespace="restate",
+                cronjob="restate-snapshot-restore-drill"
+              } > 108000
+            for: 1h
+            labels:
+              severity: critical
+              service: restate
+              notify: email
+            annotations:
+              summary: Restate isolated snapshot restore drill is stale
+              description: The daily offline snapshot-open drill has not succeeded for more than thirty hours.
+              runbook_url: argocd/applications/restate/README.md
+          - alert: RestateSnapshotRestoreDrillNeverSucceeded
+            expr: |
+              absent(kube_cronjob_created{
+                namespace="restate",
+                cronjob="restate-snapshot-restore-drill"
+              })
+              or
+              (
+                kube_cronjob_created{
+                  namespace="restate",
+                  cronjob="restate-snapshot-restore-drill"
+                } < time() - 93600
+                unless on(namespace, cronjob)
+                kube_cronjob_status_last_successful_time{
+                  namespace="restate",
+                  cronjob="restate-snapshot-restore-drill"
+                }
+              )
+            for: 1h
+            labels:
+              severity: critical
+              service: restate
+              notify: email
+            annotations:
+              summary: Restate isolated snapshot restore drill has never succeeded
+              description: The restore drill has existed for more than twenty-six hours without a successful run.
+              runbook_url: argocd/applications/restate/README.md
+          - alert: RestateOperatorMetricsUnavailable
+            expr: |
+              absent(up{job="restate-operator", namespace="restate-operator", service="restate-operator"})
+              or
+              up{job="restate-operator", namespace="restate-operator", service="restate-operator"} != 1
+            for: 2m
+            labels:
+              severity: critical
+              service: restate-operator
+              notify: email
+            annotations:
+              summary: Restate Operator metrics are unavailable
+              description: The pinned Restate Operator metrics endpoint has not been reachable for two minutes.
+          - alert: RestateOperatorCRDMissing
+            expr: restate_operator_crd_missing > 0
+            for: 5m
+            labels:
+              severity: critical
+              service: restate-operator
+              notify: email
+            annotations:
+              summary: Restate Operator is waiting for a required CRD
+              description: At least one operator controller has been unable to discover its required CRD for five minutes.
+      - name: bayn-cycle-operations.rules
+        rules:
+          - alert: BaynMetricsUnavailable
+            expr: |
+              (
+                up{
+                  job="bayn",
+                  namespace="bayn",
+                  service="bayn"
+                } != 1
+              )
+              or
+              absent(
+                up{
+                  job="bayn",
+                  namespace="bayn",
+                  service="bayn"
+                }
+              )
+            for: 2m
+            labels:
+              severity: critical
+              team: trading
+              service: bayn
+              notify: email
+            annotations:
+              summary: Bayn metrics are unavailable
+              description: The existing Bayn service cannot be scraped for two minutes.
+              runbook_url: docs/runbooks/bayn-cycle-operations.md
+          - alert: BaynStatusReplicaTargetMissed
+            expr: |
+              (
+                kube_deployment_status_replicas_available{
+                  namespace="bayn",
+                  deployment="bayn"
+                }
+                <
+                kube_deployment_spec_replicas{
+                  namespace="bayn",
+                  deployment="bayn"
+                }
+              )
+              and on(namespace, deployment)
+              (
+                kube_deployment_spec_replicas{
+                  namespace="bayn",
+                  deployment="bayn"
+                } > 1
+              )
+            for: 2m
+            labels:
+              severity: warning
+              team: trading
+              service: bayn
+              notify: email
+            annotations:
+              summary: Bayn status plane is below its replica target
+              description: Bayn has lost status/read-plane redundancy for two minutes even though at least one replica may still report READY.
+              runbook_url: docs/runbooks/bayn-cycle-operations.md
+          - alert: BaynEgressProxyReplicaTargetMissed
+            expr: |
+              (
+                kube_deployment_status_replicas_available{
+                  namespace="bayn",
+                  deployment="bayn-egress-proxy"
+                }
+                <
+                kube_deployment_spec_replicas{
+                  namespace="bayn",
+                  deployment="bayn-egress-proxy"
+                }
+              )
+              and on(namespace, deployment)
+              (
+                kube_deployment_spec_replicas{
+                  namespace="bayn",
+                  deployment="bayn-egress-proxy"
+                } > 1
+              )
+            for: 2m
+            labels:
+              severity: warning
+              team: trading
+              service: bayn-egress-proxy
+              notify: email
+            annotations:
+              summary: Bayn broker egress proxy is below its replica target
+              description: Bayn has lost broker-proxy redundancy for two minutes while the Deployment still expects multiple replicas.
+              runbook_url: docs/runbooks/bayn-cycle-operations.md
+          - alert: BaynExecutionWorkerUnavailable
+            expr: |
+              (
+                (
+                  sum(
+                    kube_replicaset_status_ready_replicas{
+                      namespace="bayn",
+                      replicaset=~"bayn-execution-controller-.*"
+                    }
+                  ) or vector(0)
+                ) < 1
+              )
+              and on()
+              (
+                max(
+                  kube_restate_deployment_spec_replicas{
+                    namespace="bayn",
+                    restate_deployment="bayn-execution-controller"
+                  }
+                ) > 0
+              )
+            for: 1m
+            labels:
+              severity: critical
+              team: trading
+              service: bayn-execution-controller
+              notify: email
+            annotations:
+              summary: Bayn has no ready execution worker
+              description: The Restate-managed Bayn execution ReplicaSets expect a worker, but none has been Ready for one minute.
+              runbook_url: docs/runbooks/bayn-cycle-operations.md
+          - alert: BaynExecutionWorkerReplicaTargetMissed
+            expr: |
+              (
+                (
+                  sum(
+                    kube_replicaset_status_ready_replicas{
+                      namespace="bayn",
+                      replicaset=~"bayn-execution-controller-.*"
+                    }
+                  ) or vector(0)
+                )
+                <
+                max(
+                  kube_restate_deployment_spec_replicas{
+                    namespace="bayn",
+                    restate_deployment="bayn-execution-controller"
+                  }
+                )
+              )
+              and on()
+              (
+                max(
+                  kube_restate_deployment_spec_replicas{
+                    namespace="bayn",
+                    restate_deployment="bayn-execution-controller"
+                  }
+                ) > 1
+              )
+            for: 2m
+            labels:
+              severity: warning
+              team: trading
+              service: bayn-execution-controller
+              notify: email
+            annotations:
+              summary: Bayn execution worker pool is below its replica target
+              description: Bayn has lost execution-worker failover capacity for two minutes while the Restate-managed ReplicaSets expect multiple workers.
+              runbook_url: docs/runbooks/bayn-cycle-operations.md
+          - alert: BaynExecutionControllerOverdue
+            expr: |
+              (
+                max by (job, namespace, service) (
+                  bayn_execution_controller_active{
+                    job="bayn",
+                    namespace="bayn",
+                    service="bayn"
+                  }
+                ) == 1
+              )
+              and on(job, namespace, service)
+              (
+                (
+                  time()
+                  -
+                  max by (job, namespace, service) (
+                    bayn_execution_controller_next_due_timestamp_seconds{
+                      job="bayn",
+                      namespace="bayn",
+                      service="bayn"
+                    }
+                  )
+                )
+                >
+                max by (job, namespace, service) (
+                  bayn_cycle_stall_threshold_seconds{
+                    job="bayn",
+                    namespace="bayn",
+                    service="bayn"
+                  }
+                )
+              )
+            for: 1m
+            labels:
+              severity: critical
+              team: trading
+              service: bayn-execution-controller
+              notify: email
+            annotations:
+              summary: Bayn durable execution controller is overdue
+              description: The active Restate execution controller has remained past its durable next-due time longer than Bayn's configured stall threshold for one minute.
+              runbook_url: docs/runbooks/bayn-cycle-operations.md
+          - alert: BaynExecutionWindowUnready
+            expr: |
+              (
+                max by (job, namespace, service) (
+                  bayn_cycle_phase{job="bayn",namespace="bayn",service="bayn",phase="active"}
+                ) == 1
+              )
+              and on(job, namespace, service)
+              (
+                max by (job, namespace, service) (
+                  bayn_cycle_decision_bound{job="bayn",namespace="bayn",service="bayn"}
+                ) == 0
+              )
+              and on(job, namespace, service)
+              (
+                max by (job, namespace, service) (
+                  bayn_capital_activation_state{job="bayn",namespace="bayn",service="bayn",state="realized"}
+                ) == 1
+              )
+              and on(job, namespace, service)
+              (
+                time() >=
+                max by (job, namespace, service) (
+                  bayn_cycle_submission_open_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}
+                ) - 600
+              )
+              and on(job, namespace, service)
+              (
+                time() <
+                max by (job, namespace, service) (
+                  bayn_cycle_submission_cutoff_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}
+                )
+              )
+              and on(job, namespace, service)
+              (
+                max by (job, namespace, service) (
+                  bayn_execution_session_preflight_ready{job="bayn",namespace="bayn",service="bayn"}
+                ) == 0
+              )
+            for: 1m
+            labels:
+              severity: warning
+              team: trading
+              service: bayn
+              notify: email
+            annotations:
+              summary: Bayn execution session is not ready before submission opens
+              description: A realized unbound execution session is within ten minutes of submission open or already inside its submission window, but durable authority, reconciliation, broker binding, controller, or runtime preflight is not ready.
+              runbook_url: docs/runbooks/bayn-cycle-operations.md
+          - alert: BaynExecutionDecisionLagging
+            expr: |
+              (
+                max by (job, namespace, service) (
+                  bayn_cycle_phase{job="bayn",namespace="bayn",service="bayn",phase="active"}
+                ) == 1
+              )
+              and on(job, namespace, service)
+              (
+                max by (job, namespace, service) (
+                  bayn_cycle_decision_bound{job="bayn",namespace="bayn",service="bayn"}
+                ) == 0
+              )
+              and on(job, namespace, service)
+              (
+                max by (job, namespace, service) (
+                  bayn_capital_activation_state{job="bayn",namespace="bayn",service="bayn",state="realized"}
+                ) == 1
+              )
+              and on(job, namespace, service)
+              (
+                max by (job, namespace, service) (
+                  bayn_execution_session_preflight_ready{job="bayn",namespace="bayn",service="bayn"}
+                ) == 1
+              )
+              and on(job, namespace, service)
+              (
+                time() >=
+                max by (job, namespace, service) (
+                  bayn_cycle_submission_open_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}
+                ) + 120
+              )
+              and on(job, namespace, service)
+              (
+                time() <
+                max by (job, namespace, service) (
+                  bayn_cycle_submission_cutoff_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}
+                )
+              )
+            for: 1m
+            labels:
+              severity: warning
+              team: trading
+              service: bayn
+              notify: email
+            annotations:
+              summary: Bayn execution decision is lagging after submission open
+              description: Bayn's durable execution preflight is healthy, but the current session is still missing an immutable decision binding more than two minutes after submission opened.
+              runbook_url: docs/runbooks/bayn-cycle-operations.md
+          - alert: BaynCycleObservationUnavailable
+            expr: |
+              bayn_cycle_observation_available{
+                job="bayn",
+                namespace="bayn",
+                service="bayn"
+              } == 0
+            for: 2m
+            labels:
+              severity: critical
+              team: trading
+              service: bayn
+              notify: email
+            annotations:
+              summary: Bayn cycle projection is unavailable
+              description: The bounded autonomous-cycle PostgreSQL projection has failed for two minutes.
+              runbook_url: docs/runbooks/bayn-cycle-operations.md
+          - alert: BaynRuntimeDegraded
+            expr: |
+              (
+                bayn_runtime_ready{
+                  job="bayn",
+                  namespace="bayn",
+                  service="bayn"
+                } == 0
+              )
+              and on(job, namespace, service, instance)
+              (
+                bayn_cycle_observation_available{
+                  job="bayn",
+                  namespace="bayn",
+                  service="bayn"
+                } == 1
+              )
+              and on(job, namespace, service, instance)
+              (
+                bayn_cycle_condition{
+                  job="bayn",
+                  namespace="bayn",
+                  service="bayn",
+                  condition="stalled"
+                } == 0
+              )
+              and on(job, namespace, service, instance)
+              (
+                bayn_cycle_condition{
+                  job="bayn",
+                  namespace="bayn",
+                  service="bayn",
+                  condition="failed"
+                } == 0
+              )
+            for: 1m
+            labels:
+              severity: critical
+              team: trading
+              service: bayn
+              notify: email
+            annotations:
+              summary: Bayn runtime is degraded
+              description: |
+                Bayn readiness is blocked by a required dependency, autonomous-loop,
+                or broker-read/account-binding failure.
+              runbook_url: docs/runbooks/bayn-cycle-operations.md
+          - alert: BaynCycleStalled
+            expr: |
+              bayn_cycle_condition{
+                job="bayn",
+                namespace="bayn",
+                service="bayn",
+                condition="stalled"
+              } == 1
+            for: 1m
+            labels:
+              severity: critical
+              team: trading
+              service: bayn
+              notify: email
+            annotations:
+              summary: Bayn autonomous cycle is stalled
+              description: A persisted cycle missed a pending publication/submission deadline, exceeded the pending attempt age, or remained ACTIVE through execution close.
+              runbook_url: docs/runbooks/bayn-cycle-operations.md
+          - alert: BaynCycleFailed
+            expr: |
+              bayn_cycle_condition{
+                job="bayn",
+                namespace="bayn",
+                service="bayn",
+                condition="failed"
+              } == 1
+            for: 1m
+            labels:
+              severity: critical
+              team: trading
+              service: bayn
+              notify: email
+            annotations:
+              summary: Bayn autonomous cycle is failed
+              description: A durable blocked cycle or fail-closed authority, reconciliation, or mutation condition remains current.
+              runbook_url: docs/runbooks/bayn-cycle-operations.md
+      - name: kafka-critical-service.rules
+        rules:
+          - alert: KafkaBrokerUnavailable
+            expr: |
+              sum(
+                kube_pod_status_ready{
+                  namespace="kafka",
+                  condition="true",
+                  pod=~"kafka-pool-b-[0-9]+"
+                }
+              ) < 3
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: kafka
+              notify: email
+            annotations:
+              summary: Kafka broker pool has unavailable brokers
+              description: |
+                Fewer than three broker-only pool-b Kafka pods are ready for 5 minutes.
+                Producers with min.insync.replicas=2 can fail when more than one broker is unavailable.
+              runbook_url: docs/incidents/2026-06-20-kafka-broker-disk-full-and-service-recovery.md
+          - alert: KafkaBrokerPVCFreeLowCritical
+            expr: |
+              (
+                kubelet_volume_stats_available_bytes{
+                  namespace="kafka",
+                  persistentvolumeclaim=~"data-kafka-pool-b-.*"
+                }
+                /
+                kubelet_volume_stats_capacity_bytes{
+                  namespace="kafka",
+                  persistentvolumeclaim=~"data-kafka-pool-b-.*"
+                }
+              ) < 0.10
+            for: 10m
+            labels:
+              severity: critical
+              team: platform
+              service: kafka
+              notify: email
+            annotations:
+              summary: Kafka broker PVC free space is critically low
+              description: A broker-only pool-b Kafka PVC has less than 10% free capacity for 10 minutes.
+              runbook_url: docs/incidents/2026-06-20-kafka-broker-disk-full-and-service-recovery.md
+          - alert: KafkaBrokerPVCFreeLowWarning
+            expr: |
+              (
+                kubelet_volume_stats_available_bytes{
+                  namespace="kafka",
+                  persistentvolumeclaim=~"data-kafka-pool-b-.*"
+                }
+                /
+                kubelet_volume_stats_capacity_bytes{
+                  namespace="kafka",
+                  persistentvolumeclaim=~"data-kafka-pool-b-.*"
+                }
+              ) < 0.25
+            for: 30m
+            labels:
+              severity: warning
+              team: platform
+              service: kafka
+            annotations:
+              summary: Kafka broker PVC free space is low
+              description: A broker-only pool-b Kafka PVC has less than 25% free capacity for 30 minutes.
+              runbook_url: docs/incidents/2026-06-20-kafka-broker-disk-full-and-service-recovery.md
+          - alert: KafkaUnderReplicatedPartitions
+            expr: |
+              (
+                sum(kafka_server_replicamanager_underreplicatedpartitions) or vector(0)
+              ) > 0
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: kafka
+              notify: email
+            annotations:
+              summary: Kafka has under-replicated partitions
+              description: Kafka reports under-replicated partitions for 5 minutes.
+              runbook_url: docs/incidents/2026-06-20-kafka-broker-disk-full-and-service-recovery.md
+          - alert: KafkaUnderMinIsrPartitions
+            expr: |
+              (
+                sum(kafka_server_replicamanager_underminisrpartitioncount) or vector(0)
+              ) > 0
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: kafka
+              notify: email
+            annotations:
+              summary: Kafka has partitions below minimum ISR
+              description: Kafka reports partitions below min.insync.replicas for 5 minutes.
+              runbook_url: docs/incidents/2026-06-20-kafka-broker-disk-full-and-service-recovery.md
+          - alert: KafkaBrokerRestarts
+            expr: |
+              sum(
+                increase(
+                  kube_pod_container_status_restarts_total{
+                    namespace="kafka",
+                    pod=~"kafka-pool-b-[0-9]+"
+                  }[15m]
+                )
+              ) > 0
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: kafka
+            annotations:
+              summary: Kafka broker container restarted
+              description: One or more pool-b broker containers restarted in the last 15 minutes.
+              runbook_url: docs/incidents/2026-06-20-kafka-broker-disk-full-and-service-recovery.md
+          - alert: TorghutHyperliquidFeedUnavailable
+            expr: |
+              sum(
+                kube_deployment_status_replicas_available{
+                  namespace="torghut",
+                  deployment="torghut-hyperliquid-feed"
+                }
+              ) < 1
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: torghut-hyperliquid-feed
+              notify: email
+            annotations:
+              summary: Torghut Hyperliquid feed is unavailable
+              description: The torghut-hyperliquid-feed deployment has no available replicas for 5 minutes.
+              runbook_url: docs/incidents/2026-06-20-kafka-broker-disk-full-and-service-recovery.md
+          - alert: KafkaDependentDeploymentUnavailable
+            expr: |
+              kube_deployment_status_replicas_available{
+                namespace="torghut",
+                deployment=~"torghut-ws|torghut-ws-options|torghut-ta|torghut-options-ta|torghut-options-catalog|torghut-options-enricher"
+              } < 1
+            for: 10m
+            labels:
+              severity: critical
+              team: platform
+              service: kafka-dependent
+              notify: email
+            annotations:
+              summary: Kafka-dependent deployment is unavailable
+              description: A Torghut Kafka producer or consumer deployment has no available replicas for 10 minutes.
+              runbook_url: docs/incidents/2026-06-20-kafka-broker-disk-full-and-service-recovery.md
+          - alert: CriticalArgoApplicationDegraded
+            expr: |
+              argocd_app_info{
+                name=~"kafka|torghut|torghut-hyperliquid-feed|torghut-options|froussard|observability",
+                health_status!="Healthy"
+              } == 1
+            for: 10m
+            labels:
+              severity: critical
+              team: platform
+              service: argocd
+              notify: email
+            annotations:
+              summary: Critical Argo CD application is degraded
+              description: A critical Kafka, dependent-service, or observability Argo CD application is not Healthy for 10 minutes.
+              runbook_url: docs/incidents/2026-06-20-kafka-broker-disk-full-and-service-recovery.md
+      - name: tengri-production.rules
+        rules:
+          - record: tengri_rollout_enabled
+            expr: |
+              max(
+                kube_argocd_application_deployment_history_info{
+                  namespace="argocd",
+                  application="tengri"
+                }
+              )
+          - alert: TengriArgoApplicationDegraded
+            expr: |
+              argocd_app_info{
+                name="tengri",
+                health_status!="Healthy"
+              } == 1
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: tengri
+              notify: email
+            annotations:
+              summary: The Tengri Argo CD application is degraded
+              description: Argo CD has reported the Tengri application unhealthy for five minutes.
+              runbook_url: docs/tengri/operations.md
+          - alert: TengriMetricsUnavailable
+            expr: |
+              (
+                (
+                  sum(up{job="tengri",namespace="tengri"}) < 1
+                )
+                or
+                absent(up{job="tengri",namespace="tengri"})
+              )
+              and on()
+              (tengri_rollout_enabled == 1)
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: tengri
+              notify: email
+            annotations:
+              summary: Tengri control-plane metrics are unavailable
+              description: The Tengri control plane has not produced a healthy metrics scrape for five minutes.
+              runbook_url: docs/tengri/operations.md
+          - alert: TengriAgentFailed
+            expr: |
+              max(
+                tengri_agents{
+                  job="tengri",
+                  namespace="tengri",
+                  state="failed"
+                }
+              ) > 0
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: tengri
+              notify: email
+            annotations:
+              summary: Tengri has a failed microVM agent
+              description: At least one Tengri microVM has remained in the failed state for five minutes.
+              runbook_url: docs/tengri/operations.md
+          - alert: TengriGuestFailureBurst
+            expr: |
+              sum(
+                increase(
+                  tengri_guest_failures_total{
+                    job="tengri",
+                    namespace="tengri"
+                  }[15m]
+                )
+              ) > 2
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: tengri
+            annotations:
+              summary: Tengri guest operations are repeatedly failing
+              description: Tengri recorded more than two guest API or readiness failures during the last 15 minutes.
+              runbook_url: docs/tengri/operations.md
+          - alert: TengriBootLatencyHigh
+            expr: |
+              (
+                sum(rate(tengri_agent_boot_latency_seconds_sum{job="tengri",namespace="tengri"}[15m]))
+                /
+                clamp_min(
+                  sum(rate(tengri_agent_boot_latency_seconds_count{job="tengri",namespace="tengri"}[15m])),
+                  0.001
+                )
+              ) > 120
+              and
+              sum(increase(tengri_agent_boot_latency_seconds_count{job="tengri",namespace="tengri"}[15m])) >= 2
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: tengri
+            annotations:
+              summary: Tengri agent boot latency is high
+              description: Average guest boot latency has exceeded two minutes across at least two boots in 15 minutes.
+              runbook_url: docs/tengri/operations.md
+          - alert: TengriResumeLatencyHigh
+            expr: |
+              (
+                sum(rate(tengri_agent_resume_latency_seconds_sum{job="tengri",namespace="tengri"}[15m]))
+                /
+                clamp_min(
+                  sum(rate(tengri_agent_resume_latency_seconds_count{job="tengri",namespace="tengri"}[15m])),
+                  0.001
+                )
+              ) > 60
+              and
+              sum(increase(tengri_agent_resume_latency_seconds_count{job="tengri",namespace="tengri"}[15m])) >= 2
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: tengri
+            annotations:
+              summary: Tengri agent resume latency is high
+              description: Average guest resume latency has exceeded one minute across at least two resumes in 15 minutes.
+              runbook_url: docs/tengri/operations.md
+          - alert: TengriQuotaRejections
+            expr: |
+              sum(
+                increase(
+                  tengri_quota_rejections_total{
+                    job="tengri",
+                    namespace="tengri"
+                  }[15m]
+                )
+              ) > 0
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: tengri
+            annotations:
+              summary: Tengri is rejecting agent creation at the global quota
+              description: At least one agent creation request was rejected because the six-agent quota was exhausted.
+              runbook_url: docs/tengri/operations.md

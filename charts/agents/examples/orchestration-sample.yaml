@@ -1,0 +1,26 @@
+apiVersion: orchestration.proompteng.ai/v1alpha1
+kind: Orchestration
+metadata:
+  name: sample-orchestration
+spec:
+  entrypoint: main
+  steps:
+    - name: implement
+      kind: AgentRun
+      timeoutSeconds: 1800
+      agentRef:
+        name: codex-agent
+      implementationSpecRef:
+        name: codex-impl-sample
+      with:
+        repository: proompteng/lab
+        issueNumber: '1234'
+    - name: notify
+      kind: ToolRun
+      dependsOn:
+        - implement
+      timeoutSeconds: 300
+      toolRef:
+        name: echo-tool
+      with:
+        message: 'orchestration complete'

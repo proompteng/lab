@@ -1,0 +1,16 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: feature-flags-private
+  namespace: feature-flags
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`feature-flags.k8s.proompteng.ai`)
+      services:
+        - name: feature-flags
+          port: 8013
+  tls:
+    secretName: wildcard-k8s-proompteng-ai-tls
