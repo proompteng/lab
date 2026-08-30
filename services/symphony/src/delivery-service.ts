@@ -473,10 +473,18 @@ export const makeDeliveryServiceLayer = (logger: Logger) =>
 
       const listKargoBranchCommits = (repo: string, branch: string) => {
         const parsedRepo = parseRepo(repo)
-        return githubRequest<GitHubCommit[]>(
-          repo,
-          `/repos/${parsedRepo.owner}/${parsedRepo.name}/commits?sha=${encodeURIComponent(branch)}&per_page=100`,
-        ).pipe(
+        const listPage = (page: number, commits: GitHubCommit[]): Effect.Effect<GitHubCommit[], OrchestratorError> =>
+          githubRequest<GitHubCommit[]>(
+            repo,
+            `/repos/${parsedRepo.owner}/${parsedRepo.name}/commits?sha=${encodeURIComponent(branch)}&per_page=100&page=${page}`,
+          ).pipe(
+            Effect.flatMap((pageCommits) => {
+              const allCommits = [...commits, ...pageCommits]
+              return pageCommits.length < 100 ? Effect.succeed(allCommits) : listPage(page + 1, allCommits)
+            }),
+          )
+
+        return listPage(1, []).pipe(
           Effect.catchAll((error) =>
             error.message.endsWith(': 404') ? Effect.succeed<GitHubCommit[]>([]) : Effect.fail(error),
           ),

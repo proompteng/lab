@@ -268,7 +268,23 @@ describe('delivery transaction stages', () => {
           { status: 200, headers: { 'content-type': 'application/json' } },
         )
       }
-      if (url.includes('/commits?sha=kargo%2Fsymphony&per_page=100')) {
+      if (url.includes('/commits?sha=kargo%2Fsymphony&per_page=100&page=1')) {
+        return new Response(
+          JSON.stringify(
+            Array.from({ length: 100 }, (_, index) => ({
+              sha: index.toString(16).padStart(40, '0'),
+              html_url: `https://github.com/proompteng/lab/commit/${index.toString(16).padStart(40, '0')}`,
+              commit: {
+                message: `kargo(symphony): promote older-freight-${index}`,
+                author: { date: '2026-08-29T22:00:00.000Z' },
+                committer: { date: '2026-08-29T22:00:00.000Z' },
+              },
+            })),
+          ),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        )
+      }
+      if (url.includes('/commits?sha=kargo%2Fsymphony&per_page=100&page=2')) {
         return new Response(
           JSON.stringify([
             {
@@ -373,6 +389,8 @@ describe('delivery transaction stages', () => {
         lastError: null,
       })
       expect(requestedUrls.filter((url) => url.includes('/pulls?'))).toHaveLength(1)
+      expect(requestedUrls.some((url) => url.includes('/commits?sha=kargo%2Fsymphony&per_page=100&page=1'))).toBe(true)
+      expect(requestedUrls.some((url) => url.includes('/commits?sha=kargo%2Fsymphony&per_page=100&page=2'))).toBe(true)
     } finally {
       globalThis.fetch = originalFetch
       if (originalGhToken === undefined) {

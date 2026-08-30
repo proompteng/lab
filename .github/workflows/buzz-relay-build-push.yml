@@ -155,6 +155,7 @@ jobs:
         env:
           SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
           SOURCE_TIMESTAMP: ${{ steps.source.outputs.source_timestamp }}
+          SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
         run: |
           set -euo pipefail
           [[ "${SOURCE_SHA}" == "${GITHUB_SHA}" ]]
@@ -172,11 +173,17 @@ jobs:
           done
           tag="${IMAGE_REPOSITORY}:sha-${SOURCE_SHA}"
           docker buildx imagetools create \
+            --annotation "index:org.opencontainers.image.source=${SOURCE_URL}" \
+            --annotation "index:org.opencontainers.image.revision=${SOURCE_SHA}" \
             --tag "$tag" \
             "${IMAGE_REPOSITORY}:sha-${SOURCE_SHA}-amd64" \
             "${IMAGE_REPOSITORY}:sha-${SOURCE_SHA}-arm64"
           docker buildx imagetools inspect --raw "$tag" > index.json
-          jq -e '
+          jq -e \
+            --arg source_url "${SOURCE_URL}" \
+            --arg source_sha "${SOURCE_SHA}" '
+            .annotations["org.opencontainers.image.source"] == $source_url and
+            .annotations["org.opencontainers.image.revision"] == $source_sha and
             any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "amd64") and
             any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "arm64")
           ' index.json

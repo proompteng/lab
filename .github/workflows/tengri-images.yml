@@ -190,6 +190,7 @@ jobs:
           SIGNING_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/tengri-images.yml@refs/heads/main
           SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
           SOURCE_TIMESTAMP: ${{ steps.source.outputs.source_timestamp }}
+          SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
         run: |
           set -euo pipefail
           mkdir -p .artifacts/tengri
@@ -215,11 +216,17 @@ jobs:
             done
 
             docker buildx imagetools create \
+              --annotation "index:org.opencontainers.image.source=${SOURCE_URL}" \
+              --annotation "index:org.opencontainers.image.revision=${SOURCE_SHA}" \
               --tag "${image}:${tag}" \
               "${image}:${tag}-amd64" \
               "${image}:${tag}-arm64" >&2
             docker buildx imagetools inspect --raw "${image}:${tag}" > "${index_path}"
-            jq -e '
+            jq -e \
+              --arg source_url "${SOURCE_URL}" \
+              --arg source_sha "${SOURCE_SHA}" '
+              .annotations["org.opencontainers.image.source"] == $source_url and
+              .annotations["org.opencontainers.image.revision"] == $source_sha and
               any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "amd64") and
               any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "arm64")
             ' "${index_path}" >&2
