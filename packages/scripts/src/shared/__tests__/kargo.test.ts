@@ -51,13 +51,17 @@ const helmApplicationSet = YAML.parse(readRepoFile('argocd/applicationsets/helm-
 const helmApplicationElements = helmApplicationSet.spec.generators[0].matrix.generators[1].list.elements as Array<
   Record<string, any>
 >
-const kargoHelmValues = helmApplicationElements.find((element) => element.name === 'kargo')?.valuesObject as Record<
-  string,
-  any
->
+const kargoHelmElement = helmApplicationElements.find((element) => element.name === 'kargo')
+const kargoHelmValues = kargoHelmElement?.valuesObject as Record<string, any>
 const argoCDConfigMap = YAML.parse(readRepoFile('argocd/applications/argocd/overlays/argocd-cm.yaml')) as Manifest & {
   data?: Record<string, string>
 }
+const argoCDCommandParameters = YAML.parse(
+  readRepoFile('argocd/applications/argocd/overlays/argocd-cmd-params-cm.yaml'),
+) as Manifest & { data?: Record<string, string> }
+const argoCDControllerStatefulSetPatch = YAML.parse(
+  readRepoFile('argocd/applications/argocd/overlays/argocd-application-controller-statefulset.yaml'),
+) as Manifest
 const dexConfig = YAML.parse(argoCDConfigMap.data?.['dex.config'] ?? '') as Record<string, any>
 const argoCDIngressRoute = YAML.parse(readRepoFile('argocd/applications/argocd/base/ingressroute.yaml')) as Manifest
 const kargoDexCORSMiddleware = YAML.parse(
@@ -472,6 +476,18 @@ const byName = (manifests: Manifest[]): Map<string, Manifest> =>
   new Map(manifests.map((manifest) => [manifest.metadata?.name ?? '', manifest]))
 
 describe('Kargo direct-push GitOps contract', () => {
+  it('uses the current Kargo patch and persists Argo resource health for Stage checks', () => {
+    expect(kargoHelmElement?.version).toBe('1.11.2')
+    expect(argoCDCommandParameters.data?.['controller.resource.health.persist']).toBe('true')
+    expect(argoCDControllerStatefulSetPatch.spec?.template).toMatchObject({
+      metadata: {
+        annotations: {
+          'gitops.proompteng.ai/config-revision': 'controller-resource-health-persist-v1',
+        },
+      },
+    })
+  })
+
   it('exposes the Kargo UI over Tailscale with Dex SSO and no built-in admin', () => {
     expect(kargoHelmValues.api).toMatchObject({
       enabled: true,
@@ -534,7 +550,7 @@ describe('Kargo direct-push GitOps contract', () => {
         },
       },
     })
-    const dexRoute = (argoCDIngressRoute.spec?.routes as Array<Record<string, any>>).find((route) =>
+    const dexRoute = ((argoCDIngressRoute.spec?.routes ?? []) as Array<Record<string, any>>).find((route) =>
       route.match?.includes('PathPrefix(`/api/dex`)'),
     )
     expect(dexRoute?.middlewares).toEqual([{ name: 'kargo-dex-cors' }])
