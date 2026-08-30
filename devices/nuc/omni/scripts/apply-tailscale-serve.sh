@@ -18,28 +18,37 @@ require_env_value OMNI_HOST
 current=$(mktemp)
 normalized_current=$(mktemp)
 normalized_expected=$(mktemp)
+normalized_legacy=$(mktemp)
 cleanup() {
-  rm -f -- "${current}" "${normalized_current}" "${normalized_expected}"
+  rm -f -- "${current}" "${normalized_current}" "${normalized_expected}" "${normalized_legacy}"
 }
 trap cleanup EXIT
 
 sudo tailscale serve status --json | jq . >"${current}"
 jq --sort-keys . "${current}" >"${normalized_current}"
 jq 'del(.version)' "${OMNI_DIR}/tailscale-serve.json" | jq --sort-keys . >"${normalized_expected}"
+jq --arg host "${OMNI_HOST}" '
+  del(.version)
+  | .TCP["8090"] = {"HTTPS": true}
+  | .Web[$host + ":8090"] = {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8090"}}}
+' "${OMNI_DIR}/tailscale-serve.json" | jq --sort-keys . >"${normalized_legacy}"
 
 if cmp --silent "${normalized_current}" "${normalized_expected}"; then
   printf 'Tailscale Serve configuration is already current\n'
   exit 0
 fi
 
-if ! jq --exit-status '(. == null) or (type == "object" and length == 0)' "${current}" >/dev/null; then
+legacy_configuration=0
+if cmp --silent "${normalized_current}" "${normalized_legacy}"; then
+  legacy_configuration=1
+elif ! jq --exit-status '(. == null) or (type == "object" and length == 0)' "${current}" >/dev/null; then
   [[ "${OMNI_SERVE_REPLACE:-}" == '1' ]] ||
     die 'Tailscale Serve has unmanaged configuration; review it and rerun with OMNI_SERVE_REPLACE=1'
 fi
 
 timestamp=$(date -u +%Y%m%dT%H%M%SZ)
 install -m 0600 "${current}" "${OMNI_DATA_ROOT}/backups/tailscale-serve-before-${timestamp}.json"
-if [[ "${OMNI_SERVE_REPLACE:-}" == '1' ]]; then
+if ((legacy_configuration == 1)) || [[ "${OMNI_SERVE_REPLACE:-}" == '1' ]]; then
   sudo tailscale serve reset
 fi
 
