@@ -1,0 +1,284 @@
+"""Runtime feature data-quality gates for fail-closed strategy evaluation."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field as dataclass_field
+from datetime import datetime
+from statistics import quantiles
+
+from .features import (
+    FEATURE_SCHEMA_VERSION_V3,
+    FEATURE_VECTOR_V3_REQUIRED_FIELDS,
+    map_feature_values_v3,
+    signal_declares_compatible_schema,
+)
+from .models import SignalEnvelope
+
+QUALITY_GATED_REQUIRED_FIELDS = tuple(
+    [field for field in FEATURE_VECTOR_V3_REQUIRED_FIELDS if field != "price"]
+)
+REASON_NON_MONOTONIC = "non_monotonic_progression"
+REASON_SCHEMA_MISMATCH = "schema_mismatch"
+REASON_REQUIRED_NULL_RATE = "required_feature_null_rate_exceeds_threshold"
+REASON_STALENESS = "feature_staleness_exceeds_budget"
+REASON_DUPLICATE_RATIO = "duplicate_ratio_exceeds_threshold"
+BLOCKING_REASONS = frozenset(
+    {
+        REASON_NON_MONOTONIC,
+        REASON_SCHEMA_MISMATCH,
+        REASON_STALENESS,
+        REASON_DUPLICATE_RATIO,
+    }
+)
+
+
+@dataclass(frozen=True)
+class FeatureQualityThresholds:
+    max_required_null_rate: float = 0.01
+    max_staleness_ms: int = 120_000
+    max_duplicate_ratio: float = 0.02
+
+    def to_payload(self) -> dict[str, float | int]:
+        return {
+            "max_required_null_rate": self.max_required_null_rate,
+            "max_staleness_ms": self.max_staleness_ms,
+            "max_duplicate_ratio": self.max_duplicate_ratio,
+        }
+
+
+@dataclass(frozen=True)
+class FeatureQualityReport:
+    accepted: bool
+    rows_total: int
+    null_rate_by_field: dict[str, float]
+    staleness_ms_p95: int
+    duplicate_ratio: float
+    schema_mismatch_total: int
+    reasons: list[str]
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "accepted": self.accepted,
+            "rows_total": self.rows_total,
+            "null_rate_by_field": dict(self.null_rate_by_field),
+            "staleness_ms_p95": self.staleness_ms_p95,
+            "duplicate_ratio": self.duplicate_ratio,
+            "schema_mismatch_total": self.schema_mismatch_total,
+            "reasons": list(self.reasons),
+        }
+
+    @property
+    def blocking_reasons(self) -> list[str]:
+        return [reason for reason in self.reasons if reason in BLOCKING_REASONS]
+
+    @property
+    def warning_only_reasons(self) -> list[str]:
+        return [reason for reason in self.reasons if reason not in BLOCKING_REASONS]
+
+
+class FeatureQualityError(RuntimeError):
+    """Raised when a quality report fails hard thresholds."""
+
+
+@dataclass
+class _FeatureQualityScan:
+    null_counts: dict[str, int]
+    malformed_staleness_count: int = 0
+    seen_keys: set[tuple[datetime, str, str, int, str, str]] = dataclass_field(
+        default_factory=lambda: set[tuple[datetime, str, str, int, str, str]]()
+    )
+    duplicate_total: int = 0
+    schema_mismatch_total: int = 0
+    staleness_values: list[int] = dataclass_field(default_factory=lambda: list[int]())
+    non_monotonic_detected: bool = False
+    previous_key: tuple[datetime, str, str, int, str, str] | None = None
+
+
+def evaluate_feature_batch_quality(
+    signals: list[SignalEnvelope],
+    *,
+    thresholds: FeatureQualityThresholds | None = None,
+) -> FeatureQualityReport:
+    policy = thresholds or FeatureQualityThresholds()
+    rows_total = len(signals)
+    if rows_total == 0:
+        return _empty_feature_quality_report()
+
+    scan = _scan_feature_batch(signals)
+
+    null_rate_by_field = {
+        field: scan.null_counts[field] / rows_total
+        for field in FEATURE_VECTOR_V3_REQUIRED_FIELDS
+    }
+    duplicate_ratio = scan.duplicate_total / rows_total
+    staleness_ms_p95 = _p95(scan.staleness_values)
+    unique_reasons = sorted(
+        set(
+            _derive_quality_reasons(
+                scan=scan,
+                null_rate_by_field=null_rate_by_field,
+                duplicate_ratio=duplicate_ratio,
+                staleness_ms_p95=staleness_ms_p95,
+                policy=policy,
+            )
+        )
+    )
+    return FeatureQualityReport(
+        accepted=len(unique_reasons) == 0,
+        rows_total=rows_total,
+        null_rate_by_field=null_rate_by_field,
+        staleness_ms_p95=staleness_ms_p95,
+        duplicate_ratio=duplicate_ratio,
+        schema_mismatch_total=scan.schema_mismatch_total,
+        reasons=unique_reasons,
+    )
+
+
+def _empty_feature_quality_report() -> FeatureQualityReport:
+    return FeatureQualityReport(
+        accepted=True,
+        rows_total=0,
+        null_rate_by_field={field: 0.0 for field in FEATURE_VECTOR_V3_REQUIRED_FIELDS},
+        staleness_ms_p95=0,
+        duplicate_ratio=0.0,
+        schema_mismatch_total=0,
+        reasons=[],
+    )
+
+
+def _scan_feature_batch(signals: list[SignalEnvelope]) -> _FeatureQualityScan:
+    scan = _FeatureQualityScan(
+        null_counts={field: 0 for field in FEATURE_VECTOR_V3_REQUIRED_FIELDS},
+    )
+    for signal in signals:
+        if not signal_declares_compatible_schema(signal):
+            scan.schema_mismatch_total += 1
+
+        values = map_feature_values_v3(signal)
+        for field in FEATURE_VECTOR_V3_REQUIRED_FIELDS:
+            if values.get(field) is None:
+                scan.null_counts[field] += 1
+
+        staleness_raw = values.get("staleness_ms")
+        staleness = _coerce_staleness_ms(staleness_raw)
+        if staleness is None:
+            scan.malformed_staleness_count += 1
+        else:
+            scan.staleness_values.append(staleness)
+
+        key = _quality_identity_key(signal)
+        if key in scan.seen_keys:
+            scan.duplicate_total += 1
+        else:
+            scan.seen_keys.add(key)
+
+        if scan.previous_key is not None and key < scan.previous_key:
+            scan.non_monotonic_detected = True
+        scan.previous_key = key
+    return scan
+
+
+def _derive_quality_reasons(
+    *,
+    scan: _FeatureQualityScan,
+    null_rate_by_field: dict[str, float],
+    duplicate_ratio: float,
+    staleness_ms_p95: int,
+    policy: FeatureQualityThresholds,
+) -> list[str]:
+    reasons: list[str] = []
+    if scan.non_monotonic_detected:
+        reasons.append(REASON_NON_MONOTONIC)
+    if scan.malformed_staleness_count > 0:
+        reasons.append(REASON_STALENESS)
+    if scan.schema_mismatch_total > 0:
+        reasons.append(REASON_SCHEMA_MISMATCH)
+    if any(
+        null_rate_by_field[field] > policy.max_required_null_rate
+        for field in QUALITY_GATED_REQUIRED_FIELDS
+    ):
+        reasons.append(REASON_REQUIRED_NULL_RATE)
+    if staleness_ms_p95 > policy.max_staleness_ms:
+        reasons.append(REASON_STALENESS)
+    if duplicate_ratio > policy.max_duplicate_ratio:
+        reasons.append(REASON_DUPLICATE_RATIO)
+    return reasons
+
+
+def enforce_feature_batch_quality(
+    signals: list[SignalEnvelope],
+    *,
+    thresholds: FeatureQualityThresholds | None = None,
+) -> FeatureQualityReport:
+    report = evaluate_feature_batch_quality(signals, thresholds=thresholds)
+    if report.accepted:
+        return report
+
+    parts: list[str] = []
+    if report.reasons:
+        parts.append(f"reasons={','.join(report.reasons)}")
+    parts.append(f"rows={report.rows_total}")
+    parts.append(f"schema_mismatch_total={report.schema_mismatch_total}")
+    parts.append(f"staleness_ms_p95={report.staleness_ms_p95}")
+    parts.append(f"duplicate_ratio={report.duplicate_ratio:.6f}")
+    raise FeatureQualityError("feature_quality_gate_failed " + " ".join(parts))
+
+
+def _p95(values: list[int]) -> int:
+    if not values:
+        return 0
+    if len(values) == 1:
+        return values[0]
+    quantized = quantiles(values, n=100, method="inclusive")
+    if not quantized:
+        return max(values)
+    return int(quantized[94])
+
+
+def _coerce_staleness_ms(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _quality_identity_key(
+    signal: SignalEnvelope,
+) -> tuple[datetime, str, str, int, str, str]:
+    payload = signal.payload or {}
+    declared_schema = payload.get("feature_schema_version")
+    schema_version = (
+        str(declared_schema).strip()
+        if declared_schema not in (None, "")
+        else FEATURE_SCHEMA_VERSION_V3
+    )
+    return (
+        signal.event_ts,
+        signal.symbol,
+        signal.timeframe or "1Min",
+        signal.seq or 0,
+        signal.source or "unknown",
+        schema_version,
+    )
+
+
+__all__ = [
+    "FeatureQualityError",
+    "FeatureQualityReport",
+    "FeatureQualityThresholds",
+    "REASON_DUPLICATE_RATIO",
+    "REASON_NON_MONOTONIC",
+    "REASON_REQUIRED_NULL_RATE",
+    "REASON_SCHEMA_MISMATCH",
+    "REASON_STALENESS",
+    "enforce_feature_batch_quality",
+    "evaluate_feature_batch_quality",
+]

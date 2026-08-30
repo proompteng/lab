@@ -1,0 +1,31 @@
+---
+title: Towns and Build Trees
+description: Town building reference and faction build-tree decision guide.
+---
+
+import { buildingEntries } from '@/src/data/olden/encyclopedia'
+
+# Towns and Build Trees
+
+Town pages cannot stop at "build growth first." This page makes the building surface visible and ties it to the actual decisions: economy, dwellings, upgrades, magic, defense, and faction mechanics.
+
+<WikiVisual
+  src="/visuals/generated/olden-town-build-tree.png"
+  alt="Original fantasy town planning table with glowing build-tree branches and a miniature city."
+  caption="Original generated raster art for town and build-tree pages. Building rows below link back to public source entries."
+/>
+
+<TownBuildTree />
+
+## All indexed building entries
+
+<EncyclopediaEntryTable
+  entries={buildingEntries}
+  title="Building index"
+  description="Public building entries scraped from source metadata, including faction icon source links where available."
+  groupBy="Faction"
+  defaultOpenGroups={8}
+  sourceLabel="Building page"
+/>
+
+<SourceNote ids={['community-olden-era-buildings', 'imagegen-original-assets']} />

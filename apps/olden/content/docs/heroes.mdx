@@ -1,0 +1,45 @@
+---
+title: Heroes
+description: Complete hero reference with faction, class, starting skills, specialty text, and gameplay job notes.
+---
+
+import { classEntries, heroEntries } from '@/src/data/olden/encyclopedia'
+
+# Heroes
+
+Heroes are the operating system of a run. A good hero page must show faction, class, starting skills, specialty text, source portrait, and job fit in one place.
+
+<WikiVisual
+  src="/visuals/generated/olden-hero-roster.png"
+  alt="Fantasy strategy hero roster standing before faction banners and a campaign table"
+  caption="Original generated raster art for the hero encyclopedia. Hero rows below use sourced public database fields."
+/>
+
+## Hero jobs
+
+- **Main hero** carries the best army, takes the route-defining fights, and needs loss reduction, tempo, and spell value.
+- **Scout** reveals map, chains safe resources, and keeps movement pressure without stealing core troops.
+- **Caster/support hero** turns mana and spell access into safer fights or utility.
+- **Economy hero** matters only when the payoff arrives before the decisive build or fight.
+
+<EncyclopediaEntryTable
+  entries={heroEntries}
+  title="Hero roster"
+  description="All public hero rows currently indexed from the community hero database, grouped by faction."
+  groupBy="Faction"
+  defaultOpenGroups={7}
+  sourceLabel="Hero page"
+/>
+
+## Classes
+
+<EncyclopediaEntryTable
+  entries={classEntries}
+  title="Hero classes"
+  description="Public class rows with faction mapping and source links."
+  groupBy="Faction"
+  defaultOpenGroups={7}
+  sourceLabel="Class page"
+/>
+
+<SourceNote ids={['community-olden-era-heroes', 'community-olden-era-classes', 'imagegen-original-assets']} />

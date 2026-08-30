@@ -1,0 +1,159 @@
+fullnameOverride: observability-kube-state-metrics
+prometheusScrape: false
+replicas: 1
+
+collectors:
+  - cronjobs
+  - daemonsets
+  - deployments
+  - namespaces
+  - nodes
+  - pods
+  - replicasets
+  - services
+  - statefulsets
+
+rbac:
+  extraRules:
+    - apiGroups:
+        - argoproj.io
+      resources:
+        - applications
+      verbs:
+        - list
+        - watch
+    - apiGroups:
+        - postgresql.cnpg.io
+      resources:
+        - backups
+        - scheduledbackups
+      verbs:
+        - list
+        - watch
+    - apiGroups:
+        - restate.dev
+      resources:
+        - restatedeployments
+      verbs:
+        - list
+        - watch
+
+customResourceState:
+  enabled: true
+  config:
+    kind: CustomResourceStateMetrics
+    spec:
+      resources:
+        - groupVersionKind:
+            group: argoproj.io
+            version: v1alpha1
+            kind: Application
+          metricNamePrefix: kube_argocd
+          labelsFromPath:
+            application:
+              - metadata
+              - name
+            namespace:
+              - metadata
+              - namespace
+          metrics:
+            - name: application_deployment_history_info
+              help: Argo CD application has at least one persisted successful deployment.
+              each:
+                type: Info
+                info:
+                  path:
+                    - status
+                    - history
+                    - "0"
+                  labelsFromPath:
+                    deployed_at:
+                      - deployedAt
+                    revision:
+                      - revision
+        - groupVersionKind:
+            group: postgresql.cnpg.io
+            version: v1
+            kind: Backup
+          metricNamePrefix: kube_cnpg
+          labelsFromPath:
+            namespace:
+              - metadata
+              - namespace
+            backup:
+              - metadata
+              - name
+            cluster:
+              - metadata
+              - labels
+              - cnpg.io/cluster
+            scheduled_backup:
+              - metadata
+              - labels
+              - cnpg.io/scheduled-backup
+            phase:
+              - status
+              - phase
+          metrics:
+            - name: backup_stopped_at
+              help: CloudNativePG backup completion timestamp in Unix seconds.
+              each:
+                type: Gauge
+                gauge:
+                  path:
+                    - status
+                    - stoppedAt
+        - groupVersionKind:
+            group: postgresql.cnpg.io
+            version: v1
+            kind: ScheduledBackup
+          metricNamePrefix: kube_cnpg
+          labelsFromPath:
+            namespace:
+              - metadata
+              - namespace
+            scheduled_backup:
+              - metadata
+              - name
+            cluster:
+              - spec
+              - cluster
+              - name
+          metrics:
+            - name: scheduled_backup_last_schedule_time
+              help: CloudNativePG most recent scheduled backup timestamp in Unix seconds.
+              each:
+                type: Gauge
+                gauge:
+                  path:
+                    - status
+                    - lastScheduleTime
+        - groupVersionKind:
+            group: restate.dev
+            version: v1beta1
+            kind: RestateDeployment
+          metricNamePrefix: kube_restate
+          labelsFromPath:
+            namespace:
+              - metadata
+              - namespace
+            restate_deployment:
+              - metadata
+              - name
+          metrics:
+            - name: deployment_spec_replicas
+              help: Desired replica count from the RestateDeployment specification.
+              each:
+                type: Gauge
+                gauge:
+                  path:
+                    - spec
+                    - replicas
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi

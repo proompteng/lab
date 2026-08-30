@@ -1,0 +1,90 @@
+name: bumba
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'services/bumba/**'
+      - 'packages/temporal-bun-sdk/**'
+      - 'nix/images/bumba.nix'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - 'nix/oci-push.sh'
+      - 'argocd/applications/bumba/**'
+  pull_request:
+    paths:
+      - 'services/bumba/**'
+      - 'packages/temporal-bun-sdk/**'
+      - 'nix/images/bumba.nix'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - 'nix/oci-push.sh'
+      - 'argocd/applications/bumba/**'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pr-checks:
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/common-monorepo.yml
+    with:
+      bun-version: 1.4.0
+      node-version: 24.11.1
+      install-command: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/bumba --filter @proompteng/temporal-bun-sdk && bun run --filter @proompteng/temporal-bun-sdk build
+      lint-command: bunx oxfmt --check services/bumba packages/scripts/src/bumba argocd/applications/bumba
+      oxlint-command: bun run --cwd services/bumba lint:oxlint
+      oxlint-type-command: bun run --cwd services/bumba lint:oxlint:type
+      test-command: bun run --cwd services/bumba tsc && bun run --cwd services/bumba test
+    secrets: inherit
+
+  atlas-integration:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: mirror.gcr.io/pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: atlas
+          POSTGRES_PASSWORD: atlas
+          POSTGRES_DB: atlas_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U atlas -d atlas_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      ATLAS_INTEGRATION_DATABASE_URL: postgresql://atlas:atlas@127.0.0.1:5432/atlas_test?sslmode=disable
+      ATLAS_REQUIRE_INTEGRATION_TESTS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/bumba --filter @proompteng/temporal-bun-sdk
+      - run: bun run --filter @proompteng/temporal-bun-sdk build
+      - run: bun test services/bumba/src/atlas/reconciliation.integration.test.ts
+
+  nix-image:
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          !contains(github.event.head_commit.message || '', 'automated release PR')
+        )
+      }}
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: bumba
+      package_attr: bumba-image
+      tag: sha-${{ github.sha }}
+      publish_kargo_tag: true
+      pr_number: ${{ github.event.pull_request.number || '' }}
+      latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
+    secrets: inherit

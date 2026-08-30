@@ -1,0 +1,37 @@
+name: symphony-build-push
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'services/symphony/**'
+      - 'nix/images/symphony.nix'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - '.github/workflows/symphony-post-deploy-verify.yml'
+      - 'nix/oci-push.sh'
+      - 'argocd/applications/symphony/**'
+      - 'argocd/applications/symphony-jangar/**'
+      - 'argocd/applications/symphony-torghut/**'
+      - 'argocd/applications/symphony-base/**'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nix-image:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: symphony
+      package_attr: symphony-image
+      tag: sha-${{ github.sha }}
+      publish_kargo_tag: true
+      pr_number: ${{ github.event.pull_request.number || '' }}
+      latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
+    secrets: inherit
