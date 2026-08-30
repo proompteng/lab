@@ -236,12 +236,18 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).not.toContain('SIM_MIRROR')
   })
 
-  it('requests explicit Argo sync before polling deployed revisions', () => {
-    expect(workflow).toContain('argocd.argoproj.io/refresh=hard --overwrite')
-    expect(workflow).toContain('request_argocd_sync()')
-    expect(workflow).toContain('{"prune": True}')
-    expect(workflow).toContain('kubectl patch application "${app}" -n argocd --type merge -p "${payload}"')
+  it('observes the Kargo-owned Argo sync without mutating applications', () => {
+    expect(workflow).toContain('contents: read')
+    expect(workflow).toContain("Kargo's")
+    expect(workflow).toContain('argocd-update step owns the sync')
     expect(workflow).toContain('for app in torghut torghut-options; do')
+    expect(workflow).not.toContain('argocd.argoproj.io/refresh')
+    expect(workflow).not.toContain('request_argocd_sync()')
+    expect(workflow).not.toContain('kubectl annotate application')
+    expect(workflow).not.toContain('kubectl patch application')
+    expect(workflow).not.toContain('contents: write')
+    expect(workflow).not.toContain('issues: write')
+    expect(workflow).not.toContain('pull-requests: write')
   })
 
   it('bounds Argo convergence waits and prints resource diagnostics on timeout', () => {
@@ -308,9 +314,9 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(arcKubeModeServiceAccount).toContain('namespace: arc')
   })
 
-  it('grants the ARC runner patch access for explicit Argo refreshes', () => {
-    expect(agentsCiClusterRbac).toContain('agents-ci-runner-argocd-application-refresh')
+  it('keeps ARC runner Argo access read-only', () => {
+    expect(agentsCiClusterRbac).toContain('agents-ci-runner-argocd-verify-read')
     expect(agentsCiClusterRbac).toContain('argoproj.io')
-    expect(agentsCiClusterRbac).toContain('patch')
+    expect(agentsCiClusterRbac).not.toContain('agents-ci-runner-argocd-application-refresh')
   })
 })
