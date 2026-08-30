@@ -509,3 +509,14 @@ index 1d272e2dd5a9cd6421849dfc53b85338511cf9bf..cb45d1dce54a6e54b3284ca71eaa06ba
 +        assert!(build_block_automounts(&annotations, &devices, "container-id").is_err());
 +    }
 +
+diff --git a/tools/packaging/static-build/agent/Dockerfile b/tools/packaging/static-build/agent/Dockerfile
+index 689805427adbb2e6647f8fde9b142eda2f5374f0..c034f3b5d04138678268cf585b3132d75348994c 100644
+--- a/tools/packaging/static-build/agent/Dockerfile
++++ b/tools/packaging/static-build/agent/Dockerfile
+@@ -56 +56,5 @@ RUN ARCH=$(uname -m) && \
+-    curl -sSL "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_${ORAS_ARCH}.tar.gz" -o /tmp/oras.tar.gz && \
++    curl --fail --location --silent --show-error \
++        --retry 5 --retry-all-errors --retry-delay 5 \
++        --connect-timeout 30 --max-time 300 \
++        "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_${ORAS_ARCH}.tar.gz" \
++        -o /tmp/oras.tar.gz && \
