@@ -6,7 +6,11 @@ ARG BUN_BASE_IMAGE=mirror.gcr.io/oven/bun
 ARG BUN_VERSION=1.4.0
 ARG NODE_BASE_IMAGE=mirror.gcr.io/node
 ARG NODE_VERSION=24.11.1
+ARG RUST_BASE_IMAGE=mirror.gcr.io/rust
+ARG RUST_VERSION=1.90.0
 ARG UBUNTU_BASE_IMAGE=mirror.gcr.io/ubuntu
+ARG UV_BASE_IMAGE=ghcr.io/astral-sh/uv
+ARG UV_VERSION=0.11.14
 
 FROM --platform=$BUILDPLATFORM ${GO_BASE_IMAGE}:${GO_VERSION}-bookworm AS build
 
@@ -21,16 +25,45 @@ RUN go test ./... && \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
       go build -trimpath -ldflags='-s -w' -o /out/nanoagent .
 
+FROM ${GO_BASE_IMAGE}:${GO_VERSION}-bookworm AS go-runtime
+
 FROM ${NODE_BASE_IMAGE}:${NODE_VERSION}-bookworm-slim AS node-runtime
 
 FROM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS bun-runtime
 
+FROM ${RUST_BASE_IMAGE}:${RUST_VERSION}-bookworm AS rust-runtime
+
+FROM rust-runtime AS rust-linker-runtime
+
+ARG TARGETARCH
+
+RUN set -eux; \
+    case "$TARGETARCH" in \
+      amd64) linux_triplet='x86_64-linux-gnu' ;; \
+      arm64) linux_triplet='aarch64-linux-gnu' ;; \
+      *) printf 'unsupported Rust linker architecture: %s\n' "$TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    gcc_crt_directory="$(dirname "$(gcc -print-file-name=crtbeginS.o)")"; \
+    mkdir -p /out/crt; \
+    cp \
+      "/usr/lib/${linux_triplet}/Scrt1.o" \
+      "/usr/lib/${linux_triplet}/crti.o" \
+      "/usr/lib/${linux_triplet}/crtn.o" \
+      "$gcc_crt_directory/crtbeginS.o" \
+      "$gcc_crt_directory/crtendS.o" \
+      /out/crt/; \
+    test "$(find /out/crt -maxdepth 1 -type f | wc -l)" -eq 5
+
+FROM ${UV_BASE_IMAGE}:${UV_VERSION} AS uv-runtime
+
 FROM ${UBUNTU_BASE_IMAGE}:24.04 AS runtime
 
-ENV CODEX_BINARY=/home/nanoagent/.local/bin/codex \
+ENV CARGO_HOME=/home/nanoagent/.cargo \
+    CODEX_BINARY=/home/nanoagent/.local/bin/codex \
     CODEX_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-codex \
     CODEX_HOME=/home/nanoagent/.codex \
     BUN_INSTALL=/home/nanoagent/.local \
+    GOROOT=/home/nanoagent/.local/go \
     HOME=/home/nanoagent \
     NANOAGENT_HOME=/home/nanoagent \
     NANOAGENT_REEXEC_WRAPPER=/usr/bin/tini \
@@ -44,6 +77,7 @@ RUN set -eux; \
     apt-get update -o Acquire::Retries=3; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       bash \
+      bubblewrap \
       ca-certificates \
       curl \
       file \
@@ -59,7 +93,8 @@ RUN set -eux; \
       python3-venv \
       ripgrep \
       tar \
-      tini; \
+      tini \
+      xz-utils; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
     runtime_group="$(getent group 1000 | cut -d: -f1 || true)"; \
@@ -83,44 +118,105 @@ COPY --from=build /out/nanoagent /usr/local/bin/nanoagent
 COPY --chmod=0555 bootstrap-codex.sh /usr/local/bin/bootstrap-codex
 RUN test -x /usr/local/bin/bootstrap-codex && test -x /usr/local/bin/nanoagent
 
-FROM runtime AS node-bun-bundle
+FROM runtime AS development-toolchain-bundle
 
 ARG BUN_VERSION
+ARG GO_VERSION
 ARG NODE_VERSION
+ARG RUST_VERSION
+ARG UV_VERSION
 
 COPY --from=node-runtime /usr/local/bin/node /bundle/node/bin/node
 COPY --from=node-runtime /usr/local/lib/node_modules/npm /bundle/node/lib/node_modules/npm
 COPY --from=bun-runtime /usr/local/bin/bun /bundle/bun/bin/bun
+COPY --from=go-runtime /usr/local/go /bundle/go
+COPY --from=rust-runtime /usr/local/rustup/toolchains /bundle/rust-toolchains
+COPY --from=rust-linker-runtime /out /bundle/linker
+COPY --from=uv-runtime /uv /bundle/uv/bin/uv
+COPY --from=uv-runtime /uvx /bundle/uv/bin/uvx
 RUN set -eux; \
+    rust_toolchain="$(find /bundle/rust-toolchains -mindepth 1 -maxdepth 1 -type d -name "${RUST_VERSION}-*" -print -quit)"; \
+    test -n "$rust_toolchain"; \
+    mv "$rust_toolchain" /bundle/rust; \
+    rm -rf /bundle/rust-toolchains; \
+    rm -f \
+      /bundle/rust/bin/rust-gdb \
+      /bundle/rust/bin/rust-gdbgui \
+      /bundle/rust/bin/rust-lldb; \
+    rm -rf /bundle/rust/etc /bundle/rust/share; \
     test "$(/bundle/node/bin/node --version)" = "v${NODE_VERSION}"; \
     test "$(/bundle/bun/bin/bun --version)" = "${BUN_VERSION}"; \
+    test "$(GOROOT=/bundle/go /bundle/go/bin/go version | cut -d' ' -f3)" = "go${GO_VERSION}"; \
+    test "$(/bundle/rust/bin/rustc --version | cut -d' ' -f2)" = "${RUST_VERSION}"; \
+    test "$(/bundle/rust/bin/cargo --version | cut -d' ' -f2)" = "${RUST_VERSION}"; \
+    test "$(/bundle/uv/bin/uv --version | cut -d' ' -f2)" = "${UV_VERSION}"; \
     mkdir -p /out; \
-    tar --create --gzip --file /out/node-bun.tar.gz --directory /bundle .
+    XZ_OPT='-T0 -6' tar \
+      --create \
+      --xz \
+      --file /out/development-toolchain.tar.xz \
+      --sort=name \
+      --mtime='UTC 2020-01-01' \
+      --owner=0 \
+      --group=0 \
+      --numeric-owner \
+      --directory /bundle \
+      .
 
 FROM runtime AS runtime-with-toolchain
 
-COPY --from=node-bun-bundle /out/node-bun.tar.gz /usr/share/nanoagent/node-bun.tar.gz
+COPY --from=development-toolchain-bundle /out/development-toolchain.tar.xz /usr/share/nanoagent/development-toolchain.tar.xz
 COPY --chmod=0555 bootstrap-toolchain.sh /usr/local/bin/bootstrap-toolchain
 RUN test -x /usr/local/bin/bootstrap-toolchain && bootstrap-toolchain --validate-manifest
 
 FROM runtime-with-toolchain AS toolchain-smoke
 
 ENV BUN_INSTALL=/home/nanoagent/.toolchain-smoke/.local \
+    CARGO_HOME=/home/nanoagent/.toolchain-smoke/.cargo \
+    GOROOT=/home/nanoagent/.toolchain-smoke/.local/go \
     HOME=/home/nanoagent/.toolchain-smoke \
     NPM_CONFIG_PREFIX=/home/nanoagent/.toolchain-smoke/.local \
     PATH=/home/nanoagent/.toolchain-smoke/.local/bin:/home/nanoagent/.local/bin:/home/nanoagent/go/bin:/home/nanoagent/.cargo/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 USER 1000:1000
 RUN mkdir -p "$HOME" && \
     bootstrap-toolchain --install-only && \
+    test "$(command -v bwrap)" = '/usr/bin/bwrap' && \
     test "$(node --version)" = 'v24.11.1' && \
     test "$(npm --version | cut -d. -f1)" -ge 10 && \
     test "$(npm config get prefix)" = "$HOME/.local" && \
     test "$(bun --version)" = '1.4.0' && \
     test "$(bunx --version)" = '1.4.0' && \
+    test "$(uv --version | cut -d' ' -f2)" = '0.11.14' && \
+    test "$(go version | cut -d' ' -f3)" = 'go1.25.5' && \
+    test "$(go env GOROOT)" = "$HOME/.local/go" && \
+    test "$(rustc --version | cut -d' ' -f2)" = '1.90.0' && \
+    test "$(cargo --version | cut -d' ' -f2)" = '1.90.0' && \
+    test "$(rustdoc --version | cut -d' ' -f2)" = '1.90.0' && \
+    printf 'fn main(){println!("rust-ok");}\n' > /tmp/rust-smoke.rs && \
+    test "$(rustc /tmp/rust-smoke.rs -o /tmp/rust-smoke && /tmp/rust-smoke)" = 'rust-ok' && \
+    cargo new --quiet --bin /tmp/cargo-smoke && \
+    test "$(cd /tmp/cargo-smoke && cargo run --quiet)" = 'Hello, world!' && \
+    cargo new --quiet --lib /tmp/cargo-library-smoke && \
+    printf '/// Returns 42.\n///\n/// ```\n/// assert_eq!(cargo_library_smoke::answer(), 42);\n/// ```\npub fn answer() -> i32 { 42 }\n' \
+      > /tmp/cargo-library-smoke/src/lib.rs && \
+    (cd /tmp/cargo-library-smoke && cargo test --quiet) && \
+    printf '#[no_mangle]\npub extern "C" fn answer() -> i32 { 42 }\n' > /tmp/rust-library-smoke.rs && \
+    rustc --crate-type=cdylib /tmp/rust-library-smoke.rs -o /tmp/librust_library_smoke.so && \
+    printf 'package main\nimport "fmt"\nfunc main(){fmt.Println("go-ok")}\n' > /tmp/go-smoke.go && \
+    test "$(CGO_ENABLED=0 go run /tmp/go-smoke.go)" = 'go-ok' && \
+    uv venv /tmp/uv-smoke >/dev/null && \
     mkdir -p "$BUN_INSTALL/install/global" && \
     printf '{"name":"nanoagent-global"}\n' > "$BUN_INSTALL/install/global/package.json" && \
     test "$(bun pm bin --global)" = "$HOME/.local/bin" && \
-    printf 'node=%s bun=%s\n' "$(node --version)" "$(bun --version)" > /tmp/toolchain-version
+    printf 'node=%s bun=%s uv=%s go=%s rustc=%s cargo=%s rustdoc=%s\n' \
+      "$(node --version)" \
+      "$(bun --version)" \
+      "$(uv --version)" \
+      "$(go version)" \
+      "$(rustc --version)" \
+      "$(cargo --version)" \
+      "$(rustdoc --version)" \
+      > /tmp/toolchain-version
 
 # Download and verify the pinned native Codex package during every image build. The
 # package is intentionally not copied into the final rootfs; a guest installs the

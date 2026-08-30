@@ -51,14 +51,18 @@ a shared `OPENAI_API_KEY`.
 
 Kata's Firecracker snapshotter extracts the guest OCI image into a 512 MiB blockfile. The Dockerfile therefore enforces
 a 480 MiB uncompressed-rootfs ceiling. The image contains a minimal Ubuntu 24.04 shell environment, Nanoagent, and a
-compressed multi-architecture bundle for the pinned Node 24.11.1 and Bun 1.4.0 guest toolchain.
+compressed multi-architecture bundle for the pinned Node 24.11.1, Bun 1.4.0, uv 0.11.14, Go 1.25.5, and Rust/Cargo
+1.90.0 guest toolchain. Ubuntu's system `bubblewrap` package satisfies Codex's Linux sandbox prerequisite instead of
+showing a bundled-helper fallback warning after device login.
 
 After Nanoagent has moved its bootstrap credential through the one-use pipe and removed the transport variables from
-the process environment, `bootstrap-toolchain` atomically installs Node, npm, npx, Bun, and Bunx under the versioned
-per-architecture `~/.tengri/toolchains` directory. Stable links live in `~/.local/bin`, and subsequent boots validate
-and reuse the existing home-volume install. Nanoagent configures both npm and Bun to use `~/.local` as their persistent
-global prefix, so globally installed package executables are immediately available from the existing
-`~/.local/bin` PATH.
+the process environment, `bootstrap-toolchain` atomically installs Node, npm, npx, Bun, Bunx, uv, Go, gofmt, rustc,
+Cargo, and rustdoc under the versioned per-architecture `~/.tengri/toolchains` directory. Stable links live in `~/.local/bin`,
+the relocatable Go root lives at `~/.local/go`, and subsequent boots validate and reuse the existing home-volume
+install. Nanoagent configures both npm and Bun to use `~/.local` as their persistent global prefix, so globally
+installed package executables are immediately available from the existing `~/.local/bin` PATH. Rust compilation and
+doctests use the bundled architecture-specific `rust-lld` and minimal startup objects through atomically generated
+wrappers, so pure Rust programs and library tests work without a mutable system compiler on the read-only guest rootfs.
 
 On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.149.0 package from the npm registry,
 verifies its pinned SHA-512 digest, and atomically installs the complete native package under the 16 GiB PVC-backed
