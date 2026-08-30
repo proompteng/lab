@@ -36,6 +36,7 @@ fi
 
 git -C "$source_dir" apply --unidiff-zero --check "$patch_file"
 git -C "$source_dir" apply --unidiff-zero "$patch_file"
+make -C "$source_dir/src/agent" src/version.rs
 
 (
   cd -- "$source_dir"
