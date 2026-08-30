@@ -1,0 +1,16 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: torghut-flink-private
+  namespace: torghut
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`flink.k8s.proompteng.ai`)
+      services:
+        - name: torghut-ta-rest
+          port: 8081
+  tls:
+    secretName: wildcard-k8s-proompteng-ai-tls

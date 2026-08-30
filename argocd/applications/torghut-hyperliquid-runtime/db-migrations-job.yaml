@@ -1,0 +1,71 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: torghut-hyperliquid-runtime-db-migrations
+  namespace: torghut
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  backoffLimit: 6
+  # This hook runs the same migration heads as the core Torghut hook. Keep the
+  # deadline above the 45-minute concurrent index-build statement timeout.
+  activeDeadlineSeconds: 3600
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: torghut-hyperliquid-runtime-db-migrations
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: torghut-runtime
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      containers:
+        - name: migrate
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:b359cd2368e89b492f7ff6925f975b72bb2ca3aa0261478552fc6094688e3bb4
+          imagePullPolicy: Always
+          workingDir: /app
+          command:
+            - /bin/sh
+            - -ec
+          args:
+            - |
+              deadline=$((SECONDS + 300))
+              until python - <<'PY'
+              import os
+              from sqlalchemy import create_engine, text
+
+              dsn = os.environ["DB_DSN"]
+              if dsn.startswith("postgresql://"):
+                  dsn = "postgresql+psycopg://" + dsn[len("postgresql://"):]
+              engine = create_engine(dsn, pool_pre_ping=True)
+              with engine.connect() as connection:
+                  connection.execute(text("select 1"))
+              PY
+              do
+                if [ "${SECONDS}" -ge "${deadline}" ]; then
+                  echo "Postgres did not become ready in time" >&2
+                  exit 1
+                fi
+                sleep 5
+              done
+              alembic -c /app/alembic.ini upgrade heads
+          env:
+            - name: TORGHUT_COMMIT
+              value: bbbaa168c46e6e167a5775d0f516789b13dc689d
+            - name: TORGHUT_IMAGE_DIGEST
+              value: sha256:e1bcb2c3adb2c58296ad71537de21a30fea2ac0a887a04479f44c4f26ba1f334
+            - name: PYTHONPATH
+              value: /app
+            - name: DB_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-app
+                  key: uri
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL

@@ -1,0 +1,270 @@
+import { Redacted, Result, Schema } from 'effect'
+
+import { decodeBrokerConnection, type BrokerConnection } from '../broker/connection'
+import { EmbeddedBuildMetadataSchema, type EmbeddedBuildMetadata } from '../build'
+import { BrokerAccess } from '../execution/authority'
+import { CapitalAuthoritySelection, resolveExecutionPolicy, type ExecutionPolicy } from '../execution/configuration'
+import { strictParseOptions as StrictParseOptions } from '../schemas'
+import {
+  type AlpacaCredentialPresence,
+  type AlpacaRuntimeConfig,
+  type LoadedRuntimeConfig,
+  type ParsedRuntimeConfig,
+  type RuntimeBuildMetadata,
+  type RuntimeConfigResolutionFailure,
+  type RuntimeConfigResolutionInput,
+} from './model'
+import { evaluationBoundsDecoder } from './source'
+
+const decodeEmbeddedBuildMetadata = Schema.decodeUnknownResult(EmbeddedBuildMetadataSchema, StrictParseOptions)
+
+const fail = <A>(failure: RuntimeConfigResolutionFailure): Result.Result<A, RuntimeConfigResolutionFailure> =>
+  Result.fail(failure)
+
+const decodeBounds = (
+  parsed: ParsedRuntimeConfig,
+): Result.Result<ParsedRuntimeConfig, RuntimeConfigResolutionFailure> => {
+  const decoded = evaluationBoundsDecoder(parsed.clickhouse.bounds)
+  return Result.isFailure(decoded)
+    ? fail({ _tag: 'InvalidEvaluationBounds', cause: decoded.failure })
+    : Result.succeed({
+        ...parsed,
+        clickhouse: { ...parsed.clickhouse, bounds: decoded.success },
+      })
+}
+
+const validateCycleTiming = (
+  parsed: ParsedRuntimeConfig,
+): Result.Result<ParsedRuntimeConfig, RuntimeConfigResolutionFailure> =>
+  parsed.cyclePollIntervalMs < parsed.cycleStallThresholdMs
+    ? Result.succeed(parsed)
+    : fail({
+        _tag: 'CyclePollIntervalNotShorterThanStallThreshold',
+        cyclePollIntervalMs: parsed.cyclePollIntervalMs,
+        cycleStallThresholdMs: parsed.cycleStallThresholdMs,
+      })
+
+const validateExecutionReconciliationTiming = (
+  parsed: ParsedRuntimeConfig,
+  execution: ExecutionPolicy,
+  alpaca: AlpacaRuntimeConfig | undefined,
+): Result.Result<void, RuntimeConfigResolutionFailure> => {
+  const mutationCapable = execution.brokerAccess === BrokerAccess.Mutation
+  if (!mutationCapable || alpaca === undefined) return Result.succeed(undefined)
+  const reconciliationPassTimeoutMs = parsed.operationTimeoutMs
+  const priorReconciliationTailTimeoutMs = reconciliationPassTimeoutMs
+  const requiredFreshnessWindowMs =
+    BigInt(alpaca.reconciliationIntervalMs) +
+    BigInt(priorReconciliationTailTimeoutMs) +
+    BigInt(reconciliationPassTimeoutMs)
+  if (requiredFreshnessWindowMs < BigInt(parsed.reconciliationStaleThresholdMs)) {
+    return Result.succeed(undefined)
+  }
+  return fail({
+    _tag: 'ExecutionReconciliationCadenceNotWithinStaleThreshold',
+    reconciliationIntervalMs: alpaca.reconciliationIntervalMs,
+    priorReconciliationTailTimeoutMs,
+    reconciliationPassTimeoutMs,
+    reconciliationStaleThresholdMs: parsed.reconciliationStaleThresholdMs,
+  })
+}
+
+const credentialPresence = (parsed: ParsedRuntimeConfig): AlpacaCredentialPresence => ({
+  accountId: parsed.configuredAlpaca.accountId !== undefined,
+  keyId: parsed.configuredAlpaca.key !== undefined,
+  secretKey: parsed.configuredAlpaca.secret !== undefined,
+})
+
+const configuredCredentialCount = (presence: AlpacaCredentialPresence): number =>
+  Number(presence.accountId) + Number(presence.keyId) + Number(presence.secretKey)
+
+const decodeAlpaca = (
+  parsed: ParsedRuntimeConfig,
+): Result.Result<AlpacaRuntimeConfig | undefined, RuntimeConfigResolutionFailure> => {
+  const configured = credentialPresence(parsed)
+  const count = configuredCredentialCount(configured)
+  if (count === 0) return fail({ _tag: 'MissingAlpacaCredentials' })
+  if (count !== 3) return fail({ _tag: 'IncompleteAlpacaCredentials', configured })
+  if (parsed.authorityGenerationHash === undefined) return fail({ _tag: 'MissingAlpacaAuthorityGeneration' })
+
+  const accountId = parsed.configuredAlpaca.accountId
+  const key = parsed.configuredAlpaca.key
+  const secret = parsed.configuredAlpaca.secret
+  if (accountId === undefined || key === undefined || secret === undefined) {
+    return fail({ _tag: 'IncompleteAlpacaCredentials', configured })
+  }
+  const decoded = decodeBrokerConnection({
+    provider: parsed.configuredAlpaca.provider,
+    environment: parsed.configuredAlpaca.environment,
+    baseUrl: parsed.configuredAlpaca.baseUrl,
+    expectedAccountId: accountId,
+    key,
+    secret,
+    proxyUrl: parsed.configuredAlpaca.proxyUrl,
+    operationTimeoutMs: parsed.operationTimeoutMs,
+    retryAttempts: parsed.configuredAlpaca.retryAttempts,
+  })
+  return Result.isFailure(decoded)
+    ? fail({ _tag: 'InvalidBrokerConnection', cause: decoded.failure })
+    : Result.succeed({
+        ...decoded.success,
+        authorityGenerationHash: parsed.authorityGenerationHash,
+        reconciliationIntervalMs: parsed.configuredAlpaca.reconciliationIntervalMs,
+      })
+}
+
+const resolvePolicy = (
+  parsed: ParsedRuntimeConfig,
+  alpaca: AlpacaRuntimeConfig | undefined,
+): Result.Result<ExecutionPolicy, RuntimeConfigResolutionFailure> => {
+  const policy = resolveExecutionPolicy({
+    brokerIdentity: alpaca?.identity,
+    brokerAccess: parsed.brokerAccess,
+    capitalAuthority: parsed.capitalAuthority,
+    authorityGenerationHash:
+      parsed.capitalAuthority === CapitalAuthoritySelection.None ? undefined : parsed.authorityGenerationHash,
+    persistedCapitalGrantHash: parsed.persistedCapitalGrantHash,
+  })
+  return Result.isFailure(policy)
+    ? fail({ _tag: 'InvalidExecutionPolicy', cause: policy.failure })
+    : Result.succeed(policy.success)
+}
+
+const validateProvenanceMode = (
+  parsed: ParsedRuntimeConfig,
+  embedded: EmbeddedBuildMetadata | undefined,
+): Result.Result<void, RuntimeConfigResolutionFailure> => {
+  if (parsed.provenanceMode === 'production' && embedded === undefined) {
+    return fail({ _tag: 'ProductionProvenanceRequiresEmbeddedMetadata', provenanceMode: 'production' })
+  }
+  if (parsed.provenanceMode === 'development' && embedded !== undefined) {
+    return fail({ _tag: 'EmbeddedMetadataRequiresProductionProvenance', provenanceMode: 'development' })
+  }
+  return Result.succeed(undefined)
+}
+
+const validatePostgresTls = (parsed: ParsedRuntimeConfig): Result.Result<void, RuntimeConfigResolutionFailure> =>
+  parsed.provenanceMode === 'production' && !parsed.postgres.tls
+    ? fail({ _tag: 'ProductionPostgresRequiresTls', postgresTls: false })
+    : Result.succeed(undefined)
+
+const runtimeBuildMetadata = (
+  parsed: ParsedRuntimeConfig,
+  embedded: EmbeddedBuildMetadata | undefined,
+): Result.Result<RuntimeBuildMetadata, RuntimeConfigResolutionFailure> => {
+  if (embedded === undefined) {
+    return Result.succeed({
+      ...parsed.configuredBuild,
+      verification: 'development-configured',
+    })
+  }
+  const decoded = decodeEmbeddedBuildMetadata(embedded)
+  if (Result.isFailure(decoded)) return fail({ _tag: 'InvalidEmbeddedBuildMetadata', cause: decoded.failure })
+  const verified = decoded.success
+  if (parsed.configuredBuild.sourceRevision !== verified.sourceRevision) {
+    return fail({
+      _tag: 'SourceRevisionMismatch',
+      configuredSourceRevision: parsed.configuredBuild.sourceRevision,
+      embeddedSourceRevision: verified.sourceRevision,
+    })
+  }
+  if (parsed.configuredBuild.imageRepository !== verified.imageRepository) {
+    return fail({
+      _tag: 'ImageRepositoryMismatch',
+      configuredImageRepository: parsed.configuredBuild.imageRepository,
+      embeddedImageRepository: verified.imageRepository,
+    })
+  }
+  if (parsed.configuredBuild.strategyBehaviorHash !== verified.strategyBehaviorHash) {
+    return fail({
+      _tag: 'StrategyBehaviorHashMismatch',
+      configuredStrategyBehaviorHash: parsed.configuredBuild.strategyBehaviorHash,
+      embeddedStrategyBehaviorHash: verified.strategyBehaviorHash,
+    })
+  }
+  if (parsed.configuredBuild.strategyParameterHash !== verified.strategyParameterHash) {
+    return fail({
+      _tag: 'StrategyParameterHashMismatch',
+      configuredStrategyParameterHash: parsed.configuredBuild.strategyParameterHash,
+      embeddedStrategyParameterHash: verified.strategyParameterHash,
+    })
+  }
+  return Result.succeed({
+    ...verified,
+    imageDigest: parsed.configuredBuild.imageDigest,
+    verification: 'embedded',
+  })
+}
+
+const baseConfig = (
+  parsed: ParsedRuntimeConfig,
+  execution: ExecutionPolicy,
+  build: RuntimeBuildMetadata,
+  alpaca: AlpacaRuntimeConfig | undefined,
+) => ({
+  host: parsed.host,
+  port: parsed.port,
+  capitalActivationRequestJson: parsed.capitalActivationRequestJson,
+  researchCapitalBuildLineageJson: parsed.researchCapitalBuildLineageJson,
+  execution,
+  build,
+  healthIntervalMs: parsed.healthIntervalMs,
+  operationTimeoutMs: parsed.operationTimeoutMs,
+  expectedExecutionControllerPlanHash: parsed.expectedExecutionControllerPlanHash,
+  cycleStallThresholdMs: parsed.cycleStallThresholdMs,
+  reconciliationStaleThresholdMs: parsed.reconciliationStaleThresholdMs,
+  unknownMutationThresholdMs: parsed.unknownMutationThresholdMs,
+  cyclePollIntervalMs: parsed.cyclePollIntervalMs,
+  alpaca,
+  clickhouse: parsed.clickhouse,
+  postgres: parsed.postgres,
+  tigerBeetle: parsed.tigerBeetle,
+})
+
+const loadedConfig = (
+  parsed: ParsedRuntimeConfig,
+  execution: ExecutionPolicy,
+  build: RuntimeBuildMetadata,
+  alpaca: AlpacaRuntimeConfig,
+): Result.Result<LoadedRuntimeConfig, RuntimeConfigResolutionFailure> => {
+  const common = baseConfig(parsed, execution, build, alpaca)
+  return Result.succeed({
+    ...common,
+    runtimeMode: 'AutonomousService',
+    execution: execution as LoadedRuntimeConfig['execution'],
+    alpaca,
+  })
+}
+
+export const resolveRuntimeConfig = (
+  input: RuntimeConfigResolutionInput,
+): Result.Result<LoadedRuntimeConfig, RuntimeConfigResolutionFailure> => {
+  const bounds = decodeBounds(input.parsed)
+  if (Result.isFailure(bounds)) return Result.fail(bounds.failure)
+  const parsed = bounds.success
+  const timing = validateCycleTiming(parsed)
+  if (Result.isFailure(timing)) return Result.fail(timing.failure)
+  const alpaca = decodeAlpaca(parsed)
+  if (Result.isFailure(alpaca)) return Result.fail(alpaca.failure)
+  if (alpaca.success === undefined) return Result.fail({ _tag: 'MissingAlpacaCredentials' })
+  const execution = resolvePolicy(parsed, alpaca.success)
+  if (Result.isFailure(execution)) return Result.fail(execution.failure)
+  const reconciliationTiming = validateExecutionReconciliationTiming(parsed, execution.success, alpaca.success)
+  if (Result.isFailure(reconciliationTiming)) return Result.fail(reconciliationTiming.failure)
+  const provenance = validateProvenanceMode(parsed, input.embeddedBuildMetadata)
+  if (Result.isFailure(provenance)) return Result.fail(provenance.failure)
+  const postgresTls = validatePostgresTls(parsed)
+  if (Result.isFailure(postgresTls)) return Result.fail(postgresTls.failure)
+  const build = runtimeBuildMetadata(parsed, input.embeddedBuildMetadata)
+  if (Result.isFailure(build)) return Result.fail(build.failure)
+  return loadedConfig(parsed, execution.success, build.success, alpaca.success)
+}
+
+export const redactedConfigSummary = (config: LoadedRuntimeConfig) => ({
+  ...config,
+  clickhouse: { ...config.clickhouse, password: Redacted.make('[REDACTED]') },
+  postgres: { ...config.postgres, url: Redacted.make('[REDACTED]') },
+  alpaca: { ...config.alpaca, key: Redacted.make('[REDACTED]'), secret: Redacted.make('[REDACTED]') },
+})
+
+export type { BrokerConnection }

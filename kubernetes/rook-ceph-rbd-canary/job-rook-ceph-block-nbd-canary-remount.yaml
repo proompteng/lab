@@ -1,0 +1,49 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: rook-ceph-block-nbd-canary-remount
+  namespace: rook-ceph-benchmarks
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: readback
+          image: debian:bookworm-slim
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              expected="canary-readback-rook-ceph-block-nbd-canary"
+              actual="$(cat /mnt/rbd/readback.txt)"
+              test "${actual}" = "${expected}"
+              date -u +"remountReadbackAt=%Y-%m-%dT%H:%M:%SZ"
+              echo "readback=${actual}"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            runAsUser: 65532
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          volumeMounts:
+            - name: benchmark-volume
+              mountPath: /mnt/rbd
+              readOnly: true
+      volumes:
+        - name: benchmark-volume
+          persistentVolumeClaim:
+            claimName: rook-ceph-block-nbd-canary-bench
+            readOnly: true

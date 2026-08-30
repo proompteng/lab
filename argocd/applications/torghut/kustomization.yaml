@@ -1,0 +1,66 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+configurations:
+- kustomizeconfig.yaml
+resources:
+- codex-auth-externalsecret.yaml
+- postgres-cluster.yaml
+- torghut-db-ca-prune-tombstone.yaml
+- torghut-db-ca-reflector-rbac.yaml
+- torghut-db-ca-prune-guard-job.yaml
+- torghut-db-ca-reflector-job.yaml
+- cnpg-torghut-db-objectbucketclaim.yaml
+- postgres-scheduled-backup.yaml
+- strategy-configmap.yaml
+- autonomous-configmap.yaml
+- autonomy-configmap.yaml
+- autonomy-gate-policy-configmap.yaml
+- db-migrations-job.yaml
+- tigerbeetle-cluster.yaml
+- tigerbeetle-smoke-job.yaml
+- knative-service.yaml
+- scheduler-deployment.yaml
+- scheduler-service.yaml
+- knative-service-sim.yaml
+- tailscale-service.yaml
+- ingressroute-flink-k8s-private.yaml
+- sealed-secrets.yaml
+- rook-ceph-rgw-argo-workflows-sealedsecret.yaml
+- serviceaccount.yaml
+- role.yaml
+- rolebinding.yaml
+- workflow-controller-configmap-rbac.yaml
+- rollouts-analysis-role.yaml
+- rollouts-analysis-rolebinding-codex-workflow.yaml
+- rollouts-analysis-rolebinding-runtime.yaml
+- alloy-rbac.yaml
+- alloy-configmap.yaml
+- alloy-deployment.yaml
+- llm-guardrails-exporter-configmap.yaml
+- llm-guardrails-exporter.yaml
+- whitepapers-objectbucketclaim.yaml
+- whitepapers-bucket-bootstrap-job.yaml
+- generated-resource-retention-rbac.yaml
+- generated-resource-retention-cronjob.yaml
+- broker-economic-ledger-reconciliation-cronjob.yaml
+- order-lineage-reconciliation-cronjob.yaml
+- historical-simulation-workflowtemplate.yaml
+- analysis-template-runtime-ready.yaml
+- analysis-template-activity.yaml
+- analysis-template-teardown-clean.yaml
+- analysis-template-artifact-bundle.yaml
+- clickhouse
+- ws
+- ta
+- market-data-archive
+- ta-sim
+- notebooks
+images:
+- name: registry.ide-newton.ts.net/lab/signal-publisher
+  digest: sha256:4b3c89afe7da2bd6d7157a509845878b4e1e83aaf86891f2189b51b978395c32
+- name: registry.ide-newton.ts.net/lab/torghut
+  digest: sha256:e1bcb2c3adb2c58296ad71537de21a30fea2ac0a887a04479f44c4f26ba1f334
+- name: registry.ide-newton.ts.net/lab/torghut-ta
+  digest: sha256:6a7a7f887eb0a12d47bead5d7a55898c4f21890bff61b22e4e3f772cf0c61c25
+- name: registry.ide-newton.ts.net/lab/torghut-ws
+  digest: sha256:f46a6130e2fa302ed08a486e44249f9080e88630fd4ea3333e1b02f2dfe470d8

@@ -1,0 +1,21 @@
+server:
+  listen_address: ':8080'
+discord:
+  bot_token: 'local-token'
+  application_id: '000000000000000001'
+  public_key: 'local-public-key'
+  guild_id: '000000000000000002'
+redis:
+  url: 'redis://redis:6379/0'
+postgres:
+  dsn: 'postgres://facteur:facteur@postgres:5432/facteur_kb?sslmode=disable'
+codex_implementation_orchestrator:
+  enabled: false
+  agents_base_url: http://agents.agents.svc.cluster.local
+  namespace: agents
+  agent_name: codex-agent
+  runtime_type: job
+role_map:
+  plan: ['role']
+  implement: ['role']
+  review: ['role']

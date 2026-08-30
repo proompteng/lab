@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bilig-zero
+  namespace: bilig
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+    rollingUpdate: null
+  selector:
+    matchLabels:
+      app: bilig-zero
+  template:
+    metadata:
+      labels:
+        app: bilig-zero
+    spec:
+      containers:
+        - name: bilig-zero
+          image: rocicorp/zero:1.1.1
+          ports:
+            - name: http
+              containerPort: 4848
+          readinessProbe:
+            httpGet:
+              path: /keepalive
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /keepalive
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          env:
+            - name: ZERO_PORT
+              value: "4848"
+            - name: ZERO_REPLICA_FILE
+              value: /data/zero.db
+            - name: ZERO_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bilig-zero-admin
+                  key: ZERO_ADMIN_PASSWORD
+            - name: ZERO_APP_ID
+              value: bilig_v2
+            - name: ZERO_APP_PUBLICATIONS
+              value: zero_data_v2
+            - name: ZERO_UPSTREAM_DB
+              valueFrom:
+                secretKeyRef:
+                  name: bilig-db-app
+                  key: uri
+            - name: ZERO_CVR_DB
+              valueFrom:
+                secretKeyRef:
+                  name: bilig-db-app
+                  key: uri
+            - name: ZERO_CHANGE_DB
+              valueFrom:
+                secretKeyRef:
+                  name: bilig-db-app
+                  key: uri
+            - name: ZERO_QUERY_URL
+              value: http://bilig-app/api/zero/v2/query
+            - name: ZERO_MUTATE_URL
+              value: http://bilig-app/api/zero/v2/mutate
+          volumeMounts:
+            - name: replica-data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+      volumes:
+        - name: replica-data
+          persistentVolumeClaim:
+            claimName: bilig-zero-replica

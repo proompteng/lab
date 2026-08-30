@@ -1,0 +1,91 @@
+apiVersion: flink.apache.org/v1beta1
+kind: FlinkDeployment
+metadata:
+  name: market-data-archive
+  namespace: torghut
+  labels:
+    app: market-data-archive
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+spec:
+  # The TA release workflow pins the same immutable image used by the live and simulation TA jobs.
+  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:6a7a7f887eb0a12d47bead5d7a55898c4f21890bff61b22e4e3f772cf0c61c25
+  imagePullPolicy: IfNotPresent
+  # Cut over from the v1 consumer's historical replay to the current-session v2 consumer.
+  # Existing ClickHouse history stays intact; the new group begins at each topic's live head.
+  restartNonce: 11
+  flinkVersion: v2_0
+  serviceAccount: torghut-runtime
+  flinkConfiguration:
+    state.checkpoints.dir: s3a://flink-checkpoints/torghut/market-data-archive/checkpoints
+    state.savepoints.dir: s3a://flink-checkpoints/torghut/market-data-archive/savepoints
+    execution.checkpointing.mode: EXACTLY_ONCE
+    execution.checkpointing.externalized-checkpoint-retention: RETAIN_ON_CANCELLATION
+    execution.checkpointing.unaligned: "true"
+    execution.checkpointing.tolerable-failed-checkpoints: "3"
+    taskmanager.numberOfTaskSlots: "2"
+    restart-strategy.type: exponential-delay
+    metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+    metrics.reporter.prom.port: "9249"
+    fs.s3a.endpoint: http://rook-ceph-rgw-objectstore.rook-ceph.svc:80
+    fs.s3a.connection.ssl.enabled: "false"
+    fs.s3a.path.style.access: "true"
+  podTemplate:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      labels:
+        app: market-data-archive
+    spec:
+      serviceAccountName: torghut-runtime
+      containers:
+        - name: flink-main-container
+          envFrom:
+            - configMapRef:
+                name: market-data-archive-config
+            - configMapRef:
+                name: bayn-universe-v2
+          env:
+            - name: ARCHIVE_KAFKA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-ws
+                  key: password
+            - name: ARCHIVE_CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: signal-publisher-clickhouse-auth
+                  key: password
+            - name: TORGHUT_TA_VERSION
+              value: kargo-sha-bbbaa168c46e6e167a5775d0f516789b13dc689d
+            - name: TORGHUT_TA_COMMIT
+              value: bbbaa168c46e6e167a5775d0f516789b13dc689d
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: flink-checkpoints
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: flink-checkpoints
+                  key: AWS_SECRET_ACCESS_KEY
+          ports:
+            - containerPort: 9249
+              name: metrics
+  jobManager:
+    resource:
+      cpu: 0.5
+      memory: 1024m
+    replicas: 1
+  taskManager:
+    resource:
+      cpu: 1
+      memory: 2048m
+    replicas: 2
+  job:
+    entryClass: ai.proompteng.dorvud.ta.flink.MarketDataArchiveJobKt
+    jarURI: local:///opt/flink/usrlib/app.jar
+    parallelism: 3
+    upgradeMode: stateless
+    state: running

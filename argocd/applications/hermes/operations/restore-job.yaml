@@ -1,0 +1,84 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: hermes-restore-
+  namespace: hermes
+  labels:
+    app.kubernetes.io/name: hermes
+    app.kubernetes.io/component: restore
+spec:
+  activeDeadlineSeconds: 900
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hermes
+        app.kubernetes.io/component: restore
+    spec:
+      serviceAccountName: hermes
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10000
+        runAsGroup: 10000
+        fsGroup: 10000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: restore
+          image: registry.ide-newton.ts.net/lab/hermes-agent@sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a
+          imagePullPolicy: IfNotPresent
+          command:
+            - /opt/hermes/.venv/bin/hermes
+          args:
+            - import
+            - --force
+            - /opt/backups/restore.zip
+          env:
+            - name: HERMES_HOME
+              value: /opt/data
+            - name: HOME
+              value: /opt/data/home
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+              ephemeral-storage: 128Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+              ephemeral-storage: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10000
+            runAsGroup: 10000
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: data
+              mountPath: /opt/data
+            - name: backups
+              mountPath: /opt/backups
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: data-hermes-0
+        - name: backups
+          persistentVolumeClaim:
+            claimName: backups-hermes-0
+        - name: tmp
+          emptyDir:
+            sizeLimit: 1Gi
