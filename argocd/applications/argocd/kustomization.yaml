@@ -6,6 +6,7 @@ resources:
   - https://raw.githubusercontent.com/argoproj/argo-cd/v3.4.6/manifests/ha/install.yaml
   - base/ingressroute.yaml
   - base/ingressroute-private.yaml
+  - base/kargo-dex-cors-middleware.yaml
   - base/secrets.yaml
   - base/argo-workflows-sso-sealedsecret.yaml
   - base/tsag-repo-sealedsecret.yaml

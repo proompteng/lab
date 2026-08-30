@@ -59,6 +59,10 @@ const argoCDConfigMap = YAML.parse(readRepoFile('argocd/applications/argocd/over
   data?: Record<string, string>
 }
 const dexConfig = YAML.parse(argoCDConfigMap.data?.['dex.config'] ?? '') as Record<string, any>
+const argoCDIngressRoute = YAML.parse(readRepoFile('argocd/applications/argocd/base/ingressroute.yaml')) as Manifest
+const kargoDexCORSMiddleware = YAML.parse(
+  readRepoFile('argocd/applications/argocd/base/kargo-dex-cors-middleware.yaml'),
+) as Manifest
 const applicationSetElements = ['argocd/applicationsets/product.yaml', 'argocd/applicationsets/platform.yaml'].flatMap(
   (path) =>
     (YAML.parse(readRepoFile(path)) as any).spec.generators[0].matrix.generators[1].list.elements as Array<
@@ -503,7 +507,25 @@ describe('Kargo direct-push GitOps contract', () => {
       },
     })
 
-    expect(dexConfig.web.allowedOrigins).toContain('https://kargo.ide-newton.ts.net')
+    expect(dexConfig.web.allowedOrigins).toBeUndefined()
+    expect(kargoDexCORSMiddleware).toMatchObject({
+      apiVersion: 'traefik.io/v1alpha1',
+      kind: 'Middleware',
+      metadata: { name: 'kargo-dex-cors', namespace: 'argocd' },
+      spec: {
+        headers: {
+          accessControlAllowHeaders: ['Content-Type'],
+          accessControlAllowMethods: ['GET', 'POST', 'OPTIONS'],
+          accessControlAllowOriginList: ['https://kargo.ide-newton.ts.net'],
+          accessControlMaxAge: 3600,
+          addVaryHeader: true,
+        },
+      },
+    })
+    const dexRoute = (argoCDIngressRoute.spec?.routes as Array<Record<string, any>>).find((route) =>
+      route.match?.includes('PathPrefix(`/api/dex`)'),
+    )
+    expect(dexRoute?.middlewares).toEqual([{ name: 'kargo-dex-cors' }])
     expect(dexConfig.staticClients).toEqual(
       expect.arrayContaining([
         {
