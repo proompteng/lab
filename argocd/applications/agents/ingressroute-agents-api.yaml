@@ -1,0 +1,17 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: agents-api
+  namespace: agents
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`agents.k8s.proompteng.ai`)
+      priority: 10
+      services:
+        - name: agents
+          port: 80
+  tls:
+    secretName: wildcard-k8s-proompteng-ai-tls

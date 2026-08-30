@@ -1,0 +1,43 @@
+service:
+  type: ClusterIP
+deploymentAnnotations:
+  headlamp.proompteng.ai/oidc-sealedsecret-sha: '4f3e015931e2b98851f3f9b8ad28fad04177fba38bfcf5ff7b50605726ccf8fd'
+image:
+  registry: registry.ide-newton.ts.net
+  repository: lab/headlamp@sha256
+  tag: a771dbc4d27935fd3f9fa20cd55c35f6cbb0b363fd475ea5744ef4e34761c0ff
+persistentVolumeClaim:
+  enabled: false
+podSecurityContext:
+  fsGroup: 101
+volumeMounts:
+  - name: headlamp-tmp
+    mountPath: /tmp
+volumes:
+  - name: headlamp-tmp
+    emptyDir: {}
+config:
+  staticPlugins:
+    enabled: true
+  oidc:
+    secret:
+      create: false
+    externalSecret:
+      enabled: true
+      name: headlamp-oidc
+env:
+  - name: OIDC_SCOPES
+    value: 'openid,profile,email,offline_access'
+  - name: OIDC_USE_ACCESS_TOKEN
+    value: 'true'
+ingress:
+  enabled: true
+  ingressClassName: tailscale
+  hosts:
+    - host: headlamp.ide-newton.ts.net
+      paths:
+        - path: /
+          type: Prefix
+  tls:
+    - hosts:
+        - headlamp.ide-newton.ts.net

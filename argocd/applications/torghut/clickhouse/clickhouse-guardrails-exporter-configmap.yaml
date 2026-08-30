@@ -1,0 +1,412 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: torghut-clickhouse-guardrails-exporter
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut-clickhouse-guardrails-exporter
+    app.kubernetes.io/part-of: torghut
+data:
+  exporter.py: |
+    import json
+    import os
+    import threading
+    import time
+    import urllib.parse
+    import urllib.request
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    CLICKHOUSE_URL = os.environ.get("CLICKHOUSE_URL", "http://torghut-clickhouse.torghut.svc.cluster.local:8123")
+    CLICKHOUSE_USER = os.environ.get("CLICKHOUSE_USER", "torghut")
+    CLICKHOUSE_PASSWORD = os.environ.get("CLICKHOUSE_PASSWORD", "")
+    DATABASE = os.environ.get("CLICKHOUSE_DATABASE", "torghut")
+    CLICKHOUSE_CLUSTER = os.environ.get("CLICKHOUSE_CLUSTER", "default")
+    CLICKHOUSE_NAMESPACE = os.environ.get("CLICKHOUSE_NAMESPACE", "torghut")
+    CLICKHOUSE_PORT = int(os.environ.get("CLICKHOUSE_PORT", "8123"))
+    EXPORTER_PORT = int(os.environ.get("EXPORTER_PORT", "9108"))
+    SCRAPE_INTERVAL_SECONDS = int(os.environ.get("SCRAPE_INTERVAL_SECONDS", "30"))
+    FRESHNESS_QUERY_MODE = os.environ.get("CLICKHOUSE_FRESHNESS_QUERY_MODE", "auto").strip().lower()
+
+    DEFAULT_DISK_NAME = os.environ.get("CLICKHOUSE_DISK_NAME", "default")
+    TABLES = os.environ.get("CLICKHOUSE_REPLICATED_TABLES", "ta_signals,ta_microbars").split(",")
+    TABLES = [t.strip() for t in TABLES if t.strip()]
+
+
+    def clickhouse_query_rows(base_url: str, query: str) -> list[dict]:
+        params = urllib.parse.urlencode({"query": query})
+        url = f"{base_url.rstrip('/')}/?{params}"
+        headers = {}
+        if CLICKHOUSE_USER:
+            headers["X-ClickHouse-User"] = CLICKHOUSE_USER
+        if CLICKHOUSE_PASSWORD:
+            headers["X-ClickHouse-Key"] = CLICKHOUSE_PASSWORD
+        req = urllib.request.Request(url, headers=headers, method="GET")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            body = resp.read().decode("utf-8").strip()
+            if not body:
+                return []
+            rows = []
+            for line in body.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                rows.append(json.loads(line))
+            return rows
+
+
+    def clickhouse_str(value: str) -> str:
+        # ClickHouse string literal quoting (single quotes). Double quotes are identifiers.
+        return "'" + value.replace("'", "''") + "'"
+
+
+    def prom_label_value(value: str) -> str:
+        # Minimal escaping for Prometheus label values.
+        return value.replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+
+
+    class State:
+        def __init__(self):
+            self.lock = threading.Lock()
+            # replica -> metrics
+            self.replicas: dict[str, dict] = {}
+            self.last_scrape_success = 0.0
+            self.last_scrape_ts_seconds = 0.0
+            self.last_error = ""
+            self.freshness_low_memory_total: dict[str, float] = {"ta_signals": 0.0, "ta_microbars": 0.0}
+            self.freshness_fallback_total: dict[str, float] = {"ta_signals": 0.0, "ta_microbars": 0.0}
+
+        def snapshot(self) -> dict:
+            with self.lock:
+                return {
+                    "replicas": dict(self.replicas),
+                    "last_scrape_success": self.last_scrape_success,
+                    "last_scrape_ts_seconds": self.last_scrape_ts_seconds,
+                    "freshness_low_memory_total": dict(self.freshness_low_memory_total),
+                    "freshness_fallback_total": dict(self.freshness_fallback_total),
+                }
+
+
+    state = State()
+
+
+    def float_or_nan(value):
+        try:
+            return float(value)
+        except Exception:
+            return float("nan")
+
+
+    def fetch_freshness_ms(replica_url: str, table: str, time_column: str, alias: str) -> tuple[float, float, float]:
+        precise_query = (
+            f"SELECT ifNull(toUnixTimestamp64Milli(max({time_column})), 0) AS {alias} "
+            f"FROM {DATABASE}.{table} "
+            "FORMAT JSONEachRow"
+        )
+        # Low-memory fallback path based on active parts metadata. This avoids scanning full table data.
+        low_memory_query = (
+            "SELECT ifNull(toUnixTimestamp(max(max_time)) * 1000, 0) AS "
+            f"{alias} "
+            "FROM system.parts "
+            "WHERE active "
+            f"AND database = {clickhouse_str(DATABASE)} "
+            f"AND table = {clickhouse_str(table)} "
+            "FORMAT JSONEachRow"
+        )
+
+        mode = FRESHNESS_QUERY_MODE if FRESHNESS_QUERY_MODE in ("auto", "precise", "low_memory") else "auto"
+        if mode == "precise":
+            rows = clickhouse_query_rows(replica_url, precise_query)
+            if not rows:
+                raise RuntimeError(f"{table} freshness query returned no rows")
+            return float_or_nan(rows[0].get(alias, 0.0)), 0.0, 0.0
+
+        if mode == "low_memory":
+            rows = clickhouse_query_rows(replica_url, low_memory_query)
+            if not rows:
+                raise RuntimeError(f"{table} low-memory freshness query returned no rows")
+            return float_or_nan(rows[0].get(alias, 0.0)), 1.0, 0.0
+
+        try:
+            rows = clickhouse_query_rows(replica_url, precise_query)
+            if not rows:
+                raise RuntimeError(f"{table} freshness query returned no rows")
+            return float_or_nan(rows[0].get(alias, 0.0)), 0.0, 0.0
+        except Exception as precise_error:
+            try:
+                rows = clickhouse_query_rows(replica_url, low_memory_query)
+                if not rows:
+                    raise RuntimeError(f"{table} low-memory freshness query returned no rows")
+                return float_or_nan(rows[0].get(alias, 0.0)), 1.0, 1.0
+            except Exception as low_memory_error:
+                raise RuntimeError(
+                    f"{table} freshness query failed (precise={precise_error}; low_memory={low_memory_error})"
+                ) from low_memory_error
+
+
+    def scrape_once():
+        now = time.time()
+        try:
+            discovery_query = (
+                "SELECT host_name AS replica "
+                "FROM system.clusters "
+                f"WHERE cluster = {clickhouse_str(CLICKHOUSE_CLUSTER)} "
+                "GROUP BY replica "
+                "ORDER BY replica "
+                "FORMAT JSONEachRow"
+            )
+            replica_rows = clickhouse_query_rows(CLICKHOUSE_URL, discovery_query)
+            replica_names = [str(row.get("replica") or "") for row in replica_rows]
+            replica_names = [r for r in replica_names if r]
+            if not replica_names:
+                raise RuntimeError("no ClickHouse replicas discovered via system.clusters")
+
+            disk_query = (
+                "SELECT max(free_space) AS free_space, max(total_space) AS total_space "
+                "FROM system.disks "
+                f"WHERE name = {clickhouse_str(DEFAULT_DISK_NAME)} "
+                "FORMAT JSONEachRow"
+            )
+
+            readonly_query = ""
+            if TABLES:
+                readonly_query = (
+                    "SELECT max(is_readonly) AS any_readonly "
+                    "FROM system.replicas "
+                    f"WHERE database = {clickhouse_str(DATABASE)} "
+                    f"AND table IN ({', '.join(clickhouse_str(t) for t in TABLES)}) "
+                    "FORMAT JSONEachRow"
+                )
+
+            replicas: dict[str, dict] = {}
+            scrape_errors: list[str] = []
+            low_memory_increments = {"ta_signals": 0.0, "ta_microbars": 0.0}
+            fallback_increments = {"ta_signals": 0.0, "ta_microbars": 0.0}
+
+            for replica in replica_names:
+                replica_url = f"http://{replica}.{CLICKHOUSE_NAMESPACE}.svc.cluster.local:{CLICKHOUSE_PORT}"
+                try:
+                    disk_rows = clickhouse_query_rows(replica_url, disk_query)
+                    if not disk_rows:
+                        raise RuntimeError("disk query returned no rows")
+                    disk_row = disk_rows[0]
+
+                    readonly_row: dict = {}
+                    if readonly_query:
+                        readonly_rows = clickhouse_query_rows(replica_url, readonly_query)
+                        if not readonly_rows:
+                            raise RuntimeError("readonly query returned no rows")
+                        readonly_row = readonly_rows[0]
+
+                    max_event_ts_ms, signals_low_memory_mode, signals_fallback_mode = fetch_freshness_ms(
+                        replica_url=replica_url,
+                        table="ta_signals",
+                        time_column="event_ts",
+                        alias="max_event_ts_ms",
+                    )
+                    max_window_end_ms, microbars_low_memory_mode, microbars_fallback_mode = fetch_freshness_ms(
+                        replica_url=replica_url,
+                        table="ta_microbars",
+                        time_column="window_end",
+                        alias="max_window_end_ms",
+                    )
+                    low_memory_increments["ta_signals"] += signals_low_memory_mode
+                    low_memory_increments["ta_microbars"] += microbars_low_memory_mode
+                    fallback_increments["ta_signals"] += signals_fallback_mode
+                    fallback_increments["ta_microbars"] += microbars_fallback_mode
+
+                    free_space = float_or_nan(disk_row.get("free_space"))
+                    total_space = float_or_nan(disk_row.get("total_space"))
+                    ratio = float("nan")
+                    if total_space and total_space > 0 and free_space == free_space:
+                        ratio = free_space / total_space
+
+                    replicas[replica] = {
+                        "clickhouse_up": 1.0,
+                        "disk_free_bytes": free_space,
+                        "disk_total_bytes": total_space,
+                        "disk_free_ratio": ratio,
+                        "any_replica_readonly": float_or_nan(readonly_row.get("any_readonly", 0.0)),
+                        "ta_signals_max_event_ts_seconds": max_event_ts_ms / 1000.0,
+                        "ta_microbars_max_window_end_seconds": max_window_end_ms / 1000.0,
+                        "ta_signals_freshness_low_memory_mode": signals_low_memory_mode,
+                        "ta_microbars_freshness_low_memory_mode": microbars_low_memory_mode,
+                    }
+                except Exception as e:
+                    scrape_errors.append(f"{replica}: {e}")
+                    replicas[replica] = {
+                        "clickhouse_up": 0.0,
+                        "disk_free_bytes": float("nan"),
+                        "disk_total_bytes": float("nan"),
+                        "disk_free_ratio": float("nan"),
+                        "any_replica_readonly": float("nan"),
+                        "ta_signals_max_event_ts_seconds": float("nan"),
+                        "ta_microbars_max_window_end_seconds": float("nan"),
+                        "ta_signals_freshness_low_memory_mode": float("nan"),
+                        "ta_microbars_freshness_low_memory_mode": float("nan"),
+                    }
+
+            last_scrape_success = 1.0 if scrape_errors == [] else 0.0
+
+            with state.lock:
+                state.replicas = replicas
+                state.last_scrape_success = last_scrape_success
+                state.last_scrape_ts_seconds = now
+                state.last_error = "; ".join(scrape_errors)
+                state.freshness_low_memory_total["ta_signals"] += low_memory_increments["ta_signals"]
+                state.freshness_low_memory_total["ta_microbars"] += low_memory_increments["ta_microbars"]
+                state.freshness_fallback_total["ta_signals"] += fallback_increments["ta_signals"]
+                state.freshness_fallback_total["ta_microbars"] += fallback_increments["ta_microbars"]
+        except Exception as e:
+            with state.lock:
+                state.replicas = {}
+                state.last_scrape_success = 0.0
+                state.last_scrape_ts_seconds = now
+                state.last_error = str(e)
+
+
+    def scrape_loop():
+        while True:
+            scrape_once()
+            time.sleep(SCRAPE_INTERVAL_SECONDS)
+
+
+    def render_metrics(snapshot: dict) -> str:
+        lines = []
+        lines.append(
+            "# HELP torghut_clickhouse_guardrails_clickhouse_up 1 if ClickHouse is reachable for guardrail queries (per replica)."
+        )
+        lines.append("# TYPE torghut_clickhouse_guardrails_clickhouse_up gauge")
+        for replica, metrics in snapshot["replicas"].items():
+            label = prom_label_value(replica)
+            lines.append(
+                f'torghut_clickhouse_guardrails_clickhouse_up{{replica="{label}"}} {metrics["clickhouse_up"]}'
+            )
+
+        lines.append("# HELP torghut_clickhouse_guardrails_disk_free_bytes Free bytes on the ClickHouse default disk (per replica).")
+        lines.append("# TYPE torghut_clickhouse_guardrails_disk_free_bytes gauge")
+        for replica, metrics in snapshot["replicas"].items():
+            label = prom_label_value(replica)
+            lines.append(
+                f'torghut_clickhouse_guardrails_disk_free_bytes{{replica="{label}"}} {metrics["disk_free_bytes"]}'
+            )
+
+        lines.append("# HELP torghut_clickhouse_guardrails_disk_total_bytes Total bytes on the ClickHouse default disk (per replica).")
+        lines.append("# TYPE torghut_clickhouse_guardrails_disk_total_bytes gauge")
+        for replica, metrics in snapshot["replicas"].items():
+            label = prom_label_value(replica)
+            lines.append(
+                f'torghut_clickhouse_guardrails_disk_total_bytes{{replica="{label}"}} {metrics["disk_total_bytes"]}'
+            )
+
+        lines.append(
+            "# HELP torghut_clickhouse_guardrails_disk_free_ratio Free/total ratio on the ClickHouse default disk (per replica)."
+        )
+        lines.append("# TYPE torghut_clickhouse_guardrails_disk_free_ratio gauge")
+        for replica, metrics in snapshot["replicas"].items():
+            label = prom_label_value(replica)
+            lines.append(
+                f'torghut_clickhouse_guardrails_disk_free_ratio{{replica="{label}"}} {metrics["disk_free_ratio"]}'
+            )
+
+        lines.append(
+            "# HELP torghut_clickhouse_guardrails_any_replica_readonly 1 if any Torghut replicated table is read-only (per replica)."
+        )
+        lines.append("# TYPE torghut_clickhouse_guardrails_any_replica_readonly gauge")
+        for replica, metrics in snapshot["replicas"].items():
+            label = prom_label_value(replica)
+            lines.append(
+                f'torghut_clickhouse_guardrails_any_replica_readonly{{replica="{label}"}} {metrics["any_replica_readonly"]}'
+            )
+
+        lines.append(
+            "# HELP torghut_clickhouse_guardrails_ta_signals_max_event_ts_seconds Max event_ts for ta_signals (per replica, seconds since epoch)."
+        )
+        lines.append("# TYPE torghut_clickhouse_guardrails_ta_signals_max_event_ts_seconds gauge")
+        for replica, metrics in snapshot["replicas"].items():
+            label = prom_label_value(replica)
+            lines.append(
+                f'torghut_clickhouse_guardrails_ta_signals_max_event_ts_seconds{{replica="{label}"}} {metrics["ta_signals_max_event_ts_seconds"]}'
+            )
+
+        lines.append(
+            "# HELP torghut_clickhouse_guardrails_ta_microbars_max_window_end_seconds Max window_end for ta_microbars (per replica, seconds since epoch)."
+        )
+        lines.append("# TYPE torghut_clickhouse_guardrails_ta_microbars_max_window_end_seconds gauge")
+        for replica, metrics in snapshot["replicas"].items():
+            label = prom_label_value(replica)
+            lines.append(
+                f'torghut_clickhouse_guardrails_ta_microbars_max_window_end_seconds{{replica="{label}"}} {metrics["ta_microbars_max_window_end_seconds"]}'
+            )
+
+        lines.append(
+            "# HELP torghut_clickhouse_guardrails_freshness_low_memory_mode 1 if freshness query used low-memory path for this replica/table on last scrape."
+        )
+        lines.append("# TYPE torghut_clickhouse_guardrails_freshness_low_memory_mode gauge")
+        for replica, metrics in snapshot["replicas"].items():
+            label = prom_label_value(replica)
+            lines.append(
+                'torghut_clickhouse_guardrails_freshness_low_memory_mode{replica="%s",table="ta_signals"} %s'
+                % (label, metrics["ta_signals_freshness_low_memory_mode"])
+            )
+            lines.append(
+                'torghut_clickhouse_guardrails_freshness_low_memory_mode{replica="%s",table="ta_microbars"} %s'
+                % (label, metrics["ta_microbars_freshness_low_memory_mode"])
+            )
+
+        lines.append("# HELP torghut_clickhouse_guardrails_freshness_low_memory_total Freshness queries served via low-memory mode.")
+        lines.append("# TYPE torghut_clickhouse_guardrails_freshness_low_memory_total counter")
+        lines.append(
+            f'torghut_clickhouse_guardrails_freshness_low_memory_total{{table="ta_signals"}} {snapshot["freshness_low_memory_total"]["ta_signals"]}'
+        )
+        lines.append(
+            f'torghut_clickhouse_guardrails_freshness_low_memory_total{{table="ta_microbars"}} {snapshot["freshness_low_memory_total"]["ta_microbars"]}'
+        )
+
+        lines.append(
+            "# HELP torghut_clickhouse_guardrails_freshness_fallback_total Freshness queries that fell back from precise to low-memory mode."
+        )
+        lines.append("# TYPE torghut_clickhouse_guardrails_freshness_fallback_total counter")
+        lines.append(
+            f'torghut_clickhouse_guardrails_freshness_fallback_total{{table="ta_signals"}} {snapshot["freshness_fallback_total"]["ta_signals"]}'
+        )
+        lines.append(
+            f'torghut_clickhouse_guardrails_freshness_fallback_total{{table="ta_microbars"}} {snapshot["freshness_fallback_total"]["ta_microbars"]}'
+        )
+
+        lines.append("# HELP torghut_clickhouse_guardrails_last_scrape_success 1 if the last scrape succeeded.")
+        lines.append("# TYPE torghut_clickhouse_guardrails_last_scrape_success gauge")
+        lines.append(f"torghut_clickhouse_guardrails_last_scrape_success {snapshot['last_scrape_success']}")
+
+        lines.append("# HELP torghut_clickhouse_guardrails_last_scrape_ts_seconds Unix timestamp of the last scrape attempt.")
+        lines.append("# TYPE torghut_clickhouse_guardrails_last_scrape_ts_seconds gauge")
+        lines.append(f"torghut_clickhouse_guardrails_last_scrape_ts_seconds {snapshot['last_scrape_ts_seconds']}")
+
+        lines.append("")
+        return "\n".join(lines)
+
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path not in ("/metrics", "/"):
+                self.send_response(404)
+                self.end_headers()
+                return
+
+            snapshot = state.snapshot()
+            body = render_metrics(snapshot).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format, *args):
+            return
+
+
+    if __name__ == "__main__":
+        t = threading.Thread(target=scrape_loop, daemon=True)
+        t.start()
+
+        server = HTTPServer(("0.0.0.0", EXPORTER_PORT), Handler)
+        server.serve_forever()

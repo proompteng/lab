@@ -1,0 +1,13 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: torghut-runtime
+  namespace: torghut
+subjects:
+  - kind: ServiceAccount
+    name: torghut-runtime
+    namespace: torghut
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: torghut-runtime

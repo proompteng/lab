@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: traefik
+
+resources:
+  - k8s-proompteng-ai-certificate.yaml
+helmCharts:
+  - name: traefik
+    repo: https://traefik.github.io/charts
+    version: 41.1.1
+    releaseName: traefik
+    namespace: traefik
+    includeCRDs: true
+    valuesFile: values.yaml
+
+images:
+  - name: docker.io/traefik
+    newName: mirror.gcr.io/library/traefik
+    newTag: v3.7.9

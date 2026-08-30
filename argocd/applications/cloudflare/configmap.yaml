@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudflared-config
+  namespace: cloudflare
+data:
+  config.yaml: |
+    ingress:
+      - hostname: olden.proompteng.ai
+        service: http://olden.olden.svc.cluster.local:80
+      - hostname: proompteng.ai
+        service: https://traefik.traefik.svc.cluster.local:443
+        originRequest:
+          noTLSVerify: true
+      - hostname: "*.proompteng.ai"
+        service: https://traefik.traefik.svc.cluster.local:443
+        originRequest:
+          noTLSVerify: true
+      - service: http_status:404

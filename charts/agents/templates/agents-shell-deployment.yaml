@@ -1,0 +1,238 @@
+{{- if .Values.agentsShell.enabled -}}
+{{- $namespace := .Values.namespaceOverride | default .Release.Namespace -}}
+{{- $image := .Values.agentsShell.image | default dict -}}
+{{- $workspaceBootstrap := .Values.agentsShell.workspace.bootstrap | default dict -}}
+{{- $workspaceVolumeMode := .Values.agentsShell.workspace.volumeMode | default "persistentVolumeClaim" -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agents.agentsShellName" . }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "agents.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agents-shell
+spec:
+  replicas: {{ .Values.agentsShell.replicaCount }}
+  {{- with .Values.agentsShell.deploymentStrategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "agents.agentsShellSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agents.agentsShellSelectorLabels" . | nindent 8 }}
+        {{- with .Values.agentsShell.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.agentsShell.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "agents.agentsShellServiceAccountName" . }}
+      {{- if $image.pullSecrets }}
+      imagePullSecrets:
+        {{- range $image.pullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- with .Values.agentsShell.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.agentsShell.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.agentsShell.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.agentsShell.securityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.agentsShell.terminationGracePeriodSeconds }}
+      {{- if $workspaceBootstrap.enabled }}
+      initContainers:
+        - name: bootstrap-workspace
+          image: "{{ $image.repository }}:{{ $image.tag }}{{- if $image.digest }}@{{ $image.digest }}{{ end }}"
+          imagePullPolicy: {{ $image.pullPolicy }}
+          {{- with .Values.agentsShell.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            - name: GIT_REPOSITORY
+              value: {{ required "agentsShell.workspace.bootstrap.repository is required when bootstrap is enabled" $workspaceBootstrap.repository | quote }}
+            - name: GIT_BRANCH
+              value: {{ default "main" $workspaceBootstrap.branch | quote }}
+            - name: GIT_TARGET_PATH
+              value: {{ required "agentsShell.workspace.bootstrap.targetPath is required when bootstrap is enabled" $workspaceBootstrap.targetPath | quote }}
+            - name: GIT_DEPTH
+              {{- if hasKey $workspaceBootstrap "depth" }}
+              value: {{ $workspaceBootstrap.depth | quote }}
+              {{- else }}
+              value: "1"
+              {{- end }}
+            {{- with $workspaceBootstrap.tokenSecret }}
+            {{- if .name }}
+            - name: GIT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .name }}
+                  key: {{ .key | default "token" }}
+            {{- end }}
+            {{- end }}
+          command:
+            - /bin/bash
+            - -ec
+          args:
+            - |
+              set -euo pipefail
+
+              export HOME=/tmp/git-home
+              mkdir -p "${HOME}" "$(dirname "${GIT_TARGET_PATH}")" /workspace/.agents-shell
+
+              if [[ -n "${GIT_TOKEN:-}" ]]; then
+                umask 077
+                printf 'https://x-access-token:%s@github.com\n' "${GIT_TOKEN}" > /tmp/git-credentials
+                git config --global credential.helper 'store --file=/tmp/git-credentials'
+              fi
+
+              fetch_args=()
+              clone_args=()
+              if [[ "${GIT_DEPTH}" != "0" ]]; then
+                fetch_args=(--depth="${GIT_DEPTH}")
+                clone_args=(--depth="${GIT_DEPTH}")
+              fi
+
+              clone_checkout() {
+                rm -rf "${GIT_TARGET_PATH}"
+                git clone "${clone_args[@]}" --branch="${GIT_BRANCH}" "${GIT_REPOSITORY}" "${GIT_TARGET_PATH}"
+              }
+
+              preserve_checkout() {
+                local reason="$1"
+                local backup_root="/workspace/.agents-shell/checkouts"
+                local backup_path="${backup_root}/$(basename "${GIT_TARGET_PATH}")-$(date -u +%Y%m%dT%H%M%SZ)"
+
+                mkdir -p "${backup_root}"
+                if [[ -e "${backup_path}" ]]; then
+                  backup_path="${backup_path}-${RANDOM}"
+                fi
+
+                echo "preserving existing workspace checkout at ${backup_path}: ${reason}" >&2
+                mv "${GIT_TARGET_PATH}" "${backup_path}"
+              }
+
+              if [[ -d "${GIT_TARGET_PATH}/.git" ]]; then
+                git -C "${GIT_TARGET_PATH}" remote set-url origin "${GIT_REPOSITORY}"
+                if [[ "${GIT_DEPTH}" == "0" ]] && [[ "$(git -C "${GIT_TARGET_PATH}" rev-parse --is-shallow-repository 2>/dev/null)" == "true" ]]; then
+                  git -C "${GIT_TARGET_PATH}" fetch --unshallow origin "${GIT_BRANCH}" || git -C "${GIT_TARGET_PATH}" fetch origin "${GIT_BRANCH}"
+                else
+                  git -C "${GIT_TARGET_PATH}" fetch "${fetch_args[@]}" origin "${GIT_BRANCH}"
+                fi
+                if timeout 60s git -C "${GIT_TARGET_PATH}" diff --quiet && timeout 60s git -C "${GIT_TARGET_PATH}" diff --cached --quiet; then
+                  git -C "${GIT_TARGET_PATH}" checkout -B "${GIT_BRANCH}" FETCH_HEAD
+                  git -C "${GIT_TARGET_PATH}" reset --hard FETCH_HEAD
+                else
+                  preserve_checkout "local changes or git dirty-check timeout"
+                  clone_checkout
+                fi
+              elif [[ -e "${GIT_TARGET_PATH}" && -n "$(find "${GIT_TARGET_PATH}" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+                preserve_checkout "target exists and is not an empty git checkout"
+                clone_checkout
+              else
+                clone_checkout
+              fi
+
+              git -C "${GIT_TARGET_PATH}" remote set-url origin "${GIT_REPOSITORY}"
+              git -C "${GIT_TARGET_PATH}" config user.name "Greg Konush"
+              git -C "${GIT_TARGET_PATH}" config user.email "greg@proompteng.ai"
+              rm -f /tmp/git-credentials
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+      {{- end }}
+      containers:
+        - name: agents-shell
+          image: "{{ $image.repository }}:{{ $image.tag }}{{- if $image.digest }}@{{ $image.digest }}{{ end }}"
+          imagePullPolicy: {{ $image.pullPolicy }}
+          {{- with .Values.agentsShell.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            - name: AGENTS_POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            {{- range $name, $value := .Values.agentsShell.env.vars }}
+            - name: {{ $name }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- range .Values.agentsShell.env.secrets }}
+            - name: {{ .name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .secretName }}
+                  key: {{ .key | default "value" }}
+            {{- end }}
+            {{- range .Values.agentsShell.env.config }}
+            - name: {{ .name }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .configMapName }}
+                  key: {{ .key | default .name }}
+            {{- end }}
+            {{- range .Values.agentsShell.env.extra }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          {{- if .Values.agentsShell.livenessProbe.enabled }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.agentsShell.livenessProbe.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.agentsShell.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.agentsShell.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.agentsShell.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.agentsShell.livenessProbe.failureThreshold }}
+          {{- end }}
+          {{- if .Values.agentsShell.readinessProbe.enabled }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.agentsShell.readinessProbe.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.agentsShell.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.agentsShell.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.agentsShell.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.agentsShell.readinessProbe.failureThreshold }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.agentsShell.resources | nindent 12 }}
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+      volumes:
+        - name: workspace
+          {{- if eq $workspaceVolumeMode "emptyDir" }}
+          emptyDir: {}
+          {{- else if eq $workspaceVolumeMode "persistentVolumeClaim" }}
+          {{- if not .Values.agentsShell.workspace.enabled }}
+          {{- fail "agentsShell.workspace.enabled must be true when agentsShell.workspace.volumeMode is persistentVolumeClaim" }}
+          {{- end }}
+          persistentVolumeClaim:
+            claimName: {{ include "agents.agentsShellWorkspaceClaimName" . }}
+          {{- else }}
+          {{- fail "agentsShell.workspace.volumeMode must be either persistentVolumeClaim or emptyDir" }}
+          {{- end }}
+{{- end }}
