@@ -208,7 +208,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
                 automation: auto
-                enabled: "true"
+                enabled: "false"
               - name: oirat
                 path: argocd/applications/oirat
                 namespace: oirat
@@ -397,7 +397,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "7"
                 automation: auto
-                enabled: "true"
+                enabled: "false"
               - name: torghut-hyperliquid-feed
                 path: argocd/applications/torghut-hyperliquid-feed
                 namespace: torghut
@@ -405,7 +405,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "7"
                 automation: auto
-                enabled: "true"
+                enabled: "false"
               - name: torghut-hyperliquid-runtime
                 path: argocd/applications/torghut-hyperliquid-runtime
                 namespace: torghut
@@ -413,7 +413,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "8"
                 automation: auto
-                enabled: "true"
+                enabled: "false"
               - name: bilig
                 path: argocd/applications/bilig
                 namespace: bilig

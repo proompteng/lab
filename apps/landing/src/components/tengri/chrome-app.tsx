@@ -25,6 +25,7 @@ import {
   parseChromeAddress,
   parsePreviewBridgeMessage,
   safePreviewLaunchUrl,
+  safePreviewSessionOrigin,
   type ChromePage,
   type ChromePreviewNavigationMode,
   type ChromePreviewShortcut,
@@ -32,6 +33,16 @@ import {
 import { runTengriAction } from './client'
 
 type PreviewPage = Extract<ChromePage, { kind: 'preview' }>
+type EmbeddedPreviewSession = {
+  id: string
+  launchUrl: string
+  previewOrigin: string
+}
+type ExternalPreviewLifecycle = {
+  agentId: string
+  disposed: boolean
+  sessions: Map<string, { popup: Window; sessionId: string }>
+}
 
 function chromeTabKeyTarget(key: string, currentIndex: number, tabCount: number) {
   if (tabCount < 1) return null
@@ -51,10 +62,12 @@ function focusChromeTab(tabId: string) {
 export function ChromeApp({
   active: applicationActive = true,
   agentId,
+  onOpenExternalPreview,
   previewGatewayOrigin,
 }: {
   active?: boolean
   agentId: string
+  onOpenExternalPreview: (page: PreviewPage) => Promise<void>
   previewGatewayOrigin: string
 }) {
   const [state, dispatch] = useReducer(chromeReducer, undefined, initialChromeState)
@@ -63,6 +76,14 @@ export function ChromeApp({
   const [address, setAddress] = useState(activePage.displayUrl)
   const [navigationError, setNavigationError] = useState('')
   const addressRef = useRef<HTMLInputElement | null>(null)
+  const mountedRef = useRef(false)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
 
   useEffect(() => {
     setAddress(activePage.displayUrl)
@@ -87,22 +108,10 @@ export function ChromeApp({
   async function openExternally() {
     if (activePage.kind !== 'preview') return
     setNavigationError('')
-    const popup = window.open('about:blank', '_blank')
-    if (!popup) {
-      setNavigationError('Allow pop-ups to open this preview in a browser tab.')
-      return
-    }
-    popup.opener = null
-    let issuedSessionId = ''
     try {
-      const session = await issuePreview(agentId, activePage)
-      issuedSessionId = session.id
-      const launchUrl = safePreviewLaunchUrl(session.launchUrl, previewGatewayOrigin)
-      if (!launchUrl) throw new Error('Tengri returned an invalid preview URL')
-      popup.location.replace(launchUrl)
+      await onOpenExternalPreview(activePage)
     } catch (cause) {
-      if (issuedSessionId) void revokePreview(agentId, issuedSessionId)
-      popup.close()
+      if (!mountedRef.current) return
       setNavigationError(cause instanceof Error ? cause.message : 'The microVM preview could not be opened')
     }
   }
@@ -311,6 +320,62 @@ export function ChromeApp({
   )
 }
 
+export function useExternalPreviewLifecycle(agentId: string, previewGatewayOrigin: string) {
+  const lifecycleRef = useRef<ExternalPreviewLifecycle | null>(null)
+  if (lifecycleRef.current?.agentId !== agentId) {
+    lifecycleRef.current = { agentId, disposed: false, sessions: new Map() }
+  }
+  const lifecycle = lifecycleRef.current
+
+  useEffect(() => {
+    lifecycle.disposed = false
+    const interval = window.setInterval(() => {
+      for (const [sessionId, session] of lifecycle.sessions) {
+        if (!session.popup.closed) continue
+        lifecycle.sessions.delete(sessionId)
+        void revokePreview(agentId, session.sessionId)
+      }
+    }, 250)
+    return () => {
+      lifecycle.disposed = true
+      window.clearInterval(interval)
+      for (const session of lifecycle.sessions.values()) {
+        void revokePreview(agentId, session.sessionId, true)
+      }
+      lifecycle.sessions.clear()
+    }
+  }, [agentId, lifecycle])
+
+  return useCallback(
+    async (page: PreviewPage) => {
+      if (lifecycle.disposed) throw new Error('The Tengri desktop is no longer available')
+      const popup = window.open('about:blank', '_blank')
+      if (!popup) throw new Error('Allow pop-ups to open this preview in a browser tab.')
+      popup.opener = null
+      let issuedSessionId = ''
+      try {
+        const session = await issuePreview(agentId, page)
+        issuedSessionId = session.id
+        if (lifecycle.disposed || popup.closed) {
+          await revokePreview(agentId, session.id, lifecycle.disposed)
+          popup.close()
+          return
+        }
+        const launchUrl = safePreviewLaunchUrl(session.launchUrl, previewGatewayOrigin)
+        if (!launchUrl) throw new Error('Tengri returned an invalid preview URL')
+        popup.location.replace(launchUrl)
+        // expiresAt is the one-use bootstrap ticket deadline, not the lifetime of the active preview.
+        lifecycle.sessions.set(session.id, { popup, sessionId: session.id })
+      } catch (cause) {
+        if (issuedSessionId) await revokePreview(agentId, issuedSessionId, lifecycle.disposed)
+        popup.close()
+        throw cause
+      }
+    },
+    [agentId, lifecycle, previewGatewayOrigin],
+  )
+}
+
 function PreviewFrame({
   active,
   agentId,
@@ -329,7 +394,7 @@ function PreviewFrame({
   previewGatewayOrigin: string
 }) {
   const [attempt, setAttempt] = useState(0)
-  const [session, setSession] = useState<{ id: string; launchUrl: string } | null>(null)
+  const [session, setSession] = useState<EmbeddedPreviewSession | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState('')
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
@@ -340,10 +405,11 @@ function PreviewFrame({
     if (!active) return
     let disposed = false
     let issuedSessionId = ''
+    const requestedPage = pageRef.current
     setSession(null)
     setLoaded(false)
     setError('')
-    void issuePreview(agentId, pageRef.current)
+    void issuePreview(agentId, requestedPage)
       .then((issued) => {
         issuedSessionId = issued.id
         if (disposed) {
@@ -352,7 +418,13 @@ function PreviewFrame({
         }
         const safeUrl = safePreviewLaunchUrl(issued.launchUrl, previewGatewayOrigin)
         if (!safeUrl) throw new Error('Tengri returned an invalid preview URL')
-        setSession({ id: issued.id, launchUrl: safeUrl })
+        const previewOrigin = safePreviewSessionOrigin(issued.previewOrigin, issued.id)
+        if (!previewOrigin) throw new Error('Tengri returned an invalid preview origin')
+        setSession({
+          id: issued.id,
+          launchUrl: safeUrl,
+          previewOrigin,
+        })
       })
       .catch((cause: unknown) => {
         if (!disposed) {
@@ -369,8 +441,7 @@ function PreviewFrame({
     if (!session) return
     const handleMessage = (event: MessageEvent<unknown>) => {
       if (event.source !== iframeRef.current?.contentWindow) return
-      const expectedOrigin = new URL(session.launchUrl).origin
-      const message = parsePreviewBridgeMessage(event.data, event.origin, expectedOrigin, session.id, page.port)
+      const message = parsePreviewBridgeMessage(event.data, event.origin, session.previewOrigin, session.id, page.port)
       if (!message) return
       if (message.kind === 'shortcut') onShortcut(message.key)
       else onNavigate(message.page, message.mode)
@@ -460,11 +531,14 @@ function issuePreview(agentId: string, page: PreviewPage, signal?: AbortSignal) 
       agentId,
       port: page.port,
       path: page.path,
+      fragment: page.fragment,
     },
     signal,
   )
 }
 
-function revokePreview(agentId: string, sessionId: string) {
-  return runTengriAction<null>({ action: 'revoke-preview-session', agentId, sessionId }).catch(() => null)
+function revokePreview(agentId: string, sessionId: string, keepalive = false) {
+  return runTengriAction<null>({ action: 'revoke-preview-session', agentId, sessionId }, { keepalive }).catch(
+    () => null,
+  )
 }

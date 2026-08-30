@@ -64,9 +64,11 @@ The accepted r4 release produced these immutable inputs:
    verified digests into one generated promotion PR.
 6. GitOps canary images must use the immutable Nanoagent digest from that release contract, never a mutable tag.
 
-`.github/workflows/kata-firecracker-extension.yaml` is now validation-only and cannot publish. The accepted r4
-receipts remain authoritative for installed nodes. Future extension publication must use
-`registry.ide-newton.ts.net` and requires a separately reviewed node-image rollout before it can replace r4.
+`.github/workflows/kata-firecracker-extension.yaml` publishes signed r5 extension and installer candidates to
+`registry.ide-newton.ts.net`; their immutable publication receipt is recorded in
+`devices/galactic/extensions/kata/RELEASE-v4.1.0-talos-v1.13.9.md`. Publication is not rollout authority. The accepted
+r4 receipts remain authoritative for installed nodes until a separately reviewed, one-node-at-a-time r5 rollout has
+both installed and proved the candidate on each target.
 
 Before touching a node, retain the workflow URLs, image digests, Cosign verification output, and generated installer
 digests in the rollout evidence directory.
@@ -156,6 +158,12 @@ export ALTRA_INSTALLER='ghcr.io/proompteng/talos-kata-runtimes@sha256:08a58afa7c
 For Ryzen or Turin, after the target is fully drained and any etcd leadership has moved away:
 
 ```bash
+case "$TALOS_NODE" in
+  100.100.244.141) export INSTALLER_IMAGE="$RYZEN_INSTALLER" ;;
+  100.100.244.190) export INSTALLER_IMAGE="$TURIN_INSTALLER" ;;
+  *) echo "no accepted Ryzen/Turin installer for $TALOS_NODE" >&2; exit 2 ;;
+esac
+
 talosctl --nodes "$TALOS_NODE" --endpoints "$TALOS_NODE" upgrade \
   --image "$INSTALLER_IMAGE" \
   --drain=false \
@@ -415,8 +423,13 @@ Before activating Firecracker, verify the effective Talos CRI configuration on t
 ```bash
 ! talosctl --nodes "$TALOS_NODE" --endpoints "$TALOS_NODE" read /etc/cri/containerd.toml \
   | rg -F 'io.containerd.snapshotter.v1.blockfile'
-talosctl --nodes "$TALOS_NODE" --endpoints "$TALOS_NODE" read /etc/cri/conf.d/20-customization.part \
-  | rg 'discard_unpacked_layers = false|use_local_image_pull = true|runtime_platforms.kata-fc|snapshotter = "blockfile"'
+CRI_CUSTOMIZATION="$(
+  talosctl --nodes "$TALOS_NODE" --endpoints "$TALOS_NODE" read /etc/cri/conf.d/20-customization.part
+)"
+printf '%s\n' "$CRI_CUSTOMIZATION" \
+  | rg -U -F $'[plugins."io.containerd.cri.v1.images"]\n  discard_unpacked_layers = false\n  use_local_image_pull = true'
+printf '%s\n' "$CRI_CUSTOMIZATION" \
+  | rg -U -F $'[plugins."io.containerd.cri.v1.images".runtime_platforms.kata-fc]\n  snapshotter = "blockfile"'
 talosctl --nodes "$TALOS_NODE" --endpoints "$TALOS_NODE" get kubeletconfig -o yaml \
   | rg 'RuntimeClassInImageCriApi: true'
 talosctl --nodes "$TALOS_NODE" --endpoints "$TALOS_NODE" logs cri --tail 1000 \

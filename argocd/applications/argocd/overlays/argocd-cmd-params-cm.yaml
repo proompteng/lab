@@ -6,6 +6,7 @@ data:
   controller.status.processors: "20"
   controller.operation.processors: "10"
   controller.repo.server.timeout.seconds: "60"
+  controller.resource.health.persist: "true"
   controller.k8s.client.qps: "100"
   controller.k8s.client.burst: "200"
   reposerver.parallelism.limit: "16"
