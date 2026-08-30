@@ -892,12 +892,13 @@ spec:
   freightCreationCriteria:
     expression: >-
       imageFrom('registry.ide-newton.ts.net/lab/tengri').Tag == 'kargo-sha-' +
-      commitFrom('git@github.com:proompteng/lab.git').ID &&
+      commitFrom('https://github.com/proompteng/lab.git').ID &&
       imageFrom('registry.ide-newton.ts.net/lab/nanoagent').Tag == 'kargo-sha-' +
-      commitFrom('git@github.com:proompteng/lab.git').ID
+      commitFrom('https://github.com/proompteng/lab.git').ID
   subscriptions:
     - git:
-        repoURL: git@github.com:proompteng/lab.git
+        # Public HTTPS discovery gets Kargo's HTTP stall detection; the Stage keeps SSH only for pushes.
+        repoURL: https://github.com/proompteng/lab.git
         branch: main
         commitSelectionStrategy: NewestFromBranch
         discoveryLimit: 20
