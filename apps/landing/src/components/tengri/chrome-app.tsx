@@ -25,6 +25,7 @@ import {
   parseChromeAddress,
   parsePreviewBridgeMessage,
   safePreviewLaunchUrl,
+  safePreviewSessionOrigin,
   type ChromePage,
   type ChromePreviewNavigationMode,
   type ChromePreviewShortcut,
@@ -63,6 +64,27 @@ export function ChromeApp({
   const [address, setAddress] = useState(activePage.displayUrl)
   const [navigationError, setNavigationError] = useState('')
   const addressRef = useRef<HTMLInputElement | null>(null)
+  const externalPreviewSessionsRef = useRef(new Map<string, { expiresAt: number; popup: Window; sessionId: string }>())
+
+  useEffect(() => {
+    const sessions = externalPreviewSessionsRef.current
+    const interval = window.setInterval(() => {
+      const now = Date.now()
+      for (const [sessionId, session] of sessions) {
+        if (session.popup.closed) {
+          sessions.delete(sessionId)
+          void revokePreview(agentId, session.sessionId)
+        } else if (session.expiresAt <= now) {
+          sessions.delete(sessionId)
+        }
+      }
+    }, 250)
+    return () => {
+      window.clearInterval(interval)
+      for (const session of sessions.values()) void revokePreview(agentId, session.sessionId)
+      sessions.clear()
+    }
+  }, [agentId])
 
   useEffect(() => {
     setAddress(activePage.displayUrl)
@@ -99,7 +121,10 @@ export function ChromeApp({
       issuedSessionId = session.id
       const launchUrl = safePreviewLaunchUrl(session.launchUrl, previewGatewayOrigin)
       if (!launchUrl) throw new Error('Tengri returned an invalid preview URL')
+      const expiresAt = Date.parse(session.expiresAt)
+      if (!Number.isFinite(expiresAt)) throw new Error('Tengri returned an invalid preview expiry')
       popup.location.replace(launchUrl)
+      externalPreviewSessionsRef.current.set(session.id, { expiresAt, popup, sessionId: session.id })
     } catch (cause) {
       if (issuedSessionId) void revokePreview(agentId, issuedSessionId)
       popup.close()
@@ -329,7 +354,7 @@ function PreviewFrame({
   previewGatewayOrigin: string
 }) {
   const [attempt, setAttempt] = useState(0)
-  const [session, setSession] = useState<{ id: string; launchUrl: string } | null>(null)
+  const [session, setSession] = useState<{ id: string; launchUrl: string; previewOrigin: string } | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState('')
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
@@ -352,7 +377,9 @@ function PreviewFrame({
         }
         const safeUrl = safePreviewLaunchUrl(issued.launchUrl, previewGatewayOrigin)
         if (!safeUrl) throw new Error('Tengri returned an invalid preview URL')
-        setSession({ id: issued.id, launchUrl: safeUrl })
+        const previewOrigin = safePreviewSessionOrigin(issued.previewOrigin, issued.id)
+        if (!previewOrigin) throw new Error('Tengri returned an invalid preview origin')
+        setSession({ id: issued.id, launchUrl: safeUrl, previewOrigin })
       })
       .catch((cause: unknown) => {
         if (!disposed) {
@@ -369,8 +396,7 @@ function PreviewFrame({
     if (!session) return
     const handleMessage = (event: MessageEvent<unknown>) => {
       if (event.source !== iframeRef.current?.contentWindow) return
-      const expectedOrigin = new URL(session.launchUrl).origin
-      const message = parsePreviewBridgeMessage(event.data, event.origin, expectedOrigin, session.id, page.port)
+      const message = parsePreviewBridgeMessage(event.data, event.origin, session.previewOrigin, session.id, page.port)
       if (!message) return
       if (message.kind === 'shortcut') onShortcut(message.key)
       else onNavigate(message.page, message.mode)
