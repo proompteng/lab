@@ -10,8 +10,8 @@ V2 contract:
 - Execution network is `testnet`.
 - Runtime env names use `HYPERLIQUID_EXECUTION_*`; old `HYPERLIQUID_RUNTIME_*` names are rejected by config validation.
 - ConfigMap-only emergency env changes may bump Deployment pod-template annotation `proompteng.ai/config-revision` so
-  Argo creates a new ReplicaSet and the process reads the new env. Code-coupled gates must instead wait for the
-  Torghut release PR to promote a new digest and matching `TORGHUT_COMMIT`.
+  Argo creates a new ReplicaSet and the process reads the new env. Code-coupled gates wait for the Torghut Kargo Freight
+  and Stage promotion to write `kargo/torghut` with a new digest and matching `TORGHUT_COMMIT`.
 - The configured execution universe is
   `BTC,ETH,HYPE,SOL,xyz:SKHX,xyz:MU,xyz:XYZ100,xyz:CL,xyz:SNDK,xyz:MSTR,xyz:SILVER,xyz:GOLD`. Selection uses direct
   Hyperliquid mainnet `metaAndAssetCtxs` 24h notional volume (`dayNtlVlm`) and keeps only markets enabled in
@@ -57,7 +57,10 @@ scripts/torghut/bootstrap-hyperliquid-testnet-1password.sh reconcile
 
 Acceptance checks:
 
+- `kubectl -n lab-delivery get warehouse,freight,stage`
+- `kubectl -n lab-delivery get stage/torghut -o yaml`
 - `kubectl -n argocd get application torghut-hyperliquid-runtime`
+- `kubectl -n argocd get application torghut-hyperliquid-runtime -o jsonpath='{.spec.source.targetRevision}{"\n"}{.status.sync.revision}{"\n"}'`
 - `kubectl -n torghut rollout status deploy/torghut-hyperliquid-runtime --timeout=180s`
 - `kubectl -n torghut exec deploy/torghut-hyperliquid-runtime -- curl -fsS localhost:8182/readyz`
 - `kubectl -n torghut exec deploy/torghut-hyperliquid-runtime -- curl -fsS localhost:8182/trading/loop/status`

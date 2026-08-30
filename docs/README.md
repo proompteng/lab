@@ -12,6 +12,7 @@ Start here when deciding which documentation to trust.
 ## Current Operational Maps
 
 - Atlas code search: `atlas/README.md`
+- Deployment automation: `release-automation.md` (Kargo is the image-promotion authority)
 - Agents/Jangar: `agents/README.md`
 - Agents/Jangar source-read state: `agents/current-source-state.md`
 - Torghut: `torghut/README.md`

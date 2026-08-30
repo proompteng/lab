@@ -66,6 +66,10 @@ jobs:
           TARGET_TAG: ${{ inputs.target_tag }}
         run: |
           set -euo pipefail
+          if [[ "${TARGET_TAG}" == kargo-sha-* ]]; then
+            echo "Manual OCI mirrors cannot publish reserved kargo-sha tags." >&2
+            exit 2
+          fi
           bash .github/scripts/validate-oci-mirror-inputs.sh
           {
             echo "source=${SOURCE_REGISTRY}/${SOURCE_REPOSITORY}@${SOURCE_DIGEST}"

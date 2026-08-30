@@ -117,6 +117,7 @@ const appToDeployScriptPath = new Map<string, string>([
 ])
 
 const appToWorkflowPaths = new Map<string, string[]>([
+  ['tengri', ['.github/workflows/tengri-images.yml', 'argocd/applications/kargo']],
   ['symphony-jangar', ['.github/workflows/symphony-build-push.yaml']],
   ['symphony-torghut', ['.github/workflows/symphony-build-push.yaml']],
   ['torghut-hyperliquid-feed', ['.github/workflows/torghut-hyperliquid-feed-build-push.yaml']],
@@ -132,8 +133,8 @@ const appToWorkflowPaths = new Map<string, string[]>([
 ])
 
 const manifestOnlyRepoImageApps = new Map<string, string>([
-  ['analysis', 'repo image is tracked by image updater, but no local source build/deploy path exists in this repo'],
-  ['bilig', 'repo image is produced outside this checkout; this app is GitOps/image-updater managed here'],
+  ['analysis', 'repo image is tracked by Kargo, but no local source build/deploy path exists in this repo'],
+  ['bilig', 'repo image is produced outside this checkout; this app is GitOps/Kargo managed here'],
   [
     'buzz',
     'relay source lives in the upstream block/buzz repository; lab builds a bounded Ceph RGW compatibility derivative and pins its image digest',
@@ -148,20 +149,20 @@ const manifestOnlyRepoImageApps = new Map<string, string>([
   ],
 ])
 
-type ReleaseWorkflowImageContract = {
+type KargoImageContract = {
   reason: string
   repositories: string[]
   workflowPaths: string[]
 }
 
-const releaseWorkflowImageApps = new Map<string, ReleaseWorkflowImageContract>([
+const kargoImageApps = new Map<string, KargoImageContract>([
   [
     'tengri',
     {
       reason:
-        'Tengri and Nanoagent are built, signed, and promoted together by the dedicated multi-architecture Tengri release workflow',
+        'Tengri and Nanoagent are built and signed together, then promoted automatically by Kargo after the image workflow succeeds',
       repositories: ['registry.ide-newton.ts.net/lab/nanoagent', 'registry.ide-newton.ts.net/lab/tengri'],
-      workflowPaths: ['.github/workflows/tengri-images.yml', '.github/workflows/tengri-release.yml'],
+      workflowPaths: ['.github/workflows/tengri-images.yml', 'argocd/applications/kargo'],
     },
   ],
 ])
@@ -351,10 +352,7 @@ const normalizeRepoImages = (images: Iterable<string>): string[] => {
   )
 }
 
-const hasCompleteWorkflowImageOwnership = (
-  entry: EnabledAppInventoryEntry,
-  contract: ReleaseWorkflowImageContract,
-): boolean => {
+const hasCompleteKargoImageOwnership = (entry: EnabledAppInventoryEntry, contract: KargoImageContract): boolean => {
   const workflowPaths = new Set(entry.workflowPaths)
   return (
     contract.repositories.every((repository) => {
@@ -425,9 +423,9 @@ export const classifyEnabledApp = (entry: EnabledAppInventoryEntry): EnabledAppI
     return { ...entry, class: 'vendor-manifest', deferredReason: manifestOnlyReason }
   }
 
-  const releaseWorkflowContract = releaseWorkflowImageApps.get(entry.name)
-  if (releaseWorkflowContract && hasCompleteWorkflowImageOwnership(entry, releaseWorkflowContract)) {
-    return { ...entry, class: 'workflow-image', deferredReason: releaseWorkflowContract.reason }
+  const kargoContract = kargoImageApps.get(entry.name)
+  if (kargoContract && hasCompleteKargoImageOwnership(entry, kargoContract)) {
+    return { ...entry, class: 'workflow-image', deferredReason: kargoContract.reason }
   }
 
   if (entry.repoImages.length > 0) {
@@ -499,12 +497,12 @@ export const assertEnabledAppBuildPolicy = (inventory: EnabledAppInventory): voi
 
   const invalidWorkflowImages = inventory.entries.filter((entry) => {
     if (entry.class !== 'workflow-image') return false
-    const contract = releaseWorkflowImageApps.get(entry.name)
-    return !contract || !hasCompleteWorkflowImageOwnership(entry, contract) || entry.nixImageAttr !== undefined
+    const contract = kargoImageApps.get(entry.name)
+    return !contract || !hasCompleteKargoImageOwnership(entry, contract) || entry.nixImageAttr !== undefined
   })
   if (invalidWorkflowImages.length > 0) {
     throw new Error(
-      `Workflow image app(s) have incomplete release ownership: ${invalidWorkflowImages.map((entry) => entry.name).join(', ')}`,
+      `Workflow image app(s) have incomplete Kargo ownership: ${invalidWorkflowImages.map((entry) => entry.name).join(', ')}`,
     )
   }
 }

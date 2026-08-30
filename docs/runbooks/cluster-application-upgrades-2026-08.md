@@ -1,5 +1,9 @@
 # Cluster application upgrades — August 2026
 
+> Historical campaign record: resource identities and Image Updater references below describe the August baseline.
+> Current image delivery is the Kargo process in [`docs/release-automation.md`](../release-automation.md); do not use
+> this record as release automation guidance.
+
 This runbook controls the staged upgrade campaign for enabled applications in the `galactic-lan` cluster. Changes
 must merge to `main` and reconcile through Argo CD; do not apply rendered manifests directly.
 

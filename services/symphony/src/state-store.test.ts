@@ -169,6 +169,7 @@ describe('durable state store', () => {
               mergedAt: null,
               mergedCommitSha: null,
             },
+            kargo: null,
             argo: null,
             postDeploy: null,
             rollbackPr: null,

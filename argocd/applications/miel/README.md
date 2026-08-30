@@ -41,4 +41,6 @@ Override these values as needed for other environments, then restart the deploym
 
 ## Image Updates
 
-Use `scripts/build-miel.sh <tag>` to build and push a new container image. Update the `image` field in `deployment.yaml` (or manage via Argo CD Image Updater) to roll out the new version.
+Miel is disabled in the product ApplicationSet and is not enrolled in Kargo. Do not update its deployment image or use
+legacy image write-back automation. Re-enabling Miel requires a repo-owned immutable image build plus a Kargo
+Warehouse and Stage; after that cutover, merging application code to `main` is the only image-release trigger.

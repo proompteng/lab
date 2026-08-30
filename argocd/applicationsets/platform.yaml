@@ -16,6 +16,20 @@ spec:
                   destinationServer: https://kubernetes.default.svc
           - list:
               elements: &platform_elements
+              - name: kargo-delivery
+                path: argocd/applications/kargo
+                namespace: lab-delivery
+                renderWithLovely: false
+                annotations:
+                  argocd.argoproj.io/sync-wave: "0"
+                managedNamespaceMetadata:
+                  labels:
+                    kargo.akuity.io/project: "true"
+                    pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
+                automation: auto
+                enabled: "true"
               - name: cloudnative-pg
                 path: argocd/applications/cloudnative-pg
                 namespace: cloudnative-pg
@@ -136,8 +150,10 @@ spec:
               - name: tengri
                 path: argocd/applications/tengri
                 namespace: tengri
+                targetRevision: kargo/tengri
                 annotations:
                   argocd.argoproj.io/sync-wave: "2"
+                  kargo.akuity.io/authorized-stage: lab-delivery:tengri
                 automation: auto
                 enabled: "true"
                 ignoreDifferences:
@@ -262,8 +278,10 @@ spec:
               - name: hermes
                 path: argocd/applications/hermes
                 namespace: hermes
+                targetRevision: kargo/hermes-toolchain
                 annotations:
                   argocd.argoproj.io/sync-wave: "2"
+                  kargo.akuity.io/authorized-stage: lab-delivery:hermes-toolchain
                 automation: manual
                 enabled: "true"
                 ignoreDifferences:
@@ -437,8 +455,10 @@ spec:
               - name: attic
                 path: argocd/applications/attic
                 namespace: attic
+                targetRevision: kargo/attic
                 annotations:
                   argocd.argoproj.io/sync-wave: "3"
+                  kargo.akuity.io/authorized-stage: lab-delivery:attic
                 managedNamespaceMetadata:
                   labels:
                     external-secrets.proompteng.ai/enabled: "true"
@@ -449,8 +469,10 @@ spec:
               - name: buzz
                 path: argocd/applications/buzz
                 namespace: buzz
+                targetRevision: kargo/buzz
                 annotations:
                   argocd.argoproj.io/sync-wave: "3"
+                  kargo.akuity.io/authorized-stage: lab-delivery:buzz
                 managedNamespaceMetadata:
                   labels:
                     external-secrets.proompteng.ai/enabled: "true"
@@ -610,8 +632,10 @@ spec:
               - name: arc
                 path: argocd/applications/arc
                 namespace: arc
+                targetRevision: kargo/arc-runner
                 annotations:
                   argocd.argoproj.io/sync-wave: "4"
+                  kargo.akuity.io/authorized-stage: lab-delivery:arc-runner
                 managedNamespaceMetadata:
                   labels:
                     pod-security.kubernetes.io/enforce: privileged
@@ -699,8 +723,10 @@ spec:
               - name: headlamp
                 path: argocd/applications/headlamp
                 namespace: headlamp
+                targetRevision: kargo/headlamp
                 annotations:
                   argocd.argoproj.io/sync-wave: "4"
+                  kargo.akuity.io/authorized-stage: lab-delivery:headlamp
                 automation: auto
                 enabled: "true"
               - name: pgadmin

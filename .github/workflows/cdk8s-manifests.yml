@@ -12,7 +12,6 @@ on:
       - 'argocd/applications/docs/**'
       - 'argocd/applications/analysis/**'
       - 'argocd/applications/*/generated/**'
-      - 'argocd/applications/argocd/base/image-updater-product.yaml'
       - 'bun.lock'
       - 'package.json'
       - 'scripts/kubeconform.sh'
@@ -105,6 +104,4 @@ jobs:
             exit 1
           fi
           grep -Eq 'image: registry\.ide-newton\.ts\.net/lab/docs@sha256:[0-9a-f]{64}$' "${RUNNER_TEMP}/docs.yaml"
-          grep -Eq 'image: registry\.ide-newton\.ts\.net/lab/analysis:[0-9a-f]{40}$' "${RUNNER_TEMP}/analysis.yaml"
-          grep -Fq 'writeBackTarget: kustomization:/argocd/applications/docs' argocd/applications/argocd/base/image-updater-product.yaml
-          grep -Fq 'writeBackTarget: kustomization:/argocd/applications/analysis' argocd/applications/argocd/base/image-updater-product.yaml
+          grep -Eq 'image: registry\.ide-newton\.ts\.net/lab/analysis@sha256:[0-9a-f]{64}$' "${RUNNER_TEMP}/analysis.yaml"

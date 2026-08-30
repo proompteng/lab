@@ -29,9 +29,14 @@ describe('config normalization', () => {
           default_branch: 'main',
         },
         release: {
-          mode: 'gitops_pr_on_main',
+          mode: 'kargo_auto',
+          promotion_authority: 'kargo',
           required_checks_source: 'branch_protection',
           promotion_branch_prefix: 'codex/jangar-release-',
+          kargo_project: 'lab-delivery',
+          kargo_warehouse: 'jangar',
+          kargo_branch: 'kargo/jangar',
+          kargo_stages: ['jangar'],
           blocked_labels: ['manual-only', 'cluster-recovery'],
           deployables: [
             {
@@ -83,6 +88,14 @@ describe('config normalization', () => {
       argocdApplication: 'symphony-jangar',
     })
     expect(config.release.promotionBranchPrefix).toBe('codex/jangar-release-')
+    expect(config.release).toMatchObject({
+      mode: 'kargo_auto',
+      promotionAuthority: 'kargo',
+      kargoProject: 'lab-delivery',
+      kargoWarehouse: 'jangar',
+      kargoBranch: 'kargo/jangar',
+      kargoStages: ['jangar'],
+    })
     expect(config.release.blockedLabels).toEqual(['manual-only', 'cluster-recovery'])
     expect(config.tracker.handoffState).toBe('Backlog')
     expect(config.release.deployables).toEqual([

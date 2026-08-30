@@ -73,8 +73,13 @@ export const makeTestConfig = (overrides: SymphonyConfigOverrides = {}): Symphon
   },
   release: {
     mode: overrides.release?.mode ?? 'gitops_pr_on_main',
+    promotionAuthority: overrides.release?.promotionAuthority ?? 'github_pr',
     requiredChecksSource: overrides.release?.requiredChecksSource ?? 'branch_protection',
     promotionBranchPrefix: overrides.release?.promotionBranchPrefix ?? 'codex/symphony-release-',
+    kargoProject: overrides.release?.kargoProject ?? null,
+    kargoWarehouse: overrides.release?.kargoWarehouse ?? null,
+    kargoBranch: overrides.release?.kargoBranch ?? null,
+    kargoStages: overrides.release?.kargoStages ?? [],
     blockedLabels: overrides.release?.blockedLabels ?? [
       'manual-only',
       'secret-rotation',
@@ -170,8 +175,13 @@ export const makeTestSnapshot = (): RuntimeSnapshot => ({
   },
   release: {
     mode: 'gitops_pr_on_main',
+    promotionAuthority: 'github_pr',
     requiredChecksSource: 'branch_protection',
     promotionBranchPrefix: 'codex/symphony-release-',
+    kargoProject: null,
+    kargoWarehouse: null,
+    kargoBranch: null,
+    kargoStages: [],
     blockedLabels: ['manual-only'],
     deployables: [
       {
@@ -276,6 +286,7 @@ export const makeTestSnapshot = (): RuntimeSnapshot => ({
         build: null,
         releaseContract: null,
         promotionPr: null,
+        kargo: null,
         argo: null,
         postDeploy: null,
         rollbackPr: null,

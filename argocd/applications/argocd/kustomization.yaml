@@ -6,12 +6,10 @@ resources:
   - https://raw.githubusercontent.com/argoproj/argo-cd/v3.4.6/manifests/ha/install.yaml
   - base/ingressroute.yaml
   - base/ingressroute-private.yaml
-  - https://raw.githubusercontent.com/argoproj-labs/argocd-image-updater/v1.2.2/config/install.yaml
+  - base/kargo-dex-cors-middleware.yaml
   - base/secrets.yaml
   - base/argo-workflows-sso-sealedsecret.yaml
   - base/tsag-repo-sealedsecret.yaml
-  - base/image-updater-git-ssh.yaml
-  - base/image-updater-product.yaml
   - alloy-rbac.yaml
   - alloy-configmap.yaml
   - alloy-deployment.yaml
@@ -22,11 +20,6 @@ patches:
     target:
       kind: Deployment
       name: argocd-repo-server
-  - path: overlays/argocd-image-updater-config.yaml
-  - path: overlays/argocd-image-updater-deployment.yaml
-    target:
-      kind: Deployment
-      name: argocd-image-updater-controller
   - path: overlays/argocd-server-deployment.yaml
     target:
       kind: Deployment

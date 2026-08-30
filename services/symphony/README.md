@@ -2,7 +2,7 @@
 
 Symphony is a Bun/TypeScript delivery runtime for the `Symphony` Linear project. It polls Linear, creates
 per-issue workspaces, runs Codex app-server sessions against those workspaces using a repository-owned
-`WORKFLOW.md`, and tracks the full GitHub Actions plus GitOps delivery transaction for each issue.
+`WORKFLOW.md`, and tracks the full GitHub Actions, Kargo, and Argo CD delivery transaction for each issue.
 
 ## Run
 
@@ -39,12 +39,13 @@ bun run --cwd services/symphony lint:oxlint:type
 - Per-issue workspace creation, hook execution, terminal cleanup, and recovery from restarts or leadership changes
 - Lease-based leader election for single-cluster scheduler ownership
 - Codex app-server execution with first-class runtime tools for `linear_graphql` and GitHub delivery operations
-- Delivery transaction tracking for code PRs, required checks, merges to `main`, build workflow runs, promotion PRs, Argo rollout state, post-deploy verification, and rollback PRs
+- Delivery transaction tracking for code PRs, required checks, merges to `main`, build workflow runs, Kargo Warehouse/Freight/Stage state, Argo rollout state, configured post-deploy health checks, and Kargo re-promotions
 - HTTP dashboard and JSON APIs for runtime state, issue drilldowns, delivery state, capacity, leader status, recent events, and recent errors
 
 ## Delivery guarantees
 
-- Symphony does not mutate the cluster directly. Delivery stays on GitHub Actions plus GitOps.
+- Symphony does not mutate the cluster directly. Delivery stays on GitHub Actions image publication, Kargo promotion, and Argo CD reconciliation.
+- A normal delivery is `main` merge -> image publish -> Kargo Freight -> automatic Stage promotion -> Argo `Synced`/`Healthy` -> rollout and live verification. There is no digest/SHA promotion PR or release branch.
 - Terminal delivery states clear stale runtime payloads so completed or rolled-back issues no longer appear as actively running.
 - Successful terminal delivery states clear obsolete `delivery.lastError` values instead of preserving transient refresh failures.
 - Pre-dispatch target health is tolerant of short-lived transient failures and candidate fetch uses bounded retry with backoff/jitter before dispatch pauses.

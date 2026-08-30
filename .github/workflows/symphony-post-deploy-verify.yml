@@ -3,7 +3,7 @@ name: symphony-post-deploy-verify
 on:
   push:
     branches:
-      - main
+      - kargo/symphony
     paths:
       - 'argocd/applications/symphony/**'
       - 'argocd/applications/symphony-jangar/**'
@@ -23,8 +23,7 @@ jobs:
   verify:
     runs-on: arc-arm64
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -133,70 +132,3 @@ jobs:
             --kustomization-path argocd/applications/symphony-torghut/kustomization.yaml \
             --argo-application symphony-torghut \
             --service-base-url http://symphony-torghut.torghut.svc.cluster.local:8080
-
-      - name: Prepare rollback manifests
-        if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
-        id: rollback
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          HEAD_MESSAGE="$(git log -1 --pretty=%s)"
-          if [[ "${HEAD_MESSAGE}" == rollback\(symphony\):* ]]; then
-            echo "Skipping rollback PR because current commit is already a rollback"
-            echo "should_rollback=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if ! git rev-parse --verify HEAD^ >/dev/null 2>&1; then
-            echo "No parent commit available for rollback"
-            echo "should_rollback=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          git checkout --quiet HEAD^ -- \
-            argocd/applications/symphony/kustomization.yaml \
-            argocd/applications/symphony/deployment.patch.yaml \
-            argocd/applications/symphony-jangar/kustomization.yaml \
-            argocd/applications/symphony-jangar/deployment.patch.yaml \
-            argocd/applications/symphony-torghut/kustomization.yaml \
-            argocd/applications/symphony-torghut/deployment.patch.yaml
-
-          if git diff --quiet -- \
-            argocd/applications/symphony/kustomization.yaml \
-            argocd/applications/symphony/deployment.patch.yaml \
-            argocd/applications/symphony-jangar/kustomization.yaml \
-            argocd/applications/symphony-jangar/deployment.patch.yaml \
-            argocd/applications/symphony-torghut/kustomization.yaml \
-            argocd/applications/symphony-torghut/deployment.patch.yaml; then
-            echo "No rollback diff detected"
-            echo "should_rollback=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo "should_rollback=true" >> "$GITHUB_OUTPUT"
-
-      - name: Open rollback pull request
-        if: failure() && steps.rollback.outputs.should_rollback == 'true'
-        uses: peter-evans/create-pull-request@v7
-        with:
-          token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
-          branch: codex/symphony-rollback-${{ github.run_id }}-${{ github.run_attempt }}
-          base: main
-          title: 'rollback(symphony): revert failed promotion ${{ github.sha }}'
-          commit-message: 'rollback(symphony): revert failed promotion ${{ github.sha }}'
-          delete-branch: true
-          add-paths: |
-            argocd/applications/symphony/kustomization.yaml
-            argocd/applications/symphony/deployment.patch.yaml
-            argocd/applications/symphony-jangar/kustomization.yaml
-            argocd/applications/symphony-jangar/deployment.patch.yaml
-            argocd/applications/symphony-torghut/kustomization.yaml
-            argocd/applications/symphony-torghut/deployment.patch.yaml
-          body: |
-            ## Summary
-            Automatic rollback created because `symphony-post-deploy-verify` failed on `main`.
-
-            - Failed commit: `${{ github.sha }}`
-            - Workflow run: `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`
-            - Rollback source: `HEAD^` manifests from the failed run checkout

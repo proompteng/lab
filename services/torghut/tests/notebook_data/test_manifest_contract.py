@@ -52,6 +52,10 @@ def _representative_render() -> list[dict[str, object]]:
                                         "TORGHUT_HUB_COOKIE_SECRET", "cookie-secret"
                                     ),
                                     _secret_env("TORGHUT_HUB_CRYPT_KEY", "crypt-key"),
+                                    {
+                                        "name": "TORGHUT_NOTEBOOK_IMAGE",
+                                        "value": "registry.ide-newton.ts.net/lab/torghut-notebook@sha256:b12dc0108776ce0cc548e464ec5608dae2048839fb76a636c2bc154f451351bb",
+                                    },
                                 ],
                             }
                         ]
@@ -201,8 +205,16 @@ def test_chart_and_digest_contracts_are_pinned() -> None:
     assert values["hub"]["image"]["tag"] == "4.4.0"
     assert values["proxy"]["chp"]["image"]["tag"] == "5.2.0"
     assert values["singleuser"]["cmd"] is None
-    assert values["singleuser"]["image"]["name"].endswith("@sha256")
-    assert re.fullmatch(r"[0-9a-f]{64}", values["singleuser"]["image"]["tag"])
+    notebook_image = values["hub"]["extraEnv"]["TORGHUT_NOTEBOOK_IMAGE"]["value"]
+    assert re.fullmatch(
+        r"registry\.ide-newton\.ts\.net/lab/torghut-notebook@sha256:[0-9a-f]{64}",
+        notebook_image,
+    )
+    assert values["singleuser"]["image"] == {
+        "name": "",
+        "tag": "",
+        "pullPolicy": "IfNotPresent",
+    }
 
 
 def test_singleuser_memory_uses_jupyterhub_byte_specifications() -> None:

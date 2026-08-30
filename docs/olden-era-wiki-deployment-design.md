@@ -1,5 +1,9 @@
 # Olden Era Wiki Deployment Design
 
+> Historical pre-Kargo design. Olden is disabled and this document is not an operating runbook. Its Image Updater,
+> release-branch, release-PR, and manual-sync instructions are retired. Any future enablement must add an immutable
+> main-branch builder plus a Kargo Warehouse and Stage before the application is enabled.
+
 **Goal:** Deploy `https://olden.proompteng.ai` as an unofficial, source-attributed Heroes of Might and Magic: Olden Era player wiki covering the information needed to learn, play, compare factions, and keep up with Early Access changes.
 
 **Architecture:** Create a dedicated `apps/olden` Next.js 16 + Fumadocs MDX app, with curated MDX strategy pages and typed reference data for factions, units, heroes, skills, spells, artifacts, laws, buildings, map objects, game modes, and patch freshness. Deploy it as a standalone Kubernetes workload through Argo CD at `olden.proompteng.ai`, with Cloudflare Tunnel routing `olden.proompteng.ai` directly to the in-cluster `olden` Service.

@@ -24,6 +24,16 @@ const arcKubeModeServiceAccount = readFileSync(
 )
 
 describe('torghut post-deploy verifier workflow', () => {
+  it('runs from the Kargo promotion branch instead of the pre-promotion main branch', () => {
+    const pushTrigger = workflow.slice(workflow.indexOf('  push:'), workflow.indexOf('  workflow_dispatch:'))
+
+    expect(pushTrigger).toContain('- kargo/torghut')
+    expect(pushTrigger).not.toContain('- main')
+    expect(pushTrigger).toContain("- 'argocd/applications/torghut/**'")
+    expect(pushTrigger).toContain("- 'argocd/applications/torghut-options/**'")
+    expect(pushTrigger).toContain("- 'argocd/applications/torghut-hyperliquid-runtime/**'")
+  })
+
   it('does not skip Knative Service readiness when the runner lacks RBAC', () => {
     expect(workflow).not.toContain('Skipping Knative Service readiness check')
     expect(workflow).toContain('Failed to read Knative Service ${service}')
@@ -56,14 +66,16 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).toContain('[ "${OPERATION_PHASE}" = \'Succeeded\' ]')
   })
 
-  it('verifies options, TA, and websocket deployments after Torghut GitOps changes', () => {
+  it('verifies every Torghut stage application and runtime deployment after GitOps changes', () => {
     expect(workflow).toContain("- 'argocd/applications/torghut-options/**'")
-    expect(workflow).toContain('for app in torghut torghut-options; do')
+    expect(workflow).toContain("- 'argocd/applications/torghut-hyperliquid-runtime/**'")
+    expect(workflow).toContain('for app in torghut torghut-options torghut-hyperliquid-runtime; do')
     expect(workflow).toContain('kubectl rollout status "deployment/${deployment}"')
     expect(workflow).toContain('torghut-options-archive')
     expect(workflow).toContain('torghut-options-catalog')
     expect(workflow).toContain('torghut-options-enricher')
     expect(workflow).toContain('torghut-options-ta')
+    expect(workflow).toContain('torghut-hyperliquid-runtime')
     expect(workflow).toContain('torghut-ta')
     expect(workflow).toContain('torghut-ta-sim')
     expect(workflow).toContain('torghut-ws')
@@ -90,7 +102,7 @@ describe('torghut post-deploy verifier workflow', () => {
     const replicaRead = workflow.indexOf(
       "kubectl get deployment torghut-scheduler -n torghut -o jsonpath='{.spec.replicas}'",
     )
-    const argoWait = workflow.indexOf('for app in torghut torghut-options; do')
+    const argoWait = workflow.indexOf('for app in torghut torghut-options torghut-hyperliquid-runtime; do')
 
     expect(replicaRead).toBeGreaterThan(argoWait)
     expect(workflow).toContain('case "${TORGHUT_SCHEDULER_REPLICAS}" in')
@@ -104,7 +116,7 @@ describe('torghut post-deploy verifier workflow', () => {
 
   it('reads and exports the desired torghut-sim trading state from the live Knative Service', () => {
     const desiredStateRead = workflow.indexOf('kubectl get ksvc torghut-sim -n torghut -o json')
-    const argoWait = workflow.indexOf('for app in torghut torghut-options; do')
+    const argoWait = workflow.indexOf('for app in torghut torghut-options torghut-hyperliquid-runtime; do')
 
     expect(desiredStateRead).toBeGreaterThan(argoWait)
     expect(workflow).toContain('select(.name == "TRADING_ENABLED")')
@@ -227,12 +239,18 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).not.toContain('SIM_MIRROR')
   })
 
-  it('requests explicit Argo sync before polling deployed revisions', () => {
-    expect(workflow).toContain('argocd.argoproj.io/refresh=hard --overwrite')
-    expect(workflow).toContain('request_argocd_sync()')
-    expect(workflow).toContain('{"prune": True}')
-    expect(workflow).toContain('kubectl patch application "${app}" -n argocd --type merge -p "${payload}"')
-    expect(workflow).toContain('for app in torghut torghut-options; do')
+  it('observes the Kargo-owned Argo sync without mutating applications', () => {
+    expect(workflow).toContain('contents: read')
+    expect(workflow).toContain("Kargo's")
+    expect(workflow).toContain('argocd-update step owns the sync')
+    expect(workflow).toContain('for app in torghut torghut-options torghut-hyperliquid-runtime; do')
+    expect(workflow).not.toContain('argocd.argoproj.io/refresh')
+    expect(workflow).not.toContain('request_argocd_sync()')
+    expect(workflow).not.toContain('kubectl annotate application')
+    expect(workflow).not.toContain('kubectl patch application')
+    expect(workflow).not.toContain('contents: write')
+    expect(workflow).not.toContain('issues: write')
+    expect(workflow).not.toContain('pull-requests: write')
   })
 
   it('bounds Argo convergence waits and prints resource diagnostics on timeout', () => {
@@ -299,9 +317,9 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(arcKubeModeServiceAccount).toContain('namespace: arc')
   })
 
-  it('grants the ARC runner patch access for explicit Argo refreshes', () => {
-    expect(agentsCiClusterRbac).toContain('agents-ci-runner-argocd-application-refresh')
+  it('keeps ARC runner Argo access read-only', () => {
+    expect(agentsCiClusterRbac).toContain('agents-ci-runner-argocd-verify-read')
     expect(agentsCiClusterRbac).toContain('argoproj.io')
-    expect(agentsCiClusterRbac).toContain('patch')
+    expect(agentsCiClusterRbac).not.toContain('agents-ci-runner-argocd-application-refresh')
   })
 })

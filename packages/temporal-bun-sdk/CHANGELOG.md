@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.3](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.11.2...temporal-bun-sdk-v0.11.3) (2026-08-30)
+
+
+### Bug Fixes
+
+* **temporal-bun-sdk:** refresh Temporal API protos ([#14257](https://github.com/proompteng/lab/issues/14257)) ([1cabb3c](https://github.com/proompteng/lab/commit/1cabb3c79880542f44f4a7195cb938879df3f648))
+
 ## [0.11.2](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.11.1...temporal-bun-sdk-v0.11.2) (2026-08-28)
 
 

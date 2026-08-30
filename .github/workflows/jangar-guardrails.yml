@@ -6,8 +6,6 @@ on:
       - main
     paths:
       - '.github/workflows/jangar-build-push.yaml'
-      - '.github/workflows/jangar-release.yml'
-      - '.github/workflows/jangar-deploy-automerge.yml'
       - '.github/workflows/jangar-post-deploy-verify.yml'
       - '.github/workflows/jangar-guardrails.yml'
       - 'argocd/applicationsets/product.yaml'
@@ -15,8 +13,6 @@ on:
   pull_request:
     paths:
       - '.github/workflows/jangar-build-push.yaml'
-      - '.github/workflows/jangar-release.yml'
-      - '.github/workflows/jangar-deploy-automerge.yml'
       - '.github/workflows/jangar-post-deploy-verify.yml'
       - '.github/workflows/jangar-guardrails.yml'
       - 'argocd/applicationsets/product.yaml'
@@ -77,8 +73,6 @@ jobs:
         run: |
           ./actionlint -color -ignore 'label "arc-arm64" is unknown' \
             .github/workflows/jangar-build-push.yaml \
-            .github/workflows/jangar-release.yml \
-            .github/workflows/jangar-deploy-automerge.yml \
             .github/workflows/jangar-post-deploy-verify.yml \
             .github/workflows/jangar-guardrails.yml
 

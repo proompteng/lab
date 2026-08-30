@@ -113,8 +113,13 @@ const RawSectionSchema = Schema.Struct({
   release: Schema.optionalWith(
     Schema.Struct({
       mode: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      promotion_authority: Schema.optionalWith(Schema.Unknown, { nullable: true }),
       required_checks_source: Schema.optionalWith(Schema.Unknown, { nullable: true }),
       promotion_branch_prefix: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      kargo_project: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      kargo_warehouse: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      kargo_branch: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      kargo_stages: Schema.optionalWith(Schema.Unknown, { nullable: true }),
       blocked_labels: Schema.optionalWith(Schema.Unknown, { nullable: true }),
       deployables: Schema.optionalWith(Schema.Unknown, { nullable: true }),
     }),
@@ -182,6 +187,9 @@ const normalizeConcurrencyMap = (value: unknown): Record<string, number> => {
 
 const readString = (value: unknown, fallback: string): string =>
   typeof value === 'string' && value.trim().length > 0 ? value.trim() : fallback
+
+const readOptionalString = (value: unknown): string | null =>
+  typeof value === 'string' && value.trim().length > 0 ? value.trim() : null
 
 const normalizeManifestPaths = (value: unknown): string[] =>
   Array.isArray(value)
@@ -370,8 +378,13 @@ const normalizeConfig = (
     },
     release: {
       mode: readString(release.mode, 'gitops_pr_on_main'),
+      promotionAuthority: readString(release.promotion_authority, 'github_pr'),
       requiredChecksSource: readString(release.required_checks_source, 'branch_protection'),
       promotionBranchPrefix,
+      kargoProject: readOptionalString(release.kargo_project),
+      kargoWarehouse: readOptionalString(release.kargo_warehouse),
+      kargoBranch: readOptionalString(release.kargo_branch),
+      kargoStages: normalizeStringList(release.kargo_stages, []),
       blockedLabels: normalizeStringList(release.blocked_labels, DEFAULT_BLOCKED_LABELS).map((label) =>
         normalizeState(label),
       ),
@@ -417,6 +430,32 @@ export const validateDispatchConfigEffect = (config: SymphonyConfig): Effect.Eff
     }
     if (!config.codex.command || config.codex.command.trim().length === 0) {
       return yield* Effect.fail(new ConfigError('invalid_codex_command', 'codex.command must be set'))
+    }
+    if (config.release.mode === 'kargo_auto' && config.release.promotionAuthority !== 'kargo') {
+      return yield* Effect.fail(
+        new ConfigError(
+          'dispatch_validation_failed',
+          'release.promotion_authority must be kargo when release.mode is kargo_auto',
+        ),
+      )
+    }
+    if (config.release.promotionAuthority === 'kargo') {
+      const missingFields = [
+        ['kargo_project', config.release.kargoProject],
+        ['kargo_warehouse', config.release.kargoWarehouse],
+        ['kargo_branch', config.release.kargoBranch],
+      ]
+        .filter(([, value]) => !value)
+        .map(([field]) => field)
+      if (config.release.kargoStages.length === 0) missingFields.push('kargo_stages')
+      if (missingFields.length > 0) {
+        return yield* Effect.fail(
+          new ConfigError(
+            'dispatch_validation_failed',
+            `Kargo release configuration is missing: ${missingFields.join(', ')}`,
+          ),
+        )
+      }
     }
   })
 

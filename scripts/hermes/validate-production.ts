@@ -5,12 +5,14 @@ const hermesImage =
   'registry.ide-newton.ts.net/lab/hermes-agent@sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a'
 const squidImage = 'docker.io/ubuntu/squid@sha256:8a3baed477e2c282ab8aa5edad442f69873246964f225c5c2ae8364b6610963c'
 const kubectlImage = 'registry.k8s.io/kubectl@sha256:0bb95b2a450875fc8ceaea2f9987a99fe27c228846e2e00b93b65ebb0d59034e'
-const hermesToolchainImage =
-  'registry.ide-newton.ts.net/lab/hermes-toolchain@sha256:1864320822cb274202f768a8333ac9ac8fb01d8e259394ca5f9f6dcbe6d1a20e'
 const githubCliVersion = '2.96.0'
 const githubCliArchiveSha256 = '83d5c2ccad5498f58bf6368acb1ab32588cf43ab3a4b1c301bf36328b1c8bd60'
 const terminalPath =
   '/opt/tools:/opt/lab-toolchain/bin:/opt/hermes/bin:/opt/hermes/.venv/bin:/opt/data/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+const hermesToolchainConcreteReferencePattern =
+  /registry\.ide-newton\.ts\.net\/lab\/hermes-toolchain@sha256:[a-f0-9]{64}/
+const hermesToolchainReferencePattern =
+  /^        - name: lab-toolchain-image\n          image:\n            reference: (registry\.ide-newton\.ts\.net\/lab\/hermes-toolchain@sha256:[a-f0-9]{64})$/gm
 
 export const productionPaths = {
   kustomization: 'argocd/applications/hermes/kustomization.yaml',
@@ -55,7 +57,6 @@ export const productionPaths = {
   pullRequestWorkflow: '.github/workflows/pull-request.yml',
   toolchainImage: 'nix/images/hermes-toolchain.nix',
   toolchainBuildWorkflow: '.github/workflows/hermes-toolchain-build-push.yml',
-  toolchainReleaseWorkflow: '.github/workflows/hermes-toolchain-release.yml',
 } as const
 
 export type ProductionPath = keyof typeof productionPaths
@@ -103,6 +104,17 @@ function forbidTerms(failures: string[], path: string, content: string, terms: s
   }
 }
 
+function forbidPattern(failures: string[], path: string, content: string, pattern: RegExp, description: string): void {
+  if (pattern.test(content)) {
+    failures.push(`${path}: contains forbidden production pattern ${JSON.stringify(description)}`)
+  }
+}
+
+function deriveHermesToolchainImage(statefulSet: string): string | undefined {
+  const matches = [...statefulSet.matchAll(hermesToolchainReferencePattern)]
+  return matches.length === 1 ? matches[0]?.[1] : undefined
+}
+
 export async function loadProductionFiles(): Promise<ProductionFiles> {
   const entries = await Promise.all(
     Object.entries(productionPaths).map(async ([name, path]) => [name, await readFile(path, 'utf8')] as const),
@@ -112,6 +124,7 @@ export async function loadProductionFiles(): Promise<ProductionFiles> {
 
 export function validateProductionContent(files: ProductionFiles): string[] {
   const failures: string[] = []
+  const hermesToolchainImage = deriveHermesToolchainImage(files.statefulSet)
   const initContainersSection = sectionBetween(files.statefulSet, '      initContainers:\n', '      containers:\n')
   const containersSection = sectionBetween(files.statefulSet, '      containers:\n', '      volumes:\n')
   const bootstrapContainer = namedListItemSection(initContainersSection, 8, 'bootstrap')
@@ -218,7 +231,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   if (count(files.statefulSet, `reference: ${kubectlImage}`) !== 1) {
     failures.push(`${productionPaths.statefulSet}: kubectl must use exactly one immutable Kubernetes 1.35 OCI volume`)
   }
-  if (count(files.statefulSet, `reference: ${hermesToolchainImage}`) !== 1) {
+  if (hermesToolchainImage === undefined) {
     failures.push(
       `${productionPaths.statefulSet}: Lab tools must use exactly one immutable Hermes toolchain OCI volume`,
     )
@@ -769,9 +782,25 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '/etc/profile.d/hermes-tools.sh',
     githubCliArchiveSha256,
     'dedicated multi-architecture Nix OCI image is pinned by index digest',
-    hermesToolchainImage,
+    'Kargo-managed StatefulSet reference',
+    'kargo/hermes-toolchain',
+    'There is no digest bump PR, release PR, manual SHA edit, or manual Argo sync.',
     'Bootstrap fails closed unless every tool reports the repository-pinned version.',
   ])
+  forbidPattern(
+    failures,
+    productionPaths.readme,
+    files.readme,
+    hermesToolchainConcreteReferencePattern,
+    'a concrete Hermes toolchain digest',
+  )
+  forbidPattern(
+    failures,
+    productionPaths.runbook,
+    files.runbook,
+    hermesToolchainConcreteReferencePattern,
+    'a concrete Hermes toolchain digest',
+  )
 
   const expectedToolchainPackages = `tools = [
     nodejs
@@ -811,19 +840,6 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'package_attr: hermes-toolchain-image',
     'hermes-toolchain-release-contract',
   ])
-  requireTerms(failures, productionPaths.toolchainReleaseWorkflow, files.toolchainReleaseWorkflow, [
-    'name: hermes-toolchain-release',
-    '      - hermes-toolchain-build-push',
-    'name: hermes-toolchain-release-contract',
-    'nix run .#assert-oci-platforms -- "${IMAGE}@${DIGEST}" linux/amd64 linux/arm64',
-    'argocd/applications/hermes/statefulset.yaml',
-    'if [ "$old_digest" != "$new_digest" ]; then',
-    'Hermes toolchain digest is already current: sha256:${new_digest}',
-    'automated-pr',
-    'nix-oci',
-    'agents',
-  ])
-
   const operationDeadlines = {
     migrationDryRun: 600,
     migrationApply: 600,
@@ -1153,18 +1169,21 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   requireTerms(failures, productionPaths.runbook, releaseEvidenceSection, [
     'set -euo pipefail',
     'git fetch --quiet origin main',
+    'git fetch --quiet origin kargo/hermes-toolchain',
     'main_revision=$(git rev-parse origin/main)',
-    'test "$(git rev-parse HEAD)" = "$main_revision"',
+    'kargo_revision=$(git rev-parse origin/kargo/hermes-toolchain)',
+    'test "$(git rev-parse origin/kargo/hermes-toolchain)" = "$kargo_revision"',
     'test "$upstream_digest" = sha256:9c841866021c54c4596849f6135717e8a4d52ba510b7f52c50aef1de1a283973',
     'test "$mirror_digest" = sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a',
-    'toolchain_ref=registry.ide-newton.ts.net/lab/hermes-toolchain@sha256:1864320822cb274202f768a8333ac9ac8fb01d8e259394ca5f9f6dcbe6d1a20e',
-    'test "$toolchain_digest" = sha256:1864320822cb274202f768a8333ac9ac8fb01d8e259394ca5f9f6dcbe6d1a20e',
+    'toolchain_ref=$(git show "origin/kargo/hermes-toolchain:argocd/applications/hermes/statefulset.yaml" |',
+    'test -n "$toolchain_ref"',
+    'test "$toolchain_digest" = "${toolchain_ref##*@}"',
     'test "$toolchain_platforms" = linux/amd64,linux/arm64',
     '.config.Labels["proompteng.ai/toolchain.node"] == "24.11.1"',
     '.config.Labels["proompteng.ai/toolchain.yq"] == "4.49.2"',
     'argocd app get hermes --refresh >/dev/null',
     "hermes_revision=$(kubectl -n argocd get application hermes -o jsonpath='{.status.sync.revision}')",
-    'test "$hermes_revision" = "$main_revision"',
+    'test "$hermes_revision" = "$kargo_revision"',
   ])
   const phaseZeroSection = files.runbook.match(/## Phase 0:[\s\S]*?## Phase 1:/)?.[0] ?? ''
   requireTerms(failures, productionPaths.runbook, phaseZeroSection, [

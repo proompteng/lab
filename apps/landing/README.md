@@ -2,7 +2,12 @@
 
 This app expects the shared Convex backend in `packages/backend`.
 
-Deployment: changes under `apps/landing/**` (or `packages/design/**`) merged to `main` trigger a Docker build and an Argo CD Image Updater PR that bumps `argocd/applications/proompteng/kustomization.yaml`.
+Deployment: changes under `apps/landing/**` (or `packages/design/**`) merged to `main` trigger the main-branch image
+build. Kargo discovers the immutable image, creates Freight, and automatically promotes the `proompteng` Stage; Kargo
+writes the exact source commit, digest, and build/provenance metadata to `kargo/proompteng` without a pull request, and
+Argo tracks that branch through sync/health. No Image Updater, SHA manifest bump, release branch, or deployment PR is
+required. See [`docs/release-automation.md`](../../docs/release-automation.md) for the common delivery contract and
+evidence commands.
 
 ## Local setup
 
@@ -48,11 +53,11 @@ signatures until the controller has refreshed the same bundle; remove the previo
 observed it.
 
 Changing `TENGRI_PUBLIC_URL` rolls the landing Deployment through GitOps and briefly interrupts the web UI and BFF.
-Merge the reviewed manifest, let Argo replace the Pod, then verify
+Merge the reviewed configuration, let Argo follow the Kargo deployment branch and replace the Pod, then verify
 `kubectl --context galactic-lan -n proompteng rollout status deployment/proompteng --timeout=5m` and confirm an
 authenticated `/api/tengri` snapshot reports the expected `previewGatewayOrigin`. Existing MicroVM Pods and PVCs are
-not touched. Roll back by reverting the configuration commit through a follow-up PR and Argo; do not apply or undo the
-Deployment directly.
+not touched. Roll back an image by re-promoting the last known-good Proompteng Freight through Kargo; do not apply or undo
+the Deployment directly.
 
 ## Validation
 

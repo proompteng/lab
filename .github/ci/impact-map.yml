@@ -128,7 +128,6 @@ targets:
       - argocd/applications/*/generated/**
       - argocd/applications/docs/**
       - argocd/applications/analysis/**
-      - argocd/applications/argocd/base/image-updater-product.yaml
       - schemas/custom/**
 
   workflow-lint:

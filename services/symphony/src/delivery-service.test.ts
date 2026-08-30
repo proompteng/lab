@@ -23,6 +23,7 @@ describe('delivery transaction stages', () => {
         build: null,
         releaseContract: null,
         promotionPr: null,
+        kargo: null,
         argo: null,
         postDeploy: null,
         rollbackPr: null,
@@ -59,6 +60,7 @@ describe('delivery transaction stages', () => {
         build: null,
         releaseContract: null,
         promotionPr: null,
+        kargo: null,
         argo: null,
         postDeploy: null,
         rollbackPr: null,
@@ -87,6 +89,7 @@ describe('delivery transaction stages', () => {
         },
         releaseContract: null,
         promotionPr: null,
+        kargo: null,
         argo: null,
         postDeploy: null,
         rollbackPr: null,
@@ -115,6 +118,7 @@ describe('delivery transaction stages', () => {
           mergedAt: '2026-03-14T12:00:00.000Z',
           mergedCommitSha: 'fedcba9876543210fedcba9876543210fedcba98',
         },
+        kargo: null,
         argo: {
           application: 'symphony',
           namespace: 'jangar',
@@ -150,6 +154,7 @@ describe('delivery transaction stages', () => {
         build: null,
         releaseContract: null,
         promotionPr: null,
+        kargo: null,
         argo: null,
         postDeploy: null,
         rollbackPr: {
@@ -175,6 +180,267 @@ describe('delivery transaction stages', () => {
       promotionPr: null,
       rollbackPr: null,
     })
+  })
+
+  test('revalidates a paginated superseding Kargo promotion and verifier without searching for a promotion PR', async () => {
+    const originalFetch = globalThis.fetch
+    const originalGhToken = process.env.GH_TOKEN
+    process.env.GH_TOKEN = 'test-token'
+
+    const sourceSha = 'abcdef0123456789abcdef0123456789abcdef01'
+    const supersedingSourceSha = '2222222222222222222222222222222222222222'
+    const divergedSourceSha = '3333333333333333333333333333333333333333'
+    const previousKargoRevision = '1111111111111111111111111111111111111111'
+    const kargoRevision = 'fedcba9876543210fedcba9876543210fedcba98'
+    const divergedKargoRevision = '4444444444444444444444444444444444444444'
+    const config = makeTestConfig({
+      release: {
+        mode: 'kargo_auto',
+        promotionAuthority: 'kargo',
+        kargoProject: 'lab-delivery',
+        kargoWarehouse: 'symphony',
+        kargoBranch: 'kargo/symphony',
+        kargoStages: ['symphony'],
+      },
+    })
+    const requestedUrls: string[] = []
+
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = input instanceof Request ? input.url : String(input)
+      requestedUrls.push(url)
+
+      if (url.includes('/pulls?state=all&base=main')) {
+        return new Response(
+          JSON.stringify([
+            {
+              number: 201,
+              html_url: 'https://github.com/proompteng/lab/pull/201',
+              state: 'closed',
+              title: 'feat(symphony): ABC-2 use Kargo delivery',
+              body: 'ABC-2',
+              draft: false,
+              created_at: null,
+              updated_at: null,
+              merged_at: '2026-08-29T23:00:00.000Z',
+              merge_commit_sha: sourceSha,
+              head: { ref: 'codex/abc-2', sha: sourceSha },
+              base: { ref: 'main' },
+            },
+          ]),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        )
+      }
+      if (url.includes(`/commits/${sourceSha}/check-runs`)) {
+        return new Response(
+          JSON.stringify({
+            check_runs: [
+              {
+                name: 'symphony',
+                html_url: 'https://github.com/proompteng/lab/actions/runs/701',
+                status: 'completed',
+                conclusion: 'success',
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        )
+      }
+      if (url.includes(`/commits/${sourceSha}/status`)) {
+        return new Response(JSON.stringify({ state: 'success', statuses: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (url.includes(`/actions/runs?head_sha=${sourceSha}`)) {
+        return new Response(
+          JSON.stringify({
+            workflow_runs: [
+              {
+                id: 701,
+                html_url: 'https://github.com/proompteng/lab/actions/runs/701',
+                name: 'symphony-build-push',
+                status: 'completed',
+                conclusion: 'success',
+                event: 'push',
+                head_sha: sourceSha,
+                head_branch: 'main',
+                created_at: '2026-08-29T23:01:00.000Z',
+                updated_at: '2026-08-29T23:05:00.000Z',
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        )
+      }
+      if (url.includes('/commits?sha=kargo%2Fsymphony&per_page=100&page=1')) {
+        return new Response(
+          JSON.stringify(
+            Array.from({ length: 100 }, (_, index) => ({
+              sha: index.toString(16).padStart(40, '0'),
+              html_url: `https://github.com/proompteng/lab/commit/${index.toString(16).padStart(40, '0')}`,
+              commit: {
+                message: `kargo(symphony): promote older-freight-${index}`,
+                author: { date: '2026-08-29T22:00:00.000Z' },
+                committer: { date: '2026-08-29T22:00:00.000Z' },
+              },
+            })),
+          ),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        )
+      }
+      if (url.includes('/commits?sha=kargo%2Fsymphony&per_page=100&page=2')) {
+        return new Response(
+          JSON.stringify([
+            {
+              sha: divergedKargoRevision,
+              html_url: `https://github.com/proompteng/lab/commit/${divergedKargoRevision}`,
+              commit: {
+                message: `kargo(symphony): promote freight-diverged\n\nSource commit: ${divergedSourceSha}`,
+                author: { date: '2026-08-29T23:07:00.000Z' },
+                committer: { date: '2026-08-29T23:07:00.000Z' },
+              },
+            },
+            {
+              sha: kargoRevision,
+              html_url: `https://github.com/proompteng/lab/commit/${kargoRevision}`,
+              commit: {
+                message: `kargo(symphony): promote freight-abc\n\nSource commit: ${supersedingSourceSha}`,
+                author: { date: '2026-08-29T23:06:00.000Z' },
+                committer: { date: '2026-08-29T23:06:00.000Z' },
+              },
+            },
+          ]),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        )
+      }
+      if (url.includes(`/compare/${sourceSha}...${divergedSourceSha}`)) {
+        return new Response(JSON.stringify({ status: 'diverged' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (url.includes(`/compare/${sourceSha}...${supersedingSourceSha}`)) {
+        return new Response(JSON.stringify({ status: 'ahead' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (url.includes(`/actions/runs?head_sha=${kargoRevision}`)) {
+        return new Response(
+          JSON.stringify({
+            workflow_runs: [
+              {
+                id: 702,
+                html_url: 'https://github.com/proompteng/lab/actions/runs/702',
+                name: 'symphony-post-deploy-verify',
+                status: 'completed',
+                conclusion: 'success',
+                event: 'push',
+                head_sha: kargoRevision,
+                head_branch: 'kargo/symphony',
+                created_at: '2026-08-29T23:07:00.000Z',
+                updated_at: '2026-08-29T23:10:00.000Z',
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        )
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    }) as typeof fetch
+
+    const runtime = ManagedRuntime.make(
+      makeDeliveryServiceLayer(createLogger({ test: 'kargo-delivery-refresh' })).pipe(
+        Layer.provide(
+          Layer.succeed(WorkflowService, {
+            current: Effect.succeed({ definition: { config: {}, promptTemplate: '' }, config }),
+            config: Effect.succeed(config),
+            reload: Effect.succeed({ definition: { config: {}, promptTemplate: '' }, config }),
+            changes: Stream.empty,
+          }),
+        ),
+      ),
+    )
+
+    try {
+      const refreshed = await runtime.runPromise(
+        Effect.gen(function* () {
+          const delivery = yield* DeliveryService
+          return yield* delivery.refreshIssueDelivery(
+            {
+              issueIdentifier: 'ABC-2',
+              issueId: 'issue-2',
+              status: 'tracked',
+              workspacePath: null,
+              attempts: { restartCount: 0, currentRetryAttempt: 0 },
+              running: null,
+              retry: null,
+              logs: { codex_session_logs: [] },
+              recentEvents: [],
+              lastError: null,
+              tracked: { lastKnownState: 'In Progress' },
+              runHistory: [],
+              delivery: {
+                ...createEmptyDeliveryTransaction('argo_rollout_pending'),
+                mergedCommitSha: sourceSha,
+                kargo: {
+                  project: 'lab-delivery',
+                  warehouse: 'symphony',
+                  stages: ['symphony'],
+                  branch: 'kargo/symphony',
+                  revision: previousKargoRevision,
+                  sourceSha,
+                  freight: 'freight-old',
+                  url: `https://github.com/proompteng/lab/commit/${previousKargoRevision}`,
+                  observedAt: '2026-08-29T22:00:00.000Z',
+                },
+              },
+              updatedAt: '2026-08-29T23:00:00.000Z',
+            },
+            config,
+          )
+        }),
+      )
+
+      expect(refreshed).toMatchObject({
+        stage: 'completed',
+        mergedCommitSha: sourceSha,
+        promotionPr: null,
+        rollbackPr: null,
+        releaseContract: {
+          sourceSha: supersedingSourceSha,
+          reason: 'kargo_freight',
+        },
+        kargo: {
+          project: 'lab-delivery',
+          warehouse: 'symphony',
+          stages: ['symphony'],
+          branch: 'kargo/symphony',
+          revision: kargoRevision,
+          sourceSha: supersedingSourceSha,
+          freight: 'freight-abc',
+        },
+        postDeploy: {
+          name: 'symphony-post-deploy-verify',
+          state: 'success',
+          headSha: kargoRevision,
+        },
+        lastError: null,
+      })
+      expect(requestedUrls.filter((url) => url.includes('/pulls?'))).toHaveLength(1)
+      expect(requestedUrls.some((url) => url.includes('/commits?sha=kargo%2Fsymphony&per_page=100&page=1'))).toBe(true)
+      expect(requestedUrls.some((url) => url.includes('/commits?sha=kargo%2Fsymphony&per_page=100&page=2'))).toBe(true)
+      expect(requestedUrls.some((url) => url.includes(`/compare/${sourceSha}...${divergedSourceSha}`))).toBe(true)
+      expect(requestedUrls.some((url) => url.includes(`/compare/${sourceSha}...${supersedingSourceSha}`))).toBe(true)
+    } finally {
+      globalThis.fetch = originalFetch
+      if (originalGhToken === undefined) {
+        delete process.env.GH_TOKEN
+      } else {
+        process.env.GH_TOKEN = originalGhToken
+      }
+      await runtime.dispose()
+    }
   })
 
   test('clears stale delivery errors after terminal success', async () => {
@@ -233,6 +499,7 @@ describe('delivery transaction stages', () => {
           mergedAt: '2026-03-16T03:00:00.000Z',
           mergedCommitSha: 'fedcba9876543210fedcba9876543210fedcba98',
         },
+        kargo: null,
         argo: null,
         postDeploy: null,
         rollbackPr: null,

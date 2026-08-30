@@ -1,5 +1,9 @@
 # Nix Enabled-App Rollout Final Report - 2026-07-05
 
+> Historical evidence captured before the Kargo cutover. Release-workflow and deployment-PR references below record
+> the former system and are not current operating instructions. Current release authority is
+> `docs/release-automation.md`.
+
 This is the final report for the enabled-app Nix build performance rollout as of 2026-07-05.
 
 ## Final Status

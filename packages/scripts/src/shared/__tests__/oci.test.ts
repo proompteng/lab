@@ -2,14 +2,13 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 
 import { afterEach, describe, expect, it } from 'bun:test'
 
-import { __private, assertOciPlatforms, createOciIndex, inspectOciPlatforms } from '../oci'
+import { __private, assertOciPlatforms, createOciIndex, inspectOciPlatforms, publishOciKargoTag } from '../oci'
 
 const originalWhich = Bun.which
 const repoRoot = new URL('../../../../../', import.meta.url)
 const readRepoFile = (path: string): string => readFileSync(new URL(path, repoRoot), 'utf8')
 const repoFileExists = (path: string): boolean => existsSync(new URL(path, repoRoot))
 const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-const releasePrTokenInput = 'token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}'
 const expectNixListBlock = (source: string, assignment: string): string => {
   const match = source.match(new RegExp(`${escapeRegex(assignment)}\\s*=\\s*\\[([\\s\\S]*?)\\];`, 'm'))
   expect(match?.[1]).toBeDefined()
@@ -24,8 +23,6 @@ const expectNixMakeBinPathBlock = (source: string, assignment: string): string =
 }
 
 const atticWorkflow = readRepoFile('.github/workflows/attic-build-push.yaml')
-const atticReleaseWorkflow = readRepoFile('.github/workflows/attic-release.yml')
-const atticReleaseMetadataScript = readRepoFile('nix/attic-release-metadata.sh')
 const atticDeployment = readRepoFile('argocd/applications/attic/deployment.yaml')
 const atticGcCronJob = readRepoFile('argocd/applications/attic/gc-cronjob.yaml')
 const productApplicationSet = readRepoFile('argocd/applicationsets/product.yaml')
@@ -35,44 +32,33 @@ const ociReleaseContractScript = readRepoFile('nix/oci-release-contract.sh')
 const ciRunTimedScript = readRepoFile('nix/ci-run-timed.sh')
 const ciNixOciSummaryScript = readRepoFile('nix/ci-nix-oci-summary.sh')
 const nixOciWorkflow = readRepoFile('.github/workflows/nix-oci-build-common.yml')
-const enabledSimpleReleaseWorkflow = readRepoFile('.github/workflows/enabled-simple-nix-release.yml')
+const manualDockerWorkflow = readRepoFile('.github/workflows/manual-docker-build-push.yaml')
 const productNixWorkflow = readRepoFile('.github/workflows/product-nix-images.yml')
 const bunWorkspaceServiceModule = readRepoFile('nix/images/bun-workspace-service.nix')
-const enabledProductReleaseWorkflow = readRepoFile('.github/workflows/enabled-product-nix-release.yml')
 const agentsBuildWorkflow = readRepoFile('.github/workflows/agents-build-push.yml')
-const agentsReleaseWorkflow = readRepoFile('.github/workflows/agents-release.yml')
 const agentsCiWorkflow = readRepoFile('.github/workflows/agents-ci.yml')
 const arcRunnerBuildWorkflow = readRepoFile('.github/workflows/arc-runner-build-push.yml')
-const arcRunnerReleaseWorkflow = readRepoFile('.github/workflows/arc-runner-release.yml')
+const hermesToolchainBuildWorkflow = readRepoFile('.github/workflows/hermes-toolchain-build-push.yml')
 const jangarBuildWorkflow = readRepoFile('.github/workflows/jangar-build-push.yaml')
-const jangarReleaseWorkflow = readRepoFile('.github/workflows/jangar-release.yml')
 const jangarPostDeployVerifyWorkflow = readRepoFile('.github/workflows/jangar-post-deploy-verify.yml')
 const symphonyBuildWorkflow = readRepoFile('.github/workflows/symphony-build-push.yaml')
+const symphonyPostDeployVerifyWorkflow = readRepoFile('.github/workflows/symphony-post-deploy-verify.yml')
 const symphonyCiWorkflow = readRepoFile('.github/workflows/symphony-ci.yml')
-const symphonyReleaseWorkflow = readRepoFile('.github/workflows/symphony-release.yml')
 const symphonyReleaseMetadataScript = readRepoFile('packages/scripts/src/symphony/resolve-release-metadata.ts')
 const jangarReleaseMetadataScript = readRepoFile('packages/scripts/src/jangar/resolve-release-metadata.ts')
 const sagBuildWorkflow = readRepoFile('.github/workflows/sag-build-push.yaml')
-const sagReleaseWorkflow = readRepoFile('.github/workflows/sag-release.yml')
 const sagPostDeployVerifyWorkflow = readRepoFile('.github/workflows/sag-post-deploy-verify.yml')
 const torghutBuildWorkflow = readRepoFile('.github/workflows/torghut-build-push.yaml')
+const torghutNotebookBuildWorkflow = readRepoFile('.github/workflows/torghut-notebook-build-push.yaml')
 const torghutTaBuildWorkflow = readRepoFile('.github/workflows/torghut-ta-build-push.yaml')
 const torghutWsBuildWorkflow = readRepoFile('.github/workflows/torghut-ws-build-push.yaml')
 const torghutHyperliquidFeedBuildWorkflow = readRepoFile('.github/workflows/torghut-hyperliquid-feed-build-push.yaml')
-const torghutReleaseWorkflow = readRepoFile('.github/workflows/torghut-release.yml')
-const torghutTaReleaseWorkflow = readRepoFile('.github/workflows/torghut-ta-release.yml')
-const torghutWsReleaseWorkflow = readRepoFile('.github/workflows/torghut-ws-release.yml')
-const torghutHyperliquidFeedReleaseWorkflow = readRepoFile('.github/workflows/torghut-hyperliquid-feed-release.yml')
 const torghutCiWorkflow = readRepoFile('.github/workflows/torghut-ci.yml')
-const torghutDeployAutomergeWorkflow = readRepoFile('.github/workflows/torghut-deploy-automerge.yml')
-const autoPrReleaseBranchesWorkflow = readRepoFile('.github/workflows/auto-pr-release-branches.yml')
-const releasePrAutomergeWorkflow = readRepoFile('.github/workflows/release-pr-automerge.yml')
-const productImageUpdater = readRepoFile('argocd/applications/argocd/base/image-updater-product.yaml')
 const oiratWorkflow = readRepoFile('.github/workflows/oirat-ci.yml')
 const bumbaWorkflow = readRepoFile('.github/workflows/bumba-ci.yml')
 const froussardWorkflow = readRepoFile('.github/workflows/froussard-ci.yml')
 const headlampWorkflow = readRepoFile('.github/workflows/headlamp-ci.yml')
-const headlampReleaseWorkflow = readRepoFile('.github/workflows/headlamp-release.yml')
+const signalPublisherBuildWorkflow = readRepoFile('.github/workflows/signal-publisher-build-push.yml')
 const headlampValues = readRepoFile('argocd/applications/headlamp/values.yaml')
 const headlampStaticCopyPatch = readRepoFile('services/headlamp/patches/0004-static-copy-writable.patch')
 const froussardKnativeService = readRepoFile('argocd/applications/froussard/knative-service.yaml')
@@ -331,9 +317,18 @@ describe('assertOciPlatforms', () => {
 })
 
 describe('createOciIndex', () => {
-  it('creates an index from arch tags, tags latest, and returns digest outputs', () => {
+  it('creates an index, publishes latest, and immutably aliases the verified digest for Kargo', () => {
     const calls: string[] = []
-    Bun.which = ((binary: string) => (binary === 'crane' ? '/bin/crane' : null)) as typeof Bun.which
+    const kargoTag = `kargo-sha-${'1'.repeat(40)}-run-123456`
+    const kargoReference = `registry.example/lab/example:${kargoTag}`
+    const annotations = {
+      'ai.proompteng.github-actions-build-conclusion': 'success',
+      'ai.proompteng.github-actions-run-id': '123456',
+    }
+    let annotationsApplied = false
+    let kargoTagCreated = false
+    Bun.which = ((binary: string) =>
+      binary === 'crane' || binary === 'regctl' ? `/bin/${binary}` : null) as typeof Bun.which
     __private.setSpawnSync(((command: Parameters<typeof Bun.spawnSync>[0]) => {
       const joined = typeof command === 'string' ? command : command.join(' ')
       calls.push(joined)
@@ -346,8 +341,9 @@ describe('createOciIndex', () => {
       }
       if (
         joined ===
-        'crane index append -m registry.example/lab/example@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -m registry.example/lab/example@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc -t registry.example/lab/example:sha-123'
+        'regctl index create registry.example/lab/example:sha-123 --digest sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --digest sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc --annotation ai.proompteng.github-actions-build-conclusion=success --annotation ai.proompteng.github-actions-run-id=123456'
       ) {
+        annotationsApplied = true
         return spawnResult(0)
       }
       if (joined === 'crane tag registry.example/lab/example:sha-123 latest') {
@@ -357,7 +353,19 @@ describe('createOciIndex', () => {
         return spawnResult(0, 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd')
       }
       if (joined === 'crane manifest registry.example/lab/example:sha-123') {
-        return spawnResult(0, manifestList)
+        return spawnResult(
+          0,
+          JSON.stringify({ ...JSON.parse(manifestList), annotations: annotationsApplied ? annotations : {} }),
+        )
+      }
+      if (joined === `crane digest ${kargoReference}`) {
+        return kargoTagCreated
+          ? spawnResult(0, 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd')
+          : spawnResult(1, '', 'MANIFEST_UNKNOWN: manifest unknown')
+      }
+      if (joined === `crane tag registry.example/lab/example:sha-123 ${kargoTag}`) {
+        kargoTagCreated = true
+        return spawnResult(0)
       }
       return spawnResult(1, '', `unexpected call: ${joined}`)
     }) as typeof Bun.spawnSync)
@@ -366,6 +374,8 @@ describe('createOciIndex', () => {
       image: 'registry.example/lab/example',
       tag: 'sha-123',
       latest: true,
+      kargoTag,
+      annotations,
       archTags: [
         { platform: 'linux/amd64', tag: 'sha-123-amd64' },
         { platform: 'linux/arm64', tag: 'sha-123-arm64' },
@@ -379,40 +389,225 @@ describe('createOciIndex', () => {
       digest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
     })
     expect(result.platformDigests).toHaveLength(2)
+    expect(annotationsApplied).toBe(true)
+    expect(calls.some((call) => call.startsWith('crane mutate '))).toBe(false)
     expect(calls).toContain('crane tag registry.example/lab/example:sha-123 latest')
+    expect(calls).toContain(`crane digest ${kargoReference}`)
+    expect(calls).toContain(`crane tag registry.example/lab/example:sha-123 ${kargoTag}`)
+  })
+
+  it('prepares an exact receipt index without exposing its deferred Kargo tag', () => {
+    const calls: string[] = []
+    const sourceSha = '1'.repeat(40)
+    const runId = '123456'
+    const kargoTag = `kargo-sha-${sourceSha}-run-${runId}`
+    const digest = 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
+    const annotations = {
+      'ai.proompteng.github-actions-build-conclusion': 'success',
+      'ai.proompteng.github-actions-run-id': runId,
+      'org.opencontainers.image.revision': sourceSha,
+      'org.opencontainers.image.source': 'https://github.com/proompteng/lab',
+    }
+    const receiptReference = `registry.example/lab/example:receipt-${kargoTag}`
+    Bun.which = ((binary: string) =>
+      binary === 'crane' || binary === 'regctl' ? `/bin/${binary}` : null) as typeof Bun.which
+    __private.setSpawnSync(((command: Parameters<typeof Bun.spawnSync>[0]) => {
+      const joined = typeof command === 'string' ? command : command.join(' ')
+      calls.push(joined)
+      if (joined.startsWith(`regctl index create ${receiptReference} `)) {
+        return spawnResult(0)
+      }
+      if (joined === `crane manifest ${receiptReference}`) {
+        return spawnResult(0, JSON.stringify({ ...JSON.parse(manifestList), annotations }))
+      }
+      if (joined === `crane digest ${receiptReference}`) {
+        return spawnResult(0, digest)
+      }
+      return spawnResult(1, '', `unexpected call: ${joined}`)
+    }) as typeof Bun.spawnSync)
+
+    const result = createOciIndex({
+      image: 'registry.example/lab/example',
+      tag: `receipt-${kargoTag}`,
+      archTags: [
+        {
+          platform: 'linux/amd64',
+          tag: 'registry.example/lab/example@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        },
+        {
+          platform: 'linux/arm64',
+          tag: 'registry.example/lab/example@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+        },
+      ],
+      annotations,
+      kargoTag,
+      deferKargoTag: true,
+    })
+
+    expect(result.reference).toBe(`registry.example/lab/example@${digest}`)
+    expect(calls.some((call) => call.includes(`example:${kargoTag}`))).toBe(false)
+    expect(calls.some((call) => call.startsWith('crane tag '))).toBe(false)
+  })
+
+  it('publishes only a validated exact receipt digest under an immutable Kargo tag', () => {
+    const calls: string[] = []
+    const sourceSha = '1'.repeat(40)
+    const runId = '123456'
+    const kargoTag = `kargo-sha-${sourceSha}-run-${runId}`
+    const digest = 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
+    const reference = `registry.example/lab/example@${digest}`
+    const kargoReference = `registry.example/lab/example:${kargoTag}`
+    const annotations = {
+      'ai.proompteng.github-actions-build-conclusion': 'success',
+      'ai.proompteng.github-actions-run-id': runId,
+      'org.opencontainers.image.revision': sourceSha,
+      'org.opencontainers.image.source': 'https://github.com/proompteng/lab',
+    }
+    let published = false
+    Bun.which = ((binary: string) => (binary === 'crane' ? '/bin/crane' : null)) as typeof Bun.which
+    __private.setSpawnSync(((command: Parameters<typeof Bun.spawnSync>[0]) => {
+      const joined = typeof command === 'string' ? command : command.join(' ')
+      calls.push(joined)
+      if (joined === `crane digest ${reference}`) {
+        return spawnResult(0, digest)
+      }
+      if (joined === `crane manifest ${reference}`) {
+        return spawnResult(0, JSON.stringify({ ...JSON.parse(manifestList), annotations }))
+      }
+      if (joined === `crane digest ${kargoReference}`) {
+        return published ? spawnResult(0, digest) : spawnResult(1, '', 'MANIFEST_UNKNOWN: manifest unknown')
+      }
+      if (joined === `crane tag ${reference} ${kargoTag}`) {
+        published = true
+        return spawnResult(0)
+      }
+      return spawnResult(1, '', `unexpected call: ${joined}`)
+    }) as typeof Bun.spawnSync)
+
+    expect(
+      publishOciKargoTag({
+        image: 'registry.example/lab/example',
+        reference,
+        kargoTag,
+      }),
+    ).toMatchObject({ reference, digest, tag: kargoTag })
+    expect(published).toBe(true)
+    expect(calls).toContain(`crane tag ${reference} ${kargoTag}`)
+  })
+
+  it('refuses to publish a receipt digest without complete source provenance', () => {
+    const sourceSha = '1'.repeat(40)
+    const runId = '123456'
+    const digest = 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
+    const reference = `registry.example/lab/example@${digest}`
+    Bun.which = ((binary: string) => (binary === 'crane' ? '/bin/crane' : null)) as typeof Bun.which
+    __private.setSpawnSync(((command: Parameters<typeof Bun.spawnSync>[0]) => {
+      const joined = typeof command === 'string' ? command : command.join(' ')
+      if (joined === `crane digest ${reference}`) {
+        return spawnResult(0, digest)
+      }
+      if (joined === `crane manifest ${reference}`) {
+        return spawnResult(
+          0,
+          JSON.stringify({
+            ...JSON.parse(manifestList),
+            annotations: {
+              'ai.proompteng.github-actions-build-conclusion': 'success',
+              'ai.proompteng.github-actions-run-id': runId,
+              'org.opencontainers.image.revision': sourceSha,
+            },
+          }),
+        )
+      }
+      return spawnResult(1, '', `unexpected call: ${joined}`)
+    }) as typeof Bun.spawnSync)
+
+    expect(() =>
+      publishOciKargoTag({
+        image: 'registry.example/lab/example',
+        reference,
+        kargoTag: `kargo-sha-${sourceSha}-run-${runId}`,
+      }),
+    ).toThrow('missing org.opencontainers.image.source')
+  })
+
+  it('requires receipt annotations and the immutable Kargo tag to identify the same Actions run', () => {
+    const options = {
+      image: 'registry.example/lab/example',
+      tag: 'sha-123',
+      archTags: [{ platform: 'linux/amd64', tag: 'sha-123-amd64' }],
+      annotations: {
+        'ai.proompteng.github-actions-build-conclusion': 'success',
+        'ai.proompteng.github-actions-run-id': '123456',
+      },
+    }
+
+    expect(() =>
+      createOciIndex({
+        ...options,
+        kargoTag: `kargo-sha-${'1'.repeat(40)}`,
+      }),
+    ).toThrow('receipt annotations require a run-qualified immutable Kargo tag')
+    expect(() =>
+      createOciIndex({
+        ...options,
+        kargoTag: `kargo-sha-${'1'.repeat(40)}-run-654321`,
+      }),
+    ).toThrow('does not match OCI build receipt run ID')
+    expect(() =>
+      createOciIndex({
+        image: options.image,
+        tag: options.tag,
+        archTags: options.archTags,
+        kargoTag: `kargo-sha-${'1'.repeat(40)}-run-123456`,
+      }),
+    ).toThrow('requires OCI build receipt annotations')
+  })
+
+  it('fails closed when an existing Kargo tag cannot be inspected', () => {
+    Bun.which = ((binary: string) =>
+      binary === 'crane' || binary === 'regctl' ? `/bin/${binary}` : null) as typeof Bun.which
+    __private.setSpawnSync(((command: Parameters<typeof Bun.spawnSync>[0]) => {
+      const joined = typeof command === 'string' ? command : command.join(' ')
+      if (joined.startsWith('crane digest registry.example/lab/example:sha-123-')) {
+        return spawnResult(0, 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
+      }
+      if (joined.startsWith('regctl index create ')) {
+        return spawnResult(0)
+      }
+      if (joined === 'crane digest registry.example/lab/example:sha-123') {
+        return spawnResult(0, 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd')
+      }
+      if (joined === 'crane manifest registry.example/lab/example:sha-123') {
+        return spawnResult(0, manifestList)
+      }
+      if (joined.startsWith('crane digest registry.example/lab/example:kargo-sha-')) {
+        return spawnResult(1, '', 'denied: authorization required')
+      }
+      return spawnResult(1, '', `unexpected call: ${joined}`)
+    }) as typeof Bun.spawnSync)
+
+    expect(() =>
+      createOciIndex({
+        image: 'registry.example/lab/example',
+        tag: 'sha-123',
+        kargoTag: `kargo-sha-${'2'.repeat(40)}`,
+        archTags: [
+          { platform: 'linux/amd64', tag: 'sha-123-amd64' },
+          { platform: 'linux/arm64', tag: 'sha-123-arm64' },
+        ],
+      }),
+    ).toThrow('Unable to inspect immutable OCI tag')
   })
 })
 
 describe('native OCI build workflows', () => {
-  it('creates generated release PRs with an app token fallback so automerge can run', () => {
-    for (const [name, workflow] of [
-      ['agents', agentsReleaseWorkflow],
-      ['arc-runner', arcRunnerReleaseWorkflow],
-      ['attic', atticReleaseWorkflow],
-      ['enabled-product', enabledProductReleaseWorkflow],
-      ['enabled-simple', enabledSimpleReleaseWorkflow],
-      ['headlamp', headlampReleaseWorkflow],
-      ['jangar', jangarReleaseWorkflow],
-      ['sag', sagReleaseWorkflow],
-      ['symphony', symphonyReleaseWorkflow],
-      ['torghut', torghutReleaseWorkflow],
-      ['torghut-hyperliquid-feed', torghutHyperliquidFeedReleaseWorkflow],
-      ['torghut-ta', torghutTaReleaseWorkflow],
-      ['torghut-ws', torghutWsReleaseWorkflow],
-    ]) {
-      expect(workflow, `${name} must open generated release PRs through create-pull-request`).toContain(
-        'peter-evans/create-pull-request@',
-      )
-      expect(workflow, `${name} release PRs must not be authored only by GITHUB_TOKEN`).toContain(releasePrTokenInput)
-    }
-  })
-
   it('routes the live Attic image through real Nix OCI builds', () => {
     expect(atticWorkflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
     expect(atticWorkflow).toContain('package_attr: atticd-image')
     expect(atticWorkflow).not.toContain('needs: meta')
     expect(atticWorkflow).toContain('tag: sha-${{ github.sha }}')
-    expect(atticWorkflow).not.toContain('argocd/applications/attic/**')
+    expect(atticWorkflow).toContain('argocd/applications/attic/**')
     expect(flake).not.toContain('facteur-image')
     expect(repoFileExists('.github/workflows/facteur-build-push.yaml')).toBe(false)
     expect(repoFileExists('nix/images/facteur.nix')).toBe(false)
@@ -424,6 +619,28 @@ describe('native OCI build workflows', () => {
     expect(nixOciWorkflow).toContain('nix build ".#${PACKAGE_ATTR}"')
     expect(nixOciWorkflow).toContain('bash nix/oci-inspect-archive.sh "${IMAGE_TAR}"')
     expect(nixOciWorkflow).toContain('bash nix/oci-push.sh')
+    expect(nixOciWorkflow).toContain('default: false')
+    expect(nixOciWorkflow).toContain('--source-sha "${SOURCE_SHA}"')
+    expect(nixOciWorkflow).toContain('--source-timestamp "${SOURCE_TIMESTAMP}"')
+    expect(nixOciWorkflow).toContain('kargo_tag="kargo-sha-${SOURCE_SHA}"')
+    expect(nixOciWorkflow).toContain('kargo_tag="${kargo_tag}-run-${GITHUB_RUN_ID}"')
+    expect(nixOciWorkflow).toContain('--kargo-tag "${kargo_tag}"')
+    expect(nixOciWorkflow).toContain(
+      '--annotation "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"',
+    )
+    expect(nixOciWorkflow).toContain('--annotation "org.opencontainers.image.revision=${SOURCE_SHA}"')
+    expect(nixOciWorkflow).toContain('--annotation "ai.proompteng.github-actions-run-id=${GITHUB_RUN_ID}"')
+    expect(nixOciWorkflow).toContain('--annotation "ai.proompteng.github-actions-build-conclusion=${BUILD_CONCLUSION}"')
+    expect(nixOciWorkflow).toContain('BUILD_CONCLUSION: ${{ needs.build-platform.result }}')
+    expect(nixOciWorkflow).toContain('KARGO_TAG_INCLUDE_RUN_ID: ${{ inputs.kargo_tag_include_run_id }}')
+    expect(nixOciWorkflow).toContain('kargo_tag_include_run_id:')
+    expect(nixOciWorkflow).toContain('if [ "${BUILD_CONCLUSION}" != \'success\' ]; then')
+    expect(nixOciWorkflow).toContain("github.ref == 'refs/heads/main'")
+    expect(ociPushScript).toContain('org.opencontainers.image.created=${source_timestamp}')
+    expect(ociPushScript).toContain('org.opencontainers.image.revision=${source_sha}')
+    expect(ociPushScript).toContain('crane mutate "${reference}"')
+    expect(ociPushScript).toContain('Source commit SHA must be a full lowercase 40-hex commit SHA')
+    expect(manualDockerWorkflow).toContain('Manual OCI mirrors cannot publish reserved kargo-sha tags.')
     expect(nixOciWorkflow).toContain('publish_on_dispatch:')
     expect(nixOciWorkflow).toContain("github.event_name == 'workflow_dispatch'")
     expect(nixOciWorkflow).toContain("github.ref == 'refs/heads/main' || inputs.publish_on_dispatch")
@@ -596,10 +813,6 @@ describe('native OCI build workflows', () => {
     ]) {
       expect(workflow).not.toContain("'package.json'")
     }
-    for (const workflow of [enabledSimpleReleaseWorkflow, enabledProductReleaseWorkflow, sagReleaseWorkflow]) {
-      expect(workflow).not.toContain('package.json')
-    }
-
     for (const workflow of [jangarBuildWorkflow]) {
       expect(workflow).not.toContain("'packages/scripts/src/jangar/**'")
       expect(workflow).not.toContain("'packages/scripts/src/shared/docker.ts'")
@@ -616,36 +829,16 @@ describe('native OCI build workflows', () => {
     expect(sagBuildWorkflow).not.toContain("'packages/scripts/src/shared/cli.ts'")
     expect(sagBuildWorkflow).not.toContain("'packages/scripts/src/shared/git.ts'")
     expect(sagBuildWorkflow).not.toContain("'packages/scripts/src/shared/docker.ts'")
-    expect(headlampWorkflow).not.toContain("'argocd/applications/headlamp/**'")
+    expect(headlampWorkflow).toContain("'argocd/applications/headlamp/**'")
     expect(headlampWorkflow).not.toContain("'docs/headlamp-setup.md'")
     expect(headlampWorkflow).not.toContain("'packages/scripts/src/headlamp/**'")
     expect(headlampWorkflow).not.toContain("'packages/scripts/src/shared/nix-oci-deploy.ts'")
 
-    expect(enabledProductReleaseWorkflow).not.toContain('packages/scripts/src/shared nix/images')
-    expect(enabledProductReleaseWorkflow).not.toContain('packages/scripts/src/shared/nix-oci-deploy.ts')
-    expect(sagReleaseWorkflow).not.toContain('packages/scripts/src/shared/nix-oci-deploy.ts')
     expect(symphonyReleaseMetadataScript).not.toContain('packages\\/scripts\\/src\\/symphony')
     expect(symphonyReleaseMetadataScript).not.toContain('packages\\/scripts\\/src\\/shared')
   })
 
-  it('keeps workflow_run release stale guards aligned to image build triggers', () => {
-    for (const workflow of [
-      enabledSimpleReleaseWorkflow,
-      enabledProductReleaseWorkflow,
-      sagReleaseWorkflow,
-      torghutTaReleaseWorkflow,
-      torghutWsReleaseWorkflow,
-      torghutHyperliquidFeedReleaseWorkflow,
-      headlampReleaseWorkflow,
-    ]) {
-      expect(workflow).not.toContain('.github/workflows/')
-      expect(workflow).not.toContain('packages/scripts/src/shared/nix-oci-deploy.ts')
-      expect(workflow).not.toContain('nix/oci-release-contract.sh')
-      for (const helperInput of nixImageHelperInputs) {
-        expect(workflow).toContain(helperInput)
-      }
-    }
-
+  it('keeps release metadata scripts independent from build workflow files', () => {
     expect(symphonyReleaseMetadataScript).not.toContain('.github\\/workflows\\/')
     expect(symphonyReleaseMetadataScript).not.toContain('setup-nix-toolchain')
     expect(symphonyReleaseMetadataScript).not.toContain('nix\\/oci-release-contract\\.sh')
@@ -664,25 +857,14 @@ describe('native OCI build workflows', () => {
     }
   })
 
-  it('uses the published full-SHA tag for manual Nix image promotions', () => {
+  it('keeps published image metadata on full-SHA tags', () => {
     expect(jangarReleaseMetadataScript).toContain('`sha-${sourceSha}`')
     expect(jangarReleaseMetadataScript).not.toContain('sourceSha.slice(0, 8)')
     expect(symphonyReleaseMetadataScript).toContain('`sha-${sourceSha}`')
     expect(symphonyReleaseMetadataScript).not.toContain('sourceSha.slice(0, 8)')
-    for (const workflow of [
-      torghutReleaseWorkflow,
-      torghutTaReleaseWorkflow,
-      torghutWsReleaseWorkflow,
-      torghutHyperliquidFeedReleaseWorkflow,
-    ]) {
-      expect(workflow).toContain('TAG="sha-${SOURCE_SHA}"')
-      expect(workflow).not.toContain('git rev-parse --short=8')
-    }
-    expect(atticReleaseMetadataScript).toContain('tag="sha-${source_sha}"')
-    expect(atticReleaseMetadataScript).not.toContain('git rev-parse --short=12')
   })
 
-  it('does not fan out migrated image builds on workflow-only changes', () => {
+  it('rebuilds Kargo-enrolled image builds when the shared OCI implementation changes', () => {
     const migratedImageWorkflows = [
       atticWorkflow,
       arcRunnerBuildWorkflow,
@@ -691,19 +873,27 @@ describe('native OCI build workflows', () => {
       froussardWorkflow,
       productNixWorkflow,
       agentsBuildWorkflow,
+      headlampWorkflow,
+      hermesToolchainBuildWorkflow,
       jangarBuildWorkflow,
+      signalPublisherBuildWorkflow,
       symphonyBuildWorkflow,
-      sagBuildWorkflow,
       torghutBuildWorkflow,
+      torghutNotebookBuildWorkflow,
       torghutTaBuildWorkflow,
       torghutWsBuildWorkflow,
       torghutHyperliquidFeedBuildWorkflow,
     ]
 
     for (const workflow of migratedImageWorkflows) {
-      expect(workflow).not.toContain("- '.github/workflows/")
-      expect(workflow).not.toContain("- '.github/actions/setup-nix-toolchain/**'")
+      expect(workflow).toContain("- '.github/workflows/nix-oci-build-common.yml'")
+      expect(workflow).toContain("- 'packages/scripts/src/shared/oci.ts'")
+      expect(workflow).toContain("- 'nix/oci-push.sh'")
+      if (workflow !== hermesToolchainBuildWorkflow) {
+        expect(workflow).not.toContain("- '.github/actions/setup-nix-toolchain/**'")
+      }
     }
+    expect(hermesToolchainBuildWorkflow).toContain("- '.github/actions/setup-nix-toolchain/**'")
   })
 
   it('does not fan out service CI on image workflow-only changes', () => {
@@ -738,11 +928,6 @@ describe('native OCI build workflows', () => {
       expect(workflow).not.toContain('- flake.nix')
     }
 
-    for (const workflow of [enabledSimpleReleaseWorkflow, enabledProductReleaseWorkflow, sagReleaseWorkflow]) {
-      expect(workflow).not.toContain(' flake.nix ')
-      expect(workflow).not.toContain('\n              flake.nix\n')
-    }
-
     expect(symphonyReleaseMetadataScript).not.toContain('flake\\.nix$')
     expect(symphonyReleaseMetadataScript).toContain('nix\\/images\\/openai-codex-cli\\.nix$')
     for (const workflow of [
@@ -762,7 +947,6 @@ describe('native OCI build workflows', () => {
     expect(productNixWorkflow).toContain("- 'flake.lock'")
     expect(productNixWorkflow).toContain("- 'nix/images/bun-workspace-service.nix'")
     expect(headlampWorkflow).not.toContain("- 'flake.nix'")
-    expect(headlampReleaseWorkflow).toContain('flake.nix')
   })
 
   it('validates Bumba pull requests when the Temporal SDK changes', () => {
@@ -781,6 +965,11 @@ describe('native OCI build workflows', () => {
     expect(ociPushScript).toContain('policy_json="$(mktemp)"')
     expect(ociPushScript).toContain('"type": "insecureAcceptAnything"')
     expect(ociPushScript).toContain('skopeo --policy "${policy_json}" copy')
+  })
+
+  it('only lets the manual mirror write non-reserved tags', () => {
+    expect(manualDockerWorkflow).toContain('if [[ "${TARGET_TAG}" == kargo-sha-* ]]')
+    expect(manualDockerWorkflow).toContain('exit 2')
   })
 
   it('serializes layer uploads against the shaped registry writer', () => {
@@ -803,30 +992,20 @@ describe('native OCI build workflows', () => {
       atticWorkflow,
       nixOciWorkflow,
       arcRunnerBuildWorkflow,
-      arcRunnerReleaseWorkflow,
       oiratWorkflow,
       bumbaWorkflow,
       froussardWorkflow,
       productNixWorkflow,
-      enabledProductReleaseWorkflow,
       agentsBuildWorkflow,
       jangarBuildWorkflow,
-      jangarReleaseWorkflow,
       symphonyBuildWorkflow,
-      symphonyReleaseWorkflow,
       sagBuildWorkflow,
-      sagReleaseWorkflow,
       sagPostDeployVerifyWorkflow,
       torghutBuildWorkflow,
       torghutTaBuildWorkflow,
       torghutWsBuildWorkflow,
       torghutHyperliquidFeedBuildWorkflow,
-      torghutReleaseWorkflow,
-      torghutTaReleaseWorkflow,
-      torghutWsReleaseWorkflow,
-      torghutHyperliquidFeedReleaseWorkflow,
       torghutCiWorkflow,
-      torghutDeployAutomergeWorkflow,
     ]
     for (const workflow of migratedWorkflows) {
       expect(workflow).not.toContain('docker/build-push-action')
@@ -861,61 +1040,53 @@ describe('native OCI build workflows', () => {
     expect(repoFileExists('nix/images/froussard.nix')).toBe(true)
     expect(repoFileExists('nix/images/headlamp.nix')).toBe(true)
 
-    for (const [workflow, imageName, packageAttr, artifact] of [
-      [oiratWorkflow, 'oirat', 'oirat-image', 'oirat-release-contract'],
-      [bumbaWorkflow, 'bumba', 'bumba-image', 'bumba-release-contract'],
-      [froussardWorkflow, 'froussard', 'froussard-image', 'froussard-release-contract'],
-      [headlampWorkflow, 'headlamp', 'headlamp-image', 'headlamp-release-contract'],
+    for (const [workflow, imageName, packageAttr] of [
+      [oiratWorkflow, 'oirat', 'oirat-image'],
+      [bumbaWorkflow, 'bumba', 'bumba-image'],
+      [froussardWorkflow, 'froussard', 'froussard-image'],
+      [headlampWorkflow, 'headlamp', 'headlamp-image'],
     ] as const) {
       expect(workflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
       expect(workflow).toContain(`image_name: ${imageName}`)
       expect(workflow).toContain(`package_attr: ${packageAttr}`)
-      expect(workflow).toContain(`'${artifact}'`)
+      expect(workflow).toContain('publish_kargo_tag: true')
+      expect(workflow).not.toContain('release_artifact_name:')
       expect(workflow).toContain('tag: sha-${{ github.sha }}')
       expect(workflow).not.toContain('uses: ./.github/workflows/docker-build-common.yaml')
     }
   })
 
-  it('lets workflow-dispatched main image builds publish release contracts', () => {
-    const mainDispatchPredicate =
-      "(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'"
-
+  it('publishes immutable Kargo aliases only for enrolled image builds', () => {
     expect(nixOciWorkflow).toContain("github.event_name == 'push' && github.ref == 'refs/heads/main'")
     expect(nixOciWorkflow).toContain("github.event_name == 'workflow_dispatch'")
     expect(nixOciWorkflow).toContain("github.ref == 'refs/heads/main' || inputs.publish_on_dispatch")
     expect(nixOciWorkflow).toContain('name: Push platform image without Docker')
     expect(nixOciWorkflow).toContain('name: Warm Nix image archive output in Attic')
     expect(nixOciWorkflow).toContain('publish-index:')
-
-    for (const [workflow, artifact] of [
-      [oiratWorkflow, 'oirat-release-contract'],
-      [bumbaWorkflow, 'bumba-release-contract'],
-      [froussardWorkflow, 'froussard-release-contract'],
-      [sagBuildWorkflow, 'sag-release-contract'],
-      [symphonyBuildWorkflow, 'symphony-release-contract'],
-      [jangarBuildWorkflow, 'jangar-release-contract'],
-      [torghutBuildWorkflow, 'torghut-release-contract'],
-      [torghutTaBuildWorkflow, 'torghut-ta-release-contract'],
-      [torghutWsBuildWorkflow, 'torghut-ws-release-contract'],
-      [torghutHyperliquidFeedBuildWorkflow, 'torghut-hyperliquid-feed-release-contract'],
-      [headlampWorkflow, 'headlamp-release-contract'],
-    ] as const) {
-      expect(workflow).toContain(`latest: \${{ ${mainDispatchPredicate} }}`)
-      expect(workflow).toContain(`release_artifact_name: \${{ ${mainDispatchPredicate} && '${artifact}' || '' }}`)
-    }
-
-    for (const artifact of [
-      'agents-controller-release-contract',
-      'agents-control-plane-release-contract',
-      'agents-shell-release-contract',
+    for (const workflow of [
+      oiratWorkflow,
+      bumbaWorkflow,
+      froussardWorkflow,
+      symphonyBuildWorkflow,
+      jangarBuildWorkflow,
+      torghutBuildWorkflow,
+      torghutTaBuildWorkflow,
+      torghutWsBuildWorkflow,
+      torghutHyperliquidFeedBuildWorkflow,
+      headlampWorkflow,
+      atticWorkflow,
     ]) {
-      expect(agentsBuildWorkflow).toContain(
-        `release_artifact_name: \${{ ${mainDispatchPredicate} && '${artifact}' || '' }}`,
-      )
+      expect(workflow).toContain('publish_kargo_tag: true')
+      expect(workflow).not.toContain('release_artifact_name:')
     }
-    expect(agentsBuildWorkflow).toContain(`write-values:\n    if: ${mainDispatchPredicate}`)
-    expect(atticWorkflow).toContain(`latest: \${{ ${mainDispatchPredicate} }}`)
-    expect(atticWorkflow).toContain('release_artifact_name: attic-release-contract')
+    expect(agentsBuildWorkflow).toContain('publish_kargo_tag: false')
+    expect(agentsBuildWorkflow).toContain('publish-kargo-tag')
+    expect(nixOciWorkflow).toContain('default: false')
+    expect(nixOciWorkflow).toContain('PUBLISH_KARGO_TAG}')
+    expect(nixOciWorkflow).toContain('GITHUB_REF}" = "refs/heads/main"')
+    expect(nixOciWorkflow).toContain('kargo-sha-${SOURCE_SHA}')
+    expect(sagBuildWorkflow).toContain('publish_kargo_tag: false')
+    expect(sagBuildWorkflow).not.toContain('release_artifact_name:')
   })
 
   it('routes the enabled Headlamp image through a real Nix OCI attr', () => {
@@ -955,7 +1126,8 @@ describe('native OCI build workflows', () => {
     expect(headlampWorkflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
     expect(headlampWorkflow).toContain('image_name: headlamp')
     expect(headlampWorkflow).toContain('package_attr: headlamp-image')
-    expect(headlampWorkflow).toContain('headlamp-release-contract')
+    expect(headlampWorkflow).toContain('publish_kargo_tag: true')
+    expect(headlampWorkflow).not.toContain('release_artifact_name:')
     expect(headlampWorkflow).toContain('tag: sha-${{ github.sha }}')
     expect(headlampWorkflow).toContain('image_build_timeout: 20m')
     expect(headlampWorkflow).toContain('sh services/headlamp/scripts/test-upstream.sh')
@@ -964,15 +1136,6 @@ describe('native OCI build workflows', () => {
     expect(headlampWorkflow).not.toContain('docker buildx')
     expect(headlampWorkflow).not.toContain('docker run')
     expect(headlampWorkflow).not.toContain('docker push')
-
-    expect(headlampReleaseWorkflow).toContain('headlamp-release-contract')
-    expect(headlampReleaseWorkflow).toContain('argocd/applications/headlamp/values.yaml')
-    expect(headlampReleaseWorkflow).toContain('nix run .#assert-oci-platforms -- "${IMAGE}@${DIGEST}"')
-    expect(headlampReleaseWorkflow).toContain('repository: lab/headlamp@sha256')
-    expect(headlampReleaseWorkflow).toContain('peter-evans/create-pull-request@v7')
-    expect(headlampReleaseWorkflow).toMatch(/labels: \|[\s\S]*?do-not-automerge[\s\S]*?add-paths: \|/)
-    expect(headlampReleaseWorkflow).not.toContain('docker buildx')
-    expect(headlampReleaseWorkflow).not.toContain('docker/setup-buildx-action')
   })
 
   it('routes the enabled Symphony fleet image through a real Nix OCI attr', () => {
@@ -988,15 +1151,33 @@ describe('native OCI build workflows', () => {
     expect(symphonyBuildWorkflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
     expect(symphonyBuildWorkflow).toContain('image_name: symphony')
     expect(symphonyBuildWorkflow).toContain('package_attr: symphony-image')
-    expect(symphonyBuildWorkflow).toContain('symphony-release-contract')
+    expect(symphonyBuildWorkflow).toContain('publish_kargo_tag: true')
+    expect(symphonyBuildWorkflow).not.toContain('release_artifact_name:')
     expect(symphonyBuildWorkflow).toContain('tag: sha-${{ github.sha }}')
+    expect(symphonyBuildWorkflow).toContain("- '.github/workflows/symphony-post-deploy-verify.yml'")
     expect(symphonyBuildWorkflow).not.toContain('oven-sh/setup-bun')
     expect(symphonyBuildWorkflow).not.toContain('docker/setup-buildx-action')
+  })
 
-    expect(symphonyReleaseWorkflow).toContain('uses: ./.github/actions/setup-nix-toolchain')
-    expect(symphonyReleaseWorkflow).toContain('crane digest "${IMAGE_NAME}:${IMAGE_TAG}"')
-    expect(symphonyReleaseWorkflow).not.toContain('docker buildx')
-    expect(symphonyReleaseWorkflow).not.toContain('docker/setup-buildx-action')
+  it('keeps Symphony post-deploy verification observe-only on the Kargo branch', () => {
+    const pushTrigger = symphonyPostDeployVerifyWorkflow.slice(
+      symphonyPostDeployVerifyWorkflow.indexOf('  push:'),
+      symphonyPostDeployVerifyWorkflow.indexOf('  workflow_dispatch:'),
+    )
+
+    expect(symphonyPostDeployVerifyWorkflow).toContain('name: symphony-post-deploy-verify')
+    expect(pushTrigger).toContain('- kargo/symphony')
+    expect(pushTrigger).not.toContain('- main')
+    expect(pushTrigger).toContain("- 'argocd/applications/symphony/**'")
+    expect(pushTrigger).toContain("- 'argocd/applications/symphony-jangar/**'")
+    expect(pushTrigger).toContain("- 'argocd/applications/symphony-torghut/**'")
+    expect(symphonyPostDeployVerifyWorkflow).toContain('contents: read')
+    expect(symphonyPostDeployVerifyWorkflow).toContain('Verify Symphony fleet deployment health and digest')
+    expect(symphonyPostDeployVerifyWorkflow).toContain('--expected-revision "${GITHUB_SHA}"')
+    expect(symphonyPostDeployVerifyWorkflow).not.toContain('contents: write')
+    expect(symphonyPostDeployVerifyWorkflow).not.toContain('pull-requests: write')
+    expect(symphonyPostDeployVerifyWorkflow).not.toContain('Prepare rollback manifests')
+    expect(symphonyPostDeployVerifyWorkflow).not.toContain('create-pull-request')
   })
 
   it('routes the enabled Sag image through a real Nix OCI attr', () => {
@@ -1010,16 +1191,12 @@ describe('native OCI build workflows', () => {
     expect(sagBuildWorkflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
     expect(sagBuildWorkflow).toContain('image_name: sag')
     expect(sagBuildWorkflow).toContain('package_attr: sag-image')
-    expect(sagBuildWorkflow).toContain('sag-release-contract')
+    expect(sagBuildWorkflow).toContain('publish_kargo_tag: false')
+    expect(sagBuildWorkflow).not.toContain('release_artifact_name:')
     expect(sagBuildWorkflow).toContain('tag: sha-${{ github.sha }}')
     expect(sagBuildWorkflow).not.toContain('oven-sh/setup-bun')
     expect(sagBuildWorkflow).not.toContain('docker/setup-buildx-action')
 
-    expect(sagReleaseWorkflow).toContain('argocd/sag/kustomization.yaml')
-    expect(sagReleaseWorkflow).toContain('nix run .#assert-oci-platforms -- "${IMAGE}@${DIGEST}"')
-    expect(sagReleaseWorkflow).toContain('test "${service}" = "sag"')
-    expect(sagReleaseWorkflow).not.toContain('packages/scripts/src/shared/nix-oci-deploy.ts')
-    expect(sagReleaseWorkflow).not.toContain('docker buildx')
     expect(sagPostDeployVerifyWorkflow).toContain('Determine Sag ApplicationSet state')
     expect(sagPostDeployVerifyWorkflow).toContain('argocd/applicationsets/product.yaml')
     expect(sagPostDeployVerifyWorkflow).toContain("if: steps.sag.outputs.enabled == 'true'")
@@ -1063,35 +1240,26 @@ describe('native OCI build workflows', () => {
     expect(jangarBuildWorkflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
     expect(jangarBuildWorkflow).toContain('image_name: jangar')
     expect(jangarBuildWorkflow).toContain('package_attr: jangar-image')
-    expect(jangarBuildWorkflow).toContain('jangar-release-contract')
+    expect(jangarBuildWorkflow).toContain('publish_kargo_tag: true')
+    expect(jangarBuildWorkflow).toContain('kargo_tag_include_run_id: true')
+    expect(jangarBuildWorkflow).not.toContain('release_artifact_name:')
     expect(jangarBuildWorkflow).toContain('tag: sha-${{ github.sha }}')
     expect(jangarBuildWorkflow).toContain('image_build_timeout: 12m')
+    expect(jangarBuildWorkflow).toContain("- '.github/workflows/jangar-post-deploy-verify.yml'")
     expect(jangarBuildWorkflow).not.toContain('oven-sh/setup-bun')
     expect(jangarBuildWorkflow).not.toContain('docker/setup-buildx-action')
-
-    expect(jangarReleaseWorkflow).toContain('uses: ./.github/actions/setup-nix-toolchain')
-    expect(jangarReleaseWorkflow).toContain('runs-on: arc-amd64')
-    expect(jangarReleaseWorkflow).toContain('crane digest "${IMAGE_NAME}:${IMAGE_TAG}"')
-    expect(jangarReleaseWorkflow).toContain('REGISTRY_SERVICE: registry.registry.svc.cluster.local')
-    expect(jangarReleaseWorkflow).toContain('regctl registry set "${REGISTRY_SERVICE}" --tls disabled --skip-check')
-    expect(jangarReleaseWorkflow).toContain('VERIFY_IMAGE="${REGISTRY_SERVICE}/${REPOSITORY}"')
-    expect(jangarReleaseWorkflow).toContain('nix run .#assert-oci-platforms -- "${VERIFY_IMAGE}@${DIGEST}"')
-    expect(jangarReleaseWorkflow).toContain(`source_ci_run_id:
-        description: Successful jangar-build-push run ID that produced the image
-        required: true`)
-    expect(jangarReleaseWorkflow).toContain(
-      'JANGAR_SOURCE_CI_RUN_ID: ${{ github.event.workflow_run.id || inputs.source_ci_run_id }}',
-    )
-    expect(jangarReleaseWorkflow).toContain(
-      '- Source CI run: `${{ github.event.workflow_run.id || inputs.source_ci_run_id }}`',
-    )
-    expect(jangarReleaseWorkflow).not.toContain('JANGAR_SOURCE_CI_RUN_ID: ${{ github.run_id }}')
-    expect(jangarReleaseWorkflow).not.toContain('docker buildx')
-    expect(jangarReleaseWorkflow).not.toContain('docker/setup-buildx-action')
   })
 
   it('keeps Jangar post-deploy verification observe-only without rollback PR automation', () => {
+    const pushTrigger = jangarPostDeployVerifyWorkflow.slice(
+      jangarPostDeployVerifyWorkflow.indexOf('  push:'),
+      jangarPostDeployVerifyWorkflow.indexOf('  workflow_dispatch:'),
+    )
+
     expect(jangarPostDeployVerifyWorkflow).toContain('name: jangar-post-deploy-verify')
+    expect(pushTrigger).toContain('- kargo/jangar')
+    expect(pushTrigger).not.toContain('- main')
+    expect(pushTrigger).toContain("- 'argocd/applications/jangar/**'")
     expect(jangarPostDeployVerifyWorkflow).toContain('contents: read')
     expect(jangarPostDeployVerifyWorkflow).toContain('Verify deployment health and digest')
     expect(jangarPostDeployVerifyWorkflow).toContain('Sync Temporal routing after rollout')
@@ -1113,22 +1281,17 @@ describe('native OCI build workflows', () => {
   })
 
   it('routes the enabled Torghut family images through real Nix OCI attrs', () => {
-    expect(torghutReleaseWorkflow).toContain("TORGHUT_INCLUDE_OPTIONS_MANIFESTS: 'true'")
-    for (const [workflow, imageName, packageAttr, artifact] of [
-      [torghutBuildWorkflow, 'torghut', 'torghut-image', 'torghut-release-contract'],
-      [torghutTaBuildWorkflow, 'torghut-ta', 'torghut-ta-image', 'torghut-ta-release-contract'],
-      [torghutWsBuildWorkflow, 'torghut-ws', 'torghut-ws-image', 'torghut-ws-release-contract'],
-      [
-        torghutHyperliquidFeedBuildWorkflow,
-        'torghut-hyperliquid-feed',
-        'torghut-hyperliquid-feed-image',
-        'torghut-hyperliquid-feed-release-contract',
-      ],
+    for (const [workflow, imageName, packageAttr] of [
+      [torghutBuildWorkflow, 'torghut', 'torghut-image'],
+      [torghutTaBuildWorkflow, 'torghut-ta', 'torghut-ta-image'],
+      [torghutWsBuildWorkflow, 'torghut-ws', 'torghut-ws-image'],
+      [torghutHyperliquidFeedBuildWorkflow, 'torghut-hyperliquid-feed', 'torghut-hyperliquid-feed-image'],
     ] as const) {
       expect(workflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
       expect(workflow).toContain(`image_name: ${imageName}`)
       expect(workflow).toContain(`package_attr: ${packageAttr}`)
-      expect(workflow).toContain(artifact)
+      expect(workflow).toContain('publish_kargo_tag: true')
+      expect(workflow).not.toContain('release_artifact_name:')
       expect(workflow).toContain('tag: sha-${{ github.sha }}')
     }
 
@@ -1156,34 +1319,35 @@ describe('native OCI build workflows', () => {
     expect(torghutTaImageModule).not.toContain('archive.apache.org/dist/flink')
     expect(torghutWsImageModule).toContain('ForwarderAppKt')
     expect(torghutHyperliquidFeedImageModule).toContain('HyperliquidFeedAppKt')
-
-    for (const workflow of [
-      torghutReleaseWorkflow,
-      torghutTaReleaseWorkflow,
-      torghutWsReleaseWorkflow,
-      torghutHyperliquidFeedReleaseWorkflow,
-    ]) {
-      expect(workflow).toContain('uses: ./.github/actions/setup-nix-toolchain')
-      expect(workflow).toContain('crane digest "${IMAGE_NAME}:${IMAGE_TAG}"')
-      expect(workflow).toContain('nix run .#assert-oci-platforms -- "${IMAGE_REF}" linux/amd64 linux/arm64')
-      expect(workflow).not.toContain('packages/scripts/src/shared/nix-oci-deploy.ts')
-      expect(workflow).not.toContain('packages/scripts/src/shared/oci-digest.ts')
-      expect(workflow).not.toContain('docker buildx')
-    }
   })
 
   it('routes the enabled Agents service images through real Nix OCI attrs', () => {
-    for (const [imageName, packageAttr, artifact] of [
-      ['agents-controller', 'agents-controller-image', 'agents-controller-release-contract'],
-      ['agents-control-plane', 'agents-control-plane-image', 'agents-control-plane-release-contract'],
-      ['agents-shell', 'agents-shell-image', 'agents-shell-release-contract'],
-      ['agents-codex-runner', 'agents-codex-runner-image', 'agents-codex-runner-release-contract'],
+    for (const [imageName, packageAttr] of [
+      ['agents-controller', 'agents-controller-image'],
+      ['agents-control-plane', 'agents-control-plane-image'],
+      ['agents-shell', 'agents-shell-image'],
+      ['agents-codex-runner', 'agents-codex-runner-image'],
     ] as const) {
       expect(agentsImageModule).toContain(`"${packageAttr}"`)
       expect(agentsBuildWorkflow).toContain(`image_name: ${imageName}`)
       expect(agentsBuildWorkflow).toContain(`package_attr: ${packageAttr}`)
-      expect(agentsBuildWorkflow).toContain(artifact)
     }
+    expect(agentsBuildWorkflow.match(/publish_kargo_tag: false/g)).toHaveLength(4)
+    expect(agentsBuildWorkflow).not.toContain('kargo_tag_include_run_id: true')
+    expect(agentsBuildWorkflow).not.toContain('release_artifact_name:')
+
+    const uploadValuesIndex = agentsBuildWorkflow.indexOf('name: Upload rendered Agents values')
+    const publishReceiptsIndex = agentsBuildWorkflow.indexOf('name: Publish complete Agents receipt set for Kargo')
+    expect(uploadValuesIndex).toBeGreaterThan(-1)
+    expect(publishReceiptsIndex).toBeGreaterThan(uploadValuesIndex)
+    expect(agentsBuildWorkflow.match(/--defer-kargo-tag/g)).toHaveLength(4)
+    expect(agentsBuildWorkflow).toContain('bun run packages/scripts/src/shared/oci.ts publish-kargo-tag')
+    expect(agentsBuildWorkflow).toContain('KARGO_TAG: kargo-sha-${{ github.sha }}-run-${{ github.run_id }}')
+    expect(agentsBuildWorkflow).toContain('CONTROLLER_DIGEST: ${{ steps.controller-receipt.outputs.digest }}')
+    expect(agentsBuildWorkflow).toContain('CONTROL_PLANE_DIGEST: ${{ steps.control-plane-receipt.outputs.digest }}')
+    expect(agentsBuildWorkflow).toContain('AGENTS_SHELL_DIGEST: ${{ steps.agents-shell-receipt.outputs.digest }}')
+    expect(agentsBuildWorkflow).toContain('RUNNER_DIGEST: ${{ steps.runner-receipt.outputs.digest }}')
+    expect(agentsBuildWorkflow).toContain("'packages/scripts/src/shared/oci.ts'")
 
     expect(flake).toContain('import ./nix/images/agents.nix')
     expect(agentsImageModule).toContain('import ./openai-codex-cli.nix')
@@ -1205,8 +1369,8 @@ describe('native OCI build workflows', () => {
     expect(agentsBuildWorkflow).toContain('--runner-tag "${TAG}"')
     expect(agentsBuildWorkflow).toContain('--runner-repository registry.ide-newton.ts.net/lab/agents-codex-runner')
     expect(agentsBuildWorkflow).toContain("'charts/agents/crds/**'")
-    expect(agentsBuildWorkflow).not.toContain("'charts/agents/**'")
-    expect(agentsBuildWorkflow).not.toContain("'argocd/applications/agents/**'")
+    expect(agentsBuildWorkflow).toContain("'charts/agents/**'")
+    expect(agentsBuildWorkflow).toContain("'argocd/applications/agents/**'")
     expect(agentsBuildWorkflow).toContain("'packages/scripts/src/agents/update-values.ts'")
     expect(agentsBuildWorkflow).not.toContain("'packages/scripts/src/agents/**'")
     for (const runtimePackage of ['agent-contracts', 'codex', 'cx-tools', 'otel', 'temporal-bun-sdk']) {
@@ -1266,12 +1430,14 @@ describe('native OCI build workflows', () => {
       expect(repoFileExists(`nix/images/${service}.nix`)).toBe(true)
       expect(productNixWorkflow).toContain(`image_name: ${service}`)
       expect(productNixWorkflow).toContain(`package_attr: ${packageAttr}`)
-      expect(productNixWorkflow).toContain(`${service}-release-contract`)
+      expect(productNixWorkflow).toContain('publish_kargo_tag: true')
+      expect(productNixWorkflow).not.toContain('release_artifact_name:')
     }
 
     expect(productNixWorkflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
     expect(productNixWorkflow).toContain('tag: sha-${{ github.sha }}')
     expect(productNixWorkflow.match(/- 'packages\/design\/\*\*'/g)).toHaveLength(6)
+    expect(productNixWorkflow.match(/- '\.github\/workflows\/nix-oci-build-common\.yml'/g)).toHaveLength(6)
     expect(flake).toContain('"olden-image"')
     expect(repoFileExists('nix/images/olden.nix')).toBe(true)
     expect(productNixWorkflow).not.toContain('image_name: olden')
@@ -1281,11 +1447,11 @@ describe('native OCI build workflows', () => {
     expect(productNixWorkflow).not.toContain('uses: ./.github/workflows/docker-build-common.yaml')
     expect(productNixWorkflow).not.toContain('mathieudutour/github-tag-action')
     expect(productNixWorkflow).not.toContain('ncipollo/release-action')
-    expect(productNixWorkflow).not.toContain("'argocd/applications/docs/**'")
-    expect(productNixWorkflow).not.toContain("'argocd/applications/app/**'")
-    expect(productNixWorkflow).not.toContain("'argocd/applications/proompteng/**'")
+    expect(productNixWorkflow).toContain("'argocd/applications/docs/**'")
+    expect(productNixWorkflow).toContain("'argocd/applications/app/**'")
+    expect(productNixWorkflow).toContain("'argocd/applications/proompteng/**'")
     expect(productNixWorkflow).not.toContain("'argocd/applications/olden/**'")
-    expect(productNixWorkflow).not.toContain("'argocd/applications/synthesis/**'")
+    expect(productNixWorkflow).toContain("'argocd/applications/synthesis/**'")
     expect(appImageModule).toContain('"@proompteng/source"')
     for (const imageModule of productImageModules) {
       expect(imageModule).toContain('dependencyClosure = "bunCache";')
@@ -1298,15 +1464,12 @@ describe('native OCI build workflows', () => {
     expect(bunWorkspaceServiceModule).toContain("find . -path '*/node_modules' -prune -exec rm -rf {} +")
   })
 
-  it('does not rebuild migrated simple app images for GitOps-only manifest changes', () => {
-    expect(oiratWorkflow).not.toContain("'argocd/applications/oirat/**'")
-    expect(bumbaWorkflow).not.toContain("'argocd/applications/bumba/**'")
+  it('rebuilds migrated simple app images for GitOps-only manifest changes', () => {
+    expect(oiratWorkflow).toContain("'argocd/applications/oirat/**'")
+    expect(bumbaWorkflow).toContain("'argocd/applications/bumba/**'")
     expect(bumbaWorkflow).not.toContain("'argocd/applicationsets/product.yaml'")
-    expect(froussardWorkflow).not.toContain("'argocd/applications/froussard/**'")
-    expect(headlampWorkflow).not.toContain("'argocd/applications/headlamp/**'")
-    expect(enabledSimpleReleaseWorkflow).not.toContain('packages/scripts/src/oirat argocd/applications/oirat')
-    expect(enabledSimpleReleaseWorkflow).not.toContain('packages/scripts/src/bumba argocd/applications/bumba')
-    expect(enabledSimpleReleaseWorkflow).not.toContain('packages/scripts/src/froussard argocd/applications/froussard')
+    expect(froussardWorkflow).toContain("'argocd/applications/froussard/**'")
+    expect(headlampWorkflow).toContain("'argocd/applications/headlamp/**'")
   })
 
   it('keeps manual migrated app deploy scripts on the shared Nix image helper', () => {
@@ -1427,44 +1590,6 @@ describe('native OCI build workflows', () => {
     expect(nixOciPlanScript).toContain('Nix OCI image pushes must stay in')
   })
 
-  it('opens digest-pinning release PRs for enabled simple app Nix builds', () => {
-    expect(enabledSimpleReleaseWorkflow).toContain('workflows:')
-    expect(enabledSimpleReleaseWorkflow).toContain('- oirat')
-    expect(enabledSimpleReleaseWorkflow).toContain('- bumba')
-    expect(enabledSimpleReleaseWorkflow).toContain('- froussard')
-    expect(enabledSimpleReleaseWorkflow).toContain('nix run .#assert-oci-platforms -- "${IMAGE}@${DIGEST}"')
-    expect(enabledSimpleReleaseWorkflow).toContain('service build inputs changed after source commit')
-    for (const [workflow, sharedPath] of [
-      [oiratWorkflow, "'packages/discord/**'"],
-      [bumbaWorkflow, "'packages/temporal-bun-sdk/**'"],
-      [froussardWorkflow, "'packages/codex/**'"],
-      [froussardWorkflow, "'packages/discord/**'"],
-      [froussardWorkflow, "'packages/otel/**'"],
-    ]) {
-      expect(workflow).toContain(sharedPath)
-    }
-    expect(froussardWorkflow).toContain("'packages/agent-contracts/**'")
-    expect(enabledSimpleReleaseWorkflow).toContain('argocd/applications/oirat/kustomization.yaml')
-    expect(enabledSimpleReleaseWorkflow).toContain('argocd/applications/bumba/kustomization.yaml')
-    expect(enabledSimpleReleaseWorkflow).toContain('argocd/applications/bumba/deployment.yaml')
-    expect(enabledSimpleReleaseWorkflow).toContain('TEMPORAL_WORKER_BUILD_ID')
-    expect(enabledSimpleReleaseWorkflow).toContain('build_id="bumba@${SOURCE_SHA}"')
-    expect(enabledSimpleReleaseWorkflow).toContain('BUILD_ID="${build_id}" perl')
-    expect(enabledSimpleReleaseWorkflow).toContain('value: ${build_id}')
-    expect(enabledSimpleReleaseWorkflow).toContain('argocd/applications/froussard/knative-service.yaml')
-    expect(enabledSimpleReleaseWorkflow).toContain(
-      'source_version="$(git describe --tags --always --long --match \'v[0-9]*.[0-9]*.[0-9]*\' "${source_sha}")"',
-    )
-    expect(enabledSimpleReleaseWorkflow).toContain('echo "source_version=${source_version}"')
-    expect(enabledSimpleReleaseWorkflow).toContain('SOURCE_VERSION: ${{ steps.meta.outputs.source_version }}')
-    expect(enabledSimpleReleaseWorkflow).toContain('name:\\s+FROUSSARD_VERSION')
-    expect(enabledSimpleReleaseWorkflow).toContain('value: ${SOURCE_VERSION}')
-    expect(enabledSimpleReleaseWorkflow).toContain('Source version: `${{ steps.meta.outputs.source_version }}`')
-    expect(enabledSimpleReleaseWorkflow).toContain('\\@sha256:[0-9a-f]{64}')
-    expect(enabledSimpleReleaseWorkflow).toContain('peter-evans/create-pull-request@v7')
-    expect(enabledSimpleReleaseWorkflow).not.toContain('docker buildx')
-  })
-
   it('keeps Bumba image content independent from GitOps-only release commits', () => {
     const bumbaFlakeBlock = flake.match(
       /"bumba-image"\s*=\s*import \.\/nix\/images\/bumba\.nix \{([\s\S]*?)\n\s*\};/m,
@@ -1475,119 +1600,6 @@ describe('native OCI build workflows', () => {
     expect(bumbaFlakeBlock).toBeDefined()
     expect(bumbaFlakeBlock).not.toContain('repoRevision')
     expect(readRepoFile('argocd/applications/bumba/deployment.yaml')).toContain('TEMPORAL_WORKER_BUILD_ID')
-  })
-
-  it('keeps Bumba release ownership out of Argo CD Image Updater', () => {
-    expect(productImageUpdater).not.toContain('namePattern: bumba')
-    expect(productImageUpdater).not.toContain('writeBackTarget: kustomization:/argocd/applications/bumba')
-    expect(productImageUpdater).not.toContain('imageName: registry.ide-newton.ts.net/lab/bumba:latest')
-    expect(enabledSimpleReleaseWorkflow).toContain('- bumba')
-    expect(enabledSimpleReleaseWorkflow).toContain('argocd/applications/bumba/kustomization.yaml')
-  })
-
-  it('opens digest-pinning release PRs for enabled product app Nix builds', () => {
-    expect(enabledProductReleaseWorkflow).toContain('workflows:')
-    expect(enabledProductReleaseWorkflow).toContain('- product-nix-images')
-    for (const service of ['proompteng', 'app', 'synthesis', 'docs']) {
-      expect(enabledProductReleaseWorkflow).toContain(`argocd/applications/${service}/kustomization.yaml`)
-    }
-    expect(enabledProductReleaseWorkflow).not.toContain('argocd/applications/olden/kustomization.yaml')
-    expect(enabledProductReleaseWorkflow).not.toContain('- olden')
-    expect(enabledProductReleaseWorkflow).toContain('registry.ide-newton.ts.net/lab/${SERVICE}')
-    expect(enabledProductReleaseWorkflow).toContain('registry.ide-newton.ts.net/lab/${service}')
-    expect(enabledProductReleaseWorkflow).toContain('${service}-image')
-    expect(enabledProductReleaseWorkflow).toContain('nix run .#assert-oci-platforms -- "${image}@${digest}"')
-    expect(enabledProductReleaseWorkflow).toContain('service build inputs changed after')
-    for (const sharedInput of [
-      'nix/images/bun-workspace-service.nix',
-      'nix/packages.nix',
-      'nix/cache-push.sh',
-      'nix/ci-nix-oci-summary.sh',
-      'nix/ci-run-timed.sh',
-      'nix/oci-inspect-archive.sh',
-      'nix/oci-push.sh',
-      'flake.lock',
-      'bun.lock',
-    ]) {
-      expect(productNixWorkflow.match(new RegExp(`'${escapeRegex(sharedInput)}'`, 'g'))).toHaveLength(6)
-      expect(enabledProductReleaseWorkflow).toContain(sharedInput)
-    }
-    expect(enabledProductReleaseWorkflow).not.toContain('.github/workflows/product-nix-images.yml')
-    expect(enabledProductReleaseWorkflow).not.toContain('.github/workflows/nix-oci-build-common.yml')
-    expect(enabledProductReleaseWorkflow).toContain('peter-evans/create-pull-request@v7')
-    expect(enabledProductReleaseWorkflow).not.toContain('packages/scripts/src/shared/nix-oci-deploy.ts')
-    expect(enabledProductReleaseWorkflow).not.toContain('docker buildx')
-  })
-
-  it('blocks stale Docker-era release branches but auto-merges generated Nix OCI release PRs', () => {
-    expect(autoPrReleaseBranchesWorkflow).toContain('migrated_nix_image_paths=(')
-    for (const path of [
-      'argocd/applications/app/kustomization.yaml',
-      'argocd/applications/bumba/kustomization.yaml',
-      'argocd/applications/docs/kustomization.yaml',
-      'argocd/applications/headlamp/values.yaml',
-      'argocd/applications/oirat/kustomization.yaml',
-      'argocd/applications/proompteng/kustomization.yaml',
-      'argocd/sag/kustomization.yaml',
-      'argocd/applications/symphony/kustomization.yaml',
-      'argocd/applications/symphony-jangar/kustomization.yaml',
-      'argocd/applications/symphony-torghut/kustomization.yaml',
-      'argocd/applications/synthesis/kustomization.yaml',
-    ]) {
-      expect(autoPrReleaseBranchesWorkflow).toContain(`"${path}"`)
-    }
-    expect(autoPrReleaseBranchesWorkflow).toContain('reason="migrated-nix-image-app:${path}"')
-    expect(autoPrReleaseBranchesWorkflow).toContain('disabled_image_paths=(')
-    expect(autoPrReleaseBranchesWorkflow).toContain('"argocd/applications/olden/kustomization.yaml"')
-    expect(autoPrReleaseBranchesWorkflow).toContain('reason="disabled-image-app:${path}"')
-    expect(releasePrAutomergeWorkflow).toContain('nix_oci_release_paths=(')
-    expect(releasePrAutomergeWorkflow).toContain("contains(github.event.pull_request.head.ref, '-nix-release-')")
-    expect(releasePrAutomergeWorkflow).toContain("contains(github.event.pull_request.head.ref, '-release-')")
-    for (const path of [
-      'argocd/applications/arc/application.yaml',
-      'argocd/applications/app/kustomization.yaml',
-      'argocd/applications/attic/deployment.yaml',
-      'argocd/applications/attic/gc-cronjob.yaml',
-      'argocd/applications/bumba/deployment.yaml',
-      'argocd/applications/bumba/kustomization.yaml',
-      'argocd/applications/docs/kustomization.yaml',
-      'argocd/applications/froussard/knative-service.yaml',
-      'argocd/applications/headlamp/values.yaml',
-      'argocd/applications/oirat/kustomization.yaml',
-      'argocd/applications/proompteng/kustomization.yaml',
-      'argocd/applications/synthesis/kustomization.yaml',
-    ]) {
-      expect(releasePrAutomergeWorkflow).toContain(`"${path}"`)
-    }
-    expect(releasePrAutomergeWorkflow).not.toContain('argocd/applications/olden/kustomization.yaml')
-    expect(releasePrAutomergeWorkflow).toContain(
-      '[[ "$PR_HEAD_REF" =~ ^codex/(attic|arc-runner)-release-sha-[0-9a-f]{40}$ ]]',
-    )
-    expect(releasePrAutomergeWorkflow).toContain(
-      '[[ "$PR_HEAD_REF" =~ ^codex/(headlamp|oirat|bumba|froussard)-nix-release-sha-[0-9a-f]{40}$ ]]',
-    )
-    expect(releasePrAutomergeWorkflow).toContain('[[ "$PR_HEAD_REF" =~ ^codex/product-nix-release-[0-9a-f]{40}$ ]]')
-    expect(releasePrAutomergeWorkflow).toContain('for required_label in automated-pr nix-oci')
-    expect(releasePrAutomergeWorkflow).toMatch(/pull_request_target:[\s\S]*?types:[\s\S]*?- unlabeled[\s\S]*?paths:/)
-    const optOutGuardIndex = releasePrAutomergeWorkflow.indexOf('name == "do-not-automerge"')
-    const optOutExitIndex = releasePrAutomergeWorkflow.indexOf('reason=opt-out-label-present')
-    const enableAutomergeIndex = releasePrAutomergeWorkflow.indexOf('gh pr merge "$PR_NUMBER"')
-    expect(optOutGuardIndex).toBeGreaterThan(-1)
-    expect(optOutExitIndex).toBeGreaterThan(optOutGuardIndex)
-    expect(enableAutomergeIndex).toBeGreaterThan(optOutExitIndex)
-    expect(releasePrAutomergeWorkflow).toContain('[[ "$PR_AUTHOR" != "gregkonush" ]]')
-    expect(releasePrAutomergeWorkflow).toContain('commit_committer_login')
-    expect(releasePrAutomergeWorkflow).toContain('commit_committer_email')
-    expect(releasePrAutomergeWorkflow).toContain('reason=human-authored-release-pr')
-    expect(releasePrAutomergeWorkflow).not.toContain(
-      'allowed_authors=("app/github-actions" "github-actions[bot]" "gregkonush")',
-    )
-    expect(releasePrAutomergeWorkflow).toContain('set_output "head_sha=${PR_HEAD_SHA}"')
-    expect(releasePrAutomergeWorkflow).toContain('PR_HEAD_SHA: ${{ steps.gates.outputs.head_sha }}')
-    expect(releasePrAutomergeWorkflow).toContain('--match-head-commit "$PR_HEAD_SHA"')
-    expect(releasePrAutomergeWorkflow).not.toContain('current_head_sha="$(gh pr view')
-    expect(torghutDeployAutomergeWorkflow).toContain('--match-head-commit "${PR_HEAD_SHA}"')
-    expect(releasePrAutomergeWorkflow).toContain('reason=eligible:${release_kind}')
   })
 
   it('keeps Froussard Knative digest rollouts from respecting ignored live annotations during apply', () => {
@@ -1604,23 +1616,6 @@ describe('native OCI build workflows', () => {
     expect(froussardKnativeService).toContain(
       'serving.knative.dev/lastModifier: system:serviceaccount:argocd:argocd-application-controller',
     )
-  })
-
-  it('promotes Attic by digest after a Nix OCI build contract', () => {
-    expect(atticReleaseWorkflow).toContain('attic-release-contract')
-    expect(atticReleaseWorkflow).toContain('argocd/applications/attic/deployment.yaml')
-    expect(atticReleaseWorkflow).toContain('argocd/applications/attic/gc-cronjob.yaml')
-    expect(atticReleaseWorkflow).toContain('nix-oci')
-    expect(atticReleaseWorkflow).toContain('nix run .#resolve-attic-release-metadata')
-    expect(atticReleaseWorkflow).toContain('export IMAGE_REF="${IMAGE}@${DIGEST}"')
-    expect(atticReleaseWorkflow).toContain('image: $ENV{IMAGE_REF}')
-    expect(atticReleaseWorkflow).toContain(
-      'substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/',
-    )
-    expect(atticReleaseWorkflow).not.toContain('image: \'"${image_ref}"\'')
-    expect(atticReleaseWorkflow).not.toContain('nix develop -c')
-    expect(atticReleaseMetadataScript).toContain('"${builder}" != \'nix-dockerTools-skopeo\'')
-    expect(atticReleaseMetadataScript).toContain('crane digest "${image}:${tag}"')
   })
 
   it('disables AWS metadata lookups for the Attic S3 client without changing storage resources', () => {

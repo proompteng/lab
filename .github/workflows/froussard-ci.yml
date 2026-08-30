@@ -11,11 +11,19 @@ on:
       - 'packages/discord/**'
       - 'packages/otel/**'
       - 'nix/images/froussard.nix'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - 'packages/scripts/src/shared/oci.ts'
+      - 'nix/oci-push.sh'
+      - 'argocd/applications/froussard/**'
   pull_request:
     paths:
       - 'apps/froussard/**'
       - 'packages/agent-contracts/**'
       - 'nix/images/froussard.nix'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - 'packages/scripts/src/shared/oci.ts'
+      - 'nix/oci-push.sh'
+      - 'argocd/applications/froussard/**'
   workflow_dispatch:
 
 concurrency:
@@ -40,7 +48,7 @@ jobs:
       image_name: froussard
       package_attr: froussard-image
       tag: sha-${{ github.sha }}
+      publish_kargo_tag: true
       pr_number: ${{ github.event.pull_request.number || '' }}
       latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
-      release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'froussard-release-contract' || '' }}
     secrets: inherit

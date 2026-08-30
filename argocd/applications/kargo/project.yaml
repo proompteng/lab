@@ -1,0 +1,6 @@
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo

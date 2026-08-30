@@ -11,6 +11,11 @@ on:
       - 'services/jangar/**'
       - 'services/bumba/**'
       - 'nix/images/jangar.nix'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - 'packages/scripts/src/shared/oci.ts'
+      - '.github/workflows/jangar-post-deploy-verify.yml'
+      - 'nix/oci-push.sh'
+      - 'argocd/applications/jangar/**'
   workflow_dispatch:
 
 concurrency:
@@ -25,8 +30,9 @@ jobs:
       image_name: jangar
       package_attr: jangar-image
       tag: sha-${{ github.sha }}
+      publish_kargo_tag: true
+      kargo_tag_include_run_id: true
       pr_number: ${{ github.event.pull_request.number || '' }}
       image_build_timeout: 12m
       latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
-      release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'jangar-release-contract' || '' }}
     secrets: inherit
