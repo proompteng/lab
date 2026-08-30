@@ -746,6 +746,12 @@ async function resizeWindow(
 }
 
 test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and window controls', async ({ page }) => {
+  const terminalDisposeFailures: string[] = []
+  page.on('console', (message) => {
+    if (message.text().includes('[tengri-terminal] terminal dispose failed')) {
+      terminalDisposeFailures.push(message.text())
+    }
+  })
   const mock = await mockTengri(page, {
     extraFiles: Array.from({ length: 8 }, (_, index) => ({
       name: `test-${index + 1}.txt`,
@@ -877,7 +883,9 @@ test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and win
   const creationIdPattern = new RegExp(`^tengri-${readyAgent.id}-[0-9a-f]{32}-terminal-[0-9]+$`)
   expect(terminalCreations.every((action) => creationIdPattern.test(String(action.creationId)))).toBe(true)
   await page.getByRole('button', { name: 'Close Terminal' }).last().click()
+  await expect(page.getByRole('region', { name: 'Terminal window' })).toHaveCount(1)
   await expect.poll(() => mock.actions.some((action) => action.action === 'terminate-terminal')).toBe(true)
+  expect(terminalDisposeFailures).toEqual([])
 })
 
 test('preserves terminal identity on reload and BFCache restore while isolating a duplicated desktop tab', async ({

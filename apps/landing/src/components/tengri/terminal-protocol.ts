@@ -243,8 +243,16 @@ export function terminalPlainText(value: unknown): string {
 
 export function safelyDisposeTerminal(
   terminal: { dispose(): void } | null,
+  addons: readonly { dispose(): void }[] = [],
   logger: Pick<typeof console, 'warn'> = console,
 ): void {
+  for (let index = addons.length - 1; index >= 0; index -= 1) {
+    try {
+      addons[index]?.dispose()
+    } catch (cause) {
+      logger.warn('[tengri-terminal] terminal addon dispose failed', cause)
+    }
+  }
   if (!terminal) return
   try {
     terminal.dispose()
