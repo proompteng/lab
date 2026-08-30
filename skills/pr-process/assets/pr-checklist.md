@@ -9,4 +9,4 @@
 - [ ] Required exact-head checks are green
 - [ ] Actionable review threads are handled
 - [ ] Rollout impact documented for infrastructure changes
-- [ ] Squash merge authorized; branch deletion omitted
+- [ ] Squash merge authorized and bound to the verified head; branch deletion omitted

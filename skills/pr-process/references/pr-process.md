@@ -37,6 +37,7 @@ The helper creates a pull request, so run it only when that external mutation is
 ## Exact-head readiness
 
 ```bash
+VERIFIED_HEAD=$(gh pr view <pr> -R proompteng/lab --json headRefOid --jq .headRefOid)
 gh pr view <pr> -R proompteng/lab --json headRefOid,baseRefOid,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup
 gh pr checks <pr> -R proompteng/lab
 ```
@@ -48,7 +49,8 @@ Inspect every actionable review thread and relevant failing log. A PR is ready o
 For an approved PR:
 
 ```bash
-gh pr merge <pr> --squash -R proompteng/lab
+gh pr merge <pr> --squash --match-head-commit "$VERIFIED_HEAD" -R proompteng/lab
 ```
 
-Do not pass `--delete-branch`; shared worktrees may still reference stack branches.
+Use the `VERIFIED_HEAD` recorded before readiness checks. If the head changes, rerun the checks and review audit before
+recording a new value. Do not pass `--delete-branch`; shared worktrees may still reference stack branches.
