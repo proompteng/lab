@@ -127,6 +127,7 @@ type MockOptions = {
   authenticated?: boolean
   agent?: typeof readyAgent | null
   codexAuthenticated?: boolean
+  deferSleepReconciliation?: boolean
   extraFiles?: typeof workspaceEntries
   failSnapshotAfterAction?: 'delete-agent' | 'sleep-agent'
   holdCodexAccount?: boolean
@@ -587,7 +588,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
           markHeldLifecycleActionStarted()
           await heldLifecycleAction
         }
-        agent = agent ? { ...agent, phase: 'sleeping' } : agent
+        if (!options.deferSleepReconciliation) agent = agent ? { ...agent, phase: 'sleeping' } : agent
         result = agent
         break
       case 'resume-agent':
@@ -609,6 +610,9 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
 
   return {
     actions,
+    completeSleepReconciliation: () => {
+      agent = agent ? { ...agent, phase: 'sleeping' } : agent
+    },
     failNextReads: (path: string, count = 1) => {
       readFileFailures.set(path, count)
     },
@@ -1684,7 +1688,7 @@ test('stops a failed agent without deleting its persistent workspace', async ({ 
     phase: 'failed',
     message: 'No proven Firecracker node can schedule this agent.',
   }
-  const mock = await mockTengri(page, { agent: failedAgent })
+  const mock = await mockTengri(page, { agent: failedAgent, deferSleepReconciliation: true })
   await page.goto('/')
 
   const failed = page.getByRole('dialog', { name: 'Agent could not start' })
@@ -1692,6 +1696,10 @@ test('stops a failed agent without deleting its persistent workspace', async ({ 
 
   await expect.poll(() => mock.actions.some((action) => action.action === 'sleep-agent')).toBe(true)
   expect(mock.actions.some((action) => action.action === 'delete-agent')).toBe(false)
+  await expect(page.getByRole('status', { name: 'Putting agent to sleep' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Delete Failed Agent' })).toHaveCount(0)
+
+  mock.completeSleepReconciliation()
   await expect(page.getByRole('dialog', { name: 'Tengri is sleeping' })).toBeVisible()
 })
 

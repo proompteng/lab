@@ -388,13 +388,31 @@ function FailedAgentWindow({
   const [error, setError] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [sleepBusy, setSleepBusy] = useState(false)
+  const [sleepCommitted, setSleepCommitted] = useState(false)
+
+  useEffect(() => {
+    if (!sleepCommitted) return
+    let cancelled = false
+    let timer: number | undefined
+
+    const refreshUntilSleeping = async () => {
+      await onChanged()
+      if (!cancelled) timer = window.setTimeout(() => void refreshUntilSleeping(), 2_000)
+    }
+    void refreshUntilSleeping()
+
+    return () => {
+      cancelled = true
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  }, [onChanged, sleepCommitted])
 
   async function preserveWorkspace() {
     setSleepBusy(true)
     setError('')
     try {
       await runTengriAction<TengriAgent>({ action: 'sleep-agent', agentId: agent.id })
-      await onChanged()
+      setSleepCommitted(true)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'The failed agent could not be stopped')
     } finally {
@@ -415,6 +433,17 @@ function FailedAgentWindow({
     } finally {
       setDeleteBusy(false)
     }
+  }
+
+  if (sleepCommitted) {
+    return (
+      <StatusWindow
+        icon={<LoaderCircle className="h-7 w-7 animate-spin text-[#8abfff]" />}
+        title="Putting agent to sleep"
+        detail="Stopping the failed Firecracker guest while keeping the persistent workspace."
+        progress
+      />
+    )
   }
 
   return (
