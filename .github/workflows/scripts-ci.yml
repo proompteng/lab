@@ -50,6 +50,7 @@ on:
       - 'docs/runbooks/rook-ceph-client-ops-performance.md'
       - 'docs/nix-enabled-app-build-performance-rollout-plan.md'
       - 'devices/galactic/docs/troubleshooting-networking.md'
+      - 'devices/galactic/docs/tailscale.md'
       - '.github/workflows/scripts-ci.yml'
       - '.github/workflows/manual-docker-build-push.yaml'
       - '.github/scripts/validate-oci-mirror-inputs.sh'
@@ -102,6 +103,7 @@ on:
       - 'docs/runbooks/rook-ceph-client-ops-performance.md'
       - 'docs/nix-enabled-app-build-performance-rollout-plan.md'
       - 'devices/galactic/docs/troubleshooting-networking.md'
+      - 'devices/galactic/docs/tailscale.md'
       - '.github/workflows/manual-docker-build-push.yaml'
       - '.github/scripts/validate-oci-mirror-inputs.sh'
 

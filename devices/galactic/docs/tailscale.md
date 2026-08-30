@@ -41,7 +41,7 @@ talosctl -n <talos-api-address> -e <talos-api-address> logs ext-tailscale | tail
 Confirm all three current nodes appear in the tailnet:
 
 ```bash
-tailscale status | rg -E 'ryzen|turin|altra'
+tailscale status | rg 'ryzen|turin|altra'
 ```
 
 When validating private registry reachability, use an existing approved smoke-test tag and pull it through the Talos
