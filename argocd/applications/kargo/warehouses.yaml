@@ -17,6 +17,8 @@ spec:
         repoURL: git@github.com:proompteng/lab.git
         branch: main
         commitSelectionStrategy: NewestFromBranch
+        discoveryLimit: 20
+        strictSemvers: true
         includePaths:
           - apps/landing
           - packages/backend
@@ -38,6 +40,8 @@ spec:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/proompteng
         imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
         allowTagsRegexes:
           - '^kargo-sha-[0-9a-f]{40}$'
         platform: linux/amd64
@@ -62,6 +66,8 @@ spec:
         repoURL: git@github.com:proompteng/lab.git
         branch: main
         commitSelectionStrategy: NewestFromBranch
+        discoveryLimit: 20
+        strictSemvers: true
         includePaths:
           - apps/app
           - packages/design
@@ -81,6 +87,8 @@ spec:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/app
         imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
         allowTagsRegexes:
           - '^kargo-sha-[0-9a-f]{40}$'
         platform: linux/amd64
@@ -105,6 +113,8 @@ spec:
         repoURL: git@github.com:proompteng/lab.git
         branch: main
         commitSelectionStrategy: NewestFromBranch
+        discoveryLimit: 20
+        strictSemvers: true
         includePaths:
           - apps/synthesis
           - packages/design
@@ -124,6 +134,8 @@ spec:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/synthesis
         imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
         allowTagsRegexes:
           - '^kargo-sha-[0-9a-f]{40}$'
         platform: linux/amd64
@@ -148,6 +160,8 @@ spec:
         repoURL: git@github.com:proompteng/lab.git
         branch: main
         commitSelectionStrategy: NewestFromBranch
+        discoveryLimit: 20
+        strictSemvers: true
         includePaths:
           - apps/docs
           - packages/design
@@ -167,6 +181,8 @@ spec:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/docs
         imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
         allowTagsRegexes:
           - '^kargo-sha-[0-9a-f]{40}$'
         platform: linux/amd64
@@ -191,6 +207,8 @@ spec:
         repoURL: git@github.com:proompteng/lab.git
         branch: main
         commitSelectionStrategy: NewestFromBranch
+        discoveryLimit: 20
+        strictSemvers: true
         includePaths:
           - services/bumba
           - packages/temporal-bun-sdk
@@ -201,6 +219,8 @@ spec:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/bumba
         imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
         allowTagsRegexes:
           - '^kargo-sha-[0-9a-f]{40}$'
         platform: linux/amd64
@@ -225,6 +245,8 @@ spec:
         repoURL: git@github.com:proompteng/lab.git
         branch: main
         commitSelectionStrategy: NewestFromBranch
+        discoveryLimit: 20
+        strictSemvers: true
         includePaths:
           - services/oirat
           - packages/discord
@@ -235,6 +257,8 @@ spec:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/oirat
         imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
         allowTagsRegexes:
           - '^kargo-sha-[0-9a-f]{40}$'
         platform: linux/amd64
@@ -259,6 +283,8 @@ spec:
         repoURL: git@github.com:proompteng/lab.git
         branch: main
         commitSelectionStrategy: NewestFromBranch
+        discoveryLimit: 20
+        strictSemvers: true
         includePaths:
           - apps/froussard
           - packages/agent-contracts
@@ -272,6 +298,8 @@ spec:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/froussard
         imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
         allowTagsRegexes:
           - '^kargo-sha-[0-9a-f]{40}$'
         platform: linux/amd64
@@ -296,6 +324,8 @@ spec:
         repoURL: git@github.com:proompteng/lab.git
         branch: main
         commitSelectionStrategy: NewestFromBranch
+        discoveryLimit: 20
+        strictSemvers: true
         includePaths:
           - nix/images/arc-runner.nix
           - nix/cache-doctor.sh
@@ -307,6 +337,8 @@ spec:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/arc-runner
         imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
         allowTagsRegexes:
           - '^kargo-sha-[0-9a-f]{40}$'
         platform: linux/amd64
@@ -331,6 +363,8 @@ spec:
         repoURL: git@github.com:proompteng/lab.git
         branch: main
         commitSelectionStrategy: NewestFromBranch
+        discoveryLimit: 20
+        strictSemvers: true
         includePaths:
           - nix/images/attic.nix
           - docs/nix-cache.md
@@ -341,6 +375,8 @@ spec:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/attic
         imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
         allowTagsRegexes:
           - '^kargo-sha-[0-9a-f]{40}$'
         platform: linux/amd64
@@ -365,6 +401,8 @@ spec:
         repoURL: git@github.com:proompteng/lab.git
         branch: main
         commitSelectionStrategy: NewestFromBranch
+        discoveryLimit: 20
+        strictSemvers: true
         includePaths:
           - .github/workflows/headlamp-ci.yml
           - .github/workflows/nix-oci-build-common.yml
@@ -376,6 +414,8 @@ spec:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/headlamp
         imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
         allowTagsRegexes:
           - '^kargo-sha-[0-9a-f]{40}$'
         platform: linux/amd64
@@ -400,6 +440,8 @@ spec:
         repoURL: git@github.com:proompteng/lab.git
         branch: main
         commitSelectionStrategy: NewestFromBranch
+        discoveryLimit: 20
+        strictSemvers: true
         includePaths:
           - .github/actions/setup-nix-toolchain
           - .github/workflows/hermes-toolchain-build-push.yml
@@ -417,6 +459,8 @@ spec:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/hermes-toolchain
         imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
         allowTagsRegexes:
           - '^kargo-sha-[0-9a-f]{40}$'
         platform: linux/amd64
@@ -445,6 +489,8 @@ spec:
         repoURL: git@github.com:proompteng/lab.git
         branch: main
         commitSelectionStrategy: NewestFromBranch
+        discoveryLimit: 20
+        strictSemvers: true
         includePaths:
           - services/jangar
           - services/bumba
@@ -456,6 +502,8 @@ spec:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/jangar
         imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
         allowTagsRegexes:
           - '^kargo-sha-[0-9a-f]{40}-run-[1-9][0-9]*$'
         platform: linux/amd64
@@ -480,6 +528,8 @@ spec:
         repoURL: git@github.com:proompteng/lab.git
         branch: main
         commitSelectionStrategy: NewestFromBranch
+        discoveryLimit: 20
+        strictSemvers: true
         includePaths:
           - services/symphony
           - nix/images/symphony.nix
@@ -493,6 +543,8 @@ spec:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/symphony
         imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
         allowTagsRegexes:
           - '^kargo-sha-[0-9a-f]{40}$'
         platform: linux/amd64
@@ -525,6 +577,8 @@ spec:
         repoURL: git@github.com:proompteng/lab.git
         branch: main
         commitSelectionStrategy: NewestFromBranch
+        discoveryLimit: 20
+        strictSemvers: true
         includePaths:
           - services/torghut
           - packages/scripts/src/torghut
@@ -562,6 +616,8 @@ spec:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/torghut
         imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
         allowTagsRegexes:
           - '^kargo-sha-[0-9a-f]{40}$'
         platform: linux/amd64
@@ -569,6 +625,8 @@ spec:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/torghut-notebook
         imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
         allowTagsRegexes:
           - '^kargo-sha-[0-9a-f]{40}$'
         platform: linux/amd64
@@ -576,6 +634,8 @@ spec:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/torghut-ta
         imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
         allowTagsRegexes:
           - '^kargo-sha-[0-9a-f]{40}$'
         platform: linux/amd64
@@ -583,6 +643,8 @@ spec:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/torghut-ws
         imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
         allowTagsRegexes:
           - '^kargo-sha-[0-9a-f]{40}$'
         platform: linux/amd64
@@ -590,6 +652,8 @@ spec:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/signal-publisher
         imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
         allowTagsRegexes:
           - '^kargo-sha-[0-9a-f]{40}$'
         platform: linux/amd64
@@ -614,6 +678,8 @@ spec:
         repoURL: git@github.com:proompteng/lab.git
         branch: main
         commitSelectionStrategy: NewestFromBranch
+        discoveryLimit: 20
+        strictSemvers: true
         includePaths:
           - services/dorvud/gradle
           - services/dorvud/gradlew
@@ -630,6 +696,8 @@ spec:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/torghut-hyperliquid-feed
         imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
         allowTagsRegexes:
           - '^kargo-sha-[0-9a-f]{40}$'
         platform: linux/amd64
@@ -650,11 +718,15 @@ spec:
         repoURL: git@github.com:proompteng/lab.git
         branch: main
         commitSelectionStrategy: NewestFromBranch
+        discoveryLimit: 20
+        strictSemvers: true
         includePaths:
           - argocd/applications/bilig
     - image:
         repoURL: registry.ide-newton.ts.net/lab/bilig-app
         imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
         allowTagsRegexes:
           - '^[0-9a-f]{40}$'
         platform: linux/arm64
@@ -675,11 +747,15 @@ spec:
         repoURL: git@github.com:proompteng/lab.git
         branch: main
         commitSelectionStrategy: NewestFromBranch
+        discoveryLimit: 20
+        strictSemvers: true
         includePaths:
           - argocd/applications/analysis
     - image:
         repoURL: registry.ide-newton.ts.net/lab/analysis
         imageSelectionStrategy: Digest
+        discoveryLimit: 20
+        strictSemvers: true
         constraint: latest
         platform: linux/arm64
 ---
@@ -721,6 +797,8 @@ spec:
         repoURL: git@github.com:proompteng/lab.git
         branch: main
         commitSelectionStrategy: NewestFromBranch
+        discoveryLimit: 20
+        strictSemvers: true
         includePaths:
           - packages/agent-contracts
           - packages/codex
@@ -752,6 +830,8 @@ spec:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/agents-controller
         imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
         allowTagsRegexes:
           - '^kargo-sha-[0-9a-f]{40}-run-[1-9][0-9]*$'
         platform: linux/amd64
@@ -759,6 +839,8 @@ spec:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/agents-control-plane
         imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
         allowTagsRegexes:
           - '^kargo-sha-[0-9a-f]{40}-run-[1-9][0-9]*$'
         platform: linux/amd64
@@ -766,6 +848,8 @@ spec:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/agents-shell
         imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
         allowTagsRegexes:
           - '^kargo-sha-[0-9a-f]{40}-run-[1-9][0-9]*$'
         platform: linux/amd64
@@ -773,6 +857,8 @@ spec:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/agents-codex-runner
         imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
         allowTagsRegexes:
           - '^kargo-sha-[0-9a-f]{40}-run-[1-9][0-9]*$'
         platform: linux/amd64
@@ -799,6 +885,8 @@ spec:
         repoURL: git@github.com:proompteng/lab.git
         branch: main
         commitSelectionStrategy: NewestFromBranch
+        discoveryLimit: 20
+        strictSemvers: true
         includePaths:
           - services/tengri
           - services/nanoagent
@@ -811,6 +899,8 @@ spec:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/tengri
         imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
         allowTagsRegexes:
           - '^kargo-sha-[0-9a-f]{40}$'
         platform: linux/amd64
@@ -818,6 +908,8 @@ spec:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/nanoagent
         imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
         allowTagsRegexes:
           - '^kargo-sha-[0-9a-f]{40}$'
         platform: linux/amd64
@@ -842,6 +934,8 @@ spec:
         repoURL: git@github.com:proompteng/lab.git
         branch: main
         commitSelectionStrategy: NewestFromBranch
+        discoveryLimit: 20
+        strictSemvers: true
         includePaths:
           - third_party/buzz
           - .github/workflows/buzz-relay-build-push.yml
@@ -849,6 +943,8 @@ spec:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/buzz
         imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
         allowTagsRegexes:
           - '^kargo-sha-[0-9a-f]{40}$'
         platform: linux/amd64
