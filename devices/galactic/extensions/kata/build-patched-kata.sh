@@ -73,8 +73,8 @@ for artifact in kata-static-agent.tar.zst kata-static-shim-v2-rust.tar.zst; do
 done
 
 tar --zstd -tf "$output_dir/kata-static-agent.tar.zst" \
-  | grep -Fxq './usr/bin/kata-agent'
+  | grep -Fx './usr/bin/kata-agent' >/dev/null
 tar --zstd -tf "$output_dir/kata-static-shim-v2-rust.tar.zst" \
-  | grep -Fxq './opt/kata/runtime-rs/bin/containerd-shim-kata-v2'
+  | grep -Fx './opt/kata/runtime-rs/bin/containerd-shim-kata-v2' >/dev/null
 
 sha256sum "$output_dir"/*.tar.zst
