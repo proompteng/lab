@@ -64,7 +64,9 @@ jobs:
             libmount-dev \
             libseccomp-dev \
             pkg-config \
-            protobuf-compiler
+            protobuf-compiler \
+            zstd
+          INSTALL_IN_GOPATH=false .kata-source/ci/install_yq.sh
 
       - name: Build and test patched Kata components
         run: |
