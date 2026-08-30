@@ -725,6 +725,12 @@ describe('Kargo direct-push GitOps contract', () => {
     expect(timeoutSeconds).toBeGreaterThanOrEqual(verifierTimeoutSeconds + 600)
   })
 
+  it('retains post-deploy verification for every application promoted by the Torghut stage', () => {
+    expect(torghutVerifierWorkflow).toContain("- 'argocd/applications/torghut-hyperliquid-runtime/**'")
+    expect(torghutVerifierWorkflow).toContain('for app in torghut torghut-options torghut-hyperliquid-runtime; do')
+    expect(torghutVerifierWorkflow).toContain('torghut-hyperliquid-runtime \\')
+  })
+
   it('uses Kargo to write image and provenance data, never live Argo image overrides', () => {
     const stageMap = byName(stages)
     for (const stageName of expectedStageNames) {

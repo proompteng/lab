@@ -7,6 +7,7 @@ on:
     paths:
       - 'argocd/applications/torghut/**'
       - 'argocd/applications/torghut-options/**'
+      - 'argocd/applications/torghut-hyperliquid-runtime/**'
   workflow_dispatch:
     inputs:
       expected_revision:
@@ -135,7 +136,7 @@ jobs:
           ARGO_SYNC_POLL_INTERVAL_SECONDS=2
           ARGO_SYNC_POLL_ATTEMPTS=$((ARGO_SYNC_TIMEOUT_SECONDS / ARGO_SYNC_POLL_INTERVAL_SECONDS))
 
-          for app in torghut torghut-options; do
+          for app in torghut torghut-options torghut-hyperliquid-runtime; do
             for attempt in $(seq 1 "${ARGO_SYNC_POLL_ATTEMPTS}"); do
               STATUS="$(kubectl get application "${app}" -n argocd -o jsonpath='{.status.sync.status} {.status.health.status} {.status.sync.revision} {.status.operationState.phase} {.status.operationState.syncResult.revision} {.status.history[-1].revision}')"
               SYNC_STATUS="$(echo "${STATUS}" | awk '{print $1}')"
@@ -303,6 +304,7 @@ jobs:
             torghut-options-catalog \
             torghut-options-enricher \
             torghut-options-ta \
+            torghut-hyperliquid-runtime \
             torghut-ta \
             torghut-ta-sim \
             torghut-ws \
