@@ -20,6 +20,7 @@ on:
       - 'nix/oci-push.sh'
       - 'nix/oci-release-contract.sh'
       - 'nix/packages.nix'
+      - 'argocd/applications/hermes/**'
   workflow_dispatch:
 
 concurrency:
@@ -33,6 +34,7 @@ jobs:
       image_name: hermes-toolchain
       package_attr: hermes-toolchain-image
       tag: sha-${{ github.sha }}
+      publish_kargo_tag: true
       pr_number: ${{ github.event.pull_request.number || '' }}
       latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
       publish_on_dispatch: true

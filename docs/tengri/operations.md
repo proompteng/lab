@@ -1,6 +1,6 @@
 # Tengri operations
 
-Tengri is delivered only through CI and the `tengri` Argo CD application. It owns namespaced `MicroVM` resources,
+Tengri is delivered through the main-branch image build, Kargo, and the `tengri` Argo CD application. It owns namespaced `MicroVM` resources,
 their bootstrap Secrets, 16 GiB `rook-ceph-block` PVCs, and unprivileged `kata-fc` Pods. It does not mutate Talos,
 Kata RuntimeClasses, node scheduling, or cluster nodes.
 
@@ -125,17 +125,29 @@ Exact failure reasons are published in CR status. Do not infer success from a cr
 
 1. Run the controller and Nanoagent tests and verify both generated CRD copies.
 2. Merge controller, guest, CRD, or release-tool changes to `main`. `Tengri images` validates both services and CRDs,
-   builds native `linux/amd64` and `linux/arm64` images, publishes and signs both multi-architecture indexes, and emits
-   one immutable `tengri-release-contract` for that source revision.
-3. `Tengri release` verifies the contract, indexes, signatures, and current `main`, then opens one generated promotion
-   PR that pins both digests and enables the Tengri ApplicationSet entry and BFF endpoint atomically. A newer relevant
-   build immediately invalidates an older open promotion.
-4. Review and merge the generated promotion PR; never hand-edit image digests or use the retired manual mirror path.
-5. Let Argo reconcile from `main`, then verify the controller Deployment, Service endpoints, `/livez`, `/readyz`, and
-   unchanged node scheduling.
-6. Run the bounded Firecracker acceptance path: create one authenticated agent, prove `runtimeClassName: kata-fc`,
+   builds native `linux/amd64` and `linux/arm64` images, publishes and signs both final multi-architecture indexes, then
+   emits the `kargo-sha-<40>` aliases with OCI `org.opencontainers.image.created` (source commit RFC3339 time) and
+   `org.opencontainers.image.revision` (full source SHA), plus one immutable `tengri-release-contract` for that source revision.
+   Legacy `sha-*` and mutable `latest` tags are ignored by the Tengri Warehouses.
+3. The Kargo Tengri Warehouse/Freight path discovers both immutable image outputs. Its exact automatic `tengri` Stage
+   policy promotes the matching controller and Nanoagent Freight together, copies the source commit and full
+   digest/build metadata to `kargo/tengri`, and pushes that branch without a pull request. The Argo Applications track
+   the branch and wait for `Synced`/`Healthy`. No generated promotion PR, release branch, or manifest digest bump is part
+   of this flow.
+4. Let Argo reconcile, then verify the controller Deployment, Service endpoints, `/livez`, `/readyz`, and unchanged
+   node scheduling.
+5. Run the bounded Firecracker acceptance path: create one authenticated agent, prove `runtimeClassName: kata-fc`,
    guest kernel isolation, fresh-image pull, interactive PTY, persistent file round trip, Codex event, and localhost
    preview WebSocket/HMR.
+
+Use these read-only checks to distinguish Kargo promotion from Argo and workload proof:
+
+```bash
+kubectl --context galactic-lan -n lab-delivery get warehouse,freight,stage
+kubectl --context galactic-lan -n lab-delivery get stage/tengri -o yaml
+kubectl --context galactic-lan -n argocd get application/tengri application/proompteng \
+  -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.sync.status}{" "}{.status.health.status}{"\n"}{end}'
+```
 
 ### Storage layout
 
@@ -147,13 +159,14 @@ Tengri supports only `runtime.proompteng.ai/storage-layout=home-workspace-v2`:
 3. Any CR with a missing or different layout is rejected and must be deleted and recreated. The failed
    `home-workspace-v1` experiment never produced a working guest, so there is no migration or fallback path.
 
-The Deployment temporarily retains `TENGRI_NEW_AGENT_STORAGE_LAYOUT=home-workspace-v1` only to keep the pinned
-pre-v2 controller stable between the source merge and image promotion. The v2 controller ignores the variable and
-always writes `home-workspace-v2`; remove the inert variable in a later GitOps cleanup after v2 is live.
+The Deployment temporarily retains `TENGRI_NEW_AGENT_STORAGE_LAYOUT=home-workspace-v1` only while Kargo promotes the
+v2 controller/guest pair. The v2 controller ignores the variable and always writes `home-workspace-v2`; remove the inert
+variable in a later GitOps-only cleanup after Kargo and Argo prove v2 live.
 
-Promote or roll back the controller and Nanoagent digests together through GitOps. Do not mix a controller and guest
+Promote or roll back the controller and Nanoagent digests together through Kargo. Do not mix a controller and guest
 image from different releases. A controller predating `home-workspace-v2` cannot safely resume a v2 guest. Before
-reverting past v2, let every v2 agent expire or delete it through Tengri, then require this zero-result check:
+re-promoting a Freight pair predating v2, let every v2 agent expire or delete it through Tengri, then require this
+zero-result check:
 
 ```bash
 kubectl --context galactic-lan -n tengri get microvms.runtime.proompteng.ai -o json \
@@ -162,56 +175,45 @@ kubectl --context galactic-lan -n tengri get microvms.runtime.proompteng.ai -o j
 
 ### Proompteng desktop image promotions
 
-The generated product-image promotion updates the immutable `proompteng` digest in
-`argocd/applications/proompteng/kustomization.yaml`. The production Deployment has one replica with `maxSurge: 0` and
-`maxUnavailable: 1`, so Argo replaces the existing Pod without a surge Pod. A short interval with no ready web Pod is
-expected; an open desktop can show a reconnecting or degraded state until the replacement Pod passes its startup and
-readiness probes. The Firecracker guest Pod and its PVC continue running during this web-only rollout.
+The Kargo `proompteng` Stage copies the source commit and full image/build metadata to `kargo/proompteng` and pushes it
+without a pull request. The Argo Application tracks that branch. The repository Kustomization on `main` remains the
+reviewed configuration baseline. The production Deployment has one replica with `maxSurge: 0` and `maxUnavailable: 1`,
+so Argo replaces the existing Pod without a surge Pod. A short interval with no ready web Pod is expected; an open
+desktop can show a reconnecting or degraded state until the replacement Pod passes its startup and readiness probes. The
+Firecracker guest Pod and its PVC continue running during this web-only rollout.
 
-After merging a promotion, require all of the following before calling the rollout complete:
+After Kargo promotes a Freight, require all of the following before calling the rollout complete:
 
 ```bash
 set -euo pipefail
 
-argocd app get proompteng --hard-refresh
-argocd app wait proompteng --sync --health --timeout 300
+kubectl --context galactic-lan -n lab-delivery get freight,stage
+kubectl --context galactic-lan -n lab-delivery get stage/proompteng -o yaml
+kubectl --context galactic-lan -n argocd get application/proompteng \
+  -o jsonpath='{.status.sync.status}{"\n"}{.status.health.status}{"\n"}'
+kubectl --context galactic-lan -n argocd get application/proompteng \
+  -o jsonpath='{.spec.source.targetRevision}{"\n"}{.status.sync.revision}{"\n"}'
 kubectl --context galactic-lan -n proompteng rollout status deployment/proompteng --timeout=5m
 kubectl --context galactic-lan -n proompteng get deployment/proompteng \
   -o jsonpath='{.status.readyReplicas}/{.status.replicas}{"\n"}'
 
-proompteng_image=registry.ide-newton.ts.net/lab/proompteng
-proompteng_index_digest=$(yq -er \
-  '.images[] | select(.name == "registry.ide-newton.ts.net/lab/proompteng") | .digest' \
-  argocd/applications/proompteng/kustomization.yaml)
-proompteng_arm64_digest=$(bun run packages/scripts/src/shared/oci.ts inspect \
-  "$proompteng_image@$proompteng_index_digest" | awk '$1 == "linux/arm64" { print $2 }')
-test -n "$proompteng_arm64_digest"
-
 proompteng_image_id=$(kubectl --context galactic-lan -n proompteng get pod -l app=proompteng -o json | jq -er '
   [.items[] | select(.status.containerStatuses[0].ready == true) | .status.containerStatuses[0].imageID]
   | if length == 1 then .[0] else error("expected exactly one ready proompteng Pod") end')
-case "$proompteng_image_id" in
-  *"$proompteng_index_digest"|*"$proompteng_arm64_digest") ;;
-  *)
-    echo "unexpected proompteng imageID: $proompteng_image_id" >&2
-    exit 1
-    ;;
-esac
+test -n "$proompteng_image_id"
 curl --fail --silent --show-error --output /dev/null https://proompteng.ai/
 ```
 
-The kubelet can report either the promoted multi-platform index digest or the selected `linux/arm64` child-manifest
-digest, so the check accepts exactly those two values from the published index. The Deployment must return to `1/1`,
+The kubelet can report the promoted multi-platform index digest or the selected platform child-manifest digest; compare
+the running image ID with the Freight digest and its published child manifest. The Deployment must return to `1/1`,
 and the Argo application must be `Synced` and `Healthy`. Finish with the built-in browser: reload
 `https://proompteng.ai`, require the authenticated desktop to return to `Connected`, and exercise the capability changed
 by the promoted source. Deployment health and an HTTP 200 alone are not sufficient product acceptance.
 
-If the replacement Pod does not become ready or the browser acceptance fails, create a normal follow-up PR from the
-latest `main` that restores only the previously proven Proompteng digest in
-`argocd/applications/proompteng/kustomization.yaml`. The PR must leave the `app`, `synthesis`, and `docs` manifests at
-their current digests; never revert a multi-service promotion commit to recover only Proompteng. Verify that the PR
-changes only the Proompteng Kustomization, then let CI and Argo perform the targeted rollback. Do not patch the live
-Deployment, delete the SealedSecrets, or change the running microVM while rolling the web image back.
+If the replacement Pod does not become ready or the browser acceptance fails, fix the source-owned failure and
+re-promote the previously proven Proompteng Freight through Kargo. Kargo rewrites `kargo/proompteng` and Argo
+reconciles it. Do not create a digest PR, patch the live Deployment, delete the SealedSecrets, or change the running
+microVM while rolling the web image back.
 
 Do not deploy from a worktree, directly apply rendered manifests, cordon or drain a node, reboot a node, or create a
 permanent canary DaemonSet.
@@ -294,8 +296,8 @@ The authenticated Codex account, thread, event-replay, approval, and end-to-end 
 
 ## Recovery
 
-- Controller unavailable: existing guest Pods and PVCs continue running. Revert the image or manifest commit through a
-  follow-up PR and allow the singleton `Recreate` Deployment to reconcile.
+- Controller unavailable: existing guest Pods and PVCs continue running. Re-promote the last known-good controller/guest
+  Freight pair through Kargo and allow the singleton `Recreate` Deployment to reconcile from `kargo/tengri`.
 - Guest `Failed`: inspect the CR status condition, Pod events, image-pull status, and Nanoagent readiness. Fix the
   source-owned cause; do not fabricate progress or bypass `kata-fc`.
 - Sleeping guest: call resume or perform an authenticated operation. Do not recreate the PVC.

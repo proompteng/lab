@@ -8,11 +8,17 @@ on:
       - 'services/bumba/**'
       - 'packages/temporal-bun-sdk/**'
       - 'nix/images/bumba.nix'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - 'nix/oci-push.sh'
+      - 'argocd/applications/bumba/**'
   pull_request:
     paths:
       - 'services/bumba/**'
       - 'packages/temporal-bun-sdk/**'
       - 'nix/images/bumba.nix'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - 'nix/oci-push.sh'
+      - 'argocd/applications/bumba/**'
   workflow_dispatch:
 
 concurrency:
@@ -78,7 +84,7 @@ jobs:
       image_name: bumba
       package_attr: bumba-image
       tag: sha-${{ github.sha }}
+      publish_kargo_tag: true
       pr_number: ${{ github.event.pull_request.number || '' }}
       latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
-      release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'bumba-release-contract' || '' }}
     secrets: inherit

@@ -12,14 +12,19 @@ never use the Discord token concurrently.
 - Upstream multi-architecture index: `sha256:9c841866021c54c4596849f6135717e8a4d52ba510b7f52c50aef1de1a283973`.
 - Mirrored amd64 manifest: `registry.ide-newton.ts.net/lab/hermes-agent@sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a`.
 - Squid egress proxy: `docker.io/ubuntu/squid:6.6-24.04_edge` pinned by digest in `egress-proxy.yaml`.
-- Lab toolchain:
-  `registry.ide-newton.ts.net/lab/hermes-toolchain@sha256:1864320822cb274202f768a8333ac9ac8fb01d8e259394ca5f9f6dcbe6d1a20e`.
-  The dedicated multi-architecture Nix OCI image is pinned by index digest and restricted to Node `24.11.1`, Bun/Bunx
-  `1.4.0`, Go `1.25.5`, Helm `3.19.1`, Kustomize `5.8.0`, kubeconform `0.7.0`, ShellCheck `0.11.0`, jq `1.8.1`, and yq
-  `4.49.2`.
+- Lab toolchain: the dedicated multi-architecture Nix OCI image is pinned by index digest in the Kargo-managed StatefulSet reference;
+  it is restricted to Node `24.11.1`, Bun/Bunx `1.4.0`, Go `1.25.5`, Helm `3.19.1`, Kustomize `5.8.0`, kubeconform `0.7.0`,
+  ShellCheck `0.11.0`, jq `1.8.1`, and yq `4.49.2`.
 
-All runtime image references are immutable digests. Updating Hermes requires a new release review, amd64 mirror, rootless
-smoke test, manifest change, and normal CI/Codex review.
+All runtime image references are immutable digests. A merge to `main` starts the Hermes toolchain image build; once the
+multi-architecture image is published, Kargo creates Freight and automatically promotes Stage `lab-delivery/hermes-toolchain`.
+Kargo copies the exact source commit into `kargo/hermes-toolchain`, updates the StatefulSet image reference, commits and
+pushes that deployment branch, and Argo CD reconciles the branch. Freight, Stage, and the resulting branch commit are the
+deployment record. There is no digest bump PR, release PR, manual SHA edit, or manual Argo sync.
+
+The StatefulSet is the only committed surface that owns the current Hermes toolchain digest. Do not copy that ephemeral
+digest into documentation, scripts, or PR descriptions; derive it from the Kargo-managed StatefulSet or Freight when
+validating a rollout.
 
 ## Runtime boundaries
 

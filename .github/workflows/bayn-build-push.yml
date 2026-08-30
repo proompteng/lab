@@ -20,6 +20,7 @@ jobs:
       image_name: bayn
       package_attr: bayn-image
       tag: sha-${{ github.sha }}
+      publish_kargo_tag: false
       source_revision: ${{ github.sha }}
       pr_number: ''
       latest: true

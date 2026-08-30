@@ -135,6 +135,9 @@ const renderDashboard = (snapshot: RuntimeSnapshot) => {
           <td>${escapeHtml(row.delivery?.build?.state ?? '')}</td>
           <td>${escapeHtml(row.delivery?.releaseContract?.digest ?? row.delivery?.releaseContract?.tag ?? '')}</td>
           <td>${escapeHtml(row.delivery?.promotionPr?.number ?? '')}</td>
+          <td>${escapeHtml(
+            row.delivery?.kargo ? `${row.delivery.kargo.branch}@${row.delivery.kargo.revision.slice(0, 12)}` : '',
+          )}</td>
           <td>${escapeHtml(row.delivery?.argo?.sync ?? '')}/${escapeHtml(row.delivery?.argo?.health ?? '')}</td>
           <td>${escapeHtml(row.delivery?.postDeploy?.state ?? '')}</td>
           <td>${escapeHtml(row.delivery?.rollbackPr?.number ?? '')}</td>
@@ -261,8 +264,13 @@ const renderDashboard = (snapshot: RuntimeSnapshot) => {
           <table>
             <tbody>${renderKeyValueRows([
               { key: 'mode', value: snapshot.release.mode },
+              { key: 'promotionAuthority', value: snapshot.release.promotionAuthority },
               { key: 'requiredChecksSource', value: snapshot.release.requiredChecksSource },
               { key: 'promotionBranchPrefix', value: snapshot.release.promotionBranchPrefix },
+              { key: 'kargoProject', value: snapshot.release.kargoProject },
+              { key: 'kargoWarehouse', value: snapshot.release.kargoWarehouse },
+              { key: 'kargoBranch', value: snapshot.release.kargoBranch },
+              { key: 'kargoStages', value: snapshot.release.kargoStages.join(', ') || 'none' },
               { key: 'blockedLabels', value: snapshot.release.blockedLabels.join(', ') || 'none' },
               {
                 key: 'deployables',
@@ -341,8 +349,8 @@ const renderDashboard = (snapshot: RuntimeSnapshot) => {
         <h2>Delivery Transactions</h2>
         <div class="table-scroll">
           <table>
-            <thead><tr><th>Issue</th><th>Status</th><th>Stage</th><th>Code PR</th><th>Checks</th><th>Build</th><th>Release</th><th>Promotion PR</th><th>Argo</th><th>Post-Deploy</th><th>Rollback PR</th><th>Last Error</th></tr></thead>
-            <tbody>${deliveryRows || '<tr><td colspan="12">No tracked issues.</td></tr>'}</tbody>
+            <thead><tr><th>Issue</th><th>Status</th><th>Stage</th><th>Code PR</th><th>Checks</th><th>Build</th><th>Release</th><th>Promotion PR</th><th>Kargo</th><th>Argo</th><th>Post-Deploy</th><th>Rollback PR</th><th>Last Error</th></tr></thead>
+            <tbody>${deliveryRows || '<tr><td colspan="13">No tracked issues.</td></tr>'}</tbody>
           </table>
         </div>
       </div>

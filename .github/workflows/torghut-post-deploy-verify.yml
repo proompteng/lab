@@ -3,10 +3,11 @@ name: torghut-post-deploy-verify
 on:
   push:
     branches:
-      - main
+      - kargo/torghut
     paths:
       - 'argocd/applications/torghut/**'
       - 'argocd/applications/torghut-options/**'
+      - 'argocd/applications/torghut-hyperliquid-runtime/**'
   workflow_dispatch:
     inputs:
       expected_revision:
@@ -22,9 +23,7 @@ jobs:
   verify:
     runs-on: arc-arm64
     permissions:
-      contents: write
-      issues: write
-      pull-requests: write
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -121,35 +120,6 @@ jobs:
             git cat-file -e "${revision}^{commit}" >/dev/null 2>&1
           }
 
-          request_argocd_sync() {
-            local app="$1"
-            local revision="$2"
-            local active_operation
-            local payload
-
-            kubectl annotate application "${app}" -n argocd argocd.argoproj.io/refresh=hard --overwrite
-
-            active_operation="$(kubectl get application "${app}" -n argocd -o jsonpath='{.operation.sync.revision}' 2>/dev/null || true)"
-            if [ -n "${active_operation}" ]; then
-              echo "Argo application ${app} already has a sync operation for revision ${active_operation}"
-              return
-            fi
-
-            payload="$(
-              SYNC_REVISION="${revision}" python3 - <<'PY'
-          import json
-          import os
-
-          sync = {"prune": True}
-          revision = os.environ.get("SYNC_REVISION", "")
-          if revision:
-              sync["revision"] = revision
-          print(json.dumps({"operation": {"sync": sync}}))
-          PY
-            )"
-            kubectl patch application "${app}" -n argocd --type merge -p "${payload}"
-          }
-
           dump_argocd_app_diagnostics() {
             local app="$1"
 
@@ -159,17 +129,14 @@ jobs:
             kubectl get application "${app}" -n argocd -o jsonpath='{range .status.resources[?(@.status=="OutOfSync")]}{.kind}{"/"}{.namespace}{"/"}{.name}{"\t"}{.status}{"\t"}{.health.status}{"\n"}{end}' || true
           }
 
-          for app in torghut torghut-options; do
-            request_argocd_sync "${app}" "${EXPECTED_REVISION}"
-          done
-
           # The PreSync database migration may run for up to 90 minutes. Keep the verifier
-          # alive for that deadline plus five minutes of Argo reconciliation headroom.
+          # alive for that deadline plus five minutes of Argo reconciliation headroom. Kargo's
+          # argocd-update step owns the sync; this workflow only observes its result.
           ARGO_SYNC_TIMEOUT_SECONDS=5700
           ARGO_SYNC_POLL_INTERVAL_SECONDS=2
           ARGO_SYNC_POLL_ATTEMPTS=$((ARGO_SYNC_TIMEOUT_SECONDS / ARGO_SYNC_POLL_INTERVAL_SECONDS))
 
-          for app in torghut torghut-options; do
+          for app in torghut torghut-options torghut-hyperliquid-runtime; do
             for attempt in $(seq 1 "${ARGO_SYNC_POLL_ATTEMPTS}"); do
               STATUS="$(kubectl get application "${app}" -n argocd -o jsonpath='{.status.sync.status} {.status.health.status} {.status.sync.revision} {.status.operationState.phase} {.status.operationState.syncResult.revision} {.status.history[-1].revision}')"
               SYNC_STATUS="$(echo "${STATUS}" | awk '{print $1}')"
@@ -337,6 +304,7 @@ jobs:
             torghut-options-catalog \
             torghut-options-enricher \
             torghut-options-ta \
+            torghut-hyperliquid-runtime \
             torghut-ta \
             torghut-ta-sim \
             torghut-ws \

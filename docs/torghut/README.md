@@ -15,8 +15,10 @@ Trust these surfaces in order:
 - Service code: `services/torghut/app/**`, `services/torghut/scripts/**`, and `services/torghut/tests/**`.
 - Runtime status: `GET /readyz`, `GET /trading/status`, `GET /trading/revenue-repair`, and
   `GET /trading/consumer-evidence`.
-- Release automation: `.github/workflows/torghut-release.yml`, `.github/workflows/torghut-ci.yml`,
-  `.github/workflows/torghut-deploy-automerge.yml`, and `packages/scripts/src/torghut/update-manifests.ts`.
+- Release automation: the Torghut image builders in `.github/workflows/torghut-*-build-push.yaml` publish one
+  commit-correlated image set from `main`; `argocd/applications/kargo/warehouses.yaml` creates Freight and
+  `argocd/applications/kargo/stages.yaml` promotes it directly to `kargo/torghut`. Argo tracks that branch. There is no
+  release PR, manifest updater script, or manual sync in the image release path.
 
 ## Current Runbooks
 

@@ -1,5 +1,8 @@
 # cdk8s Adoption Rollout Proof
 
+> Historical evidence captured before the Kargo cutover. Image Updater and release-PR statements below describe the
+> former system and are not current operating instructions. Current release authority is `docs/release-automation.md`.
+
 ## Result
 
 cdk8s adoption is established for the live `docs` and `analysis` applications. Both applications now use committed,

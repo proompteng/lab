@@ -8,20 +8,38 @@ on:
     branches:
       - main
     paths:
-      - 'services/torghut/app/__init__.py'
-      - 'services/torghut/app/notebook_data/**'
-      - 'services/torghut/notebooks/00-system-flow.ipynb'
-      - 'services/torghut/notebooks/10-strategy-lifecycle.ipynb'
-      - 'services/torghut/notebooks/20-execution-evidence.ipynb'
-      - 'services/torghut/notebooks/30-capital-authority.ipynb'
-      - 'services/torghut/notebooks/40-transformer-math-from-first-principles.ipynb'
-      - 'services/torghut/notebooks/README.md'
-      - 'services/torghut/scripts/start_torghut_notebook.sh'
-      - 'services/torghut/pyproject.toml'
-      - 'services/torghut/uv.lock'
+      - 'services/torghut/**'
+      - 'packages/scripts/src/torghut/**'
+      - '!packages/scripts/src/torghut/__tests__/**'
+      - '!packages/scripts/src/torghut/**/*.test.ts'
+      - 'services/dorvud/gradle/**'
+      - 'services/dorvud/gradlew'
+      - 'services/dorvud/gradle.properties'
+      - 'services/dorvud/settings.gradle.kts'
+      - 'services/dorvud/build.gradle.kts'
+      - 'services/dorvud/platform/**'
+      - 'services/dorvud/technical-analysis/**'
+      - 'services/dorvud/technical-analysis-flink/**'
+      - 'services/dorvud/websockets/**'
+      - 'services/signal-publisher/**'
+      - 'nix/images/torghut.nix'
       - 'nix/images/torghut-notebook.nix'
+      - 'nix/images/torghut-ta.nix'
+      - 'nix/images/dorvud-jvm-service.nix'
+      - 'nix/images/torghut-ws.nix'
+      - 'nix/images/signal-publisher.nix'
+      - 'nix/images/bun-workspace-service.nix'
+      - 'services/torghut/uv.lock'
       - 'flake.nix'
       - 'flake.lock'
+      - 'bun.lock'
+      - 'package.json'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - '.github/workflows/torghut-post-deploy-verify.yml'
+      - 'nix/oci-push.sh'
+      - 'argocd/applications/torghut/**'
+      - 'argocd/applications/torghut-options/**'
+      - 'argocd/applications/torghut-hyperliquid-runtime/**'
   workflow_dispatch:
 
 concurrency:
@@ -36,8 +54,8 @@ jobs:
       image_name: torghut-notebook
       package_attr: torghut-notebook-image
       tag: sha-${{ github.sha }}
+      publish_kargo_tag: true
       pr_number: ${{ github.event.pull_request.number || '' }}
       latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
-      release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'torghut-notebook-release-contract' || '' }}
       image_build_timeout: 15m
     secrets: inherit

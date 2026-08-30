@@ -89,12 +89,22 @@ The local runtime exposes:
 - Webhook idempotency defaults to a 10 minute TTL with 10,000 entries. Override via
   `FROUSSARD_WEBHOOK_IDEMPOTENCY_TTL_MS` and `FROUSSARD_WEBHOOK_IDEMPOTENCY_MAX_ENTRIES`.
 
-### Local Deploy Script
+### Production deployment
 
-- Run `bun packages/scripts/src/froussard/deploy-service.ts` to build/push the Docker image defined in `apps/froussard/Dockerfile`, stamp `argocd/applications/froussard/knative-service.yaml` with the new image digest plus the derived `FROUSSARD_VERSION/FROUSSARD_COMMIT`, and `kubectl apply` the manifest for an immediate rollout. The helper reads version/commit from `git describe --tags --always` / `git rev-parse HEAD` unless you override them via env vars.
+Froussard is a Kargo-managed target. Merge source to `main` and wait for the passing build, the `froussard` Warehouse
+Freight, the exact Stage promotion, the generated `kargo/froussard` branch, and Argo `Synced`/`Healthy` plus the
+webhook live checks. Do not edit an image tag or digest, create a release/deployment PR, use Image Updater, or apply the
+production manifest directly. Follow [`docs/release-automation.md`](../../docs/release-automation.md) for evidence and
+rollback.
+
+### Local-only deploy helper
+
+- `bun packages/scripts/src/froussard/deploy-service.ts` is retained only for an isolated local environment. It builds and
+  applies a local manifest; never point it at the Kargo-managed production cluster or use it as a release mechanism. The
+  helper reads version/commit from `git describe --tags --always` / `git rev-parse HEAD` unless you override them via env vars.
 - Useful overrides:
   - `FROUSSARD_IMAGE_REGISTRY`, `FROUSSARD_IMAGE_REPOSITORY`, `FROUSSARD_IMAGE_TAG`, `FROUSSARD_PLATFORMS` (defaults to `linux/arm64`), `FROUSSARD_DOCKERFILE`, and `FROUSSARD_BUILD_CONTEXT` control the Docker build.
-  - `FROUSSARD_KNATIVE_MANIFEST` points to the manifest to rewrite/apply (defaults to `argocd/applications/froussard/knative-service.yaml`).
+  - `FROUSSARD_KNATIVE_MANIFEST` points to the local manifest to rewrite/apply (defaults to `argocd/applications/froussard/knative-service.yaml`).
   - `FROUSSARD_VERSION` / `FROUSSARD_COMMIT` let you pin the metadata injected into the deployment env without touching git state.
   - Append `--dry-run` (and optionally point `FROUSSARD_KNATIVE_MANIFEST` at a scratch copy) to preview the manifest edits without building/pushing or calling `kubectl`.
 

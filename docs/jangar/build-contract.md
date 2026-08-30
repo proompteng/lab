@@ -40,21 +40,27 @@ Contracts:
 
 - image metadata is emitted through `packages/scripts/src/jangar/release-contract.ts`
 - the runtime image and optional control-plane image share one typed release contract
-- manifest updates use `packages/scripts/src/jangar/update-manifests.ts`
+- the final multi-architecture OCI index must succeed before the builder publishes `kargo-sha-<40>`; the image labels
+  `org.opencontainers.image.created` and `org.opencontainers.image.revision` carry the source commit's RFC3339 time
+  and full SHA, respectively
+- production image promotion is performed by the Kargo `jangar` Warehouse and Stage; Kargo copies the exact source
+  commit and writes the full digest plus build/provenance metadata to the generated `kargo/jangar` branch, then pushes
+  it directly without a promotion pull request
 
 ## Manifest Contract
 
-Canonical manifest readers/writers:
+Canonical build/proof contracts:
 
 - `packages/scripts/src/jangar/manifest-contract.ts`
-- `packages/scripts/src/jangar/update-manifests.ts`
 - `packages/scripts/src/jangar/verify-deployment.ts`
 
 Rules:
 
-- kustomization image references are read and updated through typed YAML parsing
-- rollout annotations are updated through typed YAML parsing
-- post-deploy verification reads the expected digest from the same manifest contract instead of ad hoc line scanning
+- the repository Kustomize files remain the reviewed configuration baseline
+- Kargo writes the promoted digest and companion metadata to `kargo/jangar`; the Argo Application tracks that branch and
+  ApplicationSet preserves the Kargo target revision and deployment metadata
+- post-deploy verification reads the promoted digest and running image ID from the Kargo branch and Argo/runtime state
+  instead of ad hoc line scanning
 
 ## Rollout Verification
 
@@ -73,7 +79,14 @@ Checks:
 
 ## Production Flow
 
-1. `jangar-build-push` builds and publishes the runtime contract.
-2. `jangar-release` writes the promoted digest into GitOps manifests.
-3. Argo CD reconciles the release revision.
-4. `jangar-post-deploy-verify` validates rollout, digest, and Argo health.
+1. `jangar-build-push` validates the runtime contract, completes the final multi-architecture index, and publishes the
+   eligible `kargo-sha-<40>` image after a merge to `main`; legacy `sha-*` and mutable `latest` are not Warehouse inputs.
+2. The Kargo `jangar` Warehouse discovers the image and creates Freight in `lab-delivery`.
+3. The exact automatic `jangar` Stage policy promotes the Freight. Kargo copies the source commit and writes the full
+   digest/build metadata to `kargo/jangar`, then Argo tracks that branch and waits for sync/health.
+4. The configured Jangar post-deploy health checks validate the rollout, promoted digest, running image ID, and Argo
+   health.
+
+There is no Image Updater, SHA/digest manifest bump, release branch, deployment PR, release automerge, or manual Argo
+sync. If an Application is recreated, re-promote the current Freight through Kargo so the `kargo/jangar` branch is
+reconstructed and tracked again.

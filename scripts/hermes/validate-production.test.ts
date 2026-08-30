@@ -60,15 +60,30 @@ test('rejects a mutable Hermes toolchain image volume', async () => {
   )
 })
 
-test('rejects a Hermes toolchain release that treats an already-current digest as stale', async () => {
+test('derives the Hermes toolchain reference from the StatefulSet manifest', async () => {
   const files = await loadProductionFiles()
-  files.toolchainReleaseWorkflow = files.toolchainReleaseWorkflow.replace(
-    'if [ "$old_digest" != "$new_digest" ]; then',
-    'if true; then',
+  const currentReference = files.statefulSet.match(
+    /(?<=reference: )registry\.ide-newton\.ts\.net\/lab\/hermes-toolchain@sha256:[a-f0-9]{64}/,
+  )?.[0]
+  expect(currentReference).toBeDefined()
+
+  files.statefulSet = files.statefulSet.replace(
+    currentReference!,
+    currentReference!.replace(/[a-f0-9]{64}$/, 'f'.repeat(64)),
+  )
+
+  expect(validateProductionContent(files)).toEqual([])
+})
+
+test('rejects a concrete Hermes toolchain digest in release documentation', async () => {
+  const files = await loadProductionFiles()
+  files.readme = files.readme.replace(
+    'Kargo-managed StatefulSet reference',
+    `Kargo-managed StatefulSet reference registry.ide-newton.ts.net/lab/hermes-toolchain@sha256:${'a'.repeat(64)}`,
   )
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.toolchainReleaseWorkflow}: missing production invariant "if [ \\"$old_digest\\" != \\"$new_digest\\" ]; then"`,
+    `${productionPaths.readme}: contains forbidden production pattern "a concrete Hermes toolchain digest"`,
   )
 })
 
@@ -242,10 +257,10 @@ test('rejects release evidence that does not enforce the mirrored digest', async
 
 test('rejects rollout evidence that permits an Argo revision mismatch', async () => {
   const files = await loadProductionFiles()
-  files.runbook = files.runbook.replace('test "$hermes_revision" = "$main_revision"', 'true')
+  files.runbook = files.runbook.replace('test "$hermes_revision" = "$kargo_revision"', 'true')
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.runbook}: missing production invariant "test \\"$hermes_revision\\" = \\"$main_revision\\""`,
+    `${productionPaths.runbook}: missing production invariant "test \\"$hermes_revision\\" = \\"$kargo_revision\\""`,
   )
 })
 

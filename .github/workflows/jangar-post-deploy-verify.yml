@@ -3,7 +3,7 @@ name: jangar-post-deploy-verify
 on:
   push:
     branches:
-      - main
+      - kargo/jangar
     paths:
       - 'argocd/applications/jangar/**'
   workflow_dispatch:

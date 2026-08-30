@@ -18,7 +18,7 @@ filtered=()
 add_manifest_file() {
   local file="$1"
   case "$(basename "$file")" in
-    kustomization.yaml | kustomization.yml)
+    kustomization.yaml | kustomization.yml | kustomizeconfig.yaml | kustomizeconfig.yml)
       kustomizations+=("$file")
       return
       ;;

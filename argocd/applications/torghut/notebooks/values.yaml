@@ -35,6 +35,8 @@ hub:
       keys:
         - '3333333333333333333333333333333333333333333333333333333333333333'
   extraEnv:
+    TORGHUT_NOTEBOOK_IMAGE:
+      value: registry.ide-newton.ts.net/lab/torghut-notebook@sha256:b12dc0108776ce0cc548e464ec5608dae2048839fb76a636c2bc154f451351bb
     TORGHUT_HUB_COOKIE_SECRET:
       valueFrom:
         secretKeyRef:
@@ -72,6 +74,16 @@ hub:
       c.Authenticator.manage_groups = False
       c.Authenticator.manage_roles = False
       c.Authenticator.allow_existing_users = False
+    10-torghut-singleuser-image: |
+      import os
+      import re
+
+      notebook_image = os.environ.get("TORGHUT_NOTEBOOK_IMAGE", "").strip()
+      if not notebook_image:
+          raise RuntimeError("TORGHUT_NOTEBOOK_IMAGE must be set to an immutable image reference")
+      if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", notebook_image):
+          raise RuntimeError("TORGHUT_NOTEBOOK_IMAGE must use a 64-character sha256 digest")
+      c.KubeSpawner.image = notebook_image
 
 proxy:
   secretToken: '2222222222222222222222222222222222222222222222222222222222222222'
@@ -92,9 +104,12 @@ proxy:
 
 singleuser:
   cmd: null
+  # The spawned notebook image is supplied through the Hub Deployment's
+  # TORGHUT_NOTEBOOK_IMAGE env var above. Keeping the chart's image fields
+  # empty prevents a second, stale image reference from reaching KubeSpawner.
   image:
-    name: registry.ide-newton.ts.net/lab/torghut-notebook@sha256
-    tag: 'b12dc0108776ce0cc548e464ec5608dae2048839fb76a636c2bc154f451351bb'
+    name: ''
+    tag: ''
     pullPolicy: IfNotPresent
   defaultUrl: /lab/tree/work/00-system-flow.ipynb
   startTimeout: 600

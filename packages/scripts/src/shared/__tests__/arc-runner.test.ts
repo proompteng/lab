@@ -9,17 +9,11 @@ const setupAction = readRepoFile('.github/actions/setup-nix-toolchain/action.yml
 const arcApplication = readRepoFile('argocd/applications/arc/application.yaml')
 const arcRunnerImage = readRepoFile('nix/images/arc-runner.nix')
 const arcRunnerBuildWorkflow = readRepoFile('.github/workflows/arc-runner-build-push.yml')
-const arcRunnerReleaseWorkflow = readRepoFile('.github/workflows/arc-runner-release.yml')
 const nixOciWorkflow = readRepoFile('.github/workflows/nix-oci-build-common.yml')
-const atticReleaseWorkflow = readRepoFile('.github/workflows/attic-release.yml')
 const agentsBuildWorkflow = readRepoFile('.github/workflows/agents-build-push.yml')
 const argoLintWorkflow = readRepoFile('.github/workflows/argo-lint.yml')
-const enabledProductReleaseWorkflow = readRepoFile('.github/workflows/enabled-product-nix-release.yml')
-const enabledSimpleReleaseWorkflow = readRepoFile('.github/workflows/enabled-simple-nix-release.yml')
 const kubeconformWorkflow = readRepoFile('.github/workflows/kubeconform.yml')
 const headlampWorkflow = readRepoFile('.github/workflows/headlamp-ci.yml')
-const sagReleaseWorkflow = readRepoFile('.github/workflows/sag-release.yml')
-const symphonyReleaseWorkflow = readRepoFile('.github/workflows/symphony-release.yml')
 const flake = readRepoFile('flake.nix')
 const nixPackages = readRepoFile('nix/packages.nix')
 const toolchainDoctor = readRepoFile('nix/toolchain-doctor.sh')
@@ -39,14 +33,6 @@ const arcRunnerBuildTriggerPaths = Array.from(
 const arcRunnerToolchainScriptPaths = Array.from(
   new Set(Array.from(flake.matchAll(/builtins\.readFile \.\/(nix\/[^)]+\.sh)/g), ([, path]) => path)),
 )
-const arcRunnerReleaseOnlyScriptPaths = new Set(['nix/oci-release-contract.sh'])
-const arcRunnerSharedScriptPaths = new Set(['nix/cache-push.sh', 'nix/oci-inspect-archive.sh', 'nix/oci-push.sh'])
-
-const releaseGuardFragmentForPath = (path: string): string => {
-  const guardPath = path.endsWith('/**') ? `${path.slice(0, -3)}/` : path
-  return guardPath.replaceAll('.', '\\.')
-}
-
 describe('ARC Nix runner toolchain', () => {
   it('keeps ARC runner scratch writes off shared Ceph while making runner images releasable by digest', () => {
     expect(arcApplication).toContain('runnerScaleSetName: arc-arm64')
@@ -65,13 +51,8 @@ describe('ARC Nix runner toolchain', () => {
     expect(analysisBlock).toContain('sizeLimit: 20Gi')
     expect(analysisBlock).not.toContain('volumeClaimTemplate:')
     expect(analysisBlock).not.toContain('storageClassName: "rook-ceph-block"')
-    expect(arcRunnerReleaseWorkflow).toContain('registry.ide-newton.ts.net/lab/arc-runner')
-    expect(arcRunnerReleaseWorkflow).toContain('arc-runner\\@sha256')
-    expect(arcRunnerReleaseWorkflow).toContain('test "$(grep -cF "image: ${IMAGE_REF}"')
-    expect(arcRunnerReleaseWorkflow).toContain("grep -F 'image: docker:dind'")
-    expect(arcRunnerReleaseWorkflow).toContain("grep -cF 'sizeLimit: 80Gi'")
-    expect(arcRunnerReleaseWorkflow).not.toContain('ObjectBucketClaim')
-    expect(arcRunnerReleaseWorkflow).not.toContain('PersistentVolumeClaim')
+    expect(arcRunnerBuildWorkflow).toContain('image_name: arc-runner')
+    expect(arcRunnerBuildWorkflow).toContain('latest: ${{')
   })
 
   it('keeps lab ARC runner concurrency capped', () => {
@@ -148,11 +129,12 @@ describe('ARC Nix runner toolchain', () => {
     expect(toolchainDoctor).not.toContain('expect_eq helm v3.14.4')
   })
 
-  it('publishes multi-arch ARC runner images and opens a digest-pinning release PR', () => {
+  it('publishes multi-arch ARC runner images for Kargo discovery', () => {
     expect(arcRunnerBuildWorkflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
     expect(arcRunnerBuildWorkflow).toContain('image_name: arc-runner')
     expect(arcRunnerBuildWorkflow).toContain('package_attr: arc-runner-image')
-    expect(arcRunnerBuildWorkflow).toContain('arc-runner-release-contract')
+    expect(arcRunnerBuildWorkflow).toContain('publish_kargo_tag: true')
+    expect(arcRunnerBuildWorkflow).not.toContain('release_artifact_name:')
     expect(arcRunnerBuildWorkflow).toContain(
       "latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}",
     )
@@ -161,54 +143,23 @@ describe('ARC Nix runner toolchain', () => {
     expect(arcRunnerBuildWorkflow).not.toContain('docker/setup-buildx-action')
     expect(arcRunnerBuildWorkflow).not.toContain('docker run')
     expect(arcRunnerBuildWorkflow).not.toContain("- '.github/actions/setup-nix-toolchain/**'")
-    expect(arcRunnerBuildWorkflow).not.toContain("- '.github/workflows/nix-oci-build-common.yml'")
+    expect(arcRunnerBuildWorkflow).toContain("- '.github/workflows/nix-oci-build-common.yml'")
+    expect(arcRunnerBuildWorkflow).toContain("- 'nix/oci-push.sh'")
     expect(arcRunnerBuildWorkflow).not.toContain("- '.github/workflows/arc-runner-build-push.yml'")
-    expect(arcRunnerBuildWorkflow).not.toContain("'.github/workflows/arc-runner-release.yml'")
     expect(arcRunnerBuildWorkflow).not.toContain("'packages/scripts/src/shared/__tests__/arc-runner.test.ts'")
-    expect(arcRunnerReleaseWorkflow).toContain('workflows:')
-    expect(arcRunnerReleaseWorkflow).toContain('arc-runner-build-push')
-    expect(arcRunnerReleaseWorkflow).toContain('uses: ./.github/actions/setup-nix-toolchain')
-    expect(arcRunnerReleaseWorkflow).toContain("require-preinstalled: 'true'")
-    expect(arcRunnerReleaseWorkflow).toContain('crane digest "${image}:${tag}"')
-    expect(arcRunnerReleaseWorkflow).toContain('changed_paths="$(git diff --name-only "${source_sha}..HEAD")"')
-    expect(arcRunnerReleaseWorkflow).toContain('arc_image_input_changes="$(')
-    expect(arcRunnerReleaseWorkflow).toContain('ARC runner image inputs changed after the build:')
-    expect(arcRunnerReleaseWorkflow).toContain('ARC runner image inputs unchanged after ${source_sha}')
     expect(arcRunnerBuildTriggerPaths.length).toBeGreaterThan(0)
     expect(arcRunnerToolchainScriptPaths.length).toBeGreaterThan(0)
     for (const toolchainScriptPath of arcRunnerToolchainScriptPaths) {
       if (
-        arcRunnerReleaseOnlyScriptPaths.has(toolchainScriptPath) ||
-        arcRunnerSharedScriptPaths.has(toolchainScriptPath)
-      ) {
-        expect(
-          arcRunnerBuildTriggerPaths,
-          `${toolchainScriptPath} must not fan out ARC runner image builds`,
-        ).not.toContain(toolchainScriptPath)
+        toolchainScriptPath === 'nix/oci-release-contract.sh' ||
+        toolchainScriptPath === 'nix/cache-push.sh' ||
+        toolchainScriptPath === 'nix/oci-inspect-archive.sh'
+      )
         continue
-      }
       expect(arcRunnerBuildTriggerPaths, `${toolchainScriptPath} must start ARC runner image builds`).toContain(
         toolchainScriptPath,
       )
     }
-    for (const arcImageInputPath of [
-      ...arcRunnerBuildTriggerPaths,
-      ...arcRunnerToolchainScriptPaths.filter((path) => !arcRunnerReleaseOnlyScriptPaths.has(path)),
-    ]) {
-      expect(arcRunnerReleaseWorkflow, `${arcImageInputPath} must block stale ARC runner promotion`).toContain(
-        releaseGuardFragmentForPath(arcImageInputPath),
-      )
-    }
-    expect(arcRunnerReleaseWorkflow).not.toContain('nix/oci-release-contract\\.sh')
-    expect(arcRunnerReleaseWorkflow).toContain('flake\\.nix')
-    expect(arcRunnerReleaseWorkflow).not.toContain('\\.github/workflows/arc-runner-release\\.yml')
-    expect(arcRunnerReleaseWorkflow).toContain('nix run .#assert-oci-platforms')
-    expect(arcRunnerReleaseWorkflow).not.toContain('docker buildx')
-    expect(arcRunnerReleaseWorkflow).not.toContain('docker/setup-buildx-action')
-    expect(arcRunnerReleaseWorkflow).toContain('peter-evans/create-pull-request@v7')
-    expect(arcRunnerReleaseWorkflow).toContain('token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}')
-    expect(arcRunnerReleaseWorkflow).toContain('argocd/applications/arc/application.yaml')
-    expect(arcRunnerReleaseWorkflow).toContain('nix-oci')
   })
 
   it('uses a shared setup action so Nix jobs validate preinstalled tools before falling back', () => {
@@ -245,16 +196,7 @@ describe('ARC Nix runner toolchain', () => {
     expect(setupAction).toContain('toolchain-doctor')
     expect(setupAction).toContain('oci-doctor')
 
-    for (const workflow of [
-      nixOciWorkflow,
-      atticReleaseWorkflow,
-      agentsBuildWorkflow,
-      enabledProductReleaseWorkflow,
-      enabledSimpleReleaseWorkflow,
-      headlampWorkflow,
-      sagReleaseWorkflow,
-      symphonyReleaseWorkflow,
-    ]) {
+    for (const workflow of [nixOciWorkflow, agentsBuildWorkflow, headlampWorkflow]) {
       expect(workflow).toContain('uses: ./.github/actions/setup-nix-toolchain')
       expect(workflow).toContain("require-preinstalled: 'true'")
     }
@@ -267,8 +209,6 @@ describe('ARC Nix runner toolchain', () => {
 
     expect(nixOciWorkflow).not.toContain('Install xz for Nix installer')
     expect(nixOciWorkflow).not.toContain('uses: cachix/install-nix-action@v31')
-    expect(atticReleaseWorkflow).not.toContain('Install xz for Nix installer')
-    expect(atticReleaseWorkflow).not.toContain('uses: cachix/install-nix-action@v31')
   })
 
   it('does not let ARC workflow callers silently use fallback Nix installation', () => {

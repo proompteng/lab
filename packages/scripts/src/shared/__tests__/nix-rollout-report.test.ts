@@ -75,7 +75,7 @@ describe('Nix rollout report', () => {
     ])
   })
 
-  it('reports dedicated workflow images without treating them as deferred Nix migrations', () => {
+  it('reports Kargo-owned workflow images without treating them as deferred Nix migrations', () => {
     const report = buildNixRolloutReport({
       inventory: inventory([
         entry({
@@ -85,8 +85,8 @@ describe('Nix rollout report', () => {
             'registry.ide-newton.ts.net/lab/tengri@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
             'registry.ide-newton.ts.net/lab/nanoagent@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
           ],
-          workflowPaths: ['.github/workflows/tengri-images.yml', '.github/workflows/tengri-release.yml'],
-          deferredReason: 'dedicated multi-architecture release workflow',
+          workflowPaths: ['.github/workflows/tengri-images.yml', 'argocd/applications/kargo'],
+          deferredReason: 'built and signed together, then promoted automatically by Kargo',
         }),
       ]),
     })

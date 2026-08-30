@@ -215,6 +215,8 @@ data:
         inCluster: true
     web:
       http: 0.0.0.0:5556
+      allowedOrigins:
+        - https://kargo.ide-newton.ts.net
     telemetry:
       http: 0.0.0.0:5558
     grpc:
@@ -228,6 +230,14 @@ data:
           - https://workflows.proompteng.ai/oauth2/callback
           - https://workflows.k8s.proompteng.ai/oauth2/callback
         secretEnv: ARGO_WORKFLOWS_SSO_CLIENT_SECRET
+      - id: kargo-ui
+        name: Kargo UI
+        public: true
+        redirectURIs:
+          - https://kargo.ide-newton.ts.net/login
+      - id: kargo-cli
+        name: Kargo CLI
+        public: true
     staticPasswords:
       - email: admin@proompteng.ai
         hashFromEnv: ARGO_WORKFLOWS_SSO_PASSWORD_HASH

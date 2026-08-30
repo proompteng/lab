@@ -9,10 +9,12 @@ on:
       - main
     paths:
       - 'nix/images/arc-runner.nix'
-      - 'nix/attic-release-metadata.sh'
       - 'nix/cache-doctor.sh'
       - 'nix/oci-doctor.sh'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - 'nix/oci-push.sh'
       - 'nix/toolchain-doctor.sh'
+      - 'argocd/applications/arc/**'
   workflow_dispatch:
 
 concurrency:
@@ -26,8 +28,8 @@ jobs:
       image_name: arc-runner
       package_attr: arc-runner-image
       tag: sha-${{ github.sha }}
+      publish_kargo_tag: true
       pr_number: ${{ github.event.pull_request.number || '' }}
       latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
       publish_on_dispatch: true
-      release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'arc-runner-release-contract' || '' }}
     secrets: inherit

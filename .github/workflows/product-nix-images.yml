@@ -26,10 +26,15 @@ on:
       - 'nix/ci-nix-oci-summary.sh'
       - 'nix/ci-run-timed.sh'
       - 'nix/oci-inspect-archive.sh'
+      - '.github/workflows/nix-oci-build-common.yml'
       - 'nix/oci-push.sh'
       - 'flake.nix'
       - 'flake.lock'
       - 'bun.lock'
+      - 'argocd/applications/proompteng/**'
+      - 'argocd/applications/app/**'
+      - 'argocd/applications/synthesis/**'
+      - 'argocd/applications/docs/**'
   push:
     branches:
       - main
@@ -51,10 +56,15 @@ on:
       - 'nix/ci-nix-oci-summary.sh'
       - 'nix/ci-run-timed.sh'
       - 'nix/oci-inspect-archive.sh'
+      - '.github/workflows/nix-oci-build-common.yml'
       - 'nix/oci-push.sh'
       - 'flake.nix'
       - 'flake.lock'
       - 'bun.lock'
+      - 'argocd/applications/proompteng/**'
+      - 'argocd/applications/app/**'
+      - 'argocd/applications/synthesis/**'
+      - 'argocd/applications/docs/**'
   workflow_dispatch:
     inputs:
       build_proompteng:
@@ -78,8 +88,8 @@ on:
         type: boolean
         default: true
 concurrency:
-  group: product-nix-images-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: product-nix-images-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changes:
@@ -114,10 +124,12 @@ jobs:
               - 'nix/ci-nix-oci-summary.sh'
               - 'nix/ci-run-timed.sh'
               - 'nix/oci-inspect-archive.sh'
+              - '.github/workflows/nix-oci-build-common.yml'
               - 'nix/oci-push.sh'
               - 'flake.nix'
               - 'flake.lock'
               - 'bun.lock'
+              - 'argocd/applications/proompteng/**'
             app:
               - 'apps/app/**'
               - 'packages/design/**'
@@ -128,10 +140,12 @@ jobs:
               - 'nix/ci-nix-oci-summary.sh'
               - 'nix/ci-run-timed.sh'
               - 'nix/oci-inspect-archive.sh'
+              - '.github/workflows/nix-oci-build-common.yml'
               - 'nix/oci-push.sh'
               - 'flake.nix'
               - 'flake.lock'
               - 'bun.lock'
+              - 'argocd/applications/app/**'
             synthesis:
               - 'apps/synthesis/**'
               - 'packages/design/**'
@@ -142,10 +156,12 @@ jobs:
               - 'nix/ci-nix-oci-summary.sh'
               - 'nix/ci-run-timed.sh'
               - 'nix/oci-inspect-archive.sh'
+              - '.github/workflows/nix-oci-build-common.yml'
               - 'nix/oci-push.sh'
               - 'flake.nix'
               - 'flake.lock'
               - 'bun.lock'
+              - 'argocd/applications/synthesis/**'
             docs:
               - 'apps/docs/**'
               - 'packages/design/**'
@@ -156,10 +172,12 @@ jobs:
               - 'nix/ci-nix-oci-summary.sh'
               - 'nix/ci-run-timed.sh'
               - 'nix/oci-inspect-archive.sh'
+              - '.github/workflows/nix-oci-build-common.yml'
               - 'nix/oci-push.sh'
               - 'flake.nix'
               - 'flake.lock'
               - 'bun.lock'
+              - 'argocd/applications/docs/**'
       - name: Manual build selection
         id: manual
         if: github.event_name == 'workflow_dispatch'
@@ -179,9 +197,9 @@ jobs:
       image_name: proompteng
       package_attr: proompteng-image
       tag: sha-${{ github.sha }}
+      publish_kargo_tag: true
       pr_number: ${{ github.event.pull_request.number && format('{0}-proompteng', github.event.pull_request.number) || '' }}
       latest: true
-      release_artifact_name: proompteng-release-contract
     secrets: inherit
 
   build-app:
@@ -192,9 +210,9 @@ jobs:
       image_name: app
       package_attr: app-image
       tag: sha-${{ github.sha }}
+      publish_kargo_tag: true
       pr_number: ${{ github.event.pull_request.number && format('{0}-app', github.event.pull_request.number) || '' }}
       latest: true
-      release_artifact_name: app-release-contract
     secrets: inherit
 
   build-synthesis:
@@ -205,9 +223,9 @@ jobs:
       image_name: synthesis
       package_attr: synthesis-image
       tag: sha-${{ github.sha }}
+      publish_kargo_tag: true
       pr_number: ${{ github.event.pull_request.number && format('{0}-synthesis', github.event.pull_request.number) || '' }}
       latest: true
-      release_artifact_name: synthesis-release-contract
     secrets: inherit
 
   build-docs:
@@ -218,7 +236,7 @@ jobs:
       image_name: docs
       package_attr: docs-image
       tag: sha-${{ github.sha }}
+      publish_kargo_tag: true
       pr_number: ${{ github.event.pull_request.number && format('{0}-docs', github.event.pull_request.number) || '' }}
       latest: true
-      release_artifact_name: docs-release-contract
     secrets: inherit

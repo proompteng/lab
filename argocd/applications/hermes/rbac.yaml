@@ -36,7 +36,6 @@ rules:
       - apiregistration.k8s.io
       - approvals.proompteng.ai
       - apps
-      - argocd-image-updater.argoproj.io
       - argoproj.io
       - artifacts.proompteng.ai
       - autoscaling
