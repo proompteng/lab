@@ -1,0 +1,234 @@
+# Torghut Automated Trading - One-Shot Execution Doc
+
+> Note: Canonical production-facing design docs live in `docs/torghut/design-system/README.md` (v1). This document is supporting material and may drift from the current deployed manifests.
+
+This document describes a **single-run, end-to-end** implementation plan for the core automated trading pipeline in torghut. It is intentionally structured as a one-shot execution guide for Codex (no milestones).
+
+## Scope
+
+- **Signals source:** ClickHouse `ta_signals`.
+- **Execution mode:** paper trading by default, live trading gated by config.
+- **Universe:** from Jangar symbols endpoint or per-strategy list.
+- **Owner:** torghut service (FastAPI) or a dedicated worker deployment in the torghut namespace.
+
+## Design References
+
+- Streaming + TA pipeline: `docs/torghut/architecture.md`
+- Flink TA job: `docs/torghut/flink-ta.md`
+- Topics & schemas: `docs/torghut/topics-and-schemas.md`
+- Main service consumer guide: `docs/torghut/main-service-consumer.md` (deprecated)
+
+## System Overview
+
+Pipeline:
+
+```
+Alpaca Market WS -> torghut-ws -> Kafka ingest topics -> torghut-ta (Flink) -> ClickHouse (ta_signals/ta_microbars)
+ClickHouse -> torghut trading loop -> deterministic RiskEngine -> OrderExecutor -> Alpaca Trading API
+torghut trading loop -> Postgres audit (trade_decisions, executions, llm_decision_reviews, position_snapshots)
+Jangar -> symbols/universe API + TA visualization (reads ClickHouse directly)
+```
+
+## Runtime Configuration (env)
+
+- `TRADING_ENABLED` (default `false`) gates the trading loop.
+- `TRADING_MODE` (`paper|live`, default `paper`); live order submission also requires the live-submit activation and simple-submit gates.
+- `TRADING_SIGNAL_SOURCE` (`clickhouse`), `TRADING_SIGNAL_TABLE` (default `torghut.ta_signals`).
+- `TRADING_SIGNAL_SCHEMA` (`auto|envelope|flat`) to align ClickHouse shape with ingestion.
+  - `auto`: inspect columns (prefers `event_ts` + flattened columns when `payload` is absent).
+  - `envelope`: select `event_ts, ingest_ts, symbol, payload, window, seq, source`.
+  - `flat`: select `ts, symbol, macd, macd_signal, signal, rsi, rsi14, ema, vwap, signal_json, timeframe, price, close, spread`.
+- `TRADING_PRICE_TABLE` (default `torghut.ta_microbars`) for price snapshots.
+- `TRADING_PRICE_LOOKBACK_MINUTES` for price lookups (default `5`).
+- `TA_CLICKHOUSE_URL`, `TA_CLICKHOUSE_USERNAME`, `TA_CLICKHOUSE_PASSWORD` for ClickHouse access.
+- `TRADING_POLL_MS` and `TRADING_RECONCILE_MS` for loop intervals.
+- `TRADING_UNIVERSE_SOURCE` (`jangar|static`), `JANGAR_SYMBOLS_URL`, `TRADING_STATIC_SYMBOLS`.
+- `TRADING_ACCOUNT_LABEL` (defaults to `TRADING_MODE` when unset) for audit tagging.
+- Optional risk defaults: `TRADING_MAX_NOTIONAL_PER_TRADE`, `TRADING_MAX_POSITION_PCT_EQUITY`.
+- Shorts policy: `TRADING_ALLOW_SHORTS` (default `false`).
+- LLM controls: `LLM_ENABLED`, `LLM_SHADOW_MODE`, `LLM_PROMPT_VERSION`, `LLM_RECENT_DECISIONS`,
+  `LLM_CIRCUIT_MAX_ERRORS`, `LLM_CIRCUIT_WINDOW_SECONDS`, `LLM_CIRCUIT_COOLDOWN_SECONDS`.
+
+**Timeframe note:** when signals are emitted at 1s windows (`window_size=PT1S`), the ingestor
+maps that to `1Sec`. Strategies must use a matching `base_timeframe` (`1Sec`) or they will never fire.
+
+```mermaid
+flowchart LR
+  CH[(ClickHouse ta_signals)] --> ING[SignalIngestor]
+  ING --> DEC[DecisionEngine]
+  DEC --> RISK[RiskEngine]
+  RISK --> EXEC[OrderExecutor]
+  EXEC --> ALPACA[Alpaca API]
+  EXEC --> DB[(Postgres: trade_decisions, executions)]
+  ALPACA --> REC[Reconciler]
+  REC --> DB
+```
+
+## One-Shot Execution Steps (implementation within a single Codex run)
+
+### 1) Create trading modules (code)
+
+Create a module folder under `services/torghut/app/trading/` with:
+
+- `models.py` - Pydantic DTOs for signals/decisions/execution requests.
+- `ingest.py` - ClickHouse signal ingestion (poll by `event_ts` cursor).
+- `decisions.py` - Strategy evaluation (start with simple MACD/RSI example).
+- `risk.py` - Risk checks:
+  - `max_position_pct_equity`
+  - `max_notional_per_trade`
+  - symbol allowlist
+  - paper-only gate + kill switch
+- `execution.py` - Idempotent order submission via `TorghutAlpacaClient`.
+- `reconcile.py` - Order reconciliation (poll Alpaca for status updates).
+- `scheduler.py` - Worker loop:
+  - `ingest -> decide -> risk -> execute`
+  - periodic reconciliation
+
+### 2) Wire into torghut service
+
+In `services/torghut/app/main.py`:
+
+- On startup, spawn the trading loop if `TRADING_ENABLED=true`.
+- Optional admin endpoints:
+  - `GET /trading/status`
+  - `GET /trading/health`
+
+### 3) Extend config
+
+In `services/torghut/app/config.py` add:
+
+- `TRADING_ENABLED` (bool)
+- `TRADING_MODE` (`paper|live`)
+- `TRADING_SIGNAL_SOURCE` (`clickhouse`)
+- `TRADING_POLL_MS`
+- `TRADING_UNIVERSE_SOURCE` (`jangar|static`)
+
+### 4) DB schema updates
+
+Use Alembic in `services/torghut/migrations/` to add:
+
+- `trade_decisions.decision_hash` (unique)
+- `trade_decisions.executed_at` (timestamp)
+- Optional: `executions.last_update_at`
+- Optional: `trade_cursor` table for ingestion cursor (or re-use `tool_run_logs`).
+
+### 5) Idempotency
+
+Decision hash:
+
+```
+decision_hash = sha256(strategy_id + symbol + event_ts + action + params)
+```
+
+Before submitting an order:
+
+- check if decision exists for hash
+- if execution exists, skip
+
+### 6) Risk & gating rules
+
+Minimum checks before order submission:
+
+- `TRADING_ENABLED=true`
+- `TRADING_MODE=paper` unless explicit live override
+- strategy enabled + symbol allowed
+- buying power / equity coverage
+- max notional per trade
+- max percent equity per position
+- optional cool-down per symbol
+
+### 7) Observability
+
+Logs (structured):
+
+- `strategy_id`, `decision_id`, `symbol`, `event_ts`, `alpaca_order_id`
+
+Metrics (min set):
+
+- `decisions_total`
+- `orders_submitted_total`
+- `orders_rejected_total`
+- `reconcile_updates_total`
+- `llm_requests_total`
+- `llm_veto_total`
+- `llm_adjust_total`
+- `llm_error_total`
+- `llm_circuit_open_total`
+- `llm_shadow_total`
+
+`GET /trading/status` also reports LLM circuit breaker state and shadow/fail
+configuration for operational visibility.
+
+### 8) Manifests / runtime
+
+Option A: run trading loop in torghut Knative service.
+Option B: create a **dedicated worker Deployment**:
+
+- `argocd/applications/torghut/trading/`
+- ConfigMap for trading settings
+- Secret for Alpaca creds
+
+### 9) Tests
+
+Add unit tests:
+
+- decision logic
+- risk engine
+- idempotency
+  Integration test:
+- ingest one fake signal -> decision -> execution row
+
+## Strategy provisioning
+
+Define a strategy catalog in `argocd/applications/torghut/strategy-configmap.yaml` (hot reload applies changes).
+For ad-hoc dev/stage seeding you can still run:
+
+```
+uv run python services/torghut/scripts/seed_strategy.py \
+  --name macd-rsi-default \
+  --base-timeframe 1Sec \
+  --symbols CRWD,MU,NVDA \
+  --enabled
+```
+
+## Replay / backtest hook
+
+Replay ClickHouse signals through the decision engine without executing orders by
+calling `ClickHouseSignalIngestor.fetch_signals_between(...)` in a one-off script
+or notebook (no dedicated replay script is shipped today).
+
+## Trading audit APIs
+
+- `GET /trading/decisions?symbol=&since=`
+- `GET /trading/executions?symbol=&since=`
+- `GET /trading/metrics`
+  - Decision JSON includes `params.price` + `params.price_snapshot` when prices are fetched from ClickHouse.
+
+## Code Locations (existing + new)
+
+Existing:
+
+- `services/torghut/app/alpaca_client.py`
+- `services/torghut/app/models/entities.py`
+- `services/torghut/app/snapshots.py`
+
+New (proposed):
+
+- `services/torghut/app/trading/*.py`
+- `services/torghut/migrations/*`
+- `argocd/applications/torghut/trading/*` (if separate worker)
+
+## Suggested TODO markers (for tracking)
+
+```
+# TODO(trading): implement SignalIngestor for ClickHouse
+# TODO(trading): implement StrategyRunner
+# TODO(trading): implement RiskEngine checks
+# TODO(trading): implement OrderExecutor + idempotency
+# TODO(trading): implement Reconciliation loop
+```
+
+## Notes
+
+- Signal ingestion is ClickHouse-only for this plan.
+- Keep the system paper-only unless explicitly configured for live trading.

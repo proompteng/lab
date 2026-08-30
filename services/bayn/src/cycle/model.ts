@@ -1,0 +1,767 @@
+import { Result, Schema } from 'effect'
+
+import type { MarketCalendarObservation, MarketCalendarSession } from '../broker/alpaca'
+import { canonicalHashV1Result } from '../hash'
+import {
+  IsoDateSchema,
+  PositiveIntegerSchema,
+  Sha256Schema,
+  StrictNonEmptyStringSchema,
+  UtcInstantSchema,
+  strictParseOptions,
+} from '../schemas'
+import { Pipeable } from '../pipeable'
+
+export const cycleTimeZone = 'America/New_York' as const
+export const maximumSubmissionDurationMs = 86_400_000
+export const SubmissionWindowMsSchema = PositiveIntegerSchema.check(
+  Schema.isLessThanOrEqualTo(maximumSubmissionDurationMs),
+)
+
+const canonicalHashMatches = (value: unknown, expectedHash: string): boolean => {
+  const hash = canonicalHashV1Result(value)
+  return Result.isSuccess(hash) && hash.success === expectedHash
+}
+
+export enum CycleState {
+  Pending = 'PENDING',
+  Active = 'ACTIVE',
+  Completed = 'COMPLETED',
+  NoTrade = 'NO_TRADE',
+  Blocked = 'BLOCKED',
+}
+
+export type CycleCompletionState = CycleState.Completed | CycleState.NoTrade
+
+export enum CycleTerminalReason {
+  MissedPublication = 'BLOCKED_MISSED_PUBLICATION_DEADLINE',
+  MissedSubmission = 'BLOCKED_MISSED_SUBMISSION_DEADLINE',
+  DataUnavailable = 'BLOCKED_DATA_UNAVAILABLE',
+  DataStale = 'BLOCKED_DATA_STALE',
+  DataInvalid = 'BLOCKED_DATA_INVALID',
+  ProvenanceMismatch = 'BLOCKED_PROVENANCE_MISMATCH',
+  Authority = 'BLOCKED_AUTHORITY',
+  KillActive = 'BLOCKED_KILL_ACTIVE',
+  BrokerDisabled = 'BLOCKED_BROKER_DISABLED',
+  BrokerUnavailable = 'BLOCKED_BROKER_UNAVAILABLE',
+  UnresolvedMutation = 'BLOCKED_UNRESOLVED_MUTATION',
+  Reconciliation = 'BLOCKED_RECONCILIATION',
+  Risk = 'BLOCKED_RISK',
+}
+
+const ExecutionCalendarObservationMaterialBase = Schema.Struct({
+  executionCalendarSchemaVersion: Schema.Literal('bayn.alpaca-market-calendar-observation.v1'),
+  executionCalendarSource: Schema.Literal('alpaca-v2-calendar'),
+  executionSessionDate: IsoDateSchema,
+  executionOpenAt: UtcInstantSchema,
+  executionCloseAt: UtcInstantSchema,
+})
+
+const executionCalendarMaterialIssues = (
+  observation: typeof ExecutionCalendarObservationMaterialBase.Type,
+): Schema.FilterIssue[] => {
+  const issues: Schema.FilterIssue[] = []
+  if (observation.executionOpenAt >= observation.executionCloseAt) {
+    issues.push({ path: ['executionCloseAt'], issue: 'must follow the execution session open' })
+  }
+  if (
+    !observation.executionOpenAt.startsWith(observation.executionSessionDate) ||
+    !observation.executionCloseAt.startsWith(observation.executionSessionDate)
+  ) {
+    issues.push({ path: ['executionSessionDate'], issue: 'must match the UTC execution session instants' })
+  }
+  return issues
+}
+
+export const ExecutionCalendarObservationMaterialSchema = ExecutionCalendarObservationMaterialBase.check(
+  Schema.makeFilter(executionCalendarMaterialIssues),
+)
+export type ExecutionCalendarObservationMaterial = typeof ExecutionCalendarObservationMaterialSchema.Type
+
+const executionCalendarMaterialOf = (
+  observation: ExecutionCalendarObservationMaterial,
+): ExecutionCalendarObservationMaterial => ({
+  executionCalendarSchemaVersion: observation.executionCalendarSchemaVersion,
+  executionCalendarSource: observation.executionCalendarSource,
+  executionSessionDate: observation.executionSessionDate,
+  executionOpenAt: observation.executionOpenAt,
+  executionCloseAt: observation.executionCloseAt,
+})
+
+const ExecutionCalendarObservationBase = Schema.Struct({
+  ...ExecutionCalendarObservationMaterialBase.fields,
+  executionCalendarHash: Sha256Schema,
+})
+
+const executionCalendarObservationIssues = (
+  observation: typeof ExecutionCalendarObservationBase.Type,
+): Schema.FilterIssue[] => {
+  const issues = executionCalendarMaterialIssues(observation)
+  if (!canonicalHashMatches(executionCalendarMaterialOf(observation), observation.executionCalendarHash)) {
+    issues.push({ path: ['executionCalendarHash'], issue: 'must match the selected broker-calendar session' })
+  }
+  return issues
+}
+
+export const ExecutionCalendarObservationSchema = ExecutionCalendarObservationBase.check(
+  Schema.makeFilter(executionCalendarObservationIssues),
+)
+export type ExecutionCalendarObservation = typeof ExecutionCalendarObservationSchema.Type
+export type SelectedExecutionCalendarSession = Pick<MarketCalendarObservation, 'schemaVersion' | 'source'> &
+  MarketCalendarSession
+
+const CycleExecutionPolicyV1MaterialSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.autonomous-cycle-execution-policy.v1'),
+  strategyExecutionModelHash: Sha256Schema,
+  submissionWindowMs: SubmissionWindowMsSchema,
+  submissionCutoffBeforeOpenMs: SubmissionWindowMsSchema,
+})
+
+const CycleExecutionPolicyV2MaterialSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.autonomous-cycle-execution-policy.v2'),
+  strategyExecutionModelHash: Sha256Schema,
+  submissionWindowMs: SubmissionWindowMsSchema,
+  submissionCutoffAfterOpenMs: SubmissionWindowMsSchema,
+})
+
+const CycleExecutionPolicyV3MaterialSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.autonomous-cycle-execution-policy.v3'),
+  strategyExecutionModelHash: Sha256Schema,
+  warmupAfterOpenMs: SubmissionWindowMsSchema,
+  submissionCutoffBeforeCloseMs: SubmissionWindowMsSchema,
+})
+
+export const CycleExecutionPolicyMaterialSchema = Schema.Union([
+  CycleExecutionPolicyV1MaterialSchema,
+  CycleExecutionPolicyV2MaterialSchema,
+  CycleExecutionPolicyV3MaterialSchema,
+])
+export type CycleExecutionPolicyMaterial = typeof CycleExecutionPolicyMaterialSchema.Type
+
+const CycleExecutionPolicyV1Base = Schema.Struct({
+  ...CycleExecutionPolicyV1MaterialSchema.fields,
+  executionPolicyHash: Sha256Schema,
+})
+const CycleExecutionPolicyV2Base = Schema.Struct({
+  ...CycleExecutionPolicyV2MaterialSchema.fields,
+  executionPolicyHash: Sha256Schema,
+})
+const CycleExecutionPolicyV3Base = Schema.Struct({
+  ...CycleExecutionPolicyV3MaterialSchema.fields,
+  executionPolicyHash: Sha256Schema,
+})
+
+const cycleExecutionPolicyIssues = (
+  policy:
+    | typeof CycleExecutionPolicyV1Base.Type
+    | typeof CycleExecutionPolicyV2Base.Type
+    | typeof CycleExecutionPolicyV3Base.Type,
+): readonly Schema.FilterIssue[] => {
+  const { executionPolicyHash, ...material } = policy
+  return canonicalHashMatches(material, executionPolicyHash)
+    ? []
+    : [{ path: ['executionPolicyHash'], issue: 'must match the canonical execution policy material' }]
+}
+
+export const CycleExecutionPolicySchema = Schema.Union([
+  CycleExecutionPolicyV1Base.check(Schema.makeFilter(cycleExecutionPolicyIssues)),
+  CycleExecutionPolicyV2Base.check(Schema.makeFilter(cycleExecutionPolicyIssues)),
+  CycleExecutionPolicyV3Base.check(Schema.makeFilter(cycleExecutionPolicyIssues)),
+])
+export type CycleExecutionPolicy = typeof CycleExecutionPolicySchema.Type
+
+const CycleIdentityExecutionMaterial = {
+  qualificationRunId: Sha256Schema,
+  strategyProtocolHash: Sha256Schema,
+  accountId: StrictNonEmptyStringSchema,
+  executionSessionDate: IsoDateSchema,
+  executionCalendarSchemaVersion: Schema.Literal('bayn.alpaca-market-calendar-observation.v1'),
+  executionCalendarSource: Schema.Literal('alpaca-v2-calendar'),
+  executionCalendarHash: Sha256Schema,
+} as const
+
+const CycleIdentitySignalMaterial = {
+  ...CycleIdentityExecutionMaterial,
+  signalSessionDate: IsoDateSchema,
+  signalCalendarVersion: StrictNonEmptyStringSchema,
+} as const
+
+const CycleIdentityV1MaterialSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.autonomous-cycle-identity.v1'),
+  strategyName: Schema.Literal('risk-balanced-trend'),
+  ...CycleIdentitySignalMaterial,
+  executionPolicy: CycleExecutionPolicyV1Base.check(Schema.makeFilter(cycleExecutionPolicyIssues)),
+})
+
+const CycleIdentityV2MaterialSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.autonomous-cycle-identity.v2'),
+  strategyName: Schema.Literal('opening-drive-momentum'),
+  ...CycleIdentitySignalMaterial,
+  executionPolicy: CycleExecutionPolicyV2Base.check(Schema.makeFilter(cycleExecutionPolicyIssues)),
+})
+
+const OpeningDriveCycleIdentityV3MaterialSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.autonomous-cycle-identity.v3'),
+  strategyName: Schema.Literal('opening-drive-momentum'),
+  ...CycleIdentityExecutionMaterial,
+  executionPolicy: CycleExecutionPolicyV2Base.check(Schema.makeFilter(cycleExecutionPolicyIssues)),
+})
+
+const IntradayMomentumCycleIdentityV3MaterialSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.autonomous-cycle-identity.v3'),
+  strategyName: Schema.Literal('intraday-momentum'),
+  ...CycleIdentityExecutionMaterial,
+  executionPolicy: CycleExecutionPolicyV3Base.check(Schema.makeFilter(cycleExecutionPolicyIssues)),
+})
+
+const CycleIdentityV3MaterialSchema = Schema.Union([
+  OpeningDriveCycleIdentityV3MaterialSchema,
+  IntradayMomentumCycleIdentityV3MaterialSchema,
+])
+
+export const CycleIdentityMaterialSchema = Schema.Union([
+  CycleIdentityV1MaterialSchema,
+  CycleIdentityV2MaterialSchema,
+  CycleIdentityV3MaterialSchema,
+])
+export type CycleIdentityMaterial = typeof CycleIdentityMaterialSchema.Type
+
+const CycleIdentityV1Base = Schema.Struct({ ...CycleIdentityV1MaterialSchema.fields, cycleId: Sha256Schema })
+const CycleIdentityV2Base = Schema.Struct({ ...CycleIdentityV2MaterialSchema.fields, cycleId: Sha256Schema })
+const OpeningDriveCycleIdentityV3Base = Schema.Struct({
+  ...OpeningDriveCycleIdentityV3MaterialSchema.fields,
+  cycleId: Sha256Schema,
+})
+const IntradayMomentumCycleIdentityV3Base = Schema.Struct({
+  ...IntradayMomentumCycleIdentityV3MaterialSchema.fields,
+  cycleId: Sha256Schema,
+})
+
+const cycleIdentityIssues = (
+  identity:
+    | typeof CycleIdentityV1Base.Type
+    | typeof CycleIdentityV2Base.Type
+    | typeof OpeningDriveCycleIdentityV3Base.Type
+    | typeof IntradayMomentumCycleIdentityV3Base.Type,
+): readonly Schema.FilterIssue[] => {
+  const issues: Schema.FilterIssue[] = []
+  const { cycleId, ...material } = identity
+  if (
+    identity.schemaVersion !== 'bayn.autonomous-cycle-identity.v3' &&
+    identity.signalSessionDate >= identity.executionSessionDate
+  ) {
+    issues.push({ path: ['executionSessionDate'], issue: 'must follow the Signal session' })
+  }
+  if (!canonicalHashMatches(material, cycleId)) {
+    issues.push({ path: ['cycleId'], issue: 'must match the canonical cycle identity material' })
+  }
+  return issues
+}
+
+export const CycleIdentitySchema = Schema.Union([
+  CycleIdentityV1Base.check(Schema.makeFilter(cycleIdentityIssues)),
+  CycleIdentityV2Base.check(Schema.makeFilter(cycleIdentityIssues)),
+  OpeningDriveCycleIdentityV3Base.check(Schema.makeFilter(cycleIdentityIssues)),
+  IntradayMomentumCycleIdentityV3Base.check(Schema.makeFilter(cycleIdentityIssues)),
+])
+export type CycleIdentity = typeof CycleIdentitySchema.Type
+
+const CycleWindowExecutionFields = {
+  ...ExecutionCalendarObservationBase.fields,
+  submissionOpenAt: UtcInstantSchema,
+  submissionCutoffAt: UtcInstantSchema,
+} as const
+
+const CycleWindowV1Base = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.autonomous-cycle-window.v1'),
+  signalCalendarVersion: StrictNonEmptyStringSchema,
+  signalSessionDate: IsoDateSchema,
+  ...CycleWindowExecutionFields,
+  signalCloseAt: UtcInstantSchema,
+  publicationDeadlineAt: UtcInstantSchema,
+})
+
+const CycleWindowV2Base = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.autonomous-cycle-window.v2'),
+  signalCalendarVersion: StrictNonEmptyStringSchema,
+  signalSessionDate: IsoDateSchema,
+  ...CycleWindowExecutionFields,
+  signalCloseAt: UtcInstantSchema,
+  publicationDeadlineAt: UtcInstantSchema,
+})
+
+const CycleWindowV3Base = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.autonomous-cycle-window.v3'),
+  ...CycleWindowExecutionFields,
+})
+
+const cycleWindowIssues = (
+  window: typeof CycleWindowV1Base.Type | typeof CycleWindowV2Base.Type | typeof CycleWindowV3Base.Type,
+): readonly Schema.FilterIssue[] => {
+  const issues = executionCalendarObservationIssues(window)
+  if (window.schemaVersion !== 'bayn.autonomous-cycle-window.v3') {
+    if (window.signalSessionDate >= window.executionSessionDate) {
+      issues.push({ path: ['executionSessionDate'], issue: 'must follow the Signal session' })
+    }
+    if (window.signalCloseAt >= window.submissionOpenAt) {
+      issues.push({ path: ['submissionOpenAt'], issue: 'must follow the Signal session close' })
+    }
+    const expectedPublicationDeadlineAt =
+      window.schemaVersion === 'bayn.autonomous-cycle-window.v1' ? window.submissionOpenAt : window.executionOpenAt
+    if (window.publicationDeadlineAt !== expectedPublicationDeadlineAt) {
+      issues.push({
+        path: ['publicationDeadlineAt'],
+        issue:
+          window.schemaVersion === 'bayn.autonomous-cycle-window.v1'
+            ? 'must equal the pre-open submission window'
+            : 'must equal the execution-session open',
+      })
+    }
+  }
+  if (window.submissionOpenAt >= window.submissionCutoffAt) {
+    issues.push({ path: ['submissionCutoffAt'], issue: 'must follow the submission window open' })
+  }
+  if (
+    (window.schemaVersion === 'bayn.autonomous-cycle-window.v1' &&
+      window.submissionCutoffAt >= window.executionOpenAt) ||
+    (window.schemaVersion !== 'bayn.autonomous-cycle-window.v1' && window.executionOpenAt >= window.submissionOpenAt)
+  ) {
+    issues.push({
+      path: ['executionOpenAt'],
+      issue:
+        window.schemaVersion === 'bayn.autonomous-cycle-window.v1'
+          ? 'must follow the broker submission cutoff'
+          : 'must precede the intraday submission window',
+    })
+  }
+  if (
+    window.schemaVersion !== 'bayn.autonomous-cycle-window.v1' &&
+    window.submissionCutoffAt >= window.executionCloseAt
+  ) {
+    issues.push({ path: ['submissionCutoffAt'], issue: 'must precede the execution-session close' })
+  }
+  if (window.executionOpenAt >= window.executionCloseAt) {
+    issues.push({ path: ['executionCloseAt'], issue: 'must follow the execution session open' })
+  }
+  return issues
+}
+
+export const CycleWindowSchema = Schema.Union([
+  CycleWindowV1Base.check(Schema.makeFilter(cycleWindowIssues)),
+  CycleWindowV2Base.check(Schema.makeFilter(cycleWindowIssues)),
+  CycleWindowV3Base.check(Schema.makeFilter(cycleWindowIssues)),
+])
+export type CycleWindow = typeof CycleWindowSchema.Type
+
+const CycleDraftBase = Schema.Struct({
+  schemaVersion: Schema.Literals(['bayn.autonomous-cycle.v1', 'bayn.autonomous-cycle.v2', 'bayn.autonomous-cycle.v3']),
+  identity: CycleIdentitySchema,
+  window: CycleWindowSchema,
+})
+
+const cycleDraftIssues = (draft: typeof CycleDraftBase.Type): readonly Schema.FilterIssue[] => {
+  const issues: Schema.FilterIssue[] = []
+  const versionMatches =
+    (draft.schemaVersion === 'bayn.autonomous-cycle.v1' &&
+      draft.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v1' &&
+      draft.window.schemaVersion === 'bayn.autonomous-cycle-window.v1') ||
+    (draft.schemaVersion === 'bayn.autonomous-cycle.v2' &&
+      draft.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v2' &&
+      draft.window.schemaVersion === 'bayn.autonomous-cycle-window.v2') ||
+    (draft.schemaVersion === 'bayn.autonomous-cycle.v3' &&
+      draft.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v3' &&
+      draft.window.schemaVersion === 'bayn.autonomous-cycle-window.v3')
+  if (!versionMatches) {
+    issues.push({ path: ['schemaVersion'], issue: 'must match the identity and window contract versions' })
+  }
+  if (
+    draft.identity.schemaVersion !== 'bayn.autonomous-cycle-identity.v3' &&
+    draft.window.schemaVersion !== 'bayn.autonomous-cycle-window.v3'
+  ) {
+    if (draft.identity.signalSessionDate !== draft.window.signalSessionDate) {
+      issues.push({ path: ['window', 'signalSessionDate'], issue: 'must match the cycle identity' })
+    }
+    if (draft.identity.signalCalendarVersion !== draft.window.signalCalendarVersion) {
+      issues.push({ path: ['window', 'signalCalendarVersion'], issue: 'must match the cycle identity' })
+    }
+  }
+  if (draft.identity.executionSessionDate !== draft.window.executionSessionDate) {
+    issues.push({ path: ['window', 'executionSessionDate'], issue: 'must match the cycle identity' })
+  }
+  if (draft.identity.executionCalendarSchemaVersion !== draft.window.executionCalendarSchemaVersion) {
+    issues.push({ path: ['window', 'executionCalendarSchemaVersion'], issue: 'must match the cycle identity' })
+  }
+  if (draft.identity.executionCalendarSource !== draft.window.executionCalendarSource) {
+    issues.push({ path: ['window', 'executionCalendarSource'], issue: 'must match the cycle identity' })
+  }
+  if (draft.identity.executionCalendarHash !== draft.window.executionCalendarHash) {
+    issues.push({ path: ['window', 'executionCalendarHash'], issue: 'must match the cycle identity' })
+  }
+  const policy = draft.identity.executionPolicy
+  if (policy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v3') {
+    const expectedSubmissionOpenAt = Date.parse(draft.window.executionOpenAt) + policy.warmupAfterOpenMs
+    const expectedSubmissionCutoffAt = Date.parse(draft.window.executionCloseAt) - policy.submissionCutoffBeforeCloseMs
+    if (Date.parse(draft.window.submissionOpenAt) !== expectedSubmissionOpenAt) {
+      issues.push({
+        path: ['window', 'submissionOpenAt'],
+        issue: 'must equal execution open plus the bound intraday warmup',
+      })
+    }
+    if (Date.parse(draft.window.submissionCutoffAt) !== expectedSubmissionCutoffAt) {
+      issues.push({
+        path: ['window', 'submissionCutoffAt'],
+        issue: 'must equal execution close minus the bound intraday cutoff lead',
+      })
+    }
+  } else {
+    const submissionWindowMs = Date.parse(draft.window.submissionCutoffAt) - Date.parse(draft.window.submissionOpenAt)
+    if (submissionWindowMs !== policy.submissionWindowMs) {
+      issues.push({
+        path: ['window', 'submissionCutoffAt'],
+        issue: 'must match the bound execution policy submission window',
+      })
+    }
+  }
+  if (policy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v1') {
+    const submissionCutoffBeforeOpenMs =
+      Date.parse(draft.window.executionOpenAt) - Date.parse(draft.window.submissionCutoffAt)
+    if (submissionCutoffBeforeOpenMs !== policy.submissionCutoffBeforeOpenMs) {
+      issues.push({
+        path: ['window', 'submissionCutoffAt'],
+        issue: 'must match the bound execution policy broker cutoff lead',
+      })
+    }
+  } else if (policy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v2') {
+    const submissionCutoffAfterOpenMs =
+      Date.parse(draft.window.submissionCutoffAt) - Date.parse(draft.window.executionOpenAt)
+    if (submissionCutoffAfterOpenMs !== policy.submissionCutoffAfterOpenMs) {
+      issues.push({
+        path: ['window', 'submissionCutoffAt'],
+        issue: 'must match the bound execution policy intraday cutoff',
+      })
+    }
+  }
+  return issues
+}
+
+export const CycleDraftSchema = CycleDraftBase.check(Schema.makeFilter(cycleDraftIssues))
+export type CycleDraft = typeof CycleDraftSchema.Type
+
+const CycleBindingsSchema = Schema.Struct({
+  snapshotId: Schema.optionalKey(Sha256Schema),
+  decisionHash: Schema.optionalKey(Sha256Schema),
+})
+export type CycleBindings = typeof CycleBindingsSchema.Type
+
+const AutonomousCycleBase = Schema.Struct({
+  ...CycleDraftBase.fields,
+  state: Schema.Enum(CycleState),
+  bindings: CycleBindingsSchema,
+  terminalReason: Schema.optionalKey(Schema.Enum(CycleTerminalReason)),
+  stateVersion: PositiveIntegerSchema,
+  createdAt: UtcInstantSchema,
+  updatedAt: UtcInstantSchema,
+  terminalAt: Schema.optionalKey(UtcInstantSchema),
+})
+
+export const AutonomousCycleSchema = AutonomousCycleBase.check(
+  Schema.makeFilter((cycle) => {
+    const issues = [...cycleDraftIssues(cycle)]
+    if (cycle.updatedAt < cycle.createdAt) {
+      issues.push({ path: ['updatedAt'], issue: 'must not precede cycle creation' })
+    }
+    if (cycle.bindings.decisionHash !== undefined && cycle.bindings.snapshotId === undefined) {
+      issues.push({ path: ['bindings', 'decisionHash'], issue: 'requires a bound snapshot' })
+    }
+    switch (cycle.state) {
+      case CycleState.Pending:
+        if (
+          cycle.bindings.decisionHash !== undefined ||
+          cycle.terminalReason !== undefined ||
+          cycle.terminalAt !== undefined
+        ) {
+          issues.push({ path: ['state'], issue: 'PENDING permits only an optional snapshot binding' })
+        }
+        break
+      case CycleState.Active:
+        if (
+          (cycle.schemaVersion !== 'bayn.autonomous-cycle.v3' && cycle.bindings.snapshotId === undefined) ||
+          cycle.terminalReason !== undefined ||
+          cycle.terminalAt !== undefined
+        ) {
+          issues.push({
+            path: ['state'],
+            issue: 'ACTIVE permits an unbound intraday cycle but requires a legacy snapshot and no terminal fields',
+          })
+        }
+        break
+      case CycleState.Completed:
+        if (
+          cycle.bindings.snapshotId === undefined ||
+          cycle.bindings.decisionHash === undefined ||
+          cycle.terminalReason !== undefined ||
+          cycle.terminalAt === undefined
+        ) {
+          issues.push({ path: ['state'], issue: 'COMPLETED requires a bound decision and terminal time' })
+        }
+        break
+      case CycleState.NoTrade:
+        if (
+          cycle.bindings.snapshotId === undefined ||
+          cycle.bindings.decisionHash === undefined ||
+          cycle.terminalReason !== undefined ||
+          cycle.terminalAt === undefined
+        ) {
+          issues.push({ path: ['state'], issue: 'NO_TRADE requires a bound decision and terminal time' })
+        }
+        break
+      case CycleState.Blocked:
+        if (cycle.terminalReason === undefined || cycle.terminalAt === undefined) {
+          issues.push({ path: ['state'], issue: 'BLOCKED requires its durable reason and terminal time' })
+        }
+        break
+    }
+    if (cycle.terminalAt !== undefined && cycle.terminalAt !== cycle.updatedAt) {
+      issues.push({ path: ['terminalAt'], issue: 'must equal the terminal state update time' })
+    }
+    return issues
+  }),
+)
+export type AutonomousCycle = typeof AutonomousCycleSchema.Type
+
+type LegacyCycleIdentityV1 = Extract<CycleIdentity, { readonly schemaVersion: 'bayn.autonomous-cycle-identity.v1' }>
+type LegacyCycleIdentityV2 = Extract<CycleIdentity, { readonly schemaVersion: 'bayn.autonomous-cycle-identity.v2' }>
+type LegacyCycleWindowV1 = Extract<CycleWindow, { readonly schemaVersion: 'bayn.autonomous-cycle-window.v1' }>
+type LegacyCycleWindowV2 = Extract<CycleWindow, { readonly schemaVersion: 'bayn.autonomous-cycle-window.v2' }>
+export type LegacyCycleIdentity = LegacyCycleIdentityV1 | LegacyCycleIdentityV2
+export type LegacyCycleWindow = LegacyCycleWindowV1 | LegacyCycleWindowV2
+export type LegacyCycleDraft =
+  | (Omit<CycleDraft, 'identity' | 'schemaVersion' | 'window'> & {
+      readonly schemaVersion: 'bayn.autonomous-cycle.v1'
+      readonly identity: LegacyCycleIdentityV1
+      readonly window: LegacyCycleWindowV1
+    })
+  | (Omit<CycleDraft, 'identity' | 'schemaVersion' | 'window'> & {
+      readonly schemaVersion: 'bayn.autonomous-cycle.v2'
+      readonly identity: LegacyCycleIdentityV2
+      readonly window: LegacyCycleWindowV2
+    })
+export type LegacyAutonomousCycle =
+  | (Omit<AutonomousCycle, 'identity' | 'schemaVersion' | 'window'> & {
+      readonly schemaVersion: 'bayn.autonomous-cycle.v1'
+      readonly identity: LegacyCycleIdentityV1
+      readonly window: LegacyCycleWindowV1
+    })
+  | (Omit<AutonomousCycle, 'identity' | 'schemaVersion' | 'window'> & {
+      readonly schemaVersion: 'bayn.autonomous-cycle.v2'
+      readonly identity: LegacyCycleIdentityV2
+      readonly window: LegacyCycleWindowV2
+    })
+
+type AutonomousCycleVariantBase = Omit<AutonomousCycle, 'bindings' | 'state' | 'terminalAt' | 'terminalReason'>
+type PendingCycleBindings =
+  | { readonly snapshotId?: undefined; readonly decisionHash?: undefined }
+  | { readonly snapshotId: string; readonly decisionHash?: undefined }
+type TerminalCycleBindings = PendingCycleBindings | { readonly snapshotId: string; readonly decisionHash: string }
+export type PendingCycle = AutonomousCycleVariantBase & {
+  readonly state: CycleState.Pending
+  readonly bindings: PendingCycleBindings
+  readonly terminalReason?: undefined
+  readonly terminalAt?: undefined
+}
+export type ActiveUnboundCycle = AutonomousCycleVariantBase & {
+  readonly state: CycleState.Active
+  readonly bindings: PendingCycleBindings
+  readonly terminalReason?: undefined
+  readonly terminalAt?: undefined
+}
+export type ActiveDecisionBoundCycle = AutonomousCycleVariantBase & {
+  readonly state: CycleState.Active
+  readonly bindings: { readonly snapshotId: string; readonly decisionHash: string }
+  readonly terminalReason?: undefined
+  readonly terminalAt?: undefined
+}
+export type CompletedCycle = AutonomousCycleVariantBase & {
+  readonly state: CycleCompletionState
+  readonly bindings: { readonly snapshotId: string; readonly decisionHash: string }
+  readonly terminalReason?: undefined
+  readonly terminalAt: string
+}
+export type BlockedCycle = AutonomousCycleVariantBase & {
+  readonly state: CycleState.Blocked
+  readonly bindings: TerminalCycleBindings
+  readonly terminalReason: CycleTerminalReason
+  readonly terminalAt: string
+}
+export type CorrelatedAutonomousCycle =
+  | PendingCycle
+  | ActiveUnboundCycle
+  | ActiveDecisionBoundCycle
+  | CompletedCycle
+  | BlockedCycle
+
+export type IntradayCycleIdentity = Extract<
+  CycleIdentity,
+  { readonly schemaVersion: 'bayn.autonomous-cycle-identity.v3' }
+>
+export type IntradayCycleWindow = Extract<CycleWindow, { readonly schemaVersion: 'bayn.autonomous-cycle-window.v3' }>
+export type IntradayCycleDraft = Omit<CycleDraft, 'identity' | 'schemaVersion' | 'window'> & {
+  readonly schemaVersion: 'bayn.autonomous-cycle.v3'
+  readonly identity: IntradayCycleIdentity
+  readonly window: IntradayCycleWindow
+}
+export type IntradayAutonomousCycle = Omit<AutonomousCycle, 'identity' | 'schemaVersion' | 'window'> & {
+  readonly schemaVersion: 'bayn.autonomous-cycle.v3'
+  readonly identity: IntradayCycleIdentity
+  readonly window: IntradayCycleWindow
+}
+
+export const isLegacyAutonomousCycle = (cycle: AutonomousCycle): cycle is LegacyAutonomousCycle =>
+  (cycle.schemaVersion === 'bayn.autonomous-cycle.v1' &&
+    cycle.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v1' &&
+    cycle.window.schemaVersion === 'bayn.autonomous-cycle-window.v1') ||
+  (cycle.schemaVersion === 'bayn.autonomous-cycle.v2' &&
+    cycle.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v2' &&
+    cycle.window.schemaVersion === 'bayn.autonomous-cycle-window.v2')
+
+export const isIntradayAutonomousCycle = (cycle: AutonomousCycle): cycle is IntradayAutonomousCycle =>
+  cycle.schemaVersion === 'bayn.autonomous-cycle.v3' &&
+  cycle.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v3' &&
+  cycle.window.schemaVersion === 'bayn.autonomous-cycle-window.v3'
+
+export const isLegacyCycleDraft = (draft: CycleDraft): draft is LegacyCycleDraft =>
+  (draft.schemaVersion === 'bayn.autonomous-cycle.v1' &&
+    draft.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v1' &&
+    draft.window.schemaVersion === 'bayn.autonomous-cycle-window.v1') ||
+  (draft.schemaVersion === 'bayn.autonomous-cycle.v2' &&
+    draft.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v2' &&
+    draft.window.schemaVersion === 'bayn.autonomous-cycle-window.v2')
+
+export const isIntradayCycleDraft = (draft: CycleDraft): draft is IntradayCycleDraft =>
+  draft.schemaVersion === 'bayn.autonomous-cycle.v3' &&
+  draft.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v3' &&
+  draft.window.schemaVersion === 'bayn.autonomous-cycle-window.v3'
+
+export const isIntradayCycleIdentity = (identity: CycleIdentity): identity is IntradayCycleIdentity =>
+  identity.schemaVersion === 'bayn.autonomous-cycle-identity.v3'
+
+export const cycleAuthoritySessionDate = (identity: CycleIdentity): CycleIdentity['executionSessionDate'] =>
+  isIntradayCycleIdentity(identity) ? identity.executionSessionDate : identity.signalSessionDate
+
+export const SignalCycleSessionSchema = Schema.Struct({
+  calendar_version: StrictNonEmptyStringSchema,
+  session_date: IsoDateSchema,
+  close_time: Schema.String.check(Schema.isPattern(/^(?:[01]\d|2[0-3]):[0-5]\d$/)),
+  timezone: Schema.Literal(cycleTimeZone),
+})
+
+export const SelectedExecutionCalendarSessionSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.alpaca-market-calendar-observation.v1'),
+  source: Schema.Literal('alpaca-v2-calendar'),
+  date: IsoDateSchema,
+  openAt: UtcInstantSchema,
+  closeAt: UtcInstantSchema,
+})
+
+export const CycleWindowPolicyInputSchema = Schema.Union([
+  CycleExecutionPolicySchema,
+  Schema.Struct({
+    submissionWindowMs: Schema.Finite,
+    submissionCutoffBeforeOpenMs: Schema.Finite,
+  }),
+  Schema.Struct({
+    submissionWindowMs: Schema.Finite,
+    submissionCutoffAfterOpenMs: Schema.Finite,
+  }),
+  Schema.Struct({
+    warmupAfterOpenMs: Schema.Finite,
+    submissionCutoffBeforeCloseMs: Schema.Finite,
+  }),
+])
+
+export type SignalCycleSession = typeof SignalCycleSessionSchema.Type
+export type CycleWindowPolicyInput = typeof CycleWindowPolicyInputSchema.Type
+
+const decodeExecutionCalendarMaterialResultDataFirst = Schema.decodeUnknownResult(
+  ExecutionCalendarObservationMaterialSchema,
+  strictParseOptions,
+)
+
+export const decodeExecutionCalendarMaterialResult = Pipeable.dual(1, (input: unknown) =>
+  decodeExecutionCalendarMaterialResultDataFirst(input),
+)
+const decodeExecutionCalendarObservationResultDataFirst = Schema.decodeUnknownResult(
+  ExecutionCalendarObservationSchema,
+  strictParseOptions,
+)
+
+export const decodeExecutionCalendarObservationResult = Pipeable.dual(1, (input: unknown) =>
+  decodeExecutionCalendarObservationResultDataFirst(input),
+)
+const decodeCycleWindowPolicyInputResultDataFirst = Schema.decodeUnknownResult(
+  CycleWindowPolicyInputSchema,
+  strictParseOptions,
+)
+
+export const decodeCycleWindowPolicyInputResult = Pipeable.dual(1, (input: unknown) =>
+  decodeCycleWindowPolicyInputResultDataFirst(input),
+)
+const decodeCycleExecutionPolicyMaterialResultDataFirst = Schema.decodeUnknownResult(
+  CycleExecutionPolicyMaterialSchema,
+  strictParseOptions,
+)
+
+export const decodeCycleExecutionPolicyMaterialResult = Pipeable.dual(1, (input: unknown) =>
+  decodeCycleExecutionPolicyMaterialResultDataFirst(input),
+)
+const decodeCycleExecutionPolicyResultDataFirst = Schema.decodeUnknownResult(
+  CycleExecutionPolicySchema,
+  strictParseOptions,
+)
+
+export const decodeCycleExecutionPolicyResult = Pipeable.dual(1, (input: unknown) =>
+  decodeCycleExecutionPolicyResultDataFirst(input),
+)
+const decodeCycleIdentityMaterialResultDataFirst = Schema.decodeUnknownResult(
+  CycleIdentityMaterialSchema,
+  strictParseOptions,
+)
+
+export const decodeCycleIdentityMaterialResult = Pipeable.dual(1, (input: unknown) =>
+  decodeCycleIdentityMaterialResultDataFirst(input),
+)
+const decodeCycleIdentityResultDataFirst = Schema.decodeUnknownResult(CycleIdentitySchema, strictParseOptions)
+
+export const decodeCycleIdentityResult = Pipeable.dual(1, (input: unknown) => decodeCycleIdentityResultDataFirst(input))
+const decodeCycleWindowResultDataFirst = Schema.decodeUnknownResult(CycleWindowSchema, strictParseOptions)
+
+export const decodeCycleWindowResult = Pipeable.dual(1, (input: unknown) => decodeCycleWindowResultDataFirst(input))
+const decodeCycleDraftResultDataFirst = Schema.decodeUnknownResult(CycleDraftSchema, strictParseOptions)
+
+export const decodeCycleDraftResult = Pipeable.dual(1, (input: unknown) => decodeCycleDraftResultDataFirst(input))
+
+const decodeExecutionCalendarObservationDataFirst = Schema.decodeUnknownEffect(
+  ExecutionCalendarObservationSchema,
+  strictParseOptions,
+)
+
+export const decodeExecutionCalendarObservation = Pipeable.dual(1, (input: unknown) =>
+  decodeExecutionCalendarObservationDataFirst(input),
+)
+const decodeCycleExecutionPolicyDataFirst = Schema.decodeUnknownEffect(CycleExecutionPolicySchema, strictParseOptions)
+
+export const decodeCycleExecutionPolicy = Pipeable.dual(1, (input: unknown) =>
+  decodeCycleExecutionPolicyDataFirst(input),
+)
+const decodeCycleIdentityDataFirst = Schema.decodeUnknownEffect(CycleIdentitySchema, strictParseOptions)
+
+export const decodeCycleIdentity = Pipeable.dual(1, (input: unknown) => decodeCycleIdentityDataFirst(input))
+const decodeCycleWindowDataFirst = Schema.decodeUnknownEffect(CycleWindowSchema, strictParseOptions)
+
+export const decodeCycleWindow = Pipeable.dual(1, (input: unknown) => decodeCycleWindowDataFirst(input))
+const decodeCycleDraftDataFirst = Schema.decodeUnknownEffect(CycleDraftSchema, strictParseOptions)
+
+export const decodeCycleDraft = Pipeable.dual(1, (input: unknown) => decodeCycleDraftDataFirst(input))
+const decodeAutonomousCycleDataFirst = Schema.decodeUnknownEffect(AutonomousCycleSchema, strictParseOptions)
+
+export const decodeAutonomousCycle = Pipeable.dual(1, (input: unknown) => decodeAutonomousCycleDataFirst(input))

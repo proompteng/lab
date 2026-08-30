@@ -1,0 +1,7 @@
+---
+- name: Grab rancher bootstrap logs
+  hosts: rancher_bootstrap
+  tasks:
+    - name: Grab rancher bootstrap logs
+      ansible.builtin.shell:
+        cmd: docker logs rancher2 2>&1 | grep "Bootstrap Password:"

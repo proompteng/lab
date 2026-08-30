@@ -1,0 +1,41 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bilig-runtime-ingress
+  namespace: bilig
+  labels:
+    app.kubernetes.io/part-of: bilig
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - bilig-app
+          - bilig-zero
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+      ports:
+        - protocol: TCP
+          port: 4321
+        - protocol: TCP
+          port: 4848
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values:
+                  - bilig-alloy
+                  - bilig-app
+                  - bilig-zero
+      ports:
+        - protocol: TCP
+          port: 4321
+        - protocol: TCP
+          port: 4848

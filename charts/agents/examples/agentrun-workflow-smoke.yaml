@@ -1,0 +1,31 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: agents-workflow-smoke
+spec:
+  agentRef:
+    name: smoke-agent
+  implementationSpecRef:
+    name: smoke-impl
+  runtime:
+    type: workflow
+    config:
+      ttlSecondsAfterFinished: 600
+  workflow:
+    steps:
+      - name: plan
+        timeoutSeconds: 300
+        parameters:
+          stage: plan
+      - name: implement
+        timeoutSeconds: 900
+        parameters:
+          stage: implement
+  workload:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+  parameters:
+    task: 'Workflow smoke validation'
+    priority: 'medium'

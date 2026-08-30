@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: convex-backend-config
+data:
+  CONVEX_SITE_ORIGIN: https://convex.proompteng.ai/http
+  CONVEX_CLOUD_ORIGIN: https://convex.proompteng.ai
