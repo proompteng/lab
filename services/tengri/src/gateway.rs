@@ -81,8 +81,11 @@ const PREVIEW_BOOTSTRAP_SCRIPT: &str = r#"(() => {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ token }),
   })
-    .then((response) => {
+    .then(async (response) => {
       if (!response.ok) throw new Error('preview session rejected');
+      const payload = await response.json();
+      if (typeof payload.fragment !== 'string') throw new Error('preview fragment missing');
+      history.replaceState(null, '', `${target}${payload.fragment}`);
       window.location.reload();
     })
     .catch(() => {
@@ -114,12 +117,14 @@ const OPEN_PREVIEW_BOOTSTRAP_SCRIPT: &str = r#"(() => {
     });
 })();
 "#;
-const PREVIEW_BRIDGE_SCRIPT: &str = r#"(() => {
+const PREVIEW_DESKTOP_ORIGIN_MARKER: &str = "__TENGRI_DESKTOP_ORIGIN_JSON__";
+const PREVIEW_BRIDGE_SCRIPT_TEMPLATE: &str = r#"(() => {
   const channel = 'tengri-preview-v1';
+  const desktopOrigin = __TENGRI_DESKTOP_ORIGIN_JSON__;
   const match = window.location.hostname.match(/^tengri-([a-z0-9]{24})\./);
   if (!match || window.parent === window) return;
   const sessionId = match[1];
-  const send = (message) => window.parent.postMessage({ channel, sessionId, ...message }, '*');
+  const send = (message) => window.parent.postMessage({ channel, sessionId, ...message }, desktopOrigin);
   const notify = (mode) => send({ type: 'navigation', mode, url: window.location.href });
   for (const [method, mode] of [['pushState', 'push'], ['replaceState', 'replace']]) {
     const original = window.history[method];
@@ -565,15 +570,17 @@ async fn preview_bootstrap(
         session.token,
     );
     (
-        StatusCode::NO_CONTENT,
+        StatusCode::OK,
         [
             (header::SET_COOKIE, cookie),
+            (header::CONTENT_TYPE, "application/json".to_owned()),
             (header::CACHE_CONTROL, "no-store".to_owned()),
             (
                 HeaderName::from_static("referrer-policy"),
                 "no-referrer".to_owned(),
             ),
         ],
+        serde_json::json!({"fragment": session.initial_fragment}).to_string(),
     )
         .into_response()
 }
@@ -591,18 +598,33 @@ async fn serve_preview_bootstrap_script(
     script_response(PREVIEW_BOOTSTRAP_SCRIPT)
 }
 
-async fn serve_preview_bridge_script() -> axum::response::Response {
-    script_response(PREVIEW_BRIDGE_SCRIPT)
+async fn serve_preview_bridge_script(
+    State(state): State<GatewayState>,
+    request: Request<Body>,
+) -> axum::response::Response {
+    let Some(authority) = request_authority(&request) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if state.preview_origin.session_id(&authority).is_none() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    script_response(preview_bridge_script(&state.preview_origin.desktop_origin))
 }
 
-fn script_response(script: &'static str) -> axum::response::Response {
+fn preview_bridge_script(desktop_origin: &str) -> String {
+    let desktop_origin =
+        serde_json::to_string(desktop_origin).expect("string serialization cannot fail");
+    PREVIEW_BRIDGE_SCRIPT_TEMPLATE.replace(PREVIEW_DESKTOP_ORIGIN_MARKER, &desktop_origin)
+}
+
+fn script_response(script: impl Into<String>) -> axum::response::Response {
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/javascript; charset=utf-8")
         .header(header::CACHE_CONTROL, "no-store")
         .header("Referrer-Policy", "no-referrer")
         .header("X-Content-Type-Options", "nosniff")
-        .body(Body::from(script))
+        .body(Body::from(script.into()))
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
@@ -1347,13 +1369,85 @@ mod tests {
         .await;
         assert_eq!(control_preview_script.status(), StatusCode::NOT_FOUND);
 
-        let preview_script =
-            router_response(preview_router(state), "/_tengri/bootstrap.js", preview_host).await;
+        let preview_script = router_response(
+            preview_router(state.clone()),
+            "/_tengri/bootstrap.js",
+            preview_host,
+        )
+        .await;
         assert_eq!(preview_script.status(), StatusCode::OK);
         assert_eq!(
             preview_script.headers().get(header::CONTENT_TYPE),
             Some(&HeaderValue::from_static("text/javascript; charset=utf-8"))
         );
+
+        let preview_bridge = router_response(
+            preview_router(state.clone()),
+            "/_tengri/bridge.js",
+            preview_host,
+        )
+        .await;
+        assert_eq!(preview_bridge.status(), StatusCode::OK);
+        let bridge_body = to_bytes(preview_bridge.into_body(), 16 * 1024)
+            .await
+            .expect("preview bridge body");
+        let bridge = std::str::from_utf8(&bridge_body).expect("UTF-8 preview bridge");
+        assert!(bridge.contains("const desktopOrigin = \"https://proompteng.ai\""));
+
+        let bridge_on_control_host = router_response(
+            preview_router(state),
+            "/_tengri/bridge.js",
+            "tengri.proompteng.ai",
+        )
+        .await;
+        assert_eq!(bridge_on_control_host.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn preview_bootstrap_returns_the_fragment_for_normal_guest_navigation() {
+        let (service, _handle) = tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
+        let state = test_gateway_state(Client::new(service, "tengri"));
+        let ticket = state
+            .tickets
+            .issue_preview(&"a".repeat(64), "agent", 4321, "/app?mode=dev", "#editor")
+            .expect("preview ticket");
+        let session = state
+            .tickets
+            .consume_preview(&ticket.token)
+            .expect("preview session");
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/_tengri/bootstrap")
+            .header(header::HOST, format!("tengri-{}.proompteng.ai", session.id))
+            .body(Body::from(
+                serde_json::json!({"token": session.token}).to_string(),
+            ))
+            .expect("preview bootstrap request");
+
+        let response = preview_bootstrap(State(state), request)
+            .await
+            .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE),
+            Some(&HeaderValue::from_static("application/json")),
+        );
+        assert!(response.headers().contains_key(header::SET_COOKIE));
+        let body = to_bytes(response.into_body(), 1_024)
+            .await
+            .expect("preview bootstrap body");
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).expect("preview bootstrap JSON"),
+            serde_json::json!({"fragment": "#editor"}),
+        );
+        let final_location = "history.replaceState(null, '', `${target}${payload.fragment}`)";
+        let final_location_offset = PREVIEW_BOOTSTRAP_SCRIPT
+            .find(final_location)
+            .expect("preview bootstrap writes the final fragment into history");
+        let reload_offset = PREVIEW_BOOTSTRAP_SCRIPT
+            .find("window.location.reload()")
+            .expect("preview bootstrap forces a guest document load");
+        assert!(final_location_offset < reload_offset);
     }
 
     async fn readiness_for_kubernetes_responses(
@@ -1591,6 +1685,7 @@ mod tests {
             agent_id: "agent-a".to_owned(),
             port: 3000,
             initial_path: "/".to_owned(),
+            initial_fragment: String::new(),
             expires_at: SystemTime::now() + Duration::from_secs(60),
         };
         let binding = PreviewGuestBinding::new(&session);
@@ -1620,6 +1715,7 @@ mod tests {
             agent_id: "agent-a".to_owned(),
             port: 3000,
             initial_path: "/".to_owned(),
+            initial_fragment: String::new(),
             expires_at: SystemTime::now() + Duration::from_secs(60),
         };
         let stale_binding = PreviewGuestBinding::new(&session);
@@ -1732,9 +1828,14 @@ mod tests {
             html.find("/_tengri/bridge.js").expect("bridge script")
                 < html.find("</head>").expect("head close")
         );
-        assert!(PREVIEW_BRIDGE_SCRIPT.contains("tengri-preview-v1"));
-        assert!(PREVIEW_BRIDGE_SCRIPT.contains("pushState"));
-        assert!(PREVIEW_BRIDGE_SCRIPT.contains("stopImmediatePropagation"));
+        let bridge = preview_bridge_script("https://proompteng.ai");
+        assert!(bridge.contains("tengri-preview-v1"));
+        assert!(bridge.contains("pushState"));
+        assert!(bridge.contains("stopImmediatePropagation"));
+        assert!(bridge.contains("postMessage({ channel, sessionId, ...message }, desktopOrigin)"));
+        assert!(!bridge.contains("postMessage({ channel, sessionId, ...message }, '*')"));
+        assert!(!bridge.contains("restore-fragment"));
+        assert!(!bridge.contains(PREVIEW_DESKTOP_ORIGIN_MARKER));
     }
 
     #[test]

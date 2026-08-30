@@ -1037,10 +1037,15 @@ impl MicroVmControlPlane for ControlPlane {
                 )
             })?;
         let path = validate_preview_path(&request.path)?;
+        let fragment = validate_preview_fragment(&request.fragment)?;
         self.guest(&principal, &request.agent_id).await?;
-        let issued =
-            self.tickets
-                .issue_preview(&principal.owner_hash, &request.agent_id, port, &path)?;
+        let issued = self.tickets.issue_preview(
+            &principal.owner_hash,
+            &request.agent_id,
+            port,
+            &path,
+            &fragment,
+        )?;
         metrics::global().record_preview_session();
         let preview_origin = self.preview_origin.origin(&issued.id);
         Ok(Response::new(PreviewSession {
@@ -2697,6 +2702,23 @@ fn validate_preview_path(value: &str) -> Result<String, Status> {
     Ok(normalized)
 }
 
+fn validate_preview_fragment(value: &str) -> Result<String, Status> {
+    if value.is_empty() {
+        return Ok(String::new());
+    }
+    if !value.starts_with('#')
+        || value.len() > 4_096
+        || value
+            .chars()
+            .any(|character| character <= '\u{001f}' || character == '\u{007f}')
+    {
+        return Err(Status::invalid_argument(
+            "preview fragment must start with #, contain no control characters, and be at most 4096 bytes",
+        ));
+    }
+    Ok(value.to_owned())
+}
+
 fn validate_digest_pinned_image(image: &str) -> anyhow::Result<()> {
     let (repository, digest) = image
         .rsplit_once("@sha256:")
@@ -3401,6 +3423,24 @@ mod tests {
         assert!(validate_preview_path("https://private.example").is_err());
         assert!(validate_preview_path("/app#stolen").is_err());
         assert!(validate_preview_path("/app\r\nX-Injected: 1").is_err());
+    }
+
+    #[test]
+    fn preview_fragment_is_bounded_and_kept_separate_from_the_proxy_path() {
+        assert_eq!(
+            validate_preview_fragment("#editor").expect("preview fragment"),
+            "#editor",
+        );
+        assert_eq!(validate_preview_fragment("").expect("empty fragment"), "");
+        let exact = format!("#{}x", "é".repeat(2_047));
+        assert_eq!(exact.len(), 4_096);
+        assert_eq!(
+            validate_preview_fragment(&exact).expect("maximum preview fragment"),
+            exact,
+        );
+        assert!(validate_preview_fragment("editor").is_err());
+        assert!(validate_preview_fragment("#editor\nprivate").is_err());
+        assert!(validate_preview_fragment(&format!("#{}", "é".repeat(2_048))).is_err());
     }
 
     #[test]
