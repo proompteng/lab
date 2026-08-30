@@ -1,0 +1,26 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: jangar
+nameSuffix: -jangar
+labels:
+  - includeSelectors: true
+    includeTemplates: true
+    pairs:
+      app.kubernetes.io/name: symphony-jangar
+      app.kubernetes.io/part-of: lab
+configMapGenerator:
+  - name: symphony-workflow
+    files:
+      - WORKFLOW.md
+resources:
+  - ../symphony-base
+  - linear-api-key-sealedsecret.yaml
+  - target-argocd-role.yaml
+  - target-argocd-rolebinding.yaml
+patches:
+  - path: deployment.patch.yaml
+images:
+  - name: registry.ide-newton.ts.net/lab/symphony
+    newName: registry.ide-newton.ts.net/lab/symphony
+    newTag: "sha-c9e7e812e662f56fe32d69eefe03db1230d04155"
+    digest: sha256:5685220b1125ab9ec423e0cf003d82ff6ed1d1da81041b634a6f24e387ea3267

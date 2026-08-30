@@ -1,0 +1,44 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: istio-system
+resources:
+  - ingress-class.yaml
+  - knative-local-gateway.yaml
+  - knative-local-gateway-rbac.yaml
+  - knative-local-gateway-deployment.yaml
+helmCharts:
+  - name: base
+    repo: https://istio-release.storage.googleapis.com/charts
+    version: 1.30.3
+    releaseName: istio-base
+    namespace: istio-system
+    includeCRDs: true
+    valuesInline:
+      defaultRevision: default
+  - name: istiod
+    repo: https://istio-release.storage.googleapis.com/charts
+    version: 1.30.3
+    releaseName: istiod
+    namespace: istio-system
+  - name: cni
+    repo: https://istio-release.storage.googleapis.com/charts
+    version: 1.30.3
+    releaseName: istio-cni
+    namespace: istio-system
+patches:
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: istiod
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/10
+        value:
+          name: GOMEMLIMIT
+          valueFrom:
+            resourceFieldRef:
+              divisor: "1"
+              resource: limits.memory
+      - op: remove
+        path: /spec/template/spec/containers/0/env/12

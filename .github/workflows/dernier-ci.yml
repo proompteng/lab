@@ -1,0 +1,65 @@
+name: dernier-ci
+
+on:
+  pull_request:
+    paths:
+      - 'services/dernier/**'
+      - 'argocd/applications/dernier/**'
+      - 'docs/dernier.md'
+      - 'skaffold.yaml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: dernier_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/dernier_test
+      RAILS_ENV: test
+      BUNDLE_WITHOUT: development
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install --no-install-recommends -y libpq-dev postgresql-client
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4.7'
+          bundler-cache: true
+          working-directory: services/dernier
+
+      - name: Wait for Postgres
+        run: |
+          for i in {1..10}; do
+            pg_isready -h localhost -p 5432 -U postgres && break
+            sleep 2
+          done
+
+      - name: Prepare database
+        run: bundle exec rails db:prepare
+        working-directory: services/dernier
+
+      - name: Run tests
+        run: bundle exec rails test
+        working-directory: services/dernier

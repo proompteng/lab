@@ -1,0 +1,30 @@
+'use client'
+
+import { Toaster } from '@proompteng/design/ui'
+import { ConvexProvider, ConvexReactClient } from 'convex/react'
+import { ThemeProvider } from 'next-themes'
+import { type ReactNode, useMemo } from 'react'
+
+const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL
+
+export default function Providers({ children }: { children: ReactNode }) {
+  const convexClient = useMemo(() => {
+    if (!convexUrl) {
+      if (process.env.NODE_ENV === 'development') {
+        console.warn('NEXT_PUBLIC_CONVEX_URL is not set; Convex queries will be disabled.')
+      }
+      return undefined
+    }
+
+    return new ConvexReactClient(convexUrl)
+  }, [])
+
+  const content = convexClient ? <ConvexProvider client={convexClient}>{children}</ConvexProvider> : children
+
+  return (
+    <ThemeProvider attribute="class" forcedTheme="dark" disableTransitionOnChange>
+      {content}
+      <Toaster richColors closeButton />
+    </ThemeProvider>
+  )
+}
