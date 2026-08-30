@@ -67,8 +67,8 @@ The accepted r4 release produced these immutable inputs:
 `.github/workflows/kata-firecracker-extension.yaml` publishes signed r5 extension and installer candidates to
 `registry.ide-newton.ts.net`; their immutable publication receipt is recorded in
 `devices/galactic/extensions/kata/RELEASE-v4.1.0-talos-v1.13.9.md`. Publication is not rollout authority. The accepted
-r4 receipts remain authoritative for installed nodes until a separately reviewed, one-node-at-a-time r5 rollout has
-both installed and proved the candidate on each target.
+r5 receipt is authoritative for Ryzen; the accepted r4 receipts remain authoritative for Turin and Altra until a
+separately reviewed, one-node-at-a-time r5 rollout has both installed and proved the candidate on each target.
 
 Before touching a node, retain the workflow URLs, image digests, Cosign verification output, and generated installer
 digests in the rollout evidence directory.
@@ -144,13 +144,14 @@ issuing exactly one `talosctl reboot --mode=powercycle`. Keep the node cordoned 
 extension, CRI, guest, and host-side runtime acceptance as an Omni-driven upgrade. This is a same-identity
 cache-replacement exception, not a second upgrade authority: normal version or schematic changes remain Omni-owned.
 
-### Accepted r4 node installers
+### Accepted node installers
 
-The completed r4 rollout used these exact installer images. They already include every machine-specific extension in
-the cluster inventory table; do not substitute the extension-only index for a node installer:
+Use these exact currently accepted installer images. They already include every machine-specific extension in the
+cluster inventory table; do not substitute the extension-only index for a node installer. Ryzen accepted r5 on
+2026-08-30; Turin and Altra remain on r4:
 
 ```bash
-export RYZEN_INSTALLER='ghcr.io/proompteng/talos-kata-runtimes@sha256:e12717e24f74b0d509a9c57cc2e5036854dfa3a9de0aafa33a3a0d2bf7b317d3'
+export RYZEN_INSTALLER='registry.ide-newton.ts.net/lab/talos-kata-runtimes@sha256:d489b3d7fc198d98dfbef8a8754933a5ce68f78920e4ce251f41a34594259def'
 export TURIN_INSTALLER='ghcr.io/proompteng/talos-kata-runtimes@sha256:fffaddf186ff39e4352b17fd032bac60aa518abac459346f43fde95586897db0'
 export ALTRA_INSTALLER='ghcr.io/proompteng/talos-kata-runtimes@sha256:08a58afa7ca1ed0d02e23b9ff940edb37b131f0f1291392f2c00bdc9049dcfa2'
 ```
