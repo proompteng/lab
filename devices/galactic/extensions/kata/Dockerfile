@@ -12,7 +12,7 @@ ARG FIRECRACKER_VERSION=v1.12.1
 ARG FIRECRACKER_AMD64_SHA256=0a75e67ef6e4c540a2cf248b06822b0be9820cbba9fe19f9e0321200fe76ff6b
 ARG FIRECRACKER_ARM64_SHA256=785bc9d30756bff0c03fb275baac957363f9ba98f78a2272405dcb6929ebb953
 
-RUN apk add --no-cache ca-certificates curl e2fsprogs tar zstd
+RUN apk add --no-cache ca-certificates curl e2fsprogs e2fsprogs-extra tar zstd
 
 COPY --from=validator /extensions-validator /usr/local/bin/extensions-validator
 COPY 10-kata-firecracker.part /tmp/10-kata-firecracker.part
