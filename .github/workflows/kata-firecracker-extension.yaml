@@ -162,6 +162,9 @@ jobs:
       id-token: write
     strategy:
       fail-fast: false
+      # Installer images contain a large artifacts layer. Keep registry traffic bounded while
+      # the Docker client uploads that layer in resumable chunks.
+      max-parallel: 1
       matrix:
         include:
           - profile: ryzen-amd64
@@ -202,7 +205,19 @@ jobs:
           set -euo pipefail
           tag="installer-v1.13.9-kata-4.1.0-r5-${{ matrix.profile }}"
           reference="${IMAGE}:${tag}"
-          crane push "${INSTALLER_TAR}" "${reference}"
+          source_reference="$(
+            tar -xOf "${INSTALLER_TAR}" manifest.json |
+              jq -er '
+                if length == 1 and (.[0].RepoTags | length) == 1 then
+                  .[0].RepoTags[0]
+                else
+                  error("installer archive must contain exactly one tagged image")
+                end
+              '
+          )"
+          docker image load --input "${INSTALLER_TAR}"
+          docker image tag "${source_reference}" "${reference}"
+          docker image push "${reference}"
           digest="$(crane digest "${reference}")"
           test "$(crane config "${reference}" | jq -r .architecture)" = '${{ matrix.architecture }}'
           immutable_reference="${IMAGE}@${digest}"
