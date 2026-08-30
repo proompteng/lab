@@ -45,6 +45,7 @@ Never committed:
 - `.env`: account UUID, admin email, OIDC client credentials, and temporary Tailscale auth key
 - `/var/lib/omni/secrets/omni.asc`: the private etcd encryption key
 - `/var/lib/omni/{etcd,sqlite,tsidp}`: persistent application and identity-provider state
+- `/var/lib/omni/cluster-etcd-backups`: encrypted managed-cluster etcd snapshots
 - `/var/lib/omni/backups`: archives containing all of the above secrets
 
 Losing `omni.asc` makes an etcd backup unusable. Losing the tsidp state invalidates the registered OIDC client and
@@ -122,7 +123,28 @@ docker compose --env-file .env logs --tail 100 tsidp
 ```
 
 `verify.sh` proves both containers are running, both private HTTPS endpoints answer, the checked-in Serve config is
-active, and Omni owns UDP `50180` on the expected tail IP.
+active, Omni owns UDP `50180` on the expected tail IP, and the local cluster-etcd backup directory is mounted from
+`/var/lib/omni/cluster-etcd-backups` on the NUC.
+
+### Managed-cluster etcd backups
+
+Omni stores encrypted managed-cluster etcd snapshots locally under `/var/lib/omni/cluster-etcd-backups`. The
+`galactic` cluster template requests a snapshot every 24 hours. The local backend and the S3 backend are mutually
+exclusive; this installation intentionally uses the local backend.
+
+After deploying Omni or changing the cluster backup schedule, verify the backend and the latest `galactic` snapshot
+from an authenticated workstation:
+
+```bash
+omnictl get etcdbackupoverallstatus -o yaml
+omnictl get etcdbackupstatus galactic -o yaml
+omnictl get etcdbackup --selector omni.sidero.dev/cluster=galactic
+```
+
+Require `configurationname: local`, an empty `configurationerror`, and a recent successful `lastbackuptime`. Omni does
+not prune local snapshots automatically. Monitor NUC free space and establish a reviewed retention policy before
+deleting any snapshot. A NUC-local snapshot protects cluster recovery but not NUC disk loss; copy the snapshot tree or
+the required restore point to encrypted off-host storage when that additional failure-domain protection is required.
 
 ## Backup and restore
 
@@ -132,9 +154,10 @@ Create a consistent full-state backup:
 ./scripts/backup.sh
 ```
 
-The script briefly stops Omni and tsidp, archives `.env`, the encryption key, embedded etcd, SQLite, and tsidp state,
-then restarts only services that were running. Managed Kubernetes clusters continue operating while Omni is down.
-Archives are mode `0600` under `/var/lib/omni/backups`; copy each archive and checksum to encrypted off-host storage.
+The script briefly stops Omni and tsidp, archives `.env`, the encryption key, embedded etcd, managed-cluster etcd
+snapshots, SQLite, and tsidp state, then restarts only services that were running. Managed Kubernetes clusters continue
+operating while Omni is down. Archives are mode `0600` under `/var/lib/omni/backups`; copy each archive and checksum to
+encrypted off-host storage.
 
 For recovery, use a new NUC with the same Tailscale hostname and address, sync this directory, and bootstrap only the
 host packages and directories. Do not start Omni. Copy the archive and checksum to the NUC, verify them, then restore

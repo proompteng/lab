@@ -30,6 +30,17 @@ load_omni_env() {
   [[ "${OMNI_DATA_ROOT}" == '/var/lib/omni' ]] || die 'OMNI_DATA_ROOT must be /var/lib/omni on this NUC'
 }
 
+ensure_cluster_etcd_backup_directory() {
+  require_command install
+  require_command sudo
+
+  local owner group
+  owner=${SUDO_USER:-$(id -un)}
+  group=$(id -gn "${owner}")
+
+  sudo install -d -m 0700 -o "${owner}" -g "${group}" "${OMNI_DATA_ROOT}/cluster-etcd-backups"
+}
+
 require_env_value() {
   local name=$1
   [[ -n "${!name:-}" ]] || die "${name} must be set in ${OMNI_ENV_FILE}"

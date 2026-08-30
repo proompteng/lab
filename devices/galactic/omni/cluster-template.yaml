@@ -4,6 +4,9 @@ kubernetes:
   version: v1.36.4
 talos:
   version: v1.13.9
+features:
+  backupConfiguration:
+    interval: 24h
 patches:
   - file: image-factory-registry.yaml
 ---

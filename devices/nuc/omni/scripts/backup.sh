@@ -12,6 +12,7 @@ for command in sha256sum sudo tar; do
 done
 
 load_omni_env
+ensure_cluster_etcd_backup_directory
 
 [[ "${OMNI_DIR}" == /* ]] || die 'OMNI_DIR must be absolute'
 [[ "${OMNI_DATA_ROOT}" == /* ]] || die 'OMNI_DATA_ROOT must be absolute'
@@ -45,6 +46,7 @@ compose stop --timeout 60 omni tsidp
 sudo tar --numeric-owner --create --gzip --file "${temporary}" \
   --directory / \
   "${data_root_relative}/etcd" \
+  "${data_root_relative}/cluster-etcd-backups" \
   "${data_root_relative}/sqlite" \
   "${data_root_relative}/tsidp" \
   "${data_root_relative}/secrets" \

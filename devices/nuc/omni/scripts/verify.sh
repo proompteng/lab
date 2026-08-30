@@ -29,6 +29,13 @@ for service in tsidp omni; do
   [[ "$(docker inspect --format '{{.State.Status}}' "${container_id}")" == 'running' ]] || die "${service} is not running"
 done
 
+omni_container_id=$(compose ps --quiet omni)
+cluster_backup_source=$(docker inspect --format \
+  '{{range .Mounts}}{{if eq .Destination "/var/lib/omni/cluster-etcd-backups"}}{{.Source}}{{end}}{{end}}' \
+  "${omni_container_id}")
+[[ "${cluster_backup_source}" == "${OMNI_DATA_ROOT}/cluster-etcd-backups" ]] ||
+  die 'Omni cluster etcd backup directory is not mounted from persistent NUC storage'
+
 curl --fail --silent --show-error --output /dev/null http://127.0.0.1:8180/
 require_https_endpoint 'Omni UI/API' "https://${OMNI_HOST}/"
 require_https_endpoint 'Omni machine API' "https://${OMNI_HOST}:8090/"
