@@ -215,8 +215,6 @@ data:
         inCluster: true
     web:
       http: 0.0.0.0:5556
-      allowedOrigins:
-        - https://kargo.ide-newton.ts.net
     telemetry:
       http: 0.0.0.0:5558
     grpc:
