@@ -1,0 +1,1988 @@
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: proompteng
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/proompteng
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/proompteng
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: proompteng
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/proompteng
+            images:
+              - image: ${{ vars.imageRepo }}
+                digest: ${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(proompteng): promote ${{ ctx.targetFreight.name }}
+        - uses: git-push
+          as: push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          as: deploy
+          retry:
+            timeout: 20m
+            errorThreshold: 3
+          config:
+            apps:
+              - name: proompteng
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: app
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/app
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/app
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: app
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/app
+            images:
+              - image: ${{ vars.imageRepo }}
+                digest: ${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(app): promote ${{ ctx.targetFreight.name }}
+        - uses: git-push
+          as: push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          as: deploy
+          retry:
+            timeout: 20m
+            errorThreshold: 3
+          config:
+            apps:
+              - name: app
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: synthesis
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/synthesis
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/synthesis
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: synthesis
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/synthesis
+            images:
+              - image: ${{ vars.imageRepo }}
+                digest: ${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(synthesis): promote ${{ ctx.targetFreight.name }}
+        - uses: git-push
+          as: push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          as: deploy
+          retry:
+            timeout: 20m
+            errorThreshold: 3
+          config:
+            apps:
+              - name: synthesis
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: docs
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/docs
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/docs
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: docs
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/docs
+            images:
+              - image: ${{ vars.imageRepo }}
+                digest: ${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(docs): promote ${{ ctx.targetFreight.name }}
+        - uses: git-push
+          as: push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          as: deploy
+          retry:
+            timeout: 20m
+            errorThreshold: 3
+          config:
+            apps:
+              - name: docs
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: bumba
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/bumba
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/bumba
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: bumba
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/bumba
+            images:
+              - image: ${{ vars.imageRepo }}
+                digest: ${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/bumba/deployment.yaml
+            updates:
+              - key: spec.template.spec.containers.0.env.6.value
+                value: "${{ 'bumba@' + trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(bumba): promote ${{ ctx.targetFreight.name }}
+        - uses: git-push
+          as: push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          as: deploy
+          retry:
+            timeout: 20m
+            errorThreshold: 3
+          config:
+            apps:
+              - name: bumba
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: oirat
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/oirat
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/oirat
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: oirat
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/oirat
+            images:
+              - image: ${{ vars.imageRepo }}
+                digest: ${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(oirat): promote ${{ ctx.targetFreight.name }}
+        - uses: git-push
+          as: push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          as: deploy
+          retry:
+            timeout: 20m
+            errorThreshold: 3
+          config:
+            apps:
+              - name: oirat
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: attic
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/attic
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/attic
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: attic
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/attic
+            images:
+              - image: ${{ vars.imageRepo }}
+                digest: ${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(attic): promote ${{ ctx.targetFreight.name }}
+        - uses: git-push
+          as: push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          as: deploy
+          retry:
+            timeout: 20m
+            errorThreshold: 3
+          config:
+            apps:
+              - name: attic
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: froussard
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/froussard
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/froussard
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: froussard
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/froussard/knative-service.yaml
+            updates:
+              - key: spec.template.spec.containers.0.image
+                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
+              - key: spec.template.spec.containers.0.env.15.value
+                value: '${{ imageFrom(vars.imageRepo).Tag }}'
+              - key: spec.template.spec.containers.0.env.16.value
+                value: "${{ trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(froussard): promote ${{ ctx.targetFreight.name }}
+        - uses: git-push
+          as: push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          as: deploy
+          retry:
+            timeout: 20m
+            errorThreshold: 3
+          config:
+            apps:
+              - name: froussard
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: arc-runner
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/arc-runner
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/arc-runner
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: arc-runner
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/arc/application.yaml
+            updates:
+              - key: spec.sources.1.helm.valuesObject.template.spec.initContainers.0.image
+                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
+              - key: spec.sources.1.helm.valuesObject.template.spec.containers.0.image
+                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
+              - key: spec.sources.2.helm.valuesObject.template.spec.initContainers.0.image
+                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
+              - key: spec.sources.2.helm.valuesObject.template.spec.containers.0.image
+                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
+              - key: spec.sources.3.helm.valuesObject.template.spec.initContainers.0.image
+                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
+              - key: spec.sources.3.helm.valuesObject.template.spec.containers.0.image
+                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(arc-runner): promote ${{ ctx.targetFreight.name }}
+        - uses: git-push
+          as: push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          as: deploy
+          retry:
+            timeout: 20m
+            errorThreshold: 3
+          config:
+            apps:
+              - name: arc
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: headlamp
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/headlamp
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/headlamp
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: headlamp
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/headlamp/values.yaml
+            updates:
+              - key: image.tag
+                value: "${{ trimPrefix(imageFrom(vars.imageRepo).Digest, 'sha256:') }}"
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(headlamp): promote ${{ ctx.targetFreight.name }}
+        - uses: git-push
+          as: push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          as: deploy
+          retry:
+            timeout: 20m
+            errorThreshold: 3
+          config:
+            apps:
+              - name: headlamp
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: hermes-toolchain
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/hermes-toolchain
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/hermes-toolchain
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: hermes-toolchain
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/hermes/statefulset.yaml
+            updates:
+              - key: spec.template.spec.volumes.5.image.reference
+                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(hermes-toolchain): promote ${{ ctx.targetFreight.name }}
+        - uses: git-push
+          as: push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          as: deploy
+          retry:
+            timeout: 20m
+            errorThreshold: 3
+          config:
+            apps:
+              - name: hermes
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: jangar
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/jangar
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/jangar
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: jangar
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/jangar/kustomization.yaml
+            updates:
+              - key: images.1.newTag
+                value: '${{ imageFrom(vars.imageRepo).Tag }}'
+              - key: images.1.digest
+                value: '${{ imageFrom(vars.imageRepo).Digest }}'
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/jangar/deployment.yaml
+            updates:
+              - key: spec.template.spec.containers.0.env.2.value
+                value: '${{ commitFrom(vars.gitRepo).ID }}'
+              - key: spec.template.spec.containers.0.env.3.value
+                value: '${{ commitFrom(vars.gitRepo).ID }}'
+              - key: spec.template.spec.containers.0.env.132.value
+                value: "${{ quote(imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-run-id']) }}"
+              - key: spec.template.spec.containers.0.env.133.value
+                value: "${{ quote(imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-build-conclusion']) }}"
+              - key: spec.template.spec.containers.0.env.134.value
+                value: '${{ imageFrom(vars.imageRepo).Digest }}'
+              - key: spec.template.spec.containers.0.env.135.value
+                value: '${{ commitFrom(vars.gitRepo).ID }}'
+              - key: spec.template.spec.containers.0.env.136.value
+                value: '${{ imageFrom(vars.imageRepo).Digest }}'
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(jangar): promote ${{ ctx.targetFreight.name }}
+        - uses: git-push
+          as: push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          as: deploy
+          retry:
+            timeout: 20m
+            errorThreshold: 3
+          config:
+            apps:
+              - name: jangar
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: symphony
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/symphony
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/symphony
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: symphony
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/symphony/kustomization.yaml
+            updates:
+              - key: images.0.newTag
+                value: '${{ imageFrom(vars.imageRepo).Tag }}'
+              - key: images.0.digest
+                value: '${{ imageFrom(vars.imageRepo).Digest }}'
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/symphony-jangar/kustomization.yaml
+            updates:
+              - key: images.0.newTag
+                value: '${{ imageFrom(vars.imageRepo).Tag }}'
+              - key: images.0.digest
+                value: '${{ imageFrom(vars.imageRepo).Digest }}'
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/symphony-torghut/kustomization.yaml
+            updates:
+              - key: images.0.newTag
+                value: '${{ imageFrom(vars.imageRepo).Tag }}'
+              - key: images.0.digest
+                value: '${{ imageFrom(vars.imageRepo).Digest }}'
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(symphony): promote ${{ ctx.targetFreight.name }}
+        - uses: git-push
+          as: push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          as: deploy
+          retry:
+            timeout: 20m
+            errorThreshold: 3
+          config:
+            apps:
+              - name: symphony
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+              - name: symphony-jangar
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+              - name: symphony-torghut
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: torghut
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/torghut
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/torghut
+    - name: notebookImageRepo
+      value: registry.ide-newton.ts.net/lab/torghut-notebook
+    - name: taImageRepo
+      value: registry.ide-newton.ts.net/lab/torghut-ta
+    - name: wsImageRepo
+      value: registry.ide-newton.ts.net/lab/torghut-ws
+    - name: signalImageRepo
+      value: registry.ide-newton.ts.net/lab/signal-publisher
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: torghut
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/torghut
+            images:
+              - image: ${{ vars.imageRepo }}
+                digest: ${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/torghut-options
+            images:
+              - image: ${{ vars.imageRepo }}
+                digest: ${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/torghut-hyperliquid-runtime
+            images:
+              - image: ${{ vars.imageRepo }}
+                digest: ${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/torghut
+            images:
+              - image: ${{ vars.taImageRepo }}
+                digest: ${{ imageFrom(vars.taImageRepo).Digest }}
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/torghut-options
+            images:
+              - image: ${{ vars.taImageRepo }}
+                digest: ${{ imageFrom(vars.taImageRepo).Digest }}
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/torghut
+            images:
+              - image: ${{ vars.wsImageRepo }}
+                digest: ${{ imageFrom(vars.wsImageRepo).Digest }}
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/torghut-options
+            images:
+              - image: ${{ vars.wsImageRepo }}
+                digest: ${{ imageFrom(vars.wsImageRepo).Digest }}
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/torghut
+            images:
+              - image: ${{ vars.signalImageRepo }}
+                digest: ${{ imageFrom(vars.signalImageRepo).Digest }}
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/torghut/notebooks/values.yaml
+            updates:
+              - key: hub.extraEnv.TORGHUT_NOTEBOOK_IMAGE.value
+                value: "${{ vars.notebookImageRepo }}@${{ imageFrom(vars.notebookImageRepo).Digest }}"
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/torghut/clickhouse/kustomization.yaml
+            updates:
+              - key: images.0.newTag
+                value: '${{ imageFrom(vars.signalImageRepo).Tag }}'
+              - key: images.0.digest
+                value: '${{ imageFrom(vars.signalImageRepo).Digest }}'
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/torghut/clickhouse/signal-publisher-cronjob.yaml
+            updates:
+              - key: spec.jobTemplate.spec.template.spec.containers.0.image
+                value: "${{ vars.signalImageRepo }}@${{ imageFrom(vars.signalImageRepo).Digest }}"
+              - key: spec.jobTemplate.spec.template.spec.containers.0.env.5.value
+                value: "${{ trimPrefix(imageFrom(vars.signalImageRepo).Tag, 'kargo-sha-') }}"
+              - key: spec.jobTemplate.spec.template.spec.containers.0.env.6.value
+                value: '${{ vars.signalImageRepo }}'
+              - key: spec.jobTemplate.spec.template.spec.containers.0.env.7.value
+                value: '${{ imageFrom(vars.signalImageRepo).Digest }}'
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/torghut/knative-service.yaml
+            updates:
+              - key: spec.template.spec.containers.0.env.176.value
+                value: '${{ imageFrom(vars.imageRepo).Tag }}'
+              - key: spec.template.spec.containers.0.env.177.value
+                value: "${{ trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
+              - key: spec.template.spec.containers.0.env.178.value
+                value: '${{ imageFrom(vars.imageRepo).Digest }}'
+              - key: spec.template.spec.containers.0.env.179.value
+                value: linux/amd64,linux/arm64
+              - key: spec.template.spec.containers.0.env.180.value
+                value: linux/amd64,linux/arm64
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/torghut/knative-service-sim.yaml
+            updates:
+              - key: spec.template.spec.containers.0.env.213.value
+                value: '${{ imageFrom(vars.imageRepo).Tag }}'
+              - key: spec.template.spec.containers.0.env.214.value
+                value: "${{ trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
+              - key: spec.template.spec.containers.0.env.215.value
+                value: '${{ imageFrom(vars.imageRepo).Digest }}'
+              - key: spec.template.spec.containers.0.env.216.value
+                value: linux/amd64,linux/arm64
+              - key: spec.template.spec.containers.0.env.217.value
+                value: linux/amd64,linux/arm64
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/torghut/scheduler-deployment.yaml
+            updates:
+              - key: spec.template.spec.containers.0.env.178.value
+                value: '${{ imageFrom(vars.imageRepo).Tag }}'
+              - key: spec.template.spec.containers.0.env.179.value
+                value: "${{ trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
+              - key: spec.template.spec.containers.0.env.180.value
+                value: '${{ imageFrom(vars.imageRepo).Digest }}'
+              - key: spec.template.spec.containers.0.env.181.value
+                value: linux/amd64,linux/arm64
+              - key: spec.template.spec.containers.0.env.182.value
+                value: linux/amd64,linux/arm64
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/torghut/broker-economic-ledger-reconciliation-cronjob.yaml
+            updates:
+              - key: spec.jobTemplate.spec.template.spec.containers.0.env.12.value
+                value: '${{ imageFrom(vars.imageRepo).Tag }}'
+              - key: spec.jobTemplate.spec.template.spec.containers.0.env.13.value
+                value: "${{ trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
+              - key: spec.jobTemplate.spec.template.spec.containers.0.env.14.value
+                value: '${{ imageFrom(vars.imageRepo).Digest }}'
+              - key: spec.jobTemplate.spec.template.spec.containers.0.env.15.value
+                value: linux/amd64,linux/arm64
+              - key: spec.jobTemplate.spec.template.spec.containers.0.env.16.value
+                value: linux/amd64,linux/arm64
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/torghut/order-lineage-reconciliation-cronjob.yaml
+            updates:
+              - key: spec.jobTemplate.spec.template.spec.containers.0.env.8.value
+                value: '${{ imageFrom(vars.imageRepo).Tag }}'
+              - key: spec.jobTemplate.spec.template.spec.containers.0.env.9.value
+                value: "${{ trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
+              - key: spec.jobTemplate.spec.template.spec.containers.0.env.10.value
+                value: '${{ imageFrom(vars.imageRepo).Digest }}'
+              - key: spec.jobTemplate.spec.template.spec.containers.0.env.11.value
+                value: linux/amd64,linux/arm64
+              - key: spec.jobTemplate.spec.template.spec.containers.0.env.12.value
+                value: linux/amd64,linux/arm64
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/torghut-hyperliquid-runtime/deployment.yaml
+            updates:
+              - key: spec.template.spec.containers.0.env.0.value
+                value: "${{ trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
+              - key: spec.template.spec.containers.0.env.1.value
+                value: '${{ imageFrom(vars.imageRepo).Digest }}'
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/torghut-hyperliquid-runtime/db-migrations-job.yaml
+            updates:
+              - key: spec.template.spec.containers.0.env.0.value
+                value: "${{ trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
+              - key: spec.template.spec.containers.0.env.1.value
+                value: '${{ imageFrom(vars.imageRepo).Digest }}'
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/torghut/ta/flinkdeployment.yaml
+            updates:
+              - key: spec.image
+                value: "${{ vars.taImageRepo }}@${{ imageFrom(vars.taImageRepo).Digest }}"
+              - key: spec.podTemplate.spec.containers.0.env.10.value
+                value: '${{ imageFrom(vars.taImageRepo).Tag }}'
+              - key: spec.podTemplate.spec.containers.0.env.11.value
+                value: "${{ trimPrefix(imageFrom(vars.taImageRepo).Tag, 'kargo-sha-') }}"
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/torghut/ta-sim/flinkdeployment.yaml
+            updates:
+              - key: spec.image
+                value: "${{ vars.taImageRepo }}@${{ imageFrom(vars.taImageRepo).Digest }}"
+              - key: spec.podTemplate.spec.containers.0.env.10.value
+                value: '${{ imageFrom(vars.taImageRepo).Tag }}'
+              - key: spec.podTemplate.spec.containers.0.env.11.value
+                value: "${{ trimPrefix(imageFrom(vars.taImageRepo).Tag, 'kargo-sha-') }}"
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/torghut/market-data-archive/flinkdeployment.yaml
+            updates:
+              - key: spec.image
+                value: "${{ vars.taImageRepo }}@${{ imageFrom(vars.taImageRepo).Digest }}"
+              - key: spec.podTemplate.spec.containers.0.env.2.value
+                value: '${{ imageFrom(vars.taImageRepo).Tag }}'
+              - key: spec.podTemplate.spec.containers.0.env.3.value
+                value: "${{ trimPrefix(imageFrom(vars.taImageRepo).Tag, 'kargo-sha-') }}"
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/torghut-options/ta/flinkdeployment.yaml
+            updates:
+              - key: spec.image
+                value: "${{ vars.taImageRepo }}@${{ imageFrom(vars.taImageRepo).Digest }}"
+              - key: spec.podTemplate.spec.containers.0.env.11.value
+                value: '${{ imageFrom(vars.taImageRepo).Tag }}'
+              - key: spec.podTemplate.spec.containers.0.env.12.value
+                value: "${{ trimPrefix(imageFrom(vars.taImageRepo).Tag, 'kargo-sha-') }}"
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/torghut/ws/deployment.yaml
+            updates:
+              - key: spec.template.spec.containers.0.image
+                value: "${{ vars.wsImageRepo }}@${{ imageFrom(vars.wsImageRepo).Digest }}"
+              - key: spec.template.spec.containers.0.env.7.value
+                value: '${{ imageFrom(vars.wsImageRepo).Tag }}'
+              - key: spec.template.spec.containers.0.env.8.value
+                value: "${{ trimPrefix(imageFrom(vars.wsImageRepo).Tag, 'kargo-sha-') }}"
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/torghut-options/ws/deployment.yaml
+            updates:
+              - key: spec.template.spec.containers.0.image
+                value: "${{ vars.wsImageRepo }}@${{ imageFrom(vars.wsImageRepo).Digest }}"
+              - key: spec.template.spec.containers.0.env.4.value
+                value: '${{ imageFrom(vars.wsImageRepo).Tag }}'
+              - key: spec.template.spec.containers.0.env.5.value
+                value: "${{ trimPrefix(imageFrom(vars.wsImageRepo).Tag, 'kargo-sha-') }}"
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/torghut-options/archive/deployment.yaml
+            updates:
+              - key: spec.template.spec.containers.0.env.5.value
+                value: '${{ imageFrom(vars.imageRepo).Tag }}'
+              - key: spec.template.spec.containers.0.env.6.value
+                value: "${{ trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/torghut-options/catalog/deployment.yaml
+            updates:
+              - key: spec.template.spec.containers.0.env.8.value
+                value: '${{ imageFrom(vars.imageRepo).Tag }}'
+              - key: spec.template.spec.containers.0.env.9.value
+                value: "${{ trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/torghut-options/enricher/deployment.yaml
+            updates:
+              - key: spec.template.spec.containers.0.env.7.value
+                value: '${{ imageFrom(vars.imageRepo).Tag }}'
+              - key: spec.template.spec.containers.0.env.8.value
+                value: "${{ trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(torghut): promote ${{ ctx.targetFreight.name }}
+        - uses: git-push
+          as: push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          as: deploy
+          retry:
+            timeout: 20m
+            errorThreshold: 3
+          config:
+            apps:
+              - name: torghut
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+              - name: torghut-options
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+              - name: torghut-hyperliquid-runtime
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: torghut-hyperliquid-feed
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/torghut-hyperliquid-feed
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/torghut-hyperliquid-feed
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: torghut-hyperliquid-feed
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/torghut-hyperliquid-feed
+            images:
+              - image: ${{ vars.imageRepo }}
+                digest: ${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/torghut-hyperliquid-feed/deployment.yaml
+            updates:
+              - key: spec.template.spec.containers.0.image
+                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
+              - key: spec.template.spec.containers.0.env.0.value
+                value: '${{ imageFrom(vars.imageRepo).Tag }}'
+              - key: spec.template.spec.containers.0.env.1.value
+                value: "${{ trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
+              - key: spec.template.spec.containers.0.env.2.value
+                value: '${{ imageFrom(vars.imageRepo).Digest }}'
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(torghut-hyperliquid-feed): promote ${{ ctx.targetFreight.name }}
+        - uses: git-push
+          as: push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          as: deploy
+          retry:
+            timeout: 20m
+            errorThreshold: 3
+          config:
+            apps:
+              - name: torghut-hyperliquid-feed
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: bilig
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/bilig
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/bilig-app
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: bilig
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/bilig
+            images:
+              - image: ${{ vars.imageRepo }}
+                digest: ${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(bilig): promote ${{ ctx.targetFreight.name }}
+        - uses: git-push
+          as: push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          as: deploy
+          retry:
+            timeout: 20m
+            errorThreshold: 3
+          config:
+            apps:
+              - name: bilig
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: analysis
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/analysis
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/analysis
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: analysis
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/analysis
+            images:
+              - image: ${{ vars.imageRepo }}
+                digest: ${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(analysis): promote ${{ ctx.targetFreight.name }}
+        - uses: git-push
+          as: push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          as: deploy
+          retry:
+            timeout: 20m
+            errorThreshold: 3
+          config:
+            apps:
+              - name: analysis
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: agents
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/agents
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/agents-controller
+    - name: agentsControllerImage
+      value: registry.ide-newton.ts.net/lab/agents-controller
+    - name: agentsControlPlaneImage
+      value: registry.ide-newton.ts.net/lab/agents-control-plane
+    - name: agentsShellImage
+      value: registry.ide-newton.ts.net/lab/agents-shell
+    - name: agentsCodexRunnerImage
+      value: registry.ide-newton.ts.net/lab/agents-codex-runner
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: agents
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: fail
+          as: validate-image-tags
+          if: '${{ imageFrom(vars.agentsControllerImage).Tag != imageFrom(vars.agentsControlPlaneImage).Tag || imageFrom(vars.agentsControllerImage).Tag != imageFrom(vars.agentsShellImage).Tag || imageFrom(vars.agentsControllerImage).Tag != imageFrom(vars.agentsCodexRunnerImage).Tag }}'
+          config:
+            message: agents images must be built from the same commit
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/agents/values.yaml
+            updates:
+              - key: image.repository
+                value: '${{ vars.agentsControllerImage }}'
+              - key: image.tag
+                value: '${{ imageFrom(vars.agentsControllerImage).Tag }}'
+              - key: image.digest
+                value: '${{ imageFrom(vars.agentsControllerImage).Digest }}'
+              - key: controllers.image.repository
+                value: '${{ vars.agentsControllerImage }}'
+              - key: controllers.image.tag
+                value: '${{ imageFrom(vars.agentsControllerImage).Tag }}'
+              - key: controllers.image.digest
+                value: '${{ imageFrom(vars.agentsControllerImage).Digest }}'
+              - key: controlPlane.image.repository
+                value: '${{ vars.agentsControlPlaneImage }}'
+              - key: controlPlane.image.tag
+                value: '${{ imageFrom(vars.agentsControlPlaneImage).Tag }}'
+              - key: controlPlane.image.digest
+                value: '${{ imageFrom(vars.agentsControlPlaneImage).Digest }}'
+              - key: controlPlane.env.vars.AGENTS_SOURCE_HEAD_SHA
+                value: '${{ commitFrom(vars.gitRepo).ID }}'
+              - key: controlPlane.env.vars.AGENTS_GITOPS_REVISION
+                value: '${{ commitFrom(vars.gitRepo).ID }}'
+              - key: controlPlane.env.vars.AGENTS_SOURCE_CI_RUN_ID
+                value: "${{ quote(imageFrom(vars.agentsControlPlaneImage).Annotations['ai.proompteng.github-actions-run-id']) }}"
+              - key: controlPlane.env.vars.AGENTS_SOURCE_CI_CONCLUSION
+                value: "${{ quote(imageFrom(vars.agentsControlPlaneImage).Annotations['ai.proompteng.github-actions-build-conclusion']) }}"
+              - key: controlPlane.env.vars.AGENTS_MANIFEST_IMAGE_DIGEST
+                value: '${{ imageFrom(vars.agentsControlPlaneImage).Digest }}'
+              - key: controlPlane.env.vars.AGENTS_SERVING_BUILD_COMMIT
+                value: '${{ commitFrom(vars.gitRepo).ID }}'
+              - key: controlPlane.env.vars.AGENTS_SERVING_IMAGE_DIGEST
+                value: '${{ imageFrom(vars.agentsControlPlaneImage).Digest }}'
+              - key: agentsShell.image.repository
+                value: '${{ vars.agentsShellImage }}'
+              - key: agentsShell.image.tag
+                value: '${{ imageFrom(vars.agentsShellImage).Tag }}'
+              - key: agentsShell.image.digest
+                value: '${{ imageFrom(vars.agentsShellImage).Digest }}'
+              - key: runner.image.repository
+                value: '${{ vars.agentsCodexRunnerImage }}'
+              - key: runner.image.tag
+                value: '${{ imageFrom(vars.agentsCodexRunnerImage).Tag }}'
+              - key: runner.image.digest
+                value: '${{ imageFrom(vars.agentsCodexRunnerImage).Digest }}'
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(agents): promote ${{ ctx.targetFreight.name }}
+        - uses: git-push
+          as: push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          as: deploy
+          retry:
+            timeout: 20m
+            errorThreshold: 3
+          config:
+            apps:
+              - name: agents
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: tengri
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/tengri
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/tengri
+    - name: tengriImage
+      value: registry.ide-newton.ts.net/lab/tengri
+    - name: nanoagentImage
+      value: registry.ide-newton.ts.net/lab/nanoagent
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: tengri
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: fail
+          as: validate-image-tags
+          if: '${{ imageFrom(vars.tengriImage).Tag != imageFrom(vars.nanoagentImage).Tag }}'
+          config:
+            message: tengri images must be built from the same commit
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/tengri
+            images:
+              - image: ${{ vars.tengriImage }}
+                digest: ${{ imageFrom(vars.tengriImage).Digest }}
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/tengri/kustomization.yaml
+            updates:
+              - key: configMapGenerator.0.literals.0
+                value: "NANOAGENT_IMAGE=${{ vars.nanoagentImage }}@${{ imageFrom(vars.nanoagentImage).Digest }}"
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(tengri): promote ${{ ctx.targetFreight.name }}
+        - uses: git-push
+          as: push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          as: deploy
+          retry:
+            timeout: 20m
+            errorThreshold: 3
+          config:
+            apps:
+              - name: tengri
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: buzz
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/buzz
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/buzz
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: buzz
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/buzz/kustomization.yaml
+            updates:
+              - key: images.0.newTag
+                value: '${{ imageFrom(vars.imageRepo).Tag }}'
+              - key: images.0.digest
+                value: '${{ imageFrom(vars.imageRepo).Digest }}'
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(buzz): promote ${{ ctx.targetFreight.name }}
+        - uses: git-push
+          as: push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          as: deploy
+          retry:
+            timeout: 20m
+            errorThreshold: 3
+          config:
+            apps:
+              - name: buzz
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}

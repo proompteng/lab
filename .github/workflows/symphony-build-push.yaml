@@ -10,6 +10,12 @@ on:
     paths:
       - 'services/symphony/**'
       - 'nix/images/symphony.nix'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - 'nix/oci-push.sh'
+      - 'argocd/applications/symphony/**'
+      - 'argocd/applications/symphony-jangar/**'
+      - 'argocd/applications/symphony-torghut/**'
+      - 'argocd/applications/symphony-base/**'
   workflow_dispatch:
 
 concurrency:
@@ -24,7 +30,7 @@ jobs:
       image_name: symphony
       package_attr: symphony-image
       tag: sha-${{ github.sha }}
+      publish_kargo_tag: true
       pr_number: ${{ github.event.pull_request.number || '' }}
       latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
-      release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'symphony-release-contract' || '' }}
     secrets: inherit

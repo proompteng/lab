@@ -619,14 +619,15 @@ temporarily disable the supporting controller; no CRD or data migration is invol
 
 ## Deployment
 
-```bash
-bun run packages/scripts/src/jangar/build-image.ts
-bun run packages/scripts/src/jangar/deploy-service.ts
-```
+Jangar is a Kargo-managed target. Merge source to `main`, wait for `jangar-build-push` to publish the eligible image,
+then let the `jangar` Warehouse create Freight and the exact Stage promotion write `kargo/jangar`. Argo tracks that
+branch and syncs the configured renderer; verify the rendered digest, rollout, `Synced`/`Healthy`, and service checks.
+Do not edit image tags or digests, create a release/deployment PR, use Image Updater, or run a manual Argo sync for an
+image release. The CI/CD source of truth is [`docs/jangar/build-contract.md`](../../docs/jangar/build-contract.md).
 
-The CI/CD source of truth is `docs/jangar/build-contract.md`. The runtime contract requires both `.output/public` and
-`.output/server/index.mjs`, and manifest verification now reads image/digest expectations through the shared typed YAML
-manifest contract in `packages/scripts/src/jangar/manifest-contract.ts`.
+For isolated local development only, `bun run packages/scripts/src/jangar/build-image.ts` and
+`bun run packages/scripts/src/jangar/deploy-service.ts` may build/apply a local service. Never point those helpers at the
+Kargo-managed production cluster.
 
 The Temporal worker starts polling, aligns its Worker Deployment to its exact configured build ID, and waits for routing
 propagation to report `COMPLETED` before readiness becomes true. The post-deploy verifier reads the worker-selected current

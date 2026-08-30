@@ -114,9 +114,13 @@ target:
   repo: proompteng/lab
   default_branch: main
 release:
-  mode: gitops_pr_on_main
-  required_checks_source: branch_protection
-  promotion_branch_prefix: codex/torghut-release-
+  mode: kargo_auto
+  promotion_authority: kargo
+  kargo_project: lab-delivery
+  kargo_warehouse: torghut
+  kargo_branch: kargo/torghut
+  kargo_stages:
+    - torghut
   blocked_labels:
     - manual-only
     - secret-rotation
@@ -129,8 +133,6 @@ release:
       manifest_paths:
         - argocd/applications/torghut
       build_workflow: torghut-build-push
-      release_workflow: torghut-release
-      post_deploy_workflow: torghut-post-deploy-verify
 health:
   pre_dispatch:
     - name: torghut-argo
@@ -174,12 +176,14 @@ Execution contract:
 5. Use a `codex/` branch name for code changes and the GitHub CLI with `GH_TOKEN`/`GITHUB_TOKEN` for PR operations.
 6. Always use `.github/PULL_REQUEST_TEMPLATE.md` when opening or updating a PR.
 7. Never mutate the cluster directly from the workspace. No `kubectl apply`, no manual Argo syncs, and no direct manifest promotion commits from the pod.
-8. Promotion must follow the repository automation:
+8. Promotion must follow the Kargo repository automation:
    - merge the code PR to `main`
    - wait for `torghut-build-push`
-   - wait for `torghut-release` to open or update the promotion PR
-   - wait for that promotion PR to merge
-   - wait for `torghut-post-deploy-verify`
+   - wait for the `torghut` Warehouse to discover the immutable image and create Freight
+   - wait for the exact automatic `torghut` Stage policy to promote that Freight, write `kargo/torghut`, and for the Argo
+     Application to sync that branch
+   - run the configured post-deploy health checks and verify the service live endpoint
+   - do not create a release branch, digest/SHA manifest PR, or manual Argo sync
    - only then mark the Linear issue done
 9. If the issue requires unsupported manual work such as secret rotation, cluster recovery, cross-repo changes, or first-wave DB migrations, leave a clear Linear update with `linear_graphql`, move the issue to a non-active handoff state, and stop.
 10. If release automation or rollout verification fails, leave a detailed Linear update and stop. Do not bypass GitOps.
@@ -208,6 +212,6 @@ Blockers:
 
 Deliverable:
 
-- Land the Torghut code change through GitHub and the existing Torghut release automation.
-- Wait until Argo rollout and post-deploy verification succeed.
+- Land the Torghut code change through GitHub and the Kargo-backed Torghut delivery automation.
+- Wait until the Freight is promoted, Argo is `Synced`/`Healthy`, the workload rollout, and configured post-deploy health checks succeed.
 - Leave a final Linear update summarizing the code change, exact validations, release outcome, and any residual risks.

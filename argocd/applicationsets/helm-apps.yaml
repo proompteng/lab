@@ -17,6 +17,44 @@ spec:
                   destinationServer: https://kubernetes.default.svc
           - list:
               elements: &helm_elements
+                - name: kargo
+                  namespace: kargo
+                  repoUrl: ghcr.io/akuity/kargo-charts
+                  chart: kargo
+                  version: 1.11.0
+                  releaseName: kargo
+                  enabled: "true"
+                  managedNamespaceMetadata:
+                    labels:
+                      pod-security.kubernetes.io/enforce: baseline
+                      pod-security.kubernetes.io/audit: restricted
+                      pod-security.kubernetes.io/warn: restricted
+                  valuesObject:
+                    api:
+                      enabled: false
+                      rollouts:
+                        integrationEnabled: false
+                    externalWebhooksServer:
+                      enabled: false
+                    global:
+                      clusterSecretsNamespace: kargo
+                      createClusterSecretsNamespace: false
+                      systemResources:
+                        namespace: kargo
+                        createNamespace: false
+                      sharedResources:
+                        namespace: kargo
+                        createNamespace: false
+                    controller:
+                      reconcilers:
+                        warehouses:
+                          minReconciliationInterval: 1m0s
+                      argocd:
+                        integrationEnabled: true
+                        namespace: argocd
+                        watchArgocdNamespaceOnly: true
+                      rollouts:
+                        integrationEnabled: false
                 - name: restate-operator-crds
                   namespace: restate-operator
                   repoUrl: ghcr.io/restatedev

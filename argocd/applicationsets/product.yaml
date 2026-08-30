@@ -21,9 +21,11 @@ spec:
               - name: proompteng
                 path: argocd/applications/proompteng
                 namespace: proompteng
+                targetRevision: kargo/proompteng
                 renderWithLovely: false
                 annotations:
                   argocd.argoproj.io/sync-wave: "5"
+                  kargo.akuity.io/authorized-stage: lab-delivery:proompteng
                 managedNamespaceMetadata:
                   labels:
                     external-secrets.proompteng.ai/enabled: "true"
@@ -35,17 +37,21 @@ spec:
               - name: app
                 path: argocd/applications/app
                 namespace: app
+                targetRevision: kargo/app
                 renderWithLovely: false
                 annotations:
                   argocd.argoproj.io/sync-wave: "5"
+                  kargo.akuity.io/authorized-stage: lab-delivery:app
                 automation: auto
                 enabled: "true"
               - name: synthesis
                 path: argocd/applications/synthesis
                 namespace: synthesis
+                targetRevision: kargo/synthesis
                 renderWithLovely: false
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
+                  kargo.akuity.io/authorized-stage: lab-delivery:synthesis
                 managedNamespaceMetadata:
                   labels:
                     external-secrets.proompteng.ai/enabled: "true"
@@ -70,9 +76,11 @@ spec:
               - name: docs
                 path: argocd/applications/docs
                 namespace: docs
+                targetRevision: kargo/docs
                 renderWithLovely: false
                 annotations:
                   argocd.argoproj.io/sync-wave: "5"
+                  kargo.akuity.io/authorized-stage: lab-delivery:docs
                 automation: auto
                 enabled: "true"
               - name: olden
@@ -87,9 +95,11 @@ spec:
               - name: analysis
                 path: argocd/applications/analysis
                 namespace: analysis
+                targetRevision: kargo/analysis
                 renderWithLovely: false
                 annotations:
                   argocd.argoproj.io/sync-wave: "5"
+                  kargo.akuity.io/authorized-stage: lab-delivery:analysis
                 automation: auto
                 enabled: "true"
               - name: homepage
@@ -160,8 +170,10 @@ spec:
               - name: jangar
                 path: argocd/applications/jangar
                 namespace: jangar
+                targetRevision: kargo/jangar
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
+                  kargo.akuity.io/authorized-stage: lab-delivery:jangar
                 managedNamespaceMetadata:
                   labels:
                     external-secrets.proompteng.ai/enabled: "true"
@@ -173,8 +185,10 @@ spec:
               - name: agents
                 path: argocd/applications/agents
                 namespace: agents
+                targetRevision: kargo/agents
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
+                  kargo.akuity.io/authorized-stage: lab-delivery:agents
                 managedNamespaceMetadata:
                   labels:
                     external-secrets.proompteng.ai/enabled: "true"
@@ -190,36 +204,46 @@ spec:
               - name: bumba
                 path: argocd/applications/bumba
                 namespace: jangar
+                targetRevision: kargo/bumba
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
+                  kargo.akuity.io/authorized-stage: lab-delivery:bumba
                 automation: auto
                 enabled: "true"
               - name: symphony
                 path: argocd/applications/symphony
                 namespace: jangar
+                targetRevision: kargo/symphony
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
+                  kargo.akuity.io/authorized-stage: lab-delivery:symphony
                 automation: auto
                 enabled: "true"
               - name: symphony-jangar
                 path: argocd/applications/symphony-jangar
                 namespace: jangar
+                targetRevision: kargo/symphony
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
+                  kargo.akuity.io/authorized-stage: lab-delivery:symphony
                 automation: auto
                 enabled: "true"
               - name: symphony-torghut
                 path: argocd/applications/symphony-torghut
                 namespace: torghut
+                targetRevision: kargo/symphony
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
+                  kargo.akuity.io/authorized-stage: lab-delivery:symphony
                 automation: auto
                 enabled: "true"
               - name: oirat
                 path: argocd/applications/oirat
                 namespace: oirat
+                targetRevision: kargo/oirat
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
+                  kargo.akuity.io/authorized-stage: lab-delivery:oirat
                 automation: manual
                 enabled: "true"
               - name: khoshut
@@ -291,8 +315,10 @@ spec:
               - name: torghut
                 path: argocd/applications/torghut
                 namespace: torghut
+                targetRevision: kargo/torghut
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
+                  kargo.akuity.io/authorized-stage: lab-delivery:torghut
                 # Torghut needs a custom sync policy because RespectIgnoreDifferences can block
                 # nested Knative Service env updates from applying. Keep the app on SSA so Argo
                 # does not rely on brittle client-side apply metadata for large Knative and
@@ -404,32 +430,40 @@ spec:
                 path: argocd/applications/torghut-options
                 namespace: torghut
                 renderWithLovely: false
+                targetRevision: kargo/torghut
                 annotations:
                   argocd.argoproj.io/sync-wave: "7"
+                  kargo.akuity.io/authorized-stage: lab-delivery:torghut
                 automation: auto
                 enabled: "true"
               - name: torghut-hyperliquid-feed
                 path: argocd/applications/torghut-hyperliquid-feed
                 namespace: torghut
                 renderWithLovely: false
+                targetRevision: kargo/torghut-hyperliquid-feed
                 annotations:
                   argocd.argoproj.io/sync-wave: "7"
+                  kargo.akuity.io/authorized-stage: lab-delivery:torghut-hyperliquid-feed
                 automation: auto
                 enabled: "true"
               - name: torghut-hyperliquid-runtime
                 path: argocd/applications/torghut-hyperliquid-runtime
                 namespace: torghut
                 renderWithLovely: false
+                targetRevision: kargo/torghut
                 annotations:
                   argocd.argoproj.io/sync-wave: "8"
+                  kargo.akuity.io/authorized-stage: lab-delivery:torghut
                 automation: auto
                 enabled: "true"
               - name: bilig
                 path: argocd/applications/bilig
                 namespace: bilig
                 renderWithLovely: false
+                targetRevision: kargo/bilig
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
+                  kargo.akuity.io/authorized-stage: lab-delivery:bilig
                 automation: auto
                 enabled: "true"
               - name: miel
@@ -450,8 +484,10 @@ spec:
               - name: froussard
                 path: argocd/applications/froussard
                 namespace: froussard
+                targetRevision: kargo/froussard
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
+                  kargo.akuity.io/authorized-stage: lab-delivery:froussard
                 # RespectIgnoreDifferences can preserve stale Knative metadata annotations
                 # during apply and block image/env digest rollouts from reconciling.
                 syncOptions:

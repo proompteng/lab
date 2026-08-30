@@ -38,7 +38,7 @@ Install a new cluster
 
 ## Bootstrap GitOps (ArgoCD) – step by step
 
-1. Apply ArgoCD base (HA install, image updater, Traefik IngressRoute, secrets):
+1. Apply the Argo CD base (HA install, Traefik IngressRoutes, and secrets):
 
 ```bash
 kubectl apply -k argocd/applications/argocd
@@ -87,6 +87,10 @@ kubectl -n argocd get applications.argoproj.io
 kubectl -n argocd get apps,applicationsets
 kubectl -n argocd get pods -w
 ```
+
+The root ApplicationSet installs Kargo and its `lab-delivery` project after this bootstrap. Kargo owns image promotion:
+after a successful `main` image build it creates Freight, promotes the exact digest, writes the deployment branch, and waits
+for Argo CD sync and health. There is no image-updater or deployment-pull-request step.
 
 ## K3sup flags explained (what we set and why)
 

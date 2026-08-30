@@ -156,7 +156,7 @@ const entry = (name: string) => {
 }
 
 describe('enabled app inventory', () => {
-  it('classifies Tengri as a dedicated release-workflow image only with complete ownership evidence', () => {
+  it('classifies Tengri as a Kargo-owned workflow image only with complete ownership evidence', () => {
     const tengri = {
       name: 'tengri',
       path: 'argocd/applications/tengri',
@@ -170,12 +170,12 @@ describe('enabled app inventory', () => {
         'registry.ide-newton.ts.net/lab/nanoagent@sha256:' + 'b'.repeat(64),
         'registry.ide-newton.ts.net/lab/tengri@sha256:' + 'a'.repeat(64),
       ],
-      workflowPaths: ['.github/workflows/tengri-images.yml', '.github/workflows/tengri-release.yml'],
+      workflowPaths: ['.github/workflows/tengri-images.yml', 'argocd/applications/kargo'],
     } satisfies EnabledAppInventoryEntry
 
     expect(classifyEnabledApp(tengri)).toMatchObject({
       class: 'workflow-image',
-      deferredReason: expect.stringContaining('built, signed, and promoted together'),
+      deferredReason: expect.stringContaining('promoted automatically by Kargo'),
     })
     for (const repository of tengri.repoImages) {
       expect(
@@ -210,7 +210,7 @@ describe('enabled app inventory', () => {
           applicationSetEntryCount: 1,
           directApplicationCount: 0,
         }),
-      ).toThrow('incomplete release ownership')
+      ).toThrow('incomplete Kargo ownership')
     }
     expectIncompleteOwnership({ ...tengri, class: 'workflow-image', repoImages: [tengri.repoImages[0]] })
     expectIncompleteOwnership({
@@ -332,7 +332,7 @@ describe('enabled app inventory', () => {
     expect(talosUpgradeRunbook).toContain('It deletes that Pod and its')
     expect(talosUpgradeRunbook).toContain('unique bootstrap Secret on success or failure')
     expect(tengriOperations).toContain('`Tengri images` validates both services and CRDs')
-    expect(tengriOperations).toContain('`Tengri release` verifies the contract')
+    expect(tengriOperations).toContain('emits the `kargo-sha-<40>` aliases')
     expect(tengriOperations).toContain('argocd app sync kata --prune')
     expect(tengriOperations).toContain('kubectl --context galactic-lan -n kata get daemonset -o name')
     expect(tengriOperations).toContain('verify-runtimes.sh "$PROOF_DIR" talos-192-168-1-194 fc')
@@ -369,7 +369,7 @@ describe('enabled app inventory', () => {
 
   it('pins the Argo control-plane upgrade wave and applies its large CRD server-side', () => {
     expect(argoCdKustomization).toContain('argo-cd/v3.4.6/manifests/ha/install.yaml')
-    expect(argoCdKustomization).toContain('argocd-image-updater/v1.2.2/config/install.yaml')
+    expect(argoCdKustomization).not.toContain('argocd-image-updater')
     expect(argoCdLovelyPluginOverlay).toContain('ghcr.io/crumbhole/lovely:1.2.5')
     expect(argoCdApplicationSetCrdOverlay).toContain(
       'argocd.argoproj.io/sync-options: ServerSideApply=true,Prune=false',

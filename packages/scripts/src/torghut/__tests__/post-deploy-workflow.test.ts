@@ -24,6 +24,15 @@ const arcKubeModeServiceAccount = readFileSync(
 )
 
 describe('torghut post-deploy verifier workflow', () => {
+  it('runs from the Kargo promotion branch instead of the pre-promotion main branch', () => {
+    const pushTrigger = workflow.slice(workflow.indexOf('  push:'), workflow.indexOf('  workflow_dispatch:'))
+
+    expect(pushTrigger).toContain('- kargo/torghut')
+    expect(pushTrigger).not.toContain('- main')
+    expect(pushTrigger).toContain("- 'argocd/applications/torghut/**'")
+    expect(pushTrigger).toContain("- 'argocd/applications/torghut-options/**'")
+  })
+
   it('does not skip Knative Service readiness when the runner lacks RBAC', () => {
     expect(workflow).not.toContain('Skipping Knative Service readiness check')
     expect(workflow).toContain('Failed to read Knative Service ${service}')

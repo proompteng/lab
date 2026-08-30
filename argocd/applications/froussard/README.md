@@ -24,4 +24,6 @@ source-bound AgentRun independently through the Agents API.
 
 The code rollout deliberately keeps `LINEAR_WEBHOOK_ENABLED=false`. The activation change must add
 the generated `linear-secrets.yaml`, configure the Linear topic and AgentRun settings, and set the
-flag to `true` in one digest-pinned rollout.
+flag to `true` in one reviewed source change. The image remains Kargo-managed: the `froussard`
+Warehouse/Stage writes the exact promoted digest and source metadata to `kargo/froussard`, and Argo
+tracks that branch. Do not hand-edit an image tag or digest or use a deployment PR for this app.

@@ -18,24 +18,34 @@ channel without dual writers, and retains a tested rollback path. All `kubectl` 
 - Every Exa API key rotation must restart `hermes-0` and repeat both native-web and Exa MCP canaries before acceptance.
 - A `Synced/Healthy` Argo application is not sufficient proof. Record authenticated inference, persistence, egress, backup,
   migration, and Discord lifecycle evidence.
-- Roll out and cut over only from merged `main`; do not deploy manifests from an unmerged worktree.
+- Roll out and cut over only from Kargo's `kargo/hermes-toolchain` branch, which Kargo creates from a published image
+  built from merged `main`; do not deploy manifests from an unmerged worktree or a hand-edited digest branch.
 
 ## Release evidence
 
-Before each rollout, verify and record:
+Before each rollout, verify and record the Kargo promotion and the immutable references it produced. A merge to `main`
+starts the Hermes toolchain build. After the image is published, Warehouse `lab-delivery/hermes-toolchain` creates Freight
+and Stage `lab-delivery/hermes-toolchain` automatically copies the exact source commit into `kargo/hermes-toolchain`,
+updates the StatefulSet reference, commits and pushes that branch, and lets Argo CD reconcile it. Do not create or merge a
+digest bump PR, release PR, or manual SHA change.
 
 ```bash
 set -euo pipefail
 git fetch --quiet origin main
+git fetch --quiet origin kargo/hermes-toolchain
 main_revision=$(git rev-parse origin/main)
-test "$(git rev-parse HEAD)" = "$main_revision"
+kargo_revision=$(git rev-parse origin/kargo/hermes-toolchain)
+test "$(git rev-parse origin/kargo/hermes-toolchain)" = "$kargo_revision"
 upstream_digest=$(crane digest docker.io/nousresearch/hermes-agent:v2026.7.7.2)
 mirror_digest=$(crane digest registry.ide-newton.ts.net/lab/hermes-agent:v2026.7.7.2-amd64)
-toolchain_ref=registry.ide-newton.ts.net/lab/hermes-toolchain@sha256:1864320822cb274202f768a8333ac9ac8fb01d8e259394ca5f9f6dcbe6d1a20e
+toolchain_ref=$(git show "origin/kargo/hermes-toolchain:argocd/applications/hermes/statefulset.yaml" | \
+  sed -n 's#.*reference: \(registry\.ide-newton\.ts\.net/lab/hermes-toolchain@sha256:[0-9a-f]\{64\}\).*#\1#p')
+test -n "$toolchain_ref"
+test "$(printf '%s\n' "$toolchain_ref" | wc -l | tr -d '[:space:]')" -eq 1
 toolchain_digest=$(crane digest "$toolchain_ref")
 test "$upstream_digest" = sha256:9c841866021c54c4596849f6135717e8a4d52ba510b7f52c50aef1de1a283973
 test "$mirror_digest" = sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a
-test "$toolchain_digest" = sha256:1864320822cb274202f768a8333ac9ac8fb01d8e259394ca5f9f6dcbe6d1a20e
+test "$toolchain_digest" = "${toolchain_ref##*@}"
 toolchain_platforms=$(crane manifest "$toolchain_ref" | jq -r \
   '[.manifests[].platform | "\(.os)/\(.architecture)"] | sort | join(",")')
 test "$toolchain_platforms" = linux/amd64,linux/arm64
@@ -54,18 +64,21 @@ for platform in linux/amd64 linux/arm64; do
 done
 argocd app get hermes --refresh >/dev/null
 hermes_revision=$(kubectl -n argocd get application hermes -o jsonpath='{.status.sync.revision}')
-test "$hermes_revision" = "$main_revision"
-printf 'main=%s upstream=%s mirror=%s argo=%s\n' \
-  "$main_revision" "$upstream_digest" "$mirror_digest" "$hermes_revision"
+hermes_target_revision=$(kubectl -n argocd get application hermes -o jsonpath='{.spec.source.targetRevision}')
+test "$hermes_target_revision" = kargo/hermes-toolchain
+test "$hermes_revision" = "$kargo_revision"
+printf 'main=%s kargo=%s upstream=%s mirror=%s argo=%s\n' \
+  "$main_revision" "$kargo_revision" "$upstream_digest" "$mirror_digest" "$hermes_revision"
 printf 'toolchain=%s platforms=%s\n' "$toolchain_digest" "$toolchain_platforms"
-unset main_revision upstream_digest mirror_digest toolchain_ref toolchain_digest toolchain_platforms platform hermes_revision
+unset main_revision kargo_revision upstream_digest mirror_digest toolchain_ref toolchain_digest toolchain_platforms platform hermes_revision hermes_target_revision
 ```
 
 The expected upstream index digest is `sha256:9c841866021c54c4596849f6135717e8a4d52ba510b7f52c50aef1de1a283973`.
 The expected mirrored amd64 manifest digest is
 `sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a`.
-The expected Hermes toolchain multi-architecture index digest is
-`sha256:1864320822cb274202f768a8333ac9ac8fb01d8e259394ca5f9f6dcbe6d1a20e`.
+The current Hermes toolchain digest is intentionally not repeated in this runbook. The Kargo-managed StatefulSet on
+`kargo/hermes-toolchain` is the sole committed owner; derive its `reference` as shown above and verify the resolved image
+digest and platform labels from that reference.
 
 ## Phase 0: preflight and secret
 

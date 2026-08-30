@@ -18,7 +18,9 @@ export type CreateOciIndexOptions = {
   image: string
   tag: string
   archTags: OciArchTag[]
+  annotations?: Record<string, string>
   latest?: boolean
+  kargoTag?: string
 }
 
 export type CreateOciIndexResult = {
@@ -75,7 +77,56 @@ const runOptional = (command: string, args: string[]): string | undefined => {
   return stdout.length > 0 ? stdout : undefined
 }
 
+type ProbeResult = {
+  exitCode: number
+  stdout: string
+  stderr: string
+}
+
+const runProbe = (command: string, args: string[]): ProbeResult => {
+  ensureCli(command)
+  const result = spawnSyncImpl([command, ...args], { cwd: repoRoot })
+  return {
+    exitCode: result.exitCode,
+    stdout: readProcessOutput(result.stdout).trim(),
+    stderr: readProcessOutput(result.stderr).trim(),
+  }
+}
+
+const isVerifiedManifestNotFound = (diagnostic: string): boolean =>
+  /manifest[\s_-]+(?:unknown|not[\s_-]+found)|(?:manifest|tag)[^\n]*\b404\b/i.test(diagnostic)
+
+const probeDigest = (reference: string): string | undefined => {
+  const result = runProbe('crane', ['digest', reference])
+  if (result.exitCode === 0) {
+    if (!/^sha256:[0-9a-f]{64}$/.test(result.stdout)) {
+      throw new Error(`Registry returned an invalid digest for ${reference}: ${result.stdout || '<empty>'}`)
+    }
+    return result.stdout
+  }
+
+  const diagnostic = [result.stdout, result.stderr].filter(Boolean).join('\n')
+  if (isVerifiedManifestNotFound(diagnostic)) {
+    return undefined
+  }
+
+  throw new Error(`Unable to inspect immutable OCI tag ${reference}: ${diagnostic || `exit ${result.exitCode}`}`)
+}
+
 const imageReference = (image: string, tag: string): string => `${image}:${tag}`
+
+const normalizeAnnotations = (annotations: Record<string, string> | undefined): Array<[string, string]> => {
+  const entries = Object.entries(annotations ?? {}).sort(([left], [right]) => left.localeCompare(right))
+  for (const [key, value] of entries) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(key)) {
+      throw new Error(`OCI annotation key is invalid: ${key || '<empty>'}`)
+    }
+    if (!value || value.includes('\0') || value.includes('\n') || value.includes('\r')) {
+      throw new Error(`OCI annotation ${key} must be a nonempty single-line value`)
+    }
+  }
+  return entries
+}
 
 const stripTagOrDigest = (reference: string): string => {
   const digestIndex = reference.indexOf('@')
@@ -197,6 +248,44 @@ export const createOciIndex = (options: CreateOciIndexOptions): CreateOciIndexRe
   }
 
   const reference = imageReference(options.image, options.tag)
+  const annotations = normalizeAnnotations(options.annotations)
+  const annotationMap = new Map(annotations)
+  const kargoTag = options.kargoTag
+  const kargoTagMatch = kargoTag?.match(/^kargo-sha-([0-9a-f]{40})(?:-run-([1-9][0-9]*))?$/)
+  if (kargoTag && !kargoTagMatch) {
+    throw new Error(
+      'createOciIndex kargoTag must match kargo-sha-<40 lowercase hex>[-run-<positive integer>]: ' + kargoTag,
+    )
+  }
+
+  const tagRunId = kargoTagMatch?.[2]
+  const receiptRunId = annotationMap.get('ai.proompteng.github-actions-run-id')
+  const receiptConclusion = annotationMap.get('ai.proompteng.github-actions-build-conclusion')
+  const hasReceiptMetadata = receiptRunId !== undefined || receiptConclusion !== undefined
+  if (hasReceiptMetadata) {
+    if (!receiptRunId || !receiptConclusion) {
+      throw new Error('OCI build receipt annotations must include both run ID and build conclusion')
+    }
+    if (!/^[1-9][0-9]*$/.test(receiptRunId)) {
+      throw new Error(`OCI build receipt run ID must be a positive integer: ${receiptRunId}`)
+    }
+    if (receiptConclusion !== 'success') {
+      throw new Error(`OCI build receipt conclusion must be success: ${receiptConclusion}`)
+    }
+    if (!tagRunId) {
+      throw new Error('OCI build receipt annotations require a run-qualified immutable Kargo tag')
+    }
+    if (tagRunId !== receiptRunId) {
+      throw new Error(`Kargo tag run ID ${tagRunId} does not match OCI build receipt run ID ${receiptRunId}`)
+    }
+  } else if (tagRunId) {
+    throw new Error('A run-qualified immutable Kargo tag requires OCI build receipt annotations')
+  }
+
+  const sourceRevision = annotationMap.get('org.opencontainers.image.revision')
+  if (sourceRevision && kargoTagMatch && sourceRevision !== kargoTagMatch[1]) {
+    throw new Error(`Kargo tag source revision ${kargoTagMatch[1]} does not match OCI annotation ${sourceRevision}`)
+  }
   const args = ['index', 'append']
 
   for (const archTag of options.archTags) {
@@ -207,12 +296,51 @@ export const createOciIndex = (options: CreateOciIndexOptions): CreateOciIndexRe
   args.push('-t', reference)
   runRequired('crane', args)
 
+  if (annotations.length > 0) {
+    const mutateArgs = ['mutate', reference]
+    for (const [key, value] of annotations) {
+      mutateArgs.push('--annotation', `${key}=${value}`)
+    }
+    mutateArgs.push('--tag', reference)
+    runRequired('crane', mutateArgs)
+
+    const manifest = JSON.parse(runRequired('crane', ['manifest', reference])) as {
+      annotations?: Record<string, string>
+    }
+    for (const [key, value] of annotations) {
+      if (manifest.annotations?.[key] !== value) {
+        throw new Error(`OCI index ${reference} is missing required annotation ${key}`)
+      }
+    }
+  }
+
   if (options.latest) {
     runRequired('crane', ['tag', reference, 'latest'])
   }
 
   const digest = runRequired('crane', ['digest', reference])
-  const platformDigests = inspectOciPlatforms(reference)
+  const platformDigests = kargoTag
+    ? assertOciPlatforms(reference, ['linux/amd64', 'linux/arm64'])
+    : inspectOciPlatforms(reference)
+  if (kargoTag) {
+    const kargoReference = imageReference(options.image, kargoTag)
+    const existingDigest = probeDigest(kargoReference)
+    if (existingDigest && existingDigest !== digest) {
+      throw new Error(
+        `Refusing to move immutable Kargo tag ${kargoReference}: existing digest ${existingDigest} differs from ${digest}`,
+      )
+    }
+    if (!existingDigest) {
+      runRequired('crane', ['tag', reference, kargoTag])
+    }
+    const observedKargoDigest = probeDigest(kargoReference)
+    if (!observedKargoDigest) {
+      throw new Error(`Kargo tag ${kargoReference} was not found after creation`)
+    }
+    if (observedKargoDigest !== digest) {
+      throw new Error(`Kargo tag ${kargoReference} resolved to ${observedKargoDigest}, expected ${digest}`)
+    }
+  }
 
   return {
     image: options.image,
@@ -269,11 +397,21 @@ const parseArchTag = (value: string): OciArchTag => {
   }
 }
 
+const parseAnnotation = (value: string): [string, string] => {
+  const equalsIndex = value.indexOf('=')
+  if (equalsIndex <= 0 || equalsIndex === value.length - 1) {
+    throw new Error(`--annotation must use key=value, got ${value}`)
+  }
+  return [value.slice(0, equalsIndex), value.slice(equalsIndex + 1)]
+}
+
 const runCreateIndexCli = (args: string[]): void => {
   let image = ''
   let tag = ''
   let latest = false
+  let kargoTag = ''
   const archTags: OciArchTag[] = []
+  const annotations: Record<string, string> = {}
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]
@@ -288,6 +426,16 @@ const runCreateIndexCli = (args: string[]): void => {
       index += 1
     } else if (arg === '--latest') {
       latest = true
+    } else if (arg === '--kargo-tag') {
+      kargoTag = takeValue(args, index, arg)
+      index += 1
+    } else if (arg === '--annotation') {
+      const [key, value] = parseAnnotation(takeValue(args, index, arg))
+      if (Object.hasOwn(annotations, key)) {
+        throw new Error(`create-index received duplicate annotation key: ${key}`)
+      }
+      annotations[key] = value
+      index += 1
     } else {
       throw new Error(`Unknown create-index argument: ${arg}`)
     }
@@ -300,7 +448,14 @@ const runCreateIndexCli = (args: string[]): void => {
     throw new Error('create-index requires --tag')
   }
 
-  const result = createOciIndex({ image, tag, archTags, latest })
+  const result = createOciIndex({
+    image,
+    tag,
+    archTags,
+    annotations: Object.keys(annotations).length > 0 ? annotations : undefined,
+    latest,
+    kargoTag: kargoTag || undefined,
+  })
   writeGithubOutput(result)
   console.log(JSON.stringify(result, null, 2))
 }

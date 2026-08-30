@@ -17,6 +17,9 @@ on:
       - 'services/dorvud/hyperliquid-feed/**'
       - 'nix/images/dorvud-jvm-service.nix'
       - 'nix/images/torghut-hyperliquid-feed.nix'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - 'nix/oci-push.sh'
+      - 'argocd/applications/torghut-hyperliquid-feed/**'
   workflow_dispatch:
 
 concurrency:
@@ -31,7 +34,7 @@ jobs:
       image_name: torghut-hyperliquid-feed
       package_attr: torghut-hyperliquid-feed-image
       tag: sha-${{ github.sha }}
+      publish_kargo_tag: true
       pr_number: ${{ github.event.pull_request.number || '' }}
       latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
-      release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'torghut-hyperliquid-feed-release-contract' || '' }}
     secrets: inherit

@@ -114,9 +114,13 @@ target:
   repo: proompteng/lab
   default_branch: main
 release:
-  mode: gitops_pr_on_main
-  required_checks_source: branch_protection
-  promotion_branch_prefix: codex/symphony-release-
+  mode: kargo_auto
+  promotion_authority: kargo
+  kargo_project: lab-delivery
+  kargo_warehouse: symphony
+  kargo_branch: kargo/symphony
+  kargo_stages:
+    - symphony
   blocked_labels:
     - manual-only
     - secret-rotation
@@ -129,8 +133,6 @@ release:
       manifest_paths:
         - argocd/applications/symphony
       build_workflow: symphony-build-push
-      release_workflow: symphony-release
-      post_deploy_workflow: symphony-post-deploy-verify
 health:
   pre_dispatch:
     - name: symphony-argo
@@ -173,12 +175,14 @@ Execution contract:
 5. Use a `codex/` branch name for code changes.
 6. Use the GitHub CLI with `GH_TOKEN`/`GITHUB_TOKEN` for PR operations. Always use `.github/PULL_REQUEST_TEMPLATE.md`.
 7. Never mutate the cluster directly from the workspace. No `kubectl apply`, no manual Argo syncs, and no direct manifest promotion commits from the pod.
-8. Promotion must follow the repository automation:
+8. Promotion must follow the Kargo repository automation:
    - merge the code PR to `main`
    - wait for `symphony-build-push`
-   - wait for `symphony-release` to open or update the promotion PR
-   - wait for that promotion PR to merge
-   - wait for `symphony-post-deploy-verify`
+   - wait for the `symphony` Warehouse to discover the immutable image and create Freight
+   - wait for the exact automatic `symphony` Stage policy to promote that Freight, write `kargo/symphony`, and for the
+     Argo Application to sync that branch
+   - run the configured post-deploy health checks and verify the service live endpoint
+   - do not create a release branch, digest/SHA manifest PR, or manual Argo sync
    - only then mark the Linear issue done
 9. If the issue requires unsupported manual work such as secret rotation, cluster recovery, cross-repo changes, or first-wave DB migrations, leave a clear Linear update with `linear_graphql`, move the issue to a non-active handoff state, and stop.
 10. If release automation or rollout verification fails, leave a detailed Linear update and stop. Do not bypass GitOps.
@@ -207,6 +211,6 @@ Blockers:
 
 Deliverable:
 
-- Land the code change through GitHub and the existing Symphony release automation.
-- Wait until Argo rollout and post-deploy verification succeed.
+- Land the code change through GitHub and the Kargo-backed Symphony delivery automation.
+- Wait until the Freight is promoted, Argo is `Synced`/`Healthy`, the workload rollout, and configured post-deploy health checks succeed.
 - Leave a final Linear update summarizing the change, the exact validations, the release/promotion outcome, and any residual risks.

@@ -8,12 +8,14 @@ on:
     paths:
       - 'third_party/buzz/**'
       - '.github/workflows/buzz-relay-build-push.yml'
+      - 'argocd/applications/buzz/**'
   push:
     branches:
       - main
     paths:
       - 'third_party/buzz/**'
       - '.github/workflows/buzz-relay-build-push.yml'
+      - 'argocd/applications/buzz/**'
   workflow_dispatch:
 
 env:
@@ -130,28 +132,98 @@ jobs:
     needs: build
     runs-on: arc-arm64
     steps:
+      - name: Checkout deployment repository
+        uses: actions/checkout@v5
+
+      - name: Resolve source commit metadata
+        id: source
+        env:
+          EXPECTED_SOURCE_REVISION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          source_sha="$(git rev-parse HEAD)"
+          expected_source_sha="$(git rev-parse "${EXPECTED_SOURCE_REVISION}^{commit}")"
+          [[ "${source_sha}" == "${expected_source_sha}" ]]
+          printf 'source_sha=%s\n' "${source_sha}" >> "${GITHUB_OUTPUT}"
+          printf 'source_timestamp=%s\n' "$(git show -s --format=%cI HEAD)" >> "${GITHUB_OUTPUT}"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Publish multi-architecture index
         shell: bash
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+          SOURCE_TIMESTAMP: ${{ steps.source.outputs.source_timestamp }}
         run: |
           set -euo pipefail
-          tag="${IMAGE_REPOSITORY}:sha-${GITHUB_SHA}"
+          [[ "${SOURCE_SHA}" == "${GITHUB_SHA}" ]]
+          for architecture in amd64 arm64; do
+            reference="${IMAGE_REPOSITORY}:sha-${SOURCE_SHA}-${architecture}"
+            crane mutate "${reference}" \
+              --label "org.opencontainers.image.created=${SOURCE_TIMESTAMP}" \
+              --label "org.opencontainers.image.revision=${SOURCE_SHA}" \
+              --tag "${reference}" >/dev/null
+            crane config "${reference}" | jq -e \
+              --arg source_timestamp "${SOURCE_TIMESTAMP}" \
+              --arg source_sha "${SOURCE_SHA}" \
+              '.config.Labels["org.opencontainers.image.created"] == $source_timestamp and
+               .config.Labels["org.opencontainers.image.revision"] == $source_sha' >/dev/null
+          done
+          tag="${IMAGE_REPOSITORY}:sha-${SOURCE_SHA}"
           docker buildx imagetools create \
             --tag "$tag" \
-            "${IMAGE_REPOSITORY}:sha-${GITHUB_SHA}-amd64" \
-            "${IMAGE_REPOSITORY}:sha-${GITHUB_SHA}-arm64"
+            "${IMAGE_REPOSITORY}:sha-${SOURCE_SHA}-amd64" \
+            "${IMAGE_REPOSITORY}:sha-${SOURCE_SHA}-arm64"
           docker buildx imagetools inspect --raw "$tag" > index.json
           jq -e '
             any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "amd64") and
             any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "arm64")
           ' index.json
-          digest="sha256:$(sha256sum index.json | cut -d ' ' -f1)"
+          digest="$(
+            docker buildx imagetools inspect \
+              --format '{{json .Manifest}}' \
+              "${tag}" |
+              jq -er '.digest'
+          )"
+          [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            kargo_tag="kargo-sha-${SOURCE_SHA}"
+            kargo_reference="${IMAGE_REPOSITORY}:${kargo_tag}"
+            probe_error="$(mktemp)"
+            trap 'rm -f "${probe_error}"' EXIT
+            if kargo_digest="$(
+              docker buildx imagetools inspect \
+                --format '{{json .Manifest}}' \
+                "${kargo_reference}" 2>"${probe_error}" |
+                jq -er '.digest' 2>>"${probe_error}"
+            )"; then
+              [[ "${kargo_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+              [[ "${kargo_digest}" == "${digest}" ]]
+            else
+              probe_output="$(cat "${probe_error}")"
+              if ! grep -Eiq 'manifest[[:space:]_-]+(unknown|not[[:space:]]+found)|manifest[^[:cntrl:]]*404|404[^[:cntrl:]]*(manifest|not[[:space:]]+found)' <<<"${probe_output}"; then
+                echo "Unable to inspect immutable Kargo tag ${kargo_reference}: ${probe_output}" >&2
+                exit 1
+              fi
+              docker buildx imagetools create --tag "${kargo_reference}" "${tag}"
+              kargo_digest="$(
+                docker buildx imagetools inspect \
+                  --format '{{json .Manifest}}' \
+                  "${kargo_reference}" |
+                  jq -er '.digest'
+              )"
+              [[ "${kargo_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+              [[ "${kargo_digest}" == "${digest}" ]]
+            fi
+          fi
           {
             echo '### Buzz relay image'
             echo
             echo "- Image: ${tag}@${digest}"
+            if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
+              echo "- Kargo image: ${kargo_reference}@${kargo_digest}"
+            fi
             echo '- Platforms: linux/amd64, linux/arm64'
             echo "- Upstream: ${UPSTREAM_REVISION}"
           } >> "$GITHUB_STEP_SUMMARY"

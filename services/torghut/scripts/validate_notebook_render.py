@@ -149,6 +149,10 @@ def _validate_hub_and_proxy(documents: list[YamlObject]) -> None:
         "name": "torghut-notebook-hub",
         "key": "crypt-key",
     }
+    assert re.fullmatch(
+        r"registry\.ide-newton\.ts\.net/lab/torghut-notebook@sha256:[0-9a-f]{64}",
+        _string_at(_env(hub, "TORGHUT_NOTEBOOK_IMAGE"), "value"),
+    )
 
 
 def _validate_network_exposure(documents: list[YamlObject]) -> None:
@@ -206,14 +210,26 @@ def _validate_hub_values(values: YamlObject) -> None:
         term not in extra_config
         for term in ("Keycloak", "OAuth", "password", "REMOTE_USER", "identity")
     )
+    notebook_image = _string_at(
+        _mapping_at(hub, "extraEnv"), "TORGHUT_NOTEBOOK_IMAGE", "value"
+    )
+    assert re.fullmatch(
+        r"registry\.ide-newton\.ts\.net/lab/torghut-notebook@sha256:[0-9a-f]{64}",
+        notebook_image,
+    )
+    image_config = _string_at(hub, "extraConfig", "10-torghut-singleuser-image")
+    for required in (
+        'os.environ.get("TORGHUT_NOTEBOOK_IMAGE", "").strip()',
+        're.fullmatch(r".+@sha256:[0-9a-f]{64}", notebook_image)',
+        "c.KubeSpawner.image = notebook_image",
+    ):
+        assert required in image_config
 
 
 def _validate_singleuser_values(values: YamlObject) -> None:
     singleuser = _mapping_at(values, "singleuser")
-    assert _at(singleuser, "image", "name") == (
-        "registry.ide-newton.ts.net/lab/torghut-notebook@sha256"
-    )
-    assert re.fullmatch(r"[0-9a-f]{64}", str(_at(singleuser, "image", "tag")))
+    assert _at(singleuser, "image", "name") == ""
+    assert _at(singleuser, "image", "tag") == ""
     assert singleuser["cpu"] == {"guarantee": 2, "limit": 8}
     assert singleuser["memory"] == {"guarantee": "8G", "limit": "16G"}
     assert _at(singleuser, "storage", "capacity") == "50Gi"

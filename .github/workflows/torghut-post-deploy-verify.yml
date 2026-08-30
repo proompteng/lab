@@ -3,7 +3,7 @@ name: torghut-post-deploy-verify
 on:
   push:
     branches:
-      - main
+      - kargo/torghut
     paths:
       - 'argocd/applications/torghut/**'
       - 'argocd/applications/torghut-options/**'

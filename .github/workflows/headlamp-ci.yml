@@ -8,18 +8,22 @@ on:
     paths:
       - '.github/workflows/headlamp-ci.yml'
       - '.github/workflows/nix-oci-build-common.yml'
+      - 'nix/oci-push.sh'
       - 'nix/verify-headlamp-image-assets.sh'
       - 'services/headlamp/**'
       - 'nix/images/headlamp.nix'
+      - 'argocd/applications/headlamp/**'
   push:
     branches:
       - main
     paths:
       - '.github/workflows/headlamp-ci.yml'
       - '.github/workflows/nix-oci-build-common.yml'
+      - 'nix/oci-push.sh'
       - 'nix/verify-headlamp-image-assets.sh'
       - 'services/headlamp/**'
       - 'nix/images/headlamp.nix'
+      - 'argocd/applications/headlamp/**'
   workflow_dispatch:
 
 concurrency:
@@ -58,6 +62,7 @@ jobs:
       image_name: headlamp
       package_attr: headlamp-image
       tag: sha-${{ github.sha }}
+      publish_kargo_tag: true
       image_build_timeout: 20m
 
   nix-image:
@@ -75,8 +80,8 @@ jobs:
       image_name: headlamp
       package_attr: headlamp-image
       tag: sha-${{ github.sha }}
+      publish_kargo_tag: true
       latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
-      release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'headlamp-release-contract' || '' }}
       image_build_timeout: 20m
     secrets:
       ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}

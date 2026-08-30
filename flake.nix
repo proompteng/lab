@@ -168,15 +168,6 @@
             pkgs.jq
           ] (builtins.readFile ./nix/oci-release-contract.sh);
 
-          resolveAtticReleaseMetadata = mkShellScript "resolve-attic-release-metadata" [
-            pkgs.bash
-            pkgs.coreutils
-            pkgs.git
-            pkgs.gnugrep
-            pkgs.go-containerregistry
-            pkgs.jq
-          ] (builtins.readFile ./nix/attic-release-metadata.sh);
-
           createOciIndex = mkOciScript "create-oci-index" ''
             exec bun run packages/scripts/src/shared/oci.ts create-index "$@"
           '';
@@ -199,7 +190,6 @@
               ociPush
               inspectOciArchive
               writeOciReleaseContract
-              resolveAtticReleaseMetadata
               createOciIndex
               inspectOciImage
               assertOciPlatforms
@@ -349,7 +339,6 @@
               ociPush
               inspectOciArchive
               writeOciReleaseContract
-              resolveAtticReleaseMetadata
               createOciIndex
               inspectOciImage
               assertOciPlatforms
@@ -371,7 +360,6 @@
             oci-push = mkApp ociPush;
             inspect-oci-archive = mkApp inspectOciArchive;
             write-oci-release-contract = mkApp writeOciReleaseContract;
-            resolve-attic-release-metadata = mkApp resolveAtticReleaseMetadata;
             create-oci-index = mkApp createOciIndex;
             inspect-oci-image = mkApp inspectOciImage;
             assert-oci-platforms = mkApp assertOciPlatforms;
@@ -386,7 +374,6 @@
               ociPush
               inspectOciArchive
               writeOciReleaseContract
-              resolveAtticReleaseMetadata
             ];
             shellHook = ''
               export LAB_NIX_TOOLCHAIN=1

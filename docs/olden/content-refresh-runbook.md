@@ -27,5 +27,8 @@ bun run build:olden
 - Use Conventional Commits.
 - Open a PR with content sources listed.
 - Wait for Olden PR CI before merge.
-- Let the normal path run after merge: Docker Build and Push publishes the `olden` image, Argo CD Image Updater opens the release PR, release automerge promotes `argocd/applications/olden/kustomization.yaml`, and Argo CD syncs the app.
-- Verify `https://olden.proompteng.ai/docs/meta/sources` after the release PR merges and Argo reports the app healthy.
+- Olden is currently disabled in the product ApplicationSet. Before enabling it, enroll its image with a Kargo Warehouse
+  and exact automatic `olden` Stage. After enrollment, Docker Build and Push publishes the image, Kargo creates Freight,
+  copies the exact source commit, digest, and build/provenance metadata to `kargo/olden` without a pull request, and the
+  Argo Application tracks that branch and syncs it. No Image Updater or release PR is involved.
+- Verify `https://olden.proompteng.ai/docs/meta/sources` after the Stage is promoted and Argo reports the app healthy.

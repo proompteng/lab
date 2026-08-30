@@ -50,16 +50,19 @@ MicroVM Pods and PVCs continue running; this rollout does not modify a `MicroVM`
 Clients reconnect after the Service has a ready endpoint, while an operation submitted during the gap returns a
 truthful service-unavailable response and must be retried.
 
-Roll out only through the `Tengri images` publisher, the generated `Tengri release` promotion PR, and Argo
-reconciliation. On `main`, `Tengri images` validates both services, builds native `linux/amd64` and `linux/arm64`
-images, publishes signed multi-architecture indexes at `registry.ide-newton.ts.net/lab/{tengri,nanoagent}:sha-<commit>`,
-and uploads their immutable digests in the `tengri-release-contract` artifact. `Tengri release` verifies that contract,
-both OCI indexes, and both signatures, then opens one atomic promotion PR that pins both digests and enables the
-ApplicationSet and BFF together:
+Roll out through the `Tengri images` publisher, Kargo, and Argo reconciliation. On `main`, `Tengri images` validates
+both services, builds native `linux/amd64` and `linux/arm64` images, publishes signed multi-architecture indexes at
+`registry.ide-newton.ts.net/lab/{tengri,nanoagent}:kargo-sha-<40>` only after each final index succeeds; the images
+carry `org.opencontainers.image.created` (source commit RFC3339 time) and `org.opencontainers.image.revision` (full
+source SHA), and their immutable digests are uploaded in the `tengri-release-contract` artifact. The Kargo `tengri` Stage consumes the controller and Nanoagent Freight together,
+copies the exact source commit and full digest/build metadata to `kargo/tengri`, and pushes that branch without a pull
+request. The Argo Applications track the generated branch; no promotion PR or manifest SHA bump is required:
 
 1. Merge the controller or guest source and wait for `Tengri images` validation, both native builds, index publication,
    and keyless signature verification to pass.
-2. Review and merge the generated promotion PR; never hand-edit a mutable tag into GitOps.
+2. In `lab-delivery`, verify that Kargo discovered both immutable images, created the matching Freight, and promoted the
+   exact automatic `tengri` Stage. Verify that `kargo/tengri` contains the complete source commit, digests, and build
+   provenance, and that the Argo Applications track it at `Synced`/`Healthy`.
 3. Confirm Argo starts one `tengri` Deployment replacement and does not reconcile guest Pods, PVCs, or nodes.
 4. From a configured `galactic-lan` client, verify the replacement and its control path:
 
@@ -88,12 +91,12 @@ ApplicationSet and BFF together:
 5. Confirm the pre-rollout `MicroVM` count and phases are unchanged, then exercise one authenticated read-only control
    plane request. Do not create a canary DaemonSet or mutate node scheduling to verify this rollout.
 
-If the replacement cannot become ready, use a follow-up PR and let Argo perform the same `Recreate` rollout. Do not use
-`kubectl rollout undo` or directly apply manifests because GitOps would overwrite that state. Never revert to a
-controller predating `home-workspace-v2` while any v2 `MicroVM` exists: the predecessor cannot safely resume those
-guests. Let every v2 agent expire or delete it through Tengri, verify that no v2 CR remains, and only then revert both
-signed image digests together. Verify the restored Pod, Service endpoint, `/livez`, and `/readyz` with the commands
-above.
+If the replacement cannot become ready, inspect the Kargo Stage, Freight, generated `kargo/tengri` branch, and Argo
+Applications and correct the source-owned failure. Re-promote a previously proven controller/guest Freight pair through
+Kargo; never use `kubectl rollout undo`, directly apply manifests, or create a digest promotion PR. Never revert to a controller predating
+`home-workspace-v2` while any v2 `MicroVM` exists: the predecessor cannot safely resume those guests. Let every v2 agent
+expire or delete it through Tengri, verify that no v2 CR remains, and only then re-promote the matching known-good pair.
+Verify the restored Pod, Service endpoint, `/livez`, and `/readyz` with the commands above.
 
 Tengri supports one storage layout:
 `runtime.proompteng.ai/storage-layout=home-workspace-v2`. Every new agent receives that annotation, mounts its PVC
@@ -103,7 +106,7 @@ has one application container and no init container, so Firecracker creates only
 The failed `home-workspace-v1` experiment never produced a working guest and is not a compatibility contract. A CR with
 any other layout is rejected and must be deleted and recreated; Tengri does not migrate or fall back to the broken
 topology. The Deployment temporarily retains the predecessor's `TENGRI_NEW_AGENT_STORAGE_LAYOUT=home-workspace-v1`
-environment variable so the still-pinned predecessor remains stable until the v2 image promotion lands. The v2
+environment variable so the still-pinned predecessor remains stable while Kargo promotes `kargo/tengri`. The v2
 controller does not read that variable and always creates `home-workspace-v2`. Remove the inert variable in a later
 GitOps-only cleanup after the v2 controller is live. Never roll back past the v2 controller while a v2 CR exists.
 

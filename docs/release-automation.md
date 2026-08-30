@@ -1,54 +1,126 @@
-# Release Branch Auto-PR Workflow
+# Kargo deployment automation
 
-This workflow opens pull requests whenever Argo CD Image Updater commits to a `release/<sha256>` branch or when a maintainer triggers the `workflow_dispatch` input. The automation relies on standard GitHub Actions branching semantics and the release workflow documented in GitHub’s [manual dispatch guide](https://docs.github.com/actions/using-workflows/events-that-trigger-workflows#workflow_dispatch).
+This repository uses Kargo as the single image-promotion authority. Git remains the complete desired-state authority:
+source, workload configuration, and Kargo resources are reviewed in Git. Kargo owns the release decision after an image
+has been published; it directly manages a deployment branch and does not open a second pull request to rewrite a SHA or
+digest in the source repository.
 
-## Release PR Automerge
+The cluster installation is pinned to the Kargo v1.11 API and chart contract. Keep Warehouse, Freight, Stage, and
+promotion-step fields aligned with that pinned version when enrolling an application.
 
-PRs created from release branches can be auto-merged by [`.github/workflows/release-pr-automerge.yml`](../.github/workflows/release-pr-automerge.yml) when they match strict safety gates:
+## Artifact eligibility
 
-- Base branch is `main`.
-- Head branch starts with `release/`.
-- PR is not draft.
-- PR author is allowlisted GitHub Actions identity.
-- PR head repository matches the base repository.
-- Label `do-not-automerge` is not present.
-- All changed files are allowlisted release artifacts. Current automerge allowlist:
-  - `argocd/applications/khoshut/kustomization.yaml`
-  - `argocd/applications/analysis/kustomization.yaml`
-  - `argocd/applications/bilig/kustomization.yaml`
+Repo-owned builders publish an immutable Kargo alias only after the final multi-architecture OCI index succeeds. The
+default alias is `kargo-sha-<40>`. Applications that retain a build receipt use
+`kargo-sha-<40>-run-<github-run-id>` so a new run for the same source commit never attempts to move an immutable tag.
+Every platform image carries `org.opencontainers.image.created` set to the source commit's RFC3339 time and
+`org.opencontainers.image.revision` set to the full source commit SHA. The final OCI index repeats the source and
+revision as OCI annotations. Receipt-bearing indexes also record the real `ai.proompteng.github-actions-run-id` and
+the admitted `ai.proompteng.github-actions-build-conclusion`; the builder rejects a run-qualified tag whose annotations
+are absent or disagree. Kargo exposes those annotations through `imageFrom(...).Annotations`. Applications with
+retained build receipts must read them from the selected Freight image and must not substitute a Freight name or
+invented conclusion. Repo-owned Warehouses select only their immutable alias shape; they ignore legacy `sha-*` tags
+and mutable `latest`, so failed or pre-migration builds cannot create Freight. These tags are builder/Warehouse
+implementation details: operators and agents do not create, retag, or manually select them.
 
-The workflow enables squash auto-merge (`gh pr merge --auto --squash`) only after all eligibility checks pass. GitHub still enforces required checks and merge rules before the merge actually executes.
+`analysis` and `bilig` are the explicit external-publisher exceptions. The `analysis` Warehouse watches the publisher's
+mutable `latest` discovery pointer with `imageSelectionStrategy: Digest`; its Freight and generated manifests pin the
+immutable digest. The `bilig` Warehouse uses `NewestBuild` over the publisher's bare 40-hex tag. Neither external image
+uses the repo-owned `kargo-sha-<40>` contract, and operators do not retag or manually select either publisher's tags.
 
-### Operator Controls
+## Normal production path
 
-- To block automerge for a specific release PR, add label `do-not-automerge`.
-- To inspect automerge decisions:
-  - `gh pr view <num> -R proompteng/lab --json labels,author,baseRefName,headRefName,files`
-  - `gh run view <run-id> -R proompteng/lab`
-  - `gh pr checks <num> -R proompteng/lab`
+Every application image follows this transaction:
 
-## Enrolling a New Application
+1. Merge the reviewed source pull request to `main`.
+2. The existing `main` build workflow runs its tests, completes the final multi-architecture build, and publishes the
+   eligible immutable artifact described above. A mutable `latest` tag or legacy `sha-*` tag is not a Kargo input.
+3. The Kargo Warehouse observes the published image and creates a Freight containing the exact image digest.
+4. The application's exact automatic promotion policy selects that Freight and promotes the matching Kargo Stage.
+5. The Stage copies the exact source commit, writes the full image digest and companion build/provenance metadata, and
+   directly commits and pushes `kargo/<stage>` with no pull request. The Argo CD Application tracks that branch. Kargo
+   waits for Argo sync and health.
+6. The application rollout and service-specific live checks prove the result. A retained post-deploy workflow listens
+   to its exact `kargo/<stage>` branch and manifest paths, because the generated Kargo commit—not the earlier `main`
+   merge—is the deployed revision. `workflow_dispatch` may run the same verifier diagnostically; it is not a promotion
+   or recovery fallback.
 
-1. Add the app to the `product-image-updater` ImageUpdater resource with a `writeBackTarget` that points at its Kustomize directory.
-2. Confirm [`.github/workflows/auto-pr-release-branches.yml`](../.github/workflows/auto-pr-release-branches.yml) still watches `release/**` branches and `argocd/applications/*/kustomization.yaml`.
-3. Add the app Kustomization file to the allowlist in [`.github/workflows/release-pr-automerge.yml`](../.github/workflows/release-pr-automerge.yml) if its release PRs should auto-merge.
-4. Push an Image Updater-style change to a `release/<sha256>` branch or trigger the workflow manually with `head_branch=release/<sha256>` to verify that a pull request is created.
+There is no Image Updater, SHA-manifest bump, release branch, deployment PR, release automerge, manual Argo sync, or
+direct `kubectl` deployment in this path. A failed build, Warehouse, Freight, Stage, Argo, or rollout gate blocks the
+transaction at that gate; it is not repaired by bypassing the gate.
 
-## Enabling Docker Image Publishing
+Kargo's `lab-delivery` Project, Warehouses, Freight records, Stages, promotion policies, and `kargo/<stage>` branches
+are the promotion record. The ApplicationSet points each Kargo-managed Application at its Kargo branch and must not
+overwrite that branch or its managed deployment metadata. If an Application is recreated, re-promote its current
+Freight so Kargo reconstructs the branch and Argo follows it; do not recreate a digest bump pull request. An explicitly
+authorized break-glass direct deployment is an incident action, not a normal release path.
 
-When a new application should ship a container image, mirror its registration in the owning service or app build workflow. Reuse [`.github/workflows/docker-build-common.yaml`](../.github/workflows/docker-build-common.yaml) when the image is published through the shared Docker build path.
+Bayn is the one safety exception and is not enrolled in a Kargo Warehouse or Stage. Its `bayn-release` activation and
+source-lineage branch remain the authority for strategy activation; an image digest alone never creates Freight or
+authorizes a Bayn promotion.
 
-1. Add the application under the owning workflow path filter so that commits touching its source trigger a build.
-2. Confirm the workflow declares explicit `permissions:` at the top level (for example `contents: read`) and only grants broader access to the individual jobs that require it.
-3. If the app is Next.js-based, set `output: 'standalone'` in `next.config.mjs` so the build generates the `/standalone` server bundle consumed by the Dockerfile.
-4. Create or update the service-specific build workflow job that calls `docker-build-common.yaml` with the application's image name, Dockerfile path, and build context when that workflow family is used.
-5. Update cleanup or rollback dependencies in that owning workflow if the workflow manages release tags or cleanup jobs.
+## Application enrollment
 
-This keeps the continuous delivery release tagging and the image publishing workflow in sync whenever a new app comes online.
+For a new image-backed application:
 
-## Formatting Notes
+1. Make the `main` build publish the verified `kargo-sha-<40>` artifact only after its final multi-architecture index
+   succeeds, with the required OCI labels. Do not add a deployment PR job or a workflow that edits an Argo manifest
+   after publication. For external `analysis`, keep `latest` as a `Digest`-strategy discovery pointer and pin the
+   immutable digest in Freight/manifests; for external `bilig`, retain the bare 40-hex `NewestBuild` contract.
+2. Add one Kargo Warehouse for the image and one Stage with the exact Git branch, digest, and build/provenance update
+   contract. Add an exact automatic policy for that Stage; do not use a broad selector that can promote unrelated
+   artifacts.
+3. Add `kargo.akuity.io/authorized-stage: lab-delivery:<stage>` to the target Argo Application. If one Application
+   consumes several images, authorize each corresponding Stage.
+4. Configure Kargo to update the source files consumed by the Application's configured renderer (Kustomize, Helm,
+   Lovely, or another approved renderer). Validate the rendered output against the promoted digest; the renderer is an
+   implementation detail, not a second promotion authority.
+5. Configure the ApplicationSet to track `kargo/<stage>` and preserve Kargo-managed deployment metadata. Keep the
+   repository manifest on `main` as the reviewed source/configuration baseline; the Kargo branch is generated promotion
+   state, not a second review boundary.
+6. Prove one complete transaction: published immutable image -> Warehouse -> Freight -> Stage promotion -> Argo
+   `Synced`/`Healthy` -> workload rollout -> application-specific live check.
+7. If the application retains a post-deploy workflow, trigger it from the exact generated `kargo/<stage>` branch and
+   the files the Stage writes. Do not trigger deployment proof from `main`, where the promoted digest does not yet
+   exist.
 
-- Use single quotes for all YAML string literals in `.github/workflows/auto-pr-release-branches.yml` to keep quoting consistent and avoid escaping GitHub expressions like `${{ ... }}`.
-- Run `bun run format` before committing if you make broader changes that touch project code; the workflow file is not autoformatted, so keep it tidy by hand.
+## Evidence
 
-This documentation helps ensure the `workflow_dispatch` options stay synchronized with the applications managed by Argo CD Image Updater.
+Run these read-only checks from an authenticated cluster client. Replace placeholders with the exact resource names;
+always provide an explicit namespace:
+
+```bash
+set -euo pipefail
+
+# Kargo promotion record
+kubectl -n lab-delivery get project,warehouse,freight,stage
+kubectl -n lab-delivery get warehouse/<warehouse> -o yaml
+kubectl -n lab-delivery get freight/<freight> -o yaml
+kubectl -n lab-delivery get stage/<stage> -o yaml
+
+# Argo result, Kargo branch, and the image selected by the Application
+kubectl -n argocd get application/<application> -o jsonpath='{.status.sync.status}{"\n"}{.status.health.status}{"\n"}'
+kubectl -n argocd get application/<application> -o jsonpath='{.spec.source.targetRevision}{"\n"}{.status.sync.revision}{"\n"}'
+
+# Workload result (use the resource kind owned by the application)
+kubectl -n <workload-namespace> rollout status deployment/<deployment> --timeout=5m
+kubectl -n <workload-namespace> get pods -l app.kubernetes.io/instance=<application> -o wide
+```
+
+The evidence must identify the promoted digest and show that the running workload reports the same image ID (allowing
+for a platform child digest when a multi-architecture index is used). `Synced`/`Healthy` alone is not rollout or live
+application proof. The service's current runbook supplies endpoint, readiness, and domain-specific checks.
+
+Distinguish these states in incident notes and delivery records: merged, built, published, Freight created, promoted,
+Argo synced/healthy, rollout ready, and live application verified. “Merged” or “built” is not “deployed.”
+
+## Recovery
+
+For a failed promotion, inspect the Kargo Stage, Freight, Kargo branch, and Argo Application in the namespaces above and
+fix the source-owned failure. Re-promote a previously proven Freight through Kargo for a targeted rollback; Kargo will
+rewrite/push the branch and Argo will reconcile it. Do not edit a live Deployment, run `argocd app sync`, or create a
+manifest-bump PR. If direct deployment is unavoidable, record explicit break-glass authorization and the incident
+evidence, then restore Kargo control through Git/configuration afterward.
+
+Historical release-branch and Image Updater documents are not current operating instructions; consult Git history when
+auditing an old transaction.

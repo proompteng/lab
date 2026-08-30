@@ -8,15 +8,38 @@ on:
     branches:
       - main
     paths:
+      - 'services/torghut/**'
+      - 'packages/scripts/src/torghut/**'
+      - '!packages/scripts/src/torghut/__tests__/**'
+      - '!packages/scripts/src/torghut/**/*.test.ts'
       - 'services/dorvud/gradle/**'
       - 'services/dorvud/gradlew'
       - 'services/dorvud/gradle.properties'
       - 'services/dorvud/settings.gradle.kts'
       - 'services/dorvud/build.gradle.kts'
       - 'services/dorvud/platform/**'
+      - 'services/dorvud/technical-analysis/**'
+      - 'services/dorvud/technical-analysis-flink/**'
       - 'services/dorvud/websockets/**'
+      - 'services/signal-publisher/**'
+      - 'nix/images/torghut.nix'
+      - 'nix/images/torghut-notebook.nix'
+      - 'nix/images/torghut-ta.nix'
       - 'nix/images/dorvud-jvm-service.nix'
       - 'nix/images/torghut-ws.nix'
+      - 'nix/images/signal-publisher.nix'
+      - 'nix/images/bun-workspace-service.nix'
+      - 'services/torghut/uv.lock'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'bun.lock'
+      - 'package.json'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - '.github/workflows/torghut-post-deploy-verify.yml'
+      - 'nix/oci-push.sh'
+      - 'argocd/applications/torghut/**'
+      - 'argocd/applications/torghut-options/**'
+      - 'argocd/applications/torghut-hyperliquid-runtime/**'
   workflow_dispatch:
 
 concurrency:
@@ -31,7 +54,7 @@ jobs:
       image_name: torghut-ws
       package_attr: torghut-ws-image
       tag: sha-${{ github.sha }}
+      publish_kargo_tag: true
       pr_number: ${{ github.event.pull_request.number || '' }}
       latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
-      release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'torghut-ws-release-contract' || '' }}
     secrets: inherit

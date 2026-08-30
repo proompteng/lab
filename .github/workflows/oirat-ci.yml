@@ -8,10 +8,16 @@ on:
       - 'services/oirat/**'
       - 'packages/discord/**'
       - 'nix/images/oirat.nix'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - 'nix/oci-push.sh'
+      - 'argocd/applications/oirat/**'
   pull_request:
     paths:
       - 'services/oirat/**'
       - 'nix/images/oirat.nix'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - 'nix/oci-push.sh'
+      - 'argocd/applications/oirat/**'
   workflow_dispatch:
 
 concurrency:
@@ -39,7 +45,7 @@ jobs:
       image_name: oirat
       package_attr: oirat-image
       tag: sha-${{ github.sha }}
+      publish_kargo_tag: true
       pr_number: ${{ github.event.pull_request.number || '' }}
       latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
-      release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'oirat-release-contract' || '' }}
     secrets: inherit

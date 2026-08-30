@@ -3,7 +3,11 @@
 This is a Next.js application generated with
 [Create Fumadocs](https://github.com/fuma-nama/fumadocs).
 
-Deployment: changes under `apps/docs/**` (or `packages/design/**`) merged to `main` trigger a Docker build and an Argo CD Image Updater PR that bumps `argocd/applications/docs/kustomization.yaml`.
+Deployment: changes under `apps/docs/**` (or `packages/design/**`) merged to `main` trigger the main-branch image build.
+Kargo discovers the immutable image, creates Freight, and automatically promotes the `docs` Stage; Kargo writes the
+exact source commit, digest, and build/provenance metadata to `kargo/docs` without a pull request, and Argo tracks that
+branch through sync/health. No Image Updater, SHA manifest bump, release branch, or deployment PR is required. See
+[`docs/release-automation.md`](../../docs/release-automation.md) for the common delivery contract and evidence commands.
 
 Run development server:
 

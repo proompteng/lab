@@ -93,13 +93,9 @@ Commit the updated manifest and trigger an Argo CD sync.
 
 ## Deployment
 
-```bash
-# render manifests
-kubectl kustomize argocd/applications/dernier/overlays/cluster
-
-# sync via Argo CD CLI
-argocd app sync dernier
-```
+Dernier is disabled in the product ApplicationSet and is not enrolled in Kargo. Do not perform an image deployment
+while it is disabled. Re-enabling it requires an immutable main-branch image builder and a Kargo Warehouse and Stage;
+no manual Argo sync or manifest-bump PR may be added as a release path.
 
 ## Health Checks
 
@@ -108,7 +104,8 @@ argocd app sync dernier
 
 ## Runbooks
 
-- **Rollout:** Bump the image tag via CI (Skaffold profiles `dernier` / `dernier-remote`) or Argo CD Image Updater. Confirm HPA status with `kubectl get hpa -n dernier`.
+- **Rollout:** No rollout is supported while Dernier is disabled. After Kargo enrollment, merge application code to
+  `main` and observe the resulting Freight promotion and Argo health.
 - **Database Maintenance:** Use `kubectl cnpg psql dernier-db -n dernier` for direct access. Certificates are mounted from `dernier-db-ca`.
 - **Secret Rotation:** Run `scripts/generate-dernier-sealed-secret.ts --print-values` to emit and seal fresh keys. Capture the printed `RAILS_MASTER_KEY`/`SECRET_KEY_BASE`, commit the updated sealed secret, and sync `dernier`.
 - **Credentials Re-encryption:** When rotating the master key, regenerate `config/credentials.yml.enc` with the new key before deploying.
