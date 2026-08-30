@@ -576,6 +576,8 @@ describe('Kargo direct-push GitOps contract', () => {
         repoURL: 'git@github.com:proompteng/lab.git',
         branch: 'main',
         commitSelectionStrategy: 'NewestFromBranch',
+        discoveryLimit: 20,
+        strictSemvers: true,
       })
       expect(git?.includePaths).toEqual(contract.includePaths)
       if (contract.excludePaths) expect(git?.excludePaths).toEqual(contract.excludePaths)
@@ -587,6 +589,8 @@ describe('Kargo direct-push GitOps contract', () => {
       expect(imageSubscriptions.map((image) => image.repoURL)).toEqual(contract.images)
       for (const image of imageSubscriptions) {
         expect(image.imageSelectionStrategy).toBe(contract.imageStrategy ?? 'NewestBuild')
+        expect(image.discoveryLimit).toBe(20)
+        expect(image.strictSemvers).toBe(true)
         if (contract.imageStrategy === 'Digest') {
           expect(image.constraint).toBe('latest')
           expect(image.cacheByTag).toBeUndefined()
