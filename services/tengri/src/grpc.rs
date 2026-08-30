@@ -1,4 +1,10 @@
-use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Weak},
+    time::Duration,
+};
 
 use async_stream::try_stream;
 use chrono::{DateTime, Utc};
@@ -71,6 +77,7 @@ pub struct ControlPlane {
     preview_origin: PreviewOrigin,
     activity: ActivityTracker,
     create_lock: Arc<Mutex<()>>,
+    terminal_creation_locks: TerminalCreationLockManager,
     provisional_terminal_leases: ProvisionalTerminalLeaseManager,
 }
 
@@ -109,6 +116,7 @@ impl ControlPlane {
             preview_origin: config.preview_origin,
             activity,
             create_lock: Arc::new(Mutex::new(())),
+            terminal_creation_locks: TerminalCreationLockManager::default(),
             provisional_terminal_leases,
         })
     }
@@ -600,11 +608,16 @@ impl MicroVmControlPlane for ControlPlane {
         let cwd = request.cwd;
         let columns = request.columns;
         let rows = request.rows;
+        let creation_guard = self
+            .terminal_creation_locks
+            .acquire(&agent_id, &creation_id)
+            .await;
         let create_agent_id = agent_id.clone();
         let leases = self.provisional_terminal_leases.clone();
         let failed_leases = leases.clone();
         let failed_agent_id = agent_id.clone();
         let creation = detached_terminal_creation(
+            creation_guard,
             async move {
                 guest
                     .create_terminal(&creation_id, &cwd, columns, rows)
@@ -1816,6 +1829,31 @@ fn provisional_terminal_annotation_key(terminal_id: &str) -> String {
     format!("{PROVISIONAL_TERMINAL_ANNOTATION_PREFIX}{terminal_id}")
 }
 
+#[derive(Clone, Default)]
+struct TerminalCreationLockManager {
+    locks: Arc<Mutex<TerminalCreationLockMap>>,
+}
+
+type TerminalCreationLockMap = HashMap<(String, String), Weak<Mutex<()>>>;
+
+impl TerminalCreationLockManager {
+    async fn acquire(&self, agent_id: &str, creation_id: &str) -> tokio::sync::OwnedMutexGuard<()> {
+        let key = (agent_id.to_owned(), creation_id.to_owned());
+        let lock = {
+            let mut locks = self.locks.lock().await;
+            locks.retain(|_, lock| lock.strong_count() > 0);
+            if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+                lock
+            } else {
+                let lock = Arc::new(Mutex::new(()));
+                locks.insert(key, Arc::downgrade(&lock));
+                lock
+            }
+        };
+        lock.lock_owned().await
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ProvisionalTerminalLease {
     AwaitingTicket(Uuid),
@@ -1915,12 +1953,14 @@ impl ProvisionalTerminalLeaseRegistry {
     }
 }
 
-async fn detached_terminal_creation<C, S, SF, F, FF>(
+async fn detached_terminal_creation<G, C, S, SF, F, FF>(
+    guard: G,
     creation: C,
     on_success: S,
     on_failure: F,
 ) -> Result<GuestTerminalCreation, Status>
 where
+    G: Send + 'static,
     C: Future<Output = Result<GuestTerminalCreation, GuestError>> + Send + 'static,
     S: FnOnce(GuestTerminalCreation) -> SF + Send + 'static,
     SF: Future<Output = Result<GuestTerminalCreation, Status>> + Send + 'static,
@@ -1929,6 +1969,7 @@ where
 {
     let (result_sender, result_receiver) = oneshot::channel();
     tokio::spawn(async move {
+        let _guard = guard;
         let result = match creation.await {
             Ok(creation) => on_success(creation).await,
             Err(error) => on_failure(error).await,
@@ -2795,6 +2836,7 @@ mod tests {
         let creation_started = started.clone();
         let creation_release = release.clone();
         let request = tokio::spawn(detached_terminal_creation(
+            (),
             async move {
                 creation_started.notify_one();
                 creation_release.notified().await;
@@ -2830,6 +2872,70 @@ mod tests {
                 .expect("detached tracking result"),
             "terminal-current"
         );
+    }
+
+    #[tokio::test]
+    async fn replayed_terminal_creation_waits_for_prior_lease_tracking() {
+        let locks = TerminalCreationLockManager::default();
+        let first_guard = locks.acquire("agent-current", "tengri-terminal-1").await;
+        let tracking_started = Arc::new(tokio::sync::Notify::new());
+        let tracking_release = Arc::new(tokio::sync::Notify::new());
+        let first_tracking_started = tracking_started.clone();
+        let first_tracking_release = tracking_release.clone();
+        let first = tokio::spawn(detached_terminal_creation(
+            first_guard,
+            async move {
+                Ok(GuestTerminalCreation {
+                    session: crate::guest::TerminalSession {
+                        id: "terminal-current".to_owned(),
+                        creation_id: "tengri-terminal-1".to_owned(),
+                        cwd: "/workspace".to_owned(),
+                        created_at: "2026-08-30T00:00:00Z".to_owned(),
+                        last_activity_at: "2026-08-30T00:00:00Z".to_owned(),
+                        attached: false,
+                    },
+                    created: true,
+                })
+            },
+            move |creation| async move {
+                first_tracking_started.notify_one();
+                first_tracking_release.notified().await;
+                Ok(creation)
+            },
+            |error| async move { Err(map_guest_error(error)) },
+        ));
+
+        tracking_started.notified().await;
+        let second_started = Arc::new(tokio::sync::Notify::new());
+        let second_waiting = second_started.clone();
+        let second_locks = locks.clone();
+        let (second_acquired_sender, mut second_acquired_receiver) = oneshot::channel();
+        let second = tokio::spawn(async move {
+            second_waiting.notify_one();
+            let _guard = second_locks
+                .acquire("agent-current", "tengri-terminal-1")
+                .await;
+            let _ = second_acquired_sender.send(());
+        });
+        second_started.notified().await;
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), &mut second_acquired_receiver,)
+                .await
+                .is_err(),
+            "the replay must wait until the first request finishes lease tracking",
+        );
+
+        tracking_release.notify_one();
+        first
+            .await
+            .expect("first creation task")
+            .expect("first creation result");
+        tokio::time::timeout(Duration::from_secs(1), second_acquired_receiver)
+            .await
+            .expect("replayed creation lock timeout")
+            .expect("replayed creation lock result");
+        second.await.expect("replayed creation task");
     }
 
     fn provisional_terminal_test_agent(now: DateTime<Utc>) -> MicroVM {
