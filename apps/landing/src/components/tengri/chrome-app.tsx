@@ -64,18 +64,15 @@ export function ChromeApp({
   const [address, setAddress] = useState(activePage.displayUrl)
   const [navigationError, setNavigationError] = useState('')
   const addressRef = useRef<HTMLInputElement | null>(null)
-  const externalPreviewSessionsRef = useRef(new Map<string, { expiresAt: number; popup: Window; sessionId: string }>())
+  const externalPreviewSessionsRef = useRef(new Map<string, { popup: Window; sessionId: string }>())
 
   useEffect(() => {
     const sessions = externalPreviewSessionsRef.current
     const interval = window.setInterval(() => {
-      const now = Date.now()
       for (const [sessionId, session] of sessions) {
         if (session.popup.closed) {
           sessions.delete(sessionId)
           void revokePreview(agentId, session.sessionId)
-        } else if (session.expiresAt <= now) {
-          sessions.delete(sessionId)
         }
       }
     }, 250)
@@ -121,10 +118,9 @@ export function ChromeApp({
       issuedSessionId = session.id
       const launchUrl = safePreviewLaunchUrl(session.launchUrl, previewGatewayOrigin)
       if (!launchUrl) throw new Error('Tengri returned an invalid preview URL')
-      const expiresAt = Date.parse(session.expiresAt)
-      if (!Number.isFinite(expiresAt)) throw new Error('Tengri returned an invalid preview expiry')
       popup.location.replace(launchUrl)
-      externalPreviewSessionsRef.current.set(session.id, { expiresAt, popup, sessionId: session.id })
+      // expiresAt is the one-use bootstrap ticket deadline, not the lifetime of the active preview.
+      externalPreviewSessionsRef.current.set(session.id, { popup, sessionId: session.id })
     } catch (cause) {
       if (issuedSessionId) void revokePreview(agentId, issuedSessionId)
       popup.close()

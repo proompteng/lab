@@ -368,7 +368,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         result = {
           id: previewSessionId,
           launchUrl: `http://localhost:8080/v1/preview/open#${ticket}`,
-          expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
+          expiresAt: new Date(Date.now() + 30_000).toISOString(),
           previewOrigin: `https://tengri-${previewSessionId}.proompteng.ai`,
         }
         break
