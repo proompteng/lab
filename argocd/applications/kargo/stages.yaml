@@ -1827,7 +1827,10 @@ metadata:
     delivery.proompteng.ai/managed-by: kargo
 spec:
   vars:
-    - name: gitRepo
+    # Freight identity follows the Warehouse's HTTPS source; promotion writes still use the sealed SSH key.
+    - name: freightGitRepo
+      value: https://github.com/proompteng/lab.git
+    - name: pushGitRepo
       value: git@github.com:proompteng/lab.git
     - name: targetBranch
       value: kargo/tengri
@@ -1859,12 +1862,12 @@ spec:
             message: tengri images must be built from the same commit
         - uses: git-clone
           config:
-            repoURL: ${{ vars.gitRepo }}
+            repoURL: ${{ vars.pushGitRepo }}
             author:
               name: Kargo
               email: kargo@proompteng.ai
             checkout:
-              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+              - commit: ${{ commitFrom(vars.freightGitRepo).ID }}
                 path: ${{ vars.srcPath }}
               - branch: ${{ vars.targetBranch }}
                 create: true
