@@ -307,8 +307,9 @@ export async function issuePreviewSession(
   agentId: string,
   port: number,
   path: string,
+  fragment: string,
 ): Promise<TengriPreviewSession> {
-  const response = await unary<RawRecord>('issuePreviewSession', { agentId, port, path }, subject, 130_000)
+  const response = await unary<RawRecord>('issuePreviewSession', { agentId, port, path, fragment }, subject, 130_000)
   return {
     id: stringValue(response.id),
     launchUrl: stringValue(response.launchUrl),
