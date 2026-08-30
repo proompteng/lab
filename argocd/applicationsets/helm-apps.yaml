@@ -66,6 +66,9 @@ spec:
                         namespace: kargo
                         createNamespace: false
                     controller:
+                      env:
+                        - name: GIT_TERMINAL_PROMPT
+                          value: "0"
                       reconcilers:
                         warehouses:
                           minReconciliationInterval: 1m0s
