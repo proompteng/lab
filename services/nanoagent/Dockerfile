@@ -25,6 +25,8 @@ RUN go test ./... && \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
       go build -trimpath -ldflags='-s -w' -o /out/nanoagent .
 
+FROM ${GO_BASE_IMAGE}:${GO_VERSION}-bookworm AS go-runtime
+
 FROM ${NODE_BASE_IMAGE}:${NODE_VERSION}-bookworm-slim AS node-runtime
 
 FROM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS bun-runtime
@@ -126,7 +128,7 @@ ARG UV_VERSION
 COPY --from=node-runtime /usr/local/bin/node /bundle/node/bin/node
 COPY --from=node-runtime /usr/local/lib/node_modules/npm /bundle/node/lib/node_modules/npm
 COPY --from=bun-runtime /usr/local/bin/bun /bundle/bun/bin/bun
-COPY --from=build /usr/local/go /bundle/go
+COPY --from=go-runtime /usr/local/go /bundle/go
 COPY --from=rust-runtime /usr/local/rustup/toolchains /bundle/rust-toolchains
 COPY --from=rust-linker-runtime /out /bundle/linker
 COPY --from=uv-runtime /uv /bundle/uv/bin/uv

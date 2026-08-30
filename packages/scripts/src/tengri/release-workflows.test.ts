@@ -91,6 +91,9 @@ describe('Tengri release workflows', () => {
       expect(dockerfile).not.toContain('docker.io/')
     }
     expect(nanoagent).toContain('ARG GO_BASE_IMAGE=mirror.gcr.io/golang')
+    expect(nanoagent).toContain('FROM ${GO_BASE_IMAGE}:${GO_VERSION}-bookworm AS go-runtime')
+    expect(nanoagent).toContain('COPY --from=go-runtime /usr/local/go /bundle/go')
+    expect(nanoagent).not.toContain('COPY --from=build /usr/local/go /bundle/go')
     expect(nanoagent).toContain('ARG BUN_BASE_IMAGE=mirror.gcr.io/oven/bun')
     expect(nanoagent).toContain('ARG NODE_BASE_IMAGE=mirror.gcr.io/node')
     expect(nanoagent).toContain('ARG UBUNTU_BASE_IMAGE=mirror.gcr.io/ubuntu')
