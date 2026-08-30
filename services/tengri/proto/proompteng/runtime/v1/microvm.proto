@@ -232,7 +232,12 @@ message CodexEvent {
   string raw_json = 9;
 }
 
-message IssuePreviewSessionRequest { string agent_id = 1; uint32 port = 2; string path = 3; }
+message IssuePreviewSessionRequest {
+  string agent_id = 1;
+  uint32 port = 2;
+  string path = 3;
+  string fragment = 4;
+}
 message PreviewSession {
   string id = 1;
   string launch_url = 2;
