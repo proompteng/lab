@@ -146,6 +146,18 @@ beforeAll(async () => {
         truncated: true,
       })
     },
+    issuePreviewSession(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedRequest = call.request
+      callback(null, {
+        id: 'preview12345678901234567',
+        launchUrl: 'https://tengri.example/v1/preview/open#ticket.signature',
+        expiresAt: '2026-08-27T00:00:30Z',
+        previewOrigin: 'https://tengri-preview12345678901234567.example',
+      })
+    },
     watchFiles(call: grpc.ServerWritableStream<Record<string, unknown>, Record<string, unknown>>) {
       receivedMetadata = call.metadata
       receivedRequest = call.request
@@ -263,6 +275,24 @@ describe('Tengri gRPC BFF transport', () => {
         },
       ],
       truncated: true,
+    })
+  })
+
+  test('keeps the preview fragment separate from the guest proxy path', async () => {
+    const { issuePreviewSession } = await import('./grpc')
+    const session = await issuePreviewSession('github:42', 'agent-test', 4321, '/app?mode=dev', '#editor')
+
+    expect(receivedRequest).toEqual({
+      agentId: 'agent-test',
+      port: 4321,
+      path: '/app?mode=dev',
+      fragment: '#editor',
+    })
+    expect(session).toEqual({
+      id: 'preview12345678901234567',
+      launchUrl: 'https://tengri.example/v1/preview/open#ticket.signature',
+      expiresAt: '2026-08-27T00:00:30Z',
+      previewOrigin: 'https://tengri-preview12345678901234567.example',
     })
   })
 

@@ -33,6 +33,11 @@ import {
 import { runTengriAction } from './client'
 
 type PreviewPage = Extract<ChromePage, { kind: 'preview' }>
+type EmbeddedPreviewSession = {
+  id: string
+  launchUrl: string
+  previewOrigin: string
+}
 type ExternalPreviewLifecycle = {
   agentId: string
   disposed: boolean
@@ -389,7 +394,7 @@ function PreviewFrame({
   previewGatewayOrigin: string
 }) {
   const [attempt, setAttempt] = useState(0)
-  const [session, setSession] = useState<{ id: string; launchUrl: string; previewOrigin: string } | null>(null)
+  const [session, setSession] = useState<EmbeddedPreviewSession | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState('')
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
@@ -400,10 +405,11 @@ function PreviewFrame({
     if (!active) return
     let disposed = false
     let issuedSessionId = ''
+    const requestedPage = pageRef.current
     setSession(null)
     setLoaded(false)
     setError('')
-    void issuePreview(agentId, pageRef.current)
+    void issuePreview(agentId, requestedPage)
       .then((issued) => {
         issuedSessionId = issued.id
         if (disposed) {
@@ -414,7 +420,11 @@ function PreviewFrame({
         if (!safeUrl) throw new Error('Tengri returned an invalid preview URL')
         const previewOrigin = safePreviewSessionOrigin(issued.previewOrigin, issued.id)
         if (!previewOrigin) throw new Error('Tengri returned an invalid preview origin')
-        setSession({ id: issued.id, launchUrl: safeUrl, previewOrigin })
+        setSession({
+          id: issued.id,
+          launchUrl: safeUrl,
+          previewOrigin,
+        })
       })
       .catch((cause: unknown) => {
         if (!disposed) {
@@ -521,6 +531,7 @@ function issuePreview(agentId: string, page: PreviewPage, signal?: AbortSignal) 
       agentId,
       port: page.port,
       path: page.path,
+      fragment: page.fragment,
     },
     signal,
   )

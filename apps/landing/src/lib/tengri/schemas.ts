@@ -46,6 +46,20 @@ const previewPath = z
     (value) => !value.includes('\u0000') && !value.includes('\r') && !value.includes('\n') && !value.includes('#'),
     'Invalid preview path',
   )
+const previewFragment = z
+  .string()
+  .max(4096)
+  .refine((value) => Buffer.byteLength(value, 'utf8') <= 4096, 'Preview fragment exceeds 4096 bytes')
+  .refine(
+    (value) =>
+      value === '' ||
+      (value.startsWith('#') &&
+        !Array.from(value).some((character) => {
+          const codePoint = character.codePointAt(0) ?? 0
+          return codePoint <= 0x1f || codePoint === 0x7f
+        })),
+    'Invalid preview fragment',
+  )
 
 export const tengriActionSchema = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('create-agent'), displayName: z.string().trim().min(1).max(64) }),
@@ -118,6 +132,7 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
     agentId,
     port: previewPort,
     path: previewPath,
+    fragment: previewFragment,
   }),
   z.strictObject({ action: z.literal('revoke-preview-session'), agentId, sessionId: previewSessionId }),
 ])
