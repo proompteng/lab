@@ -154,14 +154,17 @@ kubectl --context galactic-lan -n argocd get application/tengri application/proo
 Tengri supports only `runtime.proompteng.ai/storage-layout=home-workspace-v2`:
 
 1. Every new CR is marked with that layout directly; there is no activation flag.
-2. The Pod mounts its PVC exactly once at `/home/nanoagent`. The Nanoagent image exposes
-   `/home/nanoagent/workspace` through `/workspace`; there is no init container or synthetic identity volume.
-3. Any CR with a missing or different layout is rejected and must be deleted and recreated. The failed
-   `home-workspace-v1` experiment never produced a working guest, so there is no migration or fallback path.
-
-The Deployment temporarily retains `TENGRI_NEW_AGENT_STORAGE_LAYOUT=home-workspace-v1` only while Kargo promotes the
-v2 controller/guest pair. The v2 controller ignores the variable and always writes `home-workspace-v2`; remove the inert
-variable in a later GitOps-only cleanup after Kargo and Argo prove v2 live.
+2. Tengri creates one 16 GiB `volumeMode: Block` PVC and exposes it to the container as `/dev/tengri-home`.
+3. The reviewed Kata persistent-block contract formats only an explicitly authorized, provably new device, mounts it
+   at `/home/nanoagent`, applies GID 1000, and accepts an idempotent retry of the same provisioning token. Nanoagent
+   exposes `/home/nanoagent/workspace` through `/workspace`; there is no init container.
+4. The Pod schedules only on nodes labeled both `runtime.proompteng.ai/kata-fc=ready` and
+   `runtime.proompteng.ai/kata-fc-persistent-block=ready`. Apply the second label only after installing the signed r5
+   Kata extension and proving raw-block persistence on that node.
+5. Any CR with a missing or different layout is rejected and must be deleted and recreated. The failed
+   `home-workspace-v1` experiment never produced a working guest, so there is no migration or fallback path. A v2 CR
+   with a legacy filesystem-mode PVC is likewise rejected and must be deleted and recreated; the controller never
+   mutates or reformats it.
 
 Promote or roll back the controller and Nanoagent digests together through Kargo. Do not mix a controller and guest
 image from different releases. A controller predating `home-workspace-v2` cannot safely resume a v2 guest. Before

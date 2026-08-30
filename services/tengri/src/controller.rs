@@ -254,7 +254,7 @@ async fn ensure_runtime_pod(
         ));
     }
 
-    let desired = build_pod(microvm, namespace, bootstrap_secret, home_claim);
+    let desired = build_pod(microvm, namespace, bootstrap_secret, home_claim)?;
     pods.patch(
         &name,
         &PatchParams::apply(MANAGER_NAME).force(),
