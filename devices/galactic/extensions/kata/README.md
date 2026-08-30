@@ -43,6 +43,13 @@ builds the patched agent and runtime-rs shim natively on `amd64` and `arm64`. Th
 otherwise stock Kata Ubuntu guest image and publishes signed, architecture-specific Talos installers to the private
 registry. It does not alter a node automatically.
 
+Persistent devices use a sandbox-stable mount keyed by the guest device source, so multiple containers sharing one
+Pod reuse the existing mount instead of checking a mounted filesystem. Device paths are escaped injectively before
+they become annotation identifiers. The agent preserves existing ext4 filesystems and refuses to format a device
+whose filesystem signature is absent unless the controller explicitly sets `initialize_fs=true` for an
+authoritatively new volume; normal restart Pods must omit that one-time authorization. This avoids both unsafe
+reformatting and a synchronous full-volume scan during container creation.
+
 Reproduce the patched components from an exact clean Kata checkout:
 
 ```bash

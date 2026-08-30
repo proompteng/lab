@@ -43,7 +43,7 @@ make -C "$source_dir/src/agent" src/version.rs
 (
   cd -- "$source_dir"
   cargo test --locked -p kata-agent storage::block_handler::tests
-  cargo test --locked -p runtimes container_manager::container::tests
+  cargo test --locked -p virt_container container_manager::container::tests
 )
 
 install -d "$requested_output_dir"

@@ -1,30 +1,42 @@
 diff --git a/src/agent/src/storage/block_handler.rs b/src/agent/src/storage/block_handler.rs
-index 133d485952374ee2bb74bcad0fb782fef2f89048..81e049ab6694d03a1875a0c75807961673990289 100644
+index 133d48595..9af587166 100644
 --- a/src/agent/src/storage/block_handler.rs
 +++ b/src/agent/src/storage/block_handler.rs
-@@ -19 +19 @@ use kata_types::device::{
+@@ -19 +19,4 @@ use kata_types::device::{
 -use kata_types::mount::{StorageDevice, KATA_BLOCK_VOLUME_CREATE_FS};
-+use kata_types::mount::{StorageDevice, KATA_BLOCK_VOLUME_CREATE_FS, KATA_BLOCK_VOLUME_ENSURE_FS};
-@@ -21,0 +22 @@ use protocols::agent::Storage;
++use kata_types::mount::{
++    StorageDevice, KATA_BLOCK_VOLUME_CREATE_FS, KATA_BLOCK_VOLUME_ENSURE_FS,
++    KATA_BLOCK_VOLUME_INITIALIZE_FS,
++};
+@@ -21,0 +25 @@ use protocols::agent::Storage;
 +use tokio::io::{AsyncReadExt, AsyncSeekExt};
-@@ -40,0 +42 @@ const EPHEMERAL_ENCRYPTION_DRIVER_OPTION: &str = "encryption_key=ephemeral";
+@@ -40,0 +45 @@ const EPHEMERAL_ENCRYPTION_DRIVER_OPTION: &str = "encryption_key=ephemeral";
 +const E2FSCK: &str = "e2fsck";
-@@ -41,0 +44,3 @@ const MKFS_EXT4: &str = "mkfs.ext4";
-+const BLANK_DEVICE_SCAN_BUFFER_BYTES: usize = 1024 * 1024;
+@@ -41,0 +47,2 @@ const MKFS_EXT4: &str = "mkfs.ext4";
 +const EXT4_MAGIC_OFFSET: u64 = 1024 + 56;
 +const EXT4_MAGIC: [u8; 2] = [0x53, 0xef];
-@@ -43,0 +49 @@ const BLOCK_EMPTYDIR_EXT4_MKFS_OPTS: [&str; 8] =
+@@ -43,0 +51 @@ const BLOCK_EMPTYDIR_EXT4_MKFS_OPTS: [&str; 8] =
 +const PERSISTENT_EXT4_MKFS_OPTS: [&str; 3] = ["-F", "-m", "0"];
-@@ -48,0 +55 @@ struct BlockStorageDriverOptions {
+@@ -48,0 +57,2 @@ struct BlockStorageDriverOptions {
 +    should_ensure_filesystem: bool,
-@@ -84,0 +92,2 @@ async fn handle_block_storage(
++    should_initialize_filesystem: bool,
+@@ -84,0 +95,7 @@ async fn handle_block_storage(
 +        } else if options.should_ensure_filesystem {
-+            ensure_persistent_block_filesystem(logger, storage).await?;
-@@ -96,0 +106,12 @@ fn block_storage_driver_options(storage: &Storage) -> Result<BlockStorageDriverO
++            ensure_persistent_block_filesystem(
++                logger,
++                storage,
++                options.should_initialize_filesystem,
++            )
++            .await?;
+@@ -96,0 +114,24 @@ fn block_storage_driver_options(storage: &Storage) -> Result<BlockStorageDriverO
 +    let should_ensure_filesystem = storage
 +        .driver_options
 +        .iter()
 +        .any(|opt| opt == KATA_BLOCK_VOLUME_ENSURE_FS);
++    let should_initialize_filesystem = storage
++        .driver_options
++        .iter()
++        .any(|opt| opt == KATA_BLOCK_VOLUME_INITIALIZE_FS);
 +
 +    if should_create_filesystem && should_ensure_filesystem {
 +        return Err(anyhow!(
@@ -33,9 +45,18 @@ index 133d485952374ee2bb74bcad0fb782fef2f89048..81e049ab6694d03a1875a0c758079616
 +            KATA_BLOCK_VOLUME_ENSURE_FS
 +        ));
 +    }
-@@ -108,0 +130 @@ fn block_storage_driver_options(storage: &Storage) -> Result<BlockStorageDriverO
++
++    if should_initialize_filesystem && !should_ensure_filesystem {
++        return Err(anyhow!(
++            "{} requires {}",
++            KATA_BLOCK_VOLUME_INITIALIZE_FS,
++            KATA_BLOCK_VOLUME_ENSURE_FS
++        ));
++    }
+@@ -108,0 +150,2 @@ fn block_storage_driver_options(storage: &Storage) -> Result<BlockStorageDriverO
 +        should_ensure_filesystem,
-@@ -128,0 +151,123 @@ async fn ensure_block_filesystem(logger: &Logger, storage: &Storage) -> Result<(
++        should_initialize_filesystem,
+@@ -128,0 +172,98 @@ async fn ensure_block_filesystem(logger: &Logger, storage: &Storage) -> Result<(
 +async fn run_block_command(
 +    program: &str,
 +    args: &[&str],
@@ -66,35 +87,6 @@ index 133d485952374ee2bb74bcad0fb782fef2f89048..81e049ab6694d03a1875a0c758079616
 +        .await
 +        .with_context(|| format!("read ext4 superblock magic from {source}"))?;
 +    Ok(magic == EXT4_MAGIC)
-+}
-+
-+async fn block_device_is_blank(source: &str) -> Result<bool> {
-+    let mut device = tokio::fs::File::open(source)
-+        .await
-+        .with_context(|| format!("open block device {source}"))?;
-+    let mut buffer = vec![0_u8; BLANK_DEVICE_SCAN_BUFFER_BYTES];
-+    let mut total_bytes_read = 0_u64;
-+
-+    loop {
-+        let count = device
-+            .read(&mut buffer)
-+            .await
-+            .with_context(|| format!("read block device {source}"))?;
-+        if count == 0 {
-+            break;
-+        }
-+        total_bytes_read += count as u64;
-+
-+        if buffer[..count].iter().any(|byte| *byte != 0) {
-+            return Ok(false);
-+        }
-+    }
-+
-+    if total_bytes_read == 0 {
-+        return Err(anyhow!("block device {source} returned no data"));
-+    }
-+
-+    Ok(true)
 +}
 +
 +async fn check_ext4_filesystem(source: &str) -> Result<()> {
@@ -129,7 +121,11 @@ index 133d485952374ee2bb74bcad0fb782fef2f89048..81e049ab6694d03a1875a0c758079616
 +    ))
 +}
 +
-+async fn ensure_persistent_block_filesystem(logger: &Logger, storage: &Storage) -> Result<()> {
++async fn ensure_persistent_block_filesystem(
++    logger: &Logger,
++    storage: &Storage,
++    initialize_filesystem: bool,
++) -> Result<()> {
 +    if storage.fstype != "ext4" {
 +        return Err(anyhow!(
 +            "ensuring filesystem {} for persistent block storage is unsupported",
@@ -145,9 +141,9 @@ index 133d485952374ee2bb74bcad0fb782fef2f89048..81e049ab6694d03a1875a0c758079616
 +        return check_ext4_filesystem(&storage.source).await;
 +    }
 +
-+    if !block_device_is_blank(&storage.source).await? {
++    if !initialize_filesystem {
 +        return Err(anyhow!(
-+            "refusing to format {}: ext4 magic is absent and device is not blank",
++            "refusing to format {}: ext4 magic is absent and initialization was not explicitly authorized",
 +            storage.source
 +        ));
 +    }
@@ -159,7 +155,7 @@ index 133d485952374ee2bb74bcad0fb782fef2f89048..81e049ab6694d03a1875a0c758079616
 +    create_persistent_ext4_filesystem(&storage.source).await
 +}
 +
-@@ -133,17 +278,8 @@ async fn ensure_ext4_filesystem(logger: &Logger, source: &str) -> Result<()> {
+@@ -133,17 +274,8 @@ async fn ensure_ext4_filesystem(logger: &Logger, source: &str) -> Result<()> {
 -    let output = {
 -        // Keep the agent SIGCHLD handler from reaping this child before
 -        // tokio::process observes it.
@@ -185,13 +181,16 @@ index 133d485952374ee2bb74bcad0fb782fef2f89048..81e049ab6694d03a1875a0c758079616
 +    let mut args = vec!["-F"];
 +    args.extend(BLOCK_EMPTYDIR_EXT4_MKFS_OPTS);
 +    let output = run_block_command(MKFS_EXT4, &args, source).await?;
-@@ -186,0 +323 @@ mod tests {
+@@ -186,0 +319,2 @@ mod tests {
 +                should_ensure_filesystem: false,
-@@ -201,0 +339 @@ mod tests {
++                should_initialize_filesystem: false,
+@@ -201,0 +336,2 @@ mod tests {
 +                should_ensure_filesystem: false,
-@@ -219,0 +358 @@ mod tests {
++                should_initialize_filesystem: false,
+@@ -219,0 +356,2 @@ mod tests {
 +                should_ensure_filesystem: false,
-@@ -231,0 +371,91 @@ mod tests {
++                should_initialize_filesystem: false,
+@@ -231,0 +370,109 @@ mod tests {
 +
 +    #[test]
 +    fn block_storage_options_allow_persistent_filesystem_ensure() {
@@ -205,8 +204,38 @@ index 133d485952374ee2bb74bcad0fb782fef2f89048..81e049ab6694d03a1875a0c758079616
 +                has_ephemeral_encryption: false,
 +                should_create_filesystem: false,
 +                should_ensure_filesystem: true,
++                should_initialize_filesystem: false,
 +            }
 +        );
++    }
++
++    #[test]
++    fn block_storage_options_allow_authorized_persistent_initialization() {
++        let storage = storage_with_driver_options(&[
++            KATA_BLOCK_VOLUME_ENSURE_FS,
++            KATA_BLOCK_VOLUME_INITIALIZE_FS,
++        ]);
++
++        let options = block_storage_driver_options(&storage).unwrap();
++
++        assert_eq!(
++            options,
++            BlockStorageDriverOptions {
++                has_ephemeral_encryption: false,
++                should_create_filesystem: false,
++                should_ensure_filesystem: true,
++                should_initialize_filesystem: true,
++            }
++        );
++    }
++
++    #[test]
++    fn block_storage_options_reject_initialization_without_ensure() {
++        let storage = storage_with_driver_options(&[KATA_BLOCK_VOLUME_INITIALIZE_FS]);
++
++        let err = block_storage_driver_options(&storage).unwrap_err();
++
++        assert!(err.to_string().contains(KATA_BLOCK_VOLUME_ENSURE_FS));
 +    }
 +
 +    #[test]
@@ -234,35 +263,23 @@ index 133d485952374ee2bb74bcad0fb782fef2f89048..81e049ab6694d03a1875a0c758079616
 +    }
 +
 +    #[tokio::test]
-+    async fn blank_device_scan_accepts_zero_filled_device() {
++    async fn persistent_storage_refuses_uninitialized_device_without_authorization() {
 +        let file = tempfile::NamedTempFile::new().unwrap();
-+        file.as_file()
-+            .set_len((BLANK_DEVICE_SCAN_BUFFER_BYTES * 2 + 4096) as u64)
-+            .unwrap();
++        file.as_file().set_len(4096).unwrap();
++        let storage = Storage {
++            source: file.path().display().to_string(),
++            fstype: "ext4".to_owned(),
++            ..Default::default()
++        };
++        let logger = Logger::root(slog::Discard, o!());
 +
-+        assert!(block_device_is_blank(file.path().to_str().unwrap())
++        let err = ensure_persistent_block_filesystem(&logger, &storage, false)
 +            .await
-+            .unwrap());
-+    }
++            .unwrap_err();
 +
-+    #[tokio::test]
-+    async fn blank_device_scan_rejects_nonzero_data() {
-+        use std::io::{Seek, SeekFrom, Write};
-+
-+        let mut file = tempfile::NamedTempFile::new().unwrap();
-+        file.as_file()
-+            .set_len((BLANK_DEVICE_SCAN_BUFFER_BYTES * 2 + 4096) as u64)
-+            .unwrap();
-+        file.seek(SeekFrom::Start(
-+            (BLANK_DEVICE_SCAN_BUFFER_BYTES + 4096) as u64,
-+        ))
-+        .unwrap();
-+        file.write_all(&[1]).unwrap();
-+        file.flush().unwrap();
-+
-+        assert!(!block_device_is_blank(file.path().to_str().unwrap())
-+            .await
-+            .unwrap());
++        assert!(err
++            .to_string()
++            .contains("initialization was not explicitly authorized"));
 +    }
 +
 +    #[tokio::test]
@@ -284,35 +301,40 @@ index 133d485952374ee2bb74bcad0fb782fef2f89048..81e049ab6694d03a1875a0c758079616
 +        );
 +    }
 diff --git a/src/libs/kata-types/src/mount.rs b/src/libs/kata-types/src/mount.rs
-index 96aabe1ba18985e8252d6c79667757a347c2c1e5..b1df68b62d472c415c285bdd85f74b8db3d39d27 100644
+index 96aabe1ba..00c732345 100644
 --- a/src/libs/kata-types/src/mount.rs
 +++ b/src/libs/kata-types/src/mount.rs
-@@ -46,0 +47,6 @@ pub const KATA_BLOCK_VOLUME_CREATE_FS: &str = "create_filesystem";
+@@ -46,0 +47,12 @@ pub const KATA_BLOCK_VOLUME_CREATE_FS: &str = "create_filesystem";
 +/// Key to request idempotent filesystem preparation for persistent block storage.
 +///
 +/// Unlike [`KATA_BLOCK_VOLUME_CREATE_FS`], this option preserves an existing
 +/// filesystem and only creates one when the device is verifiably blank.
 +pub const KATA_BLOCK_VOLUME_ENSURE_FS: &str = "ensure_filesystem";
 +
++/// Key to authorize filesystem creation for a newly provisioned persistent block volume.
++///
++/// This option is only valid together with [`KATA_BLOCK_VOLUME_ENSURE_FS`]. Callers must
++/// emit it only while initializing a volume they authoritatively know has never held data.
++pub const KATA_BLOCK_VOLUME_INITIALIZE_FS: &str = "initialize_filesystem";
++
 diff --git a/src/runtime-rs/crates/runtimes/virt_container/src/container_manager/container.rs b/src/runtime-rs/crates/runtimes/virt_container/src/container_manager/container.rs
-index 1d272e2dd5a9cd6421849dfc53b85338511cf9bf..cb45d1dce54a6e54b3284ca71eaa06ba5ed9eb05 100644
+index 1d272e2dd..4b4842eeb 100644
 --- a/src/runtime-rs/crates/runtimes/virt_container/src/container_manager/container.rs
 +++ b/src/runtime-rs/crates/runtimes/virt_container/src/container_manager/container.rs
 @@ -7,0 +8 @@ use std::collections::HashMap;
 +use std::path::{Component, Path, PathBuf};
 @@ -24,0 +26 @@ use kata_types::{
-+    mount::KATA_BLOCK_VOLUME_ENSURE_FS,
-@@ -39,0 +42,6 @@ use crate::container_manager::{is_termination_signal, logger_with_process};
++    mount::{KATA_BLOCK_VOLUME_ENSURE_FS, KATA_BLOCK_VOLUME_INITIALIZE_FS},
+@@ -39,0 +42,7 @@ use crate::container_manager::{is_termination_signal, logger_with_process};
 +const BLOCK_VOLUME_ANNOTATION_PREFIX: &str = "io.katacontainers.volume";
 +const BLOCK_VOLUME_MOUNT_PATH_SUFFIX: &str = "mount_path";
 +const BLOCK_VOLUME_FS_TYPE_SUFFIX: &str = "fs_type";
 +const BLOCK_VOLUME_FS_GROUP_SUFFIX: &str = "fs_group";
++const BLOCK_VOLUME_INITIALIZE_FS_SUFFIX: &str = "initialize_fs";
 +const SUPPORTED_BLOCK_VOLUME_FS_TYPE: &str = "ext4";
 +
-@@ -213,0 +222,14 @@ impl Container {
-+        for (storage, mount) in
-+            build_block_automounts(&updated_annotations, &devices_agent, &config.container_id)?
-+        {
+@@ -213,0 +223,12 @@ impl Container {
++        for (storage, mount) in build_block_automounts(&updated_annotations, &devices_agent)? {
 +            info!(
 +                self.logger,
 +                "auto-mounting persistent block volume";
@@ -324,17 +346,33 @@ index 1d272e2dd5a9cd6421849dfc53b85338511cf9bf..cb45d1dce54a6e54b3284ca71eaa06ba
 +            spec.mounts_mut().get_or_insert_with(Vec::new).push(mount);
 +        }
 +
-@@ -867,0 +890,99 @@ fn get_disable_guest_selinux(toml_config: &TomlConfig) -> bool {
+@@ -867,0 +889,133 @@ fn get_disable_guest_selinux(toml_config: &TomlConfig) -> bool {
 +fn block_volume_annotation_key(device_name: &str, suffix: &str) -> String {
 +    format!("{BLOCK_VOLUME_ANNOTATION_PREFIX}.{device_name}.{suffix}")
 +}
 +
++fn encode_block_volume_identifier(value: &str) -> String {
++    const HEX: &[u8; 16] = b"0123456789abcdef";
++
++    let mut encoded = String::with_capacity(value.len());
++    for byte in value.bytes() {
++        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.') {
++            encoded.push(char::from(byte));
++        } else {
++            encoded.push('_');
++            encoded.push(char::from(HEX[(byte >> 4) as usize]));
++            encoded.push(char::from(HEX[(byte & 0x0f) as usize]));
++        }
++    }
++    encoded
++}
++
 +fn block_volume_device_name(container_path: &str) -> Option<String> {
-+    let device_name = container_path.strip_prefix("/dev/")?.replace('/', "_");
++    let device_name = container_path.strip_prefix("/dev/")?;
 +    if device_name.is_empty() {
 +        return None;
 +    }
-+    Some(device_name)
++    Some(encode_block_volume_identifier(device_name))
 +}
 +
 +fn block_volume_mount_path(value: &str) -> Result<PathBuf> {
@@ -358,7 +396,6 @@ index 1d272e2dd5a9cd6421849dfc53b85338511cf9bf..cb45d1dce54a6e54b3284ca71eaa06ba
 +fn build_block_automounts(
 +    annotations: &HashMap<String, String>,
 +    devices: &[agent::types::Device],
-+    container_id: &str,
 +) -> Result<Vec<(agent::Storage, oci::Mount)>> {
 +    let mut automounts = Vec::new();
 +
@@ -399,12 +436,31 @@ index 1d272e2dd5a9cd6421849dfc53b85338511cf9bf..cb45d1dce54a6e54b3284ca71eaa06ba
 +            })
 +            .transpose()?;
 +
-+        let sandbox_mount_point = format!(
-+            "/run/kata-containers/shared/containers/{container_id}/block-volume-{device_name}"
-+        );
++        if device.id.is_empty() {
++            return Err(anyhow!(
++                "block auto-mount device {} has no guest source",
++                device.container_path
++            ));
++        }
++        let source_name = encode_block_volume_identifier(&device.id);
++        let sandbox_mount_point =
++            format!("/run/kata-containers/shared/volumes/block-volume-{source_name}");
++        let initialize_fs_key =
++            block_volume_annotation_key(&device_name, BLOCK_VOLUME_INITIALIZE_FS_SUFFIX);
++        let mut driver_options = vec![KATA_BLOCK_VOLUME_ENSURE_FS.to_owned()];
++        match annotations.get(&initialize_fs_key).map(String::as_str) {
++            None | Some("false") => {}
++            Some("true") => driver_options.push(KATA_BLOCK_VOLUME_INITIALIZE_FS.to_owned()),
++            Some(value) => {
++                return Err(anyhow!(
++                    "invalid block auto-mount initialize_fs {value} for {}",
++                    device.container_path
++                ));
++            }
++        }
 +        let storage = agent::Storage {
 +            driver: device.field_type.clone(),
-+            driver_options: vec![KATA_BLOCK_VOLUME_ENSURE_FS.to_owned()],
++            driver_options,
 +            source: device.id.clone(),
 +            fs_type: fs_type.to_owned(),
 +            fs_group,
@@ -424,9 +480,9 @@ index 1d272e2dd5a9cd6421849dfc53b85338511cf9bf..cb45d1dce54a6e54b3284ca71eaa06ba
 +    Ok(automounts)
 +}
 +
-@@ -911,0 +1033 @@ mod tests {
+@@ -911,0 +1066 @@ mod tests {
 +    use super::build_block_automounts;
-@@ -916,0 +1039,82 @@ mod tests {
+@@ -916,0 +1072,149 @@ mod tests {
 +    fn block_device(container_path: &str, id: &str) -> agent::types::Device {
 +        agent::types::Device {
 +            container_path: container_path.to_owned(),
@@ -454,7 +510,7 @@ index 1d272e2dd5a9cd6421849dfc53b85338511cf9bf..cb45d1dce54a6e54b3284ca71eaa06ba
 +        ]);
 +        let devices = vec![block_device("/dev/tengri-home", "0000:00:04.0")];
 +
-+        let automounts = build_block_automounts(&annotations, &devices, "container-id").unwrap();
++        let automounts = build_block_automounts(&annotations, &devices).unwrap();
 +
 +        assert_eq!(automounts.len(), 1);
 +        let (storage, mount) = &automounts[0];
@@ -468,7 +524,7 @@ index 1d272e2dd5a9cd6421849dfc53b85338511cf9bf..cb45d1dce54a6e54b3284ca71eaa06ba
 +        assert_eq!(storage.fs_group.as_ref().unwrap().group_id, 1000);
 +        assert_eq!(
 +            storage.mount_point,
-+            "/run/kata-containers/shared/containers/container-id/block-volume-tengri-home"
++            "/run/kata-containers/shared/volumes/block-volume-0000_3a00_3a04.0"
 +        );
 +        assert_eq!(mount.destination(), Path::new("/home/nanoagent"));
 +        assert_eq!(mount.typ(), &Some("bind".to_owned()));
@@ -478,7 +534,7 @@ index 1d272e2dd5a9cd6421849dfc53b85338511cf9bf..cb45d1dce54a6e54b3284ca71eaa06ba
 +    fn ignores_unannotated_block_devices() {
 +        let devices = vec![block_device("/dev/tengri-home", "0000:00:04.0")];
 +
-+        let automounts = build_block_automounts(&HashMap::new(), &devices, "container-id").unwrap();
++        let automounts = build_block_automounts(&HashMap::new(), &devices).unwrap();
 +
 +        assert!(automounts.is_empty());
 +    }
@@ -493,7 +549,7 @@ index 1d272e2dd5a9cd6421849dfc53b85338511cf9bf..cb45d1dce54a6e54b3284ca71eaa06ba
 +                "io.katacontainers.volume.tengri-home.mount_path".to_owned(),
 +                destination.to_owned(),
 +            )]);
-+            assert!(build_block_automounts(&annotations, &devices, "container-id").is_err());
++            assert!(build_block_automounts(&annotations, &devices).is_err());
 +        }
 +
 +        let annotations = HashMap::from([
@@ -506,11 +562,78 @@ index 1d272e2dd5a9cd6421849dfc53b85338511cf9bf..cb45d1dce54a6e54b3284ca71eaa06ba
 +                "xfs".to_owned(),
 +            ),
 +        ]);
-+        assert!(build_block_automounts(&annotations, &devices, "container-id").is_err());
++        assert!(build_block_automounts(&annotations, &devices).is_err());
++    }
++
++    #[test]
++    fn authorizes_persistent_initialization_only_when_requested() {
++        let devices = vec![block_device("/dev/tengri-home", "0000:00:04.0")];
++        let annotations = HashMap::from([
++            (
++                "io.katacontainers.volume.tengri-home.mount_path".to_owned(),
++                "/home/nanoagent".to_owned(),
++            ),
++            (
++                "io.katacontainers.volume.tengri-home.initialize_fs".to_owned(),
++                "true".to_owned(),
++            ),
++        ]);
++
++        let automounts = build_block_automounts(&annotations, &devices).unwrap();
++
++        assert_eq!(
++            automounts[0].0.driver_options,
++            vec![
++                KATA_BLOCK_VOLUME_ENSURE_FS.to_owned(),
++                KATA_BLOCK_VOLUME_INITIALIZE_FS.to_owned(),
++            ]
++        );
++
++        let invalid_annotations = HashMap::from([
++            (
++                "io.katacontainers.volume.tengri-home.mount_path".to_owned(),
++                "/home/nanoagent".to_owned(),
++            ),
++            (
++                "io.katacontainers.volume.tengri-home.initialize_fs".to_owned(),
++                "yes".to_owned(),
++            ),
++        ]);
++        assert!(build_block_automounts(&invalid_annotations, &devices).is_err());
++    }
++
++    #[test]
++    fn reuses_one_sandbox_mount_for_the_same_device() {
++        let devices = vec![block_device("/dev/tengri-home", "0000:00:04.0")];
++        let annotations = HashMap::from([(
++            "io.katacontainers.volume.tengri-home.mount_path".to_owned(),
++            "/home/nanoagent".to_owned(),
++        )]);
++
++        let first = build_block_automounts(&annotations, &devices).unwrap();
++        let second = build_block_automounts(&annotations, &devices).unwrap();
++
++        assert_eq!(first[0].0.mount_point, second[0].0.mount_point);
++    }
++
++    #[test]
++    fn block_device_annotation_encoding_is_collision_free() {
++        assert_eq!(
++            block_volume_device_name("/dev/a/b").as_deref(),
++            Some("a_2fb")
++        );
++        assert_eq!(
++            block_volume_device_name("/dev/a_b").as_deref(),
++            Some("a_5fb")
++        );
++        assert_ne!(
++            block_volume_device_name("/dev/a/b"),
++            block_volume_device_name("/dev/a_b")
++        );
 +    }
 +
 diff --git a/tools/packaging/static-build/agent/Dockerfile b/tools/packaging/static-build/agent/Dockerfile
-index 689805427adbb2e6647f8fde9b142eda2f5374f0..c034f3b5d04138678268cf585b3132d75348994c 100644
+index 689805427..c034f3b5d 100644
 --- a/tools/packaging/static-build/agent/Dockerfile
 +++ b/tools/packaging/static-build/agent/Dockerfile
 @@ -56 +56,5 @@ RUN ARCH=$(uname -m) && \
