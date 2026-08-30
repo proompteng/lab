@@ -1,5 +1,5 @@
 diff --git a/src/agent/src/storage/block_handler.rs b/src/agent/src/storage/block_handler.rs
-index 133d48595..ae6337d3b 100644
+index 133d48595..f20cd1fea 100644
 --- a/src/agent/src/storage/block_handler.rs
 +++ b/src/agent/src/storage/block_handler.rs
 @@ -19 +19,4 @@ use kata_types::device::{
@@ -9,34 +9,42 @@ index 133d48595..ae6337d3b 100644
 +    KATA_BLOCK_VOLUME_INITIALIZE_FS,
 +};
 @@ -21,0 +25 @@ use protocols::agent::Storage;
-+use tokio::io::{AsyncReadExt, AsyncSeekExt};
++use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 @@ -40,0 +45 @@ const EPHEMERAL_ENCRYPTION_DRIVER_OPTION: &str = "encryption_key=ephemeral";
 +const E2FSCK: &str = "e2fsck";
-@@ -41,0 +47,2 @@ const MKFS_EXT4: &str = "mkfs.ext4";
+@@ -41,0 +47,6 @@ const MKFS_EXT4: &str = "mkfs.ext4";
 +const EXT4_MAGIC_OFFSET: u64 = 1024 + 56;
 +const EXT4_MAGIC: [u8; 2] = [0x53, 0xef];
-@@ -43,0 +51 @@ const BLOCK_EMPTYDIR_EXT4_MKFS_OPTS: [&str; 8] =
++const PERSISTENT_BLOCK_MARKER_BYTES: usize = 1024;
++const PERSISTENT_BLOCK_MARKER_MAGIC: &[u8] = b"KATA-BLOCK-INIT-V1\0";
++const PERSISTENT_BLOCK_TOKEN_MIN_BYTES: usize = 16;
++const PERSISTENT_BLOCK_TOKEN_MAX_BYTES: usize = 128;
+@@ -43,0 +55 @@ const BLOCK_EMPTYDIR_EXT4_MKFS_OPTS: [&str; 8] =
 +const PERSISTENT_EXT4_MKFS_OPTS: [&str; 3] = ["-F", "-m", "0"];
-@@ -48,0 +57,2 @@ struct BlockStorageDriverOptions {
+@@ -48,0 +61,9 @@ struct BlockStorageDriverOptions {
 +    should_ensure_filesystem: bool,
-+    should_initialize_filesystem: bool,
-@@ -84,0 +95,7 @@ async fn handle_block_storage(
++    initialization_token: Option<String>,
++}
++
++#[derive(Debug, Eq, PartialEq)]
++enum PersistentBlockInitializationMarker {
++    Blank,
++    Consumed(String),
++    Occupied,
+@@ -84,0 +106,7 @@ async fn handle_block_storage(
 +        } else if options.should_ensure_filesystem {
 +            ensure_persistent_block_filesystem(
 +                logger,
 +                storage,
-+                options.should_initialize_filesystem,
++                options.initialization_token.as_deref(),
 +            )
 +            .await?;
-@@ -96,0 +114,24 @@ fn block_storage_driver_options(storage: &Storage) -> Result<BlockStorageDriverO
+@@ -96,0 +125,21 @@ fn block_storage_driver_options(storage: &Storage) -> Result<BlockStorageDriverO
 +    let should_ensure_filesystem = storage
 +        .driver_options
 +        .iter()
 +        .any(|opt| opt == KATA_BLOCK_VOLUME_ENSURE_FS);
-+    let should_initialize_filesystem = storage
-+        .driver_options
-+        .iter()
-+        .any(|opt| opt == KATA_BLOCK_VOLUME_INITIALIZE_FS);
++    let initialization_token = persistent_initialization_token(storage)?;
 +
 +    if should_create_filesystem && should_ensure_filesystem {
 +        return Err(anyhow!(
@@ -46,17 +54,57 @@ index 133d48595..ae6337d3b 100644
 +        ));
 +    }
 +
-+    if should_initialize_filesystem && !should_ensure_filesystem {
++    if initialization_token.is_some() && !should_ensure_filesystem {
 +        return Err(anyhow!(
 +            "{} requires {}",
 +            KATA_BLOCK_VOLUME_INITIALIZE_FS,
 +            KATA_BLOCK_VOLUME_ENSURE_FS
 +        ));
 +    }
-@@ -108,0 +150,2 @@ fn block_storage_driver_options(storage: &Storage) -> Result<BlockStorageDriverO
+@@ -108,0 +158,2 @@ fn block_storage_driver_options(storage: &Storage) -> Result<BlockStorageDriverO
 +        should_ensure_filesystem,
-+        should_initialize_filesystem,
-@@ -128,0 +172,98 @@ async fn ensure_block_filesystem(logger: &Logger, storage: &Storage) -> Result<(
++        initialization_token,
+@@ -111,0 +163,39 @@ fn block_storage_driver_options(storage: &Storage) -> Result<BlockStorageDriverO
++fn validate_persistent_initialization_token(token: &str) -> Result<()> {
++    if !(PERSISTENT_BLOCK_TOKEN_MIN_BYTES..=PERSISTENT_BLOCK_TOKEN_MAX_BYTES).contains(&token.len())
++        || !token
++            .bytes()
++            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
++    {
++        return Err(anyhow!(
++            "persistent block initialization token must be 16-128 ASCII letters, digits, dots, dashes, or underscores"
++        ));
++    }
++    Ok(())
++}
++
++fn persistent_initialization_token(storage: &Storage) -> Result<Option<String>> {
++    let prefix = format!("{KATA_BLOCK_VOLUME_INITIALIZE_FS}=");
++    let mut token = None;
++
++    for option in &storage.driver_options {
++        if option == KATA_BLOCK_VOLUME_INITIALIZE_FS {
++            return Err(anyhow!(
++                "{} requires a unique provisioning token",
++                KATA_BLOCK_VOLUME_INITIALIZE_FS
++            ));
++        }
++        let Some(value) = option.strip_prefix(&prefix) else {
++            continue;
++        };
++        validate_persistent_initialization_token(value)?;
++        if token.replace(value.to_owned()).is_some() {
++            return Err(anyhow!(
++                "{} may be specified only once",
++                KATA_BLOCK_VOLUME_INITIALIZE_FS
++            ));
++        }
++    }
++
++    Ok(token)
++}
++
+@@ -128,0 +219,191 @@ async fn ensure_block_filesystem(logger: &Logger, storage: &Storage) -> Result<(
 +async fn run_block_command(
 +    program: &str,
 +    args: &[&str],
@@ -87,6 +135,74 @@ index 133d48595..ae6337d3b 100644
 +        .await
 +        .with_context(|| format!("read ext4 superblock magic from {source}"))?;
 +    Ok(magic == EXT4_MAGIC)
++}
++
++async fn persistent_block_initialization_marker(
++    source: &str,
++) -> Result<PersistentBlockInitializationMarker> {
++    let mut device = tokio::fs::File::open(source)
++        .await
++        .with_context(|| format!("open block device {source}"))?;
++    let mut marker = [0_u8; PERSISTENT_BLOCK_MARKER_BYTES];
++    device
++        .read_exact(&mut marker)
++        .await
++        .with_context(|| format!("read persistent block initialization marker from {source}"))?;
++
++    if marker.iter().all(|byte| *byte == 0) {
++        return Ok(PersistentBlockInitializationMarker::Blank);
++    }
++    if !marker.starts_with(PERSISTENT_BLOCK_MARKER_MAGIC) {
++        return Ok(PersistentBlockInitializationMarker::Occupied);
++    }
++
++    let length_offset = PERSISTENT_BLOCK_MARKER_MAGIC.len();
++    let token_offset = length_offset + std::mem::size_of::<u16>();
++    let token_length =
++        u16::from_le_bytes([marker[length_offset], marker[length_offset + 1]]) as usize;
++    let token_end = token_offset.saturating_add(token_length);
++    if token_end > marker.len() || marker[token_end..].iter().any(|byte| *byte != 0) {
++        return Ok(PersistentBlockInitializationMarker::Occupied);
++    }
++    let Ok(token) = std::str::from_utf8(&marker[token_offset..token_end]) else {
++        return Ok(PersistentBlockInitializationMarker::Occupied);
++    };
++    if validate_persistent_initialization_token(token).is_err() {
++        return Ok(PersistentBlockInitializationMarker::Occupied);
++    }
++
++    Ok(PersistentBlockInitializationMarker::Consumed(
++        token.to_owned(),
++    ))
++}
++
++async fn record_persistent_block_initialization_token(source: &str, token: &str) -> Result<()> {
++    validate_persistent_initialization_token(token)?;
++    let mut marker = [0_u8; PERSISTENT_BLOCK_MARKER_BYTES];
++    let length_offset = PERSISTENT_BLOCK_MARKER_MAGIC.len();
++    let token_offset = length_offset + std::mem::size_of::<u16>();
++    let token_end = token_offset + token.len();
++    marker[..length_offset].copy_from_slice(PERSISTENT_BLOCK_MARKER_MAGIC);
++    marker[length_offset..token_offset].copy_from_slice(&(token.len() as u16).to_le_bytes());
++    marker[token_offset..token_end].copy_from_slice(token.as_bytes());
++
++    let mut device = tokio::fs::OpenOptions::new()
++        .write(true)
++        .open(source)
++        .await
++        .with_context(|| format!("open block device {source} for initialization marker"))?;
++    device
++        .seek(std::io::SeekFrom::Start(0))
++        .await
++        .with_context(|| format!("seek block device {source} for initialization marker"))?;
++    device
++        .write_all(&marker)
++        .await
++        .with_context(|| format!("write persistent block initialization marker to {source}"))?;
++    device
++        .sync_data()
++        .await
++        .with_context(|| format!("sync persistent block initialization marker to {source}"))
 +}
 +
 +async fn check_ext4_filesystem(source: &str) -> Result<()> {
@@ -124,7 +240,7 @@ index 133d48595..ae6337d3b 100644
 +async fn ensure_persistent_block_filesystem(
 +    logger: &Logger,
 +    storage: &Storage,
-+    initialize_filesystem: bool,
++    initialization_token: Option<&str>,
 +) -> Result<()> {
 +    if storage.fstype != "ext4" {
 +        return Err(anyhow!(
@@ -133,29 +249,54 @@ index 133d48595..ae6337d3b 100644
 +        ));
 +    }
 +
++    let marker = persistent_block_initialization_marker(&storage.source).await?;
++    if let Some(token) = initialization_token {
++        match &marker {
++            PersistentBlockInitializationMarker::Blank => {}
++            PersistentBlockInitializationMarker::Consumed(_) => {
++                return Err(anyhow!(
++                    "refusing to reuse a consumed persistent block initialization token for {}",
++                    storage.source
++                ));
++            }
++            PersistentBlockInitializationMarker::Occupied => {
++                return Err(anyhow!(
++                    "refusing to initialize {}: ext4 boot area is not blank",
++                    storage.source
++                ));
++            }
++        }
++        validate_persistent_initialization_token(token)?;
++    }
++
 +    if block_device_has_ext4_filesystem(&storage.source).await? {
 +        info!(logger, "checking persistent block filesystem";
 +            "source" => storage.source.as_str(),
 +            "fstype" => storage.fstype.as_str(),
 +        );
-+        return check_ext4_filesystem(&storage.source).await;
++        check_ext4_filesystem(&storage.source).await?;
++        if let Some(token) = initialization_token {
++            record_persistent_block_initialization_token(&storage.source, token).await?;
++        }
++        return Ok(());
 +    }
 +
-+    if !initialize_filesystem {
++    let Some(token) = initialization_token else {
 +        return Err(anyhow!(
 +            "refusing to format {}: ext4 magic is absent and initialization was not explicitly authorized",
 +            storage.source
 +        ));
-+    }
++    };
 +
 +    info!(logger, "creating persistent block filesystem";
 +        "source" => storage.source.as_str(),
 +        "fstype" => storage.fstype.as_str(),
 +    );
-+    create_persistent_ext4_filesystem(&storage.source).await
++    create_persistent_ext4_filesystem(&storage.source).await?;
++    record_persistent_block_initialization_token(&storage.source, token).await
 +}
 +
-@@ -133,17 +274,8 @@ async fn ensure_ext4_filesystem(logger: &Logger, source: &str) -> Result<()> {
+@@ -133,17 +414,8 @@ async fn ensure_ext4_filesystem(logger: &Logger, source: &str) -> Result<()> {
 -    let output = {
 -        // Keep the agent SIGCHLD handler from reaping this child before
 -        // tokio::process observes it.
@@ -181,16 +322,19 @@ index 133d48595..ae6337d3b 100644
 +    let mut args = vec!["-F"];
 +    args.extend(BLOCK_EMPTYDIR_EXT4_MKFS_OPTS);
 +    let output = run_block_command(MKFS_EXT4, &args, source).await?;
-@@ -186,0 +319,2 @@ mod tests {
+@@ -168,0 +441,2 @@ mod tests {
++    const TEST_INITIALIZATION_TOKEN: &str = "provisioning-generation-0001";
++
+@@ -186,0 +461,2 @@ mod tests {
 +                should_ensure_filesystem: false,
-+                should_initialize_filesystem: false,
-@@ -201,0 +336,2 @@ mod tests {
++                initialization_token: None,
+@@ -201,0 +478,2 @@ mod tests {
 +                should_ensure_filesystem: false,
-+                should_initialize_filesystem: false,
-@@ -219,0 +356,2 @@ mod tests {
++                initialization_token: None,
+@@ -219,0 +498,2 @@ mod tests {
 +                should_ensure_filesystem: false,
-+                should_initialize_filesystem: false,
-@@ -231,0 +370,107 @@ mod tests {
++                initialization_token: None,
+@@ -231,0 +512,174 @@ mod tests {
 +
 +    #[test]
 +    fn block_storage_options_allow_persistent_filesystem_ensure() {
@@ -204,17 +348,17 @@ index 133d48595..ae6337d3b 100644
 +                has_ephemeral_encryption: false,
 +                should_create_filesystem: false,
 +                should_ensure_filesystem: true,
-+                should_initialize_filesystem: false,
++                initialization_token: None,
 +            }
 +        );
 +    }
 +
 +    #[test]
 +    fn block_storage_options_allow_authorized_persistent_initialization() {
-+        let storage = storage_with_driver_options(&[
-+            KATA_BLOCK_VOLUME_ENSURE_FS,
-+            KATA_BLOCK_VOLUME_INITIALIZE_FS,
-+        ]);
++        let initialization_option =
++            format!("{KATA_BLOCK_VOLUME_INITIALIZE_FS}={TEST_INITIALIZATION_TOKEN}");
++        let storage =
++            storage_with_driver_options(&[KATA_BLOCK_VOLUME_ENSURE_FS, &initialization_option]);
 +
 +        let options = block_storage_driver_options(&storage).unwrap();
 +
@@ -224,18 +368,32 @@ index 133d48595..ae6337d3b 100644
 +                has_ephemeral_encryption: false,
 +                should_create_filesystem: false,
 +                should_ensure_filesystem: true,
-+                should_initialize_filesystem: true,
++                initialization_token: Some(TEST_INITIALIZATION_TOKEN.to_owned()),
 +            }
 +        );
 +    }
 +
 +    #[test]
 +    fn block_storage_options_reject_initialization_without_ensure() {
-+        let storage = storage_with_driver_options(&[KATA_BLOCK_VOLUME_INITIALIZE_FS]);
++        let initialization_option =
++            format!("{KATA_BLOCK_VOLUME_INITIALIZE_FS}={TEST_INITIALIZATION_TOKEN}");
++        let storage = storage_with_driver_options(&[&initialization_option]);
 +
 +        let err = block_storage_driver_options(&storage).unwrap_err();
 +
 +        assert!(err.to_string().contains(KATA_BLOCK_VOLUME_ENSURE_FS));
++    }
++
++    #[test]
++    fn block_storage_options_reject_missing_or_invalid_initialization_tokens() {
++        for option in [
++            KATA_BLOCK_VOLUME_INITIALIZE_FS.to_owned(),
++            format!("{KATA_BLOCK_VOLUME_INITIALIZE_FS}=true"),
++            format!("{KATA_BLOCK_VOLUME_INITIALIZE_FS}=contains/slash"),
++        ] {
++            let storage = storage_with_driver_options(&[KATA_BLOCK_VOLUME_ENSURE_FS, &option]);
++            assert!(block_storage_driver_options(&storage).is_err());
++        }
 +    }
 +
 +    #[test]
@@ -273,13 +431,66 @@ index 133d48595..ae6337d3b 100644
 +        };
 +        let logger = Logger::root(slog::Discard, o!());
 +
-+        let err = ensure_persistent_block_filesystem(&logger, &storage, false)
++        let err = ensure_persistent_block_filesystem(&logger, &storage, None)
 +            .await
 +            .unwrap_err();
 +
 +        assert!(err
 +            .to_string()
 +            .contains("initialization was not explicitly authorized"));
++    }
++
++    #[tokio::test]
++    async fn persistent_initialization_marker_round_trips() {
++        let file = tempfile::NamedTempFile::new().unwrap();
++        file.as_file().set_len(4096).unwrap();
++        let source = file.path().to_str().unwrap();
++
++        assert_eq!(
++            persistent_block_initialization_marker(source)
++                .await
++                .unwrap(),
++            PersistentBlockInitializationMarker::Blank
++        );
++
++        record_persistent_block_initialization_token(source, TEST_INITIALIZATION_TOKEN)
++            .await
++            .unwrap();
++
++        assert_eq!(
++            persistent_block_initialization_marker(source)
++                .await
++                .unwrap(),
++            PersistentBlockInitializationMarker::Consumed(TEST_INITIALIZATION_TOKEN.to_owned())
++        );
++    }
++
++    #[tokio::test]
++    async fn persistent_storage_rejects_replayed_initialization_token() {
++        use std::io::{Seek, SeekFrom, Write};
++
++        let mut file = tempfile::NamedTempFile::new().unwrap();
++        file.as_file().set_len(4096).unwrap();
++        file.seek(SeekFrom::Start(EXT4_MAGIC_OFFSET)).unwrap();
++        file.write_all(&EXT4_MAGIC).unwrap();
++        file.flush().unwrap();
++        let source = file.path().to_str().unwrap();
++        record_persistent_block_initialization_token(source, TEST_INITIALIZATION_TOKEN)
++            .await
++            .unwrap();
++        let storage = Storage {
++            source: source.to_owned(),
++            fstype: "ext4".to_owned(),
++            ..Default::default()
++        };
++        let logger = Logger::root(slog::Discard, o!());
++
++        let err =
++            ensure_persistent_block_filesystem(&logger, &storage, Some(TEST_INITIALIZATION_TOKEN))
++                .await
++                .unwrap_err();
++
++        assert!(err.to_string().contains("consumed"));
 +    }
 +
 +    #[tokio::test]
@@ -299,39 +510,42 @@ index 133d48595..ae6337d3b 100644
 +        );
 +    }
 diff --git a/src/libs/kata-types/src/mount.rs b/src/libs/kata-types/src/mount.rs
-index 96aabe1ba..00c732345 100644
+index 96aabe1ba..d694d9393 100644
 --- a/src/libs/kata-types/src/mount.rs
 +++ b/src/libs/kata-types/src/mount.rs
-@@ -46,0 +47,12 @@ pub const KATA_BLOCK_VOLUME_CREATE_FS: &str = "create_filesystem";
+@@ -46,0 +47,13 @@ pub const KATA_BLOCK_VOLUME_CREATE_FS: &str = "create_filesystem";
 +/// Key to request idempotent filesystem preparation for persistent block storage.
 +///
 +/// Unlike [`KATA_BLOCK_VOLUME_CREATE_FS`], this option preserves an existing
 +/// filesystem and only creates one when the device is verifiably blank.
 +pub const KATA_BLOCK_VOLUME_ENSURE_FS: &str = "ensure_filesystem";
 +
-+/// Key to authorize filesystem creation for a newly provisioned persistent block volume.
++/// Key prefix to authorize filesystem creation for a newly provisioned persistent block volume.
 +///
 +/// This option is only valid together with [`KATA_BLOCK_VOLUME_ENSURE_FS`]. Callers must
-+/// emit it only while initializing a volume they authoritatively know has never held data.
++/// emit it as `initialize_filesystem=<unique provisioning token>` only while initializing a
++/// volume they authoritatively know has never held data.
 +pub const KATA_BLOCK_VOLUME_INITIALIZE_FS: &str = "initialize_filesystem";
 +
 diff --git a/src/runtime-rs/crates/runtimes/virt_container/src/container_manager/container.rs b/src/runtime-rs/crates/runtimes/virt_container/src/container_manager/container.rs
-index 1d272e2dd..4b4842eeb 100644
+index 1d272e2dd..5f73f042f 100644
 --- a/src/runtime-rs/crates/runtimes/virt_container/src/container_manager/container.rs
 +++ b/src/runtime-rs/crates/runtimes/virt_container/src/container_manager/container.rs
 @@ -7,0 +8 @@ use std::collections::HashMap;
 +use std::path::{Component, Path, PathBuf};
 @@ -24,0 +26 @@ use kata_types::{
 +    mount::{KATA_BLOCK_VOLUME_ENSURE_FS, KATA_BLOCK_VOLUME_INITIALIZE_FS},
-@@ -39,0 +42,7 @@ use crate::container_manager::{is_termination_signal, logger_with_process};
+@@ -39,0 +42,9 @@ use crate::container_manager::{is_termination_signal, logger_with_process};
 +const BLOCK_VOLUME_ANNOTATION_PREFIX: &str = "io.katacontainers.volume";
 +const BLOCK_VOLUME_MOUNT_PATH_SUFFIX: &str = "mount_path";
 +const BLOCK_VOLUME_FS_TYPE_SUFFIX: &str = "fs_type";
 +const BLOCK_VOLUME_FS_GROUP_SUFFIX: &str = "fs_group";
-+const BLOCK_VOLUME_INITIALIZE_FS_SUFFIX: &str = "initialize_fs";
++const BLOCK_VOLUME_INITIALIZATION_TOKEN_SUFFIX: &str = "initialization_token";
++const BLOCK_VOLUME_TOKEN_MIN_BYTES: usize = 16;
++const BLOCK_VOLUME_TOKEN_MAX_BYTES: usize = 128;
 +const SUPPORTED_BLOCK_VOLUME_FS_TYPE: &str = "ext4";
 +
-@@ -213,0 +223,12 @@ impl Container {
+@@ -213,0 +225,12 @@ impl Container {
 +        for (storage, mount) in build_block_automounts(&updated_annotations, &devices_agent)? {
 +            info!(
 +                self.logger,
@@ -344,7 +558,7 @@ index 1d272e2dd..4b4842eeb 100644
 +            spec.mounts_mut().get_or_insert_with(Vec::new).push(mount);
 +        }
 +
-@@ -867,0 +889,133 @@ fn get_disable_guest_selinux(toml_config: &TomlConfig) -> bool {
+@@ -867,0 +891,145 @@ fn get_disable_guest_selinux(toml_config: &TomlConfig) -> bool {
 +fn block_volume_annotation_key(device_name: &str, suffix: &str) -> String {
 +    format!("{BLOCK_VOLUME_ANNOTATION_PREFIX}.{device_name}.{suffix}")
 +}
@@ -389,6 +603,19 @@ index 1d272e2dd..4b4842eeb 100644
 +        ));
 +    }
 +    Ok(path.to_path_buf())
++}
++
++fn block_volume_initialization_token(value: &str) -> Result<&str> {
++    if !(BLOCK_VOLUME_TOKEN_MIN_BYTES..=BLOCK_VOLUME_TOKEN_MAX_BYTES).contains(&value.len())
++        || !value
++            .bytes()
++            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
++    {
++        return Err(anyhow!(
++            "block auto-mount initialization token must be 16-128 ASCII letters, digits, dots, dashes, or underscores"
++        ));
++    }
++    Ok(value)
 +}
 +
 +fn build_block_automounts(
@@ -443,18 +670,17 @@ index 1d272e2dd..4b4842eeb 100644
 +        let source_name = encode_block_volume_identifier(&device.id);
 +        let sandbox_mount_point =
 +            format!("/run/kata-containers/shared/volumes/block-volume-{source_name}");
-+        let initialize_fs_key =
-+            block_volume_annotation_key(&device_name, BLOCK_VOLUME_INITIALIZE_FS_SUFFIX);
++        let initialization_token_key =
++            block_volume_annotation_key(&device_name, BLOCK_VOLUME_INITIALIZATION_TOKEN_SUFFIX);
 +        let mut driver_options = vec![KATA_BLOCK_VOLUME_ENSURE_FS.to_owned()];
-+        match annotations.get(&initialize_fs_key).map(String::as_str) {
-+            None | Some("false") => {}
-+            Some("true") => driver_options.push(KATA_BLOCK_VOLUME_INITIALIZE_FS.to_owned()),
-+            Some(value) => {
-+                return Err(anyhow!(
-+                    "invalid block auto-mount initialize_fs {value} for {}",
++        if let Some(value) = annotations.get(&initialization_token_key) {
++            let token = block_volume_initialization_token(value).with_context(|| {
++                format!(
++                    "invalid block auto-mount initialization token for {}",
 +                    device.container_path
-+                ));
-+            }
++                )
++            })?;
++            driver_options.push(format!("{KATA_BLOCK_VOLUME_INITIALIZE_FS}={token}"));
 +        }
 +        let storage = agent::Storage {
 +            driver: device.field_type.clone(),
@@ -478,9 +704,9 @@ index 1d272e2dd..4b4842eeb 100644
 +    Ok(automounts)
 +}
 +
-@@ -911,0 +1066 @@ mod tests {
+@@ -911,0 +1080 @@ mod tests {
 +    use super::build_block_automounts;
-@@ -916,0 +1072,149 @@ mod tests {
+@@ -916,0 +1086,152 @@ mod tests {
 +    fn block_device(container_path: &str, id: &str) -> agent::types::Device {
 +        agent::types::Device {
 +            container_path: container_path.to_owned(),
@@ -565,6 +791,7 @@ index 1d272e2dd..4b4842eeb 100644
 +
 +    #[test]
 +    fn authorizes_persistent_initialization_only_when_requested() {
++        const TOKEN: &str = "provisioning-generation-0001";
 +        let devices = vec![block_device("/dev/tengri-home", "0000:00:04.0")];
 +        let annotations = HashMap::from([
 +            (
@@ -572,8 +799,8 @@ index 1d272e2dd..4b4842eeb 100644
 +                "/home/nanoagent".to_owned(),
 +            ),
 +            (
-+                "io.katacontainers.volume.tengri-home.initialize_fs".to_owned(),
-+                "true".to_owned(),
++                "io.katacontainers.volume.tengri-home.initialization_token".to_owned(),
++                TOKEN.to_owned(),
 +            ),
 +        ]);
 +
@@ -583,21 +810,23 @@ index 1d272e2dd..4b4842eeb 100644
 +            automounts[0].0.driver_options,
 +            vec![
 +                KATA_BLOCK_VOLUME_ENSURE_FS.to_owned(),
-+                KATA_BLOCK_VOLUME_INITIALIZE_FS.to_owned(),
++                format!("{KATA_BLOCK_VOLUME_INITIALIZE_FS}={TOKEN}"),
 +            ]
 +        );
 +
-+        let invalid_annotations = HashMap::from([
-+            (
-+                "io.katacontainers.volume.tengri-home.mount_path".to_owned(),
-+                "/home/nanoagent".to_owned(),
-+            ),
-+            (
-+                "io.katacontainers.volume.tengri-home.initialize_fs".to_owned(),
-+                "yes".to_owned(),
-+            ),
-+        ]);
-+        assert!(build_block_automounts(&invalid_annotations, &devices).is_err());
++        for invalid_token in ["true", "contains/slash"] {
++            let invalid_annotations = HashMap::from([
++                (
++                    "io.katacontainers.volume.tengri-home.mount_path".to_owned(),
++                    "/home/nanoagent".to_owned(),
++                ),
++                (
++                    "io.katacontainers.volume.tengri-home.initialization_token".to_owned(),
++                    invalid_token.to_owned(),
++                ),
++            ]);
++            assert!(build_block_automounts(&invalid_annotations, &devices).is_err());
++        }
 +    }
 +
 +    #[test]

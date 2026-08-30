@@ -46,8 +46,9 @@ registry. It does not alter a node automatically.
 Persistent devices use a sandbox-stable mount keyed by the guest device source, so multiple containers sharing one
 Pod reuse the existing mount instead of checking a mounted filesystem. Device paths are escaped injectively before
 they become annotation identifiers. The agent preserves existing ext4 filesystems and refuses to format a device
-whose filesystem signature is absent unless the controller explicitly sets `initialize_fs=true` for an
-authoritatively new volume; normal restart Pods must omit that one-time authorization. This avoids both unsafe
+whose filesystem signature is absent unless the controller supplies a unique `initialization_token` for an
+authoritatively new volume. Successful initialization records the consumed token in ext4's reserved 1024-byte boot
+area; replayed tokens and occupied boot areas fail closed. Normal restart Pods must omit the token. This avoids unsafe
 reformatting and a synchronous full-volume scan during container creation.
 
 Reproduce the patched components from an exact clean Kata checkout:
