@@ -5,6 +5,9 @@ metadata:
 spec:
   replicas: 3
   template:
+    metadata:
+      annotations:
+        gitops.proompteng.ai/config-revision: controller-resource-health-persist-v1
     spec:
       containers:
         - name: argocd-application-controller

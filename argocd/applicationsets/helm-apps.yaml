@@ -21,7 +21,7 @@ spec:
                   namespace: kargo
                   repoUrl: ghcr.io/akuity/kargo-charts
                   chart: kargo
-                  version: 1.11.0
+                  version: 1.11.2
                   releaseName: kargo
                   enabled: "true"
                   managedNamespaceMetadata:
