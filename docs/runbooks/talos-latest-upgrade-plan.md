@@ -426,10 +426,10 @@ Before activating Firecracker, verify the effective Talos CRI configuration on t
 CRI_CUSTOMIZATION="$(
   talosctl --nodes "$TALOS_NODE" --endpoints "$TALOS_NODE" read /etc/cri/conf.d/20-customization.part
 )"
-printf '%s\n' "$CRI_CUSTOMIZATION" | rg -F 'discard_unpacked_layers = false'
-printf '%s\n' "$CRI_CUSTOMIZATION" | rg -F 'use_local_image_pull = true'
-printf '%s\n' "$CRI_CUSTOMIZATION" | rg -F '[plugins."io.containerd.cri.v1.images".runtime_platforms.kata-fc]'
-printf '%s\n' "$CRI_CUSTOMIZATION" | rg -F 'snapshotter = "blockfile"'
+printf '%s\n' "$CRI_CUSTOMIZATION" \
+  | rg -U -F $'[plugins."io.containerd.cri.v1.images"]\n  discard_unpacked_layers = false\n  use_local_image_pull = true'
+printf '%s\n' "$CRI_CUSTOMIZATION" \
+  | rg -U -F $'[plugins."io.containerd.cri.v1.images".runtime_platforms.kata-fc]\n  snapshotter = "blockfile"'
 talosctl --nodes "$TALOS_NODE" --endpoints "$TALOS_NODE" get kubeletconfig -o yaml \
   | rg 'RuntimeClassInImageCriApi: true'
 talosctl --nodes "$TALOS_NODE" --endpoints "$TALOS_NODE" logs cri --tail 1000 \

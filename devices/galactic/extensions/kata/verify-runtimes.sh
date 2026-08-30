@@ -67,7 +67,10 @@ permanent_canary_daemonsets="$(
     | rg '/(microvm-agent|nanoagent)-(qemu|clh|fc|dragonball)$' \
     | sed "s#^#$NAMESPACE/#" || true
 )"
-if kubectl --context "$KUBE_CONTEXT" get namespace "$RETIRED_NAMESPACE" >/dev/null 2>&1; then
+retired_namespace="$(
+  kubectl --context "$KUBE_CONTEXT" get namespace "$RETIRED_NAMESPACE" --ignore-not-found -o name
+)"
+if [[ -n "$retired_namespace" ]]; then
   kubectl --context "$KUBE_CONTEXT" -n "$RETIRED_NAMESPACE" get daemonset -o yaml \
     >"$evidence_dir/retired-daemonsets.yaml"
   retired_canary_daemonsets="$(
