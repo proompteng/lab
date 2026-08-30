@@ -1,5 +1,5 @@
 diff --git a/src/agent/src/storage/block_handler.rs b/src/agent/src/storage/block_handler.rs
-index 133d485952374ee2bb74bcad0fb782fef2f89048..be6ef96d8b6340a77416bcbab6bb2bbb81598fdf 100644
+index 133d485952374ee2bb74bcad0fb782fef2f89048..81e049ab6694d03a1875a0c75807961673990289 100644
 --- a/src/agent/src/storage/block_handler.rs
 +++ b/src/agent/src/storage/block_handler.rs
 @@ -19 +19 @@ use kata_types::device::{
@@ -10,7 +10,7 @@ index 133d485952374ee2bb74bcad0fb782fef2f89048..be6ef96d8b6340a77416bcbab6bb2bbb
 @@ -40,0 +42 @@ const EPHEMERAL_ENCRYPTION_DRIVER_OPTION: &str = "encryption_key=ephemeral";
 +const E2FSCK: &str = "e2fsck";
 @@ -41,0 +44,3 @@ const MKFS_EXT4: &str = "mkfs.ext4";
-+const BLANK_DEVICE_PROBE_BYTES: usize = 1024 * 1024;
++const BLANK_DEVICE_SCAN_BUFFER_BYTES: usize = 1024 * 1024;
 +const EXT4_MAGIC_OFFSET: u64 = 1024 + 56;
 +const EXT4_MAGIC: [u8; 2] = [0x53, 0xef];
 @@ -43,0 +49 @@ const BLOCK_EMPTYDIR_EXT4_MKFS_OPTS: [&str; 8] =
@@ -35,7 +35,7 @@ index 133d485952374ee2bb74bcad0fb782fef2f89048..be6ef96d8b6340a77416bcbab6bb2bbb
 +    }
 @@ -108,0 +130 @@ fn block_storage_driver_options(storage: &Storage) -> Result<BlockStorageDriverO
 +        should_ensure_filesystem,
-@@ -128,0 +151,119 @@ async fn ensure_block_filesystem(logger: &Logger, storage: &Storage) -> Result<(
+@@ -128,0 +151,123 @@ async fn ensure_block_filesystem(logger: &Logger, storage: &Storage) -> Result<(
 +async fn run_block_command(
 +    program: &str,
 +    args: &[&str],
@@ -68,29 +68,33 @@ index 133d485952374ee2bb74bcad0fb782fef2f89048..be6ef96d8b6340a77416bcbab6bb2bbb
 +    Ok(magic == EXT4_MAGIC)
 +}
 +
-+async fn block_device_prefix_is_blank(source: &str) -> Result<bool> {
++async fn block_device_is_blank(source: &str) -> Result<bool> {
 +    let mut device = tokio::fs::File::open(source)
 +        .await
 +        .with_context(|| format!("open block device {source}"))?;
-+    let mut prefix = vec![0_u8; BLANK_DEVICE_PROBE_BYTES];
-+    let mut bytes_read = 0;
++    let mut buffer = vec![0_u8; BLANK_DEVICE_SCAN_BUFFER_BYTES];
++    let mut total_bytes_read = 0_u64;
 +
-+    while bytes_read < prefix.len() {
++    loop {
 +        let count = device
-+            .read(&mut prefix[bytes_read..])
++            .read(&mut buffer)
 +            .await
 +            .with_context(|| format!("read block device {source}"))?;
 +        if count == 0 {
 +            break;
 +        }
-+        bytes_read += count;
++        total_bytes_read += count as u64;
++
++        if buffer[..count].iter().any(|byte| *byte != 0) {
++            return Ok(false);
++        }
 +    }
 +
-+    if bytes_read == 0 {
++    if total_bytes_read == 0 {
 +        return Err(anyhow!("block device {source} returned no data"));
 +    }
 +
-+    Ok(prefix[..bytes_read].iter().all(|byte| *byte == 0))
++    Ok(true)
 +}
 +
 +async fn check_ext4_filesystem(source: &str) -> Result<()> {
@@ -141,7 +145,7 @@ index 133d485952374ee2bb74bcad0fb782fef2f89048..be6ef96d8b6340a77416bcbab6bb2bbb
 +        return check_ext4_filesystem(&storage.source).await;
 +    }
 +
-+    if !block_device_prefix_is_blank(&storage.source).await? {
++    if !block_device_is_blank(&storage.source).await? {
 +        return Err(anyhow!(
 +            "refusing to format {}: ext4 magic is absent and device is not blank",
 +            storage.source
@@ -155,7 +159,7 @@ index 133d485952374ee2bb74bcad0fb782fef2f89048..be6ef96d8b6340a77416bcbab6bb2bbb
 +    create_persistent_ext4_filesystem(&storage.source).await
 +}
 +
-@@ -133,17 +274,8 @@ async fn ensure_ext4_filesystem(logger: &Logger, source: &str) -> Result<()> {
+@@ -133,17 +278,8 @@ async fn ensure_ext4_filesystem(logger: &Logger, source: &str) -> Result<()> {
 -    let output = {
 -        // Keep the agent SIGCHLD handler from reaping this child before
 -        // tokio::process observes it.
@@ -181,13 +185,13 @@ index 133d485952374ee2bb74bcad0fb782fef2f89048..be6ef96d8b6340a77416bcbab6bb2bbb
 +    let mut args = vec!["-F"];
 +    args.extend(BLOCK_EMPTYDIR_EXT4_MKFS_OPTS);
 +    let output = run_block_command(MKFS_EXT4, &args, source).await?;
-@@ -186,0 +319 @@ mod tests {
+@@ -186,0 +323 @@ mod tests {
 +                should_ensure_filesystem: false,
-@@ -201,0 +335 @@ mod tests {
+@@ -201,0 +339 @@ mod tests {
 +                should_ensure_filesystem: false,
-@@ -219,0 +354 @@ mod tests {
+@@ -219,0 +358 @@ mod tests {
 +                should_ensure_filesystem: false,
-@@ -231,0 +367,88 @@ mod tests {
+@@ -231,0 +371,91 @@ mod tests {
 +
 +    #[test]
 +    fn block_storage_options_allow_persistent_filesystem_ensure() {
@@ -230,30 +234,33 @@ index 133d485952374ee2bb74bcad0fb782fef2f89048..be6ef96d8b6340a77416bcbab6bb2bbb
 +    }
 +
 +    #[tokio::test]
-+    async fn blank_device_probe_accepts_zero_filled_prefix() {
++    async fn blank_device_scan_accepts_zero_filled_device() {
 +        let file = tempfile::NamedTempFile::new().unwrap();
 +        file.as_file()
-+            .set_len(BLANK_DEVICE_PROBE_BYTES as u64)
++            .set_len((BLANK_DEVICE_SCAN_BUFFER_BYTES * 2 + 4096) as u64)
 +            .unwrap();
 +
-+        assert!(block_device_prefix_is_blank(file.path().to_str().unwrap())
++        assert!(block_device_is_blank(file.path().to_str().unwrap())
 +            .await
 +            .unwrap());
 +    }
 +
 +    #[tokio::test]
-+    async fn blank_device_probe_rejects_nonzero_prefix() {
++    async fn blank_device_scan_rejects_nonzero_data() {
 +        use std::io::{Seek, SeekFrom, Write};
 +
 +        let mut file = tempfile::NamedTempFile::new().unwrap();
 +        file.as_file()
-+            .set_len(BLANK_DEVICE_PROBE_BYTES as u64)
++            .set_len((BLANK_DEVICE_SCAN_BUFFER_BYTES * 2 + 4096) as u64)
 +            .unwrap();
-+        file.seek(SeekFrom::Start(4096)).unwrap();
++        file.seek(SeekFrom::Start(
++            (BLANK_DEVICE_SCAN_BUFFER_BYTES + 4096) as u64,
++        ))
++        .unwrap();
 +        file.write_all(&[1]).unwrap();
 +        file.flush().unwrap();
 +
-+        assert!(!block_device_prefix_is_blank(file.path().to_str().unwrap())
++        assert!(!block_device_is_blank(file.path().to_str().unwrap())
 +            .await
 +            .unwrap());
 +    }
@@ -264,7 +271,7 @@ index 133d485952374ee2bb74bcad0fb782fef2f89048..be6ef96d8b6340a77416bcbab6bb2bbb
 +
 +        let mut file = tempfile::NamedTempFile::new().unwrap();
 +        file.as_file()
-+            .set_len(BLANK_DEVICE_PROBE_BYTES as u64)
++            .set_len(BLANK_DEVICE_SCAN_BUFFER_BYTES as u64)
 +            .unwrap();
 +        file.seek(SeekFrom::Start(EXT4_MAGIC_OFFSET)).unwrap();
 +        file.write_all(&EXT4_MAGIC).unwrap();

@@ -13,8 +13,10 @@ if [[ $# -ne 2 ]]; then
   exit 2
 fi
 
-readonly script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-readonly source_dir="$(cd -- "$1" && pwd -P)"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly script_dir
+source_dir="$(cd -- "$1" && pwd -P)"
+readonly source_dir
 readonly requested_output_dir="$2"
 readonly patch_file="$script_dir/patches/0001-persistent-block-automount.patch"
 
@@ -45,7 +47,8 @@ make -C "$source_dir/src/agent" src/version.rs
 )
 
 install -d "$requested_output_dir"
-readonly output_dir="$(cd -- "$requested_output_dir" && pwd -P)"
+output_dir="$(cd -- "$requested_output_dir" && pwd -P)"
+readonly output_dir
 readonly build_dir="$source_dir/tools/packaging/kata-deploy/local-build/build"
 
 make -C "$source_dir/tools/packaging/kata-deploy/local-build" agent-tarball
