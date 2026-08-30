@@ -1678,6 +1678,23 @@ test('renders truthful booting, sleeping, and failed lifecycle states', async ({
   ).toEqual([])
 })
 
+test('stops a failed agent without deleting its persistent workspace', async ({ page }) => {
+  const failedAgent = {
+    ...readyAgent,
+    phase: 'failed',
+    message: 'No proven Firecracker node can schedule this agent.',
+  }
+  const mock = await mockTengri(page, { agent: failedAgent })
+  await page.goto('/')
+
+  const failed = page.getByRole('dialog', { name: 'Agent could not start' })
+  await failed.getByRole('button', { name: 'Sleep and Keep Workspace' }).click()
+
+  await expect.poll(() => mock.actions.some((action) => action.action === 'sleep-agent')).toBe(true)
+  expect(mock.actions.some((action) => action.action === 'delete-agent')).toBe(false)
+  await expect(page.getByRole('dialog', { name: 'Tengri is sleeping' })).toBeVisible()
+})
+
 test('shows native-feeling unauthenticated and create-agent states', async ({ page }) => {
   await mockTengri(page, { authenticated: false })
   await page.goto('/')

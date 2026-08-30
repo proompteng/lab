@@ -209,7 +209,9 @@ function DesktopGate({
     )
   }
   if (gate.kind === 'sleeping') return <SleepingAgentWindow agent={gate.agent} onChanged={onRefresh} />
-  if (gate.kind === 'failed') return <FailedAgentWindow agent={gate.agent} onDeleted={onAgentDeleted} />
+  if (gate.kind === 'failed') {
+    return <FailedAgentWindow agent={gate.agent} onChanged={onRefresh} onDeleted={onAgentDeleted} />
+  }
   if (gate.kind === 'unknown') {
     return (
       <ActionWindow
@@ -373,13 +375,35 @@ function SleepingAgentWindow({ agent, onChanged }: { agent: TengriAgent; onChang
   )
 }
 
-function FailedAgentWindow({ agent, onDeleted }: { agent: TengriAgent; onDeleted: (agent: TengriAgent) => void }) {
-  const [busy, setBusy] = useState(false)
+function FailedAgentWindow({
+  agent,
+  onChanged,
+  onDeleted,
+}: {
+  agent: TengriAgent
+  onChanged: () => Promise<void>
+  onDeleted: (agent: TengriAgent) => void
+}) {
+  const [deleteBusy, setDeleteBusy] = useState(false)
   const [error, setError] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [sleepBusy, setSleepBusy] = useState(false)
+
+  async function preserveWorkspace() {
+    setSleepBusy(true)
+    setError('')
+    try {
+      await runTengriAction<TengriAgent>({ action: 'sleep-agent', agentId: agent.id })
+      await onChanged()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'The failed agent could not be stopped')
+    } finally {
+      setSleepBusy(false)
+    }
+  }
 
   async function deleteAgent() {
-    setBusy(true)
+    setDeleteBusy(true)
     setError('')
     try {
       await runTengriAction<null>({ action: 'delete-agent', agentId: agent.id })
@@ -389,7 +413,7 @@ function FailedAgentWindow({ agent, onDeleted }: { agent: TengriAgent; onDeleted
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'The failed agent could not be deleted')
     } finally {
-      setBusy(false)
+      setDeleteBusy(false)
     }
   }
 
@@ -401,15 +425,25 @@ function FailedAgentWindow({ agent, onDeleted }: { agent: TengriAgent; onDeleted
           title="Agent could not start"
           detail={agent.message || agent.conditions.at(-1)?.message || 'Tengri reported a guest startup failure.'}
           error={error}
-          actionIcon={<Trash2 aria-hidden="true" className="h-4 w-4" />}
-          actionBusy={busy}
-          actionLabel="Delete Failed Agent"
-          danger
-          onAction={() => setConfirmOpen(true)}
+          actionIcon={<Moon aria-hidden="true" className="h-4 w-4" />}
+          actionBusy={sleepBusy}
+          actionLabel="Sleep and Keep Workspace"
+          onAction={() => void preserveWorkspace()}
+          secondaryAction={
+            <button
+              type="button"
+              disabled={sleepBusy || deleteBusy}
+              onClick={() => setConfirmOpen(true)}
+              className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-4 py-2.5 text-sm font-semibold text-white outline-none transition hover:bg-red-600 focus-visible:ring-2 focus-visible:ring-red-200 disabled:opacity-40"
+            >
+              <Trash2 aria-hidden="true" className="h-4 w-4" />
+              Delete Failed Agent
+            </button>
+          }
         />
       </div>
       <ConfirmationDialog
-        busy={busy}
+        busy={deleteBusy}
         description="This removes the failed microVM and its persistent workspace so a clean agent can be created. This cannot be undone."
         error={error}
         onCancel={() => setConfirmOpen(false)}
@@ -439,6 +473,7 @@ function ActionWindow({
   error = '',
   icon,
   onAction,
+  secondaryAction,
   title,
 }: WindowMessageProps & {
   actionBusy?: boolean
@@ -447,25 +482,29 @@ function ActionWindow({
   danger?: boolean
   error?: string
   onAction: () => void
+  secondaryAction?: ReactNode
 }) {
   return (
     <LifecycleWindow title={title} interactive>
       <WindowHero icon={icon} title={title} detail={detail} />
       {error ? <InlineError message={error} /> : null}
-      <button
-        type="button"
-        aria-busy={actionBusy}
-        disabled={actionBusy}
-        onClick={onAction}
-        className={`mt-6 inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white outline-none transition focus-visible:ring-2 disabled:opacity-40 ${danger ? 'bg-red-700 hover:bg-red-600 focus-visible:ring-red-200' : 'bg-[#1769d2] hover:bg-[#1d6fd8] focus-visible:ring-[#9bc8ff]'}`}
-      >
-        {actionBusy ? (
-          <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" />
-        ) : (
-          actionIcon || <RotateCw aria-hidden="true" className="h-4 w-4" />
-        )}
-        {actionLabel}
-      </button>
+      <div className="mt-6 flex flex-wrap gap-3">
+        <button
+          type="button"
+          aria-busy={actionBusy}
+          disabled={actionBusy}
+          onClick={onAction}
+          className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white outline-none transition focus-visible:ring-2 disabled:opacity-40 ${danger ? 'bg-red-700 hover:bg-red-600 focus-visible:ring-red-200' : 'bg-[#1769d2] hover:bg-[#1d6fd8] focus-visible:ring-[#9bc8ff]'}`}
+        >
+          {actionBusy ? (
+            <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" />
+          ) : (
+            actionIcon || <RotateCw aria-hidden="true" className="h-4 w-4" />
+          )}
+          {actionLabel}
+        </button>
+        {secondaryAction}
+      </div>
     </LifecycleWindow>
   )
 }
