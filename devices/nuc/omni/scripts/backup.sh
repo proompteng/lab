@@ -12,6 +12,7 @@ for command in sha256sum sudo tar; do
 done
 
 load_omni_env
+ensure_cluster_etcd_backup_directory
 
 [[ "${OMNI_DIR}" == /* ]] || die 'OMNI_DIR must be absolute'
 [[ "${OMNI_DATA_ROOT}" == /* ]] || die 'OMNI_DATA_ROOT must be absolute'
