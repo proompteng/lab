@@ -200,10 +200,7 @@ jobs:
             probe_error="$(mktemp)"
             trap 'rm -f "${probe_error}"' EXIT
             if kargo_digest="$(
-              docker buildx imagetools inspect \
-                --format '{{json .Manifest}}' \
-                "${kargo_reference}" 2>"${probe_error}" |
-                jq -er '.digest' 2>>"${probe_error}"
+              crane digest "${kargo_reference}" 2>"${probe_error}"
             )"; then
               [[ "${kargo_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
               [[ "${kargo_digest}" == "${digest}" ]]
@@ -215,10 +212,7 @@ jobs:
               fi
               docker buildx imagetools create --tag "${kargo_reference}" "${tag}"
               kargo_digest="$(
-                docker buildx imagetools inspect \
-                  --format '{{json .Manifest}}' \
-                  "${kargo_reference}" |
-                  jq -er '.digest'
+                crane digest "${kargo_reference}"
               )"
               [[ "${kargo_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
               [[ "${kargo_digest}" == "${digest}" ]]
