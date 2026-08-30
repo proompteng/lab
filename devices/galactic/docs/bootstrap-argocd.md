@@ -30,19 +30,21 @@ This is typically caused by `kubectl apply` trying to store the full object in t
 Recommended (server-side apply, avoids last-applied annotation):
 
 ```bash
-kubectl apply --server-side --force-conflicts -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.4.6/manifests/crds/applicationset-crd.yaml
+kubectl --context galactic-lan apply --server-side --force-conflicts \
+  -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.2/manifests/crds/applicationset-crd.yaml
 ```
 
 Fallback (create-only, avoids last-applied annotation):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/argoproj/argo-cd/v3.4.6/manifests/crds/applicationset-crd.yaml | kubectl create -f -
+curl -fsSL https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.2/manifests/crds/applicationset-crd.yaml \
+  | kubectl --context galactic-lan create -f -
 ```
 
 Verify:
 
 ```bash
-kubectl get crd applicationsets.argoproj.io
+kubectl --context galactic-lan get crd applicationsets.argoproj.io
 ```
 
 ## Install Traefik CRDs (required by this repo's Argo CD manifests)
@@ -101,9 +103,9 @@ argocd admin initial-password -n argocd
 
 ## Next steps
 
-1. Register the repo and create the root Application:
+1. Create and verify the one-time root Application handoff:
    - `argocd/applicationsets/README.md`
-1. Install stage-based ApplicationSets once the prerequisites (CRDs, MetalLB, etc.) are in place:
-   - `argocd/applicationsets/bootstrap.yaml`
+1. Let the root Application create the staged ApplicationSets; do not apply `bootstrap.yaml`, `platform.yaml`, or
+   `product.yaml` directly.
 1. If you reference Tailscale-only hostnames (for example `registry.ide-newton.ts.net`) in Kubernetes image references,
    verify the Omni-owned node-level Tailscale configuration first: `devices/galactic/docs/tailscale.md`.

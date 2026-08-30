@@ -55,5 +55,16 @@ curl -fsSL https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.2/manifests/c
 
 Do not use either command as routine reconciliation after `argocd/root.yaml` is healthy.
 
+After the Argo CD control plane is ready, perform the one-time handoff to the repository root Application:
+
+```bash
+kubectl --context galactic-lan -n argocd apply -f argocd/root.yaml
+kubectl --context galactic-lan -n argocd get application root
+kubectl --context galactic-lan -n argocd get applicationsets
+```
+
+The repository is public, so this root handoff does not require a manually registered repository credential. Once the
+`root` Application is healthy, it owns every resource listed above; do not apply the child ApplicationSets directly.
+
 The former Harvester preparation command and manual child-ApplicationSet workflow were removed from this runbook. Their
 retained files are tracked for evidence-gated retirement in `docs/repository-cleanup-todo.md`.
