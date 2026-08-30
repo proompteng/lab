@@ -938,3 +938,17 @@ index 992b14ca4..aa58b2738 100755
 +		--network=host \
 @@ -28,0 +30 @@ docker run --rm -i -v "${repo_root_dir}:${repo_root_dir}" \
 +	--network=host \
+diff --git a/tools/packaging/static-build/shim-v2/build.sh b/tools/packaging/static-build/shim-v2/build.sh
+index daa0b8000..2898d462b 100755
+--- a/tools/packaging/static-build/shim-v2/build.sh
++++ b/tools/packaging/static-build/shim-v2/build.sh
+@@ -104,0 +105 @@ docker pull "${container_image}" || \
++		--network=host \
+@@ -118,0 +120 @@ case "${RUNTIME_CHOICE}" in
++			--network=host \
+@@ -125,0 +128 @@ case "${RUNTIME_CHOICE}" in
++			--network=host \
+@@ -144,0 +148 @@ case "${RUNTIME_CHOICE}" in
++			--network=host \
+@@ -151,0 +156 @@ case "${RUNTIME_CHOICE}" in
++			--network=host \
