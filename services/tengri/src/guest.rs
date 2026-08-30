@@ -507,21 +507,18 @@ impl GuestClient {
     pub async fn watch_files(
         &self,
         path: &str,
-        after: u64,
+        after: Option<u64>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<FileEvent, GuestError>> + Send>>, GuestError> {
         self.ndjson(self.file_watch_request(path, after)).await
     }
 
-    fn file_watch_request(&self, path: &str, after: u64) -> reqwest::RequestBuilder {
+    fn file_watch_request(&self, path: &str, after: Option<u64>) -> reqwest::RequestBuilder {
         let request = self
             .request(Method::GET, "/v1/files/watch")
             .query(&[("path", path)]);
-        // The public gRPC contract uses zero for an initial subscription. Nanoagent
-        // distinguishes an omitted cursor (tail now) from an explicit zero (replay).
-        if after == 0 {
-            request
-        } else {
-            request.query(&[("after", after)])
+        match after {
+            Some(after) => request.query(&[("after", after)]),
+            None => request,
         }
     }
 
@@ -1392,7 +1389,7 @@ mod tests {
     }
 
     #[test]
-    fn file_watch_omits_zero_cursor_and_preserves_resume_cursors() {
+    fn file_watch_preserves_optional_cursor_presence() {
         let client = GuestClient {
             http: reqwest::Client::new(),
             base_url: "http://127.0.0.1:8080".to_owned(),
@@ -1401,11 +1398,15 @@ mod tests {
             terminal_identities: TerminalIdentityRegistry::default(),
         };
         let initial = client
-            .file_watch_request("/workspace", 0)
+            .file_watch_request("/workspace", None)
             .build()
             .expect("initial file watch request");
+        let from_zero = client
+            .file_watch_request("/workspace", Some(0))
+            .build()
+            .expect("zero-cursor file watch request");
         let resumed = client
-            .file_watch_request("/workspace", 42)
+            .file_watch_request("/workspace", Some(42))
             .build()
             .expect("resumed file watch request");
 
@@ -1415,6 +1416,11 @@ mod tests {
             Some("/workspace")
         );
         assert!(!initial_query.contains_key("after"));
+        let zero_query = from_zero.url().query_pairs().collect::<HashMap<_, _>>();
+        assert_eq!(
+            zero_query.get("after").map(|value| value.as_ref()),
+            Some("0")
+        );
         let resumed_query = resumed.url().query_pairs().collect::<HashMap<_, _>>();
         assert_eq!(
             resumed_query.get("path").map(|value| value.as_ref()),

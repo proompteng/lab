@@ -157,6 +157,18 @@ export function CodeEditor({
     [patchTab],
   )
 
+  const markUnverified = useCallback(
+    (targetPath: string, error: string) => {
+      conflictedPathsRef.current.add(targetPath)
+      writeControllersRef.current.get(targetPath)?.abort()
+      const timer = saveTimersRef.current.get(targetPath)
+      if (timer) window.clearTimeout(timer)
+      saveTimersRef.current.delete(targetPath)
+      patchTab(targetPath, { state: 'error', error })
+    },
+    [patchTab],
+  )
+
   const clearPendingRename = useCallback((targetPath: string) => {
     const timer = pendingRenameTimersRef.current.get(targetPath)
     if (timer) window.clearTimeout(timer)
@@ -659,7 +671,7 @@ export function CodeEditor({
           )
           if (!failure) return
           if (failure.conflict) markConflict(targetPath, error)
-          else patchTab(targetPath, failure.patch)
+          else markUnverified(targetPath, error)
         })
     }
     const handleMessage = (directory: string, message: MessageEvent<string>) => {
@@ -717,7 +729,7 @@ export function CodeEditor({
     return () => {
       for (const source of sources) source.close()
     }
-  }, [deferUnpairedRename, loadPath, markConflict, migratePath, ownerAgentId, patchTab, watchDirectoryKey])
+  }, [deferUnpairedRename, loadPath, markConflict, markUnverified, migratePath, ownerAgentId, watchDirectoryKey])
 
   const hasDirtyTabs = tabs.some((tab) => tab.dirty)
   useEffect(() => {

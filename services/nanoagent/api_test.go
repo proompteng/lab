@@ -485,12 +485,18 @@ func TestWatchFilesRoutesPairedRenameThroughSymlinkedParent(t *testing.T) {
 		err   error
 	}, 1)
 	go func() {
-		var event fileEvent
-		decodeErr := json.NewDecoder(response.Body).Decode(&event)
-		result <- struct {
-			event fileEvent
-			err   error
-		}{event: event, err: decodeErr}
+		decoder := json.NewDecoder(response.Body)
+		for {
+			var event fileEvent
+			decodeErr := decoder.Decode(&event)
+			if decodeErr != nil || event.Kind != "reset" {
+				result <- struct {
+					event fileEvent
+					err   error
+				}{event: event, err: decodeErr}
+				return
+			}
+		}
 	}()
 	select {
 	case decoded := <-result:
@@ -536,29 +542,100 @@ func TestWatchFilesWithoutCursorStartsAfterHistoricalEvents(t *testing.T) {
 		t.Fatalf("watch status = %d body = %s", response.StatusCode, body)
 	}
 
-	server.fileWatcher.publish(fileEvent{Kind: "changed", Path: "/current.txt"})
 	result := make(chan struct {
-		event fileEvent
-		err   error
+		events []fileEvent
+		err    error
 	}, 1)
 	go func() {
-		var event fileEvent
-		decodeErr := json.NewDecoder(response.Body).Decode(&event)
+		decoder := json.NewDecoder(response.Body)
+		events := make([]fileEvent, 0, 2)
+		for range 2 {
+			var event fileEvent
+			if decodeErr := decoder.Decode(&event); decodeErr != nil {
+				result <- struct {
+					events []fileEvent
+					err    error
+				}{events: events, err: decodeErr}
+				return
+			}
+			events = append(events, event)
+		}
 		result <- struct {
-			event fileEvent
-			err   error
-		}{event: event, err: decodeErr}
+			events []fileEvent
+			err    error
+		}{events: events}
 	}()
+	server.fileWatcher.publish(fileEvent{Kind: "changed", Path: "/current.txt"})
 	select {
 	case decoded := <-result:
 		if decoded.err != nil {
 			t.Fatalf("decode watch event: %v", decoded.err)
 		}
-		if decoded.event.Sequence != 2 || decoded.event.Path != "/current.txt" {
-			t.Fatalf("first watch event = %#v, want only the post-subscription event", decoded.event)
+		if len(decoded.events) != 2 {
+			t.Fatalf("watch events = %#v, want snapshot and current event", decoded.events)
+		}
+		if snapshot := decoded.events[0]; snapshot.Sequence != 1 || snapshot.Kind != "reset" || snapshot.Path != "/" {
+			t.Fatalf("watch snapshot = %#v, want starting cursor 1", snapshot)
+		}
+		if current := decoded.events[1]; current.Sequence != 2 || current.Path != "/current.txt" {
+			t.Fatalf("current watch event = %#v, want post-subscription event", current)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for post-subscription file event")
+		t.Fatal("timed out waiting for snapshot and post-subscription file event")
+	}
+}
+
+func TestFileWatcherSubscribeCurrentEmitsZeroStartingCursor(t *testing.T) {
+	t.Parallel()
+	server := testAPIServer(t)
+	id, events, err := server.fileWatcher.subscribeCurrent("/", server.workspace.realRoot)
+	if err != nil {
+		t.Fatalf("subscribe from current sequence: %v", err)
+	}
+	defer server.fileWatcher.unsubscribe(id)
+
+	select {
+	case event := <-events:
+		if event.Sequence != 0 || event.Kind != "reset" || event.Path != "/" {
+			t.Fatalf("initial watch snapshot = %#v, want zero starting cursor", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for initial watch snapshot")
+	}
+}
+
+func TestWatchFilesExplicitZeroReplaysHistoricalEvents(t *testing.T) {
+	t.Parallel()
+	server := testAPIServer(t)
+	server.fileWatcher.publish(fileEvent{Kind: "changed", Path: "/historical.txt"})
+
+	streamServer := httptest.NewServer(server.authenticatedRoutes())
+	defer streamServer.Close()
+	request, err := http.NewRequest(
+		http.MethodGet,
+		streamServer.URL+"/v1/files/watch?path=%2F&after=0",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("create watch request: %v", err)
+	}
+	request.Header.Set("Authorization", "Bearer test-bootstrap-token")
+	response, err := streamServer.Client().Do(request)
+	if err != nil {
+		t.Fatalf("watch files: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(response.Body)
+		t.Fatalf("watch status = %d body = %s", response.StatusCode, body)
+	}
+
+	var event fileEvent
+	if err := json.NewDecoder(response.Body).Decode(&event); err != nil {
+		t.Fatalf("decode replay event: %v", err)
+	}
+	if event.Sequence != 1 || event.Kind != "changed" || event.Path != "/historical.txt" {
+		t.Fatalf("replay event = %#v, want historical event at sequence 1", event)
 	}
 }
 
