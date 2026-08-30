@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- deployment.yaml
+- service.yaml
+- ingressroute.yaml
+- postgres-cluster.yaml
+- secret.yaml
+images:
+- name: registry.ide-newton.ts.net/lab/app
+  digest: sha256:2ff35a9e4e2d442da1d2585d6603c4a862e93aaa6ba36caeef0df05b786f70f3

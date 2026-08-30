@@ -1,0 +1,160 @@
+import { Effect, Result, Schema, Semaphore } from 'effect'
+
+import type { ApplicationPlanFor, AutonomousCycleDriverStartup } from '../app'
+import type { BrokerReadShape } from '../broker/alpaca'
+import { BrokerMutationError } from '../broker/alpaca-mutations'
+import { CycleRunnerError } from '../cycle/runner'
+import { CapitalAuthorityKind } from '../execution/authority'
+import { Authority, type AuthorityState } from '../execution/contracts'
+import type { ResearchCapitalActivationRequest } from '../execution/configuration'
+import { makeExecutionProgram, type ExecutionProgram } from '../execution/runtime-program'
+import { operationalError } from '../errors'
+import {
+  executionMandateCloseExpiresAt,
+  makeMutationAutonomousCycleStartup,
+  makeObserveAutonomousCycleStartup,
+  type LifecycleAdvanceDisposition,
+  type LifecycleAdvanceMaintenance,
+  type RecoveryFirstCycleDriver,
+} from '../observe-composition'
+import { reconciliationRunnerError } from '../observe-composition/decision-builder'
+import type { ReconciliationPassError } from '../reconciler'
+import { currentUtcInstant } from '../time'
+import type { AutonomousCyclePassObservation } from '../runtime-state'
+import type { IntradayMarketDataService } from '../market-data'
+
+export const runtimeBroker = (
+  plan: ApplicationPlanFor<'AutonomousService'>,
+  read: BrokerReadShape,
+  mutationEnabled: boolean,
+) => ({
+  read,
+  expectedAccountId: plan.config.alpaca.expectedAccountId,
+  executionEligible: mutationEnabled,
+  executionDisabledReason: mutationEnabled ? null : ('BROKER_ACCESS_READ_ONLY' as const),
+})
+
+export const lifecycleMaintenanceCycle =
+  (
+    plan: ApplicationPlanFor<'AutonomousService'>,
+    reconcileBeforeAdvance: Effect.Effect<void, ReconciliationPassError>,
+    maintainLifecycle: LifecycleAdvanceMaintenance,
+  ): AutonomousCycleDriverStartup<RecoveryFirstCycleDriver> =>
+  (startup) =>
+    Semaphore.make(1).pipe(
+      Effect.map((operationPermit) => {
+        const nextDelayMs = Math.min(plan.config.cyclePollIntervalMs, plan.config.alpaca.reconciliationIntervalMs)
+        const observeSuccess = currentUtcInstant.pipe(
+          Effect.flatMap((observedAt) => {
+            const observation: AutonomousCyclePassObservation = {
+              result: 'SUCCESS',
+              observedAt,
+              outcome: 'RECOVERED',
+            }
+            return startup.recordPass(observation).pipe(Effect.as({ observation }))
+          }),
+        )
+        const advance = operationPermit.withPermit(
+          runLifecycleMaintenanceAdvance(reconcileBeforeAdvance, maintainLifecycle).pipe(
+            Effect.andThen(observeSuccess),
+            Effect.catch((error) =>
+              currentUtcInstant.pipe(
+                Effect.flatMap((observedAt) => {
+                  const observation: AutonomousCyclePassObservation = {
+                    result: 'FAILURE',
+                    observedAt,
+                    operation: error.operation,
+                    failure: error.failure,
+                    message: error.message,
+                  }
+                  return startup.recordPass(observation).pipe(Effect.andThen(Effect.fail(error)))
+                }),
+              ),
+            ),
+          ),
+        )
+        const driver: RecoveryFirstCycleDriver = {
+          advance,
+          nextDelayMs,
+        }
+        return Effect.succeed(driver)
+      }),
+    )
+
+const lifecycleReconciliationError = (cause: ReconciliationPassError): CycleRunnerError => {
+  return reconciliationRunnerError(cause)
+}
+
+export const runLifecycleMaintenanceAdvance = (
+  reconcileBeforeAdvance: Effect.Effect<void, ReconciliationPassError>,
+  maintainLifecycle: LifecycleAdvanceMaintenance,
+): Effect.Effect<LifecycleAdvanceDisposition, CycleRunnerError> =>
+  maintainLifecycle.beforeReconciliation.pipe(
+    Effect.andThen(reconcileBeforeAdvance.pipe(Effect.mapError(lifecycleReconciliationError))),
+    Effect.andThen(maintainLifecycle.afterReconciliation),
+  )
+
+export const observeCycleGenerationHash = (authority: AuthorityState): Result.Result<string, string> =>
+  authority.maximum === Authority.Observe && authority.effective === Authority.Observe
+    ? Result.succeed(authority.generationHash)
+    : Result.fail('OBSERVE cycle startup requires current effective OBSERVE authority')
+
+export const observeCycle = (
+  plan: ApplicationPlanFor<'AutonomousService'>,
+  authorityGenerationHash: string,
+  intradayMarketData: IntradayMarketDataService,
+) => {
+  return makeObserveAutonomousCycleStartup({
+    accountId: plan.config.alpaca.expectedAccountId,
+    authorityGenerationHash,
+    pollIntervalMs: plan.config.cyclePollIntervalMs,
+    reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
+    reconciliationPassTimeoutMs: plan.config.operationTimeoutMs,
+    strategy: plan.strategy,
+    intradayMarketData,
+  })
+}
+
+export const mutationCycle = (
+  plan: ApplicationPlanFor<'AutonomousService'>,
+  executionProgram: ExecutionProgram,
+  executionMandate: ResearchCapitalActivationRequest,
+  executionCycleClosureStore: import('../db/execution-cycle-closure').ExecutionCycleClosureStoreShape,
+  blockedCycleIntentStore: import('../execution/intents').BlockedCycleIntentStoreShape,
+  onClosedCycle: (cycleId: string, observedAt: string) => Effect.Effect<void>,
+  lifecycleMaintenance: LifecycleAdvanceMaintenance | undefined,
+  intradayMarketData: IntradayMarketDataService,
+) => {
+  return makeMutationAutonomousCycleStartup({
+    accountId: plan.config.alpaca.expectedAccountId,
+    authorityGenerationHash:
+      plan.config.execution.capitalAuthority._tag === CapitalAuthorityKind.Granted
+        ? plan.config.execution.capitalAuthority.authorityGenerationHash
+        : plan.config.alpaca.authorityGenerationHash,
+    pollIntervalMs: plan.config.cyclePollIntervalMs,
+    reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
+    reconciliationPassTimeoutMs: plan.config.operationTimeoutMs,
+    strategy: plan.strategy,
+    intradayMarketData,
+    executionProgram,
+    executionCycleClosureStore,
+    blockedCycleIntentStore,
+    onClosedCycle,
+    executionMandateCutoffAt: executionMandate.cutoffAt,
+    executionMandateCloseSubmitCutoffAt: executionMandate.expiresAt,
+    executionMandateExpiresAt: executionMandateCloseExpiresAt(executionMandate.expiresAt),
+    ...(lifecycleMaintenance === undefined ? {} : { lifecycleMaintenance }),
+  })
+}
+
+export const executionProgramError = (
+  cause: BrokerMutationError | Schema.SchemaError | Result.Result.Failure<ReturnType<typeof makeExecutionProgram>>,
+) =>
+  cause instanceof BrokerMutationError
+    ? operationalError({ component: 'config', operation: 'broker-mutation', message: cause.message, cause })
+    : operationalError({
+        component: 'config',
+        operation: 'execution-program',
+        message: 'execution program requires validated mutation authority and risk policy',
+        cause,
+      })

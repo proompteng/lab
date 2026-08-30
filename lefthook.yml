@@ -1,0 +1,14 @@
+pre-commit:
+  commands:
+    lint-staged:
+      run: |
+        if git diff --cached --quiet --exit-code; then
+          exit 0
+        fi
+
+        node node_modules/lint-staged/bin/lint-staged.js
+
+commit-msg:
+  commands:
+    commitlint:
+      run: node node_modules/@commitlint/cli/cli.js --edit {1}

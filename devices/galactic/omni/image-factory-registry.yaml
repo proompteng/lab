@@ -1,0 +1,6 @@
+apiVersion: v1alpha1
+kind: RegistryMirrorConfig
+name: 100.100.244.148:8081
+endpoints:
+  - url: http://100.100.244.148:8081
+skipFallback: true

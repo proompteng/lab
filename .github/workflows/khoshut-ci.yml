@@ -1,0 +1,35 @@
+name: khoshut
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'services/khoshut/**'
+      - 'argocd/applications/khoshut/**'
+      - 'argocd/applicationsets/product.yaml'
+      - '.github/workflows/khoshut-ci.yml'
+      - '.github/workflows/common-monorepo.yml'
+  pull_request:
+    paths:
+      - 'services/khoshut/**'
+      - 'argocd/applications/khoshut/**'
+      - 'argocd/applicationsets/product.yaml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    uses: ./.github/workflows/common-monorepo.yml
+    with:
+      bun-version: 1.4.0
+      node-version: 24.11.1
+      install-command: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/khoshut
+      lint-command: bunx oxfmt --check services/khoshut
+      oxlint-command: bun run --cwd services/khoshut lint:oxlint
+      oxlint-type-command: bun run --cwd services/khoshut lint:oxlint:type
+      test-command: bun run --cwd services/khoshut tsc && bun run --cwd services/khoshut test
+    secrets: inherit

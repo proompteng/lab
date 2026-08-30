@@ -1,0 +1,10 @@
+kube-apiserver-arg:
+  - "oidc-issuer-url={{ k3s_oidc_issuer_url }}"
+  - "oidc-client-id={{ k3s_oidc_client_id }}"
+  - "oidc-username-claim={{ k3s_oidc_username_claim }}"
+  - "oidc-groups-claim={{ k3s_oidc_groups_claim }}"
+  - "oidc-username-prefix={{ k3s_oidc_username_prefix }}"
+  - "oidc-groups-prefix={{ k3s_oidc_groups_prefix }}"
+{% if k3s_oidc_ca_file %}
+  - "oidc-ca-file={{ k3s_oidc_ca_file }}"
+{% endif %}

@@ -1,0 +1,151 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: knative-local-gateway
+  namespace: istio-system
+  labels:
+    app.kubernetes.io/component: net-istio
+    app.kubernetes.io/name: knative-local-gateway
+    app.kubernetes.io/part-of: knative-serving
+    app.kubernetes.io/version: 1.22.0
+    networking.knative.dev/ingress-provider: istio
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: knative-local-gateway
+      istio: ingressgateway
+  template:
+    metadata:
+      annotations:
+        inject.istio.io/templates: gateway
+        sidecar.istio.io/inject: "true"
+      labels:
+        app: knative-local-gateway
+        app.kubernetes.io/component: net-istio
+        app.kubernetes.io/name: knative-local-gateway
+        app.kubernetes.io/part-of: knative-serving
+        app.kubernetes.io/version: 1.22.0
+        networking.knative.dev/ingress-provider: istio
+        istio: ingressgateway
+        istio.io/dataplane-mode: none
+    spec:
+      serviceAccountName: knative-local-gateway
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: istio-proxy
+          image: docker.io/istio/proxyv2:1.30.3
+          imagePullPolicy: Always
+          args:
+            - proxy
+            - router
+            - --domain
+            - $(POD_NAMESPACE).svc.cluster.local
+            - --proxyLogLevel=warning
+            - --proxyComponentLogLevel=misc:error
+            - --log_output_level=default:info
+            - --serviceCluster
+            - knative-local-gateway
+            - --proxyAdminPort
+            - "15000"
+            - --controlPlaneAuthPolicy
+            - NONE
+            - --discoveryAddress
+            - istiod.istio-system.svc.cluster.local:15012
+          ports:
+            - containerPort: 15090
+              name: http-envoy-prom
+              protocol: TCP
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: INSTANCE_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: ISTIO_META_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          volumeMounts:
+            - name: workload-socket
+              mountPath: /var/run/secrets/workload-spiffe-uds
+            - name: credential-socket
+              mountPath: /var/run/secrets/credential-uds
+            - name: workload-certs
+              mountPath: /var/run/secrets/workload-spiffe-credentials
+            - name: istio-envoy
+              mountPath: /etc/istio/proxy
+            - name: config-volume
+              mountPath: /etc/istio/config
+            - name: istiod-ca-cert
+              mountPath: /var/run/secrets/istio
+            - name: istio-token
+              mountPath: /var/run/secrets/tokens
+              readOnly: true
+            - name: istio-data
+              mountPath: /var/lib/istio/data
+            - name: podinfo
+              mountPath: /etc/istio/pod
+          resources:
+            limits:
+              cpu: "2"
+              memory: 1Gi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsGroup: 1337
+            runAsNonRoot: true
+            runAsUser: 1337
+      securityContext:
+        sysctls:
+          - name: net.ipv4.ip_unprivileged_port_start
+            value: "0"
+      volumes:
+        - name: workload-socket
+          emptyDir: {}
+        - name: credential-socket
+          emptyDir: {}
+        - name: workload-certs
+          emptyDir: {}
+        - name: istio-envoy
+          emptyDir: {}
+        - name: istio-data
+          emptyDir: {}
+        - name: config-volume
+          configMap:
+            name: istio
+            optional: true
+        - name: podinfo
+          downwardAPI:
+            items:
+              - path: "labels"
+                fieldRef:
+                  fieldPath: metadata.labels
+              - path: "annotations"
+                fieldRef:
+                  fieldPath: metadata.annotations
+        - name: istiod-ca-cert
+          configMap:
+            name: istio-ca-root-cert
+            optional: true
+        - name: istio-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: istio-token
+                  expirationSeconds: 43200
+                  audience: istio-ca
