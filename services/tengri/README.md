@@ -7,6 +7,10 @@ an unprivileged `kata-fc` Pod with a 16 GiB persistent home PVC.
 The control plane also brokers scoped, one-use terminal tickets and localhost preview sessions. It does not run inside
 the guest and does not use AgentRun, KubeVirt, host devices, privileged launchers, or node mutations.
 
+Terminal creation has one protocol: every client supplies a stable 16-to-128-character `creation_id`, and Nanoagent
+returns that exact identity with the session. Retries reuse the same identity and are idempotent. Tengri rejects
+id-less requests instead of generating a compatibility identity or negotiating with an older guest.
+
 Each Chrome preview load exchanges its one-use ticket for a bounded, owner-scoped session whose ID is allocated before
 the browser receives the ticket. The desktop revokes both unused tickets and active sessions when a preview is
 superseded or closed, so reload and history use cannot exhaust the per-agent session limit. The gateway injects a
