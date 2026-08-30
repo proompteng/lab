@@ -63,6 +63,42 @@ function previewTicket(sequence: number) {
   return `${'a'.repeat(47)}${sequence.toString(36)}.${'b'.repeat(43)}`
 }
 
+function previewSessionToken(sequence: number) {
+  return `${'c'.repeat(47)}${sequence.toString(36)}.${'d'.repeat(43)}`
+}
+
+function previewBootstrapDocument() {
+  return '<!doctype html><meta charset="utf-8"><title>Tengri Preview</title><script src="/_tengri/bootstrap.js" defer></script>'
+}
+
+function previewBootstrapScript() {
+  return `(() => {
+    const token = decodeURIComponent(window.location.hash.slice(1));
+    const target = window.location.pathname + window.location.search;
+    history.replaceState(null, '', target);
+    if (!token) {
+      document.body.textContent = 'Preview session is missing or expired.';
+      return;
+    }
+    fetch('/_tengri/bootstrap', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token }),
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('preview session rejected');
+        const payload = await response.json();
+        if (typeof payload.fragment !== 'string') throw new Error('preview fragment missing');
+        history.replaceState(null, '', target + payload.fragment);
+        window.location.reload();
+      })
+      .catch(() => {
+        document.body.textContent = 'Preview session is missing or expired.';
+      });
+  })();`
+}
+
 function embeddedPreviewDocument() {
   return `<!doctype html><title>Tengri preview</title><main>Live microVM preview</main><p data-preview-route></p><script>
     (() => {
@@ -118,7 +154,13 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   const readFileFailures = new Map<string, number>()
   let previewSessionSequence = 0
   let holdNextPreviewSession = false
-  const pendingPreviewLaunches: Array<{ id: string; path: string; fragment: string; ticket: string }> = []
+  const pendingPreviewLaunches: Array<{
+    id: string
+    path: string
+    fragment: string
+    ticket: string
+    sessionToken: string
+  }> = []
   let releaseHeldResume = () => {}
   let markHeldResumeStarted = () => {}
   let releaseHeldCodexAccount = () => {}
@@ -241,7 +283,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
     const launchLocations = Object.fromEntries(
       pendingPreviewLaunches.map((session) => [
         session.ticket,
-        `https://tengri-${session.id}.proompteng.ai${session.path}${session.fragment}`,
+        `https://tengri-${session.id}.proompteng.ai${session.path}#${session.sessionToken}`,
       ]),
     )
     await route.fulfill({
@@ -251,8 +293,56 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   })
   await page.context().route('**/*', async (route) => {
     const url = new URL(route.request().url())
-    if (!/^tengri-[a-z0-9]+\.proompteng\.ai$/.test(url.hostname)) {
+    const match = url.hostname.match(/^tengri-([a-z0-9]+)\.proompteng\.ai$/)
+    if (!match) {
       await route.fallback()
+      return
+    }
+    const session = pendingPreviewLaunches.find((candidate) => candidate.id === match[1])
+    if (!session) {
+      await route.fulfill({ status: 410, body: 'Preview session is unavailable' })
+      return
+    }
+    if (url.pathname === '/_tengri/bootstrap.js') {
+      await route.fulfill({ contentType: 'text/javascript', body: previewBootstrapScript() })
+      return
+    }
+    if (url.pathname === '/_tengri/bootstrap') {
+      const input = JSON.parse(route.request().postData() ?? '{}') as { token?: unknown }
+      if (route.request().method() !== 'POST' || input.token !== session.sessionToken) {
+        await route.fulfill({ status: 401, body: 'Preview session is unavailable' })
+        return
+      }
+      await page.context().addCookies([
+        {
+          name: '__Host-tengri_preview',
+          value: session.sessionToken,
+          url: `https://${url.hostname}/`,
+          httpOnly: true,
+          secure: true,
+          // Local E2E embeds the production-shaped preview host from 127.0.0.1;
+          // production desktop and preview hosts are same-site and use Lax.
+          sameSite: 'None',
+        },
+      ])
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        headers: {
+          'cache-control': 'no-store',
+          'set-cookie': `__Host-tengri_preview=${session.sessionToken}; Path=/; HttpOnly; Secure; SameSite=None`,
+        },
+        body: JSON.stringify({ fragment: session.fragment }),
+      })
+      return
+    }
+    const cookie = route.request().headers().cookie ?? ''
+    if (!cookie.split(';').some((value) => value.trim() === `__Host-tengri_preview=${session.sessionToken}`)) {
+      await route.fulfill({
+        contentType: 'text/html',
+        headers: { 'content-security-policy': `frame-ancestors ${desktopOrigin}` },
+        body: previewBootstrapDocument(),
+      })
       return
     }
     await route.fulfill({
@@ -403,11 +493,13 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         }
         const previewSessionId = `preview${String(previewSessionSequence).padStart(17, '0')}`
         const ticket = previewTicket(previewSessionSequence)
+        const sessionToken = previewSessionToken(previewSessionSequence)
         pendingPreviewLaunches.push({
           id: previewSessionId,
           path: String(action.path),
           fragment: String(action.fragment),
           ticket,
+          sessionToken,
         })
         result = {
           id: previewSessionId,

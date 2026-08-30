@@ -85,7 +85,8 @@ const PREVIEW_BOOTSTRAP_SCRIPT: &str = r#"(() => {
       if (!response.ok) throw new Error('preview session rejected');
       const payload = await response.json();
       if (typeof payload.fragment !== 'string') throw new Error('preview fragment missing');
-      window.location.replace(`${target}${payload.fragment}`);
+      history.replaceState(null, '', `${target}${payload.fragment}`);
+      window.location.reload();
     })
     .catch(() => {
       document.body.textContent = 'Preview session is missing or expired.';
@@ -1439,10 +1440,14 @@ mod tests {
             serde_json::from_slice::<serde_json::Value>(&body).expect("preview bootstrap JSON"),
             serde_json::json!({"fragment": "#editor"}),
         );
-        assert!(
-            PREVIEW_BOOTSTRAP_SCRIPT
-                .contains("window.location.replace(`${target}${payload.fragment}`)")
-        );
+        let final_location = "history.replaceState(null, '', `${target}${payload.fragment}`)";
+        let final_location_offset = PREVIEW_BOOTSTRAP_SCRIPT
+            .find(final_location)
+            .expect("preview bootstrap writes the final fragment into history");
+        let reload_offset = PREVIEW_BOOTSTRAP_SCRIPT
+            .find("window.location.reload()")
+            .expect("preview bootstrap forces a guest document load");
+        assert!(final_location_offset < reload_offset);
     }
 
     async fn readiness_for_kubernetes_responses(
