@@ -12,7 +12,7 @@ ARG FIRECRACKER_VERSION=v1.12.1
 ARG FIRECRACKER_AMD64_SHA256=0a75e67ef6e4c540a2cf248b06822b0be9820cbba9fe19f9e0321200fe76ff6b
 ARG FIRECRACKER_ARM64_SHA256=785bc9d30756bff0c03fb275baac957363f9ba98f78a2272405dcb6929ebb953
 
-RUN apk add --no-cache ca-certificates curl e2fsprogs e2fsprogs-extra tar zstd
+RUN apk add --no-cache ca-certificates coreutils curl e2fsprogs e2fsprogs-extra jq tar util-linux zstd
 
 COPY --from=validator /extensions-validator /usr/local/bin/extensions-validator
 COPY 10-kata-firecracker.part /tmp/10-kata-firecracker.part
@@ -135,25 +135,57 @@ RUN --mount=type=cache,target=/var/cache/downloads \
     install -m 0644 \
       /tmp/kata/opt/kata/share/kata-containers/kata-ubuntu-noble.image \
       /extension/rootfs/usr/local/share/kata-containers/kata-containers.img; \
+    partition_table="$(sfdisk --json \
+      /extension/rootfs/usr/local/share/kata-containers/kata-containers.img)"; \
+    root_partition="$(printf '%s' "${partition_table}" | jq -cer ' \
+      .partitiontable.partitions as $partitions \
+      | ($partitions | map(select(.bootable == true))) as $bootable \
+      | if ($bootable | length) == 1 then $bootable[0] \
+        elif ($partitions | length) == 1 then $partitions[0] \
+        else error("expected exactly one bootable root partition") \
+        end \
+    ')"; \
+    test "$(printf '%s' "${root_partition}" | jq -er '.type')" = '83'; \
+    sector_size="$(printf '%s' "${partition_table}" | jq -er '.partitiontable.sectorsize')"; \
+    partition_start="$(printf '%s' "${root_partition}" | jq -er '.start')"; \
+    partition_size="$(printf '%s' "${root_partition}" | jq -er '.size')"; \
+    partition_offset_bytes="$((partition_start * sector_size))"; \
+    partition_size_bytes="$((partition_size * sector_size))"; \
+    dd \
+      if=/extension/rootfs/usr/local/share/kata-containers/kata-containers.img \
+      of=/tmp/kata-rootfs.ext4 \
+      bs=4M \
+      iflag=skip_bytes,count_bytes \
+      skip="${partition_offset_bytes}" \
+      count="${partition_size_bytes}" \
+      status=none; \
     debugfs -w -R 'rm /usr/bin/kata-agent' \
-      /extension/rootfs/usr/local/share/kata-containers/kata-containers.img; \
+      /tmp/kata-rootfs.ext4; \
     debugfs -w -R 'write /tmp/patched-kata-agent/usr/bin/kata-agent /usr/bin/kata-agent' \
-      /extension/rootfs/usr/local/share/kata-containers/kata-containers.img; \
+      /tmp/kata-rootfs.ext4; \
     debugfs -w -R 'set_inode_field /usr/bin/kata-agent mode 0100755' \
-      /extension/rootfs/usr/local/share/kata-containers/kata-containers.img; \
+      /tmp/kata-rootfs.ext4; \
     debugfs -R 'stat /usr/sbin/e2fsck' \
-      /extension/rootfs/usr/local/share/kata-containers/kata-containers.img \
+      /tmp/kata-rootfs.ext4 \
       | grep -Fq 'Inode:'; \
     debugfs -R 'stat /usr/sbin/mkfs.ext4' \
-      /extension/rootfs/usr/local/share/kata-containers/kata-containers.img \
+      /tmp/kata-rootfs.ext4 \
       | grep -Fq 'Inode:'; \
     debugfs -R 'dump /usr/bin/kata-agent /tmp/installed-kata-agent' \
-      /extension/rootfs/usr/local/share/kata-containers/kata-containers.img; \
+      /tmp/kata-rootfs.ext4; \
     cmp /tmp/patched-kata-agent/usr/bin/kata-agent /tmp/installed-kata-agent; \
     e2fsck_status=0; \
-    e2fsck -fy /extension/rootfs/usr/local/share/kata-containers/kata-containers.img \
+    e2fsck -fy /tmp/kata-rootfs.ext4 \
       || e2fsck_status=$?; \
     test "${e2fsck_status}" -le 1; \
+    dd \
+      if=/tmp/kata-rootfs.ext4 \
+      of=/extension/rootfs/usr/local/share/kata-containers/kata-containers.img \
+      bs=4M \
+      oflag=seek_bytes \
+      seek="${partition_offset_bytes}" \
+      conv=notrunc \
+      status=none; \
     install -m 0644 \
       /extension/rootfs/usr/local/share/kata-containers/kata-containers.img \
       /extension/rootfs/usr/local/share/kata-containers/kata-containers-qemu.img; \
