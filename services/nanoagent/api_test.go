@@ -507,6 +507,61 @@ func TestWatchFilesRoutesPairedRenameThroughSymlinkedParent(t *testing.T) {
 	}
 }
 
+func TestWatchFilesWithoutCursorStartsAfterHistoricalEvents(t *testing.T) {
+	t.Parallel()
+	server := testAPIServer(t)
+	server.fileWatcher.publish(fileEvent{Kind: "changed", Path: "/historical.txt"})
+
+	streamServer := httptest.NewServer(server.authenticatedRoutes())
+	defer streamServer.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		streamServer.URL+"/v1/files/watch?path=%2F",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("create watch request: %v", err)
+	}
+	request.Header.Set("Authorization", "Bearer test-bootstrap-token")
+	response, err := streamServer.Client().Do(request)
+	if err != nil {
+		t.Fatalf("watch files: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(response.Body)
+		t.Fatalf("watch status = %d body = %s", response.StatusCode, body)
+	}
+
+	server.fileWatcher.publish(fileEvent{Kind: "changed", Path: "/current.txt"})
+	result := make(chan struct {
+		event fileEvent
+		err   error
+	}, 1)
+	go func() {
+		var event fileEvent
+		decodeErr := json.NewDecoder(response.Body).Decode(&event)
+		result <- struct {
+			event fileEvent
+			err   error
+		}{event: event, err: decodeErr}
+	}()
+	select {
+	case decoded := <-result:
+		if decoded.err != nil {
+			t.Fatalf("decode watch event: %v", decoded.err)
+		}
+		if decoded.event.Sequence != 2 || decoded.event.Path != "/current.txt" {
+			t.Fatalf("first watch event = %#v, want only the post-subscription event", decoded.event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for post-subscription file event")
+	}
+}
+
 func TestFileAPIMoveCorrelatesLeafSymlinkThroughSymlinkedParent(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink creation requires additional privileges on Windows")

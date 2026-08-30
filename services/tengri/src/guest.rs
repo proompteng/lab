@@ -509,11 +509,20 @@ impl GuestClient {
         path: &str,
         after: u64,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<FileEvent, GuestError>> + Send>>, GuestError> {
-        self.ndjson(
-            self.request(Method::GET, "/v1/files/watch")
-                .query(&[("path", path.to_owned()), ("after", after.to_string())]),
-        )
-        .await
+        self.ndjson(self.file_watch_request(path, after)).await
+    }
+
+    fn file_watch_request(&self, path: &str, after: u64) -> reqwest::RequestBuilder {
+        let request = self
+            .request(Method::GET, "/v1/files/watch")
+            .query(&[("path", path)]);
+        // The public gRPC contract uses zero for an initial subscription. Nanoagent
+        // distinguishes an omitted cursor (tail now) from an explicit zero (replay).
+        if after == 0 {
+            request
+        } else {
+            request.query(&[("after", after)])
+        }
     }
 
     pub async fn create_terminal(
@@ -1380,5 +1389,40 @@ mod tests {
 
         assert_eq!(unary.timeout(), Some(&GUEST_UNARY_TIMEOUT));
         assert_eq!(stream.timeout(), None);
+    }
+
+    #[test]
+    fn file_watch_omits_zero_cursor_and_preserves_resume_cursors() {
+        let client = GuestClient {
+            http: reqwest::Client::new(),
+            base_url: "http://127.0.0.1:8080".to_owned(),
+            token: "token".to_owned(),
+            agent_id: "agent-watch".to_owned(),
+            terminal_identities: TerminalIdentityRegistry::default(),
+        };
+        let initial = client
+            .file_watch_request("/workspace", 0)
+            .build()
+            .expect("initial file watch request");
+        let resumed = client
+            .file_watch_request("/workspace", 42)
+            .build()
+            .expect("resumed file watch request");
+
+        let initial_query = initial.url().query_pairs().collect::<HashMap<_, _>>();
+        assert_eq!(
+            initial_query.get("path").map(|value| value.as_ref()),
+            Some("/workspace")
+        );
+        assert!(!initial_query.contains_key("after"));
+        let resumed_query = resumed.url().query_pairs().collect::<HashMap<_, _>>();
+        assert_eq!(
+            resumed_query.get("path").map(|value| value.as_ref()),
+            Some("/workspace")
+        );
+        assert_eq!(
+            resumed_query.get("after").map(|value| value.as_ref()),
+            Some("42")
+        );
     }
 }

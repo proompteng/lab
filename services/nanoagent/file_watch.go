@@ -646,6 +646,12 @@ func (files *fileWatcher) subscribe(after uint64, prefix string, directory strin
 	return id, channel, nil
 }
 
+func (files *fileWatcher) currentSequence() uint64 {
+	files.mu.Lock()
+	defer files.mu.Unlock()
+	return files.sequence
+}
+
 func (files *fileWatcher) unsubscribe(id uint64) {
 	files.mu.Lock()
 	defer files.mu.Unlock()
@@ -723,7 +729,10 @@ func (server *apiServer) handleWatchFiles(writer http.ResponseWriter, request *h
 		writeAPIError(writer, http.StatusBadRequest, "watch path must be a directory")
 		return
 	}
-	after := uint64(0)
+	// An initial Tengri subscription omits the cursor and tails from the current
+	// sequence. Explicit cursors, including zero, retain replay semantics for
+	// reconnects and direct Nanoagent clients.
+	after := server.fileWatcher.currentSequence()
 	if raw := request.URL.Query().Get("after"); raw != "" {
 		after, err = strconv.ParseUint(raw, 10, 64)
 		if err != nil {

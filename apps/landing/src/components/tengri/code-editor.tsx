@@ -19,6 +19,7 @@ import {
   codeOpenRequestKey,
   codePanelId,
   codeParentDirectory,
+  codeVerificationFailure,
   codeWatchDirectoryLimitError,
   disposeCodeModels,
   enqueueCodeOpenRequest,
@@ -650,9 +651,16 @@ export function CodeEditor({
           if (current.dirty) markConflict(targetPath, 'File changed outside Code while local edits were pending.')
           else void loadPath(targetPath, true)
         })
-        .catch((cause: unknown) =>
-          markConflict(targetPath, cause instanceof Error ? cause.message : 'File change could not be verified'),
-        )
+        .catch((cause: unknown) => {
+          const error = cause instanceof Error ? cause.message : 'File change could not be verified'
+          const failure = codeVerificationFailure(
+            tabsRef.current.find((tab) => tab.path === targetPath),
+            error,
+          )
+          if (!failure) return
+          if (failure.conflict) markConflict(targetPath, error)
+          else patchTab(targetPath, failure.patch)
+        })
     }
     const handleMessage = (directory: string, message: MessageEvent<string>) => {
       let event: TengriFileEvent
@@ -691,10 +699,10 @@ export function CodeEditor({
     }
 
     const sources = directories.map((directory) => {
-      const after = watchCursorsRef.current.get(directory) ?? 0
-      const source = new EventSource(
-        `/api/tengri/files/events?agentId=${encodeURIComponent(ownerAgentId)}&path=${encodeURIComponent(directory)}&after=${after}`,
-      )
+      const params = new URLSearchParams({ agentId: ownerAgentId, path: directory })
+      const after = watchCursorsRef.current.get(directory)
+      if (after !== undefined) params.set('after', String(after))
+      const source = new EventSource(`/api/tengri/files/events?${params}`)
       source.onopen = () => {
         connected.add(directory)
         if (connected.size === directories.length) setWatchState('connected')
@@ -709,7 +717,7 @@ export function CodeEditor({
     return () => {
       for (const source of sources) source.close()
     }
-  }, [deferUnpairedRename, loadPath, markConflict, migratePath, ownerAgentId, watchDirectoryKey])
+  }, [deferUnpairedRename, loadPath, markConflict, migratePath, ownerAgentId, patchTab, watchDirectoryKey])
 
   const hasDirtyTabs = tabs.some((tab) => tab.dirty)
   useEffect(() => {
