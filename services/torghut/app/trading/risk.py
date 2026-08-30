@@ -1,0 +1,551 @@
+"""Risk checks for trade decisions."""
+
+from __future__ import annotations
+
+from datetime import timedelta
+from decimal import Decimal
+from typing import Any, Iterable, Mapping, Optional, cast
+
+from sqlalchemy import desc, select
+from sqlalchemy.orm import Session
+
+from ..config import settings
+from ..models import Strategy, TradeDecision
+from .models import RiskCheckResult, StrategyDecision
+from .time_source import trading_now
+
+FINAL_STATUSES = {"filled", "canceled", "rejected", "expired"}
+MAX_ADVERSE_SELECTION_RISK = Decimal("0.85")
+TARGET_DAILY_NET_PNL = Decimal("500")
+MAX_FINAL_AUTHORITY_DRAWDOWN = Decimal("1500")
+MAX_FINAL_AUTHORITY_DRAWDOWN_SLEEVE_EQUITY_PCT = Decimal("0.03")
+
+
+class RiskEngine:
+    """Apply trading risk constraints before execution."""
+
+    def evaluate(
+        self,
+        session: Session,
+        decision: StrategyDecision,
+        strategy: Strategy,
+        account: dict[str, str],
+        positions: Iterable[dict[str, str]],
+        allowed_symbols: Optional[set[str]] = None,
+        execution_advisor: Mapping[str, Any] | None = None,
+    ) -> RiskCheckResult:
+        reasons: list[str] = []
+        crypto_symbol = _is_crypto_symbol(decision.symbol)
+        _append_trading_setting_reasons(reasons, crypto_symbol=crypto_symbol)
+        _append_strategy_symbol_reasons(
+            reasons,
+            strategy=strategy,
+            symbol=decision.symbol,
+            allowed_symbols=allowed_symbols,
+        )
+
+        price = _extract_decision_price(decision)
+        if price is None:
+            reasons.append("missing_price")
+
+        qty = Decimal(str(decision.qty))
+        notional = _portfolio_sizing_final_notional(decision)
+        if notional is None:
+            notional = price * qty if price is not None else None
+        position_qty, position_value = _position_summary(decision.symbol, positions)
+        short_increasing = _is_short_increasing(decision.action, qty, position_qty)
+        allocator_meta = _allocator_payload(decision)
+        _append_fragility_reasons(
+            reasons,
+            allocator_meta=allocator_meta,
+            action=decision.action,
+            qty=qty,
+            position_qty=position_qty,
+            short_increasing=short_increasing,
+        )
+
+        max_notional = None
+        if settings.trading_mode != "live":
+            max_notional = _resolve_decimal(
+                strategy.max_notional_per_trade
+            ) or _resolve_decimal(settings.trading_max_notional_per_trade)
+        enforce_notional = decision.action == "buy" or short_increasing
+        _append_max_notional_reason(
+            reasons,
+            enforce_notional=enforce_notional,
+            notional=notional,
+            max_notional=max_notional,
+        )
+
+        equity = _resolve_decimal(account.get("equity"))
+        buying_power = _resolve_decimal(account.get("buying_power"))
+        _append_buying_power_reason(
+            reasons,
+            enforce_notional=enforce_notional,
+            notional=notional,
+            buying_power=buying_power,
+        )
+
+        max_pct = _resolve_decimal(
+            strategy.max_position_pct_equity
+        ) or _resolve_decimal(settings.trading_max_position_pct_equity)
+        if not _position_pct_guardrail_satisfied_by_portfolio_sizing(decision):
+            _append_position_pct_reason(
+                reasons,
+                max_pct=max_pct,
+                equity=equity,
+                notional=notional,
+                action=decision.action,
+                position_value=position_value,
+            )
+
+        allocator_cap_notional = _allocator_approved_notional(decision)
+        _append_allocator_notional_reason(
+            reasons,
+            enforce_notional=enforce_notional,
+            allocator_cap_notional=allocator_cap_notional,
+            notional=notional,
+        )
+
+        _append_target_sizing_reasons(reasons, decision=decision)
+
+        if short_increasing and not settings.trading_allow_shorts:
+            reasons.append("shorts_not_allowed")
+
+        _append_cooldown_reason(reasons, session=session, symbol=decision.symbol)
+
+        _append_adverse_selection_reason(reasons, execution_advisor=execution_advisor)
+
+        return RiskCheckResult(approved=len(reasons) == 0, reasons=reasons)
+
+
+def _append_trading_setting_reasons(reasons: list[str], *, crypto_symbol: bool) -> None:
+    if not settings.trading_enabled:
+        reasons.append("trading_disabled")
+    if crypto_symbol and not settings.trading_crypto_enabled:
+        reasons.append("crypto_trading_disabled")
+    if (
+        crypto_symbol
+        and settings.trading_mode == "live"
+        and not settings.trading_crypto_live_enabled
+    ):
+        reasons.append("crypto_live_trading_disabled")
+
+
+def _append_strategy_symbol_reasons(
+    reasons: list[str],
+    *,
+    strategy: Strategy,
+    symbol: str,
+    allowed_symbols: Optional[set[str]],
+) -> None:
+    if not strategy.enabled:
+        reasons.append("strategy_disabled")
+    if allowed_symbols is not None and symbol not in allowed_symbols:
+        reasons.append("symbol_not_allowed")
+
+
+def _append_fragility_reasons(
+    reasons: list[str],
+    *,
+    allocator_meta: dict[str, object],
+    action: str,
+    qty: Decimal,
+    position_qty: Decimal,
+    short_increasing: bool,
+) -> None:
+    fragility_state = _fragility_state_from_allocator(allocator_meta)
+    stability_mode_active = bool(allocator_meta.get("stability_mode_active", False))
+    if settings.trading_fragility_mode != "enforce":
+        return
+    if fragility_state in {"stress", "crisis"} and not stability_mode_active:
+        reasons.append("fragility_stability_mode_mismatch")
+    if fragility_state == "crisis" and _is_risk_increasing_trade(
+        action, qty, position_qty, short_increasing
+    ):
+        reasons.append("fragility_crisis_entry_blocked")
+
+
+def _append_max_notional_reason(
+    reasons: list[str],
+    *,
+    enforce_notional: bool,
+    notional: Decimal | None,
+    max_notional: Decimal | None,
+) -> None:
+    if (
+        enforce_notional
+        and notional is not None
+        and max_notional is not None
+        and notional > max_notional
+    ):
+        reasons.append("max_notional_exceeded")
+
+
+def _append_buying_power_reason(
+    reasons: list[str],
+    *,
+    enforce_notional: bool,
+    notional: Decimal | None,
+    buying_power: Decimal | None,
+) -> None:
+    if (
+        enforce_notional
+        and notional is not None
+        and buying_power is not None
+        and notional > buying_power
+    ):
+        reasons.append("insufficient_buying_power")
+
+
+def _append_position_pct_reason(
+    reasons: list[str],
+    *,
+    max_pct: Decimal | None,
+    equity: Decimal | None,
+    notional: Decimal | None,
+    action: str,
+    position_value: Decimal,
+) -> None:
+    if max_pct is None or equity is None or notional is None:
+        return
+    delta = notional if action == "buy" else -notional
+    projected_value = position_value + delta
+    current_abs = abs(position_value)
+    projected_abs = abs(projected_value)
+    if projected_abs > equity * max_pct and projected_abs >= current_abs:
+        reasons.append("max_position_pct_exceeded")
+
+
+def _portfolio_sizing_output(decision: StrategyDecision) -> Mapping[str, Any] | None:
+    raw = decision.params.get("portfolio_sizing")
+    if not isinstance(raw, Mapping):
+        return None
+    output = cast(Mapping[str, Any], raw).get("output")
+    if not isinstance(output, Mapping):
+        return None
+    return cast(Mapping[str, Any], output)
+
+
+def _portfolio_sizing_final_notional(decision: StrategyDecision) -> Decimal | None:
+    output = _portfolio_sizing_output(decision)
+    if output is None:
+        return None
+    status = str(output.get("status") or "").strip().lower()
+    if status != "approved":
+        return None
+    final_qty = _resolve_decimal(
+        cast(Decimal | str | float | None, output.get("final_qty"))
+    )
+    if final_qty is None or final_qty != decision.qty:
+        return None
+    final_notional = _resolve_decimal(
+        cast(Decimal | str | float | None, output.get("final_notional"))
+    )
+    if final_notional is None or final_notional <= 0:
+        return None
+    return final_notional
+
+
+def _position_pct_guardrail_satisfied_by_portfolio_sizing(
+    decision: StrategyDecision,
+) -> bool:
+    output = _portfolio_sizing_output(decision)
+    if output is None:
+        return False
+    if str(output.get("status") or "").strip().lower() != "approved":
+        return False
+    final_qty = _resolve_decimal(
+        cast(Decimal | str | float | None, output.get("final_qty"))
+    )
+    if final_qty is None or final_qty != decision.qty:
+        return False
+    final_notional = _resolve_decimal(
+        cast(Decimal | str | float | None, output.get("final_notional"))
+    )
+    remaining_room_notional = _resolve_decimal(
+        cast(Decimal | str | float | None, output.get("remaining_room_notional"))
+    )
+    if final_notional is None or remaining_room_notional is None:
+        return False
+    if final_notional <= 0 or remaining_room_notional < 0:
+        return False
+    return final_notional <= remaining_room_notional + Decimal("0.01")
+
+
+def _append_allocator_notional_reason(
+    reasons: list[str],
+    *,
+    enforce_notional: bool,
+    allocator_cap_notional: Decimal | None,
+    notional: Decimal | None,
+) -> None:
+    if (
+        enforce_notional
+        and allocator_cap_notional is not None
+        and notional is not None
+        and notional > allocator_cap_notional
+    ):
+        reasons.append("allocator_notional_invariant_breached")
+
+
+def _decimal_text(value: Decimal | None) -> str | None:
+    if value is None:
+        return None
+    text = format(value.normalize(), "f")
+    return text.rstrip("0").rstrip(".") if "." in text else text
+
+
+def target_implied_daily_notional(
+    observed_post_cost_expectancy_bps: Decimal | str | float | None,
+    *,
+    target_daily_net_pnl: Decimal | str | float | None = TARGET_DAILY_NET_PNL,
+) -> tuple[Decimal | None, str | None]:
+    """Return required daily notional for a net-PnL target, fail-closed on unusable expectancy."""
+
+    expectancy_bps = _resolve_decimal(observed_post_cost_expectancy_bps)
+    target = _resolve_decimal(target_daily_net_pnl)
+    if target is None or target <= 0:
+        return None, "target_daily_net_pnl_non_positive"
+    if expectancy_bps is None:
+        return None, "observed_post_cost_expectancy_bps_missing"
+    if expectancy_bps <= 0:
+        return None, "observed_post_cost_expectancy_bps_non_positive"
+    return target / (expectancy_bps / Decimal("10000")), None
+
+
+def target_sizing_payload(source: Mapping[str, Any]) -> dict[str, object]:
+    """Build non-authoritative target sizing metadata for ranking and risk diagnostics."""
+
+    target = (
+        _resolve_decimal(
+            cast(Decimal | str | float | None, source.get("target_daily_net_pnl"))
+        )
+        or TARGET_DAILY_NET_PNL
+    )
+    expectancy = _resolve_decimal(
+        cast(
+            Decimal | str | float | None,
+            source.get("observed_post_cost_expectancy_bps"),
+        )
+    )
+    required_notional, blocker = target_implied_daily_notional(
+        expectancy, target_daily_net_pnl=target
+    )
+    capacity = _resolve_decimal(
+        cast(Decimal | str | float | None, source.get("capacity_daily_notional"))
+    )
+    drawdown_budget = _resolve_decimal(
+        cast(Decimal | str | float | None, source.get("drawdown_budget"))
+    )
+    sleeve_equity = _resolve_decimal(
+        cast(Decimal | str | float | None, source.get("allocated_sleeve_equity"))
+    )
+    blockers: list[str] = []
+    if blocker is not None:
+        blockers.append(blocker)
+    if required_notional is not None:
+        if capacity is None:
+            blockers.append("target_notional_capacity_missing")
+        elif capacity < required_notional:
+            blockers.append("target_notional_capacity_below_required")
+    drawdown_cap = MAX_FINAL_AUTHORITY_DRAWDOWN
+    if sleeve_equity is not None and sleeve_equity > 0:
+        drawdown_cap = max(
+            drawdown_cap,
+            sleeve_equity * MAX_FINAL_AUTHORITY_DRAWDOWN_SLEEVE_EQUITY_PCT,
+        )
+    if drawdown_budget is None:
+        blockers.append("target_drawdown_budget_missing")
+    elif drawdown_budget > drawdown_cap:
+        blockers.append("target_drawdown_budget_exceeds_cap")
+
+    return {
+        "target_daily_net_pnl": _decimal_text(target),
+        "observed_post_cost_expectancy_bps": _decimal_text(expectancy),
+        "required_daily_notional": _decimal_text(required_notional),
+        "capacity_daily_notional": _decimal_text(capacity),
+        "drawdown_budget": _decimal_text(drawdown_budget),
+        "drawdown_cap": _decimal_text(drawdown_cap),
+        "allocated_sleeve_equity": _decimal_text(sleeve_equity),
+        "status": "feasible" if not blockers else "blocked",
+        "blocking_reasons": blockers,
+        "authority": "ranking_metadata_only",
+    }
+
+
+def _target_sizing_source(decision: StrategyDecision) -> Mapping[str, Any] | None:
+    raw = decision.params.get("target_sizing")
+    if isinstance(raw, Mapping):
+        return cast(Mapping[str, Any], raw)
+    portfolio_output = _portfolio_sizing_output(decision)
+    if portfolio_output is None:
+        return None
+    raw_nested = portfolio_output.get("target_sizing")
+    if isinstance(raw_nested, Mapping):
+        return cast(Mapping[str, Any], raw_nested)
+    return None
+
+
+def _append_target_sizing_reasons(
+    reasons: list[str], *, decision: StrategyDecision
+) -> None:
+    source = _target_sizing_source(decision)
+    if source is None:
+        return
+    payload = target_sizing_payload(source)
+    for reason in cast(list[str], payload.get("blocking_reasons") or []):
+        reasons.append(reason)
+
+
+def _append_cooldown_reason(
+    reasons: list[str], *, session: Session, symbol: str
+) -> None:
+    cooldown_seconds = settings.trading_cooldown_seconds
+    if cooldown_seconds <= 0:
+        return
+    recent_cutoff = trading_now() - timedelta(seconds=cooldown_seconds)
+    stmt = (
+        select(TradeDecision)
+        .where(TradeDecision.symbol == symbol)
+        .where(TradeDecision.created_at >= recent_cutoff)
+        .order_by(desc(TradeDecision.created_at))
+        .limit(1)
+    )
+    recent = session.execute(stmt).scalar_one_or_none()
+    if recent and recent.status != "rejected":
+        reasons.append("cooldown_active")
+
+
+def _append_adverse_selection_reason(
+    reasons: list[str], *, execution_advisor: Mapping[str, Any] | None
+) -> None:
+    adverse_selection = _extract_adverse_selection_risk(execution_advisor)
+    if adverse_selection is not None and adverse_selection > MAX_ADVERSE_SELECTION_RISK:
+        reasons.append("adverse_selection_risk_exceeds_maximum")
+
+
+def _extract_decision_price(decision: StrategyDecision) -> Optional[Decimal]:
+    for key in ("price", "limit_price", "stop_price"):
+        value = decision.params.get(key)
+        if value is None:
+            value = getattr(decision, key, None)
+        if value is not None:
+            try:
+                return Decimal(str(value))
+            except (ArithmeticError, ValueError):
+                continue
+    return None
+
+
+def _resolve_decimal(value: Optional[Decimal | str | float]) -> Optional[Decimal]:
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        return value
+    try:
+        return Decimal(str(value))
+    except (ArithmeticError, ValueError):
+        return None
+
+
+def _position_summary(
+    symbol: str, positions: Iterable[dict[str, str]]
+) -> tuple[Decimal, Decimal]:
+    total_qty = Decimal("0")
+    total_value = Decimal("0")
+    for position in positions:
+        if position.get("symbol") != symbol:
+            continue
+        qty = _optional_decimal(position.get("qty"))
+        if qty is None:
+            qty = _optional_decimal(position.get("quantity"))
+        side = str(position.get("side") or "").lower()
+        if qty is not None and side == "short":
+            qty = -abs(qty)
+        if qty is not None:
+            total_qty += qty
+
+        market_value = _optional_decimal(position.get("market_value"))
+        if market_value is None:
+            continue
+        total_value += market_value
+    return total_qty, total_value
+
+
+def _is_short_increasing(action: str, qty: Decimal, position_qty: Decimal) -> bool:
+    if action == "buy":
+        return False
+    if position_qty <= 0:
+        return True
+    return qty > position_qty
+
+
+def _is_crypto_symbol(symbol: str) -> bool:
+    return "/" in symbol
+
+
+def _optional_decimal(value: Optional[Decimal | str | float]) -> Optional[Decimal]:
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        return value
+    try:
+        return Decimal(str(value))
+    except (ArithmeticError, ValueError):
+        return None
+
+
+def _allocator_payload(decision: StrategyDecision) -> dict[str, object]:
+    raw = decision.params.get("allocator")
+    if not isinstance(raw, dict):
+        return {}
+    payload = cast(dict[object, object], raw)
+    return {str(key): value for key, value in payload.items()}
+
+
+def _fragility_state_from_allocator(allocator: dict[str, object]) -> str:
+    raw = allocator.get("fragility_state")
+    if not isinstance(raw, str):
+        return "elevated"
+    normalized = raw.strip().lower()
+    if normalized in {"normal", "elevated", "stress", "crisis"}:
+        return normalized
+    return "elevated"
+
+
+def _is_risk_increasing_trade(
+    action: str, qty: Decimal, position_qty: Decimal, short_increasing: bool
+) -> bool:
+    if action == "buy":
+        if position_qty < 0:
+            return qty > abs(position_qty)
+        return qty > 0
+    return short_increasing
+
+
+def _allocator_approved_notional(decision: StrategyDecision) -> Optional[Decimal]:
+    allocator = decision.params.get("allocator")
+    if not isinstance(allocator, Mapping):
+        return None
+    payload = cast(Mapping[str, object], allocator)
+    return _resolve_decimal(
+        cast(Decimal | str | float | None, payload.get("approved_notional"))
+    )
+
+
+def _extract_adverse_selection_risk(
+    payload: Mapping[str, Any] | None,
+) -> Decimal | None:
+    if payload is None:
+        return None
+    raw = payload.get("adverse_selection_risk")
+    return _resolve_decimal(raw)
+
+
+__all__ = [
+    "RiskEngine",
+    "FINAL_STATUSES",
+    "target_implied_daily_notional",
+    "target_sizing_payload",
+]

@@ -1,0 +1,32 @@
+{
+  "run_id": "wp-d3cdc094c8e3184af629999a",
+  "verdict": "reject",
+  "score": 0.0,
+  "confidence": 0.98,
+  "decision_policy": "whitepaper_v1.blocked_on_source_access",
+  "rationale": "Full-paper evidence is mandatory for an implementation decision under this run contract. The paper source was not retrievable and the run ID is not registered in reachable Torghut/Jangar APIs, so the run must be rejected for this phase.",
+  "rejection_reasons": [
+    "Source retrieval failed: provided PDF URL returns HTTP 404.",
+    "Run lookup failed: Torghut and Jangar both resolve this run_id as missing.",
+    "Source linkage is incomplete: issue #42 payload is a non-whitepaper PR object.",
+    "Ceph key is known but runtime lacks usable object-store endpoint/credentials in-band."
+  ],
+  "recommendations": [
+    "Provide one valid source artifact for this exact run: accessible PDF URL, signed Ceph URL, or run-linked PDF stream.",
+    "Re-run deterministic ingestion and cite exact sections/claims before any implementation recommendation.",
+    "Validate issue/run linkage in workflow ingress so branch dispatch points to an issue-scoped, parsable source.",
+    "Rerun this analysis after source recovery to produce a fresh, testable implementation decision."
+  ],
+  "requires_followup": true,
+  "blocked_stage": "source_acquisition",
+  "blocked_reason": "whitepaper_source_unavailable",
+  "evidence": {
+    "issue_lookup": "github_issue_42_payload_is_pull_request_without_body",
+    "primary_pdf_url_status": "404",
+    "torghut_lookup": "whitepaper_run_not_found",
+    "jangar_lookup": "whitepaper_run_not_found",
+    "ceph_uri_hint": "s3://torghut-whitepapers/raw/checksum/b5/b5d4c2daa152f53c02621a70601b11dc5b4aecbda1cc3f5962bc5f7f491bad40/source.pdf",
+    "runtime_access": "no_whitepaper_ceph_client_environment_variables"
+  },
+  "smallest_unblocker": "Provide one working source access path for this run_id (downloadable PDF URL, signed Ceph URL, or linked Torghut/Jangar PDF stream)."
+}

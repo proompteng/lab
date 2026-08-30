@@ -1,0 +1,16 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: inngest-private
+  namespace: inngest
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`inngest.k8s.proompteng.ai`)
+      services:
+        - name: inngest
+          port: 8288
+  tls:
+    secretName: wildcard-k8s-proompteng-ai-tls

@@ -1,0 +1,8 @@
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: flink-checkpoints
+  namespace: torghut
+spec:
+  bucketName: flink-checkpoints
+  storageClassName: rook-ceph-bucket

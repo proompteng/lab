@@ -1,0 +1,93 @@
+# Argo GitOps and Overlays
+
+## Status
+
+- Version: `v1`
+- Last updated: **2026-02-08**
+- Source of truth (config): `argocd/applications/torghut/**`
+
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Implemented/partially evolved: Torghut GitOps, migrations, release workflows, and scripts exist; post-deploy verification wiring has changed over time.
+- Matched implementation area: CI/CD, release, GitOps, Argo, Knative, and deployment automation.
+- Current source evidence:
+  - `argocd/applications/torghut/knative-service.yaml`
+  - `argocd/applications/torghut/db-migrations-job.yaml`
+  - `.github/workflows/torghut-ci.yml`
+  - `.github/workflows/torghut-release.yml`
+  - `packages/scripts/src/torghut/update-manifests.ts`
+- Design drift note: Deployment docs must be checked against current workflows because old names have been retired or replaced.
+
+
+## Purpose
+
+Document how Torghut is deployed using ArgoCD (GitOps), how kustomize overlays should be structured, and how to
+perform safe rollouts and rollbacks.
+
+## Non-goals
+
+- Rewriting ArgoCD project structure.
+- Direct kubectl applies as the standard workflow.
+
+## Terminology
+
+- **Desired state:** Manifests in git that ArgoCD continuously reconciles.
+- **Overlay:** Environment-specific kustomize patch.
+
+## Current repo pointers
+
+- Torghut app manifests: `argocd/applications/torghut/**`
+- Existing Argo notes: `docs/torghut/argo.md`
+- Root kustomization: `argocd/applications/torghut/kustomization.yaml`
+
+## GitOps flow
+
+```mermaid
+sequenceDiagram
+  participant Dev as Engineer
+  participant Git as GitHub
+  participant Argo as ArgoCD
+  participant K8s as Kubernetes
+
+  Dev->>Git: commit manifest change
+  Git-->>Argo: webhook/poll
+  Argo->>K8s: apply desired state
+  K8s-->>Argo: health/status
+```
+
+For **actuation automation**, the same flow applies: the runner opens a PR against
+`argocd/applications/torghut/**` and Argo reconciles after merge (see
+`docs/torghut/design-system/v1/operations-actuation-runner.md`).
+
+## Overlay guidance (v1)
+
+If/when environment overlays exist:
+
+- Keep topic names and schemas consistent across envs.
+- Overlays should primarily change:
+  - image digests,
+  - external endpoints,
+  - resource requests/limits,
+  - alert thresholds,
+  - and safe defaults (paper trading remains default).
+
+## Failure modes and recovery
+
+| Failure                          | Symptoms             | Detection          | Recovery                              |
+| -------------------------------- | -------------------- | ------------------ | ------------------------------------- |
+| Drift due to manual kubectl edit | Argo shows OutOfSync | Argo dashboard     | revert manual edits; re-sync from git |
+| Bad patch                        | workloads crash      | health checks fail | `git revert` and resync               |
+
+## Security considerations
+
+- Git history is an audit log; restrict who can merge to main.
+- Avoid storing secrets in overlays; use SealedSecrets.
+
+## Decisions (ADRs)
+
+### ADR-30-1: GitOps is the only supported production change path
+
+- **Decision:** Operational changes happen via PRs and Argo sync.
+- **Rationale:** Repeatability, auditability, reduced drift.
+- **Consequences:** Requires disciplined incident procedures and fast rollback process.
