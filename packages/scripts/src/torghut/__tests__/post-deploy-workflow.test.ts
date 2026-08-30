@@ -31,6 +31,7 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(pushTrigger).not.toContain('- main')
     expect(pushTrigger).toContain("- 'argocd/applications/torghut/**'")
     expect(pushTrigger).toContain("- 'argocd/applications/torghut-options/**'")
+    expect(pushTrigger).toContain("- 'argocd/applications/torghut-hyperliquid-runtime/**'")
   })
 
   it('does not skip Knative Service readiness when the runner lacks RBAC', () => {
@@ -65,14 +66,16 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).toContain('[ "${OPERATION_PHASE}" = \'Succeeded\' ]')
   })
 
-  it('verifies options, TA, and websocket deployments after Torghut GitOps changes', () => {
+  it('verifies every Torghut stage application and runtime deployment after GitOps changes', () => {
     expect(workflow).toContain("- 'argocd/applications/torghut-options/**'")
-    expect(workflow).toContain('for app in torghut torghut-options; do')
+    expect(workflow).toContain("- 'argocd/applications/torghut-hyperliquid-runtime/**'")
+    expect(workflow).toContain('for app in torghut torghut-options torghut-hyperliquid-runtime; do')
     expect(workflow).toContain('kubectl rollout status "deployment/${deployment}"')
     expect(workflow).toContain('torghut-options-archive')
     expect(workflow).toContain('torghut-options-catalog')
     expect(workflow).toContain('torghut-options-enricher')
     expect(workflow).toContain('torghut-options-ta')
+    expect(workflow).toContain('torghut-hyperliquid-runtime')
     expect(workflow).toContain('torghut-ta')
     expect(workflow).toContain('torghut-ta-sim')
     expect(workflow).toContain('torghut-ws')
@@ -99,7 +102,7 @@ describe('torghut post-deploy verifier workflow', () => {
     const replicaRead = workflow.indexOf(
       "kubectl get deployment torghut-scheduler -n torghut -o jsonpath='{.spec.replicas}'",
     )
-    const argoWait = workflow.indexOf('for app in torghut torghut-options; do')
+    const argoWait = workflow.indexOf('for app in torghut torghut-options torghut-hyperliquid-runtime; do')
 
     expect(replicaRead).toBeGreaterThan(argoWait)
     expect(workflow).toContain('case "${TORGHUT_SCHEDULER_REPLICAS}" in')
@@ -113,7 +116,7 @@ describe('torghut post-deploy verifier workflow', () => {
 
   it('reads and exports the desired torghut-sim trading state from the live Knative Service', () => {
     const desiredStateRead = workflow.indexOf('kubectl get ksvc torghut-sim -n torghut -o json')
-    const argoWait = workflow.indexOf('for app in torghut torghut-options; do')
+    const argoWait = workflow.indexOf('for app in torghut torghut-options torghut-hyperliquid-runtime; do')
 
     expect(desiredStateRead).toBeGreaterThan(argoWait)
     expect(workflow).toContain('select(.name == "TRADING_ENABLED")')
@@ -240,7 +243,7 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).toContain('contents: read')
     expect(workflow).toContain("Kargo's")
     expect(workflow).toContain('argocd-update step owns the sync')
-    expect(workflow).toContain('for app in torghut torghut-options; do')
+    expect(workflow).toContain('for app in torghut torghut-options torghut-hyperliquid-runtime; do')
     expect(workflow).not.toContain('argocd.argoproj.io/refresh')
     expect(workflow).not.toContain('request_argocd_sync()')
     expect(workflow).not.toContain('kubectl annotate application')
