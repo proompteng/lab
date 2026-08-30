@@ -361,6 +361,8 @@ message Namespace {
     // The status of each replica where the namespace is available.
     // temporal:versioning:min_version=v0.13.0
     repeated Replica replicas = 18;
+    // The id of the project this namespace belongs to.
+    string project_id = 17;
 }
 
 message NamespaceRegionStatus {
@@ -397,9 +399,12 @@ message ExportSinkSpec {
     // The S3 configuration details when destination_type is S3.
     temporal.api.cloud.sink.v1.S3Spec s3 = 3;
 
-    // This is a feature under development. We will allow GCS sink support for GCP Namespaces.
     // The GCS configuration details when destination_type is GCS.
     temporal.api.cloud.sink.v1.GCSSpec gcs = 4;
+
+    // The Azure Blob configuration details when destination_type is Azure Blob.
+    // temporal:versioning:min_version=v0.19.1
+    temporal.api.cloud.sink.v1.AzureBlobSpec azure_blob = 5;
 }
 
 message ExportSink {
@@ -441,7 +446,6 @@ message NamespaceCapacityInfo {
   string namespace = 1;
 
   // Whether the namespace's APS limit was set by Temporal Support.
-  // When true, adjusting the namespace's capacity will reset this limit.
   bool has_legacy_limits = 2;
 
   // The current capacity of the namespace.
