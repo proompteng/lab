@@ -29,6 +29,8 @@ import { readTengriBffSecret } from './runtime-secrets'
 const DEFAULT_GRPC_DEADLINE_MS = 15_000
 const MAX_GRPC_MESSAGE_BYTES = 16 * 1024 * 1024
 const PROTO_RELATIVE_PATH = 'proompteng/runtime/v1/microvm.proto'
+const NO_PRESERVED_SCALAR_DEFAULTS = new Set<string>()
+const WATCH_FILES_PRESERVED_SCALAR_DEFAULTS = new Set(['afterSequence'])
 
 type RawRecord = Record<string, unknown>
 type RawAgent = RawRecord & {
@@ -173,8 +175,10 @@ export async function searchFiles(subject: string, agentId: string, filePath: st
   } satisfies TengriFileSearchResult
 }
 
-export function watchFiles(subject: string, agentId: string, filePath: string, afterSequence: number) {
-  return stream('watchFiles', { agentId, path: filePath, afterSequence }, subject)
+export function watchFiles(subject: string, agentId: string, filePath: string, afterSequence?: number) {
+  const request: RawRecord = { agentId, path: filePath }
+  if (afterSequence !== undefined) request.afterSequence = afterSequence
+  return stream('watchFiles', request, subject, WATCH_FILES_PRESERVED_SCALAR_DEFAULTS)
 }
 
 export function normalizeFileEvent(event: RawRecord): TengriFileEvent {
@@ -382,16 +386,26 @@ function abortedRequestError() {
   return error
 }
 
-function stream(methodName: string, request: RawRecord, subject: string) {
+function stream(
+  methodName: string,
+  request: RawRecord,
+  subject: string,
+  preservedScalarDefaults: ReadonlySet<string> = NO_PRESERVED_SCALAR_DEFAULTS,
+) {
   const client = getClient()
   const method = client[methodName] as StreamMethod
   if (typeof method !== 'function') throw new TengriUnavailableError(`Tengri method ${methodName} is unavailable`)
-  const canonicalRequest = canonicalizeProto3Request(request)
+  const canonicalRequest = canonicalizeProto3Request(request, preservedScalarDefaults)
   return method.call(client, canonicalRequest, metadata(subject, methodName, canonicalRequest), callOptions(0))
 }
 
-function canonicalizeProto3Request(request: RawRecord) {
-  return Object.fromEntries(Object.entries(request).filter(([, value]) => !isProto3ScalarDefault(value)))
+function canonicalizeProto3Request(
+  request: RawRecord,
+  preservedScalarDefaults: ReadonlySet<string> = NO_PRESERVED_SCALAR_DEFAULTS,
+) {
+  return Object.fromEntries(
+    Object.entries(request).filter(([key, value]) => preservedScalarDefaults.has(key) || !isProto3ScalarDefault(value)),
+  )
 }
 
 function isProto3ScalarDefault(value: unknown) {
