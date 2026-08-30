@@ -136,6 +136,27 @@ test -z "$(kubectl --context galactic-lan -n kata get daemonset -o name)"
 
 The runtime verifier rejects the rollout while any `microvm-agent-*` or `nanoagent-*` canary DaemonSet remains.
 
+The four runtime activation labels are deliberately unversioned. Before changing the installer on a node that already
+passed an earlier Kata release, keep that target cordoned and remove all four labels from that target only. This must
+happen before the installer or Omni reboot operation starts, so an automatically uncordoned returning node cannot
+accept Kata workloads on unproved replacement handlers:
+
+```bash
+kubectl --context galactic-lan label node <node> \
+  runtime.proompteng.ai/kata-qemu- \
+  runtime.proompteng.ai/kata-clh- \
+  runtime.proompteng.ai/kata-fc- \
+  runtime.proompteng.ai/kata-dragonball-
+test "$(kubectl --context galactic-lan get node <node> -o json | jq \
+  '[.metadata.labels | has("runtime.proompteng.ai/kata-qemu"),
+    has("runtime.proompteng.ai/kata-clh"),
+    has("runtime.proompteng.ai/kata-fc"),
+    has("runtime.proompteng.ai/kata-dragonball")] | any')" = false
+```
+
+Never remove activation labels from a non-target node. Re-add each target label only after that runtime passes the
+fresh post-install proof below.
+
 Omni normally uncordons a node when its reboot lifecycle finalizes. Immediately cordon the returned node again for
 runtime validation and require `Ready,SchedulingDisabled` before applying any runtime label:
 
