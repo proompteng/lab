@@ -142,8 +142,7 @@ RUN set -eux; \
     rm -f \
       /bundle/rust/bin/rust-gdb \
       /bundle/rust/bin/rust-gdbgui \
-      /bundle/rust/bin/rust-lldb \
-      /bundle/rust/bin/rustdoc; \
+      /bundle/rust/bin/rust-lldb; \
     rm -rf /bundle/rust/etc /bundle/rust/share; \
     test "$(/bundle/node/bin/node --version)" = "v${NODE_VERSION}"; \
     test "$(/bundle/bun/bin/bun --version)" = "${BUN_VERSION}"; \
@@ -192,10 +191,15 @@ RUN mkdir -p "$HOME" && \
     test "$(go env GOROOT)" = "$HOME/.local/go" && \
     test "$(rustc --version | cut -d' ' -f2)" = '1.90.0' && \
     test "$(cargo --version | cut -d' ' -f2)" = '1.90.0' && \
+    test "$(rustdoc --version | cut -d' ' -f2)" = '1.90.0' && \
     printf 'fn main(){println!("rust-ok");}\n' > /tmp/rust-smoke.rs && \
     test "$(rustc /tmp/rust-smoke.rs -o /tmp/rust-smoke && /tmp/rust-smoke)" = 'rust-ok' && \
     cargo new --quiet --bin /tmp/cargo-smoke && \
     test "$(cd /tmp/cargo-smoke && cargo run --quiet)" = 'Hello, world!' && \
+    cargo new --quiet --lib /tmp/cargo-library-smoke && \
+    printf '/// Returns 42.\n///\n/// ```\n/// assert_eq!(cargo_library_smoke::answer(), 42);\n/// ```\npub fn answer() -> i32 { 42 }\n' \
+      > /tmp/cargo-library-smoke/src/lib.rs && \
+    (cd /tmp/cargo-library-smoke && cargo test --quiet) && \
     printf '#[no_mangle]\npub extern "C" fn answer() -> i32 { 42 }\n' > /tmp/rust-library-smoke.rs && \
     rustc --crate-type=cdylib /tmp/rust-library-smoke.rs -o /tmp/librust_library_smoke.so && \
     printf 'package main\nimport "fmt"\nfunc main(){fmt.Println("go-ok")}\n' > /tmp/go-smoke.go && \
@@ -204,13 +208,14 @@ RUN mkdir -p "$HOME" && \
     mkdir -p "$BUN_INSTALL/install/global" && \
     printf '{"name":"nanoagent-global"}\n' > "$BUN_INSTALL/install/global/package.json" && \
     test "$(bun pm bin --global)" = "$HOME/.local/bin" && \
-    printf 'node=%s bun=%s uv=%s go=%s rustc=%s cargo=%s\n' \
+    printf 'node=%s bun=%s uv=%s go=%s rustc=%s cargo=%s rustdoc=%s\n' \
       "$(node --version)" \
       "$(bun --version)" \
       "$(uv --version)" \
       "$(go version)" \
       "$(rustc --version)" \
       "$(cargo --version)" \
+      "$(rustdoc --version)" \
       > /tmp/toolchain-version
 
 # Download and verify the pinned native Codex package during every image build. The

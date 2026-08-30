@@ -57,12 +57,12 @@ showing a bundled-helper fallback warning after device login.
 
 After Nanoagent has moved its bootstrap credential through the one-use pipe and removed the transport variables from
 the process environment, `bootstrap-toolchain` atomically installs Node, npm, npx, Bun, Bunx, uv, Go, gofmt, rustc,
-and Cargo under the versioned per-architecture `~/.tengri/toolchains` directory. Stable links live in `~/.local/bin`,
+Cargo, and rustdoc under the versioned per-architecture `~/.tengri/toolchains` directory. Stable links live in `~/.local/bin`,
 the relocatable Go root lives at `~/.local/go`, and subsequent boots validate and reuse the existing home-volume
 install. Nanoagent configures both npm and Bun to use `~/.local` as their persistent global prefix, so globally
-installed package executables are immediately available from the existing `~/.local/bin` PATH. Rust compilation uses
-the bundled architecture-specific `rust-lld` and minimal startup objects through an atomically generated wrapper, so
-pure Rust programs build without adding a mutable system compiler to the read-only guest rootfs.
+installed package executables are immediately available from the existing `~/.local/bin` PATH. Rust compilation and
+doctests use the bundled architecture-specific `rust-lld` and minimal startup objects through atomically generated
+wrappers, so pure Rust programs and library tests work without a mutable system compiler on the read-only guest rootfs.
 
 On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.149.0 package from the npm registry,
 verifies its pinned SHA-512 digest, and atomically installs the complete native package under the 16 GiB PVC-backed

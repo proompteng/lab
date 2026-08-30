@@ -68,6 +68,7 @@ validate_install() {
   [[ -x "$install_root/go/bin/gofmt" ]] || fail "gofmt install is incomplete: $install_root"
   [[ -x "$install_root/rust/bin/rustc" ]] || fail "rustc install is incomplete: $install_root"
   [[ -x "$install_root/rust/bin/cargo" ]] || fail "Cargo install is incomplete: $install_root"
+  [[ -x "$install_root/rust/bin/rustdoc" ]] || fail "rustdoc install is incomplete: $install_root"
   [[ -x "$install_root/rust/lib/rustlib/$rust_target/bin/rust-lld" ]] || fail "Rust linker is incomplete: $install_root"
   for startup_object in Scrt1.o crti.o crtn.o crtbeginS.o crtendS.o; do
     [[ -f "$install_root/linker/crt/$startup_object" ]] || fail "Rust startup object is missing: $startup_object"
@@ -80,6 +81,7 @@ validate_install() {
   [[ "$(GOROOT="$install_root/go" "$install_root/go/bin/go" version | cut -d' ' -f3)" == "go$GO_VERSION" ]] || fail 'Go version mismatch'
   [[ "$("$install_root/rust/bin/rustc" --version | cut -d' ' -f2)" == "$RUST_VERSION" ]] || fail 'Rust version mismatch'
   [[ "$("$install_root/rust/bin/cargo" --version | cut -d' ' -f2)" == "$RUST_VERSION" ]] || fail 'Cargo version mismatch'
+  [[ "$("$install_root/rust/bin/rustdoc" --version | cut -d' ' -f2)" == "$RUST_VERSION" ]] || fail 'rustdoc version mismatch'
 }
 
 link_binary() {
@@ -175,6 +177,13 @@ prepare_rust_linker() {
   write_rust_wrapper \
     "$rustc_wrapper" \
     "$install_root/rust/bin/rustc" \
+    -C "linker=$rust_linker" \
+    -C linker-flavor=ld
+
+  local rustdoc_wrapper="$HOME/.local/bin/rustdoc"
+  write_rust_wrapper \
+    "$rustdoc_wrapper" \
+    "$install_root/rust/bin/rustdoc" \
     -C "linker=$rust_linker" \
     -C linker-flavor=ld
 }
