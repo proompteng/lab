@@ -1,0 +1,7 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- generated
+images:
+- name: registry.ide-newton.ts.net/lab/docs
+  digest: sha256:4076caa2ee9684478a2acf0d421dfa7c7295b5e0da36a4407d273ffc87fe2b54

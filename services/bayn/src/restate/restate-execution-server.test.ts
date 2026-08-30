@@ -1,0 +1,194 @@
+import { connect, createServer as createHttp2Server, type ClientHttp2Session } from 'node:http2'
+import { createServer as createHttpServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
+
+import { describe, expect, test } from 'bun:test'
+import { ConfigProvider, Effect } from 'effect'
+
+import { acquireRestateHttp2Server } from './restate-http2-server'
+import {
+  decodeRestateRequestIdentityKeys,
+  makeRestateExecutionEndpointHandler,
+  restateExecutionServerConfig,
+} from './restate-execution-server'
+
+const controllerKey = 'a'.repeat(64)
+const planHash = 'b'.repeat(64)
+const sourceRevision = 'c'.repeat(40)
+const requestIdentityKey = 'publickeyv1_2G8dCQhArfvGpzPw5Vx2ALciR4xCLHfS5YaT93XjNxX9'
+
+const reservePort = (): Promise<number> =>
+  new Promise((resolve, reject) => {
+    const server = createHttpServer()
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address() as AddressInfo
+      server.close((cause) => (cause === undefined ? resolve(address.port) : reject(cause)))
+    })
+  })
+
+const connectSession = (origin: string): Promise<ClientHttp2Session> =>
+  new Promise((resolve, reject) => {
+    const session = connect(origin)
+    session.once('connect', () => resolve(session))
+    session.once('error', reject)
+  })
+
+const readDiscovery = (session: ClientHttp2Session): Promise<unknown> =>
+  new Promise((resolve, reject) => {
+    const request = session.request({
+      ':method': 'GET',
+      ':path': '/discover',
+      accept: 'application/vnd.restate.endpointmanifest.v4+json',
+    })
+    let body = ''
+    request.setEncoding('utf8')
+    request.on('data', (chunk: string) => {
+      body += chunk
+    })
+    request.once('error', reject)
+    request.once('end', () => {
+      try {
+        resolve(JSON.parse(body) as unknown)
+      } catch (cause) {
+        reject(cause)
+      }
+    })
+    request.end()
+  })
+
+const readUnsignedDiscoveryStatus = (session: ClientHttp2Session): Promise<number> =>
+  new Promise((resolve, reject) => {
+    const request = session.request({
+      ':method': 'GET',
+      ':path': '/discover',
+      accept: 'application/vnd.restate.endpointmanifest.v4+json',
+    })
+    let status: number | undefined
+    request.once('response', (headers) => {
+      const candidate = headers[':status']
+      status = typeof candidate === 'number' ? candidate : undefined
+    })
+    request.on('data', () => undefined)
+    request.once('error', reject)
+    request.once('end', () =>
+      status === undefined ? reject(new Error('Restate endpoint omitted the HTTP status')) : resolve(status),
+    )
+    request.end()
+  })
+
+describe('native Restate execution server', () => {
+  test('discovers only the account-keyed controller and its narrow bootstrap', async () => {
+    const handler = makeRestateExecutionEndpointHandler(
+      { controllerKey, operationTimeoutMs: 30_000, planHash, sourceRevision },
+      {
+        advance: () => Promise.reject(new Error('discovery must not advance execution')),
+        log: () => Promise.resolve(),
+        projectState: () => Promise.resolve(),
+      },
+      'd'.repeat(64),
+      [],
+    )
+    const port = await reservePort()
+
+    const discovery = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* acquireRestateHttp2Server(createHttp2Server(handler), port)
+          const client = yield* Effect.promise(() => connectSession(`http://127.0.0.1:${port}`))
+          const manifest = yield* Effect.promise(() => readDiscovery(client))
+          client.close()
+          return manifest
+        }),
+      ),
+    )
+
+    const services =
+      (
+        discovery as {
+          readonly services?: readonly {
+            readonly name?: string
+            readonly handlers?: readonly { readonly name?: string }[]
+          }[]
+        }
+      ).services ?? []
+    expect(
+      services.map(({ name, handlers }) => ({ name, handlers: handlers?.map((handler) => handler.name) })),
+    ).toEqual([
+      {
+        name: 'BaynExecutionController',
+        handlers: ['activate', 'tick', 'deactivate', 'status'],
+      },
+      {
+        name: 'BaynExecutionBootstrap',
+        handlers: ['start'],
+      },
+    ])
+  })
+
+  test('requires a bounded unique Restate request-identity key set', () => {
+    expect(decodeRestateRequestIdentityKeys(requestIdentityKey)).toMatchObject({ _tag: 'Success' })
+    expect(decodeRestateRequestIdentityKeys(`${requestIdentityKey},${requestIdentityKey}`)).toMatchObject({
+      _tag: 'Failure',
+    })
+    expect(decodeRestateRequestIdentityKeys('not-a-restate-key')).toMatchObject({ _tag: 'Failure' })
+  })
+
+  test('ignores retired legacy lifecycle configuration at the server boundary', async () => {
+    const configured = await Effect.runPromise(
+      restateExecutionServerConfig.pipe(
+        Effect.provideService(
+          ConfigProvider.ConfigProvider,
+          ConfigProvider.fromUnknown({
+            BAYN_EXECUTION_BOOTSTRAP_TOKEN: Buffer.alloc(32, 7).toString('base64url'),
+            RESTATE_REQUEST_IDENTITY_KEYS: requestIdentityKey,
+            BAYN_LIFECYCLE_OWNER: 'RESTATE',
+            BAYN_LIFECYCLE_COMMAND_PORT: '8081',
+            BAYN_LIFECYCLE_CONTROLLER_KEY: '',
+            BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION: 'not-a-revision',
+          }),
+        ),
+      ),
+    )
+
+    expect(configured).toMatchObject({
+      port: 9080,
+      requestIdentityKeys: requestIdentityKey,
+    })
+    expect(Object.keys(configured).sort()).toEqual([
+      'bootstrapToken',
+      'port',
+      'previousPlanHash',
+      'previousSourceRevision',
+      'requestIdentityKeys',
+    ])
+  })
+
+  test('rejects an unsigned discovery request when request identity is configured', async () => {
+    const handler = makeRestateExecutionEndpointHandler(
+      { controllerKey, operationTimeoutMs: 30_000, planHash, sourceRevision },
+      {
+        advance: () => Promise.reject(new Error('unsigned discovery must not advance execution')),
+        log: () => Promise.resolve(),
+        projectState: () => Promise.resolve(),
+      },
+      'd'.repeat(64),
+      [requestIdentityKey],
+    )
+    const port = await reservePort()
+
+    const status = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* acquireRestateHttp2Server(createHttp2Server(handler), port)
+          const client = yield* Effect.promise(() => connectSession(`http://127.0.0.1:${port}`))
+          const responseStatus = yield* Effect.promise(() => readUnsignedDiscoveryStatus(client))
+          client.close()
+          return responseStatus
+        }),
+      ),
+    )
+
+    expect(status).toBe(401)
+  })
+})

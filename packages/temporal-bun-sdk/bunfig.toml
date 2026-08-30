@@ -1,0 +1,6 @@
+[install]
+peer = true
+
+[test]
+root = "tests"
+

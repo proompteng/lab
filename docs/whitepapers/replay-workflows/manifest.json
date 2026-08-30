@@ -1,0 +1,29 @@
+{
+  "repository": "proompteng/lab",
+  "workflow": "whitepaper-analysis-v1",
+  "generatedBy": "packages/scripts/src/torghut/generate-whitepaper-replay-workflows.ts",
+  "syntheticIssueBase": 900000000,
+  "uniqueWhitepaperCount": 1,
+  "items": [
+    {
+      "syntheticIssueNumber": 900000004,
+      "paperTitle": "Navigating the Alpha Jungle: An LLM-Powered MCTS Framework for Formulaic Factor Mining",
+      "attachmentUrl": "https://arxiv.org/pdf/2505.11122",
+      "canonicalSourceIssue": {
+        "number": 3592,
+        "title": "Analyze whitepaper: arXiv 2505.11122",
+        "url": "https://github.com/proompteng/lab/issues/3592",
+        "closedAt": "2026-02-24T07:58:17Z"
+      },
+      "sourceIssues": [
+        {
+          "number": 3592,
+          "title": "Analyze whitepaper: arXiv 2505.11122",
+          "url": "https://github.com/proompteng/lab/issues/3592",
+          "closedAt": "2026-02-24T07:58:17Z"
+        }
+      ],
+      "payloadPath": "payloads/900000004-navigating-the-alpha-jungle-an-llm-powered-mcts-framework-for-formulaic-factor-mining.json"
+    }
+  ]
+}
