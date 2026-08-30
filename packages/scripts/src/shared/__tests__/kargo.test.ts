@@ -33,6 +33,18 @@ const kustomization = YAML.parse(readRepoFile('argocd/applications/kargo/kustomi
 const stagesSource = readRepoFile('argocd/applications/kargo/stages.yaml')
 const analysisKustomization = readRepoFile('argocd/applications/analysis/kustomization.yaml')
 const pullRequestWorkflow = readRepoFile('.github/workflows/pull-request.yml')
+const helmApplicationSet = YAML.parse(readRepoFile('argocd/applicationsets/helm-apps.yaml')) as any
+const helmApplicationElements = helmApplicationSet.spec.generators[0].matrix.generators[1].list.elements as Array<
+  Record<string, any>
+>
+const kargoHelmValues = helmApplicationElements.find((element) => element.name === 'kargo')?.valuesObject as Record<
+  string,
+  any
+>
+const argoCDConfigMap = YAML.parse(readRepoFile('argocd/applications/argocd/overlays/argocd-cm.yaml')) as Manifest & {
+  data?: Record<string, string>
+}
+const dexConfig = YAML.parse(argoCDConfigMap.data?.['dex.config'] ?? '') as Record<string, any>
 const applicationSetElements = ['argocd/applicationsets/product.yaml', 'argocd/applicationsets/platform.yaml'].flatMap(
   (path) =>
     (YAML.parse(readRepoFile(path)) as any).spec.generators[0].matrix.generators[1].list.elements as Array<
@@ -414,6 +426,67 @@ const byName = (manifests: Manifest[]): Map<string, Manifest> =>
   new Map(manifests.map((manifest) => [manifest.metadata?.name ?? '', manifest]))
 
 describe('Kargo direct-push GitOps contract', () => {
+  it('exposes the Kargo UI over Tailscale with Dex SSO and no built-in admin', () => {
+    expect(kargoHelmValues.api).toMatchObject({
+      enabled: true,
+      host: 'kargo.ide-newton.ts.net',
+      secretManagementEnabled: false,
+      adminAccount: { enabled: false },
+      oidc: {
+        enabled: true,
+        issuerURL: 'https://argocd.proompteng.ai/api/dex',
+        clientID: 'kargo-ui',
+        cliClientID: 'kargo-cli',
+        usernameClaim: 'email',
+        admins: { claims: { email: ['admin@proompteng.ai'] } },
+      },
+      tls: { enabled: false, terminatedUpstream: true },
+      rollouts: { integrationEnabled: false },
+    })
+    expect(kargoHelmValues.externalWebhooksServer).toEqual({ enabled: false })
+
+    const ingress = (kargoHelmValues.extraObjects as Array<Record<string, any>>).find(
+      (object) => object.kind === 'Ingress' && object.metadata?.name === 'kargo-tailscale',
+    )
+    expect(ingress).toMatchObject({
+      metadata: {
+        namespace: 'kargo',
+        annotations: { 'tailscale.com/tags': 'tag:k8s' },
+      },
+      spec: {
+        ingressClassName: 'tailscale',
+        tls: [{ hosts: ['kargo.ide-newton.ts.net'] }],
+        rules: [
+          {
+            host: 'kargo.ide-newton.ts.net',
+            http: {
+              paths: [
+                {
+                  path: '/',
+                  pathType: 'Prefix',
+                  backend: { service: { name: 'kargo-api', port: { number: 80 } } },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    })
+
+    expect(dexConfig.web.allowedOrigins).toContain('https://kargo.ide-newton.ts.net')
+    expect(dexConfig.staticClients).toEqual(
+      expect.arrayContaining([
+        {
+          id: 'kargo-ui',
+          name: 'Kargo UI',
+          public: true,
+          redirectURIs: ['https://kargo.ide-newton.ts.net/login'],
+        },
+        { id: 'kargo-cli', name: 'Kargo CLI', public: true },
+      ]),
+    )
+  })
+
   it('points every enrolled Argo Application at its exact authorized Kargo branch', () => {
     const applications = new Map(applicationSetElements.map((element) => [element.name as string, element]))
     const expectedApplications = Object.values(expected)

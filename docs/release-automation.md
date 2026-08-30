@@ -8,6 +8,20 @@ digest in the source repository.
 The cluster installation is pinned to the Kargo v1.11 API and chart contract. Keep Warehouse, Freight, Stage, and
 promotion-step fields aligned with that pinned version when enrolling an application.
 
+## Operator UI
+
+The Kargo API serves its UI at `https://kargo.ide-newton.ts.net` through a private Tailscale Ingress. Authenticate with
+the existing Argo Dex SSO identity. Kargo's built-in admin account and API Secret management are disabled; credentials
+and delivery resources remain declarative GitOps inputs. The UI is an operator view of Warehouse, Freight, Stage,
+Promotion, and Argo state. Normal application upgrades remain automatic and must not be replaced with UI-driven image
+selection, manifest edits, or manual Argo synchronization.
+
+The CLI uses the same SSO provider:
+
+```bash
+kargo login https://kargo.ide-newton.ts.net --sso
+```
+
 ## Artifact eligibility
 
 Repo-owned builders publish an immutable Kargo alias only after the final multi-architecture OCI index succeeds. The

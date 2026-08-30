@@ -31,9 +31,29 @@ spec:
                       pod-security.kubernetes.io/warn: restricted
                   valuesObject:
                     api:
-                      enabled: false
+                      enabled: true
+                      host: kargo.ide-newton.ts.net
+                      secretManagementEnabled: false
+                      adminAccount:
+                        enabled: false
+                      oidc:
+                        enabled: true
+                        issuerURL: https://argocd.proompteng.ai/api/dex
+                        clientID: kargo-ui
+                        cliClientID: kargo-cli
+                        usernameClaim: email
+                        admins:
+                          claims:
+                            email:
+                              - admin@proompteng.ai
+                      argocd:
+                        urls:
+                          "": https://argocd.proompteng.ai
                       rollouts:
                         integrationEnabled: false
+                      tls:
+                        enabled: false
+                        terminatedUpstream: true
                     externalWebhooksServer:
                       enabled: false
                     global:
@@ -55,6 +75,30 @@ spec:
                         watchArgocdNamespaceOnly: true
                       rollouts:
                         integrationEnabled: false
+                    extraObjects:
+                      - apiVersion: networking.k8s.io/v1
+                        kind: Ingress
+                        metadata:
+                          name: kargo-tailscale
+                          namespace: kargo
+                          annotations:
+                            tailscale.com/tags: tag:k8s
+                        spec:
+                          ingressClassName: tailscale
+                          tls:
+                            - hosts:
+                                - kargo.ide-newton.ts.net
+                          rules:
+                            - host: kargo.ide-newton.ts.net
+                              http:
+                                paths:
+                                  - path: /
+                                    pathType: Prefix
+                                    backend:
+                                      service:
+                                        name: kargo-api
+                                        port:
+                                          number: 80
                 - name: restate-operator-crds
                   namespace: restate-operator
                   repoUrl: ghcr.io/restatedev
