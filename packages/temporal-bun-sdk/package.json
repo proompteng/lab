@@ -1,0 +1,112 @@
+{
+  "name": "@proompteng/temporal-bun-sdk",
+  "version": "0.11.3",
+  "description": "Temporal SDK for Bun with workers, client, replay tooling, and Temporal Cloud/TLS support.",
+  "keywords": [
+    "bun",
+    "bun-sdk",
+    "client",
+    "durable-execution",
+    "effect",
+    "grpc",
+    "temporal",
+    "temporal-cloud",
+    "temporal-sdk",
+    "temporalio",
+    "typescript",
+    "worker",
+    "workflow",
+    "workflow-engine",
+    "workflow-orchestration"
+  ],
+  "homepage": "https://docs.proompteng.ai/docs/temporal-bun-sdk",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/proompteng/lab.git",
+    "directory": "packages/temporal-bun-sdk"
+  },
+  "bin": {
+    "temporal-bun": "./dist/src/bin/temporal-bun.js",
+    "temporal-bun-skill": "./dist/src/bin/temporal-bun-skill.js",
+    "temporal-bun-worker": "./dist/src/bin/start-worker.js"
+  },
+  "files": [
+    "dist",
+    "docs",
+    "skills",
+    "README.md"
+  ],
+  "type": "module",
+  "main": "./dist/src/index.js",
+  "module": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    },
+    "./config": {
+      "types": "./dist/src/config.d.ts",
+      "default": "./dist/src/config.js"
+    },
+    "./client": {
+      "types": "./dist/src/client.d.ts",
+      "default": "./dist/src/client.js"
+    },
+    "./workflow": {
+      "types": "./dist/src/workflow/index.d.ts",
+      "default": "./dist/src/workflow/index.js"
+    },
+    "./worker": {
+      "types": "./dist/src/worker.d.ts",
+      "default": "./dist/src/worker.js"
+    },
+    "./testing": {
+      "types": "./dist/src/testing/index.d.ts",
+      "default": "./dist/src/testing/index.js"
+    },
+    "./skills": {
+      "types": "./dist/src/skills/index.d.ts",
+      "default": "./dist/src/skills/index.js"
+    },
+    "./bin/start-worker": "./dist/src/bin/start-worker.js",
+    "./bin/cli": "./dist/src/bin/temporal-bun.js",
+    "./bin/skill": "./dist/src/bin/temporal-bun-skill.js"
+  },
+  "scripts": {
+    "clean": "rm -rf dist",
+    "dev": "bun --watch src/bin/start-worker.ts",
+    "build": "tsc --project tsconfig.json --pretty false",
+    "test": "bun test",
+    "test:load": "bun scripts/run-worker-load.ts",
+    "evidence:production": "bun scripts/collect-production-evidence.ts",
+    "capture:replay-corpus": "bun scripts/capture-replay-corpus.ts",
+    "verify:replay-corpus": "bun scripts/verify-replay-corpus.ts",
+    "test:coverage": "bun test --coverage",
+    "verify:production": "bun run evidence:production && bun test tests/packaging/manifest-packaging.test.ts",
+    "verify:default-choice": "TEMPORAL_REQUIRE_DEFAULT_CHOICE=1 bun run evidence:production && bun test tests/packaging/manifest-packaging.test.ts",
+    "verify:packed-readiness": "bun scripts/verify-packed-readiness.ts",
+    "start:worker": "bun run dist/src/bin/start-worker.js",
+    "temporal:start": "bun scripts/start-temporal-cli.ts",
+    "temporal:stop": "bun scripts/stop-temporal-cli.ts",
+    "prepublishOnly": "bun run verify:default-choice && TEMPORAL_REQUIRE_DEFAULT_CHOICE=1 bun run verify:packed-readiness",
+    "prepack": "bun run build && bun run verify:default-choice",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.oxlint.json --ignore-pattern tests ."
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.14.0",
+    "@connectrpc/connect": "^2.1.2",
+    "@connectrpc/connect-node": "^2.1.2",
+    "effect": "^3.22.1",
+    "typescript": "^7.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.0",
+    "bun-types": "^1.4.0"
+  },
+  "engines": {
+    "bun": ">=1.4.0"
+  }
+}

@@ -1,0 +1,70 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: torghut-ws-config
+  namespace: torghut
+  annotations:
+    argocd.argoproj.io/sync-options: Replace=true
+    torghut.proompteng.ai/config-contract: stable-trade-updates-v1
+data:
+  ALPACA_MARKET_TYPE: "equity"
+  ALPACA_CRYPTO_LOCATION: "us"
+  ALPACA_FEED: "iex"
+  # Roll out observation feeds independently; overnight remains disabled until delayed SIP is proven live.
+  ALPACA_OBSERVATION_FEEDS: "delayed_sip"
+  ALPACA_STREAM_URL: "wss://stream.data.alpaca.markets"
+  ALPACA_TRADE_STREAM_URL: "wss://paper-api.alpaca.markets/stream"
+  ALPACA_BASE_URL: "https://data.alpaca.markets"
+  # Preserve the 16-symbol bar archive while keeping Bayn's complete decision feed at Alpaca Basic's 30-unit limit:
+  # 16 bar subscriptions + 7 quote subscriptions + 7 trade subscriptions = 30. Bayn does not consume updatedBars.
+  ALPACA_MARKET_DATA_CHANNELS: "trades,quotes,bars"
+  ALPACA_MARKET_DATA_TRADES_SYMBOLS: "AAPL,AMZN,IWM,NVDA,QQQ,SMH,SPY"
+  ALPACA_MARKET_DATA_QUOTES_SYMBOLS: "AAPL,AMZN,IWM,NVDA,QQQ,SMH,SPY"
+  OPTIONS_MARKET_HOLIDAYS: "2026-01-01,2026-01-19,2026-02-16,2026-04-03,2026-05-25,2026-06-19,2026-07-03,2026-09-07,2026-11-26,2026-12-25"
+  # Full bar universe for Bayn and the existing Torghut scheduler. Quote/trade overrides are the Bayn decision set.
+  SYMBOLS: "AAPL,AMD,AMZN,AVGO,COHR,CRDO,IWM,LITE,MRVL,MU,NVDA,QQQ,SMH,SNDK,SPY,WDC"
+  SYMBOLS_ALLOWLIST: "AAPL,AMD,AMZN,AVGO,COHR,CRDO,IWM,LITE,MRVL,MU,NVDA,QQQ,SMH,SNDK,SPY,WDC"
+  # Observation symbols and their versioned identity are supplied separately in deployment.yaml.
+  # Neither static market-data path depends on Jangar.
+  SYMBOLS_POLL_INTERVAL_MS: "30000"
+  SUBSCRIBE_BATCH_SIZE: "200"
+  SHARD_COUNT: "1"
+  SHARD_INDEX: "0"
+  ENABLE_TRADE_UPDATES: "true"
+  ENABLE_BARS_BACKFILL: "true"
+  ENABLE_TRADES_BACKFILL: "true"
+  # Span the last tradable session across weekends and overnight restarts so TA can reseed before the open.
+  BARS_BACKFILL_LOOKBACK_HOURS: "120"
+  TRADES_BACKFILL_LOOKBACK_HOURS: "120"
+  TRADES_BACKFILL_MAX_RECORDS: "50000"
+  RECONNECT_BASE_MS: "500"
+  RECONNECT_MAX_MS: "30000"
+  ALPACA_MARKET_DATA_READ_IDLE_TIMEOUT_MS: "180000"
+  DEDUP_TTL_SEC: "5"
+  DEDUP_MAX_ENTRIES: "10000"
+  KAFKA_BOOTSTRAP: "kafka-kafka-bootstrap.kafka:9092"
+  KAFKA_SECURITY_PROTOCOL: "SASL_PLAINTEXT"
+  KAFKA_SASL_MECH: "SCRAM-SHA-512"
+  KAFKA_LINGER_MS: "30"
+  KAFKA_BATCH_SIZE: "32768"
+  KAFKA_BUFFER_MEMORY_BYTES: "16777216"
+  KAFKA_MAX_REQUEST_SIZE_BYTES: "524288"
+  KAFKA_DELIVERY_TIMEOUT_MS: "60000"
+  KAFKA_REQUEST_TIMEOUT_MS: "15000"
+  KAFKA_MAX_BLOCK_MS: "10000"
+  KAFKA_ACKS: "all"
+  HEALTH_NOT_READY_KILL_AFTER_MS: "120000"
+  TOPIC_TRADES: "torghut.trades.v1"
+  TOPIC_QUOTES: "torghut.quotes.v1"
+  TOPIC_BARS_1M: "torghut.bars.1m.v1"
+  TOPIC_TRADE_UPDATES: "torghut.trade-updates.v1"
+  TOPIC_TRADE_UPDATES_V2: "torghut.trade-updates.v2"
+  TORGHUT_ACCOUNT_LABEL: "PA3SX7FYNUTF"
+  TOPIC_STATUS: "torghut.status.v1"
+  TOPIC_DELAYED_SIP_TRADES: "bayn.market-data.delayed-sip.trades.v1"
+  TOPIC_DELAYED_SIP_QUOTES: "bayn.market-data.delayed-sip.quotes.v1"
+  TOPIC_DELAYED_SIP_BARS_1M: "bayn.market-data.delayed-sip.bars.1m.v1"
+  TOPIC_OVERNIGHT_TRADES: "bayn.market-data.overnight.trades.v1"
+  TOPIC_OVERNIGHT_QUOTES: "bayn.market-data.overnight.quotes.v1"
+  TOPIC_OVERNIGHT_BARS_1M: "bayn.market-data.overnight.bars.1m.v1"
+  TOPIC_OBSERVATION_STATUS: "bayn.market-data.observation.status.v1"

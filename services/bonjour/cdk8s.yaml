@@ -1,0 +1,3 @@
+language: typescript
+app: bun run infra/main.ts
+output: manifests
