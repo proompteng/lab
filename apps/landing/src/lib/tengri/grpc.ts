@@ -313,6 +313,7 @@ export async function issuePreviewSession(
     id: stringValue(response.id),
     launchUrl: stringValue(response.launchUrl),
     expiresAt: stringValue(response.expiresAt),
+    previewOrigin: stringValue(response.previewOrigin),
   }
 }
 
