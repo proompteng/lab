@@ -136,6 +136,7 @@ message CreateTerminalRequest {
   string cwd = 2;
   uint32 columns = 3;
   uint32 rows = 4;
+  // Required idempotency identity. Clients must preserve this value across retries.
   string creation_id = 5;
 }
 message ListTerminalsRequest { string agent_id = 1; }
