@@ -116,9 +116,10 @@ export function isEditorValuePersisted(value: string, lastSaved: string | undefi
 export function canStartEditorSave(
   path: string,
   conflictedPaths: ReadonlySet<string>,
+  unverifiedPaths: ReadonlySet<string>,
   migratingPaths: ReadonlySet<string>,
 ): boolean {
-  return !conflictedPaths.has(path) && !migratingPaths.has(path)
+  return !conflictedPaths.has(path) && !unverifiedPaths.has(path) && !migratingPaths.has(path)
 }
 
 export function codeVerificationFailure(tab: EditorTab | undefined, error: string): CodeVerificationFailure | null {

@@ -63,9 +63,10 @@ describe('Code editor model', () => {
 
   test('blocks queued writes after a conflict and clears only the recoverable directory-limit error', () => {
     const path = '/workspace/main.rs'
-    expect(canStartEditorSave(path, new Set([path]), new Set())).toBe(false)
-    expect(canStartEditorSave(path, new Set(), new Set([path]))).toBe(false)
-    expect(canStartEditorSave(path, new Set(), new Set())).toBe(true)
+    expect(canStartEditorSave(path, new Set([path]), new Set(), new Set())).toBe(false)
+    expect(canStartEditorSave(path, new Set(), new Set([path]), new Set())).toBe(false)
+    expect(canStartEditorSave(path, new Set(), new Set(), new Set([path]))).toBe(false)
+    expect(canStartEditorSave(path, new Set(), new Set(), new Set())).toBe(true)
 
     expect(clearCodeWatchDirectoryLimitError(codeWatchDirectoryLimitError())).toBe('')
     expect(clearCodeWatchDirectoryLimitError('Monaco failed to initialize')).toBe('Monaco failed to initialize')

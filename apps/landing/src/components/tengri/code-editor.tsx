@@ -105,6 +105,7 @@ export function CodeEditor({
   const lastSavedRef = useRef(new Map<string, string>())
   const writeEchoesRef = useRef(new CodeWriteEchoTracker())
   const conflictedPathsRef = useRef(new Set<string>())
+  const unverifiedPathsRef = useRef(new Set<string>())
   const migratingPathsRef = useRef(new Set<string>())
   const writeControllersRef = useRef(new Map<string, AbortController>())
   const watchCursorsRef = useRef(new Map<string, number>())
@@ -147,6 +148,7 @@ export function CodeEditor({
 
   const markConflict = useCallback(
     (targetPath: string, error: string) => {
+      unverifiedPathsRef.current.delete(targetPath)
       conflictedPathsRef.current.add(targetPath)
       writeControllersRef.current.get(targetPath)?.abort()
       const timer = saveTimersRef.current.get(targetPath)
@@ -159,7 +161,8 @@ export function CodeEditor({
 
   const markUnverified = useCallback(
     (targetPath: string, error: string) => {
-      conflictedPathsRef.current.add(targetPath)
+      conflictedPathsRef.current.delete(targetPath)
+      unverifiedPathsRef.current.add(targetPath)
       writeControllersRef.current.get(targetPath)?.abort()
       const timer = saveTimersRef.current.get(targetPath)
       if (timer) window.clearTimeout(timer)
@@ -201,7 +204,15 @@ export function CodeEditor({
       patchTab(targetPath, { dirty: true, state: 'saving', error: '' })
       const previous = saveQueuesRef.current.get(targetPath) ?? Promise.resolve(true)
       const operation = previous.then(async () => {
-        if (!canStartEditorSave(targetPath, conflictedPathsRef.current, migratingPathsRef.current)) return false
+        if (
+          !canStartEditorSave(
+            targetPath,
+            conflictedPathsRef.current,
+            unverifiedPathsRef.current,
+            migratingPathsRef.current,
+          )
+        )
+          return false
         const controller = new AbortController()
         writeControllersRef.current.set(targetPath, controller)
         try {
@@ -264,7 +275,14 @@ export function CodeEditor({
     (targetPath: string, model: TextModel) => {
       const currentTimer = saveTimersRef.current.get(targetPath)
       if (currentTimer) window.clearTimeout(currentTimer)
-      if (!canStartEditorSave(targetPath, conflictedPathsRef.current, migratingPathsRef.current)) {
+      if (
+        !canStartEditorSave(
+          targetPath,
+          conflictedPathsRef.current,
+          unverifiedPathsRef.current,
+          migratingPathsRef.current,
+        )
+      ) {
         patchTab(targetPath, { dirty: true })
         return
       }
@@ -284,6 +302,16 @@ export function CodeEditor({
     async (targetPath: string) => {
       const model = modelsRef.current.get(codeModelKey(ownerAgentId, targetPath))
       if (!model) return false
+      if (unverifiedPathsRef.current.has(targetPath)) {
+        await reloadPathRef.current(targetPath)
+        const refreshed = tabsRef.current.find((tab) => tab.path === targetPath)
+        return (
+          !unverifiedPathsRef.current.has(targetPath) &&
+          !conflictedPathsRef.current.has(targetPath) &&
+          refreshed?.state === 'ready' &&
+          !refreshed.dirty
+        )
+      }
       const resolvingConflict = conflictedPathsRef.current.has(targetPath)
       conflictedPathsRef.current.delete(targetPath)
       let timer = saveTimersRef.current.get(targetPath)
@@ -310,6 +338,7 @@ export function CodeEditor({
   }, [flushPath])
 
   const flushActiveRef = useRef(flushActive)
+  const reloadPathRef = useRef<(targetPath: string) => Promise<void>>(async () => {})
   const patchTabRef = useRef(patchTab)
   const scheduleSaveRef = useRef(scheduleSave)
   flushActiveRef.current = flushActive
@@ -392,6 +421,7 @@ export function CodeEditor({
         modelsRef.current.set(modelKey, model)
         lastSavedRef.current.set(targetPath, result.content)
         conflictedPathsRef.current.delete(targetPath)
+        unverifiedPathsRef.current.delete(targetPath)
         patchTab(targetPath, { dirty: false, state: 'ready', error: '' })
         if (activePathRef.current === targetPath) editor.setModel(model)
       } catch (cause) {
@@ -406,6 +436,7 @@ export function CodeEditor({
     },
     [editorInstanceId, markConflict, ownerAgentId, patchTab, showPath],
   )
+  reloadPathRef.current = (targetPath) => loadPath(targetPath, true)
 
   useEffect(() => {
     disposedRef.current = false
@@ -447,6 +478,15 @@ export function CodeEditor({
           const targetPath = model?.uri.path ?? ''
           const modelKey = targetPath ? codeModelKey(agentIdRef.current, targetPath) : ''
           if (!model || modelsRef.current.get(modelKey) !== model || loadingPathsRef.current.has(modelKey)) return
+          if (unverifiedPathsRef.current.delete(targetPath)) {
+            conflictedPathsRef.current.add(targetPath)
+            patchTabRef.current(targetPath, {
+              dirty: true,
+              state: 'error',
+              error: 'File verification failed before local edits. Retry or choose Save mine.',
+            })
+            return
+          }
           if (conflictedPathsRef.current.has(targetPath)) {
             patchTabRef.current(targetPath, { dirty: true })
             return
@@ -491,6 +531,7 @@ export function CodeEditor({
       pendingRenameTimersRef.current.clear()
       writeEchoesRef.current.clear()
       conflictedPathsRef.current.clear()
+      unverifiedPathsRef.current.clear()
       migratingPathsRef.current.clear()
       editor?.dispose()
       editorRef.current = null
@@ -522,6 +563,7 @@ export function CodeEditor({
     lastSavedRef.current.clear()
     writeEchoesRef.current.clear()
     conflictedPathsRef.current.clear()
+    unverifiedPathsRef.current.clear()
     migratingPathsRef.current.clear()
     editorRef.current?.setModel(null)
     disposeCodeModels(modelsRef.current)
@@ -572,6 +614,7 @@ export function CodeEditor({
       if (!isCodePath(path) || previousPath === path) return
       clearPendingRename(previousPath)
       conflictedPathsRef.current.delete(previousPath)
+      unverifiedPathsRef.current.delete(previousPath)
       migratingPathsRef.current.add(previousPath)
       try {
         const timer = saveTimersRef.current.get(previousPath)
@@ -768,6 +811,7 @@ export function CodeEditor({
     clearPendingRename(targetPath)
     writeEchoesRef.current.clearPath(targetPath)
     conflictedPathsRef.current.delete(targetPath)
+    unverifiedPathsRef.current.delete(targetPath)
     const model = modelsRef.current.get(modelKey)
     if (model) {
       modelsRef.current.delete(modelKey)
