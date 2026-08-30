@@ -4,7 +4,8 @@ This runbook documents how to bring up Argo CD on the `galactic` cluster in a wa
 
 ## Prereqs
 
-1. `kubectl` can reach the cluster (context `galactic`).
+1. `kubectl` can reach the cluster through context `galactic-lan` or `galactic-tailscale`; see
+   `docs/runbooks/galactic-kubernetes-access.md`.
 1. Core components are healthy:
    - `kubectl get nodes`
    - `kubectl -n kube-system get pods | rg -n 'coredns|kube-flannel|kube-proxy'`
@@ -104,4 +105,5 @@ argocd admin initial-password -n argocd
    - `argocd/applicationsets/README.md`
 1. Install stage-based ApplicationSets once the prerequisites (CRDs, MetalLB, etc.) are in place:
    - `argocd/applicationsets/bootstrap.yaml`
-1. If you reference Tailscale-only hostnames (for example `registry.ide-newton.ts.net`) in Kubernetes image references, install node-level Tailscale first: `devices/galactic/docs/tailscale.md`.
+1. If you reference Tailscale-only hostnames (for example `registry.ide-newton.ts.net`) in Kubernetes image references,
+   verify the Omni-owned node-level Tailscale configuration first: `devices/galactic/docs/tailscale.md`.
