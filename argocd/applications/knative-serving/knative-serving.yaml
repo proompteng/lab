@@ -1,0 +1,46 @@
+apiVersion: operator.knative.dev/v1beta1
+kind: KnativeServing
+metadata:
+  name: knative-serving
+  namespace: knative-serving
+spec:
+  version: 1.23.0
+  high-availability:
+    replicas: 5
+  ingress:
+    istio:
+      enabled: true
+  config:
+    domain:
+      "proompteng.ai": ""
+    gc:
+      min-non-active-revisions: "2"
+      max-non-active-revisions: "5"
+    features:
+      kubernetes.podspec-nodeselector: "enabled"
+    certmanager:
+      issuerRef: |
+        kind: ClusterIssuer
+        name: letsencrypt-prod
+      clusterLocalIssuerRef: |
+        kind: ClusterIssuer
+        name: knative-selfsigned-issuer
+      systemInternalIssuerRef: |
+        kind: ClusterIssuer
+        name: knative-selfsigned-issuer
+    network:
+      domain-template: "{{.Name}}.{{.Domain}}"
+      auto-tls: "Enabled"
+      external-domain-tls: "Enabled"
+      default-external-scheme: https
+      http-protocol: Enabled
+      ingress.class: istio.ingress.networking.knative.dev
+    istio:
+      external-gateways: |
+        - name: knative-external-gateway
+          namespace: istio-ingress
+          service: gateway.istio-ingress.svc.cluster.local
+      local-gateways: |
+        - name: knative-local-gateway
+          namespace: istio-system
+          service: knative-local-gateway.istio-system.svc.cluster.local

@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: torghut
+resources:
+- configmap.yaml
+- clickhouse-schema-configmap.yaml
+- clickhouse-schema-job.yaml
+- deployment.yaml
+- service.yaml
+- pdb.yaml
+images:
+- name: registry.ide-newton.ts.net/lab/torghut-hyperliquid-feed
+  digest: sha256:00637b96f4853f9ce0d99c640e9a7c91731a025bdd08c83ece8c4c98bb6c8050

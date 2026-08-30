@@ -1,0 +1,96 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: torghut-hyperliquid-feed
+  namespace: torghut
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  labels:
+    app: torghut-hyperliquid-feed
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: torghut-hyperliquid-feed
+  template:
+    metadata:
+      annotations:
+        proompteng.ai/config-revision: hyperliquid-feed-pinned-runtime-universe-20260704a
+      labels:
+        app: torghut-hyperliquid-feed
+    spec:
+      serviceAccountName: torghut-runtime
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: torghut-hyperliquid-feed
+          image: registry.ide-newton.ts.net/lab/torghut-hyperliquid-feed@sha256:00637b96f4853f9ce0d99c640e9a7c91731a025bdd08c83ece8c4c98bb6c8050
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: torghut-hyperliquid-feed-config
+          env:
+            - name: TORGHUT_HYPERLIQUID_FEED_VERSION
+              value: kargo-sha-bbbaa168c46e6e167a5775d0f516789b13dc689d
+            - name: TORGHUT_HYPERLIQUID_FEED_COMMIT
+              value: bbbaa168c46e6e167a5775d0f516789b13dc689d
+            - name: TORGHUT_HYPERLIQUID_FEED_IMAGE_DIGEST
+              value: sha256:00637b96f4853f9ce0d99c640e9a7c91731a025bdd08c83ece8c4c98bb6c8050
+            - name: KAFKA_SASL_USER
+              value: torghut-hyperliquid-feed
+            - name: KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-hyperliquid-feed
+                  key: password
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-clickhouse-auth
+                  key: torghut_password
+            - name: JAVA_TOOL_OPTIONS
+              value: -XX:+UseContainerSupport -XX:InitialRAMPercentage=40.0 -XX:MaxRAMPercentage=70.0 -XX:+ExitOnOutOfMemoryError
+            # Own these keys directly to clear old server-side-applied runtime overrides.
+            - name: HYPERLIQUID_PINNED_PERP_COINS
+              value: BTC,ETH,HYPE,SOL,SKHX,MU,XYZ100,CL,SNDK,MSTR,SILVER,GOLD
+            - name: CLICKHOUSE_REQUEST_TIMEOUT_MS
+              value: "30000"
+          ports:
+            - containerPort: 8080
+              name: http
+            - containerPort: 9090
+              name: metrics
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 500m
+              memory: 768Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL

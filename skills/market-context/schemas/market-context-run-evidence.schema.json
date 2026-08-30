@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["requestId", "seq", "evidence"],
+  "properties": {
+    "requestId": { "type": "string", "minLength": 1 },
+    "symbol": { "type": "string" },
+    "domain": { "type": "string", "enum": ["fundamentals", "news"] },
+    "seq": { "type": "integer", "minimum": 0 },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["source"],
+        "properties": {
+          "source": { "type": "string", "minLength": 1 },
+          "publishedAt": { "type": ["string", "null"] },
+          "url": { "type": ["string", "null"] },
+          "headline": { "type": ["string", "null"] },
+          "summary": { "type": ["string", "null"] },
+          "sentiment": { "type": ["string", "null"] },
+          "payload": { "type": "object" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "metadata": { "type": "object" }
+  },
+  "additionalProperties": true
+}

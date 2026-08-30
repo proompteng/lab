@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: oirat
+resources:
+  - configmap.yaml
+  - discord-sealedsecret.yaml
+  - deployment.yaml
+  - alloy-rbac.yaml
+  - alloy-configmap.yaml
+  - alloy-deployment.yaml
+images:
+  - name: registry.ide-newton.ts.net/lab/oirat
+    digest: sha256:8fac8aa5179e221b80569dee7d920ac07f49bbca09d190f2ee015e78d81607fc

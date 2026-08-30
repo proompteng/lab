@@ -1,0 +1,58 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: agents
+resources:
+  - postgres-cluster.yaml
+  - codex-auth-externalsecret.yaml
+  - hf-router-token-sealedsecret.yaml
+  - codex-secretbinding.yaml
+  - codex-agent.yaml
+  - graf-codex-agentprovider.yaml
+  - graf-codex-agent.yaml
+  - codex-spark-agent.yaml
+  - codex-spark-smoke-agentprovider.yaml
+  - codex-spark-smoke-agent.yaml
+  - codex-spark-smoke-agent-system-prompt-configmap.yaml
+  - codex-spark-smoke-implspec.yaml
+  - anypi-agentprovider.yaml
+  - anypi-eval-agentprovider.yaml
+  - anypi-agent.yaml
+  - anypi-eval-agent.yaml
+  - codex-agentprovider.yaml
+  - codex-spark-agentprovider.yaml
+  - codex-agent-system-prompt-configmap.yaml
+  - codex-versioncontrolprovider.yaml
+  - codex-orchestrations.yaml
+  - codex-github-events-kafkasource.yaml
+  - sample-approvalpolicy.yaml
+  - sample-budget.yaml
+  - sample-signal.yaml
+  - agents-primitives-agentprovider.yaml
+  - agents-primitives-agent.yaml
+  - agents-primitives-memory.yaml
+  - agents-primitives-tool.yaml
+  - agents-primitives-toolrun.yaml
+  - agents-primitives-approvalpolicy.yaml
+  - agents-primitives-signal.yaml
+  - agents-primitives-signal-delivery.yaml
+  - agents-artifacts-objectbucketclaim.yaml
+  - agents-primitives-artifact.yaml
+  - agents-primitives-budget.yaml
+  - agents-primitives-workspace.yaml
+  - agents-primitives-orchestration.yaml
+  - agents-primitives-sub-orchestration.yaml
+  - agents-primitives-orchestrationrun.yaml
+  - ingressroute-agents-api.yaml
+  - tailscale-service.yaml
+  - tailscale-networkpolicy.yaml
+  - alloy-rbac.yaml
+  - alloy-configmap.yaml
+  - alloy-deployment.yaml
+helmGlobals:
+  chartHome: ../../../charts
+helmCharts:
+  - name: agents
+    releaseName: agents
+    namespace: agents
+    valuesFile: values.yaml
+    includeCRDs: true

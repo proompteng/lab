@@ -1,0 +1,29 @@
+name: bayn-build-push
+
+permissions:
+  actions: read
+  contents: read
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-main
+  cancel-in-progress: true
+
+jobs:
+  image:
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: bayn
+      package_attr: bayn-image
+      tag: sha-${{ github.sha }}
+      publish_kargo_tag: false
+      source_revision: ${{ github.sha }}
+      pr_number: ''
+      latest: true
+      publish_on_dispatch: false
+      release_artifact_name: bayn-release-contract
+    secrets: inherit
