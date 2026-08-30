@@ -375,6 +375,8 @@ describe('enabled app inventory', () => {
     expect(applicationSetsReadme.split('argo-cd/v3.5.2/manifests/crds/applicationset-crd.yaml')).toHaveLength(3)
     expect(applicationSetsReadme).not.toContain('argo-cd/v3.4.6/')
     expect(argoCdReadme).toContain('## Argo CD v3.5.2 upgrade')
+    expect(argoCdReadme).toContain('argocd login argocd.proompteng.ai --sso --grpc-web')
+    expect(argoCdReadme).toContain('kargo login https://kargo.ide-newton.ts.net --sso')
     expect(argoCdReadme).toContain('first normal Kargo promotion')
     expect(argoCdKustomization).not.toContain('argocd-image-updater')
     expect(argoCdLovelyPluginOverlay).toContain('ghcr.io/crumbhole/lovely:1.2.5')

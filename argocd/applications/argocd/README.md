@@ -43,6 +43,15 @@ health, and Kargo's Argo integration:
 for application in arc-controller kargo restate-operator restate-operator-crds; do
   argocd app get "$application" --hard-refresh
 done
+
+# Force new browser-based OIDC exchanges; do not accept a cached pre-upgrade token as proof.
+argocd logout argocd.proompteng.ai || true
+argocd login argocd.proompteng.ai --sso --grpc-web
+argocd account get-user-info --server argocd.proompteng.ai --grpc-web
+
+kargo login https://kargo.ide-newton.ts.net --sso
+kargo get stages --project lab-delivery
+
 kubectl -n argocd get application -o wide
 kubectl -n lab-delivery get stages.kargo.akuity.io
 ```
