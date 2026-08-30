@@ -969,6 +969,8 @@ spec:
             path: ${{ vars.outPath }}
             message: |
               kargo(jangar): promote ${{ ctx.targetFreight.name }}
+
+              Source commit: ${{ commitFrom(vars.gitRepo).ID }}
         - uses: git-push
           as: push
           config:
@@ -1066,6 +1068,8 @@ spec:
             path: ${{ vars.outPath }}
             message: |
               kargo(symphony): promote ${{ ctx.targetFreight.name }}
+
+              Source commit: ${{ commitFrom(vars.gitRepo).ID }}
         - uses: git-push
           as: push
           config:
@@ -1401,6 +1405,8 @@ spec:
             path: ${{ vars.outPath }}
             message: |
               kargo(torghut): promote ${{ ctx.targetFreight.name }}
+
+              Source commit: ${{ commitFrom(vars.gitRepo).ID }}
         - uses: git-push
           as: push
           config:

@@ -41,6 +41,7 @@ const arcRunnerBuildWorkflow = readRepoFile('.github/workflows/arc-runner-build-
 const jangarBuildWorkflow = readRepoFile('.github/workflows/jangar-build-push.yaml')
 const jangarPostDeployVerifyWorkflow = readRepoFile('.github/workflows/jangar-post-deploy-verify.yml')
 const symphonyBuildWorkflow = readRepoFile('.github/workflows/symphony-build-push.yaml')
+const symphonyPostDeployVerifyWorkflow = readRepoFile('.github/workflows/symphony-post-deploy-verify.yml')
 const symphonyCiWorkflow = readRepoFile('.github/workflows/symphony-ci.yml')
 const symphonyReleaseMetadataScript = readRepoFile('packages/scripts/src/symphony/resolve-release-metadata.ts')
 const jangarReleaseMetadataScript = readRepoFile('packages/scripts/src/jangar/resolve-release-metadata.ts')
@@ -1009,8 +1010,30 @@ describe('native OCI build workflows', () => {
     expect(symphonyBuildWorkflow).toContain('publish_kargo_tag: true')
     expect(symphonyBuildWorkflow).not.toContain('release_artifact_name:')
     expect(symphonyBuildWorkflow).toContain('tag: sha-${{ github.sha }}')
+    expect(symphonyBuildWorkflow).toContain("- '.github/workflows/symphony-post-deploy-verify.yml'")
     expect(symphonyBuildWorkflow).not.toContain('oven-sh/setup-bun')
     expect(symphonyBuildWorkflow).not.toContain('docker/setup-buildx-action')
+  })
+
+  it('keeps Symphony post-deploy verification observe-only on the Kargo branch', () => {
+    const pushTrigger = symphonyPostDeployVerifyWorkflow.slice(
+      symphonyPostDeployVerifyWorkflow.indexOf('  push:'),
+      symphonyPostDeployVerifyWorkflow.indexOf('  workflow_dispatch:'),
+    )
+
+    expect(symphonyPostDeployVerifyWorkflow).toContain('name: symphony-post-deploy-verify')
+    expect(pushTrigger).toContain('- kargo/symphony')
+    expect(pushTrigger).not.toContain('- main')
+    expect(pushTrigger).toContain("- 'argocd/applications/symphony/**'")
+    expect(pushTrigger).toContain("- 'argocd/applications/symphony-jangar/**'")
+    expect(pushTrigger).toContain("- 'argocd/applications/symphony-torghut/**'")
+    expect(symphonyPostDeployVerifyWorkflow).toContain('contents: read')
+    expect(symphonyPostDeployVerifyWorkflow).toContain('Verify Symphony fleet deployment health and digest')
+    expect(symphonyPostDeployVerifyWorkflow).toContain('--expected-revision "${GITHUB_SHA}"')
+    expect(symphonyPostDeployVerifyWorkflow).not.toContain('contents: write')
+    expect(symphonyPostDeployVerifyWorkflow).not.toContain('pull-requests: write')
+    expect(symphonyPostDeployVerifyWorkflow).not.toContain('Prepare rollback manifests')
+    expect(symphonyPostDeployVerifyWorkflow).not.toContain('create-pull-request')
   })
 
   it('routes the enabled Sag image through a real Nix OCI attr', () => {

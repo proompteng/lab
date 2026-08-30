@@ -133,6 +133,7 @@ release:
       manifest_paths:
         - argocd/applications/torghut
       build_workflow: torghut-build-push
+      post_deploy_workflow: torghut-post-deploy-verify
 health:
   pre_dispatch:
     - name: torghut-argo

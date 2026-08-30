@@ -514,6 +514,7 @@ spec:
           - services/symphony
           - nix/images/symphony.nix
           - .github/workflows/nix-oci-build-common.yml
+          - .github/workflows/symphony-post-deploy-verify.yml
           - nix/oci-push.sh
           - argocd/applications/symphony
           - argocd/applications/symphony-jangar

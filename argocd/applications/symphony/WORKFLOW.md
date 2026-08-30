@@ -133,6 +133,7 @@ release:
       manifest_paths:
         - argocd/applications/symphony
       build_workflow: symphony-build-push
+      post_deploy_workflow: symphony-post-deploy-verify
 health:
   pre_dispatch:
     - name: symphony-argo

@@ -73,6 +73,7 @@ const issueDetails: IssueDetails = {
     build: null,
     releaseContract: null,
     promotionPr: null,
+    kargo: null,
     argo: null,
     postDeploy: null,
     rollbackPr: null,
@@ -138,6 +139,7 @@ describe('http request parsing', () => {
       expect(dashboardText).toContain('Recent Errors')
       expect(dashboardText).toContain('Target Health')
       expect(dashboardText).toContain('Delivery Transactions')
+      expect(dashboardText).toContain('<th>Kargo</th>')
       expect(dashboardText).toContain('/api/v1/ABC-1')
     } finally {
       server.stop()

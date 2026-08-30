@@ -8,6 +8,7 @@ import { OrchestratorError, toLogError } from './errors'
 import type {
   DeliveryArgoObservation,
   DeliveryChecksSummary,
+  DeliveryKargoObservation,
   DeliveryPullRequestRef,
   DeliveryStage,
   DeliveryTransaction,
@@ -84,6 +85,16 @@ type GitHubWorkflowRunsResponse = {
   workflow_runs: GitHubWorkflowRun[]
 }
 
+type GitHubCommit = {
+  sha: string
+  html_url: string
+  commit: {
+    message: string
+    author: { date: string | null } | null
+    committer: { date: string | null } | null
+  }
+}
+
 type GitHubPullsResponse = GitHubPullRequest[]
 
 type KubernetesResponse = {
@@ -99,6 +110,7 @@ type DeliveryObservation = {
   build: DeliveryWorkflowRunRef | null
   releaseContract: DeliveryTransaction['releaseContract']
   promotionPr: DeliveryPullRequestRef | null
+  kargo: DeliveryKargoObservation | null
   argo: DeliveryArgoObservation | null
   postDeploy: DeliveryWorkflowRunRef | null
   rollbackPr: DeliveryPullRequestRef | null
@@ -256,6 +268,28 @@ const parseReleaseContractFromPullRequest = (
   }
 }
 
+const parseKargoPromotion = (commit: GitHubCommit, config: SymphonyConfig): DeliveryKargoObservation | null => {
+  const { kargoBranch, kargoProject, kargoWarehouse } = config.release
+  if (!kargoBranch || !kargoProject || !kargoWarehouse) return null
+
+  const sourceSha = /^Source commit:\s*([0-9a-f]{40})$/im.exec(commit.commit.message)?.[1] ?? null
+  const promotion = /^kargo\(([^)]+)\):\s+promote\s+(.+)$/im.exec(commit.commit.message)
+  const stage = promotion?.[1]?.trim() ?? null
+  if (!sourceSha || !stage || !config.release.kargoStages.includes(stage)) return null
+
+  return {
+    project: kargoProject,
+    warehouse: kargoWarehouse,
+    stages: [...config.release.kargoStages],
+    branch: kargoBranch,
+    revision: commit.sha,
+    sourceSha,
+    freight: promotion?.[2]?.trim() || null,
+    url: commit.html_url,
+    observedAt: commit.commit.committer?.date ?? commit.commit.author?.date ?? null,
+  }
+}
+
 const deriveLastError = (stage: DeliveryStage, observation: DeliveryObservation): string | null => {
   if (stage === 'completed' || stage === 'rolled_back') return null
   if (observation.rollbackPr?.state === 'open') return observation.lastError ?? 'rollback pull request is open'
@@ -275,6 +309,15 @@ export const deriveDeliveryStage = (observation: DeliveryObservation): DeliveryS
     return 'post_deploy_verify_running'
   }
   if (observation.postDeploy?.state === 'success') return 'completed'
+  if (observation.kargo) {
+    if (!observation.argo || observation.argo.revision !== observation.kargo.revision) {
+      return 'argo_rollout_pending'
+    }
+    if (observation.argo.health !== 'Healthy' || observation.argo.sync !== 'Synced') {
+      return 'argo_rollout_pending'
+    }
+    return 'kargo_promoted'
+  }
   if (observation.promotionPr?.state === 'merged') {
     const revision = observation.argo?.revision ?? ''
     if (revision && revision !== observation.promotionPr.mergedCommitSha) {
@@ -306,6 +349,7 @@ export const createEmptyDeliveryTransaction = (stage: DeliveryStage = 'coding'):
   build: null,
   releaseContract: null,
   promotionPr: null,
+  kargo: null,
   argo: null,
   postDeploy: null,
   rollbackPr: null,
@@ -425,6 +469,18 @@ export const makeDeliveryServiceLayer = (logger: Logger) =>
           repo,
           `/repos/${parsedRepo.owner}/${parsedRepo.name}/actions/runs?head_sha=${encodeURIComponent(headSha)}&per_page=100`,
         ).pipe(Effect.map((response) => response.workflow_runs))
+      }
+
+      const listKargoBranchCommits = (repo: string, branch: string) => {
+        const parsedRepo = parseRepo(repo)
+        return githubRequest<GitHubCommit[]>(
+          repo,
+          `/repos/${parsedRepo.owner}/${parsedRepo.name}/commits?sha=${encodeURIComponent(branch)}&per_page=100`,
+        ).pipe(
+          Effect.catchAll((error) =>
+            error.message.endsWith(': 404') ? Effect.succeed<GitHubCommit[]>([]) : Effect.fail(error),
+          ),
+        )
       }
 
       const getWorkflowRunPayload = (repo: string, runId: number) => {
@@ -637,6 +693,32 @@ export const makeDeliveryServiceLayer = (logger: Logger) =>
           }),
         )
 
+      const findKargoPromotion = (
+        repo: string,
+        sourceSha: string | null,
+        config: SymphonyConfig,
+        previous: DeliveryKargoObservation | null,
+      ): Effect.Effect<DeliveryKargoObservation | null, OrchestratorError, never> => {
+        if (!sourceSha || !config.release.kargoBranch) return Effect.succeed(null)
+        if (
+          previous?.sourceSha === sourceSha &&
+          previous.branch === config.release.kargoBranch &&
+          previous.project === config.release.kargoProject &&
+          previous.warehouse === config.release.kargoWarehouse
+        ) {
+          return Effect.succeed(previous)
+        }
+
+        return listKargoBranchCommits(repo, config.release.kargoBranch).pipe(
+          Effect.map(
+            (commits) =>
+              commits
+                .map((commit) => parseKargoPromotion(commit, config))
+                .find((promotion) => promotion?.sourceSha === sourceSha) ?? null,
+          ),
+        )
+      }
+
       const findRollbackPr = (
         repo: string,
         failedCommitSha: string | null,
@@ -688,18 +770,33 @@ export const makeDeliveryServiceLayer = (logger: Logger) =>
           const workflowRuns = mergedCommitSha ? yield* listWorkflowRuns(config.target.repo, mergedCommitSha) : []
           const build = findWorkflowRunByName(workflowRuns, config.release.deployables[0]?.buildWorkflow ?? null)
 
-          const promotionPrPayload = yield* findPromotionPr(
-            config.target.repo,
-            mergedCommitSha,
-            config,
-            baseDelivery.promotionPr?.number ?? null,
-          )
+          const isKargoRelease = config.release.mode === 'kargo_auto' && config.release.promotionAuthority === 'kargo'
+          const promotionPrPayload = isKargoRelease
+            ? null
+            : yield* findPromotionPr(
+                config.target.repo,
+                mergedCommitSha,
+                config,
+                baseDelivery.promotionPr?.number ?? null,
+              )
           const promotionPr = promotionPrPayload ? toPullRequestRef(promotionPrPayload) : null
-          const releaseContract =
-            parseReleaseContractFromPullRequest(promotionPrPayload) ?? baseDelivery.releaseContract
+          const kargo = isKargoRelease
+            ? yield* findKargoPromotion(config.target.repo, mergedCommitSha, config, baseDelivery.kargo)
+            : null
+          const releaseContract = kargo
+            ? {
+                sourceSha: kargo.sourceSha,
+                tag: null,
+                digest: null,
+                image: config.release.deployables[0]?.image ?? null,
+                reason: 'kargo_freight',
+                resolvedAt: kargo.observedAt,
+              }
+            : (parseReleaseContractFromPullRequest(promotionPrPayload) ??
+              (isKargoRelease ? null : baseDelivery.releaseContract))
 
           const argo =
-            promotionPr?.state === 'merged'
+            kargo || promotionPr?.state === 'merged'
               ? yield* observeArgo(config).pipe(
                   Effect.catchAll((error) => {
                     deliveryLogger.log('warn', 'delivery_argo_observation_failed', toLogError(error))
@@ -708,21 +805,21 @@ export const makeDeliveryServiceLayer = (logger: Logger) =>
                 )
               : null
 
-          const promotionMergeCommitSha = promotionPr?.mergedCommitSha ?? null
-          const postDeployRuns = promotionMergeCommitSha
-            ? yield* listWorkflowRuns(config.target.repo, promotionMergeCommitSha)
-            : []
+          const promotedCommitSha = kargo?.revision ?? promotionPr?.mergedCommitSha ?? null
+          const postDeployRuns = promotedCommitSha ? yield* listWorkflowRuns(config.target.repo, promotedCommitSha) : []
           const postDeploy = findWorkflowRunByName(
             postDeployRuns,
             config.release.deployables[0]?.postDeployWorkflow ?? null,
           )
 
-          const rollbackPrPayload = yield* findRollbackPr(
-            config.target.repo,
-            promotionMergeCommitSha,
-            config.target.defaultBranch,
-            baseDelivery.rollbackPr?.number ?? null,
-          )
+          const rollbackPrPayload = isKargoRelease
+            ? null
+            : yield* findRollbackPr(
+                config.target.repo,
+                promotedCommitSha,
+                config.target.defaultBranch,
+                baseDelivery.rollbackPr?.number ?? null,
+              )
           const rollbackPr = rollbackPrPayload ? toPullRequestRef(rollbackPrPayload) : null
 
           const observation: DeliveryObservation = {
@@ -733,6 +830,7 @@ export const makeDeliveryServiceLayer = (logger: Logger) =>
             build,
             releaseContract,
             promotionPr,
+            kargo,
             argo,
             postDeploy,
             rollbackPr,
@@ -749,6 +847,7 @@ export const makeDeliveryServiceLayer = (logger: Logger) =>
             build,
             releaseContract,
             promotionPr,
+            kargo,
             argo,
             postDeploy,
             rollbackPr,

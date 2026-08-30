@@ -134,6 +134,7 @@ release:
         - argocd/applications/jangar
         - argocd/applications/agents/values.yaml
       build_workflow: jangar-build-push
+      post_deploy_workflow: jangar-post-deploy-verify
 health:
   pre_dispatch:
     - name: jangar-argo

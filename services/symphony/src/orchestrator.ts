@@ -303,6 +303,7 @@ const toIssueDetails = (record: IssueRecord): IssueDetails => ({
         build: record.delivery.build ? { ...record.delivery.build } : null,
         releaseContract: record.delivery.releaseContract ? { ...record.delivery.releaseContract } : null,
         promotionPr: record.delivery.promotionPr ? { ...record.delivery.promotionPr } : null,
+        kargo: record.delivery.kargo ? { ...record.delivery.kargo, stages: [...record.delivery.kargo.stages] } : null,
         argo: record.delivery.argo ? { ...record.delivery.argo } : null,
         postDeploy: record.delivery.postDeploy ? { ...record.delivery.postDeploy } : null,
         rollbackPr: record.delivery.rollbackPr ? { ...record.delivery.rollbackPr } : null,
@@ -352,8 +353,13 @@ const buildTargetSummary = (config: SymphonyConfig): TargetSummary => ({
 
 const buildReleaseSummary = (config: SymphonyConfig): ReleaseSummary => ({
   mode: config.release.mode,
+  promotionAuthority: config.release.promotionAuthority,
   requiredChecksSource: config.release.requiredChecksSource,
   promotionBranchPrefix: config.release.promotionBranchPrefix,
+  kargoProject: config.release.kargoProject,
+  kargoWarehouse: config.release.kargoWarehouse,
+  kargoBranch: config.release.kargoBranch,
+  kargoStages: [...config.release.kargoStages],
   blockedLabels: [...config.release.blockedLabels],
   deployables: config.release.deployables.map((deployable) => ({
     name: deployable.name,
@@ -420,6 +426,9 @@ const hydrateStateFromPersisted = (persisted: PersistedSchedulerState, config: S
             build: record.delivery.build ? { ...record.delivery.build } : null,
             releaseContract: record.delivery.releaseContract ? { ...record.delivery.releaseContract } : null,
             promotionPr: record.delivery.promotionPr ? { ...record.delivery.promotionPr } : null,
+            kargo: record.delivery.kargo
+              ? { ...record.delivery.kargo, stages: [...record.delivery.kargo.stages] }
+              : null,
             argo: record.delivery.argo ? { ...record.delivery.argo } : null,
             postDeploy: record.delivery.postDeploy ? { ...record.delivery.postDeploy } : null,
             rollbackPr: record.delivery.rollbackPr ? { ...record.delivery.rollbackPr } : null,
@@ -1971,8 +1980,13 @@ export const makeOrchestratorLayer = (logger: Logger) =>
                   },
                   release: {
                     mode: 'gitops_pr_on_main',
+                    promotionAuthority: 'github_pr',
                     requiredChecksSource: 'branch_protection',
                     promotionBranchPrefix: 'codex/symphony-release-',
+                    kargoProject: null,
+                    kargoWarehouse: null,
+                    kargoBranch: null,
+                    kargoStages: [],
                     blockedLabels: [],
                     deployables: [],
                   },
@@ -2053,6 +2067,9 @@ export const makeOrchestratorLayer = (logger: Logger) =>
                       build: record.delivery.build ? { ...record.delivery.build } : null,
                       releaseContract: record.delivery.releaseContract ? { ...record.delivery.releaseContract } : null,
                       promotionPr: record.delivery.promotionPr ? { ...record.delivery.promotionPr } : null,
+                      kargo: record.delivery.kargo
+                        ? { ...record.delivery.kargo, stages: [...record.delivery.kargo.stages] }
+                        : null,
                       argo: record.delivery.argo ? { ...record.delivery.argo } : null,
                       postDeploy: record.delivery.postDeploy ? { ...record.delivery.postDeploy } : null,
                       rollbackPr: record.delivery.rollbackPr ? { ...record.delivery.rollbackPr } : null,

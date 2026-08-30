@@ -257,6 +257,7 @@ const expected = {
       'services/symphony',
       'nix/images/symphony.nix',
       '.github/workflows/nix-oci-build-common.yml',
+      '.github/workflows/symphony-post-deploy-verify.yml',
       'nix/oci-push.sh',
       'argocd/applications/symphony',
       'argocd/applications/symphony-jangar',
@@ -542,6 +543,18 @@ describe('Kargo direct-push GitOps contract', () => {
       expect(steps.map((step) => step.uses)).toContain('git-commit')
       expect(steps.map((step) => step.uses)).toContain('git-push')
       expect(steps.at(-1)?.uses).toBe('argocd-update')
+
+      const push = steps.find((step) => step.uses === 'git-push')
+      expect(push?.config).toMatchObject({
+        path: '${{ vars.outPath }}',
+        targetBranch: '${{ vars.targetBranch }}',
+      })
+      expect(push?.config?.force).toBeUndefined()
+
+      if (['jangar', 'symphony', 'torghut'].includes(stageName)) {
+        const commit = steps.find((step) => step.uses === 'git-commit')
+        expect(commit?.config?.message).toContain('Source commit: ${{ commitFrom(vars.gitRepo).ID }}')
+      }
 
       const clone = steps.find((step) => step.uses === 'git-clone')
       expect(clone?.config).toMatchObject({

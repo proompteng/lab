@@ -124,6 +124,18 @@ const DeliveryArgoObservationSchema = Schema.Struct({
   checkedAt: Schema.NullOr(Schema.String),
 })
 
+const DeliveryKargoObservationSchema = Schema.Struct({
+  project: Schema.String,
+  warehouse: Schema.String,
+  stages: Schema.Array(Schema.String),
+  branch: Schema.String,
+  revision: Schema.String,
+  sourceSha: Schema.String,
+  freight: Schema.NullOr(Schema.String),
+  url: Schema.String,
+  observedAt: Schema.NullOr(Schema.String),
+})
+
 const DeliveryTransactionSchema = Schema.Struct({
   stage: Schema.Union(
     Schema.Literal('coding'),
@@ -135,6 +147,7 @@ const DeliveryTransactionSchema = Schema.Struct({
     Schema.Literal('release_contract_resolved'),
     Schema.Literal('promotion_pr_open'),
     Schema.Literal('promotion_merged'),
+    Schema.Literal('kargo_promoted'),
     Schema.Literal('argo_rollout_pending'),
     Schema.Literal('post_deploy_verify_running'),
     Schema.Literal('completed'),
@@ -150,6 +163,7 @@ const DeliveryTransactionSchema = Schema.Struct({
   build: Schema.NullOr(DeliveryWorkflowRunRefSchema),
   releaseContract: Schema.NullOr(DeliveryReleaseContractSchema),
   promotionPr: Schema.NullOr(DeliveryPullRequestRefSchema),
+  kargo: Schema.optionalWith(Schema.NullOr(DeliveryKargoObservationSchema), { nullable: true }),
   argo: Schema.NullOr(DeliveryArgoObservationSchema),
   postDeploy: Schema.NullOr(DeliveryWorkflowRunRefSchema),
   rollbackPr: Schema.NullOr(DeliveryPullRequestRefSchema),
@@ -242,6 +256,7 @@ const cloneDeliveryTransaction = (delivery: DeliveryTransaction | null): Deliver
         build: delivery.build ? { ...delivery.build } : null,
         releaseContract: delivery.releaseContract ? { ...delivery.releaseContract } : null,
         promotionPr: delivery.promotionPr ? { ...delivery.promotionPr } : null,
+        kargo: delivery.kargo ? { ...delivery.kargo, stages: [...delivery.kargo.stages] } : null,
         argo: delivery.argo ? { ...delivery.argo } : null,
         postDeploy: delivery.postDeploy ? { ...delivery.postDeploy } : null,
         rollbackPr: delivery.rollbackPr ? { ...delivery.rollbackPr } : null,

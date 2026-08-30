@@ -96,8 +96,13 @@ export type ReleaseDeployableConfig = {
 
 export type ReleaseConfig = {
   mode: string
+  promotionAuthority: string
   requiredChecksSource: string
   promotionBranchPrefix: string
+  kargoProject: string | null
+  kargoWarehouse: string | null
+  kargoBranch: string | null
+  kargoStages: string[]
   blockedLabels: string[]
   deployables: ReleaseDeployableConfig[]
 }
@@ -238,8 +243,13 @@ export type TargetSummary = {
 
 export type ReleaseSummary = {
   mode: string
+  promotionAuthority: string
   requiredChecksSource: string
   promotionBranchPrefix: string
+  kargoProject: string | null
+  kargoWarehouse: string | null
+  kargoBranch: string | null
+  kargoStages: string[]
   blockedLabels: string[]
   deployables: Array<{
     name: string
@@ -261,6 +271,7 @@ export type DeliveryStage =
   | 'release_contract_resolved'
   | 'promotion_pr_open'
   | 'promotion_merged'
+  | 'kargo_promoted'
   | 'argo_rollout_pending'
   | 'post_deploy_verify_running'
   | 'completed'
@@ -337,6 +348,18 @@ export type DeliveryArgoObservation = {
   checkedAt: string | null
 }
 
+export type DeliveryKargoObservation = {
+  project: string
+  warehouse: string
+  stages: string[]
+  branch: string
+  revision: string
+  sourceSha: string
+  freight: string | null
+  url: string
+  observedAt: string | null
+}
+
 export type DeliveryTransaction = {
   stage: DeliveryStage
   updatedAt: string
@@ -346,6 +369,7 @@ export type DeliveryTransaction = {
   build: DeliveryWorkflowRunRef | null
   releaseContract: DeliveryReleaseContract | null
   promotionPr: DeliveryPullRequestRef | null
+  kargo: DeliveryKargoObservation | null
   argo: DeliveryArgoObservation | null
   postDeploy: DeliveryWorkflowRunRef | null
   rollbackPr: DeliveryPullRequestRef | null
