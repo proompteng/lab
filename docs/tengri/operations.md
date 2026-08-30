@@ -158,7 +158,7 @@ Tengri supports only `runtime.proompteng.ai/storage-layout=home-workspace-v2`:
 3. The reviewed Kata persistent-block contract formats only an explicitly authorized, provably new device, mounts it
    at `/home/nanoagent`, and applies GID 1000. The PVC records initialization as `pending`; only that first Pod receives
    the deterministic provisioning token. As soon as Kubernetes proves Nanoagent's container was created, Tengri marks
-   the PVC `complete` and removes the authorization annotation from the live Pod. Every later sandbox restart or
+   the PVC `complete`, then removes the authorization annotation from the live Pod. Every later sandbox restart or
    sleep/resume Pod therefore omits the token, so an unexpected blank or damaged device fails closed instead of being
    reformatted. Nanoagent exposes `/home/nanoagent/workspace` through `/workspace`; there is no init container.
 4. The Pod schedules only on nodes labeled both `runtime.proompteng.ai/kata-fc=ready` and

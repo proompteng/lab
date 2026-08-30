@@ -342,10 +342,10 @@ async fn persist_storage_initialization(
         return Ok(());
     }
 
-    clear_pod_initialization_token(pods, pod).await?;
     if initialization == PersistentBlockInitialization::Pending {
         mark_pvc_initialized(client.clone(), namespace, microvm).await?;
     }
+    clear_pod_initialization_token(pods, pod).await?;
     Ok(())
 }
 
