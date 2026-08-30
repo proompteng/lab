@@ -1,0 +1,35 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: nats
+resources:
+  - nats-auth-secrets.yaml
+  - alloy-configmap.yaml
+  - alloy-deployment.yaml
+  - alloy-rbac.yaml
+  - nats-exporter-deployment.yaml
+  - nats-exporter-service.yaml
+  - stream-agent-comms.yaml
+helmCharts:
+  - name: nats
+    repo: https://nats-io.github.io/k8s/helm/charts
+    version: 2.14.2
+    releaseName: nats
+    namespace: nats
+    valuesFile: ./values.yaml
+
+images:
+  - name: nats
+    newName: mirror.gcr.io/library/nats
+    newTag: 2.14.2-alpine
+  - name: natsio/nats-server-config-reloader
+    newName: mirror.gcr.io/natsio/nats-server-config-reloader
+    newTag: 0.21.1
+  - name: natsio/nats-box
+    newName: mirror.gcr.io/natsio/nats-box
+    newTag: 0.19.3
+  - name: docker.io/natsio/prometheus-nats-exporter
+    newName: mirror.gcr.io/natsio/prometheus-nats-exporter
+    newTag: 0.18.0
+  - name: grafana/alloy
+    newName: mirror.gcr.io/grafana/alloy
+    newTag: v1.18.1

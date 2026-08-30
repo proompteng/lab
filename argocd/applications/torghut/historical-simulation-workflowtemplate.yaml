@@ -1,0 +1,233 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: torghut-historical-simulation
+  namespace: argo-workflows
+  labels:
+    app.kubernetes.io/name: torghut
+spec:
+  serviceAccountName: codex-workflow
+  entrypoint: run
+  arguments:
+    parameters:
+      - name: runId
+        value: ''
+      - name: mode
+        value: 'plan'
+      - name: datasetManifestB64
+        value: ''
+      - name: confirmPhrase
+        value: 'START_HISTORICAL_SIMULATION'
+      - name: forceReplay
+        value: 'false'
+      - name: forceDump
+        value: 'false'
+      - name: allowMissingState
+        value: 'false'
+      - name: outputRoot
+        value: /tmp/torghut-simulations
+  templates:
+  - name: run
+    nodeSelector:
+      kubernetes.io/arch: arm64
+    inputs:
+      parameters:
+        - name: runId
+        - name: mode
+        - name: datasetManifestB64
+        - name: confirmPhrase
+        - name: forceReplay
+        - name: forceDump
+        - name: allowMissingState
+        - name: outputRoot
+    container:
+      image: registry.ide-newton.ts.net/lab/torghut@sha256:b359cd2368e89b492f7ff6925f975b72bb2ca3aa0261478552fc6094688e3bb4
+      imagePullPolicy: Always
+      env:
+        - name: DB_DSN
+          valueFrom:
+            secretKeyRef:
+              name: torghut-db-app
+              key: uri
+        - name: TORGHUT_SIM_KAFKA_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: kafka-codex-credentials
+              key: password
+        - name: TORGHUT_CLICKHOUSE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: torghut-clickhouse-auth
+              key: torghut_password
+        - name: TORGHUT_POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: torghut-db-app
+              key: password
+        - name: TORGHUT_POSTGRES_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: torghut-db-superuser
+              key: password
+        - name: TORGHUT_SIM_CACHE_CEPH_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: argo-workflows
+              key: AWS_ACCESS_KEY_ID
+        - name: TORGHUT_SIM_CACHE_CEPH_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: argo-workflows
+              key: AWS_SECRET_ACCESS_KEY
+        - name: TORGHUT_SIM_CACHE_CEPH_BUCKET
+          value: argo-workflows
+        - name: TORGHUT_SIM_CACHE_CEPH_ENDPOINT
+          value: http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80
+        - name: TORGHUT_SIM_CACHE_CEPH_REGION
+          value: us-east-1
+        - name: TORGHUT_SIM_DUMP_SORT_MEMORY_LIMIT
+          value: 512M
+      command:
+        - /bin/bash
+        - -lc
+      resources:
+        requests:
+          cpu: 1
+          memory: 8Gi
+        limits:
+          cpu: 4
+          memory: 16Gi
+      args:
+        - |
+          set -euo pipefail
+          echo "RUN_LOG workflow_entrypoint_start mode={{inputs.parameters.mode}} runId={{inputs.parameters.runId}} outputRoot={{inputs.parameters.outputRoot}}"
+
+          WORKFLOW_DIR=/tmp/torghut-historical-simulation
+          MANIFEST_PATH="${WORKFLOW_DIR}/dataset-manifest.yaml"
+          OUTPUT_ROOT="{{inputs.parameters.outputRoot}}"
+          export MANIFEST_PATH OUTPUT_ROOT
+
+          mkdir -p "${WORKFLOW_DIR}"
+          echo "RUN_LOG created_workflow_dir path=${WORKFLOW_DIR}"
+
+          if [ -z "{{inputs.parameters.datasetManifestB64}}" ]; then
+            echo "datasetManifestB64 must be supplied" >&2
+            echo "RUN_LOG missing_dataset_manifest_b64"
+            exit 1
+          fi
+
+          printf '%s' "{{inputs.parameters.datasetManifestB64}}" | base64 -d > "${MANIFEST_PATH}"
+          echo "RUN_LOG manifest_written path=${MANIFEST_PATH}"
+          echo "RUN_LOG runtime_secret_present name=TORGHUT_SIM_KAFKA_PASSWORD present=${TORGHUT_SIM_KAFKA_PASSWORD:+1}"
+          python - <<'PY'
+          import os
+          import yaml
+
+          manifest_path = os.environ["MANIFEST_PATH"]
+          output_root = os.environ["OUTPUT_ROOT"]
+
+          with open(manifest_path, encoding='utf-8') as handle:
+            payload = yaml.safe_load(handle) or {}
+          if not isinstance(payload, dict):
+            raise RuntimeError("manifest must be a YAML mapping")
+
+          runtime = payload.get("runtime")
+          if not isinstance(runtime, dict):
+            runtime = {}
+          runtime.setdefault("namespace", "torghut")
+          runtime.setdefault("target_mode", "dedicated_service")
+          runtime.setdefault("ta_configmap", "torghut-ta-sim-config")
+          runtime.setdefault("ta_deployment", "torghut-ta-sim")
+          runtime.setdefault("torghut_service", "torghut-sim")
+          runtime["output_root"] = output_root
+          payload["runtime"] = runtime
+
+          def _with_password_if_missing(dsn: str | None, password: str | None) -> str | None:
+            if not dsn or not password:
+              return dsn
+            from urllib.parse import quote_plus, urlsplit
+            parsed = urlsplit(dsn)
+            if parsed.password is not None or parsed.username is None or parsed.hostname is None:
+              return dsn
+            host = parsed.hostname
+            if parsed.port is not None:
+              host = f"{host}:{parsed.port}"
+            return parsed._replace(netloc=f"{quote_plus(parsed.username)}:{quote_plus(password)}@{host}").geturl()
+
+          postgres = payload.get("postgres")
+          if not isinstance(postgres, dict):
+            postgres = {}
+          admin_password_env = postgres.get("admin_dsn_password_env")
+          admin_password = os.environ.get(admin_password_env) if isinstance(admin_password_env, str) else None
+          simulation_password_env = postgres.get("simulation_dsn_password_env")
+          if not isinstance(simulation_password_env, str) or not simulation_password_env:
+            simulation_password_env = "TORGHUT_POSTGRES_PASSWORD"
+          simulation_password = os.environ.get(simulation_password_env)
+          runtime_simulation_password_env = postgres.get("runtime_simulation_dsn_password_env")
+          if not isinstance(runtime_simulation_password_env, str) or not runtime_simulation_password_env:
+            runtime_simulation_password_env = simulation_password_env
+          runtime_simulation_password = os.environ.get(runtime_simulation_password_env)
+          admin_dsn = postgres.get("admin_dsn")
+          if isinstance(admin_dsn, str):
+            postgres["admin_dsn"] = _with_password_if_missing(admin_dsn, admin_password)
+          simulation_dsn = postgres.get("simulation_dsn")
+          if isinstance(simulation_dsn, str):
+            postgres["simulation_dsn"] = _with_password_if_missing(simulation_dsn, simulation_password)
+          runtime_simulation_dsn = postgres.get("runtime_simulation_dsn")
+          if isinstance(runtime_simulation_dsn, str):
+            postgres["runtime_simulation_dsn"] = _with_password_if_missing(runtime_simulation_dsn, runtime_simulation_password)
+          payload["postgres"] = postgres
+
+          rollouts = payload.get("rollouts")
+          if not isinstance(rollouts, dict):
+            rollouts = {}
+          rollouts.setdefault("enabled", True)
+          rollouts.setdefault("namespace", runtime.get("namespace", "torghut"))
+          rollouts.setdefault("runtime_template", "torghut-simulation-runtime-ready")
+          rollouts.setdefault("activity_template", "torghut-simulation-activity")
+          rollouts.setdefault("teardown_template", "torghut-simulation-teardown-clean")
+          rollouts.setdefault("artifact_template", "torghut-simulation-artifact-bundle")
+          payload["rollouts"] = rollouts
+
+          with open(manifest_path, 'w', encoding='utf-8') as handle:
+            yaml.safe_dump(payload, handle, default_flow_style=False, sort_keys=False)
+          PY
+          echo "RUN_LOG manifest_output_root_injected outputRoot=${OUTPUT_ROOT}"
+
+          RUN_ID='{{inputs.parameters.runId}}'
+          MODE='{{inputs.parameters.mode}}'
+          if [ -z "$RUN_ID" ]; then
+            RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+          fi
+
+          case "$MODE" in
+            plan|apply|run|report|teardown) ;;
+            *)
+              echo "invalid mode: $MODE" >&2
+              echo "RUN_LOG invalid_mode mode=${MODE}"
+              exit 1
+              ;;
+          esac
+
+          SCRIPT_ARGS=(--mode "$MODE" --run-id "$RUN_ID" --dataset-manifest "$MANIFEST_PATH" --json)
+          if [ "$MODE" = "apply" ] || [ "$MODE" = "run" ]; then
+            SCRIPT_ARGS+=(--confirm '{{inputs.parameters.confirmPhrase}}')
+          fi
+          if [ '{{inputs.parameters.forceReplay}}' = 'true' ]; then
+            SCRIPT_ARGS+=(--force-replay)
+          fi
+          if [ '{{inputs.parameters.forceDump}}' = 'true' ]; then
+            SCRIPT_ARGS+=(--force-dump)
+          fi
+          if [ '{{inputs.parameters.allowMissingState}}' = 'true' ]; then
+            SCRIPT_ARGS+=(--allow-missing-state)
+          fi
+          echo "RUN_LOG launch_script mode=${MODE} run_id=${RUN_ID} manifest=${MANIFEST_PATH}"
+
+          mkdir -p "$OUTPUT_ROOT"
+          echo "RUN_LOG invoking_python"
+          python -u -m scripts.historical_simulation_startup "${SCRIPT_ARGS[@]}"
+    outputs:
+      artifacts:
+        - name: simulation-output
+          path: "{{inputs.parameters.outputRoot}}"

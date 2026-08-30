@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: openwebui-tailscale
+  namespace: jangar
+  annotations:
+    tailscale.com/hostname: openwebui
+    # Tailscale LB readiness is managed by the operator; don't hold the Argo app in Progressing.
+    argocd.argoproj.io/ignore-healthcheck: "true"
+spec:
+  type: LoadBalancer
+  loadBalancerClass: tailscale
+  selector:
+    app.kubernetes.io/instance: jangar-openwebui
+    app.kubernetes.io/component: open-webui
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      protocol: TCP

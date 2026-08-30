@@ -1,0 +1,53 @@
+name: oirat
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'services/oirat/**'
+      - 'packages/discord/**'
+      - 'nix/images/oirat.nix'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - 'packages/scripts/src/shared/oci.ts'
+      - 'nix/oci-push.sh'
+      - 'argocd/applications/oirat/**'
+  pull_request:
+    paths:
+      - 'services/oirat/**'
+      - 'nix/images/oirat.nix'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - 'packages/scripts/src/shared/oci.ts'
+      - 'nix/oci-push.sh'
+      - 'argocd/applications/oirat/**'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pr-checks:
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/common-monorepo.yml
+    with:
+      bun-version: 1.4.0
+      node-version: 24.11.1
+      install-command: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/oirat --filter @proompteng/discord && bun run --filter @proompteng/discord build
+      lint-command: bunx oxfmt --check services/oirat packages/scripts/src/oirat
+      oxlint-command: bun run --cwd services/oirat lint:oxlint
+      oxlint-type-command: bun run --cwd services/oirat lint:oxlint:type
+      test-command: bun run --filter @proompteng/oirat test
+    secrets: inherit
+
+  nix-image:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: oirat
+      package_attr: oirat-image
+      tag: sha-${{ github.sha }}
+      publish_kargo_tag: true
+      pr_number: ${{ github.event.pull_request.number || '' }}
+      latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
+    secrets: inherit

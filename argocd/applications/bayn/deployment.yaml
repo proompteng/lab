@@ -1,0 +1,231 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bayn
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  labels:
+    app.kubernetes.io/name: bayn
+    app.kubernetes.io/part-of: bayn
+spec:
+  replicas: 2
+  revisionHistoryLimit: 2
+  progressDeadlineSeconds: 600
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bayn
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bayn
+        app.kubernetes.io/part-of: bayn
+      annotations:
+        kubectl.kubernetes.io/restartedAt: "2026-08-29T18:15:00Z"
+    spec:
+      serviceAccountName: bayn
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          nodeTaintsPolicy: Honor
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: bayn
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: bayn
+          image: bayn-main
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: BAYN_CODE_REVISION
+              value: 89115ae4b8e9ae53e9c7f5817e5e1f1dce8ece2a
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              value: http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
+            # Main carries the reviewed candidate identity, while Argo reads the generated
+            # codex/bayn-deploy branch. An identity-changing build is published but promotion
+            # intentionally holds until a follow-up rotates the sealed activation request to
+            # the exact merged source and image digest; the renderer then updates this service,
+            # the execution worker, and its activation Job atomically.
+            - name: BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH
+              value: "a4894282066826ab3516bda712267f285e7b6b107f7b8946436eecbcb49de761"
+            - name: BAYN_IMAGE_REPOSITORY
+              value: registry.ide-newton.ts.net/lab/bayn
+            - name: BAYN_IMAGE_DIGEST
+              value: sha256:6940717c4de931796e5893e8579d8e33aad9ea2c52ed4cd8db9471704d582c3a
+            - name: BAYN_STRATEGY_BEHAVIOR_HASH
+              value: "9b85a04413b635b35ad3dea33fcfc5e5bf3dd5590c1564390b454f1092988fa2"
+            - name: BAYN_STRATEGY_PARAMETER_HASH
+              value: "88f4bf9a18fd881226a123ba277a65daaaf92aba76acfde86072d03d143624ef"
+            # Reviewed activation identity pins used by the release verifier. Runtime derives the same
+            # identity from its compiled strategy contract before serving.
+            - name: BAYN_STRATEGY_NAME
+              value: intraday-momentum
+            - name: BAYN_STRATEGY_PROTOCOL_HASH
+              value: "b2cb0303849ff30d64214f0faeea689b78bcb93554eb517251f914001ec50318"
+            - name: BAYN_EXECUTION_RISK_POLICY_HASH
+              value: "2e60270036900493a121a87c73730960154278778a8aa71b663b138effd82227"
+            - name: BAYN_CAPITAL_ACTIVATION_REQUEST
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: capital-activation-request
+            - name: BAYN_CAPITAL_ACTIVATION_KIND
+              value: ResearchCapitalActivationRequest
+            - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
+              value: "{\"schemaVersion\":\"bayn.research-capital-build-lineage.v1\",\"requestHash\":\"b873497405146d8bcaf3340a8a6744fa74f4a8729f18a35cf7484dde8c7163de\",\"authoredActivation\":{\"sourceRevision\":\"89115ae4b8e9ae53e9c7f5817e5e1f1dce8ece2a\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:6940717c4de931796e5893e8579d8e33aad9ea2c52ed4cd8db9471704d582c3a\"},\"activation\":{\"sourceRevision\":\"89115ae4b8e9ae53e9c7f5817e5e1f1dce8ece2a\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:6940717c4de931796e5893e8579d8e33aad9ea2c52ed4cd8db9471704d582c3a\"}}"
+            - name: BAYN_BROKER_ACCESS
+              value: read-only
+            - name: BAYN_CAPITAL_AUTHORITY
+              value: none
+            # sha256("bayn/authority-generation/autonomous-observe-v10")
+            - name: BAYN_AUTHORITY_GENERATION_HASH
+              value: "22793abfac57568433147fb6d7a47ce7a34fb500ee47e035353ae8935a3e3fa7"
+            - name: BAYN_CYCLE_POLL_INTERVAL_MS
+              value: "30000"
+            - name: BAYN_BROKER_PROVIDER
+              value: alpaca
+            - name: BAYN_BROKER_ENVIRONMENT
+              value: sandbox
+            - name: BAYN_ALPACA_BASE_URL
+              value: https://paper-api.alpaca.markets
+            - name: BAYN_ALPACA_ACCOUNT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: account-id
+            - name: BAYN_ALPACA_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: key-id
+            - name: BAYN_ALPACA_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: secret-key
+            - name: BAYN_HEALTH_INTERVAL_MS
+              value: "30000"
+            - name: BAYN_OPERATION_TIMEOUT_MS
+              value: "30000"
+            - name: BAYN_CLICKHOUSE_URL
+              value: http://torghut-clickhouse.torghut.svc.cluster.local:8123
+            - name: BAYN_CLICKHOUSE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-clickhouse-auth
+                  key: username
+            - name: BAYN_CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-clickhouse-auth
+                  key: password
+            - name: BAYN_SIGNAL_SNAPSHOT_ID
+              value: "f50f63fecf62991203e8ddae519406a432b1d1a06c3376b18a2957b962c67a60"
+            - name: BAYN_SIGNAL_PUBLICATION_ASOF
+              value: "2026-08-04"
+            - name: BAYN_SIGNAL_CALENDAR_VERSION
+              value: "alpaca-us-equity-calendar-v1"
+            - name: BAYN_SIGNAL_DATA_START
+              value: "2016-01-04"
+            - name: BAYN_SIGNAL_DATA_END
+              value: "2026-08-04"
+            - name: BAYN_SIGNAL_LOOKBACK_START
+              value: "2016-01-04"
+            - name: BAYN_SIGNAL_EVALUATION_START
+              value: "2017-01-03"
+            - name: BAYN_SIGNAL_EVALUATION_END
+              value: "2026-08-04"
+            - name: BAYN_POSTGRES_URL
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-db-app
+                  key: fqdn-uri
+            - name: BAYN_POSTGRES_TLS
+              value: "true"
+            - name: BAYN_POSTGRES_CA_PATH
+              value: /var/run/secrets/bayn/postgres/ca.crt
+            - name: BAYN_TIGERBEETLE_CLUSTER_ID
+              value: "122731676035874920802382025803517750735"
+            - name: BAYN_TIGERBEETLE_ADDRESSES
+              value: "ledger-0.ledger-headless.bayn.svc.cluster.local:3000,ledger-1.ledger-headless.bayn.svc.cluster.local:3000,ledger-2.ledger-headless.bayn.svc.cluster.local:3000"
+            - name: BAYN_TIGERBEETLE_LEDGER
+              value: "7001"
+            - name: NODE_ENV
+              value: production
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+          securityContext:
+            # TigerBeetle's native client requires io_uring, which containerd's
+            # RuntimeDefault seccomp profile blocks. Keep every other control.
+            seccompProfile:
+              type: Unconfined
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: postgres-ca
+              mountPath: /var/run/secrets/bayn/postgres
+              readOnly: true
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
+        - name: postgres-ca
+          secret:
+            secretName: bayn-db-ca
+            defaultMode: 0444
+            items:
+              - key: ca.crt
+                path: ca.crt

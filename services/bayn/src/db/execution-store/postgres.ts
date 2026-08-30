@@ -1,0 +1,80 @@
+import { PgClient } from '@effect/sql-pg'
+import { Effect } from 'effect'
+
+import { WriterFence, WriterFenceError, type WriterFenceService } from '../../execution/writer-fence'
+import { Journal } from '../../ledger'
+import { makeReconciliation, restrictAuthority } from '../reconciliation'
+import { makeAccountingInterpreter } from './accounting'
+import { makeAuthorityPostgres } from './authority-shared'
+import { makeBrokerEventInterpreter } from './broker-events'
+import type { ExecutionPersistence, ExecutionStoreError, ExecutionStoreRuntimeConfig } from './contract'
+import { executionStoreError, runExecutionOperation } from './errors'
+import { makeObserveAuthorityInterpreter } from './observe-authority'
+import { makeCapitalGrantInterpreter } from './capital-grant'
+import { decodeAuthorityRestriction } from './rows'
+import { makeValuationInterpreter } from './valuation'
+
+const fenceAuthorityMutation = <A>(
+  effect: Effect.Effect<A, ExecutionStoreError>,
+  writerFence: WriterFenceService,
+): Effect.Effect<A, ExecutionStoreError> =>
+  writerFence.transaction(effect).pipe(
+    Effect.mapError((cause) =>
+      cause instanceof WriterFenceError
+        ? executionStoreError({
+            operation: 'authority',
+            failure: 'query',
+            message: 'authority mutation could not acquire the PostgreSQL writer fence',
+            cause,
+          })
+        : cause,
+    ),
+  )
+
+export const makeExecutionPersistence = (config: ExecutionStoreRuntimeConfig) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    const journal = yield* Journal
+    const writerFence = yield* WriterFence
+    const events = makeBrokerEventInterpreter(sql)
+    const accounting = makeAccountingInterpreter(sql, journal, config, events)
+    const valuation = makeValuationInterpreter(sql)
+    const reconciliation = makeReconciliation(sql, journal, config)
+    const authorityPostgres = makeAuthorityPostgres(sql)
+    const observeAuthority = makeObserveAuthorityInterpreter(sql, authorityPostgres, config.execution.brokerIdentity)
+    const capitalGrant = makeCapitalGrantInterpreter(sql, authorityPostgres, config, writerFence)
+
+    return {
+      events,
+      accounting,
+      valuation,
+      reconciliation: {
+        bindings: (accountId) => runExecutionOperation('bindings', reconciliation.bindings(accountId)),
+        reconcile: (snapshot) => runExecutionOperation('reconciliation', reconciliation.reconcile(snapshot)),
+      },
+      authorityGeneration: {
+        ensureAuthorityGeneration: (input) =>
+          fenceAuthorityMutation(observeAuthority.ensureAuthorityGeneration(input), writerFence),
+        readOrInitializeObserveAuthority: (input) =>
+          fenceAuthorityMutation(observeAuthority.readOrInitializeObserveAuthority(input), writerFence),
+        readAuthorityState: observeAuthority.readAuthorityState,
+        readResearchAuthorityGeneration: observeAuthority.readResearchAuthorityGeneration,
+        readAuthorityGenerationLineage: observeAuthority.readAuthorityGenerationLineage,
+      },
+      capitalGrantLifecycle: {
+        activateResearchCapitalGrant: capitalGrant.activateResearchCapitalGrant,
+      },
+      authorityRestriction: {
+        restrictAuthority: (reason, updatedAt) =>
+          fenceAuthorityMutation(
+            runExecutionOperation(
+              'authority',
+              decodeAuthorityRestriction({ reason, updatedAt }).pipe(
+                Effect.flatMap((input) => restrictAuthority(sql, input.reason, input.updatedAt)),
+              ),
+            ),
+            writerFence,
+          ),
+      },
+    } satisfies ExecutionPersistence
+  })

@@ -1,0 +1,37 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: torghut-simulation-artifact-bundle
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+spec:
+  args:
+    - name: runDir
+  metrics:
+    - name: artifact-bundle
+      provider:
+        job:
+          spec:
+            backoffLimit: 0
+            ttlSecondsAfterFinished: 300
+            template:
+              spec:
+                serviceAccountName: torghut-runtime
+                restartPolicy: Never
+                nodeSelector:
+                  kubernetes.io/arch: arm64
+                containers:
+                  - name: analysis
+                    image: registry.ide-newton.ts.net/lab/torghut@sha256:b359cd2368e89b492f7ff6925f975b72bb2ca3aa0261478552fc6094688e3bb4
+                    imagePullPolicy: IfNotPresent
+                    command:
+                      - /bin/bash
+                      - -lc
+                    args:
+                      - >-
+                        set -euo pipefail &&
+                        cd /app &&
+                        python scripts/run_simulation_analysis.py artifact-bundle
+                        --run-dir "{{args.runDir}}"
+                        --json

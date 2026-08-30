@@ -1,0 +1,231 @@
+apiVersion: clickhouse.altinity.com/v1
+kind: ClickHouseInstallation
+metadata:
+  name: torghut-clickhouse
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut-clickhouse
+    app.kubernetes.io/part-of: torghut
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  configuration:
+    files:
+      config.d/99-prometheus.xml: |-
+        <yandex>
+          <prometheus>
+            <endpoint>/metrics</endpoint>
+            <port>9363</port>
+            <metrics>true</metrics>
+            <events>true</events>
+            <asynchronous_metrics>true</asynchronous_metrics>
+          </prometheus>
+        </yandex>
+      config.d/99-logging-overrides.xml: |-
+        <yandex>
+          <!-- Override verbosity without wiping out default log/errorlog settings. -->
+          <logger>
+            <level>information</level>
+          </logger>
+
+          <!-- Bound internal system logs so they cannot starve user-table writes on an 8Gi pod. -->
+          <text_log>
+            <level>information</level>
+            <engine>Engine = MergeTree PARTITION BY event_date ORDER BY event_time TTL event_date + INTERVAL 3 DAY</engine>
+            <flush_interval_milliseconds>15000</flush_interval_milliseconds>
+            <max_size_rows>262144</max_size_rows>
+            <reserved_size_rows>8192</reserved_size_rows>
+            <buffer_size_rows_flush_threshold>131072</buffer_size_rows_flush_threshold>
+            <flush_on_crash>false</flush_on_crash>
+          </text_log>
+          <query_log>
+            <engine>Engine = MergeTree PARTITION BY event_date ORDER BY event_time TTL event_date + INTERVAL 7 DAY</engine>
+            <flush_interval_milliseconds>15000</flush_interval_milliseconds>
+            <max_size_rows>262144</max_size_rows>
+            <reserved_size_rows>8192</reserved_size_rows>
+            <buffer_size_rows_flush_threshold>131072</buffer_size_rows_flush_threshold>
+            <flush_on_crash>false</flush_on_crash>
+          </query_log>
+          <part_log>
+            <engine>Engine = MergeTree PARTITION BY event_date ORDER BY event_time TTL event_date + INTERVAL 2 DAY</engine>
+            <flush_interval_milliseconds>15000</flush_interval_milliseconds>
+            <max_size_rows>131072</max_size_rows>
+            <reserved_size_rows>4096</reserved_size_rows>
+            <buffer_size_rows_flush_threshold>65536</buffer_size_rows_flush_threshold>
+            <flush_on_crash>false</flush_on_crash>
+          </part_log>
+          <latency_log>
+            <engine>Engine = MergeTree PARTITION BY event_date ORDER BY event_time TTL event_date + INTERVAL 1 DAY</engine>
+            <flush_interval_milliseconds>15000</flush_interval_milliseconds>
+            <max_size_rows>65536</max_size_rows>
+            <reserved_size_rows>2048</reserved_size_rows>
+            <buffer_size_rows_flush_threshold>32768</buffer_size_rows_flush_threshold>
+            <flush_on_crash>false</flush_on_crash>
+          </latency_log>
+
+          <metric_log remove="1"/>
+          <asynchronous_metric_log remove="1"/>
+          <processors_profile_log remove="1"/>
+          <trace_log remove="1"/>
+
+          <!-- Keep background merges from exhausting the pod before foreground inserts can complete. -->
+          <merges_mutations_memory_usage_to_ram_ratio>0.25</merges_mutations_memory_usage_to_ram_ratio>
+        </yandex>
+      users.d/99-profile-overrides.xml: |-
+        <yandex>
+          <profiles>
+            <default>
+              <!-- Disable sampling profiler logs to keep system tables small. -->
+              <query_profiler_real_time_period_ns>0</query_profiler_real_time_period_ns>
+              <query_profiler_cpu_time_period_ns>0</query_profiler_cpu_time_period_ns>
+              <log_profile_events>0</log_profile_events>
+            </default>
+          </profiles>
+        </yandex>
+    profiles:
+      bayn/readonly: 1
+      bayn/max_execution_time: 60
+      bayn/max_result_rows: 1000000
+      bayn/result_overflow_mode: throw
+      bayn/max_memory_usage: 2147483648
+      bayn/max_threads: 4
+      # Watermark capture and paged snapshot reads may hit different replicas.
+      # Refuse a stale replica instead of returning a partial quorum-confirmed prefix.
+      bayn/select_sequential_consistency: 1
+      signal_publisher/max_execution_time: 120
+      signal_publisher/max_result_rows: 1000000
+      signal_publisher/result_overflow_mode: throw
+      signal_publisher/max_memory_usage: 2147483648
+      signal_publisher/max_threads: 4
+      signal_publisher/insert_quorum: 2
+      signal_publisher/insert_quorum_parallel: 0
+      signal_publisher/insert_quorum_timeout: 60000
+      signal_publisher/select_sequential_consistency: 1
+      notebook/readonly: 1
+      notebook/max_execution_time: 30
+      notebook/max_result_rows: 100000
+      notebook/result_overflow_mode: throw
+      notebook/max_memory_usage: 2147483648
+      notebook/max_threads: 4
+    zookeeper:
+      nodes:
+        - host: keeper-torghut-keeper
+          port: 2181
+    users:
+      bayn/password_sha256_hex:
+        valueFrom:
+          secretKeyRef:
+            name: bayn-clickhouse-auth
+            key: password_sha256_hex
+      bayn/profile: bayn
+      bayn/quota: default
+      bayn/networks/ip:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+      bayn/grants/query:
+        - GRANT SELECT ON signal.adjusted_daily_bars_v1
+        - GRANT SELECT ON signal.adjusted_daily_bars_v2
+        - GRANT SELECT ON signal.exchange_sessions_v1
+        - GRANT SELECT ON signal.intraday_bars_1m_v1
+        - GRANT SELECT ON signal.intraday_bars_1m_v2
+        - GRANT SELECT ON signal.intraday_quotes_v1
+        - GRANT SELECT ON signal.intraday_trades_v1
+        - GRANT SELECT ON signal.snapshot_manifests_v1
+        - GRANT SELECT ON signal.snapshot_manifests_v2
+      signal_publisher/password_sha256_hex:
+        valueFrom:
+          secretKeyRef:
+            name: signal-publisher-clickhouse-auth
+            key: password_sha256_hex
+      signal_publisher/profile: signal_publisher
+      signal_publisher/quota: default
+      signal_publisher/networks/ip:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+      signal_publisher/grants/query:
+        - GRANT SELECT, INSERT ON signal.adjusted_daily_bars_v2
+        - GRANT SELECT, INSERT ON signal.exchange_sessions_v1
+        - GRANT INSERT ON signal.intraday_bars_1m_v1
+        - GRANT INSERT ON signal.intraday_bars_1m_v2
+        - GRANT INSERT ON signal.intraday_quotes_v1
+        - GRANT INSERT ON signal.intraday_trades_v1
+        - GRANT SELECT, INSERT ON signal.snapshot_manifests_v1
+        - GRANT SELECT, INSERT ON signal.snapshot_manifests_v2
+      default/password_sha256_hex:
+        valueFrom:
+          secretKeyRef:
+            name: torghut-clickhouse-auth
+            key: default_password_sha256_hex
+      default/networks/ip:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+      torghut/password:
+        valueFrom:
+          secretKeyRef:
+            name: torghut-clickhouse-auth
+            key: torghut_password
+      torghut/profile: default
+      torghut/quota: default
+      torghut/networks/ip:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+      torghut_notebook/password:
+        valueFrom:
+          secretKeyRef:
+            name: torghut-notebook-clickhouse
+            key: password
+      torghut_notebook/profile: notebook
+      torghut_notebook/quota: default
+      torghut_notebook/networks/ip:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+    clusters:
+      - name: default
+        layout:
+          shardsCount: 1
+          replicasCount: 2
+        templates:
+          podTemplate: chi-default
+          volumeClaimTemplate: chi-data
+  templates:
+    podTemplates:
+      - name: chi-default
+        spec:
+          affinity:
+            podAntiAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector:
+                    matchExpressions:
+                      - key: clickhouse.altinity.com/cluster
+                        operator: In
+                        values:
+                          - default
+                  topologyKey: kubernetes.io/hostname
+          containers:
+            - name: clickhouse
+              image: altinity/clickhouse-server:25.3.6.10034.altinitystable
+              resources:
+                requests:
+                  cpu: 1
+                  memory: 2Gi
+                limits:
+                  cpu: 2
+                  memory: 8Gi
+    volumeClaimTemplates:
+      - name: chi-data
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 50Gi
+          storageClassName: rook-ceph-block
+  defaults:
+    templates:
+      podTemplate: chi-default
+      volumeClaimTemplate: chi-data

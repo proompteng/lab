@@ -1,0 +1,10 @@
+{
+  "include": [
+    "scripts/measure_torghut_tech_debt.py",
+    "scripts/pylint_torghut_quality.py",
+    "scripts/run_pylint_torghut_quality_diff_gate.py"
+  ],
+  "typeCheckingMode": "strict",
+  "venvPath": ".",
+  "venv": ".venv"
+}

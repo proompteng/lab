@@ -1,0 +1,1386 @@
+import { Data, Result, Schema, pipe } from 'effect'
+
+import { canonicalHashV1Result } from './hash'
+import { notionalMicros } from './execution-model'
+import { ExecutionSessionBindingSchema } from './execution-session'
+import {
+  AccountSnapshotSchema,
+  AccountStatus,
+  Authority,
+  AuthorityStateSchema,
+  IntentSchema,
+  IntentState,
+  KillState,
+  OrderSchema,
+  OrderSide,
+  OrderStatus,
+  OrderType,
+  PositionSchema,
+  PositiveMicrosSchema,
+  ReconciliationSchema,
+  ReconciliationStatus,
+  ReferenceIntentSchema,
+  RiskDecisionSchema,
+  RiskInputSchema,
+  RiskOutcome,
+  SignedMicrosSchema,
+  TimeInForce,
+  UnsignedMicrosSchema,
+  type Intent,
+  type Position,
+  type ReferenceIntent,
+} from './execution/contracts'
+import { reconciledStateHash } from './reconciliation'
+import {
+  Sha256Schema as Sha256,
+  StrictNonEmptyStringSchema as NonEmptyString,
+  SymbolSchema as SymbolName,
+  UtcInstantSchema as UtcInstant,
+  strictParseOptions as StrictParseOptions,
+} from './schemas'
+import { Pipeable } from './pipeable'
+import { utcInstantFromEpochMillis } from './time'
+import {
+  legacyExecutionAuthorityToken,
+  legacyExecutionIntentSchemaVersion,
+  legacyObserveAuthorityToken,
+  legacyRiskPolicySchemaVersion,
+  legacyRiskDecisionSchemaVersion,
+  legacyRiskEvaluationInputV2SchemaVersion,
+  legacyRiskEvaluationInputV3SchemaVersion,
+  legacyRiskInputSchemaVersion,
+  legacyRiskStateSchemaVersion,
+} from './execution/legacy-wire'
+
+const MAX_POLICY_MICROS = 9_223_372_036_854_775_807n
+const MAX_AGE_MS = 86_400_000
+const MAX_UNKNOWN_MUTATIONS = 1_000
+const BASIS_POINTS = 10_000n
+const QUANTITY_SCALE = 1_000_000n
+
+const LimitMicros = UnsignedMicrosSchema.check(
+  Schema.makeFilter((value: string) => BigInt(value) <= MAX_POLICY_MICROS, {
+    expected: `canonical micros not exceeding ${MAX_POLICY_MICROS}`,
+  }),
+)
+const AgeMilliseconds = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: MAX_AGE_MS }))
+const MutationCount = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: MAX_UNKNOWN_MUTATIONS }))
+const BasisPointLimit = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: Number(BASIS_POINTS) }))
+
+const isSorted = (values: ReadonlyArray<string>): boolean => {
+  for (let index = 1; index < values.length; index += 1) {
+    const previous = values[index - 1]
+    const current = values[index]
+    if (previous === undefined || current === undefined || previous >= current) return false
+  }
+  return true
+}
+
+const SortedUniqueStrings = Schema.makeFilter((values: ReadonlyArray<string>) => isSorted(values), {
+  expected: 'a strictly sorted unique array',
+})
+
+export enum BrokerMode {
+  /** Durable wire value retained for compatibility with stored evaluations. */
+  Execution = 'PAPER',
+}
+
+export enum Gate {
+  IntentState = 'intent_state',
+  IntentTime = 'intent_time',
+  IntentFreshness = 'intent_freshness',
+  Account = 'account',
+  AccountStatus = 'account_status',
+  Equity = 'equity',
+  Symbol = 'symbol',
+  MarketDataSymbol = 'market_data_symbol',
+  OrderType = 'order_type',
+  TimeInForce = 'time_in_force',
+  Authority = 'authority',
+  Kill = 'kill',
+  Reconciliation = 'reconciliation',
+  BrokerStateFreshness = 'broker_state_freshness',
+  MarketDataFreshness = 'market_data_freshness',
+  Session = 'session',
+  UnknownMutations = 'unknown_mutations',
+  UnresolvedOrders = 'unresolved_orders',
+  IntentNotional = 'intent_notional',
+  OrderNotional = 'order_notional',
+  BuyingPower = 'buying_power',
+  AdverseSlippage = 'adverse_slippage',
+  LongOnly = 'long_only',
+  SymbolExposure = 'symbol_exposure',
+  GrossExposure = 'gross_exposure',
+  NetExposure = 'net_exposure',
+  DailyTradedNotional = 'daily_traded_notional',
+  DailyLoss = 'daily_loss',
+  Drawdown = 'drawdown',
+}
+
+export enum Reason {
+  IntentNotPlanned = 'INTENT_NOT_PLANNED',
+  IntentTimeInvalid = 'INTENT_TIME_INVALID',
+  IntentStale = 'INTENT_STALE',
+  AccountMismatch = 'ACCOUNT_MISMATCH',
+  AccountNotActive = 'ACCOUNT_NOT_ACTIVE',
+  EquityNotPositive = 'EQUITY_NOT_POSITIVE',
+  SymbolNotAllowed = 'SYMBOL_NOT_ALLOWED',
+  MarketDataSymbolMismatch = 'MARKET_DATA_SYMBOL_MISMATCH',
+  OrderTypeNotAllowed = 'ORDER_TYPE_NOT_ALLOWED',
+  TimeInForceNotAllowed = 'TIME_IN_FORCE_NOT_ALLOWED',
+  AuthorityNotGranted = 'AUTHORITY_NOT_GRANTED',
+  /** Historical reason code retained only for decoding hash-bound risk evidence. */
+  LegacyAuthorityNotGranted = 'AUTHORITY_NOT_PAPER',
+  KillActive = 'KILL_ACTIVE',
+  ReconciliationNotExact = 'RECONCILIATION_NOT_EXACT',
+  BrokerStateStale = 'BROKER_STATE_STALE',
+  MarketDataStale = 'MARKET_DATA_STALE',
+  OutsideSession = 'OUTSIDE_SESSION',
+  UnknownMutation = 'UNKNOWN_MUTATION',
+  UnresolvedOrdersExceeded = 'UNRESOLVED_ORDERS_EXCEEDED',
+  IntentNotionalExceeded = 'INTENT_NOTIONAL_EXCEEDED',
+  OrderNotionalExceeded = 'ORDER_NOTIONAL_EXCEEDED',
+  BuyingPowerExceeded = 'BUYING_POWER_EXCEEDED',
+  AdverseSlippageExceeded = 'ADVERSE_SLIPPAGE_EXCEEDED',
+  ShortPositionNotAllowed = 'SHORT_POSITION_NOT_ALLOWED',
+  SymbolExposureExceeded = 'SYMBOL_EXPOSURE_EXCEEDED',
+  GrossExposureExceeded = 'GROSS_EXPOSURE_EXCEEDED',
+  NetExposureExceeded = 'NET_EXPOSURE_EXCEEDED',
+  DailyTradedNotionalExceeded = 'DAILY_TRADED_NOTIONAL_EXCEEDED',
+  DailyLossExceeded = 'DAILY_LOSS_EXCEEDED',
+  DrawdownExceeded = 'DRAWDOWN_EXCEEDED',
+}
+
+export const isAuthorityNotGrantedReason = (reason: string): boolean =>
+  reason === Reason.AuthorityNotGranted || reason === Reason.LegacyAuthorityNotGranted
+
+export interface RiskGateDefinition {
+  readonly name: Gate
+  readonly reason: Reason
+}
+
+type RiskGateDefinitionByName = {
+  readonly [Name in Gate]: {
+    readonly name: Name
+    readonly reason: Reason
+  }
+}
+
+const riskGateDefinitionByName: RiskGateDefinitionByName = {
+  [Gate.IntentState]: { name: Gate.IntentState, reason: Reason.IntentNotPlanned },
+  [Gate.IntentTime]: { name: Gate.IntentTime, reason: Reason.IntentTimeInvalid },
+  [Gate.IntentFreshness]: { name: Gate.IntentFreshness, reason: Reason.IntentStale },
+  [Gate.Account]: { name: Gate.Account, reason: Reason.AccountMismatch },
+  [Gate.AccountStatus]: { name: Gate.AccountStatus, reason: Reason.AccountNotActive },
+  [Gate.Equity]: { name: Gate.Equity, reason: Reason.EquityNotPositive },
+  [Gate.Symbol]: { name: Gate.Symbol, reason: Reason.SymbolNotAllowed },
+  [Gate.MarketDataSymbol]: { name: Gate.MarketDataSymbol, reason: Reason.MarketDataSymbolMismatch },
+  [Gate.OrderType]: { name: Gate.OrderType, reason: Reason.OrderTypeNotAllowed },
+  [Gate.TimeInForce]: { name: Gate.TimeInForce, reason: Reason.TimeInForceNotAllowed },
+  [Gate.Authority]: { name: Gate.Authority, reason: Reason.AuthorityNotGranted },
+  [Gate.Kill]: { name: Gate.Kill, reason: Reason.KillActive },
+  [Gate.Reconciliation]: { name: Gate.Reconciliation, reason: Reason.ReconciliationNotExact },
+  [Gate.BrokerStateFreshness]: { name: Gate.BrokerStateFreshness, reason: Reason.BrokerStateStale },
+  [Gate.MarketDataFreshness]: { name: Gate.MarketDataFreshness, reason: Reason.MarketDataStale },
+  [Gate.Session]: { name: Gate.Session, reason: Reason.OutsideSession },
+  [Gate.UnknownMutations]: { name: Gate.UnknownMutations, reason: Reason.UnknownMutation },
+  [Gate.UnresolvedOrders]: { name: Gate.UnresolvedOrders, reason: Reason.UnresolvedOrdersExceeded },
+  [Gate.IntentNotional]: { name: Gate.IntentNotional, reason: Reason.IntentNotionalExceeded },
+  [Gate.OrderNotional]: { name: Gate.OrderNotional, reason: Reason.OrderNotionalExceeded },
+  [Gate.BuyingPower]: { name: Gate.BuyingPower, reason: Reason.BuyingPowerExceeded },
+  [Gate.AdverseSlippage]: { name: Gate.AdverseSlippage, reason: Reason.AdverseSlippageExceeded },
+  [Gate.LongOnly]: { name: Gate.LongOnly, reason: Reason.ShortPositionNotAllowed },
+  [Gate.SymbolExposure]: { name: Gate.SymbolExposure, reason: Reason.SymbolExposureExceeded },
+  [Gate.GrossExposure]: { name: Gate.GrossExposure, reason: Reason.GrossExposureExceeded },
+  [Gate.NetExposure]: { name: Gate.NetExposure, reason: Reason.NetExposureExceeded },
+  [Gate.DailyTradedNotional]: {
+    name: Gate.DailyTradedNotional,
+    reason: Reason.DailyTradedNotionalExceeded,
+  },
+  [Gate.DailyLoss]: { name: Gate.DailyLoss, reason: Reason.DailyLossExceeded },
+  [Gate.Drawdown]: { name: Gate.Drawdown, reason: Reason.DrawdownExceeded },
+}
+
+export const orderedRiskGateDefinitions: ReadonlyArray<RiskGateDefinition> = Object.values(riskGateDefinitionByName)
+
+const RiskPolicyFields = {
+  accountId: NonEmptyString,
+  brokerMode: Schema.Literal(BrokerMode.Execution),
+  allowedSymbols: Schema.Array(SymbolName).check(Schema.isMinLength(1), Schema.isUnique(), SortedUniqueStrings),
+  allowedTimeInForce: Schema.Array(Schema.Enum(TimeInForce)).check(
+    Schema.isMinLength(1),
+    Schema.isUnique(),
+    SortedUniqueStrings,
+  ),
+  maxOrderNotionalMicros: LimitMicros,
+  maxSymbolExposureMicros: LimitMicros,
+  maxGrossExposureMicros: LimitMicros,
+  maxNetExposureMicros: LimitMicros,
+  maxDailyTradedNotionalMicros: LimitMicros,
+  maxDailyLossMicros: LimitMicros,
+  maxDrawdownMicros: LimitMicros,
+  maxIntentAgeMs: AgeMilliseconds,
+  maxBrokerStateAgeMs: AgeMilliseconds,
+  maxMarketDataAgeMs: AgeMilliseconds,
+  maxAdverseSlippageBps: BasisPointLimit,
+  maxOpenOrders: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 500 })),
+  decisionTtlMs: AgeMilliseconds,
+} as const
+
+const LegacyRiskPolicyV2Schema = Schema.Struct({
+  schemaVersion: Schema.Literal(legacyRiskPolicySchemaVersion),
+  ...RiskPolicyFields,
+  allowedOrderTypes: Schema.Tuple([Schema.Literal(OrderType.Market)]),
+})
+
+export const executionRiskPolicySchemaVersion = 'bayn.execution-risk-policy.v3' as const
+
+export const ExecutionRiskPolicySchema = Schema.Struct({
+  schemaVersion: Schema.Literal(executionRiskPolicySchemaVersion),
+  ...RiskPolicyFields,
+  allowedOrderTypes: Schema.Array(Schema.Enum(OrderType)).check(
+    Schema.isMinLength(1),
+    Schema.isUnique(),
+    SortedUniqueStrings,
+  ),
+})
+
+export const PolicySchema = Schema.Union([LegacyRiskPolicyV2Schema, ExecutionRiskPolicySchema])
+export type Policy = typeof PolicySchema.Type
+
+const policyAllowsOrderType = (policy: Policy, orderType: OrderType): boolean =>
+  policy.schemaVersion === legacyRiskPolicySchemaVersion
+    ? orderType === OrderType.Market
+    : policy.allowedOrderTypes.includes(orderType)
+
+const StateBase = Schema.Struct({
+  schemaVersion: Schema.Literal(legacyRiskStateSchemaVersion),
+  brokerMode: Schema.Literal(BrokerMode.Execution),
+  account: AccountSnapshotSchema,
+  positions: Schema.Array(PositionSchema),
+  positionsObservedAt: UtcInstant,
+  orders: Schema.Array(OrderSchema),
+  ordersObservedAt: UtcInstant,
+  reconciliation: ReconciliationSchema,
+  authority: AuthorityStateSchema,
+  authorityObservedAt: UtcInstant,
+  unknownMutationCount: MutationCount,
+  dailyTradedNotionalMicros: UnsignedMicrosSchema,
+  dayStartEquityMicros: SignedMicrosSchema,
+  peakEquityMicros: SignedMicrosSchema,
+  accountingHash: Sha256,
+  marketDataSymbol: SymbolName,
+  marketDataHash: Sha256,
+  executionMarketDataHash: Schema.optionalKey(Sha256),
+  referencePriceMicros: PositiveMicrosSchema,
+  expectedExecutionPriceMicros: PositiveMicrosSchema,
+  marketDataObservedAt: UtcInstant,
+  executionSession: ExecutionSessionBindingSchema,
+  reservedBuyingPowerMicros: UnsignedMicrosSchema,
+  evaluatedAt: UtcInstant,
+  closeOnly: Schema.optional(Schema.Boolean),
+  closeOnlyExpiresAt: Schema.optional(UtcInstant),
+})
+
+const timeDoesNotFollow = (candidate: string, boundary: string): boolean => candidate > boundary
+
+interface PositionBook {
+  readonly positions: readonly Position[]
+  readonly accountId: string
+  readonly observedAt: string
+}
+
+const positionBookIssues = (book: PositionBook): readonly Schema.FilterIssue[] => {
+  const issues: Schema.FilterIssue[] = []
+  const symbols = book.positions.map((position) => position.symbol)
+  if (new Set(symbols).size !== symbols.length || !isSorted(symbols)) {
+    issues.push({ path: ['positions'], issue: 'must be unique and sorted by symbol' })
+  }
+  for (const [index, position] of book.positions.entries()) {
+    if (position.accountId !== book.accountId) {
+      issues.push({ path: ['positions', index, 'accountId'], issue: 'must match the account snapshot' })
+    }
+    if (position.observedAt !== book.observedAt) {
+      issues.push({ path: ['positions', index, 'observedAt'], issue: 'must match positionsObservedAt' })
+    }
+    const quantity = BigInt(position.quantityMicros)
+    const marketValue = BigInt(position.marketValueMicros)
+    if (
+      (quantity === 0n) !== (marketValue === 0n) ||
+      (quantity > 0n && marketValue <= 0n) ||
+      (quantity < 0n && marketValue >= 0n)
+    ) {
+      issues.push({ path: ['positions', index, 'marketValueMicros'], issue: 'must have the quantity sign' })
+    }
+  }
+  return issues
+}
+
+export const StateSchema = StateBase.check(
+  Schema.makeFilter((state: typeof StateBase.Type): readonly Schema.FilterIssue[] => {
+    const issues: Schema.FilterIssue[] = []
+    const accountId = state.account.accountId
+    const expectedMarketDataHash =
+      state.executionMarketDataHash ??
+      (state.executionSession.schemaVersion === 'bayn.execution-session-binding.v1'
+        ? state.executionSession.signal.contentHash
+        : undefined)
+    if (expectedMarketDataHash === undefined || expectedMarketDataHash !== state.marketDataHash) {
+      issues.push({
+        path: ['marketDataHash'],
+        issue:
+          state.executionMarketDataHash === undefined
+            ? 'must match the finalized signal-session binding'
+            : 'must match the explicit execution market-data binding',
+      })
+    }
+    if (
+      state.closeOnly !== true &&
+      (state.executionSession.planningBrokerState.contentHash !== state.reconciliation.observedHash ||
+        state.executionSession.planningBrokerState.observedAt !== state.reconciliation.reconciledAt)
+    ) {
+      issues.push({
+        path: ['executionSession', 'planningBrokerState'],
+        issue: 'must match the exact reconciled broker state used for planning',
+      })
+    }
+    const timestamps = [
+      ['account', 'observedAt', state.account.observedAt],
+      ['positionsObservedAt', state.positionsObservedAt],
+      ['ordersObservedAt', state.ordersObservedAt],
+      ['reconciliation', 'reconciledAt', state.reconciliation.reconciledAt],
+      ['authorityObservedAt', state.authorityObservedAt],
+      ['marketDataObservedAt', state.marketDataObservedAt],
+    ] as const
+    for (const path of timestamps) {
+      const candidate = path.at(-1)
+      if (candidate === undefined) continue
+      if (timeDoesNotFollow(candidate, state.evaluatedAt)) {
+        issues.push({ path: path.slice(0, -1), issue: 'must not follow evaluatedAt' })
+      }
+    }
+    if (state.reconciliation.accountId !== accountId) {
+      issues.push({ path: ['reconciliation', 'accountId'], issue: 'must match the account snapshot' })
+    }
+    if (state.authority.updatedAt > state.authorityObservedAt) {
+      issues.push({ path: ['authorityObservedAt'], issue: 'must not precede the authority update' })
+    }
+    if (state.closeOnly === true && state.closeOnlyExpiresAt === undefined) {
+      issues.push({ path: ['closeOnlyExpiresAt'], issue: 'close-only risk state requires its bounded close lease' })
+    }
+    if (
+      state.closeOnly === true &&
+      state.closeOnlyExpiresAt !== undefined &&
+      state.closeOnlyExpiresAt <= state.evaluatedAt
+    ) {
+      issues.push({
+        path: ['closeOnlyExpiresAt'],
+        issue: 'close-only risk state must be evaluated before its close lease expires',
+      })
+    }
+    if (
+      state.reconciliation.reconciledAt < state.account.observedAt ||
+      state.reconciliation.reconciledAt < state.positionsObservedAt ||
+      state.reconciliation.reconciledAt < state.ordersObservedAt
+    ) {
+      issues.push({ path: ['reconciliation', 'reconciledAt'], issue: 'must cover every broker snapshot' })
+    }
+    issues.push(
+      ...positionBookIssues({
+        positions: state.positions,
+        accountId,
+        observedAt: state.positionsObservedAt,
+      }),
+    )
+    const brokerOrderIds = state.orders.map((order) => order.brokerOrderId)
+    if (new Set(brokerOrderIds).size !== brokerOrderIds.length || !isSorted(brokerOrderIds)) {
+      issues.push({ path: ['orders'], issue: 'must be unique and sorted by brokerOrderId' })
+    }
+    const clientOrderIds = state.orders.map((order) => order.clientOrderId)
+    if (new Set(clientOrderIds).size !== clientOrderIds.length) {
+      issues.push({ path: ['orders'], issue: 'must have unique clientOrderId values' })
+    }
+    const latestOrderObservation = state.orders.reduce(
+      (latest, order) => (order.observedAt > latest ? order.observedAt : latest),
+      '',
+    )
+    if (state.orders.length > 0 && latestOrderObservation !== state.ordersObservedAt) {
+      issues.push({ path: ['ordersObservedAt'], issue: 'must equal the latest paginated order observation' })
+    }
+    for (const [index, order] of state.orders.entries()) {
+      if (order.accountId !== accountId) {
+        issues.push({ path: ['orders', index, 'accountId'], issue: 'must match the account snapshot' })
+      }
+      if (order.observedAt > state.ordersObservedAt) {
+        issues.push({ path: ['orders', index, 'observedAt'], issue: 'must not follow ordersObservedAt' })
+      }
+    }
+    if (BigInt(state.peakEquityMicros) < BigInt(state.account.equityMicros)) {
+      issues.push({ path: ['peakEquityMicros'], issue: 'must not be less than current equity' })
+    }
+    return issues
+  }),
+)
+export type State = typeof StateSchema.Type
+
+const GateResultSchema = Schema.Struct({
+  name: Schema.Enum(Gate),
+  passed: Schema.Boolean,
+  reason: Schema.Enum(Reason),
+  actual: NonEmptyString,
+  required: NonEmptyString,
+})
+export type GateResult = typeof GateResultSchema.Type
+
+const EvaluationMetricsSchema = Schema.Struct({
+  orderNotionalMicros: UnsignedMicrosSchema,
+  postTradeSymbolExposureMicros: SignedMicrosSchema,
+  postTradeGrossExposureMicros: UnsignedMicrosSchema,
+  postTradeNetExposureMicros: SignedMicrosSchema,
+  dailyTradedNotionalMicros: UnsignedMicrosSchema,
+  dailyLossMicros: UnsignedMicrosSchema,
+  drawdownMicros: UnsignedMicrosSchema,
+  adverseSlippageBps: UnsignedMicrosSchema,
+  aggregateBuyingPowerMicros: UnsignedMicrosSchema,
+  unresolvedOrderCount: MutationCount,
+})
+
+const EvaluationBase = Schema.Struct({
+  policyHash: Sha256,
+  input: RiskInputSchema,
+  decision: RiskDecisionSchema,
+  gates: Schema.Array(GateResultSchema),
+  metrics: EvaluationMetricsSchema,
+})
+
+export const EvaluationSchema = EvaluationBase.check(
+  Schema.makeFilter((evaluation: typeof EvaluationBase.Type): readonly Schema.FilterIssue[] => {
+    const issues: Schema.FilterIssue[] = []
+    if (
+      evaluation.policyHash !== evaluation.input.policyHash ||
+      evaluation.policyHash !== evaluation.decision.policyHash ||
+      evaluation.input.inputHash !== evaluation.decision.inputHash ||
+      evaluation.input.intentId !== evaluation.decision.intentId
+    ) {
+      issues.push({ path: ['decision'], issue: 'must bind the exact risk input, intent, and policy' })
+    }
+    if (
+      evaluation.input.evaluatedAt !== evaluation.decision.decidedAt ||
+      evaluation.input.freshUntil !== evaluation.decision.expiresAt
+    ) {
+      issues.push({ path: ['decision'], issue: 'must retain the risk input evaluation and expiry times' })
+    }
+    const { decisionId, ...decisionMaterial } = evaluation.decision
+    const expectedDecisionId = canonicalHashV1Result(decisionMaterial)
+    if (Result.isFailure(expectedDecisionId)) {
+      issues.push({ path: ['decision', 'decisionId'], issue: 'risk decision material must be canonicalizable' })
+    } else if (decisionId !== expectedDecisionId.success) {
+      issues.push({ path: ['decision', 'decisionId'], issue: 'must match the canonical risk decision material' })
+    }
+    if (
+      evaluation.gates.length !== orderedRiskGateDefinitions.length ||
+      evaluation.gates.some((gate, index) => {
+        const definition = orderedRiskGateDefinitions[index]
+        return (
+          definition === undefined ||
+          gate.name !== definition.name ||
+          (gate.reason !== definition.reason &&
+            !(definition.name === Gate.Authority && gate.reason === Reason.LegacyAuthorityNotGranted))
+        )
+      })
+    ) {
+      issues.push({ path: ['gates'], issue: 'must contain every risk gate/reason pair in canonical order' })
+    }
+    const failedReasons = evaluation.gates.filter((gate) => !gate.passed).map((gate) => gate.reason)
+    if (
+      failedReasons.length !== evaluation.decision.reasonCodes.length ||
+      failedReasons.some((reason, index) => reason !== evaluation.decision.reasonCodes[index])
+    ) {
+      issues.push({ path: ['decision', 'reasonCodes'], issue: 'must match the failed risk gates in order' })
+    }
+    const expectedOutcome = failedReasons.length === 0 ? RiskOutcome.Approved : RiskOutcome.Blocked
+    if (evaluation.decision.outcome !== expectedOutcome) {
+      issues.push({ path: ['decision', 'outcome'], issue: 'must agree with the complete risk gate set' })
+    }
+    return issues
+  }),
+)
+export type Evaluation = typeof EvaluationSchema.Type
+export type RiskIntent = Intent | ReferenceIntent
+
+interface BindRiskAuthorityIssue {
+  readonly operation: 'bind-authority'
+  readonly reason: 'authority-contract' | 'authority-generation' | 'authority-maximum'
+}
+
+interface CanonicalizeRiskInputIssue {
+  readonly operation: 'canonicalize-input'
+  readonly reason: 'evidence' | 'reconciliation'
+}
+
+interface DecodeRiskInputIssue {
+  readonly operation: 'decode-input'
+  readonly reason: 'intent' | 'policy' | 'positions' | 'state'
+}
+
+interface DecodeRiskOutputIssue {
+  readonly operation: 'decode-output'
+  readonly reason: 'decision' | 'evaluation' | 'input'
+}
+
+interface ComputeRiskMetricsIssue {
+  readonly operation: 'compute-metrics'
+  readonly reason: 'order-notional'
+}
+
+type RiskEvaluationIssue =
+  | BindRiskAuthorityIssue
+  | CanonicalizeRiskInputIssue
+  | ComputeRiskMetricsIssue
+  | DecodeRiskInputIssue
+  | DecodeRiskOutputIssue
+
+interface RiskEvaluationFailureDetails {
+  readonly message: string
+  readonly facts: Readonly<Record<string, unknown>>
+  readonly cause?: unknown
+}
+
+export const RiskEvaluationFailure = Data.TaggedError('RiskEvaluationFailure')<
+  RiskEvaluationIssue & RiskEvaluationFailureDetails
+>
+export type RiskEvaluationFailure = InstanceType<typeof RiskEvaluationFailure>
+
+type RiskEvaluationReason<Operation extends RiskEvaluationIssue['operation']> = Extract<
+  RiskEvaluationIssue,
+  { readonly operation: Operation }
+>['reason']
+
+const bindRiskAuthorityFailure = (
+  reason: RiskEvaluationReason<'bind-authority'>,
+  message: string,
+  facts: Readonly<Record<string, unknown>> = {},
+  cause?: unknown,
+): RiskEvaluationFailure => new RiskEvaluationFailure({ operation: 'bind-authority', reason, message, facts, cause })
+
+const canonicalizeRiskInputFailure = (
+  reason: RiskEvaluationReason<'canonicalize-input'>,
+  message: string,
+  facts: Readonly<Record<string, unknown>> = {},
+  cause?: unknown,
+): RiskEvaluationFailure =>
+  new RiskEvaluationFailure({ operation: 'canonicalize-input', reason, message, facts, cause })
+
+const decodeRiskInputFailure = (
+  reason: RiskEvaluationReason<'decode-input'>,
+  message: string,
+  facts: Readonly<Record<string, unknown>> = {},
+  cause?: unknown,
+): RiskEvaluationFailure => new RiskEvaluationFailure({ operation: 'decode-input', reason, message, facts, cause })
+
+const decodeRiskOutputFailure = (
+  reason: RiskEvaluationReason<'decode-output'>,
+  message: string,
+  facts: Readonly<Record<string, unknown>> = {},
+  cause?: unknown,
+): RiskEvaluationFailure => new RiskEvaluationFailure({ operation: 'decode-output', reason, message, facts, cause })
+
+const computeRiskMetricsFailure = (
+  reason: RiskEvaluationReason<'compute-metrics'>,
+  message: string,
+  facts: Readonly<Record<string, unknown>> = {},
+  cause?: unknown,
+): RiskEvaluationFailure => new RiskEvaluationFailure({ operation: 'compute-metrics', reason, message, facts, cause })
+
+const RiskIntentSchema = Schema.Union([IntentSchema, ReferenceIntentSchema])
+const ProposedPositionsSchema = Schema.Array(PositionSchema)
+const decodeRiskIntentResult = Schema.decodeUnknownResult(RiskIntentSchema, StrictParseOptions)
+const decodeRiskStateResult = Schema.decodeUnknownResult(StateSchema, StrictParseOptions)
+const decodeRiskPolicyResult = Schema.decodeUnknownResult(PolicySchema, StrictParseOptions)
+const decodeProposedPositionsResult = Schema.decodeUnknownResult(ProposedPositionsSchema, StrictParseOptions)
+const decodeRiskInputResult = Schema.decodeUnknownResult(RiskInputSchema, StrictParseOptions)
+const decodeRiskDecisionResult = Schema.decodeUnknownResult(RiskDecisionSchema, StrictParseOptions)
+const decodeRiskEvaluationResult = Schema.decodeUnknownResult(EvaluationSchema, StrictParseOptions)
+
+const absolute = (value: bigint): bigint => (value < 0n ? -value : value)
+const positiveDifference = (left: bigint, right: bigint): bigint => (left > right ? left - right : 0n)
+const divideUp = (numerator: bigint, denominator: bigint): bigint =>
+  numerator === 0n ? 0n : (numerator + denominator - 1n) / denominator
+const divideAwayFromZero = (numerator: bigint, denominator: bigint): bigint =>
+  numerator < 0n ? -divideUp(-numerator, denominator) : divideUp(numerator, denominator)
+const instant = (value: string): number => Date.parse(value)
+const utc = utcInstantFromEpochMillis
+
+const makeGate = (
+  name: Gate,
+  passed: boolean,
+  actual: string | number | bigint,
+  required: string | number | bigint,
+): GateResult => ({
+  name,
+  reason: riskGateDefinitionByName[name].reason,
+  passed,
+  actual: String(actual),
+  required: String(required),
+})
+
+const isUnresolved = (status: OrderStatus): boolean =>
+  status === OrderStatus.New || status === OrderStatus.PartiallyFilled || status === OrderStatus.Pending
+
+interface ParsedPositionFacts {
+  readonly symbol: string
+  readonly quantityMicros: bigint
+  readonly marketValueMicros: bigint
+}
+
+interface RiskFacts {
+  readonly intent: RiskIntent
+  readonly state: State
+  readonly policy: Policy
+  readonly proposedPositions: State['positions']
+  readonly positions: ReadonlyArray<ParsedPositionFacts>
+  readonly evaluatedAt: number
+  readonly intentCreatedAt: number
+  readonly marketDataObservedAt: number
+  readonly submissionOpenAt: number
+  readonly submissionCutoffAt: number
+  readonly referencePriceMicros: bigint
+  readonly expectedExecutionPriceMicros: bigint
+  readonly intentQuantityMicros: bigint
+  readonly intentNotionalLimitMicros: bigint
+  readonly accountEquityMicros: bigint
+  readonly accountBuyingPowerMicros: bigint
+  readonly reservedBuyingPowerMicros: bigint
+  readonly priorDailyTradedNotionalMicros: bigint
+  readonly dayStartEquityMicros: bigint
+  readonly peakEquityMicros: bigint
+  readonly maxOrderNotionalMicros: bigint
+  readonly maxSymbolExposureMicros: bigint
+  readonly maxGrossExposureMicros: bigint
+  readonly maxNetExposureMicros: bigint
+  readonly maxDailyTradedNotionalMicros: bigint
+  readonly maxDailyLossMicros: bigint
+  readonly maxDrawdownMicros: bigint
+  readonly maxAdverseSlippageBps: bigint
+}
+
+interface DerivedRiskMetrics {
+  readonly orderNotionalMicros: bigint
+  readonly currentSymbolQuantityMicros: bigint
+  readonly currentSymbolExposureMagnitudeMicros: bigint
+  readonly currentGrossExposureMicros: bigint
+  readonly currentNetExposureMagnitudeMicros: bigint
+  readonly postTradeSymbolQuantityMicros: bigint
+  readonly postTradeSymbolExposureMicros: bigint
+  readonly postTradeSymbolExposureMagnitudeMicros: bigint
+  readonly postTradeGrossExposureMicros: bigint
+  readonly postTradeNetExposureMicros: bigint
+  readonly postTradeNetExposureMagnitudeMicros: bigint
+  readonly aggregateBuyingPowerMicros: bigint
+  readonly dailyTradedNotionalMicros: bigint
+  readonly dailyLossMicros: bigint
+  readonly drawdownMicros: bigint
+  readonly adverseSlippageBps: bigint
+  readonly unresolvedOrderCount: number
+  readonly oldestBrokerStateAt: number
+  readonly brokerFreshUntil: number
+  readonly marketFreshUntil: number
+}
+
+const parseRiskFacts = (
+  intent: RiskIntent,
+  state: State,
+  policy: Policy,
+  proposedPositions: State['positions'],
+): RiskFacts => ({
+  intent,
+  state,
+  policy,
+  proposedPositions,
+  positions: proposedPositions.map((position) => ({
+    symbol: position.symbol,
+    quantityMicros: BigInt(position.quantityMicros),
+    marketValueMicros: BigInt(position.marketValueMicros),
+  })),
+  evaluatedAt: instant(state.evaluatedAt),
+  intentCreatedAt: instant(intent.createdAt),
+  marketDataObservedAt: instant(state.marketDataObservedAt),
+  submissionOpenAt: instant(state.executionSession.submissionOpenAt),
+  submissionCutoffAt: instant(state.executionSession.submissionCutoffAt),
+  referencePriceMicros: BigInt(state.referencePriceMicros),
+  expectedExecutionPriceMicros: BigInt(state.expectedExecutionPriceMicros),
+  intentQuantityMicros: BigInt(intent.quantityMicros),
+  intentNotionalLimitMicros: BigInt(intent.notionalLimitMicros),
+  accountEquityMicros: BigInt(state.account.equityMicros),
+  accountBuyingPowerMicros: BigInt(state.account.buyingPowerMicros),
+  reservedBuyingPowerMicros: BigInt(state.reservedBuyingPowerMicros),
+  priorDailyTradedNotionalMicros: BigInt(state.dailyTradedNotionalMicros),
+  dayStartEquityMicros: BigInt(state.dayStartEquityMicros),
+  peakEquityMicros: BigInt(state.peakEquityMicros),
+  maxOrderNotionalMicros: BigInt(policy.maxOrderNotionalMicros),
+  maxSymbolExposureMicros: BigInt(policy.maxSymbolExposureMicros),
+  maxGrossExposureMicros: BigInt(policy.maxGrossExposureMicros),
+  maxNetExposureMicros: BigInt(policy.maxNetExposureMicros),
+  maxDailyTradedNotionalMicros: BigInt(policy.maxDailyTradedNotionalMicros),
+  maxDailyLossMicros: BigInt(policy.maxDailyLossMicros),
+  maxDrawdownMicros: BigInt(policy.maxDrawdownMicros),
+  maxAdverseSlippageBps: BigInt(policy.maxAdverseSlippageBps),
+})
+
+const deriveRiskMetrics = (facts: RiskFacts): Result.Result<DerivedRiskMetrics, RiskEvaluationFailure> => {
+  const orderNotional = notionalMicros(facts.intentQuantityMicros, facts.expectedExecutionPriceMicros)
+  if (Result.isFailure(orderNotional)) {
+    return Result.fail(
+      computeRiskMetricsFailure(
+        'order-notional',
+        'risk order notional could not be computed from decoded execution terms',
+        { intentId: facts.intent.intentId },
+        orderNotional.failure,
+      ),
+    )
+  }
+  const orderNotionalMicros = orderNotional.success
+  const direction = facts.intent.side === OrderSide.Buy ? 1n : -1n
+  const currentSymbolQuantityMicros = facts.positions
+    .filter((position) => position.symbol === facts.intent.symbol)
+    .reduce((total, position) => total + position.quantityMicros, 0n)
+  const postTradeSymbolQuantityMicros = currentSymbolQuantityMicros + direction * facts.intentQuantityMicros
+  const currentSymbolExposureNumerator = currentSymbolQuantityMicros * facts.referencePriceMicros
+  const currentSymbolExposureMagnitudeMicros = divideUp(absolute(currentSymbolExposureNumerator), QUANTITY_SCALE)
+  const postTradeSymbolExposureNumerator = postTradeSymbolQuantityMicros * facts.referencePriceMicros
+  const postTradeSymbolExposureMicros = divideAwayFromZero(postTradeSymbolExposureNumerator, QUANTITY_SCALE)
+  const postTradeSymbolExposureMagnitudeMicros = divideUp(absolute(postTradeSymbolExposureNumerator), QUANTITY_SCALE)
+  const otherGrossExposureMicros = facts.positions
+    .filter((position) => position.symbol !== facts.intent.symbol)
+    .reduce((total, position) => total + absolute(position.marketValueMicros), 0n)
+  const otherNetExposureMicros = facts.positions
+    .filter((position) => position.symbol !== facts.intent.symbol)
+    .reduce((total, position) => total + position.marketValueMicros, 0n)
+  const currentGrossExposureMicros = otherGrossExposureMicros + currentSymbolExposureMagnitudeMicros
+  const currentNetExposureNumerator = otherNetExposureMicros * QUANTITY_SCALE + currentSymbolExposureNumerator
+  const currentNetExposureMagnitudeMicros = divideUp(absolute(currentNetExposureNumerator), QUANTITY_SCALE)
+  const postTradeGrossExposureMicros = otherGrossExposureMicros + postTradeSymbolExposureMagnitudeMicros
+  const postTradeNetExposureNumerator = otherNetExposureMicros * QUANTITY_SCALE + postTradeSymbolExposureNumerator
+  const postTradeNetExposureMicros = divideAwayFromZero(postTradeNetExposureNumerator, QUANTITY_SCALE)
+  const postTradeNetExposureMagnitudeMicros = divideUp(absolute(postTradeNetExposureNumerator), QUANTITY_SCALE)
+  const aggregateBuyingPowerMicros =
+    facts.reservedBuyingPowerMicros + (facts.intent.side === OrderSide.Buy ? orderNotionalMicros : 0n)
+  const dailyTradedNotionalMicros = facts.priorDailyTradedNotionalMicros + orderNotionalMicros
+  const dailyLossMicros = positiveDifference(facts.dayStartEquityMicros, facts.accountEquityMicros)
+  const drawdownMicros = positiveDifference(facts.peakEquityMicros, facts.accountEquityMicros)
+  const adversePriceDifference =
+    facts.intent.side === OrderSide.Buy
+      ? positiveDifference(facts.expectedExecutionPriceMicros, facts.referencePriceMicros)
+      : positiveDifference(facts.referencePriceMicros, facts.expectedExecutionPriceMicros)
+  const adverseSlippageBps = divideUp(adversePriceDifference * BASIS_POINTS, facts.referencePriceMicros)
+  const unresolvedOrderCount = facts.state.orders.filter((order) => isUnresolved(order.status)).length
+  const oldestBrokerStateAt = Math.min(
+    instant(facts.state.account.observedAt),
+    instant(facts.state.positionsObservedAt),
+    instant(facts.state.ordersObservedAt),
+    ...facts.state.orders.map((order) => instant(order.observedAt)),
+    instant(facts.state.reconciliation.reconciledAt),
+    instant(facts.state.authorityObservedAt),
+  )
+
+  return Result.succeed({
+    orderNotionalMicros,
+    currentSymbolQuantityMicros,
+    currentSymbolExposureMagnitudeMicros,
+    currentGrossExposureMicros,
+    currentNetExposureMagnitudeMicros,
+    postTradeSymbolQuantityMicros,
+    postTradeSymbolExposureMicros,
+    postTradeSymbolExposureMagnitudeMicros,
+    postTradeGrossExposureMicros,
+    postTradeNetExposureMicros,
+    postTradeNetExposureMagnitudeMicros,
+    aggregateBuyingPowerMicros,
+    dailyTradedNotionalMicros,
+    dailyLossMicros,
+    drawdownMicros,
+    adverseSlippageBps,
+    unresolvedOrderCount,
+    oldestBrokerStateAt,
+    brokerFreshUntil: oldestBrokerStateAt + facts.policy.maxBrokerStateAgeMs,
+    marketFreshUntil: facts.marketDataObservedAt + facts.policy.maxMarketDataAgeMs,
+  })
+}
+
+const isPositionReducingCloseOrder = (facts: RiskFacts): boolean => {
+  if (facts.state.closeOnly !== true) return false
+  const currentQuantity =
+    facts.positions.find((position) => position.symbol === facts.intent.symbol)?.quantityMicros ?? 0n
+  const postTradeQuantity =
+    currentQuantity + (facts.intent.side === OrderSide.Buy ? facts.intentQuantityMicros : -facts.intentQuantityMicros)
+  return currentQuantity > 0n
+    ? facts.intent.side === OrderSide.Sell && postTradeQuantity >= 0n && postTradeQuantity < currentQuantity
+    : currentQuantity < 0n
+      ? facts.intent.side === OrderSide.Buy && postTradeQuantity <= 0n && postTradeQuantity > currentQuantity
+      : false
+}
+
+const isStrictlyExposureReducingClose = (facts: RiskFacts, metrics: DerivedRiskMetrics): boolean =>
+  isPositionReducingCloseOrder(facts) &&
+  metrics.postTradeSymbolExposureMagnitudeMicros < metrics.currentSymbolExposureMagnitudeMicros &&
+  metrics.postTradeGrossExposureMicros <= metrics.currentGrossExposureMicros
+
+const deriveReconciledHash = (facts: RiskFacts): Result.Result<string, RiskEvaluationFailure> =>
+  pipe(
+    reconciledStateHash({
+      account: facts.state.account,
+      positions: facts.state.positions,
+      positionsObservedAt: facts.state.positionsObservedAt,
+      orders: facts.state.orders,
+      ordersObservedAt: facts.state.ordersObservedAt,
+      accountingHash: facts.state.accountingHash,
+    }),
+    Result.mapError((cause) =>
+      canonicalizeRiskInputFailure(
+        'reconciliation',
+        'validated reconciled broker state is not canonicalizable',
+        { intentId: facts.intent.intentId },
+        cause,
+      ),
+    ),
+  )
+
+const isBrokerSupportedFractionalCloseOrder = (facts: RiskFacts): boolean =>
+  isPositionReducingCloseOrder(facts) &&
+  facts.intent.orderType === OrderType.Market &&
+  facts.intent.timeInForce === TimeInForce.Day
+
+const buildIntentContractGates = (facts: RiskFacts): readonly GateResult[] => {
+  const { intent, policy, state } = facts
+  const fractionalCloseOrder = isBrokerSupportedFractionalCloseOrder(facts)
+  const closeOnlyPositionReduction = state.closeOnly === true && isPositionReducingCloseOrder(facts)
+  return [
+    makeGate(Gate.IntentState, intent.state === IntentState.Planned, intent.state, 'PLANNED'),
+    makeGate(
+      Gate.IntentTime,
+      facts.intentCreatedAt >= facts.submissionOpenAt && facts.intentCreatedAt <= facts.evaluatedAt,
+      intent.createdAt,
+      `[${state.executionSession.submissionOpenAt},${state.evaluatedAt}]`,
+    ),
+    makeGate(
+      Gate.IntentFreshness,
+      facts.evaluatedAt < facts.intentCreatedAt + policy.maxIntentAgeMs,
+      facts.evaluatedAt - facts.intentCreatedAt,
+      `<${policy.maxIntentAgeMs}`,
+    ),
+    makeGate(
+      Gate.Account,
+      intent.accountId === policy.accountId && state.account.accountId === policy.accountId,
+      `${intent.accountId}:${state.account.accountId}`,
+      policy.accountId,
+    ),
+    makeGate(
+      Gate.AccountStatus,
+      state.account.status === AccountStatus.Active,
+      state.account.status,
+      AccountStatus.Active,
+    ),
+    makeGate(Gate.Equity, facts.accountEquityMicros > 0n, state.account.equityMicros, '>0'),
+    makeGate(
+      Gate.Symbol,
+      policy.allowedSymbols.includes(intent.symbol) || closeOnlyPositionReduction,
+      intent.symbol,
+      closeOnlyPositionReduction
+        ? `${policy.allowedSymbols.join(',')}|RECONCILED_CLOSE_ONLY`
+        : policy.allowedSymbols.join(','),
+    ),
+    makeGate(Gate.MarketDataSymbol, state.marketDataSymbol === intent.symbol, state.marketDataSymbol, intent.symbol),
+    makeGate(
+      Gate.OrderType,
+      policyAllowsOrderType(policy, intent.orderType) || fractionalCloseOrder,
+      intent.orderType,
+      fractionalCloseOrder
+        ? `${policy.allowedOrderTypes.join(',')}|MARKET_CLOSE_ONLY`
+        : policy.allowedOrderTypes.join(','),
+    ),
+    makeGate(
+      Gate.TimeInForce,
+      policy.allowedTimeInForce.includes(intent.timeInForce) || fractionalCloseOrder,
+      intent.timeInForce,
+      fractionalCloseOrder
+        ? `${policy.allowedTimeInForce.join(',')}|DAY_MARKET_CLOSE_ONLY`
+        : policy.allowedTimeInForce.join(','),
+    ),
+  ]
+}
+
+const buildAuthorityAndStateGates = (
+  facts: RiskFacts,
+  metrics: DerivedRiskMetrics,
+  reconciledHash: string,
+): readonly GateResult[] => {
+  const { policy, state } = facts
+  const closeOnly = state.closeOnly === true
+  const positionReducingClose = isPositionReducingCloseOrder(facts)
+  return [
+    makeGate(
+      Gate.Authority,
+      state.authority.maximum === Authority.Execution &&
+        (closeOnly || state.authority.effective === Authority.Execution),
+      `${state.authority.maximum}:${state.authority.effective}`,
+      closeOnly
+        ? `${legacyExecutionAuthorityToken}:(${legacyExecutionAuthorityToken}|${legacyObserveAuthorityToken})`
+        : `${legacyExecutionAuthorityToken}:${legacyExecutionAuthorityToken}`,
+    ),
+    makeGate(
+      Gate.Kill,
+      state.authority.kill === KillState.Clear || (positionReducingClose && state.authority.kill === KillState.Active),
+      state.authority.kill,
+      closeOnly ? 'CLEAR|ACTIVE_FOR_POSITION_CLOSE' : 'CLEAR',
+    ),
+    makeGate(
+      Gate.Reconciliation,
+      state.reconciliation.status === ReconciliationStatus.Exact &&
+        state.reconciliation.expectedHash === reconciledHash &&
+        state.reconciliation.observedHash === reconciledHash,
+      `${state.reconciliation.status}:${state.reconciliation.expectedHash}:${state.reconciliation.observedHash}`,
+      `${ReconciliationStatus.Exact}:${reconciledHash}:${reconciledHash}`,
+    ),
+    makeGate(
+      Gate.BrokerStateFreshness,
+      facts.evaluatedAt < metrics.brokerFreshUntil,
+      facts.evaluatedAt - metrics.oldestBrokerStateAt,
+      `<${policy.maxBrokerStateAgeMs}`,
+    ),
+    makeGate(
+      Gate.MarketDataFreshness,
+      facts.evaluatedAt < metrics.marketFreshUntil,
+      facts.evaluatedAt - facts.marketDataObservedAt,
+      `<${policy.maxMarketDataAgeMs}`,
+    ),
+    makeGate(
+      Gate.Session,
+      closeOnly
+        ? facts.state.closeOnlyExpiresAt !== undefined && facts.evaluatedAt < instant(facts.state.closeOnlyExpiresAt)
+        : facts.evaluatedAt >= facts.submissionOpenAt && facts.evaluatedAt < facts.submissionCutoffAt,
+      state.evaluatedAt,
+      closeOnly
+        ? `<${state.closeOnlyExpiresAt ?? state.executionSession.submissionCutoffAt}`
+        : `[${state.executionSession.submissionOpenAt},${state.executionSession.submissionCutoffAt})`,
+    ),
+    makeGate(Gate.UnknownMutations, state.unknownMutationCount === 0, state.unknownMutationCount, 0),
+    makeGate(
+      Gate.UnresolvedOrders,
+      metrics.unresolvedOrderCount < policy.maxOpenOrders,
+      metrics.unresolvedOrderCount,
+      `<${policy.maxOpenOrders}`,
+    ),
+  ]
+}
+
+const buildOrderLimitGates = (facts: RiskFacts, metrics: DerivedRiskMetrics): readonly GateResult[] => {
+  const { intent, policy, state } = facts
+  const exposureReducingClose = isStrictlyExposureReducingClose(facts, metrics)
+  return [
+    makeGate(
+      Gate.IntentNotional,
+      metrics.orderNotionalMicros <= facts.intentNotionalLimitMicros,
+      metrics.orderNotionalMicros,
+      `<=${intent.notionalLimitMicros}`,
+    ),
+    makeGate(
+      Gate.OrderNotional,
+      exposureReducingClose || metrics.orderNotionalMicros <= facts.maxOrderNotionalMicros,
+      metrics.orderNotionalMicros,
+      facts.state.closeOnly === true
+        ? `<=${policy.maxOrderNotionalMicros}|STRICTLY_EXPOSURE_REDUCING_CLOSE`
+        : `<=${policy.maxOrderNotionalMicros}`,
+    ),
+    makeGate(
+      Gate.BuyingPower,
+      exposureReducingClose || metrics.aggregateBuyingPowerMicros <= facts.accountBuyingPowerMicros,
+      metrics.aggregateBuyingPowerMicros,
+      facts.state.closeOnly === true
+        ? `<=${state.account.buyingPowerMicros}|STRICTLY_EXPOSURE_REDUCING_CLOSE`
+        : `<=${state.account.buyingPowerMicros}`,
+    ),
+    makeGate(
+      Gate.AdverseSlippage,
+      metrics.adverseSlippageBps <= facts.maxAdverseSlippageBps,
+      metrics.adverseSlippageBps,
+      `<=${policy.maxAdverseSlippageBps}`,
+    ),
+  ]
+}
+
+const buildExposureGates = (facts: RiskFacts, metrics: DerivedRiskMetrics): readonly GateResult[] => {
+  const { policy } = facts
+  const exposureReducingClose = isStrictlyExposureReducingClose(facts, metrics)
+  return [
+    makeGate(
+      Gate.LongOnly,
+      exposureReducingClose ||
+        (metrics.currentSymbolQuantityMicros >= 0n && metrics.postTradeSymbolQuantityMicros >= 0n),
+      `${metrics.currentSymbolQuantityMicros}:${metrics.postTradeSymbolQuantityMicros}`,
+      '>=0:>=0',
+    ),
+    makeGate(
+      Gate.SymbolExposure,
+      exposureReducingClose || metrics.postTradeSymbolExposureMagnitudeMicros <= facts.maxSymbolExposureMicros,
+      metrics.postTradeSymbolExposureMagnitudeMicros,
+      facts.state.closeOnly === true
+        ? `<=${policy.maxSymbolExposureMicros}|STRICTLY_EXPOSURE_REDUCING_CLOSE`
+        : `<=${policy.maxSymbolExposureMicros}`,
+    ),
+    makeGate(
+      Gate.GrossExposure,
+      exposureReducingClose || metrics.postTradeGrossExposureMicros <= facts.maxGrossExposureMicros,
+      metrics.postTradeGrossExposureMicros,
+      facts.state.closeOnly === true
+        ? `<=${policy.maxGrossExposureMicros}|STRICTLY_EXPOSURE_REDUCING_CLOSE`
+        : `<=${policy.maxGrossExposureMicros}`,
+    ),
+    makeGate(
+      Gate.NetExposure,
+      exposureReducingClose || metrics.postTradeNetExposureMagnitudeMicros <= facts.maxNetExposureMicros,
+      metrics.postTradeNetExposureMagnitudeMicros,
+      facts.state.closeOnly === true
+        ? `<=${policy.maxNetExposureMicros}|STRICTLY_EXPOSURE_REDUCING_CLOSE`
+        : `<=${policy.maxNetExposureMicros}`,
+    ),
+  ]
+}
+
+const buildCumulativeRiskGates = (facts: RiskFacts, metrics: DerivedRiskMetrics): readonly GateResult[] => {
+  const { policy } = facts
+  const exposureReducingClose = isStrictlyExposureReducingClose(facts, metrics)
+  return [
+    makeGate(
+      Gate.DailyTradedNotional,
+      exposureReducingClose || metrics.dailyTradedNotionalMicros <= facts.maxDailyTradedNotionalMicros,
+      metrics.dailyTradedNotionalMicros,
+      facts.state.closeOnly === true
+        ? `<=${policy.maxDailyTradedNotionalMicros}|STRICTLY_EXPOSURE_REDUCING_CLOSE`
+        : `<=${policy.maxDailyTradedNotionalMicros}`,
+    ),
+    makeGate(
+      Gate.DailyLoss,
+      exposureReducingClose || metrics.dailyLossMicros <= facts.maxDailyLossMicros,
+      metrics.dailyLossMicros,
+      facts.state.closeOnly === true
+        ? `<=${policy.maxDailyLossMicros}|STRICTLY_EXPOSURE_REDUCING_CLOSE`
+        : `<=${policy.maxDailyLossMicros}`,
+    ),
+    makeGate(
+      Gate.Drawdown,
+      exposureReducingClose || metrics.drawdownMicros <= facts.maxDrawdownMicros,
+      metrics.drawdownMicros,
+      facts.state.closeOnly === true
+        ? `<=${policy.maxDrawdownMicros}|STRICTLY_EXPOSURE_REDUCING_CLOSE`
+        : `<=${policy.maxDrawdownMicros}`,
+    ),
+  ]
+}
+
+const buildRiskGates = (
+  facts: RiskFacts,
+  metrics: DerivedRiskMetrics,
+  reconciledHash: string,
+): ReadonlyArray<GateResult> => [
+  ...buildIntentContractGates(facts),
+  ...buildAuthorityAndStateGates(facts, metrics, reconciledHash),
+  ...buildOrderLimitGates(facts, metrics),
+  ...buildExposureGates(facts, metrics),
+  ...buildCumulativeRiskGates(facts, metrics),
+]
+
+const deriveRiskExpiry = (facts: RiskFacts, metrics: DerivedRiskMetrics, outcome: RiskOutcome): string => {
+  const submissionExpiry =
+    facts.state.closeOnly === true && facts.state.closeOnlyExpiresAt !== undefined
+      ? instant(facts.state.closeOnlyExpiresAt)
+      : facts.submissionCutoffAt
+  const approvalExpiry = Math.min(
+    facts.evaluatedAt + facts.policy.decisionTtlMs,
+    facts.intentCreatedAt + facts.policy.maxIntentAgeMs,
+    metrics.brokerFreshUntil,
+    metrics.marketFreshUntil,
+    submissionExpiry,
+  )
+  const ordinaryBlockedExpiry = facts.evaluatedAt + Math.min(1_000, facts.policy.decisionTtlMs)
+  const blockedExpiry =
+    facts.evaluatedAt < submissionExpiry ? Math.min(ordinaryBlockedExpiry, submissionExpiry) : ordinaryBlockedExpiry
+  return utc(outcome === RiskOutcome.Approved ? approvalExpiry : blockedExpiry)
+}
+
+interface RiskBindingHashes {
+  readonly policyHash: string
+  readonly accountSnapshotHash: string
+  readonly positionsHash: string
+  readonly ordersHash: string
+  readonly marketDataHash: string
+  readonly inputHash: string
+}
+
+const riskEvidenceHash = (facts: RiskFacts, value: unknown): Result.Result<string, RiskEvaluationFailure> =>
+  pipe(
+    canonicalHashV1Result(value),
+    Result.mapError((cause) =>
+      canonicalizeRiskInputFailure(
+        'evidence',
+        'validated risk input evidence is not canonicalizable',
+        { intentId: facts.intent.intentId },
+        cause,
+      ),
+    ),
+  )
+
+const deriveRiskBindingHashes = (facts: RiskFacts): Result.Result<RiskBindingHashes, RiskEvaluationFailure> => {
+  const componentHashes = Result.all({
+    policyHash: riskEvidenceHash(facts, facts.policy),
+    accountSnapshotHash: riskEvidenceHash(facts, {
+      account: facts.state.account,
+      authority: facts.state.authority,
+      authorityObservedAt: facts.state.authorityObservedAt,
+      accountingHash: facts.state.accountingHash,
+      brokerMode: facts.state.brokerMode,
+      reconciliation: facts.state.reconciliation,
+      dailyTradedNotionalMicros: facts.state.dailyTradedNotionalMicros,
+      dayStartEquityMicros: facts.state.dayStartEquityMicros,
+      peakEquityMicros: facts.state.peakEquityMicros,
+    }),
+    positionsHash: riskEvidenceHash(facts, {
+      items: facts.proposedPositions,
+      observedAt: facts.state.positionsObservedAt,
+    }),
+    ordersHash: riskEvidenceHash(facts, {
+      items: facts.state.orders,
+      observedAt: facts.state.ordersObservedAt,
+      unknownMutationCount: facts.state.unknownMutationCount,
+      ...(facts.state.closeOnly === true
+        ? {
+            closeOnly: true,
+            closeOnlyExpiresAt: facts.state.closeOnlyExpiresAt,
+          }
+        : {}),
+    }),
+    marketDataHash: riskEvidenceHash(facts, {
+      symbol: facts.state.marketDataSymbol,
+      sourceHash: facts.state.marketDataHash,
+      observedAt: facts.state.marketDataObservedAt,
+      referencePriceMicros: facts.state.referencePriceMicros,
+      expectedExecutionPriceMicros: facts.state.expectedExecutionPriceMicros,
+      executionSession: facts.state.executionSession,
+    }),
+  })
+  return Result.flatMap(componentHashes, (hashes) =>
+    Result.map(
+      riskEvidenceHash(facts, {
+        schemaVersion:
+          facts.intent.schemaVersion === legacyExecutionIntentSchemaVersion
+            ? legacyRiskEvaluationInputV3SchemaVersion
+            : legacyRiskEvaluationInputV2SchemaVersion,
+        intent: facts.intent,
+        policy: facts.policy,
+        state: facts.state,
+        proposedPositions: facts.proposedPositions,
+        componentHashes: {
+          accountSnapshotHash: hashes.accountSnapshotHash,
+          positionsHash: hashes.positionsHash,
+          ordersHash: hashes.ordersHash,
+          marketDataHash: hashes.marketDataHash,
+        },
+      }),
+      (inputHash) => ({ ...hashes, inputHash }),
+    ),
+  )
+}
+
+type DecodedRiskInput = typeof RiskInputSchema.Type
+type DecodedRiskDecision = typeof RiskDecisionSchema.Type
+
+const makeRiskInput = (
+  facts: RiskFacts,
+  hashes: RiskBindingHashes,
+  expiresAt: string,
+): Result.Result<DecodedRiskInput, RiskEvaluationFailure> =>
+  Result.mapError(
+    decodeRiskInputResult({
+      schemaVersion: legacyRiskInputSchemaVersion,
+      inputHash: hashes.inputHash,
+      intentId: facts.intent.intentId,
+      policyHash: hashes.policyHash,
+      accountSnapshotHash: hashes.accountSnapshotHash,
+      positionsHash: hashes.positionsHash,
+      ordersHash: hashes.ordersHash,
+      marketDataHash: hashes.marketDataHash,
+      evaluatedAt: facts.state.evaluatedAt,
+      freshUntil: expiresAt,
+    }),
+    (cause) =>
+      decodeRiskOutputFailure('input', 'derived risk input is invalid', { intentId: facts.intent.intentId }, cause),
+  )
+
+const makeRiskDecision = (
+  facts: RiskFacts,
+  hashes: RiskBindingHashes,
+  input: DecodedRiskInput,
+  outcome: RiskOutcome,
+  reasonCodes: ReadonlyArray<Reason>,
+  expiresAt: string,
+): Result.Result<DecodedRiskDecision, RiskEvaluationFailure> => {
+  const material = {
+    schemaVersion: legacyRiskDecisionSchemaVersion,
+    inputHash: input.inputHash,
+    intentId: facts.intent.intentId,
+    policyHash: hashes.policyHash,
+    outcome,
+    reasonCodes,
+    decidedAt: facts.state.evaluatedAt,
+    expiresAt,
+  } as const
+  return Result.flatMap(riskEvidenceHash(facts, material), (decisionId) =>
+    Result.mapError(decodeRiskDecisionResult({ ...material, decisionId }), (cause) =>
+      decodeRiskOutputFailure(
+        'decision',
+        'derived risk decision is invalid',
+        { intentId: facts.intent.intentId },
+        cause,
+      ),
+    ),
+  )
+}
+
+const makeRiskEvaluation = (
+  hashes: RiskBindingHashes,
+  input: DecodedRiskInput,
+  decision: DecodedRiskDecision,
+  gates: ReadonlyArray<GateResult>,
+  metrics: DerivedRiskMetrics,
+): Result.Result<Evaluation, RiskEvaluationFailure> =>
+  Result.mapError(
+    decodeRiskEvaluationResult({
+      policyHash: hashes.policyHash,
+      input,
+      decision,
+      gates,
+      metrics: {
+        orderNotionalMicros: metrics.orderNotionalMicros.toString(),
+        postTradeSymbolExposureMicros: metrics.postTradeSymbolExposureMicros.toString(),
+        postTradeGrossExposureMicros: metrics.postTradeGrossExposureMicros.toString(),
+        postTradeNetExposureMicros: metrics.postTradeNetExposureMicros.toString(),
+        dailyTradedNotionalMicros: metrics.dailyTradedNotionalMicros.toString(),
+        dailyLossMicros: metrics.dailyLossMicros.toString(),
+        drawdownMicros: metrics.drawdownMicros.toString(),
+        adverseSlippageBps: metrics.adverseSlippageBps.toString(),
+        aggregateBuyingPowerMicros: metrics.aggregateBuyingPowerMicros.toString(),
+        unresolvedOrderCount: metrics.unresolvedOrderCount,
+      },
+    }),
+    (cause) =>
+      decodeRiskOutputFailure('evaluation', 'derived risk evaluation is invalid', { intentId: input.intentId }, cause),
+  )
+
+const validateAuthorityBinding = (intent: RiskIntent, state: State): Result.Result<void, RiskEvaluationFailure> => {
+  if (intent.schemaVersion === legacyExecutionIntentSchemaVersion) {
+    if (state.authority.maximum !== Authority.Execution) {
+      return Result.fail(
+        bindRiskAuthorityFailure(
+          'authority-maximum',
+          'authority-generation-bound risk intent requires execution maximum authority',
+          { intentId: intent.intentId, maximum: state.authority.maximum },
+        ),
+      )
+    }
+    if (intent.authorityGenerationHash !== state.authority.generationHash) {
+      return Result.fail(
+        bindRiskAuthorityFailure(
+          'authority-generation',
+          'execution risk intent must bind the exact execution authority generation from risk state',
+          {
+            intentId: intent.intentId,
+            expectedGenerationHash: state.authority.generationHash,
+            observedGenerationHash: intent.authorityGenerationHash,
+          },
+        ),
+      )
+    }
+  } else if (state.authority.maximum === Authority.Execution) {
+    return Result.fail(
+      bindRiskAuthorityFailure(
+        'authority-contract',
+        'execution risk evaluation requires an authority-generation-bound intent',
+        { intentId: intent.intentId },
+      ),
+    )
+  }
+  return Result.succeed(undefined)
+}
+
+const evaluateDecoded = (
+  intent: RiskIntent,
+  state: State,
+  policy: Policy,
+  proposedPositions: State['positions'],
+): Result.Result<Evaluation, RiskEvaluationFailure> =>
+  Result.flatMap(validateAuthorityBinding(intent, state), () => {
+    const facts = parseRiskFacts(intent, state, policy, proposedPositions)
+    return Result.flatMap(deriveReconciledHash(facts), (reconciledHash) =>
+      Result.flatMap(deriveRiskMetrics(facts), (metrics) => {
+        const gates = buildRiskGates(facts, metrics, reconciledHash)
+        const reasonCodes = gates.filter((gate) => !gate.passed).map((gate) => gate.reason)
+        const outcome = reasonCodes.length === 0 ? RiskOutcome.Approved : RiskOutcome.Blocked
+        const expiresAt = deriveRiskExpiry(facts, metrics, outcome)
+        return Result.flatMap(deriveRiskBindingHashes(facts), (hashes) =>
+          Result.flatMap(makeRiskInput(facts, hashes, expiresAt), (input) =>
+            Result.flatMap(makeRiskDecision(facts, hashes, input, outcome, reasonCodes, expiresAt), (decision) =>
+              makeRiskEvaluation(hashes, input, decision, gates, metrics),
+            ),
+          ),
+        )
+      }),
+    )
+  })
+
+export interface RiskEvaluationInput {
+  readonly intent: unknown
+  readonly state: unknown
+  readonly policy: unknown
+  readonly proposedPositions?: unknown
+}
+
+export const evaluate = (input: RiskEvaluationInput): Result.Result<Evaluation, RiskEvaluationFailure> => {
+  const intent = Result.mapError(decodeRiskIntentResult(input.intent), (cause) =>
+    decodeRiskInputFailure('intent', 'risk intent is invalid', {}, cause),
+  )
+  if (Result.isFailure(intent)) return Result.fail(intent.failure)
+  const state = Result.mapError(decodeRiskStateResult(input.state), (cause) =>
+    decodeRiskInputFailure('state', 'risk state is invalid', {}, cause),
+  )
+  if (Result.isFailure(state)) return Result.fail(state.failure)
+  const policy = Result.mapError(decodeRiskPolicyResult(input.policy), (cause) =>
+    decodeRiskInputFailure('policy', 'risk policy is invalid', {}, cause),
+  )
+  if (Result.isFailure(policy)) return Result.fail(policy.failure)
+  const proposedPositions = Result.mapError(
+    decodeProposedPositionsResult(input.proposedPositions ?? state.success.positions),
+    (cause) => decodeRiskInputFailure('positions', 'proposed risk positions are invalid', {}, cause),
+  )
+  if (Result.isFailure(proposedPositions)) return Result.fail(proposedPositions.failure)
+  const proposedPositionIssues = positionBookIssues({
+    positions: proposedPositions.success,
+    accountId: state.success.account.accountId,
+    observedAt: state.success.positionsObservedAt,
+  })
+  if (proposedPositionIssues.length > 0) {
+    return Result.fail(
+      decodeRiskInputFailure(
+        'positions',
+        'proposed risk positions do not match the authoritative position-book context',
+        { issues: proposedPositionIssues },
+      ),
+    )
+  }
+  return evaluateDecoded(intent.success, state.success, policy.success, proposedPositions.success)
+}
+
+const decodePolicyDataFirst = Schema.decodeUnknownEffect(PolicySchema, StrictParseOptions)
+
+export const decodePolicy = Pipeable.dual(1, (input: unknown) => decodePolicyDataFirst(input))
+const decodeStateDataFirst = Schema.decodeUnknownEffect(StateSchema, StrictParseOptions)
+
+export const decodeState = Pipeable.dual(1, (input: unknown) => decodeStateDataFirst(input))

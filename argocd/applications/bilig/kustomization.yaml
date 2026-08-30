@@ -1,0 +1,27 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - bilig-cert-tls.yaml
+  - app-auth-sealedsecret.yaml
+  - zero-admin-sealedsecret.yaml
+  - zero-strip-prefix-middleware.yaml
+  - zero-client-mutation-id-repair-job.yaml
+  - zero-data-migration-job.yaml
+  - app-deployment.yaml
+  - app-pdb.yaml
+  - app-service.yaml
+  - app-ingressroute.yaml
+  - zero-pvc.yaml
+  - zero-deployment.yaml
+  - zero-service.yaml
+  - zero-ingressroute.yaml
+  - postgres-cluster.yaml
+  - object-storage-configmap.yaml
+  - runtime-network-policy.yaml
+  - alloy-configmap.yaml
+  - alloy-deployment.yaml
+  - alloy-rbac.yaml
+images:
+  - name: registry.ide-newton.ts.net/lab/bilig-app
+    newName: registry.ide-newton.ts.net/lab/bilig-app
+    newTag: 11ae6004f59ce4d969b102b13a55db7b3deb6cba

@@ -1,0 +1,151 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: torghut-hyperliquid-clickhouse-schema
+  namespace: torghut
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 240
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: torghut-hyperliquid-clickhouse-schema
+    spec:
+      restartPolicy: Never
+      serviceAccountName: torghut-runtime
+      containers:
+        - name: schema
+          image: altinity/clickhouse-server:25.3.6.10034.altinitystable
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/bash
+            - -ec
+          args:
+            - |
+              set -euo pipefail
+              CLICKHOUSE_CLIENT=(
+                clickhouse-client
+                --port 9000
+                --user "${CLICKHOUSE_USERNAME}"
+                --password "${CLICKHOUSE_PASSWORD}"
+                --connect_timeout 5
+                --send_timeout 30
+                --receive_timeout 60
+              )
+              PRIMARY_HOST=torghut-clickhouse.torghut.svc.cluster.local
+              REQUIRED_TABLES=(
+                hyperliquid_raw
+                hyperliquid_market_catalog
+                hyperliquid_trades
+                hyperliquid_l2_books
+                hyperliquid_bbo
+                hyperliquid_candles
+                hyperliquid_asset_contexts
+                hyperliquid_funding
+                hyperliquid_status
+              )
+              REMOVED_TABLES=(
+                hyperliquid_raw_kafka_staging
+                hyperliquid_market_catalog_kafka_staging
+                hyperliquid_trades_kafka_staging
+                hyperliquid_l2_books_kafka_staging
+                hyperliquid_bbo_kafka_staging
+                hyperliquid_candles_kafka_staging
+                hyperliquid_asset_contexts_kafka_staging
+                hyperliquid_funding_kafka_staging
+                hyperliquid_status_kafka_staging
+              )
+              REQUIRED_TABLE_LIST="'${REQUIRED_TABLES[0]}'"
+              for table in "${REQUIRED_TABLES[@]:1}"; do
+                REQUIRED_TABLE_LIST="${REQUIRED_TABLE_LIST},'${table}'"
+              done
+              REMOVED_TABLE_LIST="'${REMOVED_TABLES[0]}'"
+              for table in "${REMOVED_TABLES[@]:1}"; do
+                REMOVED_TABLE_LIST="${REMOVED_TABLE_LIST},'${table}'"
+              done
+
+              wait_for_host() {
+                local host="$1"
+                local deadline=$((SECONDS + 90))
+                until "${CLICKHOUSE_CLIENT[@]}" --host "${host}" --query 'SELECT 1'; do
+                  if [ "${SECONDS}" -ge "${deadline}" ]; then
+                    echo "ClickHouse host ${host} did not become ready in time" >&2
+                    exit 1
+                  fi
+                  sleep 5
+                done
+              }
+
+              table_count() {
+                local host="$1"
+                "${CLICKHOUSE_CLIENT[@]}" --host "${host}" --query \
+                  "SELECT count() FROM system.tables WHERE database='torghut' AND name IN (${REQUIRED_TABLE_LIST})"
+              }
+
+              removed_table_count() {
+                local host="$1"
+                "${CLICKHOUSE_CLIENT[@]}" --host "${host}" --query \
+                  "SELECT count() FROM system.tables WHERE database='torghut' AND name IN (${REMOVED_TABLE_LIST})"
+              }
+
+              legacy_column_count() {
+                local host="$1"
+                "${CLICKHOUSE_CLIENT[@]}" --host "${host}" --query \
+                  "SELECT count() FROM system.columns WHERE database='torghut' AND table IN (${REQUIRED_TABLE_LIST}) AND name IN ('kafka_topic','kafka_partition','kafka_offset')"
+              }
+
+              wait_for_host "${PRIMARY_HOST}"
+              mapfile -t HOSTS < <(
+                "${CLICKHOUSE_CLIENT[@]}" --host "${PRIMARY_HOST}" --query \
+                  "SELECT DISTINCT host_name FROM system.clusters WHERE cluster='default' ORDER BY host_name"
+              )
+              if [ "${#HOSTS[@]}" -eq 0 ]; then
+                HOSTS=("${PRIMARY_HOST}")
+              fi
+
+              sed -E 's/ ON CLUSTER default//g' /schema/schema.sql > /tmp/schema-local.sql
+              for host in "${HOSTS[@]}"; do
+                wait_for_host "${host}"
+                timeout 90s "${CLICKHOUSE_CLIENT[@]}" --host "${host}" --multiquery < /tmp/schema-local.sql
+                count="$(table_count "${host}")"
+                if [ "${count}" -ne "${#REQUIRED_TABLES[@]}" ]; then
+                  echo "ClickHouse host ${host} has ${count}/${#REQUIRED_TABLES[@]} required Hyperliquid tables" >&2
+                  exit 1
+                fi
+                removed_count="$(removed_table_count "${host}")"
+                if [ "${removed_count}" -ne 0 ]; then
+                  echo "ClickHouse host ${host} still has ${removed_count} removed Hyperliquid staging tables" >&2
+                  exit 1
+                fi
+                column_count="$(legacy_column_count "${host}")"
+                if [ "${column_count}" -ne 0 ]; then
+                  echo "ClickHouse host ${host} still has ${column_count} removed Hyperliquid Kafka-lineage columns" >&2
+                  exit 1
+                fi
+              done
+          env:
+            - name: CLICKHOUSE_USERNAME
+              value: torghut
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-clickhouse-auth
+                  key: torghut_password
+          volumeMounts:
+            - name: schema
+              mountPath: /schema
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: schema
+          configMap:
+            name: torghut-hyperliquid-clickhouse-schema
