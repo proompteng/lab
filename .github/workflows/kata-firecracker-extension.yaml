@@ -1,39 +1,216 @@
-name: Kata multi-runtime Talos extension validation
+name: Kata multi-runtime Talos extension
 
 on:
   pull_request:
     paths:
-      - 'devices/galactic/extensions/kata/10-kata-firecracker.part'
-      - 'devices/galactic/extensions/kata/Dockerfile'
-      - 'devices/galactic/extensions/kata/build-catalog.sh'
-      - 'devices/galactic/extensions/kata/build-installer.sh'
-      - 'devices/galactic/extensions/kata/configuration-clh-runtime-rs.toml'
-      - 'devices/galactic/extensions/kata/manifest.yaml'
+      - 'devices/galactic/extensions/kata/**'
+      - '.github/workflows/kata-firecracker-extension.yaml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'devices/galactic/extensions/kata/**'
       - '.github/workflows/kata-firecracker-extension.yaml'
   workflow_dispatch:
+
+concurrency:
+  group: kata-extension-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
+env:
+  IMAGE: registry.ide-newton.ts.net/lab/talos-kata-runtimes
+  KATA_SOURCE_COMMIT: 894e1956bb340752b30f7ad49879972234a0098c
+  VERSION: 4.1.0-talos-v1.13.9-r5
+
 jobs:
   build:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    name: Build ${{ matrix.architecture }} extension
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: arc-amd64
+          - architecture: arm64
+            runner: arc-arm64
+    steps:
+      - name: Checkout lab
+        uses: actions/checkout@v6
+
+      - name: Checkout pinned Kata source
+        uses: actions/checkout@v6
+        with:
+          repository: kata-containers/kata-containers
+          ref: ${{ env.KATA_SOURCE_COMMIT }}
+          path: .kata-source
+          persist-credentials: false
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.96'
+
+      - name: Install native test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential \
+            clang \
+            libmount-dev \
+            libseccomp-dev \
+            libsystemd-dev \
+            pkg-config \
+            protobuf-compiler
+
+      - name: Build and test patched Kata components
+        run: |
+          devices/galactic/extensions/kata/build-patched-kata.sh \
+            .kata-source \
+            "devices/galactic/extensions/kata/artifacts/${{ matrix.architecture }}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+
+      - name: Build native extension image
+        uses: docker/build-push-action@v6
+        with:
+          context: devices/galactic/extensions/kata
+          platforms: linux/${{ matrix.architecture }}
+          push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          tags: ${{ env.IMAGE }}:${{ env.VERSION }}-${{ matrix.architecture }}
+          cache-from: type=registry,ref=${{ env.IMAGE }}:cache-${{ matrix.architecture }}
+          provenance: mode=max
+          sbom: true
+
+  publish:
+    name: Publish signed multi-architecture extension
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: arc-arm64
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      digest: ${{ steps.publish.outputs.digest }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
-      - name: Validate multi-architecture extension build
-        uses: docker/build-push-action@v6
         with:
-          context: devices/galactic/extensions/kata
-          platforms: linux/amd64,linux/arm64
-          push: false
-          tags: talos-kata-runtimes:validation
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          provenance: mode=max
-          sbom: true
+          driver-opts: network=host
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.10.0
+
+      - name: Publish, sign, and verify extension
+        id: publish
+        env:
+          SIGNING_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/kata-firecracker-extension.yaml@refs/heads/main
+        run: |
+          set -euo pipefail
+          reference="${IMAGE}:${VERSION}"
+          docker buildx imagetools create \
+            --tag "${reference}" \
+            "${reference}-amd64" \
+            "${reference}-arm64"
+          docker buildx imagetools inspect --raw "${reference}" > /tmp/kata-extension-index.json
+          jq -e '
+            any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "amd64") and
+            any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "arm64")
+          ' /tmp/kata-extension-index.json
+
+          digest="$(
+            docker buildx imagetools inspect \
+              --format '{{json .Manifest}}' \
+              "${reference}" |
+              jq -er '.digest'
+          )"
+          [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          immutable_reference="${IMAGE}@${digest}"
+          cosign sign --yes "${immutable_reference}"
+          cosign verify \
+            --certificate-identity "${SIGNING_IDENTITY}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "${immutable_reference}" >/dev/null
+          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+          {
+            echo '### Kata runtime extension'
+            echo
+            echo "\`${immutable_reference}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  installers:
+    name: Build ${{ matrix.profile }} installer
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: publish
+    runs-on: arc-amd64
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: ryzen-amd64
+            architecture: amd64
+          - profile: turin-amd64
+            architecture: amd64
+          - profile: altra-arm64
+            architecture: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Crane
+        uses: imjasonh/setup-crane@v0.4
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.10.0
+
+      - name: Build installer
+        id: build
+        env:
+          EXTENSION_REFERENCE: ${{ env.IMAGE }}@${{ needs.publish.outputs.digest }}
+        run: |
+          set -euo pipefail
+          installer_tar="$(
+            devices/galactic/extensions/kata/build-installer.sh \
+              '${{ matrix.profile }}' \
+              "${EXTENSION_REFERENCE}" \
+              out
+          )"
+          echo "tar=${installer_tar}" >> "${GITHUB_OUTPUT}"
+
+      - name: Publish, sign, and verify installer
+        env:
+          INSTALLER_TAR: ${{ steps.build.outputs.tar }}
+          SIGNING_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/kata-firecracker-extension.yaml@refs/heads/main
+        run: |
+          set -euo pipefail
+          tag="installer-v1.13.9-kata-4.1.0-r5-${{ matrix.profile }}"
+          reference="${IMAGE}:${tag}"
+          crane push "${INSTALLER_TAR}" "${reference}"
+          digest="$(crane digest "${reference}")"
+          test "$(crane config "${reference}" | jq -r .architecture)" = '${{ matrix.architecture }}'
+          immutable_reference="${IMAGE}@${digest}"
+          cosign sign --yes "${immutable_reference}"
+          cosign verify \
+            --certificate-identity "${SIGNING_IDENTITY}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "${immutable_reference}" >/dev/null
+          {
+            echo '### ${{ matrix.profile }} installer'
+            echo
+            echo "\`${immutable_reference}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"

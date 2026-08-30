@@ -1,0 +1,504 @@
+diff --git a/src/agent/src/storage/block_handler.rs b/src/agent/src/storage/block_handler.rs
+index 133d485952374ee2bb74bcad0fb782fef2f89048..be6ef96d8b6340a77416bcbab6bb2bbb81598fdf 100644
+--- a/src/agent/src/storage/block_handler.rs
++++ b/src/agent/src/storage/block_handler.rs
+@@ -19 +19 @@ use kata_types::device::{
+-use kata_types::mount::{StorageDevice, KATA_BLOCK_VOLUME_CREATE_FS};
++use kata_types::mount::{StorageDevice, KATA_BLOCK_VOLUME_CREATE_FS, KATA_BLOCK_VOLUME_ENSURE_FS};
+@@ -21,0 +22 @@ use protocols::agent::Storage;
++use tokio::io::{AsyncReadExt, AsyncSeekExt};
+@@ -40,0 +42 @@ const EPHEMERAL_ENCRYPTION_DRIVER_OPTION: &str = "encryption_key=ephemeral";
++const E2FSCK: &str = "e2fsck";
+@@ -41,0 +44,3 @@ const MKFS_EXT4: &str = "mkfs.ext4";
++const BLANK_DEVICE_PROBE_BYTES: usize = 1024 * 1024;
++const EXT4_MAGIC_OFFSET: u64 = 1024 + 56;
++const EXT4_MAGIC: [u8; 2] = [0x53, 0xef];
+@@ -43,0 +49 @@ const BLOCK_EMPTYDIR_EXT4_MKFS_OPTS: [&str; 8] =
++const PERSISTENT_EXT4_MKFS_OPTS: [&str; 3] = ["-F", "-m", "0"];
+@@ -48,0 +55 @@ struct BlockStorageDriverOptions {
++    should_ensure_filesystem: bool,
+@@ -84,0 +92,2 @@ async fn handle_block_storage(
++        } else if options.should_ensure_filesystem {
++            ensure_persistent_block_filesystem(logger, storage).await?;
+@@ -96,0 +106,12 @@ fn block_storage_driver_options(storage: &Storage) -> Result<BlockStorageDriverO
++    let should_ensure_filesystem = storage
++        .driver_options
++        .iter()
++        .any(|opt| opt == KATA_BLOCK_VOLUME_ENSURE_FS);
++
++    if should_create_filesystem && should_ensure_filesystem {
++        return Err(anyhow!(
++            "{} and {} are mutually exclusive",
++            KATA_BLOCK_VOLUME_CREATE_FS,
++            KATA_BLOCK_VOLUME_ENSURE_FS
++        ));
++    }
+@@ -108,0 +130 @@ fn block_storage_driver_options(storage: &Storage) -> Result<BlockStorageDriverO
++        should_ensure_filesystem,
+@@ -128,0 +151,119 @@ async fn ensure_block_filesystem(logger: &Logger, storage: &Storage) -> Result<(
++async fn run_block_command(
++    program: &str,
++    args: &[&str],
++    source: &str,
++) -> Result<std::process::Output> {
++    // Keep the agent SIGCHLD handler from reaping this child before
++    // tokio::process observes it.
++    let _locker = rustjail::container::WAIT_PID_LOCKER.lock().await;
++    tokio::process::Command::new(program)
++        .args(args)
++        .arg(source)
++        .output()
++        .await
++        .with_context(|| format!("run {program} for {source}"))
++}
++
++async fn block_device_has_ext4_filesystem(source: &str) -> Result<bool> {
++    let mut device = tokio::fs::File::open(source)
++        .await
++        .with_context(|| format!("open block device {source}"))?;
++    device
++        .seek(std::io::SeekFrom::Start(EXT4_MAGIC_OFFSET))
++        .await
++        .with_context(|| format!("seek block device {source}"))?;
++    let mut magic = [0_u8; EXT4_MAGIC.len()];
++    device
++        .read_exact(&mut magic)
++        .await
++        .with_context(|| format!("read ext4 superblock magic from {source}"))?;
++    Ok(magic == EXT4_MAGIC)
++}
++
++async fn block_device_prefix_is_blank(source: &str) -> Result<bool> {
++    let mut device = tokio::fs::File::open(source)
++        .await
++        .with_context(|| format!("open block device {source}"))?;
++    let mut prefix = vec![0_u8; BLANK_DEVICE_PROBE_BYTES];
++    let mut bytes_read = 0;
++
++    while bytes_read < prefix.len() {
++        let count = device
++            .read(&mut prefix[bytes_read..])
++            .await
++            .with_context(|| format!("read block device {source}"))?;
++        if count == 0 {
++            break;
++        }
++        bytes_read += count;
++    }
++
++    if bytes_read == 0 {
++        return Err(anyhow!("block device {source} returned no data"));
++    }
++
++    Ok(prefix[..bytes_read].iter().all(|byte| *byte == 0))
++}
++
++async fn check_ext4_filesystem(source: &str) -> Result<()> {
++    let output = run_block_command(E2FSCK, &["-p"], source).await?;
++    match output.status.code() {
++        // e2fsck uses 0 for clean and 1 for corrected errors.
++        Some(0 | 1) => Ok(()),
++        _ => Err(anyhow!(
++            "{} failed for {}: status={}, stdout={}, stderr={}",
++            E2FSCK,
++            source,
++            output.status,
++            String::from_utf8_lossy(&output.stdout),
++            String::from_utf8_lossy(&output.stderr)
++        )),
++    }
++}
++
++async fn create_persistent_ext4_filesystem(source: &str) -> Result<()> {
++    let output = run_block_command(MKFS_EXT4, &PERSISTENT_EXT4_MKFS_OPTS, source).await?;
++    if output.status.success() {
++        return Ok(());
++    }
++
++    Err(anyhow!(
++        "{} failed for {}: status={}, stdout={}, stderr={}",
++        MKFS_EXT4,
++        source,
++        output.status,
++        String::from_utf8_lossy(&output.stdout),
++        String::from_utf8_lossy(&output.stderr)
++    ))
++}
++
++async fn ensure_persistent_block_filesystem(logger: &Logger, storage: &Storage) -> Result<()> {
++    if storage.fstype != "ext4" {
++        return Err(anyhow!(
++            "ensuring filesystem {} for persistent block storage is unsupported",
++            storage.fstype
++        ));
++    }
++
++    if block_device_has_ext4_filesystem(&storage.source).await? {
++        info!(logger, "checking persistent block filesystem";
++            "source" => storage.source.as_str(),
++            "fstype" => storage.fstype.as_str(),
++        );
++        return check_ext4_filesystem(&storage.source).await;
++    }
++
++    if !block_device_prefix_is_blank(&storage.source).await? {
++        return Err(anyhow!(
++            "refusing to format {}: ext4 magic is absent and device is not blank",
++            storage.source
++        ));
++    }
++
++    info!(logger, "creating persistent block filesystem";
++        "source" => storage.source.as_str(),
++        "fstype" => storage.fstype.as_str(),
++    );
++    create_persistent_ext4_filesystem(&storage.source).await
++}
++
+@@ -133,17 +274,8 @@ async fn ensure_ext4_filesystem(logger: &Logger, source: &str) -> Result<()> {
+-    let output = {
+-        // Keep the agent SIGCHLD handler from reaping this child before
+-        // tokio::process observes it.
+-        let _locker = rustjail::container::WAIT_PID_LOCKER.lock().await;
+-        // BLOCK_EMPTYDIR_EXT4_MKFS_OPTS mirrors CDH's EXT4_INTEGRITY_MKFS_OPTS
+-        // from confidential-data-hub/hub/src/storage/volume_type/blockdevice/mod.rs.
+-        // CDH's FsFormatter adds "-F" and its mapped device path separately in
+-        // confidential-data-hub/hub/src/storage/drivers/filesystem.rs; here the
+-        // agent invokes mkfs.ext4 directly, so add "-F" and source below.
+-        tokio::process::Command::new(MKFS_EXT4)
+-            .arg("-F")
+-            .args(BLOCK_EMPTYDIR_EXT4_MKFS_OPTS)
+-            .arg(source)
+-            .output()
+-            .await
+-            .with_context(|| format!("run {MKFS_EXT4} for {source}"))?
+-    };
++    // BLOCK_EMPTYDIR_EXT4_MKFS_OPTS mirrors CDH's EXT4_INTEGRITY_MKFS_OPTS
++    // from confidential-data-hub/hub/src/storage/volume_type/blockdevice/mod.rs.
++    // CDH's FsFormatter adds "-F" and its mapped device path separately in
++    // confidential-data-hub/hub/src/storage/drivers/filesystem.rs; here the
++    // agent invokes mkfs.ext4 directly, so add "-F" below.
++    let mut args = vec!["-F"];
++    args.extend(BLOCK_EMPTYDIR_EXT4_MKFS_OPTS);
++    let output = run_block_command(MKFS_EXT4, &args, source).await?;
+@@ -186,0 +319 @@ mod tests {
++                should_ensure_filesystem: false,
+@@ -201,0 +335 @@ mod tests {
++                should_ensure_filesystem: false,
+@@ -219,0 +354 @@ mod tests {
++                should_ensure_filesystem: false,
+@@ -231,0 +367,88 @@ mod tests {
++
++    #[test]
++    fn block_storage_options_allow_persistent_filesystem_ensure() {
++        let storage = storage_with_driver_options(&[KATA_BLOCK_VOLUME_ENSURE_FS]);
++
++        let options = block_storage_driver_options(&storage).unwrap();
++
++        assert_eq!(
++            options,
++            BlockStorageDriverOptions {
++                has_ephemeral_encryption: false,
++                should_create_filesystem: false,
++                should_ensure_filesystem: true,
++            }
++        );
++    }
++
++    #[test]
++    fn block_storage_options_reject_create_and_ensure() {
++        let storage = storage_with_driver_options(&[
++            KATA_BLOCK_VOLUME_CREATE_FS,
++            KATA_BLOCK_VOLUME_ENSURE_FS,
++        ]);
++
++        let err = block_storage_driver_options(&storage).unwrap_err();
++
++        assert!(err.to_string().contains("mutually exclusive"));
++    }
++
++    #[test]
++    fn block_storage_options_reject_encrypted_persistent_ensure() {
++        let storage = storage_with_driver_options(&[
++            EPHEMERAL_ENCRYPTION_DRIVER_OPTION,
++            KATA_BLOCK_VOLUME_ENSURE_FS,
++        ]);
++
++        let err = block_storage_driver_options(&storage).unwrap_err();
++
++        assert!(err.to_string().contains(KATA_BLOCK_VOLUME_CREATE_FS));
++    }
++
++    #[tokio::test]
++    async fn blank_device_probe_accepts_zero_filled_prefix() {
++        let file = tempfile::NamedTempFile::new().unwrap();
++        file.as_file()
++            .set_len(BLANK_DEVICE_PROBE_BYTES as u64)
++            .unwrap();
++
++        assert!(block_device_prefix_is_blank(file.path().to_str().unwrap())
++            .await
++            .unwrap());
++    }
++
++    #[tokio::test]
++    async fn blank_device_probe_rejects_nonzero_prefix() {
++        use std::io::{Seek, SeekFrom, Write};
++
++        let mut file = tempfile::NamedTempFile::new().unwrap();
++        file.as_file()
++            .set_len(BLANK_DEVICE_PROBE_BYTES as u64)
++            .unwrap();
++        file.seek(SeekFrom::Start(4096)).unwrap();
++        file.write_all(&[1]).unwrap();
++        file.flush().unwrap();
++
++        assert!(!block_device_prefix_is_blank(file.path().to_str().unwrap())
++            .await
++            .unwrap());
++    }
++
++    #[tokio::test]
++    async fn ext4_probe_reads_the_superblock_magic_without_external_tools() {
++        use std::io::{Seek, SeekFrom, Write};
++
++        let mut file = tempfile::NamedTempFile::new().unwrap();
++        file.as_file()
++            .set_len(BLANK_DEVICE_PROBE_BYTES as u64)
++            .unwrap();
++        file.seek(SeekFrom::Start(EXT4_MAGIC_OFFSET)).unwrap();
++        file.write_all(&EXT4_MAGIC).unwrap();
++        file.flush().unwrap();
++
++        assert!(
++            block_device_has_ext4_filesystem(file.path().to_str().unwrap())
++                .await
++                .unwrap()
++        );
++    }
+diff --git a/src/libs/kata-types/src/mount.rs b/src/libs/kata-types/src/mount.rs
+index 96aabe1ba18985e8252d6c79667757a347c2c1e5..b1df68b62d472c415c285bdd85f74b8db3d39d27 100644
+--- a/src/libs/kata-types/src/mount.rs
++++ b/src/libs/kata-types/src/mount.rs
+@@ -46,0 +47,6 @@ pub const KATA_BLOCK_VOLUME_CREATE_FS: &str = "create_filesystem";
++/// Key to request idempotent filesystem preparation for persistent block storage.
++///
++/// Unlike [`KATA_BLOCK_VOLUME_CREATE_FS`], this option preserves an existing
++/// filesystem and only creates one when the device is verifiably blank.
++pub const KATA_BLOCK_VOLUME_ENSURE_FS: &str = "ensure_filesystem";
++
+diff --git a/src/runtime-rs/crates/runtimes/virt_container/src/container_manager/container.rs b/src/runtime-rs/crates/runtimes/virt_container/src/container_manager/container.rs
+index 1d272e2dd5a9cd6421849dfc53b85338511cf9bf..cb45d1dce54a6e54b3284ca71eaa06ba5ed9eb05 100644
+--- a/src/runtime-rs/crates/runtimes/virt_container/src/container_manager/container.rs
++++ b/src/runtime-rs/crates/runtimes/virt_container/src/container_manager/container.rs
+@@ -7,0 +8 @@ use std::collections::HashMap;
++use std::path::{Component, Path, PathBuf};
+@@ -24,0 +26 @@ use kata_types::{
++    mount::KATA_BLOCK_VOLUME_ENSURE_FS,
+@@ -39,0 +42,6 @@ use crate::container_manager::{is_termination_signal, logger_with_process};
++const BLOCK_VOLUME_ANNOTATION_PREFIX: &str = "io.katacontainers.volume";
++const BLOCK_VOLUME_MOUNT_PATH_SUFFIX: &str = "mount_path";
++const BLOCK_VOLUME_FS_TYPE_SUFFIX: &str = "fs_type";
++const BLOCK_VOLUME_FS_GROUP_SUFFIX: &str = "fs_group";
++const SUPPORTED_BLOCK_VOLUME_FS_TYPE: &str = "ext4";
++
+@@ -213,0 +222,14 @@ impl Container {
++        for (storage, mount) in
++            build_block_automounts(&updated_annotations, &devices_agent, &config.container_id)?
++        {
++            info!(
++                self.logger,
++                "auto-mounting persistent block volume";
++                "source" => storage.source.as_str(),
++                "mount_point" => mount.destination().display().to_string(),
++                "fs_type" => storage.fs_type.as_str(),
++            );
++            storages.push(storage);
++            spec.mounts_mut().get_or_insert_with(Vec::new).push(mount);
++        }
++
+@@ -867,0 +890,99 @@ fn get_disable_guest_selinux(toml_config: &TomlConfig) -> bool {
++fn block_volume_annotation_key(device_name: &str, suffix: &str) -> String {
++    format!("{BLOCK_VOLUME_ANNOTATION_PREFIX}.{device_name}.{suffix}")
++}
++
++fn block_volume_device_name(container_path: &str) -> Option<String> {
++    let device_name = container_path.strip_prefix("/dev/")?.replace('/', "_");
++    if device_name.is_empty() {
++        return None;
++    }
++    Some(device_name)
++}
++
++fn block_volume_mount_path(value: &str) -> Result<PathBuf> {
++    let path = Path::new(value);
++    if !path.is_absolute() || path == Path::new("/") {
++        return Err(anyhow!(
++            "block auto-mount destination must be an absolute non-root path: {value}"
++        ));
++    }
++    if path
++        .components()
++        .any(|component| !matches!(component, Component::RootDir | Component::Normal(_)))
++    {
++        return Err(anyhow!(
++            "block auto-mount destination must be normalized: {value}"
++        ));
++    }
++    Ok(path.to_path_buf())
++}
++
++fn build_block_automounts(
++    annotations: &HashMap<String, String>,
++    devices: &[agent::types::Device],
++    container_id: &str,
++) -> Result<Vec<(agent::Storage, oci::Mount)>> {
++    let mut automounts = Vec::new();
++
++    for device in devices {
++        let Some(device_name) = block_volume_device_name(&device.container_path) else {
++            continue;
++        };
++        let mount_path_key =
++            block_volume_annotation_key(&device_name, BLOCK_VOLUME_MOUNT_PATH_SUFFIX);
++        let Some(mount_path) = annotations.get(&mount_path_key) else {
++            continue;
++        };
++        let mount_path = block_volume_mount_path(mount_path)?;
++
++        let fs_type_key = block_volume_annotation_key(&device_name, BLOCK_VOLUME_FS_TYPE_SUFFIX);
++        let fs_type = annotations
++            .get(&fs_type_key)
++            .map(String::as_str)
++            .unwrap_or(SUPPORTED_BLOCK_VOLUME_FS_TYPE);
++        if fs_type != SUPPORTED_BLOCK_VOLUME_FS_TYPE {
++            return Err(anyhow!(
++                "unsupported block auto-mount filesystem {fs_type} for {}",
++                device.container_path
++            ));
++        }
++
++        let fs_group_key = block_volume_annotation_key(&device_name, BLOCK_VOLUME_FS_GROUP_SUFFIX);
++        let fs_group = annotations
++            .get(&fs_group_key)
++            .map(|value| {
++                value
++                    .parse::<u32>()
++                    .with_context(|| format!("invalid block auto-mount fs_group {value}"))
++                    .map(|group_id| agent::FSGroup {
++                        group_id,
++                        group_change_policy: agent::FSGroupChangePolicy::OnRootMismatch,
++                    })
++            })
++            .transpose()?;
++
++        let sandbox_mount_point = format!(
++            "/run/kata-containers/shared/containers/{container_id}/block-volume-{device_name}"
++        );
++        let storage = agent::Storage {
++            driver: device.field_type.clone(),
++            driver_options: vec![KATA_BLOCK_VOLUME_ENSURE_FS.to_owned()],
++            source: device.id.clone(),
++            fs_type: fs_type.to_owned(),
++            fs_group,
++            mount_point: sandbox_mount_point.clone(),
++            ..Default::default()
++        };
++
++        let mut mount = oci::Mount::default();
++        mount.set_destination(mount_path);
++        mount.set_typ(Some("bind".to_owned()));
++        mount.set_source(Some(PathBuf::from(sandbox_mount_point)));
++        mount.set_options(Some(vec!["bind".to_owned(), "rw".to_owned()]));
++
++        automounts.push((storage, mount));
++    }
++
++    Ok(automounts)
++}
++
+@@ -911,0 +1033 @@ mod tests {
++    use super::build_block_automounts;
+@@ -916,0 +1039,82 @@ mod tests {
++    fn block_device(container_path: &str, id: &str) -> agent::types::Device {
++        agent::types::Device {
++            container_path: container_path.to_owned(),
++            id: id.to_owned(),
++            field_type: "blk".to_owned(),
++            ..Default::default()
++        }
++    }
++
++    #[test]
++    fn builds_persistent_block_automount() {
++        let annotations = HashMap::from([
++            (
++                "io.katacontainers.volume.tengri-home.mount_path".to_owned(),
++                "/home/nanoagent".to_owned(),
++            ),
++            (
++                "io.katacontainers.volume.tengri-home.fs_type".to_owned(),
++                "ext4".to_owned(),
++            ),
++            (
++                "io.katacontainers.volume.tengri-home.fs_group".to_owned(),
++                "1000".to_owned(),
++            ),
++        ]);
++        let devices = vec![block_device("/dev/tengri-home", "0000:00:04.0")];
++
++        let automounts = build_block_automounts(&annotations, &devices, "container-id").unwrap();
++
++        assert_eq!(automounts.len(), 1);
++        let (storage, mount) = &automounts[0];
++        assert_eq!(storage.driver, "blk");
++        assert_eq!(storage.source, "0000:00:04.0");
++        assert_eq!(storage.fs_type, "ext4");
++        assert_eq!(
++            storage.driver_options,
++            vec![KATA_BLOCK_VOLUME_ENSURE_FS.to_owned()]
++        );
++        assert_eq!(storage.fs_group.as_ref().unwrap().group_id, 1000);
++        assert_eq!(
++            storage.mount_point,
++            "/run/kata-containers/shared/containers/container-id/block-volume-tengri-home"
++        );
++        assert_eq!(mount.destination(), Path::new("/home/nanoagent"));
++        assert_eq!(mount.typ(), &Some("bind".to_owned()));
++    }
++
++    #[test]
++    fn ignores_unannotated_block_devices() {
++        let devices = vec![block_device("/dev/tengri-home", "0000:00:04.0")];
++
++        let automounts = build_block_automounts(&HashMap::new(), &devices, "container-id").unwrap();
++
++        assert!(automounts.is_empty());
++    }
++
++    #[test]
++    fn rejects_unsafe_block_automount_configuration() {
++        let devices = vec![block_device("/dev/tengri-home", "0000:00:04.0")];
++        let invalid_destinations = ["workspace", "/", "/home/../etc"];
++
++        for destination in invalid_destinations {
++            let annotations = HashMap::from([(
++                "io.katacontainers.volume.tengri-home.mount_path".to_owned(),
++                destination.to_owned(),
++            )]);
++            assert!(build_block_automounts(&annotations, &devices, "container-id").is_err());
++        }
++
++        let annotations = HashMap::from([
++            (
++                "io.katacontainers.volume.tengri-home.mount_path".to_owned(),
++                "/home/nanoagent".to_owned(),
++            ),
++            (
++                "io.katacontainers.volume.tengri-home.fs_type".to_owned(),
++                "xfs".to_owned(),
++            ),
++        ]);
++        assert!(build_block_automounts(&annotations, &devices, "container-id").is_err());
++    }
++

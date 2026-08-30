@@ -37,18 +37,32 @@ extension catalog, and assembled into three architecture-specific Talos installe
 - `turin-amd64`: Kata plus the NVIDIA LTS kernel/toolkit extensions and Tailscale;
 - `altra-arm64`: Kata plus the NVIDIA LTS kernel/toolkit extensions and Tailscale.
 
-For a local extension-only validation:
+The r5 source patch adds an explicit persistent block-volume handoff between runtime-rs and kata-agent. It is pinned to
+Kata commit `894e1956bb340752b30f7ad49879972234a0098c`; CI applies the reviewed patch, runs its focused Linux tests, and
+builds the patched agent and runtime-rs shim natively on `amd64` and `arm64`. The extension injects that agent into the
+otherwise stock Kata Ubuntu guest image and publishes signed, architecture-specific Talos installers to the private
+registry. It does not alter a node automatically.
+
+Reproduce the patched components from an exact clean Kata checkout:
+
+```bash
+devices/galactic/extensions/kata/build-patched-kata.sh \
+  /path/to/kata-containers \
+  devices/galactic/extensions/kata/artifacts/$(dpkg --print-architecture)
+```
+
+Then build the native extension image:
 
 ```bash
 docker buildx build \
-  --platform linux/amd64,linux/arm64 \
+  --platform linux/$(dpkg --print-architecture) \
   --tag talos-kata-runtimes:validation \
   devices/galactic/extensions/kata
 ```
 
-The checked-in workflow now validates both architectures without publishing. The installed r4 release remains pinned
-to its existing immutable GHCR receipts; this repository move does not rebuild or replace it. Any future publication
-must use `registry.ide-newton.ts.net`, and consuming that release is a separate node-image rollout.
+The checked-in workflow validates both architectures on pull requests. On `main`, it publishes the extension and the
+three signed installers under `registry.ide-newton.ts.net/lab/talos-kata-runtimes`. The installed r4 release remains
+pinned to its existing immutable GHCR receipts until a separately authorized, one-node-at-a-time installer rollout.
 
 To reproduce an existing installer, use only the immutable extension digest recorded in the release receipt:
 
