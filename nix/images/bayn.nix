@@ -28,8 +28,8 @@ let
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = {
     # Refreshed from the two authoritative Linux builders for the Bun 1.4.0 dependency closure.
-    x86_64-linux = "sha256-rMnyn/fJW/PPZDazhzqRBAELt41pUfjGc2aSE2xiux8=";
-    aarch64-linux = "sha256-8CrmVAcnms+gBroKhJaowxtFIHReQrsLSB98OOzZfXA=";
+    x86_64-linux = lib.fakeHash;
+    aarch64-linux = lib.fakeHash;
   };
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
