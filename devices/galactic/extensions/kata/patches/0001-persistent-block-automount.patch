@@ -1,5 +1,5 @@
 diff --git a/src/agent/src/storage/block_handler.rs b/src/agent/src/storage/block_handler.rs
-index 133d48595..9af587166 100644
+index 133d48595..ae6337d3b 100644
 --- a/src/agent/src/storage/block_handler.rs
 +++ b/src/agent/src/storage/block_handler.rs
 @@ -19 +19,4 @@ use kata_types::device::{
@@ -190,7 +190,7 @@ index 133d48595..9af587166 100644
 @@ -219,0 +356,2 @@ mod tests {
 +                should_ensure_filesystem: false,
 +                should_initialize_filesystem: false,
-@@ -231,0 +370,109 @@ mod tests {
+@@ -231,0 +370,107 @@ mod tests {
 +
 +    #[test]
 +    fn block_storage_options_allow_persistent_filesystem_ensure() {
@@ -287,9 +287,7 @@ index 133d48595..9af587166 100644
 +        use std::io::{Seek, SeekFrom, Write};
 +
 +        let mut file = tempfile::NamedTempFile::new().unwrap();
-+        file.as_file()
-+            .set_len(BLANK_DEVICE_SCAN_BUFFER_BYTES as u64)
-+            .unwrap();
++        file.as_file().set_len(4096).unwrap();
 +        file.seek(SeekFrom::Start(EXT4_MAGIC_OFFSET)).unwrap();
 +        file.write_all(&EXT4_MAGIC).unwrap();
 +        file.flush().unwrap();
