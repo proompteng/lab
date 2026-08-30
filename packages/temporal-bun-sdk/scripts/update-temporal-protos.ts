@@ -27,7 +27,7 @@ const main = async () => {
       version: { type: 'string' },
       repo: { type: 'string', default: 'temporalio/api' },
       'cloud-version': { type: 'string' },
-      'cloud-repo': { type: 'string', default: 'temporalio/api-cloud' },
+      'cloud-repo': { type: 'string', default: 'temporalio/cloud-api' },
       'no-cloud': { type: 'boolean', default: false },
       help: { type: 'boolean', default: false },
     },
@@ -71,7 +71,7 @@ const main = async () => {
 
   await normalizeTrailingWhitespace(TEMPORAL_PROTO_DIR, new Set(['.proto']))
   await generateTypeScript()
-  await normalizeTrailingWhitespace(GENERATED_PROTO_DIR, new Set(['.ts']))
+  await normalizeTrailingWhitespace(GENERATED_PROTO_DIR, new Set(['.ts']), true)
 
   console.log('[temporal-bun-sdk] Temporal protos regenerated successfully.')
 }
@@ -86,7 +86,7 @@ Options:
   --version         Temporal API release tag (default: latest GitHub release)
   --repo            GitHub repo containing Temporal API proto sources (default: temporalio/api)
   --cloud-version   Temporal Cloud API release tag (default: latest GitHub release)
-  --cloud-repo      GitHub repo containing Temporal Cloud proto sources (default: temporalio/api-cloud)
+  --cloud-repo      GitHub repo containing Temporal Cloud proto sources (default: temporalio/cloud-api)
   --no-cloud        Remove Temporal Cloud protos instead of overlaying them
   --help            Show this help message
 `)
@@ -195,13 +195,17 @@ const findTemporalCloudDir = async (extractDir: string) => {
   return undefined
 }
 
-const normalizeTrailingWhitespace = async (root: string, extensions: ReadonlySet<string>) => {
+const normalizeTrailingWhitespace = async (
+  root: string,
+  extensions: ReadonlySet<string>,
+  trimTrailingBlankLines = false,
+) => {
   const entries = await readdir(root, { withFileTypes: true })
   await Promise.all(
     entries.map(async (entry) => {
       const entryPath = path.join(root, entry.name)
       if (entry.isDirectory()) {
-        await normalizeTrailingWhitespace(entryPath, extensions)
+        await normalizeTrailingWhitespace(entryPath, extensions, trimTrailingBlankLines)
         return
       }
 
@@ -210,7 +214,10 @@ const normalizeTrailingWhitespace = async (root: string, extensions: ReadonlySet
       }
 
       const content = await readFile(entryPath, 'utf8')
-      const normalized = content.replace(/[ \t]+$/gm, '')
+      const withoutTrailingWhitespace = content.replace(/[ \t]+$/gm, '')
+      const normalized = trimTrailingBlankLines
+        ? withoutTrailingWhitespace.replace(/\n+$/, '\n')
+        : withoutTrailingWhitespace
       if (normalized !== content) {
         await writeFile(entryPath, normalized, 'utf8')
       }
@@ -241,6 +248,7 @@ const generateTypeScript = async () => {
   console.log('[temporal-bun-sdk] Generating TypeScript stubs via buf...')
   const bufHome = await mkdtemp(path.join(tmpdir(), 'temporal-buf-home-'))
   try {
+    await rm(GENERATED_PROTO_DIR, { recursive: true, force: true })
     await $`cd ${REPO_ROOT} && env HOME=${bufHome} BUF_TOKEN= buf generate --template buf.temporal.gen.yaml --path proto/temporal`
   } finally {
     await rm(bufHome, { recursive: true, force: true })

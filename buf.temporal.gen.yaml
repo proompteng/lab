@@ -1,6 +1,7 @@
 version: v2
 plugins:
-  - remote: buf.build/bufbuild/es
+  - remote: buf.build/bufbuild/es:v2.14.0
+    revision: 1
     out: packages/temporal-bun-sdk/src/proto
     opt:
       - target=ts
