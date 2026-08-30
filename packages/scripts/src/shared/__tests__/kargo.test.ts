@@ -313,7 +313,7 @@ const expected = {
   symphony: {
     creationCriteria: 'single',
     images: [imageRepo('symphony')],
-    apps: ['symphony', 'symphony-jangar', 'symphony-torghut'],
+    apps: ['symphony', 'symphony-jangar'],
     includePaths: [
       'services/symphony',
       'nix/images/symphony.nix',
@@ -323,7 +323,6 @@ const expected = {
       'nix/oci-push.sh',
       'argocd/applications/symphony',
       'argocd/applications/symphony-jangar',
-      'argocd/applications/symphony-torghut',
       'argocd/applications/symphony-base',
     ],
   },
@@ -336,7 +335,7 @@ const expected = {
       imageRepo('torghut-ws'),
       imageRepo('signal-publisher'),
     ],
-    apps: ['torghut', 'torghut-options', 'torghut-hyperliquid-runtime'],
+    apps: ['torghut'],
     includePaths: [
       'services/torghut',
       'packages/scripts/src/torghut',
@@ -367,30 +366,8 @@ const expected = {
       '.github/workflows/torghut-post-deploy-verify.yml',
       'nix/oci-push.sh',
       'argocd/applications/torghut',
-      'argocd/applications/torghut-options',
-      'argocd/applications/torghut-hyperliquid-runtime',
     ],
     excludePaths: ['packages/scripts/src/torghut/__tests__', 'glob:packages/scripts/src/torghut/**/*.test.ts'],
-  },
-  'torghut-hyperliquid-feed': {
-    creationCriteria: 'single',
-    images: [imageRepo('torghut-hyperliquid-feed')],
-    apps: ['torghut-hyperliquid-feed'],
-    includePaths: [
-      'services/dorvud/gradle',
-      'services/dorvud/gradlew',
-      'services/dorvud/gradle.properties',
-      'services/dorvud/settings.gradle.kts',
-      'services/dorvud/build.gradle.kts',
-      'services/dorvud/platform',
-      'services/dorvud/hyperliquid-feed',
-      'nix/images/dorvud-jvm-service.nix',
-      'nix/images/torghut-hyperliquid-feed.nix',
-      '.github/workflows/nix-oci-build-common.yml',
-      'packages/scripts/src/shared/oci.ts',
-      'nix/oci-push.sh',
-      'argocd/applications/torghut-hyperliquid-feed',
-    ],
   },
   bilig: {
     creationCriteria: 'external',
@@ -578,7 +555,7 @@ describe('Kargo direct-push GitOps contract', () => {
       .flatMap((contract) => contract.apps)
       .sort()
     const kargoApplications = applicationSetElements
-      .filter((element) => String(element.targetRevision ?? '').startsWith('kargo/'))
+      .filter((element) => element.enabled === 'true' && String(element.targetRevision ?? '').startsWith('kargo/'))
       .map((element) => element.name as string)
       .sort()
     expect(kargoApplications).toEqual(expectedApplications)
@@ -819,10 +796,12 @@ describe('Kargo direct-push GitOps contract', () => {
     expect(timeoutSeconds).toBeGreaterThanOrEqual(verifierTimeoutSeconds + 600)
   })
 
-  it('retains post-deploy verification for every application promoted by the Torghut stage', () => {
-    expect(torghutVerifierWorkflow).toContain("- 'argocd/applications/torghut-hyperliquid-runtime/**'")
-    expect(torghutVerifierWorkflow).toContain('for app in torghut torghut-options torghut-hyperliquid-runtime; do')
-    expect(torghutVerifierWorkflow).toContain('torghut-hyperliquid-runtime \\')
+  it('retains post-deploy verification for the core Torghut application', () => {
+    expect(torghutVerifierWorkflow).toContain('for app in torghut; do')
+    expect(torghutVerifierWorkflow).toContain('torghut-ta \\')
+    expect(torghutVerifierWorkflow).toContain('torghut-ws; do')
+    expect(torghutVerifierWorkflow).not.toContain('torghut-options')
+    expect(torghutVerifierWorkflow).not.toContain('torghut-hyperliquid-runtime')
   })
 
   it('uses Kargo to write image and provenance data, never live Argo image overrides', () => {
