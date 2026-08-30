@@ -88,6 +88,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   let heldCodexAccountRequest = false
   let searchRequestsInFlight = 0
   let maxConcurrentSearchRequests = 0
+  const readFileFailures = new Map<string, number>()
   let releaseHeldResume = () => {}
   let markHeldResumeStarted = () => {}
   let releaseHeldCodexAccount = () => {}
@@ -264,6 +265,15 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         }
         break
       case 'read-file':
+        if ((readFileFailures.get(String(action.path)) ?? 0) > 0) {
+          readFileFailures.set(String(action.path), (readFileFailures.get(String(action.path)) ?? 1) - 1)
+          await route.fulfill({
+            status: 503,
+            contentType: 'application/json',
+            body: JSON.stringify({ error: 'Guest filesystem is temporarily unavailable' }),
+          })
+          return
+        }
         result = {
           path: action.path,
           content: contents.get(String(action.path)) ?? '',
@@ -428,6 +438,9 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
 
   return {
     actions,
+    failNextReads: (path: string, count = 1) => {
+      readFileFailures.set(path, count)
+    },
     failNextSnapshots: (count: number) => {
       snapshotFailuresRemaining = count
     },
@@ -484,6 +497,29 @@ function emitCodexEvent(page: Page, event: Record<string, unknown>) {
     if (!source?.onmessage) throw new Error('Codex event stream is unavailable')
     source.onmessage(new MessageEvent('message', { data: JSON.stringify(payload) }))
   }, event)
+}
+
+function emitFileEvent(page: Page, directory: string, event: Record<string, unknown>) {
+  return page.evaluate(
+    ({ directory, event }) => {
+      const sources = (
+        window as typeof window & {
+          __tengriEventSources?: Array<{
+            closed: boolean
+            onmessage: ((event: MessageEvent) => void) | null
+            url: string
+          }>
+        }
+      ).__tengriEventSources?.filter((candidate) => {
+        if (candidate.closed || !candidate.onmessage) return false
+        const url = new URL(candidate.url, window.location.href)
+        return url.pathname === '/api/tengri/files/events' && url.searchParams.get('path') === directory
+      })
+      if (!sources?.length) throw new Error(`File event stream for ${directory} is unavailable`)
+      for (const source of sources) source.onmessage?.(new MessageEvent('message', { data: JSON.stringify(event) }))
+    },
+    { directory, event },
+  )
 }
 
 async function resizeWindow(
@@ -944,6 +980,41 @@ test('persists real Finder changes into Code and exposes a localhost preview fro
   await expect(external).toHaveURL(`http://localhost:8080/v1/preview/open#${previewTicket}`)
   await expect(external.getByText('Live microVM preview')).toBeVisible()
   await external.close()
+})
+
+test('re-verifies a clean file instead of overwriting it after a watcher read failure', async ({ page }) => {
+  const mock = await mockTengri(page)
+  await page.goto('/')
+
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  await dock.getByRole('button', { name: 'Open Finder' }).click()
+  const finder = page.getByRole('region', { name: 'Finder window' })
+  await finder.getByRole('button', { name: /README\.md/ }).click()
+  await finder.getByRole('button', { name: 'Open selected file in Code' }).click()
+
+  const code = page.getByRole('region', { name: 'Code window' })
+  const editor = code.locator('.monaco-editor')
+  await expect(editor).toHaveCount(1)
+  await editor.click()
+  const initialReadCount = mock.actions.filter(
+    (action) => action.action === 'read-file' && action.path === '/README.md',
+  ).length
+  mock.failNextReads('/README.md')
+  await emitFileEvent(page, '/', { kind: 'changed', path: '/README.md', sequence: 99 })
+  await expect(code.getByRole('alert')).toContainText('Guest filesystem is temporarily unavailable')
+
+  const writeCount = mock.actions.filter(
+    (action) => action.action === 'write-file' && action.path === '/README.md',
+  ).length
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+s' : 'Control+s')
+
+  await expect
+    .poll(() => mock.actions.filter((action) => action.action === 'read-file' && action.path === '/README.md').length)
+    .toBe(initialReadCount + 2)
+  expect(mock.actions.filter((action) => action.action === 'write-file' && action.path === '/README.md')).toHaveLength(
+    writeCount,
+  )
+  await expect(code.getByRole('alert')).toHaveCount(0)
 })
 
 test('keeps the application menu and status controls separate on narrow viewports', async ({ page }) => {
