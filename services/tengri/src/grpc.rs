@@ -602,7 +602,8 @@ impl MicroVmControlPlane for ControlPlane {
         let rows = request.rows;
         let create_agent_id = agent_id.clone();
         let leases = self.provisional_terminal_leases.clone();
-        let cleanup_guest = guest.clone();
+        let failed_leases = leases.clone();
+        let failed_agent_id = agent_id.clone();
         let creation = detached_terminal_creation(
             async move {
                 guest
@@ -620,26 +621,22 @@ impl MicroVmControlPlane for ControlPlane {
                         )
                         .await
                     {
-                        match cleanup_guest.terminate_terminal(&creation.session.id).await {
-                            Ok(()) => metrics::global()
-                                .record_pty_terminated(&create_agent_id, &creation.session.id),
-                            Err(cleanup_error) if terminal_is_absent(&cleanup_error) => {
-                                metrics::global()
-                                    .record_pty_terminated(&create_agent_id, &creation.session.id)
-                            }
-                            Err(cleanup_error) => tracing::warn!(
-                                agent_id = %create_agent_id,
-                                terminal_id = %creation.session.id,
-                                %cleanup_error,
-                                "failed to clean up a terminal after lease persistence failed"
-                            ),
-                        }
+                        leases
+                            .retry_cleanup(&create_agent_id, &creation.session.id)
+                            .await;
                         return Err(error);
                     }
                 }
                 Ok(creation)
             },
-            |error| async move { Err(map_guest_error(error)) },
+            move |error| async move {
+                if let Some(terminal_id) = created_terminal_cleanup_id(&error).map(str::to_owned) {
+                    failed_leases
+                        .retry_cleanup(&failed_agent_id, &terminal_id)
+                        .await;
+                }
+                Err(map_guest_error(error))
+            },
         )
         .await?;
         Ok(Response::new(terminal_session(creation.session)))
@@ -1647,6 +1644,10 @@ impl ProvisionalTerminalLeaseManager {
             .await;
     }
 
+    async fn retry_cleanup(&self, agent_id: &str, terminal_id: &str) {
+        self.schedule(agent_id, terminal_id, Duration::ZERO).await;
+    }
+
     async fn cleanup_once(&self, agent_id: &str, terminal_id: &str) -> bool {
         let guest =
             match GuestClient::for_agent(self.client.clone(), &self.namespace, agent_id).await {
@@ -2079,6 +2080,16 @@ fn agent_is_absent(error: &GuestError) -> bool {
 
 fn terminal_is_absent(error: &GuestError) -> bool {
     matches!(error, GuestError::Api { status, .. } if *status == reqwest::StatusCode::NOT_FOUND)
+}
+
+fn created_terminal_cleanup_id(error: &GuestError) -> Option<&str> {
+    match error {
+        GuestError::TerminalCreationIdentityMismatch {
+            created_terminal_id: Some(terminal_id),
+            ..
+        } => Some(terminal_id),
+        _ => None,
+    }
 }
 
 fn map_guest_error(error: GuestError) -> Status {
@@ -2756,6 +2767,26 @@ mod tests {
         assert!(validate_terminal_creation_id(&"a".repeat(129)).is_err());
     }
 
+    #[test]
+    fn only_a_new_mismatched_terminal_is_a_cleanup_candidate() {
+        let created = GuestError::TerminalCreationIdentityMismatch {
+            expected: "terminal-creation-current".to_owned(),
+            actual: "terminal-creation-other".to_owned(),
+            created_terminal_id: Some("terminal-current".to_owned()),
+        };
+        assert_eq!(
+            created_terminal_cleanup_id(&created),
+            Some("terminal-current")
+        );
+
+        let replay = GuestError::TerminalCreationIdentityMismatch {
+            expected: "terminal-creation-current".to_owned(),
+            actual: "terminal-creation-other".to_owned(),
+            created_terminal_id: None,
+        };
+        assert_eq!(created_terminal_cleanup_id(&replay), None);
+    }
+
     #[tokio::test]
     async fn canceled_terminal_request_still_finishes_session_tracking() {
         let started = Arc::new(tokio::sync::Notify::new());
@@ -2878,6 +2909,29 @@ mod tests {
                 .get(&("agent-current".to_owned(), "terminal-durable".to_owned(),)),
             Some(ProvisionalTerminalLease::AwaitingTicket(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn terminal_cleanup_retry_is_registered_before_returning() {
+        let (service, _handle) =
+            tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+        let manager = ProvisionalTerminalLeaseManager::new(
+            Client::new(service, "tengri"),
+            Arc::<str>::from("tengri"),
+        );
+
+        manager
+            .retry_cleanup("agent-current", "terminal-retry")
+            .await;
+
+        assert!(
+            manager
+                .registry
+                .leases
+                .lock()
+                .await
+                .contains_key(&("agent-current".to_owned(), "terminal-retry".to_owned()))
+        );
     }
 
     #[tokio::test]

@@ -41,7 +41,11 @@ pub enum GuestError {
     #[error("Nanoagent does not support atomic Codex snapshot cursors")]
     MissingCodexSnapshotCursor,
     #[error("Nanoagent returned terminal creation identity {actual:?}; expected {expected:?}")]
-    TerminalCreationIdentityMismatch { expected: String, actual: String },
+    TerminalCreationIdentityMismatch {
+        expected: String,
+        actual: String,
+        created_terminal_id: Option<String>,
+    },
     #[error("Nanoagent response exceeded the {0}-byte limit")]
     ResponseTooLarge(usize),
 }
@@ -334,6 +338,7 @@ impl GuestClient {
         };
         match terminal_creation(response, creation_id).await {
             Ok(creation) => Ok(creation),
+            Err(error @ GuestError::TerminalCreationIdentityMismatch { .. }) => Err(error),
             Err(error) => {
                 self.reconcile_terminal_creation_error(creation_id, error)
                     .await
@@ -532,6 +537,7 @@ async fn terminal_creation(
         return Err(GuestError::TerminalCreationIdentityMismatch {
             expected: requested_creation_id.to_owned(),
             actual: session.creation_id,
+            created_terminal_id: created.then_some(session.id),
         });
     }
     Ok(TerminalCreation { session, created })
@@ -730,10 +736,28 @@ mod tests {
 
             assert!(matches!(
                 terminal_creation(response, "terminal-creation-current").await,
-                Err(GuestError::TerminalCreationIdentityMismatch { expected, actual: returned })
-                    if expected == "terminal-creation-current" && returned == actual
+                Err(GuestError::TerminalCreationIdentityMismatch {
+                    expected,
+                    actual: returned,
+                    created_terminal_id: Some(terminal_id),
+                }) if expected == "terminal-creation-current"
+                    && returned == actual
+                    && terminal_id == "abcdefghijklmnopqrstuvwx"
             ));
         }
+
+        let replay: reqwest::Response = http::Response::builder()
+            .status(StatusCode::OK)
+            .body(terminal_json("different-terminal-creation").to_string())
+            .expect("terminal replay response")
+            .into();
+        assert!(matches!(
+            terminal_creation(replay, "terminal-creation-current").await,
+            Err(GuestError::TerminalCreationIdentityMismatch {
+                created_terminal_id: None,
+                ..
+            })
+        ));
     }
 
     #[tokio::test]
