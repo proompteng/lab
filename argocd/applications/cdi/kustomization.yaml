@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: cdi
+
+resources:
+  - https://github.com/kubevirt/containerized-data-importer/releases/download/v1.66.0/cdi-operator.yaml
+  - https://github.com/kubevirt/containerized-data-importer/releases/download/v1.66.0/cdi-cr.yaml
+
+patches:
+  - target:
+      kind: Namespace
+      name: cdi
+    patch: |-
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: cdi
+      $patch: delete

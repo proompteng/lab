@@ -1,0 +1,16 @@
+.{
+    .name = .galette,
+    .version = "0.1.0",
+    .fingerprint = 0x659c053e5003896b, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.15.1",
+    .paths = .{
+        "",
+        "src",
+        "build.zig",
+        "build.zig.zon",
+        "Dockerfile",
+        "README.md",
+        "func.yaml",
+    },
+    .dependencies = .{},
+}

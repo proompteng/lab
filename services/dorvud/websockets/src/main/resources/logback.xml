@@ -1,0 +1,16 @@
+<configuration>
+  <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>%d{ISO8601} %-5level [%thread] %logger{36} - %msg%n</pattern>
+    </encoder>
+  </appender>
+
+  <logger name="org.apache.kafka" level="${KAFKA_CLIENT_LOG_LEVEL:-WARN}" />
+  <logger name="org.apache.kafka.clients.NetworkClient" level="WARN" />
+  <logger name="org.apache.kafka.common.network" level="WARN" />
+  <logger name="org.apache.kafka.common.security" level="WARN" />
+
+  <root level="${LOG_LEVEL:-INFO}">
+    <appender-ref ref="STDOUT" />
+  </root>
+</configuration>
