@@ -1,0 +1,120 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: kube-router
+  namespace: kube-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  labels:
+    app.kubernetes.io/name: kube-router
+    app.kubernetes.io/component: network-policy
+    app.kubernetes.io/version: v2.10.0
+spec:
+  minReadySeconds: 15
+  revisionHistoryLimit: 3
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kube-router
+      app.kubernetes.io/component: network-policy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kube-router
+        app.kubernetes.io/component: network-policy
+        app.kubernetes.io/version: v2.10.0
+    spec:
+      serviceAccountName: kube-router
+      automountServiceAccountToken: true
+      priorityClassName: system-node-critical
+      hostNetwork: true
+      hostPID: true
+      dnsPolicy: ClusterFirstWithHostNet
+      terminationGracePeriodSeconds: 30
+      nodeSelector:
+        kubernetes.io/os: linux
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: kube-router
+          image: docker.io/cloudnativelabs/kube-router@sha256:0991f2cc7aaabe107b51c0c554d6b843f0483fd319b94f437fab638470c47c22
+          imagePullPolicy: IfNotPresent
+          args:
+            - --run-router=false
+            - --run-service-proxy=false
+            - --run-firewall=true
+            - --run-loadbalancer=false
+            - --enable-cni=false
+            - --enable-ipv4=true
+            - --enable-ipv6=false
+            - --hostname-override=$(NODE_NAME)
+            - --service-cluster-ip-range=10.96.0.0/12
+            - --cache-sync-timeout=1m
+            - --iptables-sync-period=30s
+            - --health-port=20244
+            - --metrics-port=20241
+            - --v=2
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          ports:
+            - name: metrics
+              containerPort: 20241
+              protocol: TCP
+            - name: health
+              containerPort: 20244
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 24
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            privileged: true
+            allowPrivilegeEscalation: true
+            readOnlyRootFilesystem: true
+            runAsUser: 0
+          volumeMounts:
+            - name: lib-modules
+              mountPath: /lib/modules
+              readOnly: true
+            - name: xtables-lock
+              mountPath: /run/xtables.lock
+      volumes:
+        - name: lib-modules
+          hostPath:
+            path: /usr/lib/modules
+            type: Directory
+        - name: xtables-lock
+          hostPath:
+            path: /run/xtables.lock
+            type: FileOrCreate

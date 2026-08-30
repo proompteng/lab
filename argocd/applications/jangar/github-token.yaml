@@ -1,0 +1,20 @@
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: github-token
+  namespace: jangar
+  annotations:
+    argocd.argoproj.io/ignore-healthcheck: "true"
+spec:
+  encryptedData:
+    token: AgCmNmgNqBmNxozFdDmmMVGsFeQMTj7wBZOYtmQbYI8P5oqGkgqPlHYdKBhGKQu648/L0IjCZuEMSOhJDvjYVYOLZ63EGunMp1BHcAO+vkmLIg06WS0JTZHBWfVaK0LG2rdAkMdbTjN1sGznBShIKdxUmMclWXCV0h8a0UcnTVhOnpE/0ho0lIGzhuUf2V+eAKLIjxTIqWy4erKACsi/lxgYFTSzQqKs0yUf5DQb3qI+FXYTAotz3uXlwTIwiF8J2xF7US6Q5AbeUVYgHh0ycnILGX6ut6TP7HqZ+g0fpiEuJRXjuFEYRwItLV6/o8F26Eo6pIabz0GyKG7CyyAvhERp1NFn6jWz6SjEF8RlhR9YcRALPwVl+kEwtZLyWr5yOYVSVCs5NBIrC2YNt8SE9YffFDreozAIuu0i0tMiJeTuTpERBLbradEUjwvzF0Wg4n1tx86YtxR8u5rVygd5BgTEvPKvO9PLa+0aQwFNriZsCK/xcPQS909Y4E89StZtGz2Eky4E70Pk5Evnhzs90utYSujNrnYmTGWF2XQ4qURf2nlqQAbMg3EibBaXfFvD1w/1giSGcuhU7TZSyNs0G5mZbOGn6n4sDK9CwkG85dufJTOaLQBci8hrElfifLHqRroPKyK6BF+cxNajQaWGKFoD6mid+fjHDFSdAP5ovnUJ9B2JPqO/Hy+hL6PzJ7t4GeE4DNMaMUEKSwzd96oPpomP1uISS1L4RwY/rQqBa/i9r7o35HRaJL5/
+  template:
+    metadata:
+      name: github-token
+      namespace: jangar
+      annotations:
+        reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
+        reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "agents,argo-workflows,froussard,feature-flags"
+        reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
+        reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "agents,argo-workflows,froussard,feature-flags"

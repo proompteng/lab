@@ -1,0 +1,263 @@
+import { Data, Schema } from 'effect'
+import { HttpClientError } from 'effect/unstable/http'
+import { Pipeable } from '../../pipeable'
+
+export enum BrokerReadErrorKind {
+  Configuration = 'CONFIGURATION',
+  Transport = 'TRANSPORT',
+  Timeout = 'TIMEOUT',
+  Authentication = 'AUTHENTICATION',
+  Forbidden = 'FORBIDDEN',
+  NotFound = 'NOT_FOUND',
+  RateLimited = 'RATE_LIMITED',
+  Server = 'SERVER',
+  HttpStatus = 'HTTP_STATUS',
+  InvalidRequest = 'INVALID_REQUEST',
+  InvalidResponse = 'INVALID_RESPONSE',
+  AccountMismatch = 'ACCOUNT_MISMATCH',
+}
+
+export type BrokerReadOperation =
+  | 'configuration'
+  | 'proxy'
+  | 'preflight'
+  | 'account'
+  | 'account-configuration'
+  | 'positions'
+  | 'orders'
+  | 'order-by-id'
+  | 'order-by-client-id'
+  | 'fill-activities'
+  | 'asset-by-symbol'
+  | 'market-calendar'
+
+export class BrokerReadError extends Data.TaggedError('BrokerReadError')<{
+  readonly operation: BrokerReadOperation
+  readonly kind: BrokerReadErrorKind
+  readonly message: string
+  readonly retryable: boolean
+  readonly status?: number
+  readonly requestId?: string
+  readonly contentHash?: string
+  readonly observedAt?: string
+  readonly cause?: unknown
+}> {}
+
+export type BrokerReadContractFailureReason =
+  | 'ACCOUNT_BINDING'
+  | 'ASSET_BINDING'
+  | 'ASSET_CLASS'
+  | 'CALENDAR_DUPLICATE'
+  | 'CALENDAR_HOURS'
+  | 'CALENDAR_INSTANT'
+  | 'CALENDAR_RANGE'
+  | 'CANONICAL_HASH'
+  | 'DECIMAL_FORMAT'
+  | 'DECIMAL_PRECISION'
+  | 'DECIMAL_RANGE'
+  | 'DECIMAL_SIGN'
+  | 'DECIMAL_ZERO'
+  | 'FILL_ACCOUNT_BINDING'
+  | 'FILL_SHAPE'
+  | 'ORDER_SHAPE'
+  | 'RATE_LIMIT'
+
+export class BrokerReadContractFailure extends Data.TaggedError('BrokerReadContractFailure')<{
+  readonly reason: BrokerReadContractFailureReason
+  readonly message: string
+  readonly field?: string
+  readonly expected?: string
+  readonly actual?: string
+}> {}
+
+export interface BrokerReadContractFailureInput {
+  readonly reason: BrokerReadContractFailureReason
+  readonly message: string
+  readonly facts?: {
+    readonly field?: string
+    readonly expected?: string
+    readonly actual?: string
+  }
+}
+
+export const contractFailure = (input: BrokerReadContractFailureInput): BrokerReadContractFailure => {
+  const { facts = {}, ...failure } = input
+  return new BrokerReadContractFailure({ ...failure, ...facts })
+}
+
+interface ReadEvidenceLike {
+  readonly status?: number
+  readonly requestId?: string
+  readonly contentHash?: string
+  readonly observedAt?: string
+}
+
+const redactDiagnostic = (value: string, sensitiveValues: readonly string[]): string =>
+  sensitiveValues.reduce(
+    (redacted, sensitive) => (sensitive.length === 0 ? redacted : redacted.replaceAll(sensitive, '<redacted>')),
+    value,
+  )
+
+export interface SafeCauseInput {
+  readonly cause: unknown
+  readonly sensitiveValues?: readonly string[]
+}
+
+export const safeCause = (input: SafeCauseInput): Readonly<Record<string, string>> => {
+  const { cause, sensitiveValues = [] } = input
+  if (cause instanceof BrokerReadContractFailure) {
+    return {
+      tag: cause._tag,
+      reason: cause.reason,
+      message: redactDiagnostic(cause.message, sensitiveValues),
+      ...(cause.field === undefined ? {} : { field: redactDiagnostic(cause.field, sensitiveValues) }),
+      ...(cause.expected === undefined ? {} : { expected: redactDiagnostic(cause.expected, sensitiveValues) }),
+      ...(cause.actual === undefined ? {} : { actual: redactDiagnostic(cause.actual, sensitiveValues) }),
+    }
+  }
+  if (Schema.isSchemaError(cause)) {
+    return { tag: cause._tag, message: redactDiagnostic(cause.message, sensitiveValues) }
+  }
+  if (HttpClientError.isHttpClientError(cause)) {
+    const detail =
+      'cause' in cause.reason && cause.reason.cause instanceof Error ? cause.reason.cause.message : undefined
+    return {
+      tag: cause._tag,
+      reason: cause.reason._tag,
+      message: redactDiagnostic(cause.message, sensitiveValues),
+      ...(detail === undefined ? {} : { detail: redactDiagnostic(detail, sensitiveValues) }),
+    }
+  }
+  if (cause instanceof Error) {
+    const message = typeof cause.message === 'string' ? redactDiagnostic(cause.message, sensitiveValues) : undefined
+    const code =
+      'code' in cause && (typeof cause.code === 'string' || typeof cause.code === 'number')
+        ? String(cause.code)
+        : undefined
+    return {
+      tag: cause.name,
+      ...(message === undefined ? {} : { message }),
+      ...(code === undefined ? {} : { code }),
+    }
+  }
+  if (typeof cause === 'object' && cause !== null && '_tag' in cause && typeof cause._tag === 'string') {
+    const message =
+      'message' in cause && typeof cause.message === 'string'
+        ? redactDiagnostic(cause.message, sensitiveValues)
+        : undefined
+    return { tag: cause._tag, ...(message === undefined ? {} : { message }) }
+  }
+  return { tag: typeof cause }
+}
+
+export interface BrokerReadConfigurationErrorInput {
+  readonly operation: 'configuration' | 'proxy'
+  readonly message: string
+  readonly cause?: unknown
+}
+
+export const configurationError = (input: BrokerReadConfigurationErrorInput): BrokerReadError =>
+  new BrokerReadError({
+    operation: input.operation,
+    kind: BrokerReadErrorKind.Configuration,
+    message: input.message,
+    retryable: false,
+    cause: input.cause === undefined ? undefined : safeCause({ cause: input.cause }),
+  })
+
+export interface InvalidResponseInput {
+  readonly operation: BrokerReadOperation
+  readonly message: string
+  readonly evidence?: ReadEvidenceLike
+  readonly cause?: unknown
+}
+
+export const invalidResponse = (input: InvalidResponseInput): BrokerReadError =>
+  new BrokerReadError({
+    operation: input.operation,
+    kind: BrokerReadErrorKind.InvalidResponse,
+    message: input.message,
+    retryable: false,
+    ...(input.evidence?.status === undefined ? {} : { status: input.evidence.status }),
+    ...(input.evidence?.requestId === undefined ? {} : { requestId: input.evidence.requestId }),
+    ...(input.evidence?.contentHash === undefined ? {} : { contentHash: input.evidence.contentHash }),
+    ...(input.evidence?.observedAt === undefined ? {} : { observedAt: input.evidence.observedAt }),
+    ...(input.cause === undefined ? {} : { cause: safeCause({ cause: input.cause }) }),
+  })
+
+const invalidRequestDataFirst = (operation: BrokerReadOperation, message: string, cause: unknown): BrokerReadError =>
+  new BrokerReadError({
+    operation,
+    kind: BrokerReadErrorKind.InvalidRequest,
+    message,
+    retryable: false,
+    cause: safeCause({ cause }),
+  })
+
+export const invalidRequest = Pipeable.dual(3, invalidRequestDataFirst)
+
+const transportErrorDataFirst = (
+  operation: BrokerReadOperation,
+  cause: unknown,
+  sensitiveValues: readonly string[],
+): BrokerReadError =>
+  new BrokerReadError({
+    operation,
+    kind: BrokerReadErrorKind.Transport,
+    message: `Alpaca ${operation} request failed before a response was available`,
+    retryable: true,
+    cause: safeCause({ cause, sensitiveValues }),
+  })
+
+export const transportError = Pipeable.dual(3, transportErrorDataFirst)
+
+const statusErrorDataFirst = (
+  operation: BrokerReadOperation,
+  status: number,
+  requestId: string,
+  contentHash: string,
+  observedAt: string,
+  code: string | number,
+  detail: string,
+): BrokerReadError => {
+  const kind =
+    status === 401
+      ? BrokerReadErrorKind.Authentication
+      : status === 403
+        ? BrokerReadErrorKind.Forbidden
+        : status === 404
+          ? BrokerReadErrorKind.NotFound
+          : status === 429
+            ? BrokerReadErrorKind.RateLimited
+            : status >= 500
+              ? BrokerReadErrorKind.Server
+              : BrokerReadErrorKind.HttpStatus
+  return new BrokerReadError({
+    operation,
+    kind,
+    message: `Alpaca ${operation} returned HTTP ${status} (${String(code)}): ${detail}`,
+    retryable: status === 429 || status >= 500,
+    status,
+    requestId,
+    contentHash,
+    observedAt,
+  })
+}
+
+export const statusError = Pipeable.dual(7, statusErrorDataFirst)
+
+const timeoutErrorDataFirst = (
+  operation: BrokerReadOperation,
+  timeoutMs: number,
+  cause: unknown,
+  sensitiveValues: readonly string[],
+): BrokerReadError =>
+  new BrokerReadError({
+    operation,
+    kind: BrokerReadErrorKind.Timeout,
+    message: `Alpaca ${operation} exceeded its ${timeoutMs}ms deadline`,
+    retryable: true,
+    cause: safeCause({ cause, sensitiveValues }),
+  })
+
+export const timeoutError = Pipeable.dual(4, timeoutErrorDataFirst)

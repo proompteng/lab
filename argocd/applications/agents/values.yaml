@@ -1,0 +1,335 @@
+replicaCount: 1
+image:
+  repository: registry.ide-newton.ts.net/lab/agents-controller
+  tag: kargo-sha-bbbaa168c46e6e167a5775d0f516789b13dc689d-run-33299054716
+  digest: sha256:81bfb71ce4762b2b58a28a62b15feba57a1441925af30b65c2e1241762bce569
+  pullPolicy: IfNotPresent
+imagePolicy:
+  requireDigest: true
+nodeSelector: {}
+tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule
+controlPlane:
+  image:
+    repository: registry.ide-newton.ts.net/lab/agents-control-plane
+    tag: kargo-sha-bbbaa168c46e6e167a5775d0f516789b13dc689d-run-33299054716
+    digest: sha256:85b2b605508dc13e4fb48196caf9df2c5213e8bb264c57c99c1309be630f915c
+  env:
+    vars:
+      AGENTS_CONTROL_PLANE_CACHE_ENABLED: "true"
+      AGENTS_CONTROL_PLANE_CACHE_ALLOW_STALE: "false"
+      AGENTS_CONTROL_PLANE_CACHE_RESYNC_SECONDS: "60"
+      AGENTS_CONTROL_PLANE_CACHE_MAX_PENDING_WRITES: "5000"
+      AGENTS_SOURCE_HEAD_SHA: bbbaa168c46e6e167a5775d0f516789b13dc689d
+      AGENTS_GITOPS_REVISION: bbbaa168c46e6e167a5775d0f516789b13dc689d
+      AGENTS_SOURCE_CI_RUN_ID: "33299054716"
+      AGENTS_SOURCE_CI_CONCLUSION: success
+      AGENTS_MANIFEST_IMAGE_DIGEST: sha256:85b2b605508dc13e4fb48196caf9df2c5213e8bb264c57c99c1309be630f915c
+      AGENTS_SERVING_BUILD_COMMIT: bbbaa168c46e6e167a5775d0f516789b13dc689d
+      AGENTS_SERVING_IMAGE_DIGEST: sha256:85b2b605508dc13e4fb48196caf9df2c5213e8bb264c57c99c1309be630f915c
+runner:
+  image:
+    repository: registry.ide-newton.ts.net/lab/agents-codex-runner
+    tag: kargo-sha-bbbaa168c46e6e167a5775d0f516789b13dc689d-run-33299054716
+    digest: sha256:ab2b3bdf9b41e553622c560e641c4a02e4898c19bda8dcb340971b0e3e4317c1
+linearMcpGateway:
+  enabled: false
+  replicaCount: 2
+  oauthSecretName: linear-mcp-oauth
+  databaseSecret:
+    name: agents-db-app
+    key: uri
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+agentsShell:
+  enabled: true
+  image:
+    repository: registry.ide-newton.ts.net/lab/agents-shell
+    tag: kargo-sha-bbbaa168c46e6e167a5775d0f516789b13dc689d-run-33299054716
+    digest: sha256:512cfa77ea99d535038b4d552f147a63b6941b3d16321f0aaa76ef03c9aa14e8
+    pullPolicy: IfNotPresent
+  env:
+    vars:
+      AGENTS_SHELL_RESOURCE: https://agents-shell.proompteng.ai
+      AGENTS_SHELL_OAUTH_ISSUER: https://auth.proompteng.ai/realms/master
+      AGENTS_SHELL_ALLOWED_EMAILS: greg@proompteng.ai,agents-shell-chatgpt@proompteng.ai
+      AGENTS_SHELL_ALLOWED_USERNAMES: admin,agents-shell-chatgpt
+      AGENTS_SHELL_ALLOWED_K8S_NAMESPACES: ""
+      AGENTS_SHELL_WORKSPACE_ROOT: /workspace
+      AGENTS_SHELL_AUDIT_LOG_PATH: /workspace/.agents-shell/audit.jsonl
+      AGENTS_SHELL_DEFAULT_TIMEOUT_SECONDS: "60"
+      AGENTS_SHELL_MAX_TIMEOUT_SECONDS: "1800"
+      AGENTS_SHELL_DEFAULT_OUTPUT_BYTES: "20000"
+      AGENTS_SHELL_MAX_OUTPUT_BYTES: "200000"
+      AGENTS_SHELL_MAX_CONCURRENT_JOBS: "4"
+      AGENTS_SHELL_ENABLE_K8S_APPLY: "true"
+      HOME: /workspace/.agents-shell/home
+      AGENTS_SHELL_GIT_USER_NAME: Greg Konush
+      AGENTS_SHELL_GIT_USER_EMAIL: greg@proompteng.ai
+      AGENTS_SHELL_AGENT_NAMESPACE: agents
+      AGENTS_SHELL_AGENT_NAME: codex-agent
+      AGENTS_SHELL_AGENT_REPOSITORY: proompteng/lab
+      AGENTS_SHELL_AGENT_BASE_BRANCH: main
+      AGENTS_SHELL_AGENT_VCS_REF: github
+      AGENTS_SHELL_AGENT_RUNTIME_SERVICE_ACCOUNT: agents-sa
+      AGENTS_SHELL_AGENT_SECRETS: github-token,codex-auth
+    secrets:
+      - name: GITHUB_TOKEN
+        secretName: github-token
+        key: token
+      - name: GH_TOKEN
+        secretName: github-token
+        key: token
+  rbac:
+    clusterAdmin: true
+    extraReadNamespaces:
+      - torghut
+  ingressRoute:
+    enabled: true
+    host: agents-shell.proompteng.ai
+    entryPoints:
+      - web
+      - websecure
+  networkPolicy:
+    enabled: true
+    ingressNamespaces:
+      - traefik
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+  nodeSelector:
+    kubernetes.io/arch: amd64
+  workspace:
+    volumeMode: emptyDir
+    size: 20Gi
+    bootstrap:
+      enabled: true
+      repository: https://github.com/proompteng/lab.git
+      branch: main
+      targetPath: /workspace/lab
+      depth: 0
+      tokenSecret:
+        name: github-token
+        key: token
+agentRuntime:
+  native:
+    rerunOrchestration: codex-rerun
+    rerunOrchestrationNamespace: agents
+argocdHooks:
+  enabled: true
+  image:
+    repository: alpine/k8s
+    tag: 1.30.11
+    digest: sha256:aff9e683cf3950861a806b89404c5d5b4f8d6d4ab527c6da567df71b4cd4f970
+  postSync:
+    enabled: true
+  smoke:
+    agentRun:
+      apiVersion: agents.proompteng.ai/v1alpha1
+      kind: AgentRun
+      metadata:
+        name: codex-spark-smoke
+      spec:
+        agentRef:
+          name: codex-spark-smoke-agent
+        implementationSpecRef:
+          name: codex-spark-smoke-implspec
+        goal:
+          objective: Verify Codex app-server runner protocol, status, artifact collection, and the promoted runner image without
+            external side effects.
+          tokenBudget: 8000
+        runtime:
+          type: workflow
+          config:
+            serviceAccountName: agents-sa
+            backoffLimit: 0
+        ttlSecondsAfterFinished: 1800
+        workflow:
+          steps:
+            - name: smoke
+              timeoutSeconds: 900
+              parameters:
+                stage: implementation
+        parameters:
+          repository: proompteng/lab
+          base: main
+          head: codex/agents-smoke
+          issueNumber: swarm-codex-smoke
+          issueTitle: Codex Spark smoke validation
+          objective: verify deterministic app-server runner protocol and the promoted runner image without VCS or external model
+            calls
+        secrets:
+          - codex-auth
+    additionalAgentRuns:
+      - apiVersion: agents.proompteng.ai/v1alpha1
+        kind: AgentRun
+        metadata:
+          name: agents-primitives-agentrun
+        spec:
+          agentRef:
+            name: agents-primitives-agent
+          ttlSecondsAfterFinished: 600
+          implementation:
+            inline:
+              summary: Run the agents primitives smoke implementation
+              text: Execute the sample implementation for the agents primitives workflow.
+          runtime:
+            type: workflow
+          workflow:
+            steps:
+              - name: implementation
+                timeoutSeconds: 600
+                parameters:
+                  stage: implementation
+          parameters:
+            repository: proompteng/lab
+            base: main
+            head: codex/issue-2425-6cedebf4
+            stage: implementation
+controllers:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: registry.ide-newton.ts.net/lab/agents-controller
+    tag: kargo-sha-bbbaa168c46e6e167a5775d0f516789b13dc689d-run-33299054716
+    digest: sha256:81bfb71ce4762b2b58a28a62b15feba57a1441925af30b65c2e1241762bce569
+  autoscaling:
+    enabled: false
+swarm:
+  enabled: true
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+readinessProbe:
+  timeoutSeconds: 5
+controller:
+  defaultWorkload:
+    nodeSelector: {}
+    tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+    resources:
+      requests:
+        cpu: "1"
+        memory: 4Gi
+        ephemeral-storage: 8Gi
+      limits:
+        memory: 16Gi
+        ephemeral-storage: 16Gi
+  namespaces:
+    - agents
+    - synthesis
+  concurrency:
+    perNamespace: 14
+    perAgent: 10
+  queue:
+    perRepo: 200
+  agentRunRetentionSeconds: 604800
+  agentRunRetentionMaxDeletesPerNamespace: 250
+  agentRunRetentionZeroTtlMaxSeconds: 604800
+  jobTtlSeconds: 86400
+  jobTtlSecondsAfterFinished: 86400
+  runtimeDebrisCleanup:
+    mode: delete
+    orphanPodRetentionSeconds: 86400
+    maxDeletesPerNamespace: 25
+  logRetentionSeconds: 604800
+  authSecret:
+    name: codex-auth
+    key: auth.json
+    mountPath: /root/.codex
+orchestrationController:
+  namespaces:
+    - agents
+    - synthesis
+supportingController:
+  namespaces:
+    - agents
+    - synthesis
+rbac:
+  clusterScoped: true
+  extraRules:
+    - apiGroups:
+        - apiextensions.k8s.io
+      resources:
+        - customresourcedefinitions
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - ""
+      resources:
+        - endpoints
+        - services
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - discovery.k8s.io
+      resources:
+        - endpointslices
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - apps
+      resources:
+        - deployments
+      verbs:
+        - get
+        - list
+        - watch
+database:
+  secretRef:
+    name: agents-db-app
+    key: uri
+agentComms:
+  enabled: true
+  nats:
+    url: nats://nats.nats.svc.cluster.local:4222
+    userSecret:
+      name: nats-agents-credentials
+      usernameKey: username
+      passwordKey: password
+grpc:
+  enabled: true
+  port: 50051
+  servicePort: 50051
+  serviceType: ClusterIP
+env:
+  vars:
+    AGENTS_GRPC_ENABLED: "true"
+    AGENTS_GRPC_HOST: 0.0.0.0
+    AGENTS_GRPC_PORT: "50051"
+    AGENTS_GITHUB_REPOS_ALLOWED: proompteng/lab
+    AGENTS_DB_POOL_MAX: "8"
+    AGENTS_MEMORY_DB_POOL_MAX: "2"
+    PGQUERY_TIMEOUT_MS: "90000"
+    AGENTS_CONTROLLER_REPO_CONCURRENCY_OVERRIDES: "{}"
+    OPENAI_API_BASE_URL: http://flamingo.flamingo.svc.cluster.local/v1
+    OPENAI_EMBEDDING_API_BASE_URL: http://saigak.saigak.svc.cluster.local:11434/v1
+    OPENAI_EMBEDDING_MODEL: qwen3-embedding-saigak:8b
+    OPENAI_EMBEDDING_DIMENSION: "4096"
+    OPENAI_EMBEDDING_TIMEOUT_MS: "120000"
+  secrets:
+    - name: GITHUB_TOKEN
+      secretName: github-token
+      key: token
+envFromSecretRefs: []

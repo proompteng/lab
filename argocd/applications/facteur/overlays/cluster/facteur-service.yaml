@@ -1,0 +1,75 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: facteur
+  namespace: facteur
+  labels:
+    networking.knative.dev/visibility: cluster-local
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "1"
+        autoscaling.knative.dev/target: "100"
+        deploy.knative.dev/rollout: "2026-02-13T06:00:00.000Z"
+    spec:
+      serviceAccountName: facteur
+      containers:
+        - name: user-container
+          image: registry.ide-newton.ts.net/lab/facteur
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: http1
+              protocol: TCP
+          env:
+            - name: FACTEUR_CONFIG_FILE
+              value: /config/config.yaml
+            - name: FACTEUR_DISCORD_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: facteur-discord
+                  key: bot-token
+            - name: FACTEUR_DISCORD_APPLICATION_ID
+              valueFrom:
+                secretKeyRef:
+                  name: facteur-discord
+                  key: application-id
+            - name: FACTEUR_REDIS_URL
+              value: redis://facteur-redis:6379/0
+            - name: FACTEUR_POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: facteur-vector-cluster-app
+                  key: uri
+            - name: OTEL_SERVICE_NAME
+              value: facteur
+            - name: OTEL_SERVICE_NAMESPACE
+              value: facteur
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: http/protobuf
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              value: http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces
+            - name: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+              value: http://observability-mimir-gateway.observability.svc.cluster.local/otlp/v1/metrics
+            - name: OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
+              value: http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push
+          readinessProbe:
+            successThreshold: 1
+            tcpSocket:
+              port: http1
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: facteur-config

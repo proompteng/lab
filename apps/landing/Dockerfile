@@ -1,0 +1,49 @@
+ARG BUN_VERSION=1.4.0
+
+FROM node:lts-alpine AS deps
+ARG BUN_VERSION
+ENV BUN_INSTALL="/root/.bun"
+ENV PATH="$BUN_INSTALL/bin:$PATH"
+WORKDIR /app
+RUN apk add --no-cache bash curl
+RUN curl -fsSL https://bun.sh/install | bash -s -- bun-v${BUN_VERSION}
+
+COPY package.json bun.lock .npmrc* tsconfig.base.json ./
+COPY --parents apps/*/package.json ./
+COPY --parents packages/*/package.json ./
+COPY --parents services/*/package.json ./
+# Root workspaces include nested service package manifests, so keep the reduced install graph complete.
+COPY --parents services/agents/*/package.json ./
+COPY --parents services/jangar/*/package.json ./
+RUN bun install --frozen-lockfile --ignore-scripts
+
+FROM deps AS builder
+WORKDIR /app
+COPY . .
+RUN bun install --filter @proompteng/backend --frozen-lockfile --ignore-scripts
+RUN bun run build:landing
+
+FROM node:lts-alpine AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+
+RUN addgroup --system --gid 1001 nodejs && \
+  adduser --system --uid 1001 nextjs
+
+COPY --from=builder --chown=nextjs:nodejs /app/apps/landing/.next/standalone /app
+COPY --from=builder --chown=nextjs:nodejs /app/apps/landing/.next/static /app/apps/landing/.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/apps/landing/public /app/apps/landing/public
+COPY --from=builder --chown=nextjs:nodejs /app/services/tengri/proto /app/services/tengri/proto
+
+USER nextjs
+
+EXPOSE 3000
+
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+ENV TENGRI_PROTO_PATH="/app/services/tengri/proto/proompteng/runtime/v1/microvm.proto"
+
+WORKDIR /app/apps/landing
+CMD ["node", "server.js"]

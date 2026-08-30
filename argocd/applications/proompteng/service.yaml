@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: proompteng
+  namespace: proompteng
+spec:
+  selector:
+    app: proompteng
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
