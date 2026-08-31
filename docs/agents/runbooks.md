@@ -74,7 +74,7 @@ kubectl -n agents get deploy \
   -o custom-columns='NAME:.metadata.name,IMAGES:.spec.template.spec.containers[*].image'
 kubectl -n agents get pod \
   -o custom-columns='NAME:.metadata.name,IMAGE_IDS:.status.containerStatuses[*].imageID'
-kubectl get crd agentruns.agents.proompteng.ai orchestrations.agents.proompteng.ai \
+kubectl get crd agentruns.agents.proompteng.ai orchestrations.orchestration.proompteng.ai \
   implementationspecs.agents.proompteng.ai
 ```
 

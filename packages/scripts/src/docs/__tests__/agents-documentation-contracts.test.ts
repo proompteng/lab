@@ -205,6 +205,8 @@ describe('Agents documentation contracts', () => {
     expect(agent).not.toContain('deliveryId:')
     expect(runbook).toContain('kargo/agents')
     expect(runbook).toContain('lab-delivery')
+    expect(runbook).toContain('orchestrations.orchestration.proompteng.ai')
+    expect(runbook).not.toContain('orchestrations.agents.proompteng.ai')
     expect(runbook).not.toContain('Nitro')
     expect(leaderElection).toContain('agents-controller-leader')
     expect(leaderElection).toContain('agents_leader_changes_total')
