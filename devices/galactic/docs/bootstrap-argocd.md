@@ -194,7 +194,7 @@ Then open `http://127.0.0.1:8080`.
 Get the initial admin password:
 
 ```bash
-argocd admin initial-password -n argocd
+argocd admin initial-password --kube-context "$GALACTIC_CONTEXT" -n argocd
 ```
 
 ## Next steps

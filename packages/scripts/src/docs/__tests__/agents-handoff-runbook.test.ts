@@ -28,6 +28,8 @@ it('sanitizes the full Sealed Secrets key backup before restoring it', () => {
   expect(runbook).toContain('data: .data')
   expect(runbook).toContain('chmod 600 "$SEALED_SECRETS_KEY_MANIFEST"')
   expect(runbook).toContain('--server-side --force-conflicts -f "$SEALED_SECRETS_KEY_MANIFEST" -o name')
+  expect(runbook).toContain('argocd admin initial-password --kube-context "$GALACTIC_CONTEXT" -n argocd')
+  expect(runbook).not.toContain('argocd admin initial-password -n argocd')
   expect(runbook).not.toContain('--server-side --force-conflicts -f "$SEALED_SECRETS_KEY_BACKUP_PATH" -o name')
   expect(
     scriptsWorkflow.split('\n').filter((line) => line.trim() === "- 'devices/galactic/docs/bootstrap-argocd.md'"),
