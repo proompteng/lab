@@ -181,6 +181,15 @@ export function codexEventMatchesThread(event: TengriCodexEvent, threadId: strin
   return !event.threadId || event.threadId === threadId
 }
 
+function codexEventRequiresReplayAfterRestore(event: TengriCodexEvent) {
+  return (
+    event.kind === 'approval' ||
+    event.kind === 'warning' ||
+    event.kind === 'error' ||
+    Boolean(codexResolvedApprovalId(event))
+  )
+}
+
 export function codexEventShouldRender(
   event: TengriCodexEvent,
   threadId: string,
@@ -188,7 +197,7 @@ export function codexEventShouldRender(
   restoredHistorySequence = Number.POSITIVE_INFINITY,
 ) {
   if (!codexEventMatchesThread(event, threadId)) return false
-  if (event.kind === 'approval') return true
+  if (event.kind === 'approval' || event.kind === 'warning' || event.kind === 'error') return true
   if (restoredHistorySequence > 0 && event.sequence <= restoredHistorySequence) return false
   return !event.itemId || !restoredItemIds.has(event.itemId) || event.sequence > restoredHistorySequence
 }
@@ -232,7 +241,7 @@ export function appendCodexEventAfterRestore(
   snapshotSequence: number,
 ) {
   const restoredItem = restoredHistory.get(event.itemId)
-  if (event.sequence <= snapshotSequence && event.kind !== 'approval' && !codexResolvedApprovalId(event)) {
+  if (event.sequence <= snapshotSequence && !codexEventRequiresReplayAfterRestore(event)) {
     return current
   }
   const restoredPrefix =

@@ -1625,6 +1625,20 @@ test('does not duplicate snapshot-covered Codex messages when event replay races
       itemId: '',
       text: 'Tokens: 10 input · 4 output',
     },
+    {
+      sequence: 44,
+      kind: 'warning',
+      method: 'tengri/eventOmitted',
+      itemId: '',
+      text: 'One oversized Codex event was omitted',
+    },
+    {
+      sequence: 45,
+      kind: 'error',
+      method: 'turn/completed',
+      itemId: '',
+      text: 'The turn failed',
+    },
   ]) {
     await emitCodexEvent(page, {
       ...replayedEvent,
@@ -1639,6 +1653,8 @@ test('does not duplicate snapshot-covered Codex messages when event replay races
   await expect(page.getByText(progressText, { exact: true })).toHaveCount(1)
   await expect(page.getByText(finalText, { exact: true })).toHaveCount(1)
   await expect(page.getByText('Tokens: 10 input · 4 output', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('One oversized Codex event was omitted', { exact: true })).toHaveCount(1)
+  await expect(page.getByText('The turn failed', { exact: true })).toHaveCount(1)
 })
 
 test('does not resurrect a turn completed while replay recovery is in flight', async ({ page }) => {
