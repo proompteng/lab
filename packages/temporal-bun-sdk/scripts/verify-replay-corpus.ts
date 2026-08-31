@@ -37,7 +37,6 @@ type CorpusEntry = {
   readonly historyEventTypes?: readonly string[]
   readonly temporalServerVersion?: string
   readonly sdkVersion?: string
-  readonly bunVersion?: string
   readonly payloadCodecProfile?: string
   readonly historyEventCount: number
   readonly expectedCommandCount: number
@@ -91,6 +90,9 @@ const sortStrings = (values: readonly string[]): string[] =>
   [...values].sort((left, right) => left.localeCompare(right))
 
 const verifyEntry = async (entry: CorpusEntry): Promise<CorpusResult> => {
+  if ('bunVersion' in entry) {
+    throw new Error(`Replay corpus fixture ${entry.name} must not include bunVersion provenance`)
+  }
   const resolvedPath = resolve(dirname(manifestPath), entry.path)
   if (!existsSync(resolvedPath)) {
     throw new Error(`Replay corpus fixture missing: ${entry.path}`)
@@ -203,9 +205,6 @@ const main = async () => {
     ),
     sdkVersions: sortStrings(
       Array.from(new Set(manifest.fixtures.map((fixture) => fixture.sdkVersion).filter(isString))),
-    ),
-    bunVersions: sortStrings(
-      Array.from(new Set(manifest.fixtures.map((fixture) => fixture.bunVersion).filter(isString))),
     ),
     payloadCodecProfiles: Array.from(
       new Set(manifest.fixtures.map((fixture) => fixture.payloadCodecProfile).filter(isString)),

@@ -4,8 +4,32 @@ on:
   pull_request:
     paths:
       - 'services/jangar/**'
+      - 'services/agents/src/app-routes/**'
+      - 'services/agents/src/components/control-plane/**'
+      - 'services/agents/src/control-plane/**'
+      - 'services/agents/src/routes/**'
+      - 'services/agents/src/server/agents-controller/**'
+      - 'services/agents/src/server/control-plane*.ts'
+      - 'services/agents/src/server/control-plane*/**'
+      - 'services/agents/src/server/v1/control-plane-*.ts'
+      - 'services/agents/src/server/v1/control-plane-*/**'
+      - 'services/agents/src/server/health.ts'
+      - 'services/agents/src/server/metrics.ts'
+      - 'services/agents/src/server/ready.ts'
+      - 'services/agents/src/server/start-runtime.ts'
+      - 'services/agents/src/server/orchestration-controller.ts'
+      - 'services/agents/src/server/supporting-primitives-controller.ts'
       - 'packages/scripts/src/jangar/**'
       - 'argocd/applications/jangar/**'
+      - 'docs/jangar/architecture-inventory.md'
+      - '!services/agents/src/**/*.test.ts'
+      - '!services/agents/src/**/*.test.tsx'
+      - '!services/agents/src/**/*.spec.ts'
+      - '!services/agents/src/**/*.spec.tsx'
+      - '!services/agents/src/**/*.gen.ts'
+      - '!services/agents/src/**/*.gen.tsx'
+      - '!services/agents/src/**/*.generated.ts'
+      - '!services/agents/src/**/*.generated.tsx'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
