@@ -49,10 +49,14 @@ on that named ConfigMap.
 ## GitOps rollout and rollback
 
 Tengri is a singleton `Recreate` Deployment. A GitOps rollout terminates the old control-plane Pod before the new Pod
-becomes ready, so gRPC, event streams, PTY WebSockets, and preview proxy connections are briefly unavailable. Existing
-MicroVM Pods and PVCs continue running; this rollout does not modify a `MicroVM`, Kata, Talos, or any cluster node.
-Clients reconnect after the Service has a ready endpoint, while an operation submitted during the gap returns a
-truthful service-unavailable response and must be retried.
+becomes ready, so gRPC, event streams, PTY WebSockets, and preview proxy connections are briefly unavailable. Clients
+reconnect after the Service has a ready endpoint, while an operation submitted during the gap returns a truthful
+service-unavailable response and must be retried.
+
+The replacement controller hard-migrates every existing `MicroVM.spec.image` to the promoted digest. Sleeping agents
+keep their CR and PVC and use the new digest on resume. Running agents report `GuestImageUpdate`, revoke capabilities
+bound to the old guest, and replace only their owned Firecracker Pod. The CR, bootstrap Secret, and PVC remain in
+place. The migration never changes Kata, Talos, node scheduling, or any cluster node.
 
 Before opening its public listeners, a replacement controller recovers durable provisional-terminal leases from
 Kubernetes. Transient transport failures, HTTP 408/429 responses, and API server 5xx responses use a bounded
@@ -73,7 +77,9 @@ request. The Argo Applications track the generated branch; no promotion PR or ma
 2. In `lab-delivery`, verify that Kargo discovered both immutable images, created the matching Freight, and promoted the
    exact automatic `tengri` Stage. Verify that `kargo/tengri` contains the complete source commit, digests, and build
    provenance, and that the Argo Applications track it at `Synced`/`Healthy`.
-3. Confirm Argo starts one `tengri` Deployment replacement and does not reconcile guest Pods, PVCs, or nodes.
+3. Confirm Argo starts one `tengri` Deployment replacement. Record every `MicroVM`, guest Pod, and PVC UID before the
+   rollout. Confirm each CR adopts the promoted Nanoagent digest, each running guest receives a new Pod UID, and every
+   PVC UID remains unchanged. Confirm no node is mutated.
 4. From a configured `galactic-lan` client, verify the replacement and its control path:
 
    ```bash
@@ -98,8 +104,9 @@ request. The Argo Applications track the generated branch; no promotion PR or ma
    trap - EXIT INT TERM
    ```
 
-5. Confirm the pre-rollout `MicroVM` count and phases are unchanged, then exercise one authenticated read-only control
-   plane request. Do not create a canary DaemonSet or mutate node scheduling to verify this rollout.
+5. Confirm the pre-rollout `MicroVM` count is unchanged, wait for running agents to return to `Ready`, then exercise one
+   authenticated read-only control-plane request and verify persistent workspace contents. Do not create a canary
+   DaemonSet or mutate node scheduling to verify this rollout.
 
 If the replacement cannot become ready, inspect the Kargo Stage, Freight, generated `kargo/tengri` branch, and Argo
 Applications and correct the source-owned failure. Re-promote a previously proven controller/guest Freight pair through

@@ -43,7 +43,6 @@ fn production_crd() -> anyhow::Result<CustomResourceDefinition> {
         "x-kubernetes-validations",
         json!([
             {"rule": "self.spec.ownerHash == oldSelf.spec.ownerHash", "message": "ownerHash is immutable"},
-            {"rule": "self.spec.image == oldSelf.spec.image", "message": "the digest-pinned guest image is immutable"},
             {"rule": "self.spec.architecture == oldSelf.spec.architecture", "message": "the server-selected architecture is immutable"},
             {"rule": "self.spec.resources == oldSelf.spec.resources", "message": "the v1 resource profile is immutable"},
             {
@@ -120,7 +119,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn production_schema_is_fixed_immutable_and_observable() {
+    fn production_schema_is_fixed_controller_owned_and_observable() {
         let crd = serde_json::to_value(production_crd().expect("generate production CRD"))
             .expect("serialize production CRD");
         assert_eq!(
@@ -153,12 +152,21 @@ mod tests {
             Some(&json!("string")),
             "future expiry timestamps must not use kubectl's age-oriented date renderer"
         );
-        assert_eq!(
-            crd.pointer(
-                "/spec/versions/0/schema/openAPIV3Schema/x-kubernetes-validations/1/message"
-            ),
-            Some(&json!("the digest-pinned guest image is immutable"))
+        let validations = crd
+            .pointer("/spec/versions/0/schema/openAPIV3Schema/x-kubernetes-validations")
+            .and_then(Value::as_array)
+            .expect("production validations");
+        assert!(
+            validations.iter().all(|validation| {
+                validation.get("rule").and_then(Value::as_str)
+                    != Some("self.spec.image == oldSelf.spec.image")
+            }),
+            "the controller must be able to hard-migrate existing agents to the configured digest"
         );
+        assert!(validations.iter().any(|validation| {
+            validation.get("rule").and_then(Value::as_str)
+                == Some("self.spec.ownerHash == oldSelf.spec.ownerHash")
+        }));
         assert_eq!(
             crd.pointer(
                 "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/displayName/maxLength"
