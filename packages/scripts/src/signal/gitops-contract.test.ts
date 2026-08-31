@@ -249,14 +249,14 @@ describe('Signal publisher GitOps authority contract', () => {
       'pdb.yaml',
     ])
     expect(archive.spec).toMatchObject({
-      restartNonce: 12,
+      restartNonce: 13,
       job: {
         entryClass: 'ai.proompteng.dorvud.ta.flink.MarketDataArchiveJobKt',
-        parallelism: 7,
+        parallelism: 16,
         state: 'running',
         upgradeMode: 'stateless',
       },
-      taskManager: { replicas: 4 },
+      taskManager: { replicas: 8 },
     })
     expect(Number.isSafeInteger(archive.spec.restartNonce)).toBe(true)
     expect(archive.spec.restartNonce).toBeGreaterThan(0)
@@ -275,7 +275,7 @@ describe('Signal publisher GitOps authority contract', () => {
       ARCHIVE_DELAYED_SIP_QUOTES_TOPIC: 'bayn.market-data.delayed-sip.quotes.v1',
       ARCHIVE_DELAYED_SIP_TRADES_TOPIC: 'bayn.market-data.delayed-sip.trades.v1',
       ARCHIVE_OVERNIGHT_BARS_TOPIC: 'bayn.market-data.overnight.bars.1m.v1',
-      ARCHIVE_PARALLELISM: '7',
+      ARCHIVE_PARALLELISM: '16',
       ARCHIVE_CLICKHOUSE_URL:
         'jdbc:clickhouse://torghut-clickhouse.torghut.svc.cluster.local:8123/signal?clickhouse_setting_insert_quorum_parallel=1',
       ARCHIVE_CLICKHOUSE_USERNAME: 'signal_publisher',
