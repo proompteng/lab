@@ -91,6 +91,7 @@ commit, or paste its contents. Set `SEALED_SECRETS_KEY_BACKUP_PATH` in the shell
 
 ```bash
 set -euo pipefail
+umask 077
 : "${GALACTIC_CONTEXT:?Set GALACTIC_CONTEXT to galactic-lan or galactic-tailscale first}"
 : "${SEALED_SECRETS_KEY_BACKUP_PATH:?Set this to the local 0600 controller-key YAML from approved secret storage}"
 test -s "$SEALED_SECRETS_KEY_BACKUP_PATH"
@@ -99,19 +100,38 @@ test -s "$SEALED_SECRETS_KEY_BACKUP_PATH"
 kubectl --context "$GALACTIC_CONTEXT" create namespace sealed-secrets --dry-run=client -o yaml \
   | kubectl --context "$GALACTIC_CONTEXT" apply --server-side --field-manager=galactic-bootstrap -f - >/dev/null
 
-# Validate metadata and required TLS fields without emitting Secret data.
+# Normalize the full kubectl YAML backup before applying it. Keep only the fields
+# required to restore this key; never apply server-owned metadata from the old cluster.
+SEALED_SECRETS_BOOTSTRAP_DIR="$(mktemp -d)"
+trap 'rm -rf "$SEALED_SECRETS_BOOTSTRAP_DIR"' EXIT
+SEALED_SECRETS_KEY_MANIFEST="$SEALED_SECRETS_BOOTSTRAP_DIR/controller-key.json"
 kubectl --context "$GALACTIC_CONTEXT" -n sealed-secrets apply --dry-run=client \
   -f "$SEALED_SECRETS_KEY_BACKUP_PATH" -o json \
   | jq -e '
-      .kind == "Secret" and
-      (.metadata.namespace == "sealed-secrets" or .metadata.namespace == null) and
-      (.metadata.labels["sealedsecrets.bitnami.com/sealed-secrets-key"] != null) and
-      .type == "kubernetes.io/tls" and
-      (.data | has("tls.crt") and has("tls.key"))
-    ' >/dev/null
+      if .kind == "Secret" and
+         (.metadata.name | type == "string" and length > 0) and
+         (.metadata.namespace == "sealed-secrets" or .metadata.namespace == null) and
+         (.metadata.labels["sealedsecrets.bitnami.com/sealed-secrets-key"] != null) and
+         .type == "kubernetes.io/tls" and
+         (.data | has("tls.crt") and has("tls.key"))
+      then {
+        apiVersion: .apiVersion,
+        kind: .kind,
+        metadata: {
+          name: .metadata.name,
+          namespace: (.metadata.namespace // "sealed-secrets"),
+          labels: .metadata.labels
+        },
+        type: .type,
+        data: .data
+      }
+      else error("controller-key backup is not a valid Sealed Secrets TLS Secret")
+      end
+    ' > "$SEALED_SECRETS_KEY_MANIFEST"
+chmod 600 "$SEALED_SECRETS_KEY_MANIFEST"
 
 SEALED_SECRETS_KEY_NAME="$(kubectl --context "$GALACTIC_CONTEXT" -n sealed-secrets apply \
-  --server-side --force-conflicts -f "$SEALED_SECRETS_KEY_BACKUP_PATH" -o name)"
+  --server-side --force-conflicts -f "$SEALED_SECRETS_KEY_MANIFEST" -o name)"
 test -n "$SEALED_SECRETS_KEY_NAME"
 
 # Install exactly the overlay Argo CD will later adopt. Run this from the repository root inside `nix develop`.
@@ -132,13 +152,11 @@ kubectl --context "$GALACTIC_CONTEXT" -n sealed-secrets get "$SEALED_SECRETS_KEY
     ' >/dev/null
 
 # Verify that the controller serves the restored certificate; no private key or Secret data is printed.
-SEALED_SECRETS_VERIFY_DIR="$(mktemp -d)"
-trap 'rm -rf "$SEALED_SECRETS_VERIFY_DIR"' EXIT
 kubectl --context "$GALACTIC_CONTEXT" -n sealed-secrets get "$SEALED_SECRETS_KEY_NAME" \
-  -o jsonpath='{.data.tls\.crt}' | base64 --decode > "$SEALED_SECRETS_VERIFY_DIR/backup.crt"
+  -o jsonpath='{.data.tls\.crt}' | base64 --decode > "$SEALED_SECRETS_BOOTSTRAP_DIR/backup.crt"
 kubeseal --context "$GALACTIC_CONTEXT" --controller-name sealed-secrets \
-  --controller-namespace sealed-secrets --fetch-cert > "$SEALED_SECRETS_VERIFY_DIR/controller.crt"
-cmp -s "$SEALED_SECRETS_VERIFY_DIR/backup.crt" "$SEALED_SECRETS_VERIFY_DIR/controller.crt"
+  --controller-namespace sealed-secrets --fetch-cert > "$SEALED_SECRETS_BOOTSTRAP_DIR/controller.crt"
+cmp -s "$SEALED_SECRETS_BOOTSTRAP_DIR/backup.crt" "$SEALED_SECRETS_BOOTSTRAP_DIR/controller.crt"
 ```
 
 The final `cmp` is the key gate: it proves the running controller is serving the restored certificate. Do not proceed
