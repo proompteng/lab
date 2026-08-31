@@ -169,7 +169,7 @@ export async function POST(request: Request) {
         result = null
         break
       case 'preview-session':
-        result = await issuePreviewSession(identity.subject, action.agentId, action.port, action.path)
+        result = await issuePreviewSession(identity.subject, action.agentId, action.port, action.path, action.fragment)
         break
       case 'revoke-preview-session':
         await revokePreviewSession(identity.subject, action.agentId, action.sessionId)

@@ -13,7 +13,9 @@ import {
 const inventory = loadEnabledAppInventory()
 const platformApplicationSet = readFileSync('argocd/applicationsets/platform.yaml', 'utf8')
 const bootstrapApplicationSet = readFileSync('argocd/applicationsets/bootstrap.yaml', 'utf8')
+const applicationSetsReadme = readFileSync('argocd/applicationsets/README.md', 'utf8')
 const argoCdKustomization = readFileSync('argocd/applications/argocd/kustomization.yaml', 'utf8')
+const argoCdReadme = readFileSync('argocd/applications/argocd/README.md', 'utf8')
 const argoCdApplicationSetCrdOverlay = readFileSync(
   'argocd/applications/argocd/overlays/argocd-applicationset-crd.yaml',
   'utf8',
@@ -368,7 +370,15 @@ describe('enabled app inventory', () => {
   })
 
   it('pins the Argo control-plane upgrade wave and applies its large CRD server-side', () => {
-    expect(argoCdKustomization).toContain('argo-cd/v3.4.6/manifests/ha/install.yaml')
+    expect(argoCdKustomization).toContain('argo-cd/v3.5.2/manifests/ha/install.yaml')
+    expect(argoCdKustomization).not.toContain('argo-cd/v3.4.6/')
+    expect(applicationSetsReadme.split('argo-cd/v3.5.2/manifests/crds/applicationset-crd.yaml')).toHaveLength(3)
+    expect(applicationSetsReadme).not.toContain('argo-cd/v3.4.6/')
+    expect(argoCdReadme).toContain('## Argo CD v3.5.2 upgrade')
+    expect(argoCdReadme).toContain('argocd login argocd.proompteng.ai --username admin --grpc-web')
+    expect(argoCdReadme).not.toContain('argocd login argocd.proompteng.ai --sso')
+    expect(argoCdReadme).toContain('kargo login https://kargo.ide-newton.ts.net --sso')
+    expect(argoCdReadme).toContain('first normal Kargo promotion')
     expect(argoCdKustomization).not.toContain('argocd-image-updater')
     expect(argoCdLovelyPluginOverlay).toContain('ghcr.io/crumbhole/lovely:1.2.5')
     expect(argoCdApplicationSetCrdOverlay).toContain(
@@ -600,12 +610,8 @@ describe('enabled app inventory', () => {
       'attic',
       'symphony',
       'symphony-jangar',
-      'symphony-torghut',
       'jangar',
       'torghut',
-      'torghut-hyperliquid-feed',
-      'torghut-hyperliquid-runtime',
-      'torghut-options',
     ]) {
       expect(entry(name).class).toBe('nix-image')
       expect(entry(name).repoImages.length).toBeGreaterThan(0)
@@ -625,12 +631,8 @@ describe('enabled app inventory', () => {
     expect(entry('arc').nixImageAttr).toBe('arc-runner-image')
     expect(entry('symphony').nixImageAttr).toBe('symphony-image')
     expect(entry('symphony-jangar').nixImageAttr).toBe('symphony-image')
-    expect(entry('symphony-torghut').nixImageAttr).toBe('symphony-image')
     expect(entry('jangar').nixImageAttr).toBe('jangar-image')
     expect(entry('torghut').nixImageAttr).toBe('torghut-image')
-    expect(entry('torghut-hyperliquid-feed').nixImageAttr).toBe('torghut-hyperliquid-feed-image')
-    expect(entry('torghut-hyperliquid-runtime').nixImageAttr).toBe('torghut-image')
-    expect(entry('torghut-options').nixImageAttr).toBe('torghut-image')
   })
 
   it('tracks the live Attic image through both GitHub Actions and manual deploy paths', () => {
@@ -673,47 +675,26 @@ describe('enabled app inventory', () => {
     expect(entry('jangar').workflowPaths).toContain('.github/workflows/jangar-build-push.yaml')
   })
 
-  it('tracks Symphony derivative apps through the shared Symphony Nix image path', () => {
-    for (const name of ['symphony-jangar', 'symphony-torghut']) {
-      expect(entry(name)).toMatchObject({
-        class: 'nix-image',
-        nixImageAttr: 'symphony-image',
-        buildScriptPath: 'packages/scripts/src/symphony/build-image.ts',
-        deployScriptPath: 'packages/scripts/src/symphony/deploy-service.ts',
-      })
-      expect(entry(name).workflowPaths).toContain('.github/workflows/symphony-build-push.yaml')
-      expect(entry(name).deferredReason).toBeUndefined()
-    }
+  it('tracks the Symphony Jangar derivative through the shared Symphony Nix image path', () => {
+    expect(entry('symphony-jangar')).toMatchObject({
+      class: 'nix-image',
+      nixImageAttr: 'symphony-image',
+      buildScriptPath: 'packages/scripts/src/symphony/build-image.ts',
+      deployScriptPath: 'packages/scripts/src/symphony/deploy-service.ts',
+    })
+    expect(entry('symphony-jangar').workflowPaths).toContain('.github/workflows/symphony-build-push.yaml')
+    expect(entry('symphony-jangar').deferredReason).toBeUndefined()
   })
 
-  it('tracks Torghut-family enabled apps through explicit Nix image ownership paths', () => {
-    expect(entry('torghut-hyperliquid-feed')).toMatchObject({
-      class: 'nix-image',
-      nixImageAttr: 'torghut-hyperliquid-feed-image',
-      buildScriptPath: 'packages/scripts/src/torghut/build-hyperliquid-feed-image.ts',
-      deployScriptPath: 'packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts',
-    })
-    expect(entry('torghut-hyperliquid-feed').workflowPaths).toContain(
-      '.github/workflows/torghut-hyperliquid-feed-build-push.yaml',
-    )
-
-    expect(entry('torghut-hyperliquid-runtime')).toMatchObject({
-      class: 'nix-image',
-      nixImageAttr: 'torghut-image',
-      buildScriptPath: 'packages/scripts/src/torghut/build-image.ts',
-      deployScriptPath: 'packages/scripts/src/torghut/update-manifests.ts',
-    })
-    expect(entry('torghut-hyperliquid-runtime').workflowPaths).toContain('.github/workflows/torghut-build-push.yaml')
-
-    expect(entry('torghut-options')).toMatchObject({
-      class: 'nix-image',
-      nixImageAttr: 'torghut-image',
-      buildScriptPath: 'packages/scripts/src/torghut/build-image.ts',
-      deployScriptPath: 'packages/scripts/src/torghut/update-manifests.ts',
-    })
-    expect(entry('torghut-options').workflowPaths).toContain('.github/workflows/torghut-build-push.yaml')
-    expect(entry('torghut-options').workflowPaths).toContain('.github/workflows/torghut-ws-build-push.yaml')
-    expect(entry('torghut-options').workflowPaths).toContain('.github/workflows/torghut-ta-build-push.yaml')
+  it('excludes retired Torghut applications from the enabled inventory', () => {
+    for (const name of [
+      'symphony-torghut',
+      'torghut-options',
+      'torghut-hyperliquid-feed',
+      'torghut-hyperliquid-runtime',
+    ]) {
+      expect(inventory.entries.some((candidate) => candidate.name === name)).toBe(false)
+    }
   })
 
   it('keeps repo-image apps without local build ownership out of Nix migration state', () => {

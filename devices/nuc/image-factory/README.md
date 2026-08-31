@@ -7,8 +7,9 @@ Compose network.
 
 The factory replaces the upstream extension catalog with the accepted signed r4 catalog at
 `ghcr.io/proompteng/talos-extensions:v1.13.9`. That catalog contains every official Sidero Labs extension plus
-`proompteng/talos-kata-runtimes`. The current Kata workflow is validation-only and cannot replace this catalog. This is
-the supported community path: the separate `enterprise.extraExtensions` feature is not required.
+`proompteng/talos-kata-runtimes`. The Kata workflow publishes signed r5 candidates to the private registry, but does
+not replace this accepted catalog or authorize a node rollout. This is the supported community path: the separate
+`enterprise.extraExtensions` feature is not required.
 
 ## Trust and persistent state
 
