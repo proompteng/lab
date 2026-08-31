@@ -19,6 +19,7 @@ configMapGenerator:
       - bootstrap-github.sh
       - terminal-profile.sh
       - backup-once.sh
+      - backup-output-policy.sh
       - AGENTS.md=bootstrap/AGENTS.md
       - HEARTBEAT.md=bootstrap/HEARTBEAT.md
       - IDENTITY.md=bootstrap/IDENTITY.md

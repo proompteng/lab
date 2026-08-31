@@ -58,7 +58,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
                 - name: init-dind-externals
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:d7690c5c34037ce945c44edd362e6d61e6b625622bc69cff17aa0a28923a705e
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:cc9a44aec6e2164005eb04c7983359a8fe7f0b58e1e79d27ff140b686da709b1
                   command: ["cp", "-r", "-v", "/home/runner/externals/.", "/home/runner/tmpDir/"]
                   resources:
                     requests:
@@ -69,7 +69,7 @@ spec:
                       memory: "256Mi"
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:d7690c5c34037ce945c44edd362e6d61e6b625622bc69cff17aa0a28923a705e
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:cc9a44aec6e2164005eb04c7983359a8fe7f0b58e1e79d27ff140b686da709b1
                   command: ["/bin/bash", "-lc"]
                   args:
                     - |
@@ -184,7 +184,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
                 - name: init-dind-externals
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:d7690c5c34037ce945c44edd362e6d61e6b625622bc69cff17aa0a28923a705e
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:cc9a44aec6e2164005eb04c7983359a8fe7f0b58e1e79d27ff140b686da709b1
                   command: ["cp", "-r", "-v", "/home/runner/externals/.", "/home/runner/tmpDir/"]
                   resources:
                     requests:
@@ -195,7 +195,7 @@ spec:
                       memory: "256Mi"
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:d7690c5c34037ce945c44edd362e6d61e6b625622bc69cff17aa0a28923a705e
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:cc9a44aec6e2164005eb04c7983359a8fe7f0b58e1e79d27ff140b686da709b1
                   command: ["/bin/bash", "-lc"]
                   args:
                     - |
@@ -315,7 +315,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
                 - name: init-dind-externals
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:d7690c5c34037ce945c44edd362e6d61e6b625622bc69cff17aa0a28923a705e
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:cc9a44aec6e2164005eb04c7983359a8fe7f0b58e1e79d27ff140b686da709b1
                   command: ["cp", "-r", "-v", "/home/runner/externals/.", "/home/runner/tmpDir/"]
                   resources:
                     requests:
@@ -326,7 +326,7 @@ spec:
                       memory: "256Mi"
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:d7690c5c34037ce945c44edd362e6d61e6b625622bc69cff17aa0a28923a705e
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:cc9a44aec6e2164005eb04c7983359a8fe7f0b58e1e79d27ff140b686da709b1
                   command: ["/bin/bash", "-lc"]
                   args:
                     - |

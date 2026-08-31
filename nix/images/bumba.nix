@@ -11,8 +11,8 @@ import ./bun-workspace-service.nix {
   serviceName = "bumba";
   packageName = "@proompteng/bumba";
   depsHash = {
-    x86_64-linux = "sha256-fS1drRuxef6H6QieDU9afrqsjVyKIll8/qB4ZLUoWlY=";
-    aarch64-linux = "sha256-rjshdlEOFK2MxVJGfQDzNw9ASJ6p60+CUlbk5aZtP1M=";
+    x86_64-linux = "sha256-dpvr0jcFO6hBBoVvjI0wyUwOzqX0/lPkDAp+CgsFv08=";
+    aarch64-linux = "sha256-Hutk1t+c2KvaMlQK0aXiuVRh3nNvaw3oIYIP7fQpJP0=";
   };
   installFilters = [
     "@proompteng/bumba"

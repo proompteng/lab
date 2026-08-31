@@ -37,18 +37,41 @@ extension catalog, and assembled into three architecture-specific Talos installe
 - `turin-amd64`: Kata plus the NVIDIA LTS kernel/toolkit extensions and Tailscale;
 - `altra-arm64`: Kata plus the NVIDIA LTS kernel/toolkit extensions and Tailscale.
 
-For a local extension-only validation:
+The r5 source patch adds an explicit persistent block-volume handoff between runtime-rs and kata-agent. It is pinned to
+Kata commit `894e1956bb340752b30f7ad49879972234a0098c`; CI applies the reviewed patch, runs its focused Linux tests, and
+builds the patched agent and runtime-rs shim natively on `amd64` and `arm64`. The extension injects that agent into the
+otherwise stock Kata Ubuntu guest image and publishes signed, architecture-specific Talos installers to the private
+registry. It does not alter a node automatically.
+
+Persistent devices use a sandbox-stable mount keyed by the guest device source, so multiple containers sharing one
+Pod reuse the existing mount instead of checking a mounted filesystem. Device paths are escaped injectively before
+they become annotation identifiers. The agent preserves existing ext4 filesystems and refuses to format a device
+whose filesystem signature is absent unless the controller supplies a unique `initialization_token` for an
+authoritatively new volume. Successful initialization records the consumed token in ext4's reserved 1024-byte boot
+area; replayed tokens and occupied boot areas fail closed. Normal restart Pods must omit the token. This avoids unsafe
+reformatting and a synchronous full-volume scan during container creation.
+
+Reproduce the patched components from an exact clean Kata checkout:
+
+```bash
+devices/galactic/extensions/kata/build-patched-kata.sh \
+  /path/to/kata-containers \
+  devices/galactic/extensions/kata/artifacts/$(dpkg --print-architecture)
+```
+
+Then build the native extension image:
 
 ```bash
 docker buildx build \
-  --platform linux/amd64,linux/arm64 \
+  --platform linux/$(dpkg --print-architecture) \
   --tag talos-kata-runtimes:validation \
   devices/galactic/extensions/kata
 ```
 
-The checked-in workflow now validates both architectures without publishing. The installed r4 release remains pinned
-to its existing immutable GHCR receipts; this repository move does not rebuild or replace it. Any future publication
-must use `registry.ide-newton.ts.net`, and consuming that release is a separate node-image rollout.
+The checked-in workflow validates both architectures on pull requests. On `main`, it publishes the extension and the
+three signed installers under `registry.ide-newton.ts.net/lab/talos-kata-runtimes`. Ryzen installed and accepted its
+immutable r5 installer on 2026-08-30. Turin and Altra remain pinned to their accepted r4 GHCR receipts until each gets
+a separately authorized, one-node-at-a-time r5 rollout and live acceptance.
 
 To reproduce an existing installer, use only the immutable extension digest recorded in the release receipt:
 
@@ -113,6 +136,27 @@ test -z "$(kubectl --context galactic-lan -n kata get daemonset -o name)"
 ```
 
 The runtime verifier rejects the rollout while any `microvm-agent-*` or `nanoagent-*` canary DaemonSet remains.
+
+The four runtime activation labels are deliberately unversioned. Before changing the installer on a node that already
+passed an earlier Kata release, keep that target cordoned and remove all four labels from that target only. This must
+happen before the installer or Omni reboot operation starts, so an automatically uncordoned returning node cannot
+accept Kata workloads on unproved replacement handlers:
+
+```bash
+kubectl --context galactic-lan label node <node> \
+  runtime.proompteng.ai/kata-qemu- \
+  runtime.proompteng.ai/kata-clh- \
+  runtime.proompteng.ai/kata-fc- \
+  runtime.proompteng.ai/kata-dragonball-
+test "$(kubectl --context galactic-lan get node <node> -o json | jq \
+  '[.metadata.labels | has("runtime.proompteng.ai/kata-qemu"),
+    has("runtime.proompteng.ai/kata-clh"),
+    has("runtime.proompteng.ai/kata-fc"),
+    has("runtime.proompteng.ai/kata-dragonball")] | any')" = false
+```
+
+Never remove activation labels from a non-target node. Re-add each target label only after that runtime passes the
+fresh post-install proof below.
 
 Omni normally uncordons a node when its reboot lifecycle finalizes. Immediately cordon the returned node again for
 runtime validation and require `Ready,SchedulingDisabled` before applying any runtime label:

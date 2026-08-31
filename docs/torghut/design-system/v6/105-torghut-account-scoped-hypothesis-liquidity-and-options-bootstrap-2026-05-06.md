@@ -2,20 +2,6 @@
 
 Status: Accepted for engineer and deployer handoff
 
-## Source Implementation Audit (2026-07-04)
-
-- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
-- Implementation status: Partially implemented: options data/control lane exists; options trading authority remains separate and gated.
-- Matched implementation area: Options lane.
-- Current source evidence:
-  - `services/torghut/app/options_lane/settings.py`
-  - `services/torghut/app/options_lane/catalog_service.py`
-  - `services/torghut/app/options_lane/enricher_service.py`
-  - `argocd/applications/torghut-options/ws/deployment.yaml`
-  - `argocd/applications/torghut-options/ta/flinkdeployment.yaml`
-- Design drift note: March/options text must be checked against current `options_lane` source and `torghut-options` GitOps before use.
-
-
 ## Decision
 
 I am choosing an **account-scoped hypothesis liquidity book with an options bootstrap lane** for Torghut.
