@@ -211,6 +211,13 @@ export const isExecutionMandateFailureRestriction = (reason: string | undefined)
   reason?.startsWith(legacyExecutionMandateFailureRestrictionPrefix) === true ||
   (reason !== undefined && legacyExecutionMandateFailureRestriction.test(reason))
 
+const unfinishedCycleReadFailure = 'oldest unfinished mutation cycle read failed'
+
+/** A database read failed before a cycle, intent, or broker mutation could advance. */
+export const isExecutionCyclePreflightStoreRestriction = (reason: string | undefined): boolean =>
+  reason === `${executionMandateFailureRestrictionPrefix} read-oldest-unfinished: ${unfinishedCycleReadFailure}` ||
+  reason === `${executionMandateFailureRestrictionPrefix} recover-cycle: ${unfinishedCycleReadFailure}`
+
 /** Restrictions whose current bound cycle must be allowed to reach the existing terminal recovery owner. */
 export const isExecutionMandateRecoveryRestriction = (reason: string | undefined): boolean =>
   reason === reconciliationIncompleteRestrictionReason || isExecutionMandateFailureRestriction(reason)
@@ -263,6 +270,9 @@ export const decideExecutionMandateAuthority = (
     facts.kill === 'ACTIVE' &&
     facts.generationHash !== facts.sourceGenerationHash
   if (isRestrictedPaperAuthority && facts.reason === reconciliationIncompleteRestrictionReason) {
+    return Result.succeed({ _tag: 'Rearm' })
+  }
+  if (isRestrictedPaperAuthority && isExecutionCyclePreflightStoreRestriction(facts.reason)) {
     return Result.succeed({ _tag: 'Rearm' })
   }
   if (isRestrictedPaperAuthority && isExecutionMandateFailureRestriction(facts.reason)) {

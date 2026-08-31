@@ -26,6 +26,19 @@ spec:
     - from:
         - namespaceSelector:
             matchLabels:
+              kubernetes.io/metadata.name: tailscale
+          podSelector:
+            matchLabels:
+              tailscale.com/managed: "true"
+              tailscale.com/parent-resource-ns: hermes
+              tailscale.com/parent-resource-type: ingress
+              tailscale.com/parent-resource: hermes-tailscale
+      ports:
+        - protocol: TCP
+          port: 8642
+    - from:
+        - namespaceSelector:
+            matchLabels:
               kubernetes.io/metadata.name: hermes
       ports:
         - protocol: TCP

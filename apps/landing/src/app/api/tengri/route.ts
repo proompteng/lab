@@ -7,6 +7,7 @@ import {
   deleteAgent,
   deleteFile,
   getCodexAccount,
+  getCodexLogin,
   interruptCodexTurn,
   isTengriControlPlaneConfigured,
   issuePreviewSession,
@@ -144,6 +145,9 @@ export async function POST(request: Request) {
         break
       case 'codex-account':
         result = await getCodexAccount(identity.subject, action.agentId, request.signal)
+        break
+      case 'codex-login-status':
+        result = await getCodexLogin(identity.subject, action.agentId, request.signal)
         break
       case 'codex-login':
         result = await startCodexLogin(identity.subject, action.agentId)

@@ -67,6 +67,13 @@ type codexPendingResult struct {
 type codexCallResult struct {
 	result        json.RawMessage
 	eventSequence uint64
+	generation    *codexProcessGeneration
+}
+
+type codexLoginSnapshot struct {
+	Active    bool            `json:"active"`
+	Result    json.RawMessage `json:"result,omitempty"`
+	StartedAt string          `json:"startedAt,omitempty"`
 }
 
 type codexSubscription struct {
@@ -96,19 +103,24 @@ type codexSupervisor struct {
 	loginMu         sync.Mutex
 	responseTimeout time.Duration
 
-	mu             sync.Mutex
-	command        *exec.Cmd
-	stdin          io.WriteCloser
-	generation     *codexProcessGeneration
-	pending        map[string]chan codexPendingResult
-	approvals      map[string]codexApproval
-	activeLoginID  string
-	sequence       uint64
-	buffer         []codexEvent
-	bufferBytes    int
-	subscriptions  map[uint64]codexSubscription
-	nextSubscriber uint64
-	shutdown       chan struct{}
+	mu              sync.Mutex
+	command         *exec.Cmd
+	stdin           io.WriteCloser
+	generation      *codexProcessGeneration
+	pending         map[string]chan codexPendingResult
+	approvals       map[string]codexApproval
+	activeLoginID   string
+	activeLogin     json.RawMessage
+	loginStartedAt  time.Time
+	loginGeneration *codexProcessGeneration
+	loginOperation  *codexProcessGeneration
+	loginCompleted  map[string]struct{}
+	sequence        uint64
+	buffer          []codexEvent
+	bufferBytes     int
+	subscriptions   map[uint64]codexSubscription
+	nextSubscriber  uint64
+	shutdown        chan struct{}
 }
 
 func newCodexSupervisor(binary, cwd string) *codexSupervisor {
@@ -296,8 +308,22 @@ func (supervisor *codexSupervisor) startLogin(ctx context.Context, params json.R
 	defer supervisor.loginMu.Unlock()
 
 	supervisor.mu.Lock()
+	if supervisor.loginGeneration != supervisor.generation {
+		supervisor.clearLoginLocked()
+	}
+	operationGeneration := supervisor.generation
+	supervisor.loginOperation = operationGeneration
+	supervisor.loginCompleted = make(map[string]struct{})
 	previousLoginID := supervisor.activeLoginID
 	supervisor.mu.Unlock()
+	defer func() {
+		supervisor.mu.Lock()
+		if supervisor.loginOperation == operationGeneration {
+			supervisor.loginOperation = nil
+			supervisor.loginCompleted = nil
+		}
+		supervisor.mu.Unlock()
+	}()
 	if previousLoginID != "" {
 		cancelParams, _ := json.Marshal(map[string]string{"loginId": previousLoginID})
 		cancelContext, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -308,7 +334,7 @@ func (supervisor *codexSupervisor) startLogin(ctx context.Context, params json.R
 		}
 		supervisor.mu.Lock()
 		if supervisor.activeLoginID == previousLoginID {
-			supervisor.activeLoginID = ""
+			supervisor.clearLoginLocked()
 		}
 		supervisor.mu.Unlock()
 	}
@@ -323,9 +349,39 @@ func (supervisor *codexSupervisor) startLogin(ctx context.Context, params json.R
 		return codexCallResult{}, errors.New("Codex app-server returned an invalid device login")
 	}
 	supervisor.mu.Lock()
-	supervisor.activeLoginID = login.LoginID
+	_, completed := supervisor.loginCompleted[login.LoginID]
+	if supervisor.loginOperation == result.generation && !completed {
+		supervisor.activeLoginID = login.LoginID
+		supervisor.activeLogin = append(json.RawMessage(nil), result.result...)
+		supervisor.loginStartedAt = time.Now().UTC()
+		supervisor.loginGeneration = result.generation
+	}
 	supervisor.mu.Unlock()
 	return result, nil
+}
+
+func (supervisor *codexSupervisor) loginSnapshot() codexLoginSnapshot {
+	supervisor.mu.Lock()
+	defer supervisor.mu.Unlock()
+	if supervisor.activeLoginID == "" ||
+		len(supervisor.activeLogin) == 0 ||
+		supervisor.loginStartedAt.IsZero() ||
+		supervisor.loginGeneration != supervisor.generation ||
+		supervisor.generation.failure != nil {
+		return codexLoginSnapshot{}
+	}
+	return codexLoginSnapshot{
+		Active:    true,
+		Result:    append(json.RawMessage(nil), supervisor.activeLogin...),
+		StartedAt: supervisor.loginStartedAt.Format(time.RFC3339Nano),
+	}
+}
+
+func (supervisor *codexSupervisor) clearLoginLocked() {
+	supervisor.activeLoginID = ""
+	supervisor.activeLogin = nil
+	supervisor.loginStartedAt = time.Time{}
+	supervisor.loginGeneration = nil
 }
 
 func (supervisor *codexSupervisor) request(
@@ -379,7 +435,11 @@ func (supervisor *codexSupervisor) request(
 		if len(result.err) > 0 && string(result.err) != "null" {
 			return codexCallResult{}, fmt.Errorf("Codex app-server request failed: %s", compactJSON(result.err))
 		}
-		return codexCallResult{result: result.result, eventSequence: result.eventSequence}, nil
+		return codexCallResult{
+			result:        result.result,
+			eventSequence: result.eventSequence,
+			generation:    generation,
+		}, nil
 	}
 }
 
@@ -503,8 +563,14 @@ func (supervisor *codexSupervisor) handleServerMessage(
 		}
 		if json.Unmarshal(message.Params, &params) == nil {
 			supervisor.mu.Lock()
-			if supervisor.generation == generation && (params.LoginID == "" || supervisor.activeLoginID == params.LoginID) {
-				supervisor.activeLoginID = ""
+			if supervisor.generation == generation {
+				if params.LoginID != "" && supervisor.loginOperation == generation {
+					supervisor.loginCompleted[params.LoginID] = struct{}{}
+				}
+				if supervisor.loginGeneration == generation &&
+					(params.LoginID == "" || supervisor.activeLoginID == params.LoginID) {
+					supervisor.clearLoginLocked()
+				}
 			}
 			supervisor.mu.Unlock()
 		}
@@ -1007,7 +1073,9 @@ func (supervisor *codexSupervisor) failProcess(err error) {
 	pending := supervisor.pending
 	supervisor.pending = make(map[string]chan codexPendingResult)
 	supervisor.approvals = make(map[string]codexApproval)
-	supervisor.activeLoginID = ""
+	supervisor.clearLoginLocked()
+	supervisor.loginOperation = nil
+	supervisor.loginCompleted = nil
 	supervisor.mu.Unlock()
 	encoded, _ := json.Marshal(map[string]string{"message": err.Error()})
 	for _, channel := range pending {
@@ -1059,6 +1127,14 @@ func (server *apiServer) handleCodexCall(writer http.ResponseWriter, request *ht
 		return
 	}
 	writeJSON(writer, http.StatusOK, codexCallResponse{Result: result.result, EventSequence: result.eventSequence})
+}
+
+func (server *apiServer) handleCodexLogin(writer http.ResponseWriter, _ *http.Request) {
+	if server.codex == nil {
+		writeAPIError(writer, http.StatusServiceUnavailable, "Codex app-server is disabled")
+		return
+	}
+	writeJSON(writer, http.StatusOK, server.codex.loginSnapshot())
 }
 
 func (server *apiServer) handleCodexApproval(writer http.ResponseWriter, request *http.Request) {

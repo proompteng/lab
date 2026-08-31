@@ -893,7 +893,12 @@ const readUnfinishedMutationCycle = (
       }),
     ),
     Effect.mapError((cause) =>
-      mutationRunnerError({ message: 'oldest unfinished mutation cycle read failed', cause, failure: 'store' }),
+      mutationRunnerError({
+        operation: 'read-oldest-unfinished',
+        message: 'oldest unfinished mutation cycle read failed',
+        cause,
+        failure: 'store',
+      }),
     ),
     Effect.map(Option.getOrUndefined),
   )
