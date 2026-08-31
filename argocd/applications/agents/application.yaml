@@ -1,3 +1,5 @@
+# Legacy standalone manifest retained pending repository cleanup. Do not apply it: the `agents` Application is generated
+# by `argocd/applicationsets/product.yaml` and promoted from `kargo/agents`.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

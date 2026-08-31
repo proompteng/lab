@@ -27,7 +27,7 @@ import {
   windowIdForOpen,
   windowReducer,
 } from '@/lib/tengri/window-manager'
-import { ChromeApp } from './chrome-app'
+import { ChromeApp, useExternalPreviewLifecycle } from './chrome-app'
 import {
   beginTengriLifecycleTransition,
   getTengriGuestOperationSnapshot,
@@ -247,6 +247,7 @@ export function ReadyDesktop({
   const lifecycleTransitionReleaseRef = useRef<(() => void) | null>(null)
   const terminalCloseHandlersRef = useRef(new Map<string, () => void>())
   const reducedMotion = useReducedMotion()
+  const openExternalPreview = useExternalPreviewLifecycle(agent.id, previewGatewayOrigin)
 
   useEffect(
     () =>
@@ -740,6 +741,7 @@ export function ReadyDesktop({
                 <ChromeApp
                   active={desktopWindow.id === windowState.activeWindowId}
                   agentId={agent.id}
+                  onOpenExternalPreview={openExternalPreview}
                   previewGatewayOrigin={previewGatewayOrigin}
                 />
               ) : desktopWindow.app === 'code' ? (
