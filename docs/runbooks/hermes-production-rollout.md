@@ -36,15 +36,39 @@ git fetch --quiet origin kargo/hermes-toolchain
 main_revision=$(git rev-parse origin/main)
 kargo_revision=$(git rev-parse origin/kargo/hermes-toolchain)
 test "$(git rev-parse origin/kargo/hermes-toolchain)" = "$kargo_revision"
-upstream_digest=$(crane digest docker.io/nousresearch/hermes-agent:v2026.7.7.2)
-mirror_digest=$(crane digest registry.ide-newton.ts.net/lab/hermes-agent:v2026.7.7.2-amd64)
+upstream_ref=docker.io/nousresearch/hermes-agent:v2026.8.27
+mirror_ref=registry.ide-newton.ts.net/lab/hermes-agent:v2026.8.27-amd64
+upstream_digest=$(crane digest "$upstream_ref")
+upstream_manifest=$(crane manifest "$upstream_ref")
+upstream_amd64_digest=$(printf '%s' "$upstream_manifest" | jq -er '
+  .manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest
+')
+upstream_attestation_digest=$(printf '%s' "$upstream_manifest" | jq -er --arg subject "$upstream_amd64_digest" '
+  .manifests[]
+  | select(
+      .annotations["vnd.docker.reference.type"] == "attestation-manifest" and
+      .annotations["vnd.docker.reference.digest"] == $subject
+    )
+  | .digest
+')
+provenance_subject=$(crane manifest "docker.io/nousresearch/hermes-agent@$upstream_attestation_digest" | \
+  jq -er '.subject.digest')
+upstream_revision=$(crane config --platform linux/amd64 "$upstream_ref" | \
+  jq -er '.config.Labels["org.opencontainers.image.revision"]')
+mirror_digest=$(crane digest "$mirror_ref")
+mirror_revision=$(crane config "$mirror_ref" | jq -er '.config.Labels["org.opencontainers.image.revision"]')
 toolchain_ref=$(git show "origin/kargo/hermes-toolchain:argocd/applications/hermes/statefulset.yaml" | \
   sed -n 's#.*reference: \(registry\.ide-newton\.ts\.net/lab/hermes-toolchain@sha256:[0-9a-f]\{64\}\).*#\1#p')
 test -n "$toolchain_ref"
 test "$(printf '%s\n' "$toolchain_ref" | wc -l | tr -d '[:space:]')" -eq 1
 toolchain_digest=$(crane digest "$toolchain_ref")
-test "$upstream_digest" = sha256:9c841866021c54c4596849f6135717e8a4d52ba510b7f52c50aef1de1a283973
-test "$mirror_digest" = sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a
+test "$upstream_digest" = sha256:e0df6adebddf29b91112aefc999d4aaf6846c9eb544faca5672a16a13590ff79
+test "$upstream_amd64_digest" = sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843
+test "$upstream_attestation_digest" = sha256:450e5016e0a278396f097abbb8a2f54418e0980dd09e60dbf5f48eab96e06a9c
+test "$provenance_subject" = "$upstream_amd64_digest"
+test "$upstream_revision" = 5fc308a70719a83cccdbba4c0e39c23f5a8239d5
+test "$mirror_digest" = sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843
+test "$mirror_revision" = "$upstream_revision"
 test "$toolchain_digest" = "${toolchain_ref##*@}"
 toolchain_platforms=$(crane manifest "$toolchain_ref" | jq -r \
   '[.manifests[].platform | "\(.os)/\(.architecture)"] | sort | join(",")')
@@ -67,15 +91,22 @@ hermes_revision=$(kubectl -n argocd get application hermes -o jsonpath='{.status
 hermes_target_revision=$(kubectl -n argocd get application hermes -o jsonpath='{.spec.source.targetRevision}')
 test "$hermes_target_revision" = kargo/hermes-toolchain
 test "$hermes_revision" = "$kargo_revision"
-printf 'main=%s kargo=%s upstream=%s mirror=%s argo=%s\n' \
-  "$main_revision" "$kargo_revision" "$upstream_digest" "$mirror_digest" "$hermes_revision"
+printf 'main=%s kargo=%s upstream=%s amd64=%s attestation=%s mirror=%s revision=%s argo=%s\n' \
+  "$main_revision" "$kargo_revision" "$upstream_digest" "$upstream_amd64_digest" \
+  "$upstream_attestation_digest" "$mirror_digest" "$upstream_revision" "$hermes_revision"
 printf 'toolchain=%s platforms=%s\n' "$toolchain_digest" "$toolchain_platforms"
-unset main_revision kargo_revision upstream_digest mirror_digest toolchain_ref toolchain_digest toolchain_platforms platform hermes_revision hermes_target_revision
+unset main_revision kargo_revision upstream_ref mirror_ref upstream_digest upstream_manifest upstream_amd64_digest
+unset upstream_attestation_digest provenance_subject upstream_revision mirror_digest mirror_revision
+unset toolchain_ref toolchain_digest toolchain_platforms platform hermes_revision hermes_target_revision
 ```
 
-The expected upstream index digest is `sha256:9c841866021c54c4596849f6135717e8a4d52ba510b7f52c50aef1de1a283973`.
+The expected upstream index digest is `sha256:e0df6adebddf29b91112aefc999d4aaf6846c9eb544faca5672a16a13590ff79`.
+The expected upstream amd64 manifest digest is
+`sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843`; its attached SLSA provenance manifest is
+`sha256:450e5016e0a278396f097abbb8a2f54418e0980dd09e60dbf5f48eab96e06a9c` and records source revision
+`5fc308a70719a83cccdbba4c0e39c23f5a8239d5`.
 The expected mirrored amd64 manifest digest is
-`sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a`.
+`sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843`.
 The current Hermes toolchain digest is intentionally not repeated in this runbook. The Kargo-managed StatefulSet on
 `kargo/hermes-toolchain` is the sole committed owner; derive its `reference` as shown above and verify the resolved image
 digest and platform labels from that reference.
@@ -264,6 +295,7 @@ digest and platform labels from that reference.
    validation from the durable lab checkout without changing its existing branch or dirty state:
 
    ```bash
+   test "$(kubectl -n hermes exec hermes-0 -c hermes -- /usr/local/bin/node --version)" = v26.5.1
    kubectl -n hermes exec hermes-0 -c hermes -- /usr/bin/bash -lc '
      set -euo pipefail
      test "$(command -v gh)" = /opt/tools/gh

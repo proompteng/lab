@@ -6,7 +6,7 @@ metadata:
   labels:
     app.kubernetes.io/name: hermes
     app.kubernetes.io/component: gateway
-    app.kubernetes.io/version: v2026.7.7.2
+    app.kubernetes.io/version: v2026.8.27
 spec:
   serviceName: hermes
   replicas: 1
@@ -27,7 +27,7 @@ spec:
       labels:
         app.kubernetes.io/name: hermes
         app.kubernetes.io/component: gateway
-        app.kubernetes.io/version: v2026.7.7.2
+        app.kubernetes.io/version: v2026.8.27
     spec:
       serviceAccountName: hermes
       automountServiceAccountToken: true
@@ -55,7 +55,7 @@ spec:
           type: RuntimeDefault
       initContainers:
         - name: bootstrap
-          image: registry.ide-newton.ts.net/lab/hermes-agent@sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a
+          image: registry.ide-newton.ts.net/lab/hermes-agent@sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
@@ -137,7 +137,7 @@ spec:
               mountPath: /opt/github-auth
       containers:
         - name: hermes
-          image: registry.ide-newton.ts.net/lab/hermes-agent@sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a
+          image: registry.ide-newton.ts.net/lab/hermes-agent@sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843
           imagePullPolicy: IfNotPresent
           workingDir: /opt/data/workspace/tuslagch/lab
           command:
@@ -172,7 +172,7 @@ spec:
             - name: GIT_TERMINAL_PROMPT
               value: "0"
             - name: PATH
-              value: /opt/tools:/opt/lab-toolchain/bin:/opt/hermes/bin:/opt/hermes/.venv/bin:/opt/data/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+              value: /opt/tools:/opt/hermes/bin:/opt/hermes/.venv/bin:/opt/data/.local/bin:/usr/local/sbin:/usr/local/bin:/opt/lab-toolchain/bin:/usr/sbin:/usr/bin:/sbin:/bin
             - name: API_SERVER_ENABLED
               value: "true"
             - name: API_SERVER_HOST
@@ -336,7 +336,7 @@ spec:
             pullPolicy: IfNotPresent
         - name: lab-toolchain-image
           image:
-            reference: registry.ide-newton.ts.net/lab/hermes-toolchain@sha256:b3f83d929040d5270cda144a9590de9fd7465c521471169f2c886fccd507ff14
+            reference: registry.ide-newton.ts.net/lab/hermes-toolchain@sha256:9ce371382f847b25898460a312003906b69a7499ffea6c90e724e1e18435cee3
             pullPolicy: IfNotPresent
         - name: tools
           emptyDir:
