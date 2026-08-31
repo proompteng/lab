@@ -806,26 +806,51 @@ async fn pod_sandbox_failure(
 }
 
 fn pod_sandbox_is_stuck(pod: &Pod, now: DateTime<Utc>) -> bool {
-    let sandbox_condition = pod
-        .status
+    pod_sandbox_transition_time(pod).is_some_and(|transitioned_at| {
+        now.timestamp().saturating_sub(transitioned_at.as_second())
+            >= POD_SANDBOX_FAILURE_GRACE_SECONDS
+    })
+}
+
+fn pod_sandbox_transition_time(pod: &Pod) -> Option<k8s_openapi::jiff::Timestamp> {
+    pod.status
         .as_ref()
         .and_then(|status| status.conditions.as_ref())
         .and_then(|conditions| {
-            conditions
-                .iter()
-                .find(|condition| condition.type_ == "PodReadyToStartContainers")
-        });
-    sandbox_condition.is_some_and(|condition| {
-        condition.status == "False"
-            && condition
-                .last_transition_time
+            conditions.iter().find(|condition| {
+                condition.type_ == "PodReadyToStartContainers" && condition.status == "False"
+            })
+        })
+        .and_then(|condition| condition.last_transition_time.as_ref())
+        .map(|transitioned_at| transitioned_at.0)
+}
+
+fn event_observed_time(event: &Event) -> Option<k8s_openapi::jiff::Timestamp> {
+    event
+        .series
+        .as_ref()
+        .and_then(|series| series.last_observed_time.as_ref())
+        .map(|last_observed_time| last_observed_time.0)
+        .or_else(|| {
+            event
+                .last_timestamp
                 .as_ref()
-                .is_some_and(|transitioned_at| {
-                    now.timestamp()
-                        .saturating_sub(transitioned_at.0.as_second())
-                        >= POD_SANDBOX_FAILURE_GRACE_SECONDS
-                })
-    })
+                .map(|last_timestamp| last_timestamp.0)
+        })
+        .or_else(|| event.event_time.as_ref().map(|event_time| event_time.0))
+        .or_else(|| {
+            event
+                .first_timestamp
+                .as_ref()
+                .map(|first_timestamp| first_timestamp.0)
+        })
+        .or_else(|| {
+            event
+                .metadata
+                .creation_timestamp
+                .as_ref()
+                .map(|created_at| created_at.0)
+        })
 }
 
 fn latest_pod_sandbox_failure<'a>(
@@ -833,19 +858,25 @@ fn latest_pod_sandbox_failure<'a>(
     events: impl Iterator<Item = &'a Event>,
 ) -> Option<PodSandboxFailure> {
     let pod_uid = pod.metadata.uid.as_deref()?;
+    let transitioned_at = pod_sandbox_transition_time(pod)?;
     events
         .filter(|event| {
             event.type_.as_deref() == Some("Warning")
                 && event.reason.as_deref() == Some("FailedCreatePodSandBox")
                 && event.involved_object.uid.as_deref() == Some(pod_uid)
+                && event_observed_time(event)
+                    .is_some_and(|observed_at| observed_at >= transitioned_at)
         })
         .max_by_key(|event| {
-            event
-                .metadata
-                .resource_version
-                .as_deref()
-                .and_then(|value| value.parse::<u128>().ok())
-                .unwrap_or_default()
+            (
+                event_observed_time(event),
+                event
+                    .metadata
+                    .resource_version
+                    .as_deref()
+                    .and_then(|value| value.parse::<u128>().ok())
+                    .unwrap_or_default(),
+            )
         })
         .map(|event| PodSandboxFailure {
             reason: "FailedCreatePodSandBox".to_owned(),
@@ -1349,6 +1380,10 @@ mod tests {
                 message: Some("flannel has no IP addresses available".to_owned()),
                 reason: Some("FailedCreatePodSandBox".to_owned()),
                 type_: Some("Warning".to_owned()),
+                last_timestamp: Some(Time(
+                    k8s_openapi::jiff::Timestamp::from_second(now.timestamp())
+                        .expect("current sandbox event timestamp"),
+                )),
                 ..Event::default()
             },
         ];
@@ -1405,6 +1440,48 @@ mod tests {
             .expect("Pod conditions")[0]
             .status = "True".to_owned();
         assert!(!pod_sandbox_is_stuck(&pod, now));
+    }
+
+    #[test]
+    fn ignores_stale_pod_sandbox_failure_from_previous_transition() {
+        let now = Utc::now();
+        let transitioned_at = now.timestamp() - POD_SANDBOX_FAILURE_GRACE_SECONDS - 1;
+        let pod = Pod {
+            metadata: kube::core::ObjectMeta {
+                uid: Some("current-pod-uid".to_owned()),
+                ..kube::core::ObjectMeta::default()
+            },
+            status: Some(PodStatus {
+                conditions: Some(vec![PodCondition {
+                    type_: "PodReadyToStartContainers".to_owned(),
+                    status: "False".to_owned(),
+                    last_transition_time: Some(Time(
+                        k8s_openapi::jiff::Timestamp::from_second(transitioned_at)
+                            .expect("current sandbox transition timestamp"),
+                    )),
+                    ..PodCondition::default()
+                }]),
+                ..PodStatus::default()
+            }),
+            ..Pod::default()
+        };
+        let historical_event = Event {
+            involved_object: ObjectReference {
+                uid: Some("current-pod-uid".to_owned()),
+                ..ObjectReference::default()
+            },
+            message: Some("historical sandbox failure".to_owned()),
+            reason: Some("FailedCreatePodSandBox".to_owned()),
+            type_: Some("Warning".to_owned()),
+            last_timestamp: Some(Time(
+                k8s_openapi::jiff::Timestamp::from_second(transitioned_at - 1)
+                    .expect("historical sandbox event timestamp"),
+            )),
+            ..Event::default()
+        };
+
+        assert!(pod_sandbox_is_stuck(&pod, now));
+        assert!(latest_pod_sandbox_failure(&pod, [&historical_event].into_iter()).is_none());
     }
 
     #[test]
