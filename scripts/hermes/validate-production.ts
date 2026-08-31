@@ -1,14 +1,21 @@
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 
-const hermesImage =
-  'registry.ide-newton.ts.net/lab/hermes-agent@sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a'
+const hermesRelease = 'v2026.8.27'
+const hermesVersion = '0.20.6'
+const hermesSourceRevision = '5fc308a70719a83cccdbba4c0e39c23f5a8239d5'
+const hermesUpstreamIndexDigest = 'sha256:e0df6adebddf29b91112aefc999d4aaf6846c9eb544faca5672a16a13590ff79'
+const hermesUpstreamAmd64Digest = 'sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843'
+const hermesAttestationManifestDigest = 'sha256:450e5016e0a278396f097abbb8a2f54418e0980dd09e60dbf5f48eab96e06a9c'
+const hermesImage = `registry.ide-newton.ts.net/lab/hermes-agent@${hermesUpstreamAmd64Digest}`
 const squidImage = 'docker.io/ubuntu/squid@sha256:8a3baed477e2c282ab8aa5edad442f69873246964f225c5c2ae8364b6610963c'
 const kubectlImage = 'registry.k8s.io/kubectl@sha256:0bb95b2a450875fc8ceaea2f9987a99fe27c228846e2e00b93b65ebb0d59034e'
 const githubCliVersion = '2.96.0'
 const githubCliArchiveSha256 = '83d5c2ccad5498f58bf6368acb1ab32588cf43ab3a4b1c301bf36328b1c8bd60'
 const terminalPath =
   '/opt/tools:/opt/lab-toolchain/bin:/opt/hermes/bin:/opt/hermes/.venv/bin:/opt/data/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+const gatewayPath =
+  '/opt/tools:/opt/hermes/bin:/opt/hermes/.venv/bin:/opt/data/.local/bin:/usr/local/sbin:/usr/local/bin:/opt/lab-toolchain/bin:/usr/sbin:/usr/bin:/sbin:/bin'
 const hermesToolchainConcreteReferencePattern =
   /registry\.ide-newton\.ts\.net\/lab\/hermes-toolchain@sha256:[a-f0-9]{64}/
 const hermesToolchainReferencePattern =
@@ -158,6 +165,9 @@ export function validateProductionContent(files: ProductionFiles): string[] {
       `${productionPaths.statefulSet}: the bootstrap and gateway containers must use the mirrored immutable amd64 digest`,
     )
   }
+  if (count(files.statefulSet, `app.kubernetes.io/version: ${hermesRelease}`) !== 2) {
+    failures.push(`${productionPaths.statefulSet}: metadata and Pod template must identify Hermes ${hermesRelease}`)
+  }
   requireTerms(failures, productionPaths.statefulSet, files.statefulSet, [
     'persistentVolumeClaimRetentionPolicy:',
     'whenDeleted: Retain',
@@ -183,7 +193,6 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'mountPath: /opt/github-auth',
     'mountPath: /etc/profile.d/hermes-tools.sh\n              subPath: terminal-profile.sh\n              readOnly: true',
     'sizeLimit: 1Mi',
-    'value: /opt/tools:/opt/lab-toolchain/bin:/opt/hermes/bin:',
     'name: KUBECONFIG',
     'value: /opt/data/home/.kube/config',
     'name: GH_CONFIG_DIR',
@@ -198,6 +207,12 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'value: main',
     'value: localhost,127.0.0.1,.svc,.svc.cluster.local,10.96.0.1',
   ])
+  const gatewayPathEnvironment = `            - name: PATH\n              value: ${gatewayPath}\n`
+  if (count(gatewayContainer, gatewayPathEnvironment) !== 1) {
+    failures.push(
+      `${productionPaths.statefulSet}: the gateway must use the release-bundled Node before the Lab terminal toolchain`,
+    )
+  }
   if (!gatewayContainer.includes('          workingDir: /opt/data/workspace/tuslagch/lab\n')) {
     failures.push(
       `${productionPaths.statefulSet}: missing production invariant "workingDir: /opt/data/workspace/tuslagch/lab"`,
@@ -354,8 +369,15 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   }
 
   requireTerms(failures, productionPaths.config, files.config, [
-    '_config_version: 33',
-    'base_url: http://flamingo.flamingo.svc.cluster.local/v1',
+    '_config_version: 39',
+    [
+      'model:',
+      '  default: qwen36-flamingo',
+      '  provider: custom',
+      '  base_url: http://flamingo.flamingo.svc.cluster.local/v1',
+      '  api_mode: chat_completions',
+      '  context_length: 262144',
+    ].join('\n'),
     'terminal:\n  backend: local\n  cwd: /opt/data/workspace/tuslagch/lab',
     'shell_init_files:\n    - /etc/profile.d/hermes-tools.sh',
     'discord:\n    enabled: true',
@@ -771,6 +793,13 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '/opt/lab-toolchain/bin',
   ])
   requireTerms(failures, productionPaths.readme, files.readme, [
+    `Hermes Agent release: \`${hermesRelease}\` (Hermes \`${hermesVersion}\`)`,
+    hermesSourceRevision,
+    hermesUpstreamIndexDigest,
+    hermesUpstreamAmd64Digest,
+    hermesAttestationManifestDigest,
+    'gateway process keeps the upstream `/usr/local/bin/node` `v26.5.1`',
+    'model-authored terminals retain repository-pinned Node `24.11.1`',
     'digest-pinned Kubernetes 1.35 `kubectl` binary',
     'only `get`, `list`, and `watch`',
     '`tuslagch` GitHub OAuth token is committed only as a namespace-scoped SealedSecret ciphertext',
@@ -1127,6 +1156,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'test "$(pwd -P)" = /opt/data/workspace/tuslagch/lab',
     'test "$(git rev-parse --show-toplevel)" = /opt/data/workspace/tuslagch/lab',
     'test "$(command -v node)" = /opt/lab-toolchain/bin/node',
+    'test "$(kubectl -n hermes exec hermes-0 -c hermes -- /usr/local/bin/node --version)" = v26.5.1',
     'test "$(command -v bun)" = /opt/lab-toolchain/bin/bun',
     'test "$(command -v go)" = /opt/lab-toolchain/bin/go',
     'test "$(node --version)" = v24.11.1',
@@ -1173,8 +1203,14 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'main_revision=$(git rev-parse origin/main)',
     'kargo_revision=$(git rev-parse origin/kargo/hermes-toolchain)',
     'test "$(git rev-parse origin/kargo/hermes-toolchain)" = "$kargo_revision"',
-    'test "$upstream_digest" = sha256:9c841866021c54c4596849f6135717e8a4d52ba510b7f52c50aef1de1a283973',
-    'test "$mirror_digest" = sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a',
+    `upstream_ref=docker.io/nousresearch/hermes-agent:${hermesRelease}`,
+    `test "$upstream_digest" = ${hermesUpstreamIndexDigest}`,
+    `test "$upstream_amd64_digest" = ${hermesUpstreamAmd64Digest}`,
+    `test "$upstream_attestation_digest" = ${hermesAttestationManifestDigest}`,
+    'test "$provenance_subject" = "$upstream_amd64_digest"',
+    `test "$upstream_revision" = ${hermesSourceRevision}`,
+    `test "$mirror_digest" = ${hermesUpstreamAmd64Digest}`,
+    'test "$mirror_revision" = "$upstream_revision"',
     'toolchain_ref=$(git show "origin/kargo/hermes-toolchain:argocd/applications/hermes/statefulset.yaml" |',
     'test -n "$toolchain_ref"',
     'test "$toolchain_digest" = "${toolchain_ref##*@}"',
