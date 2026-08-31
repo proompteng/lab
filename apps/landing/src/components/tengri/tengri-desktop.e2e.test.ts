@@ -1619,21 +1619,42 @@ test('does not duplicate snapshot-covered Codex messages when event replay races
       text: finalText,
     },
     {
-      sequence: 43,
+      sequence: 41,
       kind: 'usage',
       method: 'thread/tokenUsage/updated',
       itemId: '',
       text: 'Tokens: 10 input · 4 output',
     },
     {
+      sequence: 42,
+      kind: 'usage',
+      method: 'account/rateLimits/updated',
+      itemId: '',
+      text: '7d window: 10% used',
+    },
+    {
+      sequence: 43,
+      kind: 'usage',
+      method: 'thread/tokenUsage/updated',
+      itemId: '',
+      text: 'Tokens: 20 input · 6 output',
+    },
+    {
       sequence: 44,
+      kind: 'usage',
+      method: 'account/rateLimits/updated',
+      itemId: '',
+      text: '7d window: 12% used',
+    },
+    {
+      sequence: 45,
       kind: 'warning',
       method: 'tengri/eventOmitted',
       itemId: '',
       text: 'One oversized Codex event was omitted',
     },
     {
-      sequence: 45,
+      sequence: 46,
       kind: 'error',
       method: 'turn/completed',
       itemId: '',
@@ -1652,7 +1673,10 @@ test('does not duplicate snapshot-covered Codex messages when event replay races
   await expect(page.getByText(promptText, { exact: true })).toHaveCount(1)
   await expect(page.getByText(progressText, { exact: true })).toHaveCount(1)
   await expect(page.getByText(finalText, { exact: true })).toHaveCount(1)
-  await expect(page.getByText('Tokens: 10 input · 4 output', { exact: true })).toHaveCount(1)
+  await expect(page.getByText('Tokens: 10 input · 4 output', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('7d window: 10% used', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('Tokens: 20 input · 6 output', { exact: true })).toHaveCount(1)
+  await expect(page.getByText('7d window: 12% used', { exact: true })).toHaveCount(1)
   await expect(page.getByText('One oversized Codex event was omitted', { exact: true })).toHaveCount(1)
   await expect(page.getByText('The turn failed', { exact: true })).toHaveCount(1)
 })

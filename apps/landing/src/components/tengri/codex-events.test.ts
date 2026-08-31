@@ -48,6 +48,101 @@ describe('Codex event replay', () => {
     expect(next.at(-1)?.sequence).toBe(500)
   })
 
+  test('keeps only the newest cumulative usage snapshots', () => {
+    const tokenUsage = {
+      ...event,
+      sequence: 10,
+      kind: 'usage' as const,
+      method: 'thread/tokenUsage/updated',
+      itemId: '',
+      text: 'Tokens: 10 input · 4 output',
+    }
+    const rateLimits = {
+      ...tokenUsage,
+      sequence: 11,
+      method: 'account/rateLimits/updated',
+      threadId: '',
+      text: '7d window: 10% used',
+    }
+    const newerTokenUsage = { ...tokenUsage, sequence: 12, text: 'Tokens: 20 input · 6 output' }
+    const newerRateLimits = { ...rateLimits, sequence: 13, text: '7d window: 12% used' }
+    const otherThreadUsage = {
+      ...newerTokenUsage,
+      sequence: 14,
+      threadId: 'thread-2',
+      text: 'Tokens: 5 input · 2 output',
+    }
+
+    const current = [tokenUsage, rateLimits].reduce<TengriCodexEvent[]>(
+      (next, currentEvent) => appendCodexEvent(next, currentEvent),
+      [],
+    )
+    const updated = [newerTokenUsage, newerRateLimits, otherThreadUsage].reduce(
+      (next, currentEvent) => appendCodexEvent(next, currentEvent),
+      current,
+    )
+
+    expect(updated).toEqual([newerTokenUsage, newerRateLimits, otherThreadUsage])
+    expect(appendCodexEvent(updated, tokenUsage)).toBe(updated)
+  })
+
+  test('keeps independent rate-limit buckets and merges sparse rolling updates', () => {
+    const rateLimitEvent = (sequence: number, rateLimits: Record<string, unknown>, text = ''): TengriCodexEvent => ({
+      ...event,
+      sequence,
+      kind: 'usage',
+      method: 'account/rateLimits/updated',
+      threadId: '',
+      itemId: '',
+      text,
+      rawJson: JSON.stringify({ params: { rateLimits } }),
+    })
+    const codex = rateLimitEvent(20, {
+      limitId: 'codex',
+      limitName: 'Codex',
+      primary: { usedPercent: 10, windowDurationMins: 300 },
+      secondary: { usedPercent: 20, windowDurationMins: 10_080 },
+      credits: { hasCredits: true, unlimited: false, balance: '8' },
+      individualLimit: null,
+      spendControlReached: false,
+      planType: 'pro',
+      rateLimitReachedType: 'rate_limit_reached',
+    })
+    const other = rateLimitEvent(21, {
+      limitId: 'codex_other',
+      limitName: 'Codex Other',
+      primary: { usedPercent: 50, windowDurationMins: 30 },
+      secondary: null,
+      credits: null,
+      individualLimit: null,
+      spendControlReached: null,
+      planType: null,
+      rateLimitReachedType: null,
+    })
+    const sparseCodexUpdate = rateLimitEvent(22, {
+      limitId: null,
+      limitName: null,
+      primary: { usedPercent: 12, windowDurationMins: 300 },
+      secondary: null,
+      credits: null,
+      individualLimit: null,
+      spendControlReached: null,
+      planType: null,
+      rateLimitReachedType: null,
+    })
+
+    const updated = [codex, other, sparseCodexUpdate].reduce<TengriCodexEvent[]>(
+      (next, currentEvent) => appendCodexEvent(next, currentEvent),
+      [],
+    )
+
+    expect(updated).toHaveLength(2)
+    expect(updated[1]).toEqual(other)
+    expect(codexEventDisplayText(updated[0]!)).toBe(
+      '5h window: 12% used · 7d window: 20% used · Credits: 8 · Limit state: rate limit reached',
+    )
+  })
+
   test('coalesces camel-case app-server deltas by authoritative item ID', () => {
     const first = {
       ...event,
