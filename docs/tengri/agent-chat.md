@@ -20,8 +20,9 @@ signed GitHub subject and the server-owned `MicroVM` owner hash.
 ## User flow
 
 1. Chrome opens its first tab at `tengri://agent` and renders the agent chat for the active microVM.
-2. The BFF reads the guest's Codex account state. If the user is not authenticated, the UI starts a ChatGPT device-code
-   login. The code and verification URL are short-lived and can be restarted without remounting the desktop.
+2. The BFF reads the guest's Codex account state. If the user is not authenticated, it also reads any active
+   ChatGPT device-code login from Nanoagent. A browser reconnect keeps the same code and original expiry; only an
+   explicit restart invalidates that attempt.
 3. Nanoagent persists the resulting Codex login under the PVC-backed user home. Tengri does not inject or share an
    `OPENAI_API_KEY`.
 4. The first message creates a thread. Later messages resume the browser's persisted thread ID, and **New
@@ -39,6 +40,7 @@ The public browser surface uses strict action schemas rather than exposing arbit
 | Browser action     | Internal gRPC          | Guest app-server operation          |
 | ------------------ | ---------------------- | ----------------------------------- |
 | `codex-account`    | `GetCodexAccount`      | `account/read`                      |
+| `codex-login-status` | `GetCodexLogin`      | Nanoagent active-login snapshot     |
 | `codex-login`      | `StartCodexLogin`      | `account/login/start`               |
 | `create-thread`    | `CreateCodexThread`    | `thread/start`                      |
 | `resume-thread`    | `ResumeCodexThread`    | `thread/resume`                     |
@@ -67,6 +69,8 @@ for truthful guest readiness before forwarding an operation, so a sleeping agent
 - A failed turn renders the app-server failure text as an error before clearing active-turn controls.
 - Account refreshes and login-completion events are tied to the current device-login attempt so stale responses cannot
   overwrite a newer login.
+- A reconnecting browser restores the active device-login snapshot from the same app-server generation. Nanoagent
+  rejects a stale snapshot after the app server restarts, and Tengri preserves the attempt's original expiry.
 - The UI caps retained events and rendered text. It does not render remote Markdown images or raw unbounded app-server
   payloads.
 

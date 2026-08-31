@@ -98,6 +98,7 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('terminate-terminal'), agentId, terminalId: codexId }),
   z.strictObject({ action: z.literal('terminal-ticket'), agentId, terminalId: codexId }),
   z.strictObject({ action: z.literal('codex-account'), agentId }),
+  z.strictObject({ action: z.literal('codex-login-status'), agentId }),
   z.strictObject({ action: z.literal('codex-login'), agentId }),
   z.strictObject({ action: z.literal('create-thread'), agentId }),
   z.strictObject({ action: z.literal('resume-thread'), agentId, threadId: codexId }),
