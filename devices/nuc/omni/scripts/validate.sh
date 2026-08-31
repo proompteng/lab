@@ -28,7 +28,13 @@ current_tail_ip=$(tailscale ip -4 | head -n 1)
 
 [[ -s "${OMNI_DATA_ROOT}/secrets/omni.asc" ]] || die 'Omni encryption key is missing; run scripts/bootstrap.sh'
 gpg --batch --show-keys "${OMNI_DATA_ROOT}/secrets/omni.asc" >/dev/null
-jq -e '.version == "0.0.1" and .TCP["443"].HTTPS and .TCP["8090"].HTTPS and .TCP["8100"].HTTPS' \
+cluster_backup_dir="${OMNI_DATA_ROOT}/cluster-etcd-backups"
+[[ -d "${cluster_backup_dir}" ]] || die "cluster etcd backup directory is missing: ${cluster_backup_dir}"
+[[ "$(stat -c '%a' "${cluster_backup_dir}")" == '700' ]] ||
+  die "cluster etcd backup directory must have mode 700: ${cluster_backup_dir}"
+[[ -w "${cluster_backup_dir}" ]] || die "cluster etcd backup directory is not writable: ${cluster_backup_dir}"
+jq -e \
+  '.version == "0.0.1" and .TCP["443"].HTTPS and .TCP["8090"].TCPForward == "127.0.0.1:8090" and .TCP["8100"].HTTPS' \
   "${OMNI_DIR}/tailscale-serve.json" >/dev/null
 
 if [[ "${mode}" == 'full' ]]; then
@@ -43,6 +49,14 @@ if [[ "${mode}" == 'full' ]]; then
 fi
 
 compose config --quiet
+compose config --format json | jq -e \
+  --arg expected "--machine-api-advertised-url=grpc://${NUC_TAILSCALE_IP}:8090/" \
+  '.services.omni.command | index($expected) != null' \
+  >/dev/null || die 'Omni machine API must advertise the raw Tailscale TCP endpoint with the grpc scheme'
+compose config --format json | jq -e \
+  --arg source "${cluster_backup_dir}" \
+  '.services.omni.volumes[] | select(.type == "bind" and .source == $source and .target == "/var/lib/omni/cluster-etcd-backups")' \
+  >/dev/null || die 'Omni Compose configuration does not persist the cluster etcd backup directory'
 
 if [[ -z "$(compose ps --quiet omni 2>/dev/null)" ]]; then
   occupied=$(ss -H -lntup | awk '$5 ~ /:(8180|8090|8091|8092|8100|50180)$/ { print }')

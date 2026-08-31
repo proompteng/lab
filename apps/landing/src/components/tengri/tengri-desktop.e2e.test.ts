@@ -127,6 +127,7 @@ type MockOptions = {
   authenticated?: boolean
   agent?: typeof readyAgent | null
   codexAuthenticated?: boolean
+  deferSleepReconciliation?: boolean
   extraFiles?: typeof workspaceEntries
   failSnapshotAfterAction?: 'delete-agent' | 'sleep-agent'
   holdCodexAccount?: boolean
@@ -587,7 +588,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
           markHeldLifecycleActionStarted()
           await heldLifecycleAction
         }
-        agent = agent ? { ...agent, phase: 'sleeping' } : agent
+        if (!options.deferSleepReconciliation) agent = agent ? { ...agent, phase: 'sleeping' } : agent
         result = agent
         break
       case 'resume-agent':
@@ -609,6 +610,9 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
 
   return {
     actions,
+    completeSleepReconciliation: () => {
+      agent = agent ? { ...agent, phase: 'sleeping' } : agent
+    },
     failNextReads: (path: string, count = 1) => {
       readFileFailures.set(path, count)
     },
@@ -742,6 +746,12 @@ async function resizeWindow(
 }
 
 test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and window controls', async ({ page }) => {
+  const terminalDisposeFailures: string[] = []
+  page.on('console', (message) => {
+    if (message.text().includes('[tengri-terminal] terminal dispose failed')) {
+      terminalDisposeFailures.push(message.text())
+    }
+  })
   const mock = await mockTengri(page, {
     extraFiles: Array.from({ length: 8 }, (_, index) => ({
       name: `test-${index + 1}.txt`,
@@ -873,7 +883,9 @@ test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and win
   const creationIdPattern = new RegExp(`^tengri-${readyAgent.id}-[0-9a-f]{32}-terminal-[0-9]+$`)
   expect(terminalCreations.every((action) => creationIdPattern.test(String(action.creationId)))).toBe(true)
   await page.getByRole('button', { name: 'Close Terminal' }).last().click()
+  await expect(page.getByRole('region', { name: 'Terminal window' })).toHaveCount(1)
   await expect.poll(() => mock.actions.some((action) => action.action === 'terminate-terminal')).toBe(true)
+  expect(terminalDisposeFailures).toEqual([])
 })
 
 test('preserves terminal identity on reload and BFCache restore while isolating a duplicated desktop tab', async ({
@@ -1676,6 +1688,27 @@ test('renders truthful booting, sleeping, and failed lifecycle states', async ({
       readyAgent.id,
     ),
   ).toEqual([])
+})
+
+test('stops a failed agent without deleting its persistent workspace', async ({ page }) => {
+  const failedAgent = {
+    ...readyAgent,
+    phase: 'failed',
+    message: 'No proven Firecracker node can schedule this agent.',
+  }
+  const mock = await mockTengri(page, { agent: failedAgent, deferSleepReconciliation: true })
+  await page.goto('/')
+
+  const failed = page.getByRole('dialog', { name: 'Agent could not start' })
+  await failed.getByRole('button', { name: 'Sleep and Keep Workspace' }).click()
+
+  await expect.poll(() => mock.actions.some((action) => action.action === 'sleep-agent')).toBe(true)
+  expect(mock.actions.some((action) => action.action === 'delete-agent')).toBe(false)
+  await expect(page.getByRole('status', { name: 'Putting agent to sleep' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Delete Failed Agent' })).toHaveCount(0)
+
+  mock.completeSleepReconciliation()
+  await expect(page.getByRole('dialog', { name: 'Tengri is sleeping' })).toBeVisible()
 })
 
 test('shows native-feeling unauthenticated and create-agent states', async ({ page }) => {

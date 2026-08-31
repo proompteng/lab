@@ -187,9 +187,28 @@ describe('Tengri terminal protocol', () => {
             throw new Error('context lost')
           },
         },
+        [],
         { warn },
       ),
     ).not.toThrow()
     expect(warn).toHaveBeenCalledTimes(1)
+  })
+
+  test('disposes terminal addons in reverse load order before the terminal core', () => {
+    const order: string[] = []
+    const warn = mock(() => undefined)
+
+    safelyDisposeTerminal(
+      { dispose: () => order.push('terminal') },
+      [
+        { dispose: () => order.push('fit') },
+        { dispose: () => order.push('canvas') },
+        { dispose: () => order.push('links') },
+      ],
+      { warn },
+    )
+
+    expect(order).toEqual(['links', 'canvas', 'fit', 'terminal'])
+    expect(warn).not.toHaveBeenCalled()
   })
 })

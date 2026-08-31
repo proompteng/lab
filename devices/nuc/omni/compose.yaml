@@ -35,11 +35,12 @@ services:
       - ${OMNI_DATA_ROOT:-/var/lib/omni}/secrets/omni.asc:/run/secrets/omni.asc:ro
       - ${OMNI_DATA_ROOT:-/var/lib/omni}/etcd:/var/lib/omni/etcd
       - ${OMNI_DATA_ROOT:-/var/lib/omni}/sqlite:/var/lib/omni/sqlite
+      - ${OMNI_DATA_ROOT:-/var/lib/omni}/cluster-etcd-backups:/var/lib/omni/cluster-etcd-backups
     command:
       - --config-path=/etc/omni/omni.yaml
       - --account-id=${OMNI_ACCOUNT_UUID:-}
       - --advertised-api-url=https://${OMNI_HOST:-nuc.ide-newton.ts.net}/
-      - --machine-api-advertised-url=https://${OMNI_HOST:-nuc.ide-newton.ts.net}:8090/
+      - --machine-api-advertised-url=grpc://${NUC_TAILSCALE_IP:-100.78.240.108}:8090/
       - --advertised-kubernetes-proxy-url=https://${OMNI_HOST:-nuc.ide-newton.ts.net}:8100/
       - --siderolink-wireguard-bind-addr=${NUC_TAILSCALE_IP:-100.78.240.108}:50180
       - --siderolink-wireguard-advertised-addr=${NUC_TAILSCALE_IP:-100.78.240.108}:50180

@@ -1,16 +1,19 @@
 # Hermes production
 
-Hermes is the planned production runtime for the Tuslagch assistant. The initial GitOps state exposes only the authenticated
-cluster-local API. Keep the manual application unsynced until the live NetworkPolicy enforcement probe passes. Discord
-remains disabled until migration and API canary gates pass; the cutover is a separate reviewed change so Hermes and OpenClaw
-never use the Discord token concurrently.
+Hermes is the production runtime for the Tuslagch assistant. GitOps exposes its authenticated API through the cluster-local
+Service and a private Tailscale Ingress; neither path bypasses bearer authentication. Keep the manual application unsynced
+until the live NetworkPolicy enforcement probe passes. Hermes and OpenClaw must never use the Discord token concurrently.
 
 ## Release and supply chain
 
-- Hermes Agent release: `v2026.7.7.2` (Hermes `0.18.2`), upstream commit
-  `9de9c25f620ff7f1ce0fd5457d596052d5159596`.
-- Upstream multi-architecture index: `sha256:9c841866021c54c4596849f6135717e8a4d52ba510b7f52c50aef1de1a283973`.
-- Mirrored amd64 manifest: `registry.ide-newton.ts.net/lab/hermes-agent@sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a`.
+- Hermes Agent release: `v2026.8.27` (Hermes `0.20.6`), upstream commit
+  `5fc308a70719a83cccdbba4c0e39c23f5a8239d5`.
+- Upstream multi-architecture index: `sha256:e0df6adebddf29b91112aefc999d4aaf6846c9eb544faca5672a16a13590ff79`.
+- Upstream amd64 manifest: `sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843`.
+- Upstream amd64 SLSA provenance manifest: `sha256:450e5016e0a278396f097abbb8a2f54418e0980dd09e60dbf5f48eab96e06a9c`.
+  Its subject is the exact amd64 manifest and its BuildKit provenance records GitHub Actions run `33070373247` and source
+  revision `5fc308a70719a83cccdbba4c0e39c23f5a8239d5`.
+- Mirrored amd64 manifest: `registry.ide-newton.ts.net/lab/hermes-agent@sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843`.
 - Squid egress proxy: `docker.io/ubuntu/squid:6.6-24.04_edge` pinned by digest in `egress-proxy.yaml`.
 - Lab toolchain: the dedicated multi-architecture Nix OCI image is pinned by index digest in the Kargo-managed StatefulSet reference;
   it is restricted to Node `24.11.1`, Bun/Bunx `1.4.0`, Go `1.25.5`, Helm `3.19.1`, Kustomize `5.8.0`, kubeconform `0.7.0`,
@@ -58,11 +61,14 @@ validating a rollout.
   `83d5c2ccad5498f58bf6368acb1ab32588cf43ab3a4b1c301bf36328b1c8bd60`, caches the verified archive, and recreates the
   `tuslagch` Git identity, GitHub CLI authentication, and `gh auth git-credential` helper on every start. Bootstrap fails
   closed unless `gh api user` returns `tuslagch` and repository permission is `ADMIN`.
-- The immutable `/etc/profile.d/hermes-tools.sh` restores `/opt/tools`, `/opt/lab-toolchain/bin`, and the pinned Hermes paths after Debian's login
-  profile resets `PATH`; Hermes explicitly sources it while capturing each terminal session, so bare `gh` and `kubectl`
-  resolve consistently from API and Discord terminals.
+- The gateway process keeps the upstream `/usr/local/bin/node` `v26.5.1` ahead of the Lab toolchain so Hermes runs with its
+  release-pinned Node major. The immutable `/etc/profile.d/hermes-tools.sh` deliberately restores `/opt/tools`,
+  `/opt/lab-toolchain/bin`, and the pinned Hermes paths after Debian's login profile resets `PATH`; Hermes explicitly
+  sources it while capturing each terminal session, so model-authored terminals retain repository-pinned Node `24.11.1`
+  and bare `gh` and `kubectl` resolve consistently from API and Discord terminals.
 - API key rotation requires a bounded Secret refresh, gateway Pod restart, and old-key rejection/new-key acceptance proof.
-- The API is cluster-local and requires bearer authentication for model requests and detailed health.
+- The API is available through the cluster-local Service and the private tailnet URL
+  `https://hermes.ide-newton.ts.net`; both require bearer authentication for model requests and detailed health.
 - Native Exa-backed `web_search` and `web_extract` are enabled for CLI, authenticated API, and Discord sessions. The
   authenticated Exa MCP server is restricted to its read-only `web_search_exa` and `web_fetch_exa` tools. Plugins,
   delegation, cron, hooks, and speech-to-text remain disabled; manual approvals and unconditional deny rules remain
@@ -73,6 +79,23 @@ validating a rollout.
   operations use the sealed `tuslagch` identity. Clean `main` checkouts fast-forward on restart; dirty worktrees and non-main
   branches are preserved. Both the gateway's documented `terminal.cwd` and the container working directory point at this
   repository root.
+
+## Private tailnet API
+
+The `hermes-tailscale` layer-7 Ingress exposes the gateway only to authorized tailnet clients. The Tailscale operator
+terminates TLS for `https://hermes.ide-newton.ts.net` and forwards HTTP to the cluster-internal `hermes` Service on named
+port `api` / `8642`. It does not enable Funnel or create a public Ingress. The gateway's existing bearer authentication
+remains mandatory after Tailscale has authorized network access.
+
+- Canonical URL: `https://hermes.ide-newton.ts.net`
+- MagicDNS hostname: `hermes`
+- Kubernetes Ingress: `hermes-tailscale`
+- Backend: `hermes.hermes.svc.cluster.local:8642`
+
+The gateway NetworkPolicy admits port `8642` only from the exact operator-managed proxy labeled for
+`hermes/hermes-tailscale` and from existing same-namespace callers. Ordinary Pods in other namespaces remain denied.
+Use the fully qualified URL so TLS validates against the tailnet certificate; an unauthenticated request to
+`/health/detailed` must return `401`.
 
 ## State and recovery
 

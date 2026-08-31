@@ -170,23 +170,13 @@ kubectl create secret generic keycloak-admin \
 
 2. Commit the updated sealed secret and sync Argo CD.
 
-## Applying manifests locally
+## Reconciling manifests
 
-This app uses plain YAML manifests (no Helm). To apply directly:
+This app uses plain YAML manifests owned by Argo CD. Commit manifest changes, let CI validate them, and sync or wait for
+the owning Argo CD Application. Do not apply the individual manifests as a normal rollout path.
 
-```bash
-kubectl apply -f argocd/applications/keycloak/headlamp-client-sealedsecret.yaml
-kubectl apply -f argocd/applications/keycloak/keycloak-admin-sealedsecret.yaml
-kubectl apply -f argocd/applications/keycloak/postgres-cluster.yaml
-kubectl apply -f argocd/applications/keycloak/keycloak.yaml
-kubectl apply -f argocd/applications/keycloak/ingressroute.yaml
-```
-
-To run the OIDC client bootstrap without waiting for Argo CD, apply the job after the secret:
-
-```bash
-kubectl apply -f argocd/applications/keycloak/headlamp-client-bootstrap-job.yaml
-```
+For a documented emergency only, a direct apply must be followed by the equivalent committed desired-state change and
+Argo CD reconciliation before the incident is closed.
 
 ## Quick checks
 

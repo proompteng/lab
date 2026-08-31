@@ -1,34 +1,21 @@
 # Torghut Design System v4: Quant LLM Profitability Expansion
 
+This is a historical research-to-implementation archive index, not a current implementation dashboard. Validate every
+reference against `docs/torghut/README.md`, live GitOps, service source, and runtime readback.
+
 ## Status
 
 - Version: `v4`
 - Date: `2026-02-19`
-- Maturity: `research-to-implementation pack`
+- Maturity: `historical research-to-implementation pack`
 - Scope: 10 additional design docs focused on profitability, robustness, and autonomous controls.
-- Source-of-truth implementation status: `implementation-status-matrix-2026-02-21.md`
-- Evidence sync: `implementation-audit.md`
-- Implementation status (strict): `Implemented=0`, `Partial=1`, `Planned=10` of 11
-
-## Source Implementation Audit (2026-07-04)
-
-- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
-- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
-- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
-- Current source evidence:
-  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
-  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
-  - `services/torghut/app/trading/consumer_evidence.py`
-  - `services/torghut/app/trading/freshness_carry.py`
-  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
-  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
-- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
-
+- Operational authority: `docs/torghut/README.md`, live GitOps, service source, and runtime readback.
+- Historical implementation counts: `Implemented=0`, `Partial=1`, `Planned=10` of 11
 
 ## Objective
 
-Translate fresh quant and LLM research (2024-2025) into implementation-ready Torghut designs that can be executed by
-engineers or AgentRuns with clear acceptance gates.
+This pack records how fresh quant and LLM research (2024-2025) was translated into implementation-ready Torghut
+designs. It is historical context; current implementation requires fresh source, GitOps, and runtime validation.
 
 ## Non-Negotiable Invariants
 
@@ -37,7 +24,7 @@ engineers or AgentRuns with clear acceptance gates.
 - LLM systems are bounded by policy and cannot directly bypass deterministic execution controls.
 - Every promotion decision must be backed by reproducible evidence.
 
-## New Design Pack (10 Documents)
+## Historical Design Pack (10 Documents)
 
 1. `01-time-series-foundation-model-routing-and-calibration.md`
 2. `02-limit-order-book-intelligence-and-feature-stack.md`
@@ -50,7 +37,7 @@ engineers or AgentRuns with clear acceptance gates.
 9. `09-ai-market-fragility-and-stability-controls.md`
 10. `10-profitability-evidence-standard-and-benchmark-suite.md`
 
-## Primary Research Inputs (Fresh)
+## Historical Primary Research Inputs
 
 - Chronos / Chronos-2 / MOMENT / TiRex (time-series foundation models).
 - HLOB and recent limit-order-book prediction work.
@@ -62,7 +49,7 @@ engineers or AgentRuns with clear acceptance gates.
 - FinSrag / TiMi / FinTMMBench for finance RAG + memory + evaluation.
 - BIS and NBER white papers on AI market fragility and asset pricing.
 
-## Execution Expectations
+## Historical Execution Expectations
 
 Every doc in this pack includes:
 
@@ -71,7 +58,7 @@ Every doc in this pack includes:
 - verification and rollback,
 - an AgentRun handoff bundle (`ImplementationSpec` name, required keys, artifacts, exit criteria).
 
-## Recommended Starting Order
+## Historical Recommended Starting Order
 
 1. `05-conformal-uncertainty-and-regime-shift-gating.md`
 2. `10-profitability-evidence-standard-and-benchmark-suite.md`

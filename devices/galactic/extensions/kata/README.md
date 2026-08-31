@@ -69,8 +69,9 @@ docker buildx build \
 ```
 
 The checked-in workflow validates both architectures on pull requests. On `main`, it publishes the extension and the
-three signed installers under `registry.ide-newton.ts.net/lab/talos-kata-runtimes`. The installed r4 release remains
-pinned to its existing immutable GHCR receipts until a separately authorized, one-node-at-a-time installer rollout.
+three signed installers under `registry.ide-newton.ts.net/lab/talos-kata-runtimes`. Ryzen installed and accepted its
+immutable r5 installer on 2026-08-30. Turin and Altra remain pinned to their accepted r4 GHCR receipts until each gets
+a separately authorized, one-node-at-a-time r5 rollout and live acceptance.
 
 To reproduce an existing installer, use only the immutable extension digest recorded in the release receipt:
 

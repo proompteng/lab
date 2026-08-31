@@ -7,11 +7,11 @@
 - Source of truth (config): `argocd/applications/torghut/**`
 - Implementation status: `Implemented` (verified with code + tests + runtime/config on 2026-02-21)
 
-## Source Implementation Audit (2026-07-04)
+## Historical Source Audit (2026-07-04)
 
 - Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
 - Implementation status: **Implemented and expanded.** The WS forwarder exists as the Dorvud `ForwarderApp` with Alpaca market-data streaming, optional trade updates, bars backfill, static/remote symbol handling, Kafka publishing, readiness/liveness gates, metrics, and GitOps deployment.
-- Current source evidence:
+- Source evidence inspected:
   - `ForwarderConfig.kt` defines current env/config for market type, crypto location, Alpaca feed/base/stream URLs, trade stream URL, market-data channels, options holidays, static symbols, allowlist, shard settings, trade updates, bars backfill, reconnect/backoff, dedup, Kafka auth/TLS, topics, health/metrics ports, and not-ready liveness timeout.
   - `ForwarderApp.kt::start` builds Kafka producer, dedup caches, symbol tracker, market-data stream job, optional trade-updates stream job, and optional bars backfill job.
   - `ForwarderApp.streamMarketDataSession` handles Alpaca auth, subscribe/unsubscribe batches, symbol refresh, options starvation status, reconnect classification, and message routing.

@@ -4,6 +4,9 @@ kubernetes:
   version: v1.36.4
 talos:
   version: v1.13.9
+features:
+  backupConfiguration:
+    interval: 24h
 patches:
   - file: image-factory-registry.yaml
 ---
@@ -143,7 +146,8 @@ patches:
             path: "/etc/cri/conf.d/20-customization.part"
             permissions: 420
         install:
-          disk: /dev/nvme0n1
+          disk: "/dev/disk/by-id/nvme-CT4000P3PSSD8_2441E98EAAFB"
+          wipe: false
         kernel:
           modules:
             - name: nvidia

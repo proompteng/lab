@@ -36,15 +36,39 @@ git fetch --quiet origin kargo/hermes-toolchain
 main_revision=$(git rev-parse origin/main)
 kargo_revision=$(git rev-parse origin/kargo/hermes-toolchain)
 test "$(git rev-parse origin/kargo/hermes-toolchain)" = "$kargo_revision"
-upstream_digest=$(crane digest docker.io/nousresearch/hermes-agent:v2026.7.7.2)
-mirror_digest=$(crane digest registry.ide-newton.ts.net/lab/hermes-agent:v2026.7.7.2-amd64)
+upstream_ref=docker.io/nousresearch/hermes-agent:v2026.8.27
+mirror_ref=registry.ide-newton.ts.net/lab/hermes-agent:v2026.8.27-amd64
+upstream_digest=$(crane digest "$upstream_ref")
+upstream_manifest=$(crane manifest "$upstream_ref")
+upstream_amd64_digest=$(printf '%s' "$upstream_manifest" | jq -er '
+  .manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest
+')
+upstream_attestation_digest=$(printf '%s' "$upstream_manifest" | jq -er --arg subject "$upstream_amd64_digest" '
+  .manifests[]
+  | select(
+      .annotations["vnd.docker.reference.type"] == "attestation-manifest" and
+      .annotations["vnd.docker.reference.digest"] == $subject
+    )
+  | .digest
+')
+provenance_subject=$(crane manifest "docker.io/nousresearch/hermes-agent@$upstream_attestation_digest" | \
+  jq -er '.subject.digest')
+upstream_revision=$(crane config --platform linux/amd64 "$upstream_ref" | \
+  jq -er '.config.Labels["org.opencontainers.image.revision"]')
+mirror_digest=$(crane digest "$mirror_ref")
+mirror_revision=$(crane config "$mirror_ref" | jq -er '.config.Labels["org.opencontainers.image.revision"]')
 toolchain_ref=$(git show "origin/kargo/hermes-toolchain:argocd/applications/hermes/statefulset.yaml" | \
   sed -n 's#.*reference: \(registry\.ide-newton\.ts\.net/lab/hermes-toolchain@sha256:[0-9a-f]\{64\}\).*#\1#p')
 test -n "$toolchain_ref"
 test "$(printf '%s\n' "$toolchain_ref" | wc -l | tr -d '[:space:]')" -eq 1
 toolchain_digest=$(crane digest "$toolchain_ref")
-test "$upstream_digest" = sha256:9c841866021c54c4596849f6135717e8a4d52ba510b7f52c50aef1de1a283973
-test "$mirror_digest" = sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a
+test "$upstream_digest" = sha256:e0df6adebddf29b91112aefc999d4aaf6846c9eb544faca5672a16a13590ff79
+test "$upstream_amd64_digest" = sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843
+test "$upstream_attestation_digest" = sha256:450e5016e0a278396f097abbb8a2f54418e0980dd09e60dbf5f48eab96e06a9c
+test "$provenance_subject" = "$upstream_amd64_digest"
+test "$upstream_revision" = 5fc308a70719a83cccdbba4c0e39c23f5a8239d5
+test "$mirror_digest" = sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843
+test "$mirror_revision" = "$upstream_revision"
 test "$toolchain_digest" = "${toolchain_ref##*@}"
 toolchain_platforms=$(crane manifest "$toolchain_ref" | jq -r \
   '[.manifests[].platform | "\(.os)/\(.architecture)"] | sort | join(",")')
@@ -67,15 +91,22 @@ hermes_revision=$(kubectl -n argocd get application hermes -o jsonpath='{.status
 hermes_target_revision=$(kubectl -n argocd get application hermes -o jsonpath='{.spec.source.targetRevision}')
 test "$hermes_target_revision" = kargo/hermes-toolchain
 test "$hermes_revision" = "$kargo_revision"
-printf 'main=%s kargo=%s upstream=%s mirror=%s argo=%s\n' \
-  "$main_revision" "$kargo_revision" "$upstream_digest" "$mirror_digest" "$hermes_revision"
+printf 'main=%s kargo=%s upstream=%s amd64=%s attestation=%s mirror=%s revision=%s argo=%s\n' \
+  "$main_revision" "$kargo_revision" "$upstream_digest" "$upstream_amd64_digest" \
+  "$upstream_attestation_digest" "$mirror_digest" "$upstream_revision" "$hermes_revision"
 printf 'toolchain=%s platforms=%s\n' "$toolchain_digest" "$toolchain_platforms"
-unset main_revision kargo_revision upstream_digest mirror_digest toolchain_ref toolchain_digest toolchain_platforms platform hermes_revision hermes_target_revision
+unset main_revision kargo_revision upstream_ref mirror_ref upstream_digest upstream_manifest upstream_amd64_digest
+unset upstream_attestation_digest provenance_subject upstream_revision mirror_digest mirror_revision
+unset toolchain_ref toolchain_digest toolchain_platforms platform hermes_revision hermes_target_revision
 ```
 
-The expected upstream index digest is `sha256:9c841866021c54c4596849f6135717e8a4d52ba510b7f52c50aef1de1a283973`.
+The expected upstream index digest is `sha256:e0df6adebddf29b91112aefc999d4aaf6846c9eb544faca5672a16a13590ff79`.
+The expected upstream amd64 manifest digest is
+`sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843`; its attached SLSA provenance manifest is
+`sha256:450e5016e0a278396f097abbb8a2f54418e0980dd09e60dbf5f48eab96e06a9c` and records source revision
+`5fc308a70719a83cccdbba4c0e39c23f5a8239d5`.
 The expected mirrored amd64 manifest digest is
-`sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a`.
+`sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843`.
 The current Hermes toolchain digest is intentionally not repeated in this runbook. The Kargo-managed StatefulSet on
 `kargo/hermes-toolchain` is the sole committed owner; derive its `reference` as shown above and verify the resolved image
 digest and platform labels from that reference.
@@ -256,6 +287,9 @@ digest and platform labels from that reference.
    Job must complete and its log, archived SQLite integrity checks, and checksum verification must succeed. The data mount
    is write-capable only because SQLite read-only WAL connections require shared-memory sidecar access; the pinned backup
    process still opens each source database in read-only mode and fails closed on any safe-copy fallback.
+   Hermes 0.20.6 may report its live root `gateway.sock` as the only skipped file. The production wrapper accepts that exact
+   warning only when the path is a Unix socket, rejects every other skipped file or incomplete database copy, and verifies
+   that the transient socket is absent from the published archive.
    A standalone Job does not update the CronJob's status; `HermesBackupStale` grants a new CronJob 26 hours for its first scheduled success,
    then monitors its last successful completion. A missing CronJob still alerts, and backup failure never changes the
    gateway Pod's readiness.
@@ -264,6 +298,7 @@ digest and platform labels from that reference.
    validation from the durable lab checkout without changing its existing branch or dirty state:
 
    ```bash
+   test "$(kubectl -n hermes exec hermes-0 -c hermes -- /usr/local/bin/node --version)" = v26.5.1
    kubectl -n hermes exec hermes-0 -c hermes -- /usr/bin/bash -lc '
      set -euo pipefail
      test "$(command -v gh)" = /opt/tools/gh
@@ -326,7 +361,75 @@ digest and platform labels from that reference.
    unset hermes_api_key
    ```
 
-4. Prove native Exa search/extract and the allowlisted Exa MCP tools from the production container:
+4. Prove the private Tailscale Ingress, tailnet TLS, bearer-auth boundary, and backend isolation:
+
+   ```bash
+   set -euo pipefail
+   tailnet_url=https://hermes.ide-newton.ts.net
+   test "$(kubectl -n hermes get ingress hermes-tailscale -o jsonpath='{.spec.ingressClassName}')" = tailscale
+   test "$(kubectl -n hermes get ingress hermes-tailscale -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')" = \
+     hermes.ide-newton.ts.net
+   tailscale_proxy=$(kubectl -n tailscale get pods \
+     -l tailscale.com/managed=true,tailscale.com/parent-resource-type=ingress,tailscale.com/parent-resource-ns=hermes,tailscale.com/parent-resource=hermes-tailscale \
+     -o jsonpath='{.items[0].metadata.name}')
+   test -n "$tailscale_proxy"
+   test "$(kubectl -n tailscale get pod "$tailscale_proxy" -o jsonpath='{.status.containerStatuses[0].ready}')" = true
+   kubectl -n tailscale exec "$tailscale_proxy" -- tailscale serve status | grep -F \
+     'https://hermes.ide-newton.ts.net (tailnet only)'
+   tailnet_status=
+   for _ in $(seq 1 12); do
+     tailnet_status=$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 15 \
+       "$tailnet_url/health/detailed" || true)
+     test "$tailnet_status" = 401 && break
+     sleep 5
+   done
+   test "$tailnet_status" = 401
+   hermes_api_key=$(kubectl -n hermes get secret hermes-api-auth -o jsonpath='{.data.API_SERVER_KEY}' | base64 -d)
+   curl -fsS -H "Authorization: Bearer $hermes_api_key" "$tailnet_url/health/detailed" | jq -e \
+     '.status == "ok" and .gateway_state == "running"'
+   curl -fsS -H "Authorization: Bearer $hermes_api_key" -H 'Content-Type: application/json' \
+     -d '{"model":"tuslagch","messages":[{"role":"user","content":"Reply with exactly HERMES_TAILNET_OK"}]}' \
+     "$tailnet_url/v1/chat/completions" | jq -e \
+     '.choices[0].message.content | contains("HERMES_TAILNET_OK")'
+   unset hermes_api_key tailnet_status tailscale_proxy tailnet_url
+   hermes_service_ip=$(kubectl -n hermes get service hermes -o jsonpath='{.spec.clusterIP}')
+   test -n "$hermes_service_ip"
+   ready_hermes_endpoints=$(kubectl -n hermes get endpointslices.discovery.k8s.io \
+     -l kubernetes.io/service-name=hermes -o json | \
+     jq '[.items[].endpoints[] | select(.conditions.ready == true)] | length')
+   test "$ready_hermes_endpoints" -gt 0
+   kubectl run hermes-tailnet-deny-check \
+     -n default \
+     --rm \
+     -i \
+     --restart=Never \
+     --image=curlimages/curl:8.17.0 \
+     --image-pull-policy=IfNotPresent \
+     --env="HERMES_SERVICE_IP=$hermes_service_ip" \
+     --command -- sh -ec '
+       service_host=hermes.hermes.svc.cluster.local
+       curl_status=0
+       curl -sS --connect-timeout 2 --max-time 5 \
+         --resolve "${service_host}:8642:${HERMES_SERVICE_IP}" \
+         "http://${service_host}:8642/health" >/tmp/out 2>/tmp/err || curl_status=$?
+       if [ "$curl_status" -ne 28 ]; then
+         echo "expected NetworkPolicy timeout (curl 28), got $curl_status" >&2
+         cat /tmp/out >&2
+         cat /tmp/err >&2
+         exit 1
+       fi
+       echo gateway_access_blocked_by_timeout
+     '
+   unset hermes_service_ip ready_hermes_endpoints
+   ```
+
+   The endpoint is tailnet-only; never add `tailscale.com/funnel` or a public ingress class. A successful HTTP response
+   from the ordinary `default` namespace is a rollout blocker even if that response is `401`. The negative probe pins
+   the API-resolved Service IP with `--resolve`, so DNS failure cannot masquerade as isolation; a ready EndpointSlice and
+   the authenticated tailnet request prove backend reachability. Only curl exit `28` (the bounded connection timeout)
+   counts as NetworkPolicy denial.
+
+5. Prove native Exa search/extract and the allowlisted Exa MCP tools from the production container:
 
    ```bash
    set -euo pipefail
@@ -369,7 +472,7 @@ digest and platform labels from that reference.
    '
    ```
 
-5. Prove state survives a restart. Create a harmless canary file, restart the pod, and read it back:
+6. Prove state survives a restart. Create a harmless canary file, restart the pod, and read it back:
 
    ```bash
    set -euo pipefail
@@ -379,7 +482,7 @@ digest and platform labels from that reference.
    kubectl -n hermes exec hermes-0 -c hermes -- test -s /opt/data/workspace/tuslagch/.rollout-canary
    ```
 
-6. Prove direct-egress containment, public HTTPS through Squid, and private-destination denial:
+7. Prove direct-egress containment, public HTTPS through Squid, and private-destination denial:
 
    ```bash
    set -euo pipefail
@@ -408,7 +511,7 @@ digest and platform labels from that reference.
    The direct public request must fail. Discord, GitHub, and an arbitrary public HTTPS destination must work through Squid,
    while the metadata destination must receive Squid's explicit denial.
 
-7. Prove the cluster reader and local lab checkout from inside the gateway:
+8. Prove the cluster reader and local lab checkout from inside the gateway:
 
    ```bash
    set -euo pipefail
@@ -438,7 +541,7 @@ digest and platform labels from that reference.
    Secrets, service-account token subresources, `exec`, `attach`, `proxy`, and `port-forward`. The server-side dry-run is an
    authorization proof: it must be rejected before admission and must not create a ConfigMap.
 
-8. Prove the authenticated GitHub identity and non-mutating branch-push capability from inside the gateway:
+9. Prove the authenticated GitHub identity and non-mutating branch-push capability from inside the gateway:
 
    ```bash
    set -euo pipefail
