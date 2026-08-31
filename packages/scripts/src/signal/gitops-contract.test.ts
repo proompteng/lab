@@ -249,14 +249,20 @@ describe('Signal publisher GitOps authority contract', () => {
       'pdb.yaml',
     ])
     expect(archive.spec).toMatchObject({
-      restartNonce: 13,
+      restartNonce: 14,
       job: {
         entryClass: 'ai.proompteng.dorvud.ta.flink.MarketDataArchiveJobKt',
         parallelism: 16,
         state: 'running',
         upgradeMode: 'stateless',
       },
-      taskManager: { replicas: 8 },
+      taskManager: {
+        replicas: 8,
+        resource: {
+          cpu: 2,
+          memory: '2048m',
+        },
+      },
     })
     expect(Number.isSafeInteger(archive.spec.restartNonce)).toBe(true)
     expect(archive.spec.restartNonce).toBeGreaterThan(0)
