@@ -55,6 +55,8 @@
             exact.kubeconform
             exact.kubectl
             pkgs.kubeseal
+            pkgs.curl
+            pkgs.coreutils
             exact.argo-workflows
             pkgs.argocd
             pkgs.buf

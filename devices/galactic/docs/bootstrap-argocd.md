@@ -96,6 +96,31 @@ umask 077
 : "${SEALED_SECRETS_KEY_BACKUP_PATH:?Set this to the local 0600 controller-key YAML from approved secret storage}"
 test -s "$SEALED_SECRETS_KEY_BACKUP_PATH"
 
+if [ ! -f "$SEALED_SECRETS_KEY_BACKUP_PATH" ] || [ -L "$SEALED_SECRETS_KEY_BACKUP_PATH" ]; then
+  printf 'controller-key backup must be a regular file, not a symlink\n' >&2
+  exit 1
+fi
+
+SEALED_SECRETS_KEY_BACKUP_UID="$(stat -c '%u' -- "$SEALED_SECRETS_KEY_BACKUP_PATH")"
+SEALED_SECRETS_KEY_BACKUP_MODE="$(stat -c '%a' -- "$SEALED_SECRETS_KEY_BACKUP_PATH")"
+if [ "$SEALED_SECRETS_KEY_BACKUP_UID" != "$(id -u)" ]; then
+  printf 'controller-key backup must be owned by the current user\n' >&2
+  exit 1
+fi
+if [ "$SEALED_SECRETS_KEY_BACKUP_MODE" != '600' ]; then
+  printf 'controller-key backup must have mode 0600\n' >&2
+  exit 1
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+SEALED_SECRETS_KEY_BACKUP_REALPATH="$(realpath -- "$SEALED_SECRETS_KEY_BACKUP_PATH")"
+case "$SEALED_SECRETS_KEY_BACKUP_REALPATH" in
+  "$REPO_ROOT"|"$REPO_ROOT"/*)
+    printf 'controller-key backup must be outside the repository checkout\n' >&2
+    exit 1
+    ;;
+esac
+
 # ApplicationSet will own this namespace after the root handoff; create it only for this preflight.
 kubectl --context "$GALACTIC_CONTEXT" create namespace sealed-secrets --dry-run=client -o yaml \
   | kubectl --context "$GALACTIC_CONTEXT" apply --server-side --field-manager=galactic-bootstrap -f - >/dev/null

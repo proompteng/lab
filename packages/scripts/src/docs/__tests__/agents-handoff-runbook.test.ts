@@ -33,6 +33,15 @@ it('sanitizes the full Sealed Secrets key backup before restoring it', () => {
   expect(runbook).not.toContain('argocd admin initial-password -n argocd')
   expect(runbook).not.toContain('--server-side --force-conflicts -f "$SEALED_SECRETS_KEY_BACKUP_PATH" -o name')
   expect(flake).toContain('pkgs.kubeseal')
+  expect(flake).toContain('pkgs.curl')
+  expect(flake).toContain('pkgs.coreutils')
+  expect(runbook).toContain('[ ! -f "$SEALED_SECRETS_KEY_BACKUP_PATH" ]')
+  expect(runbook).toContain('[ -L "$SEALED_SECRETS_KEY_BACKUP_PATH" ]')
+  expect(runbook).toContain('stat -c \'%u\' -- "$SEALED_SECRETS_KEY_BACKUP_PATH"')
+  expect(runbook).toContain('stat -c \'%a\' -- "$SEALED_SECRETS_KEY_BACKUP_PATH"')
+  expect(runbook).toContain('[ "$SEALED_SECRETS_KEY_BACKUP_MODE" != \'600\' ]')
+  expect(runbook).toContain('SEALED_SECRETS_KEY_BACKUP_REALPATH="$(realpath -- "$SEALED_SECRETS_KEY_BACKUP_PATH")"')
+  expect(runbook).toContain('"$REPO_ROOT"|"$REPO_ROOT"/*)')
   expect(
     scriptsWorkflow.split('\n').filter((line) => line.trim() === "- 'devices/galactic/docs/bootstrap-argocd.md'"),
   ).toHaveLength(2)
