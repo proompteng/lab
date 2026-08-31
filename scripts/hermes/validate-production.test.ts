@@ -183,6 +183,57 @@ test('rejects omitting the translated Kubernetes API endpoints', async () => {
   )
 })
 
+test('rejects omitting the private Hermes Tailscale Ingress from the rendered application', async () => {
+  const files = await loadProductionFiles()
+  files.kustomization = files.kustomization.replace('  - tailscale-ingress.yaml\n', '')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.kustomization}: missing production invariant "- tailscale-ingress.yaml"`,
+  )
+})
+
+test('rejects changing the Hermes Tailscale TLS or routing hostname', async () => {
+  const files = await loadProductionFiles()
+  files.tailscaleIngress = files.tailscaleIngress.replaceAll('hermes.ide-newton.ts.net', 'hermes-public.example.com')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.tailscaleIngress}: TLS and routing must use only the Hermes MagicDNS hostname`,
+  )
+})
+
+test('rejects routing the Hermes Tailscale Ingress to another backend', async () => {
+  const files = await loadProductionFiles()
+  files.tailscaleIngress = files.tailscaleIngress.replace('                name: hermes', '                name: other')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.tailscaleIngress}: missing production invariant "backend:\\n              service:\\n                name: hermes\\n                port:\\n                  name: api"`,
+  )
+})
+
+test('rejects enabling public Funnel access for Hermes', async () => {
+  const files = await loadProductionFiles()
+  files.tailscaleIngress = files.tailscaleIngress.replace(
+    '    tailscale.com/tags: tag:k8s',
+    '    tailscale.com/funnel: "true"',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.tailscaleIngress}: contains forbidden production term "tailscale.com/funnel"`,
+  )
+})
+
+test('rejects widening Hermes ingress beyond its exact Tailscale proxy', async () => {
+  const files = await loadProductionFiles()
+  files.networkPolicy = files.networkPolicy.replace(
+    '        - namespaceSelector:\n            matchLabels:\n              kubernetes.io/metadata.name: tailscale',
+    '        - namespaceSelector: {}\n        - namespaceSelector:\n            matchLabels:\n              kubernetes.io/metadata.name: tailscale',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.networkPolicy}: contains forbidden production term "        - namespaceSelector: {}"`,
+  )
+})
+
 test('rejects restoring a domain-only Squid egress allowlist', async () => {
   const files = await loadProductionFiles()
   files.squidConfig = files.squidConfig.replace(
