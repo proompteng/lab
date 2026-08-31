@@ -189,6 +189,7 @@ export function codexEventShouldRender(
 ) {
   if (!codexEventMatchesThread(event, threadId)) return false
   if (event.kind === 'approval') return true
+  if (restoredHistorySequence > 0 && event.sequence <= restoredHistorySequence) return false
   return !event.itemId || !restoredItemIds.has(event.itemId) || event.sequence > restoredHistorySequence
 }
 
@@ -231,7 +232,9 @@ export function appendCodexEventAfterRestore(
   snapshotSequence: number,
 ) {
   const restoredItem = restoredHistory.get(event.itemId)
-  if (event.kind !== 'approval' && restoredItem && event.sequence <= snapshotSequence) return current
+  if (event.sequence <= snapshotSequence && event.kind !== 'approval' && !codexResolvedApprovalId(event)) {
+    return current
+  }
   const restoredPrefix =
     restoredItem && codexEventContinuesRestoredItem(event, restoredItem, snapshotSequence) ? restoredItem.text : ''
   return appendCodexEvent(current, event, restoredPrefix)

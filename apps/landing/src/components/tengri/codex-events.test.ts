@@ -124,9 +124,13 @@ describe('Codex event replay', () => {
 
   test('keeps only post-resume updates visible for items restored into history', () => {
     const restoredItemIds = new Set([event.itemId])
+    const itemlessSnapshotEvent = { ...event, kind: 'usage' as const, itemId: '' }
+    const renamedSnapshotItem = { ...event, itemId: 'app-server-generated-id' }
 
     expect(codexEventShouldRender(event, event.threadId, restoredItemIds)).toBe(false)
     expect(codexEventShouldRender(event, event.threadId, restoredItemIds, event.sequence)).toBe(false)
+    expect(codexEventShouldRender(itemlessSnapshotEvent, event.threadId, restoredItemIds, event.sequence)).toBe(false)
+    expect(codexEventShouldRender(renamedSnapshotItem, event.threadId, restoredItemIds, event.sequence)).toBe(false)
     expect(codexEventShouldRender(event, event.threadId, restoredItemIds, event.sequence - 1)).toBe(true)
   })
 
@@ -203,6 +207,33 @@ describe('Codex event replay', () => {
     )
   })
 
+  test('drops all snapshot-covered replay events when restored transcript IDs were synthesized', () => {
+    const restoredById = new Map([
+      ['item-1', { id: 'item-1', kind: 'user-message' as const, text: 'Create the proof file.' }],
+      ['item-2', { id: 'item-2', kind: 'assistant-text' as const, text: 'Creating the file.' }],
+      ['item-3', { id: 'item-3', kind: 'assistant-text' as const, text: '/workspace/proof.txt' }],
+    ])
+    const replayed = [
+      { ...event, sequence: 9, kind: 'user-message' as const, itemId: 'msg-user-live', text: 'Create the proof file.' },
+      { ...event, sequence: 13, itemId: 'msg-agent-live', text: 'Creating the file.' },
+      {
+        ...event,
+        sequence: 26,
+        kind: 'file-diff' as const,
+        method: 'turn/diff/updated',
+        itemId: '',
+        text: '+++ /workspace/proof.txt',
+      },
+      { ...event, sequence: 27, kind: 'usage' as const, method: 'thread/tokenUsage/updated', itemId: '' },
+      { ...event, sequence: 42, itemId: 'msg-agent-final-live', text: '/workspace/proof.txt' },
+    ]
+    const postSnapshot = { ...event, sequence: 54, kind: 'warning' as const, itemId: '', text: 'Live warning' }
+
+    expect(reconcileCodexEventsWithRestoredHistory([...replayed, postSnapshot], restoredById, 53)).toEqual([
+      postSnapshot,
+    ])
+  })
+
   test('drops snapshot-covered deltas delivered after the snapshot commit', () => {
     const restored = { id: event.itemId, kind: 'assistant-text', text: 'snapshot includes delta' } as const
     const restoredById = new Map([[restored.id, restored]])
@@ -226,6 +257,26 @@ describe('Codex event replay', () => {
 
     const approval = { ...delayedIncludedDelta, kind: 'approval' as const, approvalId: 'approval-1' }
     expect(appendCodexEventAfterRestore([], approval, restoredById, 42)).toEqual([approval])
+  })
+
+  test('reconciles snapshot-covered approval requests with their resolution events', () => {
+    const approval = {
+      ...event,
+      sequence: 20,
+      kind: 'approval' as const,
+      method: 'item/commandExecution/requestApproval',
+      approvalId: '7',
+    }
+    const resolved = {
+      ...event,
+      sequence: 21,
+      kind: 'thread-state' as const,
+      method: 'serverRequest/resolved',
+      itemId: '',
+      rawJson: JSON.stringify({ params: { threadId: event.threadId, requestId: 7 } }),
+    }
+
+    expect(reconcileCodexEventsWithRestoredHistory([approval, resolved], new Map(), 42)).toEqual([])
   })
 
   test('removes a replayed approval after its server request resolves', () => {
