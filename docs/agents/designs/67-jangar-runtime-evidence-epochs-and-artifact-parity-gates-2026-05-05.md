@@ -17,7 +17,6 @@ Extends:
 
 - `65-jangar-recovery-epoch-cutover-and-backlog-seat-enforcement-contract-2026-03-21.md`
 - `65-jangar-recovery-warrants-and-runtime-proof-cells-contract-2026-03-21.md`
-- `66-jangar-recovery-release-lanes-and-rollout-proof-fence-contract-2026-03-21.md`
 - `63-jangar-consumer-projections-and-latency-class-admission-contract-2026-03-20.md`
 
 ## Executive summary

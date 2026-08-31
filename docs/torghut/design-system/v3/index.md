@@ -1,34 +1,21 @@
 # Torghut Design System v3: Flexible Quant Strategy Engine
 
+This is a historical design and handoff archive index, not a current implementation dashboard. Validate every reference
+against `docs/torghut/README.md`, live GitOps, service source, and runtime readback.
+
 ## Status
 
 - Version: `v3`
 - Date: `2026-02-12`
-- Maturity: `production handoff package`
+- Maturity: `historical production handoff package`
 - Primary scope: Torghut quant strategy engine modernization with AgentRun-ready implementation contracts.
-- Source-of-truth implementation status: `implementation-status-matrix-2026-02-21.md`
-- Evidence sync: `implementation-audit.md`
-- Implementation status (strict): `Implemented=4`, `Partial=29`, `Planned=4` of 37
-
-## Source Implementation Audit (2026-07-04)
-
-- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
-- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
-- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
-- Current source evidence:
-  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
-  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
-  - `services/torghut/app/trading/consumer_evidence.py`
-  - `services/torghut/app/trading/freshness_carry.py`
-  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
-  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
-- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
-
+- Operational authority: `docs/torghut/README.md`, live GitOps, service source, and runtime readback.
+- Historical implementation counts: `Implemented=4`, `Partial=29`, `Planned=4` of 37
 
 ## Purpose
 
-This package translates Torghut quant research goals into implementation-grade designs that are directly executable by
-human engineers or AgentRuns with minimal interpretation risk.
+This package records the historical translation of Torghut quant research goals into implementation-grade designs. It
+is not a current execution plan; current work must be revalidated against source, GitOps, and runtime state.
 
 The package is explicitly grounded in:
 
@@ -51,7 +38,7 @@ The package is explicitly grounded in:
 - AI/LLM/agent layers are advisory unless explicitly gated for actuation.
 - Same input + same config + same code version must reproduce same outcome.
 
-## Handoff Readiness Standard
+## Historical Handoff Readiness Standard
 
 Every doc in this pack includes:
 
@@ -67,7 +54,7 @@ Every doc in this pack includes:
   - expected artifacts,
   - exit criteria.
 
-## Source-of-Truth Inputs
+## Historical Source Inputs
 
 Code and configuration:
 
@@ -99,7 +86,7 @@ Runtime/data snapshot commands executed on `2026-02-11` UTC:
 - `kubectl cnpg psql -n torghut torghut-db -- -d torghut ...`
 - `kubectl exec -n torghut chi-torghut-clickhouse-default-0-0-0 -- clickhouse-client ...`
 
-Fast refresh workflow for subsequent analysis passes:
+Snapshot refresh workflow used for subsequent analysis passes:
 
 - `docs/agents/designs/jangar-torghut-live-analysis-playbook.md`
 
@@ -145,7 +132,7 @@ For end-to-end autonomous operation (research -> strategy -> backtest -> paper -
 - `docs/torghut/design-system/v3/full-loop/templates/implementationspecs.yaml`
 - `docs/torghut/design-system/v3/full-loop/templates/agentruns.yaml`
 
-## Operational Snapshot Package (Current-State Review)
+## Historical Operational Snapshot Package
 
 - `docs/torghut/design-system/v3/current-state-snapshot-2026-02-12.md`
 - `docs/torghut/design-system/v3/system-state-assessment-runbook.md`
@@ -203,16 +190,16 @@ spec:
         timeoutSeconds: 7200
 ```
 
-## Delivery Waves
+## Historical Delivery Waves
 
 - Wave 1: feature contract + plugin SDK + legacy wrapper.
 - Wave 2: strategy engine runtime + allocator + execution abstractions.
 - Wave 3: backtesting ledger + promotion gates + TCA integration.
 - Wave 4: autonomy/governance automation + LEAN/QLib/RD-Agent research lanes.
 
-## Implementation Snapshot (2026-02-11)
+## Historical Implementation Snapshot (2026-02-11)
 
-Phase-1 and phase-2 foundations now implemented in `services/torghut/`:
+Phase-1 and phase-2 foundations were recorded as implemented in `services/torghut/`:
 
 - plugin runtime scaffolding (`app/trading/strategy_runtime.py`) with deterministic parameter and feature hashes,
 - feature normalization boundary (`app/trading/features.py`) exposing `FeatureVectorV3` + parity hash metadata,
@@ -220,13 +207,13 @@ Phase-1 and phase-2 foundations now implemented in `services/torghut/`:
 - end-to-end deterministic lane runner (`scripts/run_autonomous_lane.py`) producing research/backtest/gate artifacts and
   paper-candidate patch output.
 
-Current safety posture:
+Safety posture recorded in this snapshot:
 
 - live remains gated by default (`TRADING_MODE=paper`, `allow_live_promotion=false`),
 - deterministic risk/firewall remain final authority in runtime execution path,
 - LLM path remains bounded/advisory and cannot bypass gate/risk controls.
 
-Migration notes for next phases:
+Migration notes recorded for the next phases:
 
 - promote `TRADING_STRATEGY_RUNTIME_MODE=scheduler_v3` after paper shadow validation and parity checks,
 - wire autonomous lane artifacts into AgentRun specs (`torghut-v3-backtest-robustness-v1` and
