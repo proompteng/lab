@@ -249,7 +249,7 @@ test('terminalizes a restricted unbound execution cycle before cutoff without en
   ).toBe(CycleTerminalReason.Authority)
 })
 
-test('restricted mutation startup terminalizes its unbound cycle before building a decision', async () => {
+test('restricted mutation startup terminalizes its unbound cycle without discovering a replacement', async () => {
   const observedAt = utcInstantFromEpochMillis(Date.parse(cycle.window.submissionOpenAt) + 1_000)
   const terminalCycle = Effect.runSync(
     decodeAutonomousCycle({
@@ -267,7 +267,7 @@ test('restricted mutation startup terminalizes its unbound cycle before building
     acquire: () => forbidden('cycle acquisition'),
     read: () => forbidden('cycle read by ID'),
     readAuthoritySlot: () => forbidden('authority-slot read'),
-    readOldestUnfinished: () => Effect.succeed(Option.some(cycle)),
+    readOldestUnfinished: () => Effect.succeed(blockCount === 0 ? Option.some(cycle) : Option.none()),
     readDecisionDocument: () => forbidden('decision document read'),
     bindSnapshot: () => forbidden('snapshot binding'),
     activate: () => forbidden('cycle activation'),
@@ -287,7 +287,7 @@ test('restricted mutation startup terminalizes its unbound cycle before building
   const reconciliationServices = makeExactReconciliationServices()
   const executionStore = reconciliationServices.executionStore
 
-  const advance = await Effect.runPromise(
+  const advances = await Effect.runPromise(
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse(observedAt))
       const driverEffect = yield* makeMutationAutonomousCycleStartupProduction(
@@ -307,7 +307,9 @@ test('restricted mutation startup terminalizes its unbound cycle before building
         recordPass: () => Effect.void,
       })
       const driver = yield* driverEffect
-      return yield* driver.advance
+      const blocked = yield* driver.advance
+      const waiting = yield* driver.advance
+      return { blocked, waiting }
     }).pipe(
       Effect.provideService(BrokerRead, reconciliationServices.brokerRead),
       Effect.provideService(CycleStore, cycleStore),
@@ -324,11 +326,12 @@ test('restricted mutation startup terminalizes its unbound cycle before building
     ),
   )
 
-  expect(advance.result).toMatchObject({
+  expect(advances.blocked.result).toMatchObject({
     outcome: 'RECOVERED',
     action: 'BLOCKED',
     cycle: { state: CycleState.Blocked, terminalReason: CycleTerminalReason.Authority },
   })
+  expect(advances.waiting.result).toEqual({ outcome: 'WINDOW_CLOSED', observedAt })
   expect(blockCount).toBe(1)
 })
 

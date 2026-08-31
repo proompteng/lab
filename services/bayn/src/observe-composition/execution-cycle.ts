@@ -1126,6 +1126,9 @@ export const runRecoveryFirstCyclePass = (
           if (terminalReason !== undefined && unfinished !== undefined && !mutationBound(unfinished)) {
             return terminalizeUnboundMutationCycle(unfinished, terminalReason, observedAt)
           }
+          if (capability._tag === 'RecoveryOnly') {
+            return Effect.succeed({ outcome: 'WINDOW_CLOSED' as const, observedAt })
+          }
           if (input.executionMandateCutoffAt !== undefined && observedAt >= input.executionMandateCutoffAt) {
             return Effect.succeed({ outcome: 'WINDOW_CLOSED' as const, observedAt })
           }
