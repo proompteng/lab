@@ -1550,7 +1550,10 @@ internal class TaSignalsFunction(
     ctx: Context,
     out: Collector<Envelope<TaSignalsPayload>>,
   ) {
-    quoteState.update(TimedQuoteState(eventTs = value.eventTs, payload = value.payload))
+    val current = quoteState.value()
+    if (quoteStateAccepts(current, value.eventTs)) {
+      quoteState.update(TimedQuoteState(eventTs = value.eventTs, payload = value.payload))
+    }
   }
 
   private fun computeSignals(
@@ -1816,6 +1819,11 @@ data class TimedQuoteState(
   val eventTs: Instant,
   val payload: QuotePayload,
 ) : Serializable
+
+internal fun quoteStateAccepts(
+  current: TimedQuoteState?,
+  incomingEventTs: Instant,
+): Boolean = current == null || incomingEventTs.isAfter(current.eventTs)
 
 internal fun freshQuotePayloadForBar(
   quote: TimedQuoteState?,

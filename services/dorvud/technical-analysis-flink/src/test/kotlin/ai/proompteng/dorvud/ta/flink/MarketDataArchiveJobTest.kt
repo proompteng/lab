@@ -224,7 +224,7 @@ class MarketDataArchiveJobTest {
         "UNIVERSE_SYMBOLS" to observationUniverse.symbols.sorted().joinToString(","),
         "UNIVERSE_SYMBOL_HASH" to observationUniverse.symbolHash,
       )
-    val config = MarketDataArchiveConfig.fromEnv(valid)
+    val config = MarketDataArchiveConfig.fromEnv(valid + ("ARCHIVE_PARALLELISM" to "7"))
     assertEquals(7, config.routes.size)
     assertEquals(coreUniverse, config.routes.getValue("torghut.bars.1m.v1").universe)
     assertEquals(
@@ -234,6 +234,7 @@ class MarketDataArchiveJobTest {
     assertEquals(100, config.clickhouseBatchSize)
     assertEquals("signal_publisher", config.clickhouseUsername)
     assertEquals(OffsetResetStrategy.LATEST, config.offsetResetStrategy)
+    assertEquals(7, config.parallelism)
 
     val legacy =
       MarketDataArchiveConfig.fromEnv(
@@ -262,6 +263,9 @@ class MarketDataArchiveJobTest {
     }
     assertFailsWith<IllegalArgumentException> {
       MarketDataArchiveConfig.fromEnv(valid + ("ARCHIVE_CLICKHOUSE_BATCH_SIZE" to "1001"))
+    }
+    assertFailsWith<IllegalArgumentException> {
+      MarketDataArchiveConfig.fromEnv(valid + ("ARCHIVE_PARALLELISM" to "17"))
     }
     assertFailsWith<IllegalArgumentException> {
       MarketDataArchiveConfig.fromEnv(valid + ("ARCHIVE_OFFSET_RESET" to "middle"))
