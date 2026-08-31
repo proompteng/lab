@@ -32,6 +32,8 @@ use crate::{
 
 const BOOTSTRAP_SECRET_REJECTED: &str = "BootstrapSecretRejected";
 const GUEST_IMAGE_UPDATE_REASON: &str = "GuestImageUpdate";
+const GUEST_IMAGE_UPDATE_STARTED_AT_ANNOTATION: &str =
+    "runtime.proompteng.ai/guest-image-update-started-at";
 const UNSCHEDULABLE_FAILURE_GRACE_SECONDS: i64 = 30;
 const POD_SANDBOX_FAILURE_GRACE_SECONDS: i64 = 30;
 const MAX_FAILURE_MESSAGE_CHARS: usize = 2_048;
@@ -124,7 +126,7 @@ async fn reconcile(
     }
 
     if microvm.spec.image != context.guest_image.as_ref() {
-        patch_guest_image(&microvms, &microvm, &context.guest_image).await?;
+        patch_guest_image(&microvms, &microvm, &context.guest_image, &now.to_rfc3339()).await?;
         info!(
             microvm = %name,
             previous_image = %microvm.spec.image,
@@ -151,6 +153,9 @@ async fn reconcile(
         // Sleeping is observable only after the Firecracker guest is gone. Waiting for
         // foreground deletion also prevents a resume from racing a terminating Pod.
         delete_owned_and_wait(&pods, &name, &microvm).await?;
+        if guest_image_update_started_at(&microvm).is_some() {
+            clear_guest_image_update_started_at(&microvms, &microvm).await?;
+        }
         let status = sleeping_status(&microvm, idle, now);
         if microvm.status.as_ref() != Some(&status) {
             patch_status(&microvms, &microvm, status).await?;
@@ -280,7 +285,9 @@ async fn reconcile(
 
     let ready_transition = status.phase == MicroVMPhase::Ready
         && microvm.status.as_ref().map(|value| value.phase) != Some(MicroVMPhase::Ready);
-    let latency = ready_transition.then(|| readiness_latency(&microvm, now));
+    let latency = ready_transition
+        .then(|| readiness_latency(&microvm, now))
+        .flatten();
     if status.phase == MicroVMPhase::Failed
         && microvm.status.as_ref().map(|value| value.phase) != Some(MicroVMPhase::Failed)
     {
@@ -298,6 +305,9 @@ async fn reconcile(
     }
     if status.phase == MicroVMPhase::Ready && resume_started_at(&microvm).is_some() {
         clear_resume_started_at(&microvms, &microvm).await?;
+    }
+    if status.phase == MicroVMPhase::Ready && guest_image_update_started_at(&microvm).is_some() {
+        clear_guest_image_update_started_at(&microvms, &microvm).await?;
     }
 
     Ok(Action::requeue(next_requeue(&microvm, now)))
@@ -450,11 +460,18 @@ enum ReadinessLatency {
     Resume(u64),
 }
 
-fn readiness_latency(microvm: &MicroVM, now: DateTime<Utc>) -> ReadinessLatency {
-    if let Some(started_at) = resume_started_at(microvm) {
-        return ReadinessLatency::Resume(elapsed_millis(started_at, now).unwrap_or_default());
+fn readiness_latency(microvm: &MicroVM, now: DateTime<Utc>) -> Option<ReadinessLatency> {
+    if guest_image_update_started_at(microvm).is_some() {
+        return None;
     }
-    ReadinessLatency::Boot(elapsed_millis(&microvm.spec.created_at, now).unwrap_or_default())
+    if let Some(started_at) = resume_started_at(microvm) {
+        return Some(ReadinessLatency::Resume(
+            elapsed_millis(started_at, now).unwrap_or_default(),
+        ));
+    }
+    Some(ReadinessLatency::Boot(
+        elapsed_millis(&microvm.spec.created_at, now).unwrap_or_default(),
+    ))
 }
 
 fn resume_started_at(microvm: &MicroVM) -> Option<&str> {
@@ -466,9 +483,34 @@ fn resume_started_at(microvm: &MicroVM) -> Option<&str> {
         .map(String::as_str)
 }
 
+fn guest_image_update_started_at(microvm: &MicroVM) -> Option<&str> {
+    microvm
+        .metadata
+        .annotations
+        .as_ref()
+        .and_then(|annotations| annotations.get(GUEST_IMAGE_UPDATE_STARTED_AT_ANNOTATION))
+        .map(String::as_str)
+}
+
 async fn clear_resume_started_at(api: &Api<MicroVM>, microvm: &MicroVM) -> Result<(), kube::Error> {
     let mut patch = json!({"metadata": {"annotations": {}}});
     patch["metadata"]["annotations"][RESUME_STARTED_AT_ANNOTATION] = serde_json::Value::Null;
+    api.patch(
+        &microvm.name_any(),
+        &PatchParams::default(),
+        &Patch::Merge(&patch),
+    )
+    .await?;
+    Ok(())
+}
+
+async fn clear_guest_image_update_started_at(
+    api: &Api<MicroVM>,
+    microvm: &MicroVM,
+) -> Result<(), kube::Error> {
+    let mut patch = json!({"metadata": {"annotations": {}}});
+    patch["metadata"]["annotations"][GUEST_IMAGE_UPDATE_STARTED_AT_ANNOTATION] =
+        serde_json::Value::Null;
     api.patch(
         &microvm.name_any(),
         &PatchParams::default(),
@@ -613,14 +655,20 @@ async fn patch_guest_image(
     api: &Api<MicroVM>,
     microvm: &MicroVM,
     image: &str,
+    started_at: &str,
 ) -> Result<(), kube::Error> {
+    let mut patch = json!({
+        "metadata": {
+            "resourceVersion": microvm.resource_version(),
+            "annotations": {},
+        },
+        "spec": {"image": image},
+    });
+    patch["metadata"]["annotations"][GUEST_IMAGE_UPDATE_STARTED_AT_ANNOTATION] = json!(started_at);
     api.patch(
         &microvm.name_any(),
         &PatchParams::default(),
-        &Patch::Merge(json!({
-            "metadata": {"resourceVersion": microvm.resource_version()},
-            "spec": {"image": image},
-        })),
+        &Patch::Merge(&patch),
     )
     .await?;
     Ok(())
@@ -1949,13 +1997,37 @@ mod tests {
 
         assert_eq!(
             readiness_latency(&microvm, now),
-            ReadinessLatency::Resume(3_000)
+            Some(ReadinessLatency::Resume(3_000))
         );
         microvm.metadata.annotations = None;
         assert_eq!(
             readiness_latency(&microvm, now),
-            ReadinessLatency::Boot(7_200_000)
+            Some(ReadinessLatency::Boot(7_200_000))
         );
+    }
+
+    #[test]
+    fn guest_image_update_does_not_record_the_agent_age_as_boot_latency() {
+        let now = Utc::now();
+        let mut microvm = test_microvm(now - chrono::Duration::hours(2));
+        microvm.status = Some(MicroVMStatus {
+            phase: MicroVMPhase::Booting,
+            conditions: vec![condition(
+                &microvm,
+                "Ready",
+                "False",
+                "GuestBooting",
+                "Starting the Firecracker guest",
+                now,
+            )],
+            ..MicroVMStatus::default()
+        });
+        microvm.metadata.annotations = Some(std::collections::BTreeMap::from([(
+            GUEST_IMAGE_UPDATE_STARTED_AT_ANNOTATION.to_owned(),
+            (now - chrono::Duration::seconds(5)).to_rfc3339(),
+        )]));
+
+        assert_eq!(readiness_latency(&microvm, now), None);
     }
 
     #[test]
@@ -2295,8 +2367,10 @@ mod tests {
         let client = Client::new(service, "tengri");
         let microvms = Api::namespaced(client, "tengri");
         let patch_image = desired_image.clone();
-        let patch =
-            tokio::spawn(async move { patch_guest_image(&microvms, &microvm, &patch_image).await });
+        let started_at = "2026-08-31T08:00:00Z";
+        let patch = tokio::spawn(async move {
+            patch_guest_image(&microvms, &microvm, &patch_image, started_at).await
+        });
 
         let (request, response) = handle.next_request().await.expect("MicroVM image patch");
         assert_eq!(request.method(), http::Method::PATCH);
@@ -2313,6 +2387,10 @@ mod tests {
         )
         .expect("merge patch JSON");
         assert_eq!(body["metadata"]["resourceVersion"], "41");
+        assert_eq!(
+            body["metadata"]["annotations"][GUEST_IMAGE_UPDATE_STARTED_AT_ANNOTATION],
+            started_at
+        );
         assert_eq!(body["spec"], json!({"image": desired_image}));
         response.send_response(
             Response::builder()
