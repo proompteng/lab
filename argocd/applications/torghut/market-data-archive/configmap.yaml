@@ -8,10 +8,9 @@ data:
   ARCHIVE_KAFKA_SECURITY: "SASL_PLAINTEXT"
   ARCHIVE_KAFKA_SASL_MECH: "SCRAM-SHA-512"
   ARCHIVE_KAFKA_USERNAME: "torghut-ws"
-  # v1 retained historical offsets from the pre-quote/trade topology and left current
-  # session records behind a multi-day replay. v2 starts every configured topic at
-  # its deployment-time head; existing ClickHouse rows remain immutable and readable.
-  ARCHIVE_GROUP_ID: "bayn-market-data-archive-v2"
+  # v3 starts at the repartitioned quote stream head. Existing ClickHouse rows remain
+  # immutable; only current data is admitted after the skewed v2 backlog.
+  ARCHIVE_GROUP_ID: "bayn-market-data-archive-v3"
   ARCHIVE_OFFSET_RESET: "latest"
   ARCHIVE_CLIENT_ID: "bayn-market-data-archive"
   ARCHIVE_CORE_FEED: "iex"
@@ -26,7 +25,7 @@ data:
   ARCHIVE_DELAYED_SIP_TRADES_TOPIC: "bayn.market-data.delayed-sip.trades.v1"
   ARCHIVE_OVERNIGHT_BARS_TOPIC: "bayn.market-data.overnight.bars.1m.v1"
   ARCHIVE_CHECKPOINT_INTERVAL_MS: "60000"
-  ARCHIVE_PARALLELISM: "3"
+  ARCHIVE_PARALLELISM: "7"
   # ClickHouse JDBC v2 forwards server settings only with the clickhouse_setting_ prefix.
   ARCHIVE_CLICKHOUSE_URL: "jdbc:clickhouse://torghut-clickhouse.torghut.svc.cluster.local:8123/signal?clickhouse_setting_insert_quorum_parallel=1"
   ARCHIVE_CLICKHOUSE_USERNAME: "signal_publisher"
