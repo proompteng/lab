@@ -852,10 +852,40 @@ test('rejects a read-only data mount that prevents SQLite WAL-safe backup', asyn
 
 test('rejects publishing a backup after SQLite falls back to a raw copy', async () => {
   const files = await loadProductionFiles()
-  files.backupScript = files.backupScript.replace('*"SQLite safe copy failed"*|', '')
+  files.backupPolicy = files.backupPolicy.replace('*"SQLite safe copy failed"*|', '')
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.backupScript}: missing production invariant "*\\\"SQLite safe copy failed\\\"*|*\\\"Raw copy also failed\\\"*|*\\\"Warnings (\\\"*)"`,
+    `${productionPaths.backupPolicy}: missing production invariant "*\\\"SQLite safe copy failed\\\"*|*\\\"Raw copy also failed\\\"*)"`,
+  )
+})
+
+test('rejects accepting the gateway socket warning without proving it is a Unix socket', async () => {
+  const files = await loadProductionFiles()
+  files.backupPolicy = files.backupPolicy.replace('[ -S "$backup_policy_socket" ] || return 1', ':')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.backupPolicy}: missing production invariant "[ -S \\"$backup_policy_socket\\" ] || return 1"`,
+  )
+})
+
+test('rejects a broad backup warning allowance', async () => {
+  const files = await loadProductionFiles()
+  files.backupPolicy = files.backupPolicy.replace(
+    "backup_policy_header='  Warnings (1 files skipped):'",
+    "backup_policy_header='  Warnings ('",
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.backupPolicy}: missing production invariant "backup_policy_header='  Warnings (1 files skipped):'"`,
+  )
+})
+
+test('rejects a backup archive that can publish the transient gateway socket', async () => {
+  const files = await loadProductionFiles()
+  files.backupScript = files.backupScript.replace('if "gateway.sock" in backup.namelist():', 'if False:')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.backupScript}: missing production invariant "if \\"gateway.sock\\" in backup.namelist():"`,
   )
 })
 
