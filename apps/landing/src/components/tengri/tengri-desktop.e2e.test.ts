@@ -130,6 +130,7 @@ type MockOptions = {
   codexAuthenticated?: boolean
   deferSleepReconciliation?: boolean
   extraFiles?: typeof workspaceEntries
+  failCodexAccountUntilReleased?: boolean
   failSnapshotAfterAction?: 'delete-agent' | 'sleep-agent'
   holdCodexAccount?: boolean
   holdCodexAccountAfterLogin?: boolean
@@ -150,6 +151,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   const actions: Record<string, unknown>[] = []
   let resumeThreadRequests = 0
   let resumeThreadResponses = 0
+  let codexAccountFailuresReleased = !options.failCodexAccountUntilReleased
   let heldCodexAccountRequest = false
   let searchRequestsInFlight = 0
   let maxConcurrentSearchRequests = 0
@@ -511,6 +513,14 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         }
         break
       case 'codex-account':
+        if (!codexAccountFailuresReleased) {
+          await route.fulfill({
+            status: 503,
+            contentType: 'application/json',
+            body: JSON.stringify({ error: 'Codex account is temporarily unavailable' }),
+          })
+          return
+        }
         if (
           options.holdCodexAccount ||
           (options.holdCodexAccountAfterLogin &&
@@ -636,6 +646,9 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
     getSnapshotRequestCount: () => snapshotRequests,
     holdNextPreviewSession: () => {
       holdNextPreviewSession = true
+    },
+    releaseCodexAccountFailures: () => {
+      codexAccountFailuresReleased = true
     },
     releaseHeldCodexAccount,
     releaseHeldLifecycleAction,
@@ -1467,6 +1480,23 @@ test('restores an active Codex device login without replacing its code', async (
   await page.goto('/')
 
   const chrome = page.getByRole('region', { name: 'Chrome window' })
+  await expect(chrome.getByText('TENG-RI99')).toBeVisible()
+  expect(mock.actions.filter((action) => action.action === 'codex-login-status')).toHaveLength(1)
+  expect(mock.actions.some((action) => action.action === 'codex-login')).toBe(false)
+})
+
+test('restores an active Codex device login after retrying a failed account check', async ({ page }) => {
+  const mock = await mockTengri(page, {
+    activeCodexLogin: true,
+    codexAuthenticated: false,
+    failCodexAccountUntilReleased: true,
+  })
+  await page.goto('/')
+
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  await expect(chrome.getByRole('button', { name: 'Retry' })).toBeVisible()
+  mock.releaseCodexAccountFailures()
+  await chrome.getByRole('button', { name: 'Retry' }).click()
   await expect(chrome.getByText('TENG-RI99')).toBeVisible()
   expect(mock.actions.filter((action) => action.action === 'codex-login-status')).toHaveLength(1)
   expect(mock.actions.some((action) => action.action === 'codex-login')).toBe(false)

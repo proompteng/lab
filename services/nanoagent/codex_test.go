@@ -383,6 +383,7 @@ printf '{"id":%%s,"result":{"type":"chatgptDeviceCode","loginId":"login-one","ve
 IFS= read -r cancel_login
 printf '%%s' "$cancel_login" > %q
 id=$(printf '%%s\n' "$cancel_login" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+printf '{"method":"account/login/completed","params":{"loginId":"login-one"}}\n'
 printf '{"id":%%s,"result":{}}\n' "$id"
 IFS= read -r second_login
 id=$(printf '%%s\n' "$second_login" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')

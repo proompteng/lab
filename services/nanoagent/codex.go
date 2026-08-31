@@ -113,6 +113,8 @@ type codexSupervisor struct {
 	activeLogin     json.RawMessage
 	loginStartedAt  time.Time
 	loginGeneration *codexProcessGeneration
+	loginOperation  *codexProcessGeneration
+	loginCompleted  map[string]struct{}
 	sequence        uint64
 	buffer          []codexEvent
 	bufferBytes     int
@@ -309,8 +311,19 @@ func (supervisor *codexSupervisor) startLogin(ctx context.Context, params json.R
 	if supervisor.loginGeneration != supervisor.generation {
 		supervisor.clearLoginLocked()
 	}
+	operationGeneration := supervisor.generation
+	supervisor.loginOperation = operationGeneration
+	supervisor.loginCompleted = make(map[string]struct{})
 	previousLoginID := supervisor.activeLoginID
 	supervisor.mu.Unlock()
+	defer func() {
+		supervisor.mu.Lock()
+		if supervisor.loginOperation == operationGeneration {
+			supervisor.loginOperation = nil
+			supervisor.loginCompleted = nil
+		}
+		supervisor.mu.Unlock()
+	}()
 	if previousLoginID != "" {
 		cancelParams, _ := json.Marshal(map[string]string{"loginId": previousLoginID})
 		cancelContext, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -336,10 +349,13 @@ func (supervisor *codexSupervisor) startLogin(ctx context.Context, params json.R
 		return codexCallResult{}, errors.New("Codex app-server returned an invalid device login")
 	}
 	supervisor.mu.Lock()
-	supervisor.activeLoginID = login.LoginID
-	supervisor.activeLogin = append(json.RawMessage(nil), result.result...)
-	supervisor.loginStartedAt = time.Now().UTC()
-	supervisor.loginGeneration = result.generation
+	_, completed := supervisor.loginCompleted[login.LoginID]
+	if supervisor.loginOperation == result.generation && !completed {
+		supervisor.activeLoginID = login.LoginID
+		supervisor.activeLogin = append(json.RawMessage(nil), result.result...)
+		supervisor.loginStartedAt = time.Now().UTC()
+		supervisor.loginGeneration = result.generation
+	}
 	supervisor.mu.Unlock()
 	return result, nil
 }
@@ -542,20 +558,22 @@ func (supervisor *codexSupervisor) handleServerMessage(
 		return
 	}
 	if message.Method == "account/login/completed" {
-		supervisor.loginMu.Lock()
 		var params struct {
 			LoginID string `json:"loginId"`
 		}
 		if json.Unmarshal(message.Params, &params) == nil {
 			supervisor.mu.Lock()
-			if supervisor.generation == generation &&
-				supervisor.loginGeneration == generation &&
-				(params.LoginID == "" || supervisor.activeLoginID == params.LoginID) {
-				supervisor.clearLoginLocked()
+			if supervisor.generation == generation {
+				if params.LoginID != "" && supervisor.loginOperation == generation {
+					supervisor.loginCompleted[params.LoginID] = struct{}{}
+				}
+				if supervisor.loginGeneration == generation &&
+					(params.LoginID == "" || supervisor.activeLoginID == params.LoginID) {
+					supervisor.clearLoginLocked()
+				}
 			}
 			supervisor.mu.Unlock()
 		}
-		supervisor.loginMu.Unlock()
 	}
 	approvalID := ""
 	if len(message.ID) > 0 {
@@ -1056,6 +1074,8 @@ func (supervisor *codexSupervisor) failProcess(err error) {
 	supervisor.pending = make(map[string]chan codexPendingResult)
 	supervisor.approvals = make(map[string]codexApproval)
 	supervisor.clearLoginLocked()
+	supervisor.loginOperation = nil
+	supervisor.loginCompleted = nil
 	supervisor.mu.Unlock()
 	encoded, _ := json.Marshal(map[string]string{"message": err.Error()})
 	for _, channel := range pending {

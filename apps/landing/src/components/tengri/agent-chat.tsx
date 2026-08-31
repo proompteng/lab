@@ -131,10 +131,10 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   )
 
   const recoverLogin = useCallback(
-    async (signal: AbortSignal) => {
+    async (signal?: AbortSignal) => {
       try {
         const next = await runTengriAction<TengriCodexLogin | null>({ action: 'codex-login-status', agentId }, signal)
-        if (signal.aborted || !mountedRef.current || loginIdRef.current) return
+        if (signal?.aborted || !mountedRef.current || loginIdRef.current) return
         if (!next) {
           await refreshAccount(signal, false)
           return
@@ -152,12 +152,21 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         setLogin(next)
         setError('')
       } catch (cause) {
-        if (!signal.aborted && mountedRef.current) {
+        if (!signal?.aborted && mountedRef.current) {
           setError(cause instanceof Error ? cause.message : 'Codex device login state is unavailable')
         }
       }
     },
     [agentId, refreshAccount],
+  )
+
+  const refreshAccountAndRecoverLogin = useCallback(
+    async (signal?: AbortSignal) => {
+      const next = await refreshAccount(signal)
+      if (next && !next.authenticated && !signal?.aborted) await recoverLogin(signal)
+      return next
+    },
+    [recoverLogin, refreshAccount],
   )
 
   useEffect(() => {
@@ -188,11 +197,9 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   useEffect(() => {
     if (!active) return
     const controller = new AbortController()
-    void refreshAccount(controller.signal).then((next) => {
-      if (next && !next.authenticated && !controller.signal.aborted) void recoverLogin(controller.signal)
-    })
+    void refreshAccountAndRecoverLogin(controller.signal)
     return () => controller.abort()
-  }, [active, recoverLogin, refreshAccount])
+  }, [active, refreshAccountAndRecoverLogin])
 
   useEffect(() => {
     if (!active || !login || account?.authenticated) return
@@ -522,7 +529,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
             <button
               type="button"
               className="mt-4 rounded-xl bg-white/9 px-4 py-2 text-xs text-white/76 hover:bg-white/13"
-              onClick={() => void refreshAccount()}
+              onClick={() => void refreshAccountAndRecoverLogin()}
             >
               Retry
             </button>
