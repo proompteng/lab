@@ -51,6 +51,8 @@ on:
       - 'docs/nix-enabled-app-build-performance-rollout-plan.md'
       - 'devices/galactic/docs/troubleshooting-networking.md'
       - 'devices/galactic/docs/tailscale.md'
+      - 'kubernetes/rook-ceph-rbd-canary/README.md'
+      - 'kubernetes/rook-ceph-rwx-benchmarks/README.md'
       - '.github/workflows/scripts-ci.yml'
       - '.github/workflows/manual-docker-build-push.yaml'
       - '.github/scripts/validate-oci-mirror-inputs.sh'
@@ -104,6 +106,8 @@ on:
       - 'docs/nix-enabled-app-build-performance-rollout-plan.md'
       - 'devices/galactic/docs/troubleshooting-networking.md'
       - 'devices/galactic/docs/tailscale.md'
+      - 'kubernetes/rook-ceph-rbd-canary/README.md'
+      - 'kubernetes/rook-ceph-rwx-benchmarks/README.md'
       - '.github/workflows/manual-docker-build-push.yaml'
       - '.github/scripts/validate-oci-mirror-inputs.sh'
 

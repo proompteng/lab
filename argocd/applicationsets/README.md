@@ -57,6 +57,13 @@ curl -fsSL https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.2/manifests/c
 
 Do not use either command as routine reconciliation after `argocd/root.yaml` is healthy.
 
+Before this one-time root handoff on a fresh or rebuilt cluster, complete the **Install Sealed Secrets and restore its
+controller key** gate in `devices/galactic/docs/bootstrap-argocd.md`. That gate creates the namespace, installs the
+repository-owned Sealed Secrets overlay, restores the controller-key Secret from approved secret storage without
+printing its contents, and verifies that the running controller serves the restored certificate. Do not apply the
+auto-syncing root Application if the backup is unavailable or the certificate check fails; existing repository
+`SealedSecret` manifests must remain decryptable.
+
 After the Argo CD control plane is ready, perform the one-time handoff to the repository root Application:
 
 ```bash
