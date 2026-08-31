@@ -98,7 +98,9 @@ describe('intraday archive queries', () => {
       expect(query).toContain(`ingest_ts <= parseDateTime64BestEffort("${request.observedAt}", 9, 'UTC')`)
       expect(query).toContain('max(event_ts) OVER (PARTITION BY symbol) AS latest_event_ts')
       expect(query).toContain('WHERE event_ts = latest_event_ts')
-      expect(query).toContain('AS latest_payload_variants')
+      expect(query).toContain('ORDER BY source_partition DESC, source_offset DESC, ingest_ts DESC')
+      expect(query).not.toContain('latest_payload_variants')
+      expect(query).not.toContain('uniqExact(tuple(')
       expect(query).toContain('WHERE latest_candidate_rank = 1')
       expect(query).not.toContain('LIMIT 1 BY symbol')
     }
