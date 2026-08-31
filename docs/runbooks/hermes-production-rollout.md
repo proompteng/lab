@@ -287,6 +287,9 @@ digest and platform labels from that reference.
    Job must complete and its log, archived SQLite integrity checks, and checksum verification must succeed. The data mount
    is write-capable only because SQLite read-only WAL connections require shared-memory sidecar access; the pinned backup
    process still opens each source database in read-only mode and fails closed on any safe-copy fallback.
+   Hermes 0.20.6 may report its live root `gateway.sock` as the only skipped file. The production wrapper accepts that exact
+   warning only when the path is a Unix socket, rejects every other skipped file or incomplete database copy, and verifies
+   that the transient socket is absent from the published archive.
    A standalone Job does not update the CronJob's status; `HermesBackupStale` grants a new CronJob 26 hours for its first scheduled success,
    then monitors its last successful completion. A missing CronJob still alerts, and backup failure never changes the
    gateway Pod's readiness.
@@ -358,7 +361,75 @@ digest and platform labels from that reference.
    unset hermes_api_key
    ```
 
-4. Prove native Exa search/extract and the allowlisted Exa MCP tools from the production container:
+4. Prove the private Tailscale Ingress, tailnet TLS, bearer-auth boundary, and backend isolation:
+
+   ```bash
+   set -euo pipefail
+   tailnet_url=https://hermes.ide-newton.ts.net
+   test "$(kubectl -n hermes get ingress hermes-tailscale -o jsonpath='{.spec.ingressClassName}')" = tailscale
+   test "$(kubectl -n hermes get ingress hermes-tailscale -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')" = \
+     hermes.ide-newton.ts.net
+   tailscale_proxy=$(kubectl -n tailscale get pods \
+     -l tailscale.com/managed=true,tailscale.com/parent-resource-type=ingress,tailscale.com/parent-resource-ns=hermes,tailscale.com/parent-resource=hermes-tailscale \
+     -o jsonpath='{.items[0].metadata.name}')
+   test -n "$tailscale_proxy"
+   test "$(kubectl -n tailscale get pod "$tailscale_proxy" -o jsonpath='{.status.containerStatuses[0].ready}')" = true
+   kubectl -n tailscale exec "$tailscale_proxy" -- tailscale serve status | grep -F \
+     'https://hermes.ide-newton.ts.net (tailnet only)'
+   tailnet_status=
+   for _ in $(seq 1 12); do
+     tailnet_status=$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 15 \
+       "$tailnet_url/health/detailed" || true)
+     test "$tailnet_status" = 401 && break
+     sleep 5
+   done
+   test "$tailnet_status" = 401
+   hermes_api_key=$(kubectl -n hermes get secret hermes-api-auth -o jsonpath='{.data.API_SERVER_KEY}' | base64 -d)
+   curl -fsS -H "Authorization: Bearer $hermes_api_key" "$tailnet_url/health/detailed" | jq -e \
+     '.status == "ok" and .gateway_state == "running"'
+   curl -fsS -H "Authorization: Bearer $hermes_api_key" -H 'Content-Type: application/json' \
+     -d '{"model":"tuslagch","messages":[{"role":"user","content":"Reply with exactly HERMES_TAILNET_OK"}]}' \
+     "$tailnet_url/v1/chat/completions" | jq -e \
+     '.choices[0].message.content | contains("HERMES_TAILNET_OK")'
+   unset hermes_api_key tailnet_status tailscale_proxy tailnet_url
+   hermes_service_ip=$(kubectl -n hermes get service hermes -o jsonpath='{.spec.clusterIP}')
+   test -n "$hermes_service_ip"
+   ready_hermes_endpoints=$(kubectl -n hermes get endpointslices.discovery.k8s.io \
+     -l kubernetes.io/service-name=hermes -o json | \
+     jq '[.items[].endpoints[] | select(.conditions.ready == true)] | length')
+   test "$ready_hermes_endpoints" -gt 0
+   kubectl run hermes-tailnet-deny-check \
+     -n default \
+     --rm \
+     -i \
+     --restart=Never \
+     --image=curlimages/curl:8.17.0 \
+     --image-pull-policy=IfNotPresent \
+     --env="HERMES_SERVICE_IP=$hermes_service_ip" \
+     --command -- sh -ec '
+       service_host=hermes.hermes.svc.cluster.local
+       curl_status=0
+       curl -sS --connect-timeout 2 --max-time 5 \
+         --resolve "${service_host}:8642:${HERMES_SERVICE_IP}" \
+         "http://${service_host}:8642/health" >/tmp/out 2>/tmp/err || curl_status=$?
+       if [ "$curl_status" -ne 28 ]; then
+         echo "expected NetworkPolicy timeout (curl 28), got $curl_status" >&2
+         cat /tmp/out >&2
+         cat /tmp/err >&2
+         exit 1
+       fi
+       echo gateway_access_blocked_by_timeout
+     '
+   unset hermes_service_ip ready_hermes_endpoints
+   ```
+
+   The endpoint is tailnet-only; never add `tailscale.com/funnel` or a public ingress class. A successful HTTP response
+   from the ordinary `default` namespace is a rollout blocker even if that response is `401`. The negative probe pins
+   the API-resolved Service IP with `--resolve`, so DNS failure cannot masquerade as isolation; a ready EndpointSlice and
+   the authenticated tailnet request prove backend reachability. Only curl exit `28` (the bounded connection timeout)
+   counts as NetworkPolicy denial.
+
+5. Prove native Exa search/extract and the allowlisted Exa MCP tools from the production container:
 
    ```bash
    set -euo pipefail
@@ -401,7 +472,7 @@ digest and platform labels from that reference.
    '
    ```
 
-5. Prove state survives a restart. Create a harmless canary file, restart the pod, and read it back:
+6. Prove state survives a restart. Create a harmless canary file, restart the pod, and read it back:
 
    ```bash
    set -euo pipefail
@@ -411,7 +482,7 @@ digest and platform labels from that reference.
    kubectl -n hermes exec hermes-0 -c hermes -- test -s /opt/data/workspace/tuslagch/.rollout-canary
    ```
 
-6. Prove direct-egress containment, public HTTPS through Squid, and private-destination denial:
+7. Prove direct-egress containment, public HTTPS through Squid, and private-destination denial:
 
    ```bash
    set -euo pipefail
@@ -440,7 +511,7 @@ digest and platform labels from that reference.
    The direct public request must fail. Discord, GitHub, and an arbitrary public HTTPS destination must work through Squid,
    while the metadata destination must receive Squid's explicit denial.
 
-7. Prove the cluster reader and local lab checkout from inside the gateway:
+8. Prove the cluster reader and local lab checkout from inside the gateway:
 
    ```bash
    set -euo pipefail
@@ -470,7 +541,7 @@ digest and platform labels from that reference.
    Secrets, service-account token subresources, `exec`, `attach`, `proxy`, and `port-forward`. The server-side dry-run is an
    authorization proof: it must be rejected before admission and must not create a ConfigMap.
 
-8. Prove the authenticated GitHub identity and non-mutating branch-push capability from inside the gateway:
+9. Prove the authenticated GitHub identity and non-mutating branch-push capability from inside the gateway:
 
    ```bash
    set -euo pipefail
