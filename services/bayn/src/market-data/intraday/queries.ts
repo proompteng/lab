@@ -152,6 +152,8 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
     `
   }
 
+  // Provider event timestamps are not record identifiers: several valid quotes or trades can share one timestamp.
+  // The captured Kafka partition and offset provide the deterministic tie-break inside the immutable watermark.
   const loadIntradayQuotes = (request: IntradaySnapshotRequest, after?: IntradayArchivePageCursor) => {
     const time = bounds(request)
     const watermark = watermarkBounds(request, request.sourceTopics.quotes)
@@ -169,7 +171,6 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
         source_topic,
         toString(source_partition) AS source_partition,
         toString(source_offset) AS source_offset,
-        toString(latest_payload_variants) AS latest_payload_variants,
         toString(bid_price) AS bid_price,
         toString(bid_size) AS bid_size,
         toString(ask_price) AS ask_price,
@@ -182,11 +183,8 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
             *,
             row_number() OVER (
               PARTITION BY symbol
-              ORDER BY ingest_ts DESC, source_topic DESC, source_partition DESC, source_offset DESC
-            ) AS latest_candidate_rank,
-            uniqExact(tuple(bid_price, bid_size, ask_price, ask_size, market_session, delay_class)) OVER (
-              PARTITION BY symbol
-            ) AS latest_payload_variants
+              ORDER BY source_partition DESC, source_offset DESC, ingest_ts DESC
+            ) AS latest_candidate_rank
           FROM (
             SELECT *, max(event_ts) OVER (PARTITION BY symbol) AS latest_event_ts
             FROM signal.intraday_quotes_v1 FINAL
@@ -234,7 +232,6 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
         source_topic,
         toString(source_partition) AS source_partition,
         toString(source_offset) AS source_offset,
-        toString(latest_payload_variants) AS latest_payload_variants,
         toString(price) AS price,
         toString(size) AS size,
         toString(schema_version) AS schema_version
@@ -245,11 +242,8 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
             *,
             row_number() OVER (
               PARTITION BY symbol
-              ORDER BY ingest_ts DESC, source_topic DESC, source_partition DESC, source_offset DESC
-            ) AS latest_candidate_rank,
-            uniqExact(tuple(price, size, market_session, delay_class)) OVER (
-              PARTITION BY symbol
-            ) AS latest_payload_variants
+              ORDER BY source_partition DESC, source_offset DESC, ingest_ts DESC
+            ) AS latest_candidate_rank
           FROM (
             SELECT *, max(event_ts) OVER (PARTITION BY symbol) AS latest_event_ts
             FROM signal.intraday_trades_v1 FINAL
