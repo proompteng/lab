@@ -50,4 +50,10 @@ describe('Omni cluster template secret rendering', () => {
     ).toHaveLength(3)
     expect(clusterTemplate.match(/RuntimeClassInImageCriApi: true/g)).toHaveLength(3)
   })
+
+  test('pins Altra installation to its stable system-disk identity', () => {
+    const clusterTemplate = readFileSync(new URL('./cluster-template.yaml', import.meta.url), 'utf8')
+
+    expect(clusterTemplate).toContain('disk: "/dev/disk/by-id/nvme-CT4000P3PSSD8_2441E98EAAFB"\n          wipe: false')
+  })
 })

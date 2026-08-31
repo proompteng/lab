@@ -146,7 +146,8 @@ patches:
             path: "/etc/cri/conf.d/20-customization.part"
             permissions: 420
         install:
-          disk: /dev/nvme0n1
+          disk: "/dev/disk/by-id/nvme-CT4000P3PSSD8_2441E98EAAFB"
+          wipe: false
         kernel:
           modules:
             - name: nvidia
