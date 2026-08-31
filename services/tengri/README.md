@@ -54,6 +54,12 @@ MicroVM Pods and PVCs continue running; this rollout does not modify a `MicroVM`
 Clients reconnect after the Service has a ready endpoint, while an operation submitted during the gap returns a
 truthful service-unavailable response and must be retried.
 
+Before opening its public listeners, a replacement controller recovers durable provisional-terminal leases from
+Kubernetes. Transient transport failures, HTTP 408/429 responses, and API server 5xx responses use a bounded
+eight-attempt exponential retry with a five-second maximum delay. Authorization, validation, and other permanent
+failures still stop startup immediately, so the retry absorbs a brief Kubernetes Service race without masking broken
+RBAC or configuration.
+
 Roll out through the `Tengri images` publisher, Kargo, and Argo reconciliation. On `main`, `Tengri images` validates
 both services, builds native `linux/amd64` and `linux/arm64` images, publishes signed multi-architecture indexes at
 `registry.ide-newton.ts.net/lab/{tengri,nanoagent}:kargo-sha-<40>` only after each final index succeeds; the images
