@@ -3,12 +3,13 @@ import { expect, test } from 'bun:test'
 import { Cause, Deferred, Effect, Exit, Fiber, Semaphore } from 'effect'
 import { TestClock } from 'effect/testing'
 
+import { CycleRunnerError } from '../cycle/runner'
+import { CycleStoreError } from '../cycle/store'
 import { operationalError } from '../errors'
 import { IntradaySnapshotFailure } from '../market-data'
 import { ObserveDecisionAwaitingSignal, decisionBuildError } from './decision-builder'
 import { runRestateAdvanceWithinTimeout } from './recovery-driver'
 import { shouldRestrictMutationLoopFailure } from './mutation-interpreter'
-import { CycleRunnerError } from '../cycle/runner'
 
 test('retries an oldest-unfinished preflight read without permanently restricting execution authority', () => {
   expect(
@@ -17,6 +18,12 @@ test('retries an oldest-unfinished preflight read without permanently restrictin
         operation: 'read-oldest-unfinished',
         failure: 'store',
         message: 'oldest unfinished mutation cycle read failed',
+        cause: new CycleStoreError({
+          operation: 'read-oldest-unfinished',
+          failure: 'query',
+          persistenceFailure: 'connectivity',
+          message: 'connection closed during failover',
+        }),
       }),
     ),
   ).toBe(false)
@@ -29,6 +36,31 @@ test('retries an oldest-unfinished preflight read without permanently restrictin
       }),
     ),
   ).toBe(true)
+})
+
+test('keeps non-transient oldest-unfinished failures fail-closed', () => {
+  const failures = [
+    { failure: 'decode', persistenceFailure: 'decode' },
+    { failure: 'invariant', persistenceFailure: 'invariant' },
+    { failure: 'query', persistenceFailure: 'query' },
+  ] as const
+  for (const failure of failures) {
+    expect(
+      shouldRestrictMutationLoopFailure(
+        new CycleRunnerError({
+          operation: 'read-oldest-unfinished',
+          failure: 'store',
+          message: 'oldest unfinished mutation cycle read failed',
+          cause: new CycleStoreError({
+            operation: 'read-oldest-unfinished',
+            failure: failure.failure,
+            persistenceFailure: failure.persistenceFailure,
+            message: 'persisted cycle cannot be read safely',
+          }),
+        }),
+      ),
+    ).toBe(true)
+  }
 })
 
 test('maps an expected armed-entry wait to a non-terminal decision outcome', () => {

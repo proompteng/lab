@@ -750,7 +750,7 @@ export const prepareOrRecoverResearchCapitalActivation = (
         .pipe(
           Effect.map((rearmed) => ({ _tag: 'Rearmed' as const, rearmed })),
           Effect.catch((cause) => {
-            if (!currentRestrictedSourceRecovery || currentGeneration === undefined) {
+            if (!currentReconciliationRecovery || currentGeneration === undefined) {
               return Effect.fail(
                 capitalActivationOperationalError('research capital source authority rearm failed', cause),
               )

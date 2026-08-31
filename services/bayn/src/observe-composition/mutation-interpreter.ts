@@ -1,12 +1,13 @@
 import { Effect } from 'effect'
 
 import { MutationOperation } from '../broker/alpaca-mutations'
+import { CycleRunnerError } from '../cycle/runner'
+import { CycleStoreError } from '../cycle/store'
 import { AuthorityRestrictionStore } from '../db/execution-store'
 import { MutationEventType, MutationStore, type MutationEvent } from '../execution/mutations'
 import { executionCycleRestrictionSubject } from '../execution/mandate'
 import type { ExecutionProgram } from '../execution/runtime-program'
 import { WriterFence } from '../execution/writer-fence'
-import { CycleRunnerError } from '../cycle/runner'
 import { currentUtcInstant } from '../time'
 import { decideMutationIntentSettlement, type MutationIntentExecutionResult } from './mutation-decisions'
 import { Pipeable } from '../pipeable'
@@ -38,9 +39,15 @@ export const mutationRunnerError = (input: MutationRunnerErrorInput): CycleRunne
     cause: input.cause,
   })
 
-/** A failed preflight read performed no broker I/O and is safe to retry on the next reconciled controller tick. */
+const isTransientCycleStoreFailure = (cause: unknown): cause is CycleStoreError =>
+  cause instanceof CycleStoreError &&
+  (cause.persistenceFailure === 'connectivity' || cause.persistenceFailure === 'transaction')
+
+/** A transient failed preflight read performed no broker I/O and is safe to retry on the next reconciled tick. */
 export const shouldRestrictMutationLoopFailure = (error: CycleRunnerError): boolean =>
-  error.operation !== 'read-oldest-unfinished' || error.failure !== 'store'
+  error.operation !== 'read-oldest-unfinished' ||
+  error.failure !== 'store' ||
+  !isTransientCycleStoreFailure(error.cause)
 
 const restrictMutationAuthorityDataFirst = (
   subject: string,
