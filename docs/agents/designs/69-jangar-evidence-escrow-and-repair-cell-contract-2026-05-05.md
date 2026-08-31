@@ -16,7 +16,6 @@ Companion doc:
 Extends:
 
 - `docs/agents/designs/65-jangar-recovery-epoch-cutover-and-backlog-seat-enforcement-contract-2026-03-21.md`
-- `docs/agents/designs/66-jangar-recovery-release-lanes-and-rollout-proof-fence-contract-2026-03-21.md`
 - `docs/agents/designs/jangar-control-plane-failure-mode-reduction-and-safe-rollout-architecture-2026-03-16.md`
 - `docs/torghut/design-system/v6/71-torghut-whitepaper-autoresearch-profit-target-strategy-factory-2026-04-21.md`
 

@@ -7,11 +7,11 @@
 - Source of truth (config): `argocd/applications/torghut/**`
 - Implementation status: `Implemented` (verified with code + tests + runtime/config on 2026-02-21)
 
-## Source Implementation Audit (2026-07-04)
+## Historical Source Audit (2026-07-04)
 
 - Source baseline inspected: `0aee01702 fix(torghut): pin loop status runtime image (#11897)`.
 - Implementation status: **Implemented, but materially refactored from this v1 document.** The periodic trading loop exists, but not as the old monolithic `services/torghut/app/trading/scheduler.py` flow. Current runtime is split across `SimpleTradingPipeline`, shared pipeline mixins, source-collection helpers, paper-route materialization, submission policy, and execution/adapters.
-- Current source evidence:
+- Source evidence inspected:
   - `services/torghut/app/trading/scheduler/simple_pipeline.py` defines `SimpleTradingPipeline`, composed from paper-route, source-collection, proof-floor, quote-sizing, direct-submission, and base pipeline mixins.
   - `services/torghut/app/trading/scheduler/simple_pipeline.py::SimpleTradingPipeline.run_once` labels mature rejected-signal outcomes, loads strategies, captures runtime-window account snapshots, warms session context, bounds paper-route signal scope, fetches signals, and processes the batch.
   - `services/torghut/app/trading/scheduler/pipeline/run_cycle.py::TradingPipelineRunCycleMixin.run_once` keeps the generic dependency-driven run cycle for ingestor/decision/risk/executor/reconciler style operation.

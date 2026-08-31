@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'bun:test'
 import { resolveConfig } from '../config'
+import { DEFAULT_ADDRESS } from '../runtime'
 
 describe('resolveConfig', () => {
+  it('defaults to the chart-owned gRPC service', () => {
+    expect(DEFAULT_ADDRESS).toBe('agents-grpc.agents.svc.cluster.local:50051')
+  })
+
   it('defaults to kube mode even when address is set', () => {
     const { resolved, warnings } = resolveConfig({}, { address: '127.0.0.1:50051' })
     expect(resolved.mode).toBe('kube')

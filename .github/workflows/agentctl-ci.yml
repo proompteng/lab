@@ -4,12 +4,14 @@ on:
   pull_request:
     paths:
       - 'services/agents/agentctl/**'
+      - 'docs/agents/agentctl-cli-design.md'
       - 'docs/agents/agentctl-release.md'
   push:
     branches:
       - main
     paths:
       - 'services/agents/agentctl/**'
+      - 'docs/agents/agentctl-cli-design.md'
       - 'docs/agents/agentctl-release.md'
       - '.github/workflows/agentctl-*.yml'
   workflow_dispatch:

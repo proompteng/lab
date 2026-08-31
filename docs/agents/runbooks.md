@@ -1,54 +1,150 @@
 # Runbooks (Agents)
 
-Status: Current (2026-01-20)
+Status: Current (2026-08-30)
 
 Docs index: [README](README.md)
 
 See also:
 
-- `README.md` (docs index)
-- `designs/handoff-common.md` (GitOps render + live verification commands)
-- `ci-validation-plan.md` (what to run before/after rollout)
+- `README.md` (docs index and authority order)
+- `designs/handoff-common.md` (source-backed render and live verification commands)
+- `ci-validation-plan.md` (chart, CRD, and integration validation)
+- `../../docs/release-automation.md` (repository-wide Kargo delivery contract)
 
-## Install
+## Production delivery (Kargo + Argo CD)
 
-1. `helm install agents charts/agents -n agents --create-namespace`
-2. Verify CRDs: `kubectl get crd | rg agents.proompteng.ai`
-3. Verify Agents services: `kubectl -n agents get deploy,svc`
+Production Agents is delivered through the `main` build, the `lab-delivery/agents` Kargo
+Warehouse and Stage, and the ApplicationSet-generated `agents` Argo CD Application. Helm is
+the renderer inside the GitOps application; it is not a production installation or upgrade
+authority.
 
-## Upgrade
+The production application contract is:
 
-1. `helm upgrade agents charts/agents -n agents`
-2. Confirm rollout: `kubectl -n agents rollout status deploy/agents`
-3. For probe/lifecycle/strategy changes, apply component-at-a-time:
-   - First land global values.
-   - Validate control-plane rollout.
-   - Then validate controllers rollout.
-4. If migration is not stable, roll back and remove component overrides first, then global adjustments.
+1. Merge the reviewed source change to `main`. The Agents build workflow
+   (`.github/workflows/agents-build-push.yml`) builds the controller, control-plane, shell,
+   and Codex runner images.
+2. Wait for the workflow to finish its complete receipt set. It publishes the four images
+   only after their final multi-architecture indexes and provenance annotations are valid.
+   Do not select a mutable `latest` tag or create an image tag by hand.
+3. The `lab-delivery/agents` Warehouse accepts only one run-qualified
+   `kargo-sha-<source-sha>-run-<github-run-id>` set whose four images share the source,
+   run ID, and successful build conclusion. Inspect the `lab-delivery/agents` Warehouse
+   and the resulting Freight before treating promotion as admitted.
+4. The automatic `lab-delivery/agents` Stage validates that all four image tags match,
+   writes the promoted digests, source SHA, and CI metadata into
+   `argocd/applications/agents/values.yaml` on the generated `kargo/agents` branch, and
+   updates the `agents` Argo Application to that generated revision.
+5. Wait for Argo to consume the exact `kargo/agents` revision and become `Synced` and
+   `Healthy`. Do not edit `argocd/applications/agents/values.yaml` to promote an image,
+   push to `kargo/agents`, create a release/deployment PR, use Image Updater, or run a
+   manual Argo sync as a substitute for Kargo. The ApplicationSet intentionally leaves
+   Agents sync automation manual because the Stage's `argocd-update` step is the deploy
+   authority. If the Application remains OutOfSync, repair or retry that promotion step;
+   do not bypass it by changing the Application or syncing it manually.
+6. Prove the workload and service live. A release is complete only when the promoted
+   Freight, generated branch/revision, Argo state, rollout, running image IDs, readiness,
+   and a representative AgentRun agree.
 
-## Rollback
-
-1. `helm rollback agents <REV> -n agents`
-2. Verify status and re-run smoke test.
-
-## Argo CD Application (GitOps, optional)
-
-If you use Argo CD for GitOps (optional), use the sample Application manifest in
-`argocd/applications/agents/application.yaml`:
-
-These commands apply only to Argo CD-based installs:
+Inspect the promotion record and Argo revision:
 
 ```bash
-bun run packages/scripts/src/agents/deploy-service.ts
-kubectl apply -n argocd -f argocd/applications/agents/application.yaml
-kubectl -n argocd get applications.argoproj.io agents
+kubectl -n lab-delivery get warehouse/agents stage/agents
+kubectl -n lab-delivery get freight -o wide
+kubectl -n lab-delivery get stage/agents -o yaml
+kubectl -n argocd get application/agents \
+  -o jsonpath='{.spec.source.targetRevision}{"\n"}{.status.sync.revision}{"\n"}{.status.sync.status}{"\n"}{.status.health.status}{"\n"}'
+git ls-remote origin refs/heads/kargo/agents
 ```
 
-The Application renders `argocd/applications/agents` (Helm + kustomize) and installs CRDs + Agents
-into the `agents` namespace using `argocd/applications/agents/values.yaml`.
-Update the values file with your Agents image tags, database secret, and (optional) runner image via `runner.image.*`.
-The chart defaults `controller.jobTtlSecondsAfterFinished` to a safe value; set it to `0` to disable job cleanup.
-Runner image env precedence is: `env.vars.AGENTS_AGENT_RUNNER_IMAGE` > `runner.image.*` > chart default.
+The desired branch must be `kargo/agents`; the Argo status revision must be the generated
+Kargo commit, not the preceding `main` merge. If any Warehouse, Freight, Stage, Argo, or
+workload gate fails, repair the source-owned failure or re-promote a known-good Freight.
+Do not bypass the failed gate with a direct Deployment edit or a manifest bump.
+
+## Production rollout and live proof
+
+Check every enabled production workload and the service contract:
+
+```bash
+kubectl -n agents get deploy,svc,pod -o wide
+kubectl -n agents rollout status deployment/agents --timeout=5m
+kubectl -n agents rollout status deployment/agents-controllers --timeout=5m
+kubectl -n agents rollout status deployment/agents-shell --timeout=5m
+kubectl -n agents get deploy \
+  -o custom-columns='NAME:.metadata.name,IMAGES:.spec.template.spec.containers[*].image'
+kubectl -n agents get pod \
+  -o custom-columns='NAME:.metadata.name,IMAGE_IDS:.status.containerStatuses[*].imageID'
+kubectl get crd agentruns.agents.proompteng.ai orchestrations.agents.proompteng.ai \
+  implementationspecs.agents.proompteng.ai
+```
+
+For the HTTP service, use a read-only port-forward and check both basic and control-plane
+readiness. The Service exposes port `80`; the control-plane container listens on its HTTP
+port behind that Service.
+
+```bash
+kubectl -n agents port-forward service/agents 8080:80
+curl -fsS http://127.0.0.1:8080/health | jq
+curl -fsS http://127.0.0.1:8080/ready | jq
+curl -fsS 'http://127.0.0.1:8080/v1/control-plane/status?namespace=agents' | jq \
+  '{runtime_adapters,workflows,agentrun_ingestion,execution_trust,runtime_kits,admission_passports}'
+```
+
+Keep the port-forward running while collecting the checks, or run the curls from a
+temporary diagnostic Pod. `/ready` and control-plane status are evidence surfaces; they
+do not replace an AgentRun proof.
+
+## Production rollback
+
+Rollback is a Kargo operation. Identify the last known-good Freight and re-promote it
+through the `lab-delivery/agents` Stage. Kargo will regenerate `kargo/agents`, update the
+Argo revision, and preserve the source/configuration boundary.
+
+```bash
+kubectl -n lab-delivery get freight -o wide
+kubectl -n lab-delivery get stage/agents -o yaml
+kubectl -n argocd get application/agents \
+  -o jsonpath='{.spec.source.targetRevision}{"\n"}{.status.sync.revision}{"\n"}'
+kubectl -n agents rollout status deployment/agents --timeout=5m
+kubectl -n agents rollout status deployment/agents-controllers --timeout=5m
+kubectl -n agents rollout status deployment/agents-shell --timeout=5m
+```
+
+Do not run `helm rollback`, edit a live Deployment, retag an image, edit the generated
+Kargo branch, create a digest/SHA promotion PR, or use a manual Argo sync as the rollback
+mechanism. If direct deployment is unavoidable during an authorized incident, record the
+incident and exact authorization, keep the action bounded, and restore Kargo control before
+normal operations resume.
+
+## Local chart development (non-production)
+
+The following Helm and helper commands are for a disposable kind/minikube or isolated
+development cluster only. They do not install, upgrade, promote, or roll back production.
+
+Render and lint the chart locally:
+
+```bash
+helm lint charts/agents
+helm template agents charts/agents --namespace agents
+```
+
+The local helper `packages/scripts/src/agents/deploy-service.ts` may build and apply a
+local service for isolated development. It is not a production release path and must not
+be pointed at the production `agents` namespace. Use `bun run packages/scripts/src/agents/deploy-service.ts`
+only with an explicitly disposable namespace and local values.
+
+The Application renders `argocd/applications/agents` with Kustomize's Helm integration and
+the production overlay. For a source-backed render matching Argo:
+
+```bash
+kustomize build --enable-helm argocd/applications/agents > /tmp/agents-rendered.yaml
+scripts/agents/validate-agents.sh
+```
+
+Update production values only through a reviewed source change. The chart defaults
+`controller.jobTtlSecondsAfterFinished` to a safe value; set it to `0` only in local
+values when disabling job cleanup is intentional. Runner image precedence remains
+`env.vars.AGENTS_AGENT_RUNNER_IMAGE` > `runner.image.*` > chart default.
 
 If `controller.namespaces` spans multiple namespaces or `"*"`, set `rbac.clusterScoped=true`.
 Guardrail rules that fail install-time validation:
@@ -59,8 +155,8 @@ Guardrail rules that fail install-time validation:
 - Multiple namespaces with `rbac.clusterScoped=false`
 - Explicit single namespace values that do not match `namespaceOverride`/release namespace
 
-Run the namespace validation helper (from `docs/agents/ci-validation-plan.md`) before upgrading
-if changing any of these scope values. Example:
+Run the namespace validation helper (from `docs/agents/ci-validation-plan.md`) before changing
+any of these scope values. Example:
 
 ```bash
 helm template charts/agents --set namespaceOverride=agents --set-json 'controller.namespaces=["agents"]' --set rbac.clusterScoped=false
@@ -73,8 +169,9 @@ If that helper is unavailable, run the full command list in the validation plan 
 GitOps rollout notes (native workflow runtime):
 
 - No external workflow engine is required for native AgentRun/OrchestrationRun execution.
-- Keep `controller.enabled`, `orchestrationController.enabled`, and `supportingController.enabled` at their defaults
-  unless you are intentionally disabling native runtime components.
+- Keep `controllers.enabled`, `controller.enabled`, `orchestrationController.enabled`, and
+  `supportingController.enabled` at their defaults unless you are intentionally disabling
+  native runtime components.
 - To point Codex reruns/system improvements at native orchestration, set
   `agentRuntime.native.rerunOrchestration` and/or `agentRuntime.native.systemImprovementOrchestration`
   (plus the matching `agentRuntime.native.*Namespace` values if needed) in `argocd/applications/agents/values.yaml`.
@@ -82,15 +179,16 @@ GitOps rollout notes (native workflow runtime):
 CI runners use `argocd/applications/agents-ci` to provision the `agents-ci` namespace and RBAC for ARC
 so GitHub Actions can execute smoke tests against the chart.
 
-Optional Argo CD smoke test (only for Argo CD-based installs):
+Optional local/break-glass smoke test (not a production release mechanism):
 
 ```bash
 kubectl -n argocd get applications.argoproj.io agents -o yaml
 kubectl -n agents get deploy,svc
-kubectl -n agents rollout status deploy/agents
+kubectl -n agents rollout status deploy/agents --timeout=5m
 kubectl get crd | rg agents.proompteng.ai
 kubectl -n agents port-forward svc/agents 8080:80
 curl -fsS http://localhost:8080/health
+# These example resources are disposable smoke fixtures only.
 kubectl -n agents apply -f charts/agents/examples/agentrun-sample.yaml
 kubectl -n agents apply -f charts/agents/examples/orchestration-sample.yaml
 kubectl -n agents apply -f charts/agents/examples/orchestrationrun-sample.yaml
@@ -98,10 +196,10 @@ kubectl -n agents wait --for=condition=complete job \
   -l agents.proompteng.ai/agent-run=codex-run-sample --timeout=5m
 ```
 
-## Smoke test (kind/minikube)
+## Smoke test (kind/minikube; local only)
 
 ```bash
-packages/scripts/src/agents/smoke-agents.ts
+bun run packages/scripts/src/agents/smoke-agents.ts
 ```
 
 This installs the chart, applies deterministic smoke CRs, submits a multi-step workflow runtime
@@ -324,20 +422,20 @@ Expected outcomes:
 - emergency rollback for deploy verification only is `--skip-admission-passport-verification` or
   `JANGAR_VERIFY_ADMISSION_PASSPORTS=false`; leave `/ready` and status passport projections enabled while debugging.
 
-## Native workflow e2e proof
+## Native workflow e2e proof (local/explicit break-glass only)
 
 This runbook validates the native workflow runtime end-to-end (AgentProvider → Agent → ImplementationSpec → AgentRun)
-and confirms that the Codex implementation step opens a PR against `proompteng/lab`.
+and confirms that the Codex implementation step opens a PR against `proompteng/lab`. The
+harness creates temporary resources and credentials; use a disposable namespace or an
+explicitly authorized incident environment. It is not a production image-promotion or
+deployment mechanism.
 
 Prereqs:
 
 - `codex-github-token` secret in the target namespace (GH token with repo permissions).
 - OpenAI key available via `AGENTS_E2E_OPENAI_KEY` or an existing `codex-openai-key` secret
   (the script will create/update it when the env var is set).
-
-Prereqs:
-
-- Agents chart is installed in `agents` and Jangar is reachable.
+- Agents is already available in the target environment and Jangar is reachable.
 - A GitHub token secret exists (see below).
 
 Create the GitHub token secret once (or set `AGENTS_E2E_GH_TOKEN`):
@@ -428,13 +526,6 @@ uv run python scripts/orchestration_guard.py evaluate-failure \
 
 - Use emergency mode only for ticketed incidents. Mutable actions remain GitOps-first by default.
 
-## Jangar /health 500 (router init error)
-
-- Symptom: `/health` returns 500 with `ReferenceError: Cannot access 'aE' before initialization`.
-- Root cause: Jangar builds picked up an incompatible Nitro `latest` bundle output.
-- Fix: Pin Nitro to `3.0.0` in `services/jangar/package.json` and deploy a pinned domain-app image digest
-  (avoid `latest`).
-
 ## Stuck AgentRun
 
 - Check status/conditions: `kubectl -n agents get agentrun <name> -o yaml`
@@ -455,15 +546,29 @@ uv run python scripts/orchestration_guard.py evaluate-failure \
 
 ## CRD Missing
 
-- Reinstall chart or apply CRD YAMLs directly.
-- Verify `kubectl api-resources | rg agents`.
+- Confirm the Argo Application is present and consuming the expected Kargo revision:
+
+  ```bash
+  kubectl -n argocd get application/agents \
+    -o jsonpath='{.spec.source.targetRevision}{"\n"}{.status.sync.status}{"\n"}{.status.health.status}{"\n"}'
+  kubectl get crd | rg 'agents\.proompteng\.ai|orchestration\.proompteng\.ai|workspaces\.proompteng\.ai'
+  ```
+
+- If the production Application is missing or out of sync, repair the ApplicationSet,
+  Kargo Stage, or generated `kargo/agents` branch through reviewed GitOps changes. Do
+  not reinstall the production chart with Helm or apply generated CRD YAMLs directly.
+- For a disposable local cluster, render the chart with `helm template` or rerun the
+  local smoke helper after correcting the source inputs.
 
 ## Diagram
 
 ```mermaid
 flowchart TD
-  Install["helm install / Argo CD sync"] --> Verify["kubectl get deploy,svc,crd"]
-  Verify --> Smoke["apply examples + wait for Job/AgentRun"]
-  Smoke --> Upgrade["helm upgrade / sync"]
-  Upgrade --> Rollback["helm rollback (if needed)"]
+  Source["Merge reviewed change to main"] --> Build["agents-build-push: four images + receipt set"]
+  Build --> Warehouse["lab-delivery/agents Warehouse creates Freight"]
+  Warehouse --> Stage["agents Stage validates and promotes"]
+  Stage --> Branch["Kargo writes kargo/agents + updates Argo revision"]
+  Branch --> Argo["Argo agents Synced/Healthy"]
+  Argo --> Live["Rollout + readiness + live AgentRun proof"]
+  Live --> Rollback["Rollback: re-promote known-good Freight"]
 ```

@@ -7,11 +7,11 @@
 - Source of truth (config): `argocd/applications/torghut/**`
 - Implementation status: `Implemented` (verified with code + tests + runtime/config on 2026-02-21)
 
-## Source Implementation Audit (2026-07-04)
+## Historical Source Audit (2026-07-04)
 
 - Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
 - Implementation status: **Implemented and significantly expanded beyond v1.** Postgres remains the trading/audit/control-plane relational store, with CNPG GitOps, Alembic migrations, app and simulation databases, vector extension setup, order-feed audit tables, TigerBeetle refs, whitepaper/autoresearch objects, options indexes, and Hyperliquid runtime tables.
-- Current source evidence:
+- Source evidence inspected:
   - `argocd/applications/torghut/postgres-cluster.yaml` defines the CNPG `torghut-db` cluster, `torghut` database, `torghut_app` owner, 50Gi Rook-Ceph storage, 14-day object-store backup retention, monitoring, and reflected credentials.
   - `argocd/applications/torghut/db-migrations-job.yaml` runs Alembic `upgrade heads`, waits for the app DB and admin DB, creates/repairs the `torghut_sim_default` simulation database, enables `vector`, grants privileges, and normalizes ownership.
   - `services/torghut/migrations/versions/**` currently contains migrations `0001` through `0057`, covering initial trading schema, LLM reviews, autonomy ledger, order feed events/source windows, TCA, Lean, multi-account isolation, whitepaper workflow, options lane, simulation context, evidence epochs, TigerBeetle refs, Hyperliquid runtime, and generic multifactor machine.
