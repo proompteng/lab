@@ -48,6 +48,44 @@ describe('Codex event replay', () => {
     expect(next.at(-1)?.sequence).toBe(500)
   })
 
+  test('keeps only the newest cumulative usage snapshots', () => {
+    const tokenUsage = {
+      ...event,
+      sequence: 10,
+      kind: 'usage' as const,
+      method: 'thread/tokenUsage/updated',
+      itemId: '',
+      text: 'Tokens: 10 input · 4 output',
+    }
+    const rateLimits = {
+      ...tokenUsage,
+      sequence: 11,
+      method: 'account/rateLimits/updated',
+      threadId: '',
+      text: '7d window: 10% used',
+    }
+    const newerTokenUsage = { ...tokenUsage, sequence: 12, text: 'Tokens: 20 input · 6 output' }
+    const newerRateLimits = { ...rateLimits, sequence: 13, text: '7d window: 12% used' }
+    const otherThreadUsage = {
+      ...newerTokenUsage,
+      sequence: 14,
+      threadId: 'thread-2',
+      text: 'Tokens: 5 input · 2 output',
+    }
+
+    const current = [tokenUsage, rateLimits].reduce<TengriCodexEvent[]>(
+      (next, currentEvent) => appendCodexEvent(next, currentEvent),
+      [],
+    )
+    const updated = [newerTokenUsage, newerRateLimits, otherThreadUsage].reduce(
+      (next, currentEvent) => appendCodexEvent(next, currentEvent),
+      current,
+    )
+
+    expect(updated).toEqual([newerTokenUsage, newerRateLimits, otherThreadUsage])
+    expect(appendCodexEvent(updated, tokenUsage)).toBe(updated)
+  })
+
   test('coalesces camel-case app-server deltas by authoritative item ID', () => {
     const first = {
       ...event,

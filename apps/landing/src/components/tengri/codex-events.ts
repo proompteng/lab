@@ -49,6 +49,18 @@ export function appendCodexEvent(current: TengriCodexEvent[], event: TengriCodex
   if (current.some((candidate) => codexEventKey(candidate) === key)) return current
   const eventText = commandOutputDeltaText(event)
 
+  const usageSnapshotKey = authoritativeUsageSnapshotKey(event)
+  const usageSnapshotIndex = usageSnapshotKey
+    ? current.findIndex((candidate) => authoritativeUsageSnapshotKey(candidate) === usageSnapshotKey)
+    : -1
+
+  if (usageSnapshotIndex >= 0) {
+    if (current[usageSnapshotIndex]!.sequence >= event.sequence) return current
+    const next = [...current]
+    next[usageSnapshotIndex] = { ...event, text: truncateEventText(eventText) }
+    return next
+  }
+
   const snapshotMethod = authoritativeTurnSnapshotMethod(event)
   const snapshotIndex = snapshotMethod
     ? current.findIndex(
@@ -871,6 +883,14 @@ function authoritativeTurnSnapshotMethod(event: TengriCodexEvent) {
   const method = event.method.toLowerCase()
   if (event.kind === 'plan' && method === 'turn/plan/updated') return method
   if (event.kind === 'file-diff' && method === 'turn/diff/updated') return method
+  return ''
+}
+
+function authoritativeUsageSnapshotKey(event: TengriCodexEvent) {
+  if (event.kind !== 'usage') return ''
+  const method = event.method.toLowerCase()
+  if (method.includes('tokenusage')) return `token-usage:${event.threadId}`
+  if (method.includes('ratelimits')) return 'rate-limits'
   return ''
 }
 
