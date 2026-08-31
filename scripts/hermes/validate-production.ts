@@ -1272,9 +1272,15 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     "'https://hermes.ide-newton.ts.net (tailnet only)'",
     'test "$tailnet_status" = 401',
     'contains("HERMES_TAILNET_OK")',
-    'http://hermes.hermes.svc.cluster.local:8642/health',
-    'echo gateway_access_blocked',
+    "hermes_service_ip=$(kubectl -n hermes get service hermes -o jsonpath='{.spec.clusterIP}')",
+    "jq '[.items[].endpoints[] | select(.conditions.ready == true)] | length'",
+    '--resolve "${service_host}:8642:${HERMES_SERVICE_IP}"',
+    '"http://${service_host}:8642/health" >/tmp/out 2>/tmp/err || curl_status=$?',
+    'if [ "$curl_status" -ne 28 ]; then',
+    'echo gateway_access_blocked_by_timeout',
     'never add `tailscale.com/funnel` or a public ingress class',
+    'DNS failure cannot masquerade as isolation',
+    'Only curl exit `28` (the bounded connection timeout)',
   ])
   const releaseEvidenceSection = files.runbook.match(/## Release evidence[\s\S]*?## Phase 0:/)?.[0] ?? ''
   requireTerms(failures, productionPaths.runbook, releaseEvidenceSection, [

@@ -392,6 +392,12 @@ digest and platform labels from that reference.
      "$tailnet_url/v1/chat/completions" | jq -e \
      '.choices[0].message.content | contains("HERMES_TAILNET_OK")'
    unset hermes_api_key tailnet_status tailscale_proxy tailnet_url
+   hermes_service_ip=$(kubectl -n hermes get service hermes -o jsonpath='{.spec.clusterIP}')
+   test -n "$hermes_service_ip"
+   ready_hermes_endpoints=$(kubectl -n hermes get endpointslices.discovery.k8s.io \
+     -l kubernetes.io/service-name=hermes -o json | \
+     jq '[.items[].endpoints[] | select(.conditions.ready == true)] | length')
+   test "$ready_hermes_endpoints" -gt 0
    kubectl run hermes-tailnet-deny-check \
      -n default \
      --rm \
@@ -399,20 +405,29 @@ digest and platform labels from that reference.
      --restart=Never \
      --image=curlimages/curl:8.17.0 \
      --image-pull-policy=IfNotPresent \
+     --env="HERMES_SERVICE_IP=$hermes_service_ip" \
      --command -- sh -ec '
-       if curl -sS --connect-timeout 2 --max-time 5 \
-         http://hermes.hermes.svc.cluster.local:8642/health >/tmp/out 2>/tmp/err; then
-         echo unexpected_gateway_access
-         cat /tmp/out
+       service_host=hermes.hermes.svc.cluster.local
+       curl_status=0
+       curl -sS --connect-timeout 2 --max-time 5 \
+         --resolve "${service_host}:8642:${HERMES_SERVICE_IP}" \
+         "http://${service_host}:8642/health" >/tmp/out 2>/tmp/err || curl_status=$?
+       if [ "$curl_status" -ne 28 ]; then
+         echo "expected NetworkPolicy timeout (curl 28), got $curl_status" >&2
+         cat /tmp/out >&2
+         cat /tmp/err >&2
          exit 1
        fi
-       echo gateway_access_blocked
-       cat /tmp/err
+       echo gateway_access_blocked_by_timeout
      '
+   unset hermes_service_ip ready_hermes_endpoints
    ```
 
    The endpoint is tailnet-only; never add `tailscale.com/funnel` or a public ingress class. A successful HTTP response
-   from the ordinary `default` namespace is a rollout blocker even if that response is `401`.
+   from the ordinary `default` namespace is a rollout blocker even if that response is `401`. The negative probe pins
+   the API-resolved Service IP with `--resolve`, so DNS failure cannot masquerade as isolation; a ready EndpointSlice and
+   the authenticated tailnet request prove backend reachability. Only curl exit `28` (the bounded connection timeout)
+   counts as NetworkPolicy denial.
 
 5. Prove native Exa search/extract and the allowlisted Exa MCP tools from the production container:
 

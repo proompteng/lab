@@ -234,6 +234,24 @@ test('rejects widening Hermes ingress beyond its exact Tailscale proxy', async (
   )
 })
 
+test('rejects a tailnet isolation check that depends on cluster DNS', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace('--resolve "${service_host}:8642:${HERMES_SERVICE_IP}"', '')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "--resolve \\"\${service_host}:8642:\${HERMES_SERVICE_IP}\\""`,
+  )
+})
+
+test('rejects treating arbitrary tailnet probe failures as policy denial', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace('if [ "$curl_status" -ne 28 ]; then', 'if [ "$curl_status" -eq 0 ]; then')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "if [ \\"$curl_status\\" -ne 28 ]; then"`,
+  )
+})
+
 test('rejects restoring a domain-only Squid egress allowlist', async () => {
   const files = await loadProductionFiles()
   files.squidConfig = files.squidConfig.replace(
