@@ -22,7 +22,7 @@ import { type Policy } from '../risk'
 import { currentUtcInstant } from '../time'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
 import { reconstructBoundIntradaySnapshot, type CycleDecisionDocument } from '../shadow-decision-contract'
-import { restrictMutationLoopFailure } from './mutation-interpreter'
+import { restrictMutationLoopFailure, shouldRestrictMutationLoopFailure } from './mutation-interpreter'
 import type {
   ExecutionCapability,
   ObserveAutonomousCycleInput,
@@ -195,7 +195,10 @@ const makeRecoveryFirstCycleDriverEffect = (
       Effect.tap(() => markMutationReconciliationCompleted(cadence)),
     )
     const observeCycleFailure = (error: CycleRunnerError) =>
-      (capability._tag === 'Mutation' ? restrictMutationLoopFailure(error) : Effect.void).pipe(
+      (capability._tag === 'Mutation' && shouldRestrictMutationLoopFailure(error)
+        ? restrictMutationLoopFailure(error)
+        : Effect.void
+      ).pipe(
         Effect.catch((restrictionError: CycleRunnerError) =>
           currentUtcInstant.pipe(
             Effect.flatMap((observedAt) =>
