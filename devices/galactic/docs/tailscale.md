@@ -38,15 +38,14 @@ talosctl -n <talos-api-address> -e <talos-api-address> service ext-tailscale sta
 talosctl -n <talos-api-address> -e <talos-api-address> logs ext-tailscale | tail -n 40
 ```
 
-Confirm all three current nodes appear in the tailnet:
+Confirm all three current nodes are online and reachable through the tailnet:
 
 ```bash
 set -euo pipefail
 
-tailnet_status="$(tailscale status)"
 for node in ryzen turin altra; do
-  if ! printf '%s\n' "$tailnet_status" | rg -q -- "(^|[[:space:]])${node}([.-]|[[:space:]]|$)"; then
-    printf 'missing required Tailscale node: %s\n' "$node" >&2
+  if ! tailscale ping --c 1 --timeout 10s --until-direct=false "$node" >/dev/null; then
+    printf 'required Tailscale node is offline or unreachable: %s\n' "$node" >&2
     exit 1
   fi
 done
@@ -66,7 +65,7 @@ Do not create or publish a new image merely to perform this check.
 
 - Omni reports no unexpected pending machine operation.
 - The expected Tailscale extension is installed and `ext-tailscale` is healthy on each node.
-- Ryzen, Turin, and Altra have the intended tailnet identities.
+- Ryzen, Turin, and Altra have the intended tailnet identities and answer a Tailscale-layer ping.
 - A node-level private registry pull succeeds without changing DNS or machine configuration directly.
 - Kubernetes nodes remain `Ready`, and existing registry-backed workloads do not enter `ImagePullBackOff`.
 
