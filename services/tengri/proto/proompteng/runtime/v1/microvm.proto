@@ -112,7 +112,7 @@ message DeleteFileRequest { string agent_id = 1; string path = 2; bool recursive
 message SearchFilesRequest { string agent_id = 1; string query = 2; string path = 3; uint32 limit = 4; }
 message SearchFilesResponse { repeated FileEntry entries = 1; bool truncated = 2; }
 // Watches direct children of path. Clients open additional watches for nested directories they display or edit.
-message WatchFilesRequest { string agent_id = 1; string path = 2; uint64 after_sequence = 3; }
+message WatchFilesRequest { string agent_id = 1; string path = 2; optional uint64 after_sequence = 3; }
 
 enum FileEventKind {
   FILE_EVENT_KIND_UNSPECIFIED = 0;
@@ -136,6 +136,7 @@ message CreateTerminalRequest {
   string cwd = 2;
   uint32 columns = 3;
   uint32 rows = 4;
+  // Required idempotency identity. Clients must preserve this value across retries.
   string creation_id = 5;
 }
 message ListTerminalsRequest { string agent_id = 1; }
@@ -232,6 +233,16 @@ message CodexEvent {
   string raw_json = 9;
 }
 
-message IssuePreviewSessionRequest { string agent_id = 1; uint32 port = 2; string path = 3; }
-message PreviewSession { string id = 1; string launch_url = 2; string expires_at = 3; }
+message IssuePreviewSessionRequest {
+  string agent_id = 1;
+  uint32 port = 2;
+  string path = 3;
+  string fragment = 4;
+}
+message PreviewSession {
+  string id = 1;
+  string launch_url = 2;
+  string expires_at = 3;
+  string preview_origin = 4;
+}
 message RevokePreviewSessionRequest { string agent_id = 1; string session_id = 2; }

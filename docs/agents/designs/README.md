@@ -2,9 +2,10 @@
 
 Status: Supporting implementation and historical contracts.
 
-This directory is intentionally curated. A document remains here because live code, configuration, tests, current
-documentation, or another retained contract still names it. Retention does not make a design current production
-authority.
+This directory is intentionally curated. A document remains here only when live code, configuration, tests, or a
+maintained current document consumes it, or when it contains clearly unique historical rationale or provenance that
+cannot be reconstructed from Git history. Retention does not make a design current production authority; references only
+from another archive document, generated catalog, or obsolete index are insufficient.
 
 For current behavior, start with:
 
@@ -21,7 +22,8 @@ supporting rationale for contracts still surfaced by the implementation.
 
 ## Retention Rule
 
-- Keep a design while a live contract or maintained document cites it.
+- Keep a design while a live external contract or maintained current document cites it, or while it preserves unique
+  historical rationale/provenance that is not recoverable from Git history.
 - Move reusable operational instructions into a current runbook or component README.
 - Delete superseded variants, completed handoffs, rollout journals, and orphaned proposals.
 - Use Git history when historical text is needed after deletion.
