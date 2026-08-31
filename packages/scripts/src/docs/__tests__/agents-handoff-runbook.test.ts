@@ -46,3 +46,39 @@ it('sanitizes the full Sealed Secrets key backup before restoring it', () => {
     scriptsWorkflow.split('\n').filter((line) => line.trim() === "- 'devices/galactic/docs/bootstrap-argocd.md'"),
   ).toHaveLength(2)
 })
+
+it('gates the auto-syncing root handoff on MetalLB readiness', () => {
+  const bootstrapRunbook = readFileSync(join(repoRoot, 'devices/galactic/docs/bootstrap-argocd.md'), 'utf8')
+  const applicationSetsRunbook = readFileSync(join(repoRoot, 'argocd/applicationsets/README.md'), 'utf8')
+  const bootstrapApplicationSet = readFileSync(join(repoRoot, 'argocd/applicationsets/bootstrap.yaml'), 'utf8')
+
+  const metallbEntry = bootstrapApplicationSet.match(
+    /                - name: metallb-system\n[\s\S]*?(?=\n                - name:)/,
+  )?.[0]
+  const gateIndex = applicationSetsRunbook.indexOf('**Bootstrap MetalLB before the root handoff.**')
+  const rootHandoffIndex = applicationSetsRunbook.indexOf(
+    'kubectl --context "$GALACTIC_CONTEXT" -n argocd apply -f argocd/root.yaml',
+  )
+
+  expect(metallbEntry).toContain('automation: manual')
+  expect(bootstrapRunbook).toContain('## Bootstrap MetalLB before the root handoff')
+  expect(bootstrapRunbook).toContain('kustomize build --enable-helm argocd/applications/metallb-system')
+  expect(bootstrapRunbook).toContain('select(.kind != "IPAddressPool" and .kind != "L2Advertisement")')
+  expect(bootstrapRunbook).toContain('select(.kind == "IPAddressPool" or .kind == "L2Advertisement")')
+  expect(bootstrapRunbook).toContain('wait --for=condition=Established --timeout=120s')
+  expect(bootstrapRunbook).toContain('deployment/controller --timeout=300s')
+  expect(bootstrapRunbook).toContain('daemonset/speaker --timeout=300s')
+  expect(bootstrapRunbook).toContain('ipaddresspool.metallb.io/metallb-ip-pool')
+  expect(bootstrapRunbook).toContain('l2advertisement.metallb.io/metallb-l2-advertisement')
+  expect(gateIndex).toBeGreaterThan(-1)
+  expect(rootHandoffIndex).toBeGreaterThan(gateIndex)
+  expect(applicationSetsRunbook).toContain(
+    "--for=jsonpath='{.status.sync.status}'=Synced application/metallb-system --timeout=300s",
+  )
+  expect(applicationSetsRunbook).toContain(
+    "--for=jsonpath='{.status.health.status}'=Healthy application/metallb-system --timeout=300s",
+  )
+  expect(applicationSetsRunbook).toContain(
+    "--for=jsonpath='{.status.loadBalancer.ingress[0].ip}'=100.100.244.181 service/traefik --timeout=300s",
+  )
+})

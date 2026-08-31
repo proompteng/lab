@@ -204,6 +204,58 @@ kubectl --context "$GALACTIC_CONTEXT" -n argocd rollout status deploy/argocd-ser
 kubectl --context "$GALACTIC_CONTEXT" -n argocd rollout status deploy/argocd-repo-server --timeout=300s
 ```
 
+## Bootstrap MetalLB before the root handoff
+
+The `metallb-system` Application intentionally remains manual because it owns cluster-critical networking. The root
+Application also creates auto-synced consumers such as Traefik, so a fresh or rebuilt cluster must complete this gate
+before applying `argocd/root.yaml`. Otherwise Traefik can reconcile before MetalLB exists and never receive its required
+LoadBalancer address.
+
+This is a one-time bootstrap exception. It applies the same repository-owned MetalLB overlay that the bootstrap
+ApplicationSet adopts after the root handoff. After that adoption, stop applying the overlay directly and use the
+normal GitOps path.
+
+```bash
+set -euo pipefail
+: "${GALACTIC_CONTEXT:?Set GALACTIC_CONTEXT to galactic-lan or galactic-tailscale first}"
+
+kubectl --context "$GALACTIC_CONTEXT" create namespace metallb-system --dry-run=client -o yaml \
+  | kubectl --context "$GALACTIC_CONTEXT" apply --server-side --field-manager=galactic-bootstrap -f - >/dev/null
+kubectl --context "$GALACTIC_CONTEXT" label namespace metallb-system \
+  pod-security.kubernetes.io/enforce=privileged \
+  pod-security.kubernetes.io/audit=privileged \
+  pod-security.kubernetes.io/warn=privileged --overwrite
+kubectl --context "$GALACTIC_CONTEXT" annotate namespace metallb-system \
+  argocd.argoproj.io/sync-options=Prune=false --overwrite
+
+# Apply exactly the desired state that Application/metallb-system will later adopt. Install built-in resources and
+# CRDs first; submitting the custom resources before the validating webhook is ready makes a fresh bootstrap race.
+kustomize build --enable-helm argocd/applications/metallb-system \
+  | yq eval 'select(.kind != "IPAddressPool" and .kind != "L2Advertisement")' - \
+  | kubectl --context "$GALACTIC_CONTEXT" -n metallb-system apply \
+      --server-side --force-conflicts -f - >/dev/null
+
+kubectl --context "$GALACTIC_CONTEXT" wait --for=condition=Established --timeout=120s \
+  crd/ipaddresspools.metallb.io crd/l2advertisements.metallb.io
+kubectl --context "$GALACTIC_CONTEXT" -n metallb-system rollout status \
+  deployment/controller --timeout=300s
+kubectl --context "$GALACTIC_CONTEXT" -n metallb-system rollout status \
+  daemonset/speaker --timeout=300s
+
+kustomize build --enable-helm argocd/applications/metallb-system \
+  | yq eval 'select(.kind == "IPAddressPool" or .kind == "L2Advertisement")' - \
+  | kubectl --context "$GALACTIC_CONTEXT" -n metallb-system apply \
+      --server-side --force-conflicts -f - >/dev/null
+
+kubectl --context "$GALACTIC_CONTEXT" -n metallb-system get \
+  ipaddresspool.metallb.io/metallb-ip-pool
+kubectl --context "$GALACTIC_CONTEXT" -n metallb-system get \
+  l2advertisement.metallb.io/metallb-l2-advertisement
+```
+
+Every command above must succeed. If the controller, speaker, address pool, or L2 advertisement is not ready, stop and
+do not apply the root Application.
+
 ## Access the UI (no ingress)
 
 Port-forward:
