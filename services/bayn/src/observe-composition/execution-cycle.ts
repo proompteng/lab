@@ -906,12 +906,23 @@ const readUnfinishedMutationCycle = (
 const mutationBound = (cycle: AutonomousCycle | undefined): cycle is AutonomousCycle =>
   cycle !== undefined && cycle.state === CycleState.Active && cycle.bindings.decisionHash !== undefined
 
-const terminalizeUnboundMutationCycleAtCutoff = (
+export const decideUnboundExecutionCycleTerminalization = (input: {
+  readonly capability: ExecutionCapability['_tag']
+  readonly executionMandateCutoffAt?: string
+  readonly observedAt: string
+}): CycleTerminalReason.Authority | undefined =>
+  input.executionMandateCutoffAt !== undefined &&
+  (input.capability === 'RecoveryOnly' || input.observedAt >= input.executionMandateCutoffAt)
+    ? CycleTerminalReason.Authority
+    : undefined
+
+const terminalizeUnboundMutationCycle = (
   cycle: AutonomousCycle,
+  reason: CycleTerminalReason.Authority,
   observedAt: string,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, CycleStore> =>
   CycleStore.pipe(
-    Effect.flatMap((store) => store.block(cycle.identity.cycleId, CycleTerminalReason.Authority, observedAt)),
+    Effect.flatMap((store) => store.block(cycle.identity.cycleId, reason, observedAt)),
     Effect.mapError((cause) =>
       mutationRunnerError({ message: 'expired execution cycle finalization failed', cause, failure: 'store' }),
     ),
@@ -1105,12 +1116,18 @@ export const runRecoveryFirstCyclePass = (
       }
       return currentUtcInstant.pipe(
         Effect.flatMap((observedAt) => {
-          if (
-            input.executionMandateCutoffAt !== undefined &&
-            observedAt >= input.executionMandateCutoffAt &&
-            unfinished !== undefined
-          ) {
-            return terminalizeUnboundMutationCycleAtCutoff(unfinished, observedAt)
+          const terminalReason = decideUnboundExecutionCycleTerminalization({
+            capability: capability._tag,
+            ...(input.executionMandateCutoffAt === undefined
+              ? {}
+              : { executionMandateCutoffAt: input.executionMandateCutoffAt }),
+            observedAt,
+          })
+          if (terminalReason !== undefined && unfinished !== undefined && !mutationBound(unfinished)) {
+            return terminalizeUnboundMutationCycle(unfinished, terminalReason, observedAt)
+          }
+          if (capability._tag === 'RecoveryOnly') {
+            return Effect.succeed({ outcome: 'WINDOW_CLOSED' as const, observedAt })
           }
           if (input.executionMandateCutoffAt !== undefined && observedAt >= input.executionMandateCutoffAt) {
             return Effect.succeed({ outcome: 'WINDOW_CLOSED' as const, observedAt })
