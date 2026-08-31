@@ -46,12 +46,12 @@ release documentation points only to CI, Kargo, and Argo CD.
 
 ## Completed and superseded documentation
 
-- [x] Delete `docs/agents/agents-shell-effect-schema-modularization-plan.md`; the implementation is complete, covered
-  by the Agents shell module and regression tests, and the plan had no inbound repository references.
-- [x] Delete `docs/nix-enabled-app-rollout-evidence-2026-07-05.md`; it was a pre-Kargo final report with no inbound
-  references, while `docs/release-automation.md` owns the current release contract.
-- [x] Delete `docs/torghut/ops-2026-05-05-chip-universe-rollout.md`; its fixed universe was a stale rollout snapshot,
-  had no inbound references, and contradicted current GitOps configuration.
+- [x] Retire the completed Agents shell Effect/schema modularization plan after confirming the implementation, module
+  regression tests, and absence of inbound repository references.
+- [x] Retire the pre-Kargo Nix-enabled application rollout evidence report dated 2026-07-05; the current release
+  contract now lives in `docs/release-automation.md`.
+- [x] Retire the Torghut chip-universe rollout snapshot dated 2026-05-05 after confirming its fixed universe contradicted
+  current GitOps configuration and had no inbound references.
 - [x] Replace the duplicated 1,189-line `docs/torghut/design-system/v6/index.md` journal with a concise historical
   source map that retains the machine-consumed completion matrix and removes broken catalog entries.
 

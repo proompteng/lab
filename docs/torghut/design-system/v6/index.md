@@ -37,8 +37,6 @@ and runtime evidence independently confirm it.
   disposition and rollout gates.
 - `31-proven-autonomous-quant-llm-torghut-trading-system-2026-03-07.md` records the historical integrated-system
   design.
-- `../implementation-status-matrix-2026-02-21.md` and `../implementation-audit.md` provide the maintained source-read
-  audit of retained design documents.
 
 ## Later Design Records
 
