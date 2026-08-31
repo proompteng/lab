@@ -46,10 +46,7 @@ const request: IntradaySnapshotRequest = {
   ],
 }
 
-type IntradayIdentityRow = Omit<
-  IntradayQuoteRow,
-  'latest_payload_variants' | 'bid_price' | 'bid_size' | 'ask_price' | 'ask_size'
->
+type IntradayIdentityRow = Omit<IntradayQuoteRow, 'bid_price' | 'bid_size' | 'ask_price' | 'ask_size'>
 
 const identity = (symbol: string, eventAt: string, sourceTopic: string, sourceOffset: number): IntradayIdentityRow => ({
   provider: 'alpaca',
@@ -90,7 +87,6 @@ const makeRows = () => {
   )
   const quotes: IntradayQuoteRow[] = symbols.map((symbol) => ({
     ...identity(symbol, '2026-08-18T13:35:15.000Z', quotesTopic, offset++),
-    latest_payload_variants: '1',
     bid_price: '100',
     bid_size: '10',
     ask_price: '100.02',
@@ -98,7 +94,6 @@ const makeRows = () => {
   }))
   const trades: IntradayTradeRow[] = symbols.map((symbol) => ({
     ...identity(symbol, '2026-08-18T13:35:10.000Z', tradesTopic, offset++),
-    latest_payload_variants: '1',
     price: '100.01',
     size: '5',
   }))
@@ -137,6 +132,20 @@ describe('immutable intraday market snapshot', () => {
     expect(snapshot.manifest.lineage).toHaveLength(3)
     expect(reordered.manifest.snapshotId).toBe(snapshot.manifest.snapshotId)
     expect(reordered.manifest.contentHash).toBe(snapshot.manifest.contentHash)
+  })
+
+  test('accepts legacy persisted quote and trade markers without changing the snapshot binding', () => {
+    const rows = makeRows()
+    const current = success(verifyIntradaySnapshot(request, rows))
+    const legacy = success(
+      verifyIntradaySnapshot(request, {
+        ...rows,
+        quotes: rows.quotes.map((row) => ({ ...row, latest_payload_variants: '1' })),
+        trades: rows.trades.map((row) => ({ ...row, latest_payload_variants: '1' })),
+      }),
+    )
+
+    expect(legacy).toEqual(current)
   })
 
   test('binds complete post-range evidence without requiring every symbol to be selection-fresh simultaneously', () => {
@@ -753,21 +762,6 @@ describe('immutable intraday market snapshot', () => {
     })
   })
 
-  test('fails closed when tied latest archive records contain conflicting market payloads', () => {
-    const rows = makeRows()
-    expect(
-      error(
-        verifyIntradaySnapshot(request, {
-          ...rows,
-          quotes: rows.quotes.map((quote, index) => (index === 0 ? { ...quote, latest_payload_variants: '2' } : quote)),
-        }),
-      ),
-    ).toMatchObject({
-      reason: 'ordering',
-      message: 'latest intraday timestamp has conflicting market payloads',
-    })
-  })
-
   test('rejects a self-consistent replay with conflicting duplicate quote candidates', () => {
     const rows = makeRows()
     const firstQuote = rows.quotes[0]
@@ -788,7 +782,6 @@ describe('immutable intraday market snapshot', () => {
         {
           ...firstQuote,
           source_offset: '15',
-          latest_payload_variants: '1',
           bid_price: '99.50',
           ask_price: '99.52',
         },

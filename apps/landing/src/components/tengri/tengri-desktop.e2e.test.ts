@@ -137,6 +137,7 @@ type MockOptions = {
   holdLifecycleAction?: 'delete-agent' | 'sleep-agent'
   holdReplayResume?: boolean
   resumeThreadDelayMs?: number
+  resumeThreadEventSequence?: number
   resumeThreadRawJson?: string
   searchDelays?: Record<string, number>
   searchTruncated?: boolean
@@ -598,7 +599,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         result = {
           id: action.threadId,
           rawJson: options.resumeThreadRawJson ?? '{"thread":{"turns":[]}}',
-          eventSequence: 0,
+          eventSequence: options.resumeThreadEventSequence ?? 0,
         }
         break
       case 'send-turn':
@@ -1566,6 +1567,94 @@ test('steers a recovered in-progress turn when sending during thread resume', as
     )
     .toBe(true)
   expect(mock.actions.some((action) => action.action === 'send-turn')).toBe(false)
+})
+
+test('does not duplicate snapshot-covered Codex messages when event replay races thread resume', async ({ page }) => {
+  const promptText = 'Create the live proof file.'
+  const progressText = 'Creating the file now.'
+  const finalText = '/workspace/tengri-codex-live-proof.txt'
+  const mock = await mockTengri(page, {
+    resumeThreadDelayMs: 1_000,
+    resumeThreadEventSequence: 53,
+    resumeThreadRawJson: JSON.stringify({
+      thread: {
+        turns: [
+          {
+            id: 'turn-complete',
+            status: 'completed',
+            items: [
+              { id: 'item-1', type: 'userMessage', content: [{ type: 'text', text: promptText }] },
+              { id: 'item-2', type: 'agentMessage', text: progressText },
+              { id: 'item-3', type: 'agentMessage', text: finalText },
+            ],
+          },
+        ],
+      },
+    }),
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-complete'))
+  await page.goto('/')
+  await expect.poll(() => mock.actions.filter((action) => action.action === 'resume-thread').length).toBe(1)
+
+  for (const replayedEvent of [
+    {
+      sequence: 9,
+      kind: 'user-message',
+      method: 'item/completed',
+      itemId: 'msg-user-live',
+      text: promptText,
+    },
+    {
+      sequence: 13,
+      kind: 'assistant-text',
+      method: 'item/completed',
+      itemId: 'msg-agent-live',
+      text: progressText,
+    },
+    {
+      sequence: 42,
+      kind: 'assistant-text',
+      method: 'item/completed',
+      itemId: 'msg-agent-final-live',
+      text: finalText,
+    },
+    {
+      sequence: 43,
+      kind: 'usage',
+      method: 'thread/tokenUsage/updated',
+      itemId: '',
+      text: 'Tokens: 10 input · 4 output',
+    },
+    {
+      sequence: 44,
+      kind: 'warning',
+      method: 'tengri/eventOmitted',
+      itemId: '',
+      text: 'One oversized Codex event was omitted',
+    },
+    {
+      sequence: 45,
+      kind: 'error',
+      method: 'turn/completed',
+      itemId: '',
+      text: 'The turn failed',
+    },
+  ]) {
+    await emitCodexEvent(page, {
+      ...replayedEvent,
+      threadId: 'thread-complete',
+      turnId: 'turn-complete',
+      approvalId: '',
+      rawJson: '{}',
+    })
+  }
+
+  await expect(page.getByText(promptText, { exact: true })).toHaveCount(1)
+  await expect(page.getByText(progressText, { exact: true })).toHaveCount(1)
+  await expect(page.getByText(finalText, { exact: true })).toHaveCount(1)
+  await expect(page.getByText('Tokens: 10 input · 4 output', { exact: true })).toHaveCount(1)
+  await expect(page.getByText('One oversized Codex event was omitted', { exact: true })).toHaveCount(1)
+  await expect(page.getByText('The turn failed', { exact: true })).toHaveCount(1)
 })
 
 test('does not resurrect a turn completed while replay recovery is in flight', async ({ page }) => {
