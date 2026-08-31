@@ -130,6 +130,36 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     [agentId],
   )
 
+  const recoverLogin = useCallback(
+    async (signal: AbortSignal) => {
+      try {
+        const next = await runTengriAction<TengriCodexLogin | null>({ action: 'codex-login-status', agentId }, signal)
+        if (signal.aborted || !mountedRef.current || loginIdRef.current) return
+        if (!next) {
+          await refreshAccount(signal, false)
+          return
+        }
+        const expiresAt = Date.parse(next.expiresAt)
+        if (!Number.isFinite(expiresAt)) {
+          setError('Codex returned an invalid device-login deadline. Start a new login.')
+          return
+        }
+        if (expiresAt <= Date.now()) {
+          await refreshAccount(signal, false)
+          return
+        }
+        loginIdRef.current = next.loginId
+        setLogin(next)
+        setError('')
+      } catch (cause) {
+        if (!signal.aborted && mountedRef.current) {
+          setError(cause instanceof Error ? cause.message : 'Codex device login state is unavailable')
+        }
+      }
+    },
+    [agentId, refreshAccount],
+  )
+
   useEffect(() => {
     setAccount(null)
     loginIdRef.current = ''
@@ -158,9 +188,11 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   useEffect(() => {
     if (!active) return
     const controller = new AbortController()
-    void refreshAccount(controller.signal)
+    void refreshAccount(controller.signal).then((next) => {
+      if (next && !next.authenticated && !controller.signal.aborted) void recoverLogin(controller.signal)
+    })
     return () => controller.abort()
-  }, [active, refreshAccount])
+  }, [active, recoverLogin, refreshAccount])
 
   useEffect(() => {
     if (!active || !login || account?.authenticated) return
@@ -292,7 +324,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       if (eventMethod === 'account/login/completed') {
         const activeLoginId = loginIdRef.current
         if (codexLoginCompletionIsUncorrelated(event)) {
-          if (activeLoginId) void refreshAccount(undefined, false, activeLoginId)
+          void refreshAccount(undefined, false, activeLoginId)
           return
         }
         if (!codexLoginCompletionMatches(event, activeLoginId)) return

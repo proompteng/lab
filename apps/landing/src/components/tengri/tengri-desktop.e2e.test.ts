@@ -124,6 +124,7 @@ function embeddedPreviewDocument() {
 type TerminalStore = { sessions: Record<string, unknown>[] }
 
 type MockOptions = {
+  activeCodexLogin?: boolean
   authenticated?: boolean
   agent?: typeof readyAgent | null
   codexAuthenticated?: boolean
@@ -525,6 +526,16 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
           email: options.codexAuthenticated === false ? '' : 'ada@example.test',
           plan: options.codexAuthenticated === false ? '' : 'pro',
         }
+        break
+      case 'codex-login-status':
+        result = options.activeCodexLogin
+          ? {
+              loginId: 'login-existing',
+              verificationUrl: 'https://auth.openai.com/device',
+              userCode: 'TENG-RI99',
+              expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+            }
+          : null
         break
       case 'codex-login':
         result = {
@@ -1446,6 +1457,19 @@ test('blocks lifecycle changes while Chrome has a device-login refresh in flight
   await expect(settings.getByRole('button', { name: 'Sleep Agent' })).toBeEnabled()
   await settings.getByRole('button', { name: 'Sleep Agent' }).click()
   await expect(page.getByRole('dialog', { name: 'Tengri is sleeping' })).toBeVisible()
+})
+
+test('restores an active Codex device login without replacing its code', async ({ page }) => {
+  const mock = await mockTengri(page, {
+    activeCodexLogin: true,
+    codexAuthenticated: false,
+  })
+  await page.goto('/')
+
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  await expect(chrome.getByText('TENG-RI99')).toBeVisible()
+  expect(mock.actions.filter((action) => action.action === 'codex-login-status')).toHaveLength(1)
+  expect(mock.actions.some((action) => action.action === 'codex-login')).toBe(false)
 })
 
 test('does not refresh the guest account after sleep starts', async ({ page }) => {
