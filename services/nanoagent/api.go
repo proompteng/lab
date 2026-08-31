@@ -111,6 +111,7 @@ func (server *apiServer) authenticatedRoutes() http.Handler {
 	mux.HandleFunc("DELETE /v1/terminals/{id}", server.handleTerminateTerminal)
 	mux.HandleFunc("GET /v1/terminals/{id}/ws", server.handleTerminalWebSocket)
 	mux.HandleFunc("POST /v1/codex/call", server.handleCodexCall)
+	mux.HandleFunc("GET /v1/codex/login", server.handleCodexLogin)
 	mux.HandleFunc("GET /v1/codex/events", server.handleCodexEvents)
 	mux.HandleFunc("POST /v1/codex/approvals/{id}", server.handleCodexApproval)
 	mux.HandleFunc("/v1/preview/{port}/{path...}", server.handlePreview)

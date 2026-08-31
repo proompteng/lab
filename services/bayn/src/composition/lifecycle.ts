@@ -15,6 +15,7 @@ import {
   makeObserveAutonomousCycleStartup,
   type LifecycleAdvanceDisposition,
   type LifecycleAdvanceMaintenance,
+  type MutationCycleExecutionMode,
   type RecoveryFirstCycleDriver,
 } from '../observe-composition'
 import { reconciliationRunnerError } from '../observe-composition/decision-builder'
@@ -124,27 +125,31 @@ export const mutationCycle = (
   onClosedCycle: (cycleId: string, observedAt: string) => Effect.Effect<void>,
   lifecycleMaintenance: LifecycleAdvanceMaintenance | undefined,
   intradayMarketData: IntradayMarketDataService,
+  executionMode: MutationCycleExecutionMode = 'Mutation',
 ) => {
-  return makeMutationAutonomousCycleStartup({
-    accountId: plan.config.alpaca.expectedAccountId,
-    authorityGenerationHash:
-      plan.config.execution.capitalAuthority._tag === CapitalAuthorityKind.Granted
-        ? plan.config.execution.capitalAuthority.authorityGenerationHash
-        : plan.config.alpaca.authorityGenerationHash,
-    pollIntervalMs: plan.config.cyclePollIntervalMs,
-    reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
-    reconciliationPassTimeoutMs: plan.config.operationTimeoutMs,
-    strategy: plan.strategy,
-    intradayMarketData,
-    executionProgram,
-    executionCycleClosureStore,
-    blockedCycleIntentStore,
-    onClosedCycle,
-    executionMandateCutoffAt: executionMandate.cutoffAt,
-    executionMandateCloseSubmitCutoffAt: executionMandate.expiresAt,
-    executionMandateExpiresAt: executionMandateCloseExpiresAt(executionMandate.expiresAt),
-    ...(lifecycleMaintenance === undefined ? {} : { lifecycleMaintenance }),
-  })
+  return makeMutationAutonomousCycleStartup(
+    {
+      accountId: plan.config.alpaca.expectedAccountId,
+      authorityGenerationHash:
+        plan.config.execution.capitalAuthority._tag === CapitalAuthorityKind.Granted
+          ? plan.config.execution.capitalAuthority.authorityGenerationHash
+          : plan.config.alpaca.authorityGenerationHash,
+      pollIntervalMs: plan.config.cyclePollIntervalMs,
+      reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
+      reconciliationPassTimeoutMs: plan.config.operationTimeoutMs,
+      strategy: plan.strategy,
+      intradayMarketData,
+      executionProgram,
+      executionCycleClosureStore,
+      blockedCycleIntentStore,
+      onClosedCycle,
+      executionMandateCutoffAt: executionMandate.cutoffAt,
+      executionMandateCloseSubmitCutoffAt: executionMandate.expiresAt,
+      executionMandateExpiresAt: executionMandateCloseExpiresAt(executionMandate.expiresAt),
+      ...(lifecycleMaintenance === undefined ? {} : { lifecycleMaintenance }),
+    },
+    executionMode,
+  )
 }
 
 export const executionProgramError = (

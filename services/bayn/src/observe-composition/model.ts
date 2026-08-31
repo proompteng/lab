@@ -122,6 +122,8 @@ export type ExecutionCapability =
   | { readonly _tag: 'RecoveryOnly' }
   | { readonly _tag: 'Mutation'; readonly executionProgram: ExecutionProgram }
 
+export type MutationCycleExecutionMode = ExecutionCapability['_tag']
+
 export type ExecutionMutationLogContext = {
   readonly cycleId: string
   readonly intentId: string

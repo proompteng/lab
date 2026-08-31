@@ -48,6 +48,101 @@ describe('Codex event replay', () => {
     expect(next.at(-1)?.sequence).toBe(500)
   })
 
+  test('keeps only the newest cumulative usage snapshots', () => {
+    const tokenUsage = {
+      ...event,
+      sequence: 10,
+      kind: 'usage' as const,
+      method: 'thread/tokenUsage/updated',
+      itemId: '',
+      text: 'Tokens: 10 input · 4 output',
+    }
+    const rateLimits = {
+      ...tokenUsage,
+      sequence: 11,
+      method: 'account/rateLimits/updated',
+      threadId: '',
+      text: '7d window: 10% used',
+    }
+    const newerTokenUsage = { ...tokenUsage, sequence: 12, text: 'Tokens: 20 input · 6 output' }
+    const newerRateLimits = { ...rateLimits, sequence: 13, text: '7d window: 12% used' }
+    const otherThreadUsage = {
+      ...newerTokenUsage,
+      sequence: 14,
+      threadId: 'thread-2',
+      text: 'Tokens: 5 input · 2 output',
+    }
+
+    const current = [tokenUsage, rateLimits].reduce<TengriCodexEvent[]>(
+      (next, currentEvent) => appendCodexEvent(next, currentEvent),
+      [],
+    )
+    const updated = [newerTokenUsage, newerRateLimits, otherThreadUsage].reduce(
+      (next, currentEvent) => appendCodexEvent(next, currentEvent),
+      current,
+    )
+
+    expect(updated).toEqual([newerTokenUsage, newerRateLimits, otherThreadUsage])
+    expect(appendCodexEvent(updated, tokenUsage)).toBe(updated)
+  })
+
+  test('keeps independent rate-limit buckets and merges sparse rolling updates', () => {
+    const rateLimitEvent = (sequence: number, rateLimits: Record<string, unknown>, text = ''): TengriCodexEvent => ({
+      ...event,
+      sequence,
+      kind: 'usage',
+      method: 'account/rateLimits/updated',
+      threadId: '',
+      itemId: '',
+      text,
+      rawJson: JSON.stringify({ params: { rateLimits } }),
+    })
+    const codex = rateLimitEvent(20, {
+      limitId: 'codex',
+      limitName: 'Codex',
+      primary: { usedPercent: 10, windowDurationMins: 300 },
+      secondary: { usedPercent: 20, windowDurationMins: 10_080 },
+      credits: { hasCredits: true, unlimited: false, balance: '8' },
+      individualLimit: null,
+      spendControlReached: false,
+      planType: 'pro',
+      rateLimitReachedType: 'rate_limit_reached',
+    })
+    const other = rateLimitEvent(21, {
+      limitId: 'codex_other',
+      limitName: 'Codex Other',
+      primary: { usedPercent: 50, windowDurationMins: 30 },
+      secondary: null,
+      credits: null,
+      individualLimit: null,
+      spendControlReached: null,
+      planType: null,
+      rateLimitReachedType: null,
+    })
+    const sparseCodexUpdate = rateLimitEvent(22, {
+      limitId: null,
+      limitName: null,
+      primary: { usedPercent: 12, windowDurationMins: 300 },
+      secondary: null,
+      credits: null,
+      individualLimit: null,
+      spendControlReached: null,
+      planType: null,
+      rateLimitReachedType: null,
+    })
+
+    const updated = [codex, other, sparseCodexUpdate].reduce<TengriCodexEvent[]>(
+      (next, currentEvent) => appendCodexEvent(next, currentEvent),
+      [],
+    )
+
+    expect(updated).toHaveLength(2)
+    expect(updated[1]).toEqual(other)
+    expect(codexEventDisplayText(updated[0]!)).toBe(
+      '5h window: 12% used · 7d window: 20% used · Credits: 8 · Limit state: rate limit reached',
+    )
+  })
+
   test('coalesces camel-case app-server deltas by authoritative item ID', () => {
     const first = {
       ...event,
@@ -122,11 +217,19 @@ describe('Codex event replay', () => {
     expect(codexEventShouldRender(approval, 'thread-2', restoredItemIds)).toBe(false)
   })
 
-  test('keeps only post-resume updates visible for items restored into history', () => {
+  test('keeps only post-resume item updates plus snapshot-independent events visible', () => {
     const restoredItemIds = new Set([event.itemId])
+    const itemlessSnapshotEvent = { ...event, kind: 'usage' as const, itemId: '' }
+    const renamedSnapshotItem = { ...event, itemId: 'app-server-generated-id' }
+    const snapshotWarning = { ...event, kind: 'warning' as const, itemId: '', text: 'Replay warning' }
+    const snapshotError = { ...event, kind: 'error' as const, itemId: '', text: 'Turn failed' }
 
     expect(codexEventShouldRender(event, event.threadId, restoredItemIds)).toBe(false)
     expect(codexEventShouldRender(event, event.threadId, restoredItemIds, event.sequence)).toBe(false)
+    expect(codexEventShouldRender(itemlessSnapshotEvent, event.threadId, restoredItemIds, event.sequence)).toBe(true)
+    expect(codexEventShouldRender(renamedSnapshotItem, event.threadId, restoredItemIds, event.sequence)).toBe(false)
+    expect(codexEventShouldRender(snapshotWarning, event.threadId, restoredItemIds, event.sequence)).toBe(true)
+    expect(codexEventShouldRender(snapshotError, event.threadId, restoredItemIds, event.sequence)).toBe(true)
     expect(codexEventShouldRender(event, event.threadId, restoredItemIds, event.sequence - 1)).toBe(true)
   })
 
@@ -203,6 +306,60 @@ describe('Codex event replay', () => {
     )
   })
 
+  test('drops all snapshot-covered replay events when restored transcript IDs were synthesized', () => {
+    const restoredById = new Map([
+      ['item-1', { id: 'item-1', kind: 'user-message' as const, text: 'Create the proof file.' }],
+      ['item-2', { id: 'item-2', kind: 'assistant-text' as const, text: 'Creating the file.' }],
+      ['item-3', { id: 'item-3', kind: 'assistant-text' as const, text: '/workspace/proof.txt' }],
+    ])
+    const replayed = [
+      { ...event, sequence: 9, kind: 'user-message' as const, itemId: 'msg-user-live', text: 'Create the proof file.' },
+      { ...event, sequence: 13, itemId: 'msg-agent-live', text: 'Creating the file.' },
+      {
+        ...event,
+        sequence: 26,
+        kind: 'file-diff' as const,
+        method: 'turn/diff/updated',
+        itemId: '',
+        text: '+++ /workspace/proof.txt',
+      },
+      { ...event, sequence: 42, itemId: 'msg-agent-final-live', text: '/workspace/proof.txt' },
+    ]
+    const snapshotUsage = {
+      ...event,
+      sequence: 27,
+      kind: 'usage' as const,
+      method: 'thread/tokenUsage/updated',
+      itemId: '',
+      text: 'Tokens: 10 input · 4 output',
+    }
+    const snapshotWarning = {
+      ...event,
+      sequence: 44,
+      kind: 'warning' as const,
+      method: 'tengri/eventOmitted',
+      itemId: '',
+      text: 'One oversized event was omitted',
+    }
+    const snapshotError = {
+      ...event,
+      sequence: 45,
+      kind: 'error' as const,
+      method: 'turn/completed',
+      itemId: '',
+      text: 'The turn failed',
+    }
+    const postSnapshot = { ...event, sequence: 54, kind: 'warning' as const, itemId: '', text: 'Live warning' }
+
+    expect(
+      reconcileCodexEventsWithRestoredHistory(
+        [...replayed, snapshotUsage, snapshotWarning, snapshotError, postSnapshot],
+        restoredById,
+        53,
+      ),
+    ).toEqual([snapshotUsage, snapshotWarning, snapshotError, postSnapshot])
+  })
+
   test('drops snapshot-covered deltas delivered after the snapshot commit', () => {
     const restored = { id: event.itemId, kind: 'assistant-text', text: 'snapshot includes delta' } as const
     const restoredById = new Map([[restored.id, restored]])
@@ -226,6 +383,26 @@ describe('Codex event replay', () => {
 
     const approval = { ...delayedIncludedDelta, kind: 'approval' as const, approvalId: 'approval-1' }
     expect(appendCodexEventAfterRestore([], approval, restoredById, 42)).toEqual([approval])
+  })
+
+  test('reconciles snapshot-covered approval requests with their resolution events', () => {
+    const approval = {
+      ...event,
+      sequence: 20,
+      kind: 'approval' as const,
+      method: 'item/commandExecution/requestApproval',
+      approvalId: '7',
+    }
+    const resolved = {
+      ...event,
+      sequence: 21,
+      kind: 'thread-state' as const,
+      method: 'serverRequest/resolved',
+      itemId: '',
+      rawJson: JSON.stringify({ params: { threadId: event.threadId, requestId: 7 } }),
+    }
+
+    expect(reconcileCodexEventsWithRestoredHistory([approval, resolved], new Map(), 42)).toEqual([])
   })
 
   test('removes a replayed approval after its server request resolves', () => {

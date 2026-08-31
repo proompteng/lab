@@ -482,22 +482,6 @@ const normalizeTrade = (row: IntradayTradeRow): Result.Result<IntradayTrade, Int
     return Object.freeze({ ...identity, price, size })
   })
 
-const validateLatestPayloadVariants = (
-  quotes: readonly IntradayQuoteRow[],
-  trades: readonly IntradayTradeRow[],
-): Result.Result<void, IntradaySnapshotFailure> => {
-  const ambiguous = [...quotes, ...trades].find((row) => row.latest_payload_variants !== '1')
-  return ambiguous === undefined
-    ? Result.succeed(undefined)
-    : Result.fail(
-        failure('ordering', 'latest intraday timestamp has conflicting market payloads', {
-          symbol: ambiguous.symbol,
-          sourceTopic: ambiguous.source_topic,
-          payloadVariants: ambiguous.latest_payload_variants,
-        }),
-      )
-}
-
 const compareOffsets = (left: string, right: string): number => {
   const leftOffset = BigInt(left)
   const rightOffset = BigInt(right)
@@ -848,7 +832,6 @@ export const verifyIntradaySnapshot = (
       quotes: decodeIntradayQuoteRows(rows.quotes),
       trades: decodeIntradayTradeRows(rows.trades),
     })
-    yield* validateLatestPayloadVariants(decoded.quotes, decoded.trades)
     const session = verifiedRequest.calendar.sessions.find(({ date }) => date === verifiedRequest.sessionDate)
     if (session === undefined) {
       return yield* Result.fail(failure('request', 'intraday snapshot has no bound exchange session'))
@@ -917,9 +900,11 @@ const archiveIdentityRow = (record: IntradayRecordIdentity) => ({
   schema_version: record.schemaVersion,
 })
 
-const eventPayloadKey = (record: IntradayQuote | IntradayTrade): Result.Result<string, IntradaySnapshotFailure> =>
+const validateReplayEventTimestamp = (
+  record: IntradayQuote | IntradayTrade,
+): Result.Result<void, IntradaySnapshotFailure> =>
   Result.try({
-    try: () => `${record.symbol}\u0000${intradayInstantNanos(record.eventAt)}`,
+    try: () => void intradayInstantNanos(record.eventAt),
     catch: (cause) =>
       failure('rows', 'intraday quote or trade timestamp does not match the archive contract', undefined, cause),
   })
@@ -934,16 +919,15 @@ const validateReplayPayload = <T extends IntradayQuote | IntradayTrade>(
       failure('rows', 'intraday quote or trade payload does not match the archive contract', undefined, cause),
   })
 
-const replayCandidateKeys = <T extends IntradayQuote | IntradayTrade>(
+const validateReplayCandidates = <T extends IntradayQuote | IntradayTrade>(
   records: readonly T[],
   recordKind: 'quote' | 'trade',
   payload: (record: T) => readonly number[],
-): Result.Result<ReadonlyMap<T, string>, IntradaySnapshotFailure> =>
+): Result.Result<void, IntradaySnapshotFailure> =>
   Result.gen(function* () {
-    const keys = new Map<T, string>()
     const observedSymbols = new Set<string>()
     for (const record of records) {
-      const key = yield* eventPayloadKey(record)
+      yield* validateReplayEventTimestamp(record)
       yield* validateReplayPayload(record, payload)
       if (observedSymbols.has(record.symbol)) {
         return yield* Result.fail(
@@ -953,9 +937,8 @@ const replayCandidateKeys = <T extends IntradayQuote | IntradayTrade>(
         )
       }
       observedSymbols.add(record.symbol)
-      keys.set(record, key)
     }
-    return keys
+    return undefined
   })
 
 const replaySnapshotEnvelope = (snapshot: unknown): Result.Result<IntradayMarketSnapshot, IntradaySnapshotFailure> =>
@@ -1000,21 +983,17 @@ export const persistIntradaySnapshotRows = (
   Result.gen(function* () {
     const collections = yield* replaySnapshotEnvelope(snapshot)
     const bars = yield* Result.all(collections.bars.map(replayedBarRow))
-    const quoteCandidateKeys = yield* replayCandidateKeys(collections.quotes, 'quote', (quote) => [
+    yield* validateReplayCandidates(collections.quotes, 'quote', (quote) => [
       quote.bidPrice,
       quote.bidSize,
       quote.askPrice,
       quote.askSize,
     ])
-    const tradeCandidateKeys = yield* replayCandidateKeys(collections.trades, 'trade', (trade) => [
-      trade.price,
-      trade.size,
-    ])
+    yield* validateReplayCandidates(collections.trades, 'trade', (trade) => [trade.price, trade.size])
     return {
       bars,
       quotes: collections.quotes.map((quote) => ({
         ...archiveIdentityRow(quote),
-        latest_payload_variants: quoteCandidateKeys.has(quote) ? '1' : '0',
         bid_price: quote.bidPrice,
         bid_size: quote.bidSize,
         ask_price: quote.askPrice,
@@ -1022,7 +1001,6 @@ export const persistIntradaySnapshotRows = (
       })),
       trades: collections.trades.map((trade) => ({
         ...archiveIdentityRow(trade),
-        latest_payload_variants: tradeCandidateKeys.has(trade) ? '1' : '0',
         price: trade.price,
         size: trade.size,
       })),

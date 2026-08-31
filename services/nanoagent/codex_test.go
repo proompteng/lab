@@ -383,6 +383,7 @@ printf '{"id":%%s,"result":{"type":"chatgptDeviceCode","loginId":"login-one","ve
 IFS= read -r cancel_login
 printf '%%s' "$cancel_login" > %q
 id=$(printf '%%s\n' "$cancel_login" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+printf '{"method":"account/login/completed","params":{"loginId":"login-one"}}\n'
 printf '{"id":%%s,"result":{}}\n' "$id"
 IFS= read -r second_login
 id=$(printf '%%s\n' "$second_login" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
@@ -416,6 +417,10 @@ sleep 30
 	}
 	if !strings.Contains(string(result.result), `"loginId":"login-two"`) {
 		t.Fatalf("restarted login result = %s", result.result)
+	}
+	snapshot := supervisor.loginSnapshot()
+	if !snapshot.Active || !strings.Contains(string(snapshot.Result), `"loginId":"login-two"`) || snapshot.StartedAt == "" {
+		t.Fatalf("active login snapshot = %#v", snapshot)
 	}
 	cancelRequest, err := os.ReadFile(marker)
 	if err != nil {
@@ -483,6 +488,26 @@ sleep 30
 	supervisor.mu.Unlock()
 	if activeLoginID != "login-one" {
 		t.Fatalf("active login ID = %q, want login-one", activeLoginID)
+	}
+	if snapshot := supervisor.loginSnapshot(); !snapshot.Active ||
+		!strings.Contains(string(snapshot.Result), `"loginId":"login-one"`) {
+		t.Fatalf("retained login snapshot = %#v", snapshot)
+	}
+}
+
+func TestCodexLoginSnapshotRejectsAnotherAppServerGeneration(t *testing.T) {
+	t.Parallel()
+	supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
+	supervisor.mu.Lock()
+	supervisor.activeLoginID = "login-one"
+	supervisor.activeLogin = json.RawMessage(`{"loginId":"login-one"}`)
+	supervisor.loginStartedAt = time.Now().UTC()
+	supervisor.loginGeneration = supervisor.generation
+	supervisor.generation = newCodexProcessGeneration()
+	supervisor.mu.Unlock()
+
+	if snapshot := supervisor.loginSnapshot(); snapshot.Active {
+		t.Fatalf("stale login snapshot = %#v", snapshot)
 	}
 }
 

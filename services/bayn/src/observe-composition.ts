@@ -60,6 +60,7 @@ export type {
   LifecycleAdvanceDisposition,
   LifecycleAdvanceMaintenance,
   MutationAutonomousCycleInput,
+  MutationCycleExecutionMode,
   ObserveAutonomousCycleInput,
   ObserveStartupPreparation,
   RecoveryFirstCycleAdvance,
@@ -70,6 +71,7 @@ export type {
 
 export {
   blockedEntryRequiresCloseOnlyContainment,
+  decideUnboundExecutionCycleTerminalization,
   decideReconciledExecutionCycleCompletion,
   decideReconciledExecutionCycleTerminalization,
   decideExecutionCycleCloseDocument,
