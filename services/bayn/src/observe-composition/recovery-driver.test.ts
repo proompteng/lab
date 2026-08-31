@@ -7,6 +7,29 @@ import { operationalError } from '../errors'
 import { IntradaySnapshotFailure } from '../market-data'
 import { ObserveDecisionAwaitingSignal, decisionBuildError } from './decision-builder'
 import { runRestateAdvanceWithinTimeout } from './recovery-driver'
+import { shouldRestrictMutationLoopFailure } from './mutation-interpreter'
+import { CycleRunnerError } from '../cycle/runner'
+
+test('retries an oldest-unfinished preflight read without permanently restricting execution authority', () => {
+  expect(
+    shouldRestrictMutationLoopFailure(
+      new CycleRunnerError({
+        operation: 'read-oldest-unfinished',
+        failure: 'store',
+        message: 'oldest unfinished mutation cycle read failed',
+      }),
+    ),
+  ).toBe(false)
+  expect(
+    shouldRestrictMutationLoopFailure(
+      new CycleRunnerError({
+        operation: 'recover-cycle',
+        failure: 'store',
+        message: 'durable submit recovery read failed',
+      }),
+    ),
+  ).toBe(true)
+})
 
 test('maps an expected armed-entry wait to a non-terminal decision outcome', () => {
   const error = decisionBuildError(

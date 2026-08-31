@@ -37,6 +37,7 @@ import { OperationalError } from '../errors'
 import {
   decideExecutionMandateAuthority,
   executionActivationRestrictionSubject,
+  isExecutionCyclePreflightStoreRestriction,
   validateExecutionMandateCloseWindow,
 } from '../execution/mandate'
 import { legacyAuthorityGenerationV3SchemaVersion } from '../execution/legacy-wire'
@@ -692,11 +693,17 @@ export const prepareOrRecoverResearchCapitalActivation = (
       authority.reason === reconciliationIncompleteRestrictionReason &&
       currentGenerationMatchesRequest &&
       currentGeneration !== undefined
+    const currentPreflightStoreRecovery =
+      decision._tag === 'Rearm' &&
+      isExecutionCyclePreflightStoreRestriction(authority.reason) &&
+      currentGenerationMatchesRequest &&
+      currentGeneration !== undefined
+    const currentRestrictedSourceRecovery = currentReconciliationRecovery || currentPreflightStoreRecovery
     if (
       buildContinuation !== null &&
       decision._tag !== 'Resume' &&
       decision._tag !== 'ResumeRestricted' &&
-      !currentReconciliationRecovery
+      !currentRestrictedSourceRecovery
     ) {
       return yield* capitalActivationOperationalError(
         'research capital build continuation requires the exact active generation',
@@ -736,14 +743,14 @@ export const prepareOrRecoverResearchCapitalActivation = (
         .ensureAuthorityGeneration({
           generationHash: activationSourceGenerationHash,
           maximum: Authority.Observe,
-          ...(currentReconciliationRecovery && currentGeneration !== undefined
+          ...(currentRestrictedSourceRecovery && currentGeneration !== undefined
             ? { preserveCyclePlanHash: currentGeneration.proofPlanHash }
             : {}),
         })
         .pipe(
           Effect.map((rearmed) => ({ _tag: 'Rearmed' as const, rearmed })),
           Effect.catch((cause) => {
-            if (!currentReconciliationRecovery || currentGeneration === undefined) {
+            if (!currentRestrictedSourceRecovery || currentGeneration === undefined) {
               return Effect.fail(
                 capitalActivationOperationalError('research capital source authority rearm failed', cause),
               )

@@ -24,6 +24,7 @@ export type ExecutionMutationExecutor<E, R> = {
 export const mutationConsistencyDelayMs = 1_000
 
 export interface MutationRunnerErrorInput {
+  readonly operation?: CycleRunnerError['operation']
   readonly message: string
   readonly cause?: unknown
   readonly failure?: CycleRunnerError['failure']
@@ -31,11 +32,15 @@ export interface MutationRunnerErrorInput {
 
 export const mutationRunnerError = (input: MutationRunnerErrorInput): CycleRunnerError =>
   new CycleRunnerError({
-    operation: 'recover-cycle',
+    operation: input.operation ?? 'recover-cycle',
     failure: input.failure ?? 'operational',
     message: input.message,
     cause: input.cause,
   })
+
+/** A failed preflight read performed no broker I/O and is safe to retry on the next reconciled controller tick. */
+export const shouldRestrictMutationLoopFailure = (error: CycleRunnerError): boolean =>
+  error.operation !== 'read-oldest-unfinished' || error.failure !== 'store'
 
 const restrictMutationAuthorityDataFirst = (
   subject: string,

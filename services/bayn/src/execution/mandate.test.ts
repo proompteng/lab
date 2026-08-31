@@ -8,6 +8,7 @@ import {
   constrainExecutionTargetAllocationCapitalMicros,
   executionMandateAllocationCapitalMicros,
   executionMandateFailureRestrictionPrefix,
+  isExecutionCyclePreflightStoreRestriction,
   isExecutionMandateFailureRestriction,
   isExecutionMandateRecoveryRestriction,
   capitalGrantFromLegacyGeneration,
@@ -140,6 +141,16 @@ describe('execution mandate decisions', () => {
     ).toBe(false)
     expect(isExecutionMandateRecoveryRestriction(reconciliationIncompleteRestrictionReason)).toBe(true)
     expect(isExecutionMandateRecoveryRestriction('operator requested PAPER stop')).toBe(false)
+    expect(
+      isExecutionCyclePreflightStoreRestriction(
+        `${executionMandateFailureRestrictionPrefix} recover-cycle: oldest unfinished mutation cycle read failed`,
+      ),
+    ).toBe(true)
+    expect(
+      isExecutionCyclePreflightStoreRestriction(
+        `${executionMandateFailureRestrictionPrefix} recover-cycle: durable submit recovery read failed`,
+      ),
+    ).toBe(false)
   })
 
   test('adapts legacy qualification history and research history to one grant boundary', () => {
@@ -247,6 +258,17 @@ describe('execution mandate decisions', () => {
         reason: 'PAPER autonomous cycle loop restricted effective authority: build-decision failed',
       }),
     ).toEqual(Result.succeed({ _tag: 'ResumeRestricted' }))
+    expect(
+      decideExecutionMandateAuthority({
+        ...common,
+        generationHash: 'b'.repeat(64),
+        maximum: 'PAPER',
+        effective: 'OBSERVE',
+        kill: 'ACTIVE',
+        currentGenerationMatchesRequest: true,
+        reason: `${executionMandateFailureRestrictionPrefix} recover-cycle: oldest unfinished mutation cycle read failed`,
+      }),
+    ).toEqual(Result.succeed({ _tag: 'Rearm' }))
     expect(
       decideExecutionMandateAuthority({
         ...common,
