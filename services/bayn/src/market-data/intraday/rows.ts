@@ -82,6 +82,9 @@ const IntradayBarRowSchema = Schema.Struct({
 
 const IntradayQuoteRowSchema = Schema.Struct({
   ...identityFields,
+  // Compatibility only: releases before the Kafka offset tie-break persisted
+  // this derived marker. Decode and ignore it; new rows never emit it.
+  latest_payload_variants: Schema.optional(DigitsSchema),
   bid_price: NumericSchema,
   bid_size: NumericSchema,
   ask_price: NumericSchema,
@@ -101,6 +104,7 @@ const IntradayQuoteRowSchema = Schema.Struct({
 
 const IntradayTradeRowSchema = Schema.Struct({
   ...identityFields,
+  latest_payload_variants: Schema.optional(DigitsSchema),
   price: NumericSchema,
   size: NumericSchema,
 }).check(

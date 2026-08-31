@@ -134,6 +134,20 @@ describe('immutable intraday market snapshot', () => {
     expect(reordered.manifest.contentHash).toBe(snapshot.manifest.contentHash)
   })
 
+  test('accepts legacy persisted quote and trade markers without changing the snapshot binding', () => {
+    const rows = makeRows()
+    const current = success(verifyIntradaySnapshot(request, rows))
+    const legacy = success(
+      verifyIntradaySnapshot(request, {
+        ...rows,
+        quotes: rows.quotes.map((row) => ({ ...row, latest_payload_variants: '1' })),
+        trades: rows.trades.map((row) => ({ ...row, latest_payload_variants: '1' })),
+      }),
+    )
+
+    expect(legacy).toEqual(current)
+  })
+
   test('binds complete post-range evidence without requiring every symbol to be selection-fresh simultaneously', () => {
     const snapshot = success(verifyIntradaySnapshot({ ...request, observedAt: '2026-08-18T13:36:30.000Z' }, makeRows()))
 
