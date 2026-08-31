@@ -1,9 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    pin::Pin,
-    sync::{Arc, Mutex, MutexGuard, Weak},
-    time::Duration,
-};
+use std::{pin::Pin, time::Duration};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use futures::{Stream, StreamExt};
@@ -13,7 +8,6 @@ use reqwest::{Method, StatusCode};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use thiserror::Error;
-use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 
 use crate::crd::{MicroVM, MicroVMPhase};
 
@@ -46,6 +40,12 @@ pub enum GuestError {
     InvalidJson(#[from] serde_json::Error),
     #[error("Nanoagent does not support atomic Codex snapshot cursors")]
     MissingCodexSnapshotCursor,
+    #[error("Nanoagent returned terminal creation identity {actual:?}; expected {expected:?}")]
+    TerminalCreationIdentityMismatch {
+        expected: String,
+        actual: String,
+        created_terminal_id: Option<String>,
+    },
     #[error("Nanoagent response exceeded the {0}-byte limit")]
     ResponseTooLarge(usize),
 }
@@ -55,201 +55,6 @@ pub struct GuestClient {
     http: reqwest::Client,
     base_url: String,
     token: String,
-    agent_id: String,
-    terminal_identities: TerminalIdentityRegistry,
-}
-
-#[derive(Clone, Default)]
-pub struct TerminalIdentityRegistry {
-    state: Arc<Mutex<TerminalIdentityState>>,
-    legacy_creation_locks: Arc<Mutex<HashMap<String, Weak<AsyncMutex<()>>>>>,
-}
-
-#[derive(Default)]
-struct TerminalIdentityState {
-    agents: HashMap<String, AgentTerminalIdentities>,
-}
-
-#[derive(Default)]
-struct AgentTerminalIdentities {
-    creation_ids: HashMap<String, String>,
-    pending: HashMap<String, PendingLegacyCreation>,
-}
-
-struct PendingLegacyCreation {
-    existing_session_ids: HashSet<String>,
-    cwd: String,
-}
-
-impl TerminalIdentityRegistry {
-    async fn lock_legacy_creation(&self, agent_id: &str) -> OwnedMutexGuard<()> {
-        let lock = {
-            let mut locks = self
-                .legacy_creation_locks
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            locks.retain(|_, lock| lock.strong_count() > 0);
-            if let Some(lock) = locks.get(agent_id).and_then(Weak::upgrade) {
-                lock
-            } else {
-                let lock = Arc::new(AsyncMutex::new(()));
-                locks.insert(agent_id.to_owned(), Arc::downgrade(&lock));
-                lock
-            }
-        };
-        lock.lock_owned().await
-    }
-
-    fn begin_legacy_creation(
-        &self,
-        agent_id: &str,
-        creation_id: &str,
-        cwd: &str,
-        existing: &[TerminalSession],
-    ) {
-        let mut state = self.state();
-        state
-            .agents
-            .entry(agent_id.to_owned())
-            .or_default()
-            .pending
-            .insert(
-                creation_id.to_owned(),
-                PendingLegacyCreation {
-                    existing_session_ids: existing
-                        .iter()
-                        .map(|session| session.id.clone())
-                        .collect(),
-                    cwd: cwd.to_owned(),
-                },
-            );
-    }
-
-    fn finish_creation(&self, agent_id: &str, creation_id: &str, session_id: &str) {
-        let mut state = self.state();
-        let identities = state.agents.entry(agent_id.to_owned()).or_default();
-        identities.pending.remove(creation_id);
-        identities
-            .creation_ids
-            .insert(session_id.to_owned(), creation_id.to_owned());
-    }
-
-    pub(crate) fn restore_legacy_creation(
-        &self,
-        agent_id: &str,
-        creation_id: &str,
-        cwd: &str,
-        existing_session_ids: &[String],
-        terminal_id: Option<&str>,
-    ) {
-        let mut state = self.state();
-        let identities = state.agents.entry(agent_id.to_owned()).or_default();
-        if let Some(terminal_id) = terminal_id {
-            identities.pending.remove(creation_id);
-            identities
-                .creation_ids
-                .insert(terminal_id.to_owned(), creation_id.to_owned());
-            return;
-        }
-        identities.pending.insert(
-            creation_id.to_owned(),
-            PendingLegacyCreation {
-                existing_session_ids: existing_session_ids.iter().cloned().collect(),
-                cwd: cwd.to_owned(),
-            },
-        );
-    }
-
-    pub(crate) fn remove_creation(&self, agent_id: &str, creation_id: &str) {
-        let mut state = self.state();
-        let remove_agent = if let Some(identities) = state.agents.get_mut(agent_id) {
-            identities.pending.remove(creation_id);
-            identities
-                .creation_ids
-                .retain(|_, stored_creation_id| stored_creation_id != creation_id);
-            identities.creation_ids.is_empty() && identities.pending.is_empty()
-        } else {
-            false
-        };
-        if remove_agent {
-            state.agents.remove(agent_id);
-        }
-    }
-
-    pub(crate) fn reconcile(&self, agent_id: &str, sessions: &mut [TerminalSession]) {
-        let mut state = self.state();
-        let Some(identities) = state.agents.get_mut(agent_id) else {
-            return;
-        };
-        let active_session_ids = sessions
-            .iter()
-            .map(|session| session.id.clone())
-            .collect::<HashSet<_>>();
-        identities
-            .creation_ids
-            .retain(|session_id, _| active_session_ids.contains(session_id));
-        for session in sessions.iter() {
-            if !session.creation_id.is_empty() {
-                identities
-                    .creation_ids
-                    .insert(session.id.clone(), session.creation_id.clone());
-            }
-        }
-
-        let mut claimed_session_ids = identities
-            .creation_ids
-            .keys()
-            .cloned()
-            .collect::<HashSet<_>>();
-        let mut reconciled = Vec::new();
-        for (creation_id, pending) in &identities.pending {
-            let candidates = sessions
-                .iter()
-                .filter(|session| {
-                    session.creation_id.is_empty()
-                        && session.cwd == pending.cwd
-                        && !pending.existing_session_ids.contains(&session.id)
-                        && !claimed_session_ids.contains(&session.id)
-                })
-                .collect::<Vec<_>>();
-            if let [session] = candidates.as_slice() {
-                identities
-                    .creation_ids
-                    .insert(session.id.clone(), creation_id.clone());
-                claimed_session_ids.insert(session.id.clone());
-                reconciled.push(creation_id.clone());
-            }
-        }
-        for creation_id in reconciled {
-            identities.pending.remove(&creation_id);
-        }
-        for session in sessions {
-            if session.creation_id.is_empty()
-                && let Some(creation_id) = identities.creation_ids.get(&session.id)
-            {
-                session.creation_id.clone_from(creation_id);
-            }
-        }
-    }
-
-    fn remove_session(&self, agent_id: &str, session_id: &str) {
-        let mut state = self.state();
-        let remove_agent = if let Some(identities) = state.agents.get_mut(agent_id) {
-            identities.creation_ids.remove(session_id);
-            identities.creation_ids.is_empty() && identities.pending.is_empty()
-        } else {
-            false
-        };
-        if remove_agent {
-            state.agents.remove(agent_id);
-        }
-    }
-
-    fn state(&self) -> MutexGuard<'_, TerminalIdentityState> {
-        self.state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -356,21 +161,6 @@ impl GuestClient {
         namespace: &str,
         agent_id: &str,
     ) -> Result<Self, GuestError> {
-        Self::for_agent_with_terminal_identities(
-            client,
-            namespace,
-            agent_id,
-            TerminalIdentityRegistry::default(),
-        )
-        .await
-    }
-
-    pub async fn for_agent_with_terminal_identities(
-        client: Client,
-        namespace: &str,
-        agent_id: &str,
-        terminal_identities: TerminalIdentityRegistry,
-    ) -> Result<Self, GuestError> {
         let microvms: Api<MicroVM> = Api::namespaced(client.clone(), namespace);
         let microvm = microvms.get(agent_id).await?;
         let status = microvm
@@ -403,8 +193,6 @@ impl GuestClient {
                 .build()?,
             base_url: format!("http://{guest_ip}:{GUEST_API_PORT}"),
             token,
-            agent_id: agent_id.to_owned(),
-            terminal_identities,
         })
     }
 
@@ -507,13 +295,19 @@ impl GuestClient {
     pub async fn watch_files(
         &self,
         path: &str,
-        after: u64,
+        after: Option<u64>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<FileEvent, GuestError>> + Send>>, GuestError> {
-        self.ndjson(
-            self.request(Method::GET, "/v1/files/watch")
-                .query(&[("path", path.to_owned()), ("after", after.to_string())]),
-        )
-        .await
+        self.ndjson(self.file_watch_request(path, after)).await
+    }
+
+    fn file_watch_request(&self, path: &str, after: Option<u64>) -> reqwest::RequestBuilder {
+        let request = self
+            .request(Method::GET, "/v1/files/watch")
+            .query(&[("path", path)]);
+        match after {
+            Some(after) => request.query(&[("after", after)]),
+            None => request,
+        }
     }
 
     pub async fn create_terminal(
@@ -538,25 +332,16 @@ impl GuestClient {
             Ok(response) => response,
             Err(error) => {
                 return self
-                    .reconcile_terminal_creation_error(creation_id, error)
+                    .reconcile_terminal_creation_error(creation_id, error, false)
                     .await;
             }
         };
+        let created = response.status() == StatusCode::CREATED;
         match terminal_creation(response, creation_id).await {
-            Ok(creation) => {
-                self.terminal_identities.finish_creation(
-                    &self.agent_id,
-                    creation_id,
-                    &creation.session.id,
-                );
-                Ok(creation)
-            }
-            Err(error) if legacy_terminal_creation_id_rejection(&error) => {
-                self.create_legacy_terminal(creation_id, cwd, columns, rows)
-                    .await
-            }
+            Ok(creation) => Ok(creation),
+            Err(error @ GuestError::TerminalCreationIdentityMismatch { .. }) => Err(error),
             Err(error) => {
-                self.reconcile_terminal_creation_error(creation_id, error)
+                self.reconcile_terminal_creation_error(creation_id, error, created)
                     .await
             }
         }
@@ -566,89 +351,22 @@ impl GuestClient {
         &self,
         creation_id: &str,
         original_error: GuestError,
+        created: bool,
     ) -> Result<TerminalCreation, GuestError> {
         if let Ok(sessions) = self.list_terminals().await
             && let Some(session) = sessions
                 .into_iter()
                 .find(|session| session.creation_id == creation_id)
         {
-            return Ok(TerminalCreation {
-                session,
-                created: false,
-            });
+            return Ok(TerminalCreation { session, created });
         }
         Err(original_error)
     }
 
-    async fn create_legacy_terminal(
-        &self,
-        creation_id: &str,
-        cwd: &str,
-        columns: u32,
-        rows: u32,
-    ) -> Result<TerminalCreation, GuestError> {
-        let _legacy_creation_guard = self
-            .terminal_identities
-            .lock_legacy_creation(&self.agent_id)
-            .await;
-        let existing = self.list_terminals().await?;
-        if let Some(session) = existing
-            .iter()
-            .find(|session| session.creation_id == creation_id)
-        {
-            return Ok(TerminalCreation {
-                session: session.clone(),
-                created: false,
-            });
-        }
-        self.terminal_identities
-            .begin_legacy_creation(&self.agent_id, creation_id, cwd, &existing);
-
-        let result = async {
-            let response =
-                self.send_unary(self.request(Method::POST, "/v1/terminals").json(
-                    &serde_json::json!({
-                        "cwd": cwd,
-                        "columns": columns,
-                        "rows": rows
-                    }),
-                ))
-                .await?;
-            terminal_creation(response, creation_id).await
-        }
-        .await;
-
-        match result {
-            Ok(creation) => {
-                self.terminal_identities.finish_creation(
-                    &self.agent_id,
-                    creation_id,
-                    &creation.session.id,
-                );
-                Ok(creation)
-            }
-            Err(error) => {
-                if let Ok(sessions) = self.list_terminals().await
-                    && let Some(session) = sessions
-                        .into_iter()
-                        .find(|session| session.creation_id == creation_id)
-                {
-                    return Ok(TerminalCreation {
-                        session,
-                        created: false,
-                    });
-                }
-                Err(error)
-            }
-        }
-    }
-
     pub async fn list_terminals(&self) -> Result<Vec<TerminalSession>, GuestError> {
-        let mut response: TerminalList = self
+        let response: TerminalList = self
             .json(self.request(Method::GET, "/v1/terminals"))
             .await?;
-        self.terminal_identities
-            .reconcile(&self.agent_id, &mut response.sessions);
         Ok(response.sessions)
     }
 
@@ -658,7 +376,6 @@ impl GuestClient {
                 .await?,
         )
         .await?;
-        self.terminal_identities.remove_session(&self.agent_id, id);
         Ok(())
     }
 
@@ -814,21 +531,15 @@ async fn terminal_creation(
     let response = checked_response(response).await?;
     let created = response.status() == StatusCode::CREATED;
     let body = bounded_response_body(response, MAX_GUEST_JSON_BYTES).await?;
-    let mut session: TerminalSession = serde_json::from_slice(&body)?;
-    if session.creation_id.is_empty() {
-        session.creation_id = requested_creation_id.to_owned();
+    let session: TerminalSession = serde_json::from_slice(&body)?;
+    if session.creation_id != requested_creation_id {
+        return Err(GuestError::TerminalCreationIdentityMismatch {
+            expected: requested_creation_id.to_owned(),
+            actual: session.creation_id,
+            created_terminal_id: created.then_some(session.id),
+        });
     }
     Ok(TerminalCreation { session, created })
-}
-
-fn legacy_terminal_creation_id_rejection(error: &GuestError) -> bool {
-    matches!(
-        error,
-        GuestError::Api { status, message }
-            if *status == StatusCode::BAD_REQUEST
-                && message.contains("unknown field")
-                && message.contains("creationId")
-    )
 }
 
 async fn bounded_response_body(
@@ -857,27 +568,16 @@ async fn bounded_response_body(
 mod tests {
     use super::*;
 
+    use std::collections::HashMap;
     use std::sync::{
         Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, Ordering},
     };
 
     use axum::{
         Json, Router,
         routing::{get, post},
     };
-    use tokio::sync::Notify;
-
-    fn legacy_terminal_json() -> Value {
-        serde_json::json!({
-            "id": "abcdefghijklmnopqrstuvwx",
-            "cwd": "/workspace",
-            "createdAt": "2026-08-28T00:00:00Z",
-            "lastActivityAt": "2026-08-28T00:00:00Z",
-            "attached": false
-        })
-    }
-
     fn terminal_json(creation_id: &str) -> Value {
         serde_json::json!({
             "id": "abcdefghijklmnopqrstuvwx",
@@ -941,8 +641,6 @@ mod tests {
             http: reqwest::Client::new(),
             base_url: format!("http://{address}"),
             token: "test-bootstrap-token".to_owned(),
-            agent_id: "agent-search".to_owned(),
-            terminal_identities: TerminalIdentityRegistry::default(),
         };
 
         let result = client
@@ -976,8 +674,6 @@ mod tests {
             http: reqwest::Client::new(),
             base_url: format!("http://{address}"),
             token: "test-bootstrap-token".to_owned(),
-            agent_id: "agent-legacy".to_owned(),
-            terminal_identities: TerminalIdentityRegistry::default(),
         };
 
         let account = client
@@ -1029,117 +725,42 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn terminal_creation_accepts_legacy_sessions_without_creation_identity() {
-        let response: reqwest::Response = http::Response::builder()
-            .status(StatusCode::CREATED)
-            .body(
-                r#"{
-                    "id":"abcdefghijklmnopqrstuvwx",
-                    "cwd":"/workspace",
-                    "createdAt":"2026-08-28T00:00:00Z",
-                    "lastActivityAt":"2026-08-28T00:00:00Z",
-                    "attached":false
-                }"#,
-            )
-            .expect("legacy terminal response")
+    async fn terminal_creation_rejects_a_missing_or_changed_creation_identity() {
+        for actual in ["", "different-terminal-creation"] {
+            let response: reqwest::Response = http::Response::builder()
+                .status(StatusCode::CREATED)
+                .body(terminal_json(actual).to_string())
+                .expect("terminal response")
+                .into();
+
+            assert!(matches!(
+                terminal_creation(response, "terminal-creation-current").await,
+                Err(GuestError::TerminalCreationIdentityMismatch {
+                    expected,
+                    actual: returned,
+                    created_terminal_id: Some(terminal_id),
+                }) if expected == "terminal-creation-current"
+                    && returned == actual
+                    && terminal_id == "abcdefghijklmnopqrstuvwx"
+            ));
+        }
+
+        let replay: reqwest::Response = http::Response::builder()
+            .status(StatusCode::OK)
+            .body(terminal_json("different-terminal-creation").to_string())
+            .expect("terminal replay response")
             .into();
-
-        let creation = terminal_creation(response, "terminal-creation-legacy")
-            .await
-            .expect("legacy response remains compatible");
-        assert!(creation.created);
-        assert_eq!(creation.session.creation_id, "terminal-creation-legacy");
-    }
-
-    #[test]
-    fn terminal_creation_retries_only_the_legacy_unknown_field_error() {
-        let legacy = GuestError::Api {
-            status: StatusCode::BAD_REQUEST,
-            message: r#"{"error":"json: unknown field \"creationId\""}"#.to_owned(),
-        };
-        assert!(legacy_terminal_creation_id_rejection(&legacy));
-        assert!(!legacy_terminal_creation_id_rejection(&GuestError::Api {
-            status: StatusCode::BAD_REQUEST,
-            message: "cwd is invalid".to_owned(),
-        }));
-        assert!(!legacy_terminal_creation_id_rejection(&GuestError::Api {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            message: r#"unknown field \"creationId\""#.to_owned(),
-        }));
-    }
-
-    #[tokio::test]
-    async fn terminal_creation_negotiates_with_a_legacy_guest() {
-        let attempts = Arc::new(AtomicUsize::new(0));
-        let created = Arc::new(AtomicBool::new(false));
-        let request_attempts = Arc::clone(&attempts);
-        let creation_state = Arc::clone(&created);
-        let list_state = Arc::clone(&created);
-        let router = Router::new().route(
-            "/v1/terminals",
-            get(move || {
-                let created = Arc::clone(&list_state);
-                async move {
-                    let sessions = if created.load(Ordering::SeqCst) {
-                        vec![legacy_terminal_json()]
-                    } else {
-                        Vec::new()
-                    };
-                    Json(serde_json::json!({"sessions": sessions}))
-                }
+        assert!(matches!(
+            terminal_creation(replay, "terminal-creation-current").await,
+            Err(GuestError::TerminalCreationIdentityMismatch {
+                created_terminal_id: None,
+                ..
             })
-            .post(move |Json(body): Json<Value>| {
-                let request_attempts = Arc::clone(&request_attempts);
-                let created = Arc::clone(&creation_state);
-                async move {
-                    request_attempts.fetch_add(1, Ordering::SeqCst);
-                    if body.get("creationId").is_some() {
-                        return (
-                            StatusCode::BAD_REQUEST,
-                            Json(serde_json::json!({
-                                "error": "json: unknown field \"creationId\""
-                            })),
-                        );
-                    }
-                    created.store(true, Ordering::SeqCst);
-                    (StatusCode::CREATED, Json(legacy_terminal_json()))
-                }
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind legacy Nanoagent fixture");
-        let address = listener.local_addr().expect("legacy Nanoagent address");
-        let server = tokio::spawn(async move {
-            axum::serve(listener, router)
-                .await
-                .expect("serve legacy Nanoagent fixture");
-        });
-        let client = GuestClient {
-            http: reqwest::Client::new(),
-            base_url: format!("http://{address}"),
-            token: "test-bootstrap-token".to_owned(),
-            agent_id: "agent-legacy".to_owned(),
-            terminal_identities: TerminalIdentityRegistry::default(),
-        };
-
-        let creation = client
-            .create_terminal("terminal-creation-legacy", "/workspace", 120, 32)
-            .await
-            .expect("legacy terminal creation succeeds");
-        assert_eq!(attempts.load(Ordering::SeqCst), 2);
-        assert!(creation.created);
-        assert_eq!(creation.session.creation_id, "terminal-creation-legacy");
-        let sessions = client
-            .list_terminals()
-            .await
-            .expect("legacy terminal listing succeeds");
-        assert_eq!(sessions[0].creation_id, "terminal-creation-legacy");
-        server.abort();
+        ));
     }
 
     #[tokio::test]
-    async fn terminal_creation_reconciliation_does_not_claim_a_new_session() {
+    async fn terminal_creation_reconciliation_preserves_a_known_created_session() {
         const CREATION_ID: &str = "terminal-creation-timeout";
         let created = Arc::new(AtomicBool::new(false));
         let creation_state = Arc::clone(&created);
@@ -1184,8 +805,6 @@ mod tests {
             http: reqwest::Client::new(),
             base_url: format!("http://{address}"),
             token: "test-bootstrap-token".to_owned(),
-            agent_id: "agent-response-timeout".to_owned(),
-            terminal_identities: TerminalIdentityRegistry::default(),
         };
 
         let creation = client
@@ -1193,7 +812,7 @@ mod tests {
             .await
             .expect("created terminal is reconciled after its response times out");
 
-        assert!(!creation.created);
+        assert!(creation.created);
         assert_eq!(creation.session.id, "abcdefghijklmnopqrstuvwx");
         assert_eq!(creation.session.creation_id, CREATION_ID);
         server.abort();
@@ -1224,8 +843,6 @@ mod tests {
             http: reqwest::Client::new(),
             base_url: format!("http://{address}"),
             token: "test-bootstrap-token".to_owned(),
-            agent_id: "agent-replayed-response".to_owned(),
-            terminal_identities: TerminalIdentityRegistry::default(),
         };
 
         let replay = client
@@ -1236,119 +853,6 @@ mod tests {
         assert!(!replay.created);
         assert_eq!(replay.session.creation_id, CREATION_ID);
         server.abort();
-    }
-
-    #[tokio::test]
-    async fn legacy_terminal_creation_reconciles_after_its_response_is_lost() {
-        let created = Arc::new(AtomicBool::new(false));
-        let legacy_posts = Arc::new(AtomicUsize::new(0));
-        let creation_state = Arc::clone(&created);
-        let list_state = Arc::clone(&created);
-        let post_attempts = Arc::clone(&legacy_posts);
-        let creation_started = Arc::new(Notify::new());
-        let handler_started = Arc::clone(&creation_started);
-        let hold_response = Arc::new(Notify::new());
-        let handler_hold = Arc::clone(&hold_response);
-        let router = Router::new().route(
-            "/v1/terminals",
-            get(move || {
-                let created = Arc::clone(&list_state);
-                async move {
-                    let sessions = if created.load(Ordering::SeqCst) {
-                        vec![legacy_terminal_json()]
-                    } else {
-                        Vec::new()
-                    };
-                    Json(serde_json::json!({"sessions": sessions}))
-                }
-            })
-            .post(move |Json(body): Json<Value>| {
-                let created = Arc::clone(&creation_state);
-                let creation_started = Arc::clone(&handler_started);
-                let hold_response = Arc::clone(&handler_hold);
-                let legacy_posts = Arc::clone(&post_attempts);
-                async move {
-                    if body.get("creationId").is_some() {
-                        return (
-                            StatusCode::BAD_REQUEST,
-                            Json(serde_json::json!({
-                                "error": "json: unknown field \"creationId\""
-                            })),
-                        );
-                    }
-                    legacy_posts.fetch_add(1, Ordering::SeqCst);
-                    created.store(true, Ordering::SeqCst);
-                    creation_started.notify_one();
-                    hold_response.notified().await;
-                    (StatusCode::CREATED, Json(legacy_terminal_json()))
-                }
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind legacy Nanoagent fixture");
-        let address = listener.local_addr().expect("legacy Nanoagent address");
-        let server = tokio::spawn(async move {
-            axum::serve(listener, router)
-                .await
-                .expect("serve legacy Nanoagent fixture");
-        });
-        let client = GuestClient {
-            http: reqwest::Client::new(),
-            base_url: format!("http://{address}"),
-            token: "test-bootstrap-token".to_owned(),
-            agent_id: "agent-lost-response".to_owned(),
-            terminal_identities: TerminalIdentityRegistry::default(),
-        };
-
-        let create_client = client.clone();
-        let create = tokio::spawn(async move {
-            create_client
-                .create_terminal("terminal-creation-lost", "/workspace", 120, 32)
-                .await
-        });
-        tokio::time::timeout(Duration::from_secs(2), creation_started.notified())
-            .await
-            .expect("legacy terminal was created before the response was lost");
-        create.abort();
-        let _ = create.await;
-
-        let sessions = client
-            .list_terminals()
-            .await
-            .expect("legacy terminal can be reconciled after cancellation");
-        assert_eq!(sessions.len(), 1);
-        assert_eq!(sessions[0].creation_id, "terminal-creation-lost");
-        let replayed = client
-            .create_terminal("terminal-creation-lost", "/workspace", 120, 32)
-            .await
-            .expect("legacy terminal retry reconciles instead of creating another PTY");
-        assert!(!replayed.created);
-        assert_eq!(replayed.session.id, sessions[0].id);
-        assert_eq!(legacy_posts.load(Ordering::SeqCst), 1);
-        server.abort();
-    }
-
-    #[tokio::test]
-    async fn legacy_terminal_creation_locks_are_scoped_per_agent() {
-        let registry = TerminalIdentityRegistry::default();
-        let first_agent = registry.lock_legacy_creation("agent-a").await;
-
-        let other_agent = tokio::time::timeout(
-            Duration::from_millis(100),
-            registry.lock_legacy_creation("agent-b"),
-        )
-        .await
-        .expect("an unrelated agent is not blocked by a legacy create");
-        let same_agent = tokio::time::timeout(
-            Duration::from_millis(25),
-            registry.lock_legacy_creation("agent-a"),
-        )
-        .await;
-        assert!(same_agent.is_err(), "the same agent must remain serialized");
-
-        drop(other_agent);
-        drop(first_agent);
     }
 
     #[test]
@@ -1366,8 +870,6 @@ mod tests {
             http: reqwest::Client::new(),
             base_url: "http://127.0.0.1:8080".to_owned(),
             token: "token".to_owned(),
-            agent_id: "agent-timeout".to_owned(),
-            terminal_identities: TerminalIdentityRegistry::default(),
         };
         let unary = client
             .unary_request(client.request(Method::GET, "/v1/files"))
@@ -1380,5 +882,47 @@ mod tests {
 
         assert_eq!(unary.timeout(), Some(&GUEST_UNARY_TIMEOUT));
         assert_eq!(stream.timeout(), None);
+    }
+
+    #[test]
+    fn file_watch_preserves_optional_cursor_presence() {
+        let client = GuestClient {
+            http: reqwest::Client::new(),
+            base_url: "http://127.0.0.1:8080".to_owned(),
+            token: "token".to_owned(),
+        };
+        let initial = client
+            .file_watch_request("/workspace", None)
+            .build()
+            .expect("initial file watch request");
+        let from_zero = client
+            .file_watch_request("/workspace", Some(0))
+            .build()
+            .expect("zero-cursor file watch request");
+        let resumed = client
+            .file_watch_request("/workspace", Some(42))
+            .build()
+            .expect("resumed file watch request");
+
+        let initial_query = initial.url().query_pairs().collect::<HashMap<_, _>>();
+        assert_eq!(
+            initial_query.get("path").map(|value| value.as_ref()),
+            Some("/workspace")
+        );
+        assert!(!initial_query.contains_key("after"));
+        let zero_query = from_zero.url().query_pairs().collect::<HashMap<_, _>>();
+        assert_eq!(
+            zero_query.get("after").map(|value| value.as_ref()),
+            Some("0")
+        );
+        let resumed_query = resumed.url().query_pairs().collect::<HashMap<_, _>>();
+        assert_eq!(
+            resumed_query.get("path").map(|value| value.as_ref()),
+            Some("/workspace")
+        );
+        assert_eq!(
+            resumed_query.get("after").map(|value| value.as_ref()),
+            Some("42")
+        );
     }
 }

@@ -1,27 +1,15 @@
 # Torghut v3 Full-Loop Autonomous Quant System (LLM Integrated)
 
+This is a historical design archive, not a current production operating plan. Validate every reference against
+`docs/torghut/README.md`, live GitOps, service source, and runtime readback.
+
 ## Status
 
 - Version: `v3-full-loop`
 - Date: `2026-02-11`
 - Audience: Torghut engineers, AgentRun implementers, oncall operators, quant research owners.
 
-## Source Implementation Audit (2026-07-04)
-
-- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
-- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
-- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
-- Current source evidence:
-  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
-  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
-  - `services/torghut/app/trading/consumer_evidence.py`
-  - `services/torghut/app/trading/freshness_carry.py`
-  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
-  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
-- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
-
-
-## Objective
+## Historical Objective
 
 Define a production-grade autonomous loop for Torghut:
 
@@ -35,7 +23,7 @@ Define a production-grade autonomous loop for Torghut:
 LLM integration is included as a bounded subsystem for reasoning, review, and orchestration. Deterministic risk and
 execution controls remain final authority.
 
-## Full Loop Pipeline
+## Historical Full Loop Pipeline
 
 1. `Research Intake`
 2. `Candidate Build`
@@ -45,7 +33,7 @@ execution controls remain final authority.
 6. `Live Ramp`
 7. `Continuous Governance and Recovery`
 
-## Scope Matrix (Agent Implementation Size)
+## Historical Scope Matrix (Agent Implementation Size)
 
 | Doc                                                             | Epic size | Minimum implementation scope                                                        |
 | --------------------------------------------------------------- | --------- | ----------------------------------------------------------------------------------- |
@@ -77,7 +65,7 @@ Definition of "significant scope" for this pack:
 - produces at least 3 concrete artifacts,
 - includes automated verification and rollback path.
 
-## Document Set
+## Retained Historical Document Set
 
 1. `01-autonomous-pipeline-dag-spec.md`
 2. `02-gate-policy-matrix.md`
@@ -101,21 +89,21 @@ Definition of "significant scope" for this pack:
 20. `20-autonomous-quant-llm-completion-roadmap-2026-02-13.md`
 21. `21-autonomous-no-signal-evidence-implementation-2026-02-13.md`
 
-## Templates
+## Historical Templates
 
 - `templates/implementationspecs.yaml`
 - `templates/agentruns.yaml`
 - `templates/orchestration-policy.yaml`
 - `templates/orchestration-observability.yaml`
 
-## Cross-References
+## Historical Cross-References
 
 - Core v3 architecture: `docs/torghut/design-system/v3/flexible-strategy-engine-architecture.md`
 - Core v3 governance: `docs/torghut/design-system/v3/autonomy-governance-and-rollout-plan.md`
 - AgentRun conventions: `docs/agents/agentrun-creation-guide.md`
 - Torghut AgentRun handoff baseline: `docs/torghut/design-system/v1/agentruns-handoff.md`
 
-## Definition of Complete Autonomous Loop
+## Historical Definition of a Complete Autonomous Loop
 
 - Every promotion is evidence-backed and reproducible.
 - Every autonomous action is bounded by deterministic controls.

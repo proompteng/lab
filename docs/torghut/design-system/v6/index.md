@@ -8,15 +8,15 @@ runtime readback. Start current operations from `docs/torghut/README.md`.
 
 - Version: `v6`
 - Date: `2026-03-03`
-- Maturity: `production-quality design pack`
+- Maturity: `historical production-quality design pack`
 - Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM
   reasoning, contamination-safe evaluation, and production rollout controls
-- Implementation status: `Mixed` (historical program closure recorded on `2026-03-03`; source-state refreshed on
-  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-14T20:12Z`)
+- Implementation status: `Historical mixed snapshot` (program closure recorded on `2026-03-03`; source-state refreshed
+  on `2026-03-09`; proof/capital evidence refreshed on `2026-05-14T20:12Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`,
   `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
-- Evidence (current next-work priority, refreshed `2026-05-15T00:30Z`):
+- Evidence (historical next-work priority snapshot, refreshed `2026-05-15T00:30Z`):
   - `docs/agents/designs/207-jangar-consumer-evidence-transport-split-and-source-serving-contract-canary-2026-05-15.md`
   - `213-torghut-consumer-evidence-contract-canary-and-alpha-reentry-transport-2026-05-15.md`
   - `docs/agents/designs/206-jangar-route-adjacent-proof-custody-and-torghut-reentry-admission-2026-05-14.md`
@@ -546,23 +546,9 @@ runtime readback. Start current operations from `docs/torghut/README.md`.
 - Evidence sync: `14-legacy-gap-disposition-map-2026-03-03.md` (signed v4/v5 disposition completeness)
 - Rollout status: v6 pack controls are represented by merged runtime/control-plane closure phases in `main` (`#3921` through `#3960`).
 
-## Source Implementation Audit (2026-07-04)
+## Historical reading order
 
-- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
-- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
-- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
-- Current source evidence:
-  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
-  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
-  - `services/torghut/app/trading/consumer_evidence.py`
-  - `services/torghut/app/trading/freshness_carry.py`
-  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
-  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
-- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
-
-## Current reading order
-
-For current corpus navigation across active contract docs versus historical closeout records, use:
+For historical corpus navigation across retained contract docs and closeout records, use:
 
 - `docs/torghut/design-system/current-source-of-truth-and-priority-guide-2026-03-09.md`
 
@@ -570,15 +556,15 @@ For current corpus navigation across active contract docs versus historical clos
 
 The March 3 completion record remains useful as a dated closure milestone, but it should not be read as "nothing important remains."
 
-Current source-state priority is narrower:
+The source-state priority recorded at that time was narrower:
 
 - deterministic runtime closure is materially landed;
 - freshness discovery and proof persistence are still too brittle;
 - recurring empirical prove-and-promote automation remains blocked on those truth surfaces.
 
-## May 5, 2026 Proof Authority Refresh
+## May 5, 2026 Historical Proof Authority Snapshot
 
-The current source-of-truth pair for the Jangar control-plane plan lane and Torghut capital handoff is:
+The source-of-truth pair recorded for the Jangar control-plane plan lane and Torghut capital handoff at that time was:
 
 - `docs/agents/designs/84-jangar-material-action-settlement-and-proof-budget-cutover-2026-05-05.md`
 - `88-torghut-session-proof-budget-consumer-and-capital-reentry-contract-2026-05-05.md`
@@ -590,21 +576,22 @@ The supporting SLO-arbiter and session-liquidity pair remains part of the May 5 
 - `docs/agents/designs/84-jangar-evidence-liquidity-router-and-stale-digest-quarantine-2026-05-05.md`
 - `88-torghut-session-proof-liquidity-and-hypothesis-market-maker-2026-05-05.md`
 
-The current source-of-truth references for the Torghut quant discover lane are:
+The source-of-truth references recorded for the Torghut quant discover lane at that time were:
 
 - `87-torghut-repair-alpha-exchange-and-session-proof-budgets-2026-05-05.md`
 - `docs/agents/designs/83-jangar-clearance-repair-exchange-and-budgeted-proof-closures-2026-05-05.md`
 - `85-torghut-proof-fresh-profitability-governor-and-causal-replay-quarantine-2026-05-05.md`
 - `docs/agents/designs/81-jangar-action-class-proof-fuses-and-quant-health-quarantine-2026-05-05.md`
 
-Read these as the active handoff contract before using older May 5 proof-ledger variants. The refreshed evidence is
-more precise than the early-day snapshot: Torghut live and sim revisions are serving, schema proof is current, and
+Read these as a historical handoff contract snapshot, not as an active implementation authority. The evidence recorded
+here is more precise than the early-day snapshot: Torghut live and sim revisions are serving, schema proof is current,
+and
 runtime liveness is good, but readiness remains degraded, Jangar quant-health still times out, empirical proof jobs are
 stale, and runtime profitability has decisions without execution or TCA samples. The design consequence is unchanged
 but sharper: repair and replay stay open, paper/live widening requires fresh action-class authority and fresh profit
 proof, and blocked market time should be spent through zero-notional session proof budgets rather than ad hoc repair.
 
-## Recent Updates
+## Historical Updates
 
 - `27-live-hypothesis-ledger-and-capital-allocation-contract-2026-03-06.md` now records the landed hypothesis
   governance tables and the proving-lane schema choices.
@@ -886,7 +873,12 @@ This pack is positioned as the next architecture layer above:
 - Contamination-aware, forward-only evaluation is mandatory before promotion.
 - Every promotion and rollback action must be evidence-backed and reproducible.
 
-## Document Set
+## Curated Historical Document Set
+
+This is a curated historical excerpt, not an exhaustive catalog of the v6 directory. Additional retained contracts are
+intentionally omitted; use current source/GitOps/runtime evidence for implementation decisions.
+The list numbers are reading-order ordinals. Historical filename prefixes are stable archive identifiers and are not
+renumbered, so repeated or skipped prefixes are expected.
 
 1. `01-beyond-tsmom-system-architecture-and-latency-model.md`
 2. `02-regime-adaptive-expert-router-design.md`
@@ -908,7 +900,7 @@ This pack is positioned as the next architecture layer above:
 18. `18-trading-readiness-and-rollout-stability-2026-03-04.md`
 19. `19-jangar-symbol-dependency-freshness-and-readiness-guard.md`
 20. `20-trading-allocator-config-surface-hardening-2026-03-04.md`
-21. `21-schema-fingerprint-and-freshness-for-database-readiness-2026-03-04.md`
+21. `20-schema-fingerprint-and-freshness-for-database-readiness-2026-03-04.md`
 22. `22-trading-readiness-dependency-freshness-cache-2026-03-04.md`
 23. `23-readiness-schema-drift-diagnostics-2026-03-04.md`
 24. `23-trading-startup-readiness-warmup-2026-03-04.md`
@@ -946,7 +938,7 @@ This pack is positioned as the next architecture layer above:
 56. `55-torghut-hypothesis-settlement-exchange-and-lane-capability-leases-2026-03-20.md`
 57. `56-torghut-capability-leases-and-profit-clocks-2026-03-20.md`
 58. `56-torghut-profit-clocks-and-lane-falsification-exchange-2026-03-20.md`
-59. `57-torghut-profit-reserves-forecast-calibration-escrow-and-probe-auction-contract-2026-03-20.md`
+59. `57-torghut-profit-reserves-forecast-calibration-escrow-and-probe-auction-2026-03-20.md`
 60. `58-torghut-profit-cohort-auction-and-freshness-insurance-contract-2026-03-20.md`
 61. `59-torghut-lane-balance-sheet-and-dataset-seat-auction-contract-2026-03-20.md`
 62. `61-torghut-evidence-seats-and-profit-repair-exchange-contract-2026-03-20.md`
@@ -954,7 +946,9 @@ This pack is positioned as the next architecture layer above:
 64. `74-torghut-profit-cells-and-evidence-escrow-promotion-veto-2026-05-05.md`
 65. `72-torghut-profit-proof-exchange-and-query-firebreak-contract-2026-05-05.md`
 
-## Recommended Build Order
+## Historical Recommended Build Order
+
+The following is a historical sequence, not a current delivery plan.
 
 1. `05-evaluation-benchmark-and-contamination-control-standard.md`
 2. `08-profitability-research-validation-execution-governance-system.md`
@@ -976,7 +970,7 @@ This pack is positioned as the next architecture layer above:
 18. `18-trading-readiness-and-rollout-stability-2026-03-04.md`
 19. `19-jangar-symbol-dependency-freshness-and-readiness-guard.md`
 20. `20-trading-allocator-config-surface-hardening-2026-03-04.md`
-21. `21-schema-fingerprint-and-freshness-for-database-readiness-2026-03-04.md`
+21. `20-schema-fingerprint-and-freshness-for-database-readiness-2026-03-04.md`
 22. `22-trading-readiness-dependency-freshness-cache-2026-03-04.md`
 23. `23-readiness-schema-drift-diagnostics-2026-03-04.md`
 24. `23-trading-startup-readiness-warmup-2026-03-04.md`

@@ -7,12 +7,12 @@
 - Source of truth (config): `argocd/applications/torghut/**`
 - Implementation status: `Implemented` (verified with code + tests + runtime/config on 2026-02-21)
 
-## Source Implementation Audit (2026-07-04)
+## Historical Source Audit (2026-07-04)
 
 - Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
 - Implementation status: **Implemented in source as DSPy-backed advisory review plus deterministic policy guard; inactive in current deployment.** The code builds sanitized review requests, runs the DSPy review runtime, validates the response schema, and applies deterministic policy controls before any adjustment can survive.
 - Matched implementation area: LLM review and policy guard.
-- Current source evidence:
+- Source evidence inspected:
   - `services/torghut/app/trading/llm/review_engine.py`
   - `services/torghut/app/trading/llm/schema.py`
   - `services/torghut/app/trading/llm/policy.py`
@@ -32,7 +32,6 @@
 - Remaining gaps / operator caveats:
   - AI output cannot bypass deterministic policy checks;
   - activation requires DSPy artifact readiness plus governance evidence, not only `LLM_ENABLED=true`.
-
 
 ## Purpose
 

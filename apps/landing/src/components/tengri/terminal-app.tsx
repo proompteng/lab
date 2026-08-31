@@ -3,7 +3,7 @@
 import '@xterm/xterm/css/xterm.css'
 
 import type { SearchAddon } from '@xterm/addon-search'
-import type { Terminal } from '@xterm/xterm'
+import type { ITerminalAddon, Terminal } from '@xterm/xterm'
 import { AlertTriangle, ChevronDown, ChevronUp, LoaderCircle, RotateCw, Search, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
@@ -13,7 +13,6 @@ import { runTengriAction } from './client'
 import {
   buildTerminalWebSocketUrl,
   normalizeTerminalSize,
-  parseLegacyTerminalResumeState,
   parseTerminalCleanupState,
   parseTerminalControlFrame,
   parseTerminalOutputFrame,
@@ -21,7 +20,6 @@ import {
   safelyDisposeTerminal,
   settleTerminalCreation,
   terminalCreationId,
-  terminalCreationScope,
   terminalHeartbeatAction,
   terminalPlainText,
   terminalReconciliationCandidate,
@@ -57,9 +55,7 @@ export function TerminalApp({
   const reconnectNowRef = useRef<() => void>(() => undefined)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const creationId = terminalCreationId(agentId, desktopId, windowId)
-  const creationScope = terminalCreationScope(agentId, desktopId)
   const storageKey = `tengri:terminal:${agentId}:${desktopId}:${windowId}`
-  const legacyStorageKey = `tengri:terminal:${agentId}:${windowId}`
   const cleanupStorageKey = `tengri:terminal-cleanup:${agentId}`
   const [connection, setConnection] = useState<ConnectionState>({
     phase: 'initializing',
@@ -101,9 +97,9 @@ export function TerminalApp({
     let resumeChecked = false
     let claimedSessionId: string | null = null
     let creationPromise: Promise<TengriTerminalSession> | null = null
-    let releaseLegacyMigration: () => void = () => {}
     const controller = new AbortController()
     const disposables: Array<{ dispose(): void }> = []
+    const terminalAddons: ITerminalAddon[] = []
     const requestSignal = () => AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)])
 
     const updateConnection = (next: ConnectionState) => {
@@ -118,56 +114,6 @@ export function TerminalApp({
       } catch {
         return null
       }
-    }
-
-    const migrateLegacyResumeState = async (): Promise<TerminalResumeState | null> => {
-      let legacy: TerminalResumeState | null = null
-      try {
-        legacy = parseLegacyTerminalResumeState(sessionStorage.getItem(legacyStorageKey), agentId, desktopId)
-      } catch {
-        return null
-      }
-      if (!legacy) return null
-
-      const persistMigration = () => {
-        try {
-          sessionStorage.setItem(storageKey, JSON.stringify(legacy))
-          sessionStorage.removeItem(legacyStorageKey)
-        } catch {
-          // The validated in-memory state can still reconnect this document.
-        }
-        return legacy
-      }
-      if (!navigator.locks) return persistMigration()
-
-      return await new Promise<TerminalResumeState | null>((resolve) => {
-        let settled = false
-        const settle = (state: TerminalResumeState | null) => {
-          if (settled) return
-          settled = true
-          resolve(state)
-        }
-        let release: () => void = () => {}
-        const released = new Promise<void>((releaseLock) => {
-          release = releaseLock
-        })
-        void navigator.locks
-          .request(`tengri-terminal-migration:${agentId}:${legacy.sessionId}`, { ifAvailable: true }, async (lock) => {
-            if (!lock || disposed) {
-              try {
-                sessionStorage.removeItem(legacyStorageKey)
-              } catch {
-                // The duplicate tab cannot claim the legacy session without the migration lock.
-              }
-              settle(null)
-              return
-            }
-            releaseLegacyMigration = release
-            settle(persistMigration())
-            await released
-          })
-          .catch(() => settle(persistMigration()))
-      })
     }
 
     const pendingCleanupIds = (): string[] => {
@@ -326,7 +272,7 @@ export function TerminalApp({
         cleanupChecked = true
       }
       if (!resumeChecked) {
-        const stored = resumeState() ?? (await migrateLegacyResumeState())
+        const stored = resumeState()
         if (stored) {
           const sessions = await runTengriAction<TengriTerminalSession[]>(
             { action: 'list-terminals', agentId },
@@ -351,12 +297,7 @@ export function TerminalApp({
           { action: 'list-terminals', agentId },
           requestSignal(),
         )
-        const candidate = terminalReconciliationCandidate(
-          sessions,
-          creationId,
-          creationScope,
-          claimedTerminalSessionIds,
-        )
+        const candidate = terminalReconciliationCandidate(sessions, creationId, claimedTerminalSessionIds)
         if (candidate && claimSession(candidate)) {
           session = candidate
           reconnectToken = ''
@@ -410,7 +351,7 @@ export function TerminalApp({
         )
         const existing = current
           ? sessions.find((candidate) => candidate.id === current.id)
-          : terminalReconciliationCandidate(sessions, creationId, creationScope, claimedTerminalSessionIds)
+          : terminalReconciliationCandidate(sessions, creationId, claimedTerminalSessionIds)
         if (existing) {
           if (!claimSession(existing)) return
           session = existing
@@ -625,13 +566,17 @@ export function TerminalApp({
         },
       })
       terminalRef.current = terminal
+      const loadAddon = (addon: ITerminalAddon) => {
+        terminalAddons.push(addon)
+        terminal.loadAddon(addon)
+      }
       const fitAddon = new fitModule.FitAddon()
       const searchAddon = new search.SearchAddon()
       searchAddonRef.current = searchAddon
-      terminal.loadAddon(fitAddon)
-      terminal.loadAddon(searchAddon)
+      loadAddon(fitAddon)
+      loadAddon(searchAddon)
       const unicodeAddon = new unicode.Unicode11Addon()
-      terminal.loadAddon(unicodeAddon)
+      loadAddon(unicodeAddon)
       terminal.unicode.activeVersion = '11'
       terminal.open(hostRef.current)
 
@@ -644,7 +589,7 @@ export function TerminalApp({
       if (disposed) return
       if (canvasModule.status === 'fulfilled') {
         try {
-          terminal.loadAddon(new canvasModule.value.CanvasAddon())
+          loadAddon(new canvasModule.value.CanvasAddon())
           setRenderer('canvas')
         } catch (cause) {
           console.warn('[tengri-terminal] canvas renderer unavailable; using DOM fallback', cause)
@@ -656,7 +601,7 @@ export function TerminalApp({
       }
       if (clipboardModule.status === 'fulfilled') {
         try {
-          terminal.loadAddon(new clipboardModule.value.ClipboardAddon())
+          loadAddon(new clipboardModule.value.ClipboardAddon())
         } catch (cause) {
           console.warn('[tengri-terminal] clipboard addon unavailable', cause)
         }
@@ -665,7 +610,7 @@ export function TerminalApp({
       }
       if (imageModule.status === 'fulfilled') {
         try {
-          terminal.loadAddon(new imageModule.value.ImageAddon())
+          loadAddon(new imageModule.value.ImageAddon())
         } catch (cause) {
           console.warn('[tengri-terminal] image addon unavailable', cause)
         }
@@ -674,7 +619,7 @@ export function TerminalApp({
       }
       if (webLinksModule.status === 'fulfilled') {
         try {
-          terminal.loadAddon(
+          loadAddon(
             new webLinksModule.value.WebLinksAddon((_event, uri) => window.open(uri, '_blank', 'noopener,noreferrer')),
           )
         } catch (cause) {
@@ -774,7 +719,7 @@ export function TerminalApp({
       searchAddonRef.current = null
       const terminal = terminalRef.current
       terminalRef.current = null
-      safelyDisposeTerminal(terminal)
+      safelyDisposeTerminal(terminal, terminalAddons)
       const current = session
       if (current && !terminalEnded && !closeRequested) {
         storeSession(current, false)
@@ -782,20 +727,8 @@ export function TerminalApp({
         void cleanupCreatedTerminal()
       }
       releaseSessionClaim()
-      releaseLegacyMigration()
     }
-  }, [
-    agentId,
-    cleanupStorageKey,
-    creationId,
-    creationScope,
-    desktopId,
-    legacyStorageKey,
-    registerCloseHandler,
-    run,
-    storageKey,
-    windowId,
-  ])
+  }, [agentId, cleanupStorageKey, creationId, desktopId, registerCloseHandler, run, storageKey, windowId])
 
   function find(direction: 'next' | 'previous') {
     const value = searchValue.trim()

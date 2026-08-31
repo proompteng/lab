@@ -81,11 +81,18 @@ describe('Tengri BFF action schema', () => {
         agentId: 'agent-123',
         port: 4321,
         path: '/app?mode=dev',
+        fragment: '#editor',
       }).success,
     ).toBe(true)
     for (const path of ['https://example.test/app', '/app#ticket', '/app\u0000private']) {
       expect(
-        tengriActionSchema.safeParse({ action: 'preview-session', agentId: 'agent-123', port: 4321, path }).success,
+        tengriActionSchema.safeParse({
+          action: 'preview-session',
+          agentId: 'agent-123',
+          port: 4321,
+          path,
+          fragment: '',
+        }).success,
       ).toBe(false)
     }
     const exactPreviewPath = `/${'é'.repeat(2047)}x`
@@ -96,6 +103,7 @@ describe('Tengri BFF action schema', () => {
         agentId: 'agent-123',
         port: 4321,
         path: exactPreviewPath,
+        fragment: '',
       }).success,
     ).toBe(true)
     expect(
@@ -104,8 +112,31 @@ describe('Tengri BFF action schema', () => {
         agentId: 'agent-123',
         port: 4321,
         path: `${exactPreviewPath}é`,
+        fragment: '',
       }).success,
     ).toBe(false)
+    const exactPreviewFragment = `#${'é'.repeat(2047)}x`
+    expect(Buffer.byteLength(exactPreviewFragment, 'utf8')).toBe(4096)
+    expect(
+      tengriActionSchema.safeParse({
+        action: 'preview-session',
+        agentId: 'agent-123',
+        port: 4321,
+        path: '/',
+        fragment: exactPreviewFragment,
+      }).success,
+    ).toBe(true)
+    for (const fragment of ['editor', '#editor\nprivate', `#${'é'.repeat(2048)}`]) {
+      expect(
+        tengriActionSchema.safeParse({
+          action: 'preview-session',
+          agentId: 'agent-123',
+          port: 4321,
+          path: '/',
+          fragment,
+        }).success,
+      ).toBe(false)
+    }
     expect(
       tengriActionSchema.safeParse({
         action: 'revoke-preview-session',
