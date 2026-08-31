@@ -26,6 +26,7 @@ export const productionPaths = {
   statefulSet: 'argocd/applications/hermes/statefulset.yaml',
   backupCronJob: 'argocd/applications/hermes/backup-cronjob.yaml',
   backupScript: 'argocd/applications/hermes/backup-once.sh',
+  backupPolicy: 'argocd/applications/hermes/backup-output-policy.sh',
   config: 'argocd/applications/hermes/config.yaml',
   externalSecret: 'argocd/applications/hermes/external-secret.yaml',
   exaExternalSecret: 'argocd/applications/hermes/exa-external-secret.yaml',
@@ -343,10 +344,26 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   ])
   forbidTerms(failures, productionPaths.backupCronJob, files.backupCronJob, [':latest', 'restartPolicy: Never'])
 
+  requireTerms(failures, productionPaths.kustomization, files.kustomization, ['      - backup-output-policy.sh'])
+  requireTerms(failures, productionPaths.backupPolicy, files.backupPolicy, [
+    'hermes_backup_output_is_safe() (',
+    '*"SQLite safe copy failed"*|*"Raw copy also failed"*)',
+    '*"Backup incomplete:"*|*"Warnings ("*)',
+    'backup_policy_socket="$backup_policy_home/gateway.sock"',
+    "backup_policy_header='  Warnings (1 files skipped):'",
+    'backup_policy_detail="  gateway.sock: [Errno 6] No such device or address:',
+    '[ -S "$backup_policy_socket" ] || return 1',
+    '[ "$backup_policy_header_count" -eq 1 ] || return 1',
+    '[ "$backup_policy_detail_count" -eq 1 ] || return 1',
+    '*"Backup complete:"*) return 1',
+  ])
+
   const backupPublicationSteps = [
+    '. /opt/bootstrap/backup-output-policy.sh',
     'backup_output=$(/opt/hermes/.venv/bin/hermes backup --output "$pending_archive" 2>&1)',
-    '*"SQLite safe copy failed"*|*"Raw copy also failed"*|*"Warnings ("*)',
+    'if ! hermes_backup_output_is_safe "$backup_output" "${HERMES_HOME:-/opt/data}"; then',
     'corrupt_entry = backup.testzip()',
+    'if "gateway.sock" in backup.namelist():',
     'connection.execute("PRAGMA quick_check")',
     'if database_count == 0:',
     'pending_digest=$(sha256sum "$pending_archive")',
