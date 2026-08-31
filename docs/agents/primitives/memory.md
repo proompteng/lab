@@ -1,122 +1,128 @@
 # Memory Primitive
 
-## Purpose
+## Purpose and ownership
 
-The `Memory` primitive provides a provider-agnostic contract for durable, queryable, and retrievable memory
-associated with agents and workflows. It supports vector embeddings, retention policies, and access control
-without coupling to a specific backend implementation.
+`Memory` is the namespace-scoped Agents resource that selects a memory backend, its connection Secret, and the
+capabilities that a consumer expects. The installed `v1alpha1` contract is intentionally small: it does not declare a
+dataset name, schema, retention policy, embedding dimension, or reader/writer roles.
 
-The Agents service is the control plane for generic `Memory` resources. Jangar may consume Memory resources through the
-Agents `/v1/memories` and `/v1/memory-operations` APIs for domain workflows, but it does not own the generic Memory CRD
-or controller lifecycle.
+The Agents service owns the `Memory` CRD, reconciliation, and memory operation APIs. Jangar can integrate with those
+service APIs, but the generic resource and its lifecycle are not Jangar-owned. These routes are served by the Agents
+service; they should not be inferred to be Jangar routes.
 
-## Grounding in the current platform
+## Current source of truth
 
-- Existing CNPG clusters (live): `facteur/facteur-vector-cluster`, `agents/agents-db`
-- Current agent event storage direction: `docs/nats-agent-communications.md`
+- Go API types: `services/agents/api/agents/v1alpha1/types.go` (`MemorySpec`, `MemoryConnection`, `MemoryStatus`)
+- Generated CRD: `charts/agents/crds/agents.proompteng.ai_memories.yaml`
+- Chart example: `charts/agents/examples/memory-sample.yaml`
+- Reconciler: `services/agents/src/server/agents-controller/resource-reconcilers.ts` (`reconcileMemory`)
+- Runtime provider: `services/agents/src/server/memory-provider.ts`
+- Runtime schema: `services/agents/src/server/memory-provider-schema.ts`
 
-## CRDs
+## `Memory` resource
 
-### Memory (claim)
+`Memory` is namespaced. `spec.connection.secretRef.name` refers to a Secret in the same namespace because the CRD
+reference contains a name and optional key, not a namespace.
 
-Namespace-scoped, app-facing memory dataset.
+This is a valid resource shape. The Secret is included to show the connection contract; use a real Secret managed by
+the deployment rather than committing credentials.
 
 ```yaml
-apiVersion: memory.proompteng.ai/v1alpha1
+apiVersion: v1
+kind: Secret
+metadata:
+  name: default-memory-postgres
+  namespace: agents
+type: Opaque
+stringData:
+  url: postgresql://memory:replace-me@postgres.default.svc.cluster.local:5432/memory?sslmode=disable
+---
+apiVersion: agents.proompteng.ai/v1alpha1
 kind: Memory
 metadata:
-  name: codex-agent-memory
-  namespace: agents
-spec:
-  providerRef:
-    name: postgres-default
-  dataset:
-    name: codex_agent
-    schema: agent_memory
-  retention:
-    ttlDays: 90
-  embeddings:
-    enabled: true
-    dimension: 1536
-  access:
-    readerRole: memory_reader
-    writerRole: memory_writer
-```
-
-### MemoryStore (internal)
-
-Composite resource that binds the logical memory dataset to a concrete provider.
-
-## Provider decoupling rules
-
-- `Memory.spec` includes only intent and schema-level requirements.
-- Provider details live under `spec.provider.<type>` or are supplied by a referenced provider resource.
-- Switching providers is achieved by updating the `providerRef` or composition selector, without changing
-  application-level contracts.
-
-## Postgres provider (first implementation)
-
-### Requirements
-
-- Backed by CloudNativePG (CNPG) clusters
-- `pgvector` extension enabled for embeddings
-- Stable connection secret with role-based access
-
-### Provider configuration
-
-```yaml
-apiVersion: memory.proompteng.ai/v1alpha1
-kind: MemoryProvider
-metadata:
-  name: postgres-default
+  name: default-memory
   namespace: agents
 spec:
   type: postgres
-  postgres:
-    clusterRef:
-      name: facteur-vector-cluster
-      namespace: facteur
-    database: memory_codex_agent
-    schema: agent_memory
-    enablePgVector: true
+  connection:
+    secretRef:
+      name: default-memory-postgres
+      key: url
+  capabilities:
+    - vector
+    - kv
+  default: true
 ```
 
-### Connection contract
+### Spec fields
 
-`Memory.status.connectionSecretRef` must include the `name` and `namespace` of the connection secret.
-Additional connection metadata is exposed on `Memory.status`:
+| Field                       | Current contract                                                                                                                                                                                             |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `spec.type`                 | Required string. The generated CRD enum is `postgres`, `redis`, `weaviate`, `pinecone`, or `custom`.                                                                                                         |
+| `spec.connection.secretRef` | Required object. `name` is required; `key` is optional.                                                                                                                                                      |
+| `spec.capabilities`         | Optional string list. The Go type documents `vector`, `kv`, and `blob` as intended values, but the generated CRD currently emits only `type: string` for each item, so admission does not enforce that list. |
+| `spec.default`              | Optional boolean with a generated default of `false`. `true` marks the resource as a default; it does not configure storage or schema.                                                                       |
 
-- `endpoint`
-- `database`
-- `schema`
+There are no other `Memory.spec` fields in the installed CRD. In particular, `providerRef`, `dataset`, `retention`,
+`embeddings`, `access`, and provider-specific nested configuration are not valid current fields.
 
-The referenced secret must contain:
+### Status fields
 
-- `username`
-- `password`
+The status schema contains only optional `lastCheckedAt`, `conditions`, `updatedAt`, and `observedGeneration` fields.
+The Agents controller checks the type and same-namespace Secret reference, then records conditions such as:
 
-## Schema baseline
+- `Ready=True, reason=SecretResolved` when the Secret exists and an optional key is present;
+- `InvalidSpec` for a missing type, missing Secret reference, or missing referenced key;
+- `Unreachable, reason=SecretNotFound` when the Secret does not exist.
 
-- `memory_events` (append-only)
-- `memory_embeddings` (vector + metadata)
-- `memory_kv` (simple key/value)
+`Ready` means that the resource's reference was checked. It is not a database connectivity or pgvector health check.
+There is no `status.phase`, `status.connectionSecretRef`, `status.endpoint`, `status.database`, or `status.schema` in
+the current API.
 
-## Retention
+## Current Postgres runtime behavior
 
-Retention is enforced by provider-specific jobs (SQL or background worker). The retention contract
-is stored on the Memory resource; the backend implementation must honor it.
+The runtime implementation currently accepts only `spec.type: postgres`. The other values are admitted by the CRD but
+memory operations fail closed with an unsupported-type error until a corresponding provider implementation exists.
 
-## Access model
+For a Postgres Memory operation, the Agents runtime:
 
-- Readers are granted `SELECT` and `EXECUTE` on schema functions
-- Writers are granted `INSERT/UPDATE` on tables, plus vector upsert
+1. Loads the `Memory` resource and resolves its Secret in the Memory namespace.
+2. Decodes Secret `data`; if `secretRef.key` is set, that key is preferred. Otherwise it accepts `url`, `uri`, or
+   `connectionString`, or constructs a URL from `endpoint`/`host`, `database`/`dbname`, `username`/`user`, and
+   `password`.
+3. Uses the Memory metadata name as the internal dataset discriminator and uses the fixed `public` schema. Neither
+   value is configurable in the current CRD.
+4. Ensures the `vector` and `pgcrypto` extensions and creates/uses `memory_events`, `memory_kv`, and
+   `memory_embeddings` tables. Each table is scoped logically by the `dataset` column; it is not a separate schema
+   per Memory resource.
+5. Resolves the embedding dimension from Agents runtime configuration, not from `Memory.spec`.
 
-## Observability
+The operation API currently supports `event`, `kv`, `embedding`, `query`, and `embedding-index`. The separate query
+route performs vector search. Capabilities are declarative metadata; the operation handlers do not expose a `blob`
+operation.
 
-Agents should emit generic memory lifecycle events and link them to AgentRun or OrchestrationRun IDs. Jangar may
-consume those events for domain-specific surfaces.
+## Agents API boundary
 
-## Schema precedence
+The current Agents service routes are:
 
-`Memory.spec.dataset.schema` is the source of truth. `MemoryProvider.spec.postgres.schema` may
-provide a default; if both are set and differ, reconciliation should fail.
+- `POST /v1/memories` — accepts a JSON payload containing `name`, `namespace`, and `spec`, then applies a Memory CR.
+- `GET /v1/memories/$id` — reads a Memory resource through the generic resource reader.
+- `POST /v1/memory-operations` — handles event, key/value, embedding, query, and embedding-index operations.
+- `POST /v1/memory-queries` — performs a vector query from `memoryRef`, `namespace`, `query`, and optional `limit`.
+
+The mutation/query handlers require the `Idempotency-Key` HTTP header. This HTTP idempotency key is not a
+`Memory.spec` field.
+
+## Future design boundary (not an installed API)
+
+The following names and fields came from an earlier proposal and must not be applied to the current cluster:
+
+- `apiVersion: memory.proompteng.ai/v1alpha1`;
+- `MemoryProvider` and `MemoryStore` resources;
+- `Memory.spec.providerRef`, `dataset`, `retention`, `embeddings`, and `access`;
+- `MemoryProvider.spec.postgres.*` and composition/provider selectors;
+- `Memory.status.connectionSecretRef`, `endpoint`, `database`, and `schema`;
+- schema-precedence or provider-specific retention/access guarantees.
+
+They may be discussed only as future design work. There is an internal TypeScript module named
+`memory-provider.ts`, but it is not a `MemoryProvider` CRD and does not make those proposal fields valid.
