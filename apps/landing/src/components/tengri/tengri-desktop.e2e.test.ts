@@ -124,11 +124,13 @@ function embeddedPreviewDocument() {
 type TerminalStore = { sessions: Record<string, unknown>[] }
 
 type MockOptions = {
+  activeCodexLogin?: boolean
   authenticated?: boolean
   agent?: typeof readyAgent | null
   codexAuthenticated?: boolean
   deferSleepReconciliation?: boolean
   extraFiles?: typeof workspaceEntries
+  failCodexAccountUntilReleased?: boolean
   failSnapshotAfterAction?: 'delete-agent' | 'sleep-agent'
   holdCodexAccount?: boolean
   holdCodexAccountAfterLogin?: boolean
@@ -149,6 +151,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   const actions: Record<string, unknown>[] = []
   let resumeThreadRequests = 0
   let resumeThreadResponses = 0
+  let codexAccountFailuresReleased = !options.failCodexAccountUntilReleased
   let heldCodexAccountRequest = false
   let searchRequestsInFlight = 0
   let maxConcurrentSearchRequests = 0
@@ -510,6 +513,14 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         }
         break
       case 'codex-account':
+        if (!codexAccountFailuresReleased) {
+          await route.fulfill({
+            status: 503,
+            contentType: 'application/json',
+            body: JSON.stringify({ error: 'Codex account is temporarily unavailable' }),
+          })
+          return
+        }
         if (
           options.holdCodexAccount ||
           (options.holdCodexAccountAfterLogin &&
@@ -525,6 +536,16 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
           email: options.codexAuthenticated === false ? '' : 'ada@example.test',
           plan: options.codexAuthenticated === false ? '' : 'pro',
         }
+        break
+      case 'codex-login-status':
+        result = options.activeCodexLogin
+          ? {
+              loginId: 'login-existing',
+              verificationUrl: 'https://auth.openai.com/device',
+              userCode: 'TENG-RI99',
+              expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+            }
+          : null
         break
       case 'codex-login':
         result = {
@@ -625,6 +646,9 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
     getSnapshotRequestCount: () => snapshotRequests,
     holdNextPreviewSession: () => {
       holdNextPreviewSession = true
+    },
+    releaseCodexAccountFailures: () => {
+      codexAccountFailuresReleased = true
     },
     releaseHeldCodexAccount,
     releaseHeldLifecycleAction,
@@ -1446,6 +1470,36 @@ test('blocks lifecycle changes while Chrome has a device-login refresh in flight
   await expect(settings.getByRole('button', { name: 'Sleep Agent' })).toBeEnabled()
   await settings.getByRole('button', { name: 'Sleep Agent' }).click()
   await expect(page.getByRole('dialog', { name: 'Tengri is sleeping' })).toBeVisible()
+})
+
+test('restores an active Codex device login without replacing its code', async ({ page }) => {
+  const mock = await mockTengri(page, {
+    activeCodexLogin: true,
+    codexAuthenticated: false,
+  })
+  await page.goto('/')
+
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  await expect(chrome.getByText('TENG-RI99')).toBeVisible()
+  expect(mock.actions.filter((action) => action.action === 'codex-login-status')).toHaveLength(1)
+  expect(mock.actions.some((action) => action.action === 'codex-login')).toBe(false)
+})
+
+test('restores an active Codex device login after retrying a failed account check', async ({ page }) => {
+  const mock = await mockTengri(page, {
+    activeCodexLogin: true,
+    codexAuthenticated: false,
+    failCodexAccountUntilReleased: true,
+  })
+  await page.goto('/')
+
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  await expect(chrome.getByRole('button', { name: 'Retry' })).toBeVisible()
+  mock.releaseCodexAccountFailures()
+  await chrome.getByRole('button', { name: 'Retry' }).click()
+  await expect(chrome.getByText('TENG-RI99')).toBeVisible()
+  expect(mock.actions.filter((action) => action.action === 'codex-login-status')).toHaveLength(1)
+  expect(mock.actions.some((action) => action.action === 'codex-login')).toBe(false)
 })
 
 test('does not refresh the guest account after sleep starts', async ({ page }) => {

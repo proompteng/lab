@@ -149,6 +149,16 @@ struct CodexCallResponse {
     event_sequence: Option<u64>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexLoginSnapshot {
+    pub active: bool,
+    #[serde(default)]
+    pub result: Value,
+    #[serde(default)]
+    pub started_at: String,
+}
+
 #[derive(Debug)]
 pub struct CodexCallResult {
     pub result: Value,
@@ -381,6 +391,11 @@ impl GuestClient {
 
     pub async fn codex_call(&self, method: &str, params: Value) -> Result<Value, GuestError> {
         Ok(self.codex_call_response(method, params).await?.result)
+    }
+
+    pub async fn codex_login(&self) -> Result<CodexLoginSnapshot, GuestError> {
+        self.json(self.request(Method::GET, "/v1/codex/login"))
+            .await
     }
 
     pub async fn codex_call_with_sequence(
@@ -690,6 +705,44 @@ mod tests {
                 .await,
             Err(GuestError::MissingCodexSnapshotCursor)
         ));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn codex_login_snapshot_preserves_the_active_attempt() {
+        let router = Router::new().route(
+            "/v1/codex/login",
+            get(|| async {
+                Json(serde_json::json!({
+                    "active": true,
+                    "result": {
+                        "loginId": "login-one",
+                        "verificationUrl": "https://example.test/device",
+                        "userCode": "TENG-RI01"
+                    },
+                    "startedAt": "2026-08-31T09:00:00Z"
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind Nanoagent login fixture");
+        let address = listener.local_addr().expect("Nanoagent login address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router)
+                .await
+                .expect("serve Nanoagent login fixture");
+        });
+        let client = GuestClient {
+            http: reqwest::Client::new(),
+            base_url: format!("http://{address}"),
+            token: "test-bootstrap-token".to_owned(),
+        };
+
+        let snapshot = client.codex_login().await.expect("login snapshot");
+        assert!(snapshot.active);
+        assert_eq!(snapshot.result["loginId"], "login-one");
+        assert_eq!(snapshot.started_at, "2026-08-31T09:00:00Z");
         server.abort();
     }
 

@@ -11,6 +11,9 @@ Terminal creation has one protocol: every client supplies a stable 16-to-128-cha
 returns that exact identity with the session. Retries reuse the same identity and are idempotent. Tengri rejects
 id-less requests instead of generating a compatibility identity or negotiating with an older guest.
 
+Pending Codex device logins are guest-owned. A reconnecting desktop reads the active attempt from Nanoagent and keeps
+the same verification code and original expiry instead of silently starting and invalidating another attempt.
+
 Each Chrome preview load exchanges its one-use ticket for a bounded, owner-scoped session whose ID is allocated before
 the browser receives the ticket. The desktop revokes both unused tickets and active sessions when a preview is
 superseded or closed, so reload and history use cannot exhaust the per-agent session limit. The gateway injects a
