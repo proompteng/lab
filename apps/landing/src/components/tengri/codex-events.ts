@@ -181,13 +181,12 @@ export function codexEventMatchesThread(event: TengriCodexEvent, threadId: strin
   return !event.threadId || event.threadId === threadId
 }
 
+function codexEventIsIndependentOfThreadSnapshot(event: TengriCodexEvent) {
+  return event.kind === 'approval' || event.kind === 'warning' || event.kind === 'error' || event.kind === 'usage'
+}
+
 function codexEventRequiresReplayAfterRestore(event: TengriCodexEvent) {
-  return (
-    event.kind === 'approval' ||
-    event.kind === 'warning' ||
-    event.kind === 'error' ||
-    Boolean(codexResolvedApprovalId(event))
-  )
+  return codexEventIsIndependentOfThreadSnapshot(event) || Boolean(codexResolvedApprovalId(event))
 }
 
 export function codexEventShouldRender(
@@ -197,7 +196,7 @@ export function codexEventShouldRender(
   restoredHistorySequence = Number.POSITIVE_INFINITY,
 ) {
   if (!codexEventMatchesThread(event, threadId)) return false
-  if (event.kind === 'approval' || event.kind === 'warning' || event.kind === 'error') return true
+  if (codexEventIsIndependentOfThreadSnapshot(event)) return true
   if (restoredHistorySequence > 0 && event.sequence <= restoredHistorySequence) return false
   return !event.itemId || !restoredItemIds.has(event.itemId) || event.sequence > restoredHistorySequence
 }

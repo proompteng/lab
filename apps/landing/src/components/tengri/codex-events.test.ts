@@ -122,7 +122,7 @@ describe('Codex event replay', () => {
     expect(codexEventShouldRender(approval, 'thread-2', restoredItemIds)).toBe(false)
   })
 
-  test('keeps only post-resume updates visible for items restored into history', () => {
+  test('keeps only post-resume item updates plus snapshot-independent events visible', () => {
     const restoredItemIds = new Set([event.itemId])
     const itemlessSnapshotEvent = { ...event, kind: 'usage' as const, itemId: '' }
     const renamedSnapshotItem = { ...event, itemId: 'app-server-generated-id' }
@@ -131,7 +131,7 @@ describe('Codex event replay', () => {
 
     expect(codexEventShouldRender(event, event.threadId, restoredItemIds)).toBe(false)
     expect(codexEventShouldRender(event, event.threadId, restoredItemIds, event.sequence)).toBe(false)
-    expect(codexEventShouldRender(itemlessSnapshotEvent, event.threadId, restoredItemIds, event.sequence)).toBe(false)
+    expect(codexEventShouldRender(itemlessSnapshotEvent, event.threadId, restoredItemIds, event.sequence)).toBe(true)
     expect(codexEventShouldRender(renamedSnapshotItem, event.threadId, restoredItemIds, event.sequence)).toBe(false)
     expect(codexEventShouldRender(snapshotWarning, event.threadId, restoredItemIds, event.sequence)).toBe(true)
     expect(codexEventShouldRender(snapshotError, event.threadId, restoredItemIds, event.sequence)).toBe(true)
@@ -228,9 +228,16 @@ describe('Codex event replay', () => {
         itemId: '',
         text: '+++ /workspace/proof.txt',
       },
-      { ...event, sequence: 27, kind: 'usage' as const, method: 'thread/tokenUsage/updated', itemId: '' },
       { ...event, sequence: 42, itemId: 'msg-agent-final-live', text: '/workspace/proof.txt' },
     ]
+    const snapshotUsage = {
+      ...event,
+      sequence: 27,
+      kind: 'usage' as const,
+      method: 'thread/tokenUsage/updated',
+      itemId: '',
+      text: 'Tokens: 10 input · 4 output',
+    }
     const snapshotWarning = {
       ...event,
       sequence: 44,
@@ -251,11 +258,11 @@ describe('Codex event replay', () => {
 
     expect(
       reconcileCodexEventsWithRestoredHistory(
-        [...replayed, snapshotWarning, snapshotError, postSnapshot],
+        [...replayed, snapshotUsage, snapshotWarning, snapshotError, postSnapshot],
         restoredById,
         53,
       ),
-    ).toEqual([snapshotWarning, snapshotError, postSnapshot])
+    ).toEqual([snapshotUsage, snapshotWarning, snapshotError, postSnapshot])
   })
 
   test('drops snapshot-covered deltas delivered after the snapshot commit', () => {
