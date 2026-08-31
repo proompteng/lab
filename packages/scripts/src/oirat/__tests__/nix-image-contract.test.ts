@@ -8,7 +8,7 @@ describe('oirat Nix image contract', () => {
   it('pins the dependency closures observed by both native builders', () => {
     const image = readFileSync(join(repoRoot, 'nix/images/oirat.nix'), 'utf8')
 
-    expect(image).toContain('x86_64-linux = "sha256-CKTBcS3BQ0AyqqpJOWNRDaIKJmvoovVT8kQbMp55zjQ="')
-    expect(image).toContain('aarch64-linux = "sha256-qMjypWi6aeITpIXhs7P51Yc6LQgRcg3O4l8FS438FQc="')
+    expect(image).toContain('x86_64-linux = "sha256-e92eaR/VYRTKdbWYaNrCtboaasy7huMhQsvffWnSEUU="')
+    expect(image).toContain('aarch64-linux = "sha256-Nqfyxuo8KhwPzLaEc/4dPuWr0GKsIP09hbRXwI3rE18="')
   })
 })
