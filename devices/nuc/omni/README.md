@@ -159,16 +159,32 @@ the required restore point to encrypted off-host storage when that additional fa
 
 ## Backup and restore
 
-Create a consistent full-state backup:
+Run the complete repeatable backup workflow from an authenticated workstation:
+
+```bash
+./backup-to-nuc.sh galactic
+```
+
+The command verifies the local backend and live NUC runtime, requests a fresh managed-cluster etcd snapshot, waits for
+Omni to report success, proves that the new snapshot exists under the cluster UUID on the NUC, then creates a
+checksum-verified full-state archive. It finally waits for Omni and tsidp to recover and re-runs the NUC runtime
+verification. The cluster name defaults to `galactic` and the explicit Omni context defaults to `default`;
+`OMNI_CONTEXT`, `NUC_SSH_TARGET`, `NUC_OMNI_DIR`,
+`OMNI_BACKUP_TIMEOUT_SECONDS`, and `OMNI_BACKUP_POLL_SECONDS` are explicit overrides.
+
+The NUC-side archive primitive remains available for cases where a fresh managed-cluster snapshot is not required:
 
 ```bash
 ./scripts/backup.sh
 ```
 
 The script briefly stops Omni and tsidp, archives `.env`, the encryption key, embedded etcd, managed-cluster etcd
-snapshots, SQLite, and tsidp state, then restarts only services that were running. Managed Kubernetes clusters continue
-operating while Omni is down. Archives are mode `0600` under `/var/lib/omni/backups`; copy each archive and checksum to
-encrypted off-host storage.
+snapshots, SQLite, and tsidp state, validates the archive checksum, then restarts only services that were running. A
+non-blocking NUC lock rejects overlapping full-state backups. Managed Kubernetes clusters continue operating while
+Omni is down. Archives are mode `0600` under `/var/lib/omni/backups`; copy each archive and checksum to encrypted
+off-host storage. The archive preflight reserves at least 10 GiB beyond the uncompressed input size; override that
+floor with `OMNI_BACKUP_MIN_FREE_BYTES` in the NUC `.env`. Every invocation creates a new timestamped archive; neither
+script deletes snapshots or old archives.
 
 For recovery, use a new NUC with the same Tailscale hostname and address, sync this directory, and bootstrap only the
 host packages and directories. Do not start Omni. Copy the archive and checksum to the NUC, verify them, then restore
@@ -181,7 +197,7 @@ sudo tar --extract --gzip --file omni-YYYYMMDDTHHMMSSZ.tar.gz --directory /
 ./scripts/deploy.sh
 ```
 
-The archive restores `.env` to `/home/kalmyk/omni` and the four state directories to `/var/lib/omni`. Never start an
+The archive restores `.env` to `/home/kalmyk/omni` and the five state directories to `/var/lib/omni`. Never start an
 empty Omni instance against a restored account UUID, and never restore etcd without its matching `omni.asc`.
 
 For an online etcd-only snapshot, follow Sidero's supported `etcdctl --endpoints http://localhost:2379 snapshot save`

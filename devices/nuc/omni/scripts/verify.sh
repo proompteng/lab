@@ -30,11 +30,13 @@ for service in tsidp omni; do
 done
 
 omni_container_id=$(compose ps --quiet omni)
-cluster_backup_source=$(docker inspect --format \
-  '{{range .Mounts}}{{if eq .Destination "/var/lib/omni/cluster-etcd-backups"}}{{.Source}}{{end}}{{end}}' \
+cluster_backup_mount=$(docker inspect --format \
+  '{{range .Mounts}}{{if eq .Destination "/var/lib/omni/cluster-etcd-backups"}}{{.Source}}|{{.RW}}{{end}}{{end}}' \
   "${omni_container_id}")
+IFS='|' read -r cluster_backup_source cluster_backup_rw <<<"${cluster_backup_mount}"
 [[ "${cluster_backup_source}" == "${OMNI_DATA_ROOT}/cluster-etcd-backups" ]] ||
   die 'Omni cluster etcd backup directory is not mounted from persistent NUC storage'
+[[ "${cluster_backup_rw}" == 'true' ]] || die 'Omni cluster etcd backup directory is not mounted read-write'
 
 curl --fail --silent --show-error --output /dev/null http://127.0.0.1:8180/
 require_http_endpoint 'Omni Kubernetes proxy loopback' 'http://127.0.0.1:8100/'
