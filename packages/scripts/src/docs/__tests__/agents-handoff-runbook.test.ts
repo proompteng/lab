@@ -19,6 +19,7 @@ it('keeps Agents handoff shell snippets directly executable', () => {
 
 it('sanitizes the full Sealed Secrets key backup before restoring it', () => {
   const runbook = readFileSync(join(repoRoot, 'devices/galactic/docs/bootstrap-argocd.md'), 'utf8')
+  const flake = readFileSync(join(repoRoot, 'flake.nix'), 'utf8')
   const scriptsWorkflow = readFileSync(join(repoRoot, '.github/workflows/scripts-ci.yml'), 'utf8')
 
   expect(runbook).toContain('SEALED_SECRETS_KEY_MANIFEST="$SEALED_SECRETS_BOOTSTRAP_DIR/controller-key.json"')
@@ -31,6 +32,7 @@ it('sanitizes the full Sealed Secrets key backup before restoring it', () => {
   expect(runbook).toContain('argocd admin initial-password --kube-context "$GALACTIC_CONTEXT" -n argocd')
   expect(runbook).not.toContain('argocd admin initial-password -n argocd')
   expect(runbook).not.toContain('--server-side --force-conflicts -f "$SEALED_SECRETS_KEY_BACKUP_PATH" -o name')
+  expect(flake).toContain('pkgs.kubeseal')
   expect(
     scriptsWorkflow.split('\n').filter((line) => line.trim() === "- 'devices/galactic/docs/bootstrap-argocd.md'"),
   ).toHaveLength(2)
