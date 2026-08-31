@@ -2,10 +2,10 @@ use std::{sync::Arc, time::Duration};
 
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
-use k8s_openapi::api::core::v1::{ContainerStatus, PersistentVolumeClaim, Pod, Secret};
+use k8s_openapi::api::core::v1::{ContainerStatus, Event, PersistentVolumeClaim, Pod, Secret};
 use kube::{
     Api, Client, Resource, ResourceExt,
-    api::{DeleteParams, Patch, PatchParams, Preconditions},
+    api::{DeleteParams, ListParams, Patch, PatchParams, Preconditions},
     runtime::{
         Controller,
         controller::Action,
@@ -32,6 +32,14 @@ use crate::{
 
 const BOOTSTRAP_SECRET_REJECTED: &str = "BootstrapSecretRejected";
 const UNSCHEDULABLE_FAILURE_GRACE_SECONDS: i64 = 30;
+const POD_SANDBOX_FAILURE_GRACE_SECONDS: i64 = 30;
+const MAX_FAILURE_MESSAGE_CHARS: usize = 2_048;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PodSandboxFailure {
+    reason: String,
+    message: String,
+}
 
 #[derive(Clone)]
 pub struct ControllerContext {
@@ -217,7 +225,14 @@ async fn reconcile(
         .await;
         return Err(error.into());
     }
-    let status = derive_status(&microvm, &pod, &home_claim.name, now);
+    let sandbox_failure = pod_sandbox_failure(&context.client, &namespace, &pod, now).await?;
+    let status = derive_status(
+        &microvm,
+        &pod,
+        &home_claim.name,
+        sandbox_failure.as_ref(),
+        now,
+    );
 
     let ready_transition = status.phase == MicroVMPhase::Ready
         && microvm.status.as_ref().map(|value| value.phase) != Some(MicroVMPhase::Ready);
@@ -770,12 +785,169 @@ fn provisioning_failure_status(
     }
 }
 
+async fn pod_sandbox_failure(
+    client: &Client,
+    namespace: &str,
+    pod: &Pod,
+    now: DateTime<Utc>,
+) -> Result<Option<PodSandboxFailure>, kube::Error> {
+    if !pod_sandbox_is_stuck(pod, now) {
+        return Ok(None);
+    }
+    let Some(uid) = pod.metadata.uid.as_deref() else {
+        return Ok(None);
+    };
+
+    let events: Api<Event> = Api::namespaced(client.clone(), namespace);
+    let listed = events
+        .list(&ListParams::default().fields(&format!("involvedObject.uid={uid}")))
+        .await?;
+    Ok(latest_pod_sandbox_failure(pod, listed.items.iter()))
+}
+
+fn pod_sandbox_is_stuck(pod: &Pod, now: DateTime<Utc>) -> bool {
+    pod_sandbox_transition_time(pod).is_some_and(|transitioned_at| {
+        now.timestamp().saturating_sub(transitioned_at.as_second())
+            >= POD_SANDBOX_FAILURE_GRACE_SECONDS
+    })
+}
+
+fn pod_sandbox_transition_time(pod: &Pod) -> Option<k8s_openapi::jiff::Timestamp> {
+    pod.status
+        .as_ref()
+        .and_then(|status| status.conditions.as_ref())
+        .and_then(|conditions| {
+            conditions.iter().find(|condition| {
+                condition.type_ == "PodReadyToStartContainers" && condition.status == "False"
+            })
+        })
+        .and_then(|condition| condition.last_transition_time.as_ref())
+        .map(|transitioned_at| transitioned_at.0)
+}
+
+fn event_observed_time(event: &Event) -> Option<k8s_openapi::jiff::Timestamp> {
+    event
+        .series
+        .as_ref()
+        .and_then(|series| series.last_observed_time.as_ref())
+        .map(|last_observed_time| last_observed_time.0)
+        .or_else(|| {
+            event
+                .last_timestamp
+                .as_ref()
+                .map(|last_timestamp| last_timestamp.0)
+        })
+        .or_else(|| event.event_time.as_ref().map(|event_time| event_time.0))
+        .or_else(|| {
+            event
+                .first_timestamp
+                .as_ref()
+                .map(|first_timestamp| first_timestamp.0)
+        })
+        .or_else(|| {
+            event
+                .metadata
+                .creation_timestamp
+                .as_ref()
+                .map(|created_at| created_at.0)
+        })
+}
+
+fn latest_pod_sandbox_failure<'a>(
+    pod: &Pod,
+    events: impl Iterator<Item = &'a Event>,
+) -> Option<PodSandboxFailure> {
+    let pod_uid = pod.metadata.uid.as_deref()?;
+    let transitioned_at = pod_sandbox_transition_time(pod)?;
+    events
+        .filter(|event| {
+            event.type_.as_deref() == Some("Warning")
+                && event.reason.as_deref() == Some("FailedCreatePodSandBox")
+                && event.involved_object.uid.as_deref() == Some(pod_uid)
+                && event_observed_time(event)
+                    .is_some_and(|observed_at| observed_at >= transitioned_at)
+        })
+        .max_by_key(|event| {
+            (
+                event_observed_time(event),
+                event
+                    .metadata
+                    .resource_version
+                    .as_deref()
+                    .and_then(|value| value.parse::<u128>().ok())
+                    .unwrap_or_default(),
+            )
+        })
+        .map(|event| PodSandboxFailure {
+            reason: "FailedCreatePodSandBox".to_owned(),
+            message: bounded_failure_message(
+                event
+                    .message
+                    .as_deref()
+                    .unwrap_or("Kubernetes failed to create the Firecracker Pod sandbox"),
+            ),
+        })
+}
+
+fn retained_pod_sandbox_failure(
+    microvm: &MicroVM,
+    pod: &Pod,
+    now: DateTime<Utc>,
+) -> Option<PodSandboxFailure> {
+    if !pod_sandbox_is_stuck(pod, now) {
+        return None;
+    }
+
+    let status = microvm.status.as_ref()?;
+    let pod_uid = pod.metadata.uid.as_deref()?;
+    let transition_at = pod_sandbox_transition_time(pod)?.to_string();
+    if status.phase != MicroVMPhase::Failed
+        || status.failure_reason.as_deref() != Some("FailedCreatePodSandBox")
+        || status.pod_uid.as_deref() != Some(pod_uid)
+        || status.pod_sandbox_transition_at.as_deref() != Some(transition_at.as_str())
+    {
+        return None;
+    }
+
+    Some(PodSandboxFailure {
+        reason: "FailedCreatePodSandBox".to_owned(),
+        message: status.message.clone().unwrap_or_else(|| {
+            "Kubernetes failed to create the Firecracker Pod sandbox".to_owned()
+        }),
+    })
+}
+
+fn bounded_failure_message(message: &str) -> String {
+    let mut chars = message.chars();
+    let bounded: String = chars.by_ref().take(MAX_FAILURE_MESSAGE_CHARS).collect();
+    if chars.next().is_some() {
+        format!("{bounded}…")
+    } else {
+        bounded
+    }
+}
+
+fn resource_age_seconds(resource: &impl Resource, now: DateTime<Utc>) -> i64 {
+    resource
+        .meta()
+        .creation_timestamp
+        .as_ref()
+        .map(|created_at| now.timestamp().saturating_sub(created_at.0.as_second()))
+        .unwrap_or(i64::MAX)
+}
+
 fn derive_status(
     microvm: &MicroVM,
     pod: &Pod,
     home_claim: &str,
+    sandbox_failure: Option<&PodSandboxFailure>,
     now: DateTime<Utc>,
 ) -> MicroVMStatus {
+    let retained_sandbox_failure = sandbox_failure
+        .is_none()
+        .then(|| retained_pod_sandbox_failure(microvm, pod, now))
+        .flatten();
+    let sandbox_failure = sandbox_failure.or(retained_sandbox_failure.as_ref());
     let pod_status = pod.status.as_ref();
     let ready = pod_is_ready(pod);
     let failed = pod_status.and_then(|status| {
@@ -814,6 +986,13 @@ fn derive_status(
         (MicroVMPhase::Failed, reason, message, None)
     } else if let Some((reason, message)) = scheduling_failure {
         (MicroVMPhase::Failed, reason, message, None)
+    } else if let Some(failure) = sandbox_failure {
+        (
+            MicroVMPhase::Failed,
+            failure.reason.clone(),
+            failure.message.clone(),
+            None,
+        )
     } else if ready {
         (
             MicroVMPhase::Ready,
@@ -849,6 +1028,7 @@ fn derive_status(
     MicroVMStatus {
         phase,
         pod_name: pod.metadata.name.clone(),
+        pod_uid: pod.metadata.uid.clone(),
         pvc_name: Some(home_claim.to_owned()),
         pod_ip: pod_status.and_then(|status| status.pod_ip.clone()),
         node_name: pod.spec.as_ref().and_then(|spec| spec.node_name.clone()),
@@ -857,6 +1037,9 @@ fn derive_status(
         message: Some(message.clone()),
         ready_at,
         last_activity_at: last_activity_at(microvm),
+        pod_sandbox_transition_at: (reason == "FailedCreatePodSandBox")
+            .then(|| pod_sandbox_transition_time(pod).map(|value| value.to_string()))
+            .flatten(),
         conditions: vec![condition(
             microvm,
             "Ready",
@@ -870,11 +1053,7 @@ fn derive_status(
 }
 
 fn unschedulable_failure_is_terminal(pod: &Pod, now: DateTime<Utc>) -> bool {
-    let Some(created_at) = pod.metadata.creation_timestamp.as_ref() else {
-        return true;
-    };
-
-    now.timestamp().saturating_sub(created_at.0.as_second()) >= UNSCHEDULABLE_FAILURE_GRACE_SECONDS
+    resource_age_seconds(pod, now) >= UNSCHEDULABLE_FAILURE_GRACE_SECONDS
 }
 
 fn pod_is_ready(pod: &Pod) -> bool {
@@ -997,7 +1176,7 @@ mod tests {
     use http::{Request, Response, StatusCode};
     use k8s_openapi::api::core::v1::{
         ContainerState, ContainerStateRunning, ContainerStateTerminated, ContainerStateWaiting,
-        PodCondition, PodStatus,
+        ObjectReference, PodCondition, PodStatus,
     };
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
     use kube::client::Body as KubeBody;
@@ -1136,7 +1315,7 @@ mod tests {
             }),
             ..Pod::default()
         };
-        let status = derive_status(&test_microvm(now), &pod, "agent-home", now);
+        let status = derive_status(&test_microvm(now), &pod, "agent-home", None, now);
         assert_eq!(status.phase, MicroVMPhase::Failed);
         assert_eq!(status.failure_reason.as_deref(), Some("ImagePullBackOff"));
         assert_eq!(status.message.as_deref(), Some("unable to pull image"));
@@ -1169,13 +1348,241 @@ mod tests {
             ..Pod::default()
         };
 
-        let status = derive_status(&test_microvm(now), &pod, "agent-home", now);
+        let status = derive_status(&test_microvm(now), &pod, "agent-home", None, now);
         assert_eq!(status.phase, MicroVMPhase::Failed);
         assert_eq!(status.failure_reason.as_deref(), Some("Unschedulable"));
         assert_eq!(
             status.message.as_deref(),
             Some("0/3 nodes match the proven runtime selector")
         );
+    }
+
+    #[test]
+    fn reports_current_pod_sandbox_failure_precisely() {
+        let now = Utc::now();
+        let pod = Pod {
+            metadata: kube::core::ObjectMeta {
+                uid: Some("current-pod-uid".to_owned()),
+                creation_timestamp: Some(Time(
+                    k8s_openapi::jiff::Timestamp::from_second(
+                        now.timestamp() - POD_SANDBOX_FAILURE_GRACE_SECONDS - 1,
+                    )
+                    .expect("old Pod creation timestamp"),
+                )),
+                ..kube::core::ObjectMeta::default()
+            },
+            status: Some(PodStatus {
+                phase: Some("Pending".to_owned()),
+                conditions: Some(vec![PodCondition {
+                    type_: "PodReadyToStartContainers".to_owned(),
+                    status: "False".to_owned(),
+                    last_transition_time: Some(Time(
+                        k8s_openapi::jiff::Timestamp::from_second(
+                            now.timestamp() - POD_SANDBOX_FAILURE_GRACE_SECONDS - 1,
+                        )
+                        .expect("old sandbox transition timestamp"),
+                    )),
+                    ..PodCondition::default()
+                }]),
+                ..PodStatus::default()
+            }),
+            ..Pod::default()
+        };
+        assert!(pod_sandbox_is_stuck(&pod, now));
+
+        let events = [
+            Event {
+                metadata: kube::core::ObjectMeta {
+                    resource_version: Some("40".to_owned()),
+                    ..kube::core::ObjectMeta::default()
+                },
+                involved_object: ObjectReference {
+                    uid: Some("previous-pod-uid".to_owned()),
+                    ..ObjectReference::default()
+                },
+                message: Some("stale failure".to_owned()),
+                reason: Some("FailedCreatePodSandBox".to_owned()),
+                type_: Some("Warning".to_owned()),
+                ..Event::default()
+            },
+            Event {
+                metadata: kube::core::ObjectMeta {
+                    resource_version: Some("42".to_owned()),
+                    ..kube::core::ObjectMeta::default()
+                },
+                involved_object: ObjectReference {
+                    uid: Some("current-pod-uid".to_owned()),
+                    ..ObjectReference::default()
+                },
+                message: Some("flannel has no IP addresses available".to_owned()),
+                reason: Some("FailedCreatePodSandBox".to_owned()),
+                type_: Some("Warning".to_owned()),
+                last_timestamp: Some(Time(
+                    k8s_openapi::jiff::Timestamp::from_second(now.timestamp())
+                        .expect("current sandbox event timestamp"),
+                )),
+                ..Event::default()
+            },
+        ];
+        let failure =
+            latest_pod_sandbox_failure(&pod, events.iter()).expect("current Pod sandbox failure");
+        assert_eq!(failure.reason, "FailedCreatePodSandBox");
+        assert_eq!(failure.message, "flannel has no IP addresses available");
+
+        let status = derive_status(&test_microvm(now), &pod, "agent-home", Some(&failure), now);
+        assert_eq!(status.phase, MicroVMPhase::Failed);
+        assert_eq!(
+            status.failure_reason.as_deref(),
+            Some("FailedCreatePodSandBox")
+        );
+        assert_eq!(
+            status.message.as_deref(),
+            Some("flannel has no IP addresses available")
+        );
+    }
+
+    #[test]
+    fn ignores_transient_or_recovered_pod_sandbox_events() {
+        let now = Utc::now();
+        let mut pod = Pod {
+            metadata: kube::core::ObjectMeta {
+                uid: Some("current-pod-uid".to_owned()),
+                creation_timestamp: Some(Time(
+                    k8s_openapi::jiff::Timestamp::from_second(
+                        now.timestamp() - POD_SANDBOX_FAILURE_GRACE_SECONDS - 1,
+                    )
+                    .expect("old Pod creation timestamp"),
+                )),
+                ..kube::core::ObjectMeta::default()
+            },
+            status: Some(PodStatus {
+                conditions: Some(vec![PodCondition {
+                    type_: "PodReadyToStartContainers".to_owned(),
+                    status: "False".to_owned(),
+                    last_transition_time: Some(Time(
+                        k8s_openapi::jiff::Timestamp::from_second(now.timestamp())
+                            .expect("recent sandbox transition timestamp"),
+                    )),
+                    ..PodCondition::default()
+                }]),
+                ..PodStatus::default()
+            }),
+            ..Pod::default()
+        };
+        assert!(!pod_sandbox_is_stuck(&pod, now));
+
+        pod.status
+            .as_mut()
+            .and_then(|status| status.conditions.as_mut())
+            .expect("Pod conditions")[0]
+            .status = "True".to_owned();
+        assert!(!pod_sandbox_is_stuck(&pod, now));
+    }
+
+    #[test]
+    fn ignores_stale_pod_sandbox_failure_from_previous_transition() {
+        let now = Utc::now();
+        let transitioned_at = now.timestamp() - POD_SANDBOX_FAILURE_GRACE_SECONDS - 1;
+        let pod = Pod {
+            metadata: kube::core::ObjectMeta {
+                uid: Some("current-pod-uid".to_owned()),
+                ..kube::core::ObjectMeta::default()
+            },
+            status: Some(PodStatus {
+                conditions: Some(vec![PodCondition {
+                    type_: "PodReadyToStartContainers".to_owned(),
+                    status: "False".to_owned(),
+                    last_transition_time: Some(Time(
+                        k8s_openapi::jiff::Timestamp::from_second(transitioned_at)
+                            .expect("current sandbox transition timestamp"),
+                    )),
+                    ..PodCondition::default()
+                }]),
+                ..PodStatus::default()
+            }),
+            ..Pod::default()
+        };
+        let historical_event = Event {
+            involved_object: ObjectReference {
+                uid: Some("current-pod-uid".to_owned()),
+                ..ObjectReference::default()
+            },
+            message: Some("historical sandbox failure".to_owned()),
+            reason: Some("FailedCreatePodSandBox".to_owned()),
+            type_: Some("Warning".to_owned()),
+            last_timestamp: Some(Time(
+                k8s_openapi::jiff::Timestamp::from_second(transitioned_at - 1)
+                    .expect("historical sandbox event timestamp"),
+            )),
+            ..Event::default()
+        };
+
+        assert!(pod_sandbox_is_stuck(&pod, now));
+        assert!(latest_pod_sandbox_failure(&pod, [&historical_event].into_iter()).is_none());
+    }
+
+    #[test]
+    fn retains_published_pod_sandbox_failure_until_the_pod_or_transition_changes() {
+        let now = Utc::now();
+        let transitioned_at = now.timestamp() - POD_SANDBOX_FAILURE_GRACE_SECONDS - 1;
+        let transition = k8s_openapi::jiff::Timestamp::from_second(transitioned_at)
+            .expect("sandbox transition timestamp");
+        let mut pod = Pod {
+            metadata: kube::core::ObjectMeta {
+                name: Some("agent".to_owned()),
+                uid: Some("current-pod-uid".to_owned()),
+                ..kube::core::ObjectMeta::default()
+            },
+            status: Some(PodStatus {
+                phase: Some("Pending".to_owned()),
+                conditions: Some(vec![PodCondition {
+                    type_: "PodReadyToStartContainers".to_owned(),
+                    status: "False".to_owned(),
+                    last_transition_time: Some(Time(transition)),
+                    ..PodCondition::default()
+                }]),
+                ..PodStatus::default()
+            }),
+            ..Pod::default()
+        };
+        let mut microvm = test_microvm(now);
+        microvm.status = Some(MicroVMStatus {
+            phase: MicroVMPhase::Failed,
+            pod_name: Some("agent".to_owned()),
+            pod_uid: Some("current-pod-uid".to_owned()),
+            pvc_name: Some("agent-home".to_owned()),
+            failure_reason: Some("FailedCreatePodSandBox".to_owned()),
+            message: Some("flannel has no IP addresses available".to_owned()),
+            pod_sandbox_transition_at: Some(transition.to_string()),
+            ..MicroVMStatus::default()
+        });
+
+        let retained = derive_status(&microvm, &pod, "agent-home", None, now);
+        assert_eq!(retained.phase, MicroVMPhase::Failed);
+        assert_eq!(
+            retained.message.as_deref(),
+            Some("flannel has no IP addresses available")
+        );
+
+        pod.status
+            .as_mut()
+            .and_then(|status| status.conditions.as_mut())
+            .expect("Pod conditions")[0]
+            .last_transition_time = Some(Time(
+            k8s_openapi::jiff::Timestamp::from_second(now.timestamp())
+                .expect("new sandbox transition timestamp"),
+        ));
+        let after_transition = derive_status(&microvm, &pod, "agent-home", None, now);
+        assert_eq!(after_transition.phase, MicroVMPhase::Booting);
+
+        pod.status
+            .as_mut()
+            .and_then(|status| status.conditions.as_mut())
+            .expect("Pod conditions")[0]
+            .last_transition_time = Some(Time(transition));
+        pod.metadata.uid = Some("replacement-pod-uid".to_owned());
+        let after_replacement = derive_status(&microvm, &pod, "agent-home", None, now);
+        assert_eq!(after_replacement.phase, MicroVMPhase::Booting);
     }
 
     #[test]
@@ -1203,7 +1610,7 @@ mod tests {
             ..Pod::default()
         };
 
-        let status = derive_status(&test_microvm(now), &pod, "agent-home", now);
+        let status = derive_status(&test_microvm(now), &pod, "agent-home", None, now);
         assert_eq!(status.phase, MicroVMPhase::Booting);
         assert_eq!(status.failure_reason, None);
         assert_eq!(
@@ -1238,7 +1645,7 @@ mod tests {
             ..Pod::default()
         };
 
-        let status = derive_status(&test_microvm(now), &pod, "agent-home", now);
+        let status = derive_status(&test_microvm(now), &pod, "agent-home", None, now);
         assert_eq!(status.phase, MicroVMPhase::Failed);
         assert_eq!(
             status.failure_reason.as_deref(),
@@ -1386,7 +1793,7 @@ mod tests {
             ..Pod::default()
         };
 
-        let status = derive_status(&test_microvm(now), &pod, "agent-home", now);
+        let status = derive_status(&test_microvm(now), &pod, "agent-home", None, now);
         assert_eq!(status.phase, MicroVMPhase::Failed);
         assert_eq!(status.failure_reason.as_deref(), Some("Error"));
         assert_eq!(
