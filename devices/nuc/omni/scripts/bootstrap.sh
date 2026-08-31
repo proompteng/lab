@@ -38,6 +38,7 @@ for directory in "${OMNI_DATA_ROOT}" "${OMNI_DATA_ROOT}/backups" "${OMNI_DATA_RO
   "${OMNI_DATA_ROOT}/secrets" "${OMNI_DATA_ROOT}/sqlite" "${OMNI_DATA_ROOT}/tsidp"; do
   sudo install -d -m 0700 -o "${owner}" -g "${group}" "${directory}"
 done
+ensure_cluster_etcd_backup_directory
 
 key_path="${OMNI_DATA_ROOT}/secrets/omni.asc"
 if [[ ! -s "${key_path}" ]]; then

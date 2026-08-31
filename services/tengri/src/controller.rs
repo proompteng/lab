@@ -22,8 +22,10 @@ use crate::{
     crd::{MicroVM, MicroVMCondition, MicroVMDesiredState, MicroVMPhase, MicroVMStatus},
     metrics,
     pod::{
-        FINALIZER_NAME, MANAGER_NAME, bootstrap_secret_name, build_pod, ensure_bootstrap_secret,
-        ensure_pvc, has_current_storage_layout, is_controlled_by_microvm, pvc_name,
+        FINALIZER_NAME, KATA_HOME_BLOCK_INITIALIZATION_TOKEN_ANNOTATION, MANAGER_NAME,
+        PersistentBlockInitialization, bootstrap_secret_name, build_pod, ensure_bootstrap_secret,
+        ensure_pvc, has_current_storage_layout, is_controlled_by_microvm, mark_pvc_initialized,
+        pvc_name,
     },
     tickets::TicketStore,
 };
@@ -118,6 +120,8 @@ async fn reconcile(
     }
 
     if microvm.spec.desired_state == MicroVMDesiredState::Sleeping {
+        persist_storage_initialization_if_proven(&context.client, &pods, &namespace, &microvm)
+            .await?;
         context
             .tickets
             .remove_agent(&name)
@@ -166,8 +170,15 @@ async fn reconcile(
             return Err(error.into());
         }
     };
-    let pod = match ensure_runtime_pod(&pods, &microvm, &namespace, &bootstrap_secret, &home_claim)
-        .await
+    let pod = match ensure_runtime_pod(
+        &pods,
+        &microvm,
+        &namespace,
+        &bootstrap_secret,
+        &home_claim.name,
+        home_claim.initialization,
+    )
+    .await
     {
         Ok(pod) => pod,
         Err(error) => {
@@ -184,7 +195,29 @@ async fn reconcile(
             return Err(error.into());
         }
     };
-    let status = derive_status(&microvm, &pod, &home_claim, now);
+    if let Err(error) = persist_storage_initialization(
+        &context.client,
+        &pods,
+        &namespace,
+        &microvm,
+        &pod,
+        home_claim.initialization,
+    )
+    .await
+    {
+        report_provisioning_failure(
+            &microvms,
+            &pods,
+            &microvm,
+            "PersistentVolumeClaimInitializationStateRejected",
+            "persistent home claim initialization state",
+            &error,
+            now,
+        )
+        .await;
+        return Err(error.into());
+    }
+    let status = derive_status(&microvm, &pod, &home_claim.name, now);
 
     let ready_transition = status.phase == MicroVMPhase::Ready
         && microvm.status.as_ref().map(|value| value.phase) != Some(MicroVMPhase::Ready);
@@ -217,6 +250,7 @@ async fn ensure_runtime_pod(
     namespace: &str,
     bootstrap_secret: &str,
     home_claim: &str,
+    initialization: PersistentBlockInitialization,
 ) -> Result<Pod, kube::Error> {
     let name = microvm.name_any();
     if let Some(existing) = pods.get_opt(&name).await? {
@@ -254,13 +288,91 @@ async fn ensure_runtime_pod(
         ));
     }
 
-    let desired = build_pod(microvm, namespace, bootstrap_secret, home_claim);
+    let desired = build_pod(
+        microvm,
+        namespace,
+        bootstrap_secret,
+        home_claim,
+        initialization,
+    )?;
     pods.patch(
         &name,
         &PatchParams::apply(MANAGER_NAME).force(),
         &Patch::Apply(&desired),
     )
     .await
+}
+
+async fn persist_storage_initialization_if_proven(
+    client: &Client,
+    pods: &Api<Pod>,
+    namespace: &str,
+    microvm: &MicroVM,
+) -> Result<(), kube::Error> {
+    if !has_current_storage_layout(microvm) {
+        return Ok(());
+    }
+    let Some(pod) = pods.get_opt(&microvm.name_any()).await? else {
+        return Ok(());
+    };
+    if !is_controlled_by_microvm(&pod, microvm) || !pod_proves_storage_initialized(&pod) {
+        return Ok(());
+    }
+    let home_claim = ensure_pvc(client.clone(), namespace, microvm).await?;
+    persist_storage_initialization(
+        client,
+        pods,
+        namespace,
+        microvm,
+        &pod,
+        home_claim.initialization,
+    )
+    .await
+}
+
+async fn persist_storage_initialization(
+    client: &Client,
+    pods: &Api<Pod>,
+    namespace: &str,
+    microvm: &MicroVM,
+    pod: &Pod,
+    initialization: PersistentBlockInitialization,
+) -> Result<(), kube::Error> {
+    if !pod_proves_storage_initialized(pod) {
+        return Ok(());
+    }
+
+    if initialization == PersistentBlockInitialization::Pending {
+        mark_pvc_initialized(client.clone(), namespace, microvm).await?;
+    }
+    clear_pod_initialization_token(pods, pod).await?;
+    Ok(())
+}
+
+async fn clear_pod_initialization_token(pods: &Api<Pod>, pod: &Pod) -> Result<(), kube::Error> {
+    let has_token = pod
+        .metadata
+        .annotations
+        .as_ref()
+        .is_some_and(|annotations| {
+            annotations.contains_key(KATA_HOME_BLOCK_INITIALIZATION_TOKEN_ANNOTATION)
+        });
+    if !has_token {
+        return Ok(());
+    }
+
+    let name = pod.name_any();
+    let mut patch = json!({
+        "metadata": {
+            "resourceVersion": pod.resource_version(),
+            "annotations": {},
+        }
+    });
+    patch["metadata"]["annotations"][KATA_HOME_BLOCK_INITIALIZATION_TOKEN_ANNOTATION] =
+        serde_json::Value::Null;
+    pods.patch(&name, &PatchParams::default(), &Patch::Merge(&patch))
+        .await?;
+    Ok(())
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -777,6 +889,23 @@ fn pod_is_ready(pod: &Pod) -> bool {
         .is_some_and(|condition| condition.status == "True")
 }
 
+fn pod_proves_storage_initialized(pod: &Pod) -> bool {
+    pod.status
+        .as_ref()
+        .and_then(|status| status.container_statuses.as_ref())
+        .and_then(|statuses| statuses.iter().find(|status| status.name == "nanoagent"))
+        .is_some_and(|status| {
+            status
+                .state
+                .as_ref()
+                .is_some_and(|state| state.running.is_some() || state.terminated.is_some())
+                || status
+                    .last_state
+                    .as_ref()
+                    .is_some_and(|state| state.terminated.is_some())
+        })
+}
+
 fn condition(
     microvm: &MicroVM,
     type_: &str,
@@ -867,7 +996,8 @@ mod tests {
     use crate::crd::{IDLE_MINUTES, MicroVMArchitecture, MicroVMResources, MicroVMSpec};
     use http::{Request, Response, StatusCode};
     use k8s_openapi::api::core::v1::{
-        ContainerState, ContainerStateTerminated, ContainerStateWaiting, PodCondition, PodStatus,
+        ContainerState, ContainerStateRunning, ContainerStateTerminated, ContainerStateWaiting,
+        PodCondition, PodStatus,
     };
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
     use kube::client::Body as KubeBody;
@@ -1118,6 +1248,115 @@ mod tests {
             status.message.as_deref(),
             Some("bootstrap Secret is missing")
         );
+    }
+
+    #[test]
+    fn container_creation_proves_persistent_storage_initialization() {
+        let running = Pod {
+            status: Some(PodStatus {
+                container_statuses: Some(vec![ContainerStatus {
+                    name: "nanoagent".to_owned(),
+                    state: Some(ContainerState {
+                        running: Some(ContainerStateRunning::default()),
+                        ..ContainerState::default()
+                    }),
+                    ..ContainerStatus::default()
+                }]),
+                ..PodStatus::default()
+            }),
+            ..Pod::default()
+        };
+        assert!(pod_proves_storage_initialized(&running));
+
+        let restarted = Pod {
+            status: Some(PodStatus {
+                container_statuses: Some(vec![ContainerStatus {
+                    name: "nanoagent".to_owned(),
+                    state: Some(ContainerState {
+                        waiting: Some(ContainerStateWaiting::default()),
+                        ..ContainerState::default()
+                    }),
+                    last_state: Some(ContainerState {
+                        terminated: Some(ContainerStateTerminated::default()),
+                        ..ContainerState::default()
+                    }),
+                    ..ContainerStatus::default()
+                }]),
+                ..PodStatus::default()
+            }),
+            ..Pod::default()
+        };
+        assert!(pod_proves_storage_initialized(&restarted));
+
+        let never_created = Pod {
+            status: Some(PodStatus {
+                container_statuses: Some(vec![ContainerStatus {
+                    name: "nanoagent".to_owned(),
+                    state: Some(ContainerState {
+                        waiting: Some(ContainerStateWaiting::default()),
+                        ..ContainerState::default()
+                    }),
+                    ..ContainerStatus::default()
+                }]),
+                ..PodStatus::default()
+            }),
+            ..Pod::default()
+        };
+        assert!(!pod_proves_storage_initialized(&never_created));
+    }
+
+    #[tokio::test]
+    async fn successful_initialization_removes_authorization_from_the_live_pod() {
+        let pod = Pod {
+            metadata: kube::core::ObjectMeta {
+                name: Some("agent".to_owned()),
+                namespace: Some("tengri".to_owned()),
+                resource_version: Some("9".to_owned()),
+                annotations: Some(std::collections::BTreeMap::from([(
+                    KATA_HOME_BLOCK_INITIALIZATION_TOKEN_ANNOTATION.to_owned(),
+                    "tengri-token".to_owned(),
+                )])),
+                ..kube::core::ObjectMeta::default()
+            },
+            ..Pod::default()
+        };
+        let (service, mut handle) =
+            tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
+        let client = Client::new(service, "tengri");
+        let pods = Api::namespaced(client, "tengri");
+        let clear = tokio::spawn(async move { clear_pod_initialization_token(&pods, &pod).await });
+
+        let (request, response) = handle.next_request().await.expect("Pod annotation patch");
+        assert_eq!(request.method(), http::Method::PATCH);
+        assert_eq!(request.uri().path(), "/api/v1/namespaces/tengri/pods/agent");
+        let body: serde_json::Value = serde_json::from_slice(
+            &request
+                .into_body()
+                .collect_bytes()
+                .await
+                .expect("collect Pod patch"),
+        )
+        .expect("Pod patch JSON");
+        assert_eq!(body["metadata"]["resourceVersion"], "9");
+        assert_eq!(
+            body["metadata"]["annotations"][KATA_HOME_BLOCK_INITIALIZATION_TOKEN_ANNOTATION],
+            serde_json::Value::Null
+        );
+        response.send_response(
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(KubeBody::from(
+                    br#"{"apiVersion":"v1","kind":"Pod","metadata":{"name":"agent","namespace":"tengri"}}"#
+                        .to_vec(),
+                ))
+                .expect("Pod patch response"),
+        );
+
+        clear
+            .await
+            .expect("clear authorization task")
+            .expect("clear authorization");
     }
 
     #[test]
@@ -1485,7 +1724,15 @@ mod tests {
         let client = Client::new(service, "tengri");
         let pods = Api::namespaced(client, "tengri");
         let ensure = tokio::spawn(async move {
-            ensure_runtime_pod(&pods, &microvm, "tengri", "agent-bootstrap", "agent-home").await
+            ensure_runtime_pod(
+                &pods,
+                &microvm,
+                "tengri",
+                "agent-bootstrap",
+                "agent-home",
+                PersistentBlockInitialization::Pending,
+            )
+            .await
         });
 
         let (request, response) = handle.next_request().await.expect("existing Pod lookup");
