@@ -15,7 +15,7 @@ use std::{env, net::SocketAddr, path::PathBuf, time::Duration};
 use activity::ActivityTracker;
 use anyhow::Context as _;
 use crd::MicroVMArchitecture;
-use gateway::GatewayState;
+use gateway::{GatewayState, PreviewOrigin};
 use grpc::{
     ControlPlane, ControlPlaneConfig,
     proto::micro_vm_control_plane_server::MicroVmControlPlaneServer,
@@ -75,6 +75,7 @@ async fn main() -> anyhow::Result<()> {
     let public_url = required_env("TENGRI_PUBLIC_URL")?;
     let preview_url_template = required_env("TENGRI_PREVIEW_URL_TEMPLATE")?;
     let desktop_origin = required_env("TENGRI_DESKTOP_ORIGIN")?;
+    let preview_origin = PreviewOrigin::parse(preview_url_template, desktop_origin)?;
     let client = Client::try_default()
         .await
         .context("create Kubernetes client")?;
@@ -90,6 +91,7 @@ async fn main() -> anyhow::Result<()> {
             internal_hmac_secret,
             ticket_signing_secret,
             public_url,
+            preview_origin: preview_origin.clone(),
         },
         activity.clone(),
     )?;
@@ -103,8 +105,7 @@ async fn main() -> anyhow::Result<()> {
         namespace.clone(),
         tickets.clone(),
         activity,
-        preview_url_template,
-        desktop_origin,
+        preview_origin,
     )?;
     let gateway_listener = TcpListener::bind(gateway_address)
         .await

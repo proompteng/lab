@@ -16,7 +16,6 @@ Companion doc:
 Extends:
 
 - `61-jangar-runtime-kits-and-admission-passports-contract-2026-03-20.md`
-- `61-jangar-runtime-kit-ledger-and-execution-class-admission-contract-2026-03-20.md`
 - `60-jangar-recovery-ledger-and-consumer-attestation-contract-2026-03-20.md`
 
 ## Executive summary

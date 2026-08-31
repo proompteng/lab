@@ -146,6 +146,18 @@ beforeAll(async () => {
         truncated: true,
       })
     },
+    issuePreviewSession(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedRequest = call.request
+      callback(null, {
+        id: 'preview12345678901234567',
+        launchUrl: 'https://tengri.example/v1/preview/open#ticket.signature',
+        expiresAt: '2026-08-27T00:00:30Z',
+        previewOrigin: 'https://tengri-preview12345678901234567.example',
+      })
+    },
     watchFiles(call: grpc.ServerWritableStream<Record<string, unknown>, Record<string, unknown>>) {
       receivedMetadata = call.metadata
       receivedRequest = call.request
@@ -266,28 +278,69 @@ describe('Tengri gRPC BFF transport', () => {
     })
   })
 
-  test('canonicalizes proto3 scalar defaults before signing streaming requests', async () => {
+  test('keeps the preview fragment separate from the guest proxy path', async () => {
+    const { issuePreviewSession } = await import('./grpc')
+    const session = await issuePreviewSession('github:42', 'agent-test', 4321, '/app?mode=dev', '#editor')
+
+    expect(receivedRequest).toEqual({
+      agentId: 'agent-test',
+      port: 4321,
+      path: '/app?mode=dev',
+      fragment: '#editor',
+    })
+    expect(session).toEqual({
+      id: 'preview12345678901234567',
+      launchUrl: 'https://tengri.example/v1/preview/open#ticket.signature',
+      expiresAt: '2026-08-27T00:00:30Z',
+      previewOrigin: 'https://tengri-preview12345678901234567.example',
+    })
+  })
+
+  test('distinguishes an initial file watch from an explicit zero resume cursor', async () => {
     const { watchFiles } = await import('./grpc')
-    const stream = watchFiles('github:42', 'agent-test', '/workspace', 0)
+    const stream = watchFiles('github:42', 'agent-test', '/workspace')
     await new Promise<void>((resolve, reject) => {
       stream.on('error', reject)
       stream.on('end', resolve)
       stream.resume()
     })
 
-    expect(receivedRequest).toMatchObject({ agentId: 'agent-test', path: '/workspace', afterSequence: '0' })
+    expect(receivedRequest).toMatchObject({ agentId: 'agent-test', path: '/workspace' })
+    expect(receivedRequest).not.toHaveProperty('afterSequence')
+    expect(receivedRequest?._afterSequence).toBeUndefined()
     const subject = metadataValue('x-tengri-subject')
     const timestamp = metadataValue('x-tengri-timestamp')
     const nonce = metadataValue('x-tengri-nonce')
     const method = descriptor.proompteng.runtime.v1.MicroVMControlPlane.service.WatchFiles
-    const canonicalBody = method.requestSerialize({ agentId: 'agent-test', path: '/workspace' })
-    const noncanonicalBody = method.requestSerialize({ agentId: 'agent-test', path: '/workspace', afterSequence: 0 })
-    expect(noncanonicalBody.equals(canonicalBody)).toBeFalse()
-    const bodyHash = createHash('sha256').update(canonicalBody).digest('hex')
+    const initialBody = method.requestSerialize({ agentId: 'agent-test', path: '/workspace' })
+    const explicitZeroBody = method.requestSerialize({ agentId: 'agent-test', path: '/workspace', afterSequence: 0 })
+    expect(explicitZeroBody.equals(initialBody)).toBeFalse()
+    const bodyHash = createHash('sha256').update(initialBody).digest('hex')
 
     expect(metadataValue('x-tengri-signature')).toBe(
       createHmac('sha256', secret)
         .update(`${subject}\n${timestamp}\n${nonce}\n${method.path}\n${bodyHash}`)
+        .digest('hex'),
+    )
+
+    const resumed = watchFiles('github:42', 'agent-test', '/workspace', 0)
+    await new Promise<void>((resolve, reject) => {
+      resumed.on('error', reject)
+      resumed.on('end', resolve)
+      resumed.resume()
+    })
+    expect(receivedRequest).toMatchObject({
+      agentId: 'agent-test',
+      path: '/workspace',
+      afterSequence: '0',
+      _afterSequence: 'afterSequence',
+    })
+    const resumedBodyHash = createHash('sha256').update(explicitZeroBody).digest('hex')
+    expect(metadataValue('x-tengri-signature')).toBe(
+      createHmac('sha256', secret)
+        .update(
+          `${metadataValue('x-tengri-subject')}\n${metadataValue('x-tengri-timestamp')}\n${metadataValue('x-tengri-nonce')}\n${method.path}\n${resumedBodyHash}`,
+        )
         .digest('hex'),
     )
   })
