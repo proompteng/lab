@@ -286,7 +286,9 @@ const lifecycleCondition = (
   if (current === null) {
     if (projection.last?.phase === CycleState.Blocked) {
       return [
-        maximumAuthority === Authority.Execution ? CycleOperationsCondition.Failed : CycleOperationsCondition.Waiting,
+        projection.last.terminalReason === CycleTerminalReason.Authority || maximumAuthority !== Authority.Execution
+          ? CycleOperationsCondition.Waiting
+          : CycleOperationsCondition.Failed,
         CycleOperationsReason.LastCycleBlocked,
       ]
     }
