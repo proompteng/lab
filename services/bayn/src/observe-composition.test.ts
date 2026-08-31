@@ -79,6 +79,7 @@ import {
   blockedEntryRequiresCloseOnlyContainment,
   countOpenPositions,
   decideExecutionCycleCloseDocument,
+  decideUnboundExecutionCycleTerminalization,
   decideReconciledExecutionCycleCompletion,
   decideReconciledExecutionCycleTerminalization,
   decidePendingMutationObservation,
@@ -219,6 +220,116 @@ test('PAPER submissions obey separate entry and final close-session cutoffs', ()
       observedAt: '2020-05-03T20:00:00.000Z',
     }),
   ).toBe(false)
+})
+
+test('terminalizes a restricted unbound execution cycle before cutoff without enabling mutation', () => {
+  const cutoffAt = '2020-05-01T13:00:00.000Z'
+  const observedAt = '2020-05-01T12:00:00.000Z'
+
+  expect(
+    decideUnboundExecutionCycleTerminalization({
+      capability: 'RecoveryOnly',
+      executionMandateCutoffAt: cutoffAt,
+      observedAt,
+    }),
+  ).toBe(CycleTerminalReason.Authority)
+  expect(
+    decideUnboundExecutionCycleTerminalization({
+      capability: 'Mutation',
+      executionMandateCutoffAt: cutoffAt,
+      observedAt,
+    }),
+  ).toBeUndefined()
+  expect(
+    decideUnboundExecutionCycleTerminalization({
+      capability: 'Mutation',
+      executionMandateCutoffAt: cutoffAt,
+      observedAt: cutoffAt,
+    }),
+  ).toBe(CycleTerminalReason.Authority)
+})
+
+test('restricted mutation startup terminalizes its unbound cycle before building a decision', async () => {
+  const observedAt = utcInstantFromEpochMillis(Date.parse(cycle.window.submissionOpenAt) + 1_000)
+  const terminalCycle = Effect.runSync(
+    decodeAutonomousCycle({
+      ...cycle,
+      state: CycleState.Blocked,
+      terminalReason: CycleTerminalReason.Authority,
+      stateVersion: cycle.stateVersion + 1,
+      updatedAt: observedAt,
+      terminalAt: observedAt,
+    }),
+  )
+  let blockCount = 0
+  const forbidden = (capability: string) => Effect.die(new Error(`restricted cycle must not use ${capability}`))
+  const cycleStore: CycleStoreShape = {
+    acquire: () => forbidden('cycle acquisition'),
+    read: () => forbidden('cycle read by ID'),
+    readAuthoritySlot: () => forbidden('authority-slot read'),
+    readOldestUnfinished: () => Effect.succeed(Option.some(cycle)),
+    readDecisionDocument: () => forbidden('decision document read'),
+    bindSnapshot: () => forbidden('snapshot binding'),
+    activate: () => forbidden('cycle activation'),
+    bindDecision: () => forbidden('decision binding'),
+    finish: () => forbidden('cycle finishing'),
+    block: (cycleId, reason, blockedAt) =>
+      Effect.sync(() => {
+        blockCount += 1
+        expect({ cycleId, reason, blockedAt }).toEqual({
+          cycleId: cycle.identity.cycleId,
+          reason: CycleTerminalReason.Authority,
+          blockedAt: observedAt,
+        })
+        return { cycle: terminalCycle, changed: true }
+      }),
+  }
+  const reconciliationServices = makeExactReconciliationServices()
+  const executionStore = reconciliationServices.executionStore
+
+  const advance = await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(observedAt))
+      const driverEffect = yield* makeMutationAutonomousCycleStartupProduction(
+        {
+          accountId,
+          authorityGenerationHash: generationHash,
+          pollIntervalMs: 30_000,
+          reconciliationIntervalMs: 30_000,
+          reconciliationPassTimeoutMs: 30_000,
+          strategy: currentIntradayRuntime,
+          executionProgram: sandboxExecutionProgram(),
+          executionMandateCutoffAt: cycle.window.submissionCutoffAt,
+        },
+        'RecoveryOnly',
+      )({
+        cycleBindingId: cycle.identity.qualificationRunId,
+        recordPass: () => Effect.void,
+      })
+      const driver = yield* driverEffect
+      return yield* driver.advance
+    }).pipe(
+      Effect.provideService(BrokerRead, reconciliationServices.brokerRead),
+      Effect.provideService(CycleStore, cycleStore),
+      Effect.provideService(BrokerEventStore, executionStore),
+      Effect.provideService(FillAccountingStore, executionStore),
+      Effect.provideService(ValuationStore, executionStore),
+      Effect.provideService(ReconciliationStore, executionStore),
+      Effect.provideService(AuthorityGenerationStore, executionStore),
+      Effect.provideService(AuthorityRestrictionStore, executionStore),
+      Effect.provideService(IntentStore, {} as IntentStoreService),
+      Effect.provideService(MutationStore, {} as MutationStoreShape),
+      Effect.provideService(WriterFence, reconciliationServices.writerFence),
+      Effect.provide(TestClock.layer()),
+    ),
+  )
+
+  expect(advance.result).toMatchObject({
+    outcome: 'RECOVERED',
+    action: 'BLOCKED',
+    cycle: { state: CycleState.Blocked, terminalReason: CycleTerminalReason.Authority },
+  })
+  expect(blockCount).toBe(1)
 })
 
 test('requires a bounded residual close replan after a settled close leaves a position open', () => {

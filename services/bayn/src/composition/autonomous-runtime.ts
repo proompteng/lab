@@ -631,6 +631,7 @@ export const makeAutonomousServiceRuntime = (
                                             onClosedCycle,
                                             maintainExecutionLifecycle,
                                             dependencies.intradayMarketData,
+                                            restricted ? 'RecoveryOnly' : 'Mutation',
                                           ),
                                           owner,
                                         )(startup).pipe(
