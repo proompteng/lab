@@ -64,7 +64,8 @@ Prefer the Sol-specific guidance when the sources differ.
 - TypeScript formatting and linting: `bun run format`, `bun run lint:<name>`, `bunx oxfmt --check <paths>`.
 - Protobufs: `bun run proto:generate`.
 - Go: `go test ./services/...`, `go build ./services/...`; run `go mod tidy` in a service when dependencies change.
-- Infrastructure: `bun run tf:plan`, `bun run tf:apply`, `bun run lint:argocd`, `bun run ansible`.
+- Infrastructure: validate desired state with `bun run lint:argocd`. Follow `devices/galactic/README.md` for the current
+  Talos/Omni cluster and run any OpenTofu or Ansible operation only from its explicitly selected, currently owned stack.
 - Scope workspace commands with `bun run --filter <workspace> <script>`.
 - Focused tests: `bun run --filter <workspace> test -- <file> -t "<name>"`, `bun test -t "<name>" <file>`, `go test ./services/prt -run <TestName>`, `./gradlew test --tests "<class>"`, `bundle exec rails test <file>:<line>`, or `pytest <file> -k "<pattern>"`.
 

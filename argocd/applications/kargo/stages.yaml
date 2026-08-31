@@ -1054,14 +1054,6 @@ spec:
                 value: '${{ imageFrom(vars.imageRepo).Tag }}'
               - key: images.0.digest
                 value: '${{ imageFrom(vars.imageRepo).Digest }}'
-        - uses: yaml-update
-          config:
-            path: ./out/argocd/applications/symphony-torghut/kustomization.yaml
-            updates:
-              - key: images.0.newTag
-                value: '${{ imageFrom(vars.imageRepo).Tag }}'
-              - key: images.0.digest
-                value: '${{ imageFrom(vars.imageRepo).Digest }}'
         - uses: git-commit
           as: commit
           config:
@@ -1088,11 +1080,6 @@ spec:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
               - name: symphony-jangar
-                namespace: argocd
-                sources:
-                  - repoURL: https://github.com/proompteng/lab.git
-                    desiredRevision: ${{ outputs.commit.commit }}
-              - name: symphony-torghut
                 namespace: argocd
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
@@ -1163,37 +1150,13 @@ spec:
                 digest: ${{ imageFrom(vars.imageRepo).Digest }}
         - uses: kustomize-set-image
           config:
-            path: ./out/argocd/applications/torghut-options
-            images:
-              - image: ${{ vars.imageRepo }}
-                digest: ${{ imageFrom(vars.imageRepo).Digest }}
-        - uses: kustomize-set-image
-          config:
-            path: ./out/argocd/applications/torghut-hyperliquid-runtime
-            images:
-              - image: ${{ vars.imageRepo }}
-                digest: ${{ imageFrom(vars.imageRepo).Digest }}
-        - uses: kustomize-set-image
-          config:
             path: ./out/argocd/applications/torghut
             images:
               - image: ${{ vars.taImageRepo }}
                 digest: ${{ imageFrom(vars.taImageRepo).Digest }}
         - uses: kustomize-set-image
           config:
-            path: ./out/argocd/applications/torghut-options
-            images:
-              - image: ${{ vars.taImageRepo }}
-                digest: ${{ imageFrom(vars.taImageRepo).Digest }}
-        - uses: kustomize-set-image
-          config:
             path: ./out/argocd/applications/torghut
-            images:
-              - image: ${{ vars.wsImageRepo }}
-                digest: ${{ imageFrom(vars.wsImageRepo).Digest }}
-        - uses: kustomize-set-image
-          config:
-            path: ./out/argocd/applications/torghut-options
             images:
               - image: ${{ vars.wsImageRepo }}
                 digest: ${{ imageFrom(vars.wsImageRepo).Digest }}
@@ -1301,22 +1264,6 @@ spec:
                 value: linux/amd64,linux/arm64
         - uses: yaml-update
           config:
-            path: ./out/argocd/applications/torghut-hyperliquid-runtime/deployment.yaml
-            updates:
-              - key: spec.template.spec.containers.0.env.0.value
-                value: "${{ trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
-              - key: spec.template.spec.containers.0.env.1.value
-                value: '${{ imageFrom(vars.imageRepo).Digest }}'
-        - uses: yaml-update
-          config:
-            path: ./out/argocd/applications/torghut-hyperliquid-runtime/db-migrations-job.yaml
-            updates:
-              - key: spec.template.spec.containers.0.env.0.value
-                value: "${{ trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
-              - key: spec.template.spec.containers.0.env.1.value
-                value: '${{ imageFrom(vars.imageRepo).Digest }}'
-        - uses: yaml-update
-          config:
             path: ./out/argocd/applications/torghut/ta/flinkdeployment.yaml
             updates:
               - key: spec.image
@@ -1347,16 +1294,6 @@ spec:
                 value: "${{ trimPrefix(imageFrom(vars.taImageRepo).Tag, 'kargo-sha-') }}"
         - uses: yaml-update
           config:
-            path: ./out/argocd/applications/torghut-options/ta/flinkdeployment.yaml
-            updates:
-              - key: spec.image
-                value: "${{ vars.taImageRepo }}@${{ imageFrom(vars.taImageRepo).Digest }}"
-              - key: spec.podTemplate.spec.containers.0.env.11.value
-                value: '${{ imageFrom(vars.taImageRepo).Tag }}'
-              - key: spec.podTemplate.spec.containers.0.env.12.value
-                value: "${{ trimPrefix(imageFrom(vars.taImageRepo).Tag, 'kargo-sha-') }}"
-        - uses: yaml-update
-          config:
             path: ./out/argocd/applications/torghut/ws/deployment.yaml
             updates:
               - key: spec.template.spec.containers.0.image
@@ -1365,40 +1302,6 @@ spec:
                 value: '${{ imageFrom(vars.wsImageRepo).Tag }}'
               - key: spec.template.spec.containers.0.env.8.value
                 value: "${{ trimPrefix(imageFrom(vars.wsImageRepo).Tag, 'kargo-sha-') }}"
-        - uses: yaml-update
-          config:
-            path: ./out/argocd/applications/torghut-options/ws/deployment.yaml
-            updates:
-              - key: spec.template.spec.containers.0.image
-                value: "${{ vars.wsImageRepo }}@${{ imageFrom(vars.wsImageRepo).Digest }}"
-              - key: spec.template.spec.containers.0.env.4.value
-                value: '${{ imageFrom(vars.wsImageRepo).Tag }}'
-              - key: spec.template.spec.containers.0.env.5.value
-                value: "${{ trimPrefix(imageFrom(vars.wsImageRepo).Tag, 'kargo-sha-') }}"
-        - uses: yaml-update
-          config:
-            path: ./out/argocd/applications/torghut-options/archive/deployment.yaml
-            updates:
-              - key: spec.template.spec.containers.0.env.5.value
-                value: '${{ imageFrom(vars.imageRepo).Tag }}'
-              - key: spec.template.spec.containers.0.env.6.value
-                value: "${{ trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
-        - uses: yaml-update
-          config:
-            path: ./out/argocd/applications/torghut-options/catalog/deployment.yaml
-            updates:
-              - key: spec.template.spec.containers.0.env.8.value
-                value: '${{ imageFrom(vars.imageRepo).Tag }}'
-              - key: spec.template.spec.containers.0.env.9.value
-                value: "${{ trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
-        - uses: yaml-update
-          config:
-            path: ./out/argocd/applications/torghut-options/enricher/deployment.yaml
-            updates:
-              - key: spec.template.spec.containers.0.env.7.value
-                value: '${{ imageFrom(vars.imageRepo).Tag }}'
-              - key: spec.template.spec.containers.0.env.8.value
-                value: "${{ trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
         - uses: git-commit
           as: commit
           config:
@@ -1420,107 +1323,6 @@ spec:
           config:
             apps:
               - name: torghut
-                namespace: argocd
-                sources:
-                  - repoURL: https://github.com/proompteng/lab.git
-                    desiredRevision: ${{ outputs.commit.commit }}
-              - name: torghut-options
-                namespace: argocd
-                sources:
-                  - repoURL: https://github.com/proompteng/lab.git
-                    desiredRevision: ${{ outputs.commit.commit }}
-              - name: torghut-hyperliquid-runtime
-                namespace: argocd
-                sources:
-                  - repoURL: https://github.com/proompteng/lab.git
-                    desiredRevision: ${{ outputs.commit.commit }}
----
-apiVersion: kargo.akuity.io/v1alpha1
-kind: Stage
-metadata:
-  name: torghut-hyperliquid-feed
-  namespace: lab-delivery
-  labels:
-    delivery.proompteng.ai/managed-by: kargo
-spec:
-  vars:
-    - name: gitRepo
-      value: git@github.com:proompteng/lab.git
-    - name: targetBranch
-      value: kargo/torghut-hyperliquid-feed
-    - name: srcPath
-      value: ./src
-    - name: outPath
-      value: ./out
-    - name: imageRepo
-      value: registry.ide-newton.ts.net/lab/torghut-hyperliquid-feed
-  requestedFreight:
-    - origin:
-        kind: Warehouse
-        name: torghut-hyperliquid-feed
-      sources:
-        direct: true
-        autoPromotionOptions:
-          selectionPolicy: NewestFreight
-  promotionTemplate:
-    spec:
-      steps:
-        - uses: git-clone
-          config:
-            repoURL: ${{ vars.gitRepo }}
-            author:
-              name: Kargo
-              email: kargo@proompteng.ai
-            checkout:
-              - commit: ${{ commitFrom(vars.gitRepo).ID }}
-                path: ${{ vars.srcPath }}
-              - branch: ${{ vars.targetBranch }}
-                create: true
-                path: ${{ vars.outPath }}
-        - uses: git-clear
-          config:
-            path: ${{ vars.outPath }}
-        - uses: copy
-          config:
-            inPath: ${{ vars.srcPath }}
-            outPath: ${{ vars.outPath }}
-        - uses: kustomize-set-image
-          config:
-            path: ./out/argocd/applications/torghut-hyperliquid-feed
-            images:
-              - image: ${{ vars.imageRepo }}
-                digest: ${{ imageFrom(vars.imageRepo).Digest }}
-        - uses: yaml-update
-          config:
-            path: ./out/argocd/applications/torghut-hyperliquid-feed/deployment.yaml
-            updates:
-              - key: spec.template.spec.containers.0.image
-                value: "${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}"
-              - key: spec.template.spec.containers.0.env.0.value
-                value: '${{ imageFrom(vars.imageRepo).Tag }}'
-              - key: spec.template.spec.containers.0.env.1.value
-                value: "${{ trimPrefix(imageFrom(vars.imageRepo).Tag, 'kargo-sha-') }}"
-              - key: spec.template.spec.containers.0.env.2.value
-                value: '${{ imageFrom(vars.imageRepo).Digest }}'
-        - uses: git-commit
-          as: commit
-          config:
-            path: ${{ vars.outPath }}
-            message: |
-              kargo(torghut-hyperliquid-feed): promote ${{ ctx.targetFreight.name }}
-        - uses: git-push
-          as: push
-          config:
-            path: ${{ vars.outPath }}
-            targetBranch: ${{ vars.targetBranch }}
-        - uses: argocd-update
-          as: deploy
-          retry:
-            timeout: 20m0s
-            errorThreshold: 3
-          config:
-            apps:
-              - name: torghut-hyperliquid-feed
                 namespace: argocd
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
@@ -1827,7 +1629,10 @@ metadata:
     delivery.proompteng.ai/managed-by: kargo
 spec:
   vars:
-    - name: gitRepo
+    # Freight identity follows the Warehouse's HTTPS source; promotion writes still use the sealed SSH key.
+    - name: freightGitRepo
+      value: https://github.com/proompteng/lab.git
+    - name: pushGitRepo
       value: git@github.com:proompteng/lab.git
     - name: targetBranch
       value: kargo/tengri
@@ -1859,12 +1664,12 @@ spec:
             message: tengri images must be built from the same commit
         - uses: git-clone
           config:
-            repoURL: ${{ vars.gitRepo }}
+            repoURL: ${{ vars.pushGitRepo }}
             author:
               name: Kargo
               email: kargo@proompteng.ai
             checkout:
-              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+              - commit: ${{ commitFrom(vars.freightGitRepo).ID }}
                 path: ${{ vars.srcPath }}
               - branch: ${{ vars.targetBranch }}
                 create: true

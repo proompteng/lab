@@ -18,6 +18,7 @@ spec:
         branch: main
         commitSelectionStrategy: NewestFromBranch
         discoveryLimit: 20
+        blobless: true
         strictSemvers: true
         includePaths:
           - apps/landing
@@ -41,7 +42,7 @@ spec:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/proompteng
         imageSelectionStrategy: NewestBuild
-        discoveryLimit: 20
+        discoveryLimit: 1
         strictSemvers: true
         allowTagsRegexes:
           - '^kargo-sha-[0-9a-f]{40}$'
@@ -551,7 +552,6 @@ spec:
           - nix/oci-push.sh
           - argocd/applications/symphony
           - argocd/applications/symphony-jangar
-          - argocd/applications/symphony-torghut
           - argocd/applications/symphony-base
     - image:
         repoURL: registry.ide-newton.ts.net/lab/symphony
@@ -622,8 +622,6 @@ spec:
           - .github/workflows/torghut-post-deploy-verify.yml
           - nix/oci-push.sh
           - argocd/applications/torghut
-          - argocd/applications/torghut-options
-          - argocd/applications/torghut-hyperliquid-runtime
         excludePaths:
           - packages/scripts/src/torghut/__tests__
           - 'glob:packages/scripts/src/torghut/**/*.test.ts'
@@ -665,51 +663,6 @@ spec:
         cacheByTag: true
     - image:
         repoURL: registry.ide-newton.ts.net/lab/signal-publisher
-        imageSelectionStrategy: NewestBuild
-        discoveryLimit: 20
-        strictSemvers: true
-        allowTagsRegexes:
-          - '^kargo-sha-[0-9a-f]{40}$'
-        platform: linux/amd64
-        cacheByTag: true
----
-apiVersion: kargo.akuity.io/v1alpha1
-kind: Warehouse
-metadata:
-  name: torghut-hyperliquid-feed
-  namespace: lab-delivery
-  labels:
-    delivery.proompteng.ai/managed-by: kargo
-spec:
-  interval: 1m0s
-  freightCreationPolicy: Automatic
-  freightCreationCriteria:
-    expression: >-
-      imageFrom('registry.ide-newton.ts.net/lab/torghut-hyperliquid-feed').Tag == 'kargo-sha-' +
-      commitFrom('git@github.com:proompteng/lab.git').ID
-  subscriptions:
-    - git:
-        repoURL: git@github.com:proompteng/lab.git
-        branch: main
-        commitSelectionStrategy: NewestFromBranch
-        discoveryLimit: 20
-        strictSemvers: true
-        includePaths:
-          - services/dorvud/gradle
-          - services/dorvud/gradlew
-          - services/dorvud/gradle.properties
-          - services/dorvud/settings.gradle.kts
-          - services/dorvud/build.gradle.kts
-          - services/dorvud/platform
-          - services/dorvud/hyperliquid-feed
-          - nix/images/dorvud-jvm-service.nix
-          - nix/images/torghut-hyperliquid-feed.nix
-          - .github/workflows/nix-oci-build-common.yml
-          - packages/scripts/src/shared/oci.ts
-          - nix/oci-push.sh
-          - argocd/applications/torghut-hyperliquid-feed
-    - image:
-        repoURL: registry.ide-newton.ts.net/lab/torghut-hyperliquid-feed
         imageSelectionStrategy: NewestBuild
         discoveryLimit: 20
         strictSemvers: true
@@ -892,12 +845,13 @@ spec:
   freightCreationCriteria:
     expression: >-
       imageFrom('registry.ide-newton.ts.net/lab/tengri').Tag == 'kargo-sha-' +
-      commitFrom('git@github.com:proompteng/lab.git').ID &&
+      commitFrom('https://github.com/proompteng/lab.git').ID &&
       imageFrom('registry.ide-newton.ts.net/lab/nanoagent').Tag == 'kargo-sha-' +
-      commitFrom('git@github.com:proompteng/lab.git').ID
+      commitFrom('https://github.com/proompteng/lab.git').ID
   subscriptions:
     - git:
-        repoURL: git@github.com:proompteng/lab.git
+        # Public HTTPS discovery gets Kargo's HTTP stall detection; the Stage keeps SSH only for pushes.
+        repoURL: https://github.com/proompteng/lab.git
         branch: main
         commitSelectionStrategy: NewestFromBranch
         discoveryLimit: 20

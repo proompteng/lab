@@ -29,6 +29,7 @@ pub enum TicketScope {
         session_id: String,
         port: u16,
         initial_path: String,
+        initial_fragment: String,
     },
 }
 
@@ -48,6 +49,7 @@ pub struct PreviewSessionRecord {
     pub agent_id: String,
     pub port: u16,
     pub initial_path: String,
+    pub initial_fragment: String,
     pub expires_at: SystemTime,
 }
 
@@ -114,6 +116,7 @@ impl TicketStore {
         agent_id: &str,
         port: u16,
         initial_path: &str,
+        initial_fragment: &str,
     ) -> Result<IssuedTicket, Status> {
         let session_id = random_dns_label(PREVIEW_SESSION_LABEL_LENGTH);
         let mut issued = self.issue(
@@ -123,6 +126,7 @@ impl TicketStore {
                 session_id: session_id.clone(),
                 port,
                 initial_path: initial_path.to_owned(),
+                initial_fragment: initial_fragment.to_owned(),
             },
             "/v1/preview/open",
             Some('#'),
@@ -160,6 +164,7 @@ impl TicketStore {
             session_id,
             port,
             initial_path,
+            initial_fragment,
         } = ticket.scope
         else {
             return Err(Status::permission_denied(
@@ -191,6 +196,7 @@ impl TicketStore {
             agent_id: ticket.agent_id,
             port,
             initial_path,
+            initial_fragment,
             expires_at: SystemTime::now() + PREVIEW_SESSION_LIFETIME,
         };
         previews.insert(session.id.clone(), session.clone());
@@ -447,7 +453,7 @@ mod tests {
             .issue_terminal("owner", "agent-a", "terminal")
             .expect("terminal ticket");
         let preview = store
-            .issue_preview("owner", "agent-a", 3000, "/")
+            .issue_preview("owner", "agent-a", 3000, "/", "")
             .expect("preview ticket");
         let other = store
             .issue_terminal("owner", "agent-b", "terminal")
@@ -465,7 +471,13 @@ mod tests {
         let store =
             TicketStore::new("https://tengri.example".to_owned(), "s".repeat(32)).expect("store");
         let ticket = store
-            .issue_preview(&"a".repeat(64), "agent", 3000, "/dashboard?mode=dev")
+            .issue_preview(
+                &"a".repeat(64),
+                "agent",
+                3000,
+                "/dashboard?mode=dev",
+                "#editor",
+            )
             .expect("preview ticket");
         let launch = reqwest::Url::parse(&ticket.url).expect("preview launch URL");
         assert_eq!(launch.query(), None);
@@ -476,6 +488,7 @@ mod tests {
         assert_eq!(session.id, ticket.id);
         assert_eq!(session.id.len(), 24);
         assert_eq!(session.initial_path, "/dashboard?mode=dev");
+        assert_eq!(session.initial_fragment, "#editor");
         assert!(
             session
                 .id
@@ -490,7 +503,7 @@ mod tests {
         let store =
             TicketStore::new("https://tengri.example".to_owned(), "s".repeat(32)).expect("store");
         let pending = store
-            .issue_preview(&owner, "agent", 3000, "/pending")
+            .issue_preview(&owner, "agent", 3000, "/pending", "")
             .expect("pending preview");
         store
             .revoke_preview("different-owner", "agent", &pending.id)
@@ -503,7 +516,7 @@ mod tests {
             .expect("clean up wrong-owner proof");
 
         let active = store
-            .issue_preview(&owner, "agent", 3000, "/active")
+            .issue_preview(&owner, "agent", 3000, "/active", "")
             .expect("active preview");
         let session = store
             .consume_preview(&active.token)
@@ -516,7 +529,7 @@ mod tests {
         assert!(store.preview_session(&session.id, &session.token).is_err());
 
         let pending = store
-            .issue_preview(&owner, "agent", 3000, "/pending-again")
+            .issue_preview(&owner, "agent", 3000, "/pending-again", "")
             .expect("pending preview again");
         store
             .revoke_preview(&owner, "agent", &pending.id)
@@ -533,7 +546,7 @@ mod tests {
             TicketStore::new("https://tengri.example".to_owned(), "s".repeat(32)).expect("store");
         for _ in 0..100 {
             let issued = store
-                .issue_preview(&owner, "agent", 3000, "/race")
+                .issue_preview(&owner, "agent", 3000, "/race", "")
                 .expect("preview ticket");
             let barrier = Arc::new(Barrier::new(3));
             let consumed = std::thread::scope(|scope| {
@@ -593,14 +606,14 @@ mod tests {
         .expect("preview store");
         for _ in 0..PREVIEW_SESSION_LIMIT_PER_AGENT {
             let issued = previews
-                .issue_preview(&"a".repeat(64), "agent", 3000, "/")
+                .issue_preview(&"a".repeat(64), "agent", 3000, "/", "")
                 .expect("preview ticket");
             previews
                 .consume_preview(&issued.token)
                 .expect("preview within limit");
         }
         let issued = previews
-            .issue_preview(&"a".repeat(64), "agent", 3000, "/")
+            .issue_preview(&"a".repeat(64), "agent", 3000, "/", "")
             .expect("overflow preview ticket");
         let error = previews
             .consume_preview(&issued.token)

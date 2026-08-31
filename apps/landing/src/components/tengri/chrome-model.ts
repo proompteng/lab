@@ -2,7 +2,10 @@ import { normalizePreviewGatewayOrigin } from '@/lib/tengri/preview-origin'
 
 export const MAX_CHROME_TABS = 8
 const MAX_CHROME_HISTORY = 30
+const MAX_EXTERNAL_ADDRESS_BYTES = 4096
 const MAX_PREVIEW_PATH_BYTES = 4096
+const MAX_PREVIEW_FRAGMENT_BYTES = 4096
+const MAX_PREVIEW_ADDRESS_CHARACTERS = MAX_PREVIEW_PATH_BYTES + MAX_PREVIEW_FRAGMENT_BYTES + 64
 const PREVIEW_TICKET_PATTERN = /^[A-Za-z0-9_-]{16,128}\.[A-Za-z0-9_-]{16,128}$/
 export const PREVIEW_BRIDGE_CHANNEL = 'tengri-preview-v1'
 
@@ -11,7 +14,7 @@ export type ChromePreviewNavigationMode = 'load' | 'push' | 'replace'
 
 export type ChromePage =
   | { kind: 'agent'; title: string; displayUrl: 'tengri://agent' }
-  | { kind: 'preview'; title: string; displayUrl: string; port: number; path: string }
+  | { kind: 'preview'; title: string; displayUrl: string; port: number; path: string; fragment: string }
 
 export type ChromeLoadRequest = { page: ChromePage; revision: number }
 
@@ -125,7 +128,7 @@ export function currentChromePage(tab: ChromeTab) {
 export function parseChromeAddress(raw: string): ParsedChromeAddress {
   const value = raw.trim()
   if (!value || value.toLowerCase() === 'tengri://agent') return { kind: 'agent', page: CHROME_AGENT_PAGE }
-  if (value.length > 4096 || hasControlCharacters(value)) {
+  if (value.length > MAX_PREVIEW_ADDRESS_CHARACTERS || hasControlCharacters(value)) {
     return { kind: 'invalid', message: 'The address is invalid.' }
   }
   if (/^(?:about|blob|data|file|javascript|mailto|tel):/i.test(value)) {
@@ -148,12 +151,14 @@ export function parseChromeAddress(raw: string): ParsedChromeAddress {
   }
 
   const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname.toLowerCase())
-  if (!loopback) return { kind: 'external', url: url.toString() }
+  if (!loopback) {
+    if (utf8ByteLength(url.toString()) > MAX_EXTERNAL_ADDRESS_BYTES) {
+      return { kind: 'invalid', message: 'External addresses must not exceed 4096 bytes.' }
+    }
+    return { kind: 'external', url: url.toString() }
+  }
   if (url.protocol !== 'http:') {
     return { kind: 'invalid', message: 'MicroVM previews currently use HTTP localhost addresses.' }
-  }
-  if (url.hash) {
-    return { kind: 'invalid', message: 'Remove the URL fragment before opening a microVM preview.' }
   }
   const port = Number(url.port || 80)
   if (!Number.isInteger(port) || port < 1024 || port > 65535) {
@@ -166,6 +171,10 @@ export function parseChromeAddress(raw: string): ParsedChromeAddress {
   if (utf8ByteLength(path) > MAX_PREVIEW_PATH_BYTES) {
     return { kind: 'invalid', message: 'MicroVM preview paths must not exceed 4096 bytes.' }
   }
+  const fragment = url.hash
+  if (!validPreviewFragment(fragment)) {
+    return { kind: 'invalid', message: 'MicroVM preview fragments must not exceed 4096 bytes.' }
+  }
   return {
     kind: 'preview',
     page: {
@@ -174,6 +183,7 @@ export function parseChromeAddress(raw: string): ParsedChromeAddress {
       displayUrl: url.toString(),
       port,
       path,
+      fragment,
     },
   }
 }
@@ -214,11 +224,13 @@ export function parsePreviewBridgeMessage(
     }
     const path = `${url.pathname}${url.search}`
     if (utf8ByteLength(path) > MAX_PREVIEW_PATH_BYTES || hasControlCharacters(path)) return null
-    const displayUrl = `http://localhost:${port}${path}${url.hash}`
+    const fragment = url.hash
+    if (!validPreviewFragment(fragment)) return null
+    const displayUrl = `http://localhost:${port}${path}${fragment}`
     return {
       kind: 'navigation',
       mode: message.mode as ChromePreviewNavigationMode,
-      page: { kind: 'preview', title: `localhost:${port}`, displayUrl, port, path },
+      page: { kind: 'preview', title: `localhost:${port}`, displayUrl, port, path, fragment },
     }
   } catch {
     return null
@@ -242,6 +254,28 @@ export function safePreviewLaunchUrl(value: string, previewGatewayOrigin: string
       return ''
     }
     return url.toString()
+  } catch {
+    return ''
+  }
+}
+
+export function safePreviewSessionOrigin(value: string, sessionId: string) {
+  try {
+    const url = new URL(value)
+    const expectedLabel = `tengri-${sessionId}.`
+    const localHttp = url.protocol === 'http:' && url.hostname.endsWith('.localhost')
+    if (
+      (!localHttp && url.protocol !== 'https:') ||
+      !url.hostname.startsWith(expectedLabel) ||
+      url.username ||
+      url.password ||
+      url.pathname !== '/' ||
+      url.search ||
+      url.hash
+    ) {
+      return ''
+    }
+    return url.origin
   } catch {
     return ''
   }
@@ -308,6 +342,14 @@ function hasControlCharacters(value: string) {
     const codePoint = character.codePointAt(0) ?? 0
     return codePoint <= 31 || codePoint === 127
   })
+}
+
+function validPreviewFragment(value: string) {
+  return (
+    (!value || value.startsWith('#')) &&
+    utf8ByteLength(value) <= MAX_PREVIEW_FRAGMENT_BYTES &&
+    !hasControlCharacters(value)
+  )
 }
 
 function utf8ByteLength(value: string) {

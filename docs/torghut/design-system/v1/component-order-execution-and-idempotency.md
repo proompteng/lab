@@ -7,11 +7,11 @@
 - Source of truth (config): `argocd/applications/torghut/**`
 - Implementation status: `Implemented` (verified with code + tests + runtime/config on 2026-02-21)
 
-## Source Implementation Audit (2026-07-04)
+## Historical Source Audit (2026-07-04)
 
 - Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
 - Implementation status: **Implemented, but no longer matches the old single-file `execution.py` description.** The core idempotency contract exists through account-scoped `TradeDecision.decision_hash`, `Execution.client_order_id`, executor lookup before submit, broker/simulation adapter support, and readiness checks for the account-scoped client-order index.
-- Current source evidence:
+- Source evidence inspected:
   - `services/torghut/app/trading/execution/order_executor_core_methods.py::ensure_decision` computes `decision_hash(decision, account_label=...)`, reuses an existing `TradeDecision` by `(decision_hash, alpaca_account_label)`, and handles `IntegrityError` by re-reading the existing row.
   - `services/torghut/app/trading/execution/order_executor_core_methods.py::_fetch_execution` first checks exact `trade_decision_id`, then falls back to `(Execution.client_order_id == decision_hash, alpaca_account_label == account_label)`. The code explicitly says it must never match by account label alone.
   - `services/torghut/app/trading/execution/order_executor_core_methods.py::submit_order` returns early when an execution already exists, checks broker-side existing orders, prepares the order, applies retry policy, raises on conflicting open orders, resolves sell inventory, submits, and syncs the submitted execution.

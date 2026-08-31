@@ -118,7 +118,103 @@ COPY --from=build /out/nanoagent /usr/local/bin/nanoagent
 COPY --chmod=0555 bootstrap-codex.sh /usr/local/bin/bootstrap-codex
 RUN test -x /usr/local/bin/bootstrap-codex && test -x /usr/local/bin/nanoagent
 
-FROM runtime AS development-toolchain-bundle
+FROM runtime AS c-toolchain-runtime
+
+ARG TARGETARCH
+
+RUN set -eux; \
+    apt-get update -o Acquire::Retries=3; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gcc libc6-dev; \
+    triplet="$(gcc -dumpmachine)"; \
+    compiler_major="$(gcc -dumpversion)"; \
+    compiler_version="$(gcc -dumpfullversion)"; \
+    case "$TARGETARCH" in \
+      amd64) \
+        expected_triplet='x86_64-linux-gnu'; \
+        loader_path='/lib64/ld-linux-x86-64.so.2'; \
+        loader_name='ld-linux-x86-64.so.2' \
+        ;; \
+      arm64) \
+        expected_triplet='aarch64-linux-gnu'; \
+        loader_path='/lib/ld-linux-aarch64.so.1'; \
+        loader_name='ld-linux-aarch64.so.1' \
+        ;; \
+      *) printf 'unsupported C compiler architecture: %s\n' "$TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    test "$triplet" = "$expected_triplet"; \
+    test "$compiler_major" = '13'; \
+    test "$compiler_version" = '13.3.0'; \
+    compiler_driver="$(command -v "${triplet}-gcc-${compiler_major}")"; \
+    assembler="$(command -v "${triplet}-as")"; \
+    linker="$(command -v "${triplet}-ld.bfd")"; \
+    compiler_library_root="$(dirname "$(gcc -print-libgcc-file-name)")"; \
+    compiler_program_root="$(dirname "$(gcc -print-prog-name=cc1)")"; \
+    output='/out/c'; \
+    mkdir -p \
+      "$output/bin" \
+      "$output/lib/gcc/$triplet/$compiler_major" \
+      "$output/libexec/gcc/$triplet/$compiler_major" \
+      "$output/runtime" \
+      "$output/sysroot/lib/$triplet" \
+      "$output/sysroot/usr/include" \
+      "$output/sysroot/usr/lib/$triplet"; \
+    cp -a "$compiler_driver" "$output/bin/"; \
+    cp -a "$assembler" "$output/bin/"; \
+    cp -a "$linker" "$output/bin/"; \
+    ln -s "${triplet}-as" "$output/bin/as"; \
+    ln -s "${triplet}-ld.bfd" "$output/bin/ld"; \
+    cp -a "$compiler_library_root/." "$output/lib/gcc/$triplet/$compiler_major/"; \
+    rm -rf \
+      "$output/lib/gcc/$triplet/$compiler_major/plugin" \
+      "$output/lib/gcc/$triplet/$compiler_major/include/sanitizer"; \
+    rm -f \
+      "$output/lib/gcc/$triplet/$compiler_major"/libasan* \
+      "$output/lib/gcc/$triplet/$compiler_major"/libhwasan* \
+      "$output/lib/gcc/$triplet/$compiler_major"/liblsan* \
+      "$output/lib/gcc/$triplet/$compiler_major"/libtsan* \
+      "$output/lib/gcc/$triplet/$compiler_major"/libubsan*; \
+    cp -a "$compiler_program_root/cc1" "$output/libexec/gcc/$triplet/$compiler_major/"; \
+    cp -a "$compiler_program_root/liblto_plugin.so" "$output/libexec/gcc/$triplet/$compiler_major/"; \
+    cp -a /usr/include/. "$output/sysroot/usr/include/"; \
+    for development_file in \
+      Scrt1.o crt1.o crti.o crtn.o gcrt1.o rcrt1.o \
+      libc.so libc_nonshared.a libdl.a libm.so libpthread.a libresolv.a librt.a libutil.a; do \
+      if [ -e "/usr/lib/$triplet/$development_file" ]; then \
+        cp -a "/usr/lib/$triplet/$development_file" "$output/sysroot/usr/lib/$triplet/"; \
+      fi; \
+    done; \
+    for runtime_file in \
+      libc.so.6 libdl.so.2 libgcc_s.so.1 libm.so.6 libmvec.so.1 libpthread.so.0 libresolv.so.2 librt.so.1 libutil.so.1; do \
+      if [ -e "/lib/$triplet/$runtime_file" ]; then \
+        ln -s "/lib/$triplet/$runtime_file" "$output/sysroot/lib/$triplet/$runtime_file"; \
+      fi; \
+    done; \
+    mkdir -p "$output/sysroot$(dirname "$loader_path")"; \
+    ln -s "$loader_path" "$output/sysroot$loader_path"; \
+    ln -s "/lib/$triplet/$loader_name" "$output/sysroot/lib/$triplet/$loader_name"; \
+    : > /tmp/c-toolchain-runtime-libraries; \
+    for binary in "$compiler_driver" "$compiler_program_root/cc1" "$assembler" "$linker"; do \
+      ldd "$binary" | awk '$2 == "=>" && $3 ~ /^\// { print $3 }' >> /tmp/c-toolchain-runtime-libraries; \
+    done; \
+    sort -u /tmp/c-toolchain-runtime-libraries | while IFS= read -r dependency; do \
+      dependency_name="$(basename "$dependency")"; \
+      case "$dependency_name" in \
+        libc.so.6|libm.so.6|libz.so.1|libzstd.so.1) ;; \
+        *) cp -aL "$dependency" "$output/runtime/$dependency_name" ;; \
+      esac; \
+    done; \
+    printf '%s\n' "$compiler_major" > "$output/compiler-major"; \
+    printf '%s\n' "$compiler_version" > "$output/compiler-version"; \
+    printf '%s\n' "$triplet" > "$output/compiler-triplet"; \
+    test -x "$output/bin/${triplet}-gcc-${compiler_major}"; \
+    test -x "$output/bin/as"; \
+    test -x "$output/bin/ld"; \
+    test -x "$output/libexec/gcc/$triplet/$compiler_major/cc1"; \
+    test -f "$output/sysroot/usr/include/stdlib.h"; \
+    test -f "$output/sysroot/usr/lib/$triplet/Scrt1.o"; \
+    test -L "$output/sysroot$loader_path"
+
+FROM runtime AS development-toolchain-layout
 
 ARG BUN_VERSION
 ARG GO_VERSION
@@ -129,6 +225,7 @@ ARG UV_VERSION
 COPY --from=node-runtime /usr/local/bin/node /bundle/node/bin/node
 COPY --from=node-runtime /usr/local/lib/node_modules/npm /bundle/node/lib/node_modules/npm
 COPY --from=bun-runtime /usr/local/bin/bun /bundle/bun/bin/bun
+COPY --from=c-toolchain-runtime /out/c /bundle/c
 COPY --from=go-runtime /usr/local/go /bundle/go
 COPY --from=rust-runtime /usr/local/rustup/toolchains /bundle/rust-toolchains
 COPY --from=rust-linker-runtime /out /bundle/linker
@@ -144,14 +241,27 @@ RUN set -eux; \
       /bundle/rust/bin/rust-gdbgui \
       /bundle/rust/bin/rust-lldb; \
     rm -rf /bundle/rust/etc /bundle/rust/share; \
+    rm -rf /bundle/go/api /bundle/go/doc /bundle/go/misc /bundle/go/test; \
     test "$(/bundle/node/bin/node --version)" = "v${NODE_VERSION}"; \
     test "$(/bundle/bun/bin/bun --version)" = "${BUN_VERSION}"; \
+    test "$(cat /bundle/c/compiler-version)" = '13.3.0'; \
     test "$(GOROOT=/bundle/go /bundle/go/bin/go version | cut -d' ' -f3)" = "go${GO_VERSION}"; \
     test "$(/bundle/rust/bin/rustc --version | cut -d' ' -f2)" = "${RUST_VERSION}"; \
     test "$(/bundle/rust/bin/cargo --version | cut -d' ' -f2)" = "${RUST_VERSION}"; \
-    test "$(/bundle/uv/bin/uv --version | cut -d' ' -f2)" = "${UV_VERSION}"; \
+    test "$(/bundle/uv/bin/uv --version | cut -d' ' -f2)" = "${UV_VERSION}"
+
+FROM --platform=$BUILDPLATFORM ${UBUNTU_BASE_IMAGE}:24.04 AS development-toolchain-bundle
+
+RUN set -eux; \
+    apt-get update -o Acquire::Retries=3; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xz-utils; \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+
+COPY --from=development-toolchain-layout /bundle /bundle
+
+RUN set -eux; \
     mkdir -p /out; \
-    XZ_OPT='-T0 -6' tar \
+    XZ_OPT='-T2 -8' tar \
       --create \
       --xz \
       --file /out/development-toolchain.tar.xz \
@@ -189,6 +299,9 @@ RUN mkdir -p "$HOME" && \
     test "$(uv --version | cut -d' ' -f2)" = '0.11.14' && \
     test "$(go version | cut -d' ' -f3)" = 'go1.25.5' && \
     test "$(go env GOROOT)" = "$HOME/.local/go" && \
+    test "$(go env CGO_ENABLED)" = '1' && \
+    test "$(gcc -dumpfullversion)" = '13.3.0' && \
+    test "$(command -v cc)" = "$HOME/.local/bin/cc" && \
     test "$(rustc --version | cut -d' ' -f2)" = '1.90.0' && \
     test "$(cargo --version | cut -d' ' -f2)" = '1.90.0' && \
     test "$(rustdoc --version | cut -d' ' -f2)" = '1.90.0' && \
@@ -202,8 +315,8 @@ RUN mkdir -p "$HOME" && \
     (cd /tmp/cargo-library-smoke && cargo test --quiet) && \
     printf '#[no_mangle]\npub extern "C" fn answer() -> i32 { 42 }\n' > /tmp/rust-library-smoke.rs && \
     rustc --crate-type=cdylib /tmp/rust-library-smoke.rs -o /tmp/librust_library_smoke.so && \
-    printf 'package main\nimport "fmt"\nfunc main(){fmt.Println("go-ok")}\n' > /tmp/go-smoke.go && \
-    test "$(CGO_ENABLED=0 go run /tmp/go-smoke.go)" = 'go-ok' && \
+    printf 'package main\n/*\n#include <stdlib.h>\nstatic int answer(void) { return 42; }\n*/\nimport "C"\nimport "fmt"\nfunc main(){fmt.Println(C.answer())}\n' > /tmp/go-smoke.go && \
+    test "$(go run /tmp/go-smoke.go)" = '42' && \
     uv venv /tmp/uv-smoke >/dev/null && \
     mkdir -p "$BUN_INSTALL/install/global" && \
     printf '{"name":"nanoagent-global"}\n' > "$BUN_INSTALL/install/global/package.json" && \

@@ -2,20 +2,6 @@
 
 Status: Accepted for engineer and deployer handoff
 
-## Source Implementation Audit (2026-07-04)
-
-- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
-- Implementation status: Partially implemented: route repair, paper-route probing, quote routeability, and TCA/freshness surfaces exist but remain gate-controlled.
-- Matched implementation area: Routeability, TCA, fill quality, and market context.
-- Current source evidence:
-  - `services/torghut/app/trading/route_reacquisition.py`
-  - `services/torghut/app/trading/route_reacquisition_probe.py`
-  - `services/torghut/app/trading/scheduler/paper_route_probe/probe_processing.py`
-  - `services/torghut/app/trading/scheduler/submission_preparation/quote_routeability.py`
-  - `services/torghut/app/trading/tca`
-- Design drift note: Routeability claims need current repair/probe/TCA/readiness evidence.
-
-
 ## Decision
 
 I am selecting **forecast-registry repair and route-rehearsal profit gates** as Torghut's next profitability

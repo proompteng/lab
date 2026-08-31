@@ -51,13 +51,17 @@ const helmApplicationSet = YAML.parse(readRepoFile('argocd/applicationsets/helm-
 const helmApplicationElements = helmApplicationSet.spec.generators[0].matrix.generators[1].list.elements as Array<
   Record<string, any>
 >
-const kargoHelmValues = helmApplicationElements.find((element) => element.name === 'kargo')?.valuesObject as Record<
-  string,
-  any
->
+const kargoHelmElement = helmApplicationElements.find((element) => element.name === 'kargo')
+const kargoHelmValues = kargoHelmElement?.valuesObject as Record<string, any>
 const argoCDConfigMap = YAML.parse(readRepoFile('argocd/applications/argocd/overlays/argocd-cm.yaml')) as Manifest & {
   data?: Record<string, string>
 }
+const argoCDCommandParameters = YAML.parse(
+  readRepoFile('argocd/applications/argocd/overlays/argocd-cmd-params-cm.yaml'),
+) as Manifest & { data?: Record<string, string> }
+const argoCDControllerStatefulSetPatch = YAML.parse(
+  readRepoFile('argocd/applications/argocd/overlays/argocd-application-controller-statefulset.yaml'),
+) as Manifest
 const dexConfig = YAML.parse(argoCDConfigMap.data?.['dex.config'] ?? '') as Record<string, any>
 const argoCDIngressRoute = YAML.parse(readRepoFile('argocd/applications/argocd/base/ingressroute.yaml')) as Manifest
 const kargoDexCORSMiddleware = YAML.parse(
@@ -72,19 +76,22 @@ const applicationSetElements = ['argocd/applicationsets/product.yaml', 'argocd/a
 
 const imageRepo = (name: string): string => `registry.ide-newton.ts.net/lab/${name}`
 const gitRepo = 'git@github.com:proompteng/lab.git'
+const publicGitRepo = 'https://github.com/proompteng/lab.git'
 const buildRunIdAnnotation = 'ai.proompteng.github-actions-run-id'
 const buildConclusionAnnotation = 'ai.proompteng.github-actions-build-conclusion'
 const runQualifiedTagRegex = '^kargo-sha-[0-9a-f]{40}-run-[1-9][0-9]*$'
 
 type FreightCriteria = 'single' | 'all' | 'external'
 
-const criteriaExpression = (mode: FreightCriteria, images: readonly string[]): string => {
-  const clauses = images.map((image) => `imageFrom('${image}').Tag == 'kargo-sha-' + commitFrom('${gitRepo}').ID`)
+const criteriaExpression = (mode: FreightCriteria, images: readonly string[], freightGitRepo = gitRepo): string => {
+  const clauses = images.map(
+    (image) => `imageFrom('${image}').Tag == 'kargo-sha-' + commitFrom('${freightGitRepo}').ID`,
+  )
   if (mode === 'all') return clauses.join(' && ')
   return clauses[0] ?? ''
 }
 
-const receiptCriteriaExpression = (images: readonly string[]): string => {
+const receiptCriteriaExpression = (images: readonly string[], freightGitRepo = gitRepo): string => {
   const receiptImage = images.length === 1 ? images[0] : images[1]
   if (!receiptImage) return ''
 
@@ -102,7 +109,7 @@ const receiptCriteriaExpression = (images: readonly string[]): string => {
     clauses.push(`${candidate}.Annotations['${buildConclusionAnnotation}'] == 'success'`)
   }
   clauses.push(
-    `${receipt}.Tag == 'kargo-sha-' + commitFrom('${gitRepo}').ID + '-run-' + ${receipt}.Annotations['${buildRunIdAnnotation}']`,
+    `${receipt}.Tag == 'kargo-sha-' + commitFrom('${freightGitRepo}').ID + '-run-' + ${receipt}.Annotations['${buildRunIdAnnotation}']`,
   )
   for (const image of images.filter((candidate) => candidate !== receiptImage)) {
     clauses.push(`imageFrom('${image}').Tag == ${receipt}.Tag`)
@@ -306,7 +313,7 @@ const expected = {
   symphony: {
     creationCriteria: 'single',
     images: [imageRepo('symphony')],
-    apps: ['symphony', 'symphony-jangar', 'symphony-torghut'],
+    apps: ['symphony', 'symphony-jangar'],
     includePaths: [
       'services/symphony',
       'nix/images/symphony.nix',
@@ -316,7 +323,6 @@ const expected = {
       'nix/oci-push.sh',
       'argocd/applications/symphony',
       'argocd/applications/symphony-jangar',
-      'argocd/applications/symphony-torghut',
       'argocd/applications/symphony-base',
     ],
   },
@@ -329,7 +335,7 @@ const expected = {
       imageRepo('torghut-ws'),
       imageRepo('signal-publisher'),
     ],
-    apps: ['torghut', 'torghut-options', 'torghut-hyperliquid-runtime'],
+    apps: ['torghut'],
     includePaths: [
       'services/torghut',
       'packages/scripts/src/torghut',
@@ -360,30 +366,8 @@ const expected = {
       '.github/workflows/torghut-post-deploy-verify.yml',
       'nix/oci-push.sh',
       'argocd/applications/torghut',
-      'argocd/applications/torghut-options',
-      'argocd/applications/torghut-hyperliquid-runtime',
     ],
     excludePaths: ['packages/scripts/src/torghut/__tests__', 'glob:packages/scripts/src/torghut/**/*.test.ts'],
-  },
-  'torghut-hyperliquid-feed': {
-    creationCriteria: 'single',
-    images: [imageRepo('torghut-hyperliquid-feed')],
-    apps: ['torghut-hyperliquid-feed'],
-    includePaths: [
-      'services/dorvud/gradle',
-      'services/dorvud/gradlew',
-      'services/dorvud/gradle.properties',
-      'services/dorvud/settings.gradle.kts',
-      'services/dorvud/build.gradle.kts',
-      'services/dorvud/platform',
-      'services/dorvud/hyperliquid-feed',
-      'nix/images/dorvud-jvm-service.nix',
-      'nix/images/torghut-hyperliquid-feed.nix',
-      '.github/workflows/nix-oci-build-common.yml',
-      'packages/scripts/src/shared/oci.ts',
-      'nix/oci-push.sh',
-      'argocd/applications/torghut-hyperliquid-feed',
-    ],
   },
   bilig: {
     creationCriteria: 'external',
@@ -445,6 +429,8 @@ const expected = {
   },
   tengri: {
     creationCriteria: 'all',
+    freightGitRepo: publicGitRepo,
+    pushGitRepo: gitRepo,
     images: [imageRepo('tengri'), imageRepo('nanoagent')],
     apps: ['tengri'],
     includePaths: [
@@ -472,6 +458,18 @@ const byName = (manifests: Manifest[]): Map<string, Manifest> =>
   new Map(manifests.map((manifest) => [manifest.metadata?.name ?? '', manifest]))
 
 describe('Kargo direct-push GitOps contract', () => {
+  it('uses the current Kargo patch and persists Argo resource health for Stage checks', () => {
+    expect(kargoHelmElement?.version).toBe('1.11.2')
+    expect(argoCDCommandParameters.data?.['controller.resource.health.persist']).toBe('true')
+    expect(argoCDControllerStatefulSetPatch.spec?.template).toMatchObject({
+      metadata: {
+        annotations: {
+          'gitops.proompteng.ai/config-revision': 'controller-resource-health-persist-v1',
+        },
+      },
+    })
+  })
+
   it('exposes the Kargo UI over Tailscale with Dex SSO and no built-in admin', () => {
     expect(kargoHelmValues.api).toMatchObject({
       enabled: true,
@@ -534,7 +532,7 @@ describe('Kargo direct-push GitOps contract', () => {
         },
       },
     })
-    const dexRoute = (argoCDIngressRoute.spec?.routes as Array<Record<string, any>>).find((route) =>
+    const dexRoute = ((argoCDIngressRoute.spec?.routes ?? []) as Array<Record<string, any>>).find((route) =>
       route.match?.includes('PathPrefix(`/api/dex`)'),
     )
     expect(dexRoute?.middlewares).toEqual([{ name: 'kargo-dex-cors' }])
@@ -557,7 +555,7 @@ describe('Kargo direct-push GitOps contract', () => {
       .flatMap((contract) => contract.apps)
       .sort()
     const kargoApplications = applicationSetElements
-      .filter((element) => String(element.targetRevision ?? '').startsWith('kargo/'))
+      .filter((element) => element.enabled === 'true' && String(element.targetRevision ?? '').startsWith('kargo/'))
       .map((element) => element.name as string)
       .sort()
     expect(kargoApplications).toEqual(expectedApplications)
@@ -586,6 +584,7 @@ describe('Kargo direct-push GitOps contract', () => {
 
     for (const stageName of expectedStageNames) {
       const contract = expected[stageName as keyof typeof expected]
+      const freightGitRepo = 'freightGitRepo' in contract ? contract.freightGitRepo : gitRepo
       const warehouse = warehouseMap.get(stageName)
       expect(warehouse).toBeDefined()
       expect(warehouse?.metadata?.namespace).toBe('lab-delivery')
@@ -595,9 +594,9 @@ describe('Kargo direct-push GitOps contract', () => {
       if (contract.creationCriteria === 'external') {
         expect(criteria).toBeUndefined()
       } else {
-        const baseCriteria = criteriaExpression(contract.creationCriteria, contract.images)
+        const baseCriteria = criteriaExpression(contract.creationCriteria, contract.images, freightGitRepo)
         if ('requiresBuildReceipt' in contract && contract.requiresBuildReceipt) {
-          expect(criteria?.expression).toBe(receiptCriteriaExpression(contract.images))
+          expect(criteria?.expression).toBe(receiptCriteriaExpression(contract.images, freightGitRepo))
         } else {
           expect(criteria?.expression).toBe(baseCriteria)
         }
@@ -607,12 +606,13 @@ describe('Kargo direct-push GitOps contract', () => {
       expect(subscriptions).toHaveLength(contract.images.length + 1)
       const git = subscriptions.find((subscription) => subscription.git)?.git
       expect(git).toMatchObject({
-        repoURL: 'git@github.com:proompteng/lab.git',
+        repoURL: freightGitRepo,
         branch: 'main',
         commitSelectionStrategy: 'NewestFromBranch',
         discoveryLimit: 20,
         strictSemvers: true,
       })
+      expect(git?.blobless).toBe(stageName === 'proompteng' ? true : undefined)
       expect(git?.includePaths).toEqual(contract.includePaths)
       if (contract.excludePaths) expect(git?.excludePaths).toEqual(contract.excludePaths)
       else expect(git?.excludePaths).toBeUndefined()
@@ -623,7 +623,7 @@ describe('Kargo direct-push GitOps contract', () => {
       expect(imageSubscriptions.map((image) => image.repoURL)).toEqual(contract.images)
       for (const image of imageSubscriptions) {
         expect(image.imageSelectionStrategy).toBe(contract.imageStrategy ?? 'NewestBuild')
-        expect(image.discoveryLimit).toBe(20)
+        expect(image.discoveryLimit).toBe(stageName === 'proompteng' ? 1 : 20)
         expect(image.strictSemvers).toBe(true)
         if (contract.imageStrategy === 'Digest') {
           expect(image.constraint).toBe('latest')
@@ -689,6 +689,10 @@ describe('Kargo direct-push GitOps contract', () => {
 
     for (const stageName of expectedStageNames) {
       const contract = expected[stageName as keyof typeof expected]
+      const freightRepoVariable = 'freightGitRepo' in contract ? 'freightGitRepo' : 'gitRepo'
+      const pushRepoVariable = 'pushGitRepo' in contract ? 'pushGitRepo' : 'gitRepo'
+      const freightGitRepo = 'freightGitRepo' in contract ? contract.freightGitRepo : gitRepo
+      const pushGitRepo = 'pushGitRepo' in contract ? contract.pushGitRepo : gitRepo
       const stage = stageMap.get(stageName)
       expect(stage?.metadata?.namespace).toBe('lab-delivery')
 
@@ -698,7 +702,9 @@ describe('Kargo direct-push GitOps contract', () => {
           variable.value,
         ]),
       )
-      expect(vars.gitRepo).toBe('git@github.com:proompteng/lab.git')
+      expect(vars[freightRepoVariable]).toBe(freightGitRepo)
+      expect(vars[pushRepoVariable]).toBe(pushGitRepo)
+      if (freightRepoVariable !== 'gitRepo' || pushRepoVariable !== 'gitRepo') expect(vars.gitRepo).toBeUndefined()
       expect(vars.targetBranch).toBe(`kargo/${stageName}`)
       expect(vars.srcPath).toBe('./src')
       expect(vars.outPath).toBe('./out')
@@ -737,11 +743,11 @@ describe('Kargo direct-push GitOps contract', () => {
 
       const clone = steps.find((step) => step.uses === 'git-clone')
       expect(clone?.config).toMatchObject({
-        repoURL: '${{ vars.gitRepo }}',
+        repoURL: `\${{ vars.${pushRepoVariable} }}`,
         author: { name: 'Kargo', email: 'kargo@proompteng.ai' },
       })
       expect(clone?.config?.checkout).toEqual([
-        { commit: '${{ commitFrom(vars.gitRepo).ID }}', path: '${{ vars.srcPath }}' },
+        { commit: `\${{ commitFrom(vars.${freightRepoVariable}).ID }}`, path: '${{ vars.srcPath }}' },
         { branch: '${{ vars.targetBranch }}', create: true, path: '${{ vars.outPath }}' },
       ])
 
@@ -790,19 +796,23 @@ describe('Kargo direct-push GitOps contract', () => {
     expect(timeoutSeconds).toBeGreaterThanOrEqual(verifierTimeoutSeconds + 600)
   })
 
-  it('retains post-deploy verification for every application promoted by the Torghut stage', () => {
-    expect(torghutVerifierWorkflow).toContain("- 'argocd/applications/torghut-hyperliquid-runtime/**'")
-    expect(torghutVerifierWorkflow).toContain('for app in torghut torghut-options torghut-hyperliquid-runtime; do')
-    expect(torghutVerifierWorkflow).toContain('torghut-hyperliquid-runtime \\')
+  it('retains post-deploy verification for the core Torghut application', () => {
+    expect(torghutVerifierWorkflow).toContain('for app in torghut; do')
+    expect(torghutVerifierWorkflow).toContain('torghut-ta \\')
+    expect(torghutVerifierWorkflow).toContain('torghut-ws; do')
+    expect(torghutVerifierWorkflow).not.toContain('torghut-options')
+    expect(torghutVerifierWorkflow).not.toContain('torghut-hyperliquid-runtime')
   })
 
   it('uses Kargo to write image and provenance data, never live Argo image overrides', () => {
     const stageMap = byName(stages)
     for (const stageName of expectedStageNames) {
+      const contract = expected[stageName as keyof typeof expected]
+      const freightRepoVariable = 'freightGitRepo' in contract ? 'freightGitRepo' : 'gitRepo'
       const stage = stageMap.get(stageName)
       const steps = stage?.spec?.promotionTemplate?.spec?.steps as Array<Record<string, any>>
       const serialized = JSON.stringify(stage)
-      expect(serialized).toContain('commitFrom(vars.gitRepo).ID')
+      expect(serialized).toContain(`commitFrom(vars.${freightRepoVariable}).ID`)
       expect(serialized).toContain('outputs.commit.commit')
       expect(serialized).not.toContain('updateTargetRevision')
 
