@@ -12,20 +12,6 @@ directly instead of depending on a broker adapter. Historical database tables ar
 compatibility, but they are not evidence that retired live-submit or canary capabilities are active. Any future LEAN
 broker route must be introduced as a new coordinator-backed production capability with its own fault and rollout proof.
 
-## Source Implementation Audit (2026-07-04)
-
-- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
-- Implementation status: Partially implemented: Jangar has route/API integration and many control-plane modules; historical Swarm prose is not a one-to-one runtime spec.
-- Matched implementation area: Jangar/control-plane integration.
-- Current source evidence:
-  - `services/jangar/src/routes/ready.tsx`
-  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
-  - `services/jangar/src/server/control-plane-source-serving-contract-verdict.ts`
-  - `services/jangar/src/routes/api/torghut/trading/control-plane/quant/snapshot.ts`
-  - `argocd/applications/agents/kustomization.yaml`
-- Design drift note: Verify against current Jangar modules/routes before treating design contracts as live behavior.
-
-
 ## Scope
 
 This document defines production operations for Torghut LEAN multi-lane capability while preserving Torghut as control plane authority for risk, governance, and rollback safety.
