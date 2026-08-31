@@ -59,6 +59,7 @@ fn production_crd() -> anyhow::Result<CustomResourceDefinition> {
         "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/expiresAt",
         "/spec/versions/0/schema/openAPIV3Schema/properties/status/properties/readyAt",
         "/spec/versions/0/schema/openAPIV3Schema/properties/status/properties/lastActivityAt",
+        "/spec/versions/0/schema/openAPIV3Schema/properties/status/properties/podSandboxTransitionAt",
         "/spec/versions/0/schema/openAPIV3Schema/properties/status/properties/conditions/items/properties/lastTransitionAt",
     ] {
         insert(&mut crd, pointer, "format", json!("date-time"))?;

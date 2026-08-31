@@ -306,6 +306,9 @@ The authenticated Codex account, thread, event-replay, approval, and end-to-end 
   Freight pair through Kargo and allow the singleton `Recreate` Deployment to reconcile from `kargo/tengri`.
 - Guest `Failed`: inspect the CR status condition, Pod events, image-pull status, and Nanoagent readiness. Fix the
   source-owned cause; do not fabricate progress or bypass `kata-fc`.
+- Pod sandbox creation failures are copied from the current Pod's warning Event into the `MicroVM` failure condition
+  after a short grace period. The desktop therefore shows the exact runtime or CNI failure instead of remaining on a
+  fabricated booting state. Tengri never repairs a node or silently reschedules the guest around that failure.
 - Sleeping guest: call resume or perform an authenticated operation. Do not recreate the PVC.
 - Stuck deletion: inspect finalizer status and owned Pod, Secret, and PVC individually. Never remove the finalizer until
   owned resources are confirmed absent or deliberately preserved through an incident procedure.
