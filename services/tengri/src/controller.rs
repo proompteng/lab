@@ -806,7 +806,7 @@ async fn pod_sandbox_failure(
 }
 
 fn pod_sandbox_is_stuck(pod: &Pod, now: DateTime<Utc>) -> bool {
-    let sandbox_not_ready = pod
+    let sandbox_condition = pod
         .status
         .as_ref()
         .and_then(|status| status.conditions.as_ref())
@@ -814,9 +814,18 @@ fn pod_sandbox_is_stuck(pod: &Pod, now: DateTime<Utc>) -> bool {
             conditions
                 .iter()
                 .find(|condition| condition.type_ == "PodReadyToStartContainers")
-        })
-        .is_some_and(|condition| condition.status == "False");
-    sandbox_not_ready && resource_age_seconds(pod, now) >= POD_SANDBOX_FAILURE_GRACE_SECONDS
+        });
+    sandbox_condition.is_some_and(|condition| {
+        condition.status == "False"
+            && condition
+                .last_transition_time
+                .as_ref()
+                .is_some_and(|transitioned_at| {
+                    now.timestamp()
+                        .saturating_sub(transitioned_at.0.as_second())
+                        >= POD_SANDBOX_FAILURE_GRACE_SECONDS
+                })
+    })
 }
 
 fn latest_pod_sandbox_failure<'a>(
@@ -1299,6 +1308,12 @@ mod tests {
                 conditions: Some(vec![PodCondition {
                     type_: "PodReadyToStartContainers".to_owned(),
                     status: "False".to_owned(),
+                    last_transition_time: Some(Time(
+                        k8s_openapi::jiff::Timestamp::from_second(
+                            now.timestamp() - POD_SANDBOX_FAILURE_GRACE_SECONDS - 1,
+                        )
+                        .expect("old sandbox transition timestamp"),
+                    )),
                     ..PodCondition::default()
                 }]),
                 ..PodStatus::default()
@@ -1361,8 +1376,10 @@ mod tests {
             metadata: kube::core::ObjectMeta {
                 uid: Some("current-pod-uid".to_owned()),
                 creation_timestamp: Some(Time(
-                    k8s_openapi::jiff::Timestamp::from_second(now.timestamp())
-                        .expect("new Pod creation timestamp"),
+                    k8s_openapi::jiff::Timestamp::from_second(
+                        now.timestamp() - POD_SANDBOX_FAILURE_GRACE_SECONDS - 1,
+                    )
+                    .expect("old Pod creation timestamp"),
                 )),
                 ..kube::core::ObjectMeta::default()
             },
@@ -1370,6 +1387,10 @@ mod tests {
                 conditions: Some(vec![PodCondition {
                     type_: "PodReadyToStartContainers".to_owned(),
                     status: "False".to_owned(),
+                    last_transition_time: Some(Time(
+                        k8s_openapi::jiff::Timestamp::from_second(now.timestamp())
+                            .expect("recent sandbox transition timestamp"),
+                    )),
                     ..PodCondition::default()
                 }]),
                 ..PodStatus::default()
@@ -1378,12 +1399,6 @@ mod tests {
         };
         assert!(!pod_sandbox_is_stuck(&pod, now));
 
-        pod.metadata.creation_timestamp = Some(Time(
-            k8s_openapi::jiff::Timestamp::from_second(
-                now.timestamp() - POD_SANDBOX_FAILURE_GRACE_SECONDS - 1,
-            )
-            .expect("old Pod creation timestamp"),
-        ));
         pod.status
             .as_mut()
             .and_then(|status| status.conditions.as_mut())
