@@ -185,8 +185,6 @@ spec:
         x-kubernetes-validations:
         - message: ownerHash is immutable
           rule: self.spec.ownerHash == oldSelf.spec.ownerHash
-        - message: the digest-pinned guest image is immutable
-          rule: self.spec.image == oldSelf.spec.image
         - message: the server-selected architecture is immutable
           rule: self.spec.architecture == oldSelf.spec.architecture
         - message: the v1 resource profile is immutable

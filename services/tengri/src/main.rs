@@ -71,6 +71,7 @@ async fn main() -> anyhow::Result<()> {
         &env_value("TENGRI_GUEST_ARCHITECTURE").unwrap_or_else(|| DEFAULT_ARCHITECTURE.to_owned()),
     )?;
     let default_image = required_env("TENGRI_DEFAULT_IMAGE")?;
+    let controller_guest_image = default_image.clone();
     let internal_hmac_secret = required_env("TENGRI_INTERNAL_HMAC_SECRET")?;
     let ticket_signing_secret = required_env("TENGRI_TICKET_SIGNING_SECRET")?;
     let runtime_secret_directory = env_value("TENGRI_RUNTIME_SECRET_DIRECTORY").map(PathBuf::from);
@@ -134,6 +135,7 @@ async fn main() -> anyhow::Result<()> {
             client: controller_client,
             namespace: controller_namespace,
             tickets,
+            guest_image: controller_guest_image.into(),
         })
         .await;
         Ok::<(), anyhow::Error>(())
