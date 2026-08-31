@@ -72,6 +72,24 @@ test('treats a recovered terminal cycle as waiting while current execution autho
   })
 })
 
+test('keeps a non-authority terminal cycle failed while execution authority is configured', () => {
+  const status = deriveCycleOperationsStatus(
+    {
+      ...projection,
+      last: projection.last === null ? null : { ...projection.last, terminalReason: CycleTerminalReason.DataInvalid },
+    },
+    Date.parse(checkedAt),
+    Authority.Execution,
+    thresholds,
+  )
+
+  expect(status).toMatchObject({
+    condition: CycleOperationsCondition.Failed,
+    reason: CycleOperationsReason.LastCycleBlocked,
+    alerts: { cycleFailed: true, killActive: false },
+  })
+})
+
 test('continues to fail closed when the current authority kill remains active', () => {
   const status = deriveCycleOperationsStatus(
     {
