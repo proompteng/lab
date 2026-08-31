@@ -49,6 +49,18 @@ export function appendCodexEvent(current: TengriCodexEvent[], event: TengriCodex
   if (current.some((candidate) => codexEventKey(candidate) === key)) return current
   const eventText = commandOutputDeltaText(event)
 
+  const usageSnapshotKey = authoritativeUsageSnapshotKey(event)
+  const usageSnapshotIndex = usageSnapshotKey
+    ? current.findIndex((candidate) => authoritativeUsageSnapshotKey(candidate) === usageSnapshotKey)
+    : -1
+
+  if (usageSnapshotIndex >= 0) {
+    if (current[usageSnapshotIndex]!.sequence >= event.sequence) return current
+    const next = [...current]
+    next[usageSnapshotIndex] = mergeAuthoritativeUsageSnapshot(current[usageSnapshotIndex]!, event, eventText)
+    return next
+  }
+
   const snapshotMethod = authoritativeTurnSnapshotMethod(event)
   const snapshotIndex = snapshotMethod
     ? current.findIndex(
@@ -872,6 +884,48 @@ function authoritativeTurnSnapshotMethod(event: TengriCodexEvent) {
   if (event.kind === 'plan' && method === 'turn/plan/updated') return method
   if (event.kind === 'file-diff' && method === 'turn/diff/updated') return method
   return ''
+}
+
+function authoritativeUsageSnapshotKey(event: TengriCodexEvent) {
+  if (event.kind !== 'usage') return ''
+  const method = event.method.toLowerCase()
+  if (method.includes('tokenusage')) return `token-usage:${event.threadId}`
+  if (method.includes('ratelimits')) {
+    const params = record(parseRawEvent(event.rawJson).params)
+    const limitId = string(record(params.rateLimits).limitId) || 'codex'
+    return `rate-limits:${limitId}`
+  }
+  return ''
+}
+
+function mergeAuthoritativeUsageSnapshot(previous: TengriCodexEvent, event: TengriCodexEvent, eventText: string) {
+  const next = { ...event, text: truncateEventText(eventText) }
+  if (!event.method.toLowerCase().includes('ratelimits')) return next
+
+  const previousRaw = parseRawEvent(previous.rawJson)
+  const eventRaw = parseRawEvent(event.rawJson)
+  const previousParams = record(previousRaw.params)
+  const eventParams = record(eventRaw.params)
+  const previousRateLimits = record(previousParams.rateLimits)
+  const eventRateLimits = record(eventParams.rateLimits)
+  if (Object.keys(previousRateLimits).length === 0 || Object.keys(eventRateLimits).length === 0) return next
+
+  const mergedRateLimits = { ...previousRateLimits }
+  for (const [key, value] of Object.entries(eventRateLimits)) {
+    if (value !== null && value !== undefined) mergedRateLimits[key] = value
+  }
+  const rawJson = boundedRawJson(
+    JSON.stringify({
+      ...previousRaw,
+      ...eventRaw,
+      params: {
+        ...previousParams,
+        ...eventParams,
+        rateLimits: mergedRateLimits,
+      },
+    }),
+  )
+  return rawJson ? { ...next, rawJson } : next
 }
 
 function isRawReasoningDelta(event: TengriCodexEvent) {
