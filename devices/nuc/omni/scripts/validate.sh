@@ -33,7 +33,8 @@ cluster_backup_dir="${OMNI_DATA_ROOT}/cluster-etcd-backups"
 [[ "$(stat -c '%a' "${cluster_backup_dir}")" == '700' ]] ||
   die "cluster etcd backup directory must have mode 700: ${cluster_backup_dir}"
 [[ -w "${cluster_backup_dir}" ]] || die "cluster etcd backup directory is not writable: ${cluster_backup_dir}"
-jq -e '.version == "0.0.1" and .TCP["443"].HTTPS and .TCP["8090"].HTTPS and .TCP["8100"].HTTPS' \
+jq -e \
+  '.version == "0.0.1" and .TCP["443"].HTTPS and .TCP["8090"].TCPForward == "127.0.0.1:8090" and .TCP["8100"].HTTPS' \
   "${OMNI_DIR}/tailscale-serve.json" >/dev/null
 
 if [[ "${mode}" == 'full' ]]; then
