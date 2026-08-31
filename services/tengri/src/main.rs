@@ -10,7 +10,7 @@ mod pod;
 mod runtime_secret;
 mod tickets;
 
-use std::{env, net::SocketAddr, path::PathBuf, time::Duration};
+use std::{env, future::Future, net::SocketAddr, path::PathBuf, time::Duration};
 
 use activity::ActivityTracker;
 use anyhow::Context as _;
@@ -22,7 +22,12 @@ use grpc::{
 };
 use kube::Client;
 use runtime_secret::RuntimeSecretSnapshot;
-use tokio::{net::TcpListener, signal, sync::watch, time::timeout};
+use tokio::{
+    net::TcpListener,
+    signal,
+    sync::watch,
+    time::{sleep, timeout},
+};
 use tonic::transport::Server;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
@@ -34,6 +39,9 @@ const DEFAULT_PREVIEW_ADDRESS: &str = "0.0.0.0:8081";
 const DEFAULT_ARCHITECTURE: &str = "amd64";
 const MAX_GRPC_MESSAGE_BYTES: usize = 16 << 20;
 const RUNTIME_SECRET_POLL_INTERVAL: Duration = Duration::from_secs(15);
+const STARTUP_KUBERNETES_RETRY_ATTEMPTS: usize = 8;
+const STARTUP_KUBERNETES_INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
+const STARTUP_KUBERNETES_MAX_RETRY_DELAY: Duration = Duration::from_secs(5);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -95,10 +103,14 @@ async fn main() -> anyhow::Result<()> {
         },
         activity.clone(),
     )?;
-    service
-        .recover_provisional_terminal_leases()
-        .await
-        .context("recover provisional terminal leases")?;
+    retry_kubernetes_startup_operation(
+        || service.recover_provisional_terminal_leases(),
+        STARTUP_KUBERNETES_RETRY_ATTEMPTS,
+        STARTUP_KUBERNETES_INITIAL_RETRY_DELAY,
+        STARTUP_KUBERNETES_MAX_RETRY_DELAY,
+    )
+    .await
+    .context("recover provisional terminal leases")?;
     let tickets = service.tickets();
     let gateway_state = GatewayState::new(
         client.clone(),
@@ -206,6 +218,50 @@ async fn main() -> anyhow::Result<()> {
     result
 }
 
+async fn retry_kubernetes_startup_operation<F, Fut>(
+    mut operation: F,
+    max_attempts: usize,
+    initial_delay: Duration,
+    max_delay: Duration,
+) -> Result<(), kube::Error>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<(), kube::Error>>,
+{
+    debug_assert!(max_attempts > 0);
+
+    let mut retry_delay = initial_delay;
+    for attempt in 1..=max_attempts {
+        match operation().await {
+            Ok(()) => return Ok(()),
+            Err(error) if attempt < max_attempts && retryable_startup_kubernetes_error(&error) => {
+                warn!(
+                    attempt,
+                    max_attempts,
+                    retry_delay_ms = retry_delay.as_millis(),
+                    %error,
+                    "Kubernetes startup operation failed; retrying"
+                );
+                sleep(retry_delay).await;
+                retry_delay = retry_delay.saturating_mul(2).min(max_delay);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    unreachable!("positive startup retry budget always returns from the loop")
+}
+
+fn retryable_startup_kubernetes_error(error: &kube::Error) -> bool {
+    match error {
+        kube::Error::Api(response) => {
+            response.code == 408 || response.code == 429 || response.code >= 500
+        }
+        kube::Error::HyperError(_) | kube::Error::Service(_) | kube::Error::ReadEvents(_) => true,
+        _ => false,
+    }
+}
+
 fn install_rustls_crypto_provider() -> anyhow::Result<()> {
     if rustls::crypto::CryptoProvider::get_default().is_some() {
         return Ok(());
@@ -281,11 +337,118 @@ fn parse_architecture(value: &str) -> anyhow::Result<MicroVMArchitecture> {
 
 #[cfg(test)]
 mod tests {
-    use super::install_rustls_crypto_provider;
+    use std::{
+        io::ErrorKind,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::Duration,
+    };
+
+    use super::{
+        install_rustls_crypto_provider, retry_kubernetes_startup_operation,
+        retryable_startup_kubernetes_error,
+    };
 
     #[test]
     fn installs_process_level_rustls_crypto_provider() {
         install_rustls_crypto_provider().expect("install rustls provider");
         assert!(rustls::crypto::CryptoProvider::get_default().is_some());
+    }
+
+    #[tokio::test]
+    async fn retries_transient_kubernetes_startup_failure_without_process_restart() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let operation_attempts = attempts.clone();
+
+        retry_kubernetes_startup_operation(
+            move || {
+                let attempt = operation_attempts.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    if attempt == 0 {
+                        Err(connection_refused_error())
+                    } else {
+                        Ok(())
+                    }
+                }
+            },
+            3,
+            Duration::ZERO,
+            Duration::ZERO,
+        )
+        .await
+        .expect("transient Kubernetes failure should recover");
+
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn fails_fast_on_non_retryable_kubernetes_startup_failure() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let operation_attempts = attempts.clone();
+
+        let error = retry_kubernetes_startup_operation(
+            move || {
+                operation_attempts.fetch_add(1, Ordering::SeqCst);
+                async {
+                    Err(kube::Error::Api(
+                        kube::core::Status::failure("forbidden", "Forbidden")
+                            .with_code(403)
+                            .boxed(),
+                    ))
+                }
+            },
+            3,
+            Duration::ZERO,
+            Duration::ZERO,
+        )
+        .await
+        .expect_err("forbidden Kubernetes response must fail fast");
+
+        assert!(matches!(error, kube::Error::Api(response) if response.code == 403));
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn stops_after_bounded_kubernetes_startup_retries() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let operation_attempts = attempts.clone();
+
+        let error = retry_kubernetes_startup_operation(
+            move || {
+                operation_attempts.fetch_add(1, Ordering::SeqCst);
+                async { Err(connection_refused_error()) }
+            },
+            3,
+            Duration::ZERO,
+            Duration::ZERO,
+        )
+        .await
+        .expect_err("retry budget must remain bounded");
+
+        assert!(matches!(error, kube::Error::Service(_)));
+        assert_eq!(attempts.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn retries_only_transient_kubernetes_startup_errors() {
+        assert!(retryable_startup_kubernetes_error(
+            &connection_refused_error()
+        ));
+        assert!(retryable_startup_kubernetes_error(&kube::Error::Api(
+            kube::core::Status::failure("busy", "TooManyRequests")
+                .with_code(429)
+                .boxed(),
+        )));
+        assert!(!retryable_startup_kubernetes_error(&kube::Error::Api(
+            kube::core::Status::failure("forbidden", "Forbidden")
+                .with_code(403)
+                .boxed(),
+        )));
+    }
+
+    fn connection_refused_error() -> kube::Error {
+        kube::Error::Service(std::io::Error::from(ErrorKind::ConnectionRefused).into())
     }
 }
