@@ -217,7 +217,26 @@ jobs:
           )"
           docker image load --input "${INSTALLER_TAR}"
           docker image tag "${source_reference}" "${reference}"
-          docker image push "${reference}"
+          push_log="$(mktemp)"
+          trap 'rm -f "${push_log}"' EXIT
+          for attempt in 1 2 3 4; do
+            if docker image push "${reference}" 2>&1 | tee "${push_log}"; then
+              break
+            fi
+            if ! grep -Eiq \
+              'timeout awaiting response headers|connection reset by peer|TLS handshake timeout|unexpected EOF|i/o timeout|HTTP status (429|500|502|503|504)' \
+              "${push_log}"; then
+              echo 'installer push failed with a non-retryable registry error' >&2
+              exit 1
+            fi
+            if [[ "${attempt}" -eq 4 ]]; then
+              echo 'installer push exhausted transient registry retries' >&2
+              exit 1
+            fi
+            delay="$((attempt * 15))"
+            echo "::warning::installer push hit a transient registry error; retrying in ${delay}s"
+            sleep "${delay}"
+          done
           digest="$(crane digest "${reference}")"
           test "$(crane config "${reference}" | jq -r .architecture)" = '${{ matrix.architecture }}'
           immutable_reference="${IMAGE}@${digest}"

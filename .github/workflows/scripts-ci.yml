@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'packages/scripts/**'
+      - 'scripts/jangar/**'
       - 'argocd/root.yaml'
       - 'argocd/applications/argocd/**'
       - 'argocd/applications/observability/**'
@@ -40,6 +41,12 @@ on:
       - '.github/workflows/tengri.yaml'
       - 'docs/torghut/ceph-migration.md'
       - 'docs/agents/designs/handoff-common.md'
+      - 'docs/agents/primitives/**'
+      - 'docs/jangar/primitives/**'
+      - 'docs/agents/runbooks.md'
+      - 'docs/agents/leader-election-design.md'
+      - 'docs/agents/agentctl-cli-design.md'
+      - 'docs/documentation-authority.md'
       - 'docs/runbooks/rook-ceph-client-ops-performance.md'
       - 'docs/nix-enabled-app-build-performance-rollout-plan.md'
       - 'devices/galactic/docs/troubleshooting-networking.md'
@@ -49,6 +56,7 @@ on:
   pull_request:
     paths:
       - 'packages/scripts/**'
+      - 'scripts/jangar/**'
       - '.github/workflows/pull-request.yml'
       - '.github/workflows/scripts-ci.yml'
       - 'argocd/root.yaml'
@@ -85,6 +93,12 @@ on:
       - '.github/workflows/tengri.yaml'
       - 'docs/torghut/ceph-migration.md'
       - 'docs/agents/designs/handoff-common.md'
+      - 'docs/agents/primitives/**'
+      - 'docs/jangar/primitives/**'
+      - 'docs/agents/runbooks.md'
+      - 'docs/agents/leader-election-design.md'
+      - 'docs/agents/agentctl-cli-design.md'
+      - 'docs/documentation-authority.md'
       - 'docs/runbooks/rook-ceph-client-ops-performance.md'
       - 'docs/nix-enabled-app-build-performance-rollout-plan.md'
       - 'devices/galactic/docs/troubleshooting-networking.md'
@@ -105,4 +119,4 @@ jobs:
       lint-command: bun run --filter @proompteng/scripts lint
       oxlint-command: bun run --cwd packages/scripts lint:oxlint
       oxlint-type-command: bun run --cwd packages/scripts lint:oxlint:type
-      test-command: bunx tsc --noEmit --project packages/scripts/tsconfig.atlas.json && bun test packages/scripts/src
+      test-command: bunx tsc --noEmit --project packages/scripts/tsconfig.atlas.json && bun test packages/scripts/src && bun test scripts/jangar/validate-primitives.test.ts
