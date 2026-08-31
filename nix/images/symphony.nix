@@ -14,8 +14,8 @@ import ./bun-workspace-service.nix {
   serviceName = "symphony";
   packageName = "@proompteng/symphony";
   depsHash = {
-    x86_64-linux = "sha256-oMDMePxl2YhsxA1FfdtEOBQPS+qcu5yJWX7WOsklXjM=";
-    aarch64-linux = "sha256-9mNjExrn+gPNiRbkEmwA0K9KW/M/ZOxRP3XSeKcA0IM=";
+    x86_64-linux = "sha256-6q0CjK7cyckYhPBMVnPhRyurlJCp9MBmuIhjoFKPTvY=";
+    aarch64-linux = "sha256-ALhNNdR0E6ACOzYWZH36HqVhn5SmjGmt97LezxMzyIU=";
   };
   dependencyClosure = "bunCache";
   installFilters = [
