@@ -31,6 +31,7 @@ use crate::{
 };
 
 const BOOTSTRAP_SECRET_REJECTED: &str = "BootstrapSecretRejected";
+const GUEST_IMAGE_UPDATE_REASON: &str = "GuestImageUpdate";
 const UNSCHEDULABLE_FAILURE_GRACE_SECONDS: i64 = 30;
 const POD_SANDBOX_FAILURE_GRACE_SECONDS: i64 = 30;
 const MAX_FAILURE_MESSAGE_CHARS: usize = 2_048;
@@ -46,6 +47,7 @@ pub struct ControllerContext {
     pub client: Client,
     pub namespace: String,
     pub tickets: TicketStore,
+    pub guest_image: Arc<str>,
 }
 
 #[derive(Debug, Error)]
@@ -121,6 +123,17 @@ async fn reconcile(
         return Ok(Action::await_change());
     }
 
+    if microvm.spec.image != context.guest_image.as_ref() {
+        patch_guest_image(&microvms, &microvm, &context.guest_image).await?;
+        info!(
+            microvm = %name,
+            previous_image = %microvm.spec.image,
+            desired_image = %context.guest_image,
+            "updating MicroVM to the current Nanoagent release"
+        );
+        return Ok(Action::requeue(Duration::from_secs(1)));
+    }
+
     let idle = idle_deadline_passed(&microvm, now);
     if idle && microvm.spec.desired_state != MicroVMDesiredState::Sleeping {
         patch_desired_state(&microvms, &microvm, MicroVMDesiredState::Sleeping).await?;
@@ -143,6 +156,37 @@ async fn reconcile(
             patch_status(&microvms, &microvm, status).await?;
         }
         return Ok(Action::requeue(next_requeue(&microvm, now)));
+    }
+
+    if let Some(existing) = pods.get_opt(&name).await?
+        && is_controlled_by_microvm(&existing, &microvm)
+        && !runtime_pod_uses_image(&existing, &microvm.spec.image)
+    {
+        persist_storage_initialization_from_pod(
+            &context.client,
+            &pods,
+            &namespace,
+            &microvm,
+            &existing,
+        )
+        .await?;
+        context
+            .tickets
+            .remove_agent(&name)
+            .map_err(|error| ReconcileError::TicketStore(error.to_string()))?;
+        metrics::global().clear_pty_sessions(&name);
+
+        let status = guest_image_update_status(&microvm, now);
+        if microvm.status.as_ref() != Some(&status) {
+            patch_status(&microvms, &microvm, status).await?;
+        }
+        info!(
+            microvm = %name,
+            desired_image = %microvm.spec.image,
+            "replacing Firecracker guest Pod for the current Nanoagent release"
+        );
+        delete_owned_and_wait(&pods, &name, &microvm).await?;
+        return Ok(Action::requeue(Duration::from_secs(1)));
     }
 
     let bootstrap_secret =
@@ -330,7 +374,17 @@ async fn persist_storage_initialization_if_proven(
     let Some(pod) = pods.get_opt(&microvm.name_any()).await? else {
         return Ok(());
     };
-    if !is_controlled_by_microvm(&pod, microvm) || !pod_proves_storage_initialized(&pod) {
+    persist_storage_initialization_from_pod(client, pods, namespace, microvm, &pod).await
+}
+
+async fn persist_storage_initialization_from_pod(
+    client: &Client,
+    pods: &Api<Pod>,
+    namespace: &str,
+    microvm: &MicroVM,
+    pod: &Pod,
+) -> Result<(), kube::Error> {
+    if !is_controlled_by_microvm(pod, microvm) || !pod_proves_storage_initialized(pod) {
         return Ok(());
     }
     let home_claim = ensure_pvc(client.clone(), namespace, microvm).await?;
@@ -339,7 +393,7 @@ async fn persist_storage_initialization_if_proven(
         pods,
         namespace,
         microvm,
-        &pod,
+        pod,
         home_claim.initialization,
     )
     .await
@@ -555,6 +609,23 @@ async fn patch_desired_state(
     Ok(())
 }
 
+async fn patch_guest_image(
+    api: &Api<MicroVM>,
+    microvm: &MicroVM,
+    image: &str,
+) -> Result<(), kube::Error> {
+    api.patch(
+        &microvm.name_any(),
+        &PatchParams::default(),
+        &Patch::Merge(json!({
+            "metadata": {"resourceVersion": microvm.resource_version()},
+            "spec": {"image": image},
+        })),
+    )
+    .await?;
+    Ok(())
+}
+
 pub async fn patch_status(
     api: &Api<MicroVM>,
     microvm: &MicroVM,
@@ -610,6 +681,38 @@ fn sleeping_status(microvm: &MicroVM, idle: bool, now: DateTime<Utc>) -> MicroVM
         observed_generation: microvm.meta().generation.unwrap_or_default(),
         ..MicroVMStatus::default()
     }
+}
+
+fn guest_image_update_status(microvm: &MicroVM, now: DateTime<Utc>) -> MicroVMStatus {
+    let message = "Restarting the Firecracker guest on the current Nanoagent release; persistent home and workspace are retained";
+    MicroVMStatus {
+        phase: MicroVMPhase::Booting,
+        pvc_name: Some(pvc_name(microvm)),
+        message: Some(message.to_owned()),
+        last_activity_at: last_activity_at(microvm),
+        conditions: vec![condition(
+            microvm,
+            "Ready",
+            "False",
+            GUEST_IMAGE_UPDATE_REASON,
+            message,
+            now,
+        )],
+        observed_generation: microvm.meta().generation.unwrap_or_default(),
+        ..MicroVMStatus::default()
+    }
+}
+
+fn runtime_pod_uses_image(pod: &Pod, image: &str) -> bool {
+    pod.spec
+        .as_ref()
+        .and_then(|spec| {
+            spec.containers
+                .iter()
+                .find(|container| container.name == "nanoagent")
+        })
+        .and_then(|container| container.image.as_deref())
+        == Some(image)
 }
 
 fn terminating_status(microvm: &MicroVM, now: DateTime<Utc>) -> MicroVMStatus {
@@ -2106,9 +2209,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn controller_rollout_preserves_an_owned_booting_pod() {
+    async fn ensure_runtime_pod_reuses_an_owned_current_release_pod() {
         let now = Utc::now();
         let microvm = test_microvm(now);
+        let image = microvm.spec.image.clone();
         let response_pod: Pod = serde_json::from_value(json!({
             "apiVersion": "v1",
             "kind": "Pod",
@@ -2122,6 +2226,9 @@ mod tests {
                     "uid": "microvm-uid",
                     "controller": true,
                 }],
+            },
+            "spec": {
+                "containers": [{"name": "nanoagent", "image": image}],
             },
             "status": {"phase": "Pending"},
         }))
@@ -2172,6 +2279,100 @@ mod tests {
                 request.uri()
             );
         }
+    }
+
+    #[tokio::test]
+    async fn guest_image_patch_updates_only_the_controller_owned_digest() {
+        let mut microvm = test_microvm(Utc::now());
+        microvm.metadata.namespace = Some("tengri".to_owned());
+        microvm.metadata.resource_version = Some("41".to_owned());
+        let desired_image = format!("registry.example/nanoagent@sha256:{}", "b".repeat(64));
+        let mut response_microvm = microvm.clone();
+        response_microvm.spec.image = desired_image.clone();
+
+        let (service, mut handle) =
+            tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
+        let client = Client::new(service, "tengri");
+        let microvms = Api::namespaced(client, "tengri");
+        let patch_image = desired_image.clone();
+        let patch =
+            tokio::spawn(async move { patch_guest_image(&microvms, &microvm, &patch_image).await });
+
+        let (request, response) = handle.next_request().await.expect("MicroVM image patch");
+        assert_eq!(request.method(), http::Method::PATCH);
+        assert_eq!(
+            request.uri().path(),
+            "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent"
+        );
+        let body: serde_json::Value = serde_json::from_slice(
+            &request
+                .into_body()
+                .collect_bytes()
+                .await
+                .expect("patch request body"),
+        )
+        .expect("merge patch JSON");
+        assert_eq!(body["metadata"]["resourceVersion"], "41");
+        assert_eq!(body["spec"], json!({"image": desired_image}));
+        response.send_response(
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(KubeBody::from(
+                    serde_json::to_vec(&response_microvm).expect("MicroVM response JSON"),
+                ))
+                .expect("MicroVM response"),
+        );
+
+        patch
+            .await
+            .expect("image patch task")
+            .expect("controller-owned image patch");
+    }
+
+    #[test]
+    fn runtime_pod_must_use_the_exact_configured_nanoagent_digest() {
+        let current_image = format!("registry.example/nanoagent@sha256:{}", "b".repeat(64));
+        let old_image = format!("registry.example/nanoagent@sha256:{}", "a".repeat(64));
+        let current: Pod = serde_json::from_value(json!({
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {"name": "agent"},
+            "spec": {"containers": [{"name": "nanoagent", "image": current_image}]},
+        }))
+        .expect("current release Pod");
+        let old: Pod = serde_json::from_value(json!({
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {"name": "agent"},
+            "spec": {"containers": [{"name": "nanoagent", "image": old_image}]},
+        }))
+        .expect("old release Pod");
+
+        assert!(runtime_pod_uses_image(&current, &current_image));
+        assert!(!runtime_pod_uses_image(&old, &current_image));
+        assert!(!runtime_pod_uses_image(&Pod::default(), &current_image));
+    }
+
+    #[test]
+    fn guest_image_update_status_reports_a_guest_restart_and_retains_the_pvc() {
+        let now = Utc::now();
+        let mut microvm = test_microvm(now);
+        microvm.metadata.generation = Some(9);
+        let status = guest_image_update_status(&microvm, now);
+
+        assert_eq!(status.phase, MicroVMPhase::Booting);
+        assert!(!status.guest_ready);
+        assert_eq!(status.pvc_name.as_deref(), Some("agent-home"));
+        assert_eq!(status.pod_name, None);
+        assert_eq!(status.failure_reason, None);
+        assert_eq!(status.observed_generation, 9);
+        assert_eq!(status.conditions[0].reason, GUEST_IMAGE_UPDATE_REASON);
+        assert!(
+            status.message.as_deref().is_some_and(
+                |message| message.contains("persistent home and workspace are retained")
+            )
+        );
     }
 
     #[test]
