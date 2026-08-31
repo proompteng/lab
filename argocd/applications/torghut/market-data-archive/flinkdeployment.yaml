@@ -13,7 +13,7 @@ spec:
   imagePullPolicy: IfNotPresent
   # Cut over from the skewed v2 quote consumer to the repartitioned v3 consumer.
   # Existing ClickHouse history stays intact; the new group begins at each topic's live head.
-  restartNonce: 13
+  restartNonce: 14
   flinkVersion: v2_0
   serviceAccount: torghut-runtime
   flinkConfiguration:
@@ -80,7 +80,7 @@ spec:
     replicas: 1
   taskManager:
     resource:
-      cpu: 1
+      cpu: 2
       memory: 2048m
     replicas: 8
   job:
