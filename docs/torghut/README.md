@@ -33,7 +33,8 @@ Trust these surfaces in order:
 - DB migrations: `services/torghut/migrations/README.md`
 - CI/CD and release commands: `docs/torghut/ci-cd.md`
 - Historical simulation operations: `docs/torghut/rollouts/historical-simulation-playbook.md`
-- Current write-pressure rollout evidence: `docs/torghut/rollouts/2026-07-14-storage-write-pressure-remediation.md`
+- Write-pressure implementation history: [PR #12604](https://github.com/proompteng/lab/pull/12604); use the current
+  remediation design above for live operations.
 - Production readiness proof probes: `docs/torghut/production-readiness-proof-runbook.md`
 - Whitepaper issue to Kafka to Torghut to AgentRun workflow: `docs/torghut/whitepaper-research-workflow.md`
 - Postgres table reference: `docs/torghut/postgres-table-reference.md`

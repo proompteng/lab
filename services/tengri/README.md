@@ -7,6 +7,10 @@ an unprivileged `kata-fc` Pod with a 16 GiB persistent home PVC.
 The control plane also brokers scoped, one-use terminal tickets and localhost preview sessions. It does not run inside
 the guest and does not use AgentRun, KubeVirt, host devices, privileged launchers, or node mutations.
 
+Terminal creation has one protocol: every client supplies a stable 16-to-128-character `creation_id`, and Nanoagent
+returns that exact identity with the session. Retries reuse the same identity and are idempotent. Tengri rejects
+id-less requests instead of generating a compatibility identity or negotiating with an older guest.
+
 Each Chrome preview load exchanges its one-use ticket for a bounded, owner-scoped session whose ID is allocated before
 the browser receives the ticket. The desktop revokes both unused tickets and active sessions when a preview is
 superseded or closed, so reload and history use cannot exhaust the per-agent session limit. The gateway injects a
@@ -99,16 +103,21 @@ expire or delete it through Tengri, verify that no v2 CR remains, and only then 
 Verify the restored Pod, Service endpoint, `/livez`, and `/readyz` with the commands above.
 
 Tengri supports one storage layout:
-`runtime.proompteng.ai/storage-layout=home-workspace-v2`. Every new agent receives that annotation, mounts its PVC
-exactly once at `/home/nanoagent`, and exposes the persistent `workspace/` subdirectory through `/workspace`. The Pod
-has one application container and no init container, so Firecracker creates only one block-backed container rootfs.
+`runtime.proompteng.ai/storage-layout=home-workspace-v2`. Every new agent receives that annotation and one 16 GiB
+`volumeMode: Block` PVC. The Pod exposes it as `/dev/tengri-home`; the reviewed Kata persistent-block contract formats
+a provably new device once, mounts it at `/home/nanoagent`, applies GID 1000, and reuses the same filesystem on later
+boots. Nanoagent exposes the persistent `workspace/` subdirectory through `/workspace`. There is one application
+container and no init container.
+
+The Pod requires both `runtime.proompteng.ai/kata-fc=ready` and
+`runtime.proompteng.ai/kata-fc-persistent-block=ready`. The second capability must be applied only after the signed r5
+Kata extension is installed and its raw-block persistence acceptance passes on that node. Stock r4 nodes are
+deliberately ineligible rather than receiving a Pod whose PVC would be copied into Firecracker's 512 MiB rootfs.
 
 The failed `home-workspace-v1` experiment never produced a working guest and is not a compatibility contract. A CR with
 any other layout is rejected and must be deleted and recreated; Tengri does not migrate or fall back to the broken
-topology. The Deployment temporarily retains the predecessor's `TENGRI_NEW_AGENT_STORAGE_LAYOUT=home-workspace-v1`
-environment variable so the still-pinned predecessor remains stable while Kargo promotes `kargo/tengri`. The v2
-controller does not read that variable and always creates `home-workspace-v2`. Remove the inert variable in a later
-GitOps-only cleanup after the v2 controller is live. Never roll back past the v2 controller while a v2 CR exists.
+topology. A v2 CR backed by a legacy filesystem-mode claim is also rejected and must be deleted and recreated; the
+controller never mutates or reformats that claim. Never roll back past the v2 controller while a v2 CR exists.
 
 ## Local validation
 

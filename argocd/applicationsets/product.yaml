@@ -232,11 +232,12 @@ spec:
                 path: argocd/applications/symphony-torghut
                 namespace: torghut
                 targetRevision: kargo/symphony
+                cascadeResourcesOnDeletion: true
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
                   kargo.akuity.io/authorized-stage: lab-delivery:symphony
                 automation: auto
-                enabled: "true"
+                enabled: "false"
               - name: oirat
                 path: argocd/applications/oirat
                 namespace: oirat
@@ -431,31 +432,34 @@ spec:
                 namespace: torghut
                 renderWithLovely: false
                 targetRevision: kargo/torghut
+                cascadeResourcesOnDeletion: true
                 annotations:
                   argocd.argoproj.io/sync-wave: "7"
                   kargo.akuity.io/authorized-stage: lab-delivery:torghut
                 automation: auto
-                enabled: "true"
+                enabled: "false"
               - name: torghut-hyperliquid-feed
                 path: argocd/applications/torghut-hyperliquid-feed
                 namespace: torghut
                 renderWithLovely: false
                 targetRevision: kargo/torghut-hyperliquid-feed
+                cascadeResourcesOnDeletion: true
                 annotations:
                   argocd.argoproj.io/sync-wave: "7"
                   kargo.akuity.io/authorized-stage: lab-delivery:torghut-hyperliquid-feed
                 automation: auto
-                enabled: "true"
+                enabled: "false"
               - name: torghut-hyperliquid-runtime
                 path: argocd/applications/torghut-hyperliquid-runtime
                 namespace: torghut
                 renderWithLovely: false
                 targetRevision: kargo/torghut
+                cascadeResourcesOnDeletion: true
                 annotations:
                   argocd.argoproj.io/sync-wave: "8"
                   kargo.akuity.io/authorized-stage: lab-delivery:torghut
                 automation: auto
-                enabled: "true"
+                enabled: "false"
               - name: bilig
                 path: argocd/applications/bilig
                 namespace: bilig
