@@ -102,14 +102,14 @@ Do not merge ciphertext that fails `kubeseal --validate`. The Deployments intent
 booting with missing or mismatched credentials.
 
 The controller Deployment also configures the namespace, public gateway URL, preview host template, desktop origin,
-fixed guest image, and controller limits. The browser never receives these secrets, Kubernetes credentials, or guest
-bootstrap tokens.
+controller-owned digest-pinned guest image, and controller limits. The browser never receives these secrets, Kubernetes
+credentials, or guest bootstrap tokens.
 
 ## Lifecycle behavior
 
 `CreateAgent` derives a deterministic CR name from the authenticated GitHub subject, so one identity cannot race two
-active agents into existence. The server selects the architecture, 2 CPU, 4 GiB memory, 16 GiB workspace, and immutable
-guest image.
+active agents into existence. The server selects the architecture, 2 CPU, 4 GiB memory, 16 GiB workspace, and current
+digest-pinned guest image.
 
 - `Running`: the controller creates or retains the PVC, bootstrap Secret, and `kata-fc` Pod.
 - `Sleeping`: after 60 idle minutes the controller deletes only the Pod; the CR and PVC remain.
@@ -134,8 +134,11 @@ Exact failure reasons are published in CR status. Do not infer success from a cr
    digest/build metadata to `kargo/tengri`, and pushes that branch without a pull request. The Argo Applications track
    the branch and wait for `Synced`/`Healthy`. No generated promotion PR, release branch, or manifest digest bump is part
    of this flow.
-4. Let Argo reconcile, then verify the controller Deployment, Service endpoints, `/livez`, `/readyz`, and unchanged
-   node scheduling.
+4. Let Argo reconcile. The controller updates every existing `MicroVM.spec.image` to the promoted Nanoagent digest.
+   Sleeping agents retain their CR and PVC and use that digest when resumed. Running agents publish a truthful
+   `GuestImageUpdate` booting condition, revoke their old terminal and preview capabilities, and replace only their
+   owned Firecracker Pod. The CR and PVC are never deleted by this migration. Verify the controller Deployment,
+   Service endpoints, `/livez`, `/readyz`, unchanged PVC identities, and unchanged node scheduling.
 5. Run the bounded Firecracker acceptance path: create one authenticated agent, prove `runtimeClassName: kata-fc`,
    guest kernel isolation, fresh-image pull, interactive PTY, persistent file round trip, Codex event, and localhost
    preview WebSocket/HMR.
