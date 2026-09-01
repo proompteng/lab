@@ -131,16 +131,9 @@ export const isPostMutationReconciliation = (
 
 export const executionMutationSubmissionAllowed = (input: {
   readonly capability: ExecutionCapability['_tag']
-  readonly closeOnly: boolean
-  readonly executionMandateCutoffAt?: string
-  readonly executionMandateCloseSubmitCutoffAt?: string
+  readonly submissionCutoffAt: string
   readonly observedAt: string
-}): boolean =>
-  input.capability === 'Mutation' &&
-  (input.closeOnly
-    ? input.executionMandateCloseSubmitCutoffAt === undefined ||
-      input.observedAt < input.executionMandateCloseSubmitCutoffAt
-    : input.executionMandateCutoffAt === undefined || input.observedAt < input.executionMandateCutoffAt)
+}): boolean => input.capability === 'Mutation' && input.observedAt < input.submissionCutoffAt
 
 export const blockedEntryRequiresCloseOnlyContainment = (
   targetPlan: Pick<ExecutionDecisionDocument['targetPlan'], 'status' | 'reason'>,
@@ -674,9 +667,6 @@ const executeBoundExecutionCycle = (
       resolveExecutionCycleCloseWindow({
         executionCloseAt: cycle.window.executionCloseAt,
         ...sessionCloseLeads,
-        ...(input.executionMandateCutoffAt === undefined
-          ? {}
-          : { mandateForceCloseAt: input.executionMandateCutoffAt }),
         ...(input.executionMandateCloseSubmitCutoffAt === undefined
           ? {}
           : { mandateCloseSubmitCutoffAt: input.executionMandateCloseSubmitCutoffAt }),
@@ -694,14 +684,12 @@ const executeBoundExecutionCycle = (
       ),
     )
     const entrySubmissionCutoffAt =
-      closeWindow === undefined ||
-      (input.executionMandateCutoffAt !== undefined && input.executionMandateCutoffAt < closeWindow.startAt)
-        ? input.executionMandateCutoffAt
+      closeWindow === undefined || cycle.window.submissionCutoffAt < closeWindow.startAt
+        ? cycle.window.submissionCutoffAt
         : closeWindow.startAt
     const entryPhaseInput: ObserveAutonomousCycleInput = {
       ...input,
       mutationPhase: 'ENTRY',
-      ...(entrySubmissionCutoffAt === undefined ? {} : { executionMandateCutoffAt: entrySubmissionCutoffAt }),
     }
     const closeDue = closeWindow !== undefined && observedAt >= closeWindow.startAt
     const closeOnlyContainmentReason =
@@ -781,13 +769,8 @@ const executeBoundExecutionCycle = (
         reconcile,
         allowSubmit: executionMutationSubmissionAllowed({
           capability: capability._tag,
-          closeOnly,
-          ...(phaseInput.executionMandateCutoffAt === undefined
-            ? {}
-            : { executionMandateCutoffAt: phaseInput.executionMandateCutoffAt }),
-          ...(phaseInput.executionMandateCloseSubmitCutoffAt === undefined
-            ? {}
-            : { executionMandateCloseSubmitCutoffAt: phaseInput.executionMandateCloseSubmitCutoffAt }),
+          submissionCutoffAt:
+            closeOnly && closeWindow !== undefined ? closeWindow.submitCutoffAt : entrySubmissionCutoffAt,
           observedAt,
         }),
       })
@@ -908,13 +891,8 @@ const mutationBound = (cycle: AutonomousCycle | undefined): cycle is AutonomousC
 
 export const decideUnboundExecutionCycleTerminalization = (input: {
   readonly capability: ExecutionCapability['_tag']
-  readonly executionMandateCutoffAt?: string
-  readonly observedAt: string
 }): CycleTerminalReason.Authority | undefined =>
-  input.executionMandateCutoffAt !== undefined &&
-  (input.capability === 'RecoveryOnly' || input.observedAt >= input.executionMandateCutoffAt)
-    ? CycleTerminalReason.Authority
-    : undefined
+  input.capability === 'RecoveryOnly' ? CycleTerminalReason.Authority : undefined
 
 const terminalizeUnboundMutationCycle = (
   cycle: AutonomousCycle,
@@ -1118,18 +1096,11 @@ export const runRecoveryFirstCyclePass = (
         Effect.flatMap((observedAt) => {
           const terminalReason = decideUnboundExecutionCycleTerminalization({
             capability: capability._tag,
-            ...(input.executionMandateCutoffAt === undefined
-              ? {}
-              : { executionMandateCutoffAt: input.executionMandateCutoffAt }),
-            observedAt,
           })
           if (terminalReason !== undefined && unfinished !== undefined && !mutationBound(unfinished)) {
             return terminalizeUnboundMutationCycle(unfinished, terminalReason, observedAt)
           }
           if (capability._tag === 'RecoveryOnly') {
-            return Effect.succeed({ outcome: 'WINDOW_CLOSED' as const, observedAt })
-          }
-          if (input.executionMandateCutoffAt !== undefined && observedAt >= input.executionMandateCutoffAt) {
             return Effect.succeed({ outcome: 'WINDOW_CLOSED' as const, observedAt })
           }
           return runAutonomousCyclePass(context).pipe(

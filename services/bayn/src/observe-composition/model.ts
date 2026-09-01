@@ -97,7 +97,6 @@ export type ObserveAutonomousCycleInput = {
   readonly mutationPhase?: 'ENTRY' | 'CLOSE'
   readonly executionCycleClosureStore?: ExecutionCycleClosureStoreShape
   readonly blockedCycleIntentStore?: BlockedCycleIntentStoreShape
-  readonly executionMandateCutoffAt?: string
   readonly executionMandateCloseSubmitCutoffAt?: string
   readonly executionMandateExpiresAt?: string
   readonly onClosedCycle?: (cycleId: string, observedAt: string) => Effect.Effect<void>

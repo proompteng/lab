@@ -39,6 +39,11 @@ enum class ArchiveRecordKind {
   Trade,
 }
 
+data class ArchiveSourcePartition(
+  val topic: String,
+  val partition: Int,
+) : Serializable
+
 data class ArchiveUniverse(
   val id: String,
   val symbolHash: String,
@@ -259,6 +264,15 @@ data class IntradayTradeRecord(
 fun main() {
   val config = MarketDataArchiveConfig.fromEnv()
   val environment = StreamExecutionEnvironment.getExecutionEnvironment()
+
+  configureMarketDataArchiveJob(environment, config)
+  environment.execute("Bayn market-data archive")
+}
+
+internal fun configureMarketDataArchiveJob(
+  environment: StreamExecutionEnvironment,
+  config: MarketDataArchiveConfig,
+) {
   environment.setParallelism(config.parallelism)
   environment.enableCheckpointing(config.checkpointIntervalMs)
 
@@ -269,6 +283,7 @@ fun main() {
   source
     .flatMap(ParseArchiveBar(config.routes))
     .returns(TypeInformation.of(IntradayBarRecord::class.java))
+    .keyBy { bar -> ArchiveSourcePartition(bar.sourceTopic, bar.sourcePartition) }
     .sinkTo(archiveClickhouseSink(config))
     .name("signal-intraday-bars-archive")
     .uid("signal-intraday-bars-archive-v1")
@@ -276,6 +291,7 @@ fun main() {
   source
     .flatMap(ParseArchiveQuote(config.routes))
     .returns(TypeInformation.of(IntradayQuoteRecord::class.java))
+    .keyBy { quote -> ArchiveSourcePartition(quote.sourceTopic, quote.sourcePartition) }
     .sinkTo(archiveQuoteClickhouseSink(config))
     .name("signal-intraday-quotes-archive")
     .uid("signal-intraday-quotes-archive-v1")
@@ -283,11 +299,10 @@ fun main() {
   source
     .flatMap(ParseArchiveTrade(config.routes))
     .returns(TypeInformation.of(IntradayTradeRecord::class.java))
+    .keyBy { trade -> ArchiveSourcePartition(trade.sourceTopic, trade.sourcePartition) }
     .sinkTo(archiveTradeClickhouseSink(config))
     .name("signal-intraday-trades-archive")
     .uid("signal-intraday-trades-archive-v1")
-
-  environment.execute("Bayn market-data archive")
 }
 
 internal class ArchiveKafkaRecordDeserializer : KafkaRecordDeserializationSchema<ArchiveKafkaRecord> {
