@@ -214,7 +214,7 @@ class MarketDataArchiveJobTest {
       observationUniverse,
       config.routes.getValue("bayn.market-data.delayed-sip.bars.1m.v1").universe,
     )
-    assertEquals(100, config.clickhouseBatchSize)
+    assertEquals(1_000, config.clickhouseBatchSize)
     assertEquals("signal_publisher", config.clickhouseUsername)
     assertEquals(OffsetResetStrategy.LATEST, config.offsetResetStrategy)
     assertEquals(16, config.parallelism)

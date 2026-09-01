@@ -148,7 +148,7 @@ data class MarketDataArchiveConfig(
 
       val checkpointIntervalMs = env["ARCHIVE_CHECKPOINT_INTERVAL_MS"]?.toLongOrNull() ?: 60_000
       val parallelism = env["ARCHIVE_PARALLELISM"]?.toIntOrNull() ?: 3
-      val batchSize = env["ARCHIVE_CLICKHOUSE_BATCH_SIZE"]?.toIntOrNull() ?: 100
+      val batchSize = env["ARCHIVE_CLICKHOUSE_BATCH_SIZE"]?.toIntOrNull() ?: 1_000
       val flushMs = env["ARCHIVE_CLICKHOUSE_FLUSH_MS"]?.toLongOrNull() ?: 1_000
       val maxRetries = env["ARCHIVE_CLICKHOUSE_MAX_RETRIES"]?.toIntOrNull() ?: 3
       val offsetResetStrategy =
