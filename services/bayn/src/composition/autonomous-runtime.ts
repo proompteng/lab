@@ -603,7 +603,6 @@ export const makeAutonomousServiceRuntime = (
                                                   observedAt,
                                                 ),
                                               currentUtcInstant,
-                                              entrySubmitExpiresAt: request.cutoffAt,
                                               closeSubmitExpiresAt: executionMandateCloseExpiresAt(request.expiresAt),
                                               isCloseOnlyIntent: (intentId) =>
                                                 runtimeServices.executionCycleClosureStore.containsIntent(intentId),

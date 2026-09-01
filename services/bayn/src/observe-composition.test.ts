@@ -185,68 +185,48 @@ test('Restate scheduling never waits past the reconciliation cadence', () => {
   expect(recoveryFirstCycleNextDelayMs({ pollIntervalMs: 15_000, reconciliationIntervalMs: 30_000 })).toBe(15_000)
 })
 
-test('PAPER submissions obey separate entry and final close-session cutoffs', () => {
+test('execution submissions use the cycle entry cutoff and the final close-session cutoff', () => {
   expect(
     executionMutationSubmissionAllowed({
       capability: 'Mutation',
-      closeOnly: false,
-      executionMandateCutoffAt: '2020-05-01T13:00:00.000Z',
+      submissionCutoffAt: '2020-05-01T13:00:00.000Z',
       observedAt: '2020-05-01T12:59:59.000Z',
     }),
   ).toBe(true)
   expect(
     executionMutationSubmissionAllowed({
       capability: 'Mutation',
-      closeOnly: false,
-      executionMandateCutoffAt: '2020-05-01T13:00:00.000Z',
+      submissionCutoffAt: '2020-05-01T13:00:00.000Z',
       observedAt: '2020-05-01T13:00:00.000Z',
     }),
   ).toBe(false)
   expect(
     executionMutationSubmissionAllowed({
       capability: 'Mutation',
-      closeOnly: true,
-      executionMandateCutoffAt: '2020-05-01T13:00:00.000Z',
-      executionMandateCloseSubmitCutoffAt: '2020-05-03T20:00:00.000Z',
+      submissionCutoffAt: '2020-05-03T20:00:00.000Z',
       observedAt: '2020-05-01T13:05:00.000Z',
     }),
   ).toBe(true)
   expect(
     executionMutationSubmissionAllowed({
       capability: 'Mutation',
-      closeOnly: true,
-      executionMandateCutoffAt: '2020-05-01T13:00:00.000Z',
-      executionMandateCloseSubmitCutoffAt: '2020-05-03T20:00:00.000Z',
+      submissionCutoffAt: '2020-05-03T20:00:00.000Z',
       observedAt: '2020-05-03T20:00:00.000Z',
     }),
   ).toBe(false)
 })
 
-test('terminalizes a restricted unbound execution cycle before cutoff without enabling mutation', () => {
-  const cutoffAt = '2020-05-01T13:00:00.000Z'
-  const observedAt = '2020-05-01T12:00:00.000Z'
-
+test('terminalizes an unbound cycle only when execution is restricted', () => {
   expect(
     decideUnboundExecutionCycleTerminalization({
       capability: 'RecoveryOnly',
-      executionMandateCutoffAt: cutoffAt,
-      observedAt,
     }),
   ).toBe(CycleTerminalReason.Authority)
   expect(
     decideUnboundExecutionCycleTerminalization({
       capability: 'Mutation',
-      executionMandateCutoffAt: cutoffAt,
-      observedAt,
     }),
   ).toBeUndefined()
-  expect(
-    decideUnboundExecutionCycleTerminalization({
-      capability: 'Mutation',
-      executionMandateCutoffAt: cutoffAt,
-      observedAt: cutoffAt,
-    }),
-  ).toBe(CycleTerminalReason.Authority)
 })
 
 test('restricted mutation startup terminalizes its unbound cycle without discovering a replacement', async () => {
@@ -299,7 +279,6 @@ test('restricted mutation startup terminalizes its unbound cycle without discove
           reconciliationPassTimeoutMs: 30_000,
           strategy: currentIntradayRuntime,
           executionProgram: sandboxExecutionProgram(),
-          executionMandateCutoffAt: cycle.window.submissionCutoffAt,
         },
         'RecoveryOnly',
       )({
@@ -962,7 +941,6 @@ const prepareStoredExecutionStep = async (
   onRestriction: (reason: string, updatedAt: string) => void = () => undefined,
   input: typeof fixture.input & {
     readonly mutationPhase?: 'ENTRY' | 'CLOSE'
-    readonly executionMandateCutoffAt?: string
     readonly executionMandateCloseSubmitCutoffAt?: string
     readonly executionMandateExpiresAt?: string
   } = fixture.input,
@@ -1324,28 +1302,6 @@ describe('OBSERVE runtime composition', () => {
       intentId: second.intentId,
       observedAt,
       submitExpiresAt: secondRisk.evaluation.decision.expiresAt,
-    })
-  })
-
-  test('caps a fresh entry submission at the daily close start', async () => {
-    const fixture = await executionLifecycleFixture()
-    const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.createdAt) + 1_000)
-    const dailyCloseStartAt = utcInstantFromEpochMillis(Date.parse(observedAt) + 30_000)
-    const step = await prepareStoredExecutionStep(
-      fixture,
-      storedIntent(fixture.intent, IntentState.Planned, fixture.document.createdAt),
-      undefined,
-      observedAt,
-      0,
-      () => undefined,
-      { ...fixture.input, executionMandateCutoffAt: dailyCloseStartAt },
-    )
-
-    expect(step).toMatchObject({
-      _tag: 'Execute',
-      action: 'SUBMIT',
-      intentId: fixture.intent.intentId,
-      submitExpiresAt: dailyCloseStartAt,
     })
   })
 
@@ -3005,7 +2961,6 @@ describe('OBSERVE runtime composition', () => {
           input: {
             ...fixture.input,
             mutationPhase: 'CLOSE',
-            executionMandateCutoffAt: fixture.document.submissionCutoffAt,
             executionMandateCloseSubmitCutoffAt: closeExpiresAt,
             executionMandateExpiresAt: closeExpiresAt,
           },
@@ -3055,7 +3010,6 @@ describe('OBSERVE runtime composition', () => {
           input: {
             ...fixture.input,
             mutationPhase: 'CLOSE',
-            executionMandateCutoffAt: fixture.document.submissionCutoffAt,
             executionMandateCloseSubmitCutoffAt: missedCloseSubmitCutoffAt,
             executionMandateExpiresAt: closeExpiresAt,
           },
@@ -3141,7 +3095,6 @@ describe('OBSERVE runtime composition', () => {
       {
         ...fixture.input,
         mutationPhase: 'CLOSE',
-        executionMandateCutoffAt: fixture.document.submissionCutoffAt,
         executionMandateCloseSubmitCutoffAt: closeExpiresAt,
         executionMandateExpiresAt: closeExpiresAt,
       },
@@ -3289,7 +3242,6 @@ describe('OBSERVE runtime composition', () => {
       {
         ...fixture.input,
         mutationPhase: 'CLOSE',
-        executionMandateCutoffAt: fixture.document.submissionCutoffAt,
         executionMandateCloseSubmitCutoffAt: closeSubmitCutoffAt,
         executionMandateExpiresAt: closeExpiresAt,
       },
@@ -3388,7 +3340,6 @@ describe('OBSERVE runtime composition', () => {
       return expect.unreachable('partial-fill fixture requires two planned intents')
     }
     const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.createdAt) + 1_000)
-    const cutoffAt = utcInstantFromEpochMillis(Date.parse(observedAt) + 60_000)
     const filledRecord = storedIntent(filledIntent, IntentState.Terminal, observedAt, TerminalOutcome.Filled)
     const rejectedRecord = storedIntent(rejectedIntent, IntentState.Terminal, observedAt, TerminalOutcome.Rejected)
     const accepted: MutationEvent = {
@@ -3427,7 +3378,7 @@ describe('OBSERVE runtime composition', () => {
       observedAt,
       0,
       (reason) => restrictions.push(reason),
-      { ...fixture.input, executionMandateCutoffAt: cutoffAt },
+      fixture.input,
       undefined,
       true,
       fixture.policy,
@@ -3450,7 +3401,6 @@ describe('OBSERVE runtime composition', () => {
   test('keeps a single canceled partial-fill PAPER intent recoverable before cutoff', async () => {
     const fixture = await executionLifecycleFixture()
     const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.createdAt) + 1_000)
-    const cutoffAt = utcInstantFromEpochMillis(Date.parse(observedAt) + 60_000)
     const record = storedIntent(fixture.intent, IntentState.Terminal, observedAt, TerminalOutcome.Canceled)
     const accepted: MutationEvent = {
       schemaVersion: 'bayn.paper-mutation-event.v1',
@@ -3489,7 +3439,7 @@ describe('OBSERVE runtime composition', () => {
       observedAt,
       0,
       (reason) => restrictions.push(reason),
-      { ...fixture.input, executionMandateCutoffAt: cutoffAt },
+      fixture.input,
       undefined,
       true,
       fixture.policy,
@@ -3504,7 +3454,7 @@ describe('OBSERVE runtime composition', () => {
     expect(restrictions[0]).toContain(`intent ${fixture.intent.intentId} ended CANCELED`)
     expect(executionCycleHasFilledIntent({ intents: [record.intent], orders: [partialOrder] })).toBe(true)
 
-    const closeExpiresAt = utcInstantFromEpochMillis(Date.parse(cutoffAt) + 60_000)
+    const closeExpiresAt = utcInstantFromEpochMillis(Date.parse(observedAt) + 120_000)
     const closeRestrictions: string[] = []
     const closeStep = await prepareStoredExecutionStep(
       fixture,
@@ -3516,7 +3466,6 @@ describe('OBSERVE runtime composition', () => {
       {
         ...fixture.input,
         mutationPhase: 'CLOSE',
-        executionMandateCutoffAt: cutoffAt,
         executionMandateCloseSubmitCutoffAt: closeExpiresAt,
         executionMandateExpiresAt: closeExpiresAt,
       },
@@ -4340,120 +4289,6 @@ describe('OBSERVE runtime composition', () => {
     })
     expect(fencedTransactions).toBe(1)
     expect(authorityRestrictions).toBe(0)
-  })
-
-  test('terminalizes an unbound execution cycle and refuses new discovery after the entry-authority cutoff', async () => {
-    const cutoffAt = '2020-05-01T12:45:00.000Z'
-    const observedAt = '2020-05-01T12:45:01.000Z'
-    const terminalCycle = Effect.runSync(
-      decodeAutonomousCycle({
-        ...cycle,
-        state: CycleState.Blocked,
-        terminalReason: CycleTerminalReason.Authority,
-        stateVersion: cycle.stateVersion + 1,
-        updatedAt: observedAt,
-        terminalAt: observedAt,
-      }),
-    )
-    const forbidden = (capability: string) => Effect.die(new Error(`cutoff recovery must not use ${capability}`))
-    let blocked = 0
-    let terminal = false
-    const cycleStore: CycleStoreShape = {
-      acquire: () => forbidden('cycle acquisition'),
-      read: () => forbidden('cycle read by ID'),
-      readAuthoritySlot: () => forbidden('authority-slot read'),
-      readOldestUnfinished: () => Effect.succeed(terminal ? Option.none() : Option.some(cycle)),
-      readDecisionDocument: () => forbidden('decision document read'),
-      bindSnapshot: () => forbidden('snapshot binding'),
-      activate: () => forbidden('cycle activation'),
-      bindDecision: () => forbidden('decision binding'),
-      finish: () => forbidden('cycle finishing'),
-      block: (cycleId, reason, blockAt) =>
-        Effect.sync(() => {
-          blocked += 1
-          expect(cycleId).toBe(cycle.identity.cycleId)
-          expect(reason).toBe(CycleTerminalReason.Authority)
-          expect(blockAt).toBe(observedAt)
-          terminal = true
-          return { cycle: terminalCycle, changed: true }
-        }),
-    }
-    const reconciliationServices = makeExactReconciliationServices()
-    const brokerRead = reconciliationServices.brokerRead
-    const executionStore = {
-      ...reconciliationServices.executionStore,
-      ensureAuthorityGeneration: () => forbidden('authority initialization'),
-      restrictAuthority: () => forbidden('authority restriction'),
-    } satisfies BrokerEventStoreShape &
-      FillAccountingStoreShape &
-      ValuationStoreShape &
-      ReconciliationStoreShape &
-      AuthorityGenerationStoreShape &
-      AuthorityRestrictionStoreShape
-    const marketDataService: MarketDataService = {
-      check: forbidden('market-data health check'),
-      inspect: forbidden('market-data inspection'),
-      inspectCyclePublications: forbidden('cycle publication inspection'),
-      inspectPublication: () => forbidden('publication inspection'),
-      inspectSnapshotPublication: () => forbidden('snapshot publication inspection'),
-      loadSnapshotPublication: () => forbidden('snapshot publication load'),
-      load: forbidden('market-data load'),
-    }
-    const writerFence = reconciliationServices.writerFence
-    const startup = makeMutationAutonomousCycleStartup({
-      accountId,
-      authorityGenerationHash: generationHash,
-      pollIntervalMs: 30_000,
-      reconciliationIntervalMs: 30_000,
-      reconciliationPassTimeoutMs: 30_000,
-      strategy: currentIntradayRuntime,
-      executionProgram: sandboxExecutionProgram(),
-      executionMandateCutoffAt: cutoffAt,
-    })
-
-    const observations = await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          yield* TestClock.setTime(Date.parse(observedAt))
-          const firstPass = yield* Deferred.make<Parameters<Parameters<typeof startup>[0]['recordPass']>[0]>()
-          const secondPass = yield* Deferred.make<Parameters<Parameters<typeof startup>[0]['recordPass']>[0]>()
-          let passCount = 0
-          const loop = yield* startup({
-            cycleBindingId: cycle.identity.qualificationRunId,
-            recordPass: (result) => {
-              const target = passCount === 0 ? firstPass : secondPass
-              passCount += 1
-              return Deferred.succeed(target, result).pipe(Effect.asVoid)
-            },
-          })
-          const fiber = yield* loop.pipe(
-            Effect.provideService(BrokerRead, brokerRead),
-            Effect.provideService(CycleStore, cycleStore),
-            Effect.provideService(MarketData, marketDataService),
-            Effect.provideService(BrokerEventStore, executionStore),
-            Effect.provideService(FillAccountingStore, executionStore),
-            Effect.provideService(ValuationStore, executionStore),
-            Effect.provideService(ReconciliationStore, executionStore),
-            Effect.provideService(AuthorityGenerationStore, executionStore),
-            Effect.provideService(AuthorityRestrictionStore, executionStore),
-            Effect.provideService(IntentStore, {} as IntentStoreService),
-            Effect.provideService(MutationStore, {} as MutationStoreShape),
-            Effect.provideService(WriterFence, writerFence),
-            Effect.forkScoped({ startImmediately: true }),
-          )
-          const first = yield* Deferred.await(firstPass).pipe(Effect.timeout('1 second'))
-          yield* TestClock.adjust(30_000)
-          const second = yield* Deferred.await(secondPass).pipe(Effect.timeout('1 second'))
-          yield* Fiber.interrupt(fiber)
-          return [first, second] as const
-        }),
-      ).pipe(Effect.provide(TestClock.layer())),
-    )
-
-    expect(observations[0]).toMatchObject({ result: 'SUCCESS', outcome: 'RECOVERED' })
-    expect(observations[1]).toMatchObject({ result: 'SUCCESS', outcome: 'WINDOW_CLOSED' })
-    expect(blocked).toBe(1)
-    expect(terminal).toBe(true)
   })
 
   test('keeps the observe startup interface read-only by construction', () => {
