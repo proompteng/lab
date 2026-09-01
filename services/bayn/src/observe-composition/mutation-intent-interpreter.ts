@@ -48,7 +48,6 @@ export type MutationIntentInput = {
   readonly accountId: string
   readonly authorityGenerationHash: string
   readonly mutationPhase?: 'ENTRY' | 'CLOSE'
-  readonly executionMandateCutoffAt?: string
   readonly executionMandateCloseSubmitCutoffAt?: string
   readonly executionMandateExpiresAt?: string
 }
@@ -165,11 +164,7 @@ const boundExecutionSubmissionCutoff = (
       }),
     )
   }
-  return Result.succeed(
-    input.executionMandateCutoffAt !== undefined && input.executionMandateCutoffAt < cycle.window.submissionCutoffAt
-      ? input.executionMandateCutoffAt
-      : cycle.window.submissionCutoffAt,
-  )
+  return Result.succeed(cycle.window.submissionCutoffAt)
 }
 
 const immutableIntentBindingMatches = (stored: Intent, expected: Intent): boolean =>
@@ -710,8 +705,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
     }
 
     if (unsuccessfulIntentFound) {
-      const recoveryDeadline =
-        input.mutationPhase === 'CLOSE' ? input.executionMandateExpiresAt : input.executionMandateCutoffAt
+      const recoveryDeadline = input.mutationPhase === 'CLOSE' ? input.executionMandateExpiresAt : submissionCutoffAt
       if (
         (hasFilledIntent || (input.mutationPhase === 'CLOSE' && hasOpenPosition)) &&
         recoveryDeadline !== undefined &&
