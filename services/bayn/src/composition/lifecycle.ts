@@ -143,7 +143,6 @@ export const mutationCycle = (
       executionCycleClosureStore,
       blockedCycleIntentStore,
       onClosedCycle,
-      executionMandateCutoffAt: executionMandate.cutoffAt,
       executionMandateCloseSubmitCutoffAt: executionMandate.expiresAt,
       executionMandateExpiresAt: executionMandateCloseExpiresAt(executionMandate.expiresAt),
       ...(lifecycleMaintenance === undefined ? {} : { lifecycleMaintenance }),

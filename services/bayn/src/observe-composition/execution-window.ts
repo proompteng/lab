@@ -17,8 +17,6 @@ export interface ExecutionCycleCloseWindowFacts {
   readonly sessionCloseStartLeadMs?: number
   /** Strategy-bound lead from the session close to the final close submission. */
   readonly sessionCloseSubmitLeadMs?: number
-  /** Global end of entry authority and start of forced flattening. */
-  readonly mandateForceCloseAt?: string
   readonly mandateCloseSubmitCutoffAt?: string
   readonly mandateCloseExpiresAt?: string
 }
@@ -57,14 +55,9 @@ export const resolveExecutionCycleCloseWindow = (
   facts: ExecutionCycleCloseWindowFacts,
 ): Result.Result<ExecutionCycleCloseWindow | undefined, ExecutionCycleCloseWindowFailure> =>
   Result.gen(function* () {
-    if (
-      facts.mandateForceCloseAt === undefined ||
-      facts.mandateCloseSubmitCutoffAt === undefined ||
-      facts.mandateCloseExpiresAt === undefined
-    ) {
+    if (facts.mandateCloseSubmitCutoffAt === undefined || facts.mandateCloseExpiresAt === undefined) {
       return undefined
     }
-    const mandateForceCloseAt = yield* decodeInstant(facts.mandateForceCloseAt, 'mandate force-close instant')
     const mandateCloseSubmitCutoffAt = yield* decodeInstant(
       facts.mandateCloseSubmitCutoffAt,
       'mandate close submit-cutoff instant',
@@ -104,7 +97,7 @@ export const resolveExecutionCycleCloseWindow = (
       }),
     )
     const window = {
-      startAt: earlierInstant(mandateForceCloseAt, sessionStartAt),
+      startAt: sessionStartAt,
       submitCutoffAt: earlierInstant(mandateCloseSubmitCutoffAt, sessionSubmitCutoffAt),
       expiresAt: earlierInstant(mandateCloseExpiresAt, executionCloseAt),
     }
