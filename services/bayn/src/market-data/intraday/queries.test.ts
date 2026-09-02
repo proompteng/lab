@@ -56,6 +56,8 @@ describe('intraday archive queries', () => {
     expect(capture).toContain('FROM signal.intraday_bars_1m_v2')
     expect(capture).toContain('FROM signal.intraday_quotes_v1')
     expect(capture).toContain('FROM signal.intraday_trades_v1')
+    expect(capture).toContain('toString(source_partition) AS source_partition')
+    expect(capture).toContain('ORDER BY source_topic, toUInt64(source_partition)')
     expect(capture).not.toContain('has(')
     expect(capture).toContain(
       `event_ts >= parseDateTime64BestEffort("${request.calendar.sessions[0]!.openAt}", 3, 'UTC')`,
