@@ -290,6 +290,25 @@ describePostgres('PostgreSQL preopen authority recovery', () => {
           const sql = yield* PgClient.PgClient
           const cycles = yield* CycleStore
           yield* seedRepairableCycle(sql, cycles, fixture)
+          yield* sql`ALTER TABLE autonomous_cycles DISABLE TRIGGER autonomous_cycle_lifecycle`
+          yield* sql`
+            WITH timing AS (
+              SELECT clock_timestamp() AS observed_at
+            )
+            UPDATE autonomous_cycles AS cycle
+            SET
+              execution_session_date = (timing.observed_at AT TIME ZONE 'UTC')::date,
+              execution_open_at = timing.observed_at,
+              submission_open_at = timing.observed_at + interval '150 milliseconds',
+              submission_cutoff_at = timing.observed_at + interval '500 milliseconds',
+              execution_close_at = timing.observed_at + interval '501 milliseconds',
+              submission_window_ms = 350,
+              warmup_after_open_ms = 150,
+              submission_cutoff_before_close_ms = 1
+            FROM timing
+            WHERE cycle_id = ${fixture.cycle.identity.cycleId}
+          `
+          yield* sql`ALTER TABLE autonomous_cycles ENABLE TRIGGER autonomous_cycle_lifecycle`
 
           const writer = yield* sql.reserve
           yield* writer.executeUnprepared('BEGIN', [], undefined)
@@ -297,7 +316,7 @@ describePostgres('PostgreSQL preopen authority recovery', () => {
           yield* writer.executeValues('SELECT pg_advisory_xact_lock($1::integer, $2::integer)', [1_111_578_958, 1])
 
           const repair = yield* recoverPreopenAuthorityCycle.pipe(Effect.forkScoped({ startImmediately: true }))
-          yield* Effect.sleep('100 millis')
+          yield* Effect.sleep('250 millis')
           expect(repair.pollUnsafe()).toBeUndefined()
           const blockedRows = yield* writer.executeValues('SELECT state FROM autonomous_cycles WHERE cycle_id = $1', [
             fixture.cycle.identity.cycleId,
@@ -306,7 +325,12 @@ describePostgres('PostgreSQL preopen authority recovery', () => {
 
           yield* writer.executeUnprepared('ROLLBACK', [], undefined)
           yield* Fiber.join(repair)
-          expect(Option.getOrThrow(yield* cycles.read(fixture.cycle.identity.cycleId)).state).toBe(CycleState.Active)
+          const afterRepairRows = yield* sql<{ readonly state: string }>`
+            SELECT state
+            FROM autonomous_cycles
+            WHERE cycle_id = ${fixture.cycle.identity.cycleId}
+          `
+          expect(afterRepairRows).toEqual([{ state: 'BLOCKED' }])
         }),
       ),
     )
