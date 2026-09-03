@@ -216,15 +216,26 @@ test('execution submissions use the cycle entry cutoff and the final close-sessi
   ).toBe(false)
 })
 
-test('terminalizes an unbound cycle only when execution is restricted', () => {
+test('preserves a restricted unbound cycle until its submission window opens', () => {
   expect(
     decideUnboundExecutionCycleTerminalization({
       capability: 'RecoveryOnly',
+      observedAt: '2020-05-01T09:59:59.000Z',
+      submissionOpenAt: '2020-05-01T10:00:00.000Z',
+    }),
+  ).toBeUndefined()
+  expect(
+    decideUnboundExecutionCycleTerminalization({
+      capability: 'RecoveryOnly',
+      observedAt: '2020-05-01T10:00:00.000Z',
+      submissionOpenAt: '2020-05-01T10:00:00.000Z',
     }),
   ).toBe(CycleTerminalReason.Authority)
   expect(
     decideUnboundExecutionCycleTerminalization({
       capability: 'Mutation',
+      observedAt: '2020-05-01T10:00:00.000Z',
+      submissionOpenAt: '2020-05-01T10:00:00.000Z',
     }),
   ).toBeUndefined()
 })

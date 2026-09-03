@@ -113,9 +113,14 @@ export const recoverTerminalGenerationToObserve = <R>(
   input: TerminalGenerationRecoveryInput<R>,
 ): Effect.Effect<TerminalGenerationRolloverReceipt, OperationalError, R> =>
   Effect.gen(function* () {
-    const observedAt = yield* currentUtcInstant
     const settlement = yield* input.writerFence
-      .transaction(input.blockedIntents.settleCurrentTerminalGeneration({ accountId: input.accountId, observedAt }))
+      .transaction(
+        currentUtcInstant.pipe(
+          Effect.flatMap((observedAt) =>
+            input.blockedIntents.settleCurrentTerminalGeneration({ accountId: input.accountId, observedAt }),
+          ),
+        ),
+      )
       .pipe(Effect.mapError((cause) => recoveryError('terminal generation intent settlement failed', cause)))
     if (settlement._tag === 'NoTerminalGeneration') return { _tag: 'NotRequired' }
 
