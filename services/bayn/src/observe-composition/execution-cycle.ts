@@ -886,13 +886,17 @@ const readUnfinishedMutationCycle = (
     Effect.map(Option.getOrUndefined),
   )
 
-const mutationBound = (cycle: AutonomousCycle | undefined): cycle is AutonomousCycle =>
-  cycle !== undefined && cycle.state === CycleState.Active && cycle.bindings.decisionHash !== undefined
+const mutationBound = (cycle: AutonomousCycle): boolean =>
+  cycle.state === CycleState.Active && cycle.bindings.decisionHash !== undefined
 
 export const decideUnboundExecutionCycleTerminalization = (input: {
   readonly capability: ExecutionCapability['_tag']
+  readonly observedAt: string
+  readonly submissionOpenAt: string
 }): CycleTerminalReason.Authority | undefined =>
-  input.capability === 'RecoveryOnly' ? CycleTerminalReason.Authority : undefined
+  input.capability === 'RecoveryOnly' && input.observedAt >= input.submissionOpenAt
+    ? CycleTerminalReason.Authority
+    : undefined
 
 const terminalizeUnboundMutationCycle = (
   cycle: AutonomousCycle,
@@ -1089,16 +1093,20 @@ export const runRecoveryFirstCyclePass = (
 ): Effect.Effect<RecoveryFirstCyclePassResult, CycleRunnerError, RecoveryFirstRuntime> =>
   readUnfinishedMutationCycle(context).pipe(
     Effect.flatMap((unfinished) => {
-      if (mutationBound(unfinished)) {
+      if (unfinished !== undefined && mutationBound(unfinished)) {
         return recoverBoundMutationCycle(input, policy, unfinished, context, reconcile, capability)
       }
       return currentUtcInstant.pipe(
         Effect.flatMap((observedAt) => {
-          const terminalReason = decideUnboundExecutionCycleTerminalization({
-            capability: capability._tag,
-          })
-          if (terminalReason !== undefined && unfinished !== undefined && !mutationBound(unfinished)) {
-            return terminalizeUnboundMutationCycle(unfinished, terminalReason, observedAt)
+          if (unfinished !== undefined) {
+            const terminalReason = decideUnboundExecutionCycleTerminalization({
+              capability: capability._tag,
+              observedAt,
+              submissionOpenAt: unfinished.window.submissionOpenAt,
+            })
+            if (terminalReason !== undefined) {
+              return terminalizeUnboundMutationCycle(unfinished, terminalReason, observedAt)
+            }
           }
           if (capability._tag === 'RecoveryOnly') {
             return Effect.succeed({ outcome: 'WINDOW_CLOSED' as const, observedAt })
