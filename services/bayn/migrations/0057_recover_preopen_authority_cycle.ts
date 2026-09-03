@@ -11,6 +11,8 @@ export const recoverPreopenAuthorityCycle = Effect.gen(function* () {
       repairable_cycle_ids text[];
       trigger_disabled boolean := false;
     BEGIN
+      PERFORM pg_advisory_xact_lock(1111578958, 1);
+
       IF NOT EXISTS (
         SELECT 1
         FROM pg_trigger

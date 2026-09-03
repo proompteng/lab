@@ -299,7 +299,10 @@ describePostgres('PostgreSQL preopen authority recovery', () => {
           const repair = yield* recoverPreopenAuthorityCycle.pipe(Effect.forkScoped({ startImmediately: true }))
           yield* Effect.sleep('100 millis')
           expect(repair.pollUnsafe()).toBeUndefined()
-          expect(Option.getOrThrow(yield* cycles.read(fixture.cycle.identity.cycleId)).state).toBe(CycleState.Blocked)
+          const blockedRows = yield* writer.executeValues('SELECT state FROM autonomous_cycles WHERE cycle_id = $1', [
+            fixture.cycle.identity.cycleId,
+          ])
+          expect(blockedRows).toEqual([['BLOCKED']])
 
           yield* writer.executeUnprepared('ROLLBACK', [], undefined)
           yield* Fiber.join(repair)
