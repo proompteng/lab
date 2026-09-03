@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Layer, ManagedRuntime, Option, Redacted, Result, Schema } from 'effect'
+import { Effect, Fiber, Layer, ManagedRuntime, Option, Redacted, Result, Schema } from 'effect'
 
 import { recoverPreopenAuthorityCycle } from '../../../migrations/0057_recover_preopen_authority_cycle'
 import {
@@ -152,6 +152,38 @@ const seedExecutionAuthority = (sql: PgClient.PgClient, fixture: ReturnType<type
   })
 }
 
+const seedRepairableCycle = (
+  sql: PgClient.PgClient,
+  cycles: CycleStore['Service'],
+  fixture: ReturnType<typeof makeFixture>,
+) =>
+  Effect.gen(function* () {
+    yield* seedExecutionAuthority(sql, fixture)
+    yield* cycles.acquire(fixture.cycle, fixture.acquiredAt)
+    yield* cycles.activate(fixture.cycle.identity.cycleId, fixture.cycleActivatedAt)
+    yield* cycles.block(fixture.cycle.identity.cycleId, CycleTerminalReason.Authority, fixture.restrictedAt)
+    yield* sql`
+      INSERT INTO position_snapshots (
+        snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash
+      ) VALUES (
+        ${canonicalHashV1({ positions: 'flat' })}, 'bayn.paper-position-snapshot.v1', ${accountId},
+        ${canonicalHashV1({ positions: 'source' })}, ${fixture.positionsObservedAt}, 0,
+        ${canonicalHashV1({ positions: 'content' })}
+      )
+    `
+    const exactHash = canonicalHashV1({ reconciliation: 'current-flat' })
+    yield* sql`
+      INSERT INTO reconciliations (
+        reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+        content_hash, status, discrepancies, reconciled_at
+      ) VALUES (
+        ${canonicalHashV1({ reconciliation: 'current' })}, 'bayn.paper-reconciliation.v1',
+        ${accountId}, ${exactHash}, ${exactHash}, ${canonicalHashV1({ reconciliation: 'current-content' })},
+        'EXACT', ${sql.json(encodeSqlJson([]))}, ${fixture.reconciledAt}
+      )
+    `
+  })
+
 const makeRuntime = () =>
   ManagedRuntime.make(
     Layer.mergeAll(CycleStoreLive, BlockedCycleIntentStoreLive).pipe(
@@ -235,30 +267,7 @@ describePostgres('PostgreSQL preopen authority recovery', () => {
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
         const cycles = yield* CycleStore
-        yield* seedExecutionAuthority(sql, fixture)
-        yield* cycles.acquire(fixture.cycle, fixture.acquiredAt)
-        yield* cycles.activate(fixture.cycle.identity.cycleId, fixture.cycleActivatedAt)
-        yield* cycles.block(fixture.cycle.identity.cycleId, CycleTerminalReason.Authority, fixture.restrictedAt)
-        yield* sql`
-          INSERT INTO position_snapshots (
-            snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash
-          ) VALUES (
-            ${canonicalHashV1({ positions: 'flat' })}, 'bayn.paper-position-snapshot.v1', ${accountId},
-            ${canonicalHashV1({ positions: 'source' })}, ${fixture.positionsObservedAt}, 0,
-            ${canonicalHashV1({ positions: 'content' })}
-          )
-        `
-        const exactHash = canonicalHashV1({ reconciliation: 'current-flat' })
-        yield* sql`
-          INSERT INTO reconciliations (
-            reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
-            content_hash, status, discrepancies, reconciled_at
-          ) VALUES (
-            ${canonicalHashV1({ reconciliation: 'current' })}, 'bayn.paper-reconciliation.v1',
-            ${accountId}, ${exactHash}, ${exactHash}, ${canonicalHashV1({ reconciliation: 'current-content' })},
-            'EXACT', ${sql.json(encodeSqlJson([]))}, ${fixture.reconciledAt}
-          )
-        `
+        yield* seedRepairableCycle(sql, cycles, fixture)
         yield* recoverPreopenAuthorityCycle
         const repaired = yield* cycles.read(fixture.cycle.identity.cycleId)
         yield* recoverPreopenAuthorityCycle
@@ -271,6 +280,33 @@ describePostgres('PostgreSQL preopen authority recovery', () => {
     expect(repaired.terminalReason).toBeUndefined()
     expect(repaired.terminalAt).toBeUndefined()
     expect(result.replayed).toEqual(result.repaired)
+  })
+
+  test('waits for the execution writer fence before repairing a cycle', async () => {
+    const fixture = makeFixture()
+    await runtime.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const cycles = yield* CycleStore
+          yield* seedRepairableCycle(sql, cycles, fixture)
+
+          const writer = yield* sql.reserve
+          yield* writer.executeUnprepared('BEGIN', [], undefined)
+          yield* Effect.addFinalizer(() => writer.executeUnprepared('ROLLBACK', [], undefined).pipe(Effect.ignore))
+          yield* writer.executeValues('SELECT pg_advisory_xact_lock($1::integer, $2::integer)', [1_111_578_958, 1])
+
+          const repair = yield* recoverPreopenAuthorityCycle.pipe(Effect.forkScoped({ startImmediately: true }))
+          yield* Effect.sleep('100 millis')
+          expect(repair.pollUnsafe()).toBeUndefined()
+          expect(Option.getOrThrow(yield* cycles.read(fixture.cycle.identity.cycleId)).state).toBe(CycleState.Blocked)
+
+          yield* writer.executeUnprepared('ROLLBACK', [], undefined)
+          yield* Fiber.join(repair)
+          expect(Option.getOrThrow(yield* cycles.read(fixture.cycle.identity.cycleId)).state).toBe(CycleState.Active)
+        }),
+      ),
+    )
   })
 
   test('keeps blocked history when no fresh flat reconciliation proves repair is safe', async () => {
