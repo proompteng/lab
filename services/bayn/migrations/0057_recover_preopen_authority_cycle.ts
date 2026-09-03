@@ -7,11 +7,12 @@ export const recoverPreopenAuthorityCycle = Effect.gen(function* () {
   yield* sql`
     DO $migration$
     DECLARE
-      repair_observed_at timestamptz := clock_timestamp();
+      repair_observed_at timestamptz;
       repairable_cycle_ids text[];
       trigger_disabled boolean := false;
     BEGIN
       PERFORM pg_advisory_xact_lock(1111578958, 1);
+      repair_observed_at := clock_timestamp();
 
       IF NOT EXISTS (
         SELECT 1
