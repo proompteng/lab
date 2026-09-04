@@ -4,6 +4,7 @@ import { MutationOperation } from '../broker/alpaca-mutations'
 import { CycleRunnerError } from '../cycle/runner'
 import { CycleStoreError } from '../cycle/store'
 import { AuthorityRestrictionStore } from '../db/execution-store'
+import { OperationalError } from '../errors'
 import { MutationEventType, MutationStore, type MutationEvent } from '../execution/mutations'
 import { executionCycleRestrictionSubject } from '../execution/mandate'
 import type { ExecutionProgram } from '../execution/runtime-program'
@@ -43,9 +44,13 @@ const isTransientCycleStoreFailure = (cause: unknown): cause is CycleStoreError 
   cause instanceof CycleStoreError &&
   (cause.persistenceFailure === 'connectivity' || cause.persistenceFailure === 'transaction')
 
-/** Decision-build and transient preflight read failures perform no broker I/O and are safe to retry. */
+const isRetryableReconciliationFailure = (error: CycleRunnerError): boolean =>
+  error.cause instanceof OperationalError && error.cause.operation === 'reconciliation' && error.cause.retryable
+
+/** These failures do not create an unknown broker mutation and are safe to retry. */
 export const shouldRestrictMutationLoopFailure = (error: CycleRunnerError): boolean =>
   error.operation !== 'build-decision' &&
+  !isRetryableReconciliationFailure(error) &&
   (error.operation !== 'read-oldest-unfinished' ||
     error.failure !== 'store' ||
     !isTransientCycleStoreFailure(error.cause))
