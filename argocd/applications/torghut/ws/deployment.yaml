@@ -76,7 +76,7 @@ spec:
             - name: TORGHUT_WS_COMMIT
               value: e2d7b6de591204e7a182c246661b060957c929ef
             - name: JAVA_TOOL_OPTIONS
-              value: -XX:+UseContainerSupport -XX:InitialRAMPercentage=40.0 -XX:MaxRAMPercentage=70.0 -XX:+ExitOnOutOfMemoryError
+              value: -XX:+UseContainerSupport -XX:InitialRAMPercentage=25.0 -XX:MaxRAMPercentage=50.0 -XX:+ExitOnOutOfMemoryError
           ports:
             - containerPort: 8080
               name: http
@@ -100,7 +100,7 @@ spec:
               memory: 512Mi
             limits:
               cpu: "1"
-              memory: 1Gi
+              memory: 1536Mi
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
