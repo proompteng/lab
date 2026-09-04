@@ -260,11 +260,20 @@ export const evaluateIntradayMomentumDecision = (
         },
       },
     }),
-    (cause) =>
-      cause.reason === 'snapshot-coverage' &&
-      cause.message === 'intraday symbol lacks the complete rolling lookback baseline'
-        ? new IntradayMomentumEntryAwaitingSnapshot({ message: cause.message })
-        : failure('entry-decision', 'intraday-momentum strategy rejected its verified runtime snapshot', cause),
+    (cause) => {
+      if (
+        cause.reason === 'snapshot-coverage' &&
+        cause.message === 'intraday symbol lacks the complete rolling lookback baseline'
+      ) {
+        return new IntradayMomentumEntryAwaitingSnapshot({ message: cause.message })
+      }
+      const details = [
+        `${cause.reason}: ${cause.message}`,
+        cause.symbol === undefined ? undefined : `symbol=${cause.symbol}`,
+        cause.field === undefined ? undefined : `field=${cause.field}`,
+      ].filter((detail): detail is string => detail !== undefined)
+      return failure('entry-decision', details.join('; '), cause)
+    },
   )
 
 export const compileIntradayMomentumDecision = (
