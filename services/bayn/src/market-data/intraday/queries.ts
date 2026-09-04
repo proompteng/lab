@@ -93,7 +93,7 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
         AND ingest_ts <= parseDateTime64BestEffort(${time.observed}, 9, 'UTC')
     )
     GROUP BY source_topic, source_partition
-    ORDER BY source_topic, source_partition
+    ORDER BY source_topic, toUInt64(source_partition)
   `
   }
 

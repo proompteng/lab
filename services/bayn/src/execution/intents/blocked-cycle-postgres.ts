@@ -180,6 +180,7 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
             generation.activation_schema_version,
             generation.qualification_run_id,
             generation.research_plan_hash,
+            generation.strategy_protocol_hash,
             state.updated_at AS restricted_at,
             (
               state.reason LIKE ${`${executionMandateFailureRestrictionPrefix}%`}
@@ -250,11 +251,39 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
               )
             )
           FOR UPDATE OF cycle
+        ), preserved_cycles AS MATERIALIZED (
+          SELECT cycle.cycle_id
+          FROM current_generation AS generation
+          JOIN autonomous_cycles AS cycle
+            ON cycle.account_id = generation.account_id
+           AND cycle.qualification_run_id = generation.research_plan_hash
+           AND cycle.strategy_protocol_hash = generation.strategy_protocol_hash
+          WHERE generation.requires_blocked_cycle
+            AND generation.activation_schema_version = 'bayn.paper-authority-generation.v3'
+            AND cycle.schema_version = 'bayn.autonomous-cycle.v3'
+            AND cycle.identity_schema_version = 'bayn.autonomous-cycle-identity.v3'
+            AND cycle.state IN ('PENDING', 'ACTIVE')
+            AND cycle.snapshot_id IS NULL
+            AND cycle.decision_hash IS NULL
+            AND cycle.updated_at <= generation.restricted_at
+            AND ${input.observedAt}::timestamptz < cycle.submission_open_at
+            AND NOT EXISTS (
+              SELECT 1
+              FROM autonomous_cycle_shadow_decisions AS decision
+              WHERE decision.cycle_id = cycle.cycle_id
+            )
+            AND NOT EXISTS (
+              SELECT 1
+              FROM intents AS intent
+              WHERE intent.cycle_id = cycle.cycle_id
+            )
+          FOR UPDATE OF cycle
         ), recoverable_generation AS MATERIALIZED (
           SELECT generation.*
           FROM current_generation AS generation
           WHERE NOT generation.requires_blocked_cycle
              OR EXISTS (SELECT 1 FROM blocked_cycles)
+             OR EXISTS (SELECT 1 FROM preserved_cycles)
         ), terminalized AS (
           UPDATE intents AS intent
           SET

@@ -196,7 +196,7 @@ describe('execution policy configuration', () => {
   test('decodes a canonical research grant without qualification aliases', () => {
     const sourceGenerationHash = '0'.repeat(64)
     const plan = {
-      schemaVersion: 'bayn.paper-research-plan.v1' as const,
+      schemaVersion: 'bayn.research-execution-plan.v1' as const,
       activation: {
         sourceRevision: 'a'.repeat(40),
         imageRepository: 'ghcr.io/proompteng/bayn',
@@ -216,9 +216,6 @@ describe('execution policy configuration', () => {
       },
       riskPolicyHash: '8'.repeat(64),
       limits: { maxOpenOrders: 0 as const, maxPositions: 0 as const },
-      cutoffAt: '2026-09-01T13:00:00.000Z',
-      expiresAt: '2026-09-03T20:00:00.000Z',
-      maximumCloseSessions: 3 as const,
     } as const
     const planHash = Result.getOrThrow(makeResearchCapitalPlanHash(plan))
     const { schemaVersion: _planSchemaVersion, ...planFields } = plan
@@ -246,7 +243,7 @@ describe('execution policy configuration', () => {
     )
     const request = Result.getOrThrow(
       makeResearchCapitalActivationRequest({
-        schemaVersion: 'bayn.paper-research-activation-request.v1',
+        schemaVersion: 'bayn.research-execution-mandate.v1',
         grant: { _tag: 'Research', planHash },
         ...planFields,
       }),
@@ -256,15 +253,23 @@ describe('execution policy configuration', () => {
     expect(decodeCapitalActivationRequestResult({ ...request, grant: { _tag: 'Qualified' } })).toMatchObject({
       _tag: 'Failure',
     })
-    expect(decodeCapitalActivationRequestResult({ ...request, maximumCloseSessions: 4 })).toMatchObject({
+    expect(decodeCapitalActivationRequestResult({ ...request, expiresAt: '2026-09-03T20:00:00.000Z' })).toMatchObject({
       _tag: 'Failure',
     })
     expect(
-      makeResearchCapitalActivationRequest({
+      decodeCapitalActivationRequestResult({
+        ...request,
         schemaVersion: 'bayn.paper-research-activation-request.v1',
-        grant: { _tag: 'Research', planHash },
+        cutoffAt: '2026-09-01T13:00:00.000Z',
+        expiresAt: '2026-09-03T20:00:00.000Z',
+        maximumCloseSessions: 3,
+      }),
+    ).toMatchObject({ _tag: 'Failure' })
+    expect(
+      makeResearchCapitalActivationRequest({
+        schemaVersion: 'bayn.research-execution-mandate.v1',
+        grant: { _tag: 'Research', planHash: 'f'.repeat(64) },
         ...planFields,
-        cutoffAt: '2026-09-02T13:00:00.000Z',
       }),
     ).toEqual(Result.fail('ResearchCapitalPlanHashMismatch'))
     expect(researchCapitalGrantProof(request)).toMatchObject({
@@ -361,7 +366,7 @@ describe('execution policy configuration', () => {
     ).toEqual(Result.fail('research capital generation is outside the authorized build repository'))
     const continuation = Result.getOrThrow(
       makeResearchCapitalBuildContinuation({
-        schemaVersion: 'bayn.paper-research-build-continuation.v1',
+        schemaVersion: 'bayn.research-execution-build-continuation.v1',
         request,
         generationHash: generation.generationHash,
         activation: currentActivation,
@@ -373,7 +378,7 @@ describe('execution policy configuration', () => {
     )
     const wrongGenerationContinuation = Result.getOrThrow(
       makeResearchCapitalBuildContinuation({
-        schemaVersion: 'bayn.paper-research-build-continuation.v1',
+        schemaVersion: 'bayn.research-execution-build-continuation.v1',
         request,
         generationHash: 'e'.repeat(64),
         activation: currentActivation,
@@ -390,7 +395,7 @@ describe('execution policy configuration', () => {
     ).toMatchObject({ _tag: 'Failure' })
     expect(
       makeResearchCapitalBuildContinuation({
-        schemaVersion: 'bayn.paper-research-build-continuation.v1',
+        schemaVersion: 'bayn.research-execution-build-continuation.v1',
         request,
         generationHash: generation.generationHash,
         activation: { ...currentActivation, imageRepository: 'ghcr.io/other/bayn' },

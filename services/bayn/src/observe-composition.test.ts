@@ -216,15 +216,26 @@ test('execution submissions use the cycle entry cutoff and the final close-sessi
   ).toBe(false)
 })
 
-test('terminalizes an unbound cycle only when execution is restricted', () => {
+test('preserves a restricted unbound cycle until its submission window opens', () => {
   expect(
     decideUnboundExecutionCycleTerminalization({
       capability: 'RecoveryOnly',
+      observedAt: '2020-05-01T09:59:59.000Z',
+      submissionOpenAt: '2020-05-01T10:00:00.000Z',
+    }),
+  ).toBeUndefined()
+  expect(
+    decideUnboundExecutionCycleTerminalization({
+      capability: 'RecoveryOnly',
+      observedAt: '2020-05-01T10:00:00.000Z',
+      submissionOpenAt: '2020-05-01T10:00:00.000Z',
     }),
   ).toBe(CycleTerminalReason.Authority)
   expect(
     decideUnboundExecutionCycleTerminalization({
       capability: 'Mutation',
+      observedAt: '2020-05-01T10:00:00.000Z',
+      submissionOpenAt: '2020-05-01T10:00:00.000Z',
     }),
   ).toBeUndefined()
 })
@@ -941,8 +952,8 @@ const prepareStoredExecutionStep = async (
   onRestriction: (reason: string, updatedAt: string) => void = () => undefined,
   input: typeof fixture.input & {
     readonly mutationPhase?: 'ENTRY' | 'CLOSE'
-    readonly executionMandateCloseSubmitCutoffAt?: string
-    readonly executionMandateExpiresAt?: string
+    readonly executionCycleCloseSubmitCutoffAt?: string
+    readonly executionCycleCloseExpiresAt?: string
   } = fixture.input,
   latestCancel?: MutationEvent,
   allowSubmit = true,
@@ -2961,8 +2972,8 @@ describe('OBSERVE runtime composition', () => {
           input: {
             ...fixture.input,
             mutationPhase: 'CLOSE',
-            executionMandateCloseSubmitCutoffAt: closeExpiresAt,
-            executionMandateExpiresAt: closeExpiresAt,
+            executionCycleCloseSubmitCutoffAt: closeExpiresAt,
+            executionCycleCloseExpiresAt: closeExpiresAt,
           },
           preparation: fixture.preparation,
           policy: fixture.policy,
@@ -3010,8 +3021,8 @@ describe('OBSERVE runtime composition', () => {
           input: {
             ...fixture.input,
             mutationPhase: 'CLOSE',
-            executionMandateCloseSubmitCutoffAt: missedCloseSubmitCutoffAt,
-            executionMandateExpiresAt: closeExpiresAt,
+            executionCycleCloseSubmitCutoffAt: missedCloseSubmitCutoffAt,
+            executionCycleCloseExpiresAt: closeExpiresAt,
           },
           preparation: fixture.preparation,
           policy: fixture.policy,
@@ -3095,8 +3106,8 @@ describe('OBSERVE runtime composition', () => {
       {
         ...fixture.input,
         mutationPhase: 'CLOSE',
-        executionMandateCloseSubmitCutoffAt: closeExpiresAt,
-        executionMandateExpiresAt: closeExpiresAt,
+        executionCycleCloseSubmitCutoffAt: closeExpiresAt,
+        executionCycleCloseExpiresAt: closeExpiresAt,
       },
       undefined,
       true,
@@ -3242,8 +3253,8 @@ describe('OBSERVE runtime composition', () => {
       {
         ...fixture.input,
         mutationPhase: 'CLOSE',
-        executionMandateCloseSubmitCutoffAt: closeSubmitCutoffAt,
-        executionMandateExpiresAt: closeExpiresAt,
+        executionCycleCloseSubmitCutoffAt: closeSubmitCutoffAt,
+        executionCycleCloseExpiresAt: closeExpiresAt,
       },
       undefined,
       true,
@@ -3466,8 +3477,8 @@ describe('OBSERVE runtime composition', () => {
       {
         ...fixture.input,
         mutationPhase: 'CLOSE',
-        executionMandateCloseSubmitCutoffAt: closeExpiresAt,
-        executionMandateExpiresAt: closeExpiresAt,
+        executionCycleCloseSubmitCutoffAt: closeExpiresAt,
+        executionCycleCloseExpiresAt: closeExpiresAt,
       },
       undefined,
       true,
