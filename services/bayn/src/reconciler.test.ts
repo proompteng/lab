@@ -347,7 +347,21 @@ describe('reconciliation pure decisions', () => {
         failure: { _tag: 'Snapshot', reason: 'AccountBaselineMissing' },
       },
     })
-    expect(decideContainment(Cause.fail(new Error('read failed')))).toEqual({
+    const retryableRead = new BrokerReadError({
+      operation: 'account',
+      kind: BrokerReadErrorKind.Transport,
+      message: 'transient read failure',
+      retryable: true,
+    })
+    expect(decideContainment(Cause.fail(retryableRead))).toEqual({ _tag: 'PreserveAuthority' })
+
+    const invalidRead = new BrokerReadError({
+      operation: 'account',
+      kind: BrokerReadErrorKind.InvalidResponse,
+      message: 'invalid account response',
+      retryable: false,
+    })
+    expect(decideContainment(Cause.fail(invalidRead))).toEqual({
       _tag: 'RestrictAuthority',
       reason: 'reconciliation pass incomplete',
     })
@@ -355,6 +369,36 @@ describe('reconciliation pure decisions', () => {
 })
 
 describe('execution reconciliation loop', () => {
+  test('recovers a retryable broker read on the next pass without restricting authority', async () => {
+    const transientFailure = new BrokerReadError({
+      operation: 'account',
+      kind: BrokerReadErrorKind.Transport,
+      message: 'injected transient account read failure',
+      retryable: true,
+    })
+    let accountReads = 0
+    const read: BrokerReadShape = {
+      ...emptyRead(),
+      account: Effect.suspend(() => {
+        accountReads += 1
+        return accountReads === 1
+          ? Effect.fail(transientFailure)
+          : Effect.succeed({ value: account, evidence: evidence(`account-${accountReads.toString()}`) })
+      }),
+    }
+    const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
+    const program = provide(read, makeStore(control))
+
+    const failure = await Effect.runPromise(program.pipe(Effect.flip))
+    expect(failure).toBe(transientFailure)
+    expect(control.restrictions).toEqual([])
+
+    const recovered = await Effect.runPromise(program)
+    expect(recovered.report.reconciliation.status).toBe(ReconciliationStatus.Exact)
+    expect(control.reconciliations).toHaveLength(1)
+    expect(control.restrictions).toEqual([])
+  })
+
   test('reads every broker page before persisting and binds fills to their orders', async () => {
     const allOrders = Array.from({ length: 501 }, (_, index) => order(index))
     const allFills = Array.from({ length: 101 }, (_, index) => fill(index, allOrders[index]))
@@ -841,9 +885,9 @@ describe('execution reconciliation loop', () => {
   test('retains both causes when authority restriction fails', async () => {
     const primaryFailure = new BrokerReadError({
       operation: 'account',
-      kind: BrokerReadErrorKind.Transport,
-      message: 'injected primary read failure',
-      retryable: true,
+      kind: BrokerReadErrorKind.InvalidResponse,
+      message: 'injected non-retryable read failure',
+      retryable: false,
     })
     const containmentFailure = new ExecutionStoreError({
       operation: 'authority',
