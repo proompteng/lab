@@ -21,7 +21,7 @@ import {
   type ExecutionSessionBinding,
   type ExecutionSessionBindingFailure,
 } from '../execution-session'
-import { OperationalError, operationalError } from '../errors'
+import { OperationalError, operationalError, retryableOperationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
 import {
   IntradaySnapshotFailure,
@@ -294,7 +294,7 @@ const compositionFailure = (
 const reconciliationOperationalError = (cause: ReconciliationPassError): OperationalError => {
   switch (cause._tag) {
     case 'BrokerReadError':
-      return operationalError({
+      return (cause.retryable ? retryableOperationalError : operationalError)({
         component: 'market-data',
         operation: 'reconciliation',
         message: 'same-pass broker reconciliation read failed',
@@ -326,7 +326,7 @@ const reconciliationOperationalError = (cause: ReconciliationPassError): Operati
         component: 'market-data',
         operation: 'reconciliation',
         message: cause.message,
-        retryable: false,
+        retryable: true,
         cause,
       })
   }
@@ -376,12 +376,12 @@ export const decisionBuildError = (cause: ObserveDecisionFailure): CycleDecision
   }
 }
 
-export const reconciliationRunnerError = (cause: ReconciliationPassError): CycleRunnerError => {
+export const reconciliationRunnerError = (cause: ReconciliationPassError, message?: string): CycleRunnerError => {
   const operational = reconciliationOperationalError(cause)
   return new CycleRunnerError({
     operation: 'reconcile',
     failure: operationalDecisionFailure(operational.component),
-    message: operational.message,
+    message: message ?? operational.message,
     cause: operational,
   })
 }
@@ -1317,7 +1317,7 @@ export const buildClosingExecutionCycleDecision = (
       })
     }
     const reconciliation = yield* reconcile.pipe(
-      Effect.mapError((cause) => mutationRunnerError({ message: 'execution close reconciliation failed', cause })),
+      Effect.mapError((cause) => reconciliationRunnerError(cause, 'execution close reconciliation failed')),
     )
     const evaluatedAt = yield* currentUtcInstant
     const executionAuthority = yield* Effect.fromResult(
