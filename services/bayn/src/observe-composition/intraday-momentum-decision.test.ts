@@ -222,6 +222,32 @@ describe('intraday-momentum runtime decision boundary', () => {
     )
   })
 
+  test('retains typed strategy failure details at the runtime boundary', () => {
+    const strategyFailure = new IntradayMomentumFailure({
+      reason: 'snapshot-coverage',
+      message: 'intraday benchmark quote exceeds the protocol freshness bound',
+      symbol: 'SPY',
+    })
+    const definition = {
+      ...makeIntradayMomentumDefinition(protocol),
+      decide: () => Result.fail(strategyFailure),
+    }
+
+    expect(
+      failure(
+        evaluateIntradayMomentumDecision(
+          definition,
+          makeActiveCycle(),
+          {} as unknown as ArchiveVerifiedIntradayMarketSnapshot,
+        ),
+      ),
+    ).toMatchObject({
+      operation: 'entry-decision',
+      message: 'snapshot-coverage: intraday benchmark quote exceeds the protocol freshness bound; symbol=SPY',
+      cause: strategyFailure,
+    })
+  })
+
   test('derives the rolling cutoff from an early-close session instead of a fixed clock', () => {
     const cycle = makeActiveCycle('2026-08-18T13:30:00.000Z', '2026-08-18T17:00:00.000Z')
     const calendar = calendarFor(cycle)

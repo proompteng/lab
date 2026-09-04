@@ -63,6 +63,18 @@ test('keeps non-transient oldest-unfinished failures fail-closed', () => {
   }
 })
 
+test('does not revoke execution authority when decision construction fails before broker I/O', () => {
+  expect(
+    shouldRestrictMutationLoopFailure(
+      new CycleRunnerError({
+        operation: 'build-decision',
+        failure: 'operational',
+        message: 'intraday strategy rejected its verified runtime snapshot',
+      }),
+    ),
+  ).toBe(false)
+})
+
 test('maps an expected armed-entry wait to a non-terminal decision outcome', () => {
   const error = decisionBuildError(
     new ObserveDecisionAwaitingSignal({

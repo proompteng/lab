@@ -43,11 +43,12 @@ const isTransientCycleStoreFailure = (cause: unknown): cause is CycleStoreError 
   cause instanceof CycleStoreError &&
   (cause.persistenceFailure === 'connectivity' || cause.persistenceFailure === 'transaction')
 
-/** A transient failed preflight read performed no broker I/O and is safe to retry on the next reconciled tick. */
+/** Decision-build and transient preflight read failures perform no broker I/O and are safe to retry. */
 export const shouldRestrictMutationLoopFailure = (error: CycleRunnerError): boolean =>
-  error.operation !== 'read-oldest-unfinished' ||
-  error.failure !== 'store' ||
-  !isTransientCycleStoreFailure(error.cause)
+  error.operation !== 'build-decision' &&
+  (error.operation !== 'read-oldest-unfinished' ||
+    error.failure !== 'store' ||
+    !isTransientCycleStoreFailure(error.cause))
 
 const restrictMutationAuthorityDataFirst = (
   subject: string,
