@@ -406,7 +406,7 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(controllerEnvironment.get('BAYN_IMAGE_DIGEST')?.value).toBe(imageDigest)
   expect(JSON.parse(controllerEnvironment.get('BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE')?.value)).toEqual({
     schemaVersion: 'bayn.research-capital-build-lineage.v1',
-    requestHash: '48d8ac184822048559e45abd7dc0399dbe30bd9cd98c25040287061b76c2bf5b',
+    requestHash: 'a544148ebed42b639dc1efa9cf8bf7c1272031dee71dbcc1fa76ea78a01d2092',
     authoredActivation: {
       sourceRevision,
       imageRepository: 'registry.ide-newton.ts.net/lab/bayn',
@@ -439,11 +439,11 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
     'a4894282066826ab3516bda712267f285e7b6b107f7b8946436eecbcb49de761',
   )
   expect(activationSecret.metadata.annotations).toMatchObject({
-    'bayn.proompteng.ai/capital-activation-schema': 'bayn.paper-research-activation-request.v1',
+    'bayn.proompteng.ai/capital-activation-schema': 'bayn.research-execution-mandate.v1',
     'bayn.proompteng.ai/capital-activation-source-revision': sourceRevision,
     'bayn.proompteng.ai/capital-activation-image-digest': imageDigest,
     'bayn.proompteng.ai/capital-activation-content-hash':
-      '48d8ac184822048559e45abd7dc0399dbe30bd9cd98c25040287061b76c2bf5b',
+      'a544148ebed42b639dc1efa9cf8bf7c1272031dee71dbcc1fa76ea78a01d2092',
   })
   expect(activationSecret.metadata.annotations).not.toHaveProperty('bayn.proompteng.ai/capital-activation-generation')
   expect(activationSecret.spec.encryptedData['capital-activation-request']).toBeString()
@@ -468,7 +468,7 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(controllerEnvironment.has('BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION')).toBe(false)
   expect(controller.spec.restate.drainDelaySeconds).toBe(0)
   expect(activationEnvironment.get('BAYN_EXECUTION_ACTIVATION_GENERATION')?.value).toBe(
-    'faa6283e8a8944aa1a8e8b1c4df80222ea16ba618ccfafcc6d439a06deb5f38d',
+    'f0537927a707fa4fe0380fa0bb1de94fa589269ea1e330c9b5a3970bbcd0c200',
   )
   expect(activation.spec.activeDeadlineSeconds).toBe(900)
   expect(activation.spec.template.spec.automountServiceAccountToken).toBe(false)

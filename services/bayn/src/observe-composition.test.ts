@@ -952,8 +952,8 @@ const prepareStoredExecutionStep = async (
   onRestriction: (reason: string, updatedAt: string) => void = () => undefined,
   input: typeof fixture.input & {
     readonly mutationPhase?: 'ENTRY' | 'CLOSE'
-    readonly executionMandateCloseSubmitCutoffAt?: string
-    readonly executionMandateExpiresAt?: string
+    readonly executionCycleCloseSubmitCutoffAt?: string
+    readonly executionCycleCloseExpiresAt?: string
   } = fixture.input,
   latestCancel?: MutationEvent,
   allowSubmit = true,
@@ -2972,8 +2972,8 @@ describe('OBSERVE runtime composition', () => {
           input: {
             ...fixture.input,
             mutationPhase: 'CLOSE',
-            executionMandateCloseSubmitCutoffAt: closeExpiresAt,
-            executionMandateExpiresAt: closeExpiresAt,
+            executionCycleCloseSubmitCutoffAt: closeExpiresAt,
+            executionCycleCloseExpiresAt: closeExpiresAt,
           },
           preparation: fixture.preparation,
           policy: fixture.policy,
@@ -3021,8 +3021,8 @@ describe('OBSERVE runtime composition', () => {
           input: {
             ...fixture.input,
             mutationPhase: 'CLOSE',
-            executionMandateCloseSubmitCutoffAt: missedCloseSubmitCutoffAt,
-            executionMandateExpiresAt: closeExpiresAt,
+            executionCycleCloseSubmitCutoffAt: missedCloseSubmitCutoffAt,
+            executionCycleCloseExpiresAt: closeExpiresAt,
           },
           preparation: fixture.preparation,
           policy: fixture.policy,
@@ -3106,8 +3106,8 @@ describe('OBSERVE runtime composition', () => {
       {
         ...fixture.input,
         mutationPhase: 'CLOSE',
-        executionMandateCloseSubmitCutoffAt: closeExpiresAt,
-        executionMandateExpiresAt: closeExpiresAt,
+        executionCycleCloseSubmitCutoffAt: closeExpiresAt,
+        executionCycleCloseExpiresAt: closeExpiresAt,
       },
       undefined,
       true,
@@ -3253,8 +3253,8 @@ describe('OBSERVE runtime composition', () => {
       {
         ...fixture.input,
         mutationPhase: 'CLOSE',
-        executionMandateCloseSubmitCutoffAt: closeSubmitCutoffAt,
-        executionMandateExpiresAt: closeExpiresAt,
+        executionCycleCloseSubmitCutoffAt: closeSubmitCutoffAt,
+        executionCycleCloseExpiresAt: closeExpiresAt,
       },
       undefined,
       true,
@@ -3477,8 +3477,8 @@ describe('OBSERVE runtime composition', () => {
       {
         ...fixture.input,
         mutationPhase: 'CLOSE',
-        executionMandateCloseSubmitCutoffAt: closeExpiresAt,
-        executionMandateExpiresAt: closeExpiresAt,
+        executionCycleCloseSubmitCutoffAt: closeExpiresAt,
+        executionCycleCloseExpiresAt: closeExpiresAt,
       },
       undefined,
       true,
