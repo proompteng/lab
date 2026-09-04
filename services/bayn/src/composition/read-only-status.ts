@@ -93,11 +93,11 @@ export const refreshReadOnlyCapitalActivation = (
   state: Ref.Ref<RuntimeState>,
   store: ReadOnlyCapitalActivationStore,
 ): Effect.Effect<void> => {
-  const publishUnavailable = (reason: string): Effect.Effect<void> =>
+  const publishUnavailable = (reason: string, cause?: unknown): Effect.Effect<void> =>
     Effect.gen(function* () {
       const request = Result.isSuccess(configured) ? (configured.success?.request ?? null) : null
       yield* pendingCapitalActivation(state, request, 'PREPARATION_FAILED')
-      yield* logActivationUnavailable(reason)
+      yield* logActivationUnavailable(reason, cause)
     })
 
   return Effect.gen(function* () {
@@ -148,7 +148,7 @@ export const refreshReadOnlyCapitalActivation = (
       duration: plan.config.operationTimeoutMs,
       orElse: () => publishUnavailable('DURABLE_PROJECTION_TIMEOUT'),
     }),
-    Effect.catch(() => publishUnavailable('DURABLE_PROJECTION_UNAVAILABLE')),
+    Effect.catch((cause) => publishUnavailable('DURABLE_PROJECTION_UNAVAILABLE', cause)),
     Effect.withLogSpan('read-only-capital-projection'),
   )
 }
