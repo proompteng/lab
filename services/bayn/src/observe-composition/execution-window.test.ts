@@ -3,18 +3,26 @@ import { Result } from 'effect'
 
 import { resolveExecutionCycleCloseWindow } from './execution-window'
 
-const mandateWindow = {
-  mandateCloseSubmitCutoffAt: '2026-09-03T20:00:00.000Z',
-  mandateCloseExpiresAt: '2026-09-03T20:15:00.000Z',
-} as const
-
 describe('execution-cycle close windows', () => {
+  test('derives a bounded close window from every trading session', () => {
+    expect(
+      Result.getOrThrow(
+        resolveExecutionCycleCloseWindow({
+          executionCloseAt: '2026-09-04T20:00:00.000Z',
+        }),
+      ),
+    ).toEqual({
+      startAt: '2026-09-04T19:00:00.000Z',
+      submitCutoffAt: '2026-09-04T19:45:00.000Z',
+      expiresAt: '2026-09-04T20:00:00.000Z',
+    })
+  })
+
   test('closes an intraday cycle one hour before its session ends', () => {
     expect(
       Result.getOrThrow(
         resolveExecutionCycleCloseWindow({
           executionCloseAt: '2026-08-19T20:00:00.000Z',
-          ...mandateWindow,
         }),
       ),
     ).toEqual({
@@ -31,7 +39,6 @@ describe('execution-cycle close windows', () => {
           executionCloseAt: '2026-08-19T20:00:00.000Z',
           sessionCloseStartLeadMs: 30 * 60_000,
           sessionCloseSubmitLeadMs: 15 * 60_000,
-          ...mandateWindow,
         }),
       ),
     ).toEqual({
@@ -41,46 +48,11 @@ describe('execution-cycle close windows', () => {
     })
   })
 
-  test('keeps same-session flattening independent from the activation lease start', () => {
-    expect(
-      Result.getOrThrow(
-        resolveExecutionCycleCloseWindow({
-          executionCloseAt: '2026-09-01T20:00:00.000Z',
-          mandateCloseSubmitCutoffAt: '2026-09-01T19:30:00.000Z',
-          mandateCloseExpiresAt: '2026-09-01T19:50:00.000Z',
-        }),
-      ),
-    ).toEqual({
-      startAt: '2026-09-01T19:00:00.000Z',
-      submitCutoffAt: '2026-09-01T19:30:00.000Z',
-      expiresAt: '2026-09-01T19:50:00.000Z',
-    })
-  })
-
-  test('rejects malformed close instants and empty bounded windows', () => {
+  test('rejects malformed close instants and invalid strategy leads', () => {
     expect(
       Result.isFailure(
         resolveExecutionCycleCloseWindow({
           executionCloseAt: 'invalid',
-          ...mandateWindow,
-        }),
-      ),
-    ).toBe(true)
-    expect(
-      Result.isFailure(
-        resolveExecutionCycleCloseWindow({
-          executionCloseAt: '2026-08-19T20:00:00.000Z',
-          ...mandateWindow,
-          mandateCloseExpiresAt: 'invalid',
-        }),
-      ),
-    ).toBe(true)
-    expect(
-      Result.isFailure(
-        resolveExecutionCycleCloseWindow({
-          executionCloseAt: '2026-08-19T20:00:00.000Z',
-          mandateCloseSubmitCutoffAt: '2026-08-19T18:50:00.000Z',
-          mandateCloseExpiresAt: '2026-08-19T18:55:00.000Z',
         }),
       ),
     ).toBe(true)
@@ -90,7 +62,6 @@ describe('execution-cycle close windows', () => {
           executionCloseAt: '2026-08-19T20:00:00.000Z',
           sessionCloseStartLeadMs: 15 * 60_000,
           sessionCloseSubmitLeadMs: 30 * 60_000,
-          ...mandateWindow,
         }),
       ),
     ).toBe(true)

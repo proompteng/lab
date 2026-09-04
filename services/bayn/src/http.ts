@@ -563,7 +563,7 @@ const renderPrometheusMetricsDataFirst = (
     state.capitalActivation?._tag === 'NotConfigured' || state.capitalActivation === undefined
       ? 'not_configured'
       : state.capitalActivation._tag.toLowerCase()
-  const capitalActivationStates = ['not_configured', 'pending', 'realized', 'completed'] as const
+  const capitalActivationStates = ['not_configured', 'pending', 'realized'] as const
   const loopHealthy =
     state.autonomousCycleLoop.configured &&
     state.health.dependencies.cycleRunner.status === 'AVAILABLE' &&
