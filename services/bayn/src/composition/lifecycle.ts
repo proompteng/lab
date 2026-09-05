@@ -1,27 +1,17 @@
-import { Effect, Result, Schema, Semaphore } from 'effect'
+import { Result, Schema } from 'effect'
 
-import type { ApplicationPlanFor, AutonomousCycleDriverStartup } from '../app'
+import type { ApplicationPlanFor } from '../app'
 import type { BrokerReadShape } from '../broker/alpaca'
 import { BrokerMutationError } from '../broker/alpaca-mutations'
-import { CycleRunnerError } from '../cycle/runner'
 import { CapitalAuthorityKind } from '../execution/authority'
 import { Authority, type AuthorityState } from '../execution/contracts'
-import type { ResearchCapitalActivationRequest } from '../execution/configuration'
 import { makeExecutionProgram, type ExecutionProgram } from '../execution/runtime-program'
 import { operationalError } from '../errors'
 import {
-  executionMandateCloseExpiresAt,
   makeMutationAutonomousCycleStartup,
   makeObserveAutonomousCycleStartup,
-  type LifecycleAdvanceDisposition,
-  type LifecycleAdvanceMaintenance,
   type MutationCycleExecutionMode,
-  type RecoveryFirstCycleDriver,
 } from '../observe-composition'
-import { reconciliationRunnerError } from '../observe-composition/decision-builder'
-import type { ReconciliationPassError } from '../reconciler'
-import { currentUtcInstant } from '../time'
-import type { AutonomousCyclePassObservation } from '../runtime-state'
 import type { IntradayMarketDataService } from '../market-data'
 
 export const runtimeBroker = (
@@ -34,66 +24,6 @@ export const runtimeBroker = (
   executionEligible: mutationEnabled,
   executionDisabledReason: mutationEnabled ? null : ('BROKER_ACCESS_READ_ONLY' as const),
 })
-
-export const lifecycleMaintenanceCycle =
-  (
-    plan: ApplicationPlanFor<'AutonomousService'>,
-    reconcileBeforeAdvance: Effect.Effect<void, ReconciliationPassError>,
-    maintainLifecycle: LifecycleAdvanceMaintenance,
-  ): AutonomousCycleDriverStartup<RecoveryFirstCycleDriver> =>
-  (startup) =>
-    Semaphore.make(1).pipe(
-      Effect.map((operationPermit) => {
-        const nextDelayMs = Math.min(plan.config.cyclePollIntervalMs, plan.config.alpaca.reconciliationIntervalMs)
-        const observeSuccess = currentUtcInstant.pipe(
-          Effect.flatMap((observedAt) => {
-            const observation: AutonomousCyclePassObservation = {
-              result: 'SUCCESS',
-              observedAt,
-              outcome: 'RECOVERED',
-            }
-            return startup.recordPass(observation).pipe(Effect.as({ observation }))
-          }),
-        )
-        const advance = operationPermit.withPermit(
-          runLifecycleMaintenanceAdvance(reconcileBeforeAdvance, maintainLifecycle).pipe(
-            Effect.andThen(observeSuccess),
-            Effect.catch((error) =>
-              currentUtcInstant.pipe(
-                Effect.flatMap((observedAt) => {
-                  const observation: AutonomousCyclePassObservation = {
-                    result: 'FAILURE',
-                    observedAt,
-                    operation: error.operation,
-                    failure: error.failure,
-                    message: error.message,
-                  }
-                  return startup.recordPass(observation).pipe(Effect.andThen(Effect.fail(error)))
-                }),
-              ),
-            ),
-          ),
-        )
-        const driver: RecoveryFirstCycleDriver = {
-          advance,
-          nextDelayMs,
-        }
-        return Effect.succeed(driver)
-      }),
-    )
-
-const lifecycleReconciliationError = (cause: ReconciliationPassError): CycleRunnerError => {
-  return reconciliationRunnerError(cause)
-}
-
-export const runLifecycleMaintenanceAdvance = (
-  reconcileBeforeAdvance: Effect.Effect<void, ReconciliationPassError>,
-  maintainLifecycle: LifecycleAdvanceMaintenance,
-): Effect.Effect<LifecycleAdvanceDisposition, CycleRunnerError> =>
-  maintainLifecycle.beforeReconciliation.pipe(
-    Effect.andThen(reconcileBeforeAdvance.pipe(Effect.mapError(lifecycleReconciliationError))),
-    Effect.andThen(maintainLifecycle.afterReconciliation),
-  )
 
 export const observeCycleGenerationHash = (authority: AuthorityState): Result.Result<string, string> =>
   authority.maximum === Authority.Observe && authority.effective === Authority.Observe
@@ -119,11 +49,8 @@ export const observeCycle = (
 export const mutationCycle = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   executionProgram: ExecutionProgram,
-  executionMandate: ResearchCapitalActivationRequest,
   executionCycleClosureStore: import('../db/execution-cycle-closure').ExecutionCycleClosureStoreShape,
   blockedCycleIntentStore: import('../execution/intents').BlockedCycleIntentStoreShape,
-  onClosedCycle: (cycleId: string, observedAt: string) => Effect.Effect<void>,
-  lifecycleMaintenance: LifecycleAdvanceMaintenance | undefined,
   intradayMarketData: IntradayMarketDataService,
   executionMode: MutationCycleExecutionMode = 'Mutation',
 ) => {
@@ -142,11 +69,6 @@ export const mutationCycle = (
       executionProgram,
       executionCycleClosureStore,
       blockedCycleIntentStore,
-      onClosedCycle,
-      executionMandateCutoffAt: executionMandate.cutoffAt,
-      executionMandateCloseSubmitCutoffAt: executionMandate.expiresAt,
-      executionMandateExpiresAt: executionMandateCloseExpiresAt(executionMandate.expiresAt),
-      ...(lifecycleMaintenance === undefined ? {} : { lifecycleMaintenance }),
     },
     executionMode,
   )

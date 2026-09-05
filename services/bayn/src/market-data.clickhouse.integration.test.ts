@@ -6,6 +6,8 @@ import { Cause, Effect, Exit, Layer, ManagedRuntime } from 'effect'
 
 import { persistedMarketDataContract } from './testing/persisted-snapshot-fixture'
 import { config } from './testing/runtime-fixtures'
+import type { IntradaySnapshotQuery } from './market-data/intraday/model'
+import { makeIntradayMarketDataQueries } from './market-data/intraday/queries'
 import { makeMarketDataQueries } from './market-data/queries'
 import { baynTestClickhouseGuardToken, baynTestClickhouseUrl } from './test-environment.test-support'
 
@@ -14,6 +16,34 @@ const describeClickhouse = clickhouseUrl === undefined ? describe.skip : describ
 const publicationDate = '2026-03-06'
 const calendarVersion = 'signal-XNYS-2026-v1'
 const snapshotId = '1'.repeat(64)
+const intradayRequest: IntradaySnapshotQuery = {
+  calendar: {
+    schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+    source: 'alpaca-v2-calendar',
+    requestedRange: { start: publicationDate, end: publicationDate },
+    timeZone: 'UTC',
+    sessions: [
+      {
+        date: publicationDate,
+        openAt: `${publicationDate}T13:30:00.000Z`,
+        closeAt: `${publicationDate}T20:00:00.000Z`,
+      },
+    ],
+    normalizedResponseHash: '7'.repeat(64),
+  },
+  universeId: 'bayn-clickhouse-integration',
+  universeSymbolHash: '8'.repeat(64),
+  universe: ['AMD'],
+  feed: 'sip',
+  delayClass: 'real_time_consolidated',
+  sessionDate: publicationDate,
+  rangeStartAt: `${publicationDate}T13:30:00.000Z`,
+  rangeEndAt: `${publicationDate}T14:00:00.000Z`,
+  observedAt: `${publicationDate}T14:15:00.000Z`,
+  maximumQuoteAgeMs: 5_000,
+  minimumWatermarkLagMs: 1_000,
+  sourceTopics: { bars: 'bars', quotes: 'quotes', trades: 'trades' },
+}
 const clickhouseGuardTokenPattern = /^[0-9a-f]{32}$/
 let destructiveFixtureArmed = false
 
@@ -64,6 +94,76 @@ describeClickhouse('Bayn ClickHouse market-data query contract', () => {
 
         destructiveFixtureArmed = true
         yield* sql.asCommand(sql`CREATE DATABASE IF NOT EXISTS signal`)
+        yield* sql.asCommand(sql`DROP TABLE IF EXISTS signal.intraday_bars_1m_v2`)
+        yield* sql.asCommand(sql`DROP TABLE IF EXISTS signal.intraday_quotes_v1`)
+        yield* sql.asCommand(sql`DROP TABLE IF EXISTS signal.intraday_trades_v1`)
+        yield* sql.asCommand(sql`
+          CREATE TABLE signal.intraday_bars_1m_v2
+          (
+            universe_id String,
+            universe_symbol_hash String,
+            feed String,
+            source_topic String,
+            source_partition UInt32,
+            source_offset UInt64,
+            event_ts DateTime64(3, 'UTC'),
+            ingest_ts DateTime64(3, 'UTC')
+          )
+          ENGINE = Memory
+        `)
+        yield* sql.asCommand(sql`
+          CREATE TABLE signal.intraday_quotes_v1
+          (
+            universe_id String,
+            universe_symbol_hash String,
+            feed String,
+            source_topic String,
+            source_partition UInt32,
+            source_offset UInt64,
+            event_ts DateTime64(9, 'UTC'),
+            ingest_ts DateTime64(9, 'UTC')
+          )
+          ENGINE = Memory
+        `)
+        yield* sql.asCommand(sql`
+          CREATE TABLE signal.intraday_trades_v1
+          (
+            universe_id String,
+            universe_symbol_hash String,
+            feed String,
+            source_topic String,
+            source_partition UInt32,
+            source_offset UInt64,
+            event_ts DateTime64(9, 'UTC'),
+            ingest_ts DateTime64(9, 'UTC')
+          )
+          ENGINE = Memory
+        `)
+        yield* sql.insertQuery({
+          table: 'signal.intraday_bars_1m_v2',
+          values: [
+            {
+              universe_id: intradayRequest.universeId,
+              universe_symbol_hash: intradayRequest.universeSymbolHash,
+              feed: intradayRequest.feed,
+              source_topic: intradayRequest.sourceTopics.bars,
+              source_partition: 2,
+              source_offset: 20,
+              event_ts: `${publicationDate} 13:45:00.000`,
+              ingest_ts: `${publicationDate} 14:00:00.000`,
+            },
+            {
+              universe_id: intradayRequest.universeId,
+              universe_symbol_hash: intradayRequest.universeSymbolHash,
+              feed: intradayRequest.feed,
+              source_topic: intradayRequest.sourceTopics.bars,
+              source_partition: 10,
+              source_offset: 100,
+              event_ts: `${publicationDate} 13:46:00.000`,
+              ingest_ts: `${publicationDate} 14:01:00.000`,
+            },
+          ],
+        })
         yield* sql.asCommand(sql`DROP TABLE IF EXISTS signal.snapshot_manifests_v2`)
         yield* sql.asCommand(sql`
           CREATE TABLE signal.snapshot_manifests_v2
@@ -131,6 +231,9 @@ describeClickhouse('Bayn ClickHouse market-data query contract', () => {
       await runtime.runPromise(
         Effect.gen(function* () {
           const sql = yield* ClickhouseClient.ClickhouseClient
+          yield* sql.asCommand(sql`DROP TABLE IF EXISTS signal.intraday_bars_1m_v2`)
+          yield* sql.asCommand(sql`DROP TABLE IF EXISTS signal.intraday_quotes_v1`)
+          yield* sql.asCommand(sql`DROP TABLE IF EXISTS signal.intraday_trades_v1`)
           yield* sql.asCommand(sql`DROP TABLE IF EXISTS signal.snapshot_manifests_v2`)
         }),
       )
@@ -178,5 +281,19 @@ describeClickhouse('Bayn ClickHouse market-data query contract', () => {
       publication_asof: publicationDate,
       calendar_version: calendarVersion,
     })
+  })
+
+  test('captures numerically ordered partition watermarks with string wire fields', async () => {
+    const rows = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* ClickhouseClient.ClickhouseClient
+        return yield* makeIntradayMarketDataQueries(sql).captureIntradayArchiveWatermarks(intradayRequest)
+      }),
+    )
+
+    expect(rows).toEqual([
+      { source_topic: 'bars', source_partition: '2', inclusive_last_offset: '20' },
+      { source_topic: 'bars', source_partition: '10', inclusive_last_offset: '100' },
+    ])
   })
 })

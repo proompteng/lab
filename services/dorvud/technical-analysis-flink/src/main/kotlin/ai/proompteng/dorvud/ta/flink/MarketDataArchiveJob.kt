@@ -39,6 +39,11 @@ enum class ArchiveRecordKind {
   Trade,
 }
 
+data class ArchiveSourcePartition(
+  val topic: String,
+  val partition: Int,
+) : Serializable
+
 data class ArchiveUniverse(
   val id: String,
   val symbolHash: String,
@@ -143,7 +148,7 @@ data class MarketDataArchiveConfig(
 
       val checkpointIntervalMs = env["ARCHIVE_CHECKPOINT_INTERVAL_MS"]?.toLongOrNull() ?: 60_000
       val parallelism = env["ARCHIVE_PARALLELISM"]?.toIntOrNull() ?: 3
-      val batchSize = env["ARCHIVE_CLICKHOUSE_BATCH_SIZE"]?.toIntOrNull() ?: 100
+      val batchSize = env["ARCHIVE_CLICKHOUSE_BATCH_SIZE"]?.toIntOrNull() ?: 1_000
       val flushMs = env["ARCHIVE_CLICKHOUSE_FLUSH_MS"]?.toLongOrNull() ?: 1_000
       val maxRetries = env["ARCHIVE_CLICKHOUSE_MAX_RETRIES"]?.toIntOrNull() ?: 3
       val offsetResetStrategy =
@@ -155,7 +160,7 @@ data class MarketDataArchiveConfig(
       val securityProtocol = env["ARCHIVE_KAFKA_SECURITY"] ?: "SASL_PLAINTEXT"
       val saslPassword = env["ARCHIVE_KAFKA_PASSWORD"]?.takeIf { it.isNotEmpty() }
       require(checkpointIntervalMs > 0) { "ARCHIVE_CHECKPOINT_INTERVAL_MS must be > 0" }
-      require(parallelism in 1..3) { "ARCHIVE_PARALLELISM must be within 1..3" }
+      require(parallelism in 1..16) { "ARCHIVE_PARALLELISM must be within 1..16" }
       require(batchSize in 1..1_000) { "ARCHIVE_CLICKHOUSE_BATCH_SIZE must be within 1..1000" }
       require(flushMs >= 250) { "ARCHIVE_CLICKHOUSE_FLUSH_MS must be >= 250" }
       require(maxRetries in 0..10) { "ARCHIVE_CLICKHOUSE_MAX_RETRIES must be within 0..10" }
@@ -259,6 +264,15 @@ data class IntradayTradeRecord(
 fun main() {
   val config = MarketDataArchiveConfig.fromEnv()
   val environment = StreamExecutionEnvironment.getExecutionEnvironment()
+
+  configureMarketDataArchiveJob(environment, config)
+  environment.execute("Bayn market-data archive")
+}
+
+internal fun configureMarketDataArchiveJob(
+  environment: StreamExecutionEnvironment,
+  config: MarketDataArchiveConfig,
+) {
   environment.setParallelism(config.parallelism)
   environment.enableCheckpointing(config.checkpointIntervalMs)
 
@@ -269,6 +283,7 @@ fun main() {
   source
     .flatMap(ParseArchiveBar(config.routes))
     .returns(TypeInformation.of(IntradayBarRecord::class.java))
+    .keyBy { bar -> ArchiveSourcePartition(bar.sourceTopic, bar.sourcePartition) }
     .sinkTo(archiveClickhouseSink(config))
     .name("signal-intraday-bars-archive")
     .uid("signal-intraday-bars-archive-v1")
@@ -276,6 +291,7 @@ fun main() {
   source
     .flatMap(ParseArchiveQuote(config.routes))
     .returns(TypeInformation.of(IntradayQuoteRecord::class.java))
+    .keyBy { quote -> ArchiveSourcePartition(quote.sourceTopic, quote.sourcePartition) }
     .sinkTo(archiveQuoteClickhouseSink(config))
     .name("signal-intraday-quotes-archive")
     .uid("signal-intraday-quotes-archive-v1")
@@ -283,11 +299,10 @@ fun main() {
   source
     .flatMap(ParseArchiveTrade(config.routes))
     .returns(TypeInformation.of(IntradayTradeRecord::class.java))
+    .keyBy { trade -> ArchiveSourcePartition(trade.sourceTopic, trade.sourcePartition) }
     .sinkTo(archiveTradeClickhouseSink(config))
     .name("signal-intraday-trades-archive")
     .uid("signal-intraday-trades-archive-v1")
-
-  environment.execute("Bayn market-data archive")
 }
 
 internal class ArchiveKafkaRecordDeserializer : KafkaRecordDeserializationSchema<ArchiveKafkaRecord> {

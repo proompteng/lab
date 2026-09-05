@@ -3,6 +3,7 @@
 import { motion, useReducedMotion } from 'motion/react'
 import type { PointerEvent as ReactPointerEvent, ReactNode, RefObject } from 'react'
 import { useCallback, useEffect, useRef } from 'react'
+import { cn } from '@/lib/utils'
 import {
   clampToViewport,
   resizeBounds,
@@ -56,7 +57,8 @@ export function DesktopWindowFrame({
   const viewport = useCallback((): Bounds => {
     const rect = stageRef.current?.getBoundingClientRect()
     const browserWidth = typeof globalThis.window === 'undefined' ? 0 : globalThis.window.innerWidth
-    const browserHeight = typeof globalThis.window === 'undefined' ? 0 : Math.max(0, globalThis.window.innerHeight - 28)
+    const browserHeight =
+      typeof globalThis.window === 'undefined' ? 0 : Math.max(0, globalThis.window.innerHeight - 126)
     return { x: 0, y: 0, width: rect?.width ?? browserWidth, height: rect?.height ?? browserHeight }
   }, [stageRef])
 
@@ -147,18 +149,26 @@ export function DesktopWindowFrame({
         aria-label={`${window.title} window`}
         aria-hidden={window.mode === 'minimized'}
         inert={window.mode === 'minimized' ? true : undefined}
-        className="tengri-window absolute inset-3 overflow-visible rounded-[22px] border border-white/20 bg-[rgba(20,22,28,0.91)] shadow-[0_38px_100px_rgba(0,0,0,0.48),inset_0_1px_0_rgba(255,255,255,0.16)] backdrop-blur-2xl"
+        className={cn(
+          'tengri-window absolute inset-3 flex flex-col overflow-hidden rounded-[18px] border border-black/50 bg-zinc-800/95 ring-1 ring-white/25 backdrop-blur-2xl',
+          active
+            ? 'shadow-[0_24px_64px_-10px_rgba(0,0,0,0.65),0_8px_20px_rgba(0,0,0,0.3)]'
+            : 'shadow-[0_8px_28px_rgba(0,0,0,0.3)]',
+        )}
         style={{ pointerEvents: window.mode === 'minimized' ? 'none' : 'auto' }}
       >
         <header
-          className="flex h-11 touch-none items-center rounded-t-[21px] border-b border-white/10 bg-white/[0.045] px-4"
+          className={cn(
+            'relative flex h-9 shrink-0 touch-none items-center border-b border-black/20 px-2.5',
+            active ? 'bg-zinc-700/80' : 'bg-zinc-800/90',
+          )}
           onDoubleClick={() => dispatch({ type: 'toggle-maximize', id: window.id, viewport: viewport() })}
           onPointerDown={(event) => begin(event, null)}
           onPointerMove={move}
           onPointerUp={end}
           onPointerCancel={end}
         >
-          <div className="flex items-center gap-2" aria-label="Window controls">
+          <div className="group/controls flex items-center" aria-label="Window controls">
             <button
               type="button"
               aria-label={`Close ${window.title}`}
@@ -168,8 +178,13 @@ export function DesktopWindowFrame({
             >
               <span
                 aria-hidden="true"
-                className="h-3.5 w-3.5 rounded-full border border-black/20 bg-[#ff5f57] shadow-inner"
-              />
+                className={cn(
+                  'grid size-3 place-items-center rounded-full border border-black/15 text-[11px] leading-none font-bold text-black/60',
+                  active ? 'bg-[#ff5f57]' : 'bg-zinc-500/65 group-hover/controls:bg-[#ff5f57]',
+                )}
+              >
+                <span className="opacity-0 group-hover/controls:opacity-100">×</span>
+              </span>
             </button>
             <button
               type="button"
@@ -180,8 +195,13 @@ export function DesktopWindowFrame({
             >
               <span
                 aria-hidden="true"
-                className="h-3.5 w-3.5 rounded-full border border-black/20 bg-[#febc2e] shadow-inner"
-              />
+                className={cn(
+                  'grid size-3 place-items-center rounded-full border border-black/15 text-[11px] leading-none font-bold text-black/60',
+                  active ? 'bg-[#febc2e]' : 'bg-zinc-500/65 group-hover/controls:bg-[#febc2e]',
+                )}
+              >
+                <span className="opacity-0 group-hover/controls:opacity-100">−</span>
+              </span>
             </button>
             <button
               type="button"
@@ -192,8 +212,13 @@ export function DesktopWindowFrame({
             >
               <span
                 aria-hidden="true"
-                className="h-3.5 w-3.5 rounded-full border border-black/20 bg-[#28c840] shadow-inner"
-              />
+                className={cn(
+                  'grid size-3 place-items-center rounded-full border border-black/15 text-[11px] leading-none font-bold text-black/60',
+                  active ? 'bg-[#28c840]' : 'bg-zinc-500/65 group-hover/controls:bg-[#28c840]',
+                )}
+              >
+                <span className="opacity-0 group-hover/controls:opacity-100">↗</span>
+              </span>
             </button>
           </div>
           <h2
@@ -202,7 +227,7 @@ export function DesktopWindowFrame({
             {window.title}
           </h2>
         </header>
-        <div className="h-[calc(100%-2.75rem)] min-h-0 overflow-hidden rounded-b-[21px]">{children}</div>
+        <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
       </section>
       {window.mode === 'normal'
         ? (['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'] as const).map((edge) => (

@@ -1346,6 +1346,123 @@ test('sends a real agent turn and executes sleep, resume, and confirmed deletion
   await expect(page.getByRole('region', { name: 'Terminal window' })).toHaveCount(0)
 })
 
+test('renders one chat bubble per item lifecycle and preserves repeated prompts', async ({ page }) => {
+  const mock = await mockTengri(page)
+  await page.goto('/')
+  const text = 'Inspect the workspace again.'
+  const log = page.getByRole('log')
+
+  for (const index of [0, 1]) {
+    const prompt = page.getByLabel('Message your agent')
+    await prompt.fill(text)
+    await prompt.press('Enter')
+    await expect.poll(() => mock.actions.filter((action) => action.action === 'send-turn').length).toBe(index + 1)
+    await expect(page.getByTestId('agent-event-stream')).toHaveAttribute('data-state', 'connected')
+    const item = {
+      kind: 'user-message',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      itemId: `user-${index}`,
+      text,
+      approvalId: '',
+      rawJson: '{}',
+    }
+    await emitCodexEvent(page, { ...item, sequence: index * 3 + 1, method: 'item/started' })
+    await expect(log.getByText(text, { exact: true })).toHaveCount(index + 1)
+    await emitCodexEvent(page, { ...item, sequence: index * 3 + 2, method: 'item/completed' })
+    await emitCodexEvent(page, {
+      ...item,
+      sequence: index * 3 + 3,
+      method: 'turn/completed',
+      kind: 'thread-state',
+      itemId: '',
+      text: '',
+    })
+    await expect(page.getByLabel('Message your agent')).toBeVisible()
+    await expect(log.getByText(text, { exact: true })).toHaveCount(index + 1)
+  }
+})
+
+test('keeps the Dock clear of new and maximized window controls', async ({ page }) => {
+  await mockTengri(page)
+  await page.goto('/')
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  await expect(page.getByLabel('Message your agent')).toBeVisible()
+  const dockBounds = await dock.boundingBox()
+  expect(dockBounds).not.toBeNull()
+  for (const region of await page.getByRole('region', { name: /window$/ }).all()) {
+    const bounds = await region.boundingBox()
+    expect(bounds).not.toBeNull()
+    expect(bounds!.y + bounds!.height).toBeLessThan(dockBounds!.y)
+  }
+  await chrome.getByRole('button', { name: 'Maximize Chrome' }).click()
+  await expect
+    .poll(async () => {
+      const bounds = await chrome.boundingBox()
+      return bounds ? bounds.y + bounds.height : Number.POSITIVE_INFINITY
+    })
+    .toBeLessThan(dockBounds!.y)
+  await expect(page.getByRole('button', { name: 'Restore Chrome' })).toBeVisible()
+})
+
+test('refits persisted windows above the Dock after reload and browser resize', async ({ page }) => {
+  await mockTengri(page)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('/')
+
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  const chrome = page.locator('section[aria-label="Chrome window"]')
+  await expect(page.getByLabel('Message your agent')).toBeVisible()
+  const desktopId = await page.evaluate((agentId) => sessionStorage.getItem(`tengri:desktop:${agentId}`), readyAgent.id)
+  expect(desktopId).toMatch(/^[0-9a-f]{32}$/)
+
+  const oldBounds = { x: 300, y: 149, width: 1060, height: 700 }
+  await page.evaluate(
+    ({ agentId, desktopId, oldBounds }) => {
+      if (!desktopId) throw new Error('desktop identity was not persisted')
+      const key = `tengri:windows:${agentId}:${desktopId}`
+      const state = JSON.parse(sessionStorage.getItem(key) ?? 'null') as {
+        windows?: Array<{ app?: string; bounds?: object; restoredBounds?: object; mode?: string }>
+      }
+      const chrome = state.windows?.find((window) => window.app === 'chrome')
+      if (!chrome) throw new Error('persisted Chrome window was not found')
+      chrome.bounds = oldBounds
+      chrome.restoredBounds = oldBounds
+      chrome.mode = 'normal'
+      sessionStorage.setItem(key, JSON.stringify(state))
+    },
+    { agentId: readyAgent.id, desktopId, oldBounds },
+  )
+
+  await page.reload()
+  await expect(page.getByLabel('Message your agent')).toBeVisible()
+  await expect(chrome).toBeVisible()
+
+  const expectChromeAboveDock = async () => {
+    const [chromeBounds, dockBounds] = await Promise.all([chrome.boundingBox(), dock.boundingBox()])
+    return chromeBounds && dockBounds ? chromeBounds.y + chromeBounds.height - dockBounds.y : Number.POSITIVE_INFINITY
+  }
+  await expect.poll(expectChromeAboveDock).toBeLessThanOrEqual(0)
+
+  await page.setViewportSize({ width: 1440, height: 774 })
+  await expect.poll(expectChromeAboveDock).toBeLessThanOrEqual(0)
+
+  await chrome.getByRole('button', { name: 'Minimize Chrome' }).click()
+  await expect(chrome).toHaveAttribute('aria-hidden', 'true')
+  await dock.getByRole('button', { name: 'Open Chrome' }).click()
+  await expect(chrome).not.toHaveAttribute('aria-hidden', 'true')
+  await expect.poll(expectChromeAboveDock).toBeLessThanOrEqual(0)
+
+  await chrome.getByRole('button', { name: 'Maximize Chrome' }).click()
+  await expect(chrome.getByRole('button', { name: 'Restore Chrome' })).toBeVisible()
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.setViewportSize({ width: 1440, height: 774 })
+  await chrome.getByRole('button', { name: 'Restore Chrome' }).click()
+  await expect(chrome.getByRole('button', { name: 'Maximize Chrome' })).toBeVisible()
+  await expect.poll(expectChromeAboveDock).toBeLessThanOrEqual(0)
+})
+
 test('propagates deletion cleanup to every open desktop tab', async ({ page }) => {
   const terminalStore: TerminalStore = { sessions: [] }
   await mockTengri(page, { terminalStore })
@@ -1820,7 +1937,7 @@ test('renders truthful booting, sleeping, and failed lifecycle states', async ({
   await expect(page.getByRole('status', { name: 'Booting your microVM' })).toBeVisible()
 
   await page.unrouteAll({ behavior: 'wait' })
-  await mockTengri(page, {
+  const mock = await mockTengri(page, {
     agent: { ...readyAgent, phase: 'failed', message: 'Guest readiness probe failed without fabricated progress.' },
   })
   await page.reload()
@@ -1831,6 +1948,10 @@ test('renders truthful booting, sleeping, and failed lifecycle states', async ({
       sessionStorage.setItem(`tengri:windows:${agentId}:${desktopId}`, '{"windows":[]}')
       sessionStorage.setItem(`tengri:terminal:${agentId}:${desktopId}:terminal-4`, '{"sessionId":"stale"}')
       sessionStorage.setItem(`tengri:terminal-cleanup:${agentId}`, '[]')
+      localStorage.setItem(`tengri-thread:${agentId}`, 'stale-thread')
+      localStorage.setItem(`tengri:spotlight:${agentId}:recents`, '["app:chrome"]')
+      localStorage.setItem('tengri-thread:other-agent', 'other-thread')
+      localStorage.setItem('tengri:spotlight:other-agent:recents', '["app:finder"]')
     },
     { agentId: readyAgent.id, desktopId: staleDesktopId },
   )
@@ -1855,6 +1976,29 @@ test('renders truthful booting, sleeping, and failed lifecycle states', async ({
       readyAgent.id,
     ),
   ).toEqual([])
+  expect(
+    await page.evaluate(
+      (agentId) => ({
+        deletedThread: localStorage.getItem(`tengri-thread:${agentId}`),
+        deletedRecents: localStorage.getItem(`tengri:spotlight:${agentId}:recents`),
+        otherThread: localStorage.getItem('tengri-thread:other-agent'),
+        otherRecents: localStorage.getItem('tengri:spotlight:other-agent:recents'),
+      }),
+      readyAgent.id,
+    ),
+  ).toEqual({
+    deletedThread: null,
+    deletedRecents: null,
+    otherThread: 'other-thread',
+    otherRecents: '["app:finder"]',
+  })
+
+  const create = page.getByRole('dialog', { name: 'Create your agent' })
+  await create.getByLabel('Agent name').fill('Recreated Tengri')
+  await create.getByRole('button', { name: 'Create Agent' }).click()
+  await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
+  await expect(page.getByLabel('Message your agent')).toBeVisible()
+  expect(mock.actions.some((action) => action.action === 'resume-thread')).toBe(false)
 })
 
 test('stops a failed agent without deleting its persistent workspace', async ({ page }) => {
@@ -1927,4 +2071,37 @@ test('matches the Tahoe desktop at required production viewports', async ({ page
   await expect(page).toHaveScreenshot('tengri-desktop-1728x1117.png', {
     fullPage: true,
   })
+})
+
+test('renders native Finder and Settings layouts with accessible navigation', async ({ page }) => {
+  await page.clock.setFixedTime(new Date('2026-08-26T12:34:00.000Z'))
+  await mockTengri(page)
+  await page.goto('/')
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  await dock.getByRole('button', { name: 'Open Finder' }).click()
+  const finder = page.getByRole('region', { name: 'Finder window' })
+  await expect(finder.getByRole('button', { name: 'README.md' })).toBeVisible()
+  await page.mouse.move(0, 0)
+  await expect(finder).toHaveScreenshot('tengri-finder.png')
+
+  await dock.getByRole('button', { name: 'Open Settings' }).click()
+  const settings = page.getByRole('region', { name: 'Settings window' })
+  await expect(settings.getByRole('heading', { name: 'General', exact: true })).toBeVisible()
+  await page.mouse.move(0, 0)
+  await expect(settings).toHaveScreenshot('tengri-settings.png')
+  await settings.getByRole('button', { name: 'Runtime', exact: true }).click()
+  await expect(settings.getByRole('heading', { name: 'Runtime', exact: true })).toBeInViewport()
+  await settings.getByRole('button', { name: 'Lifecycle', exact: true }).click()
+  await expect(settings.getByRole('button', { name: 'Sleep Agent' })).toBeInViewport()
+  const results = await new AxeBuilder({ page }).analyze()
+  expect(
+    results.violations.filter((violation) => violation.impact === 'serious' || violation.impact === 'critical'),
+  ).toEqual([])
+
+  await page.setViewportSize({ width: 390, height: 680 })
+  await settings.getByRole('button', { name: 'Maximize Settings' }).click()
+  const bounds = await settings.boundingBox()
+  expect(bounds).not.toBeNull()
+  expect(bounds!.width).toBeLessThanOrEqual(390)
+  await expect(settings.getByRole('button', { name: 'Sleep Agent' })).toBeVisible()
 })

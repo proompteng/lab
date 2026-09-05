@@ -21,29 +21,6 @@ import type { IntradayMarketDataService } from '../market-data'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
 import type { StrategyRuntime } from '../strategy'
 import type { BoundMutationCycleOutcome } from './mutation-decisions'
-import { utcInstantFromEpochMillis } from '../time'
-
-export type LifecycleAdvanceDisposition = 'CONTINUE' | 'COMPLETED'
-
-export type LifecycleAdvanceMaintenance = {
-  /** Restricts expired authority before any reconciliation or cycle work can reach broker mutation. */
-  readonly beforeReconciliation: Effect.Effect<void, CycleRunnerError>
-  /** Finalizes a receipt only after the same advance has reconciled successfully. */
-  readonly afterReconciliation: Effect.Effect<LifecycleAdvanceDisposition, CycleRunnerError>
-}
-
-export const executionMandateCloseGraceMs = 15 * 60_000
-
-export const executionMandateCloseExpiresAt = (authorityExpiresAt: string): string =>
-  utcInstantFromEpochMillis(Date.parse(authorityExpiresAt) + executionMandateCloseGraceMs)
-
-/** Receipt finalization remains bounded, but survives late close settlement and transient read failures. */
-export const executionMandateReceiptFinalizationGraceMs = 15 * 60_000
-
-export const executionMandateReceiptFinalizationExpiresAt = (authorityExpiresAt: string): string =>
-  utcInstantFromEpochMillis(
-    Date.parse(executionMandateCloseExpiresAt(authorityExpiresAt)) + executionMandateReceiptFinalizationGraceMs,
-  )
 
 export type ObserveDecisionRuntime =
   | BrokerRead
@@ -97,12 +74,8 @@ export type ObserveAutonomousCycleInput = {
   readonly mutationPhase?: 'ENTRY' | 'CLOSE'
   readonly executionCycleClosureStore?: ExecutionCycleClosureStoreShape
   readonly blockedCycleIntentStore?: BlockedCycleIntentStoreShape
-  readonly executionMandateCutoffAt?: string
-  readonly executionMandateCloseSubmitCutoffAt?: string
-  readonly executionMandateExpiresAt?: string
-  readonly onClosedCycle?: (cycleId: string, observedAt: string) => Effect.Effect<void>
-  /** Runs phased lifecycle maintenance inside the same serialized command as reconciliation and the cycle pass. */
-  readonly lifecycleMaintenance?: LifecycleAdvanceMaintenance
+  readonly executionCycleCloseSubmitCutoffAt?: string
+  readonly executionCycleCloseExpiresAt?: string
 }
 
 export const executionDecisionFinalizationHeadroomMs = (

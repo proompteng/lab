@@ -4,9 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "bun build src/index.ts src/forward-performance-command.ts src/restate/restate-execution-server.ts src/restate/restate-execution-activate.ts --target=node --external tigerbeetle-node --entry-naming '[name].js' --outdir=dist",
+    "build": "bun build src/index.ts src/forward-performance-command.ts src/intraday-replay-command.ts src/vendor-intraday-replay-command.ts src/restate/restate-execution-server.ts src/restate/restate-execution-activate.ts --target=node --external tigerbeetle-node --entry-naming '[name].js' --outdir=dist",
     "dev": "BAYN_PROVENANCE_MODE=development bun --watch src/index.ts",
     "forward:performance": "BAYN_PROVENANCE_MODE=development node dist/forward-performance-command.js",
+    "replay:intraday": "BAYN_PROVENANCE_MODE=development node dist/intraday-replay-command.js",
+    "replay:vendor": "BAYN_PROVENANCE_MODE=development node dist/vendor-intraday-replay-command.js",
     "start": "BAYN_PROVENANCE_MODE=development node dist/index.js",
     "lint": "bun ../../node_modules/oxfmt/bin/oxfmt --check src",
     "lint:oxlint": "bun ../../node_modules/oxlint/bin/oxlint --config ../../.oxlintrc.json .",
@@ -14,7 +16,7 @@
     "test": "bun test",
     "test:broker-sandbox": "bun test src/broker-sandbox-contract.test.ts",
     "test:effect-runtime": "bun test src/clickhouse-patch.test.ts src/effect-runtime-compatibility.test.ts",
-    "test:postgres": "bun test src/cycle/store/observability.integration.test.ts && bun test src/db/execution-store.integration.test.ts && bun test src/db/execution-controller-status-postgres.integration.test.ts && bun test src/cycle/store/integration.test.ts",
+    "test:postgres": "bun test src/cycle/store/observability.integration.test.ts && bun test src/db/execution-store.integration.test.ts && bun test src/db/execution-controller-status-postgres.integration.test.ts && bun test src/cycle/store/integration.test.ts && bun test src/execution/intents/blocked-cycle-postgres.integration.test.ts && bun test src/forward-performance/postgres/read.integration.test.ts",
     "tsc": "bun run tsc:all && bun run tsc:production",
     "tsc:all": "find ../../node_modules/.bun -path '*/@effect/tsgo-*/lib/tsc*' -type f ! -name '*.json' -exec chmod +x {} + 2>/dev/null || true; \"$(bun node_modules/@effect/tsgo/dist/effect-tsgo.js get-exe-path)\" --noEmit --project tsconfig.json",
     "tsc:production": "\"$(bun node_modules/@effect/tsgo/dist/effect-tsgo.js get-exe-path)\" --noEmit --project tsconfig.production.json"

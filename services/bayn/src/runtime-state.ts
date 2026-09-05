@@ -68,23 +68,14 @@ export type CapitalActivationRuntimeState =
   | {
       readonly _tag: 'Pending'
       readonly requestHash: string | null
-      readonly reason: 'REQUEST_INVALID' | 'STARTUP_EVIDENCE_UNAVAILABLE' | 'PREPARATION_FAILED' | 'REQUEST_EXPIRED'
+      readonly reason: 'REQUEST_INVALID' | 'STARTUP_EVIDENCE_UNAVAILABLE' | 'PREPARATION_FAILED'
     }
   | {
       readonly _tag: 'Realized'
       readonly requestHash: string
       readonly generationHash: string
       readonly grant: 'Research'
-      readonly cutoffAt: string
-      readonly expiresAt: string
-      readonly maximumCloseSessions: number | null
-    }
-  | {
-      readonly _tag: 'Completed'
-      readonly requestHash: string
-      readonly generationHash: string
-      readonly grant: 'Research'
-      readonly receiptHash: string
+      readonly scope: 'Standing'
     }
 
 export interface RuntimeState {

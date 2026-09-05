@@ -44,7 +44,8 @@ import {
   makeExecutionDecisionDocument,
   type ExecutionMarketDataBinding,
 } from './shadow-decision-contract'
-import { decideIntradayMomentum, deriveIntradayMomentumSignalMetrics } from './strategy/intraday-momentum/decision'
+import { decideIntradayMomentum } from './strategy/intraday-momentum/decision'
+import { deriveIntradayMomentumSignalMetrics } from './strategy/intraday-momentum/decision-core'
 import {
   decodeDefaultIntradayMomentumProtocol,
   intradayMomentumExecutionModel,
