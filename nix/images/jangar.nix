@@ -10,6 +10,15 @@
 
 let
   codexCli = import ./openai-codex-cli.nix { inherit pkgs; };
+  codexConfigTemplate = builtins.fromTOML (
+    builtins.readFile (repoRoot + "/services/jangar/scripts/codex-config-container.toml")
+  );
+  codexConfig = (pkgs.formats.toml { }).generate "jangar-codex-config.toml" (
+    codexConfigTemplate
+    // {
+      mcp_servers = builtins.removeAttrs codexConfigTemplate.mcp_servers [ "alpaca" ];
+    }
+  );
   kubectl = exact.kubectl or pkgs.kubectl;
 
   scriptWrapper =
@@ -132,7 +141,7 @@ import ./bun-workspace-service.nix {
     cp "$TMPDIR/work/services/jangar/package.json" "$out/app/services/jangar/package.json"
     cp -R "$TMPDIR/work/services/jangar/node_modules" "$out/app/services/jangar/node_modules"
     cp -R "$TMPDIR/work/services/jangar/.output" "$out/app/services/jangar/.output"
-    cp "$TMPDIR/work/services/jangar/scripts/codex-config-container.toml" "$out/root/.codex/config.toml"
+    cp ${codexConfig} "$out/root/.codex/config.toml"
     node_pty_package_json="$(find "$out/app/node_modules/.bun" -path '*/node_modules/node-pty/package.json' -print -quit)"
     if [ -z "$node_pty_package_json" ]; then
       echo "node-pty package not found in runtime node_modules" >&2

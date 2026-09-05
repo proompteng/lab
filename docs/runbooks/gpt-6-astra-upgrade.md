@@ -16,6 +16,15 @@ come from the [OpenAI migration guide](https://developers.openai.com/api/docs/gu
   their model identities. Environment and per-run model overrides still take precedence over defaults.
 - Jangar's production model inventory includes Astra alongside its existing Qwen default, allowing callers to
   select `gpt-6-astra` explicitly.
+- Codex CLI must be at least `0.153.0` for Astra, as documented in
+  [OpenAI's Codex setup guidance](https://help.openai.com/en/articles/20001354). The shared runtime pins `0.153.4`.
+  Older clients reject Astra before inference, even with valid credentials.
+- Jangar sets `HOME=/root` and `CODEX_HOME=/root/.codex`, includes the container configuration there, and uses the
+  existing mounted `auth.json`. Renew an expired credential for the same verified account through
+  `bun run scripts/sync-codex-auth-1password.ts sync` and the existing ExternalSecrets reconciliation. New pods
+  consume the renewed secret; existing subPath mounts retain their original contents until replacement.
+- Jangar's Nix image derives its configuration from the container template and omits the Alpaca MCP entry because
+  that image does not package the executable. The Docker template retains the entry for its bundled server.
 
 ## Rollout and impact
 
@@ -35,7 +44,8 @@ acceptance process before they can establish quality or trading readiness with A
 
 After delivery, verify the exact source revision and image provenance, Argo application state, and running
 workload configuration. Check a fresh Codex run's resolved model and completion, Jangar's `/v1/models` plus a
-completed chat response, and Torghut's configured model identity plus a successful review. An advertised model
+completed chat response, and Torghut's configured model identity plus a successful review. Confirm the running
+Codex CLI meets the minimum version and discovers the mounted credentials. An advertised model
 or a healthy workload alone does not prove inference succeeds.
 
 Rollback uses a Git revert through the same delivery process. Restore the model defaults and associated request

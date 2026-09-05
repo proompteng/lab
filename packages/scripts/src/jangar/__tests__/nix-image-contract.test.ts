@@ -10,9 +10,8 @@ describe('Jangar Nix image contract', () => {
     const config = readFileSync(join(repoRoot, 'services/jangar/scripts/codex-config-container.toml'), 'utf8')
 
     expect(image).toContain('mkdir -p "$out/app/packages" "$out/app/services/jangar" "$out/root/.codex"')
-    expect(image).toContain(
-      'cp "$TMPDIR/work/services/jangar/scripts/codex-config-container.toml" "$out/root/.codex/config.toml"',
-    )
+    expect(image).toContain('cp ${codexConfig} "$out/root/.codex/config.toml"')
+    expect(image).toContain('mcp_servers = builtins.removeAttrs codexConfigTemplate.mcp_servers [ "alpaca" ];')
     expect(image).toContain('"HOME=/root"')
     expect(image).toContain('"CODEX_HOME=/root/.codex"')
     expect(config).toContain('model = "gpt-6-astra"')
