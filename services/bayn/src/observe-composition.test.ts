@@ -8,6 +8,8 @@ import { fixtureProtocol, fixtureRuntime } from './testing/runtime-fixtures'
 import {
   AccountStatus as BrokerAccountStatus,
   BrokerRead,
+  BrokerReadError,
+  BrokerReadErrorKind,
   type Account as BrokerAccount,
   type BrokerReadShape,
   type MarketCalendarObservation,
@@ -323,6 +325,95 @@ test('restricted mutation startup terminalizes its unbound cycle without discove
   })
   expect(advances.waiting.result).toEqual({ outcome: 'WINDOW_CLOSED', observedAt })
   expect(blockCount).toBe(1)
+})
+
+test('preserves execution authority after a transient reconciliation read inside a bound cycle', async () => {
+  const fixture = await executionLifecycleFixture()
+  const reconciliationServices = makeExactReconciliationServices()
+  const transientRead = new BrokerReadError({
+    operation: 'account',
+    kind: BrokerReadErrorKind.Transport,
+    message: 'injected transient bound-cycle account read failure',
+    retryable: true,
+  })
+  let accountReads = 0
+  let authorityRestrictions = 0
+  const brokerRead: BrokerReadShape = {
+    ...reconciliationServices.brokerRead,
+    account: Effect.suspend(() => {
+      accountReads += 1
+      return accountReads === 1 ? reconciliationServices.brokerRead.account : Effect.fail(transientRead)
+    }),
+    marketCalendar: calendarRead([]),
+  }
+  const executionStore = {
+    ...reconciliationServices.executionStore,
+    restrictAuthority: () =>
+      Effect.sync(() => {
+        authorityRestrictions += 1
+      }),
+  }
+  const unusedCycleMutation = Effect.die(new Error('bound-cycle reconciliation failure must not mutate cycle state'))
+  const cycleStore: CycleStoreShape = {
+    acquire: () => unusedCycleMutation,
+    read: () => unusedCycleMutation,
+    readAuthoritySlot: () => unusedCycleMutation,
+    readDecisionDocument: () => Effect.succeed(Option.some(fixture.document)),
+    readOldestUnfinished: () => Effect.succeed(Option.some(fixture.boundCycle)),
+    bindSnapshot: () => unusedCycleMutation,
+    activate: () => unusedCycleMutation,
+    bindDecision: () => unusedCycleMutation,
+    finish: () => unusedCycleMutation,
+    block: () => unusedCycleMutation,
+  }
+  const storedIntents = new Map(
+    fixture.intents.map((intent) => [intent.intentId, storedIntent(intent, IntentState.Planned, intent.createdAt)]),
+  )
+  const intentStore: IntentStoreService = {
+    commit: (intent) =>
+      Effect.sync(() => {
+        const record = storedIntents.get(intent.intentId)
+        if (record === undefined) throw new Error('bound intent is missing from the fixture store')
+        return { record, deduplicated: true }
+      }),
+    read: (intentId) => Effect.succeed(Option.fromNullishOr(storedIntents.get(intentId))),
+  }
+  const mutationStore = {
+    latest: () => Effect.void,
+  } as unknown as MutationStoreShape
+
+  const advance = await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(evaluatedAt))
+      const driverEffect = yield* makeMutationAutonomousCycleStartupProduction(fixture.input)({
+        cycleBindingId: fixture.boundCycle.identity.qualificationRunId,
+        recordPass: () => Effect.void,
+      })
+      const driver = yield* driverEffect
+      return yield* driver.advance
+    }).pipe(
+      Effect.provideService(BrokerRead, brokerRead),
+      Effect.provideService(CycleStore, cycleStore),
+      Effect.provideService(MarketData, marketData([])),
+      Effect.provideService(BrokerEventStore, executionStore),
+      Effect.provideService(FillAccountingStore, executionStore),
+      Effect.provideService(ValuationStore, executionStore),
+      Effect.provideService(ReconciliationStore, executionStore),
+      Effect.provideService(AuthorityGenerationStore, executionStore),
+      Effect.provideService(AuthorityRestrictionStore, executionStore),
+      Effect.provideService(IntentStore, intentStore),
+      Effect.provideService(MutationStore, mutationStore),
+      Effect.provideService(WriterFence, reconciliationServices.writerFence),
+      Effect.provide(TestClock.layer()),
+    ),
+  )
+
+  expect(advance.observation).toMatchObject({
+    result: 'FAILURE',
+    message: 'same-pass broker reconciliation read failed: injected transient bound-cycle account read failure',
+  })
+  expect(accountReads).toBe(2)
+  expect(authorityRestrictions).toBe(0)
 })
 
 test('requires a bounded residual close replan after a settled close leaves a position open', () => {

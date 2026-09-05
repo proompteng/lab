@@ -16,7 +16,12 @@ import type {
   IntradaySnapshotRequest,
   IntradayTrade,
 } from './model'
-import { IntradaySnapshotFailure, IntradaySnapshotPurpose, intradaySnapshotSymbols } from './model'
+import {
+  IntradayIngestionDelayDirection,
+  IntradaySnapshotFailure,
+  IntradaySnapshotPurpose,
+  intradaySnapshotSymbols,
+} from './model'
 import type { IntradayArchiveWatermarkRow, IntradayBarRow, IntradayQuoteRow, IntradayTradeRow } from './rows'
 import {
   decodeIntradayArchiveWatermarkRows,
@@ -590,12 +595,20 @@ const validateBarCoverage = (
     const availabilityDelay = intradayAgeNanos(bar.ingestedAt, bar.eventAt)
     if (availabilityDelay < minimumAvailabilityDelay || availabilityDelay > maximumAvailabilityDelay) {
       return Result.fail(
-        failure('freshness', 'intraday bar does not match its declared feed delay and finalization window', {
-          symbol: bar.symbol,
-          sourceTopic: bar.sourceTopic,
-          delayClass: request.delayClass,
-          eventAt: bar.eventAt,
-          ingestedAt: bar.ingestedAt,
+        new IntradaySnapshotFailure({
+          reason: 'freshness',
+          message: 'intraday bar does not match its declared feed delay and finalization window',
+          ingestionDelayDirection:
+            availabilityDelay < minimumAvailabilityDelay
+              ? IntradayIngestionDelayDirection.BelowMinimum
+              : IntradayIngestionDelayDirection.AboveMaximum,
+          facts: {
+            symbol: bar.symbol,
+            sourceTopic: bar.sourceTopic,
+            delayClass: request.delayClass,
+            eventAt: bar.eventAt,
+            ingestedAt: bar.ingestedAt,
+          },
         }),
       )
     }
@@ -752,12 +765,20 @@ const latestQuotes = (
       const availabilityDelay = intradayAgeNanos(evidence.ingestedAt, evidence.eventAt)
       if (availabilityDelay < minimumDelay || availabilityDelay > maximumDelay) {
         return Result.fail(
-          failure('freshness', 'intraday evidence does not match its declared feed delay', {
-            symbol,
-            sourceTopic: evidence.sourceTopic,
-            delayClass: request.delayClass,
-            eventAt: evidence.eventAt,
-            ingestedAt: evidence.ingestedAt,
+          new IntradaySnapshotFailure({
+            reason: 'freshness',
+            message: 'intraday evidence does not match its declared feed delay',
+            ingestionDelayDirection:
+              availabilityDelay < minimumDelay
+                ? IntradayIngestionDelayDirection.BelowMinimum
+                : IntradayIngestionDelayDirection.AboveMaximum,
+            facts: {
+              symbol,
+              sourceTopic: evidence.sourceTopic,
+              delayClass: request.delayClass,
+              eventAt: evidence.eventAt,
+              ingestedAt: evidence.ingestedAt,
+            },
           }),
         )
       }

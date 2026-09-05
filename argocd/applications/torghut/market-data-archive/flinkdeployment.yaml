@@ -9,7 +9,7 @@ metadata:
     argocd.argoproj.io/sync-wave: "4"
 spec:
   # The TA release workflow pins the same immutable image used by the live and simulation TA jobs.
-  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:56b6ece3c9df8e531be7befdd9c86f8313711689f0368395d78e75f2684a7e54
+  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:a12af74d23576b5ab0108d3fb19fcf9cae4a5370f0de4e1a5401e6ed85d92921
   imagePullPolicy: IfNotPresent
   # Cut over from the skewed v2 quote consumer to the repartitioned v3 consumer.
   # Existing ClickHouse history stays intact; the new group begins at each topic's live head.
@@ -57,9 +57,9 @@ spec:
                   name: signal-publisher-clickhouse-auth
                   key: password
             - name: TORGHUT_TA_VERSION
-              value: kargo-sha-0e375d853cb3bcc762a81411510791aca59cd935
+              value: kargo-sha-030662d75d54621886def20ce95cb2b55a50c83e
             - name: TORGHUT_TA_COMMIT
-              value: 0e375d853cb3bcc762a81411510791aca59cd935
+              value: 030662d75d54621886def20ce95cb2b55a50c83e
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:

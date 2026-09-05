@@ -26,6 +26,7 @@ const CODEX_EVENT_KINDS = new Set<TengriCodexEventKind>([
   'warning',
   'unknown',
 ])
+const CODEX_ITEM_LIFECYCLE_METHODS = new Set(['item/started', 'item/completed'])
 
 export type CodexTranscriptItem = {
   id: string
@@ -77,13 +78,12 @@ export function appendCodexEvent(current: TengriCodexEvent[], event: TengriCodex
     return next
   }
 
-  const itemIndex = event.itemId
+  const itemIdentity = codexEventItemIdentity(event)
+  const itemIndex = itemIdentity
     ? current.findIndex(
         (candidate) =>
-          candidate.itemId === event.itemId &&
-          candidate.threadId === event.threadId &&
-          candidate.kind === event.kind &&
-          (isDeltaEvent(candidate) || isDeltaEvent(event)),
+          codexEventItemIdentity(candidate) === itemIdentity &&
+          (isDeltaEvent(candidate) || isDeltaEvent(event) || isItemLifecycleTransition(candidate, event)),
       )
     : -1
 
@@ -876,6 +876,21 @@ function number(value: unknown) {
 
 function isDeltaEvent(event: TengriCodexEvent) {
   return event.method.toLowerCase().endsWith('delta')
+}
+
+function codexEventItemIdentity(event: TengriCodexEvent) {
+  if (!event.itemId) return ''
+  return JSON.stringify([event.threadId, event.turnId, event.itemId, event.kind])
+}
+
+function isItemLifecycleTransition(previous: TengriCodexEvent, next: TengriCodexEvent) {
+  const previousMethod = previous.method.toLowerCase()
+  const nextMethod = next.method.toLowerCase()
+  return (
+    previousMethod !== nextMethod &&
+    CODEX_ITEM_LIFECYCLE_METHODS.has(previousMethod) &&
+    CODEX_ITEM_LIFECYCLE_METHODS.has(nextMethod)
+  )
 }
 
 function authoritativeTurnSnapshotMethod(event: TengriCodexEvent) {

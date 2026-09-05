@@ -67,6 +67,7 @@ import {
   decisionBuildError,
   prepareObserveDecisionReads,
   readObserveDecisionFacts,
+  reconciliationRunnerError,
   requireMutationAuthorityGeneration,
   type ObserveDecisionInput,
   type ReconciliationPassError,
@@ -259,9 +260,7 @@ const closePlanNeedsResidualReplan = (
       return false
     }
     const facts = yield* reconcile.pipe(
-      Effect.mapError((cause) =>
-        mutationRunnerError({ message: 'execution residual close reconciliation failed', cause }),
-      ),
+      Effect.mapError((cause) => reconciliationRunnerError(cause, 'execution residual close reconciliation failed')),
     )
     return executionClosePlanNeedsResidualReplan(
       records
@@ -405,7 +404,7 @@ const ensureExecutionCycleClosure = (
     }
     if (existing === undefined) {
       const closeReconciliation = yield* reconcile.pipe(
-        Effect.mapError((cause) => mutationRunnerError({ message: 'execution close reconciliation failed', cause })),
+        Effect.mapError((cause) => reconciliationRunnerError(cause, 'execution close reconciliation failed')),
       )
       const completion = decideReconciledExecutionCycleCompletion(closeReconciliation)
       if (completion !== undefined) {
@@ -582,7 +581,7 @@ const readCloseMutationPreparationFacts = (
 ): Effect.Effect<MutationPreparationFacts, CycleRunnerError, ObserveDecisionRuntime> =>
   Effect.gen(function* () {
     const reconciliation = yield* request.reconcile.pipe(
-      Effect.mapError((cause) => mutationRunnerError({ message: 'execution close reconciliation failed', cause })),
+      Effect.mapError((cause) => reconciliationRunnerError(cause, 'execution close reconciliation failed')),
     )
     const evaluatedAt = yield* currentUtcInstant
     const authority = yield* Effect.fromResult(
@@ -694,7 +693,7 @@ const executeBoundExecutionCycle = (
     const entryRequiresCloseOnlyContainment = closeOnlyContainmentReason
       ? yield* reconcile.pipe(
           Effect.mapError((cause) =>
-            mutationRunnerError({ message: 'blocked entry containment reconciliation failed', cause }),
+            reconciliationRunnerError(cause, 'blocked entry containment reconciliation failed'),
           ),
           Effect.map(({ brokerState }) =>
             blockedEntryRequiresCloseOnlyContainment(document.targetPlan, brokerState.positions, protocol.universe),
@@ -772,7 +771,7 @@ const executeBoundExecutionCycle = (
         closeOnly || observedAt >= entryCutoffAt
           ? yield* reconcile.pipe(
               Effect.mapError((cause) =>
-                mutationRunnerError({ message: 'entry execution terminal reconciliation failed', cause }),
+                reconciliationRunnerError(cause, 'entry execution terminal reconciliation failed'),
               ),
               Effect.flatMap((facts) => entryExecutionCycleIntentEvidence(document, facts.brokerState.orders)),
             )
