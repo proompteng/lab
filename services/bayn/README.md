@@ -95,6 +95,53 @@ A standing mandate's next scheduled cycle does not make the reconciled performan
 submission window is still in the future and it has no durable decision or intent. Blocked cycles, started cycles,
 and any future cycle with durable execution work still prevent a sufficient receipt.
 
+## Historical intraday replay
+
+`bayn-intraday-replay --input <path>` evaluates finalized sessions from an exported Alpaca calendar against the retained
+intraday archive. It reads only ClickHouse using `BAYN_CLICKHOUSE_URL`, `BAYN_CLICKHOUSE_USERNAME`, and
+`BAYN_CLICKHOUSE_PASSWORD`. The command has no broker mutation, PostgreSQL, TigerBeetle, or capital-grant capability.
+Run `bun run --filter @proompteng/bayn build` for the local equivalent:
+
+```sh
+node services/bayn/dist/intraday-replay-command.js --input replay-input.json > replay-report.json
+```
+
+The input declares the calendar range, capital, and execution assumptions before the run. For example, after exporting
+the exact calendar response for this date range:
+
+```json
+{
+  "schemaVersion": "bayn.intraday-replay-input.v1",
+  "range": { "start": "2026-09-04", "end": "2026-09-04" },
+  "calendar": [{ "date": "2026-09-04", "open": "09:30", "close": "16:00" }],
+  "initialCapitalMicros": "100000000000",
+  "allocationCapitalMicros": "100000000000",
+  "assumptions": {
+    "pollIntervalMs": 30000,
+    "firstPollDelayMs": 2000,
+    "orderLatencyMs": 100,
+    "availableLiquidityPpm": 1000000,
+    "slippageBps": 0,
+    "feeMultiplierPpm": 1000000
+  }
+}
+```
+
+The range is bounded to 31 calendar days. Preserve the complete calendar response; archive date presence cannot
+establish that a session was open or that its data is complete. Each scheduled observation captures its own archive
+watermarks with event and ingestion times bounded by that observation. The report retains the manifests for decision,
+planning, and arrival quotes, as well as data failures, canceled IOC quantities, fees, cash, and unclosed positions.
+
+The fill model uses whole shares, the opposite arrival quote, a declared share of displayed liquidity, and adverse
+slippage. A modeled price beyond the submitted limit cancels the order. Zero added slippage still includes crossing
+the quoted spread and the protocol's fees. `feeMultiplierPpm` scales the fees before their normal rounding. Execution
+assumptions describe a counterfactual; they do not measure queue position or actual broker fills.
+
+Every report is `COUNTERFACTUAL_RESEARCH` and `NOT_QUALIFIED`, including a positive result. A report does not create a
+qualification, change a strategy, activate capital, or replace the forward-performance receipt. Use a declared
+chronological holdout and sufficient independent sessions before drawing a profitability conclusion; inspect the
+report's limitations and incomplete sessions rather than selecting only favorable dates or assumptions.
+
 ## Validation
 
 ```sh

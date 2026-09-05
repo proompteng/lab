@@ -24,6 +24,15 @@ import { adverseQuotePrices, executionMarketDataBinding, maximumBuyQuantities } 
 
 const minuteMs = 60_000
 
+export interface IntradayMomentumQueryContext {
+  readonly schemaVersion: AutonomousCycle['schemaVersion']
+  readonly identity: Pick<AutonomousCycle['identity'], 'strategyName' | 'executionSessionDate' | 'executionPolicy'>
+  readonly window: Pick<
+    AutonomousCycle['window'],
+    'executionOpenAt' | 'executionCloseAt' | 'submissionOpenAt' | 'submissionCutoffAt'
+  >
+}
+
 export class IntradayMomentumRuntimeDecisionFailure extends Data.TaggedError('IntradayMomentumRuntimeDecisionFailure')<{
   readonly operation: 'entry-query' | 'entry-decision' | 'binding'
   readonly message: string
@@ -46,7 +55,7 @@ const failure = (
 ): IntradayMomentumRuntimeDecisionFailure => new IntradayMomentumRuntimeDecisionFailure({ operation, message, cause })
 
 const snapshotQuery = (
-  cycle: AutonomousCycle,
+  cycle: IntradayMomentumQueryContext,
   protocol: IntradayMomentumProtocol,
   calendar: MarketCalendarObservation,
   rangeStartAt: string,
@@ -72,7 +81,7 @@ const snapshotQuery = (
 })
 
 export const intradayMomentumEntryQuery = (
-  cycle: AutonomousCycle,
+  cycle: IntradayMomentumQueryContext,
   protocol: IntradayMomentumProtocol,
   calendar: MarketCalendarObservation,
   observedAt: string,
@@ -123,7 +132,7 @@ export const intradayMomentumEntryQuery = (
 }
 
 export const intradayMomentumPricingQuery = (
-  cycle: AutonomousCycle,
+  cycle: IntradayMomentumQueryContext,
   protocol: IntradayMomentumProtocol,
   calendar: MarketCalendarObservation,
   observedAt: string,
@@ -161,7 +170,7 @@ export const intradayMomentumPricingQuery = (
 }
 
 export const intradayMomentumCloseQuery = (
-  cycle: AutonomousCycle,
+  cycle: IntradayMomentumQueryContext,
   protocol: IntradayMomentumProtocol,
   calendar: MarketCalendarObservation,
   observedAt: string,
