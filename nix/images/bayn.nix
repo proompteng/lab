@@ -27,9 +27,9 @@ let
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = {
-    # Refreshed from the two authoritative Linux builders for the Bun 1.4.0 dependency closure.
-    x86_64-linux = "sha256-AAZUF6g+65srCSP6TNvNR94ijlFP4osRw/f/v7U4fbE=";
-    aarch64-linux = "sha256-q7G6Rs0qxVDHVuoSD4/fbEhR3g662UVZfV89tUeKSh4=";
+    # Refreshed from both Linux builders after registering the forward-performance PostgreSQL regression.
+    x86_64-linux = "sha256-ZpjqSrTgeWJ/2LlSBhm7or94nX1Xnj6aFNbFVpagjaU=";
+    aarch64-linux = "sha256-J29V67huoO7fODB5WuORFMzG2qk7ALc3lObbWhnqd/M=";
   };
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
