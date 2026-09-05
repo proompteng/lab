@@ -62,7 +62,7 @@ func main() {
 			os.Exit(99)
 		}
 		if len(os.Args) == 3 && os.Args[1] == "/app/services/bayn/dist/forward-performance-command.js" && os.Args[2] == "--help" {
-			fmt.Println("Usage: bayn-forward-performance [--help]")
+			fmt.Println("Usage: bayn-forward-performance [--authority-generation <sha256>] | --help")
 			return
 		}
 		os.Exit(2)
@@ -111,12 +111,12 @@ verify_image() {
 }
 
 pack_image
-test "$(verify_image)" = 'Usage: bayn-forward-performance [--help]'
+test "$(verify_image)" = 'Usage: bayn-forward-performance [--authority-generation <sha256>] | --help'
 
 chmod u+w "${root}/nix/store/test-bayn-forward-performance/bin/bayn-forward-performance"
 cat > "${root}/nix/store/test-bayn-forward-performance/bin/bayn-forward-performance" <<'EOF'
 #!/bin/sh
-printf '%s\n' 'Usage: bayn-forward-performance [--help]'
+printf '%s\n' 'Usage: bayn-forward-performance [--authority-generation <sha256>] | --help'
 EOF
 chmod 0555 "${root}/nix/store/test-bayn-forward-performance/bin/bayn-forward-performance"
 pack_image
