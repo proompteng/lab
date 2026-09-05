@@ -248,6 +248,30 @@ describe('intraday replay program', () => {
     expect(archive.archiveCalls).toBeGreaterThan(0)
   })
 
+  test('retains the failing IOC field and reason in incomplete evidence', async () => {
+    const archive = makeArchive({
+      snapshot: (request, phase, occurrence) => {
+        const snapshot = snapshotFor(request, phase === 'decision' ? { AAPL: 0.01 } : {})
+        if (phase !== 'entry-pricing' || occurrence === 0) return snapshot
+        const quote = snapshot.latestQuotes['AAPL']
+        if (quote === undefined) throw new Error('fixture requires AAPL')
+        return {
+          ...snapshot,
+          latestQuotes: { AAPL: { ...quote, eventAt: '2026-09-04T15:00:00.000Z' } },
+        }
+      },
+    })
+    const report = await run(replayInput(['2026-09-04']), archive)
+    expect(report.sessions[0]).toMatchObject({ status: 'INCOMPLETE', orders: [], fills: [] })
+    expect(report.sessions[0]?.observations.at(-1)).toMatchObject({
+      kind: 'unavailable',
+      purpose: 'arrival',
+      reason: 'execution',
+      message: 'arrivalSnapshot.latestQuotes.AAPL.eventAt: future-quote',
+      retryable: false,
+    })
+  })
+
   test('lets an explicit allocation cap change whole-share quantity without changing canceled cash', async () => {
     const makeCanceledArchive = () =>
       makeArchive({

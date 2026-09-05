@@ -203,6 +203,31 @@ describe('intraday replay IOC execution', () => {
     })
   })
 
+  test('accepts canonical nanosecond quote timestamps and compares boundaries exactly', () => {
+    const original = snapshot().latestQuotes['AMD']
+    if (original === undefined) throw new Error('fixture must contain AMD quote')
+    const withQuote = (eventAt: string, ingestedAt = eventAt) => {
+      const quote = { ...original, eventAt, ingestedAt }
+      return {
+        ...snapshot(),
+        quotes: [quote],
+        latestQuotes: { AMD: quote },
+      } as unknown as ReturnType<typeof snapshot>
+    }
+
+    expect(
+      success(simulateIntradayReplayIoc(input({}, {}, withQuote(`${sessionDate}T13:35:29.000000001Z`)))),
+    ).toMatchObject({
+      status: 'filled',
+    })
+    expect(
+      failure(simulateIntradayReplayIoc(input({}, {}, withQuote(`${sessionDate}T13:35:30.000000001Z`)))),
+    ).toMatchObject({ reason: 'future-quote' })
+    expect(
+      failure(simulateIntradayReplayIoc(input({}, {}, withQuote(`${sessionDate}T13:35:27.999999999Z`)))),
+    ).toMatchObject({ reason: 'stale-quote' })
+  })
+
   test('rejects malformed order, assumptions, identity, and non-quote snapshots', () => {
     expect(failure(simulateIntradayReplayIoc(input({ quantityMicros: '1500000' })))).toMatchObject({
       _tag: 'InvalidIntradayReplayOrder',

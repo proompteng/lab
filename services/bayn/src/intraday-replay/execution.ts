@@ -4,7 +4,8 @@ import { quantizeAlpacaLimitPriceMicros } from '../broker/alpaca-price'
 import { OrderSide } from '../execution/contracts'
 import { MICROS, notionalMicros, numberToMicros } from '../execution-model'
 import { IntradaySnapshotPurpose, type ArchiveVerifiedIntradayMarketSnapshot } from '../market-data/intraday/model'
-import { PositiveMicrosSchema, SymbolSchema, UtcInstantSchema } from '../schemas'
+import { intradayInstantNanos, millisecondsAsNanos } from '../market-data/intraday/time'
+import { PositiveMicrosSchema, SymbolSchema, UtcInstantSchema, UtcOrderTimestampSchema } from '../schemas'
 import type { IntradayMomentumProtocol } from '../strategy/intraday-momentum/protocol'
 
 const BPS = 10_000n
@@ -13,7 +14,7 @@ const U128_MAX = (1n << 128n) - 1n
 
 const isSymbol = Schema.is(SymbolSchema)
 const isPositiveMicros = Schema.is(PositiveMicrosSchema)
-const isUtcInstant = Schema.is(UtcInstantSchema)
+const isIntradayTimestamp = Schema.is(Schema.Union([UtcInstantSchema, UtcOrderTimestampSchema]))
 
 export interface IntradayReplayIocOrder {
   readonly symbol: string
@@ -90,7 +91,8 @@ const positiveMicros = (value: string): bigint | undefined => {
   const parsed = BigInt(value)
   return parsed <= U128_MAX ? parsed : undefined
 }
-const utcMilliseconds = (value: string): number => (isUtcInstant(value) ? Date.parse(value) : Number.NaN)
+const timestampNanos = (value: string): bigint | undefined =>
+  isIntradayTimestamp(value) ? intradayInstantNanos(value) : undefined
 
 export const simulateIntradayReplayIoc = (
   input: IntradayReplayIocInput,
@@ -109,8 +111,8 @@ export const simulateIntradayReplayIoc = (
   if (requestedQuantity % MICROS !== 0n) {
     return Result.fail(invalidOrder('order.quantityMicros', order.quantityMicros, 'fractional-quantity'))
   }
-  const submittedAtMs = utcMilliseconds(order.submittedAt)
-  if (!Number.isFinite(submittedAtMs)) {
+  const submittedAtNanos = timestampNanos(order.submittedAt)
+  if (submittedAtNanos === undefined) {
     return Result.fail(invalidOrder('order.submittedAt', order.submittedAt, 'invalid-submitted-at'))
   }
   if (
@@ -163,11 +165,19 @@ export const simulateIntradayReplayIoc = (
   ) {
     return Result.fail(invalidSnapshot('arrivalSnapshot.manifest.purpose', manifest.purpose, 'not-quote-only'))
   }
-  const observedAtMs = utcMilliseconds(manifest.observedAt)
+  const observedAtNanos = timestampNanos(manifest.observedAt)
   const session = manifest.calendar.sessions.find(({ date }) => date === manifest.sessionDate)
-  const sessionOpenMs = session === undefined ? Number.NaN : utcMilliseconds(session.openAt)
-  const sessionCloseMs = session === undefined ? Number.NaN : utcMilliseconds(session.closeAt)
-  if (!Number.isFinite(observedAtMs) || !Number.isFinite(sessionOpenMs) || !Number.isFinite(sessionCloseMs)) {
+  const sessionOpenNanos = session === undefined ? undefined : timestampNanos(session.openAt)
+  const sessionCloseNanos = session === undefined ? undefined : timestampNanos(session.closeAt)
+  const maximumQuoteAgeNanos = Number.isSafeInteger(manifest.maximumQuoteAgeMs)
+    ? millisecondsAsNanos(manifest.maximumQuoteAgeMs)
+    : undefined
+  if (
+    observedAtNanos === undefined ||
+    sessionOpenNanos === undefined ||
+    sessionCloseNanos === undefined ||
+    maximumQuoteAgeNanos === undefined
+  ) {
     return Result.fail(
       failure(
         'InvalidIntradayReplaySnapshot',
@@ -179,12 +189,12 @@ export const simulateIntradayReplayIoc = (
   }
   if (
     order.submittedAt.slice(0, 10) !== manifest.sessionDate ||
-    submittedAtMs < sessionOpenMs ||
-    submittedAtMs > sessionCloseMs
+    submittedAtNanos < sessionOpenNanos ||
+    submittedAtNanos > sessionCloseNanos
   ) {
     return Result.fail(invalidOrder('order.submittedAt', order.submittedAt, 'outside-session'))
   }
-  if (observedAtMs < sessionOpenMs || observedAtMs > sessionCloseMs) {
+  if (observedAtNanos < sessionOpenNanos || observedAtNanos > sessionCloseNanos) {
     return Result.fail(
       failure(
         'InvalidIntradayReplaySnapshot',
@@ -194,7 +204,7 @@ export const simulateIntradayReplayIoc = (
       ),
     )
   }
-  if (submittedAtMs > observedAtMs)
+  if (submittedAtNanos > observedAtNanos)
     return Result.fail(invalidOrder('order.submittedAt', order.submittedAt, 'after-arrival'))
   if (!manifest.symbols.includes(order.symbol)) {
     return Result.fail(invalidSnapshot('arrivalSnapshot.manifest.symbols', order.symbol, 'missing-quote'))
@@ -221,21 +231,21 @@ export const simulateIntradayReplayIoc = (
   ) {
     return Result.fail(invalidSnapshot(quoteField, quote, 'invalid-identity'))
   }
-  const quoteEventAtMs = utcMilliseconds(quote.eventAt)
-  const quoteIngestedAtMs = utcMilliseconds(quote.ingestedAt)
-  if (!Number.isFinite(quoteEventAtMs) || !Number.isFinite(quoteIngestedAtMs)) {
+  const quoteEventAtNanos = timestampNanos(quote.eventAt)
+  const quoteIngestedAtNanos = timestampNanos(quote.ingestedAt)
+  if (quoteEventAtNanos === undefined || quoteIngestedAtNanos === undefined) {
     return Result.fail(invalidSnapshot(`${quoteField}.eventAt`, quote.eventAt, 'invalid-quote'))
   }
   if (quote.eventAt.slice(0, 10) !== manifest.sessionDate) {
     return Result.fail(invalidSnapshot(`${quoteField}.eventAt`, quote.eventAt, 'invalid-identity'))
   }
-  if (quoteEventAtMs > observedAtMs) {
+  if (quoteEventAtNanos > observedAtNanos) {
     return Result.fail(invalidSnapshot(`${quoteField}.eventAt`, quote.eventAt, 'future-quote'))
   }
   if (
-    quoteIngestedAtMs < quoteEventAtMs ||
-    quoteIngestedAtMs > observedAtMs ||
-    observedAtMs - quoteEventAtMs > manifest.maximumQuoteAgeMs
+    quoteIngestedAtNanos < quoteEventAtNanos ||
+    quoteIngestedAtNanos > observedAtNanos ||
+    observedAtNanos - quoteEventAtNanos > maximumQuoteAgeNanos
   ) {
     return Result.fail(invalidSnapshot(`${quoteField}.eventAt`, quote.eventAt, 'stale-quote'))
   }

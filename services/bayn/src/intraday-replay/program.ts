@@ -78,7 +78,7 @@ import {
   decodeIntradayReplayInput,
 } from './model'
 import { applyReplayIoc, createReplayLedger, type IntradayReplayLedger } from './ledger'
-import { simulateIntradayReplayIoc, type IntradayReplayIocOutcome } from './execution'
+import { simulateIntradayReplayIoc, type IntradayReplayIocFailure, type IntradayReplayIocOutcome } from './execution'
 
 const archiveNotMaterializedMessage = 'intraday archive has not materialized the captured source offset'
 const rollingBaselineMessage = 'intraday symbol lacks the complete rolling lookback baseline'
@@ -101,26 +101,19 @@ type SnapshotRead =
   | { readonly _tag: 'Success'; readonly snapshot: ArchiveVerifiedIntradayMarketSnapshot }
   | { readonly _tag: 'Failure'; readonly error: OperationalError }
 
-const failureDescription = (value: unknown): FailureDescription => ({
-  reason:
-    value instanceof IntradaySnapshotFailure
-      ? value.reason
-      : value instanceof OperationalError && value.cause instanceof IntradaySnapshotFailure
-        ? value.cause.reason
-        : value instanceof IntradayMomentumFailure
-          ? value.reason
-          : value instanceof OperationalError
-            ? value.operation
-            : value instanceof Error
-              ? value.name
-              : 'failure',
-  message:
-    value instanceof OperationalError && value.cause instanceof IntradaySnapshotFailure
-      ? value.cause.message
-      : value instanceof Error
-        ? value.message
-        : 'replay operation failed',
-})
+const failureDescription = (value: unknown): FailureDescription => {
+  if (value instanceof OperationalError && value.cause instanceof IntradaySnapshotFailure) {
+    return { reason: value.cause.reason, message: value.cause.message }
+  }
+  if (value instanceof IntradaySnapshotFailure || value instanceof IntradayMomentumFailure) {
+    return { reason: value.reason, message: value.message }
+  }
+  if (value instanceof OperationalError || value instanceof IntradayReplayFailure) {
+    return { reason: value.operation, message: value.message }
+  }
+  if (value instanceof Error) return { reason: value.name, message: value.message }
+  return { reason: 'failure', message: 'replay operation failed' }
+}
 
 const isRetryableArchiveFailure = (error: OperationalError): boolean => {
   const cause = error.cause
@@ -129,6 +122,13 @@ const isRetryableArchiveFailure = (error: OperationalError): boolean => {
     (cause.reason === 'not-ready' || (cause.reason === 'watermark' && cause.message === archiveNotMaterializedMessage))
   )
 }
+
+const iocFailure = (cause: IntradayReplayIocFailure): IntradayReplayFailure =>
+  new IntradayReplayFailure({
+    operation: 'execution',
+    message: `${cause.field}: ${cause.reason}`,
+    cause,
+  })
 
 const isValidUtcInstant = (value: string): boolean =>
   Schema.is(UtcInstantSchema)(value) && Number.isFinite(Date.parse(value))
@@ -625,7 +625,7 @@ const replaySession = (
       },
     })
     if (Result.isFailure(entryOutcome)) {
-      pushUnavailable(observations, 'arrival', arrivalAt, entryOutcome.failure, false)
+      pushUnavailable(observations, 'arrival', arrivalAt, iocFailure(entryOutcome.failure), false)
       return incompleteSession(context, ledger, observations, orders, 'entry IOC simulation failed')
     }
     orders.push(entryOutcome.success)
@@ -786,7 +786,7 @@ const replaySession = (
           },
         })
         if (Result.isFailure(closeOutcome)) {
-          pushUnavailable(observations, 'close', observedAt, closeOutcome.failure, false)
+          pushUnavailable(observations, 'close', observedAt, iocFailure(closeOutcome.failure), false)
           closeFailure = 'closing IOC simulation failed'
           break
         }
