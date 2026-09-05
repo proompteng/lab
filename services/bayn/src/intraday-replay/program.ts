@@ -1060,7 +1060,7 @@ export const runIntradayReplay = (
 
     const completedSessionCount = sessions.filter((session) => session.status === 'COMPLETE').length
     const incompleteSessionCount = sessions.length - completedSessionCount
-    const executionSessionCount = sessions.filter((session) => session.orders.length > 0).length
+    const executionSessionCount = sessions.filter((session) => session.fills.length > 0).length
     const totalPnl = sessions.every((session) => session.status === 'COMPLETE')
       ? sessions
           .reduce((total, session) => total + BigInt(session.netRealizedPnlAfterCostsMicros ?? '0'), 0n)

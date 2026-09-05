@@ -298,6 +298,8 @@ describe('intraday replay program', () => {
     expect(cappedOrder).toMatchObject({ status: 'canceled', requestedQuantityMicros: '1000000' })
     expect(uncapped.sessions[0]?.cashMicros).toBe('10000000000')
     expect(capped.sessions[0]?.cashMicros).toBe('10000000000')
+    expect(uncapped.totals.executionSessionCount).toBe(0)
+    expect(capped.totals.executionSessionCount).toBe(0)
   })
 
   test('rejects empty and future calendars before touching the archive', async () => {
