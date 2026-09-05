@@ -107,7 +107,8 @@ the task.
 
 Use `nix develop` for the repository toolchain and `toolchain-doctor` when versions differ. Read [flake.nix](flake.nix),
 [package.json](package.json), and component manifests for current pins and scripts. Install workspace dependencies
-with `bun install` when needed. Run commands from their owning directory and scope them to the affected workspace.
+with `bun install` when needed. Run the commands below from the repository root, passing root-relative `<paths>`.
+Select workspace scripts with `--filter`; run component-only commands from their documented owning directory.
 
 Common entry points, selected according to the change:
 
