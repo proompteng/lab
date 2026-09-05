@@ -14,6 +14,8 @@ come from the [OpenAI migration guide](https://developers.openai.com/api/docs/gu
   Responses transport. Plain text completions can continue using Chat Completions.
 - Self-hosted inference, embeddings, explicit compatibility fallbacks, and historical evaluation records retain
   their model identities. Environment and per-run model overrides still take precedence over defaults.
+- Jangar's production model inventory includes Astra alongside its existing Qwen default, allowing callers to
+  select `gpt-6-astra` explicitly.
 
 ## Rollout and impact
 

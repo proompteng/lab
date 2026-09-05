@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -249,9 +248,9 @@ class TestDSPyTransportHardening(TestCase):
 
         import litellm
 
-        captured: dict[str, dict[str, Any]] = {}
+        captured: dict[str, dict[str, object]] = {}
 
-        def _capture_completion(**kwargs: Any) -> None:
+        def _capture_completion(**kwargs: object) -> None:
             captured["request"] = kwargs
             raise RuntimeError("stop before HTTP")
 
