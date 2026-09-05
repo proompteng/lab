@@ -2087,7 +2087,7 @@ describe('agents controller reconcileAgentRun', () => {
     expect(agentRunnerSpec.adapter).toMatchObject({
       type: 'codex-app-server',
       codex: {
-        model: 'gpt-5.6-sol',
+        model: 'gpt-6-astra',
         effort: 'high',
         sandbox: 'danger-full-access',
         approval: 'never',
