@@ -1880,7 +1880,7 @@ test('renders truthful booting, sleeping, and failed lifecycle states', async ({
   await expect(page.getByRole('status', { name: 'Booting your microVM' })).toBeVisible()
 
   await page.unrouteAll({ behavior: 'wait' })
-  await mockTengri(page, {
+  const mock = await mockTengri(page, {
     agent: { ...readyAgent, phase: 'failed', message: 'Guest readiness probe failed without fabricated progress.' },
   })
   await page.reload()
@@ -1891,6 +1891,10 @@ test('renders truthful booting, sleeping, and failed lifecycle states', async ({
       sessionStorage.setItem(`tengri:windows:${agentId}:${desktopId}`, '{"windows":[]}')
       sessionStorage.setItem(`tengri:terminal:${agentId}:${desktopId}:terminal-4`, '{"sessionId":"stale"}')
       sessionStorage.setItem(`tengri:terminal-cleanup:${agentId}`, '[]')
+      localStorage.setItem(`tengri-thread:${agentId}`, 'stale-thread')
+      localStorage.setItem(`tengri:spotlight:${agentId}:recents`, '["app:chrome"]')
+      localStorage.setItem('tengri-thread:other-agent', 'other-thread')
+      localStorage.setItem('tengri:spotlight:other-agent:recents', '["app:finder"]')
     },
     { agentId: readyAgent.id, desktopId: staleDesktopId },
   )
@@ -1915,6 +1919,29 @@ test('renders truthful booting, sleeping, and failed lifecycle states', async ({
       readyAgent.id,
     ),
   ).toEqual([])
+  expect(
+    await page.evaluate(
+      (agentId) => ({
+        deletedThread: localStorage.getItem(`tengri-thread:${agentId}`),
+        deletedRecents: localStorage.getItem(`tengri:spotlight:${agentId}:recents`),
+        otherThread: localStorage.getItem('tengri-thread:other-agent'),
+        otherRecents: localStorage.getItem('tengri:spotlight:other-agent:recents'),
+      }),
+      readyAgent.id,
+    ),
+  ).toEqual({
+    deletedThread: null,
+    deletedRecents: null,
+    otherThread: 'other-thread',
+    otherRecents: '["app:finder"]',
+  })
+
+  const create = page.getByRole('dialog', { name: 'Create your agent' })
+  await create.getByLabel('Agent name').fill('Recreated Tengri')
+  await create.getByRole('button', { name: 'Create Agent' }).click()
+  await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
+  await expect(page.getByLabel('Message your agent')).toBeVisible()
+  expect(mock.actions.some((action) => action.action === 'resume-thread')).toBe(false)
 })
 
 test('stops a failed agent without deleting its persistent workspace', async ({ page }) => {
