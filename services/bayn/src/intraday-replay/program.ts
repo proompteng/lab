@@ -35,6 +35,7 @@ import {
   type IntradaySnapshotQuery,
 } from '../market-data'
 import type { ArchiveVerifiedIntradayMarketSnapshot } from '../market-data/intraday/model'
+import { isIntradaySnapshotPending } from '../market-data/intraday/pending'
 import {
   adverseClosingQuotePrices,
   adverseQuotePrices,
@@ -80,7 +81,6 @@ import {
 import { applyReplayIoc, createReplayLedger, type IntradayReplayLedger } from './ledger'
 import { simulateIntradayReplayIoc, type IntradayReplayIocFailure, type IntradayReplayIocOutcome } from './execution'
 
-const archiveNotMaterializedMessage = 'intraday archive has not materialized the captured source offset'
 const rollingBaselineMessage = 'intraday symbol lacks the complete rolling lookback baseline'
 const replayCycleSchemaVersion = 'bayn.autonomous-cycle.v3' as const
 const replayPolicySchemaVersion = 'bayn.autonomous-cycle-execution-policy.v3' as const
@@ -115,13 +115,7 @@ const failureDescription = (value: unknown): FailureDescription => {
   return { reason: 'failure', message: 'replay operation failed' }
 }
 
-const isRetryableArchiveFailure = (error: OperationalError): boolean => {
-  const cause = error.cause
-  return (
-    cause instanceof IntradaySnapshotFailure &&
-    (cause.reason === 'not-ready' || (cause.reason === 'watermark' && cause.message === archiveNotMaterializedMessage))
-  )
-}
+const isRetryableArchiveFailure = (error: OperationalError): boolean => isIntradaySnapshotPending(error.cause)
 
 const iocFailure = (cause: IntradayReplayIocFailure): IntradayReplayFailure =>
   new IntradayReplayFailure({
