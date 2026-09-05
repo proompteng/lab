@@ -38,7 +38,7 @@ spec:
   memoryRef:
     name: default-memory
   config:
-    model: gpt-5.6-sol
+    model: gpt-6-astra
   env:
     - name: CODEX_MODE
       value: autonomous
