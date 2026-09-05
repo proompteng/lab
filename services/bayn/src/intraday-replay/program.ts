@@ -10,10 +10,6 @@ import {
   type ExecutionCalendarObservation,
 } from '../cycle'
 import { makeStrategyProtocolHashResult } from '../contracts'
-import {
-  constrainExecutionTargetAllocationCapitalMicros,
-  executionMandateAllocationCapitalMicros,
-} from '../execution/mandate'
 import { OrderSide } from '../execution/contracts'
 import {
   embeddedBuildMetadata,
@@ -78,6 +74,7 @@ import {
   type IntradayReplayPosition,
   decodeIntradayReplayInput,
 } from './model'
+import { allocationForDecision } from './allocation'
 import { applyReplayIoc, createReplayLedger, type IntradayReplayLedger } from './ledger'
 import { simulateIntradayReplayIoc, type IntradayReplayIocFailure, type IntradayReplayIocOutcome } from './execution'
 
@@ -249,44 +246,6 @@ const emptySession = (
   netRealizedPnlAfterCostsMicros: null,
   maximumObservedDrawdownMicros: null,
 })
-
-const allocationForDecision = (
-  ledger: IntradayReplayLedger,
-  decision: IntradayMomentumTargetPortfolio,
-  symbol: string,
-  askPriceMicros: bigint,
-  configuredAllocationCapitalMicros: string,
-  policy: {
-    readonly maxGrossExposureMicros: string
-    readonly maxNetExposureMicros: string
-    readonly maxDailyTradedNotionalMicros: string
-    readonly maxAdverseSlippageBps: number
-    readonly maxOrderNotionalMicros: string
-    readonly maxSymbolExposureMicros: string
-  },
-) =>
-  Result.flatMap(
-    executionMandateAllocationCapitalMicros({
-      accountEquityMicros: BigInt(ledger.cashMicros),
-      dailyTradedNotionalMicros: 0n,
-      maxGrossExposureMicros: BigInt(policy.maxGrossExposureMicros),
-      maxNetExposureMicros: BigInt(policy.maxNetExposureMicros),
-      maxDailyTradedNotionalMicros: BigInt(policy.maxDailyTradedNotionalMicros),
-      maxAdverseSlippageBps: BigInt(policy.maxAdverseSlippageBps),
-      positions: [],
-      referencePriceMicros: { [symbol]: askPriceMicros.toString() },
-    }),
-    (mandateCapital) =>
-      constrainExecutionTargetAllocationCapitalMicros({
-        allocationCapitalMicros: minBigInt(
-          mandateCapital,
-          minBigInt(BigInt(configuredAllocationCapitalMicros), BigInt(ledger.cashMicros)),
-        ),
-        maxOrderNotionalMicros: BigInt(policy.maxOrderNotionalMicros),
-        maxSymbolExposureMicros: BigInt(policy.maxSymbolExposureMicros),
-        targetWeights: decision.targetWeights,
-      }),
-  )
 
 const applyOutcome = (
   ledger: IntradayReplayLedger,

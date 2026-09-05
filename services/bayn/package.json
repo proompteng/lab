@@ -4,10 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "bun build src/index.ts src/forward-performance-command.ts src/intraday-replay-command.ts src/restate/restate-execution-server.ts src/restate/restate-execution-activate.ts --target=node --external tigerbeetle-node --entry-naming '[name].js' --outdir=dist",
+    "build": "bun build src/index.ts src/forward-performance-command.ts src/intraday-replay-command.ts src/vendor-intraday-replay-command.ts src/restate/restate-execution-server.ts src/restate/restate-execution-activate.ts --target=node --external tigerbeetle-node --entry-naming '[name].js' --outdir=dist",
     "dev": "BAYN_PROVENANCE_MODE=development bun --watch src/index.ts",
     "forward:performance": "BAYN_PROVENANCE_MODE=development node dist/forward-performance-command.js",
     "replay:intraday": "BAYN_PROVENANCE_MODE=development node dist/intraday-replay-command.js",
+    "replay:vendor": "BAYN_PROVENANCE_MODE=development node dist/vendor-intraday-replay-command.js",
     "start": "BAYN_PROVENANCE_MODE=development node dist/index.js",
     "lint": "bun ../../node_modules/oxfmt/bin/oxfmt --check src",
     "lint:oxlint": "bun ../../node_modules/oxlint/bin/oxlint --config ../../.oxlintrc.json .",
