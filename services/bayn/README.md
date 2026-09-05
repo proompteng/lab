@@ -23,9 +23,11 @@ normal decision; absent or late market data is a lifecycle blocker, not a strate
 IOC limit orders at an adverse verified quote boundary. Bayn starts flattening 30 minutes before the close and must be
 flat 15 minutes before the close.
 
-Quotes and trades ingested beyond the declared delay limit remain invalid. Entry and flattening wait for a subsequent
-compliant snapshot within their existing deadlines; premature delayed-feed evidence and other freshness violations
-remain errors. Historical replay uses the same retry classification and retains every rejected observation.
+Quotes, trades, and finalized bars ingested beyond their declared delay limits remain invalid. Entry and flattening
+wait for a subsequently captured, fully verified snapshot within their existing deadlines. An invalid historical bar
+remains invalid while it is in the rolling window; waiting only helps once a compliant window is available. Premature
+feed evidence, non-final bars, and unclassified freshness violations remain errors. Historical replay uses the same
+retry classification and retains every rejected observation.
 
 The protocol, universe, thresholds, feed contract, and execution model are source-controlled TypeScript. The image
 embeds and verifies the source revision and the behavior, parameter, protocol, and risk-policy hashes.

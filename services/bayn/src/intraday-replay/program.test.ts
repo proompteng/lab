@@ -11,6 +11,7 @@ import {
 } from '../market-data'
 import type { ArchiveVerifiedIntradayMarketSnapshot } from '../market-data/intraday/model'
 import { IntradayIngestionDelayDirection } from '../market-data/intraday/model'
+import { persistIntradaySnapshotRows, verifyIntradaySnapshot } from '../market-data/intraday/verification'
 import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
 import { decodeDefaultIntradayMomentumProtocol } from '../strategy/intraday-momentum/protocol'
 import { OrderSide } from '../execution/contracts'
@@ -320,6 +321,79 @@ describe('intraday replay program', () => {
         expect(calls).toBe(1)
       }
     }
+  })
+
+  test('rejects a late finalized bar until a recaptured rolling window excludes it', async () => {
+    const archive = makeArchive()
+    const captures: IntradaySnapshotQuery[] = []
+    const verifiedWindows: IntradaySnapshotRequest[] = []
+    const watermarks = Object.values(protocol.sourceTopics)
+      .sort()
+      .map((sourceTopic) => ({ sourceTopic, sourcePartition: 0, inclusiveLastOffset: '1000' }))
+    const report = await Effect.runPromise(
+      runIntradayReplay(
+        replayInput(['2026-09-04']),
+        {
+          ...archive.service,
+          captureVersion: (query) => {
+            captures.push(query)
+            return Effect.succeed(watermarks)
+          },
+          loadSnapshot: (request) => {
+            if (request.purpose !== undefined) return archive.service.loadSnapshot(request)
+            const snapshot = snapshotFor(request, { AAPL: 0.01 })
+            const rows = Result.getOrThrow(
+              persistIntradaySnapshotRows({
+                ...snapshot,
+                bars: snapshot.bars.map((bar) =>
+                  bar.symbol === 'AAPL' && bar.eventAt === '2026-09-04T14:00:00.000Z'
+                    ? { ...bar, ingestedAt: '2026-09-04T14:01:03.065Z' }
+                    : bar,
+                ),
+              }),
+            )
+            return Effect.fromResult(
+              verifyIntradaySnapshot(request, {
+                ...rows,
+                archiveWatermarks: watermarks.map((watermark) => ({
+                  source_topic: watermark.sourceTopic,
+                  source_partition: String(watermark.sourcePartition),
+                  inclusive_last_offset: watermark.inclusiveLastOffset,
+                })),
+              }),
+            ).pipe(
+              Effect.mapError((cause) =>
+                operationalError({
+                  component: 'market-data',
+                  operation: 'load-intraday',
+                  message: cause.message,
+                  cause,
+                }),
+              ),
+              Effect.map((verified) => {
+                verifiedWindows.push(request)
+                return verified as ArchiveVerifiedIntradayMarketSnapshot
+              }),
+            )
+          },
+        },
+        finalizedNow,
+      ),
+    )
+    const session = report.sessions[0]
+    expect(session?.observations.slice(0, 2)).toMatchObject([
+      { kind: 'unavailable', observedAt: '2026-09-04T14:30:02.000Z', reason: 'freshness', retryable: true },
+      { kind: 'unavailable', observedAt: '2026-09-04T14:30:32.000Z', reason: 'freshness', retryable: true },
+    ])
+    expect(captures.slice(0, 3).map(({ rangeStartAt }) => rangeStartAt)).toEqual([
+      '2026-09-04T14:00:00.000Z',
+      '2026-09-04T14:00:00.000Z',
+      '2026-09-04T14:01:00.000Z',
+    ])
+    expect(verifiedWindows).toHaveLength(1)
+    expect(verifiedWindows[0]?.observedAt).toBe('2026-09-04T14:31:02.000Z')
+    expect(session?.orders[0]?.submittedAt).toBe('2026-09-04T14:31:02.000Z')
+    expect(session?.status).toBe('COMPLETE')
   })
 
   test('leaves a persistently unavailable archive incomplete at the submission cutoff', async () => {
