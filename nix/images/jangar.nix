@@ -121,7 +121,7 @@ import ./bun-workspace-service.nix {
     "NODE_OPTIONS=--max-old-space-size=4096 CI=true JANGAR_BUILD_MINIFY=0 JANGAR_BUILD_SOURCEMAP=0 JANGAR_BUILD_LOG_LEVEL=warn bun --cwd=services/jangar run build"
   ];
   runtimeInstallPhase = ''
-    mkdir -p "$out/app/packages" "$out/app/services/jangar"
+    mkdir -p "$out/app/packages" "$out/app/services/jangar" "$out/root/.codex"
 
     cp -R "$TMPDIR/work/node_modules" "$out/app/node_modules"
 
@@ -132,6 +132,7 @@ import ./bun-workspace-service.nix {
     cp "$TMPDIR/work/services/jangar/package.json" "$out/app/services/jangar/package.json"
     cp -R "$TMPDIR/work/services/jangar/node_modules" "$out/app/services/jangar/node_modules"
     cp -R "$TMPDIR/work/services/jangar/.output" "$out/app/services/jangar/.output"
+    cp "$TMPDIR/work/services/jangar/scripts/codex-config-container.toml" "$out/root/.codex/config.toml"
     node_pty_package_json="$(find "$out/app/node_modules/.bun" -path '*/node_modules/node-pty/package.json' -print -quit)"
     if [ -z "$node_pty_package_json" ]; then
       echo "node-pty package not found in runtime node_modules" >&2
@@ -172,6 +173,8 @@ import ./bun-workspace-service.nix {
     "VSCODE_PORT=8081"
     "VSCODE_DATA_DIR=/workspace/.ovscode"
     "VSCODE_DEFAULT_FOLDER=/workspace/lab"
+    "HOME=/root"
+    "CODEX_HOME=/root/.codex"
     "CODEX_CWD=/workspace/lab"
     "CODEX_REPO_SLUG=proompteng/lab"
     "CODEX_REPO_URL=https://github.com/proompteng/lab.git"
