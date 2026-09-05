@@ -93,7 +93,7 @@ actual="$(
     "${image_id}" \
     --help
 )"
-expected='Usage: bayn-forward-performance [--help]'
+expected='Usage: bayn-forward-performance [--authority-generation <sha256>] | --help'
 if [[ "${actual}" != "${expected}" ]]; then
   printf 'Unexpected Bayn forward-performance help output:\n%s\n' "${actual}" >&2
   exit 1
