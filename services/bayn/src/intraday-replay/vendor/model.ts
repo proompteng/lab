@@ -106,6 +106,7 @@ export interface VendorReplaySession {
   readonly ledger: ReplayLedger<VendorReplayFill>
   readonly maximumObservedDrawdownMicros: string | null
   readonly peakEquityMicros: string | null
+  /** True when this session's baseline or observed marks exceeded an active risk limit. */
   readonly riskLimitBreached: boolean
 }
 
@@ -118,6 +119,7 @@ export interface VendorReplayScenario {
     readonly executionSessionCount: number
     readonly netRealizedPnlAfterCostsMicros: string | null
     readonly maximumObservedDrawdownMicros: string | null
+    /** True when any evaluated session in this scenario exceeded an active risk limit. */
     readonly riskLimitBreached: boolean
   }
 }

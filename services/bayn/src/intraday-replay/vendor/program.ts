@@ -454,7 +454,7 @@ const skipSession = (
     'skipped after an earlier incomplete session',
     null,
     null,
-    state.riskLimitBreached,
+    false,
   ),
   state,
 })
@@ -491,7 +491,13 @@ const replaySession = (
     const dayStartEquityMicros = state.ledger.cashMicros
     let sessionPeakEquityMicros: string | null = null
     let sessionMaximumDrawdownMicros: string | null = null
-    let riskLimitBreached = state.riskLimitBreached
+    const priorRiskLimitBreached = state.riskLimitBreached
+    let riskLimitBreached = false
+    const sessionState = (stopped: boolean): ScenarioState => ({
+      ...state,
+      stopped,
+      riskLimitBreached: priorRiskLimitBreached || riskLimitBreached,
+    })
 
     const barsQuery = query(
       AlpacaHistoricalKind.Bars,
@@ -504,7 +510,7 @@ const replaySession = (
     const barsAttempt = yield* captureAttemptEffect(client, barsQuery)
     if (barsAttempt._tag === 'Failure') {
       unavailable(observations, 'decision', context.window.submissionOpenAt, barsAttempt.error)
-      const nextState = { ...state, stopped: true, riskLimitBreached }
+      const nextState = sessionState(true)
       return {
         session: sessionResult(
           context,
@@ -631,7 +637,7 @@ const replaySession = (
     }
 
     const incomplete = (reason: string): SessionRun => {
-      const nextState = { ...state, stopped: true, riskLimitBreached }
+      const nextState = sessionState(true)
       return {
         session: sessionResult(
           context,
@@ -662,12 +668,13 @@ const replaySession = (
             sessionMaximumDrawdownMicros = flatMark.success.maximumObservedDrawdownMicros
             riskLimitBreached ||=
               flatMark.success.dailyLossLimit?.exceeded === true || flatMark.success.drawdownLimit?.exceeded === true
+            const completedState = sessionState(false)
             return {
               session: sessionResult(
                 context,
                 context.session.date,
                 context.session.calendarHash,
-                { ...state, stopped: false },
+                completedState,
                 observations,
                 orders,
                 'COMPLETE',
@@ -676,7 +683,7 @@ const replaySession = (
                 sessionMaximumDrawdownMicros,
                 riskLimitBreached,
               ),
-              state: { ...state, stopped: false, riskLimitBreached },
+              state: completedState,
             }
           })()
     }
@@ -690,9 +697,10 @@ const replaySession = (
     state.maximumObservedDrawdownMicros = baselineRisk.success.maximumObservedDrawdownMicros
     sessionPeakEquityMicros = baselineRisk.success.peakEquityMicros
     sessionMaximumDrawdownMicros = baselineRisk.success.maximumObservedDrawdownMicros
-    riskLimitBreached ||=
+    const baselineRiskLimitBreached =
       baselineRisk.success.dailyLossLimit?.exceeded === true || baselineRisk.success.drawdownLimit?.exceeded === true
-    if (riskLimitBreached) return incomplete('entry blocked by the active daily-loss or drawdown limit')
+    riskLimitBreached ||= baselineRiskLimitBreached
+    if (baselineRiskLimitBreached) return incomplete('entry blocked by the active daily-loss or drawdown limit')
 
     const planningObservedAt = decisionObservedAt
     const planningMs = parseMillis(planningObservedAt)
@@ -766,12 +774,13 @@ const replaySession = (
         ? BigInt(displayed.success[symbol] ?? '0')
         : desired.success
     if (requestedQuantity === 0n) {
+      const completedState = sessionState(false)
       return {
         session: sessionResult(
           context,
           context.session.date,
           context.session.calendarHash,
-          { ...state, stopped: false },
+          completedState,
           observations,
           orders,
           'COMPLETE',
@@ -780,18 +789,19 @@ const replaySession = (
           sessionMaximumDrawdownMicros,
           riskLimitBreached,
         ),
-        state: { ...state, stopped: false, riskLimitBreached },
+        state: completedState,
       }
     }
     const requestedNotional = notionalMicros(requestedQuantity, askPriceMicros)
     if (Result.isFailure(requestedNotional)) return incomplete('entry notional could not be calculated')
     if (requestedNotional.success < BigInt(protocol.executionModel.precision.minimumBuyNotionalMicros)) {
+      const completedState = sessionState(false)
       return {
         session: sessionResult(
           context,
           context.session.date,
           context.session.calendarHash,
-          { ...state, stopped: false },
+          completedState,
           observations,
           orders,
           'COMPLETE',
@@ -800,7 +810,7 @@ const replaySession = (
           sessionMaximumDrawdownMicros,
           riskLimitBreached,
         ),
-        state: { ...state, stopped: false, riskLimitBreached },
+        state: completedState,
       }
     }
 
@@ -883,12 +893,13 @@ const replaySession = (
     if (Result.isFailure(entryLedger)) return incomplete(entryLedger.failure.message)
     state.ledger = entryLedger.success
     if (entryOutcome.success.status === 'canceled' || state.ledger.positions.length === 0) {
+      const completedState = sessionState(false)
       return {
         session: sessionResult(
           context,
           context.session.date,
           context.session.calendarHash,
-          { ...state, stopped: false },
+          completedState,
           observations,
           orders,
           'COMPLETE',
@@ -897,7 +908,7 @@ const replaySession = (
           sessionMaximumDrawdownMicros,
           riskLimitBreached,
         ),
-        state: { ...state, stopped: false, riskLimitBreached },
+        state: completedState,
       }
     }
 
@@ -1182,12 +1193,13 @@ const replaySession = (
       sessionMaximumDrawdownMicros = flatMark.success.maximumObservedDrawdownMicros
       riskLimitBreached ||=
         flatMark.success.dailyLossLimit?.exceeded === true || flatMark.success.drawdownLimit?.exceeded === true
+      const completedState = sessionState(false)
       return {
         session: sessionResult(
           context,
           context.session.date,
           context.session.calendarHash,
-          { ...state, stopped: false },
+          completedState,
           observations,
           orders,
           'COMPLETE',
@@ -1196,7 +1208,7 @@ const replaySession = (
           sessionMaximumDrawdownMicros,
           riskLimitBreached,
         ),
-        state: { ...state, stopped: false, riskLimitBreached },
+        state: completedState,
       }
     }
     return incomplete(closeFailure ?? 'positions remained open at the hard-flat boundary')
@@ -1385,7 +1397,7 @@ export const runVendorIntradayReplay = (
               `session context incomplete: ${contextResult.failure.message}`,
               null,
               null,
-              failedState.riskLimitBreached,
+              false,
             ),
             state: failedState,
           }

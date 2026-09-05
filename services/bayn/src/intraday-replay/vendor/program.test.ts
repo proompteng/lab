@@ -85,6 +85,7 @@ interface HistoricalFixtureOptions {
   readonly planningAsk?: number
   readonly arrivalAsk?: number
   readonly historyBid?: number
+  readonly firstSessionRiskExcursion?: boolean
   readonly missingBars?: boolean
   readonly missingHistory?: boolean
   readonly cancelCloseAtArrival?: boolean
@@ -263,6 +264,14 @@ const makeFixtureClient = (options: HistoricalFixtureOptions = {}): FixtureClien
           quoteRow(symbol, utcInstantFromEpochMillis(Date.parse(query.endAt) - 1), bid),
         )
       } else if (
+        options.firstSessionRiskExcursion &&
+        query.sessionDate === '2026-08-18' &&
+        Date.parse(query.endAt) === arrivalAt + 30_000
+      ) {
+        rows = query.symbols.map((symbol) =>
+          quoteRow(symbol, utcInstantFromEpochMillis(Date.parse(query.endAt) - 100), 1),
+        )
+      } else if (
         Date.parse(query.endAt) >= arrivalAt &&
         Date.parse(query.endAt) <= hardFlatAt &&
         (Date.parse(query.endAt) - arrivalAt) % 30_000 === 0
@@ -388,6 +397,41 @@ describe('vendor intraday replay orchestration', () => {
         .filter((observation) => observation.kind === 'quote' && observation.purpose === 'mark')
         .every((observation) => Date.parse(observation.observedAt) >= Date.parse(entryFill.observedAt)),
     ).toBe(true)
+  })
+
+  test('allows a later safe entry after an earlier risk excursion while retaining cumulative breach evidence', async () => {
+    const fixture = makeFixtureClient({
+      firstSessionRiskExcursion: true,
+      planningAsk: 101.01,
+      arrivalAsk: 101.01,
+      historyBid: 102,
+    })
+    const report = await run(inputFor(['2026-08-18', '2026-08-19']), fixture)
+    const scenario = report.scenarios[0]
+    if (scenario === undefined) throw new Error('test report has no scenario')
+    const first = scenario.sessions[0]
+    const second = scenario.sessions[1]
+    if (first === undefined || second === undefined) throw new Error('test report has fewer than two sessions')
+
+    expect(first.status).toBe('COMPLETE')
+    expect(first.riskLimitBreached).toBe(true)
+    expect(first.orders.some(({ side, status }) => side === 'BUY' && status === 'filled')).toBe(true)
+    expect(BigInt(first.maximumObservedDrawdownMicros ?? '0')).toBeGreaterThan(BigInt(riskPolicy.maxDrawdownMicros))
+
+    expect(second.status).toBe('COMPLETE')
+    expect(second.riskLimitBreached).toBe(false)
+    expect(second.orders.some(({ side, status }) => side === 'BUY' && status === 'filled')).toBe(true)
+    expect(scenario.totals).toMatchObject({
+      completedSessionCount: 2,
+      incompleteSessionCount: 0,
+      executionSessionCount: 2,
+      riskLimitBreached: true,
+    })
+    expect(scenario.totals.netRealizedPnlAfterCostsMicros).not.toBeNull()
+    expect(report.qualification).toBe('NOT_QUALIFIED')
+    expect(BigInt(second.maximumObservedDrawdownMicros ?? '0')).toBeGreaterThanOrEqual(
+      BigInt(first.maximumObservedDrawdownMicros ?? '0'),
+    )
   })
 
   test('keeps missing decision bars incomplete instead of recording a no-trade session', async () => {
