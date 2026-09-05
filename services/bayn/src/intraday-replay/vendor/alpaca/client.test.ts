@@ -349,11 +349,9 @@ describe('Alpaca historical vendor capture', () => {
       await Effect.runPromise(fs.writeFileString(bodyPath, '{}'))
       expect(await Effect.runPromise(fs.readFileString(bodyPath))).toBe('{}')
       expect(await Effect.runPromise(fs.exists(bodyPath))).toBeTrue()
-      expect(await Effect.runPromise(fs.readDirectory(`${cacheDirectory}/${firstResult.queryHash}`))).toEqual([
-        'query.json',
-        'page-00000000.body.json',
-        'page-00000000.receipt.json',
-      ])
+      expect(
+        (await Effect.runPromise(fs.readDirectory(`${cacheDirectory}/${firstResult.queryHash}`))).toSorted(),
+      ).toEqual(['page-00000000.body.json', 'page-00000000.receipt.json', 'query.json'])
       expect(firstResult.provenance.pageReceipts[0]?.receiptPath).toBe('page-00000000.receipt.json')
       expect(await Effect.runPromise(fs.readDirectory(cacheDirectory))).toEqual([firstResult.queryHash])
 
