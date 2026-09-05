@@ -3,6 +3,8 @@ import { Effect, Result } from 'effect'
 
 import { canonicalHashV1, sha256 } from '../../hash'
 import {
+  IntradayIngestionDelayDirection,
+  IntradaySnapshotFailure,
   IntradaySnapshotPurpose,
   type ArchiveVerifiedIntradayMarketSnapshot,
   type IntradayMarketSnapshot,
@@ -1013,14 +1015,18 @@ describe('immutable intraday market snapshot', () => {
     const finalQuote = rows.quotes.at(-1)
     if (finalBar === undefined || finalQuote === undefined) throw new Error('archive fixture is incomplete')
 
-    expect(
-      error(
-        verifyIntradaySnapshot(request, {
-          ...rows,
-          bars: [...rows.bars.slice(0, -1), { ...finalBar, is_final: '0' }],
-        }),
-      ),
-    ).toMatchObject({ reason: 'freshness' })
+    const nonFinalFailure = error(
+      verifyIntradaySnapshot(request, {
+        ...rows,
+        bars: [...rows.bars.slice(0, -1), { ...finalBar, is_final: '0' }],
+      }),
+    )
+    expect(nonFinalFailure).toMatchObject({
+      reason: 'freshness',
+      message: 'intraday snapshot contains a non-final bar revision',
+    })
+    expect(nonFinalFailure).toBeInstanceOf(IntradaySnapshotFailure)
+    expect(nonFinalFailure).not.toHaveProperty('ingestionDelayDirection')
     expect(
       error(
         verifyIntradaySnapshot(request, {
@@ -1059,22 +1065,138 @@ describe('immutable intraday market snapshot', () => {
     if (firstQuote === undefined) throw new Error('quote fixture is incomplete')
     const lateObservationRequest = { ...request, observedAt: '2026-08-18T13:50:00.000Z' }
 
-    expect(
-      error(
-        verifyIntradaySnapshot(lateObservationRequest, {
-          ...rows,
-          quotes: [
-            { ...firstQuote, event_at: request.rangeEndAt, ingested_at: '2026-08-18T13:49:45.000Z' },
-            ...rows.quotes.slice(1),
-          ],
-          trades: rows.trades.map((trade) => ({
-            ...trade,
-            event_at: '2026-08-18T13:49:50.000Z',
-            ingested_at: '2026-08-18T13:49:50.000Z',
-          })),
-        }),
-      ),
-    ).toMatchObject({ reason: 'freshness', message: 'intraday evidence does not match its declared feed delay' })
+    const failure = error(
+      verifyIntradaySnapshot(lateObservationRequest, {
+        ...rows,
+        quotes: [
+          { ...firstQuote, event_at: request.rangeEndAt, ingested_at: '2026-08-18T13:49:45.000Z' },
+          ...rows.quotes.slice(1),
+        ],
+        trades: rows.trades.map((trade) => ({
+          ...trade,
+          event_at: '2026-08-18T13:49:50.000Z',
+          ingested_at: '2026-08-18T13:49:50.000Z',
+        })),
+      }),
+    )
+    expect(failure).toMatchObject({
+      reason: 'freshness',
+      message: 'intraday evidence does not match its declared feed delay',
+      ingestionDelayDirection: IntradayIngestionDelayDirection.AboveMaximum,
+    })
+  })
+
+  test('tags quote and trade delay direction while preserving freshness rejection', () => {
+    const rows = makeRows()
+    const observedRequest = { ...request, observedAt: '2026-08-18T13:50:00.000Z' }
+    const firstQuote = rows.quotes[0]
+    const firstTrade = rows.trades[0]
+    if (firstQuote === undefined || firstTrade === undefined) throw new Error('quote/trade fixture is incomplete')
+
+    const lateQuote = error(
+      verifyIntradaySnapshot(observedRequest, {
+        ...rows,
+        quotes: [
+          { ...firstQuote, event_at: request.rangeEndAt, ingested_at: '2026-08-18T13:49:45.000Z' },
+          ...rows.quotes.slice(1),
+        ],
+      }),
+    )
+    expect(lateQuote).toMatchObject({
+      reason: 'freshness',
+      ingestionDelayDirection: IntradayIngestionDelayDirection.AboveMaximum,
+      facts: { symbol: firstQuote.symbol, sourceTopic: quotesTopic },
+    })
+
+    const lateTrade = error(
+      verifyIntradaySnapshot(observedRequest, {
+        ...rows,
+        trades: [
+          { ...firstTrade, event_at: request.rangeEndAt, ingested_at: '2026-08-18T13:49:45.000Z' },
+          ...rows.trades.slice(1),
+        ],
+      }),
+    )
+    expect(lateTrade).toMatchObject({
+      reason: 'freshness',
+      ingestionDelayDirection: IntradayIngestionDelayDirection.AboveMaximum,
+      facts: { symbol: firstTrade.symbol, sourceTopic: tradesTopic },
+    })
+
+    const delayedRequest: IntradaySnapshotRequest = {
+      ...request,
+      observedAt: '2026-08-18T13:50:30.000Z',
+      feed: 'delayed_sip',
+      delayClass: 'delayed_15m_consolidated',
+    }
+    const delayedIdentity = <T extends IntradayBarRow | IntradayQuoteRow | IntradayTradeRow>(row: T): T => ({
+      ...row,
+      feed: delayedRequest.feed,
+      delay_class: delayedRequest.delayClass,
+    })
+    const delayedRows = {
+      archiveWatermarks: rows.archiveWatermarks,
+      bars: rows.bars.map((bar) => ({
+        ...delayedIdentity(bar),
+        ingested_at: new Date(Date.parse(bar.event_at) + 16 * 60_000).toISOString(),
+      })),
+      quotes: rows.quotes.map((quote) => ({
+        ...delayedIdentity(quote),
+        ingested_at: '2026-08-18T13:50:15.000Z',
+      })),
+      trades: rows.trades.map((trade) => ({
+        ...delayedIdentity(trade),
+        event_at: delayedRequest.rangeEndAt,
+        ingested_at: '2026-08-18T13:50:00.000Z',
+      })),
+    }
+
+    const earlyQuote = error(
+      verifyIntradaySnapshot(delayedRequest, {
+        ...delayedRows,
+        quotes: delayedRows.quotes.map((quote, index) =>
+          index === 0 ? { ...quote, ingested_at: quote.event_at } : quote,
+        ),
+      }),
+    )
+    expect(earlyQuote).toMatchObject({
+      reason: 'freshness',
+      ingestionDelayDirection: IntradayIngestionDelayDirection.BelowMinimum,
+      facts: { symbol: firstQuote.symbol, sourceTopic: quotesTopic },
+    })
+
+    const earlyTrade = error(
+      verifyIntradaySnapshot(delayedRequest, {
+        ...delayedRows,
+        trades: delayedRows.trades.map((trade, index) =>
+          index === 0 ? { ...trade, ingested_at: trade.event_at } : trade,
+        ),
+      }),
+    )
+    expect(earlyTrade).toMatchObject({
+      reason: 'freshness',
+      ingestionDelayDirection: IntradayIngestionDelayDirection.BelowMinimum,
+      facts: { symbol: firstTrade.symbol, sourceTopic: tradesTopic },
+    })
+  })
+
+  test('accepts quote-only execution evidence without a trade', () => {
+    const rows = makeRows()
+    const quoteOnlyRequest: IntradaySnapshotRequest = {
+      ...request,
+      purpose: IntradaySnapshotPurpose.EntryPricing,
+      symbols: ['AMD'],
+    }
+    const snapshot = success(
+      verifyIntradaySnapshot(quoteOnlyRequest, {
+        archiveWatermarks: rows.archiveWatermarks,
+        bars: rows.bars.filter((bar) => bar.symbol === 'AMD'),
+        quotes: rows.quotes.filter((quote) => quote.symbol === 'AMD'),
+        trades: [],
+      }),
+    )
+    expect(snapshot.manifest.purpose).toBe(IntradaySnapshotPurpose.EntryPricing)
+    expect(snapshot.trades).toHaveLength(0)
   })
 
   test('rejects mixed-session observations and verifies delayed-feed availability', () => {

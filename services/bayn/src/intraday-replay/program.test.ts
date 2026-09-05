@@ -10,6 +10,7 @@ import {
   type IntradaySnapshotQuery,
 } from '../market-data'
 import type { ArchiveVerifiedIntradayMarketSnapshot } from '../market-data/intraday/model'
+import { IntradayIngestionDelayDirection } from '../market-data/intraday/model'
 import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
 import { decodeDefaultIntradayMomentumProtocol } from '../strategy/intraday-momentum/protocol'
 import { OrderSide } from '../execution/contracts'
@@ -35,7 +36,25 @@ type SnapshotFactory = (
   phase: ReplayPhase,
   phaseOccurrence: number,
 ) => ArchiveVerifiedIntradayMarketSnapshot
-type ArchiveFailureMode = 'retryable-entry' | 'defect-entry'
+type ArchiveFailureMode = 'retryable-entry' | 'defect-entry' | 'late-entry-once' | 'early-entry-once'
+
+const archiveFailures: Readonly<Record<ArchiveFailureMode, IntradaySnapshotFailure>> = {
+  'retryable-entry': new IntradaySnapshotFailure({ reason: 'not-ready', message: 'entry archive is not yet complete' }),
+  'defect-entry': new IntradaySnapshotFailure({
+    reason: 'coverage',
+    message: 'entry archive contains an impossible row set',
+  }),
+  'late-entry-once': new IntradaySnapshotFailure({
+    reason: 'freshness',
+    message: 'intraday evidence does not match its declared feed delay',
+    ingestionDelayDirection: IntradayIngestionDelayDirection.AboveMaximum,
+  }),
+  'early-entry-once': new IntradaySnapshotFailure({
+    reason: 'freshness',
+    message: 'intraday evidence does not match its declared feed delay',
+    ingestionDelayDirection: IntradayIngestionDelayDirection.BelowMinimum,
+  }),
+}
 
 const snapshotFor = (
   request: IntradaySnapshotRequest,
@@ -68,14 +87,12 @@ const makeArchive = (options: { readonly snapshot?: SnapshotFactory; readonly fa
     const key = `${request.sessionDate}:${phase}`
     const phaseOccurrence = phaseOccurrences.get(key) ?? 0
     phaseOccurrences.set(key, phaseOccurrence + 1)
-    if (phase === 'decision' && options.failure !== undefined) {
-      const snapshotFailure = new IntradaySnapshotFailure({
-        reason: options.failure === 'retryable-entry' ? 'not-ready' : 'coverage',
-        message:
-          options.failure === 'retryable-entry'
-            ? 'entry archive is not yet complete'
-            : 'entry archive contains an impossible row set',
-      })
+    const snapshotFailure = options.failure === undefined ? undefined : archiveFailures[options.failure]
+    if (
+      phase === 'decision' &&
+      snapshotFailure !== undefined &&
+      (snapshotFailure.ingestionDelayDirection === undefined || phaseOccurrence === 0)
+    ) {
       const errorFactory = options.failure === 'retryable-entry' ? retryableOperationalError : operationalError
       return Effect.fail(
         errorFactory({
@@ -246,6 +263,23 @@ describe('intraday replay program', () => {
     expect(session?.fills).toEqual([])
     expect(report.totals).toMatchObject({ completedSessionCount: 0, incompleteSessionCount: 1 })
     expect(archive.archiveCalls).toBeGreaterThan(0)
+  })
+
+  test('rejects a late snapshot then retries fresh evidence without retrying premature feed evidence', async () => {
+    const late = await run(replayInput(['2026-09-04']), makeArchive({ failure: 'late-entry-once' }))
+    expect(late.sessions[0]).toMatchObject({ status: 'COMPLETE' })
+    expect(late.sessions[0]?.observations[0]).toMatchObject({
+      kind: 'unavailable',
+      reason: 'freshness',
+      retryable: true,
+    })
+    expect(late.sessions[0]?.fills.length).toBeGreaterThan(0)
+
+    const early = await run(replayInput(['2026-09-04']), makeArchive({ failure: 'early-entry-once' }))
+    expect(early.sessions[0]).toMatchObject({ status: 'INCOMPLETE', fills: [] })
+    expect(early.sessions[0]?.observations).toMatchObject([
+      { kind: 'unavailable', reason: 'freshness', retryable: false },
+    ])
   })
 
   test('retains the failing IOC field and reason in incomplete evidence', async () => {

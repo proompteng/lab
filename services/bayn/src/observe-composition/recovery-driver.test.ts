@@ -8,6 +8,7 @@ import { CycleRunnerError } from '../cycle/runner'
 import { CycleStoreError } from '../cycle/store'
 import { operationalError } from '../errors'
 import { IntradaySnapshotFailure } from '../market-data'
+import { IntradayIngestionDelayDirection } from '../market-data/intraday/model'
 import { ObserveDecisionAwaitingSignal, decisionBuildError, reconciliationRunnerError } from './decision-builder'
 import { runRestateAdvanceWithinTimeout } from './recovery-driver'
 import { shouldRestrictMutationLoopFailure } from './mutation-interpreter'
@@ -130,6 +131,25 @@ test('keeps an incomplete intraday archive retryable without weakening malformed
 
   expect(incomplete).toMatchObject({ _tag: 'CycleDecisionBuildError', failure: 'not-ready' })
   expect(malformed).toMatchObject({ _tag: 'CycleDecisionBuildError', failure: 'market-data' })
+})
+
+test('waits only for explicitly late ingestion and preserves other freshness failures', () => {
+  const classify = (ingestionDelayDirection?: IntradayIngestionDelayDirection) =>
+    decisionBuildError(
+      operationalError({
+        component: 'market-data',
+        operation: 'load-intraday',
+        message: 'intraday evidence does not match its declared feed delay',
+        cause: new IntradaySnapshotFailure({
+          reason: 'freshness',
+          message: 'intraday evidence does not match its declared feed delay',
+          ...(ingestionDelayDirection === undefined ? {} : { ingestionDelayDirection }),
+        }),
+      }),
+    )
+  expect(classify(IntradayIngestionDelayDirection.AboveMaximum)).toMatchObject({ failure: 'not-ready' })
+  expect(classify(IntradayIngestionDelayDirection.BelowMinimum)).toMatchObject({ failure: 'market-data' })
+  expect(classify()).toMatchObject({ failure: 'market-data' })
 })
 
 test('the aggregate lifecycle budget interrupts stalled maintenance before cycle work', async () => {
