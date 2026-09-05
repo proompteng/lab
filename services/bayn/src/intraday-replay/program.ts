@@ -115,7 +115,8 @@ const failureDescription = (value: unknown): FailureDescription => {
   return { reason: 'failure', message: 'replay operation failed' }
 }
 
-const isRetryableArchiveFailure = (error: OperationalError): boolean => isIntradaySnapshotPending(error.cause)
+const isRetryableArchiveFailure = (error: OperationalError): boolean =>
+  error.retryable || isIntradaySnapshotPending(error.cause)
 
 const iocFailure = (cause: IntradayReplayIocFailure): IntradayReplayFailure =>
   new IntradayReplayFailure({
