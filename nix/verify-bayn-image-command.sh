@@ -65,6 +65,8 @@ forward_wrapper="$(resolve_image_entry /bin/bayn-forward-performance)"
 forward_command="$(resolve_image_entry /app/services/bayn/dist/forward-performance-command.js)"
 replay_wrapper="$(resolve_image_entry /bin/bayn-intraday-replay)"
 replay_command="$(resolve_image_entry /app/services/bayn/dist/intraday-replay-command.js)"
+vendor_wrapper="$(resolve_image_entry /bin/bayn-vendor-intraday-replay)"
+vendor_command="$(resolve_image_entry /app/services/bayn/dist/vendor-intraday-replay-command.js)"
 execution_server="$(resolve_image_entry /app/services/bayn/dist/restate-execution-server.js)"
 image_node="$(resolve_image_entry /bin/node)"
 
@@ -72,6 +74,8 @@ test -x "${forward_wrapper}"
 test -f "${forward_command}"
 test -x "${replay_wrapper}"
 test -f "${replay_command}"
+test -x "${vendor_wrapper}"
+test -f "${vendor_command}"
 test -f "${execution_server}"
 test -x "${image_node}"
 
@@ -140,6 +144,46 @@ compiled_replay_actual="$(
 )"
 if [[ "${compiled_replay_actual}" != "${expected_replay}" ]]; then
   printf 'Unexpected compiled Bayn intraday-replay help output:\n%s\n' "${compiled_replay_actual}" >&2
+  exit 1
+fi
+
+vendor_actual="$(
+  docker run --rm \
+    --network none \
+    --read-only \
+    --cap-drop ALL \
+    --security-opt no-new-privileges:true \
+    --pids-limit 64 \
+    --memory 512m \
+    --cpus 1 \
+    --env NODE_ENV=production \
+    --entrypoint /bin/bayn-vendor-intraday-replay \
+    "${image_id}" \
+    --help
+)"
+expected_vendor='Usage: bayn-vendor-intraday-replay --input <path> --cache <directory> | --help'
+if [[ "${vendor_actual}" != "${expected_vendor}" ]]; then
+  printf 'Unexpected Bayn vendor-intraday-replay help output:\n%s\n' "${vendor_actual}" >&2
+  exit 1
+fi
+
+compiled_vendor_actual="$(
+  docker run --rm \
+    --network none \
+    --read-only \
+    --cap-drop ALL \
+    --security-opt no-new-privileges:true \
+    --pids-limit 64 \
+    --memory 512m \
+    --cpus 1 \
+    --env NODE_ENV=production \
+    --entrypoint /bin/node \
+    "${image_id}" \
+    /app/services/bayn/dist/vendor-intraday-replay-command.js \
+    --help
+)"
+if [[ "${compiled_vendor_actual}" != "${expected_vendor}" ]]; then
+  printf 'Unexpected compiled Bayn vendor-intraday-replay help output:\n%s\n' "${compiled_vendor_actual}" >&2
   exit 1
 fi
 
