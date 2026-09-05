@@ -173,6 +173,63 @@ describe('Codex event replay', () => {
     expect(appendCodexEvent([delta], completed)).toEqual([completed])
   })
 
+  test('coalesces same-item lifecycle events without collapsing repeated prompts', () => {
+    const started = {
+      ...event,
+      sequence: 1,
+      kind: 'user-message' as const,
+      method: 'item/started',
+      itemId: 'user-1',
+      text: 'Repeat this prompt',
+    }
+    const repeatedPrompt = { ...started, sequence: 2, itemId: 'user-2' }
+    const completed = { ...started, sequence: 3, method: 'item/completed' }
+
+    const next = [started, repeatedPrompt, completed].reduce<TengriCodexEvent[]>(
+      (current, currentEvent) => appendCodexEvent(current, currentEvent),
+      [],
+    )
+
+    expect(next).toEqual([completed, repeatedPrompt])
+  })
+
+  test('coalesces file-diff lifecycle events and keeps item IDs scoped to their turn', () => {
+    const firstTurnStarted = {
+      ...event,
+      sequence: 1,
+      kind: 'file-diff' as const,
+      method: 'item/started',
+      turnId: 'turn-1',
+      itemId: 'file-1',
+      text: 'initial diff',
+    }
+    const secondTurnStarted = { ...firstTurnStarted, sequence: 2, turnId: 'turn-2', text: 'other diff' }
+    const firstTurnCompleted = { ...firstTurnStarted, sequence: 3, method: 'item/completed', text: 'complete diff' }
+
+    const next = [firstTurnStarted, secondTurnStarted, firstTurnCompleted].reduce<TengriCodexEvent[]>(
+      (current, currentEvent) => appendCodexEvent(current, currentEvent),
+      [],
+    )
+
+    expect(next).toEqual([firstTurnCompleted, secondTurnStarted])
+  })
+
+  test('coalesces same-kind tool lifecycles without merging tool-call and tool-output kinds', () => {
+    const started = {
+      ...event,
+      sequence: 1,
+      kind: 'tool-call' as const,
+      method: 'item/started',
+      itemId: 'tool-1',
+      text: 'View /workspace/image.png',
+    }
+    const completed = { ...started, sequence: 2, method: 'item/completed', text: 'View completed' }
+    const output = { ...completed, sequence: 3, kind: 'tool-output' as const, text: 'image output' }
+
+    expect(appendCodexEvent(appendCodexEvent([], started), completed)).toEqual([completed])
+    expect(appendCodexEvent(appendCodexEvent([], started), output)).toEqual([started, output])
+  })
+
   test('bounds coalesced deltas instead of allowing an unbounded transcript item', () => {
     const first = {
       ...event,

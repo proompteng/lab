@@ -259,6 +259,20 @@ describe('Tengri desktop window manager', () => {
     })
   })
 
+  test('contains initial and cascaded new windows in short usable viewports', () => {
+    for (const usableViewport of [
+      { x: 0, y: 0, width: 1_440, height: 774 },
+      { x: 0, y: 0, width: 390, height: 424 },
+    ]) {
+      let state = initialWindowState(usableViewport, ['finder', 'chrome', 'code', 'terminal', 'settings'])
+      for (let index = 0; index < 6; index += 1) {
+        state = windowReducer(state, { type: 'new', app: 'chrome', title: 'Chrome', viewport: usableViewport })
+      }
+
+      expect(state.windows.every((window) => isInsideViewport(window.bounds, usableViewport))).toBe(true)
+    }
+  })
+
   test('preserves the opposite edge while clamping resizes', () => {
     const base = { x: 100, y: 100, width: 400, height: 400 }
     const north = resizeBounds(base, 'n', 0, -200, viewport)

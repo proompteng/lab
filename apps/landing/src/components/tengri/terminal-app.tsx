@@ -544,14 +544,14 @@ export function TerminalApp({
         cursorBlink: true,
         cursorInactiveStyle: 'outline',
         cursorStyle: 'bar',
-        fontFamily: 'JetBrains Mono, SFMono-Regular, Menlo, monospace',
+        fontFamily: 'SFMono-Regular, Menlo, Monaco, monospace',
         fontSize: 13,
         letterSpacing: 0,
         lineHeight: 1.2,
         rightClickSelectsWord: true,
         scrollback: 10_000,
         theme: {
-          background: '#0a0c10',
+          background: '#1e1e1e',
           foreground: '#d9e0ee',
           cursor: '#9ccfd8',
           selectionBackground: '#3e4c76aa',
@@ -739,7 +739,7 @@ export function TerminalApp({
 
   const busy = ['connecting', 'initializing', 'reconnecting'].includes(connection.phase)
   return (
-    <div className="relative h-full bg-[#0a0c10] p-2" data-shortcuts="native">
+    <div className="relative h-full bg-[#1e1e1e] p-2" data-shortcuts="native">
       <div
         ref={hostRef}
         className="h-full w-full outline-none [&_.xterm]:h-full [&_.xterm]:p-[0.3rem] [&_.xterm-viewport]:[scrollbar-color:rgb(255_255_255/0.2)_transparent]"

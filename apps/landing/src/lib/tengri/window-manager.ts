@@ -200,7 +200,7 @@ function activateFrontmost(state: WindowManagerState): WindowManagerState {
 
 function newWindow(app: TengriApp, title: string, viewport: Bounds, z: number, id: number): DesktopWindow {
   const preferred = preferredSize(app)
-  const bounds = clampToViewport(
+  const bounds = fitToViewport(
     {
       x: Math.max(12, (viewport.width - preferred.width) / 2 + (z % 4) * 22),
       y: Math.max(12, (viewport.height - preferred.height) / 2 + (z % 3) * 18),
@@ -280,7 +280,20 @@ export function resizeBounds(base: Bounds, edge: ResizeEdge, dx: number, dy: num
 }
 
 function offsetBounds(bounds: Bounds, x: number, y: number, viewport: Bounds) {
-  return clampToViewport({ ...bounds, x: bounds.x + x, y: bounds.y + y }, viewport)
+  return fitToViewport({ ...bounds, x: bounds.x + x, y: bounds.y + y }, viewport)
+}
+
+function fitToViewport(bounds: Bounds, viewport: Bounds): Bounds {
+  const horizontal = viewportAxis(viewport.width, MIN_WINDOW_WIDTH)
+  const vertical = viewportAxis(viewport.height, MIN_WINDOW_HEIGHT)
+  const width = clamp(bounds.width, Math.min(MIN_WINDOW_WIDTH, horizontal.available), horizontal.available)
+  const height = clamp(bounds.height, Math.min(MIN_WINDOW_HEIGHT, vertical.available), vertical.available)
+  return {
+    x: clamp(bounds.x, horizontal.inset, Math.max(horizontal.inset, horizontal.size - horizontal.inset - width)),
+    y: clamp(bounds.y, vertical.inset, Math.max(vertical.inset, vertical.size - vertical.inset - height)),
+    width,
+    height,
+  }
 }
 
 function resizeAxis(

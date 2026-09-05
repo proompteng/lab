@@ -1346,6 +1346,66 @@ test('sends a real agent turn and executes sleep, resume, and confirmed deletion
   await expect(page.getByRole('region', { name: 'Terminal window' })).toHaveCount(0)
 })
 
+test('renders one chat bubble per item lifecycle and preserves repeated prompts', async ({ page }) => {
+  const mock = await mockTengri(page)
+  await page.goto('/')
+  const text = 'Inspect the workspace again.'
+  const log = page.getByRole('log')
+
+  for (const index of [0, 1]) {
+    const prompt = page.getByLabel('Message your agent')
+    await prompt.fill(text)
+    await prompt.press('Enter')
+    await expect.poll(() => mock.actions.filter((action) => action.action === 'send-turn').length).toBe(index + 1)
+    await expect(page.getByTestId('agent-event-stream')).toHaveAttribute('data-state', 'connected')
+    const item = {
+      kind: 'user-message',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      itemId: `user-${index}`,
+      text,
+      approvalId: '',
+      rawJson: '{}',
+    }
+    await emitCodexEvent(page, { ...item, sequence: index * 3 + 1, method: 'item/started' })
+    await expect(log.getByText(text, { exact: true })).toHaveCount(index + 1)
+    await emitCodexEvent(page, { ...item, sequence: index * 3 + 2, method: 'item/completed' })
+    await emitCodexEvent(page, {
+      ...item,
+      sequence: index * 3 + 3,
+      method: 'turn/completed',
+      kind: 'thread-state',
+      itemId: '',
+      text: '',
+    })
+    await expect(page.getByLabel('Message your agent')).toBeVisible()
+    await expect(log.getByText(text, { exact: true })).toHaveCount(index + 1)
+  }
+})
+
+test('keeps the Dock clear of new and maximized window controls', async ({ page }) => {
+  await mockTengri(page)
+  await page.goto('/')
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  await expect(page.getByLabel('Message your agent')).toBeVisible()
+  const dockBounds = await dock.boundingBox()
+  expect(dockBounds).not.toBeNull()
+  for (const region of await page.getByRole('region', { name: /window$/ }).all()) {
+    const bounds = await region.boundingBox()
+    expect(bounds).not.toBeNull()
+    expect(bounds!.y + bounds!.height).toBeLessThan(dockBounds!.y)
+  }
+  await chrome.getByRole('button', { name: 'Maximize Chrome' }).click()
+  await expect
+    .poll(async () => {
+      const bounds = await chrome.boundingBox()
+      return bounds ? bounds.y + bounds.height : Number.POSITIVE_INFINITY
+    })
+    .toBeLessThan(dockBounds!.y)
+  await expect(page.getByRole('button', { name: 'Restore Chrome' })).toBeVisible()
+})
+
 test('propagates deletion cleanup to every open desktop tab', async ({ page }) => {
   const terminalStore: TerminalStore = { sessions: [] }
   await mockTengri(page, { terminalStore })
@@ -1927,4 +1987,37 @@ test('matches the Tahoe desktop at required production viewports', async ({ page
   await expect(page).toHaveScreenshot('tengri-desktop-1728x1117.png', {
     fullPage: true,
   })
+})
+
+test('renders native Finder and Settings layouts with accessible navigation', async ({ page }) => {
+  await page.clock.setFixedTime(new Date('2026-08-26T12:34:00.000Z'))
+  await mockTengri(page)
+  await page.goto('/')
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  await dock.getByRole('button', { name: 'Open Finder' }).click()
+  const finder = page.getByRole('region', { name: 'Finder window' })
+  await expect(finder.getByRole('button', { name: 'README.md' })).toBeVisible()
+  await page.mouse.move(0, 0)
+  await expect(finder).toHaveScreenshot('tengri-finder.png')
+
+  await dock.getByRole('button', { name: 'Open Settings' }).click()
+  const settings = page.getByRole('region', { name: 'Settings window' })
+  await expect(settings.getByRole('heading', { name: 'General', exact: true })).toBeVisible()
+  await page.mouse.move(0, 0)
+  await expect(settings).toHaveScreenshot('tengri-settings.png')
+  await settings.getByRole('button', { name: 'Runtime', exact: true }).click()
+  await expect(settings.getByRole('heading', { name: 'Runtime', exact: true })).toBeInViewport()
+  await settings.getByRole('button', { name: 'Lifecycle', exact: true }).click()
+  await expect(settings.getByRole('button', { name: 'Sleep Agent' })).toBeInViewport()
+  const results = await new AxeBuilder({ page }).analyze()
+  expect(
+    results.violations.filter((violation) => violation.impact === 'serious' || violation.impact === 'critical'),
+  ).toEqual([])
+
+  await page.setViewportSize({ width: 390, height: 680 })
+  await settings.getByRole('button', { name: 'Maximize Settings' }).click()
+  const bounds = await settings.boundingBox()
+  expect(bounds).not.toBeNull()
+  expect(bounds!.width).toBeLessThanOrEqual(390)
+  await expect(settings.getByRole('button', { name: 'Sleep Agent' })).toBeVisible()
 })
