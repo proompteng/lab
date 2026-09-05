@@ -24,11 +24,11 @@ import {
 import { OperationalError, operationalError, retryableOperationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
 import {
-  IntradaySnapshotFailure,
   IntradaySnapshotPurpose,
   persistIntradaySnapshotRows,
   type PersistedIntradaySnapshotRows,
 } from '../market-data'
+import { isIntradaySnapshotPending } from '../market-data/intraday/pending'
 import {
   constrainExecutionTargetAllocationCapitalMicros,
   executionMandateAllocationCapitalMicros,
@@ -351,7 +351,7 @@ const operationalDecisionFailure = (
 export const decisionBuildError = (cause: ObserveDecisionFailure): CycleDecisionBuildError => {
   switch (cause._tag) {
     case 'OperationalError':
-      if (cause.cause instanceof IntradaySnapshotFailure && cause.cause.reason === 'not-ready') {
+      if (isIntradaySnapshotPending(cause.cause)) {
         return new CycleDecisionBuildError({ failure: 'not-ready', message: cause.message, cause })
       }
       return new CycleDecisionBuildError({
@@ -712,19 +712,13 @@ const intradayMomentumDefinition = (
   )
 }
 
-const intradayArchiveMaterializationPending = (cause: unknown): cause is IntradaySnapshotFailure =>
-  cause instanceof IntradaySnapshotFailure &&
-  (cause.reason === 'not-ready' ||
-    (cause.reason === 'watermark' &&
-      cause.message === 'intraday archive has not materialized the captured source offset'))
-
 const classifyIntradayEntrySnapshotFailure = (
   cause: OperationalError,
   observedAt: string,
   submissionCutoffAt: string,
 ): OperationalError | ObserveDecisionAwaitingSignal => {
   const snapshotFailure = cause.cause
-  return intradayArchiveMaterializationPending(snapshotFailure)
+  return isIntradaySnapshotPending(snapshotFailure)
     ? new ObserveDecisionAwaitingSignal({
         message: snapshotFailure.message,
         observedAt,
@@ -1413,7 +1407,7 @@ export const buildClosingExecutionCycleDecision = (
       )
       const snapshot = yield* loadIntradaySnapshot(input.intradayMarketData, query).pipe(
         Effect.mapError((cause) =>
-          intradayArchiveMaterializationPending(cause.cause)
+          isIntradaySnapshotPending(cause.cause)
             ? new ExecutionCloseAwaitingMarketData({ message: cause.message, observedAt: evaluatedAt })
             : mutationRunnerError({ message: 'execution close market-data read failed', cause }),
         ),
