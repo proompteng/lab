@@ -32,6 +32,47 @@ import { closingSnapshotBoundary, generationScope, openingSnapshotBoundary, reco
 import { ledgerReceiptQuery, ledgerTransactionQuery, receiptQuery, transactionQuery } from './queries'
 import { executionEvidenceFromRows, marketVolumeRequestsFromRows } from './projection'
 
+export const readForwardPerformanceUnclosedCycleCountDataFirst = (
+  sql: PgClient.PgClient,
+  accountId: string,
+  authorityGenerationHash?: string,
+) =>
+  sql<Record<string, unknown>>`
+    WITH latest_reconciliation AS (
+      SELECT reconciliation.reconciled_at
+      FROM reconciliations AS reconciliation
+      WHERE reconciliation.account_id = ${accountId}
+        AND ${generationScope(sql, accountId, authorityGenerationHash, 'reconciliation')}
+      ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
+      LIMIT 1
+    )
+    SELECT count(*)::integer AS count
+    FROM autonomous_cycles AS cycle
+    LEFT JOIN latest_reconciliation ON true
+    WHERE cycle.account_id = ${accountId}
+      -- A terminally blocked execution cycle is terminal evidence of an incomplete generation.
+      -- Count it as unclosed so an earlier successful cycle cannot produce a sufficient receipt.
+      AND cycle.state IN ('PENDING', 'ACTIVE', 'BLOCKED')
+      AND ${generationScope(sql, accountId, authorityGenerationHash, 'unclosed-cycle')}
+      -- A standing mandate may materialize the next cycle before its submission window opens. Ignore
+      -- only that unopened, never-started cycle at this reconciliation boundary. A bound decision
+      -- or intent is durable evidence; intents are also the root of mutation and execution facts.
+      AND (
+        latest_reconciliation.reconciled_at IS NULL
+        OR cycle.state = 'BLOCKED'
+        OR cycle.submission_open_at <= latest_reconciliation.reconciled_at
+        OR cycle.decision_hash IS NOT NULL
+        OR EXISTS (
+          SELECT 1
+          FROM intents AS intent
+          WHERE intent.cycle_id = cycle.cycle_id
+        )
+      )
+  `.pipe(
+    Effect.flatMap(decodeCount),
+    Effect.map(([row]) => row.count),
+  )
+
 export const readForwardPerformancePostgresDataFirst = (
   sql: PgClient.PgClient,
   accountId: string,
@@ -552,15 +593,11 @@ export const readForwardPerformancePostgresDataFirst = (
             COALESCE(generation.qualification_image_digest, generation.activation_image_digest)
         `.pipe(Effect.flatMap(decodeDurableExecutions))
 
-        const [unclosedCycles] = yield* sql<Record<string, unknown>>`
-          SELECT count(*)::integer AS count
-          FROM autonomous_cycles AS cycle
-          WHERE cycle.account_id = ${accountId}
-            -- A terminally blocked execution cycle is terminal evidence of an incomplete generation.
-            -- Count it as unclosed so an earlier successful cycle cannot produce a sufficient receipt.
-            AND cycle.state IN ('PENDING', 'ACTIVE', 'BLOCKED')
-            AND ${generationScope(sql, accountId, authorityGenerationHash, 'unclosed-cycle')}
-        `.pipe(Effect.flatMap(decodeCount))
+        const unclosedCycleCount = yield* readForwardPerformanceUnclosedCycleCountDataFirst(
+          sql,
+          accountId,
+          authorityGenerationHash,
+        )
 
         const [unresolvedMutations] = yield* sql<Record<string, unknown>>`
           SELECT count(*)::integer AS count
@@ -798,7 +835,7 @@ export const readForwardPerformancePostgresDataFirst = (
             imageRepository: row.qualification_image_repository ?? '',
             imageDigest: row.qualification_image_digest ?? '',
           })),
-          unclosedCycleCount: unclosedCycles.count,
+          unclosedCycleCount,
           unresolvedMutationCount: unresolvedMutations.count,
           openPositionCount: openPositions.count,
           unaccountedFillCount: unaccountedFills.count,

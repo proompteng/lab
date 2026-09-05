@@ -91,6 +91,10 @@ Malformed or ambiguous arguments fail before configuration or evidence reads. A 
 requires completed executions and exact accounting; operational readiness and an active research mandate do not
 establish profitability.
 
+A standing mandate's next scheduled cycle does not make the reconciled performance window incomplete while its
+submission window is still in the future and it has no durable decision or intent. Blocked cycles, started cycles,
+and any future cycle with durable execution work still prevent a sufficient receipt.
+
 ## Validation
 
 ```sh
