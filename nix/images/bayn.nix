@@ -29,17 +29,22 @@ let
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/intraday-replay-command.js" "$@"
   '';
+  vendorIntradayReplayCommand = pkgs.writeShellScriptBin "bayn-vendor-intraday-replay" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/vendor-intraday-replay-command.js" "$@"
+  '';
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = {
-    # Refreshed from both Linux builders after adding the intraday replay packaging entry.
-    x86_64-linux = "sha256-q+wozQogLhTvTRJRAgNDs19ENBTPbXqmzMTopC3eqzE=";
-    aarch64-linux = "sha256-x7Wkg0o5/sQKDBearZ9G32Fo8L3pshQnG3PlOs8cXHE=";
+    # Refreshed from both Linux builders after adding the vendor intraday replay packaging entry.
+    x86_64-linux = "sha256-2BCNT1yDHj4ocFAm7rxTmHRM5Ejoh86P+IAt9Cjvtfg=";
+    aarch64-linux = "sha256-YSuws5z1EOWi1sje9QpvgfCzmP7g5jEURsNktibNrSQ=";
   };
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
     (
-      "bun --cwd=services/bayn build src/index.ts src/verify-build-contract.ts src/forward-performance-command.ts src/intraday-replay-command.ts src/restate/restate-execution-server.ts src/restate/restate-execution-activate.ts --target=node "
+      "bun --cwd=services/bayn build src/index.ts src/verify-build-contract.ts src/forward-performance-command.ts src/intraday-replay-command.ts src/vendor-intraday-replay-command.ts src/restate/restate-execution-server.ts src/restate/restate-execution-activate.ts --target=node "
       + "--external tigerbeetle-node --entry-naming '[name].js' --outdir=dist "
       + buildDefine "__BAYN_BUILD_SOURCE_REVISION__" repoRevision
       + " "
@@ -59,6 +64,7 @@ let
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/index.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/forward-performance-command.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/intraday-replay-command.js"
+    "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/vendor-intraday-replay-command.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/restate-execution-server.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/restate-execution-activate.js"
     "grep -F -- ${lib.escapeShellArg strategyBehaviorHash} services/bayn/dist/index.js"
@@ -72,6 +78,7 @@ let
     cp "$TMPDIR/work/services/bayn/dist/index.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/forward-performance-command.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/intraday-replay-command.js" "$out/app/services/bayn/dist/"
+    cp "$TMPDIR/work/services/bayn/dist/vendor-intraday-replay-command.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/restate-execution-server.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/restate-execution-activate.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/package.json" "$out/app/services/bayn/package.json"
@@ -115,6 +122,7 @@ import ./bun-workspace-service.nix {
     pkgs.cacert
     forwardPerformanceCommand
     intradayReplayCommand
+    vendorIntradayReplayCommand
   ];
   exposedPorts = {
     "8080/tcp" = { };

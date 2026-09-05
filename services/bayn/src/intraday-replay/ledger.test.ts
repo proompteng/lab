@@ -4,7 +4,13 @@ import { Result } from 'effect'
 import { OrderSide } from '../execution/contracts'
 import { intradayMomentumExecutionModel } from '../strategy/intraday-momentum/protocol'
 import type { IntradayReplayIocOutcome } from './execution'
-import { applyReplayIoc, createReplayLedger, type IntradayReplayLedger } from './ledger'
+import {
+  applyReplayFill,
+  applyReplayIoc,
+  createReplayLedger,
+  type EconomicReplayFill,
+  type IntradayReplayLedger,
+} from './ledger'
 
 const feeMultiplierPpm = 1_000_000
 const executionModel = intradayMomentumExecutionModel
@@ -52,6 +58,46 @@ const apply = (ledger: IntradayReplayLedger, outcome: IntradayReplayIocOutcome) 
   applyReplayIoc(ledger, outcome, executionModel, feeMultiplierPpm)
 
 describe('intraday replay ledger', () => {
+  test.each([
+    ['requestedQuantityMicros', '1500000'],
+    ['filledQuantityMicros', '1500000'],
+    ['fillPriceMicros', '0'],
+    ['fillNotionalMicros', '0'],
+  ])('preserves the archive outcome error field for %s', (field, value) => {
+    expect(apply(freshLedger(), filled({ [field]: value }))).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'InvalidIntradayReplayLedger', field: `outcome.${field}` },
+    })
+  })
+
+  test('preserves vendor provenance while applying the same cash and fee accounting', () => {
+    type VendorFill = EconomicReplayFill & { readonly provenanceHash: string }
+    const entry: VendorFill = {
+      symbol: 'AMD',
+      side: 'buy',
+      observedAt: filledDefaults.observedAt,
+      quantityMicros: '1000000',
+      priceMicros: '100000000',
+      notionalMicros: '100000000',
+      provenanceHash: 'c'.repeat(64),
+    }
+    const vendor = success(
+      applyReplayFill(
+        success(createReplayLedger<VendorFill>('1000000000')),
+        entry,
+        '1000000',
+        executionModel,
+        feeMultiplierPpm,
+      ),
+    )
+    const archive = success(apply(freshLedger(), filled()))
+    expect(vendor.cashMicros).toBe(archive.cashMicros)
+    expect(vendor.executionFeesMicros).toBe(archive.executionFeesMicros)
+    expect(vendor.positions).toEqual(archive.positions)
+    expect(vendor.fills).toEqual([entry])
+    expect(vendor.fills[0]).not.toHaveProperty('snapshotId')
+  })
+
   test('carries a partial entry through a profitable close and aggregates fees', () => {
     const afterEntry = success(
       apply(

@@ -1,15 +1,13 @@
 import { Result, Schema } from 'effect'
 
-import { quantizeAlpacaLimitPriceMicros } from '../broker/alpaca-price'
 import { OrderSide } from '../execution/contracts'
-import { MICROS, notionalMicros, numberToMicros } from '../execution-model'
+import { MICROS, numberToMicros } from '../execution-model'
 import { IntradaySnapshotPurpose, type ArchiveVerifiedIntradayMarketSnapshot } from '../market-data/intraday/model'
 import { intradayInstantNanos, millisecondsAsNanos } from '../market-data/intraday/time'
 import { PositiveMicrosSchema, SymbolSchema, UtcInstantSchema, UtcOrderTimestampSchema } from '../schemas'
 import type { IntradayMomentumProtocol } from '../strategy/intraday-momentum/protocol'
+import { simulateIntradayReplayIocCore } from './execution-core'
 
-const BPS = 10_000n
-const PPM = 1_000_000n
 const U128_MAX = (1n << 128n) - 1n
 
 const isSymbol = Schema.is(SymbolSchema)
@@ -60,8 +58,6 @@ export type IntradayReplayIocOutcome =
       readonly reason: 'adverse-price-exceeds-limit' | 'no-displayed-liquidity' | 'zero-after-whole-share-rounding'
       readonly unfilledRemainder: 'canceled'
     })
-
-type CancelReason = 'adverse-price-exceeds-limit' | 'no-displayed-liquidity' | 'zero-after-whole-share-rounding'
 
 export interface IntradayReplayIocFailure {
   readonly _tag:
@@ -262,13 +258,6 @@ export const simulateIntradayReplayIoc = (
     return Result.fail(invalidSnapshot(quoteField, quote, 'invalid-quote'))
   }
 
-  const quotePrice = order.side === OrderSide.Buy ? ask : bid
-  const slippage = BigInt(assumptions.slippageBps)
-  const adverseNumerator = quotePrice * (order.side === OrderSide.Buy ? BPS + slippage : BPS - slippage)
-  const adversePrice =
-    order.side === OrderSide.Buy
-      ? quantizeAlpacaLimitPriceMicros((adverseNumerator + BPS - 1n) / BPS, 'UP')
-      : quantizeAlpacaLimitPriceMicros(adverseNumerator / BPS, 'DOWN')
   const evidence = {
     symbol: order.symbol,
     side: order.side,
@@ -279,36 +268,34 @@ export const simulateIntradayReplayIoc = (
     snapshotContentHash: manifest.contentHash,
     observedAt: manifest.observedAt,
   }
-  const cancel = (reason: CancelReason): Result.Result<IntradayReplayIocOutcome, IntradayReplayIocFailure> =>
-    Result.succeed({
-      ...evidence,
-      status: 'canceled',
-      reason,
-      filledQuantityMicros: '0',
-      unfilledRemainder: 'canceled',
-    })
-  if (
-    (order.side === OrderSide.Buy && adversePrice > limitPrice) ||
-    (order.side === OrderSide.Sell && adversePrice < limitPrice)
-  ) {
-    return cancel('adverse-price-exceeds-limit')
-  }
-  const liquidity = (displayed * BigInt(assumptions.availableLiquidityPpm)) / PPM
-  const fillQuantity = (liquidity / quantityIncrement) * quantityIncrement
-  const requestedOrAvailable = fillQuantity < requestedQuantity ? fillQuantity : requestedQuantity
-  if (requestedOrAvailable === 0n)
-    return cancel(liquidity === 0n ? 'no-displayed-liquidity' : 'zero-after-whole-share-rounding')
-  return notionalMicros(requestedOrAvailable, adversePrice).pipe(
+  return simulateIntradayReplayIocCore({
+    order: { side: order.side, quantityMicros: requestedQuantity, limitPriceMicros: limitPrice },
+    quote: {
+      priceMicros: order.side === OrderSide.Buy ? ask : bid,
+      displayedQuantityMicros: displayed,
+    },
+    executionModel: model,
+    assumptions,
+  }).pipe(
     Result.mapError((cause) => invalidSnapshot(quoteField, cause, 'invalid-fill-notional')),
-    Result.map(
-      (notional): IntradayReplayIocOutcome => ({
+    Result.map((coreOutcome): IntradayReplayIocOutcome => {
+      if (coreOutcome.status === 'canceled') {
+        return {
+          ...evidence,
+          status: 'canceled',
+          reason: coreOutcome.reason,
+          filledQuantityMicros: coreOutcome.filledQuantityMicros.toString(),
+          unfilledRemainder: coreOutcome.unfilledRemainder,
+        }
+      }
+      return {
         ...evidence,
         status: 'filled',
-        filledQuantityMicros: requestedOrAvailable.toString(),
-        fillPriceMicros: adversePrice.toString(),
-        fillNotionalMicros: notional.toString(),
-        unfilledRemainder: requestedOrAvailable < requestedQuantity ? 'canceled' : 'none',
-      }),
-    ),
+        filledQuantityMicros: coreOutcome.filledQuantityMicros.toString(),
+        fillPriceMicros: coreOutcome.fillPriceMicros.toString(),
+        fillNotionalMicros: coreOutcome.fillNotionalMicros.toString(),
+        unfilledRemainder: coreOutcome.unfilledRemainder,
+      }
+    }),
   )
 }

@@ -12,20 +12,23 @@ import { PositiveMicrosSchema, strictParseOptions } from '../schemas'
 import type { IntradayMomentumTargetPortfolio } from '../strategy/intraday-momentum/model'
 import type { IntradayReplayIocOutcome } from './execution'
 
+export const IntradayReplayAssumptionsSchema = Schema.Struct({
+  pollIntervalMs: Schema.Literal(30_000),
+  firstPollDelayMs: Schema.Int.check(Schema.isBetween({ minimum: 2_000, maximum: 31_999 })),
+  orderLatencyMs: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1_000 })),
+  availableLiquidityPpm: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1_000_000 })),
+  slippageBps: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
+  feeMultiplierPpm: Schema.Int.check(Schema.isBetween({ minimum: 1_000_000, maximum: 10_000_000 })),
+})
+export type IntradayReplayAssumptions = typeof IntradayReplayAssumptionsSchema.Type
+
 const ReplayInputBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.intraday-replay-input.v1'),
   range: MarketCalendarQueryBase,
   calendar: MarketCalendarResponseSchema.annotate({ parseOptions: responseParseOptions }),
   initialCapitalMicros: PositiveMicrosSchema,
   allocationCapitalMicros: PositiveMicrosSchema,
-  assumptions: Schema.Struct({
-    pollIntervalMs: Schema.Literal(30_000),
-    firstPollDelayMs: Schema.Int.check(Schema.isBetween({ minimum: 2_000, maximum: 31_999 })),
-    orderLatencyMs: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1_000 })),
-    availableLiquidityPpm: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1_000_000 })),
-    slippageBps: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
-    feeMultiplierPpm: Schema.Int.check(Schema.isBetween({ minimum: 1_000_000, maximum: 10_000_000 })),
-  }),
+  assumptions: IntradayReplayAssumptionsSchema,
 })
 
 export const IntradayReplayInputSchema = ReplayInputBase.check(

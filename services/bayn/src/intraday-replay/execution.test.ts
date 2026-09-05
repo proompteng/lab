@@ -112,6 +112,33 @@ describe('intraday replay IOC execution', () => {
     })
   })
 
+  test('preserves executable-side behavior when the unused quote size exceeds safe micros', () => {
+    const original = snapshot().latestQuotes['AMD']
+    if (original === undefined) throw new Error('fixture must contain AMD quote')
+    const withQuote = (quote: typeof original) =>
+      ({
+        ...snapshot(),
+        quotes: [quote],
+        latestQuotes: { AMD: quote },
+      }) as unknown as ReturnType<typeof snapshot>
+
+    const buy = success(
+      simulateIntradayReplayIoc(input({}, {}, withQuote({ ...original, bidSize: Number.MAX_SAFE_INTEGER }))),
+    )
+    expect(buy).toMatchObject({ status: 'filled', filledQuantityMicros: '2000000', fillPriceMicros: '100010000' })
+
+    const sell = success(
+      simulateIntradayReplayIoc(
+        input(
+          { side: OrderSide.Sell, limitPriceMicros: '99980000' },
+          {},
+          withQuote({ ...original, askSize: Number.MAX_SAFE_INTEGER }),
+        ),
+      ),
+    )
+    expect(sell).toMatchObject({ status: 'filled', filledQuantityMicros: '2000000', fillPriceMicros: '99990000' })
+  })
+
   test('cancels when declared adverse slippage crosses the order limit', () => {
     const result = success(simulateIntradayReplayIoc(input({ limitPriceMicros: '100010000' }, { slippageBps: 1 })))
 

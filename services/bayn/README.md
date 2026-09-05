@@ -148,6 +148,58 @@ qualification, change a strategy, activate capital, or replace the forward-perfo
 chronological holdout and sufficient independent sessions before drawing a profitability conclusion; inspect the
 report's limitations and incomplete sessions rather than selecting only favorable dates or assumptions.
 
+## Vendor historical research
+
+`bayn-vendor-intraday-replay --input <path> --cache <directory>` evaluates a frozen historical experiment using Alpaca
+IEX history. It shares the active strategy's decision, sizing, IOC, and fee arithmetic. It reads market data and writes
+the explicitly named local cache; it has no broker mutation or capital-grant capability.
+
+```sh
+node services/bayn/dist/vendor-intraday-replay-command.js \
+  --input vendor-input.json --cache ./vendor-cache > vendor-report.json
+```
+
+The input uses `bayn.vendor-intraday-replay-input.v1`. Supply the calendar, range, initial capital, and allocation
+capital as above, with a range of at most 120 calendar days. Export the complete official calendar in requests of at
+most 31 days before combining it. Additional required fields are:
+
+- `experimentPlanHash`: the hash of the experiment plan frozen before inspecting evaluation prices or returns;
+- `strategyProtocolHash`, `behaviorHash`, `parameterHash`, and `riskPolicyHash`: the frozen active identities, checked
+  against the implementation before data reads; and
+- `scenarios`: uniquely named `{ "name": "baseline", "assumptions": { ... } }` entries using the same explicit
+  execution assumptions as archive replay. Preserve every declared scenario in the analysis.
+
+The command uses `BAYN_ALPACA_KEY_ID`, `BAYN_ALPACA_SECRET_KEY`, and `BAYN_ALPACA_PROXY_URL` (default
+`http://bayn-egress-proxy:3128`). Historical reads target only `data.alpaca.markets`, with IEX, session-date symbol
+mapping, and raw one-minute bars. The client consumes every page, limits requests to 180 per minute, and verifies
+cached query, raw-page, normalized-content, and pagination hashes before reuse. Quote and trade requests cover only
+the protocol's freshness window at each observation; bars cover the bounded session decision range. Preserve the cache with the report
+to retain its source evidence. Progress and failures go to stderr; stdout contains the final canonical JSON report.
+Use one writer per cache directory. A checksum mismatch stops the run; preserve that cache for diagnosis and use a
+new directory for a fresh capture. Do not overwrite corrupt evidence and present it as the original capture.
+
+Vendor history proves event-time observations and completed provider queries. It cannot prove when a production
+consumer received a record, whether a historical bar was later revised, or which immutable archive version existed
+at a simulated decision. Vendor evidence therefore has its own provenance hash and never receives archive snapshot,
+ingestion-time, or Kafka identities.
+
+`quoteSizePolicy: native-unit-share-cap.v1` preserves the active strategy's capacity arithmetic: one modeled share
+per provider-native quote-size unit, before the scenario's liquidity reduction. This is a conservative capacity
+assumption, not a verified round-lot conversion. Preserve raw sizes and resolve the feed's unit contract before
+using results as execution-readiness evidence. IEX quotes describe one exchange; they do not prove consolidated
+liquidity or broker fills. Trade confirmation uses raw historical trades, not the latest-trades endpoint's
+bar-forming condition filter.
+
+Each scenario carries cash and positions chronologically. Planning and arrival prices are separate observations;
+unfilled IOC orders stay canceled and incomplete flattening retains the residual position. Long inventory is valued
+at verified adverse bids on the declared 30-second schedule. Reports retain observed equity, loss, peak, and drawdown,
+including excursions followed by recovery. Missing mark evidence makes the economic path incomplete. Observed
+drawdown can miss excursions between samples and cannot establish continuous live risk compliance.
+
+These reports remain `COUNTERFACTUAL_RESEARCH` / `NOT_QUALIFIED`. Keep retrospective development exposure, all tested
+alternatives, costs, canceled orders, and incomplete sessions visible. Positive historical returns do not replace
+independent prospective execution evidence or grant trading authority.
+
 ## Validation
 
 ```sh

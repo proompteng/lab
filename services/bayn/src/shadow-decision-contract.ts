@@ -52,10 +52,8 @@ import {
   type PlannedTargetQuantity,
   type TargetPlannerInput,
 } from './target-planner'
-import {
-  deriveIntradayMomentumSignalMetrics,
-  verifyIntradayMomentumDecisionEnvelope,
-} from './strategy/intraday-momentum/decision'
+import { verifyIntradayMomentumDecisionEnvelope } from './strategy/intraday-momentum/decision'
+import { deriveIntradayMomentumSignalMetrics } from './strategy/intraday-momentum/decision-core'
 import { PersistedStrategyDecisionSchema, RuntimeStrategyDecisionSchema } from './strategy/runtime-decision'
 import {
   intradayMomentumSignalRejectionReasons,
