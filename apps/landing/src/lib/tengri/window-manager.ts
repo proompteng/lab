@@ -127,7 +127,7 @@ export function windowReducer(state: WindowManagerState, action: WindowAction): 
       windows: focused.windows.map((window) => {
         if (window.id !== action.id) return window
         if (window.mode === 'maximized') {
-          const restoredBounds = clampToViewport(window.restoredBounds, action.viewport)
+          const restoredBounds = fitToViewport(window.restoredBounds, action.viewport)
           return { ...window, bounds: restoredBounds, restoredBounds, mode: 'normal' as const }
         }
         return {
@@ -147,9 +147,9 @@ export function windowReducer(state: WindowManagerState, action: WindowAction): 
         bounds:
           window.mode === 'maximized'
             ? maximizedBounds(action.viewport)
-            : clampToViewport(window.bounds, action.viewport),
+            : fitToViewport(window.bounds, action.viewport),
         restoredBounds:
-          window.mode === 'normal' ? clampToViewport(window.restoredBounds, action.viewport) : window.restoredBounds,
+          window.mode === 'normal' ? fitToViewport(window.restoredBounds, action.viewport) : window.restoredBounds,
       })),
     }
   }
@@ -174,7 +174,7 @@ function appendWindow(state: WindowManagerState, app: TengriApp, title: string, 
 function focusWindow(state: WindowManagerState, id: string, restore = false, viewport?: Bounds): WindowManagerState {
   const target = state.windows.find((window) => window.id === id)
   if (!target) return state
-  const restoredBounds = restore && viewport ? clampToViewport(target.restoredBounds, viewport) : target.bounds
+  const restoredBounds = restore && viewport ? fitToViewport(target.restoredBounds, viewport) : target.bounds
   return {
     ...state,
     activeApp: target.app,
@@ -362,11 +362,11 @@ function sanitizeState(state: WindowManagerState, viewport: Bounds): WindowManag
     usedIds.add(id)
     const mode = isWindowMode(window.mode) ? window.mode : ('normal' as const)
     const restoredBounds =
-      mode === 'normal' ? clampToViewport(window.restoredBounds, viewport) : nonNegativeBounds(window.restoredBounds)
+      mode === 'normal' ? fitToViewport(window.restoredBounds, viewport) : nonNegativeBounds(window.restoredBounds)
     return [
       {
         app: window.app,
-        bounds: mode === 'maximized' ? maximizedBounds(viewport) : clampToViewport(window.bounds, viewport),
+        bounds: mode === 'maximized' ? maximizedBounds(viewport) : fitToViewport(window.bounds, viewport),
         id,
         mode,
         restoredBounds,

@@ -1406,6 +1406,63 @@ test('keeps the Dock clear of new and maximized window controls', async ({ page 
   await expect(page.getByRole('button', { name: 'Restore Chrome' })).toBeVisible()
 })
 
+test('refits persisted windows above the Dock after reload and browser resize', async ({ page }) => {
+  await mockTengri(page)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('/')
+
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  const chrome = page.locator('section[aria-label="Chrome window"]')
+  await expect(page.getByLabel('Message your agent')).toBeVisible()
+  const desktopId = await page.evaluate((agentId) => sessionStorage.getItem(`tengri:desktop:${agentId}`), readyAgent.id)
+  expect(desktopId).toMatch(/^[0-9a-f]{32}$/)
+
+  const oldBounds = { x: 300, y: 149, width: 1060, height: 700 }
+  await page.evaluate(
+    ({ agentId, desktopId, oldBounds }) => {
+      if (!desktopId) throw new Error('desktop identity was not persisted')
+      const key = `tengri:windows:${agentId}:${desktopId}`
+      const state = JSON.parse(sessionStorage.getItem(key) ?? 'null') as {
+        windows?: Array<{ app?: string; bounds?: object; restoredBounds?: object; mode?: string }>
+      }
+      const chrome = state.windows?.find((window) => window.app === 'chrome')
+      if (!chrome) throw new Error('persisted Chrome window was not found')
+      chrome.bounds = oldBounds
+      chrome.restoredBounds = oldBounds
+      chrome.mode = 'normal'
+      sessionStorage.setItem(key, JSON.stringify(state))
+    },
+    { agentId: readyAgent.id, desktopId, oldBounds },
+  )
+
+  await page.reload()
+  await expect(page.getByLabel('Message your agent')).toBeVisible()
+  await expect(chrome).toBeVisible()
+
+  const expectChromeAboveDock = async () => {
+    const [chromeBounds, dockBounds] = await Promise.all([chrome.boundingBox(), dock.boundingBox()])
+    return chromeBounds && dockBounds ? chromeBounds.y + chromeBounds.height - dockBounds.y : Number.POSITIVE_INFINITY
+  }
+  await expect.poll(expectChromeAboveDock).toBeLessThanOrEqual(0)
+
+  await page.setViewportSize({ width: 1440, height: 774 })
+  await expect.poll(expectChromeAboveDock).toBeLessThanOrEqual(0)
+
+  await chrome.getByRole('button', { name: 'Minimize Chrome' }).click()
+  await expect(chrome).toHaveAttribute('aria-hidden', 'true')
+  await dock.getByRole('button', { name: 'Open Chrome' }).click()
+  await expect(chrome).not.toHaveAttribute('aria-hidden', 'true')
+  await expect.poll(expectChromeAboveDock).toBeLessThanOrEqual(0)
+
+  await chrome.getByRole('button', { name: 'Maximize Chrome' }).click()
+  await expect(chrome.getByRole('button', { name: 'Restore Chrome' })).toBeVisible()
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.setViewportSize({ width: 1440, height: 774 })
+  await chrome.getByRole('button', { name: 'Restore Chrome' }).click()
+  await expect(chrome.getByRole('button', { name: 'Maximize Chrome' })).toBeVisible()
+  await expect.poll(expectChromeAboveDock).toBeLessThanOrEqual(0)
+})
+
 test('propagates deletion cleanup to every open desktop tab', async ({ page }) => {
   const terminalStore: TerminalStore = { sessions: [] }
   await mockTengri(page, { terminalStore })
