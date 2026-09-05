@@ -282,6 +282,69 @@ describe('intraday replay program', () => {
     ])
   })
 
+  test('retries a transient archive operation on the next poll but retains permanent failures', async () => {
+    for (const retryable of [true, false]) {
+      const archive = makeArchive()
+      let calls = 0
+      const report = await Effect.runPromise(
+        runIntradayReplay(
+          replayInput(['2026-09-04']),
+          {
+            ...archive.service,
+            loadSnapshot: (request) => {
+              calls += 1
+              if (calls === 1) {
+                const makeError = retryable ? retryableOperationalError : operationalError
+                return Effect.fail(
+                  makeError({
+                    component: 'market-data',
+                    operation: 'load',
+                    message: 'archive query failed',
+                    cause: new Error('database read failure'),
+                  }),
+                )
+              }
+              return archive.service.loadSnapshot(request)
+            },
+          },
+          finalizedNow,
+        ),
+      )
+      expect(report.sessions[0]?.observations[0]).toMatchObject({ kind: 'unavailable', reason: 'load', retryable })
+      if (retryable) {
+        expect(report.sessions[0]?.status).toBe('COMPLETE')
+        expect(report.sessions[0]?.fills.length).toBeGreaterThan(0)
+        expect(archive.requests[0]?.observedAt).toBe('2026-09-04T14:30:32.000Z')
+      } else {
+        expect(report.sessions[0]).toMatchObject({ status: 'INCOMPLETE', fills: [] })
+        expect(calls).toBe(1)
+      }
+    }
+  })
+
+  test('leaves a persistently unavailable archive incomplete at the submission cutoff', async () => {
+    const archive = makeArchive()
+    const report = await Effect.runPromise(
+      runIntradayReplay(
+        replayInput(['2026-09-04']),
+        {
+          ...archive.service,
+          loadSnapshot: () =>
+            Effect.fail(
+              retryableOperationalError({ component: 'market-data', operation: 'load', message: 'unavailable' }),
+            ),
+        },
+        finalizedNow,
+      ),
+    )
+    expect(report.sessions[0]).toMatchObject({ status: 'INCOMPLETE', fills: [], netRealizedPnlAfterCostsMicros: null })
+    expect(report.sessions[0]?.observations.at(-1)).toMatchObject({
+      kind: 'unavailable',
+      observedAt: '2026-09-04T18:59:32.000Z',
+      retryable: true,
+    })
+  })
+
   test('retains the failing IOC field and reason in incomplete evidence', async () => {
     const archive = makeArchive({
       snapshot: (request, phase, occurrence) => {
