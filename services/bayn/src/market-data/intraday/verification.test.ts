@@ -1151,6 +1151,40 @@ describe('immutable intraday market snapshot', () => {
       })),
     }
 
+    const firstBar = delayedRows.bars[0]
+    if (firstBar === undefined) throw new Error('bar fixture is incomplete')
+    const lateBar = error(
+      verifyIntradaySnapshot(delayedRequest, {
+        ...delayedRows,
+        bars: delayedRows.bars.map((bar, index) =>
+          index === 0
+            ? { ...bar, ingested_at: new Date(Date.parse(bar.event_at) + 17 * 60_000 + 1).toISOString() }
+            : bar,
+        ),
+      }),
+    )
+    expect(lateBar).toMatchObject({
+      reason: 'freshness',
+      message: 'intraday bar does not match its declared feed delay and finalization window',
+      ingestionDelayDirection: IntradayIngestionDelayDirection.AboveMaximum,
+      facts: { symbol: firstBar.symbol, sourceTopic: barsTopic },
+    })
+
+    const earlyBar = error(
+      verifyIntradaySnapshot(delayedRequest, {
+        ...delayedRows,
+        bars: delayedRows.bars.map((bar, index) =>
+          index === 0 ? { ...bar, ingested_at: new Date(Date.parse(bar.event_at) + 15 * 60_000).toISOString() } : bar,
+        ),
+      }),
+    )
+    expect(earlyBar).toMatchObject({
+      reason: 'freshness',
+      message: 'intraday bar does not match its declared feed delay and finalization window',
+      ingestionDelayDirection: IntradayIngestionDelayDirection.BelowMinimum,
+      facts: { symbol: firstBar.symbol, sourceTopic: barsTopic },
+    })
+
     const earlyQuote = error(
       verifyIntradaySnapshot(delayedRequest, {
         ...delayedRows,

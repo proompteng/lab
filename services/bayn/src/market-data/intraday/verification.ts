@@ -595,12 +595,20 @@ const validateBarCoverage = (
     const availabilityDelay = intradayAgeNanos(bar.ingestedAt, bar.eventAt)
     if (availabilityDelay < minimumAvailabilityDelay || availabilityDelay > maximumAvailabilityDelay) {
       return Result.fail(
-        failure('freshness', 'intraday bar does not match its declared feed delay and finalization window', {
-          symbol: bar.symbol,
-          sourceTopic: bar.sourceTopic,
-          delayClass: request.delayClass,
-          eventAt: bar.eventAt,
-          ingestedAt: bar.ingestedAt,
+        new IntradaySnapshotFailure({
+          reason: 'freshness',
+          message: 'intraday bar does not match its declared feed delay and finalization window',
+          ingestionDelayDirection:
+            availabilityDelay < minimumAvailabilityDelay
+              ? IntradayIngestionDelayDirection.BelowMinimum
+              : IntradayIngestionDelayDirection.AboveMaximum,
+          facts: {
+            symbol: bar.symbol,
+            sourceTopic: bar.sourceTopic,
+            delayClass: request.delayClass,
+            eventAt: bar.eventAt,
+            ingestedAt: bar.ingestedAt,
+          },
         }),
       )
     }
