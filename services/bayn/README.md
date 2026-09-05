@@ -78,6 +78,19 @@ activation; an ordinary code-only release preserves the existing exact grant lin
 - `GET /v1/status`: bounded controller, strategy, authority, cycle, reconciliation, accounting, build, and blocker
   state.
 
+The read-only forward-performance command can isolate one durable mandate. Take the exact
+`capitalActivation.generationHash` from `/v1/status` when `capitalActivation._tag` is `Realized`, and run it in the
+configured runtime:
+
+```sh
+node dist/forward-performance-command.js --authority-generation <generation-hash>
+```
+
+Without that option, the command evaluates account history, which may span retired strategies and mandates.
+Malformed or ambiguous arguments fail before configuration or evidence reads. A generation-scoped receipt still
+requires completed executions and exact accounting; operational readiness and an active research mandate do not
+establish profitability.
+
 ## Validation
 
 ```sh
