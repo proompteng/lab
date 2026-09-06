@@ -155,7 +155,7 @@ export class AgentsShellRunner {
 
   async repoSessionStatus(sessionId: string, auth: AuthContext, options: { allowClosing?: boolean } = {}) {
     const session = this.repoSessions.require(sessionId, auth, options)
-    const [head, status, divergence] = await Promise.all([
+    const [head, dirtyCheck, divergence] = await Promise.all([
       this.runProcess({
         command: 'git',
         args: ['rev-parse', 'HEAD'],
@@ -165,10 +165,11 @@ export class AgentsShellRunner {
         auditEvent: 'repo_session_status_head',
       }),
       this.runProcess({
-        command: 'git',
-        args: ['status', '--porcelain=v1', '--untracked-files=normal', '--ignored=matching'],
+        command: '/bin/bash',
+        args: ['-lc', 'test -z "$(git status --porcelain=v1 --untracked-files=normal --ignored=matching)"'],
         sessionId,
         allowClosingSession: options.allowClosing,
+        okExitCodes: [0, 1],
         auth,
         auditEvent: 'repo_session_status_dirty',
       }),
@@ -181,7 +182,7 @@ export class AgentsShellRunner {
         auditEvent: 'repo_session_status_divergence',
       }),
     ])
-    if (!head.ok || !status.ok || !divergence.ok) throw new Error('failed to inspect repo session state')
+    if (!head.ok || !dirtyCheck.ok || !divergence.ok) throw new Error('failed to inspect repo session state')
     const [behindRaw = '0', aheadRaw = '0'] = divergence.stdout.trim().split(/\s+/)
     return {
       sessionId: session.id,
@@ -191,7 +192,7 @@ export class AgentsShellRunner {
       headSha: head.stdout.trim(),
       worktree: session.worktree,
       createdAt: session.createdAt,
-      dirty: status.stdout.trim().length > 0,
+      dirty: dirtyCheck.exitCode === 1,
       ahead: Number(aheadRaw),
       behind: Number(behindRaw),
     }
