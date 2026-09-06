@@ -111,8 +111,11 @@ test('exposes usable browser tabs, connection state, and contrast', async ({ pag
   await page.keyboard.press('Delete')
   await expect(page.getByRole('region', { name: 'Chrome window' })).toHaveCount(0)
 
-  await page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Chrome' }).click()
+  const chromeLauncher = page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Chrome' })
+  await chromeLauncher.click()
   await expect(tablist.getByRole('tab')).toHaveCount(1)
+  await chromeLauncher.hover()
+  await expect(chromeLauncher.getByRole('tooltip', { includeHidden: true })).toHaveCSS('opacity', '1')
 
   const seriousViolations = (await new AxeBuilder({ page }).analyze()).violations.filter(
     (violation) => violation.impact === 'critical' || violation.impact === 'serious',
