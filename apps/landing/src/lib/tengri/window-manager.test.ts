@@ -356,6 +356,7 @@ describe('Tengri desktop window manager', () => {
       left: '100px',
       top: '80px',
       transform: '',
+      translate: '',
       width: '720px',
     }
 
@@ -366,8 +367,30 @@ describe('Tengri desktop window manager', () => {
       left: '100px',
       top: '80px',
       transform: '',
+      translate: '',
       width: '640px',
     })
+  })
+
+  test('paints dragging through independent translate without replacing animation transform', () => {
+    const base = { x: 100, y: 80, width: 640, height: 480 }
+    const style = {
+      height: '480px',
+      left: '100px',
+      top: '80px',
+      transform: 'translateY(435px) scale(0.18)',
+      translate: '',
+      width: '640px',
+    }
+
+    paintWindowInteractionFrame(style, {
+      base,
+      edge: null,
+      next: { ...base, x: 142, y: 109 },
+    })
+
+    expect(style.translate).toBe('42px 29px')
+    expect(style.transform).toBe('translateY(435px) scale(0.18)')
   })
 
   test('server-renders a minimized frame without browser globals', () => {
