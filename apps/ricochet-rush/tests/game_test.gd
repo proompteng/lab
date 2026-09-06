@@ -39,6 +39,8 @@ func _run() -> void:
 	_game.start_run()
 	_check(not _game.try_echo(), "empty recording cannot deploy an echo")
 	await _test_movement_and_echo()
+	await _test_third_person_aim()
+	_test_mouse_capture_recovery()
 	await _test_scoring()
 	await _test_upgrades()
 	await _test_spawning()
@@ -97,9 +99,88 @@ func _test_movement_and_echo() -> void:
 	_check(root.gui_get_focus_owner() == null, "resume returns keyboard focus to combat")
 
 
+func _test_third_person_aim() -> void:
+	_game.start_run()
+	var enemy: RushEnemy = _game._spawn_enemy(RushEnemy.Kind.BRUTE, Vector3(0.0, 0.0, -5.0))
+	enemy.set_physics_process(false)
+	await _frames(2)
+	_game.camera.position = Vector3(1.2, 2.8, 3.0)
+	_game.camera.look_at(enemy.position + Vector3.UP * 0.8)
+	_game._update_aim()
+	_check(_game.aim_hit_enemy, "the center crosshair ray selects the visible enemy")
+	_check(not _game.aim_blocked, "an unobstructed muzzle can reach the crosshair target")
+	_check(absf(_game.player.aim_direction.y) > 0.04, "aim preserves vertical pitch")
+	var health_before: int = enemy.health
+	_game._fire_weapon()
+	var projectile: RushProjectile = _game.projectiles.back()
+	_check(
+		absf(projectile.direction.y) > 0.04,
+		"fired rounds follow the three-dimensional weapon direction"
+	)
+	await _frames(25)
+	_check(enemy.health < health_before, "a shoulder-camera shot hits the crosshair target")
+	var right_click := InputEventMouseButton.new()
+	right_click.button_index = MOUSE_BUTTON_RIGHT
+	_check(InputMap.action_has_event(&"rush_aim", right_click), "right mouse holds precision aim")
+	_check(
+		not InputMap.action_has_event(&"rush_echo", right_click),
+		"precision aim cannot accidentally summon an echo"
+	)
+	_game.start_run()
+	var barrier := StaticBody3D.new()
+	barrier.collision_layer = RushArena.COLLISION_LAYER
+	barrier.collision_mask = 0
+	barrier.position = Vector3(0.0, 1.5, -0.35)
+	var shape := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(3.0, 3.0, 0.08)
+	shape.shape = box
+	barrier.add_child(shape)
+	_game.add_child(barrier)
+	_game.player.set_physics_process(false)
+	await _frames(2)
+	var muzzle: Vector3 = _game._weapon_origin()
+	_check(muzzle.z > -0.31, "a weapon protruding through cover fires from its visible side")
+	_game.player.aim_direction = Vector3.FORWARD
+	_game._fire_weapon()
+	var blocked_shot: RushProjectile = _game.projectiles.back()
+	await _frames(1)
+	_check(
+		is_instance_valid(blocked_shot) and blocked_shot.has_bounced,
+		"the nearby wall intercepts a shot instead of letting it start through cover"
+	)
+	barrier.queue_free()
+	await _frames(1)
+
+
+func _test_mouse_capture_recovery() -> void:
+	_game.start_run()
+	_game._update_mouse_capture(false)
+	_check(_game.drag_look, "rejected mouse capture enables drag look")
+	_check(_game.phase == RicochetGame.Phase.PLAYING, "capture rejection does not block play")
+	var motion := InputEventMouseMotion.new()
+	motion.screen_relative = Vector2(80.0, 0.0)
+	var yaw: float = _game.camera.yaw
+	_game._unhandled_input(motion)
+	_check(is_equal_approx(yaw, _game.camera.yaw), "free cursor movement does not turn the camera")
+	motion.button_mask = MOUSE_BUTTON_MASK_RIGHT
+	_game._unhandled_input(motion)
+	_check(
+		not is_equal_approx(yaw, _game.camera.yaw), "right-button drag turns the fallback camera"
+	)
+	_game._update_mouse_capture(true)
+	_check(not _game.drag_look, "successful capture restores free mouse look")
+	_game._update_mouse_capture(false)
+	_check(_game.phase == RicochetGame.Phase.PAUSED, "releasing established capture pauses play")
+
+
 func _test_scoring() -> void:
 	_game.start_run()
 	await _frames(2)
+	_check(
+		_game.hud._progress_card.get_rect().end.x <= _game.hud.size.x - 20.0,
+		"the wave and timer display stays within the viewport margin"
+	)
 	_check(
 		is_equal_approx(_game.hud._dash_bar.value, _game.hud._dash_bar.max_value),
 		"a ready dash displays a full recharge bar"
