@@ -200,7 +200,13 @@ def main():
             "json",
         )
         report = evaluate(nodes, pods, ceph, args.node, args.migrated)
-    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as error:
+    except (
+        OSError,
+        subprocess.SubprocessError,
+        ValueError,
+        KeyError,
+        TypeError,
+    ) as error:
         parser.exit(2, f"preflight could not establish live evidence: {error}\n")
     report["observedAt"] = datetime.now(timezone.utc).isoformat()
     report["scope"] = (
