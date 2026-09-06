@@ -692,7 +692,9 @@ const replaySession = (
       while (nextMarkMs <= observedMs && nextMarkMs <= hardFlatMs && ledger.positions.length > 0) {
         const markObservedAt = utcInstantFromEpochMillis(nextMarkMs)
         const heldSymbols = ledger.positions.map(({ symbol: positionSymbol }) => positionSymbol)
-        const markRangeEndAt = utcInstantFromEpochMillis(Math.floor(nextMarkMs / minuteMs) * minuteMs)
+        const markRangeEndMs =
+          nextMarkMs % minuteMs === 0 ? nextMarkMs - minuteMs : Math.floor(nextMarkMs / minuteMs) * minuteMs
+        const markRangeEndAt = utcInstantFromEpochMillis(markRangeEndMs)
         const markQueryResult = intradayMomentumPricingQuery(
           context.queryContext,
           protocol,

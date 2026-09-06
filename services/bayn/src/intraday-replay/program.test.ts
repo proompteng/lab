@@ -293,6 +293,32 @@ describe('intraday replay program', () => {
     expect(report.totals.maximumObservedDrawdownMicros).toBe(maximumObservedDrawdownMicros)
   })
 
+  test('uses the preceding completed minute for an exactly aligned holding mark', async () => {
+    const archive = makeArchive({
+      snapshot: (request, phase) => {
+        if (phase === 'decision') return snapshotFor(request, { AAPL: 0.01 })
+        if (phase === 'entry-pricing') return snapshotFor(request)
+        return snapshotFor(request, { AAPL: 0.01 })
+      },
+    })
+    const report = await run(
+      replayInput(['2026-09-04'], {
+        assumptions: { ...defaultAssumptions, firstPollDelayMs: 29_900, orderLatencyMs: 100 },
+      }),
+      archive,
+    )
+    const session = report.sessions[0]
+    const alignedMark = session?.observations.find(
+      (observation) =>
+        observation.kind === 'snapshot' &&
+        observation.purpose === 'mark' &&
+        observation.manifest.observedAt.endsWith('14:31:00.000Z'),
+    )
+    expect(session).toMatchObject({ status: 'COMPLETE', netRealizedPnlAfterCostsMicros: '950000', positions: [] })
+    expect(alignedMark).toMatchObject({ kind: 'snapshot', purpose: 'mark' })
+    expect(session?.observations.some(({ kind, purpose }) => kind === 'unavailable' && purpose === 'mark')).toBe(false)
+  })
+
   test('keeps attempted close evidence while missing a required holding mark makes the session incomplete', async () => {
     const archive = makeArchive({
       snapshot: (request, phase) => {
