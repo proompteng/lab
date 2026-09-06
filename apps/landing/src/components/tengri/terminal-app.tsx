@@ -756,7 +756,12 @@ export function TerminalApp({
       />
 
       <div
-        className="absolute top-2 right-3 flex max-w-[min(70%,28rem)] items-center gap-1.5 rounded-full border border-white/7 bg-black/55 px-2 py-1 text-[10px] text-white/58 shadow-lg backdrop-blur-md"
+        className={
+          connection.phase === 'connected'
+            ? 'sr-only'
+            : 'absolute top-2 right-3 flex max-w-[min(70%,28rem)] items-center gap-1.5 rounded-full border border-white/7 bg-black/55 px-2 py-1 text-[10px] text-white/58 shadow-lg backdrop-blur-md'
+        }
+        data-connection-state={connection.phase}
         role="status"
         aria-live="polite"
       >

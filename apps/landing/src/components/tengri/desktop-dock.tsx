@@ -1,6 +1,6 @@
 'use client'
 
-import { motion, useMotionValue, useSpring } from 'motion/react'
+import { motion, useMotionValue, useSpring, useTransform } from 'motion/react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { forwardRef, useCallback, useImperativeHandle, useLayoutEffect, useMemo, useRef } from 'react'
 
@@ -50,6 +50,7 @@ const DockItem = forwardRef<DockItemHandle, DockItemProps>(function DockItem(
   const targetLift = useMotionValue(0)
   const scale = useSpring(targetScale, MAGNIFICATION_SPRING)
   const lift = useSpring(targetLift, MAGNIFICATION_SPRING)
+  const labelLift = useTransform(() => lift.get() - (scale.get() - BASE_SCALE) * 56)
 
   const applyInteraction = useCallback(() => {
     if (motionDisabled) {
@@ -110,13 +111,15 @@ const DockItem = forwardRef<DockItemHandle, DockItemProps>(function DockItem(
       onFocus={() => setFocused(true)}
       onBlur={() => setFocused(false)}
     >
-      <span
+      <motion.span
         aria-hidden="true"
         role="tooltip"
-        className="pointer-events-none absolute bottom-[calc(100%+2.125rem)] left-1/2 z-30 -translate-x-1/2 translate-y-1 whitespace-nowrap rounded-[9px] border border-white/20 bg-[rgba(26,30,44,0.88)] px-2.5 py-1 text-[12px] leading-4 font-medium tracking-[-0.01em] text-white/90 opacity-0 shadow-[0_8px_20px_rgba(0,0,0,0.32)] backdrop-blur-xl transition-[opacity,transform] delay-0 duration-150 ease-out group-hover:delay-75 group-hover:translate-y-0 group-hover:opacity-100 group-focus-visible:translate-y-0 group-focus-visible:opacity-100 motion-reduce:translate-y-0 motion-reduce:transition-none"
+        className="pointer-events-none absolute bottom-full left-1/2 z-30 -translate-x-1/2 whitespace-nowrap rounded-[6px] border border-white/20 bg-[#303030]/90 px-2.5 py-1 text-[13px] leading-4 font-normal text-white/95 opacity-0 shadow-[0_3px_10px_rgba(0,0,0,0.3)] backdrop-blur-xl transition-opacity delay-0 duration-100 group-hover:delay-75 group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:transition-none"
+        style={{ y: labelLift }}
       >
         {APP_TITLES[app]}
-      </span>
+        <span className="absolute top-[calc(100%-3px)] left-1/2 h-1.5 w-1.5 -translate-x-1/2 rotate-45 border-r border-b border-white/20 bg-[#303030]" />
+      </motion.span>
       <span
         aria-hidden="true"
         className="pointer-events-none absolute inset-x-0 top-1/2 grid h-14 w-14 -translate-y-[calc(50%-0.1875rem)] place-items-center"

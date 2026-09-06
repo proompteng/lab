@@ -21,6 +21,12 @@ cursor remains the baseline for new items. Retrieval is bounded to 90 seconds, 2
 page fails the restore instead of displaying incomplete history. Threads explicitly marked `legacy` retain the
 single full-history snapshot and cursor contract required by their reconstructed item identities.
 
+The guest pins Codex 0.153.4 in `services/nanoagent/bootstrap-codex.sh`. Its
+[item-page contract](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/app-server-protocol/src/protocol/v2/thread.rs#L1743-L1760)
+returns `{ turnId, item }` entries, not bare items. The independently generated `packages/codex` SDK is not the guest
+protocol authority. Verify changes against the pinned binary with
+`codex app-server generate-json-schema --experimental --out <temporary-directory>`.
+
 Each Chrome preview load exchanges its one-use ticket for a bounded, owner-scoped session whose ID is allocated before
 the browser receives the ticket. The desktop revokes both unused tickets and active sessions when a preview is
 superseded or closed, so reload and history use cannot exhaust the per-agent session limit. The gateway injects a

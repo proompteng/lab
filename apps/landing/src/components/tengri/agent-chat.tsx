@@ -1,6 +1,6 @@
 'use client'
 
-import { CircleStop, Copy, ExternalLink, LoaderCircle, Plus, Send } from 'lucide-react'
+import { ArrowUp, Copy, ExternalLink, LoaderCircle, Plus, Square } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   TengriCodexAccount,
@@ -70,6 +70,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const threadResumeGeneration = useRef(0)
   const mountedRef = useRef(true)
   const accountChecked = account !== null
+  const showStopAction = Boolean(activeTurnId) && !prompt.trim()
   const canStartNewConversation = codexCanStartNewConversation({
     activeTurnId,
     recovering: replayRecovering,
@@ -632,6 +633,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           </div>
         ) : null}
         <form
+          aria-label="Message composer"
           aria-busy={replayRecovering}
           className="mx-auto flex w-full items-end gap-1.5 rounded-2xl border border-white/10 bg-white/[0.055] p-1.5 shadow-sm backdrop-blur-xl"
           onSubmit={(event) => {
@@ -661,31 +663,25 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
             }
             className="max-h-36 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-sm text-white/82 outline-none placeholder:text-white/28"
           />
-          {activeTurnId ? (
-            <button
-              type="button"
-              aria-label="Interrupt turn"
-              disabled={interrupting || replayRecovering}
-              className="grid h-9 w-9 place-items-center rounded-xl bg-white/8 outline-none hover:bg-white/12 focus-visible:ring-2 focus-visible:ring-white/50 disabled:opacity-40"
-              onClick={() => void interruptTurn()}
-            >
-              {interrupting ? (
-                <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
-              ) : (
-                <CircleStop className="h-4 w-4" aria-hidden="true" />
-              )}
-            </button>
-          ) : null}
           <button
-            type="submit"
-            aria-label={activeTurnId ? 'Steer turn' : 'Send message'}
-            disabled={!prompt.trim() || submitting || replayRecovering || Boolean(threadId && !threadReady)}
-            className="grid h-9 w-9 place-items-center rounded-xl bg-[#2574e8] outline-none hover:bg-[#3981e9] focus-visible:ring-2 focus-visible:ring-white/60 disabled:opacity-30"
+            type={showStopAction ? 'button' : 'submit'}
+            aria-label={showStopAction ? 'Stop response' : activeTurnId ? 'Steer turn' : 'Send message'}
+            disabled={
+              (!showStopAction && !prompt.trim()) ||
+              submitting ||
+              interrupting ||
+              replayRecovering ||
+              Boolean(threadId && !threadReady)
+            }
+            onClick={showStopAction ? () => void interruptTurn() : undefined}
+            className={`grid h-9 w-9 shrink-0 place-items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-white/60 disabled:opacity-30 ${showStopAction ? 'bg-white/90 text-zinc-900 hover:bg-white' : 'bg-[#2574e8] hover:bg-[#3981e9]'}`}
           >
-            {submitting ? (
+            {submitting || interrupting ? (
               <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
+            ) : showStopAction ? (
+              <Square className="h-3.5 w-3.5 fill-current" aria-hidden="true" />
             ) : (
-              <Send className="h-4 w-4" aria-hidden="true" />
+              <ArrowUp className="h-4 w-4" aria-hidden="true" />
             )}
           </button>
         </form>
