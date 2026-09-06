@@ -66,7 +66,11 @@
 ## Trading and accounting invariants
 
 - Market-data snapshots must prove dataset version, universe, uniqueness, ordering, and content identity before
-  evaluation. Missing, stale, malformed, or mixed-contract data fails closed.
+  evaluation. Missing or stale evidence cannot authorize a trade for that symbol. Independent candidate queries
+  retain missing or over-late candidate evidence as explicit exclusions, with zero target weight, while other
+  candidates may proceed. Required benchmark and execution-pricing evidence still fail the whole observation;
+  malformed, premature, mixed-contract, ordering, and watermark failures always remain global. Preserve the raw
+  excluded rows and reproduce exclusions when verifying immutable snapshot evidence.
 - Inspect finalized manifest and calendar before candidate bars, then acquire the immutable qualification lock. Commit
   the evaluation graph and terminal result together; never retry or bypass an opened-incomplete lock.
 - TigerBeetle writes remain deterministic and idempotent. Existing IDs must be verified against the complete expected
