@@ -225,7 +225,7 @@ const DEFAULT_OPENAI_EMBEDDING_DIMENSION = 1536
 const DEFAULT_SELF_HOSTED_EMBEDDING_MODEL = 'qwen3-embedding-saigak:8b'
 const DEFAULT_SELF_HOSTED_EMBEDDING_DIMENSION = 4096
 const DEFAULT_ATLAS_CODE_SEARCH_EMBEDDING_DIMENSION = 1024
-const DEFAULT_OPENAI_COMPLETION_MODEL = 'gpt-5.6-sol'
+const DEFAULT_OPENAI_COMPLETION_MODEL = 'gpt-6-astra'
 const DEFAULT_SELF_HOSTED_COMPLETION_MODEL = 'qwen36-flamingo'
 const DEFAULT_SELF_HOSTED_COMPLETION_TEMPERATURE = 0.7
 const DEFAULT_SELF_HOSTED_COMPLETION_TOP_P = 0.8
@@ -427,6 +427,11 @@ const isHostedOpenAiBaseUrl = (rawBaseUrl: string) => {
   }
 }
 
+const isAstraModel = (model: string) => model.trim().toLowerCase().startsWith('gpt-6')
+
+const normalizeAstraReasoningEffort = (model: string, reasoningEffort: string) =>
+  isAstraModel(model) && (reasoningEffort === 'none' || reasoningEffort === 'minimal') ? 'low' : reasoningEffort
+
 const loadEmbeddingDimension = (fallback: number) => {
   const dimension = Number.parseInt(process.env.OPENAI_EMBEDDING_DIMENSION ?? String(fallback), 10)
   if (!Number.isFinite(dimension) || dimension <= 0) {
@@ -567,16 +572,17 @@ const loadCompletionTopP = (fallback: number | null) => {
   return topP
 }
 
-const loadCompletionReasoningEffort = (fallback: string | null) => {
+const loadCompletionReasoningEffort = (model: string, fallback: string | null) => {
   const reasoningEffort = normalizeOptionalText(process.env.OPENAI_COMPLETION_REASONING_EFFORT) ?? fallback
   if (!reasoningEffort) return null
-  if (!['high', 'medium', 'low', 'none'].includes(reasoningEffort)) {
+  const normalizedReasoningEffort = normalizeAstraReasoningEffort(model, reasoningEffort)
+  if (!['high', 'medium', 'low', 'none'].includes(normalizedReasoningEffort)) {
     throw createNonRetryableError(
       'OPENAI_COMPLETION_REASONING_EFFORT must be one of high, medium, low, none',
       'CompletionConfigError',
     )
   }
-  return reasoningEffort
+  return normalizedReasoningEffort
 }
 
 const loadEmbeddingConfig = () => {
@@ -2156,9 +2162,10 @@ const loadCompletionConfig = () => {
 
   const defaults = resolveCompletionDefaults(apiBaseUrl)
   const model = process.env.OPENAI_COMPLETION_MODEL ?? process.env.OPENAI_MODEL ?? defaults.model
-  const temperature = loadCompletionTemperature(defaults.temperature)
-  const topP = loadCompletionTopP(defaults.topP)
-  const reasoningEffort = loadCompletionReasoningEffort(defaults.reasoningEffort)
+  const astraModel = isAstraModel(model)
+  const temperature = astraModel ? null : loadCompletionTemperature(defaults.temperature)
+  const topP = astraModel ? null : loadCompletionTopP(defaults.topP)
+  const reasoningEffort = loadCompletionReasoningEffort(model, defaults.reasoningEffort)
   const timeoutMs = Number.parseInt(process.env.OPENAI_COMPLETION_TIMEOUT_MS ?? '60000', 10)
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     throw createNonRetryableError('OPENAI_COMPLETION_TIMEOUT_MS must be a positive integer', 'CompletionConfigError')

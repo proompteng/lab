@@ -15,7 +15,6 @@ Companion doc:
 
 Extends:
 
-- `66-jangar-recovery-release-lanes-and-rollout-proof-fence-contract-2026-03-21.md`
 - `65-jangar-recovery-epoch-cutover-and-backlog-seat-enforcement-contract-2026-03-21.md`
 - `61-jangar-runtime-kits-and-admission-passports-contract-2026-03-20.md`
 - `57-jangar-authority-capsules-and-readiness-class-separation-2026-03-20.md`

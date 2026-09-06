@@ -1,11 +1,10 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Option, Ref, Result, Schedule } from 'effect'
+import { Effect, Ref, Result, Schedule } from 'effect'
 
 import { makeApplicationPlan, type ApplicationPlanFor } from '../app'
 import { BrokerSession } from '../broker/alpaca'
 import type { LoadedRuntimeConfig } from '../config'
 import { CycleObservability } from '../cycle/store'
-import { readForwardPerformanceReceiptByGeneration } from '../db/forward-performance-receipt-postgres'
 import { ExecutionStoreError, type AuthorityGenerationStoreShape } from '../db/execution-store'
 import { postgresHealthCheck } from '../db/postgres-client'
 import { makeAuthorityPostgres } from '../db/execution-store/authority-shared'
@@ -17,15 +16,11 @@ import { serveHttp } from '../http'
 import { Journal } from '../ledger'
 import { IntradayMarketData } from '../market-data'
 import { initialState, type RuntimeState } from '../runtime-state'
-import { currentUtcInstant } from '../time'
 import { observeCycleGenerationHash, runtimeBroker } from './lifecycle'
 import {
-  capitalActivationOperationalError,
-  completedCapitalActivation,
   decodeConfiguredCapitalActivation,
   pendingCapitalActivation,
   readBoundCapitalActivationGeneration,
-  readCompletedExecutionLifecycle,
   readOnlyExecutionPolicy,
   realizedCapitalActivation,
   researchCapitalRecoveryRequestIsCompatible,
@@ -53,17 +48,8 @@ const configuredCapitalActivation = (
     ? Result.succeed(null)
     : decodeConfiguredCapitalActivation(serialized, serializedBuildLineage)
 
-const readReceiptHash = (sql: PgClient.PgClient, authorityGenerationHash: string) =>
-  readForwardPerformanceReceiptByGeneration(sql, authorityGenerationHash).pipe(
-    Effect.map(Option.map((receipt) => receipt.receiptHash)),
-    Effect.mapError((cause) =>
-      capitalActivationOperationalError('completed execution lifecycle receipt read failed', cause),
-    ),
-  )
-
 export interface ReadOnlyCapitalActivationStore {
   readonly authority: AuthorityGenerationStoreShape
-  readonly readReceiptHash: (authorityGenerationHash: string) => ReturnType<typeof readReceiptHash>
 }
 
 const makeReadOnlyCapitalActivationStore = (
@@ -71,7 +57,6 @@ const makeReadOnlyCapitalActivationStore = (
   sql: PgClient.PgClient,
 ): ReadOnlyCapitalActivationStore => ({
   authority: makeObserveAuthorityInterpreter(sql, makeAuthorityPostgres(sql), plan.config.alpaca.identity),
-  readReceiptHash: (generationHash) => readReceiptHash(sql, generationHash),
 })
 
 const logActivationUnavailable = (reason: string, cause?: unknown): Effect.Effect<void> =>
@@ -93,11 +78,11 @@ export const refreshReadOnlyCapitalActivation = (
   state: Ref.Ref<RuntimeState>,
   store: ReadOnlyCapitalActivationStore,
 ): Effect.Effect<void> => {
-  const publishUnavailable = (reason: string): Effect.Effect<void> =>
+  const publishUnavailable = (reason: string, cause?: unknown): Effect.Effect<void> =>
     Effect.gen(function* () {
       const request = Result.isSuccess(configured) ? (configured.success?.request ?? null) : null
       yield* pendingCapitalActivation(state, request, 'PREPARATION_FAILED')
-      yield* logActivationUnavailable(reason)
+      yield* logActivationUnavailable(reason, cause)
     })
 
   return Effect.gen(function* () {
@@ -117,24 +102,12 @@ export const refreshReadOnlyCapitalActivation = (
 
     const observePlan = readOnlyPlan(plan)
     const { request, buildContinuation, buildLineage } = configured.success
-    const observedAt = yield* currentUtcInstant
-    const currentRequest = researchCapitalRecoveryRequestIsCompatible(request, observePlan, observedAt, true)
+    const currentRequest = researchCapitalRecoveryRequestIsCompatible(request, observePlan)
     if (Result.isFailure(currentRequest)) {
       yield* pendingCapitalActivation(state, request, 'PREPARATION_FAILED')
       return yield* logActivationUnavailable('REQUEST_NOT_CURRENT')
     }
 
-    const completed = yield* readCompletedExecutionLifecycle(
-      observePlan,
-      request,
-      buildContinuation,
-      buildLineage,
-      store.authority,
-      store.readReceiptHash,
-    )
-    if (completed !== undefined) {
-      return yield* completedCapitalActivation(state, request, completed.authorityGenerationHash, completed.receiptHash)
-    }
     const generation = yield* readBoundCapitalActivationGeneration(
       observePlan,
       request,
@@ -148,7 +121,7 @@ export const refreshReadOnlyCapitalActivation = (
       duration: plan.config.operationTimeoutMs,
       orElse: () => publishUnavailable('DURABLE_PROJECTION_TIMEOUT'),
     }),
-    Effect.catch(() => publishUnavailable('DURABLE_PROJECTION_UNAVAILABLE')),
+    Effect.catch((cause) => publishUnavailable('DURABLE_PROJECTION_UNAVAILABLE', cause)),
     Effect.withLogSpan('read-only-capital-projection'),
   )
 }

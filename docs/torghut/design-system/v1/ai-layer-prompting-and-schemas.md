@@ -6,12 +6,12 @@
 - Last updated: **2026-02-08**
 - Source of truth (config): `argocd/applications/torghut/**`
 
-## Source Implementation Audit (2026-07-04)
+## Historical Source Audit (2026-07-04)
 
 - Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
 - Implementation status: **Implemented for strict request/response schemas and sanitized prompting inputs; runtime prompting is DSPy-artifact based and currently disabled in deployment.** The old `system_v1.txt` template exists, but current review execution uses DSPy adapters/runtime metadata rather than a simple static prompt call.
 - Matched implementation area: LLM prompting and schemas.
-- Current source evidence:
+- Source evidence inspected:
   - `services/torghut/app/trading/llm/prompt_templates/system_v1.txt`
   - `services/torghut/app/trading/llm/schema.py`
   - `services/torghut/app/trading/llm/review_engine.py`

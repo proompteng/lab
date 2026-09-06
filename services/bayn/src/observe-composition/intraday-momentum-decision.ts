@@ -24,6 +24,15 @@ import { adverseQuotePrices, executionMarketDataBinding, maximumBuyQuantities } 
 
 const minuteMs = 60_000
 
+export interface IntradayMomentumQueryContext {
+  readonly schemaVersion: AutonomousCycle['schemaVersion']
+  readonly identity: Pick<AutonomousCycle['identity'], 'strategyName' | 'executionSessionDate' | 'executionPolicy'>
+  readonly window: Pick<
+    AutonomousCycle['window'],
+    'executionOpenAt' | 'executionCloseAt' | 'submissionOpenAt' | 'submissionCutoffAt'
+  >
+}
+
 export class IntradayMomentumRuntimeDecisionFailure extends Data.TaggedError('IntradayMomentumRuntimeDecisionFailure')<{
   readonly operation: 'entry-query' | 'entry-decision' | 'binding'
   readonly message: string
@@ -46,7 +55,7 @@ const failure = (
 ): IntradayMomentumRuntimeDecisionFailure => new IntradayMomentumRuntimeDecisionFailure({ operation, message, cause })
 
 const snapshotQuery = (
-  cycle: AutonomousCycle,
+  cycle: IntradayMomentumQueryContext,
   protocol: IntradayMomentumProtocol,
   calendar: MarketCalendarObservation,
   rangeStartAt: string,
@@ -72,7 +81,7 @@ const snapshotQuery = (
 })
 
 export const intradayMomentumEntryQuery = (
-  cycle: AutonomousCycle,
+  cycle: IntradayMomentumQueryContext,
   protocol: IntradayMomentumProtocol,
   calendar: MarketCalendarObservation,
   observedAt: string,
@@ -123,7 +132,7 @@ export const intradayMomentumEntryQuery = (
 }
 
 export const intradayMomentumPricingQuery = (
-  cycle: AutonomousCycle,
+  cycle: IntradayMomentumQueryContext,
   protocol: IntradayMomentumProtocol,
   calendar: MarketCalendarObservation,
   observedAt: string,
@@ -161,7 +170,7 @@ export const intradayMomentumPricingQuery = (
 }
 
 export const intradayMomentumCloseQuery = (
-  cycle: AutonomousCycle,
+  cycle: IntradayMomentumQueryContext,
   protocol: IntradayMomentumProtocol,
   calendar: MarketCalendarObservation,
   observedAt: string,
@@ -260,11 +269,20 @@ export const evaluateIntradayMomentumDecision = (
         },
       },
     }),
-    (cause) =>
-      cause.reason === 'snapshot-coverage' &&
-      cause.message === 'intraday symbol lacks the complete rolling lookback baseline'
-        ? new IntradayMomentumEntryAwaitingSnapshot({ message: cause.message })
-        : failure('entry-decision', 'intraday-momentum strategy rejected its verified runtime snapshot', cause),
+    (cause) => {
+      if (
+        cause.reason === 'snapshot-coverage' &&
+        cause.message === 'intraday symbol lacks the complete rolling lookback baseline'
+      ) {
+        return new IntradayMomentumEntryAwaitingSnapshot({ message: cause.message })
+      }
+      const details = [
+        `${cause.reason}: ${cause.message}`,
+        cause.symbol === undefined ? undefined : `symbol=${cause.symbol}`,
+        cause.field === undefined ? undefined : `field=${cause.field}`,
+      ].filter((detail): detail is string => detail !== undefined)
+      return failure('entry-decision', details.join('; '), cause)
+    },
   )
 
 export const compileIntradayMomentumDecision = (

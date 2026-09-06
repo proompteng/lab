@@ -15,7 +15,6 @@ Companion doc:
 
 Extends:
 
-- `docs/agents/designs/66-jangar-recovery-release-lanes-and-rollout-proof-fence-contract-2026-03-21.md`
 - `docs/agents/designs/65-jangar-recovery-epoch-cutover-and-backlog-seat-enforcement-contract-2026-03-21.md`
 - `docs/agents/designs/63-jangar-consumer-projections-and-latency-class-admission-contract-2026-03-20.md`
 - `docs/torghut/design-system/v6/64-torghut-profit-window-cutover-and-escrow-enforcement-contract-2026-03-21.md`

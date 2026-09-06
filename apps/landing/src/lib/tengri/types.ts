@@ -156,6 +156,7 @@ export type TengriAction =
   | { action: 'terminate-terminal'; agentId: string; terminalId: string }
   | { action: 'terminal-ticket'; agentId: string; terminalId: string }
   | { action: 'codex-account'; agentId: string }
+  | { action: 'codex-login-status'; agentId: string }
   | { action: 'codex-login'; agentId: string }
   | { action: 'create-thread'; agentId: string }
   | { action: 'resume-thread'; agentId: string; threadId: string }

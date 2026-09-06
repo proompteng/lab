@@ -1,6 +1,6 @@
 'use client'
 
-import { Wifi } from 'lucide-react'
+import { Search, SlidersHorizontal, Wifi } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 
 import type { TengriAgent } from '@/lib/tengri/types'
@@ -126,7 +126,7 @@ export function MenuBar({
   }
 
   return (
-    <header className="absolute inset-x-0 top-0 z-[2000] flex h-[30px] items-center justify-between border-b border-white/10 bg-[rgba(16,20,31,0.5)] px-3 text-[12px] shadow-sm backdrop-blur-2xl">
+    <header className="absolute inset-x-0 top-0 z-[2000] flex h-[30px] items-center justify-between bg-black/20 px-3 text-[13px] text-white shadow-[0_1px_0_rgba(0,0,0,0.12)] backdrop-blur-2xl backdrop-saturate-150">
       <nav aria-label="Application menu" className="flex h-full min-w-0 items-center gap-0.5" role="menubar">
         {menuNames.map((menu, index) => {
           const key = menu === APP_TITLES[activeApp] ? 'active' : menu
@@ -147,7 +147,7 @@ export function MenuBar({
                 aria-expanded={menuOpen === menu}
                 aria-haspopup="menu"
                 aria-label={menu === 'tengri' ? 'Tengri menu' : undefined}
-                className={`flex h-full items-center rounded px-2 text-white/82 outline-none hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-white/50 ${key === 'active' ? 'font-semibold' : ''}`}
+                className={`flex h-full items-center rounded px-2.5 text-white/95 outline-none hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-white/50 ${key === 'active' ? 'font-semibold' : ''}`}
                 id={`${menuId}-trigger`}
                 onClick={(event) => {
                   event.stopPropagation()
@@ -199,7 +199,7 @@ export function MenuBar({
           )
         })}
       </nav>
-      <div aria-label="Desktop status" className="flex min-w-0 shrink-0 items-center gap-2 text-white/72 sm:gap-3">
+      <div aria-label="Desktop status" className="flex min-w-0 shrink-0 items-center gap-2 text-white/90 sm:gap-3.5">
         <span className="hidden items-center gap-1.5 lg:flex">
           <span
             aria-hidden="true"
@@ -211,10 +211,32 @@ export function MenuBar({
           <Wifi aria-hidden="true" className="h-3.5 w-3.5" />
           <span className="sr-only">{connectionWarning ? 'Connection degraded' : 'Connected'}</span>
         </span>
-        <span className="hidden max-w-32 truncate xl:inline">{userName || 'GitHub user'}</span>
+        <span className="hidden max-w-32 truncate 2xl:inline">{userName || 'GitHub user'}</span>
+        <button
+          type="button"
+          aria-label="Open Spotlight"
+          className="hidden size-6 items-center justify-center rounded hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-white sm:flex"
+          onClick={onOpenSpotlight}
+        >
+          <Search aria-hidden="true" className="size-3.5" />
+        </button>
+        <button
+          type="button"
+          aria-label="Open System Settings"
+          className="hidden size-6 items-center justify-center rounded hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-white sm:flex"
+          onClick={() => onOpenApp('settings')}
+        >
+          <SlidersHorizontal aria-hidden="true" className="size-4" />
+        </button>
         <time className="tabular-nums" dateTime={clock?.toISOString()}>
           {clock
-            ? new Intl.DateTimeFormat(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' }).format(clock)
+            ? new Intl.DateTimeFormat(undefined, {
+                weekday: 'short',
+                month: 'short',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+              }).format(clock)
             : '\u00a0'}
         </time>
       </div>
@@ -247,7 +269,7 @@ function MenuPopover({
     <div
       ref={menuRef}
       aria-labelledby={labelledBy}
-      className="absolute top-[28px] left-0 min-w-56 rounded-xl border border-white/18 bg-[rgba(34,38,50,0.88)] p-1.5 shadow-2xl backdrop-blur-3xl"
+      className="absolute top-[28px] left-0 min-w-56 rounded-lg border border-white/20 bg-zinc-800/90 p-1 shadow-[0_12px_32px_rgba(0,0,0,0.4)] backdrop-blur-3xl"
       id={id}
       onKeyDown={(event) => {
         const items = [...(menuRef.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])]
@@ -281,7 +303,7 @@ function MenuPopover({
       {entries.map((entry) => (
         <div className={entry.separator ? 'mt-1 border-t border-white/9 pt-1' : ''} key={entry.label}>
           <button
-            className="flex w-full items-center justify-between rounded-lg px-3 py-1.5 text-left text-[12px] text-white/85 outline-none hover:bg-[#2574e8] focus-visible:bg-[#2574e8]"
+            className="flex w-full items-center justify-between rounded px-2.5 py-1 text-left text-[13px] text-white/85 outline-none hover:bg-[#2574e8] focus-visible:bg-[#2574e8]"
             onClick={() => {
               void entry.run()
               onClose()
@@ -291,7 +313,7 @@ function MenuPopover({
             type="button"
           >
             <span>{entry.label}</span>
-            <span className="ml-6 text-white/38">{entry.shortcut}</span>
+            <span className="ml-6 text-white/65">{entry.shortcut}</span>
           </button>
         </div>
       ))}
