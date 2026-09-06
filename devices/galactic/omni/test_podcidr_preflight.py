@@ -1,6 +1,9 @@
+import contextlib
+import io
 import unittest
+from unittest.mock import patch
 
-from podcidr_preflight import evaluate
+from podcidr_preflight import evaluate, main
 
 
 class PreflightTest(unittest.TestCase):
@@ -139,6 +142,21 @@ class PreflightTest(unittest.TestCase):
         self.assertTrue(
             any("membership" in failure for failure in self.result()["failures"])
         )
+
+    def test_missing_kubectl_is_unavailable_evidence(self):
+        stderr = io.StringIO()
+        with (
+            patch("sys.argv", ["podcidr_preflight.py", "--node", "turin"]),
+            patch(
+                "podcidr_preflight.subprocess.run",
+                side_effect=FileNotFoundError("kubectl"),
+            ),
+            contextlib.redirect_stderr(stderr),
+            self.assertRaises(SystemExit) as result,
+        ):
+            main()
+        self.assertEqual(result.exception.code, 2)
+        self.assertIn("could not establish live evidence", stderr.getvalue())
 
 
 if __name__ == "__main__":
