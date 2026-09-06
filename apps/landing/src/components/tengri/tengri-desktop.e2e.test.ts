@@ -2027,6 +2027,46 @@ test('does not duplicate snapshot-covered Codex messages when event replay races
   await expect(page.getByText('The turn failed', { exact: true })).toHaveCount(1)
 })
 
+test('keeps capped history items from returning through delayed replay', async ({ page }) => {
+  const items = Array.from({ length: 501 }, (_, index) => ({
+    id: `answer-${index}`,
+    type: 'agentMessage',
+    text: `Restored answer ${index}`,
+  }))
+  const mock = await mockTengri(page, {
+    resumeThreadDelayMs: 500,
+    resumeThreadEventSequence: 10,
+    resumeThreadItemEventSequences: Object.fromEntries(items.map((item) => [item.id, 30])),
+    resumeThreadRawJson: JSON.stringify({
+      thread: { turns: [{ id: 'turn-capped', status: 'completed', items }] },
+    }),
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-capped'))
+  await page.goto('/')
+  await expect(page.getByTestId('agent-event-stream')).toHaveAttribute('data-state', 'connected')
+  const staleDelta = {
+    sequence: 20,
+    itemId: 'answer-0',
+    text: 'Stale omitted fragment',
+    kind: 'assistant-text',
+    method: 'item/agentMessage/delta',
+    threadId: 'thread-capped',
+    turnId: 'turn-capped',
+    approvalId: '',
+    rawJson: '{}',
+  }
+  await emitCodexEvent(page, staleDelta)
+  await expect.poll(() => mock.getResumeThreadResponseCount()).toBe(1)
+  await expect(page.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+  await expect(page.getByRole('article', { name: 'Codex response' })).toHaveCount(500)
+  await expect(page.getByText('Stale omitted fragment', { exact: true })).toHaveCount(0)
+  await emitCodexEvent(page, { ...staleDelta, sequence: 25, method: 'item/completed' })
+  await emitCodexEvent(page, { ...staleDelta, sequence: 31, itemId: 'new-answer', text: 'Fresh answer after restore' })
+  await expect(page.getByText('Fresh answer after restore', { exact: true })).toBeVisible()
+  await expect(page.getByText('Stale omitted fragment', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('Restored answer 500', { exact: true })).toBeVisible()
+})
+
 test('reconciles paginated item snapshots while keeping the transcript compact and approvals usable', async ({
   page,
 }) => {

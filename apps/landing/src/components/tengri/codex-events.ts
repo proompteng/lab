@@ -295,11 +295,14 @@ export function reconcileCodexEventsWithRestoredHistory(
   current: CodexBufferedEvent[],
   restoredHistory: ReadonlyMap<string, CodexTranscriptItem>,
   snapshotSequence: number,
+  itemSequences?: ReadonlyMap<string, number>,
 ) {
   return current.reduce<CodexBufferedEvent[]>((next, event) => {
-    if (!event.textSegments) return appendCodexEventAfterRestore(next, event, restoredHistory, snapshotSequence)
+    if (!event.textSegments) {
+      return appendCodexEventAfterRestore(next, event, restoredHistory, snapshotSequence, itemSequences)
+    }
     const restoredItem = restoredHistory.get(event.itemId)
-    const cursor = restoredItem?.eventSequence ?? snapshotSequence
+    const cursor = itemSequences?.get(event.itemId) ?? restoredItem?.eventSequence ?? snapshotSequence
     const segments: CodexTextSegment[] = []
     for (
       let segment: CodexTextSegment | undefined = event.textSegments;
@@ -324,9 +327,10 @@ export function appendCodexEventAfterRestore(
   event: TengriCodexEvent,
   restoredHistory: ReadonlyMap<string, CodexTranscriptItem>,
   snapshotSequence: number,
+  itemSequences?: ReadonlyMap<string, number>,
 ) {
   const restoredItem = restoredHistory.get(event.itemId)
-  const itemSequence = restoredItem?.eventSequence ?? snapshotSequence
+  const itemSequence = itemSequences?.get(event.itemId) ?? restoredItem?.eventSequence ?? snapshotSequence
   if (event.sequence <= itemSequence && !codexEventRequiresReplayAfterRestore(event)) {
     return current
   }

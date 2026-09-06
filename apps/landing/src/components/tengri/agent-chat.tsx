@@ -65,6 +65,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const lastEventSequence = useRef(0)
   const lastTurnLifecycleSequence = useRef(0)
   const restoredHistoryRef = useRef<ReadonlyMap<string, CodexTranscriptItem>>(new Map())
+  const restoredItemSequencesRef = useRef<ReadonlyMap<string, number>>(new Map())
   const restoredHistorySequenceRef = useRef(0)
   const replayRecoveryRef = useRef(false)
   const threadResumeGeneration = useRef(0)
@@ -191,6 +192,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     lastEventSequence.current = 0
     lastTurnLifecycleSequence.current = 0
     restoredHistoryRef.current = new Map()
+    restoredItemSequencesRef.current = new Map()
     restoredHistorySequenceRef.current = 0
     replayRecoveryRef.current = false
     threadResumeGeneration.current += 1
@@ -239,10 +241,12 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       const restored = commitThread(agentId, thread, threadIdRef, setThreadId, setHistoryItems)
       const sequence = thread.eventSequence
       const restoredById = new Map(restored.historyItems.map((item) => [item.id, item]))
+      const itemSequences = new Map(Object.entries(thread.itemEventSequences ?? {}))
       restoredHistoryRef.current = restoredById
+      restoredItemSequencesRef.current = itemSequences
       restoredHistorySequenceRef.current = sequence
       setRestoredHistorySequence(sequence)
-      setEvents((current) => reconcileCodexEventsWithRestoredHistory(current, restoredById, sequence))
+      setEvents((current) => reconcileCodexEventsWithRestoredHistory(current, restoredById, sequence, itemSequences))
       const restoredActiveTurnId = codexReconciledActiveTurnId(restored.activeTurnId, completedTurns.current)
       const activeTurnId = commitActiveTurn ? restoredActiveTurnId : activeTurnIdRef.current
       if (commitActiveTurn) setCurrentActiveTurnId(activeTurnId)
@@ -342,7 +346,13 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         if (!codexLoginCompletionMatches(event, activeLoginId)) return
       }
       setEvents((current) =>
-        appendCodexEventAfterRestore(current, event, restoredHistoryRef.current, restoredHistorySequenceRef.current),
+        appendCodexEventAfterRestore(
+          current,
+          event,
+          restoredHistoryRef.current,
+          restoredHistorySequenceRef.current,
+          restoredItemSequencesRef.current,
+        ),
       )
       if (eventMethod === 'account/login/completed') {
         const completionError = codexLoginCompletionError(event)
@@ -518,6 +528,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     removeStoredThread(agentId)
     threadIdRef.current = ''
     restoredHistoryRef.current = new Map()
+    restoredItemSequencesRef.current = new Map()
     restoredHistorySequenceRef.current = 0
     threadResumeGeneration.current += 1
     setThreadId('')
