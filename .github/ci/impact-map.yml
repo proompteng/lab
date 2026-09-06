@@ -250,6 +250,14 @@ targets:
     paths:
       - apps/froussard/**
 
+  orbit-salvage:
+    kind: delegated
+    workflow: orbit-salvage-ci
+    paths:
+      - apps/orbit-salvage/**
+      - .github/workflows/orbit-salvage-ci.yml
+      - .github/ci/impact-map.yml
+
   golink:
     kind: delegated
     workflow: golink-ci
