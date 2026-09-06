@@ -146,8 +146,8 @@ export function ChromeApp({
   }, [])
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[#101216]" onKeyDownCapture={handleShortcut}>
-      <div className="flex h-9 shrink-0 items-end gap-1 border-b border-white/8 bg-white/[0.025] px-2 pt-1">
+    <div className="flex h-full min-h-0 flex-col bg-zinc-900" onKeyDownCapture={handleShortcut}>
+      <div className="flex h-9 shrink-0 items-end gap-1 bg-zinc-800 px-2 pt-1">
         <div
           aria-label="Browser tabs"
           aria-orientation="horizontal"
@@ -162,8 +162,8 @@ export function ChromeApp({
                 aria-controls={`chrome-panel-${tab.id}`}
                 aria-keyshortcuts="Delete"
                 aria-selected={selected}
-                className={`flex h-8 max-w-52 min-w-32 shrink-0 items-center gap-2 rounded-t-lg px-3 text-xs outline-none focus-visible:ring-2 focus-visible:ring-white/50 ${
-                  selected ? 'bg-[#1b1e25] text-white/85' : 'text-white/55 hover:bg-white/5'
+                className={`flex h-8 max-w-52 min-w-32 shrink-0 items-center gap-2 rounded-t-xl px-3 text-[12px] outline-none focus-visible:ring-2 focus-visible:ring-white/50 ${
+                  selected ? 'bg-[#353535] text-white/85' : 'text-white/55 hover:bg-white/5'
                 }`}
                 id={`chrome-tab-${tab.id}`}
                 key={tab.id}
@@ -225,7 +225,7 @@ export function ChromeApp({
         </button>
       </div>
       <form
-        className="flex h-11 shrink-0 items-center gap-2 border-b border-white/8 bg-[#1b1e25] px-3"
+        className="flex h-11 shrink-0 items-center gap-2 border-b border-white/8 bg-[#353535] px-3"
         onSubmit={(event) => {
           event.preventDefault()
           navigate(address)
@@ -254,14 +254,14 @@ export function ChromeApp({
             <ArrowRight className="h-4 w-4" aria-hidden="true" />
           </ToolbarButton>
         )}
-        <label className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-white/8 bg-black/25 px-3 py-1.5 text-xs shadow-inner focus-within:border-white/16">
+        <label className="flex min-w-0 flex-1 items-center gap-2 rounded-full border border-black/15 bg-zinc-800 px-3 py-1.5 text-xs shadow-inner focus-within:border-white/16">
           <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" />
           <span className="sr-only">Private Tengri address</span>
           <input
             ref={addressRef}
             value={address}
             onChange={(event) => setAddress(event.target.value)}
-            className="min-w-0 flex-1 bg-transparent text-center text-white/66 outline-none focus:text-left"
+            className="min-w-0 flex-1 bg-transparent text-left text-white/80 outline-none focus:text-left"
             aria-label="Address"
             autoCapitalize="none"
             autoComplete="off"
@@ -281,7 +281,7 @@ export function ChromeApp({
           {navigationError}
         </div>
       ) : null}
-      <div className="relative min-h-0 flex-1 bg-[#0e1014]">
+      <div className="relative min-h-0 flex-1 bg-[#202020]">
         {state.tabs.map((tab) => {
           const page = currentChromePage(tab)
           const selected = tab.id === state.activeId
@@ -480,7 +480,7 @@ function PreviewFrame({
       {!loaded ? (
         <div
           role="status"
-          className="absolute inset-0 z-10 flex items-center justify-center gap-2 bg-[#0e1014] text-sm text-white/48"
+          className="absolute inset-0 z-10 flex items-center justify-center gap-2 bg-[#202020] text-sm text-white/48"
         >
           <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" /> Connecting to localhost…
         </div>

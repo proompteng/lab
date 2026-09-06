@@ -990,7 +990,7 @@ class TestLLMDSPyRuntime(TestCase):
             self.assertEqual(
                 init_calls.get("api_base"), "https://jangar.example/openai/v1"
             )
-            self.assertEqual(init_calls.get("model_name"), "openai/gpt-5.6-sol")
+            self.assertEqual(init_calls.get("model_name"), "openai/gpt-6-astra")
         finally:
             self._restore_live_runtime_gate(original_gate)
             settings.jangar_base_url = original_base

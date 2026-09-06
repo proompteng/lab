@@ -250,26 +250,7 @@ const makeRecoveryFirstCycleDriverEffect = (
           ),
       }),
     )
-    const completeLifecycleAdvance = currentUtcInstant.pipe(
-      Effect.flatMap((observedAt) => {
-        const observation: AutonomousCyclePassObservation = {
-          result: 'SUCCESS',
-          observedAt,
-          outcome: 'RECOVERED',
-        }
-        return startup.recordPass(observation).pipe(Effect.as({ observation }))
-      }),
-    )
-    const continueAfterReconciliation =
-      input.lifecycleMaintenance === undefined
-        ? advanceCycle
-        : input.lifecycleMaintenance.afterReconciliation.pipe(
-            Effect.flatMap((disposition) => (disposition === 'CONTINUE' ? advanceCycle : completeLifecycleAdvance)),
-          )
-    const reconciliationPreflight =
-      input.lifecycleMaintenance === undefined
-        ? reconcileMutationBeforeExternallyDrivenAdvance(input, cadence, reconcile)
-        : attemptMutationIdleReconciliation(cadence, reconcile)
+    const reconciliationPreflight = reconcileMutationBeforeExternallyDrivenAdvance(input, cadence, reconcile)
     const runCycleAdvance = reconciliationPreflight.pipe(
       Effect.matchEffect({
         onFailure: (error) =>
@@ -277,19 +258,12 @@ const makeRecoveryFirstCycleDriverEffect = (
             Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
             Effect.map((observation) => ({ observation })),
           ),
-        onSuccess: () => continueAfterReconciliation,
+        onSuccess: () => advanceCycle,
       }),
     )
-    // Restate owns one bounded command. A lifecycle advance may finalize a receipt, so it always performs
-    // a same-command reconciliation rather than reusing the ordinary cadence. Keep that preflight and maintenance in
-    // the aggregate budget so a stalled prerequisite cannot outlive Restate's command window.
-    const lifecycleAdvance =
-      input.lifecycleMaintenance === undefined
-        ? runCycleAdvance
-        : input.lifecycleMaintenance.beforeReconciliation.pipe(Effect.andThen(runCycleAdvance))
     const advance = runRestateAdvanceWithinTimeout(
       operationPermit,
-      lifecycleAdvance,
+      runCycleAdvance,
       cyclePassTimeoutMs,
       observeCycleFailure,
     )

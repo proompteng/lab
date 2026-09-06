@@ -183,7 +183,7 @@ automation must not read it. Confirm the derived public key exactly equals `RELA
 relay member.
 
 The Codex runtime must reach `READY`. If Buzz reports the adapter missing, install the Buzz-supported
-`@zed-industries/codex-acp@0.16.0`. Select Codex as the default harness, `gpt-5.6` when it is advertised, and medium
+`@zed-industries/codex-acp@0.16.0`. Select Codex as the default harness, `gpt-6-astra` when it is advertised, and medium
 reasoning; otherwise retain the runtime's advertised default model.
 
 Before declaring readiness, create normal and private channels, exercise messages/reactions/search across a restart,

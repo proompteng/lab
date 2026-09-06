@@ -26,6 +26,7 @@ const CODEX_EVENT_KINDS = new Set<TengriCodexEventKind>([
   'warning',
   'unknown',
 ])
+const CODEX_ITEM_LIFECYCLE_METHODS = new Set(['item/started', 'item/completed'])
 
 export type CodexTranscriptItem = {
   id: string
@@ -49,6 +50,18 @@ export function appendCodexEvent(current: TengriCodexEvent[], event: TengriCodex
   if (current.some((candidate) => codexEventKey(candidate) === key)) return current
   const eventText = commandOutputDeltaText(event)
 
+  const usageSnapshotKey = authoritativeUsageSnapshotKey(event)
+  const usageSnapshotIndex = usageSnapshotKey
+    ? current.findIndex((candidate) => authoritativeUsageSnapshotKey(candidate) === usageSnapshotKey)
+    : -1
+
+  if (usageSnapshotIndex >= 0) {
+    if (current[usageSnapshotIndex]!.sequence >= event.sequence) return current
+    const next = [...current]
+    next[usageSnapshotIndex] = mergeAuthoritativeUsageSnapshot(current[usageSnapshotIndex]!, event, eventText)
+    return next
+  }
+
   const snapshotMethod = authoritativeTurnSnapshotMethod(event)
   const snapshotIndex = snapshotMethod
     ? current.findIndex(
@@ -65,13 +78,12 @@ export function appendCodexEvent(current: TengriCodexEvent[], event: TengriCodex
     return next
   }
 
-  const itemIndex = event.itemId
+  const itemIdentity = codexEventItemIdentity(event)
+  const itemIndex = itemIdentity
     ? current.findIndex(
         (candidate) =>
-          candidate.itemId === event.itemId &&
-          candidate.threadId === event.threadId &&
-          candidate.kind === event.kind &&
-          (isDeltaEvent(candidate) || isDeltaEvent(event)),
+          codexEventItemIdentity(candidate) === itemIdentity &&
+          (isDeltaEvent(candidate) || isDeltaEvent(event) || isItemLifecycleTransition(candidate, event)),
       )
     : -1
 
@@ -181,6 +193,14 @@ export function codexEventMatchesThread(event: TengriCodexEvent, threadId: strin
   return !event.threadId || event.threadId === threadId
 }
 
+function codexEventIsIndependentOfThreadSnapshot(event: TengriCodexEvent) {
+  return event.kind === 'approval' || event.kind === 'warning' || event.kind === 'error' || event.kind === 'usage'
+}
+
+function codexEventRequiresReplayAfterRestore(event: TengriCodexEvent) {
+  return codexEventIsIndependentOfThreadSnapshot(event) || Boolean(codexResolvedApprovalId(event))
+}
+
 export function codexEventShouldRender(
   event: TengriCodexEvent,
   threadId: string,
@@ -188,7 +208,8 @@ export function codexEventShouldRender(
   restoredHistorySequence = Number.POSITIVE_INFINITY,
 ) {
   if (!codexEventMatchesThread(event, threadId)) return false
-  if (event.kind === 'approval') return true
+  if (codexEventIsIndependentOfThreadSnapshot(event)) return true
+  if (restoredHistorySequence > 0 && event.sequence <= restoredHistorySequence) return false
   return !event.itemId || !restoredItemIds.has(event.itemId) || event.sequence > restoredHistorySequence
 }
 
@@ -231,7 +252,9 @@ export function appendCodexEventAfterRestore(
   snapshotSequence: number,
 ) {
   const restoredItem = restoredHistory.get(event.itemId)
-  if (event.kind !== 'approval' && restoredItem && event.sequence <= snapshotSequence) return current
+  if (event.sequence <= snapshotSequence && !codexEventRequiresReplayAfterRestore(event)) {
+    return current
+  }
   const restoredPrefix =
     restoredItem && codexEventContinuesRestoredItem(event, restoredItem, snapshotSequence) ? restoredItem.text : ''
   return appendCodexEvent(current, event, restoredPrefix)
@@ -855,12 +878,69 @@ function isDeltaEvent(event: TengriCodexEvent) {
   return event.method.toLowerCase().endsWith('delta')
 }
 
+function codexEventItemIdentity(event: TengriCodexEvent) {
+  if (!event.itemId) return ''
+  return JSON.stringify([event.threadId, event.turnId, event.itemId, event.kind])
+}
+
+function isItemLifecycleTransition(previous: TengriCodexEvent, next: TengriCodexEvent) {
+  const previousMethod = previous.method.toLowerCase()
+  const nextMethod = next.method.toLowerCase()
+  return (
+    previousMethod !== nextMethod &&
+    CODEX_ITEM_LIFECYCLE_METHODS.has(previousMethod) &&
+    CODEX_ITEM_LIFECYCLE_METHODS.has(nextMethod)
+  )
+}
+
 function authoritativeTurnSnapshotMethod(event: TengriCodexEvent) {
   if (!event.turnId) return ''
   const method = event.method.toLowerCase()
   if (event.kind === 'plan' && method === 'turn/plan/updated') return method
   if (event.kind === 'file-diff' && method === 'turn/diff/updated') return method
   return ''
+}
+
+function authoritativeUsageSnapshotKey(event: TengriCodexEvent) {
+  if (event.kind !== 'usage') return ''
+  const method = event.method.toLowerCase()
+  if (method.includes('tokenusage')) return `token-usage:${event.threadId}`
+  if (method.includes('ratelimits')) {
+    const params = record(parseRawEvent(event.rawJson).params)
+    const limitId = string(record(params.rateLimits).limitId) || 'codex'
+    return `rate-limits:${limitId}`
+  }
+  return ''
+}
+
+function mergeAuthoritativeUsageSnapshot(previous: TengriCodexEvent, event: TengriCodexEvent, eventText: string) {
+  const next = { ...event, text: truncateEventText(eventText) }
+  if (!event.method.toLowerCase().includes('ratelimits')) return next
+
+  const previousRaw = parseRawEvent(previous.rawJson)
+  const eventRaw = parseRawEvent(event.rawJson)
+  const previousParams = record(previousRaw.params)
+  const eventParams = record(eventRaw.params)
+  const previousRateLimits = record(previousParams.rateLimits)
+  const eventRateLimits = record(eventParams.rateLimits)
+  if (Object.keys(previousRateLimits).length === 0 || Object.keys(eventRateLimits).length === 0) return next
+
+  const mergedRateLimits = { ...previousRateLimits }
+  for (const [key, value] of Object.entries(eventRateLimits)) {
+    if (value !== null && value !== undefined) mergedRateLimits[key] = value
+  }
+  const rawJson = boundedRawJson(
+    JSON.stringify({
+      ...previousRaw,
+      ...eventRaw,
+      params: {
+        ...previousParams,
+        ...eventParams,
+        rateLimits: mergedRateLimits,
+      },
+    }),
+  )
+  return rawJson ? { ...next, rawJson } : next
 }
 
 function isRawReasoningDelta(event: TengriCodexEvent) {

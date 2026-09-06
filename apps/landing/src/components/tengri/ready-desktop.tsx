@@ -1,6 +1,6 @@
 'use client'
 
-import { FileCode2, Folder, LoaderCircle, LogOut, Moon, Settings, SquareTerminal, Trash2 } from 'lucide-react'
+import { LoaderCircle, LogOut, Moon, Trash2 } from 'lucide-react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import {
   useCallback,
@@ -38,6 +38,7 @@ import {
 import { CodeEditor } from './code-editor'
 import { type CodeOpenRequest, updateDirtyCodeWindows } from './code-editor-model'
 import { ConfirmationDialog } from './confirmation-dialog'
+import { DesktopAppIcon } from './desktop-app-icon'
 import { DesktopWindowFrame } from './desktop-window'
 import {
   clearDeletedDesktopState,
@@ -277,7 +278,7 @@ export function ReadyDesktop({
       x: 0,
       y: 0,
       width: rect?.width ?? globalThis.innerWidth,
-      height: rect?.height ?? Math.max(0, globalThis.innerHeight - 30),
+      height: rect?.height ?? Math.max(0, globalThis.innerHeight - 126),
     }
   }, [])
 
@@ -660,9 +661,9 @@ export function ReadyDesktop({
 
   if (!layoutReady) {
     return (
-      <main className="font-inter relative h-[100dvh] min-h-[520px] w-screen overflow-hidden bg-[#050914] text-white">
+      <main className="font-system relative h-[100dvh] min-h-[520px] w-screen overflow-hidden bg-[#142849] text-white">
         <DesktopWallpaper />
-        <div ref={stageRef} className="absolute inset-x-0 top-[30px] bottom-0 grid place-items-center">
+        <div ref={stageRef} className="absolute inset-x-0 top-[30px] bottom-24 grid place-items-center">
           <p className="flex items-center gap-2 text-sm text-white/62" role="status">
             <LoaderCircle aria-hidden="true" className="size-4 animate-spin motion-reduce:animate-none" />
             Restoring desktop…
@@ -677,7 +678,7 @@ export function ReadyDesktop({
       <main
         aria-hidden={confirmOpen || spotlightOpen || undefined}
         inert={confirmOpen || spotlightOpen || undefined}
-        className="font-inter relative h-[100dvh] min-h-[520px] w-screen overflow-hidden bg-[#050914] text-white selection:bg-[#78a9ff]/35"
+        className="font-system relative h-[100dvh] min-h-[520px] w-screen overflow-hidden bg-[#142849] text-white selection:bg-[#78a9ff]/35"
       >
         <DesktopWallpaper />
         <MenuBar
@@ -702,7 +703,7 @@ export function ReadyDesktop({
           userName={user.name}
         />
 
-        <div ref={stageRef} className="absolute inset-x-0 top-[30px] bottom-0 overflow-hidden">
+        <div ref={stageRef} className="absolute inset-x-0 top-[30px] bottom-24 overflow-visible">
           {connectionWarning ? (
             <p
               role="status"
@@ -776,87 +777,78 @@ export function ReadyDesktop({
               )}
             </DesktopWindowFrame>
           ))}
-
-          <div className="pointer-events-none absolute inset-x-0 bottom-3 z-[1500] flex justify-center">
-            <nav
-              aria-label="Dock"
-              className="pointer-events-auto flex h-[72px] items-end gap-2 rounded-[24px] border border-white/20 bg-[rgba(28,33,45,0.5)] px-3 pb-2 shadow-[0_20px_60px_rgba(0,0,0,0.42),inset_0_1px_0_rgba(255,255,255,0.2)] backdrop-blur-3xl"
+        </div>
+        <div className="pointer-events-none absolute inset-x-0 bottom-3 z-[1500] flex justify-center">
+          <nav
+            aria-label="Dock"
+            className="pointer-events-auto flex h-[76px] items-end gap-2.5 rounded-[22px] border border-white/30 bg-zinc-200/20 px-3 pb-1.5 shadow-[0_5px_20px_rgba(0,0,0,0.28),inset_0_0_0_1px_rgba(0,0,0,0.08)] backdrop-blur-2xl backdrop-saturate-150"
+          >
+            <motion.button
+              type="button"
+              aria-label="Open Finder"
+              className="group relative flex flex-col items-center rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-white/80"
+              onClick={() => openFinder()}
+              whileHover={reducedMotion ? undefined : dockHoverAnimation}
+              whileTap={reducedMotion ? undefined : dockTapAnimation}
+              transition={dockTransition}
             >
-              <motion.button
-                type="button"
-                aria-label="Open Finder"
-                className="group relative flex flex-col items-center outline-none"
-                onClick={() => openFinder()}
-                whileHover={reducedMotion ? undefined : dockHoverAnimation}
-                whileTap={reducedMotion ? undefined : dockTapAnimation}
-                transition={dockTransition}
-              >
-                <DockTooltip label="Finder" />
-                <span className="grid h-12 w-12 place-items-center rounded-[13px] border border-white/20 bg-gradient-to-br from-[#69b8ff] to-[#1266ce] shadow-[0_9px_22px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.35)]">
-                  <Folder aria-hidden="true" className="h-7 w-7 fill-white/18 text-white" />
-                </span>
-                <DockIndicator running={finderRunning} />
-              </motion.button>
-              <motion.button
-                type="button"
-                aria-label="Open Chrome"
-                className="group relative flex flex-col items-center outline-none"
-                onClick={openChrome}
-                whileHover={reducedMotion ? undefined : dockHoverAnimation}
-                whileTap={reducedMotion ? undefined : dockTapAnimation}
-                transition={dockTransition}
-              >
-                <DockTooltip label="Chrome" />
-                <ChromeDockIcon />
-                <DockIndicator running={chromeRunning} />
-              </motion.button>
-              <motion.button
-                type="button"
-                aria-label="Open Code"
-                className="group relative flex flex-col items-center outline-none"
-                onClick={() => openCode()}
-                whileHover={reducedMotion ? undefined : dockHoverAnimation}
-                whileTap={reducedMotion ? undefined : dockTapAnimation}
-                transition={dockTransition}
-              >
-                <DockTooltip label="Code" />
-                <span className="grid h-12 w-12 place-items-center rounded-[13px] border border-white/20 bg-gradient-to-br from-[#5f6fff] via-[#775dd8] to-[#312d7d] shadow-[0_9px_22px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.35)]">
-                  <FileCode2 aria-hidden="true" className="h-7 w-7 text-white" />
-                </span>
-                <DockIndicator running={codeRunning} />
-              </motion.button>
-              <motion.button
-                type="button"
-                aria-label="Open Terminal"
-                className="group relative flex flex-col items-center outline-none"
-                onClick={openTerminal}
-                whileHover={reducedMotion ? undefined : dockHoverAnimation}
-                whileTap={reducedMotion ? undefined : dockTapAnimation}
-                transition={dockTransition}
-              >
-                <DockTooltip label="Terminal" />
-                <span className="grid h-12 w-12 place-items-center rounded-[13px] border border-white/20 bg-gradient-to-br from-[#323844] to-[#11141a] shadow-[0_9px_22px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.22)]">
-                  <SquareTerminal aria-hidden="true" className="h-7 w-7 text-white" />
-                </span>
-                <DockIndicator running={terminalRunning} />
-              </motion.button>
-              <motion.button
-                type="button"
-                aria-label="Open Settings"
-                className="group relative flex flex-col items-center outline-none"
-                onClick={openSettings}
-                whileHover={reducedMotion ? undefined : dockHoverAnimation}
-                whileTap={reducedMotion ? undefined : dockTapAnimation}
-                transition={dockTransition}
-              >
-                <DockTooltip label="Settings" />
-                <span className="grid h-12 w-12 place-items-center rounded-[13px] border border-white/20 bg-gradient-to-br from-[#aeb8c8] to-[#596273] shadow-[0_9px_22px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.35)]">
-                  <Settings aria-hidden="true" className="h-7 w-7 text-white" />
-                </span>
-                <DockIndicator running={settingsRunning} />
-              </motion.button>
-            </nav>
-          </div>
+              <DockTooltip label="Finder" />
+              <DesktopAppIcon app="finder" className="size-14" />
+              <DockIndicator running={finderRunning} />
+            </motion.button>
+            <motion.button
+              type="button"
+              aria-label="Open Chrome"
+              className="group relative flex flex-col items-center rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-white/80"
+              onClick={openChrome}
+              whileHover={reducedMotion ? undefined : dockHoverAnimation}
+              whileTap={reducedMotion ? undefined : dockTapAnimation}
+              transition={dockTransition}
+            >
+              <DockTooltip label="Chrome" />
+              <DesktopAppIcon app="chrome" className="size-14" />
+              <DockIndicator running={chromeRunning} />
+            </motion.button>
+            <motion.button
+              type="button"
+              aria-label="Open Code"
+              className="group relative flex flex-col items-center rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-white/80"
+              onClick={() => openCode()}
+              whileHover={reducedMotion ? undefined : dockHoverAnimation}
+              whileTap={reducedMotion ? undefined : dockTapAnimation}
+              transition={dockTransition}
+            >
+              <DockTooltip label="Code" />
+              <DesktopAppIcon app="code" className="size-14" />
+              <DockIndicator running={codeRunning} />
+            </motion.button>
+            <motion.button
+              type="button"
+              aria-label="Open Terminal"
+              className="group relative flex flex-col items-center rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-white/80"
+              onClick={openTerminal}
+              whileHover={reducedMotion ? undefined : dockHoverAnimation}
+              whileTap={reducedMotion ? undefined : dockTapAnimation}
+              transition={dockTransition}
+            >
+              <DockTooltip label="Terminal" />
+              <DesktopAppIcon app="terminal" className="size-14" />
+              <DockIndicator running={terminalRunning} />
+            </motion.button>
+            <motion.button
+              type="button"
+              aria-label="Open Settings"
+              className="group relative flex flex-col items-center rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-white/80"
+              onClick={openSettings}
+              whileHover={reducedMotion ? undefined : dockHoverAnimation}
+              whileTap={reducedMotion ? undefined : dockTapAnimation}
+              transition={dockTransition}
+            >
+              <DockTooltip label="Settings" />
+              <DesktopAppIcon app="settings" className="size-14" />
+              <DockIndicator running={settingsRunning} />
+            </motion.button>
+          </nav>
         </div>
       </main>
 
@@ -910,7 +902,7 @@ function LifecycleTransitionScreen({
         : 'Tengri is closing this authenticated desktop session.'
 
   return (
-    <main className="font-inter relative grid h-[100dvh] min-h-[520px] w-screen place-items-center overflow-hidden bg-[#050914] px-5 text-white">
+    <main className="font-system relative grid h-[100dvh] min-h-[520px] w-screen place-items-center overflow-hidden bg-[#142849] px-5 text-white">
       <DesktopWallpaper />
       <header className="absolute inset-x-0 top-0 z-20 flex h-[30px] items-center border-b border-white/10 bg-[rgba(16,20,31,0.5)] px-4 text-xs font-semibold text-white/90 backdrop-blur-2xl">
         <span className="mr-2">
@@ -945,7 +937,7 @@ function LifecycleTransitionScreen({
 
 function DockTooltip({ label }: { label: string }) {
   return (
-    <span className="pointer-events-none absolute -top-10 rounded-md border border-white/10 bg-black/65 px-2 py-1 text-[10px] text-white opacity-0 backdrop-blur-md transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+    <span className="pointer-events-none absolute -top-11 whitespace-nowrap rounded-lg border border-white/25 bg-zinc-800/80 px-3 py-1 text-[13px] text-white opacity-0 backdrop-blur-md transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
       {label}
     </span>
   )
@@ -953,17 +945,7 @@ function DockTooltip({ label }: { label: string }) {
 
 function DockIndicator({ running }: { running: boolean }) {
   return (
-    <span aria-hidden="true" className={cn('mt-1 h-1 w-1 rounded-full', running ? 'bg-white' : 'bg-transparent')} />
-  )
-}
-
-function ChromeDockIcon() {
-  return (
-    <span className="grid h-12 w-12 place-items-center rounded-[13px] border border-white/20 bg-[conic-gradient(from_210deg,#ef4b45_0_33%,#f4c447_33%_66%,#42b76a_66%_100%)] shadow-[0_9px_22px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.3)]">
-      <span className="grid h-6 w-6 place-items-center rounded-full border-2 border-white/80 bg-[#4f8ee8] shadow-inner">
-        <span className="h-2 w-2 rounded-full bg-white/28" />
-      </span>
-    </span>
+    <span aria-hidden="true" className={cn('mt-1 h-1 w-1 rounded-full', running ? 'bg-white/85' : 'bg-transparent')} />
   )
 }
 
@@ -978,11 +960,10 @@ function isEditableTarget(target: EventTarget | null) {
 
 function DesktopWallpaper() {
   return (
-    <div aria-hidden="true" className="absolute inset-0 overflow-hidden bg-[#07101d]">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_24%_18%,rgba(57,128,206,0.34),transparent_34%),radial-gradient(circle_at_75%_72%,rgba(116,79,196,0.28),transparent_40%),linear-gradient(145deg,#07111f_0%,#12182c_48%,#0b0918_100%)]" />
-      <div className="absolute top-[-22%] left-[14%] h-[74%] w-[66%] -rotate-12 rounded-[50%] bg-[linear-gradient(115deg,rgba(96,179,255,0.16),rgba(115,82,220,0.05))] blur-3xl" />
-      <div className="absolute inset-0 opacity-20 [background-size:56px_56px] [background-image:linear-gradient(rgba(255,255,255,.018)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.018)_1px,transparent_1px)]" />
-    </div>
+    <div
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-0 bg-[#142849] bg-[url('/tengri-wallpaper.svg')] bg-cover bg-center"
+    />
   )
 }
 

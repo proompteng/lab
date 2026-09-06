@@ -99,13 +99,11 @@ export interface CapitalGrantLifecycleStoreShape {
    * Atomically derives a reconciliation-bound research generation, records it, and activates execution authority. The
    * static request intentionally cannot predict this generation hash because reconciliation continues until the
    * activation transaction acquires its fence. The source hash is the durable OBSERVE generation validated by the
-   * caller and is checked again under the activation transaction lock. The immutable request cutoff is also checked
-   * against the transaction-scoped activation instant immediately before any authority history/state write.
+   * caller and is checked again under the activation transaction lock.
    */
   readonly activateResearchCapitalGrant: (
     proof: ResearchCapitalGrantProofBinding,
     sourceGenerationHash: string,
-    cutoffAt: string,
   ) => Effect.Effect<AuthorityState, ExecutionStoreError>
 }
 

@@ -27,6 +27,11 @@
     font-family: var(--font-inter, 'Inter'), Inter, ui-sans-serif, sans-serif;
   }
 
+  .font-system {
+    font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
   .animate-hero-glow {
     animation: hero-glow 18s ease-in-out infinite;
   }
