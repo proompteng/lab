@@ -67,7 +67,7 @@ compilation and doctests use the bundled architecture-specific `rust-lld` and mi
 atomically generated wrappers. Go uses the bundled target-platform GCC and sysroot with CGO enabled by default. Rust,
 C, and CGO projects therefore build without `apt`, `sudo`, or any mutation of the read-only guest rootfs.
 
-On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.149.0 package from the npm registry,
+On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.153.4 package from the npm registry,
 verifies its pinned SHA-512 digest, and atomically installs the complete native package under the 16 GiB PVC-backed
 `~/.tengri/codex` directory. Subsequent boots reuse that verified install. Nanoagent does not become ready until the
 Codex app server is available, and the `MicroVM` startup probe allows fifteen minutes for the sequential toolchain and

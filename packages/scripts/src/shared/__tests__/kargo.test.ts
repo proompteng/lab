@@ -303,6 +303,7 @@ const expected = {
       'services/jangar',
       'services/bumba',
       'nix/images/jangar.nix',
+      'nix/images/openai-codex-cli.nix',
       '.github/workflows/nix-oci-build-common.yml',
       'packages/scripts/src/shared/oci.ts',
       '.github/workflows/jangar-post-deploy-verify.yml',
@@ -317,6 +318,7 @@ const expected = {
     includePaths: [
       'services/symphony',
       'nix/images/symphony.nix',
+      'nix/images/openai-codex-cli.nix',
       '.github/workflows/nix-oci-build-common.yml',
       'packages/scripts/src/shared/oci.ts',
       '.github/workflows/symphony-post-deploy-verify.yml',
