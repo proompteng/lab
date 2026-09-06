@@ -174,6 +174,12 @@ function appendWindow(state: WindowManagerState, app: TengriApp, title: string, 
 function focusWindow(state: WindowManagerState, id: string, restore = false, viewport?: Bounds): WindowManagerState {
   const target = state.windows.find((window) => window.id === id)
   if (!target) return state
+  if (
+    !restore &&
+    state.activeWindowId === id &&
+    state.windows.every((window) => window.id === id || window.mode === 'minimized' || window.z < target.z)
+  )
+    return state
   const restoredBounds = restore && viewport ? fitToViewport(target.restoredBounds, viewport) : target.bounds
   return {
     ...state,
