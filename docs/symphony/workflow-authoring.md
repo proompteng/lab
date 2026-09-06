@@ -35,6 +35,7 @@ Workflow authors should assume Symphony validates only the scheduler-critical fi
 - tracker kind and credentials
 - project slug
 - Codex command presence
+- optional Codex model, defaulting to `gpt-6-astra`
 - YAML/front matter structure
 
 Everything else should still be written defensively in the prompt and hooks.

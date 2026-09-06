@@ -288,6 +288,7 @@ export const makeIssueRunnerLayer = (logger: Logger) =>
 
                 const session = yield* codexSessions.createSession({
                   command: config.codex.command,
+                  model: config.codex.model,
                   cwd: workspaceInfo.path,
                   approvalPolicy: config.codex.approvalPolicy,
                   threadSandbox: config.codex.threadSandbox,

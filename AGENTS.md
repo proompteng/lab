@@ -14,8 +14,10 @@ the task.
 - Authorization persists across turns. In-scope delivery includes local changes and validation, commits, pushes,
   PR creation, CI and review fixes, merge after required gates pass, normal CI/CD and GitOps rollout, and live
   acceptance. Do not request approval again merely because an authorized step writes to an external system.
-- Ask before actions outside the authorized scope, unrequested destructive actions, purchases, or credential and
-  permission changes. Prepare the concrete change and validation first so approval concerns the remaining action.
+- Ask before actions outside the authorized scope, unrequested destructive actions, purchases, or changes to
+  credential identity, destinations, or permissions. An authorized rollout includes renewing an expired credential
+  for the same verified account through its existing secret-sync path. Prepare changes and validation first so any
+  required approval concerns the remaining action.
 - Carry the task through the authorized endpoint. Distinguish local implementation, PR readiness, merge, and
   deployment in status reports, and preserve their respective review, CI, ownership, and acceptance requirements.
 - Incorporate corrections without dropping unfinished requirements. Answer side questions and resume the task unless
