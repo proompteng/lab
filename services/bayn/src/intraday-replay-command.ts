@@ -112,7 +112,8 @@ const main = Effect.gen(function* () {
 })
 
 const program = main.pipe(
+  Effect.tapCause((cause) => Effect.logError(cause)),
   // @effect-diagnostics-next-line strictEffectProvide:off -- command entry point owns the platform runtime
   Effect.provide(Layer.mergeAll(NodeServices.layer, Logger.layer([Logger.withConsoleError(Logger.formatJson)]))),
 )
-if (import.meta.main) NodeRuntime.runMain(program)
+if (import.meta.main) NodeRuntime.runMain(program, { disableErrorReporting: true })
