@@ -2197,11 +2197,18 @@ test('matches the Tahoe desktop at required production viewports', async ({ page
   await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
   await expect(page.getByTestId('agent-event-stream')).toHaveAttribute('data-state', 'connected')
   await expect(page.getByRole('button', { name: 'Open Next.js Dev Tools' })).toHaveCount(0)
+  const dockIcons = page.getByRole('navigation', { name: 'Dock' }).locator('img')
+  await expect(dockIcons).toHaveCount(5)
+  for (const icon of await dockIcons.all()) {
+    await expect.poll(() => icon.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0)
+    await expect(icon).toHaveAttribute('draggable', 'false')
+  }
   await expect.poll(async () => (await page.getByRole('region', { name: 'Finder window' }).boundingBox())?.x).toBe(212)
 
   await expect(page).toHaveScreenshot('tengri-desktop-1440x900.png', {
     fullPage: true,
   })
+  await page.getByRole('navigation', { name: 'Dock' }).screenshot({ path: test.info().outputPath('tengri-dock.png') })
 
   await page.evaluate(() => sessionStorage.clear())
   await page.setViewportSize({ width: 1728, height: 1117 })
