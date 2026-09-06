@@ -85,7 +85,7 @@ const makeArchive = (options: { readonly snapshot?: SnapshotFactory; readonly fa
     return Effect.succeed(
       Object.values(protocol.sourceTopics)
         .sort()
-        .map((sourceTopic) => ({ sourceTopic, sourcePartition: 0, inclusiveLastOffset: '100' })),
+        .map((sourceTopic) => ({ sourceTopic, sourcePartition: 0, inclusiveLastOffset: '1000' })),
     )
   }
   const loadSnapshot = (request: IntradaySnapshotRequest) => {
@@ -158,6 +158,86 @@ const entryAndCloseSnapshot: SnapshotFactory = (request, phase, occurrence) => {
 }
 
 describe('intraday replay program', () => {
+  test('replays an eligible candidate through fills while another candidate lacks a trade', async () => {
+    const archive = makeArchive({
+      snapshot: (request, phase) => {
+        const snapshot = snapshotFor(request, phase === 'decision' ? { AAPL: 0.02, AMZN: 0.01 } : {})
+        if (phase !== 'decision') return snapshot
+        const rows = Result.getOrThrow(
+          persistIntradaySnapshotRows({
+            ...snapshot,
+            trades: snapshot.trades.filter((trade) => trade.symbol !== 'AAPL'),
+          }),
+        )
+        return Result.getOrThrow(
+          verifyIntradaySnapshot(request, {
+            ...rows,
+            archiveWatermarks: request.archiveWatermarks.map((watermark) => ({
+              source_topic: watermark.sourceTopic,
+              source_partition: watermark.sourcePartition,
+              inclusive_last_offset: watermark.inclusiveLastOffset,
+            })),
+          }),
+        ) as ArchiveVerifiedIntradayMarketSnapshot
+      },
+    })
+    const report = await run(replayInput([sessionDates[0]]), archive)
+    const session = report.sessions[0]
+    expect(session?.status).toBe('COMPLETE')
+    expect(session?.fills.map(({ symbol, side }) => ({ symbol, side }))).toEqual([
+      { symbol: 'AMZN', side: 'buy' },
+      { symbol: 'AMZN', side: 'sell' },
+    ])
+    const observed = session?.observations.find(
+      (observation) => observation.kind === 'snapshot' && observation.purpose === 'decision',
+    )
+    expect(observed).toMatchObject({
+      manifest: { candidateExclusions: [{ symbol: 'AAPL', reason: 'not-ready' }] },
+      decision: { selectedSymbols: ['AMZN'], excludedCandidates: [{ symbol: 'AAPL' }] },
+    })
+    expect(
+      archive.requests
+        .filter((request) => request.purpose !== undefined)
+        .every((request) => request.symbols?.length === 1 && request.symbols[0] === 'AMZN'),
+    ).toBe(true)
+  })
+
+  test('retains all unavailable candidates without reporting a valid no-trade session', async () => {
+    const archive = makeArchive({
+      snapshot: (request) => {
+        const snapshot = snapshotFor(request)
+        const rows = Result.getOrThrow(
+          persistIntradaySnapshotRows({
+            ...snapshot,
+            trades: snapshot.trades.filter((trade) => trade.symbol === protocol.benchmarkSymbol),
+          }),
+        )
+        return Result.getOrThrow(
+          verifyIntradaySnapshot(request, {
+            ...rows,
+            archiveWatermarks: request.archiveWatermarks.map((watermark) => ({
+              source_topic: watermark.sourceTopic,
+              source_partition: watermark.sourcePartition,
+              inclusive_last_offset: watermark.inclusiveLastOffset,
+            })),
+          }),
+        ) as ArchiveVerifiedIntradayMarketSnapshot
+      },
+    })
+    const report = await run(replayInput([sessionDates[0]]), archive)
+    const session = report.sessions[0]
+    expect(session).toMatchObject({ status: 'INCOMPLETE', fills: [], orders: [], netRealizedPnlAfterCostsMicros: null })
+    const observations = session?.observations.filter((observation) => observation.kind === 'snapshot') ?? []
+    expect(observations.length).toBeGreaterThan(1)
+    for (const observation of observations) {
+      if (observation.kind !== 'snapshot') throw new Error('expected a retained snapshot')
+      expect(observation.decision?.excludedCandidates?.map(({ symbol }) => symbol)).toEqual([
+        ...protocol.candidateSymbols,
+      ])
+      expect(observation.decision?.signals).toEqual([])
+    }
+  })
+
   test('uses the planned entry limit and arrival quote without lookahead', async () => {
     const archive = makeArchive({
       snapshot: (request, phase, occurrence) => {
@@ -536,7 +616,7 @@ describe('intraday replay program', () => {
     }
   })
 
-  test('rejects a late finalized bar until a recaptured rolling window excludes it', async () => {
+  test('excludes a candidate with a late finalized bar until a recaptured rolling window becomes valid', async () => {
     const archive = makeArchive()
     const captures: IntradaySnapshotQuery[] = []
     const verifiedWindows: IntradaySnapshotRequest[] = []
@@ -595,16 +675,16 @@ describe('intraday replay program', () => {
     )
     const session = report.sessions[0]
     expect(session?.observations.slice(0, 2)).toMatchObject([
-      { kind: 'unavailable', observedAt: '2026-09-04T14:30:02.000Z', reason: 'freshness', retryable: true },
-      { kind: 'unavailable', observedAt: '2026-09-04T14:30:32.000Z', reason: 'freshness', retryable: true },
+      { kind: 'snapshot', decision: { excludedCandidates: [{ symbol: 'AAPL', reason: 'freshness' }] } },
+      { kind: 'snapshot', decision: { excludedCandidates: [{ symbol: 'AAPL', reason: 'freshness' }] } },
     ])
     expect(captures.slice(0, 3).map(({ rangeStartAt }) => rangeStartAt)).toEqual([
       '2026-09-04T14:00:00.000Z',
       '2026-09-04T14:00:00.000Z',
       '2026-09-04T14:01:00.000Z',
     ])
-    expect(verifiedWindows).toHaveLength(1)
-    expect(verifiedWindows[0]?.observedAt).toBe('2026-09-04T14:31:02.000Z')
+    expect(verifiedWindows).toHaveLength(3)
+    expect(verifiedWindows[2]?.observedAt).toBe('2026-09-04T14:31:02.000Z')
     expect(session?.orders[0]?.submittedAt).toBe('2026-09-04T14:31:02.000Z')
     expect(session?.status).toBe('COMPLETE')
   })

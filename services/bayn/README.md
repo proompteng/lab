@@ -16,18 +16,28 @@ elapsed 30-minute IEX window. It compares AAPL, AMZN, IWM, NVDA, QQQ, and SMH ag
 - at least 10 basis points of excess momentum;
 - a top-quartile location in the rolling range;
 - a spread no wider than 5 basis points; and
-- complete bars plus fresh executable quotes and trades.
+- valid rolling-bar evidence plus fresh executable quotes and trades.
 
 The strategy selects at most one long position and caps it at 10% of the mandate allocation. A valid `NO_TRADE` is a
-normal decision; absent or late market data is a lifecycle blocker, not a strategy result. New entries use whole-share
+normal decision; unavailable mandatory evidence blocks evaluation. New entries use whole-share
 IOC limit orders at an adverse verified quote boundary. Bayn starts flattening 30 minutes before the close and must be
 flat 15 minutes before the close.
 
-Quotes, trades, and finalized bars ingested beyond their declared delay limits remain invalid. Entry and flattening
-wait for a subsequently captured, fully verified snapshot within their existing deadlines. An invalid historical bar
-remains invalid while it is in the rolling window; waiting only helps once a compliant window is available. Premature
-feed evidence, non-final bars, and unclassified freshness violations remain errors. Historical replay uses the same
-retry classification and retains every rejected observation.
+Entry observations evaluate candidate availability independently. Missing or late candidate bars, quotes, or trades
+exclude that candidate with an explicit reason while other candidates remain eligible for evaluation. SPY is the
+mandatory benchmark. Source identity, canonical ordering, watermarks, finality, and premature data still fail the
+whole observation. Raw candidate rows and their exclusions remain in the hashed snapshot for revalidation.
+
+The v3 strategy target records measured signals separately from excluded candidates. Measured signals retain their
+threshold rejections and selection rank; eligible candidates outside the position limit remain visible. An observation
+with every candidate excluded remains unavailable and cannot establish a valid `NO_TRADE`. Execution pricing requires
+fresh quotes for positive targets and reconciled holdings. Legacy v2 targets remain readable for audit.
+
+Quotes, trades, and finalized bars ingested beyond their declared delay limits remain invalid. Candidate exclusion
+does not relax those limits. Required benchmark and execution evidence must become available within the existing
+deadlines. An invalid historical bar remains invalid while it is in the rolling window; waiting only helps once a
+compliant window is available. Premature feed evidence, non-final bars, and unclassified freshness violations remain
+errors. Historical replay uses the same candidate evaluation and retains every rejected observation.
 
 The protocol, universe, thresholds, feed contract, and execution model are source-controlled TypeScript. The image
 embeds and verifies the source revision and the behavior, parameter, protocol, and risk-policy hashes.

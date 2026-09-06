@@ -794,7 +794,29 @@ const compileObserveStrategyDecision = <R>(
             }),
       ),
     )
-    const pricingSymbols = [...new Set([...Object.keys(decision.targetWeights), ...heldSymbols])].sort()
+    yield* Effect.logInfo({
+      event: 'bayn.intraday-candidate-observation.v1',
+      cycleId: input.cycle.identity.cycleId,
+      authorityGenerationHash: input.authorityGenerationHash,
+      observedAt: facts.evaluatedAt,
+      manifest: decisionSnapshot.manifest,
+      decision,
+    })
+    if (decision.signals.length === 0 && heldPositions.length === 0) {
+      return yield* new ObserveDecisionAwaitingSignal({
+        message: 'intraday entry is waiting for at least one available candidate signal',
+        observedAt: facts.evaluatedAt,
+        submissionCutoffAt: input.cycle.window.submissionCutoffAt,
+      })
+    }
+    const pricingSymbols = [
+      ...new Set([
+        ...Object.entries(decision.targetWeights)
+          .filter(([, targetWeight]) => targetWeight > 0)
+          .map(([symbol]) => symbol),
+        ...heldSymbols,
+      ]),
+    ].sort()
     const pricingSnapshot =
       pricingSymbols.length === 0
         ? decisionSnapshot
