@@ -572,6 +572,7 @@ printf '%s\\n' "$@"
         name: 'repo_session_open',
         arguments: { name: 'session-test' },
       })
+
       expect(opened.isError).not.toBe(true)
       const session = opened.structuredContent as {
         sessionId: string
@@ -635,6 +636,95 @@ printf '%s\\n' "$@"
       })
       expect(closed.isError).not.toBe(true)
       expect((closed.structuredContent as { closedAt?: string }).closedAt).toEqual(expect.any(String))
+    } finally {
+      await clientTransport.close()
+      await serverTransport.close()
+      await client.close()
+      await server.close()
+    }
+  })
+
+  it('restores repo sessions after the agents-shell runner restarts', async () => {
+    const config = makeConfig()
+    const baseSha = initializeRepoFixture(config)
+    const first = await connectServer(config)
+    let sessionId = ''
+
+    try {
+      const opened = await first.client.callTool({
+        name: 'repo_session_open',
+        arguments: { name: 'restart-test' },
+      })
+      const session = opened.structuredContent as { sessionId?: string; baseSha?: string }
+      sessionId = session.sessionId ?? ''
+      expect(sessionId).not.toBe('')
+      expect(session.baseSha).toBe(baseSha)
+    } finally {
+      await first.clientTransport.close()
+      await first.serverTransport.close()
+      await first.client.close()
+      await first.server.close()
+    }
+
+    const second = await connectServer(config)
+    try {
+      const status = await second.client.callTool({
+        name: 'repo_session_status',
+        arguments: { sessionId },
+      })
+      expect(status.isError).not.toBe(true)
+      expect(status.structuredContent as { sessionId?: string; baseSha?: string }).toMatchObject({
+        sessionId,
+        baseSha,
+      })
+
+      const closed = await second.client.callTool({
+        name: 'repo_session_close',
+        arguments: { sessionId },
+      })
+      expect(closed.isError).not.toBe(true)
+    } finally {
+      await second.clientTransport.close()
+      await second.serverTransport.close()
+      await second.client.close()
+      await second.server.close()
+    }
+  })
+
+  it('waits for stubborn session jobs to terminate before forced close', async () => {
+    const config = makeConfig()
+    initializeRepoFixture(config)
+    const { client, server, clientTransport, serverTransport } = await connectServer(config)
+
+    try {
+      const opened = await client.callTool({
+        name: 'repo_session_open',
+        arguments: { name: 'forced-close-test' },
+      })
+      const sessionId = (opened.structuredContent as { sessionId: string }).sessionId
+      const started = await client.callTool({
+        name: 'shell_start',
+        arguments: {
+          sessionId,
+          command: "trap '' TERM; while :; do sleep 1; done",
+          timeoutSeconds: 30,
+        },
+      })
+      const jobId = (started.structuredContent as { jobId: string }).jobId
+
+      const closed = await client.callTool({
+        name: 'repo_session_close',
+        arguments: { sessionId, force: true },
+      })
+      expect(closed.isError).not.toBe(true)
+
+      const job = await client.callTool({ name: 'shell_read', arguments: { jobId } })
+      expect(job.structuredContent).toMatchObject({
+        jobId,
+        status: 'killed',
+        finishedAt: expect.any(String),
+      })
+      expect((job.structuredContent as { signal?: string }).signal).toBe('SIGKILL')
     } finally {
       await clientTransport.close()
       await serverTransport.close()

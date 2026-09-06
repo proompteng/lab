@@ -17,11 +17,12 @@ import { isInsidePath, resolveExistingDirectory } from './workspace-policy'
 export class AgentsShellRunner {
   readonly config: AgentsShellConfig
   readonly jobs = new ShellJobStore()
-  readonly repoSessions = new RepoSessionStore()
+  readonly repoSessions: RepoSessionStore
 
   constructor(config: AgentsShellConfig) {
     this.config = config
     mkdirSync(resolve(config.workspaceRoot), { recursive: true })
+    this.repoSessions = new RepoSessionStore(config.workspaceRoot)
   }
 
   parseCommandInput(
@@ -111,13 +112,25 @@ export class AgentsShellRunner {
     })
     if (!add.ok) throw new Error(`failed to create repo session worktree: ${add.stderr || add.stdout}`)
 
-    const session = this.repoSessions.set({
-      ...identity,
-      ownerSubject: auth.subject,
-      baseBranch,
-      baseSha,
-      createdAt: new Date().toISOString(),
-    })
+    let session
+    try {
+      session = this.repoSessions.set({
+        ...identity,
+        ownerSubject: auth.subject,
+        baseBranch,
+        baseSha,
+        createdAt: new Date().toISOString(),
+      })
+    } catch (error) {
+      await this.runProcess({
+        command: 'git',
+        args: ['worktree', 'remove', '--force', identity.worktree],
+        cwd: seed,
+        auth,
+        auditEvent: 'repo_session_persist_rollback',
+      })
+      throw error
+    }
     this.audit('repo_session_opened', auth, {
       sessionId: session.id,
       branch: session.branch,
@@ -175,12 +188,12 @@ export class AgentsShellRunner {
       throw new Error(`repo session has uncommitted changes; clean it or close with force: ${args.sessionId}`)
     }
     const session = this.repoSessions.require(args.sessionId, auth)
-    const runningJobs = this.runningJobs().filter((job) => isInsidePath(session.worktree, job.cwd))
-    if (runningJobs.length > 0 && !args.force) {
+    const activeJobs = this.runningJobs().filter((job) => isInsidePath(session.worktree, job.cwd))
+    if (activeJobs.length > 0 && !args.force) {
       throw new Error(`repo session has running shell jobs; stop them or close with force: ${args.sessionId}`)
     }
     if (args.force) {
-      for (const job of runningJobs) this.kill(job.id, auth)
+      await Promise.all(activeJobs.map((job) => this.terminateJob(job, auth)))
     }
     const remove = await this.runProcess({
       command: 'git',
@@ -201,7 +214,7 @@ export class AgentsShellRunner {
   }
 
   runningJobs() {
-    return Array.from(this.jobs.values()).filter((job) => job.status === 'running')
+    return Array.from(this.jobs.values()).filter((job) => job.finishedAt === null)
   }
 
   start(input: CommandInput, auth: AuthContext): ShellJob {
@@ -287,7 +300,7 @@ export class AgentsShellRunner {
 
   kill(jobId: string, auth: AuthContext, signal = 'SIGTERM') {
     const job = this.requireJob(jobId)
-    if (job.status !== 'running') return job
+    if (job.finishedAt !== null) return job
     const killed = this.killProcessGroup(job, signal)
     if (killed) {
       job.status = 'killed'
@@ -295,6 +308,35 @@ export class AgentsShellRunner {
       this.audit('shell_job_killed', auth, { jobId: job.id, signal })
     }
     return job
+  }
+
+  private waitForJobClose(job: ShellJob, timeoutMs: number) {
+    if (job.finishedAt !== null) return Promise.resolve(true)
+    return new Promise<boolean>((resolvePromise) => {
+      let settled = false
+      const finish = (closed: boolean) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timeout)
+        job.process.off('close', onClose)
+        resolvePromise(closed)
+      }
+      const onClose = () => finish(true)
+      const timeout = setTimeout(() => finish(false), timeoutMs)
+      job.process.once('close', onClose)
+    })
+  }
+
+  private async terminateJob(job: ShellJob, auth: AuthContext) {
+    if (job.finishedAt !== null) return
+    this.kill(job.id, auth, 'SIGTERM')
+    if (await this.waitForJobClose(job, 1_000)) return
+
+    this.audit('shell_job_kill_escalated', auth, { jobId: job.id, signal: 'SIGKILL' })
+    this.killProcessGroup(job, 'SIGKILL')
+    if (!(await this.waitForJobClose(job, 1_000))) {
+      throw new Error(`shell job did not terminate after SIGKILL: ${job.id}`)
+    }
   }
 
   requireJob(jobId: string) {

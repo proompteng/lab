@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto'
-import { resolve } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 
 import type { AuthContext } from './auth'
+import { isInsidePath } from './workspace-policy'
 
 export type RepoSession = {
   id: string
@@ -33,8 +35,58 @@ export const createRepoSessionIdentity = (workspaceRoot: string, name?: string |
 
 export class RepoSessionStore {
   private readonly sessions = new Map<string, RepoSession>()
+  private readonly metadataRoot: string
+  private readonly worktreeRoot: string
+
+  constructor(workspaceRoot: string) {
+    this.metadataRoot = resolve(workspaceRoot, '.agents-shell', 'repo-sessions')
+    this.worktreeRoot = resolve(workspaceRoot, 'worktrees', 'lab')
+    mkdirSync(this.metadataRoot, { recursive: true })
+    this.loadPersistedSessions()
+  }
+
+  private metadataPath(sessionId: string) {
+    return join(this.metadataRoot, `${sessionId}.json`)
+  }
+
+  private parsePersistedSession(value: unknown): RepoSession | null {
+    if (typeof value !== 'object' || value === null) return null
+    const record = value as Record<string, unknown>
+    const fields = ['id', 'ownerSubject', 'baseBranch', 'baseSha', 'branch', 'worktree', 'createdAt'] as const
+    if (fields.some((field) => typeof record[field] !== 'string' || record[field].length === 0)) return null
+    const session = record as RepoSession
+    const expectedMetadataPath = this.metadataPath(session.id)
+    if (!isInsidePath(this.metadataRoot, expectedMetadataPath)) return null
+    if (!isInsidePath(this.worktreeRoot, resolve(session.worktree))) return null
+    return session
+  }
+
+  private loadPersistedSessions() {
+    for (const entry of readdirSync(this.metadataRoot, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith('.json')) continue
+      const path = join(this.metadataRoot, entry.name)
+      try {
+        const session = this.parsePersistedSession(JSON.parse(readFileSync(path, 'utf8')))
+        if (!session || !existsSync(session.worktree)) {
+          unlinkSync(path)
+          continue
+        }
+        this.sessions.set(session.id, session)
+      } catch (error) {
+        console.warn('[agents-shell] ignoring invalid persisted repo session', { path, error: String(error) })
+      }
+    }
+  }
+
+  private persist(session: RepoSession) {
+    const path = this.metadataPath(session.id)
+    const temporaryPath = `${path}.${randomUUID()}.tmp`
+    writeFileSync(temporaryPath, `${JSON.stringify(session)}\n`, { mode: 0o600 })
+    renameSync(temporaryPath, path)
+  }
 
   set(session: RepoSession) {
+    this.persist(session)
     this.sessions.set(session.id, session)
     return session
   }
@@ -47,6 +99,12 @@ export class RepoSessionStore {
   }
 
   delete(sessionId: string) {
-    return this.sessions.delete(sessionId)
+    const deleted = this.sessions.delete(sessionId)
+    try {
+      unlinkSync(this.metadataPath(sessionId))
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+    return deleted
   }
 }
