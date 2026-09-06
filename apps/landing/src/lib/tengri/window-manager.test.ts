@@ -26,6 +26,23 @@ describe('Tengri desktop window manager', () => {
     expect(state.activeApp).toBe('chrome')
   })
 
+  test('preserves zoom and normal geometry through minimize, hydration, and app switching', () => {
+    let state = initialWindowState(viewport)
+    const id = state.activeWindowId
+    const normalBounds = state.windows.find((window) => window.id === id)!.bounds
+    state = windowReducer(state, { type: 'toggle-maximize', id, viewport })
+    const zoomedBounds = state.windows.find((window) => window.id === id)!.bounds
+    state = windowReducer(state, { type: 'minimize', id })
+    state = windowReducer(state, { type: 'hydrate', state, viewport })
+    state = windowReducer(state, { type: 'open', app: 'chrome', title: 'Chrome', viewport })
+    expect(state.windows.find((window) => window.id === id)).toMatchObject({ mode: 'maximized', bounds: zoomedBounds })
+    state = windowReducer(state, { type: 'focus', id: 'finder-1' })
+    state = windowReducer(state, { type: 'restore', id, viewport })
+    expect(state.windows.find((window) => window.id === id)).toMatchObject({ mode: 'maximized', bounds: zoomedBounds })
+    state = windowReducer(state, { type: 'toggle-maximize', id, viewport })
+    expect(state.windows.find((window) => window.id === id)).toMatchObject({ mode: 'normal', bounds: normalBounds })
+  })
+
   test('raises a restored active window when persisted stacking order puts another window above it', () => {
     const persisted = initialWindowState(viewport)
     persisted.activeWindowId = 'finder-1'
@@ -198,7 +215,7 @@ describe('Tengri desktop window manager', () => {
     const minimized = {
       ...persisted,
       windows: persisted.windows.map((window) =>
-        window.id === chrome.id ? { ...window, mode: 'minimized' as const } : window,
+        window.id === chrome.id ? { ...window, mode: 'minimized' as const, minimizedMode: 'normal' as const } : window,
       ),
     }
     const restored = windowReducer(minimized, { type: 'restore', id: chrome.id, viewport: usableViewport })
@@ -251,14 +268,18 @@ describe('Tengri desktop window manager', () => {
     expect(state.activeWindowId).toBe('')
   })
 
-  test('restores original bounds after minimizing a maximized window', () => {
+  test('retains original bounds for unzooming after minimizing a maximized window', () => {
     let state = initialWindowState(viewport)
     const id = state.activeWindowId
     const original = state.windows.find((window) => window.id === id)?.bounds
     state = windowReducer(state, { type: 'toggle-maximize', id, viewport })
     state = windowReducer(state, { type: 'minimize', id })
     state = windowReducer(state, { type: 'restore', id, viewport })
-
+    expect(state.windows.find((window) => window.id === id)).toMatchObject({
+      restoredBounds: original,
+      mode: 'maximized',
+    })
+    state = windowReducer(state, { type: 'toggle-maximize', id, viewport })
     expect(state.windows.find((window) => window.id === id)).toMatchObject({ bounds: original, mode: 'normal' })
   })
 
@@ -418,7 +439,11 @@ describe('Tengri desktop window manager', () => {
   })
 
   test('server-renders a minimized frame without browser globals', () => {
-    const minimized = { ...initialWindowState(viewport).windows[0]!, mode: 'minimized' as const }
+    const minimized = {
+      ...initialWindowState(viewport).windows[0]!,
+      mode: 'minimized' as const,
+      minimizedMode: 'normal' as const,
+    }
     const frame = createElement(DesktopWindowFrame, {
       active: false,
       children: createElement('div'),
