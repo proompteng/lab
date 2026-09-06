@@ -174,10 +174,14 @@ the verified snapshot manifests, data failures, orders, fills, and accounting. A
 null whenever any declared date is incomplete. Winning/losing counts describe completed independent experiments only;
 they are not a win/loss rate over the whole calendar. Zero fills are reported explicitly and do not establish an edge. All
 results remain research-only and cannot change broker or capital authority. Progress is JSON on stderr; stdout contains
-one complete JSON report. Neither the study nor the normal replay consumes or commits a Kafka consumer-group offset.
+one complete JSON report. Add `--output-directory <new-directory>` to atomically save each completed session's full
+report and frozen study/plan identity before starting the next session. The directory must not exist and its parent
+must exist; existing evidence is never overwritten. These files survive interruption but are not a completed study
+or a resume cache. Neither the study nor the normal replay consumes or commits a Kafka consumer-group offset.
 
 ```sh
-node services/bayn/dist/intraday-replay-command.js --study archive-study.json > archive-study-report.json
+node services/bayn/dist/intraday-replay-command.js --study archive-study.json \
+  --output-directory archive-study-sessions > archive-study-report.json
 ```
 
 ## Vendor historical research

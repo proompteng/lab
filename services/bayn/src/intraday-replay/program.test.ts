@@ -336,6 +336,90 @@ describe('intraday replay program', () => {
     )
   })
 
+  test('rejects a stale holding mark while retaining the attempted close', async () => {
+    const archive = makeArchive({
+      snapshot: (request, phase, occurrence) => {
+        if (phase === 'decision') return snapshotFor(request, { AAPL: 0.01 })
+        if (phase === 'entry-pricing') {
+          if (occurrence < 2) return snapshotFor(request)
+          const snapshot = snapshotFor(request)
+          const quote = snapshot.latestQuotes['AAPL']
+          if (quote === undefined) throw new Error('fixture requires AAPL')
+          return {
+            ...snapshot,
+            latestQuotes: {
+              AAPL: {
+                ...quote,
+                eventAt: new Date(Date.parse(request.observedAt) - 3_000).toISOString(),
+              },
+            },
+          }
+        }
+        return snapshotFor(request, { AAPL: 0.01 })
+      },
+    })
+    const report = await run(replayInput(['2026-09-04']), archive)
+    const session = report.sessions[0]
+    const staleMark = session?.observations.find(
+      (observation) => observation.kind === 'unavailable' && observation.purpose === 'mark',
+    )
+    expect(session).toMatchObject({
+      status: 'INCOMPLETE',
+      reason: expect.stringContaining('mark evidence incomplete'),
+      netRealizedPnlAfterCostsMicros: null,
+      positions: [],
+    })
+    expect(session?.orders.some(({ side }) => side === OrderSide.Sell)).toBe(true)
+    expect(staleMark).toMatchObject({
+      kind: 'unavailable',
+      purpose: 'mark',
+      message: expect.stringContaining('outside the freshness window'),
+    })
+  })
+
+  test('retains baseline equity diagnostics on a post-baseline planning failure', async () => {
+    const archive = makeArchive({
+      snapshot: (request, phase) => snapshotFor(request, phase === 'decision' ? { AAPL: 0.01 } : {}),
+    })
+    let planningCalls = 0
+    const report = await Effect.runPromise(
+      runIntradayReplay(
+        replayInput(['2026-09-04']),
+        {
+          ...archive.service,
+          loadSnapshot: (request) => {
+            if (request.purpose === IntradaySnapshotPurpose.EntryPricing && planningCalls++ === 0) {
+              return Effect.fail(
+                operationalError({
+                  component: 'market-data',
+                  operation: 'load-planning',
+                  message: 'planning snapshot unavailable',
+                }),
+              )
+            }
+            return archive.service.loadSnapshot(request)
+          },
+        },
+        finalizedNow,
+      ),
+    )
+    const session = report.sessions[0]
+    expect(session).toMatchObject({
+      status: 'INCOMPLETE',
+      peakEquityMicros: initialCapitalMicros,
+      maximumObservedDrawdownMicros: '0',
+      riskLimitBreached: false,
+    })
+    expect(report.totals).toMatchObject({
+      completedSessionCount: 0,
+      incompleteSessionCount: 1,
+      netRealizedPnlAfterCostsMicros: null,
+      peakEquityMicros: initialCapitalMicros,
+      maximumObservedDrawdownMicros: '0',
+      riskLimitBreached: false,
+    })
+  })
+
   test('carries the prior completed session peak into the next session drawdown', async () => {
     const archive = makeArchive({
       snapshot: (request, phase, occurrence) => {

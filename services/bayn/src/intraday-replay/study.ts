@@ -50,6 +50,14 @@ export const ArchiveReplayStudyInputSchema = StudyBase.check(
 
 export type ArchiveReplayStudyInput = typeof ArchiveReplayStudyInputSchema.Type
 
+export interface ArchiveReplayStudySessionEvidence {
+  readonly schemaVersion: 'bayn.archive-replay-study-session.v1'
+  readonly inputHash: string
+  readonly experimentPlanHash: string
+  readonly scenarioName: string
+  readonly replay: IntradayReplayReport
+}
+
 export interface ArchiveReplayStudyScenario {
   readonly name: string
   /** Every calendar day has its own fixed-capital research experiment, including failed days. */
@@ -114,6 +122,8 @@ export const runArchiveReplayStudy = (
   input: ArchiveReplayStudyInput,
   marketData: IntradayMarketDataService,
   now: string,
+  onSessionComplete: (evidence: ArchiveReplayStudySessionEvidence) => Effect.Effect<void, IntradayReplayFailure> = () =>
+    Effect.void,
 ): Effect.Effect<ArchiveReplayStudyReport, IntradayReplayFailure> =>
   Effect.gen(function* () {
     const decoded = yield* Schema.decodeUnknownEffect(
@@ -125,6 +135,7 @@ export const runArchiveReplayStudy = (
       strictParseOptions,
     )(now).pipe(Effect.mapError((cause) => fail('input', 'archive study now must be a canonical UTC instant', cause)))
     yield* verifyStudyIdentity(decoded)
+    const inputHash = yield* hash(decoded)
     // Validate every scenario before the first archive read, including duplicate and unfinished sessions.
     for (const scenario of decoded.scenarios) {
       const calendar = yield* Effect.fromResult(
@@ -149,6 +160,13 @@ export const runArchiveReplayStudy = (
           now,
         )
         replays.push(replay)
+        yield* onSessionComplete({
+          schemaVersion: 'bayn.archive-replay-study-session.v1',
+          inputHash,
+          experimentPlanHash: decoded.experimentPlanHash,
+          scenarioName: scenario.name,
+          replay,
+        })
         yield* Effect.logInfo('archive replay study session completed', {
           scenario: scenario.name,
           date: session.date,
@@ -185,7 +203,7 @@ export const runArchiveReplayStudy = (
       qualification: 'NOT_QUALIFIED',
       evaluatedAt: now,
       input: decoded,
-      inputHash: yield* hash(decoded),
+      inputHash,
       scenarios,
       limitations: [
         'each date is an independent flat-start experiment at identical initial capital; this is not a continuous portfolio',

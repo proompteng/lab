@@ -78,7 +78,7 @@ func main() {
 			return
 		}
 		if len(os.Args) == 3 && os.Args[1] == "/app/services/bayn/dist/intraday-replay-command.js" && os.Args[2] == "--help" {
-			fmt.Println("Usage: bayn-intraday-replay --input <path> | --study <path> | --help")
+			fmt.Println("Usage: bayn-intraday-replay --input <path> | --study <path> [--output-directory <new-directory>] | --help")
 			return
 		}
 		if len(os.Args) == 3 && os.Args[1] == "/app/services/bayn/dist/vendor-intraday-replay-command.js" && os.Args[2] == "--help" {
@@ -165,7 +165,7 @@ fi
 chmod u+w "${root}/nix/store/test-bayn-intraday-replay/bin/bayn-intraday-replay"
 cat > "${root}/nix/store/test-bayn-intraday-replay/bin/bayn-intraday-replay" <<'EOF'
 #!/bin/sh
-printf '%s\n' 'Usage: bayn-intraday-replay --input <path> | --study <path> | --help'
+printf '%s\n' 'Usage: bayn-intraday-replay --input <path> | --study <path> [--output-directory <new-directory>] | --help'
 EOF
 chmod 0555 "${root}/nix/store/test-bayn-intraday-replay/bin/bayn-intraday-replay"
 pack_image

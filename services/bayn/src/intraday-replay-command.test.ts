@@ -18,6 +18,14 @@ describe('intraday replay command', () => {
     })
   })
 
+  test('accepts an explicit study evidence directory and preserves spaces', () => {
+    expect(
+      Result.getOrThrow(
+        parseIntradayReplayCommandArgs(['--study', '/tmp/study.json', '--output-directory', '/tmp/study evidence']),
+      ),
+    ).toEqual({ _tag: 'Study', inputPath: '/tmp/study.json', outputDirectory: '/tmp/study evidence' })
+  })
+
   for (const args of [
     [],
     ['--input'],
@@ -31,6 +39,11 @@ describe('intraday replay command', () => {
     ['--study', '--help'],
     ['--study', ''],
     ['--input', 'a.json', '--study', 'b.json'],
+    ['--input', 'a.json', '--output-directory', 'evidence'],
+    ['--study', 'a.json', '--output-directory'],
+    ['--study', 'a.json', '--output-directory', ' '],
+    ['--study', 'a.json', '--output-directory', '--help'],
+    ['--study', 'a.json', '--unknown', 'evidence'],
   ]) {
     test(`rejects ambiguous arguments: ${JSON.stringify(args)}`, () => {
       expect(Result.isFailure(parseIntradayReplayCommandArgs(args))).toBe(true)

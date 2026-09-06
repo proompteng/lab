@@ -501,6 +501,8 @@ const replaySession = (
         equityDiagnostics(),
       )
     }
+    const incompleteAfterBaseline = (reason: string): IntradayReplaySession =>
+      incompleteSession(context, ledger, observations, orders, reason, equityDiagnostics())
     const decisionRangeEndAt = selectedDecisionSnapshot.manifest.rangeEndAt
     const decisionObservedAt = selectedDecisionSnapshot.manifest.observedAt
     const planningQueryResult = intradayMomentumPricingQuery(
@@ -513,11 +515,7 @@ const replaySession = (
     )
     if (Result.isFailure(planningQueryResult)) {
       pushUnavailable(observations, 'planning', decisionObservedAt, planningQueryResult.failure, false)
-      return incompleteSession(
-        context,
-        ledger,
-        observations,
-        orders,
+      return incompleteAfterBaseline(
         `entry planning query failed: ${failureDescription(planningQueryResult.failure).message}`,
       )
     }
@@ -525,11 +523,7 @@ const replaySession = (
     if (planningLoaded._tag === 'Failure') {
       const retryable = isRetryableArchiveFailure(planningLoaded.error)
       pushUnavailable(observations, 'planning', decisionObservedAt, planningLoaded.error, retryable)
-      return incompleteSession(
-        context,
-        ledger,
-        observations,
-        orders,
+      return incompleteAfterBaseline(
         `entry planning evidence incomplete: ${failureDescription(planningLoaded.error).message}`,
       )
     }
@@ -539,22 +533,18 @@ const replaySession = (
     const planningPrices = adverseQuotePrices(planningSnapshot, [symbol])
     if (Result.isFailure(planningPrices)) {
       pushUnavailable(observations, 'planning', decisionObservedAt, planningPrices.failure, false)
-      return incompleteSession(
-        context,
-        ledger,
-        observations,
-        orders,
+      return incompleteAfterBaseline(
         `entry price construction failed: ${failureDescription(planningPrices.failure).message}`,
       )
     }
     const askPriceMicrosText = planningPrices.success.askPriceMicros[symbol]
     if (askPriceMicrosText === undefined) {
-      return incompleteSession(context, ledger, observations, orders, 'entry planning omitted the selected symbol')
+      return incompleteAfterBaseline('entry planning omitted the selected symbol')
     }
     const askPriceMicros = BigInt(askPriceMicrosText)
     const targetWeight = selectedDecision.targetWeights[symbol]
     if (targetWeight === undefined || targetWeight <= 0) {
-      return incompleteSession(context, ledger, observations, orders, 'selected entry has no positive target weight')
+      return incompleteAfterBaseline('selected entry has no positive target weight')
     }
     const allocation = allocationForDecision(
       ledger,
@@ -566,35 +556,17 @@ const replaySession = (
     )
     if (Result.isFailure(allocation)) {
       pushUnavailable(observations, 'planning', decisionObservedAt, allocation.failure, false)
-      return incompleteSession(
-        context,
-        ledger,
-        observations,
-        orders,
-        'entry allocation could not satisfy the active risk policy',
-      )
+      return incompleteAfterBaseline('entry allocation could not satisfy the active risk policy')
     }
     const desired = desiredQuantityMicros(allocation.success, targetWeight, askPriceMicros, protocol.executionModel)
     if (Result.isFailure(desired)) {
       pushUnavailable(observations, 'planning', decisionObservedAt, desired.failure, false)
-      return incompleteSession(
-        context,
-        ledger,
-        observations,
-        orders,
-        'entry quantity could not be represented at the active precision',
-      )
+      return incompleteAfterBaseline('entry quantity could not be represented at the active precision')
     }
     const displayed = maximumBuyQuantities(planningSnapshot, { [symbol]: targetWeight })
     if (Result.isFailure(displayed)) {
       pushUnavailable(observations, 'planning', decisionObservedAt, displayed.failure, false)
-      return incompleteSession(
-        context,
-        ledger,
-        observations,
-        orders,
-        'entry displayed-liquidity evidence could not be compiled',
-      )
+      return incompleteAfterBaseline('entry displayed-liquidity evidence could not be compiled')
     }
     const displayedQuantity = BigInt(displayed.success[symbol] ?? '0')
     const requestedQuantity = minBigInt(desired.success, displayedQuantity)
@@ -618,7 +590,7 @@ const replaySession = (
     const requestedNotional = notionalMicros(requestedQuantity, askPriceMicros)
     if (Result.isFailure(requestedNotional)) {
       pushUnavailable(observations, 'planning', decisionObservedAt, requestedNotional.failure, false)
-      return incompleteSession(context, ledger, observations, orders, 'entry notional could not be calculated')
+      return incompleteAfterBaseline('entry notional could not be calculated')
     }
     const minimumBuyNotional = BigInt(protocol.executionModel.precision.minimumBuyNotionalMicros)
     if (requestedNotional.success < minimumBuyNotional) {
@@ -650,11 +622,7 @@ const replaySession = (
     )
     if (Result.isFailure(arrivalQueryResult)) {
       pushUnavailable(observations, 'arrival', arrivalAt, arrivalQueryResult.failure, false)
-      return incompleteSession(
-        context,
-        ledger,
-        observations,
-        orders,
+      return incompleteAfterBaseline(
         `entry arrival query failed: ${failureDescription(arrivalQueryResult.failure).message}`,
       )
     }
@@ -662,11 +630,7 @@ const replaySession = (
     if (arrivalLoaded._tag === 'Failure') {
       const retryable = isRetryableArchiveFailure(arrivalLoaded.error)
       pushUnavailable(observations, 'arrival', arrivalAt, arrivalLoaded.error, retryable)
-      return incompleteSession(
-        context,
-        ledger,
-        observations,
-        orders,
+      return incompleteAfterBaseline(
         `entry arrival evidence incomplete: ${failureDescription(arrivalLoaded.error).message}`,
       )
     }
@@ -691,13 +655,13 @@ const replaySession = (
     })
     if (Result.isFailure(entryOutcome)) {
       pushUnavailable(observations, 'arrival', arrivalAt, iocFailure(entryOutcome.failure), false)
-      return incompleteSession(context, ledger, observations, orders, 'entry IOC simulation failed')
+      return incompleteAfterBaseline('entry IOC simulation failed')
     }
     orders.push(entryOutcome.success)
     const entryLedger = applyOutcome(ledger, entryOutcome.success, protocol, input.assumptions.feeMultiplierPpm)
     if (Result.isFailure(entryLedger)) {
       pushUnavailable(observations, 'arrival', arrivalAt, entryLedger.failure, false)
-      return incompleteSession(context, ledger, observations, orders, 'entry IOC accounting failed')
+      return incompleteAfterBaseline('entry IOC accounting failed')
     }
     ledger = entryLedger.success
     if (entryOutcome.success.status === 'canceled' || ledger.positions.length === 0) {
@@ -753,7 +717,7 @@ const replaySession = (
           continue
         }
         const markSnapshot = markLoaded.snapshot
-        const markPrices = adverseQuotePrices(markSnapshot, heldSymbols)
+        const markPrices = adverseClosingQuotePrices(markSnapshot, heldSymbols)
         if (Result.isFailure(markPrices)) {
           pushUnavailable(observations, 'mark', markObservedAt, markPrices.failure, false)
           markEvidenceFailure ??= `mark quote construction failed: ${failureDescription(markPrices.failure).message}`
@@ -927,45 +891,17 @@ const replaySession = (
     }
 
     if (closeFailure !== undefined) {
-      return incompleteSession(
-        context,
-        ledger,
-        observations,
-        orders,
-        `close evidence incomplete: ${closeFailure}`,
-        equityDiagnostics(),
-      )
+      return incompleteAfterBaseline(`close evidence incomplete: ${closeFailure}`)
     }
     if (ledger.positions.length > 0) {
-      return incompleteSession(
-        context,
-        ledger,
-        observations,
-        orders,
-        'positions remained open at the hard-flat boundary',
-        equityDiagnostics(),
-      )
+      return incompleteAfterBaseline('positions remained open at the hard-flat boundary')
     }
     const flatMark = markEquity({})
     if (Result.isFailure(flatMark)) {
-      return incompleteSession(
-        context,
-        ledger,
-        observations,
-        orders,
-        'flat equity accounting failed after position flattening',
-        equityDiagnostics(),
-      )
+      return incompleteAfterBaseline('flat equity accounting failed after position flattening')
     }
     if (markEvidenceFailure !== undefined) {
-      return incompleteSession(
-        context,
-        ledger,
-        observations,
-        orders,
-        `mark evidence incomplete: ${markEvidenceFailure}`,
-        equityDiagnostics(),
-      )
+      return incompleteAfterBaseline(`mark evidence incomplete: ${markEvidenceFailure}`)
     }
     return completeSession(
       context,

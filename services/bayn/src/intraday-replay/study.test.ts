@@ -1,9 +1,11 @@
 import { describe, expect, test } from 'bun:test'
-import { Cause, Deferred, Effect, Exit, Fiber, Result, Schema } from 'effect'
+import { NodeFileSystem } from '@effect/platform-node'
+import { Cause, Deferred, Effect, Exit, Fiber, FileSystem, Result, Schema } from 'effect'
 
 import { makeStrategyProtocolHashResult } from '../contracts'
 import { operationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
+import { makeArchiveStudySessionWriter } from '../intraday-replay-command'
 import { IntradaySnapshotFailure, type IntradayMarketDataService } from '../market-data'
 import { loadQuoteBoundExecutionRiskPolicy } from '../observe-composition/decision-builder'
 import { activeStrategyBehaviorHash, activeStrategyName } from '../strategy'
@@ -12,7 +14,13 @@ import {
   hashIntradayMomentumProtocol,
 } from '../strategy/intraday-momentum/protocol'
 import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
-import { ArchiveReplayStudyInputSchema, runArchiveReplayStudy, type ArchiveReplayStudyInput } from './study'
+import { IntradayReplayFailure } from './model'
+import {
+  ArchiveReplayStudyInputSchema,
+  runArchiveReplayStudy,
+  type ArchiveReplayStudyInput,
+  type ArchiveReplayStudySessionEvidence,
+} from './study'
 
 const protocol = Result.getOrThrow(decodeDefaultIntradayMomentumProtocol())
 const protocolHash = Result.getOrThrow(hashIntradayMomentumProtocol(protocol))
@@ -192,5 +200,65 @@ describe('archive replay study', () => {
     )
     expect(requested).toEqual(['2026-09-01'])
     expect(canceled).toBe(true)
+  })
+
+  test('retains complete session evidence after interruption and refuses to overwrite it', async () => {
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem
+          const parent = yield* fs.makeTempDirectoryScoped()
+          const directory = `${parent}/evidence`
+          const persist = yield* makeArchiveStudySessionWriter(fs, directory)
+          const input = yield* inputEffect
+          const enteredSecond = yield* Deferred.make<void>()
+          const base = archive('2026-09-01').service
+          const market: IntradayMarketDataService = {
+            ...base,
+            captureVersion: (query) =>
+              query.sessionDate === '2026-09-01'
+                ? base.captureVersion(query)
+                : Deferred.succeed(enteredSecond, undefined).pipe(Effect.andThen(Effect.never)),
+          }
+          const saved: ArchiveReplayStudySessionEvidence[] = []
+          const fiber = yield* runArchiveReplayStudy(input, market, '2026-09-05T00:00:00.000Z', (evidence) =>
+            persist(evidence).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  saved.push(evidence)
+                }),
+              ),
+            ),
+          ).pipe(Effect.forkChild({ startImmediately: true }))
+          yield* Deferred.await(enteredSecond)
+          yield* Fiber.interrupt(fiber)
+          expect(saved).toHaveLength(1)
+          const evidence = saved[0]
+          if (evidence === undefined) throw new Error('session evidence missing')
+          expect(evidence.inputHash).toBe(Result.getOrThrow(canonicalHashV1Result(input)))
+          expect(evidence.experimentPlanHash).toBe(input.experimentPlanHash)
+          expect(evidence.replay.sessions[0]?.status).toBe('INCOMPLETE')
+          const name = `stress-2026-09-01-${evidence.replay.reportHash}.json`
+          expect(yield* fs.readDirectory(directory)).toEqual([name])
+          const original = yield* fs.readFileString(`${directory}/${name}`)
+          expect(JSON.parse(original)).toEqual(evidence)
+          expect(Exit.isFailure(yield* Effect.exit(persist(evidence)))).toBe(true)
+          expect(yield* fs.readFileString(`${directory}/${name}`)).toBe(original)
+          expect(yield* fs.readDirectory(directory)).toEqual([name])
+          expect(Exit.isFailure(yield* Effect.exit(makeArchiveStudySessionWriter(fs, directory)))).toBe(true)
+        }),
+      ).pipe(Effect.provide(NodeFileSystem.layer)),
+    )
+  })
+
+  test('stops before later sessions if evidence persistence fails', async () => {
+    const input = await Effect.runPromise(inputEffect)
+    const market = archive('2026-09-01')
+    const failure = new IntradayReplayFailure({ operation: 'report', message: 'disk full' })
+    const exit = await Effect.runPromiseExit(
+      runArchiveReplayStudy(input, market.service, '2026-09-05T00:00:00.000Z', () => Effect.fail(failure)),
+    )
+    expect(Exit.isFailure(exit)).toBe(true)
+    expect(market.dates).toEqual(['2026-09-01'])
   })
 })
