@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { chmodSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -752,6 +752,58 @@ printf '%s\\n' "$@"
       `repo session is closing: ${opened.sessionId}`,
     )
     await closing
+  })
+
+  it('waits for session-scoped process tools before checking and removing the worktree', async () => {
+    const config = makeConfig()
+    initializeRepoFixture(config)
+    const auth = makeAuth()
+    const runner = new AgentsShellRunner(config)
+    const opened = await runner.openRepoSession({ name: 'process-close-test' }, auth)
+    const readyPath = join(config.workspaceRoot, 'process-close-ready')
+
+    const process = runner.runProcess({
+      command: '/bin/bash',
+      args: ['-lc', `printf ready > ${JSON.stringify(readyPath)}; sleep 0.2; printf late > late.txt`],
+      sessionId: opened.sessionId,
+      auth,
+      auditEvent: 'repo_session_process_close_test',
+    })
+    for (let attempt = 0; attempt < 100 && !existsSync(readyPath); attempt += 1) {
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 10))
+    }
+    expect(existsSync(readyPath)).toBe(true)
+
+    const closing = runner.closeRepoSession({ sessionId: opened.sessionId }, auth)
+    const processResult = await process
+    expect(processResult.ok).toBe(true)
+    await expect(closing).rejects.toThrow('repo session has uncommitted changes')
+
+    await runner.closeRepoSession({ sessionId: opened.sessionId, force: true }, auth)
+  })
+
+  it('uses per-session fetch refs so concurrent opens do not share mutable fetch state', async () => {
+    const config = makeConfig()
+    const baseSha = initializeRepoFixture(config)
+    const auth = makeAuth()
+    const runner = new AgentsShellRunner(config)
+
+    const [first, second] = await Promise.all([
+      runner.openRepoSession({ name: 'parallel-a' }, auth),
+      runner.openRepoSession({ name: 'parallel-b' }, auth),
+    ])
+    expect(first.baseSha).toBe(baseSha)
+    expect(second.baseSha).toBe(baseSha)
+
+    const refs = execFileSync('git', ['-C', join(config.workspaceRoot, 'lab'), 'for-each-ref', 'refs/agents-shell/'], {
+      encoding: 'utf8',
+    })
+    expect(refs).toBe('')
+
+    await Promise.all([
+      runner.closeRepoSession({ sessionId: first.sessionId }, auth),
+      runner.closeRepoSession({ sessionId: second.sessionId }, auth),
+    ])
   })
 
   it('waits for stubborn session jobs to terminate before forced close', async () => {

@@ -18,7 +18,16 @@ export type RepoSession = {
 type RepoSessionRecord = {
   session: RepoSession
   closing: boolean
+  activeOperations: number
+  idleWaiters: Set<() => void>
 }
+
+const repoSessionRecord = (session: RepoSession): RepoSessionRecord => ({
+  session,
+  closing: false,
+  activeOperations: 0,
+  idleWaiters: new Set(),
+})
 
 const slugify = (value: string) => {
   const slug = value
@@ -76,7 +85,7 @@ export class RepoSessionStore {
           unlinkSync(path)
           continue
         }
-        this.sessions.set(session.id, { session, closing: false })
+        this.sessions.set(session.id, repoSessionRecord(session))
       } catch (error) {
         console.warn('[agents-shell] ignoring invalid persisted repo session', { path, error: String(error) })
       }
@@ -92,7 +101,7 @@ export class RepoSessionStore {
 
   set(session: RepoSession) {
     this.persist(session)
-    this.sessions.set(session.id, { session, closing: false })
+    this.sessions.set(session.id, repoSessionRecord(session))
     return session
   }
 
@@ -120,6 +129,30 @@ export class RepoSessionStore {
   cancelClose(sessionId: string) {
     const record = this.sessions.get(sessionId)
     if (record) record.closing = false
+  }
+
+  acquire(sessionId: string, auth: AuthContext) {
+    const session = this.require(sessionId, auth)
+    const record = this.sessions.get(sessionId)
+    if (!record) throw new Error(`unknown repo session: ${sessionId}`)
+    record.activeOperations += 1
+    return session
+  }
+
+  release(sessionId: string) {
+    const record = this.sessions.get(sessionId)
+    if (!record) return
+    record.activeOperations = Math.max(0, record.activeOperations - 1)
+    if (record.activeOperations !== 0) return
+    for (const resolveWaiter of record.idleWaiters) resolveWaiter()
+    record.idleWaiters.clear()
+  }
+
+  waitForIdle(sessionId: string, auth: AuthContext) {
+    this.require(sessionId, auth, { allowClosing: true })
+    const record = this.sessions.get(sessionId)
+    if (!record || record.activeOperations === 0) return Promise.resolve()
+    return new Promise<void>((resolvePromise) => record.idleWaiters.add(resolvePromise))
   }
 
   delete(sessionId: string) {

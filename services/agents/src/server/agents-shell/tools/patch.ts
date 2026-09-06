@@ -57,6 +57,7 @@ export const createPatchTools = (): EffectTool[] => [
             command: 'apply_patch',
             args: [],
             cwd,
+            sessionId: args.sessionId,
             stdin: args.patch,
             timeoutSeconds: args.timeoutSeconds,
             maxOutputBytes: args.maxOutputBytes,

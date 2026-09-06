@@ -31,7 +31,6 @@ export const createFileTools = (): EffectTool[] => [
     handler: (args: SearchInput, { config, runner, auth }) =>
       Effect.tryPromise({
         try: async () => {
-          const cwd = runner.resolveCwd(args.path, args.sessionId, auth)
           const rgArgs = ['--line-number', '--no-heading', '--color=never', '--hidden']
           for (const exclude of DEFAULT_WORKSPACE_SEARCH_EXCLUDES) {
             rgArgs.push('-g', `!${exclude}/**`)
@@ -43,7 +42,8 @@ export const createFileTools = (): EffectTool[] => [
           const result = await runner.runProcess({
             command: 'rg',
             args: rgArgs,
-            cwd,
+            cwd: args.path,
+            sessionId: args.sessionId,
             timeoutSeconds: config.defaultTimeoutSeconds,
             maxOutputBytes: args.maxOutputBytes,
             okExitCodes: [0, 1],

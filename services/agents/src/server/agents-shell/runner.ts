@@ -82,35 +82,45 @@ export class AgentsShellRunner {
     })
     if (!checkBranch.ok) throw new Error(`invalid base branch: ${baseBranch}`)
 
-    const remoteRef = `refs/remotes/origin/${baseBranch}`
+    const baseRef = `refs/agents-shell/repo-sessions/${identity.id}/base`
+    let baseSha = ''
+    try {
+      const fetch = await this.runProcess({
+        command: 'git',
+        args: ['fetch', '--no-write-fetch-head', 'origin', `+refs/heads/${baseBranch}:${baseRef}`],
+        cwd: seed,
+        auth,
+        auditEvent: 'repo_session_fetch',
+      })
+      if (!fetch.ok) throw new Error(`failed to fetch origin/${baseBranch}: ${fetch.stderr || fetch.stdout}`)
 
-    const fetch = await this.runProcess({
-      command: 'git',
-      args: ['fetch', 'origin', `+refs/heads/${baseBranch}:${remoteRef}`],
-      cwd: seed,
-      auth,
-      auditEvent: 'repo_session_fetch',
-    })
-    if (!fetch.ok) throw new Error(`failed to fetch origin/${baseBranch}: ${fetch.stderr || fetch.stdout}`)
+      const base = await this.runProcess({
+        command: 'git',
+        args: ['rev-parse', '--verify', baseRef],
+        cwd: seed,
+        auth,
+        auditEvent: 'repo_session_base',
+      })
+      if (!base.ok) throw new Error(`failed to resolve fetched base: ${base.stderr || base.stdout}`)
+      baseSha = base.stdout.trim()
 
-    const base = await this.runProcess({
-      command: 'git',
-      args: ['rev-parse', '--verify', remoteRef],
-      cwd: seed,
-      auth,
-      auditEvent: 'repo_session_base',
-    })
-    if (!base.ok) throw new Error(`failed to resolve fetched base: ${base.stderr || base.stdout}`)
-    const baseSha = base.stdout.trim()
-
-    const add = await this.runProcess({
-      command: 'git',
-      args: ['worktree', 'add', '-b', identity.branch, identity.worktree, baseSha],
-      cwd: seed,
-      auth,
-      auditEvent: 'repo_session_worktree_add',
-    })
-    if (!add.ok) throw new Error(`failed to create repo session worktree: ${add.stderr || add.stdout}`)
+      const add = await this.runProcess({
+        command: 'git',
+        args: ['worktree', 'add', '-b', identity.branch, identity.worktree, baseSha],
+        cwd: seed,
+        auth,
+        auditEvent: 'repo_session_worktree_add',
+      })
+      if (!add.ok) throw new Error(`failed to create repo session worktree: ${add.stderr || add.stdout}`)
+    } finally {
+      await this.runProcess({
+        command: 'git',
+        args: ['update-ref', '-d', baseRef],
+        cwd: seed,
+        auth,
+        auditEvent: 'repo_session_base_ref_cleanup',
+      })
+    }
 
     let session
     try {
@@ -186,6 +196,7 @@ export class AgentsShellRunner {
     const session = this.repoSessions.beginClose(args.sessionId, auth)
     let removed = false
     try {
+      await this.repoSessions.waitForIdle(args.sessionId, auth)
       const status = await this.repoSessionStatus(args.sessionId, auth)
       if (status.dirty && !args.force) {
         throw new Error(`repo session has uncommitted changes; clean it or close with force: ${args.sessionId}`)
@@ -365,82 +376,87 @@ export class AgentsShellRunner {
   }): Effect.Effect<ProcessResult, unknown> {
     return Effect.tryPromise({
       try: async () => {
-        const cwd = this.resolveCwd(options.cwd, options.sessionId, options.auth)
-        const timeoutSeconds = asPositiveInteger(
-          options.timeoutSeconds,
-          'timeoutSeconds',
-          this.config.defaultTimeoutSeconds,
-          this.config.maxTimeoutSeconds,
-        )
-        const maxOutputBytes = asPositiveInteger(
-          options.maxOutputBytes,
-          'maxOutputBytes',
-          this.config.defaultOutputBytes,
-          this.config.maxOutputBytes,
-          1024,
-        )
-        const commandLine = formatCommand(options.command, options.args)
-        const stdout = tail()
-        const stderr = tail()
-        let timedOut = false
+        const session = options.sessionId ? this.repoSessions.acquire(options.sessionId, options.auth) : null
+        try {
+          const cwd = resolveExistingDirectory(session?.worktree ?? resolve(this.config.workspaceRoot), options.cwd)
+          const timeoutSeconds = asPositiveInteger(
+            options.timeoutSeconds,
+            'timeoutSeconds',
+            this.config.defaultTimeoutSeconds,
+            this.config.maxTimeoutSeconds,
+          )
+          const maxOutputBytes = asPositiveInteger(
+            options.maxOutputBytes,
+            'maxOutputBytes',
+            this.config.defaultOutputBytes,
+            this.config.maxOutputBytes,
+            1024,
+          )
+          const commandLine = formatCommand(options.command, options.args)
+          const stdout = tail()
+          const stderr = tail()
+          let timedOut = false
 
-        this.audit(options.auditEvent, options.auth, { command: commandLine, cwd, timeoutSeconds })
+          this.audit(options.auditEvent, options.auth, { command: commandLine, cwd, timeoutSeconds })
 
-        const child = spawn(options.command, options.args, {
-          cwd,
-          env: { ...process.env, TERM: process.env.TERM ?? 'dumb' },
-          stdio: ['pipe', 'pipe', 'pipe'],
-        })
+          const child = spawn(options.command, options.args, {
+            cwd,
+            env: { ...process.env, TERM: process.env.TERM ?? 'dumb' },
+            stdio: ['pipe', 'pipe', 'pipe'],
+          })
 
-        child.stdout.on('data', (chunk: Buffer) => appendTail(stdout, Buffer.from(chunk), maxOutputBytes))
-        child.stderr.on('data', (chunk: Buffer) => appendTail(stderr, Buffer.from(chunk), maxOutputBytes))
+          child.stdout.on('data', (chunk: Buffer) => appendTail(stdout, Buffer.from(chunk), maxOutputBytes))
+          child.stderr.on('data', (chunk: Buffer) => appendTail(stderr, Buffer.from(chunk), maxOutputBytes))
 
-        if (options.stdin != null) {
-          child.stdin.write(options.stdin)
+          if (options.stdin != null) {
+            child.stdin.write(options.stdin)
+          }
+          child.stdin.end()
+
+          const timeout = setTimeout(() => {
+            timedOut = true
+            child.kill('SIGTERM')
+          }, timeoutSeconds * 1000)
+
+          const result = await new Promise<{ exitCode: number | null; signal: string | null }>(
+            (resolvePromise, reject) => {
+              let settled = false
+              const finish = (exitCode: number | null, signal: NodeJS.Signals | null) => {
+                if (settled) return
+                settled = true
+                child.stdout.destroy()
+                child.stderr.destroy()
+                resolvePromise({ exitCode, signal })
+              }
+
+              child.once('error', reject)
+              child.once('exit', (exitCode, signal) => setImmediate(() => finish(exitCode, signal)))
+              child.once('close', (exitCode, signal) => finish(exitCode, signal))
+            },
+          ).finally(() => clearTimeout(timeout))
+
+          const processResult = toProcessResult(
+            commandLine,
+            cwd,
+            result.exitCode,
+            result.signal,
+            timedOut,
+            stdout,
+            stderr,
+            maxOutputBytes,
+            new Set(options.okExitCodes ?? [0]),
+          )
+          this.audit(`${options.auditEvent}_finished`, options.auth, {
+            command: commandLine,
+            cwd,
+            exitCode: result.exitCode,
+            signal: result.signal,
+            timedOut,
+          })
+          return processResult
+        } finally {
+          if (options.sessionId) this.repoSessions.release(options.sessionId)
         }
-        child.stdin.end()
-
-        const timeout = setTimeout(() => {
-          timedOut = true
-          child.kill('SIGTERM')
-        }, timeoutSeconds * 1000)
-
-        const result = await new Promise<{ exitCode: number | null; signal: string | null }>(
-          (resolvePromise, reject) => {
-            let settled = false
-            const finish = (exitCode: number | null, signal: NodeJS.Signals | null) => {
-              if (settled) return
-              settled = true
-              child.stdout.destroy()
-              child.stderr.destroy()
-              resolvePromise({ exitCode, signal })
-            }
-
-            child.once('error', reject)
-            child.once('exit', (exitCode, signal) => setImmediate(() => finish(exitCode, signal)))
-            child.once('close', (exitCode, signal) => finish(exitCode, signal))
-          },
-        ).finally(() => clearTimeout(timeout))
-
-        const processResult = toProcessResult(
-          commandLine,
-          cwd,
-          result.exitCode,
-          result.signal,
-          timedOut,
-          stdout,
-          stderr,
-          maxOutputBytes,
-          new Set(options.okExitCodes ?? [0]),
-        )
-        this.audit(`${options.auditEvent}_finished`, options.auth, {
-          command: commandLine,
-          cwd,
-          exitCode: result.exitCode,
-          signal: result.signal,
-          timedOut,
-        })
-        return processResult
       },
       catch: (error) => error,
     })
