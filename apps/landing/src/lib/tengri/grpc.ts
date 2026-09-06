@@ -15,6 +15,7 @@ import type {
   TengriCodexThread,
   TengriCodexTurn,
   TengriCondition,
+  TengriErrorCode,
   TengriFileEntry,
   TengriFileEvent,
   TengriFileEventKind,
@@ -83,11 +84,13 @@ type RuntimeDescriptor = {
 
 export class TengriUnavailableError extends Error {
   readonly status: number
+  readonly code?: TengriErrorCode
 
-  constructor(message: string, status = 503) {
+  constructor(message: string, status = 503, code?: TengriErrorCode) {
     super(message)
     this.name = 'TengriUnavailableError'
     this.status = status
+    this.code = code
   }
 }
 
@@ -271,20 +274,35 @@ function normalizeCodexLogin(response: RawRecord): TengriCodexLogin {
 
 export async function createCodexThread(subject: string, agentId: string): Promise<TengriCodexThread> {
   const response = await unary<RawRecord>('createCodexThread', { agentId }, subject, 130_000)
-  return {
-    id: stringValue(response.id),
-    rawJson: stringValue(response.rawJson),
-    eventSequence: sequenceValue(response.eventSequence),
-  }
+  return normalizeCodexThread(response)
 }
 
 export async function resumeCodexThread(subject: string, agentId: string, threadId: string) {
   const response = await unary<RawRecord>('resumeCodexThread', { agentId, threadId }, subject, 130_000)
+  return normalizeCodexThread(response)
+}
+
+function normalizeCodexThread(response: RawRecord): TengriCodexThread {
+  const eventSequence = sequenceValue(response.eventSequence)
+  const itemCursors: Array<[string, number]> = []
+  if (response.itemEventSequences !== undefined && response.itemEventSequences !== null) {
+    if (typeof response.itemEventSequences !== 'object' || Array.isArray(response.itemEventSequences)) {
+      throw new TengriUnavailableError('Tengri control plane returned invalid Codex item cursors')
+    }
+    for (const [id, value] of Object.entries(response.itemEventSequences)) {
+      const sequence = sequenceValue(value)
+      if (sequence < eventSequence) {
+        throw new TengriUnavailableError('Tengri control plane returned an outdated Codex item cursor')
+      }
+      itemCursors.push([id, sequence])
+    }
+  }
   return {
     id: stringValue(response.id),
     rawJson: stringValue(response.rawJson),
-    eventSequence: sequenceValue(response.eventSequence),
-  } satisfies TengriCodexThread
+    eventSequence,
+    itemEventSequences: Object.fromEntries(itemCursors),
+  }
 }
 
 export async function sendCodexTurn(subject: string, agentId: string, threadId: string, text: string) {
@@ -391,7 +409,7 @@ async function unary<Response = RawRecord>(
         if (settled) return
         settled = true
         signal?.removeEventListener('abort', onAbort)
-        if (error) reject(mapGrpcError(error))
+        if (error) reject(mapGrpcError(error, methodName))
         else resolve(response as Response)
       },
     )
@@ -520,7 +538,7 @@ function callOptions(deadlineMs: number): grpc.CallOptions {
   return deadlineMs > 0 ? { deadline: Date.now() + deadlineMs } : {}
 }
 
-function mapGrpcError(error: grpc.ServiceError) {
+function mapGrpcError(error: grpc.ServiceError, methodName: string) {
   switch (error.code) {
     case grpc.status.INVALID_ARGUMENT:
       return new TengriUnavailableError('Tengri request is invalid', 400)
@@ -529,6 +547,9 @@ function mapGrpcError(error: grpc.ServiceError) {
     case grpc.status.PERMISSION_DENIED:
       return new TengriUnavailableError('Tengri request is not permitted', 403)
     case grpc.status.NOT_FOUND:
+      if (methodName === 'resumeCodexThread' && isMissingCodexConversation(error.details)) {
+        return new TengriUnavailableError('Codex conversation could not be found', 404, 'conversation_not_found')
+      }
       return new TengriUnavailableError('Tengri resource was not found', 404)
     case grpc.status.ALREADY_EXISTS:
       return new TengriUnavailableError('Tengri resource already exists', 409)
@@ -540,6 +561,20 @@ function mapGrpcError(error: grpc.ServiceError) {
       return new TengriUnavailableError('Tengri request timed out', 504)
     default:
       return new TengriUnavailableError('Tengri control plane is unavailable', 503)
+  }
+}
+
+function isMissingCodexConversation(details: string) {
+  try {
+    const payload: unknown = JSON.parse(details)
+    return (
+      typeof payload === 'object' &&
+      payload !== null &&
+      'error' in payload &&
+      payload.error === 'Codex conversation could not be found'
+    )
+  } catch {
+    return false
   }
 }
 

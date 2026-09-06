@@ -195,11 +195,32 @@ beforeAll(async () => {
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
       receivedRequest = call.request
+      if (call.request.threadId === 'missing-conversation') {
+        callback(serviceError(grpc.status.NOT_FOUND, '{"error":"Codex conversation could not be found"}\n'), null)
+        return
+      }
+      if (call.request.threadId === 'missing-resource') {
+        callback(serviceError(grpc.status.NOT_FOUND, '{"error":"internal resource at 10.244.1.42 is missing"}'), null)
+        return
+      }
+      if (call.request.threadId === 'unavailable-conversation') {
+        callback(serviceError(grpc.status.UNAVAILABLE, '{"error":"Codex conversation could not be found"}'), null)
+        return
+      }
       if (call.request.threadId === 'invalid-sequence') {
         callback(null, {
           id: String(call.request.threadId),
           rawJson: '{"thread":{"id":"invalid-sequence"}}',
           eventSequence: '-1',
+        })
+        return
+      }
+      if (call.request.threadId === 'paged-thread' || call.request.threadId === 'outdated-item-cursor') {
+        callback(null, {
+          id: String(call.request.threadId),
+          rawJson: '{"thread":{"id":"paged-thread"}}',
+          eventSequence: '42',
+          itemEventSequences: { 'message-1': call.request.threadId === 'paged-thread' ? '52' : '41' },
         })
         return
       }
@@ -427,13 +448,13 @@ describe('Tengri gRPC BFF transport', () => {
 
   test('restores an active Codex device login without creating another attempt', async () => {
     const { getCodexLogin } = await import('./grpc')
-    await expect(getCodexLogin('github:42', 'agent-test')).resolves.toEqual({
+    expect(await getCodexLogin('github:42', 'agent-test')).toEqual({
       loginId: 'login-one',
       verificationUrl: 'https://auth.openai.com/device',
       userCode: 'TENG-RI01',
       expiresAt: '2026-08-31T09:15:00Z',
     })
-    await expect(getCodexLogin('github:42', 'no-active-login')).resolves.toBeNull()
+    expect(await getCodexLogin('github:42', 'no-active-login')).toBeNull()
   })
 
   test('preserves a leading UTF-8 BOM for lossless editor round trips', async () => {
@@ -495,6 +516,7 @@ describe('Tengri gRPC BFF transport', () => {
       id: 'thread-test',
       rawJson: '{"thread":{"id":"thread-test"}}',
       eventSequence: 42,
+      itemEventSequences: {},
     })
   })
 
@@ -504,6 +526,38 @@ describe('Tengri gRPC BFF transport', () => {
     expect(await rejection(resumeCodexThread('github:42', 'agent-test', 'invalid-sequence'))).toMatchObject({
       message: 'Tengri control plane returned an invalid Codex event cursor',
       status: 503,
+    })
+  })
+
+  test('preserves item page cursors and rejects pages older than the recovery baseline', async () => {
+    const { resumeCodexThread } = await import('./grpc')
+    expect(await resumeCodexThread('github:42', 'agent-test', 'paged-thread')).toMatchObject({
+      eventSequence: 42,
+      itemEventSequences: { 'message-1': 52 },
+    })
+    expect(await rejection(resumeCodexThread('github:42', 'agent-test', 'outdated-item-cursor'))).toMatchObject({
+      message: 'Tengri control plane returned an outdated Codex item cursor',
+      status: 503,
+    })
+  })
+
+  test('identifies only the guest missing-conversation response as recoverable with a new conversation', async () => {
+    const { resumeCodexThread } = await import('./grpc')
+
+    expect(await rejection(resumeCodexThread('github:42', 'agent-test', 'missing-conversation'))).toMatchObject({
+      message: 'Codex conversation could not be found',
+      status: 404,
+      code: 'conversation_not_found',
+    })
+    expect(await rejection(resumeCodexThread('github:42', 'agent-test', 'missing-resource'))).toMatchObject({
+      message: 'Tengri resource was not found',
+      status: 404,
+      code: undefined,
+    })
+    expect(await rejection(resumeCodexThread('github:42', 'agent-test', 'unavailable-conversation'))).toMatchObject({
+      message: 'Tengri control plane is unavailable',
+      status: 503,
+      code: undefined,
     })
   })
 

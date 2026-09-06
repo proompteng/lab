@@ -1,38 +1,24 @@
 'use client'
 
-import { Search, SlidersHorizontal, Wifi } from 'lucide-react'
-import { useEffect, useRef } from 'react'
+import { Check, Search, SlidersHorizontal, Wifi } from 'lucide-react'
+import { memo, useEffect, useRef, useState } from 'react'
 
 import type { TengriAgent } from '@/lib/tengri/types'
-import { APP_TITLES, type TengriApp } from '@/lib/tengri/window-manager'
-import { DOCK_APPS } from './desktop-apps'
+import { APP_TITLES, type DesktopWindow, type TengriApp } from '@/lib/tengri/window-manager'
 
 type MenuEntry = {
   label: string
   shortcut?: string
   run: () => void | Promise<void>
   separator?: boolean
+  checked?: boolean
+  disabled?: boolean
 }
 
-export function MenuBar({
-  activeApp,
-  agent,
-  clock,
-  connectionWarning,
-  menuOpen,
-  onCloseActive,
-  onMenuChange,
-  onMinimizeActive,
-  onNewWindow,
-  onOpenApp,
-  onOpenSpotlight,
-  onSignOut,
-  onToggleMaximize,
-  userName,
-}: {
+type MenuBarProps = {
   activeApp: TengriApp
+  activeWindow: DesktopWindow | undefined
   agent: TengriAgent
-  clock: Date | null
   connectionWarning: string
   menuOpen: string | null
   onCloseActive: () => void
@@ -43,8 +29,29 @@ export function MenuBar({
   onOpenSpotlight: () => void
   onSignOut: () => void
   onToggleMaximize: () => void
+  onActivateWindow: (id: string) => void
+  windows: readonly DesktopWindow[]
   userName: string
-}) {
+}
+
+export const MenuBar = memo(function MenuBar({
+  activeApp,
+  activeWindow,
+  agent,
+  connectionWarning,
+  menuOpen,
+  onCloseActive,
+  onMenuChange,
+  onMinimizeActive,
+  onNewWindow,
+  onOpenApp,
+  onOpenSpotlight,
+  onSignOut,
+  onToggleMaximize,
+  onActivateWindow,
+  windows,
+  userName,
+}: MenuBarProps) {
   const triggerRefs = useRef(new Map<string, HTMLButtonElement>())
   const editTargetRef = useRef<HTMLElement | null>(null)
 
@@ -83,12 +90,18 @@ export function MenuBar({
     ],
     [APP_TITLES[activeApp]]: [
       { label: `About ${APP_TITLES[activeApp]}`, run: () => onOpenApp('settings') },
-      { label: `Close ${APP_TITLES[activeApp]} Window`, shortcut: '⌘W', run: onCloseActive, separator: true },
+      {
+        label: `Close ${APP_TITLES[activeApp]} Window`,
+        shortcut: '⌘W',
+        run: onCloseActive,
+        separator: true,
+        disabled: !activeWindow,
+      },
     ],
     File: [
       { label: `New ${APP_TITLES[activeApp]} Window`, shortcut: '⌘N', run: onNewWindow },
       { label: 'Open…', shortcut: '⌘O', run: onOpenSpotlight },
-      { label: 'Close Window', shortcut: '⌘W', run: onCloseActive },
+      { label: 'Close Window', shortcut: '⌘W', run: onCloseActive, disabled: !activeWindow },
     ],
     Edit: [
       { label: 'Undo', shortcut: '⌘Z', run: () => runEditCommand('undo') },
@@ -97,12 +110,29 @@ export function MenuBar({
       { label: 'Paste', shortcut: '⌘V', run: () => runEditCommand('paste') },
     ],
     View: [
-      { label: 'Enter Full Screen', shortcut: '⌃⌘F', run: onToggleMaximize },
+      {
+        label: activeWindow?.mode === 'maximized' ? 'Restore Window' : 'Fill Window',
+        shortcut: '⌃⌘F',
+        run: onToggleMaximize,
+        disabled: !activeWindow,
+      },
       { label: 'Open Spotlight', shortcut: '⌘Space', run: onOpenSpotlight },
     ],
     Window: [
-      { label: 'Minimize', shortcut: '⌘M', run: onMinimizeActive },
-      ...DOCK_APPS.map((app) => ({ label: APP_TITLES[app], run: () => onOpenApp(app) })),
+      { label: 'Minimize', shortcut: '⌘M', run: onMinimizeActive, disabled: !activeWindow },
+      ...windows
+        .filter((window) => window.app === activeApp)
+        .map((window, index) => {
+          const siblings = windows.filter((candidate) => candidate.app === window.app)
+          const number =
+            siblings.length > 1 ? ` ${siblings.findIndex((candidate) => candidate.id === window.id) + 1}` : ''
+          return {
+            label: `${window.title}${number}${window.mode === 'minimized' ? ' — Minimized' : ''}`,
+            checked: window.id === activeWindow?.id,
+            separator: index === 0,
+            run: () => onActivateWindow(window.id),
+          }
+        }),
     ],
     Help: [
       {
@@ -228,19 +258,33 @@ export function MenuBar({
         >
           <SlidersHorizontal aria-hidden="true" className="size-4" />
         </button>
-        <time className="tabular-nums" dateTime={clock?.toISOString()}>
-          {clock
-            ? new Intl.DateTimeFormat(undefined, {
-                weekday: 'short',
-                month: 'short',
-                day: 'numeric',
-                hour: 'numeric',
-                minute: '2-digit',
-              }).format(clock)
-            : '\u00a0'}
-        </time>
+        <DesktopClock />
       </div>
     </header>
+  )
+})
+
+function DesktopClock() {
+  const [clock, setClock] = useState<Date | null>(null)
+
+  useEffect(() => {
+    setClock(new Date())
+    const timer = window.setInterval(() => setClock(new Date()), 30_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  return (
+    <time className="tabular-nums" dateTime={clock?.toISOString()}>
+      {clock
+        ? new Intl.DateTimeFormat(undefined, {
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+          }).format(clock)
+        : '\u00a0'}
+    </time>
   )
 }
 
@@ -303,16 +347,23 @@ function MenuPopover({
       {entries.map((entry) => (
         <div className={entry.separator ? 'mt-1 border-t border-white/9 pt-1' : ''} key={entry.label}>
           <button
-            className="flex w-full items-center justify-between rounded px-2.5 py-1 text-left text-[13px] text-white/85 outline-none hover:bg-[#2574e8] focus-visible:bg-[#2574e8]"
+            className="flex w-full items-center justify-between rounded px-2.5 py-1 text-left text-[13px] text-white/85 outline-none enabled:hover:bg-[#2574e8] focus-visible:bg-[#2574e8] disabled:text-white/30"
+            disabled={entry.disabled}
+            aria-checked={entry.checked}
             onClick={() => {
-              void entry.run()
               onClose()
               returnFocus()
+              void entry.run()
             }}
-            role="menuitem"
+            role={entry.checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
             type="button"
           >
-            <span>{entry.label}</span>
+            <span className="flex items-center gap-1.5">
+              {entry.checked === undefined ? null : (
+                <Check aria-hidden="true" className={`size-3 ${entry.checked ? '' : 'invisible'}`} />
+              )}
+              {entry.label}
+            </span>
             <span className="ml-6 text-white/65">{entry.shortcut}</span>
           </button>
         </div>

@@ -1,9 +1,15 @@
 import { Result } from 'effect'
 
-import { compareIntradayInstants, intradayAgeNanos, millisecondsAsNanos } from '../../market-data/intraday/time'
+import {
+  compareIntradayInstants,
+  intradayAgeNanos,
+  intradayInstantNanos,
+  millisecondsAsNanos,
+} from '../../market-data/intraday/time'
 import {
   intradayMomentumSignalRejectionReasons,
   IntradayMomentumFailure,
+  type IntradayMomentumCandidateExclusion,
   selectCanonicalIntradayMomentumSignals,
   type IntradayMomentumTargetPortfolio,
   type IntradayMomentumSignal,
@@ -41,13 +47,19 @@ export interface IntradayMomentumCoreInput {
   readonly latestQuotes: Readonly<Record<string, IntradayMomentumCoreQuote>>
   readonly latestTrades: Readonly<Record<string, IntradayMomentumCoreTrade>>
   readonly observedAt: string
+  /** Optional rolling-window anchor used to classify candidate-local incomplete bars. */
+  readonly rangeStartAt?: string
+  /** Exclusions already established by the immutable market-data query. */
+  readonly candidateExclusions?: readonly IntradayMomentumCandidateExclusion[]
   readonly protocol: IntradayMomentumProtocol
 }
 
 export type IntradayMomentumCoreOutput = Pick<
   IntradayMomentumTargetPortfolio,
   'benchmark' | 'signals' | 'selectedSymbols' | 'targetWeights'
->
+> & {
+  readonly excludedCandidates: readonly IntradayMomentumCandidateExclusion[]
+}
 
 const fail = (
   reason: IntradayMomentumFailure['reason'],
@@ -106,6 +118,61 @@ const safeInteger = (value: bigint, field: string, symbol: string): Result.Resul
         observed: String(value),
       })
     : Result.succeed(Number(value))
+
+const completeRollingBars = (
+  bars: readonly IntradayMomentumCoreBar[],
+  rangeStartAt: string | undefined,
+  lookbackMinutes: number,
+): boolean => {
+  const ordered = bars.toSorted((left, right) => compareIntradayInstants(left.eventAt, right.eventAt))
+  if (ordered.length === 0) return false
+  if (rangeStartAt === undefined) return true
+  const first = ordered[0]
+  const last = ordered.at(-1)
+  const rangeStartNanos = intradayInstantNanos(rangeStartAt)
+  return (
+    first !== undefined &&
+    last !== undefined &&
+    intradayInstantNanos(first.eventAt) === rangeStartNanos &&
+    intradayInstantNanos(last.eventAt) === rangeStartNanos + BigInt(lookbackMinutes - 1) * 60_000_000_000n
+  )
+}
+
+const candidateEvidenceIsStale = (
+  quote: IntradayMomentumCoreQuote,
+  trade: IntradayMomentumCoreTrade,
+  observedAt: string,
+  maximumQuoteAgeMs: number,
+): boolean => {
+  const maximumAge = millisecondsAsNanos(maximumQuoteAgeMs)
+  return [quote.eventAt, trade.eventAt].some((eventAt) => {
+    const age = intradayAgeNanos(observedAt, eventAt)
+    return age < 0n || age > maximumAge
+  })
+}
+
+const candidateExclusionsBySymbol = (
+  exclusions: readonly IntradayMomentumCandidateExclusion[],
+  protocol: IntradayMomentumProtocol,
+): Result.Result<ReadonlyMap<string, IntradayMomentumCandidateExclusion>, IntradayMomentumFailure> => {
+  const candidates = new Set(protocol.candidateSymbols)
+  const bySymbol = new Map<string, IntradayMomentumCandidateExclusion>()
+  for (const exclusion of exclusions) {
+    if (
+      !candidates.has(exclusion.symbol) ||
+      exclusion.symbol === protocol.benchmarkSymbol ||
+      (exclusion.reason !== 'not-ready' && exclusion.reason !== 'freshness') ||
+      exclusion.message.trim().length === 0 ||
+      bySymbol.has(exclusion.symbol)
+    ) {
+      return fail('snapshot-identity', 'intraday candidate exclusions do not bind the configured candidate universe', {
+        symbol: exclusion.symbol,
+      })
+    }
+    bySymbol.set(exclusion.symbol, exclusion)
+  }
+  return Result.succeed(bySymbol)
+}
 
 export interface IntradayMomentumSignalPrices {
   readonly reference: bigint
@@ -248,12 +315,19 @@ export const decideIntradayMomentumCore = (
     const benchmarkFirst = benchmarkBars.toSorted((left, right) =>
       compareIntradayInstants(left.eventAt, right.eventAt),
     )[0]
-    if (benchmarkFirst === undefined || benchmarkQuote === undefined) {
+    if (
+      benchmarkFirst === undefined ||
+      benchmarkQuote === undefined ||
+      !completeRollingBars(benchmarkBars, input.rangeStartAt, protocol.lookbackMinutes)
+    ) {
       return yield* fail('snapshot-coverage', 'intraday decision lacks benchmark bars or quote', {
         symbol: protocol.benchmarkSymbol,
       })
     }
-    if (intradayAgeNanos(input.observedAt, benchmarkQuote.eventAt) > millisecondsAsNanos(protocol.maximumQuoteAgeMs)) {
+    if (
+      intradayAgeNanos(input.observedAt, benchmarkQuote.eventAt) < 0n ||
+      intradayAgeNanos(input.observedAt, benchmarkQuote.eventAt) > millisecondsAsNanos(protocol.maximumQuoteAgeMs)
+    ) {
       return yield* fail('snapshot-coverage', 'intraday benchmark quote exceeds the protocol freshness bound', {
         symbol: protocol.benchmarkSymbol,
       })
@@ -276,23 +350,44 @@ export const decideIntradayMomentumCore = (
       }
       return { reference, bid, ask, bidSize, askSize }
     })
-    const candidates = yield* Result.all(
-      protocol.candidateSymbols.map((symbol) => {
-        const quote = input.latestQuotes[symbol]
-        const trade = input.latestTrades[symbol]
-        return quote === undefined || trade === undefined
-          ? fail('snapshot-coverage', 'intraday decision lacks quote or trade confirmation', { symbol })
-          : signalFor(
-              symbol,
-              input.bars.filter((bar) => bar.symbol === symbol),
-              quote,
-              trade,
-              protocol,
-              input.observedAt,
-              benchmarkPrices,
-            )
-      }),
-    )
+    const explicitExclusions = yield* candidateExclusionsBySymbol(input.candidateExclusions ?? [], protocol)
+    const candidates: IntradayMomentumSignal[] = []
+    const excludedCandidates: IntradayMomentumCandidateExclusion[] = []
+    for (const symbol of protocol.candidateSymbols) {
+      const explicitExclusion = explicitExclusions.get(symbol)
+      if (explicitExclusion !== undefined) {
+        excludedCandidates.push(explicitExclusion)
+        continue
+      }
+      const bars = input.bars.filter((bar) => bar.symbol === symbol)
+      const quote = input.latestQuotes[symbol]
+      const trade = input.latestTrades[symbol]
+      if (!completeRollingBars(bars, input.rangeStartAt, protocol.lookbackMinutes)) {
+        excludedCandidates.push({
+          symbol,
+          reason: 'not-ready',
+          message: 'intraday candidate lacks a complete rolling bar window',
+        })
+        continue
+      }
+      if (quote === undefined || trade === undefined) {
+        excludedCandidates.push({
+          symbol,
+          reason: 'not-ready',
+          message: 'intraday candidate lacks quote or trade confirmation',
+        })
+        continue
+      }
+      if (candidateEvidenceIsStale(quote, trade, input.observedAt, protocol.maximumQuoteAgeMs)) {
+        excludedCandidates.push({
+          symbol,
+          reason: 'freshness',
+          message: 'intraday candidate quote or trade exceeds the protocol freshness bound',
+        })
+        continue
+      }
+      candidates.push(yield* signalFor(symbol, bars, quote, trade, protocol, input.observedAt, benchmarkPrices))
+    }
     const selected = selectCanonicalIntradayMomentumSignals(candidates, protocol.maximumPositions)
     const selectedSymbols = Object.freeze(selected.map(({ symbol }) => symbol))
     const rankBySymbol = new Map(selectedSymbols.map((symbol, index) => [symbol, index + 1]))
@@ -318,6 +413,7 @@ export const decideIntradayMomentumCore = (
         quoteObservedAt: benchmarkQuote.eventAt,
       }),
       selectedSymbols,
+      excludedCandidates: Object.freeze(excludedCandidates),
       targetWeights: Object.freeze(
         Object.fromEntries(
           protocol.candidateSymbols.map((symbol) => [symbol, selectedSet.has(symbol) ? targetWeight : 0]),

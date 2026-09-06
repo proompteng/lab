@@ -16,18 +16,28 @@ elapsed 30-minute IEX window. It compares AAPL, AMZN, IWM, NVDA, QQQ, and SMH ag
 - at least 10 basis points of excess momentum;
 - a top-quartile location in the rolling range;
 - a spread no wider than 5 basis points; and
-- complete bars plus fresh executable quotes and trades.
+- valid rolling-bar evidence plus fresh executable quotes and trades.
 
 The strategy selects at most one long position and caps it at 10% of the mandate allocation. A valid `NO_TRADE` is a
-normal decision; absent or late market data is a lifecycle blocker, not a strategy result. New entries use whole-share
+normal decision; unavailable mandatory evidence blocks evaluation. New entries use whole-share
 IOC limit orders at an adverse verified quote boundary. Bayn starts flattening 30 minutes before the close and must be
 flat 15 minutes before the close.
 
-Quotes, trades, and finalized bars ingested beyond their declared delay limits remain invalid. Entry and flattening
-wait for a subsequently captured, fully verified snapshot within their existing deadlines. An invalid historical bar
-remains invalid while it is in the rolling window; waiting only helps once a compliant window is available. Premature
-feed evidence, non-final bars, and unclassified freshness violations remain errors. Historical replay uses the same
-retry classification and retains every rejected observation.
+Entry observations evaluate candidate availability independently. Missing or late candidate bars, quotes, or trades
+exclude that candidate with an explicit reason while other candidates remain eligible for evaluation. SPY is the
+mandatory benchmark. Source identity, canonical ordering, watermarks, finality, and premature data still fail the
+whole observation. Raw candidate rows and their exclusions remain in the hashed snapshot for revalidation.
+
+The v3 strategy target records measured signals separately from excluded candidates. Measured signals retain their
+threshold rejections and selection rank; eligible candidates outside the position limit remain visible. An observation
+with every candidate excluded remains unavailable and cannot establish a valid `NO_TRADE`. Execution pricing requires
+fresh quotes for positive targets and reconciled holdings. Legacy v2 targets remain readable for audit.
+
+Quotes, trades, and finalized bars ingested beyond their declared delay limits remain invalid. Candidate exclusion
+does not relax those limits. Required benchmark and execution evidence must become available within the existing
+deadlines. An invalid historical bar remains invalid while it is in the rolling window; waiting only helps once a
+compliant window is available. Premature feed evidence, non-final bars, and unclassified freshness violations remain
+errors. Historical replay uses the same candidate evaluation and retains every rejected observation.
 
 The protocol, universe, thresholds, feed contract, and execution model are source-controlled TypeScript. The image
 embeds and verifies the source revision and the behavior, parameter, protocol, and risk-policy hashes.
@@ -143,10 +153,46 @@ slippage. A modeled price beyond the submitted limit cancels the order. Zero add
 the quoted spread and the protocol's fees. `feeMultiplierPpm` scales the fees before their normal rounding. Execution
 assumptions describe a counterfactual; they do not measure queue position or actual broker fills.
 
+The `bayn.intraday-replay-report.v2` report includes holding-period equity marks from adverse verified archive bids,
+observed drawdown, carried peak equity, and diagnostic daily-loss/drawdown-limit breaches. Marks use the declared
+30-second poll interval, so excursions between observations can be missed. Missing required mark evidence makes the
+session incomplete while preserving attempted closes, fees, fills, and remaining positions. These diagnostics do not
+change order decisions or represent the full live risk controller.
+
 Every report is `COUNTERFACTUAL_RESEARCH` and `NOT_QUALIFIED`, including a positive result. A report does not create a
 qualification, change a strategy, activate capital, or replace the forward-performance receipt. Use a declared
 chronological holdout and sufficient independent sessions before drawing a profitability conclusion; inspect the
 report's limitations and incomplete sessions rather than selecting only favorable dates or assumptions.
+
+### Archive study across independent sessions
+
+Use `bayn-intraday-replay --study <path>` to evaluate every declared archive session under multiple frozen execution
+assumptions. The command uses the same read-only ClickHouse configuration and the active strategy implementation.
+Each date starts flat with the same initial capital. An incomplete date remains in the report and does not skip later
+dates; these independent experiments do not represent a continuous portfolio. The ordinary `--input` mode continues
+to carry cash and stop after incomplete sessions.
+
+The study input has `schemaVersion: "bayn.archive-replay-study-input.v1"`, `sessionMode: "independent-flat-start"`,
+`experimentPlanHash`, the frozen `strategyProtocolHash` and `riskPolicyHash`, and `scenarios: [{ name, input }]`.
+Each scenario's `input` is the complete `bayn.intraday-replay-input.v1` object above. Scenarios must have unique names
+and identical calendars, date ranges, and starting/allocation capital. Only execution assumptions may differ. Freeze
+the plan and all scenarios before examining their evaluation returns; a supplied plan hash records identity, not proof
+of preregistration. The command rejects strategy/risk identity drift before archive reads.
+
+Every nested replay retains its report hash, exact Kafka topic/partition offsets, event and ingestion times through
+the verified snapshot manifests, data failures, orders, fills, and accounting. Aggregate independent-session P&L is
+null whenever any declared date is incomplete. Winning/losing counts describe completed independent experiments only;
+they are not a win/loss rate over the whole calendar. Zero fills are reported explicitly and do not establish an edge. All
+results remain research-only and cannot change broker or capital authority. Progress is JSON on stderr; stdout contains
+one complete JSON report. Add `--output-directory <new-directory>` to atomically save each completed session's full
+report and frozen study/plan identity before starting the next session. The directory must not exist and its parent
+must exist; existing evidence is never overwritten. These files survive interruption but are not a completed study
+or a resume cache. Neither the study nor the normal replay consumes or commits a Kafka consumer-group offset.
+
+```sh
+node services/bayn/dist/intraday-replay-command.js --study archive-study.json \
+  --output-directory archive-study-sessions > archive-study-report.json
+```
 
 ## Vendor historical research
 

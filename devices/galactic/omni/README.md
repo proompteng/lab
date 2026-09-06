@@ -68,3 +68,43 @@ direct pull of the same host without the mirror defaults to HTTPS and is not an 
 
 Never commit the raw or rendered templates. Delete both temporary files after the operation. The full preflight,
 runtime proof, and rollback procedure is in `docs/runbooks/talos-latest-upgrade-plan.md`.
+
+## PodCIDR maintenance checks
+
+The preparation template holds Turin and Altra at `maxPods: 250` and requests `/23` allocations for newly registered
+Nodes. Changing the allocation mask does not resize existing Nodes' immutable PodCIDRs. Before moving workloads onto
+Altra or draining either target, use the render, validate, dry-run, and Omni sync procedure above, then verify
+`kubectl --context galactic-lan -n default get node talos-192-168-1-85 -o jsonpath='{.status.capacity.pods}'` returns
+`250`. Keep that cap until Altra's new `/23` network passes acceptance. The gate intentionally fails on Altra's
+old `/24`/500 state; do not use `--migrated` to skip this preparation.
+
+Run the read-only address and storage gate immediately before each node's maintenance:
+
+```bash
+python3 devices/galactic/omni/podcidr_preflight.py --node turin
+python3 devices/galactic/omni/podcidr_preflight.py --node talos-192-168-1-85
+```
+
+The command uses only the `galactic-lan` Kubernetes context. It checks the reviewed three-node membership, readiness,
+distinct allocator `/23` blocks, current pod addresses, Ceph monitor/OSD/PG recovery, and active/standby CephFS MDS
+placement on separate hosts. It requires a 250-pod cap on the maintenance target. After migration, add `--migrated`
+to require both a `/23` PodCIDR and a 500-pod cap. Exit code 1 means a failed gate; exit code 2 means live evidence
+could not be established. A peer's existing address-capacity mismatch is reported separately as a warning.
+
+Passing these checks does not prove workload continuity, data backups, disk identity, GPU or Kata operation, or
+authorize a drain. Verify those conditions in the reviewed maintenance procedure. In particular, a Kubernetes etcd
+snapshot does not back up application volumes, and node membership changes must preserve the existing OSD identities.
+
+The [Turin and Altra maintenance procedure](../../../docs/runbooks/galactic-turin-podcidr-23-migration-plan.md)
+records the rehearsed Node re-registration, workload availability decision, restoration, and recovery sequence.
+`podcidr_patch.py` renders temporary Omni patches from a drained target's snapshots; `podcidr_cleanup.py` performs
+the guarded CNI cleanup inside the maintenance static pod. Neither tool authorizes a production drain or a Talos reset.
+The cleanup waits for asynchronous bridge detachment and fails if ports remain owned; it never removes attached ports.
+
+Check the gate's failure cases with:
+
+```bash
+python3 -m unittest discover -s devices/galactic/omni -p 'test_podcidr_*.py' -v
+ruff check devices/galactic/omni/podcidr_*.py devices/galactic/omni/test_podcidr_*.py
+ruff format --check devices/galactic/omni/podcidr_*.py devices/galactic/omni/test_podcidr_*.py
+```

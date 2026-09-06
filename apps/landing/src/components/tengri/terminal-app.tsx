@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { TengriTerminalSession, TengriTerminalTicket } from '@/lib/tengri/types'
 
 import { runTengriAction } from './client'
+import styles from './terminal-app.module.css'
 import {
   buildTerminalWebSocketUrl,
   normalizeTerminalSize,
@@ -36,6 +37,7 @@ type ConnectionState = {
 }
 
 const encoder = new TextEncoder()
+const TERMINAL_BACKGROUND = '#1e1e1e'
 const claimedTerminalSessionIds = new Set<string>()
 
 export function TerminalApp({
@@ -551,7 +553,7 @@ export function TerminalApp({
         rightClickSelectsWord: true,
         scrollback: 10_000,
         theme: {
-          background: '#1e1e1e',
+          background: TERMINAL_BACKGROUND,
           foreground: '#d9e0ee',
           cursor: '#9ccfd8',
           selectionBackground: '#3e4c76aa',
@@ -657,6 +659,7 @@ export function TerminalApp({
       const host = hostRef.current
       host.addEventListener('pointerdown', focusTerminal)
       host.addEventListener('focus', focusTerminal)
+      if (host.contains(document.activeElement)) focusTerminal()
       disposables.push(
         { dispose: () => host.removeEventListener('pointerdown', focusTerminal) },
         { dispose: () => host.removeEventListener('focus', focusTerminal) },
@@ -739,10 +742,15 @@ export function TerminalApp({
 
   const busy = ['connecting', 'initializing', 'reconnecting'].includes(connection.phase)
   return (
-    <div className="relative h-full bg-[#1e1e1e] p-2" data-shortcuts="native">
+    <div
+      className={`relative h-full p-3 ${styles.terminal}`}
+      style={{ backgroundColor: TERMINAL_BACKGROUND }}
+      data-shortcuts="native"
+    >
       <div
         ref={hostRef}
-        className="h-full w-full outline-none [&_.xterm]:h-full [&_.xterm]:p-[0.3rem] [&_.xterm-viewport]:[scrollbar-color:rgb(255_255_255/0.2)_transparent]"
+        data-window-default-focus
+        className="h-full w-full bg-inherit outline-none"
         aria-label="Interactive Tengri terminal"
         data-renderer={renderer}
         role="application"
@@ -750,7 +758,12 @@ export function TerminalApp({
       />
 
       <div
-        className="absolute top-2 right-3 flex max-w-[min(70%,28rem)] items-center gap-1.5 rounded-full border border-white/7 bg-black/55 px-2 py-1 text-[10px] text-white/58 shadow-lg backdrop-blur-md"
+        className={
+          connection.phase === 'connected'
+            ? 'sr-only'
+            : 'absolute top-2 right-3 flex max-w-[min(70%,28rem)] items-center gap-1.5 rounded-full border border-white/7 bg-black/55 px-2 py-1 text-[10px] text-white/58 shadow-lg backdrop-blur-md'
+        }
+        data-connection-state={connection.phase}
         role="status"
         aria-live="polite"
       >

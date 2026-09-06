@@ -36,6 +36,7 @@ jobs:
             case "${path}" in
               services/bayn/* | \
               packages/scripts/src/bayn/* | \
+              packages/scripts/src/shared/__tests__/bayn-cnpg-contract.test.ts | \
               argocd/applications/bayn/* | \
               argocd/applications/torghut/clickhouse/* | \
               argocd/applicationsets/product.yaml | \
@@ -113,7 +114,7 @@ jobs:
       lint-command: bunx oxfmt --check services/bayn argocd/applications/bayn argocd/applications/torghut/clickhouse/bayn-sealed-secret.yaml argocd/applications/torghut/clickhouse/clickhouse-cluster.yaml
       oxlint-command: bun run --cwd services/bayn lint:oxlint
       oxlint-type-command: bun run --cwd services/bayn lint:oxlint:type
-      test-command: bun run --cwd services/bayn tsc && bun run --cwd services/bayn test && bun test packages/scripts/src/bayn
+      test-command: bun run --cwd services/bayn tsc && bun run --cwd services/bayn test && bun test packages/scripts/src/bayn packages/scripts/src/shared/__tests__/bayn-cnpg-contract.test.ts
       build-command: bun run --cwd services/bayn build
     secrets: inherit
 

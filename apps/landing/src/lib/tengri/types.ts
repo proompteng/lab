@@ -1,5 +1,6 @@
 export type AgentPhase = 'booting' | 'failed' | 'pending' | 'ready' | 'sleeping' | 'terminating' | 'unknown'
 export type AgentArchitecture = 'amd64' | 'arm64' | 'unknown'
+export type TengriErrorCode = 'conversation_not_found'
 
 export type TengriCondition = {
   type: string
@@ -98,6 +99,7 @@ export type TengriCodexThread = {
   id: string
   rawJson: string
   eventSequence: number
+  itemEventSequences?: Record<string, number>
 }
 
 export type TengriCodexTurn = {
