@@ -138,6 +138,7 @@ type MockOptions = {
   holdReplayResume?: boolean
   resumeThreadDelayMs?: number
   resumeThreadEventSequence?: number
+  resumeThreadErrors?: Array<{ status: number; error: string; code?: string }>
   resumeThreadRawJson?: string
   searchDelays?: Record<string, number>
   searchTruncated?: boolean
@@ -588,6 +589,12 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         break
       case 'resume-thread':
         resumeThreadRequests += 1
+        if (options.resumeThreadErrors?.[resumeThreadRequests - 1]) {
+          const { status, ...failure } = options.resumeThreadErrors[resumeThreadRequests - 1]
+          resumeThreadResponses += 1
+          await route.fulfill({ status, json: failure })
+          return
+        }
         if (options.holdReplayResume && resumeThreadRequests === 2) {
           markHeldResumeStarted()
           await heldResume
@@ -1672,6 +1679,65 @@ test('keeps a committed delete transition gated when snapshot refresh fails', as
   await expect(page.getByRole('heading', { name: 'Deleting Tengri' })).toBeVisible()
   await expect(page.getByText('Waiting for controller state')).toBeVisible()
   await expect(page.getByRole('navigation', { name: 'Dock' })).toHaveCount(0)
+})
+
+test('keeps a missing conversation until the user chooses to start a new one in the same workspace', async ({
+  page,
+}) => {
+  const failure = { status: 404, error: 'Codex conversation could not be found', code: 'conversation_not_found' }
+  const mock = await mockTengri(page, { resumeThreadErrors: [failure, failure] })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-missing'))
+  await page.goto('/')
+
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  const prompt = chrome.getByRole('textbox', { name: 'Message your agent' })
+  await expect(chrome.getByRole('alert')).toHaveText('Codex conversation could not be found')
+  await expect(
+    chrome.getByText(
+      'This saved conversation is no longer available. Start a new conversation to continue in this workspace.',
+    ),
+  ).toBeVisible()
+  await expect(prompt).toBeDisabled()
+  expect(await page.evaluate(() => localStorage.getItem('tengri-thread:microvm-ada'))).toBe('thread-missing')
+
+  await chrome.getByRole('button', { name: 'Retry conversation recovery' }).click()
+  await expect.poll(() => mock.getResumeThreadResponseCount()).toBe(2)
+  await expect(chrome.getByRole('button', { name: 'Start a new conversation', exact: true })).toBeVisible()
+  expect(await page.evaluate(() => localStorage.getItem('tengri-thread:microvm-ada'))).toBe('thread-missing')
+  expect(mock.actions.some((action) => action.action === 'create-thread')).toBe(false)
+
+  await chrome.getByRole('button', { name: 'Start a new conversation', exact: true }).click()
+  await expect(prompt).toBeEnabled()
+  await expect(prompt).toBeFocused()
+  await expect(chrome.getByRole('alert')).toHaveCount(0)
+  expect(await page.evaluate(() => localStorage.getItem('tengri-thread:microvm-ada'))).toBeNull()
+  await prompt.fill('Continue in this workspace.')
+  await prompt.press('Enter')
+  await expect
+    .poll(() => mock.actions.some((action) => action.action === 'send-turn' && action.threadId === 'thread-1'))
+    .toBe(true)
+  expect(mock.actions.filter((action) => action.action === 'create-thread')).toHaveLength(1)
+  expect(
+    mock.actions.filter((action) =>
+      ['create-agent', 'delete-agent', 'sleep-agent', 'resume-agent'].includes(String(action.action)),
+    ),
+  ).toHaveLength(0)
+})
+
+test('retries a temporary conversation failure without replacing the saved thread', async ({ page }) => {
+  const mock = await mockTengri(page, {
+    resumeThreadErrors: [{ status: 503, error: 'Tengri control plane is unavailable' }],
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-recoverable'))
+  await page.goto('/')
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  await expect(chrome.getByRole('alert')).toHaveText('Tengri control plane is unavailable')
+  await expect(chrome.getByRole('button', { name: 'Start a new conversation', exact: true })).toHaveCount(0)
+  await chrome.getByRole('button', { name: 'Retry conversation recovery' }).click()
+  await expect(chrome.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+  await expect(chrome.getByRole('alert')).toHaveCount(0)
+  expect(await page.evaluate(() => localStorage.getItem('tengri-thread:microvm-ada'))).toBe('thread-recoverable')
+  expect(mock.actions.filter((action) => action.action === 'create-thread')).toHaveLength(0)
 })
 
 test('steers a recovered in-progress turn when sending during thread resume', async ({ page }) => {
