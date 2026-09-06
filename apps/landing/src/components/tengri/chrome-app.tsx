@@ -3,7 +3,6 @@
 import {
   ArrowLeft,
   ArrowRight,
-  Bot,
   ExternalLink,
   LoaderCircle,
   MonitorUp,
@@ -199,11 +198,9 @@ export function ChromeApp({
                 tabIndex={selected ? 0 : -1}
                 type="button"
               >
-                {page.kind === 'agent' ? (
-                  <Bot className="h-3.5 w-3.5 shrink-0 text-[#9ccfd8]" aria-hidden="true" />
-                ) : (
+                {page.kind === 'preview' ? (
                   <MonitorUp className="h-3.5 w-3.5 shrink-0 text-[#79b8ff]" aria-hidden="true" />
-                )}
+                ) : null}
                 <span className="truncate">{page.title}</span>
                 <span className="sr-only">. Press Delete to close.</span>
                 <span

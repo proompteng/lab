@@ -14,6 +14,13 @@ id-less requests instead of generating a compatibility identity or negotiating w
 Pending Codex device logins are guest-owned. A reconnecting desktop reads the active attempt from Nanoagent and keeps
 the same verification code and original expiry instead of silently starting and invalidating another attempt.
 
+Paginated Codex conversations resume with `excludeTurns: true`, then load `thread/items/list` and metadata-only
+`thread/turns/list` in ascending pages. Each item carries the event cursor captured with its page; the desktop uses
+that cursor to discard covered replay while retaining updates that arrive after an earlier page. The initial resume
+cursor remains the baseline for new items. Retrieval is bounded to 90 seconds, 256 pages, and 10 MiB, and any failed
+page fails the restore instead of displaying incomplete history. Threads explicitly marked `legacy` retain the
+single full-history snapshot and cursor contract required by their reconstructed item identities.
+
 Each Chrome preview load exchanges its one-use ticket for a bounded, owner-scoped session whose ID is allocated before
 the browser receives the ticket. The desktop revokes both unused tickets and active sessions when a preview is
 superseded or closed, so reload and history use cannot exhaust the per-agent session limit. The gateway injects a

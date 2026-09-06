@@ -274,20 +274,35 @@ function normalizeCodexLogin(response: RawRecord): TengriCodexLogin {
 
 export async function createCodexThread(subject: string, agentId: string): Promise<TengriCodexThread> {
   const response = await unary<RawRecord>('createCodexThread', { agentId }, subject, 130_000)
-  return {
-    id: stringValue(response.id),
-    rawJson: stringValue(response.rawJson),
-    eventSequence: sequenceValue(response.eventSequence),
-  }
+  return normalizeCodexThread(response)
 }
 
 export async function resumeCodexThread(subject: string, agentId: string, threadId: string) {
   const response = await unary<RawRecord>('resumeCodexThread', { agentId, threadId }, subject, 130_000)
+  return normalizeCodexThread(response)
+}
+
+function normalizeCodexThread(response: RawRecord): TengriCodexThread {
+  const eventSequence = sequenceValue(response.eventSequence)
+  const itemCursors: Array<[string, number]> = []
+  if (response.itemEventSequences !== undefined && response.itemEventSequences !== null) {
+    if (typeof response.itemEventSequences !== 'object' || Array.isArray(response.itemEventSequences)) {
+      throw new TengriUnavailableError('Tengri control plane returned invalid Codex item cursors')
+    }
+    for (const [id, value] of Object.entries(response.itemEventSequences)) {
+      const sequence = sequenceValue(value)
+      if (sequence < eventSequence) {
+        throw new TengriUnavailableError('Tengri control plane returned an outdated Codex item cursor')
+      }
+      itemCursors.push([id, sequence])
+    }
+  }
   return {
     id: stringValue(response.id),
     rawJson: stringValue(response.rawJson),
-    eventSequence: sequenceValue(response.eventSequence),
-  } satisfies TengriCodexThread
+    eventSequence,
+    itemEventSequences: Object.fromEntries(itemCursors),
+  }
 }
 
 export async function sendCodexTurn(subject: string, agentId: string, threadId: string, text: string) {

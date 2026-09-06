@@ -11,6 +11,8 @@ use thiserror::Error;
 
 use crate::crd::{MicroVM, MicroVMPhase};
 
+mod codex_history;
+
 const GUEST_API_PORT: u16 = 8080;
 const BOOTSTRAP_TOKEN_KEY: &str = "token";
 const MAX_GUEST_ERROR_BYTES: usize = 64 << 10;
@@ -40,6 +42,10 @@ pub enum GuestError {
     InvalidJson(#[from] serde_json::Error),
     #[error("Nanoagent does not support atomic Codex snapshot cursors")]
     MissingCodexSnapshotCursor,
+    #[error("Nanoagent returned invalid Codex history: {0}")]
+    InvalidCodexHistory(&'static str),
+    #[error("Codex conversation history retrieval timed out")]
+    CodexHistoryTimeout,
     #[error("Nanoagent returned terminal creation identity {actual:?}; expected {expected:?}")]
     TerminalCreationIdentityMismatch {
         expected: String,
