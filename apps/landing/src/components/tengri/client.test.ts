@@ -5,12 +5,42 @@ import {
   getTengriGuestOperationSnapshot,
   runTengriAction,
   subscribeTengriGuestOperations,
+  TengriRequestError,
 } from './client'
 
 const originalFetch = globalThis.fetch
 
 afterEach(() => {
   globalThis.fetch = originalFetch
+})
+
+test('preserves HTTP status and recognized conversation errors without trusting other payload shapes', async () => {
+  for (const [status, body, message, code] of [
+    [
+      404,
+      { error: 'Codex conversation could not be found', code: 'conversation_not_found' },
+      'Codex conversation could not be found',
+      'conversation_not_found',
+    ],
+    [
+      503,
+      { error: 'Tengri control plane is unavailable', code: 'conversation_not_found' },
+      'Tengri control plane is unavailable',
+      undefined,
+    ],
+    [404, { error: { internal: 'details' }, code: 'unknown' }, 'Tengri request failed with 404', undefined],
+  ] as const) {
+    globalThis.fetch = Object.assign(async () => Response.json(body, { status }), {
+      preconnect: originalFetch.preconnect,
+    })
+    const error = await runTengriAction({
+      action: 'resume-thread',
+      agentId: 'agent-errors',
+      threadId: 'thread-missing',
+    }).catch((cause: unknown) => cause)
+    expect(error).toBeInstanceOf(TengriRequestError)
+    expect(error).toMatchObject({ status, message, code })
+  }
 })
 
 describe('Tengri guest operation coordination', () => {

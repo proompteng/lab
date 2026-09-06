@@ -1,0 +1,110 @@
+name: ricochet-rush
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    paths:
+      - apps/ricochet-rush/**
+      - .github/workflows/ricochet-rush-ci.yml
+      - .github/ci/impact-map.yml
+  push:
+    branches:
+      - main
+    paths:
+      - apps/ricochet-rush/**
+      - .github/workflows/ricochet-rush-ci.yml
+      - .github/ci/impact-map.yml
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  GODOT_RELEASE: 4.7.2-stable
+  GODOT_VERSION: 4.7.2.stable.official.ed1daf0bf
+  GODOT_TEMPLATE_VERSION: 4.7.2.stable
+  GODOT_EDITOR_SHA256: cadd3204e728a35d3f13adb7fd0d7902636b79f6b95c40c265eb73b6c35329e4
+  GODOT_TEMPLATES_SHA256: f298490b8d44d934be425a5a65a51bf15f422428b229a06a6e11d9ffea248011
+  GDTOOLKIT_VERSION: 4.5.0
+
+jobs:
+  check-and-export:
+    name: Check and export
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pinned Godot editor
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/Godot_v${GODOT_RELEASE}_linux.x86_64.zip"
+          url="https://github.com/godotengine/godot-builds/releases/download/${GODOT_RELEASE}/Godot_v${GODOT_RELEASE}_linux.x86_64.zip"
+          curl --fail --location --retry 3 --retry-all-errors --proto '=https' --tlsv1.2 \
+            --output "${archive}" "${url}"
+          printf '%s  %s\n' "${GODOT_EDITOR_SHA256}" "${archive}" | sha256sum --check --strict
+          editor_dir="${RUNNER_TEMP}/godot-editor"
+          mkdir -p "${editor_dir}"
+          unzip -q "${archive}" -d "${editor_dir}"
+          godot_binary="${editor_dir}/Godot_v${GODOT_RELEASE}_linux.x86_64"
+          test -x "${godot_binary}" || chmod +x "${godot_binary}"
+          test "$("${godot_binary}" --version)" = "${GODOT_VERSION}"
+          printf 'GODOT=%s\n' "${godot_binary}" >> "${GITHUB_ENV}"
+
+      - name: Install matching export templates
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/Godot_v${GODOT_RELEASE}_export_templates.tpz"
+          url="https://github.com/godotengine/godot-builds/releases/download/${GODOT_RELEASE}/Godot_v${GODOT_RELEASE}_export_templates.tpz"
+          curl --fail --location --retry 3 --retry-all-errors --proto '=https' --tlsv1.2 \
+            --output "${archive}" "${url}"
+          printf '%s  %s\n' "${GODOT_TEMPLATES_SHA256}" "${archive}" | sha256sum --check --strict
+          template_dir="${HOME}/.local/share/godot/export_templates/${GODOT_TEMPLATE_VERSION}"
+          mkdir -p "${template_dir}"
+          unzip -q -j "${archive}" \
+            templates/macos.zip \
+            templates/web_nothreads_debug.zip \
+            templates/web_nothreads_release.zip \
+            templates/version.txt \
+            -d "${template_dir}"
+          test -s "${template_dir}/macos.zip"
+          test -s "${template_dir}/web_nothreads_debug.zip"
+          test -s "${template_dir}/web_nothreads_release.zip"
+          test -s "${template_dir}/version.txt"
+
+      - name: Check and export Ricochet Rush
+        working-directory: apps/ricochet-rush
+        env:
+          GD_VENV: ${{ runner.temp }}/gdtoolkit
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=30s 10m make check
+          make export-web
+          make export-macos
+
+      - name: Upload Web build
+        uses: actions/upload-artifact@v5
+        with:
+          name: ricochet-rush-web-${{ github.sha }}
+          path: apps/ricochet-rush/build/web/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload macOS build
+        uses: actions/upload-artifact@v5
+        with:
+          name: ricochet-rush-macos-${{ github.sha }}
+          path: apps/ricochet-rush/build/macos/RicochetRush.zip
+          if-no-files-found: error
+          retention-days: 14

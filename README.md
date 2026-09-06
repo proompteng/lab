@@ -20,6 +20,7 @@ The repository centers on:
 - `apps/cms`: Payload CMS for landing content
 - `apps/docs`: Fumadocs-based documentation app
 - `apps/orbit-salvage`: Godot space-salvage game with a native desktop and browser build
+- `apps/ricochet-rush`: Godot 3D survival shooter with native desktop and browser builds
 - `apps/froussard`: Bun webhook bridge service in `apps/`
 - `apps/reestr`, `apps/reviseur`, `apps/kabina`, `apps/nata`, `apps/kitty-krew`, `apps/alchimie`, `apps/discourse`:
   additional product and experiment surfaces

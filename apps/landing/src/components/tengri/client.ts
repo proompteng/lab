@@ -1,4 +1,16 @@
-import type { TengriAction, TengriDesktopSnapshot } from '@/lib/tengri/types'
+import type { TengriAction, TengriDesktopSnapshot, TengriErrorCode } from '@/lib/tengri/types'
+
+export class TengriRequestError extends Error {
+  readonly status: number
+  readonly code?: TengriErrorCode
+
+  constructor(message: string, status: number, code?: TengriErrorCode) {
+    super(message)
+    this.name = 'TengriRequestError'
+    this.status = status
+    this.code = code
+  }
+}
 
 export async function getDesktopSnapshot(signal?: AbortSignal): Promise<TengriDesktopSnapshot> {
   const response = await fetch('/api/tengri', { cache: 'no-store', credentials: 'same-origin', signal })
@@ -124,10 +136,16 @@ function deleteUnusedGuestOperationScope(agentId: string, scope: GuestOperationS
 }
 
 async function decodeResponse<Result>(response: Response): Promise<Result> {
-  const payload = (await response.json().catch(() => null)) as ({ error?: string } & Result) | null
-  if (!response.ok) throw new Error(payload?.error || `Tengri request failed with ${response.status}`)
+  const payload: unknown = await response.json().catch(() => null)
+  if (!response.ok) {
+    const record = typeof payload === 'object' && payload !== null ? payload : {}
+    const message = 'error' in record && typeof record.error === 'string' ? record.error : ''
+    const code =
+      response.status === 404 && 'code' in record && record.code === 'conversation_not_found' ? record.code : undefined
+    throw new TengriRequestError(message || `Tengri request failed with ${response.status}`, response.status, code)
+  }
   if (!payload) throw new Error('Tengri returned an empty response')
-  return payload
+  return payload as Result
 }
 
 function isAbortSignal(value: AbortSignal | TengriActionOptions | undefined): value is AbortSignal {

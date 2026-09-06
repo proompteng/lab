@@ -10,6 +10,20 @@ const {
   tengriRouteError,
 } = await import('./http')
 
+test('preserves the public conversation error code and prevents caching recovery failures', async () => {
+  const { TengriUnavailableError } = await import('./grpc')
+  const response = tengriRouteError(
+    new TengriUnavailableError('Codex conversation could not be found', 404, 'conversation_not_found'),
+  )
+
+  expect(response.status).toBe(404)
+  expect(response.headers.get('cache-control')).toBe('no-store, max-age=0')
+  expect(await response.json()).toEqual({
+    error: 'Codex conversation could not be found',
+    code: 'conversation_not_found',
+  })
+})
+
 describe('Tengri BFF request bodies', () => {
   test('parses a bounded UTF-8 JSON body', async () => {
     const request = new Request('https://proompteng.ai/api/tengri', {
