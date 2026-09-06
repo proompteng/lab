@@ -48,9 +48,9 @@ export interface BlockedCycleIntentStoreShape {
     input: BlockedCycleIntentTerminalizationInput,
   ) => Effect.Effect<BlockedCycleIntentTerminalizationReceipt, BlockedCycleIntentStoreError>
   /**
-   * Repairs a generation that was already kill-restricted and terminal when this process started. The caller must
-   * run this operation inside the caller's WriterFence transaction. A later, separate exact reconciliation is
-   * deliberately required before OBSERVE generation rollover can clear the kill.
+   * Settles a kill-restricted generation after either its cycle blocks or its untouched same-plan cycle is preserved
+   * before submission opens. The caller runs this operation inside its WriterFence transaction. A later, separate
+   * exact reconciliation is required before OBSERVE generation rollover can clear the kill.
    */
   readonly settleCurrentTerminalGeneration: (
     input: CurrentTerminalGenerationSettlementInput,

@@ -19,6 +19,8 @@ unauthenticated.
 - `POST /v1/terminals`, `GET /v1/terminals`, and `DELETE /v1/terminals/{id}`: PTY lifecycle;
 - `GET /v1/terminals/{id}/ws`: interactive terminal attachment, resize, signals, replay, and reconnect;
 - `POST /v1/codex/call`: authenticated Codex account, login, thread, turn, steering, and interruption calls;
+- `GET /v1/codex/login`: the current device-login attempt, so a reconnecting desktop can resume it without
+  invalidating the displayed code;
 - `GET /v1/codex/events`: bounded, replayable Codex app-server events;
 - `POST /v1/codex/approvals/{id}`: resolve a pending Codex approval request;
 - `/v1/preview/{port}/{path...}`: HTTP and WebSocket proxying to an allowed loopback development port.

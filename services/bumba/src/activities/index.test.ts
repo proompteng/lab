@@ -771,7 +771,7 @@ describe('bumba completions', () => {
     }
   })
 
-  it('omits temperature for hosted GPT-5.6 completion requests', async () => {
+  it('omits unsupported sampling parameters for hosted GPT-6 completion requests', async () => {
     const previousFetch = globalThis.fetch
     const previousEnv = {
       OPENAI_API_BASE_URL: process.env.OPENAI_API_BASE_URL,
@@ -787,8 +787,8 @@ describe('bumba completions', () => {
     process.env.OPENAI_API_BASE_URL = 'https://api.openai.com/v1'
     process.env.OPENAI_API_KEY = 'test-key'
     delete process.env.OPENAI_COMPLETION_MODEL
-    delete process.env.OPENAI_COMPLETION_TEMPERATURE
-    delete process.env.OPENAI_COMPLETION_TOP_P
+    process.env.OPENAI_COMPLETION_TEMPERATURE = '0.2'
+    process.env.OPENAI_COMPLETION_TOP_P = '0.8'
     delete process.env.OPENAI_COMPLETION_REASONING_EFFORT
     process.env.OPENAI_COMPLETION_TIMEOUT_MS = '5000'
     process.env.OPENAI_COMPLETION_MAX_OUTPUT_TOKENS = '256'
@@ -818,10 +818,31 @@ describe('bumba completions', () => {
         throw new Error('expected completion request body')
       }
       const body = requestBody as Record<string, unknown>
-      expect(body.model).toBe('gpt-5.6-sol')
+      expect(body.model).toBe('gpt-6-astra')
       expect(body).not.toHaveProperty('temperature')
       expect(body).not.toHaveProperty('top_p')
       expect(body.reasoning_effort).toBe('high')
+
+      for (const legacyEffort of ['none', 'minimal']) {
+        process.env.OPENAI_COMPLETION_REASONING_EFFORT = legacyEffort
+        requestBody = null
+        const legacyResult = await activities.enrichWithModel({
+          filename: 'sample.ts',
+          content: 'export const sample = true\n',
+          astSummary: '- export const sample',
+          context: '',
+        })
+
+        expect(legacyResult.summary).toBe('ok')
+        if (!requestBody) {
+          throw new Error(`expected completion request body for ${legacyEffort} reasoning effort`)
+        }
+        const legacyBody = requestBody as Record<string, unknown>
+        expect(legacyBody.model).toBe('gpt-6-astra')
+        expect(legacyBody).not.toHaveProperty('temperature')
+        expect(legacyBody).not.toHaveProperty('top_p')
+        expect(legacyBody.reasoning_effort).toBe('low')
+      }
     } finally {
       globalThis.fetch = previousFetch
       for (const [key, value] of Object.entries(previousEnv)) {

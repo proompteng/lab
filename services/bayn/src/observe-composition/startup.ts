@@ -11,6 +11,7 @@ import { strictParseOptions } from '../schemas'
 import { defaultIntradayMomentumProtocolDocument, strategyDefinition, type StrategyRuntime } from '../strategy'
 import type {
   MutationAutonomousCycleInput,
+  MutationCycleExecutionMode,
   ObserveAutonomousCycleInput,
   ObserveStartupPreparation,
   RecoveryFirstCycleDriver,
@@ -210,6 +211,7 @@ export const makeObserveAutonomousCycleStartup =
 export const makeMutationAutonomousCycleStartup =
   (
     input: MutationAutonomousCycleInput,
+    executionMode: MutationCycleExecutionMode = 'Mutation',
   ): AutonomousCycleDriverStartup<RecoveryFirstCycleDriver, never, RecoveryFirstRuntime> =>
   (startup) =>
     Effect.gen(function* () {
@@ -222,7 +224,9 @@ export const makeMutationAutonomousCycleStartup =
           startup,
           preparation,
           policy,
-          { _tag: 'Mutation', executionProgram: input.executionProgram },
+          executionMode === 'RecoveryOnly'
+            ? { _tag: 'RecoveryOnly' }
+            : { _tag: 'Mutation', executionProgram: input.executionProgram },
           mutationDecisionBuilder(input, preparation, policy),
           'mutation autonomous cycle loop',
         ),
