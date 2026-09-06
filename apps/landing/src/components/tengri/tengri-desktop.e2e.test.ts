@@ -2106,14 +2106,22 @@ test('reconciles paginated item snapshots while keeping the transcript compact a
   const outputCharacterWidths = await chrome
     .getByRole('article', { name: 'Codex output' })
     .locator('pre')
-    .evaluate((element) => {
+    .evaluate(async (element) => {
       const context = document.createElement('canvas').getContext('2d')
       if (!context) throw new Error('Canvas is unavailable')
       const style = getComputedStyle(element)
       context.font = `${style.fontSize} ${style.fontFamily}`
-      return { narrow: context.measureText('iii').width, wide: context.measureText('WWW').width }
+      const loadedFonts = await document.fonts.load(context.font, 'iiiWWW✓✓✓')
+      return {
+        loadedFonts: loadedFonts.length,
+        narrow: context.measureText('iii').width,
+        wide: context.measureText('WWW').width,
+        symbols: context.measureText('✓✓✓').width,
+      }
     })
+  expect(outputCharacterWidths.loadedFonts).toBeGreaterThan(0)
   expect(outputCharacterWidths.narrow).toBeCloseTo(outputCharacterWidths.wide, 1)
+  expect(outputCharacterWidths.symbols).toBeCloseTo(outputCharacterWidths.wide, 1)
   const user = chrome.getByRole('article', { name: 'Your message' })
   const response = chrome.getByRole('article', { name: 'Codex response' }).first()
   for (const row of [user, response]) {
