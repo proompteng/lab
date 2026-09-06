@@ -143,10 +143,46 @@ slippage. A modeled price beyond the submitted limit cancels the order. Zero add
 the quoted spread and the protocol's fees. `feeMultiplierPpm` scales the fees before their normal rounding. Execution
 assumptions describe a counterfactual; they do not measure queue position or actual broker fills.
 
+The `bayn.intraday-replay-report.v2` report includes holding-period equity marks from adverse verified archive bids,
+observed drawdown, carried peak equity, and diagnostic daily-loss/drawdown-limit breaches. Marks use the declared
+30-second poll interval, so excursions between observations can be missed. Missing required mark evidence makes the
+session incomplete while preserving attempted closes, fees, fills, and remaining positions. These diagnostics do not
+change order decisions or represent the full live risk controller.
+
 Every report is `COUNTERFACTUAL_RESEARCH` and `NOT_QUALIFIED`, including a positive result. A report does not create a
 qualification, change a strategy, activate capital, or replace the forward-performance receipt. Use a declared
 chronological holdout and sufficient independent sessions before drawing a profitability conclusion; inspect the
 report's limitations and incomplete sessions rather than selecting only favorable dates or assumptions.
+
+### Archive study across independent sessions
+
+Use `bayn-intraday-replay --study <path>` to evaluate every declared archive session under multiple frozen execution
+assumptions. The command uses the same read-only ClickHouse configuration and the active strategy implementation.
+Each date starts flat with the same initial capital. An incomplete date remains in the report and does not skip later
+dates; these independent experiments do not represent a continuous portfolio. The ordinary `--input` mode continues
+to carry cash and stop after incomplete sessions.
+
+The study input has `schemaVersion: "bayn.archive-replay-study-input.v1"`, `sessionMode: "independent-flat-start"`,
+`experimentPlanHash`, the frozen `strategyProtocolHash` and `riskPolicyHash`, and `scenarios: [{ name, input }]`.
+Each scenario's `input` is the complete `bayn.intraday-replay-input.v1` object above. Scenarios must have unique names
+and identical calendars, date ranges, and starting/allocation capital. Only execution assumptions may differ. Freeze
+the plan and all scenarios before examining their evaluation returns; a supplied plan hash records identity, not proof
+of preregistration. The command rejects strategy/risk identity drift before archive reads.
+
+Every nested replay retains its report hash, exact Kafka topic/partition offsets, event and ingestion times through
+the verified snapshot manifests, data failures, orders, fills, and accounting. Aggregate independent-session P&L is
+null whenever any declared date is incomplete. Winning/losing counts describe completed independent experiments only;
+they are not a win/loss rate over the whole calendar. Zero fills are reported explicitly and do not establish an edge. All
+results remain research-only and cannot change broker or capital authority. Progress is JSON on stderr; stdout contains
+one complete JSON report. Add `--output-directory <new-directory>` to atomically save each completed session's full
+report and frozen study/plan identity before starting the next session. The directory must not exist and its parent
+must exist; existing evidence is never overwritten. These files survive interruption but are not a completed study
+or a resume cache. Neither the study nor the normal replay consumes or commits a Kafka consumer-group offset.
+
+```sh
+node services/bayn/dist/intraday-replay-command.js --study archive-study.json \
+  --output-directory archive-study-sessions > archive-study-report.json
+```
 
 ## Vendor historical research
 
