@@ -399,6 +399,8 @@ export function ReadyDesktop({
     setDirtyCodeWindows((current) => updateDirtyCodeWindows(current, windowId, dirty))
   }, [])
 
+  const closeChromeWindow = useCallback((id: string) => closeWindow({ app: 'chrome', id }), [closeWindow])
+
   useEffect(() => {
     if (dirtyCodeWindows.size === 0) {
       setError((current) => (current.startsWith('Save or close every edited Code tab') ? '' : current))
@@ -771,8 +773,10 @@ export function ReadyDesktop({
                 <MemoizedChromeApp
                   active={desktopWindow.id === windowState.activeWindowId}
                   agentId={agent.id}
+                  onCloseWindow={closeChromeWindow}
                   onOpenExternalPreview={openExternalPreview}
                   previewGatewayOrigin={previewGatewayOrigin}
+                  windowId={desktopWindow.id}
                 />
               ) : desktopWindow.app === 'code' ? (
                 <MemoizedCodeEditor

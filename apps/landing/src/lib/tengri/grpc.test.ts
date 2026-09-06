@@ -215,6 +215,15 @@ beforeAll(async () => {
         })
         return
       }
+      if (call.request.threadId === 'paged-thread' || call.request.threadId === 'outdated-item-cursor') {
+        callback(null, {
+          id: String(call.request.threadId),
+          rawJson: '{"thread":{"id":"paged-thread"}}',
+          eventSequence: '42',
+          itemEventSequences: { 'message-1': call.request.threadId === 'paged-thread' ? '52' : '41' },
+        })
+        return
+      }
       callback(null, {
         id: String(call.request.threadId),
         rawJson: '{"thread":{"id":"thread-test"}}',
@@ -439,13 +448,13 @@ describe('Tengri gRPC BFF transport', () => {
 
   test('restores an active Codex device login without creating another attempt', async () => {
     const { getCodexLogin } = await import('./grpc')
-    await expect(getCodexLogin('github:42', 'agent-test')).resolves.toEqual({
+    expect(await getCodexLogin('github:42', 'agent-test')).toEqual({
       loginId: 'login-one',
       verificationUrl: 'https://auth.openai.com/device',
       userCode: 'TENG-RI01',
       expiresAt: '2026-08-31T09:15:00Z',
     })
-    await expect(getCodexLogin('github:42', 'no-active-login')).resolves.toBeNull()
+    expect(await getCodexLogin('github:42', 'no-active-login')).toBeNull()
   })
 
   test('preserves a leading UTF-8 BOM for lossless editor round trips', async () => {
@@ -507,6 +516,7 @@ describe('Tengri gRPC BFF transport', () => {
       id: 'thread-test',
       rawJson: '{"thread":{"id":"thread-test"}}',
       eventSequence: 42,
+      itemEventSequences: {},
     })
   })
 
@@ -515,6 +525,18 @@ describe('Tengri gRPC BFF transport', () => {
 
     expect(await rejection(resumeCodexThread('github:42', 'agent-test', 'invalid-sequence'))).toMatchObject({
       message: 'Tengri control plane returned an invalid Codex event cursor',
+      status: 503,
+    })
+  })
+
+  test('preserves item page cursors and rejects pages older than the recovery baseline', async () => {
+    const { resumeCodexThread } = await import('./grpc')
+    expect(await resumeCodexThread('github:42', 'agent-test', 'paged-thread')).toMatchObject({
+      eventSequence: 42,
+      itemEventSequences: { 'message-1': 52 },
+    })
+    expect(await rejection(resumeCodexThread('github:42', 'agent-test', 'outdated-item-cursor'))).toMatchObject({
+      message: 'Tengri control plane returned an outdated Codex item cursor',
       status: 503,
     })
   })
