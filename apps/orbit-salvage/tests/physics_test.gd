@@ -23,6 +23,8 @@ func _run_tests() -> void:
 	await _test_release_and_stale_references()
 	await _test_impact_damage_and_destroyed_signal()
 	await _test_tug_controls_and_fuel()
+	await _test_bidirectional_cruise_limit()
+	await _test_thrust_brakes_above_cruise()
 	await _test_slack_cable_is_force_free()
 	print("Physics tests: %d PASS, %d FAIL" % [_passed, _failed])
 	quit(1 if _failed > 0 else 0)
@@ -225,6 +227,64 @@ func _test_tug_controls_and_fuel() -> void:
 	await _wait_physics(10)
 	_expect(tug.fuel < boosted_fuel, "boost drains fuel while active")
 	tug.input_boost = false
+	await _cleanup(world)
+
+
+func _test_bidirectional_cruise_limit() -> void:
+	var world: Node2D = _new_world()
+	var forward_tug: SalvageTug = _new_tug(world, Vector2(0.0, -200.0))
+	var reverse_tug: SalvageTug = _new_tug(world, Vector2(0.0, 200.0))
+	var analog_tug: SalvageTug = _new_tug(world, Vector2(0.0, 600.0))
+	forward_tug.controls_enabled = true
+	forward_tug.input_thrust = 1.0
+	reverse_tug.controls_enabled = true
+	reverse_tug.input_thrust = -1.0
+	analog_tug.controls_enabled = true
+	analog_tug.input_thrust = -0.5
+	analog_tug.linear_velocity = Vector2(-600.0, 0.0)
+	await _wait_physics(1200)
+	var maximum_speed: float = SalvageTug.MAX_CRUISE_SPEED + SalvageTug.CRUISE_SPEED_BAND
+	_expect(
+		forward_tug.linear_velocity.length() <= maximum_speed,
+		"sustained forward thrust stays within the cruise band"
+	)
+	_expect(
+		reverse_tug.linear_velocity.length() <= maximum_speed,
+		"sustained reverse thrust stays within the cruise band"
+	)
+	_expect(
+		absf(forward_tug.linear_velocity.x + reverse_tug.linear_velocity.x) < 0.1,
+		"forward and reverse cruise limits are symmetric"
+	)
+	_expect(
+		analog_tug.linear_velocity.length() <= maximum_speed,
+		"partial reverse input respects the same cruise band"
+	)
+	await _cleanup(world)
+
+
+func _test_thrust_brakes_above_cruise() -> void:
+	var world: Node2D = _new_world()
+	var forward_tug: SalvageTug = _new_tug(world, Vector2(0.0, -200.0))
+	var reverse_tug: SalvageTug = _new_tug(world, Vector2(0.0, 200.0))
+	var coasting_tug: SalvageTug = _new_tug(world, Vector2(0.0, 600.0))
+	forward_tug.controls_enabled = true
+	forward_tug.input_thrust = -1.0
+	forward_tug.linear_velocity = Vector2(600.0, 0.0)
+	reverse_tug.controls_enabled = true
+	reverse_tug.input_thrust = 1.0
+	reverse_tug.linear_velocity = Vector2(-600.0, 0.0)
+	coasting_tug.linear_velocity = Vector2(600.0, 0.0)
+	await _wait_physics(60)
+	var coasting_speed: float = coasting_tug.linear_velocity.length()
+	_expect(
+		forward_tug.linear_velocity.length() < coasting_speed - 50.0,
+		"reverse thrust still brakes forward travel above the cruise band"
+	)
+	_expect(
+		reverse_tug.linear_velocity.length() < coasting_speed - 50.0,
+		"forward thrust still brakes reverse travel above the cruise band"
+	)
 	await _cleanup(world)
 
 

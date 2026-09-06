@@ -85,10 +85,10 @@ func _physics_process(delta: float) -> void:
 		fuel = maxf(fuel - BOOST_FUEL_PER_SECOND * maxf(delta, 0.0), 0.0)
 
 	var thrust_scale: float = 1.0
-	var forward_speed: float = linear_velocity.dot(forward)
-	if thrust > 0.0 and forward_speed > MAX_CRUISE_SPEED:
+	var speed_in_thrust_direction: float = linear_velocity.dot(forward) * signf(thrust)
+	if speed_in_thrust_direction > MAX_CRUISE_SPEED:
 		thrust_scale = clampf(
-			1.0 - (forward_speed - MAX_CRUISE_SPEED) / CRUISE_SPEED_BAND, 0.0, 1.0
+			1.0 - (speed_in_thrust_direction - MAX_CRUISE_SPEED) / CRUISE_SPEED_BAND, 0.0, 1.0
 		)
 
 	var drive_force: Vector2 = (

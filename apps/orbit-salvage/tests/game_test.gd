@@ -34,6 +34,7 @@ func _run() -> void:
 	await _frames(3)
 	_check(_game.phase == OrbitSalvageGame.Phase.TITLE, "game opens at the title screen")
 	_check(_game.cargoes.size() == 12, "sector contains twelve recoverable pieces")
+	await _test_parallax_depth()
 	_game.start_run()
 	await _frames(4)
 	_check(_game.tug.controls_enabled, "launch enables actual flight controls")
@@ -66,6 +67,49 @@ func _run() -> void:
 	DirAccess.remove_absolute(_save_path)
 	print("Game acceptance: %d/%d checks passed" % [_checks - _failures, _checks])
 	quit(0 if _failures == 0 else 1)
+
+
+func _test_parallax_depth() -> void:
+	var camera_position: Vector2 = _game.camera.position
+	var layers: Array[float] = [
+		SalvageStarfield.FAR_STAR_MOTION,
+		SalvageStarfield.MID_STAR_MOTION,
+		SalvageStarfield.BRIGHT_STAR_MOTION,
+	]
+	var before: Array[Vector2] = []
+	for motion: float in layers:
+		before.append(
+			(
+				_game.starfield.get_global_transform_with_canvas()
+				* _game.starfield._parallax_offset(motion)
+			)
+		)
+	var camera_travel := Vector2(400.0, 200.0)
+	_game.camera.position += camera_travel
+	await _frames(3)
+	var screen_travel: Vector2 = camera_travel * _game.camera.zoom
+	var distances: Array[float] = []
+	for index: int in layers.size():
+		var after: Vector2 = (
+			_game.starfield.get_global_transform_with_canvas()
+			* _game.starfield._parallax_offset(layers[index])
+		)
+		var displacement: Vector2 = after - before[index]
+		distances.append(displacement.length())
+		_check(
+			displacement.dot(screen_travel) < 0.0,
+			"star layer %d moves opposite the camera on screen" % index
+		)
+	_check(
+		(
+			distances[0] < distances[1]
+			and distances[1] < distances[2]
+			and distances[2] < screen_travel.length()
+		),
+		"far stars move slower than nearer stars and foreground geometry"
+	)
+	_game.camera.position = camera_position
+	await _frames(3)
 
 
 func _test_save_failure_recovery() -> void:
