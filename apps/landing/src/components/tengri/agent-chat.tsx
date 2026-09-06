@@ -31,7 +31,7 @@ import {
   type CodexApprovalDecision,
   type CodexTranscriptItem,
 } from './codex-events'
-import { runTengriAction } from './client'
+import { runTengriAction, TengriRequestError } from './client'
 
 type EventStreamState = 'connected' | 'connecting' | 'reconnecting'
 
@@ -50,9 +50,12 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const [interrupting, setInterrupting] = useState(false)
   const [loginBusy, setLoginBusy] = useState(false)
   const [resolvingApprovals, setResolvingApprovals] = useState<Set<string>>(() => new Set())
-  const [error, setError] = useState('')
+  const [error, setError] = useState<string | Error>('')
+  const errorMessage = error instanceof Error ? error.message : error
+  const conversationMissing = error instanceof TengriRequestError && error.code === 'conversation_not_found'
   const [eventStreamState, setEventStreamState] = useState<EventStreamState>('connecting')
   const endRef = useRef<HTMLDivElement | null>(null)
+  const promptRef = useRef<HTMLTextAreaElement | null>(null)
   const accountRefreshGeneration = useRef(0)
   const completedTurns = useRef(new Set<string>())
   const loginIdRef = useRef('')
@@ -268,7 +271,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           !controller.signal.aborted &&
           codexResumeCommitIsCurrent(generation, threadResumeGeneration.current, threadId, threadIdRef.current)
         ) {
-          setError(cause instanceof Error ? cause.message : 'Codex thread could not be resumed')
+          setError(cause instanceof Error ? cause : 'Codex thread could not be resumed')
         }
       })
     return () => controller.abort()
@@ -302,7 +305,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         mountedRef.current &&
         codexResumeCommitIsCurrent(generation, threadResumeGeneration.current, currentThread, threadIdRef.current)
       ) {
-        setError(cause instanceof Error ? cause.message : 'Codex thread state could not be refreshed')
+        setError(cause instanceof Error ? cause : 'Codex thread state could not be refreshed')
       }
     } finally {
       if (generation === threadResumeGeneration.current) {
@@ -516,6 +519,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setReplayRecovering(false)
     setError('')
     completedTurns.current.clear()
+    requestAnimationFrame(() => promptRef.current?.focus())
   }
 
   if (!account) {
@@ -524,7 +528,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         {error ? (
           <div className="text-center">
             <p className="text-sm text-red-200" role="alert">
-              {error}
+              {errorMessage}
             </p>
             <button
               type="button"
@@ -547,7 +551,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     return (
       <CodexLogin
         busy={loginBusy}
-        error={error}
+        error={errorMessage}
         login={login}
         onRefresh={() => void refreshAccount()}
         onStart={() => void startLogin()}
@@ -591,19 +595,38 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         </div>
       </div>
       <div className="shrink-0 px-[clamp(16px,4vw,48px)] pb-5">
-        <StreamStatus error={error} state={eventStreamState} />
+        <StreamStatus error={errorMessage} state={eventStreamState} />
         {replayRecovering ? (
           <p className="mx-auto mb-2 max-w-3xl text-xs text-white/45" role="status">
             Recovering the active conversation…
           </p>
         ) : threadId && !threadReady ? (
-          <button
-            type="button"
-            className="mx-auto mb-2 block max-w-3xl text-xs text-[#79b8ff] hover:text-[#9bcaff]"
-            onClick={() => void recoverThreadState()}
-          >
-            Retry conversation recovery
-          </button>
+          <div className="mx-auto mb-3 max-w-3xl text-xs">
+            {conversationMissing ? (
+              <p className="mb-2 text-white/60">
+                This saved conversation is no longer available. Start a new conversation to continue in this workspace.
+              </p>
+            ) : null}
+            <div className="flex items-center justify-center gap-4">
+              <button
+                type="button"
+                className="rounded text-[#79b8ff] outline-none hover:text-[#9bcaff] focus-visible:ring-2 focus-visible:ring-white/50"
+                onClick={() => void recoverThreadState()}
+              >
+                Retry conversation recovery
+              </button>
+              {conversationMissing ? (
+                <button
+                  type="button"
+                  disabled={!canStartNewConversation}
+                  className="rounded-lg bg-white/10 px-3 py-2 text-white/85 outline-none hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-white/50 disabled:opacity-35"
+                  onClick={newConversation}
+                >
+                  Start a new conversation
+                </button>
+              ) : null}
+            </div>
+          </div>
         ) : null}
         <form
           aria-busy={replayRecovering}
@@ -614,6 +637,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           }}
         >
           <textarea
+            ref={promptRef}
             aria-label={activeTurnId ? 'Steer the current turn' : 'Message your agent'}
             disabled={replayRecovering || Boolean(threadId && !threadReady)}
             value={prompt}
