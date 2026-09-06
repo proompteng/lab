@@ -1,6 +1,6 @@
 'use client'
 
-import { motion, useMotionValue, useSpring, useTransform } from 'motion/react'
+import { motion, useMotionValue, useMotionValueEvent, useSpring, useTransform } from 'motion/react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { forwardRef, useCallback, useImperativeHandle, useLayoutEffect, useMemo, useRef } from 'react'
 
@@ -22,7 +22,8 @@ const MAGNIFICATION_SPRING = { damping: 30, mass: 0.45, stiffness: 460 }
 
 type DockItemHandle = {
   getBounds: () => DOMRect | null
-  setFocused: (focused: boolean) => void
+  setMagnificationLimit: (limit: number) => void
+  setOffset: (offset: number) => void
   setPointerDistance: (distance: number | null) => void
 }
 
@@ -30,6 +31,7 @@ type DockItemProps = {
   app: TengriApp
   motionDisabled: boolean
   onOpenApp: (app: TengriApp) => void
+  onScaleChange: (app: TengriApp, scale: number) => void
   running: boolean
 }
 
@@ -38,7 +40,7 @@ type DockGeometry = {
 }
 
 const DockItem = forwardRef<DockItemHandle, DockItemProps>(function DockItem(
-  { app, motionDisabled, onOpenApp, running },
+  { app, motionDisabled, onOpenApp, onScaleChange, running },
   ref,
 ) {
   const buttonRef = useRef<HTMLButtonElement | null>(null)
@@ -47,10 +49,15 @@ const DockItem = forwardRef<DockItemHandle, DockItemProps>(function DockItem(
     pointerDistance: null,
   })
   const targetScale = useMotionValue(BASE_SCALE)
+  const offset = useMotionValue(0)
+  const magnificationLimit = useRef(1)
   const targetLift = useMotionValue(0)
   const scale = useSpring(targetScale, MAGNIFICATION_SPRING)
   const lift = useSpring(targetLift, MAGNIFICATION_SPRING)
   const labelLift = useTransform(() => lift.get() - (scale.get() - BASE_SCALE) * 56)
+  const hitWidth = useTransform(scale, (value) => value * 56)
+  const hitTop = useTransform(() => Math.min(0, (68 - 56) / 2 + 3 + labelLift.get()))
+  useMotionValueEvent(scale, 'change', (value) => onScaleChange(app, value))
 
   const applyInteraction = useCallback(() => {
     if (motionDisabled) {
@@ -64,7 +71,8 @@ const DockItem = forwardRef<DockItemHandle, DockItemProps>(function DockItem(
     const { focused, pointerDistance } = interactionRef.current
     const proximity =
       pointerDistance === null ? 0 : smoothStep(clamp(1 - Math.abs(pointerDistance) / MAGNIFICATION_RADIUS, 0, 1))
-    const scaleDelta = Math.max(proximity * MAX_SCALE_DELTA, focused ? FOCUS_SCALE_DELTA : 0)
+    const scaleDelta =
+      Math.max(proximity * MAX_SCALE_DELTA, focused ? FOCUS_SCALE_DELTA : 0) * magnificationLimit.current
     const liftDistance = Math.max(proximity * MAX_LIFT, focused ? FOCUS_LIFT : 0)
     targetScale.set(BASE_SCALE + scaleDelta)
     targetLift.set(-liftDistance)
@@ -93,24 +101,37 @@ const DockItem = forwardRef<DockItemHandle, DockItemProps>(function DockItem(
   useImperativeHandle(
     ref,
     () => ({
-      getBounds: () => buttonRef.current?.getBoundingClientRect() ?? null,
-      setFocused,
+      getBounds: () => {
+        const bounds = buttonRef.current?.getBoundingClientRect()
+        return bounds ? new DOMRect(bounds.x - offset.get(), bounds.y, bounds.width, bounds.height) : null
+      },
+      setMagnificationLimit: (limit) => {
+        magnificationLimit.current = limit
+        applyInteraction()
+      },
+      setOffset: (value) => offset.set(value),
       setPointerDistance,
     }),
-    [setFocused, setPointerDistance],
+    [applyInteraction, offset, setPointerDistance],
   )
 
   return (
-    <button
+    <motion.button
       ref={buttonRef}
       id={`tengri-dock-${app}`}
       type="button"
       aria-label={`Open ${APP_TITLES[app]}`}
       className="group relative flex h-[68px] w-14 shrink-0 touch-manipulation items-center justify-center rounded-[14px] px-0 pb-1 outline-none transition-colors duration-150 focus-visible:bg-white/10 focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent motion-reduce:transition-none"
+      style={{ x: offset }}
       onClick={() => onOpenApp(app)}
       onFocus={() => setFocused(true)}
       onBlur={() => setFocused(false)}
     >
+      <motion.span
+        aria-hidden="true"
+        className="absolute bottom-0 left-1/2 -translate-x-1/2"
+        style={{ top: hitTop, width: hitWidth }}
+      />
       <motion.span
         aria-hidden="true"
         role="tooltip"
@@ -139,7 +160,7 @@ const DockItem = forwardRef<DockItemHandle, DockItemProps>(function DockItem(
           running ? 'bg-white/90' : 'bg-transparent',
         )}
       />
-    </button>
+    </motion.button>
   )
 })
 
@@ -155,6 +176,25 @@ export function DesktopDock({
   const navRef = useRef<HTMLElement | null>(null)
   const itemHandlesRef = useRef(new Map<TengriApp, DockItemHandle>())
   const geometryRef = useRef(new Map<TengriApp, DockGeometry>())
+  const scalesRef = useRef(new Map<TengriApp, number>())
+  const dockWidthRef = useRef(1)
+  const plateScale = useMotionValue(1)
+
+  const arrangeItems = useCallback(
+    (app: TengriApp, scale: number) => {
+      scalesRef.current.set(app, scale)
+      const widths = DOCK_APPS.map((item) => ((scalesRef.current.get(item) ?? BASE_SCALE) - BASE_SCALE) * 56)
+      const expansion = widths.reduce((sum, width) => sum + width, 0)
+      let preceding = 0
+      DOCK_APPS.forEach((item, index) => {
+        const width = widths[index] ?? 0
+        itemHandlesRef.current.get(item)?.setOffset(preceding + width / 2 - expansion / 2)
+        preceding += width
+      })
+      plateScale.set(1 + expansion / dockWidthRef.current)
+    },
+    [plateScale],
+  )
 
   const registerItem = useCallback((app: TengriApp, handle: DockItemHandle | null) => {
     if (handle) itemHandlesRef.current.set(app, handle)
@@ -166,11 +206,17 @@ export function DesktopDock({
   )
 
   const measureGeometry = useCallback(() => {
+    const dock = navRef.current?.getBoundingClientRect()
+    if (!dock) return
+    dockWidthRef.current = dock.width
+    const available = Math.max(0, 2 * Math.min(dock.left - 8, window.innerWidth - dock.right - 8))
+    const limit = Math.min(1, available / (DOCK_APPS.length * 56 * MAX_SCALE_DELTA))
     const nextGeometry = new Map<TengriApp, DockGeometry>()
     for (const app of DOCK_APPS) {
       const bounds = itemHandlesRef.current.get(app)?.getBounds()
       if (!bounds) continue
       nextGeometry.set(app, { centerX: bounds.left + bounds.width / 2 })
+      itemHandlesRef.current.get(app)?.setMagnificationLimit(limit)
     }
     geometryRef.current = nextGeometry
   }, [])
@@ -222,17 +268,20 @@ export function DesktopDock({
     <nav
       ref={navRef}
       aria-label="Dock"
-      className="pointer-events-auto relative flex h-[76px] max-w-[calc(100vw-1rem)] items-end justify-center gap-[clamp(0px,0.8vw,0.5rem)] overflow-visible rounded-[24px] border border-white/25 bg-[rgba(31,35,49,0.46)] px-[clamp(0.25rem,1.25vw,0.75rem)] pt-0 pb-1.5 shadow-[0_12px_30px_rgba(0,0,0,0.34),inset_0_1px_0_rgba(255,255,255,0.2)] backdrop-blur-2xl backdrop-saturate-150 touch-manipulation select-none"
+      className="pointer-events-auto relative flex h-[76px] max-w-[calc(100vw-1rem)] items-end justify-center gap-[clamp(0px,0.8vw,0.5rem)] overflow-visible rounded-[24px] border border-transparent px-[clamp(0.25rem,1.25vw,0.75rem)] pt-0 pb-1.5 touch-manipulation select-none"
       data-tengri-dock="true"
       onPointerEnter={handlePointerEnter}
       onPointerMove={updateProximity}
       onPointerLeave={resetProximity}
       onPointerCancel={resetProximity}
     >
-      <span
+      <motion.span
         aria-hidden="true"
-        className="pointer-events-none absolute inset-x-5 top-px h-px rounded-full bg-gradient-to-r from-transparent via-white/35 to-transparent"
-      />
+        className="absolute -inset-px rounded-[24px] border border-white/25 bg-[rgba(31,35,49,0.46)] shadow-[0_12px_30px_rgba(0,0,0,0.34),inset_0_1px_0_rgba(255,255,255,0.2)] backdrop-blur-2xl backdrop-saturate-150"
+        style={{ scaleX: plateScale }}
+      >
+        <span className="pointer-events-none absolute inset-x-5 top-px h-px rounded-full bg-gradient-to-r from-transparent via-white/35 to-transparent" />
+      </motion.span>
       {items.map(({ app, ref }) => (
         <DockItem
           key={app}
@@ -240,6 +289,7 @@ export function DesktopDock({
           app={app}
           motionDisabled={motionDisabled}
           onOpenApp={onOpenApp}
+          onScaleChange={arrangeItems}
           running={runningApps.has(app)}
         />
       ))}
