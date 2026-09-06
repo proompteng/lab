@@ -10,8 +10,8 @@ extends Node3D
 const ARENA_ART_SCENE: PackedScene = preload("res://assets/models/arena.glb")
 const COLLISION_LAYER: int = 2
 const INNER_HALF_EXTENTS := Vector2(12.0, 8.0)
-const WALL_HEIGHT: float = 1.5
-const WALL_THICKNESS: float = 0.56
+const WALL_HEIGHT: float = 5.0
+const WALL_THICKNESS: float = 0.62
 const FLOOR_THICKNESS: float = 0.2
 
 var arena_art: Node3D
@@ -79,12 +79,21 @@ func _build_environment() -> void:
 	var world_environment := WorldEnvironment.new()
 	world_environment.name = "ArenaWorldEnvironment"
 	var environment := Environment.new()
-	environment.background_mode = Environment.BG_COLOR
-	environment.background_color = Color("080909")
-	environment.background_energy_multiplier = 0.28
+	environment.background_mode = Environment.BG_SKY
+	var sky := Sky.new()
+	var sky_material := ProceduralSkyMaterial.new()
+	sky_material.sky_top_color = Color("1C2932")
+	sky_material.sky_horizon_color = Color("8A969C")
+	sky_material.ground_bottom_color = Color("0B1013")
+	sky_material.ground_horizon_color = Color("4B5559")
+	sky_material.sun_angle_max = 12.0
+	sky_material.sun_curve = 0.08
+	sky.sky_material = sky_material
+	environment.sky = sky
+	environment.background_energy_multiplier = 0.42
 	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	environment.ambient_light_color = Color("B5AA94")
-	environment.ambient_light_energy = 0.46
+	environment.ambient_light_color = Color("A9BACA")
+	environment.ambient_light_energy = 0.72
 	environment.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	world_environment.environment = environment
 	add_child(world_environment)
@@ -93,30 +102,40 @@ func _build_environment() -> void:
 func _build_lighting() -> void:
 	var key := DirectionalLight3D.new()
 	key.name = "ArenaKeyLight"
-	key.rotation_degrees = Vector3(-54.0, -28.0, 0.0)
-	key.light_color = Color("F2EBDD")
-	key.light_energy = 0.92
-	key.shadow_enabled = true
+	key.rotation_degrees = Vector3(-56.0, -32.0, 0.0)
+	key.light_color = Color("D6E2EB")
+	key.light_energy = 1.1
+	key.shadow_enabled = false
 	key.directional_shadow_max_distance = 55.0
 	add_child(key)
 
 	var warm_fill := OmniLight3D.new()
 	warm_fill.name = "ArenaWarmFill"
-	warm_fill.position = Vector3(-7.0, 5.0, 5.0)
-	warm_fill.light_color = Color("CDBD9E")
-	warm_fill.light_energy = 0.18
-	warm_fill.omni_range = 26.0
-	warm_fill.shadow_enabled = false
+	warm_fill.position = Vector3(-7.0, 3.0, -5.0)
+	warm_fill.light_color = Color("CFA77F")
+	warm_fill.light_energy = 2.1
+	warm_fill.omni_range = 22.0
+	warm_fill.shadow_enabled = true
 	add_child(warm_fill)
 
 	var steel_fill := OmniLight3D.new()
 	steel_fill.name = "ArenaSteelFill"
-	steel_fill.position = Vector3(7.0, 4.0, -5.0)
-	steel_fill.light_color = Color("A8B0AC")
-	steel_fill.light_energy = 0.14
+	steel_fill.position = Vector3(7.0, 4.0, 3.0)
+	steel_fill.light_color = Color("8DA8BA")
+	steel_fill.light_energy = 1.6
 	steel_fill.omni_range = 24.0
 	steel_fill.shadow_enabled = false
 	add_child(steel_fill)
+
+	for side in [-1.0, 1.0]:
+		var practical := OmniLight3D.new()
+		practical.name = "ArenaPractical_%s" % ("West" if side < 0.0 else "East")
+		practical.position = Vector3(side * 8.0, 2.6, -7.35)
+		practical.light_color = Color("D8A06E")
+		practical.light_energy = 0.45
+		practical.omni_range = 12.0
+		practical.shadow_enabled = false
+		add_child(practical)
 
 
 func is_inside_play_area(position: Vector3, margin: float = 0.0) -> bool:

@@ -4,10 +4,10 @@ Run from any directory with:
 
     blender --background --python tools/build_art.py -- [output-directory]
 
-The script deliberately uses only Blender primitives, bevels, and Principled
-materials so the resulting GLBs stay portable across Godot's Compatibility
-renderer and the web export.  Every model is built from the same deterministic
-source scene and exported at the same scale on every invocation.
+Custom armor meshes, rigid articulation pivots, and baked Principled materials
+remain portable across Godot's Compatibility renderer and the Web export.
+Every model is authored in the same coordinate system and exported at a fixed
+scale. The editable Blender scene includes the generated concept reference.
 """
 
 from __future__ import annotations
@@ -16,11 +16,13 @@ import math
 import sys
 from pathlib import Path
 
+import bmesh
 import bpy
 from mathutils import Euler, Vector
 
 
 APP_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(APP_ROOT / "tools"))
 SOURCE_PATH = APP_ROOT / "art" / "source" / "ricochet_set.blend"
 DEFAULT_OUTPUT = APP_ROOT / "assets" / "models"
 
@@ -77,20 +79,20 @@ def _color(hex_value: str) -> tuple[float, float, float, float]:
 
 
 PALETTE = {
-    "ink": _color("080A0E"),
-    "graphite": _color("151A1D"),
-    "graphite_light": _color("2B3335"),
-    "steel": _color("4B5554"),
-    "ceramic": _color("CDD0C8"),
-    "ceramic_shadow": _color("7E8581"),
-    "lime": _color("E2D6B8"),
-    "lime_hot": _color("FFF1D1"),
+    "ink": _color("0B1013"),
+    "graphite": _color("242A2C"),
+    "graphite_light": _color("58615F"),
+    "steel": _color("6D746E"),
+    "ceramic": _color("D6D1C6"),
+    "ceramic_shadow": _color("89847B"),
+    "lime": _color("B09B65"),
+    "lime_hot": _color("D2B779"),
     "cyan": _color("5FE4EF"),
-    "violet": _color("3B4242"),
-    "violet_dark": _color("111619"),
-    "pink": _color("7A4D3C"),
-    "pink_hot": _color("B77A54"),
-    "amber": _color("B48A58"),
+    "violet": _color("565747"),
+    "violet_dark": _color("1C2325"),
+    "pink": _color("754437"),
+    "pink_hot": _color("A56546"),
+    "amber": _color("B17C4E"),
 }
 
 
@@ -143,9 +145,9 @@ def _materials() -> dict[str, bpy.types.Material]:
         "steel": _material(
             "MAT_steel", PALETTE["steel"], metallic=0.62, roughness=0.34
         ),
-        "ceramic": _material("MAT_player_ceramic", PALETTE["ceramic"], roughness=0.26),
+        "ceramic": _material("MAT_player_ceramic", PALETTE["ceramic"], roughness=0.48),
         "ceramic_shadow": _material(
-            "MAT_player_ceramic_shadow", PALETTE["ceramic_shadow"], roughness=0.32
+            "MAT_player_ceramic_shadow", PALETTE["ceramic_shadow"], roughness=0.52
         ),
         "lime": _material(
             "MAT_player_lime",
@@ -232,6 +234,11 @@ def _finish_mesh(
         modifier.angle_limit = math.radians(28.0)
         bpy.ops.object.modifier_apply(modifier=modifier.name)
         obj.select_set(False)
+    topology = bmesh.new()
+    topology.from_mesh(obj.data)
+    bmesh.ops.recalc_face_normals(topology, faces=list(topology.faces))
+    topology.to_mesh(obj.data)
+    topology.free()
     return obj
 
 
@@ -252,96 +259,6 @@ def _box(
     obj.name = name
     obj.scale = (dimensions[0] / 2.0, dimensions[1] / 2.0, dimensions[2] / 2.0)
     return _finish_mesh(obj, collection, material, bevel=bevel)
-
-
-def _cylinder(
-    collection: bpy.types.Collection,
-    name: str,
-    location: tuple[float, float, float],
-    radius: float,
-    depth: float,
-    material: bpy.types.Material,
-    *,
-    vertices: int = 10,
-    bevel: float = 0.0,
-    rotation: tuple[float, float, float] = (0.0, 0.0, 0.0),
-) -> bpy.types.Object:
-    bpy.ops.mesh.primitive_cylinder_add(
-        vertices=vertices,
-        radius=radius,
-        depth=depth,
-        end_fill_type="NGON",
-        location=_to_blender_location(location),
-        rotation=_to_blender_rotation(rotation),
-    )
-    obj = bpy.context.object
-    obj.name = name
-    return _finish_mesh(obj, collection, material, bevel=bevel, segments=2)
-
-
-def _sphere(
-    collection: bpy.types.Collection,
-    name: str,
-    location: tuple[float, float, float],
-    scale: tuple[float, float, float],
-    material: bpy.types.Material,
-    *,
-    segments: int = 12,
-    rings: int = 6,
-) -> bpy.types.Object:
-    # Icospheres avoid the UV-sphere cap index ordering that can vary between
-    # Blender processes, keeping repeated head/dome exports byte-stable.
-    del segments, rings
-    bpy.ops.mesh.primitive_ico_sphere_add(
-        subdivisions=2,
-        location=_to_blender_location(location),
-        rotation=_to_blender_rotation((0.0, 0.0, 0.0)),
-    )
-    obj = bpy.context.object
-    obj.name = name
-    obj.scale = scale
-    return _finish_mesh(obj, collection, material)
-
-
-def _ico_sphere(
-    collection: bpy.types.Collection,
-    name: str,
-    location: tuple[float, float, float],
-    scale: tuple[float, float, float],
-    material: bpy.types.Material,
-) -> bpy.types.Object:
-    bpy.ops.mesh.primitive_ico_sphere_add(
-        subdivisions=2,
-        location=_to_blender_location(location),
-        rotation=_to_blender_rotation((0.0, 0.0, 0.0)),
-    )
-    obj = bpy.context.object
-    obj.name = name
-    obj.scale = scale
-    return _finish_mesh(obj, collection, material)
-
-
-def _torus(
-    collection: bpy.types.Collection,
-    name: str,
-    location: tuple[float, float, float],
-    major_radius: float,
-    minor_radius: float,
-    material: bpy.types.Material,
-    *,
-    rotation: tuple[float, float, float] = (0.0, 0.0, 0.0),
-) -> bpy.types.Object:
-    bpy.ops.mesh.primitive_torus_add(
-        major_segments=12,
-        minor_segments=6,
-        major_radius=major_radius,
-        minor_radius=minor_radius,
-        location=_to_blender_location(location),
-        rotation=_to_blender_rotation(rotation),
-    )
-    obj = bpy.context.object
-    obj.name = name
-    return _finish_mesh(obj, collection, material)
 
 
 def _prism(
@@ -375,6 +292,68 @@ def _parent(obj: bpy.types.Object, root: bpy.types.Object) -> bpy.types.Object:
     return obj
 
 
+def _parent_preserve_world(
+    obj: bpy.types.Object, parent: bpy.types.Object
+) -> bpy.types.Object:
+    """Parent an authored part without changing its already placed pose."""
+
+    bpy.context.view_layer.update()
+    matrix_world = obj.matrix_world.copy()
+    obj.parent = parent
+    obj.matrix_world = matrix_world
+    return obj
+
+
+def _pivot(
+    collection: bpy.types.Collection,
+    root: bpy.types.Object,
+    name: str,
+    location: tuple[float, float, float],
+) -> bpy.types.Object:
+    """Create an exported animation pivot at a game-space coordinate."""
+
+    pivot = bpy.data.objects.new(name, None)
+    pivot.empty_display_type = "ARROWS"
+    pivot.empty_display_size = 0.09
+    collection.objects.link(pivot)
+    pivot.parent = root
+    pivot.location = _to_blender_location(location)
+    pivot["role"] = "pivot"
+    pivot["contract_name"] = name
+    return pivot
+
+
+def _beam_between(
+    collection: bpy.types.Collection,
+    name: str,
+    start: tuple[float, float, float],
+    end: tuple[float, float, float],
+    radius: float,
+    material: bpy.types.Material,
+    *,
+    vertices: int = 8,
+    bevel: float = 0.0,
+) -> bpy.types.Object:
+    """Place a cylindrical actuator along two game-space points."""
+
+    start_vector = Vector(start)
+    end_vector = Vector(end)
+    midpoint = (start_vector + end_vector) * 0.5
+    direction = end_vector - start_vector
+    blender_direction = _GAME_TO_BLENDER @ direction
+    bpy.ops.mesh.primitive_cylinder_add(
+        vertices=vertices,
+        radius=radius,
+        depth=direction.length,
+        end_fill_type="NGON",
+        location=_to_blender_location(midpoint),
+        rotation=blender_direction.to_track_quat("Z", "Y").to_euler(),
+    )
+    obj = bpy.context.object
+    obj.name = name
+    return _finish_mesh(obj, collection, material, bevel=bevel, segments=2)
+
+
 def _model_collection(name: str) -> tuple[bpy.types.Collection, bpy.types.Object]:
     collection = bpy.data.collections.new(f"{name}_ART")
     bpy.context.scene.collection.children.link(collection)
@@ -385,1720 +364,103 @@ def _model_collection(name: str) -> tuple[bpy.types.Collection, bpy.types.Object
     return collection, root
 
 
-def _add_wheel_pair(
-    collection: bpy.types.Collection,
-    root: bpy.types.Object,
-    materials: dict[str, bpy.types.Material],
-    *,
-    x: float,
-    y: float,
-    z: float,
-    radius: float,
-    width: float,
-    prefix: str,
-) -> None:
-    for side in (-1.0, 1.0):
-        wheel = _cylinder(
-            collection,
-            f"{prefix}_wheel_{'L' if side < 0 else 'R'}",
-            (x + side * 0.0, y, z),
-            radius,
-            width,
-            materials["graphite"],
-            vertices=10,
-            bevel=0.018,
-            rotation=(0.0, math.pi / 2.0, 0.0),
-        )
-        wheel.location.x = x + side * (width / 2.0)
-        _parent(wheel, root)
-        hub = _cylinder(
-            collection,
-            f"{prefix}_hub_{'L' if side < 0 else 'R'}",
-            (x + side * (width / 2.0 + 0.012), y, z),
-            radius * 0.42,
-            0.024,
-            materials["lime"],
-            vertices=8,
-            rotation=(0.0, math.pi / 2.0, 0.0),
-        )
-        _parent(hub, root)
+def _attach(obj: bpy.types.Object, parent: bpy.types.Object) -> bpy.types.Object:
+    return _parent_preserve_world(obj, parent)
 
 
-def _build_player(
-    materials: dict[str, bpy.types.Material],
-) -> tuple[bpy.types.Collection, bpy.types.Object]:
-    collection, root = _model_collection("PlayerBot")
-    graphite = materials["graphite"]
-    graphite_light = materials["graphite_light"]
-    steel = materials["steel"]
-    ceramic = materials["ceramic"]
-    ceramic_shadow = materials["ceramic_shadow"]
-    lime = materials["lime"]
-    lime_hot = materials["lime_hot"]
+def _build_player(materials: dict[str, bpy.types.Material]):
+    from hero import build_player
 
-    # Compact tracked chassis with a ceramic upper shell and exposed service
-    # rails. Every part is angular so the silhouette reads as equipment rather
-    # than a mascot, even at the game's orthographic camera distance.
-    _parent(
-        _box(
-            collection,
-            "Player_charcoal_underside",
-            (0.0, 0.12, 0.03),
-            (0.74, 0.18, 0.56),
-            graphite,
-            bevel=0.045,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Player_left_track",
-            (-0.31, 0.2, 0.03),
-            (0.16, 0.25, 0.58),
-            graphite_light,
-            bevel=0.032,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Player_right_track",
-            (0.31, 0.2, 0.03),
-            (0.16, 0.25, 0.58),
-            graphite_light,
-            bevel=0.032,
-        ),
-        root,
-    )
-    for side, x in (("left", -0.4), ("right", 0.4)):
-        _parent(
-            _cylinder(
-                collection,
-                f"Player_{side}_drive_joint",
-                (x, 0.2, -0.06),
-                0.09,
-                0.08,
-                graphite,
-                vertices=10,
-                bevel=0.012,
-                rotation=(0.0, math.pi / 2.0, 0.0),
-            ),
-            root,
-        )
-        _parent(
-            _cylinder(
-                collection,
-                f"Player_{side}_drive_hub",
-                (x + (-0.045 if x < 0.0 else 0.045), 0.2, -0.06),
-                0.038,
-                0.018,
-                steel,
-                vertices=8,
-                rotation=(0.0, math.pi / 2.0, 0.0),
-            ),
-            root,
-        )
-    _parent(
-        _prism(
-            collection,
-            "Player_ceramic_upper_shell",
-            [(-0.34, 0.25), (0.34, 0.25), (0.27, -0.3), (-0.27, -0.3)],
-            0.26,
-            0.57,
-            ceramic,
-            bevel=0.045,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Player_underside_front",
-            (0.0, 0.3, -0.32),
-            (0.48, 0.16, 0.08),
-            ceramic_shadow,
-            bevel=0.02,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Player_left_service_plate",
-            (-0.34, 0.45, 0.02),
-            (0.12, 0.25, 0.42),
-            ceramic_shadow,
-            bevel=0.028,
-            rotation=(0.0, 0.0, -0.15),
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Player_right_service_plate",
-            (0.34, 0.45, 0.02),
-            (0.12, 0.25, 0.42),
-            ceramic_shadow,
-            bevel=0.028,
-            rotation=(0.0, 0.0, 0.15),
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Player_left_edge_mark",
-            (-0.405, 0.47, -0.05),
-            (0.018, 0.12, 0.25),
-            lime,
-            bevel=0.005,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Player_right_edge_mark",
-            (0.405, 0.47, -0.05),
-            (0.018, 0.12, 0.25),
-            lime,
-            bevel=0.005,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Player_low_avionics_deck",
-            (0.0, 0.62, 0.08),
-            (0.3, 0.12, 0.28),
-            graphite_light,
-            bevel=0.03,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Player_rear_comms_fin",
-            (0.0, 0.76, 0.24),
-            (0.16, 0.12, 0.08),
-            ceramic_shadow,
-            bevel=0.018,
-            rotation=(math.radians(-10.0), 0.0, 0.0),
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Player_rear_status_bar",
-            (0.0, 0.81, 0.28),
-            (0.12, 0.018, 0.022),
-            lime_hot,
-            bevel=0.004,
-        ),
-        root,
-    )
-
-    # The cannon is a visible, articulated assembly: side pivots, a receiver,
-    # and a long barrel aligned to local -Z.
-    _parent(
-        _cylinder(
-            collection,
-            "Player_cannon_trunnion",
-            (0.0, 0.63, -0.22),
-            0.13,
-            0.12,
-            graphite,
-            vertices=10,
-            bevel=0.018,
-            rotation=(math.pi / 2.0, 0.0, 0.0),
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Player_cannon_receiver",
-            (0.0, 0.64, -0.35),
-            (0.25, 0.18, 0.25),
-            steel,
-            bevel=0.035,
-        ),
-        root,
-    )
-    for side, x in (("left", -0.15), ("right", 0.15)):
-        _parent(
-            _cylinder(
-                collection,
-                f"Player_cannon_{side}_pivot",
-                (x, 0.64, -0.35),
-                0.06,
-                0.12,
-                graphite_light,
-                vertices=10,
-                bevel=0.012,
-                rotation=(0.0, math.pi / 2.0, 0.0),
-            ),
-            root,
-        )
-        _parent(
-            _box(
-                collection,
-                f"Player_cannon_{side}_brace",
-                (x, 0.66, -0.43),
-                (0.055, 0.1, 0.2),
-                ceramic_shadow,
-                bevel=0.012,
-                rotation=(math.radians(-9.0), 0.0, 0.0),
-            ),
-            root,
-        )
-    _parent(
-        _cylinder(
-            collection,
-            "Player_forward_cannon",
-            (0.0, 0.65, -0.57),
-            0.052,
-            0.42,
-            steel,
-            vertices=10,
-            bevel=0.01,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Player_cannon_heat_guard",
-            (0.0, 0.65, -0.49),
-            (0.11, 0.11, 0.18),
-            graphite_light,
-            bevel=0.018,
-        ),
-        root,
-    )
-    _parent(
-        _torus(
-            collection,
-            "Player_cannon_muzzle_ring",
-            (0.0, 0.65, -0.79),
-            0.066,
-            0.012,
-            lime,
-        ),
-        root,
-    )
-    _parent(
-        _cylinder(
-            collection,
-            "Player_cannon_muzzle",
-            (0.0, 0.65, -0.8),
-            0.032,
-            0.022,
-            graphite,
-            vertices=10,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Player_cannon_sight",
-            (0.0, 0.75, -0.49),
-            (0.025, 0.025, 0.2),
-            lime_hot,
-            bevel=0.004,
-        ),
-        root,
-    )
-
-    _parent(
-        _box(
-            collection,
-            "Player_rear_radiator",
-            (0.0, 0.5, 0.3),
-            (0.26, 0.22, 0.08),
-            steel,
-            bevel=0.018,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Player_rear_service_bar",
-            (0.0, 0.62, 0.35),
-            (0.18, 0.04, 0.025),
-            lime,
-            bevel=0.006,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Player_rear_antenna",
-            (0.0, 0.91, 0.27),
-            (0.035, 0.16, 0.035),
-            graphite_light,
-            bevel=0.008,
-            rotation=(math.radians(-8.0), 0.0, 0.0),
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Player_rear_antenna_marker",
-            (0.0, 1.01, 0.28),
-            (0.03, 0.025, 0.03),
-            lime_hot,
-            bevel=0.005,
-        ),
-        root,
-    )
-    root["role"] = "player"
-    root["forward_axis"] = "-Z"
-    root["nominal_height"] = 1.1
-    root["nominal_radius"] = 0.45
-    return collection, root
+    return build_player(sys.modules[__name__], materials)
 
 
-def _build_chaser(
-    materials: dict[str, bpy.types.Material],
-) -> tuple[bpy.types.Collection, bpy.types.Object]:
-    """Build a headless pursuit rammer with a low armored vehicle silhouette."""
+def _build_chaser(materials: dict[str, bpy.types.Material]):
+    from mechs import build_enemy
 
-    collection, root = _model_collection("EnemyChaser")
-    violet = materials["violet"]
-    violet_dark = materials["violet_dark"]
-    graphite = materials["graphite"]
-    graphite_light = materials["graphite_light"]
-    steel = materials["steel"]
-    rust = materials["pink"]
-    rust_hot = materials["pink_hot"]
-    warm_hot = materials["lime_hot"]
-
-    _parent(
-        _prism(
-            collection,
-            "Chaser_low_tracked_hull",
-            [
-                (-0.28, 0.32),
-                (0.28, 0.32),
-                (0.34, -0.22),
-                (0.22, -0.43),
-                (-0.22, -0.43),
-                (-0.34, -0.22),
-            ],
-            0.08,
-            0.34,
-            violet_dark,
-            bevel=0.04,
-        ),
-        root,
-    )
-    for side, x in (("left", -1.0), ("right", 1.0)):
-        _parent(
-            _box(
-                collection,
-                f"Chaser_{side}_track_pod",
-                (x * 0.31, 0.22, 0.0),
-                (0.1, 0.24, 0.62),
-                graphite,
-                bevel=0.026,
-            ),
-            root,
-        )
-        _parent(
-            _cylinder(
-                collection,
-                f"Chaser_{side}_track_axle",
-                (x * 0.365, 0.22, -0.08),
-                0.058,
-                0.06,
-                graphite_light,
-                vertices=8,
-                bevel=0.01,
-                rotation=(0.0, math.pi / 2.0, 0.0),
-            ),
-            root,
-        )
-        _parent(
-            _box(
-                collection,
-                f"Chaser_{side}_armor_rail",
-                (x * 0.37, 0.34, 0.12),
-                (0.025, 0.06, 0.32),
-                steel,
-                bevel=0.004,
-            ),
-            root,
-        )
-    _parent(
-        _prism(
-            collection,
-            "Chaser_upper_deck",
-            [(-0.24, 0.18), (0.24, 0.18), (0.2, -0.27), (-0.2, -0.27)],
-            0.34,
-            0.55,
-            violet,
-            bevel=0.035,
-        ),
-        root,
-    )
-    _parent(
-        _prism(
-            collection,
-            "Chaser_front_breacher_blade",
-            [(-0.28, -0.3), (0.0, -0.52), (0.28, -0.3), (0.2, -0.25), (-0.2, -0.25)],
-            0.28,
-            0.42,
-            steel,
-            bevel=0.025,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Chaser_blade_reinforcement",
-            (0.0, 0.39, -0.36),
-            (0.3, 0.08, 0.07),
-            rust,
-            bevel=0.012,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Chaser_rear_equipment_fin",
-            (0.0, 0.66, 0.25),
-            (0.07, 0.22, 0.16),
-            graphite_light,
-            bevel=0.018,
-            rotation=(math.radians(-9.0), 0.0, 0.0),
-        ),
-        root,
-    )
-    for index, x in enumerate((-0.11, 0.11)):
-        _parent(
-            _box(
-                collection,
-                f"Chaser_rear_vent_{index}",
-                (x, 0.46, 0.31),
-                (0.055, 0.05, 0.14),
-                graphite,
-                bevel=0.008,
-            ),
-            root,
-        )
-    _parent(
-        _box(
-            collection,
-            "Chaser_rear_status_bar",
-            (0.0, 0.6, 0.34),
-            (0.13, 0.018, 0.022),
-            warm_hot,
-            bevel=0.004,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Chaser_side_warning_mark",
-            (-0.39, 0.31, -0.08),
-            (0.018, 0.07, 0.13),
-            rust_hot,
-            bevel=0.004,
-        ),
-        root,
-    )
-    root["role"] = "enemy_chaser"
-    root["forward_axis"] = "-Z"
-    root["nominal_height"] = 0.9
-    root["nominal_radius"] = 0.42
-    return collection, root
+    return build_enemy(sys.modules[__name__], materials, "chaser")
 
 
-def _build_chaser_legacy(
-    materials: dict[str, bpy.types.Material],
-) -> tuple[bpy.types.Collection, bpy.types.Object]:
-    collection, root = _model_collection("EnemyChaser")
-    violet = materials["violet"]
-    violet_dark = materials["violet_dark"]
-    pink = materials["pink"]
-    pink_hot = materials["pink_hot"]
-    graphite = materials["graphite"]
-    graphite_light = materials["graphite_light"]
-    steel = materials["steel"]
-    lime_hot = materials["lime_hot"]
+def _build_runner(materials: dict[str, bpy.types.Material]):
+    from mechs import build_enemy
 
-    # A narrow pursuit frame with exposed arm joints and a tall sensor spine.
-    _parent(
-        _prism(
-            collection,
-            "Chaser_lower_wedge",
-            [(-0.29, 0.21), (0.29, 0.21), (0.24, -0.25), (-0.24, -0.25)],
-            0.1,
-            0.34,
-            violet_dark,
-            bevel=0.04,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Chaser_front_ram",
-            (0.0, 0.31, -0.28),
-            (0.4, 0.2, 0.1),
-            violet,
-            bevel=0.022,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Chaser_left_armor",
-            (-0.32, 0.45, 0.02),
-            (0.13, 0.3, 0.42),
-            violet,
-            bevel=0.035,
-            rotation=(0.0, 0.0, -0.2),
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Chaser_right_armor",
-            (0.32, 0.45, 0.02),
-            (0.13, 0.3, 0.42),
-            violet,
-            bevel=0.035,
-            rotation=(0.0, 0.0, 0.2),
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Chaser_spine",
-            (0.0, 0.57, 0.08),
-            (0.24, 0.42, 0.2),
-            graphite,
-            bevel=0.035,
-            rotation=(math.radians(-7.0), 0.0, 0.0),
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Chaser_spine_cap",
-            (0.0, 0.75, 0.02),
-            (0.28, 0.12, 0.22),
-            steel,
-            bevel=0.025,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Chaser_warm_sensor_slit",
-            (0.0, 0.73, -0.12),
-            (0.12, 0.022, 0.018),
-            lime_hot,
-            bevel=0.004,
-        ),
-        root,
-    )
-    for side, x, sign in (("left", -1.0, -1.0), ("right", 1.0, 1.0)):
-        _parent(
-            _cylinder(
-                collection,
-                f"Chaser_{side}_shoulder_joint",
-                (x * 0.29, 0.5, -0.16),
-                0.075,
-                0.09,
-                graphite_light,
-                vertices=10,
-                bevel=0.012,
-                rotation=(0.0, math.pi / 2.0, 0.0),
-            ),
-            root,
-        )
-        _parent(
-            _box(
-                collection,
-                f"Chaser_{side}_upper_link",
-                (x * 0.36, 0.39, -0.17),
-                (0.1, 0.24, 0.14),
-                steel,
-                bevel=0.022,
-                rotation=(0.0, 0.0, sign * 0.22),
-            ),
-            root,
-        )
-        _parent(
-            _cylinder(
-                collection,
-                f"Chaser_{side}_elbow",
-                (x * 0.39, 0.27, -0.18),
-                0.06,
-                0.1,
-                graphite,
-                vertices=8,
-                bevel=0.01,
-                rotation=(0.0, math.pi / 2.0, 0.0),
-            ),
-            root,
-        )
-        _parent(
-            _box(
-                collection,
-                f"Chaser_{side}_lower_link",
-                (x * 0.37, 0.2, -0.22),
-                (0.08, 0.18, 0.1),
-                pink,
-                bevel=0.016,
-                rotation=(0.0, 0.0, sign * -0.18),
-            ),
-            root,
-        )
-    _parent(
-        _box(
-            collection,
-            "Chaser_rear_keel",
-            (0.0, 0.31, 0.27),
-            (0.18, 0.22, 0.12),
-            pink,
-            bevel=0.025,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Chaser_rear_strobe",
-            (0.0, 0.44, 0.34),
-            (0.08, 0.04, 0.018),
-            pink_hot,
-            bevel=0.004,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Chaser_top_marker",
-            (0.0, 0.86, 0.04),
-            (0.05, 0.08, 0.05),
-            pink_hot,
-            bevel=0.01,
-        ),
-        root,
-    )
-    root["role"] = "enemy_chaser"
-    root["forward_axis"] = "-Z"
-    root["nominal_height"] = 0.9
-    root["nominal_radius"] = 0.42
-    return collection, root
+    return build_enemy(sys.modules[__name__], materials, "runner")
 
 
-def _build_runner(
-    materials: dict[str, bpy.types.Material],
-) -> tuple[bpy.types.Collection, bpy.types.Object]:
-    collection, root = _model_collection("EnemyRunner")
-    violet = materials["violet"]
-    violet_dark = materials["violet_dark"]
-    pink = materials["pink"]
-    pink_hot = materials["pink_hot"]
-    graphite = materials["graphite"]
-    amber = materials["amber"]
-    lime_hot = materials["lime_hot"]
+def _build_brute(materials: dict[str, bpy.types.Material]):
+    from mechs import build_enemy
 
-    # A low, elongated reconnaissance skimmer. The nose is a hard wedge and
-    # the side rails are stabilizers, giving it a fast silhouette with no
-    # anthropomorphic features.
-    _parent(
-        _prism(
-            collection,
-            "Runner_lower_skimmer",
-            [(-0.28, 0.24), (0.28, 0.24), (0.2, -0.44), (-0.2, -0.44)],
-            0.08,
-            0.3,
-            violet_dark,
-            bevel=0.035,
-        ),
-        root,
-    )
-    _parent(
-        _prism(
-            collection,
-            "Runner_upper_keel",
-            [(-0.18, 0.16), (0.18, 0.16), (0.12, -0.28), (-0.12, -0.28)],
-            0.28,
-            0.48,
-            violet,
-            bevel=0.028,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Runner_nose_cap",
-            (0.0, 0.2, -0.46),
-            (0.2, 0.13, 0.07),
-            materials["steel"],
-            bevel=0.016,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Runner_rear_status_bar",
-            (0.0, 0.4, 0.26),
-            (0.11, 0.018, 0.02),
-            lime_hot,
-            bevel=0.004,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Runner_left_stabilizer",
-            (-0.28, 0.19, 0.04),
-            (0.07, 0.11, 0.48),
-            pink,
-            bevel=0.016,
-            rotation=(0.0, 0.0, -0.18),
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Runner_right_stabilizer",
-            (0.28, 0.19, 0.04),
-            (0.07, 0.11, 0.48),
-            pink,
-            bevel=0.016,
-            rotation=(0.0, 0.0, 0.18),
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Runner_left_rail",
-            (-0.24, 0.35, 0.14),
-            (0.025, 0.04, 0.27),
-            pink_hot,
-            bevel=0.004,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Runner_right_rail",
-            (0.24, 0.35, 0.14),
-            (0.025, 0.04, 0.27),
-            pink_hot,
-            bevel=0.004,
-        ),
-        root,
-    )
-    _parent(
-        _cylinder(
-            collection,
-            "Runner_left_skid_joint",
-            (-0.2, 0.1, 0.1),
-            0.06,
-            0.16,
-            graphite,
-            vertices=8,
-            bevel=0.01,
-            rotation=(0.0, math.pi / 2.0, 0.0),
-        ),
-        root,
-    )
-    _parent(
-        _cylinder(
-            collection,
-            "Runner_right_skid_joint",
-            (0.2, 0.1, 0.1),
-            0.06,
-            0.16,
-            graphite,
-            vertices=8,
-            bevel=0.01,
-            rotation=(0.0, math.pi / 2.0, 0.0),
-        ),
-        root,
-    )
-    _parent(
-        _cylinder(
-            collection,
-            "Runner_left_rear_thruster",
-            (-0.14, 0.24, 0.34),
-            0.07,
-            0.12,
-            graphite,
-            vertices=8,
-            bevel=0.012,
-        ),
-        root,
-    )
-    _parent(
-        _cylinder(
-            collection,
-            "Runner_right_rear_thruster",
-            (0.14, 0.24, 0.34),
-            0.07,
-            0.12,
-            graphite,
-            vertices=8,
-            bevel=0.012,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Runner_tail_fin",
-            (0.0, 0.63, 0.18),
-            (0.06, 0.24, 0.1),
-            pink_hot,
-            bevel=0.016,
-            rotation=(math.radians(-10.0), 0.0, 0.0),
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Runner_tail_marker",
-            (0.0, 0.72, 0.16),
-            (0.03, 0.05, 0.03),
-            amber,
-            bevel=0.005,
-        ),
-        root,
-    )
-    root["role"] = "enemy_runner"
-    root["forward_axis"] = "-Z"
-    root["nominal_height"] = 0.75
-    root["nominal_radius"] = 0.35
-    return collection, root
+    return build_enemy(sys.modules[__name__], materials, "brute")
 
 
-def _build_brute(
-    materials: dict[str, bpy.types.Material],
-) -> tuple[bpy.types.Collection, bpy.types.Object]:
-    """Build a heavy tracked gun platform with exposed industrial hardware."""
+def _build_turret(materials: dict[str, bpy.types.Material]):
+    from mechs import build_enemy
 
-    collection, root = _model_collection("EnemyBrute")
-    violet = materials["violet"]
-    violet_dark = materials["violet_dark"]
-    graphite = materials["graphite"]
-    graphite_light = materials["graphite_light"]
-    steel = materials["steel"]
-    rust = materials["pink"]
-    rust_hot = materials["pink_hot"]
-    amber = materials["amber"]
-    warm_hot = materials["lime_hot"]
-
-    _parent(
-        _box(
-            collection,
-            "Brute_underframe",
-            (0.0, 0.18, 0.02),
-            (0.98, 0.34, 0.78),
-            graphite,
-            bevel=0.085,
-        ),
-        root,
-    )
-    for side, x in (("left", -1.0), ("right", 1.0)):
-        _parent(
-            _box(
-                collection,
-                f"Brute_{side}_track_pod",
-                (x * 0.46, 0.25, 0.02),
-                (0.18, 0.32, 0.72),
-                graphite_light,
-                bevel=0.04,
-            ),
-            root,
-        )
-        _parent(
-            _cylinder(
-                collection,
-                f"Brute_{side}_track_axle",
-                (x * 0.55, 0.25, -0.08),
-                0.085,
-                0.06,
-                graphite,
-                vertices=10,
-                bevel=0.014,
-                rotation=(0.0, math.pi / 2.0, 0.0),
-            ),
-            root,
-        )
-        _parent(
-            _box(
-                collection,
-                f"Brute_{side}_track_rail",
-                (x * 0.56, 0.38, 0.14),
-                (0.025, 0.07, 0.42),
-                steel,
-                bevel=0.006,
-            ),
-            root,
-        )
-    _parent(
-        _prism(
-            collection,
-            "Brute_armored_hull",
-            [
-                (-0.41, 0.32),
-                (0.41, 0.32),
-                (0.46, -0.15),
-                (0.34, -0.43),
-                (-0.34, -0.43),
-                (-0.46, -0.15),
-            ],
-            0.34,
-            0.82,
-            violet_dark,
-            bevel=0.07,
-        ),
-        root,
-    )
-    _parent(
-        _prism(
-            collection,
-            "Brute_front_breacher_wedge",
-            [(-0.4, -0.28), (0.0, -0.63), (0.4, -0.28), (0.3, -0.2), (-0.3, -0.2)],
-            0.45,
-            0.7,
-            violet,
-            bevel=0.04,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Brute_breacher_edge",
-            (0.0, 0.66, -0.49),
-            (0.58, 0.07, 0.06),
-            steel,
-            bevel=0.012,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Brute_breacher_warning",
-            (0.0, 0.7, -0.55),
-            (0.24, 0.018, 0.022),
-            rust_hot,
-            bevel=0.004,
-        ),
-        root,
-    )
-
-    # The upper mass is a rotating gun deck, never a head or torso.
-    _parent(
-        _prism(
-            collection,
-            "Brute_gun_deck",
-            [(-0.3, 0.22), (0.3, 0.22), (0.26, -0.27), (-0.26, -0.27)],
-            0.82,
-            1.04,
-            violet,
-            bevel=0.04,
-        ),
-        root,
-    )
-    _parent(
-        _cylinder(
-            collection,
-            "Brute_cannon_trunnion",
-            (0.0, 0.88, -0.24),
-            0.14,
-            0.2,
-            graphite,
-            vertices=10,
-            bevel=0.022,
-            rotation=(0.0, math.pi / 2.0, 0.0),
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Brute_cannon_receiver",
-            (0.0, 0.9, -0.38),
-            (0.3, 0.2, 0.25),
-            steel,
-            bevel=0.035,
-        ),
-        root,
-    )
-    _parent(
-        _cylinder(
-            collection,
-            "Brute_forward_cannon",
-            (0.0, 0.91, -0.62),
-            0.062,
-            0.45,
-            graphite_light,
-            vertices=10,
-            bevel=0.012,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Brute_cannon_heat_guard",
-            (0.0, 0.91, -0.53),
-            (0.13, 0.12, 0.2),
-            graphite,
-            bevel=0.022,
-        ),
-        root,
-    )
-    _parent(
-        _torus(
-            collection,
-            "Brute_cannon_muzzle_ring",
-            (0.0, 0.91, -0.89),
-            0.078,
-            0.013,
-            rust_hot,
-        ),
-        root,
-    )
-    _parent(
-        _cylinder(
-            collection,
-            "Brute_cannon_muzzle",
-            (0.0, 0.91, -0.9),
-            0.037,
-            0.025,
-            graphite,
-            vertices=10,
-        ),
-        root,
-    )
-
-    _parent(
-        _box(
-            collection,
-            "Brute_rear_engine_block",
-            (0.0, 1.03, 0.26),
-            (0.48, 0.36, 0.3),
-            graphite_light,
-            bevel=0.045,
-        ),
-        root,
-    )
-    for index, x in enumerate((-0.16, 0.16)):
-        _parent(
-            _box(
-                collection,
-                f"Brute_rear_exhaust_{index}",
-                (x, 1.25, 0.31),
-                (0.1, 0.36, 0.11),
-                graphite,
-                bevel=0.018,
-            ),
-            root,
-        )
-        _parent(
-            _box(
-                collection,
-                f"Brute_rear_exhaust_cap_{index}",
-                (x, 1.46, 0.31),
-                (0.12, 0.035, 0.13),
-                steel,
-                bevel=0.008,
-            ),
-            root,
-        )
-    _parent(
-        _box(
-            collection,
-            "Brute_deck_status_bar",
-            (0.0, 1.065, 0.3),
-            (0.14, 0.018, 0.022),
-            warm_hot,
-            bevel=0.004,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Brute_left_service_mark",
-            (-0.58, 0.48, 0.14),
-            (0.018, 0.1, 0.16),
-            amber,
-            bevel=0.004,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Brute_right_service_mark",
-            (0.58, 0.48, 0.14),
-            (0.018, 0.1, 0.16),
-            amber,
-            bevel=0.004,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Brute_rear_rust_plate",
-            (0.0, 1.08, 0.43),
-            (0.24, 0.08, 0.04),
-            rust,
-            bevel=0.01,
-        ),
-        root,
-    )
-    root["role"] = "enemy_brute"
-    root["forward_axis"] = "-Z"
-    root["nominal_height"] = 1.5
-    root["nominal_radius"] = 0.65
-    return collection, root
+    return build_enemy(sys.modules[__name__], materials, "turret")
 
 
-def _build_brute_legacy(
-    materials: dict[str, bpy.types.Material],
-) -> tuple[bpy.types.Collection, bpy.types.Object]:
-    collection, root = _model_collection("EnemyBrute")
-    violet = materials["violet"]
-    violet_dark = materials["violet_dark"]
-    pink = materials["pink"]
-    pink_hot = materials["pink_hot"]
-    graphite = materials["graphite"]
-    graphite_light = materials["graphite_light"]
-    steel = materials["steel"]
-    amber = materials["amber"]
-    lime_hot = materials["lime_hot"]
+def _merge_static_meshes(root: bpy.types.Object) -> None:
+    """Join direct static siblings by material while retaining animation pivots."""
 
-    # Heavy breacher chassis. The silhouette is wide because of its hydraulic
-    # arms, while the center remains a layered mechanical torso instead of a
-    # face-like head.
-    _parent(
-        _box(
-            collection,
-            "Brute_charcoal_underframe",
-            (0.0, 0.18, 0.03),
-            (1.0, 0.34, 0.78),
-            graphite,
-            bevel=0.09,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Brute_left_track",
-            (-0.46, 0.24, 0.02),
-            (0.2, 0.3, 0.72),
-            materials["graphite_light"],
-            bevel=0.045,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Brute_right_track",
-            (0.46, 0.24, 0.02),
-            (0.2, 0.3, 0.72),
-            graphite_light,
-            bevel=0.045,
-        ),
-        root,
-    )
-    _parent(
-        _prism(
-            collection,
-            "Brute_armored_torso",
-            [(-0.42, 0.28), (0.42, 0.28), (0.36, -0.38), (-0.36, -0.38)],
-            0.34,
-            0.94,
-            violet_dark,
-            bevel=0.075,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Brute_front_breacher_plate",
-            (0.0, 0.64, -0.41),
-            (0.7, 0.42, 0.12),
-            violet,
-            bevel=0.045,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Brute_front_reinforcement",
-            (0.0, 0.67, -0.49),
-            (0.34, 0.2, 0.03),
-            materials["steel"],
-            bevel=0.012,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Brute_warm_sensor_slit",
-            (0.0, 0.82, -0.455),
-            (0.16, 0.022, 0.018),
-            lime_hot,
-            bevel=0.004,
-        ),
-        root,
-    )
-    for side, x, sign in (("left", -1.0, -1.0), ("right", 1.0, 1.0)):
-        _parent(
-            _box(
-                collection,
-                f"Brute_{side}_shoulder_block",
-                (x * 0.48, 0.86, 0.0),
-                (0.23, 0.58, 0.6),
-                violet,
-                bevel=0.06,
-                rotation=(0.0, 0.0, sign * 0.08),
-            ),
-            root,
-        )
-        _parent(
-            _cylinder(
-                collection,
-                f"Brute_{side}_shoulder_joint",
-                (x * 0.53, 0.74, -0.18),
-                0.11,
-                0.12,
-                graphite,
-                vertices=10,
-                bevel=0.022,
-                rotation=(0.0, math.pi / 2.0, 0.0),
-            ),
-            root,
-        )
-        _parent(
-            _box(
-                collection,
-                f"Brute_{side}_upper_hydraulic",
-                (x * 0.56, 0.58, -0.2),
-                (0.14, 0.34, 0.16),
-                steel,
-                bevel=0.022,
-                rotation=(0.0, 0.0, sign * -0.12),
-            ),
-            root,
-        )
-        _parent(
-            _cylinder(
-                collection,
-                f"Brute_{side}_elbow_joint",
-                (x * 0.58, 0.4, -0.22),
-                0.08,
-                0.13,
-                graphite,
-                vertices=10,
-                bevel=0.016,
-                rotation=(0.0, math.pi / 2.0, 0.0),
-            ),
-            root,
-        )
-        _parent(
-            _box(
-                collection,
-                f"Brute_{side}_ram_guard",
-                (x * 0.55, 0.27, -0.24),
-                (0.16, 0.2, 0.22),
-                pink,
-                bevel=0.03,
-                rotation=(0.0, 0.0, sign * 0.1),
-            ),
-            root,
-        )
-        _parent(
-            _box(
-                collection,
-                f"Brute_{side}_warning_mark",
-                (x * 0.64, 0.29, -0.25),
-                (0.022, 0.08, 0.1),
-                amber,
-                bevel=0.005,
-            ),
-            root,
-        )
-    _parent(
-        _box(
-            collection,
-            "Brute_upper_machinery",
-            (0.0, 1.08, 0.05),
-            (0.46, 0.28, 0.38),
-            graphite_light,
-            bevel=0.045,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Brute_upper_armor",
-            (0.0, 1.22, -0.02),
-            (0.3, 0.24, 0.26),
-            violet,
-            bevel=0.04,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Brute_upper_sensor",
-            (0.0, 1.28, -0.17),
-            (0.11, 0.02, 0.018),
-            lime_hot,
-            bevel=0.004,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Brute_rear_left_vent",
-            (-0.23, 0.73, 0.4),
-            (0.18, 0.26, 0.07),
-            amber,
-            bevel=0.018,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Brute_rear_right_vent",
-            (0.23, 0.73, 0.4),
-            (0.18, 0.26, 0.07),
-            amber,
-            bevel=0.018,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Brute_mast",
-            (0.0, 1.4, 0.04),
-            (0.05, 0.16, 0.05),
-            pink,
-            bevel=0.012,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Brute_mast_marker",
-            (0.0, 1.49, 0.04),
-            (0.03, 0.02, 0.03),
-            pink_hot,
-            bevel=0.004,
-        ),
-        root,
-    )
-    root["role"] = "enemy_brute"
-    root["forward_axis"] = "-Z"
-    root["nominal_height"] = 1.5
-    root["nominal_radius"] = 0.65
-    return collection, root
+    hierarchy = [root]
+    for obj in bpy.data.objects:
+        if obj == root or obj.type != "EMPTY":
+            continue
+        current = obj.parent
+        while current is not None and current != root:
+            current = current.parent
+        if current == root:
+            hierarchy.append(obj)
+    for parent in hierarchy:
+        grouped: dict[str, list[bpy.types.Object]] = {}
+        for child in list(parent.children):
+            if child.type != "MESH" or not child.data.materials:
+                continue
+            material_name = child.data.materials[0].name
+            grouped.setdefault(material_name, []).append(child)
+        for material_name, meshes in grouped.items():
+            if len(meshes) < 2:
+                continue
+            bpy.ops.object.select_all(action="DESELECT")
+            for mesh in meshes:
+                mesh.select_set(True)
+            bpy.context.view_layer.objects.active = meshes[0]
+            bpy.ops.object.join()
+            meshes[0].name = f"{root.name}_{parent.name}_{material_name}_static"
+            meshes[0].select_set(False)
 
 
-def _build_turret(
-    materials: dict[str, bpy.types.Material],
-) -> tuple[bpy.types.Collection, bpy.types.Object]:
-    collection, root = _model_collection("EnemyTurret")
-    violet = materials["violet"]
-    violet_dark = materials["violet_dark"]
-    pink = materials["pink"]
-    pink_hot = materials["pink_hot"]
-    graphite = materials["graphite"]
-    graphite_light = materials["graphite_light"]
-    steel = materials["steel"]
-    amber = materials["amber"]
-    lime_hot = materials["lime_hot"]
+def _descendants(root: bpy.types.Object) -> list[bpy.types.Object]:
+    descendants: list[bpy.types.Object] = []
+    for obj in bpy.data.objects:
+        current = obj.parent
+        while current is not None and current != root:
+            current = current.parent
+        if current == root:
+            descendants.append(obj)
+    return descendants
 
-    # A fixed gun platform with a machined drum, armored sensor housing, and a
-    # separate cannon cradle. There is no dome or face; the warm slit is a
-    # single targeting instrument recessed into the front plate.
-    _parent(
-        _cylinder(
-            collection,
-            "Turret_base_drum",
-            (0.0, 0.14, 0.0),
-            0.48,
-            0.28,
-            graphite,
-            vertices=12,
-            bevel=0.045,
-            rotation=(math.pi / 2.0, 0.0, 0.0),
-        ),
-        root,
-    )
-    _parent(
-        _cylinder(
-            collection,
-            "Turret_base_bearing",
-            (0.0, 0.3, 0.0),
-            0.36,
-            0.08,
-            violet_dark,
-            vertices=12,
-            bevel=0.02,
-            rotation=(math.pi / 2.0, 0.0, 0.0),
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Turret_lower_skirt",
-            (0.0, 0.39, 0.02),
-            (0.68, 0.18, 0.54),
-            violet_dark,
-            bevel=0.045,
-        ),
-        root,
-    )
-    _parent(
-        _prism(
-            collection,
-            "Turret_angular_housing",
-            [(-0.34, 0.2), (0.34, 0.2), (0.28, -0.28), (-0.28, -0.28)],
-            0.42,
-            0.76,
-            violet,
-            bevel=0.05,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Turret_front_armor",
-            (0.0, 0.55, -0.31),
-            (0.48, 0.28, 0.1),
-            materials["steel"],
-            bevel=0.028,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Turret_left_side_plate",
-            (-0.35, 0.6, 0.02),
-            (0.12, 0.28, 0.38),
-            materials["graphite_light"],
-            bevel=0.028,
-            rotation=(0.0, 0.0, -0.16),
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Turret_right_side_plate",
-            (0.35, 0.6, 0.02),
-            (0.12, 0.28, 0.38),
-            graphite_light,
-            bevel=0.028,
-            rotation=(0.0, 0.0, 0.16),
-        ),
-        root,
-    )
-    _parent(
-        _cylinder(
-            collection,
-            "Turret_left_cradle_hinge",
-            (-0.2, 0.73, -0.2),
-            0.09,
-            0.1,
-            graphite,
-            vertices=10,
-            bevel=0.014,
-            rotation=(0.0, math.pi / 2.0, 0.0),
-        ),
-        root,
-    )
-    _parent(
-        _cylinder(
-            collection,
-            "Turret_right_cradle_hinge",
-            (0.2, 0.73, -0.2),
-            0.09,
-            0.1,
-            graphite,
-            vertices=10,
-            bevel=0.014,
-            rotation=(0.0, math.pi / 2.0, 0.0),
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Turret_cannon_cradle",
-            (0.0, 0.76, -0.28),
-            (0.3, 0.18, 0.25),
-            graphite_light,
-            bevel=0.035,
-        ),
-        root,
-    )
-    _parent(
-        _cylinder(
-            collection,
-            "Turret_forward_barrel",
-            (0.0, 0.76, -0.5),
-            0.062,
-            0.42,
-            pink,
-            vertices=10,
-            bevel=0.012,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Turret_barrel_heat_guard",
-            (0.0, 0.76, -0.43),
-            (0.12, 0.12, 0.18),
-            steel,
-            bevel=0.02,
-        ),
-        root,
-    )
-    _parent(
-        _torus(
-            collection, "Turret_muzzle_ring", (0.0, 0.76, -0.73), 0.078, 0.012, pink_hot
-        ),
-        root,
-    )
-    _parent(
-        _cylinder(
-            collection,
-            "Turret_muzzle",
-            (0.0, 0.76, -0.74),
-            0.038,
-            0.022,
-            graphite,
-            vertices=10,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Turret_rear_counterweight",
-            (0.0, 0.66, 0.31),
-            (0.32, 0.2, 0.14),
-            graphite_light,
-            bevel=0.025,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Turret_rear_warning_mark",
-            (0.0, 0.74, 0.39),
-            (0.1, 0.04, 0.018),
-            amber,
-            bevel=0.004,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Turret_top_service_plate",
-            (0.0, 0.87, 0.18),
-            (0.22, 0.1, 0.2),
-            violet_dark,
-            bevel=0.02,
-        ),
-        root,
-    )
-    _parent(
-        _box(
-            collection,
-            "Turret_rear_status_bar",
-            (0.0, 0.94, 0.3),
-            (0.1, 0.018, 0.022),
-            lime_hot,
-            bevel=0.004,
-        ),
-        root,
-    )
-    for index, (x, z) in enumerate(
-        ((-0.31, -0.27), (0.31, -0.27), (-0.31, 0.27), (0.31, 0.27))
-    ):
-        _parent(
-            _box(
-                collection,
-                f"Turret_stabilizer_{index}",
-                (x, 0.19, z),
-                (0.14, 0.1, 0.2),
-                graphite_light,
-                bevel=0.018,
-                rotation=(0.0, 0.0, (-1.0 if x < 0.0 else 1.0) * 0.12),
-            ),
-            root,
-        )
-    root["role"] = "enemy_turret"
-    root["forward_axis"] = "-Z"
-    root["nominal_height"] = 1.1
-    root["nominal_radius"] = 0.5
-    return collection, root
+
+def _export_pivot_names(root: bpy.types.Object) -> list[tuple[bpy.types.Object, str]]:
+    """Temporarily make contract pivots exact and unique for one GLB export."""
+
+    all_pivots = [obj for obj in bpy.data.objects if obj.get("role") == "pivot"]
+    saved_names = [(obj, obj.name) for obj in all_pivots]
+    for index, (obj, _) in enumerate(saved_names):
+        obj.name = f"__pivot_export_{index}"
+    for obj in _descendants(root):
+        if obj.get("role") != "pivot":
+            continue
+        contract_name = obj.get("contract_name")
+        if contract_name:
+            obj.name = str(contract_name)
+    return saved_names
+
+
+def _restore_pivot_names(saved_names: list[tuple[bpy.types.Object, str]]) -> None:
+    for index, (obj, original_name) in enumerate(saved_names):
+        obj.name = f"__pivot_restore_{index}"
+    for obj, original_name in saved_names:
+        obj.name = original_name
 
 
 def _build_arena(
@@ -2295,12 +657,12 @@ def _build_arena(
 
     # Deep beveled wall blocks define the physical bounds without becoming a
     # neon frame. The dark face, steel cap, and tiny warning marks read as
-    # fabricated chamber hardware in the top-down Godot camera.
+    # fabricated chamber hardware in the third-person camera.
     wall_specs = (
-        ("north", (0.0, 0.76, -8.27), (25.4, 1.52, 0.6)),
-        ("south", (0.0, 0.76, 8.27), (25.4, 1.52, 0.6)),
-        ("west", (-12.27, 0.76, 0.0), (0.6, 1.52, 16.0)),
-        ("east", (12.27, 0.76, 0.0), (0.6, 1.52, 16.0)),
+        ("north", (0.0, 2.5, -8.27), (25.4, 5.0, 0.6)),
+        ("south", (0.0, 2.5, 8.27), (25.4, 5.0, 0.6)),
+        ("west", (-12.27, 2.5, 0.0), (0.6, 5.0, 16.0)),
+        ("east", (12.27, 2.5, 0.0), (0.6, 5.0, 16.0)),
     )
     for side, location, dimensions in wall_specs:
         _parent(
@@ -2372,6 +734,66 @@ def _build_arena(
                 root,
             )
 
+    # Upper wall bays carry the eye toward the ceiling. Each bay is a shallow
+    # inset with a contrasting service rib, so the chamber reads as assembled
+    # panels instead of a single unbroken cube.
+    for side, z in (("north", -7.94), ("south", 7.94)):
+        for index, x in enumerate((-9.5, -4.75, 0.0, 4.75, 9.5)):
+            _parent(
+                _box(
+                    collection,
+                    f"Arena_wall_upper_panel_{side}_{index}",
+                    (x, 2.8, z),
+                    (3.8, 2.75, 0.045),
+                    dark,
+                    bevel=0.05,
+                ),
+                root,
+            )
+            _parent(
+                _box(
+                    collection,
+                    f"Arena_wall_upper_rib_{side}_{index}",
+                    (
+                        x + (1.5 if index % 2 == 0 else -1.5),
+                        2.8,
+                        z - (0.04 if side == "north" else -0.04),
+                    ),
+                    (0.14, 2.9, 0.05),
+                    steel,
+                    bevel=0.018,
+                ),
+                root,
+            )
+    for side, x in (("west", -11.96), ("east", 11.96)):
+        for index, z in enumerate((-5.2, -1.75, 1.75, 5.2)):
+            _parent(
+                _box(
+                    collection,
+                    f"Arena_wall_upper_panel_{side}_{index}",
+                    (x, 2.8, z),
+                    (0.045, 2.75, 2.65),
+                    dark,
+                    bevel=0.05,
+                ),
+                root,
+            )
+            _parent(
+                _box(
+                    collection,
+                    f"Arena_wall_upper_rib_{side}_{index}",
+                    (
+                        x - (0.04 if side == "east" else -0.04),
+                        2.8,
+                        z + (1.0 if index % 2 == 0 else -1.0),
+                    ),
+                    (0.05, 2.9, 0.14),
+                    steel,
+                    bevel=0.018,
+                ),
+                root,
+            )
+
     # Recessed warm-white strips are the sole perimeter illumination cue.
     for side, location, dimensions in (
         ("north", (0.0, 0.31, -7.94), (22.8, 0.07, 0.045)),
@@ -2392,10 +814,10 @@ def _build_arena(
         )
 
     for side, location, dimensions in (
-        ("north", (0.0, 1.5, -7.99), (24.0, 0.11, 0.13)),
-        ("south", (0.0, 1.5, 7.99), (24.0, 0.11, 0.13)),
-        ("west", (-11.99, 1.5, 0.0), (0.13, 0.11, 15.0)),
-        ("east", (11.99, 1.5, 0.0), (0.13, 0.11, 15.0)),
+        ("north", (0.0, 4.92, -7.99), (24.0, 0.11, 0.13)),
+        ("south", (0.0, 4.92, 7.99), (24.0, 0.11, 0.13)),
+        ("west", (-11.99, 4.92, 0.0), (0.13, 0.11, 15.0)),
+        ("east", (11.99, 4.92, 0.0), (0.13, 0.11, 15.0)),
     ):
         _parent(
             _box(
@@ -2409,8 +831,8 @@ def _build_arena(
             root,
         )
 
-    # Faceted corner service pylons stay below the collision wall height and
-    # give the chamber a visible silhouette without obstructing play.
+    # Faceted corner service pylons sit in the wall line and give the chamber a
+    # visible silhouette without obstructing the clear combat floor.
     for index, (x, z) in enumerate(
         ((-11.5, -7.5), (11.5, -7.5), (-11.5, 7.5), (11.5, 7.5))
     ):
@@ -2420,7 +842,7 @@ def _build_arena(
                 f"Arena_corner_pylon_{index}",
                 ((-0.28, -0.23), (0.24, -0.3), (0.3, 0.24), (-0.22, 0.3)),
                 0.0,
-                1.5,
+                4.85,
                 graphite_light,
                 bevel=0.05,
             ),
@@ -2430,7 +852,7 @@ def _build_arena(
             _box(
                 collection,
                 f"Arena_corner_pylon_cap_{index}",
-                (x, 1.46, z),
+                (x, 4.84, z),
                 (0.38, 0.07, 0.38),
                 rust_hot if index == 3 else steel,
                 bevel=0.025,
@@ -2441,10 +863,222 @@ def _build_arena(
             _box(
                 collection,
                 f"Arena_corner_pylon_light_{index}",
-                (x, 0.84, z - 0.3),
+                (x, 2.7, z - 0.3),
                 (0.07, 0.26, 0.025),
                 warm,
                 bevel=0.008,
+            ),
+            root,
+        )
+
+    # Tall corner columns, overhead trusses, and a suspended service gantry
+    # provide the vertical scale that a close third-person camera needs. All
+    # supports remain outside the playable rectangle; only their silhouettes
+    # and the ceiling are visible above the clear arena floor.
+    for index, (x, z) in enumerate(
+        ((-12.58, -8.42), (12.58, -8.42), (-12.58, 8.42), (12.58, 8.42))
+    ):
+        _parent(
+            _box(
+                collection,
+                f"Arena_structural_column_{index}",
+                (x, 2.72, z),
+                (0.7, 5.45, 0.7),
+                graphite,
+                bevel=0.085,
+            ),
+            root,
+        )
+        _parent(
+            _box(
+                collection,
+                f"Arena_structural_column_base_{index}",
+                (x, 0.28, z),
+                (1.05, 0.5, 1.05),
+                steel,
+                bevel=0.08,
+            ),
+            root,
+        )
+        _parent(
+            _box(
+                collection,
+                f"Arena_structural_column_cap_{index}",
+                (x, 5.48, z),
+                (0.98, 0.22, 0.98),
+                graphite_light,
+                bevel=0.045,
+            ),
+            root,
+        )
+
+    for index, z in enumerate((-6.4, -2.2, 2.2, 6.4)):
+        _parent(
+            _box(
+                collection,
+                f"Arena_ceiling_truss_{index}",
+                (0.0, 5.35, z),
+                (24.4, 0.22, 0.22),
+                graphite_light,
+                bevel=0.035,
+            ),
+            root,
+        )
+        for x in (-9.0, -3.0, 3.0, 9.0):
+            _parent(
+                _box(
+                    collection,
+                    f"Arena_ceiling_truss_post_{index}_{x:g}",
+                    (x, 5.05, z),
+                    (0.13, 0.62, 0.13),
+                    steel,
+                    bevel=0.018,
+                    rotation=(0.0, 0.0, math.radians(9.0 if index % 2 == 0 else -9.0)),
+                ),
+                root,
+            )
+    for x in (-8.0, 0.0, 8.0):
+        _parent(
+            _box(
+                collection,
+                f"Arena_crossbeam_{x:g}",
+                (x, 5.56, 0.0),
+                (0.24, 0.22, 16.1),
+                graphite,
+                bevel=0.035,
+            ),
+            root,
+        )
+    for index, x in enumerate((-8.0, 0.0, 8.0)):
+        _parent(
+            _box(
+                collection,
+                f"Arena_crossbeam_light_{index}",
+                (x, 5.42, 0.0),
+                (0.08, 0.025, 10.4),
+                warm_hot,
+                bevel=0.008,
+            ),
+            root,
+        )
+    for index, z in enumerate((-6.4, -2.2, 2.2, 6.4)):
+        _parent(
+            _box(
+                collection,
+                f"Arena_ceiling_panel_{index}",
+                (0.0, 5.78, z),
+                (24.0, 0.08, 3.72),
+                dark,
+                bevel=0.04,
+            ),
+            root,
+        )
+
+    gantry_x, gantry_y, gantry_z = 0.0, 4.45, -5.25
+    _parent(
+        _box(
+            collection,
+            "Arena_suspended_gantry_beam",
+            (gantry_x, gantry_y, gantry_z),
+            (6.6, 0.28, 0.34),
+            graphite_light,
+            bevel=0.04,
+        ),
+        root,
+    )
+    for index, x in enumerate((-2.65, 2.65)):
+        _parent(
+            _box(
+                collection,
+                f"Arena_gantry_hanger_{index}",
+                (x, 4.05, gantry_z),
+                (0.16, 0.9, 0.16),
+                steel,
+                bevel=0.025,
+            ),
+            root,
+        )
+        _parent(
+            _box(
+                collection,
+                f"Arena_gantry_brace_{index}",
+                (x, 4.06, gantry_z + (0.34 if index == 0 else -0.34)),
+                (0.13, 0.72, 0.13),
+                rust,
+                bevel=0.018,
+                rotation=(math.radians(22.0 if index == 0 else -22.0), 0.0, 0.0),
+            ),
+            root,
+        )
+    _parent(
+        _box(
+            collection,
+            "Arena_suspended_reactor",
+            (gantry_x, 3.7, gantry_z),
+            (1.35, 0.7, 0.9),
+            graphite,
+            bevel=0.085,
+        ),
+        root,
+    )
+    _parent(
+        _box(
+            collection,
+            "Arena_suspended_reactor_face",
+            (gantry_x, 3.7, gantry_z + 0.47),
+            (0.72, 0.32, 0.04),
+            steel,
+            bevel=0.025,
+        ),
+        root,
+    )
+    _parent(
+        _box(
+            collection,
+            "Arena_suspended_reactor_indicator",
+            (gantry_x, 3.82, gantry_z + 0.5),
+            (0.24, 0.045, 0.025),
+            warm,
+            bevel=0.006,
+        ),
+        root,
+    )
+
+    # Conduit trays hug the upper wall line. Repeated brackets and drop
+    # elbows keep the vertical walls detailed while leaving the center open.
+    for side, z in (("north", -7.73), ("south", 7.73)):
+        _parent(
+            _box(
+                collection,
+                f"Arena_conduit_tray_{side}",
+                (0.0, 4.52, z),
+                (21.8, 0.34, 0.28),
+                dark,
+                bevel=0.045,
+            ),
+            root,
+        )
+        for index, x in enumerate((-9.0, -4.5, 0.0, 4.5, 9.0)):
+            _parent(
+                _box(
+                    collection,
+                    f"Arena_conduit_clamp_{side}_{index}",
+                    (x, 4.32, z),
+                    (0.16, 0.42, 0.36),
+                    steel,
+                    bevel=0.02,
+                ),
+                root,
+            )
+    for side, x in (("west", -11.73), ("east", 11.73)):
+        _parent(
+            _box(
+                collection,
+                f"Arena_conduit_tray_{side}",
+                (x, 4.52, 0.0),
+                (0.28, 0.34, 13.8),
+                dark,
+                bevel=0.045,
             ),
             root,
         )
@@ -2540,7 +1174,7 @@ def _build_arena(
     root["role"] = "arena_visual"
     root["inner_width"] = 24.0
     root["inner_depth"] = 16.0
-    root["wall_height"] = 1.5
+    root["wall_height"] = 5.0
     return collection, root
 
 
@@ -2552,13 +1186,30 @@ def _build_showroom(
     scene = bpy.context.scene
     showroom = bpy.data.collections.new("Showroom")
     scene.collection.children.link(showroom)
+    concept_path = APP_ROOT / "art" / "concepts" / "mech-model-sheet-v1.png"
+    if concept_path.is_file():
+        concept_image = bpy.data.images.load(str(concept_path), check_existing=True)
+        concept_image.pack()
+        concept_image.filepath = "//../concepts/mech-model-sheet-v1.png"
+        concept_reference = bpy.data.objects.new("ConceptReference_MechSheet", None)
+        concept_reference.empty_display_type = "IMAGE"
+        concept_reference.data = concept_image
+        concept_reference.empty_display_size = 3.8
+        concept_reference.color[3] = 0.42
+        concept_reference.hide_render = True
+        concept_reference.location = _to_blender_location((15.0, 2.0, -1.0))
+        showroom.objects.link(concept_reference)
     arena_root.location = _to_blender_location((0.0, 0.0, 0.0))
+    # The source scene is a playable third-person composition: the player is
+    # foregrounded near the camera and the other silhouettes recede into the
+    # chamber. This makes opening the .blend useful for art review instead of
+    # showing an overhead asset lineup.
     display_positions = [
-        (-5.8, 0.0, 3.4),
-        (-2.6, 0.0, -2.2),
-        (2.4, 0.0, -2.3),
-        (6.0, 0.0, 2.4),
-        (0.0, 0.0, 0.7),
+        (0.0, 0.0, 3.4),
+        (-3.2, 0.0, -1.2),
+        (3.6, 0.0, -2.5),
+        (-4.6, 0.0, -5.1),
+        (5.2, 0.0, -4.2),
     ]
     for root, position in zip(roots, display_positions, strict=True):
         root.location = _to_blender_location(position)
@@ -2566,13 +1217,14 @@ def _build_showroom(
     camera_data = bpy.data.cameras.new("ShowroomCamera")
     camera = bpy.data.objects.new("ShowroomCamera", camera_data)
     showroom.objects.link(camera)
-    camera.location = _to_blender_location((0.0, 21.5, -19.0))
+    camera.location = _to_blender_location((1.35, 2.05, 6.9))
     camera.rotation_euler = (
-        (_to_blender_location((0.0, 0.0, 0.0)) - camera.location)
+        (_to_blender_location((0.0, 0.94, 3.4)) - camera.location)
         .to_track_quat("-Z", "Y")
         .to_euler()
     )
-    camera_data.lens = 47.0
+    camera_data.lens = 36.0
+    camera_data.passepartout_alpha = 0.9
     camera_data.clip_end = 100.0
     scene.camera = camera
     for screen in bpy.data.screens:
@@ -2588,50 +1240,73 @@ def _build_showroom(
             space.shading.show_cavity = True
             space.overlay.show_overlays = False
             space.region_3d.view_perspective = "CAMERA"
-            space.region_3d.view_camera_zoom = 0.85
+            space.region_3d.view_camera_zoom = 14.0
 
     key_data = bpy.data.lights.new("ShowroomKey", type="AREA")
-    key_data.energy = 1180.0
+    key_data.energy = 1450.0
     key_data.shape = "DISK"
     key_data.size = 6.0
     key = bpy.data.objects.new("ShowroomKey", key_data)
     showroom.objects.link(key)
-    key.location = _to_blender_location((-5.0, 12.0, -5.0))
+    key.location = _to_blender_location((-5.0, 8.5, 3.0))
     key.rotation_euler = (
-        (_to_blender_location((0.0, 0.0, 0.0)) - key.location)
+        (_to_blender_location((0.0, 0.8, -2.5)) - key.location)
         .to_track_quat("-Z", "Y")
         .to_euler()
     )
 
     fill_data = bpy.data.lights.new("ShowroomFill", type="AREA")
-    fill_data.energy = 430.0
-    fill_data.color = (0.68, 0.62, 0.52)
+    fill_data.energy = 620.0
+    fill_data.color = (0.55, 0.68, 0.82)
     fill_data.shape = "RECTANGLE"
     fill_data.size = 5.0
     fill = bpy.data.objects.new("ShowroomFill", fill_data)
     showroom.objects.link(fill)
-    fill.location = _to_blender_location((7.0, 7.0, 5.0))
+    fill.location = _to_blender_location((6.0, 5.5, 1.5))
     fill.rotation_euler = (
-        (_to_blender_location((0.0, 0.0, 0.0)) - fill.location)
+        (_to_blender_location((0.0, 1.0, -2.0)) - fill.location)
         .to_track_quat("-Z", "Y")
         .to_euler()
     )
 
     rim_data = bpy.data.lights.new("ShowroomRim", type="AREA")
-    rim_data.energy = 520.0
-    rim_data.color = (0.9, 0.58, 0.36)
+    rim_data.energy = 760.0
+    rim_data.color = (0.92, 0.52, 0.28)
     rim_data.shape = "RECTANGLE"
     rim_data.size = 7.0
     rim = bpy.data.objects.new("ShowroomRim", rim_data)
     showroom.objects.link(rim)
-    rim.location = _to_blender_location((-8.0, 6.0, 8.0))
+    rim.location = _to_blender_location((-7.0, 4.5, -6.5))
     rim.rotation_euler = (
-        (_to_blender_location((0.0, 0.7, 0.0)) - rim.location)
+        (_to_blender_location((0.0, 1.0, -2.5)) - rim.location)
         .to_track_quat("-Z", "Y")
         .to_euler()
     )
 
-    scene.world.color = (0.008, 0.009, 0.01)
+    # Use a real procedural sky for reflections in the Blender source. The
+    # modeled chamber blocks the horizon in the review camera, while this sky
+    # keeps ceramic and steel from reading as flat gray under ambient-only
+    # lighting.
+    if scene.world is None:
+        scene.world = bpy.data.worlds.new("RICOCHET_World")
+    scene.world.use_nodes = True
+    world_nodes = scene.world.node_tree.nodes
+    world_links = scene.world.node_tree.links
+    world_nodes.clear()
+    world_output = world_nodes.new("ShaderNodeOutputWorld")
+    world_background = world_nodes.new("ShaderNodeBackground")
+    world_sky = world_nodes.new("ShaderNodeTexSky")
+    world_sky.sky_type = "MULTIPLE_SCATTERING"
+    world_sky.sun_elevation = math.radians(34.0)
+    world_sky.sun_rotation = math.radians(142.0)
+    world_sky.altitude = 0.35
+    world_sky.air_density = 1.15
+    world_background.inputs["Strength"].default_value = 0.32
+    world_links.new(world_sky.outputs["Color"], world_background.inputs["Color"])
+    world_links.new(
+        world_background.outputs["Background"], world_output.inputs["Surface"]
+    )
+    scene.world.color = (0.02, 0.028, 0.036)
     scene.render.engine = "BLENDER_EEVEE"
     scene.render.resolution_x = 1024
     scene.render.resolution_y = 700
@@ -2675,33 +1350,40 @@ def _export_model(
 ) -> None:
     root.location = Vector((0.0, 0.0, 0.0))
     bpy.context.view_layer.update()
-    _select_hierarchy(root)
-    bpy.ops.export_scene.gltf(
-        filepath=str(file_path),
-        export_format="GLB",
-        use_selection=True,
-        export_apply=True,
-        export_materials="EXPORT",
-        export_texcoords=False,
-        export_normals=True,
-        export_tangents=False,
-        export_cameras=False,
-        export_lights=False,
-        export_animations=False,
-        export_morph=False,
-        export_extras=True,
-        export_yup=True,
-        export_loglevel=-1,
-    )
-    root.location = display_location
-    bpy.ops.object.select_all(action="DESELECT")
+    saved_pivot_names = _export_pivot_names(root)
+    try:
+        _select_hierarchy(root)
+        bpy.ops.export_scene.gltf(
+            filepath=str(file_path),
+            export_format="GLB",
+            use_selection=True,
+            export_apply=True,
+            export_materials="EXPORT",
+            export_texcoords=True,
+            export_normals=True,
+            export_tangents=False,
+            export_cameras=False,
+            export_lights=False,
+            export_animations=False,
+            export_morph=False,
+            export_extras=True,
+            export_yup=True,
+            export_loglevel=-1,
+        )
+    finally:
+        _restore_pivot_names(saved_pivot_names)
+        root.location = display_location
+        bpy.ops.object.select_all(action="DESELECT")
 
 
 def main() -> None:
     OUTPUT_DIRECTORY.mkdir(parents=True, exist_ok=True)
     SOURCE_PATH.parent.mkdir(parents=True, exist_ok=True)
     _configure_scene()
+    from surfaces import apply_paint, project_uvs
+
     materials = _materials()
+    apply_paint(materials, APP_ROOT / "art" / "textures")
     model_builders = [
         _build_player,
         _build_chaser,
@@ -2712,6 +1394,9 @@ def main() -> None:
     built_models = [builder(materials) for builder in model_builders]
     roots = [root for _, root in built_models]
     _, arena_root = _build_arena(materials)
+    for root in [*roots, arena_root]:
+        _merge_static_meshes(root)
+        project_uvs(root)
     _build_showroom(materials, arena_root, roots)
     bpy.ops.wm.save_as_mainfile(filepath=str(SOURCE_PATH))
 

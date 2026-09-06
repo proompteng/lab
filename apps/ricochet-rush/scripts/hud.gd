@@ -7,8 +7,7 @@ signal resume_requested
 signal upgrade_chosen(id: StringName)
 signal sound_requested
 
-const DISPLAY_FONT: Font = preload("res://assets/fonts/SpaceGrotesk.ttf")
-const MONO_FONT: Font = preload("res://assets/fonts/DMMono.ttf")
+const DISPLAY_FONT: Font = preload("res://assets/fonts/Inter.ttf")
 const INK := Color("e5e7e3")
 const MUTED := Color("989fa2")
 const AMBER := Color("d0a253")
@@ -22,6 +21,7 @@ const MAX_HEALTH_PIPS: int = 10
 var game: RicochetGame
 var _title_view: VBoxContainer
 var _flight_view: Control
+var _header: Control
 var _pause_view: PanelContainer
 var _upgrade_view: PanelContainer
 var _result_view: PanelContainer
@@ -97,17 +97,21 @@ func _ready() -> void:
 func _label(text: String, size_px: int = 16, color: Color = INK, mono: bool = false) -> Label:
 	var label := Label.new()
 	label.text = text
-	if mono:
-		label.add_theme_font_override("font", MONO_FONT)
-	else:
-		var font := FontVariation.new()
-		font.base_font = DISPLAY_FONT
-		font.variation_opentype = {2003265652: 650 if size_px >= 24 else 500}
-		label.add_theme_font_override("font", font)
+	label.add_theme_font_override("font", _font(700 if size_px >= 24 else 600 if mono else 500))
 	label.add_theme_font_size_override("font_size", size_px)
 	label.add_theme_color_override("font_color", color)
+	label.add_theme_color_override("font_shadow_color", Color(DEEP_INK, 0.86))
+	label.add_theme_constant_override("shadow_offset_x", 1)
+	label.add_theme_constant_override("shadow_offset_y", 1)
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return label
+
+
+func _font(weight: int = 500) -> Font:
+	var font := FontVariation.new()
+	font.base_font = DISPLAY_FONT
+	font.variation_opentype = {2003265652: weight}
+	return font
 
 
 func _box(gap: int = 8) -> VBoxContainer:
@@ -136,7 +140,7 @@ func _button(text: String, primary: bool = false) -> Button:
 	button.custom_minimum_size.y = 48.0
 	button.focus_mode = Control.FOCUS_ALL
 	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	button.add_theme_font_override("font", MONO_FONT)
+	button.add_theme_font_override("font", _font(600))
 	button.add_theme_font_size_override("font_size", 13)
 	button.alignment = HORIZONTAL_ALIGNMENT_CENTER
 	var base: Color = INK if primary else PANEL_RAISED
@@ -170,6 +174,7 @@ func _bar(color: Color, width: float = 250.0, height: float = 6.0) -> ProgressBa
 func _build_header() -> void:
 	var header := HBoxContainer.new()
 	header.name = "Header"
+	_header = header
 	add_child(header)
 	header.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
 	header.offset_left = 28.0
@@ -183,7 +188,7 @@ func _build_header() -> void:
 	header.add_child(mark)
 	var brand := _box(0)
 	brand.add_child(_label("RICOCHET RUSH", 18, INK))
-	brand.add_child(_label("TIME ECHOES", 10, MUTED, true))
+	brand.add_child(_label("TIME ECHO PROTOCOL", 10, MUTED, true))
 	header.add_child(brand)
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -204,28 +209,32 @@ func _build_title() -> void:
 	_title_view.name = "Title"
 	_title_view.custom_minimum_size.x = 500.0
 	add_child(_title_view)
-	_title_view.add_child(_label("A FIGHT ACROSS THREE SECONDS", 11, AMBER, true))
+	_title_view.add_child(_label("FIELD TEST / TIME ECHO PROTOCOL", 10, AMBER, true))
 	_title_view.add_child(_spacer(8.0))
-	var title := _label("RICOCHET\nRUSH", 72, INK)
-	title.add_theme_constant_override("line_spacing", -22)
+	var title := _label("RICOCHET RUSH", 46, INK)
 	_title_view.add_child(title)
 	_title_view.add_child(_spacer(14.0))
-	_title_view.add_child(_label("FIGHT WITH YOUR PAST SELF.", 19, CYAN))
+	_title_view.add_child(_label("TIME ECHO PROTOCOL", 18, CYAN, true))
 	_title_view.add_child(_spacer(9.0))
 	_title_view.add_child(_label("Move. Shoot. Press E to replay your last 3 seconds.", 15, MUTED))
 	_title_view.add_child(_spacer(22.0))
 	_start_button = _button("START RUN   /   ENTER", true)
-	_start_button.custom_minimum_size = Vector2(360.0, 52.0)
+	_start_button.custom_minimum_size = Vector2(300.0, 48.0)
 	_start_button.pressed.connect(func() -> void: start_requested.emit())
 	_title_view.add_child(_start_button)
 	_title_view.add_child(_spacer(8.0))
 	_title_view.add_child(
-		_label("WASD MOVE   MOUSE AIM   HOLD LMB FIRE   SPACE DASH   E / RMB ECHO", 10, MUTED, true)
+		_label(
+			"WASD MOVE   MOUSE LOOK   RMB AIM   HOLD LMB FIRE   SPACE DASH   E ECHO",
+			10,
+			MUTED,
+			true
+		)
 	)
 	var best := _label("", 11, AMBER, true)
 	best.name = "Best"
 	_title_view.add_child(best)
-	var footer := _label("MOVE WITH INTENT. LEAVE AN ECHO.", 10, MUTED, true)
+	var footer := _label("01 / TIME ECHO PROTOCOL", 10, MUTED, true)
 	footer.name = "TitleFooter"
 	add_child(footer)
 	footer.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
@@ -266,6 +275,7 @@ func _build_flight() -> void:
 
 	_progress_card = _card(Vector2(270.0, 42.0))
 	_progress_card.name = "ProgressCard"
+	_progress_card.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	_flight_view.add_child(_progress_card)
 	var progress_content := _box(6)
 	_progress_card.add_child(progress_content)
@@ -319,7 +329,10 @@ func _build_flight() -> void:
 	_build_echo_card()
 	_build_action_prompt()
 	_controls = _label(
-		"WASD MOVE    MOUSE AIM / FIRE    SPACE DASH    E / RMB ECHO", 10, MUTED, true
+		"WASD MOVE    MOUSE LOOK    RMB AIM    HOLD LMB FIRE    SPACE DASH    E ECHO    ESC PAUSE",
+		10,
+		MUTED,
+		true
 	)
 	_controls.name = "Controls"
 	_controls.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -436,12 +449,13 @@ func _build_result() -> void:
 	content.add_child(_result_stats)
 	_storage_notice = _label("", 12, AMBER)
 	_storage_notice.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_storage_notice.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_storage_notice)
 	_storage_notice.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
 	_storage_notice.offset_left = 28.0
 	_storage_notice.offset_right = -28.0
-	_storage_notice.offset_top = 72.0
-	_storage_notice.offset_bottom = 96.0
+	_storage_notice.offset_top = 86.0
+	_storage_notice.offset_bottom = 110.0
 	content.add_child(_spacer(4.0))
 	_retry_button = _button("RETRY RUN   /   ENTER", true)
 	_retry_button.pressed.connect(func() -> void: retry_requested.emit())
@@ -487,18 +501,19 @@ func _layout() -> void:
 	_result_view.size = result_size
 	if not is_instance_valid(_flight_view):
 		return
-	_score_card.position = Vector2(28.0, 102.0)
-	_score_card.size = Vector2(210.0, 100.0)
-	_progress_card.position = Vector2((size.x - 270.0) * 0.5, 102.0)
-	_progress_card.size = Vector2(270.0, 42.0)
-	_combo_card.position = Vector2(size.x - 268.0, 102.0)
+	_score_card.position = Vector2(28.0, 26.0)
+	_score_card.size = Vector2(220.0, 92.0)
+	var progress_width: float = maxf(270.0, _progress_card.get_combined_minimum_size().x)
+	_progress_card.position = Vector2(size.x - progress_width - 28.0, 26.0)
+	_progress_card.size = Vector2(progress_width, 42.0)
+	_combo_card.position = Vector2((size.x - 240.0) * 0.5, 26.0)
 	_combo_card.size = Vector2(240.0, 70.0)
-	_health_card.position = Vector2(28.0, size.y - 135.0)
+	_health_card.position = Vector2(28.0, size.y - 126.0)
 	_health_card.size = Vector2(230.0, 94.0)
-	_echo_card.position = Vector2(size.x - 296.0, size.y - 146.0)
+	_echo_card.position = Vector2(size.x - 296.0, size.y - 136.0)
 	_echo_card.size = Vector2(268.0, 112.0)
-	var action_width: float = minf(440.0, size.x - 600.0)
-	_action_panel.position = Vector2((size.x - action_width) * 0.5, size.y - 119.0)
+	var action_width: float = minf(440.0, maxf(300.0, size.x - 600.0))
+	_action_panel.position = Vector2((size.x - action_width) * 0.5, size.y - 112.0)
 	_action_panel.size = Vector2(action_width, 62.0)
 	_controls.position = Vector2(28.0, size.y - 34.0)
 	_controls.size = Vector2(maxf(300.0, size.x - 56.0), 20.0)
@@ -512,6 +527,7 @@ func set_phase(value: int) -> void:
 		return
 	_phase = value
 	_title_view.visible = value == RicochetGame.Phase.TITLE
+	_header.visible = value != RicochetGame.Phase.PLAYING
 	get_node("TitleFooter").visible = _title_view.visible
 	_flight_view.visible = value == RicochetGame.Phase.PLAYING
 	_pause_view.visible = value == RicochetGame.Phase.PAUSED
@@ -554,6 +570,12 @@ func refresh(delta: float) -> void:
 		_refresh_upgrade_choices()
 	if _phase != RicochetGame.Phase.PLAYING:
 		return
+	_controls.text = (
+		"WASD MOVE    RMB + DRAG LOOK / AIM    LMB FIRE    SPACE DASH    E ECHO    ESC PAUSE"
+		if game.drag_look
+		else "WASD MOVE    MOUSE LOOK    RMB AIM    HOLD LMB FIRE    SPACE DASH    E ECHO    ESC PAUSE"
+	)
+	_controls.modulate = AMBER if game.drag_look else Color.WHITE
 	var score_delta: int = game.score - _last_score if _last_score >= 0 else 0
 	_score_label.text = _number(game.score)
 	if score_delta > 0:
@@ -632,8 +654,8 @@ func _update_echo() -> void:
 		status_color = CYAN
 		hint_color = CYAN
 	elif game.echo_ready:
-		_echo_status.text = "ECHO READY / E OR RMB"
-		_echo_hint.text = "PRESS E OR RMB TO REPLAY 3.0S"
+		_echo_status.text = "ECHO READY / PRESS E"
+		_echo_hint.text = "PRESS E TO REPLAY 3.0S"
 		status_color = CYAN
 		hint_color = CYAN
 	elif history < 0.65:
@@ -856,6 +878,70 @@ func _number(value: int) -> String:
 	return "%d,%03d" % [value / 1000, value % 1000]
 
 
+func _draw_crosshair() -> void:
+	if not is_instance_valid(game):
+		return
+	var center := size * 0.5
+	var gap: float = 4.0 if game.aiming else 7.0
+	var arm: float = 9.0 if game.aiming else 7.0
+	var stroke: float = 2.0 if game.aiming else 1.0
+	var crosshair_color := AMBER if game.aim_blocked or game.aim_hit_enemy else INK
+	var line_color := Color(crosshair_color, 0.96 if game.aiming else 0.82)
+	draw_line(
+		Vector2(center.x - gap - arm, center.y),
+		Vector2(center.x - gap, center.y),
+		line_color,
+		stroke
+	)
+	draw_line(
+		Vector2(center.x + gap, center.y),
+		Vector2(center.x + gap + arm, center.y),
+		line_color,
+		stroke
+	)
+	draw_line(
+		Vector2(center.x, center.y - gap - arm),
+		Vector2(center.x, center.y - gap),
+		line_color,
+		stroke
+	)
+	draw_line(
+		Vector2(center.x, center.y + gap),
+		Vector2(center.x, center.y + gap + arm),
+		line_color,
+		stroke
+	)
+	draw_rect(Rect2(center - Vector2(1.0, 1.0), Vector2(2.0, 2.0)), line_color)
+	if game.recent_hit > 0.0:
+		var hit_gap: float = gap + arm + 6.0
+		var hit_alpha: float = clampf(game.recent_hit / 0.14, 0.0, 1.0) * 0.78
+		var hit_color := Color(AMBER, hit_alpha)
+		draw_line(
+			center + Vector2(-hit_gap, -hit_gap),
+			center + Vector2(-hit_gap + 5.0, -hit_gap + 5.0),
+			hit_color,
+			1.0
+		)
+		draw_line(
+			center + Vector2(hit_gap, -hit_gap),
+			center + Vector2(hit_gap - 5.0, -hit_gap + 5.0),
+			hit_color,
+			1.0
+		)
+		draw_line(
+			center + Vector2(-hit_gap, hit_gap),
+			center + Vector2(-hit_gap + 5.0, hit_gap - 5.0),
+			hit_color,
+			1.0
+		)
+		draw_line(
+			center + Vector2(hit_gap, hit_gap),
+			center + Vector2(hit_gap - 5.0, hit_gap - 5.0),
+			hit_color,
+			1.0
+		)
+
+
 func _draw() -> void:
 	if _phase == RicochetGame.Phase.TITLE:
 		for index: int in 40:
@@ -865,8 +951,11 @@ func _draw() -> void:
 				Rect2(float(index) * width, 78.0, width + 1.0, size.y - 78.0),
 				Color(0.015, 0.018, 0.02, alpha)
 			)
-	draw_rect(Rect2(0.0, 0.0, size.x, 78.0), Color(DEEP_INK, 0.96))
-	draw_line(Vector2(28.0, 78.0), Vector2(size.x - 28.0, 78.0), Color(BORDER, 0.8), 1.0)
+	if _phase == RicochetGame.Phase.PLAYING:
+		_draw_crosshair()
+	else:
+		draw_rect(Rect2(0.0, 0.0, size.x, 78.0), Color(DEEP_INK, 0.72))
+		draw_line(Vector2(28.0, 78.0), Vector2(size.x - 28.0, 78.0), Color(BORDER, 0.8), 1.0)
 	if _phase == RicochetGame.Phase.PAUSED or _phase == RicochetGame.Phase.UPGRADING:
 		draw_rect(Rect2(Vector2.ZERO, size), Color(0.01, 0.012, 0.013, 0.74))
 	elif _phase == RicochetGame.Phase.OVER:

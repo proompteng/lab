@@ -111,6 +111,31 @@ const success = <A, E>(result: Result.Result<A, E>): A => Result.getOrThrow(resu
 const error = <A, E>(result: Result.Result<A, E>): E => Result.getOrThrow(Result.flip(result))
 
 describe('immutable intraday market snapshot', () => {
+  test.each(['quote', 'trade', 'completion-bar'] as const)(
+    'retains an unavailable candidate without blocking its required benchmark: %s',
+    (missing) => {
+      const rows = makeRows()
+      const candidateRequest = { ...request, symbols, candidateSymbols: ['AMD'] }
+      const snapshot = success(
+        verifyIntradaySnapshot(candidateRequest, {
+          ...rows,
+          quotes: missing === 'quote' ? rows.quotes.filter((row) => row.symbol !== 'AMD') : rows.quotes,
+          trades: missing === 'trade' ? rows.trades.filter((row) => row.symbol !== 'AMD') : rows.trades,
+          bars:
+            missing === 'completion-bar'
+              ? rows.bars.filter((row) => row.symbol !== 'AMD' || row.event_at !== '2026-08-18T13:34:00.000Z')
+              : rows.bars,
+        }),
+      )
+      expect(snapshot.manifest).toMatchObject({
+        candidateSymbols: ['AMD'],
+        candidateExclusions: [{ symbol: 'AMD', reason: 'not-ready' }],
+      })
+      expect(snapshot.latestQuotes['NVDA']).toBeDefined()
+      expect(success(reverifyIntradayMarketSnapshot(snapshot))).toEqual(snapshot)
+    },
+  )
+
   test('binds a complete opening range, fresh quotes, trades, and Kafka lineage deterministically', () => {
     const rows = makeRows()
     const snapshot = success(verifyIntradaySnapshot(request, rows))
@@ -134,6 +159,118 @@ describe('immutable intraday market snapshot', () => {
     expect(snapshot.manifest.lineage).toHaveLength(3)
     expect(reordered.manifest.snapshotId).toBe(snapshot.manifest.snapshotId)
     expect(reordered.manifest.contentHash).toBe(snapshot.manifest.contentHash)
+  })
+
+  test('binds late candidate evidence as an exclusion and rejects forged exclusions on replay', () => {
+    const rows = makeRows()
+    const candidateRequest = { ...request, symbols, candidateSymbols: ['AMD'] }
+    const delayedRows = {
+      ...rows,
+      bars: rows.bars.map((bar) =>
+        bar.symbol === 'AMD' && bar.event_at === request.rangeStartAt
+          ? { ...bar, ingested_at: '2026-08-18T13:33:00.000Z' }
+          : bar,
+      ),
+    }
+    const snapshot = success(verifyIntradaySnapshot(candidateRequest, delayedRows))
+    expect(snapshot.bars).toHaveLength(rows.bars.length)
+    expect(snapshot.manifest.candidateExclusions).toEqual([
+      {
+        symbol: 'AMD',
+        reason: 'freshness',
+        message: 'intraday bar does not match its declared feed delay and finalization window',
+      },
+    ])
+    expect(success(reverifyIntradayMarketSnapshot(snapshot))).toEqual(snapshot)
+    expect(
+      error(
+        reverifyIntradayMarketSnapshot({
+          ...snapshot,
+          manifest: { ...snapshot.manifest, candidateExclusions: [] },
+        }),
+      ).reason,
+    ).toBe('hash')
+    expect(error(verifyIntradaySnapshot(request, delayedRows)).reason).toBe('freshness')
+  })
+
+  test('requires the benchmark even when candidate data is unavailable', () => {
+    const rows = makeRows()
+    expect(
+      error(
+        verifyIntradaySnapshot(
+          { ...request, symbols, candidateSymbols: ['AMD'] },
+          {
+            ...rows,
+            quotes: [],
+          },
+        ),
+      ),
+    ).toMatchObject({ reason: 'not-ready', facts: { symbol: 'NVDA' } })
+  })
+
+  test('re-queries excluded candidates at the original immutable archive version', async () => {
+    const rows = makeRows()
+    const candidateRequest = { ...request, symbols, candidateSymbols: ['AMD'] }
+    const candidateRows = { ...rows, trades: rows.trades.filter((row) => row.symbol !== 'AMD') }
+    const snapshot = success(verifyIntradaySnapshot(candidateRequest, candidateRows))
+    const requested: IntradaySnapshotRequest[] = []
+    const verified = await Effect.runPromise(
+      verifyIntradayArchiveSnapshot((bound) => {
+        requested.push(bound)
+        return Effect.succeed(
+          success(verifyIntradaySnapshot(bound, candidateRows)) as ArchiveVerifiedIntradayMarketSnapshot,
+        )
+      }, snapshot),
+    )
+    expect<IntradayMarketSnapshot>(verified).toEqual(snapshot)
+    expect(requested).toEqual([candidateRequest])
+  })
+
+  test('does not hide corrupted or premature candidate evidence behind a missing quote', () => {
+    const rows = makeRows()
+    const candidateRequest = { ...request, symbols, candidateSymbols: ['AMD'] }
+    const withoutQuote = { ...rows, quotes: rows.quotes.filter((row) => row.symbol !== 'AMD') }
+    const first = rows.bars[0]
+    if (first === undefined) throw new Error('fixture requires a bar')
+    const corruptions = [
+      { ...first, feed: 'iex' },
+      { ...first, is_final: '0' },
+      { ...first, ingested_at: first.event_at },
+      { ...first, event_at: '2026-08-18T13:30:00.001Z' },
+      { ...first, source_offset: '999' },
+    ]
+    for (const corrupted of corruptions) {
+      expect(
+        verifyIntradaySnapshot(candidateRequest, {
+          ...withoutQuote,
+          bars: [corrupted, ...rows.bars.slice(1)],
+        })._tag,
+      ).toBe('Failure')
+    }
+    expect(
+      error(
+        verifyIntradaySnapshot(candidateRequest, {
+          ...withoutQuote,
+          bars: [...rows.bars, first],
+        }),
+      ).reason,
+    ).toBe('coverage')
+  })
+
+  test('rejects candidate policies without exactly one required benchmark or on execution pricing', () => {
+    for (const candidateSymbols of [[], ['AMD', 'NVDA'], ['AMD', 'AMD'], ['UNKNOWN']]) {
+      expect(error(verifyIntradaySnapshotRequest({ ...request, symbols, candidateSymbols })).reason).toBe('request')
+    }
+    expect(
+      error(
+        verifyIntradaySnapshotRequest({
+          ...request,
+          symbols,
+          candidateSymbols: ['AMD'],
+          purpose: IntradaySnapshotPurpose.EntryPricing,
+        }),
+      ).reason,
+    ).toBe('request')
   })
 
   test('accepts legacy persisted quote and trade markers without changing the snapshot binding', () => {
