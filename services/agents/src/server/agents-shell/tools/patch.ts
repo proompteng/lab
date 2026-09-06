@@ -1,4 +1,4 @@
-import { relative, resolve } from 'node:path'
+import { resolve } from 'node:path'
 
 import { Effect } from 'effect'
 
@@ -7,7 +7,7 @@ import { agentsShellErrorFromUnknown } from '../errors'
 import { toolSecurityMeta, type EffectTool } from '../mcp-adapter'
 import { jsonTextResult } from '../results'
 import { ApplyPatchInputSchema, ApplyPatchOutputSchema, type ApplyPatchInput } from '../schemas'
-import { isInsidePath, resolveExistingDirectory } from '../workspace-policy'
+import { isInsidePath } from '../workspace-policy'
 
 const extractCodexPatchPaths = (patch: string) => {
   const paths = new Set<string>()
@@ -18,7 +18,7 @@ const extractCodexPatchPaths = (patch: string) => {
   return Array.from(paths)
 }
 
-const validateCodexPatch = (workspaceRoot: string, cwd: string, patch: string) => {
+const validateCodexPatch = (allowedRoot: string, cwd: string, patch: string) => {
   if (!patch.trimStart().startsWith('*** Begin Patch')) {
     throw new Error("patch must start with '*** Begin Patch'")
   }
@@ -29,7 +29,7 @@ const validateCodexPatch = (workspaceRoot: string, cwd: string, patch: string) =
   if (paths.length === 0) throw new Error('patch does not contain recognizable Codex patch file paths')
   for (const path of paths) {
     const candidate = resolve(cwd, path)
-    if (!isInsidePath(resolve(workspaceRoot), candidate)) {
+    if (!isInsidePath(resolve(allowedRoot), candidate)) {
       throw new Error(`patch path must stay under workspace: ${path}`)
     }
   }
@@ -47,15 +47,16 @@ export const createPatchTools = (): EffectTool[] => [
     annotations: writeAnnotations,
     scopes: WRITE_SCOPES,
     ...toolSecurityMeta([WRITE_SCOPES[0]]),
-    handler: (args: ApplyPatchInput, { config, runner, auth }) =>
+    handler: (args: ApplyPatchInput, { runner, auth }) =>
       Effect.tryPromise({
         try: async () => {
-          const cwd = resolveExistingDirectory(config.workspaceRoot, args.cwd ?? 'lab')
-          const changedFiles = validateCodexPatch(config.workspaceRoot, cwd, args.patch)
+          const sessionRoot = runner.resolveRoot(args.sessionId, auth)
+          const cwd = runner.resolveCwd(args.cwd ?? (args.sessionId ? undefined : 'lab'), args.sessionId, auth)
+          const changedFiles = validateCodexPatch(sessionRoot, cwd, args.patch)
           const result = await runner.runProcess({
             command: 'apply_patch',
             args: [],
-            cwd: relative(resolve(config.workspaceRoot), cwd) || '.',
+            cwd,
             stdin: args.patch,
             timeoutSeconds: args.timeoutSeconds,
             maxOutputBytes: args.maxOutputBytes,

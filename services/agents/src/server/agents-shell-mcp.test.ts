@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { chmodSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -68,6 +69,22 @@ const makeAuth = (scopes = ['agents-shell.read', 'agents-shell.write']): AuthCon
 const linkedOauthScheme = [{ type: 'oauth2', scopes: ['agents-shell.read', 'offline_access'] }]
 
 const randomListenPort = () => 30_000 + Math.floor(Math.random() * 20_000)
+
+const initializeRepoFixture = (config: AgentsShellConfig) => {
+  const repo = join(config.workspaceRoot, 'lab')
+  const remote = join(config.workspaceRoot, 'origin.git')
+  mkdirSync(repo, { recursive: true })
+  execFileSync('git', ['init', '--bare', remote])
+  execFileSync('git', ['init', '-b', 'main', repo])
+  execFileSync('git', ['-C', repo, 'config', 'user.name', 'Agents Shell Test'])
+  execFileSync('git', ['-C', repo, 'config', 'user.email', 'agents-shell@example.test'])
+  writeFileSync(join(repo, 'README.md'), '# fixture\n')
+  execFileSync('git', ['-C', repo, 'add', 'README.md'])
+  execFileSync('git', ['-C', repo, 'commit', '-m', 'fixture'])
+  execFileSync('git', ['-C', repo, 'remote', 'add', 'origin', remote])
+  execFileSync('git', ['-C', repo, 'push', '-u', 'origin', 'main'])
+  return execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+}
 
 const connectServer = async (config: AgentsShellConfig, auth = makeAuth()) => {
   const runner = new AgentsShellRunner(config)
@@ -294,6 +311,9 @@ describe('agents-shell MCP tools', () => {
     const tools = await client.listTools()
     expect(tools.tools.map((tool) => tool.name).sort()).toEqual(
       [
+        'repo_session_open',
+        'repo_session_status',
+        'repo_session_close',
         'search',
         'read_file',
         'apply_patch',
@@ -377,7 +397,7 @@ describe('agents-shell MCP tools', () => {
     await server.close()
 
     const rawTools = await listToolsOnWire(config)
-    expect(Buffer.byteLength(JSON.stringify({ tools: rawTools }))).toBeLessThan(18_000)
+    expect(Buffer.byteLength(JSON.stringify({ tools: rawTools }))).toBeLessThan(21_000)
 
     const rawSearch = rawTools.find((tool) => tool.name === 'search')
     expect(rawSearch?.securitySchemes).toEqual(linkedOauthScheme)
@@ -540,6 +560,87 @@ printf '%s\\n' "$@"
     await serverTransport.close()
     await client.close()
     await server.close()
+  })
+
+  it('opens an isolated repo session and routes repo tools through its worktree', async () => {
+    const config = makeConfig()
+    const baseSha = initializeRepoFixture(config)
+    const { client, server, clientTransport, serverTransport } = await connectServer(config)
+
+    try {
+      const opened = await client.callTool({
+        name: 'repo_session_open',
+        arguments: { name: 'session-test' },
+      })
+      expect(opened.isError).not.toBe(true)
+      const session = opened.structuredContent as {
+        sessionId: string
+        branch: string
+        baseBranch: string
+        baseSha: string
+        headSha: string
+        worktree: string
+        dirty: boolean
+        ahead: number
+        behind: number
+      }
+      expect(session.sessionId).toMatch(/^repo-session-test-[0-9a-f]{8}$/)
+      expect(session.branch).toMatch(/^codex\/session-test-[0-9a-f]{8}$/)
+      expect(session.baseBranch).toBe('main')
+      expect(session.baseSha).toBe(baseSha)
+      expect(session.headSha).toBe(baseSha)
+      expect(session.dirty).toBe(false)
+      expect(session.ahead).toBe(0)
+      expect(session.behind).toBe(0)
+      expect(session.worktree).toContain(join('worktrees', 'lab', 'session-test-'))
+
+      const write = await client.callTool({
+        name: 'shell_run',
+        arguments: { sessionId: session.sessionId, command: "printf '%s\\n' session-data > session.txt" },
+      })
+      expect(write.isError).not.toBe(true)
+
+      const read = await client.callTool({
+        name: 'read_file',
+        arguments: { sessionId: session.sessionId, path: 'session.txt' },
+      })
+      expect((read.structuredContent as { content?: string }).content).toBe('session-data\n')
+
+      const gitStatus = await client.callTool({
+        name: 'git',
+        arguments: { sessionId: session.sessionId, args: ['status', '--short'] },
+      })
+      expect((gitStatus.structuredContent as { stdout?: string }).stdout).toContain('?? session.txt')
+
+      const status = await client.callTool({
+        name: 'repo_session_status',
+        arguments: { sessionId: session.sessionId },
+      })
+      expect((status.structuredContent as { dirty?: boolean }).dirty).toBe(true)
+
+      const blockedClose = await client.callTool({
+        name: 'repo_session_close',
+        arguments: { sessionId: session.sessionId },
+      })
+      expect(blockedClose.isError).toBe(true)
+      expect(JSON.stringify(blockedClose.content)).toContain('uncommitted changes')
+
+      await client.callTool({
+        name: 'shell_run',
+        arguments: { sessionId: session.sessionId, command: 'rm session.txt' },
+      })
+      const closed = await client.callTool({
+        name: 'repo_session_close',
+        arguments: { sessionId: session.sessionId },
+      })
+      expect(closed.isError).not.toBe(true)
+      expect((closed.structuredContent as { closedAt?: string }).closedAt).toEqual(expect.any(String))
+    } finally {
+      await clientTransport.close()
+      await serverTransport.close()
+      await client.close()
+      await server.close()
+    }
   })
 
   it('applies Codex patch syntax through the apply_patch executable', async () => {
@@ -735,9 +836,9 @@ fi
       expect(content.guide).toContain('current ChatGPT model')
       expect(content.guide).toContain('AGENTS.md')
       expect(content.guide).toContain('Respect dirty worktrees')
-      expect(content.guide).toContain('/workspace/worktrees/lab')
-      expect(content.guide).toContain('cwd: "worktrees/lab/<branch-slug>"')
-      expect(content.guide).toContain('Never share a worktree or branch')
+      expect(content.guide).toContain('repo_session_open')
+      expect(content.guide).toContain('sessionId')
+      expect(content.guide).toContain('repo_session_close')
       expect(content.guide).toContain('Do not use agent_start/status/read/cancel')
       expect(content.guide).toContain('apply_patch')
       expect(content.guide).toContain('Commit as Greg Konush')

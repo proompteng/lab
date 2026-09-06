@@ -11,26 +11,32 @@ import type { AgentsShellConfig } from './config'
 import { ShellJobStore, appendTail, tail, type CommandInput, type ShellJob } from './jobs'
 import { asPositiveInteger } from './limits'
 import { formatCommand, toProcessResult, type ProcessResult } from './process-runner'
-import { resolveExistingDirectory } from './workspace-policy'
+import { createRepoSessionIdentity, RepoSessionStore } from './repo-sessions'
+import { isInsidePath, resolveExistingDirectory } from './workspace-policy'
 
 export class AgentsShellRunner {
   readonly config: AgentsShellConfig
   readonly jobs = new ShellJobStore()
+  readonly repoSessions = new RepoSessionStore()
 
   constructor(config: AgentsShellConfig) {
     this.config = config
     mkdirSync(resolve(config.workspaceRoot), { recursive: true })
   }
 
-  parseCommandInput(args: {
-    command: string
-    cwd?: string
-    timeoutSeconds?: number
-    maxOutputBytes?: number
-  }): CommandInput {
+  parseCommandInput(
+    args: {
+      command: string
+      cwd?: string
+      sessionId?: string
+      timeoutSeconds?: number
+      maxOutputBytes?: number
+    },
+    auth: AuthContext,
+  ): CommandInput {
     return {
       command: args.command,
-      cwd: resolveExistingDirectory(this.config.workspaceRoot, args.cwd),
+      cwd: this.resolveCwd(args.cwd, args.sessionId, auth),
       timeoutSeconds: asPositiveInteger(
         args.timeoutSeconds,
         'timeoutSeconds',
@@ -45,6 +51,149 @@ export class AgentsShellRunner {
         1024,
       ),
     }
+  }
+
+  private repoSeedPath() {
+    return resolveExistingDirectory(this.config.workspaceRoot, 'lab')
+  }
+
+  resolveRoot(sessionId: string | undefined, auth: AuthContext) {
+    return sessionId ? this.repoSessions.require(sessionId, auth).worktree : resolve(this.config.workspaceRoot)
+  }
+
+  resolveCwd(cwd: string | undefined, sessionId: string | undefined, auth: AuthContext) {
+    return resolveExistingDirectory(this.resolveRoot(sessionId, auth), cwd)
+  }
+
+  async openRepoSession(args: { name?: string; baseBranch?: string }, auth: AuthContext) {
+    const seed = this.repoSeedPath()
+    const baseBranch = args.baseBranch ?? this.config.agentBaseBranch
+    if (baseBranch.startsWith('-')) throw new Error(`invalid base branch: ${baseBranch}`)
+    const identity = createRepoSessionIdentity(this.config.workspaceRoot, args.name)
+    mkdirSync(resolve(this.config.workspaceRoot, 'worktrees', 'lab'), { recursive: true })
+
+    const checkBranch = await this.runProcess({
+      command: 'git',
+      args: ['check-ref-format', '--branch', baseBranch],
+      cwd: seed,
+      auth,
+      auditEvent: 'repo_session_check_base',
+    })
+    if (!checkBranch.ok) throw new Error(`invalid base branch: ${baseBranch}`)
+
+    const remoteRef = `refs/remotes/origin/${baseBranch}`
+
+    const fetch = await this.runProcess({
+      command: 'git',
+      args: ['fetch', 'origin', `+refs/heads/${baseBranch}:${remoteRef}`],
+      cwd: seed,
+      auth,
+      auditEvent: 'repo_session_fetch',
+    })
+    if (!fetch.ok) throw new Error(`failed to fetch origin/${baseBranch}: ${fetch.stderr || fetch.stdout}`)
+
+    const base = await this.runProcess({
+      command: 'git',
+      args: ['rev-parse', '--verify', remoteRef],
+      cwd: seed,
+      auth,
+      auditEvent: 'repo_session_base',
+    })
+    if (!base.ok) throw new Error(`failed to resolve fetched base: ${base.stderr || base.stdout}`)
+    const baseSha = base.stdout.trim()
+
+    const add = await this.runProcess({
+      command: 'git',
+      args: ['worktree', 'add', '-b', identity.branch, identity.worktree, baseSha],
+      cwd: seed,
+      auth,
+      auditEvent: 'repo_session_worktree_add',
+    })
+    if (!add.ok) throw new Error(`failed to create repo session worktree: ${add.stderr || add.stdout}`)
+
+    const session = this.repoSessions.set({
+      ...identity,
+      ownerSubject: auth.subject,
+      baseBranch,
+      baseSha,
+      createdAt: new Date().toISOString(),
+    })
+    this.audit('repo_session_opened', auth, {
+      sessionId: session.id,
+      branch: session.branch,
+      baseBranch,
+      baseSha,
+      worktree: session.worktree,
+    })
+    return this.repoSessionStatus(session.id, auth)
+  }
+
+  async repoSessionStatus(sessionId: string, auth: AuthContext) {
+    const session = this.repoSessions.require(sessionId, auth)
+    const [head, status, divergence] = await Promise.all([
+      this.runProcess({
+        command: 'git',
+        args: ['rev-parse', 'HEAD'],
+        cwd: session.worktree,
+        auth,
+        auditEvent: 'repo_session_status_head',
+      }),
+      this.runProcess({
+        command: 'git',
+        args: ['status', '--porcelain=v1'],
+        cwd: session.worktree,
+        auth,
+        auditEvent: 'repo_session_status_dirty',
+      }),
+      this.runProcess({
+        command: 'git',
+        args: ['rev-list', '--left-right', '--count', `${session.baseSha}...HEAD`],
+        cwd: session.worktree,
+        auth,
+        auditEvent: 'repo_session_status_divergence',
+      }),
+    ])
+    if (!head.ok || !status.ok || !divergence.ok) throw new Error('failed to inspect repo session state')
+    const [behindRaw = '0', aheadRaw = '0'] = divergence.stdout.trim().split(/\s+/)
+    return {
+      sessionId: session.id,
+      branch: session.branch,
+      baseBranch: session.baseBranch,
+      baseSha: session.baseSha,
+      headSha: head.stdout.trim(),
+      worktree: session.worktree,
+      createdAt: session.createdAt,
+      dirty: status.stdout.trim().length > 0,
+      ahead: Number(aheadRaw),
+      behind: Number(behindRaw),
+    }
+  }
+
+  async closeRepoSession(args: { sessionId: string; force?: boolean }, auth: AuthContext) {
+    const status = await this.repoSessionStatus(args.sessionId, auth)
+    if (status.dirty && !args.force) {
+      throw new Error(`repo session has uncommitted changes; clean it or close with force: ${args.sessionId}`)
+    }
+    const session = this.repoSessions.require(args.sessionId, auth)
+    const runningJobs = this.runningJobs().filter((job) => isInsidePath(session.worktree, job.cwd))
+    if (runningJobs.length > 0 && !args.force) {
+      throw new Error(`repo session has running shell jobs; stop them or close with force: ${args.sessionId}`)
+    }
+    if (args.force) {
+      for (const job of runningJobs) this.kill(job.id, auth)
+    }
+    const remove = await this.runProcess({
+      command: 'git',
+      args: ['worktree', 'remove', ...(args.force ? ['--force'] : []), session.worktree],
+      cwd: this.repoSeedPath(),
+      auth,
+      auditEvent: 'repo_session_worktree_remove',
+    })
+    if (!remove.ok) throw new Error(`failed to remove repo session worktree: ${remove.stderr || remove.stdout}`)
+    this.repoSessions.delete(args.sessionId)
+    const closedAt = new Date().toISOString()
+    this.audit('repo_session_closed', auth, { sessionId: args.sessionId, branch: session.branch, closedAt })
+    return { ...status, closedAt }
   }
 
   audit(event: string, auth: AuthContext | null, payload: Record<string, unknown>) {
@@ -158,6 +307,7 @@ export class AgentsShellRunner {
     command: string
     args: string[]
     cwd?: string
+    sessionId?: string
     stdin?: string
     timeoutSeconds?: number
     maxOutputBytes?: number
@@ -167,7 +317,7 @@ export class AgentsShellRunner {
   }): Effect.Effect<ProcessResult, unknown> {
     return Effect.tryPromise({
       try: async () => {
-        const cwd = resolveExistingDirectory(this.config.workspaceRoot, options.cwd)
+        const cwd = this.resolveCwd(options.cwd, options.sessionId, options.auth)
         const timeoutSeconds = asPositiveInteger(
           options.timeoutSeconds,
           'timeoutSeconds',
