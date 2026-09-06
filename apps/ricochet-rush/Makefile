@@ -7,7 +7,7 @@ PYTHON ?= python3
 GD_VENV ?= $(PROJECT_DIR)/.venv
 GD_FORMAT ?= $(GD_VENV)/bin/gdformat
 GD_LINT ?= $(GD_VENV)/bin/gdlint
-TEST_SCRIPTS ?= tests/combat_test.gd tests/echo_test.gd tests/game_test.gd
+TEST_SCRIPTS ?= tests/combat_test.gd tests/echo_test.gd tests/camera_test.gd tests/actor_visual_test.gd tests/game_test.gd
 BLENDER ?= blender
 ART_SCRIPT ?= tools/build_art.py
 

@@ -2,13 +2,13 @@
 
 importer="font_data_dynamic"
 type="FontFile"
-uid="uid://e2v2tiniqd81"
-path="res://.godot/imported/DMMono.ttf-150d1352c35e1d5132f1477e19aad0b2.fontdata"
+uid="uid://bhpmvpbyscbra"
+path="res://.godot/imported/Inter.ttf-48d80b607bc8c026a4a7deff5f7e1456.fontdata"
 
 [deps]
 
-source_file="res://assets/fonts/DMMono.ttf"
-dest_files=["res://.godot/imported/DMMono.ttf-150d1352c35e1d5132f1477e19aad0b2.fontdata"]
+source_file="res://assets/fonts/Inter.ttf"
+dest_files=["res://.godot/imported/Inter.ttf-48d80b607bc8c026a4a7deff5f7e1456.fontdata"]
 
 [params]
 

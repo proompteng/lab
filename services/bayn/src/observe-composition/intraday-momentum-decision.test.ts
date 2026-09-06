@@ -96,7 +96,7 @@ const calendarFor = (cycle: AutonomousCycle) => {
 }
 
 const target = (observedAt: string, selected: boolean): IntradayMomentumTargetPortfolio => ({
-  schemaVersion: 'bayn.intraday-momentum.target.v2',
+  schemaVersion: 'bayn.intraday-momentum.target.v3',
   strategy: 'intraday-momentum',
   sessionDate: '2026-08-18',
   snapshotId: sha256(observedAt),
@@ -111,6 +111,7 @@ const target = (observedAt: string, selected: boolean): IntradayMomentumTargetPo
     askSizeMicros: '1000000',
     quoteObservedAt: observedAt,
   },
+  excludedCandidates: [],
   selectedSymbols: selected ? ['AAPL'] : [],
   targetWeights: { AAPL: selected ? 0.1 : 0 },
   signals: [

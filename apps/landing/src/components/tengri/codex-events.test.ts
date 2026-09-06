@@ -152,7 +152,9 @@ describe('Codex event replay', () => {
       sequence: 1,
     }
     const second = { ...first, text: 'lo', sequence: 2 }
-    expect(appendCodexEvent(appendCodexEvent([], first), second)).toEqual([{ ...second, text: 'Hello' }])
+    const result = appendCodexEvent(appendCodexEvent([], first), second)
+    expect(result).toHaveLength(1)
+    expect(result[0]).toMatchObject({ ...second, text: 'Hello' })
   })
 
   test('decodes base64 command deltas before coalescing them', () => {
@@ -164,7 +166,9 @@ describe('Codex event replay', () => {
       sequence: 1,
     }
     const second = { ...first, text: 'IHRoZXJl', sequence: 2 }
-    expect(appendCodexEvent(appendCodexEvent([], first), second)).toEqual([{ ...second, text: 'hi there' }])
+    const result = appendCodexEvent(appendCodexEvent([], first), second)
+    expect(result).toHaveLength(1)
+    expect(result[0]).toMatchObject({ ...second, text: 'hi there' })
   })
 
   test('replaces streamed text with the authoritative completed item', () => {
@@ -256,7 +260,9 @@ describe('Codex event replay', () => {
     const summary = { ...raw, method: 'item/reasoning/summaryTextDelta', text: 'Public summary', sequence: 2 }
 
     expect(appendCodexEvent([], raw)).toEqual([])
-    expect(appendCodexEvent(appendCodexEvent([], raw), summary)).toEqual([summary])
+    const result = appendCodexEvent(appendCodexEvent([], raw), summary)
+    expect(result).toHaveLength(1)
+    expect(result[0]).toMatchObject(summary)
     expect(codexEventDisplayText(raw)).toBe('')
   })
 
@@ -363,6 +369,75 @@ describe('Codex event replay', () => {
     )
   })
 
+  test('reconciles live messages against their own history page without dropping later updates to earlier pages', () => {
+    const history = codexTranscriptFromThread(
+      JSON.stringify({
+        thread: {
+          turns: [
+            {
+              items: [
+                { id: 'item-1', type: 'agentMessage', text: 'First' },
+                { id: 'item-2', type: 'agentMessage', text: 'Second' },
+              ],
+            },
+          ],
+        },
+      }),
+      { 'item-1': 20, 'item-2': 30 },
+    )
+    const restored = new Map(history.map((item) => [item.id, item]))
+    const delta = { ...event, method: 'item/agentMessage/delta' }
+    const replay = [
+      { ...delta, sequence: 18, itemId: 'item-1', text: 'rst' },
+      { ...delta, sequence: 24, itemId: 'item-1', text: ' live' },
+      { ...delta, sequence: 28, itemId: 'item-2', text: 'ond' },
+      { ...delta, sequence: 31, itemId: 'item-2', text: ' live' },
+      { ...event, sequence: 12, itemId: 'new-item', text: 'Created while paging' },
+    ]
+    const reconciled = reconcileCodexEventsWithRestoredHistory(replay, restored, 10)
+    const coalesced = replay.reduce(
+      (current, next) => appendCodexEvent(current, next),
+      [] as ReturnType<typeof appendCodexEvent>,
+    )
+    expect(
+      reconcileCodexEventsWithRestoredHistory(coalesced, restored, 10).map(({ itemId, text }) => ({ itemId, text })),
+    ).toEqual(reconciled.map(({ itemId, text }) => ({ itemId, text })))
+    expect(reconciled.map(({ itemId, text }) => ({ itemId, text }))).toEqual([
+      { itemId: 'item-1', text: 'First live' },
+      { itemId: 'item-2', text: 'Second live' },
+      { itemId: 'new-item', text: 'Created while paging' },
+    ])
+    expect(appendCodexEventAfterRestore(reconciled, replay[0]!, restored, 10)).toBe(reconciled)
+    expect(codexEventSupersedesRestoredItem(replay[2]!, restored.get('item-2'), 10)).toBe(false)
+    expect(codexEventSupersedesRestoredItem(replay[1]!, restored.get('item-1'), 10)).toBe(true)
+  })
+
+  test('retains page cursors for items omitted by the visible transcript cap', () => {
+    const items = Array.from({ length: 501 }, (_, index) => ({
+      id: `item-${index}`,
+      type: 'agentMessage',
+      text: `Message ${index}`,
+    }))
+    const itemSequences = new Map(items.map((item) => [item.id, 30]))
+    const history = codexTranscriptFromThread(
+      JSON.stringify({ thread: { turns: [{ items }] } }),
+      Object.fromEntries(itemSequences),
+    )
+    const restored = new Map(history.map((item) => [item.id, item]))
+    expect(history).toHaveLength(500)
+    expect(restored.has('item-0')).toBe(false)
+    const staleDelta = { ...event, itemId: 'item-0', method: 'item/agentMessage/delta', sequence: 20, text: 'stale' }
+    const staleCompletion = { ...staleDelta, method: 'item/completed', sequence: 25 }
+    for (const buffered of [[staleDelta], [staleCompletion], appendCodexEvent([], staleDelta)]) {
+      expect(reconcileCodexEventsWithRestoredHistory(buffered, restored, 10, itemSequences)).toEqual([])
+    }
+    expect(appendCodexEventAfterRestore([], staleDelta, restored, 10, itemSequences)).toEqual([])
+    const newer = { ...staleCompletion, sequence: 31, text: 'Updated after the page snapshot' }
+    expect(appendCodexEventAfterRestore([], newer, restored, 10, itemSequences)[0]?.text).toBe(newer.text)
+    const newItem = { ...staleCompletion, itemId: 'new-item', sequence: 12, text: 'Created while paging' }
+    expect(appendCodexEventAfterRestore([], newItem, restored, 10, itemSequences)[0]?.text).toBe(newItem.text)
+  })
+
   test('drops all snapshot-covered replay events when restored transcript IDs were synthesized', () => {
     const restoredById = new Map([
       ['item-1', { id: 'item-1', kind: 'user-message' as const, text: 'Create the proof file.' }],
@@ -415,6 +490,29 @@ describe('Codex event replay', () => {
         53,
       ),
     ).toEqual([snapshotUsage, snapshotWarning, snapshotError, postSnapshot])
+  })
+
+  test('rebases streamed fragments again without repeating a prior restored prefix or a completed item', () => {
+    const delta = { ...event, method: 'item/agentMessage/delta', sequence: 12, text: ' live' }
+    const firstHistory = new Map([
+      [event.itemId, { id: event.itemId, kind: 'assistant-text' as const, text: 'First', eventSequence: 10 }],
+    ])
+    const first = appendCodexEventAfterRestore([], delta, firstHistory, 10)
+    const secondDelta = { ...delta, sequence: 22, text: ' again' }
+    const buffered = appendCodexEvent(first, secondDelta)
+    const secondHistory = new Map([
+      [event.itemId, { id: event.itemId, kind: 'assistant-text' as const, text: 'First live', eventSequence: 20 }],
+    ])
+    const rebased = reconcileCodexEventsWithRestoredHistory(buffered, secondHistory, 20)
+    expect(rebased[0]?.text).toBe('First live again')
+    expect(reconcileCodexEventsWithRestoredHistory(rebased, secondHistory, 20)[0]?.text).toBe('First live again')
+
+    const completed = { ...event, sequence: 21, text: 'Authoritative replacement' }
+    const afterCompletion = appendCodexEvent([completed], secondDelta)
+    expect(reconcileCodexEventsWithRestoredHistory(afterCompletion, secondHistory, 20)[0]?.text).toBe(
+      'Authoritative replacement again',
+    )
+    expect(appendCodexEvent(afterCompletion, delta)).toBe(afterCompletion)
   })
 
   test('drops snapshot-covered deltas delivered after the snapshot commit', () => {

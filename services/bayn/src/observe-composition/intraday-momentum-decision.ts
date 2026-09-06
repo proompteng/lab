@@ -117,8 +117,8 @@ export const intradayMomentumEntryQuery = (
       }),
     )
   }
-  return Result.succeed(
-    snapshotQuery(
+  return Result.succeed({
+    ...snapshotQuery(
       cycle,
       protocol,
       calendar,
@@ -128,7 +128,8 @@ export const intradayMomentumEntryQuery = (
       decisionDelayMs,
       intradayMomentumSnapshotSymbols(protocol),
     ),
-  )
+    candidateSymbols: protocol.candidateSymbols,
+  })
 }
 
 export const intradayMomentumPricingQuery = (
@@ -200,6 +201,9 @@ export const intradayMomentumEntryDisposition = (
   finalizationHeadroomMs: number,
 ): IntradayMomentumEntryDisposition => {
   if (decision.selectedSymbols.length > 0 || positionsRequireContainment) return 'EXECUTE'
+  if (decision.signals.length === 0 && decision.excludedCandidates.length > 0) {
+    return 'AWAIT_SIGNAL'
+  }
   const remainingMs = Date.parse(submissionCutoffAt) - Date.parse(decision.observedAt)
   return remainingMs > finalizationHeadroomMs ? 'AWAIT_SIGNAL' : 'NO_TRADE'
 }
@@ -256,8 +260,8 @@ export const evaluateIntradayMomentumDecision = (
 ): Result.Result<
   IntradayMomentumTargetPortfolio,
   IntradayMomentumEntryAwaitingSnapshot | IntradayMomentumRuntimeDecisionFailure
-> =>
-  Result.mapError(
+> => {
+  return Result.mapError(
     definition.decide({
       market: {
         snapshot: decisionSnapshot,
@@ -284,6 +288,7 @@ export const evaluateIntradayMomentumDecision = (
       return failure('entry-decision', details.join('; '), cause)
     },
   )
+}
 
 export const compileIntradayMomentumDecision = (
   decision: IntradayMomentumTargetPortfolio,
@@ -295,14 +300,21 @@ export const compileIntradayMomentumDecision = (
     Result.gen(function* () {
       const heldSymbols = heldPositions.map((position) => position.symbol)
       const planningTargetWeights = intradayMomentumPlanningTargetWeights(decision, heldSymbols)
-      const planningSymbols = Object.keys(planningTargetWeights)
+      const pricingSymbols = [
+        ...new Set([
+          ...Object.entries(planningTargetWeights)
+            .filter(([, targetWeight]) => targetWeight > 0)
+            .map(([symbol]) => symbol),
+          ...heldSymbols,
+        ]),
+      ].sort()
       const maximumSellQuantityMicros = yield* maximumSellQuantities(
         pricingSnapshot,
         heldPositions,
         planningTargetWeights,
       )
       const maximumBuyQuantityMicros = yield* maximumBuyQuantities(pricingSnapshot, planningTargetWeights)
-      const quotePrices = yield* adverseQuotePrices(pricingSnapshot, planningSymbols)
+      const quotePrices = yield* adverseQuotePrices(pricingSnapshot, pricingSymbols)
       const decisionMarketDataRows = yield* persistIntradaySnapshotRows(decisionSnapshot)
       const decisionBinding = yield* executionMarketDataBinding(decisionSnapshot)
       const usesDedicatedPricing = pricingSnapshot.manifest.purpose === IntradaySnapshotPurpose.EntryPricing

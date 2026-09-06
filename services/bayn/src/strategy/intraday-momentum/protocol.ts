@@ -48,7 +48,7 @@ export const intradayMomentumSourceTopics = Object.freeze({
   trades: 'torghut.trades.v1',
 } as const)
 
-const prospectiveCandidates = ['AAPL', 'AMZN', 'IWM', 'NVDA', 'QQQ', 'SMH'] as const
+export const intradayMomentumCandidateSymbols = ['AAPL', 'AMZN', 'IWM', 'NVDA', 'QQQ', 'SMH'] as const
 const prospectiveBenchmark = 'SPY' as const
 
 export const intradayMomentumExecutionModel: Extract<
@@ -139,7 +139,7 @@ const protocolIssues = (protocol: typeof IntradayMomentumProtocolBase.Type): rea
     issues.push({ path: ['candidateSymbols'], issue: 'must be unique and sorted in canonical order' })
   }
   if (
-    protocol.candidateSymbols.join(',') !== prospectiveCandidates.join(',') ||
+    protocol.candidateSymbols.join(',') !== intradayMomentumCandidateSymbols.join(',') ||
     protocol.benchmarkSymbol !== prospectiveBenchmark
   ) {
     issues.push({ path: ['candidateSymbols'], issue: 'must bind the immutable prospective trial universe' })
@@ -245,7 +245,7 @@ export const defaultIntradayMomentumProtocolDocument = Object.freeze({
   universeId: coreUniverse.id,
   universeSymbolHash: coreUniverse.symbolHash,
   universe: coreUniverse.symbols,
-  candidateSymbols: prospectiveCandidates,
+  candidateSymbols: intradayMomentumCandidateSymbols,
   benchmarkSymbol: prospectiveBenchmark,
   feed: 'iex',
   delayClass: 'real_time_exchange_only',

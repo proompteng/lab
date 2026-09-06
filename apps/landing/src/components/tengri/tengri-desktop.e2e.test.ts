@@ -138,6 +138,7 @@ type MockOptions = {
   holdReplayResume?: boolean
   resumeThreadDelayMs?: number
   resumeThreadEventSequence?: number
+  resumeThreadItemEventSequences?: Record<string, number>
   resumeThreadErrors?: Array<{ status: number; error: string; code?: string }>
   resumeThreadRawJson?: string
   searchDelays?: Record<string, number>
@@ -607,6 +608,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
           id: action.threadId,
           rawJson: options.resumeThreadRawJson ?? '{"thread":{"turns":[]}}',
           eventSequence: options.resumeThreadEventSequence ?? 0,
+          itemEventSequences: options.resumeThreadItemEventSequences ?? {},
         }
         break
       case 'send-turn':
@@ -901,7 +903,10 @@ test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and win
   await expect(terminal.locator('.xterm canvas')).not.toHaveCount(0)
   await expect.poll(() => mock.actions.some((action) => action.action === 'create-terminal')).toBe(true)
   await expect.poll(() => mock.actions.some((action) => action.action === 'terminal-ticket')).toBe(true)
-  await expect(terminal.getByText('Connected', { exact: true })).toBeVisible()
+  await expect(terminal.getByRole('status').filter({ hasText: /^Connected$/ })).toHaveAttribute(
+    'data-connection-state',
+    'connected',
+  )
   await page.keyboard.press('Meta+Space')
   await spotlight.getByRole('combobox').fill('New Terminal')
   await page.keyboard.press('Enter')
@@ -925,9 +930,18 @@ test('keeps the terminal background continuous through its gutters after resizin
 
   const terminal = page.getByRole('region', { name: 'Terminal window' })
   await expect(terminal.getByLabel('Interactive Tengri terminal')).toHaveAttribute('data-renderer', 'canvas')
-  await expect(terminal.getByText('Connected', { exact: true })).toBeVisible()
+  await expect(terminal.getByRole('status').filter({ hasText: /^Connected$/ })).toHaveAttribute(
+    'data-connection-state',
+    'connected',
+  )
   await testInfo.attach('terminal-before-resize', { body: await terminal.screenshot(), contentType: 'image/png' })
   await expect(terminal.locator('.xterm-viewport')).toHaveCSS('background-color', 'rgb(30, 30, 30)')
+
+  const connectionStatus = terminal.getByRole('status').filter({ hasText: /^Connected$/ })
+  const statusBounds = await connectionStatus.boundingBox()
+  expect(statusBounds?.width).toBeLessThanOrEqual(1)
+  expect(statusBounds?.height).toBeLessThanOrEqual(1)
+  await expect(connectionStatus).toHaveCSS('clip-path', 'inset(50%)')
 
   await resizeWindow(page, terminal, 'se', { x: 73, y: 41 }, { x: 0, y: 0, width: 73, height: 41 })
   await expect(terminal.locator('.xterm-viewport')).toHaveCSS('background-color', 'rgb(30, 30, 30)')
@@ -951,14 +965,20 @@ test('preserves terminal identity on reload and BFCache restore while isolating 
     originalMock.actions.find((action) => action.action === 'create-terminal')?.creationId,
   )
   await expect(
-    page.getByRole('region', { name: 'Terminal window' }).getByText('Connected', { exact: true }),
-  ).toBeVisible()
+    page
+      .getByRole('region', { name: 'Terminal window' })
+      .getByRole('status')
+      .filter({ hasText: /^Connected$/ }),
+  ).toHaveAttribute('data-connection-state', 'connected')
 
   await page.reload()
   await expect(page.getByRole('region', { name: 'Terminal window' })).toHaveCount(1)
   await expect(
-    page.getByRole('region', { name: 'Terminal window' }).getByText('Connected', { exact: true }),
-  ).toBeVisible()
+    page
+      .getByRole('region', { name: 'Terminal window' })
+      .getByRole('status')
+      .filter({ hasText: /^Connected$/ }),
+  ).toHaveAttribute('data-connection-state', 'connected')
   expect(originalMock.actions.filter((action) => action.action === 'create-terminal')).toHaveLength(1)
 
   await page.evaluate(() => {
@@ -976,8 +996,11 @@ test('preserves terminal identity on reload and BFCache restore while isolating 
   await openTerminal(duplicate)
   await expect.poll(() => duplicateMock.actions.filter((action) => action.action === 'create-terminal').length).toBe(1)
   await expect(
-    duplicate.getByRole('region', { name: 'Terminal window' }).getByText('Connected', { exact: true }),
-  ).toBeVisible()
+    duplicate
+      .getByRole('region', { name: 'Terminal window' })
+      .getByRole('status')
+      .filter({ hasText: /^Connected$/ }),
+  ).toHaveAttribute('data-connection-state', 'connected')
 
   const duplicateCreationId = String(
     duplicateMock.actions.find((action) => action.action === 'create-terminal')?.creationId,
@@ -998,16 +1021,22 @@ test('restores and isolates desktop sessions without Web Locks or BroadcastChann
 
   await page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Terminal' }).click()
   await expect(
-    page.getByRole('region', { name: 'Terminal window' }).getByText('Connected', { exact: true }),
-  ).toBeVisible()
+    page
+      .getByRole('region', { name: 'Terminal window' })
+      .getByRole('status')
+      .filter({ hasText: /^Connected$/ }),
+  ).toHaveAttribute('data-connection-state', 'connected')
   const desktopId = await page.evaluate((agentId) => sessionStorage.getItem(`tengri:desktop:${agentId}`), readyAgent.id)
 
   await page.reload()
 
   await expect(page.getByRole('region', { name: 'Terminal window' })).toHaveCount(1)
   await expect(
-    page.getByRole('region', { name: 'Terminal window' }).getByText('Connected', { exact: true }),
-  ).toBeVisible()
+    page
+      .getByRole('region', { name: 'Terminal window' })
+      .getByRole('status')
+      .filter({ hasText: /^Connected$/ }),
+  ).toHaveAttribute('data-connection-state', 'connected')
   expect(await page.evaluate((agentId) => sessionStorage.getItem(`tengri:desktop:${agentId}`), readyAgent.id)).toBe(
     desktopId,
   )
@@ -1061,6 +1090,71 @@ test('reports the desktop window limit for shortcuts, Dock launches, and Spotlig
   await expect(spotlight).toHaveCount(0)
   await expect(page.getByRole('region', { name: 'Terminal window' })).toHaveCount(0)
   await expect(capacityAlert).toBeVisible()
+})
+
+test('closes Chrome with its last tab and keeps the new-tab button next to the tabs', async ({ page }, testInfo) => {
+  const mock = await mockTengri(page)
+  await page.goto('/')
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  const dockChrome = page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Chrome' })
+  const tabs = chrome.getByRole('tablist', { name: 'Browser tabs' }).getByRole('tab')
+  const newTab = chrome.getByRole('button', { name: 'New tab' })
+
+  await newTab.click()
+  await expect(tabs).toHaveCount(2)
+  const lastTabBounds = await tabs.last().boundingBox()
+  const newTabBounds = await newTab.boundingBox()
+  if (!lastTabBounds || !newTabBounds) throw new Error('Chrome tab geometry is missing')
+  expect(newTabBounds.x - (lastTabBounds.x + lastTabBounds.width)).toBeGreaterThanOrEqual(0)
+  expect(newTabBounds.x - (lastTabBounds.x + lastTabBounds.width)).toBeLessThanOrEqual(8)
+  await page.mouse.move(0, 0)
+  const screenshotPath = testInfo.outputPath('chrome-tabs.png')
+  await chrome.screenshot({ path: screenshotPath })
+  await testInfo.attach('chrome-tabs', { path: screenshotPath, contentType: 'image/png' })
+
+  await tabs.first().locator('[data-close-chrome-tab]').click()
+  await expect(tabs).toHaveCount(1)
+  await expect(tabs.first()).toHaveAttribute('aria-selected', 'true')
+  await tabs.first().locator('[data-close-chrome-tab]').click()
+  await expect(chrome).toHaveCount(0)
+
+  await dockChrome.click()
+  await expect(tabs).toHaveCount(1)
+  await tabs.first().click({ button: 'middle' })
+  await expect(chrome).toHaveCount(0)
+
+  await dockChrome.click()
+  await chrome.getByRole('textbox', { name: 'Message your agent' }).focus()
+  await page.keyboard.press('Meta+w')
+  await expect(chrome).toHaveCount(0)
+  await dockChrome.click()
+  await expect(tabs).toHaveCount(1)
+  expect(mock.actions.some((action) => ['delete-agent', 'sleep-agent'].includes(String(action.action)))).toBe(false)
+})
+
+test('closes the last embedded preview tab through its shortcut bridge and releases the preview', async ({ page }) => {
+  const mock = await mockTengri(page)
+  await page.goto('/')
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  await chrome.getByLabel('Address').fill('localhost:4321')
+  await chrome.getByLabel('Address').press('Enter')
+  const previewFrame = chrome.getByTitle('localhost:4321')
+  await expect(previewFrame.contentFrame().getByText('Live microVM preview')).toBeVisible()
+  const frame = await (await previewFrame.elementHandle())?.contentFrame()
+  if (!frame) throw new Error('Embedded preview is unavailable')
+  const sessionId = new URL(frame.url()).hostname.slice('tengri-'.length, -'.proompteng.ai'.length)
+  await frame.evaluate(
+    ({ sessionId, desktopOrigin }) => {
+      window.parent.postMessage({ channel: 'tengri-preview-v1', sessionId, type: 'shortcut', key: 'w' }, desktopOrigin)
+    },
+    { sessionId, desktopOrigin },
+  )
+  await expect(chrome).toHaveCount(0)
+  await expect
+    .poll(() =>
+      mock.actions.some((action) => action.action === 'revoke-preview-session' && action.sessionId === sessionId),
+    )
+    .toBe(true)
 })
 
 test('persists real Finder changes into Code and exposes a localhost preview from Chrome', async ({ page }) => {
@@ -1337,8 +1431,11 @@ test('sends a real agent turn and executes sleep, resume, and confirmed deletion
 
   await dock.getByRole('button', { name: 'Open Terminal' }).click()
   await expect(
-    page.getByRole('region', { name: 'Terminal window' }).getByText('Connected', { exact: true }),
-  ).toBeVisible()
+    page
+      .getByRole('region', { name: 'Terminal window' })
+      .getByRole('status')
+      .filter({ hasText: /^Connected$/ }),
+  ).toHaveAttribute('data-connection-state', 'connected')
   await dock.getByRole('button', { name: 'Open Settings' }).click()
   await settings.getByRole('button', { name: 'Delete Agent' }).click()
   const deleteDialog = page.getByRole('alertdialog', { name: /Delete “Tengri”/ })
@@ -1496,8 +1593,11 @@ test('propagates deletion cleanup to every open desktop tab', async ({ page }) =
   await duplicate.goto('/')
   await duplicate.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Terminal' }).click()
   await expect(
-    duplicate.getByRole('region', { name: 'Terminal window' }).getByText('Connected', { exact: true }),
-  ).toBeVisible()
+    duplicate
+      .getByRole('region', { name: 'Terminal window' })
+      .getByRole('status')
+      .filter({ hasText: /^Connected$/ }),
+  ).toHaveAttribute('data-connection-state', 'connected')
   expect(
     await duplicate.evaluate(
       (agentId) =>
@@ -1740,6 +1840,53 @@ test('retries a temporary conversation failure without replacing the saved threa
   expect(mock.actions.filter((action) => action.action === 'create-thread')).toHaveLength(0)
 })
 
+test('uses one composer control for sending, steering, and stopping a response', async ({ page }, testInfo) => {
+  const mock = await mockTengri(page)
+  await page.goto('/')
+  const composer = page.getByRole('form', { name: 'Message composer' })
+  const prompt = composer.getByRole('textbox')
+  const action = composer.getByRole('button')
+  await expect(action).toHaveCount(1)
+  await expect(action).toHaveAccessibleName('Send message')
+  await expect(action).toBeDisabled()
+  await prompt.fill('Inspect the workspace.')
+  await action.click()
+  await expect(action).toHaveAccessibleName('Stop response')
+  await expect(action).toBeEnabled()
+  await expect(action).toHaveCount(1)
+  await prompt.press('Enter')
+  expect(mock.actions.some((item) => item.action === 'interrupt-turn')).toBe(false)
+  const screenshotPath = testInfo.outputPath('composer-stop.png')
+  await composer.screenshot({ path: screenshotPath })
+  await testInfo.attach('composer-stop', { path: screenshotPath, contentType: 'image/png' })
+
+  await prompt.fill('Only inspect the current directory.')
+  await expect(action).toHaveAccessibleName('Steer turn')
+  await action.click()
+  await expect
+    .poll(() => mock.actions.some((item) => item.action === 'steer-turn' && item.turnId === 'turn-1'))
+    .toBe(true)
+  await expect(action).toHaveAccessibleName('Stop response')
+  await action.click()
+  await expect
+    .poll(() => mock.actions.some((item) => item.action === 'interrupt-turn' && item.turnId === 'turn-1'))
+    .toBe(true)
+  await emitCodexEvent(page, {
+    sequence: 1,
+    threadId: 'thread-1',
+    turnId: 'turn-1',
+    itemId: '',
+    kind: 'thread-state',
+    method: 'turn/completed',
+    text: '',
+    approvalId: '',
+    rawJson: '{}',
+  })
+  await expect(action).toHaveAccessibleName('Send message')
+  await expect(action).toHaveCount(1)
+  await expect(action).toBeDisabled()
+})
+
 test('steers a recovered in-progress turn when sending during thread resume', async ({ page }) => {
   const mock = await mockTengri(page, {
     resumeThreadDelayMs: 400,
@@ -1878,6 +2025,172 @@ test('does not duplicate snapshot-covered Codex messages when event replay races
   await expect(page.getByText('7d window: 12% used', { exact: true })).toHaveCount(1)
   await expect(page.getByText('One oversized Codex event was omitted', { exact: true })).toHaveCount(1)
   await expect(page.getByText('The turn failed', { exact: true })).toHaveCount(1)
+})
+
+test('keeps capped history items from returning through delayed replay', async ({ page }) => {
+  const items = Array.from({ length: 501 }, (_, index) => ({
+    id: `answer-${index}`,
+    type: 'agentMessage',
+    text: `Restored answer ${index}`,
+  }))
+  const mock = await mockTengri(page, {
+    resumeThreadDelayMs: 500,
+    resumeThreadEventSequence: 10,
+    resumeThreadItemEventSequences: Object.fromEntries(items.map((item) => [item.id, 30])),
+    resumeThreadRawJson: JSON.stringify({
+      thread: { turns: [{ id: 'turn-capped', status: 'completed', items }] },
+    }),
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-capped'))
+  await page.goto('/')
+  await expect(page.getByTestId('agent-event-stream')).toHaveAttribute('data-state', 'connected')
+  const staleDelta = {
+    sequence: 20,
+    itemId: 'answer-0',
+    text: 'Stale omitted fragment',
+    kind: 'assistant-text',
+    method: 'item/agentMessage/delta',
+    threadId: 'thread-capped',
+    turnId: 'turn-capped',
+    approvalId: '',
+    rawJson: '{}',
+  }
+  await emitCodexEvent(page, staleDelta)
+  await expect.poll(() => mock.getResumeThreadResponseCount()).toBe(1)
+  await expect(page.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+  await expect(page.getByRole('article', { name: 'Codex response' })).toHaveCount(500)
+  await expect(page.getByText('Stale omitted fragment', { exact: true })).toHaveCount(0)
+  await emitCodexEvent(page, { ...staleDelta, sequence: 25, method: 'item/completed' })
+  await emitCodexEvent(page, { ...staleDelta, sequence: 31, itemId: 'new-answer', text: 'Fresh answer after restore' })
+  await expect(page.getByText('Fresh answer after restore', { exact: true })).toBeVisible()
+  await expect(page.getByText('Stale omitted fragment', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('Restored answer 500', { exact: true })).toBeVisible()
+})
+
+test('reconciles paginated item snapshots while keeping the transcript compact and approvals usable', async ({
+  page,
+}) => {
+  await page.clock.setFixedTime(new Date('2026-08-26T12:34:00.000Z'))
+  const mock = await mockTengri(page, {
+    resumeThreadDelayMs: 500,
+    resumeThreadEventSequence: 10,
+    resumeThreadItemEventSequences: { 'answer-one': 20, 'answer-two': 30 },
+    resumeThreadRawJson: JSON.stringify({
+      thread: {
+        turns: [
+          {
+            id: 'turn-one',
+            status: 'inProgress',
+            items: [
+              {
+                id: 'user-one',
+                type: 'userMessage',
+                content: [{ type: 'text', text: 'Inspect the desktop and verify the fixes locally.' }],
+              },
+              { id: 'answer-one', type: 'agentMessage', text: 'The terminal background is continuous.' },
+              {
+                id: 'output-one',
+                type: 'commandExecution',
+                status: 'completed',
+                exitCode: 0,
+                aggregatedOutput: '✓ Terminal resize\n✓ Window drag\n✓ Dock alignment',
+              },
+              { id: 'answer-two', type: 'agentMessage', text: 'The browser checks pass.' },
+            ],
+          },
+        ],
+      },
+    }),
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-paged'))
+  await page.goto('/')
+  await expect(page.getByTestId('agent-event-stream')).toHaveAttribute('data-state', 'connected')
+  for (const event of [
+    { sequence: 18, itemId: 'answer-one', text: 'The terminal background is continuous.' },
+    { sequence: 24, itemId: 'answer-one', text: ' Corner handles are easy to grab.' },
+    { sequence: 28, itemId: 'answer-two', text: 'The browser checks pass.' },
+    { sequence: 31, itemId: 'answer-two', text: ' Tooltips stay above the icons.' },
+  ]) {
+    await emitCodexEvent(page, {
+      ...event,
+      kind: 'assistant-text',
+      method: 'item/agentMessage/delta',
+      threadId: 'thread-paged',
+      turnId: 'turn-one',
+      approvalId: '',
+      rawJson: '{}',
+    })
+  }
+  await expect.poll(() => mock.getResumeThreadResponseCount()).toBe(1)
+  await expect(page.getByRole('textbox', { name: 'Steer the current turn' })).toBeEnabled()
+  await expect(page.getByRole('article', { name: 'Codex response' }).first()).toHaveText(
+    'The terminal background is continuous. Corner handles are easy to grab.',
+  )
+  await expect(page.getByText('The browser checks pass. Tooltips stay above the icons.', { exact: true })).toHaveCount(
+    1,
+  )
+  await emitCodexEvent(page, {
+    sequence: 32,
+    itemId: 'approval-item',
+    kind: 'approval',
+    method: 'item/commandExecution/requestApproval',
+    threadId: 'thread-paged',
+    turnId: 'turn-one',
+    approvalId: 'approval-one',
+    text: 'Run the production build?',
+    rawJson: JSON.stringify({ params: { availableDecisions: ['accept', 'decline'] } }),
+  })
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  await expect(chrome.getByRole('button', { name: 'Approve once', exact: true })).toBeVisible()
+  await expect(chrome.getByRole('button', { name: 'Approve for session', exact: true })).toHaveCount(0)
+  const outputCharacterWidths = await chrome
+    .getByRole('article', { name: 'Codex output' })
+    .locator('pre')
+    .evaluate(async (element) => {
+      const context = document.createElement('canvas').getContext('2d')
+      if (!context) throw new Error('Canvas is unavailable')
+      const style = getComputedStyle(element)
+      context.font = `${style.fontSize} ${style.fontFamily}`
+      const loadedFonts = await document.fonts.load(context.font, 'iiiWWW✓✓✓')
+      return {
+        loadedFonts: loadedFonts.length,
+        narrow: context.measureText('iii').width,
+        wide: context.measureText('WWW').width,
+        symbols: context.measureText('✓✓✓').width,
+      }
+    })
+  expect(outputCharacterWidths.loadedFonts).toBeGreaterThan(0)
+  expect(outputCharacterWidths.narrow).toBeCloseTo(outputCharacterWidths.wide, 1)
+  expect(outputCharacterWidths.symbols).toBeCloseTo(outputCharacterWidths.wide, 1)
+  const user = chrome.getByRole('article', { name: 'Your message' })
+  const response = chrome.getByRole('article', { name: 'Codex response' }).first()
+  for (const row of [user, response]) {
+    await expect(row).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+    await expect(row).toHaveCSS('border-radius', '0px')
+    await expect(row).toHaveCSS('padding-top', '0px')
+    await expect(row).toHaveCSS('padding-bottom', '0px')
+  }
+  const [userBounds, responseBounds] = await Promise.all([user.boundingBox(), response.boundingBox()])
+  if (!userBounds || !responseBounds) throw new Error('Transcript rows are missing')
+  expect(userBounds.x).toBe(responseBounds.x)
+  await chrome.getByRole('button', { name: 'Close Chrome' }).hover()
+  await expect(chrome).toHaveScreenshot('tengri-compact-chat.png')
+  await chrome.getByRole('button', { name: 'Approve once', exact: true }).click()
+  await expect
+    .poll(() =>
+      mock.actions.some(
+        (action) =>
+          action.action === 'resolve-approval' &&
+          action.approvalId === 'approval-one' &&
+          action.decision === 'approve-once',
+      ),
+    )
+    .toBe(true)
+  await expect(chrome.getByRole('button', { name: 'Approve once', exact: true })).toHaveCount(0)
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect(response).toBeVisible()
+  await page.mouse.move(0, 0)
+  await expect(chrome).toHaveScreenshot('tengri-compact-chat-narrow.png')
 })
 
 test('does not resurrect a turn completed while replay recovery is in flight', async ({ page }) => {
@@ -2065,6 +2378,15 @@ test('supports desktop window shortcuts, independent windows, drag, and eight-ed
   await chromeWindows.getByRole('textbox', { name: 'Address' }).focus()
   await page.keyboard.press('Meta+n')
   await expect(chromeWindows).toHaveCount(2)
+  await chromeWindows.last().getByRole('button', { name: 'New tab' }).click()
+  const secondWindowTabs = chromeWindows.last().getByRole('tab')
+  await secondWindowTabs.last().focus()
+  await page.keyboard.press('ArrowLeft')
+  await expect(secondWindowTabs.first()).toBeFocused()
+  await page.keyboard.press('Delete')
+  await expect(secondWindowTabs).toHaveCount(1)
+  await expect(secondWindowTabs.first()).toBeFocused()
+  await expect(chromeWindows.first().getByRole('tab')).toHaveCount(1)
   await chromeWindows.last().getByRole('textbox', { name: 'Address' }).focus()
   await page.keyboard.press('Meta+o')
   await expect(page.getByRole('dialog', { name: 'Spotlight' })).toBeVisible()
@@ -2350,6 +2672,128 @@ test('magnifies neighboring Dock icons without pointer-frame layout reads and re
   if (!narrowDock) throw new Error('Dock disappeared at mobile width')
   expect(narrowDock.x).toBeGreaterThanOrEqual(0)
   expect(narrowDock.x + narrowDock.width).toBeLessThanOrEqual(320)
+})
+
+test('keeps Dock tooltips above magnified artwork, centers idle icons, and stays within the viewport', async ({
+  page,
+}, testInfo) => {
+  await mockTengri(page)
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.goto('/')
+
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  const code = dock.getByRole('button', { name: 'Open Code' })
+  const codeImage = code.locator('img')
+  const dockBounds = await dock.boundingBox()
+  const codeBounds = await code.boundingBox()
+  if (!dockBounds || !codeBounds) throw new Error('Dock geometry is missing')
+  for (const icon of await dock.locator('img').all()) {
+    await expect.poll(() => icon.evaluate((element: HTMLImageElement) => element.naturalWidth)).toBeGreaterThan(0)
+    const artworkBounds = await icon.evaluate((element) => {
+      if (!(element instanceof HTMLImageElement) || !element.complete || element.naturalWidth === 0) {
+        throw new Error('Dock artwork is not ready')
+      }
+      const canvas = document.createElement('canvas')
+      canvas.width = element.naturalWidth
+      canvas.height = element.naturalHeight
+      const context = canvas.getContext('2d')
+      if (!context) throw new Error('Canvas is unavailable')
+      context.drawImage(element, 0, 0)
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
+      let top = canvas.height
+      let bottom = -1
+      let left = canvas.width
+      let right = -1
+      for (let y = 0; y < canvas.height; y += 1) {
+        for (let x = 0; x < canvas.width; x += 1) {
+          if (pixels[(y * canvas.width + x) * 4 + 3] <= 16) continue
+          top = Math.min(top, y)
+          bottom = Math.max(bottom, y)
+          left = Math.min(left, x)
+          right = Math.max(right, x)
+        }
+      }
+      if (right < left || bottom < top) throw new Error('Dock artwork has no visible pixels')
+      const bounds = element.getBoundingClientRect()
+      const scaleX = bounds.width / canvas.width
+      const scaleY = bounds.height / canvas.height
+      return {
+        bottom: bounds.top + (bottom + 1) * scaleY,
+        left: bounds.left + left * scaleX,
+        right: bounds.left + (right + 1) * scaleX,
+        top: bounds.top + top * scaleY,
+      }
+    })
+    const dockCenterY = dockBounds.y + dockBounds.height / 2
+    const artworkCenterY = (artworkBounds.top + artworkBounds.bottom) / 2
+    expect(
+      Math.abs(artworkCenterY - dockCenterY),
+      (await icon.getAttribute('src')) ?? 'Dock artwork',
+    ).toBeLessThanOrEqual(3)
+  }
+
+  const codeTooltip = code.locator('[role="tooltip"]')
+  await code.hover({ position: { x: codeBounds.width / 2, y: codeBounds.height / 2 } })
+  await expect(codeTooltip).toHaveCSS('opacity', '1')
+  await expect
+    .poll(async () => {
+      const [icon, tooltip] = await Promise.all([codeImage.boundingBox(), codeTooltip.boundingBox()])
+      return icon && tooltip ? icon.y - (tooltip.y + tooltip.height) : Number.NEGATIVE_INFINITY
+    })
+    .toBeGreaterThanOrEqual(6)
+  const dockTooltipPath = testInfo.outputPath('dock-tooltip.png')
+  await page.screenshot({
+    path: dockTooltipPath,
+    clip: {
+      x: dockBounds.x - 24,
+      y: dockBounds.y - 100,
+      width: dockBounds.width + 48,
+      height: dockBounds.height + 112,
+    },
+  })
+  await testInfo.attach('dock-tooltip', { path: dockTooltipPath, contentType: 'image/png' })
+
+  await page.setViewportSize({ width: 320, height: 680 })
+  const viewport = page.viewportSize()
+  if (!viewport) throw new Error('Viewport size is unavailable')
+  const expectWithinViewport = async (button: Locator) => {
+    const tooltip = button.locator('[role="tooltip"]')
+    await expect(tooltip).toHaveCSS('opacity', '1')
+    const bounds = await tooltip.boundingBox()
+    if (!bounds) throw new Error('Dock tooltip is missing')
+    expect(bounds.x).toBeGreaterThanOrEqual(0)
+    expect(bounds.y).toBeGreaterThanOrEqual(0)
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(viewport.width)
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(viewport.height)
+  }
+
+  await dock.getByRole('button', { name: 'Open Finder' }).hover()
+  await expectWithinViewport(dock.getByRole('button', { name: 'Open Finder' }))
+  await dock.getByRole('button', { name: 'Open Settings' }).hover()
+  await expectWithinViewport(dock.getByRole('button', { name: 'Open Settings' }))
+
+  await page.mouse.move(0, 0)
+  const finder = dock.getByRole('button', { name: 'Open Finder' })
+  await finder.focus()
+  await expect(finder).toBeFocused()
+  await expect(finder.locator('[role="tooltip"]')).toHaveCSS('opacity', '1')
+  await expectWithinViewport(finder)
+  await expect
+    .poll(async () => {
+      const [icon, tooltip] = await Promise.all([
+        finder.locator('img').boundingBox(),
+        finder.locator('[role="tooltip"]').boundingBox(),
+      ])
+      return icon && tooltip ? icon.y - (tooltip.y + tooltip.height) : Number.POSITIVE_INFINITY
+    })
+    .toBeLessThanOrEqual(16)
+
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  const settings = dock.getByRole('button', { name: 'Open Settings' })
+  await settings.focus()
+  await expect(settings).toBeFocused()
+  await expect(settings.locator('[role="tooltip"]')).toHaveCSS('opacity', '1')
+  await expectWithinViewport(settings)
 })
 
 test('minimizes to the app icon and leaves hidden window geometry idle during clock and menu updates', async ({

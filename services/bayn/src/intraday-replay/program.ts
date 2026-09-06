@@ -441,7 +441,10 @@ const replaySession = (
 
       const decision = decisionResult.success
       observations.push({ kind: 'snapshot', purpose: 'decision', manifest: decisionSnapshot.manifest, decision })
-      if (decision.selectedSymbols.length === 0) continue
+      if (decision.selectedSymbols.length === 0) {
+        retryableEntryFailure ||= decision.excludedCandidates?.length === protocol.candidateSymbols.length
+        continue
+      }
       if (decision.selectedSymbols.length > 1) {
         structuralFailure = 'active intraday-momentum selected more than one entry symbol'
         break

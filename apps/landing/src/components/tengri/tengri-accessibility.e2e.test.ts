@@ -109,8 +109,10 @@ test('exposes usable browser tabs, connection state, and contrast', async ({ pag
   await expect(tablist.getByRole('tab')).toBeFocused()
 
   await page.keyboard.press('Delete')
+  await expect(page.getByRole('region', { name: 'Chrome window' })).toHaveCount(0)
+
+  await page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Chrome' }).click()
   await expect(tablist.getByRole('tab')).toHaveCount(1)
-  await expect(tablist.getByRole('tab')).toBeFocused()
 
   const seriousViolations = (await new AxeBuilder({ page }).analyze()).violations.filter(
     (violation) => violation.impact === 'critical' || violation.impact === 'serious',

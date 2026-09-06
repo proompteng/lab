@@ -155,6 +155,8 @@ func TestCodexRPCAllowlistExposesOnlyDesktopOperations(t *testing.T) {
 		"account/login/start",
 		"thread/start",
 		"thread/resume",
+		"thread/turns/list",
+		"thread/items/list",
 		"turn/start",
 		"turn/steer",
 		"turn/interrupt",
