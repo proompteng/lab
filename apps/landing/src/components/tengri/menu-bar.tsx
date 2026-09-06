@@ -1,7 +1,7 @@
 'use client'
 
 import { Search, SlidersHorizontal, Wifi } from 'lucide-react'
-import { useEffect, useRef } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 
 import type { TengriAgent } from '@/lib/tengri/types'
 import { APP_TITLES, type TengriApp } from '@/lib/tengri/window-manager'
@@ -14,25 +14,9 @@ type MenuEntry = {
   separator?: boolean
 }
 
-export function MenuBar({
-  activeApp,
-  agent,
-  clock,
-  connectionWarning,
-  menuOpen,
-  onCloseActive,
-  onMenuChange,
-  onMinimizeActive,
-  onNewWindow,
-  onOpenApp,
-  onOpenSpotlight,
-  onSignOut,
-  onToggleMaximize,
-  userName,
-}: {
+type MenuBarProps = {
   activeApp: TengriApp
   agent: TengriAgent
-  clock: Date | null
   connectionWarning: string
   menuOpen: string | null
   onCloseActive: () => void
@@ -44,7 +28,23 @@ export function MenuBar({
   onSignOut: () => void
   onToggleMaximize: () => void
   userName: string
-}) {
+}
+
+export const MenuBar = memo(function MenuBar({
+  activeApp,
+  agent,
+  connectionWarning,
+  menuOpen,
+  onCloseActive,
+  onMenuChange,
+  onMinimizeActive,
+  onNewWindow,
+  onOpenApp,
+  onOpenSpotlight,
+  onSignOut,
+  onToggleMaximize,
+  userName,
+}: MenuBarProps) {
   const triggerRefs = useRef(new Map<string, HTMLButtonElement>())
   const editTargetRef = useRef<HTMLElement | null>(null)
 
@@ -228,19 +228,33 @@ export function MenuBar({
         >
           <SlidersHorizontal aria-hidden="true" className="size-4" />
         </button>
-        <time className="tabular-nums" dateTime={clock?.toISOString()}>
-          {clock
-            ? new Intl.DateTimeFormat(undefined, {
-                weekday: 'short',
-                month: 'short',
-                day: 'numeric',
-                hour: 'numeric',
-                minute: '2-digit',
-              }).format(clock)
-            : '\u00a0'}
-        </time>
+        <DesktopClock />
       </div>
     </header>
+  )
+})
+
+function DesktopClock() {
+  const [clock, setClock] = useState<Date | null>(null)
+
+  useEffect(() => {
+    setClock(new Date())
+    const timer = window.setInterval(() => setClock(new Date()), 30_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  return (
+    <time className="tabular-nums" dateTime={clock?.toISOString()}>
+      {clock
+        ? new Intl.DateTimeFormat(undefined, {
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+          }).format(clock)
+        : '\u00a0'}
+    </time>
   )
 }
 

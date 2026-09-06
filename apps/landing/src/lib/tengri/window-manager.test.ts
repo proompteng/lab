@@ -8,10 +8,34 @@ import { initialWindowState, MAX_DESKTOP_WINDOWS, resizeBounds, windowIdForOpen,
 const viewport = { x: 0, y: 0, width: 1440, height: 870 }
 
 describe('Tengri desktop window manager', () => {
+  test('clicking the active window preserves state while focusing another window raises it once', () => {
+    const state = initialWindowState(viewport)
+    expect(windowReducer(state, { type: 'focus', id: state.activeWindowId })).toBe(state)
+    expect(windowReducer(state, { type: 'open', app: 'chrome', title: 'Chrome', viewport })).toBe(state)
+
+    const focused = windowReducer(state, { type: 'focus', id: 'finder-1' })
+    expect(focused.activeWindowId).toBe('finder-1')
+    expect(focused.nextZ).toBe(state.nextZ + 1)
+    expect(focused.windows.find((window) => window.id === 'finder-1')?.z).toBe(state.nextZ)
+    expect(windowReducer(focused, { type: 'focus', id: 'finder-1' })).toBe(focused)
+  })
+
   test('boots with Finder behind frontmost Chrome', () => {
     const state = initialWindowState(viewport)
     expect(state.windows.map((window) => window.app)).toEqual(['finder', 'chrome'])
     expect(state.activeApp).toBe('chrome')
+  })
+
+  test('raises a restored active window when persisted stacking order puts another window above it', () => {
+    const persisted = initialWindowState(viewport)
+    persisted.activeWindowId = 'finder-1'
+    const state = windowReducer(persisted, { type: 'hydrate', state: persisted, viewport })
+    const focused = windowReducer(state, { type: 'focus', id: 'finder-1' })
+    expect(focused).not.toBe(state)
+    const finder = focused.windows.find((window) => window.id === 'finder-1')!
+    const chrome = focused.windows.find((window) => window.app === 'chrome')!
+    expect(finder.z).toBeGreaterThan(chrome.z)
+    expect(windowReducer(focused, { type: 'focus', id: 'finder-1' })).toBe(focused)
   })
 
   test('can boot an incremental desktop with only implemented applications', () => {
@@ -356,6 +380,7 @@ describe('Tengri desktop window manager', () => {
       left: '100px',
       top: '80px',
       transform: '',
+      translate: '',
       width: '720px',
     }
 
@@ -366,8 +391,30 @@ describe('Tengri desktop window manager', () => {
       left: '100px',
       top: '80px',
       transform: '',
+      translate: '',
       width: '640px',
     })
+  })
+
+  test('paints dragging through independent translate without replacing animation transform', () => {
+    const base = { x: 100, y: 80, width: 640, height: 480 }
+    const style = {
+      height: '480px',
+      left: '100px',
+      top: '80px',
+      transform: 'translateY(435px) scale(0.18)',
+      translate: '',
+      width: '640px',
+    }
+
+    paintWindowInteractionFrame(style, {
+      base,
+      edge: null,
+      next: { ...base, x: 142, y: 109 },
+    })
+
+    expect(style.translate).toBe('42px 29px')
+    expect(style.transform).toBe('translateY(435px) scale(0.18)')
   })
 
   test('server-renders a minimized frame without browser globals', () => {

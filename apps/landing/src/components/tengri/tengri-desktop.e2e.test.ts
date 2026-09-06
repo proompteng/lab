@@ -138,6 +138,7 @@ type MockOptions = {
   holdReplayResume?: boolean
   resumeThreadDelayMs?: number
   resumeThreadEventSequence?: number
+  resumeThreadErrors?: Array<{ status: number; error: string; code?: string }>
   resumeThreadRawJson?: string
   searchDelays?: Record<string, number>
   searchTruncated?: boolean
@@ -588,6 +589,12 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         break
       case 'resume-thread':
         resumeThreadRequests += 1
+        if (options.resumeThreadErrors?.[resumeThreadRequests - 1]) {
+          const { status, ...failure } = options.resumeThreadErrors[resumeThreadRequests - 1]
+          resumeThreadResponses += 1
+          await route.fulfill({ status, json: failure })
+          return
+        }
         if (options.holdReplayResume && resumeThreadRequests === 2) {
           markHeldResumeStarted()
           await heldResume
@@ -733,12 +740,17 @@ async function resizeWindow(
   edge: 'e' | 'n' | 'ne' | 'nw' | 's' | 'se' | 'sw' | 'w',
   delta: { x: number; y: number },
   expected: { height: number; width: number; x: number; y: number },
+  grabPoint?: { x: number; y: number },
 ) {
   const before = await frame.boundingBox()
   expect(before).not.toBeNull()
   const handle = frame.locator('..').locator(`.cursor-${edge}-resize`)
   const handleBounds = await handle.boundingBox()
   expect(handleBounds).not.toBeNull()
+  const point = grabPoint ?? {
+    x: handleBounds!.x + handleBounds!.width / 2,
+    y: handleBounds!.y + handleBounds!.height / 2,
+  }
   await expect
     .poll(() =>
       page.evaluate(
@@ -746,21 +758,14 @@ async function resizeWindow(
           className: document.elementFromPoint(x, y)?.getAttribute('class'),
           tagName: document.elementFromPoint(x, y)?.tagName,
         }),
-        {
-          x: handleBounds!.x + handleBounds!.width / 2,
-          y: handleBounds!.y + handleBounds!.height / 2,
-        },
+        point,
       ),
     )
     .toMatchObject({ className: expect.stringContaining(`cursor-${edge}-resize`) })
 
-  await page.mouse.move(handleBounds!.x + handleBounds!.width / 2, handleBounds!.y + handleBounds!.height / 2)
+  await page.mouse.move(point.x, point.y)
   await page.mouse.down()
-  await page.mouse.move(
-    handleBounds!.x + handleBounds!.width / 2 + delta.x,
-    handleBounds!.y + handleBounds!.height / 2 + delta.y,
-    { steps: 3 },
-  )
+  await page.mouse.move(point.x + delta.x, point.y + delta.y, { steps: 3 })
   await page.mouse.up()
 
   for (const property of ['x', 'y', 'width', 'height'] as const) {
@@ -911,6 +916,24 @@ test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and win
   await expect(page.getByRole('region', { name: 'Terminal window' })).toHaveCount(1)
   await expect.poll(() => mock.actions.some((action) => action.action === 'terminate-terminal')).toBe(true)
   expect(terminalDisposeFailures).toEqual([])
+})
+
+test('keeps the terminal background continuous through its gutters after resizing', async ({ page }, testInfo) => {
+  await mockTengri(page)
+  await page.goto('/')
+  await page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Terminal' }).click()
+
+  const terminal = page.getByRole('region', { name: 'Terminal window' })
+  await expect(terminal.getByLabel('Interactive Tengri terminal')).toHaveAttribute('data-renderer', 'canvas')
+  await expect(terminal.getByText('Connected', { exact: true })).toBeVisible()
+  await testInfo.attach('terminal-before-resize', { body: await terminal.screenshot(), contentType: 'image/png' })
+  await expect(terminal.locator('.xterm-viewport')).toHaveCSS('background-color', 'rgb(30, 30, 30)')
+
+  await resizeWindow(page, terminal, 'se', { x: 73, y: 41 }, { x: 0, y: 0, width: 73, height: 41 })
+  await expect(terminal.locator('.xterm-viewport')).toHaveCSS('background-color', 'rgb(30, 30, 30)')
+  const screenshotPath = testInfo.outputPath('terminal-after-resize.png')
+  await terminal.screenshot({ path: screenshotPath })
+  await testInfo.attach('terminal-after-resize', { path: screenshotPath, contentType: 'image/png' })
 })
 
 test('preserves terminal identity on reload and BFCache restore while isolating a duplicated desktop tab', async ({
@@ -1658,6 +1681,65 @@ test('keeps a committed delete transition gated when snapshot refresh fails', as
   await expect(page.getByRole('navigation', { name: 'Dock' })).toHaveCount(0)
 })
 
+test('keeps a missing conversation until the user chooses to start a new one in the same workspace', async ({
+  page,
+}) => {
+  const failure = { status: 404, error: 'Codex conversation could not be found', code: 'conversation_not_found' }
+  const mock = await mockTengri(page, { resumeThreadErrors: [failure, failure] })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-missing'))
+  await page.goto('/')
+
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  const prompt = chrome.getByRole('textbox', { name: 'Message your agent' })
+  await expect(chrome.getByRole('alert')).toHaveText('Codex conversation could not be found')
+  await expect(
+    chrome.getByText(
+      'This saved conversation is no longer available. Start a new conversation to continue in this workspace.',
+    ),
+  ).toBeVisible()
+  await expect(prompt).toBeDisabled()
+  expect(await page.evaluate(() => localStorage.getItem('tengri-thread:microvm-ada'))).toBe('thread-missing')
+
+  await chrome.getByRole('button', { name: 'Retry conversation recovery' }).click()
+  await expect.poll(() => mock.getResumeThreadResponseCount()).toBe(2)
+  await expect(chrome.getByRole('button', { name: 'Start a new conversation', exact: true })).toBeVisible()
+  expect(await page.evaluate(() => localStorage.getItem('tengri-thread:microvm-ada'))).toBe('thread-missing')
+  expect(mock.actions.some((action) => action.action === 'create-thread')).toBe(false)
+
+  await chrome.getByRole('button', { name: 'Start a new conversation', exact: true }).click()
+  await expect(prompt).toBeEnabled()
+  await expect(prompt).toBeFocused()
+  await expect(chrome.getByRole('alert')).toHaveCount(0)
+  expect(await page.evaluate(() => localStorage.getItem('tengri-thread:microvm-ada'))).toBeNull()
+  await prompt.fill('Continue in this workspace.')
+  await prompt.press('Enter')
+  await expect
+    .poll(() => mock.actions.some((action) => action.action === 'send-turn' && action.threadId === 'thread-1'))
+    .toBe(true)
+  expect(mock.actions.filter((action) => action.action === 'create-thread')).toHaveLength(1)
+  expect(
+    mock.actions.filter((action) =>
+      ['create-agent', 'delete-agent', 'sleep-agent', 'resume-agent'].includes(String(action.action)),
+    ),
+  ).toHaveLength(0)
+})
+
+test('retries a temporary conversation failure without replacing the saved thread', async ({ page }) => {
+  const mock = await mockTengri(page, {
+    resumeThreadErrors: [{ status: 503, error: 'Tengri control plane is unavailable' }],
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-recoverable'))
+  await page.goto('/')
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  await expect(chrome.getByRole('alert')).toHaveText('Tengri control plane is unavailable')
+  await expect(chrome.getByRole('button', { name: 'Start a new conversation', exact: true })).toHaveCount(0)
+  await chrome.getByRole('button', { name: 'Retry conversation recovery' }).click()
+  await expect(chrome.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+  await expect(chrome.getByRole('alert')).toHaveCount(0)
+  expect(await page.evaluate(() => localStorage.getItem('tengri-thread:microvm-ada'))).toBe('thread-recoverable')
+  expect(mock.actions.filter((action) => action.action === 'create-thread')).toHaveLength(0)
+})
+
 test('steers a recovered in-progress turn when sending during thread resume', async ({ page }) => {
   const mock = await mockTengri(page, {
     resumeThreadDelayMs: 400,
@@ -1847,6 +1929,130 @@ test('does not resurrect a turn completed while replay recovery is in flight', a
   expect(mock.actions.some((action) => action.action === 'steer-turn')).toBe(false)
 })
 
+test('resizes across all visible corners while keeping window controls clickable', async ({ page }) => {
+  await mockTengri(page)
+  await page.goto('/')
+  const frame = page.getByRole('region', { name: 'Chrome window' })
+  await expect(frame).toBeVisible()
+
+  for (const inset of [8, -8]) {
+    for (const edge of ['nw', 'ne', 'sw', 'se'] as const) {
+      const bounds = await frame.boundingBox()
+      expect(bounds).not.toBeNull()
+      const west = edge.includes('w')
+      const north = edge.includes('n')
+      await resizeWindow(
+        page,
+        frame,
+        edge,
+        { x: west ? 12 : -12, y: north ? 12 : -12 },
+        { x: west ? 12 : 0, y: north ? 12 : 0, width: -12, height: -12 },
+        {
+          x: bounds!.x + (west ? inset : bounds!.width - inset),
+          y: bounds!.y + (north ? inset : bounds!.height - inset),
+        },
+      )
+    }
+  }
+
+  for (const name of ['Close Chrome', 'Minimize Chrome', 'Maximize Chrome']) {
+    const button = frame.getByRole('button', { name, exact: true })
+    const bounds = await button.boundingBox()
+    expect(bounds).not.toBeNull()
+    for (const point of [
+      { x: 2, y: 12 },
+      { x: 12, y: 2 },
+      { x: 22, y: 12 },
+      { x: 12, y: 22 },
+    ]) {
+      await expect
+        .poll(() =>
+          page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('button')?.getAttribute('aria-label'), {
+            x: bounds!.x + point.x,
+            y: bounds!.y + point.y,
+          }),
+        )
+        .toBe(name)
+    }
+  }
+  await frame.getByRole('button', { name: 'Maximize Chrome', exact: true }).click()
+  await frame.getByRole('button', { name: 'Restore Chrome', exact: true }).click()
+  await frame.getByRole('button', { name: 'Minimize Chrome', exact: true }).click()
+  await expect(frame).toHaveCount(0)
+  await page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Chrome', exact: true }).click()
+  await frame.getByRole('button', { name: 'Close Chrome', exact: true }).click()
+  await expect(frame).toHaveCount(0)
+})
+
+test('tracks the pointer during dragging without repeated desktop layout reads or release snapback', async ({
+  page,
+}) => {
+  await mockTengri(page)
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.goto('/')
+  const frame = page.getByRole('region', { name: 'Chrome window' })
+  await expect(frame).toBeVisible()
+  const before = await frame.boundingBox()
+  const header = await frame.locator(':scope > header').boundingBox()
+  if (!before || !header) throw new Error('Chrome window is missing')
+  const start = { x: header.x + header.width / 2, y: header.y + header.height / 2 }
+  await page.mouse.move(start.x, start.y)
+  await page.mouse.down()
+
+  const layoutReads = frame.evaluate(
+    (element) =>
+      new Promise<number>((resolve) => {
+        const stage = element.parentElement?.parentElement
+        if (!stage) throw new Error('Desktop stage is missing')
+        const getBounds = stage.getBoundingClientRect.bind(stage)
+        let reads = 0
+        stage.getBoundingClientRect = () => {
+          reads += 1
+          return getBounds()
+        }
+        document.addEventListener(
+          'pointerup',
+          () => {
+            stage.getBoundingClientRect = getBounds
+            resolve(reads)
+          },
+          { once: true, capture: true },
+        )
+      }),
+  )
+  for (const delta of [12, 24, 36, 48, 60]) {
+    await page.mouse.move(start.x + delta, start.y - delta / 4, { steps: 3 })
+    await expect.poll(async () => (await frame.boundingBox())?.x).toBeCloseTo(before.x + delta, 0)
+    await expect.poll(async () => (await frame.boundingBox())?.y).toBeCloseTo(before.y - delta / 4, 0)
+  }
+  await page.mouse.up()
+  expect(await layoutReads).toBe(0)
+  await expect.poll(async () => (await frame.boundingBox())?.x).toBeCloseTo(before.x + 60, 0)
+  await expect.poll(async () => (await frame.boundingBox())?.y).toBeCloseTo(before.y - 15, 0)
+  await frame.getByRole('button', { name: 'Minimize Chrome', exact: true }).click()
+  await expect(frame).toHaveCount(0)
+  await page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Chrome', exact: true }).click()
+  await expect.poll(async () => (await frame.boundingBox())?.x).toBeCloseTo(before.x + 60, 0)
+  await expect.poll(async () => (await frame.boundingBox())?.y).toBeCloseTo(before.y - 15, 0)
+})
+
+test('keeps window dimensions within the desktop when the browser shrinks during a resize', async ({ page }) => {
+  await mockTengri(page)
+  await page.goto('/')
+  const frame = page.getByRole('region', { name: 'Chrome window' })
+  const handle = frame.locator('..').locator('.cursor-e-resize')
+  const bounds = await handle.boundingBox()
+  if (!bounds) throw new Error('Chrome resize handle is missing')
+  await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(bounds.x + bounds.width / 2 + 24, bounds.y + bounds.height / 2)
+  await page.setViewportSize({ width: 860, height: 650 })
+  await expect.poll(async () => (await frame.boundingBox())?.width).toBeLessThanOrEqual(848)
+  await page.mouse.up()
+  await expect.poll(async () => (await frame.boundingBox())?.width).toBeLessThanOrEqual(848)
+  await expect.poll(async () => (await frame.boundingBox())?.height).toBeLessThanOrEqual(512)
+})
+
 test('supports desktop window shortcuts, independent windows, drag, and eight-edge resize behavior', async ({
   page,
 }) => {
@@ -1899,6 +2105,7 @@ test('supports desktop window shortcuts, independent windows, drag, and eight-ed
     await resizeWindow(page, frontmost, edge, delta, expected)
   }
 
+  await frontmost.getByRole('button', { name: 'Minimize Chrome', exact: true }).focus()
   await page.keyboard.press('Meta+Backquote')
   await expect
     .poll(async () => {
@@ -2049,18 +2256,163 @@ test('has no serious or critical Axe violations', async ({ page }) => {
   ).toEqual([])
 })
 
-test('matches the Tahoe desktop at required production viewports', async ({ page }) => {
+test('aligns native window controls with app toolbars and keeps narrow layouts usable', async ({ page }) => {
+  await mockTengri(page)
+  await page.goto('/')
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  const controls = await chrome.getByRole('button', { name: 'Close Chrome' }).boundingBox()
+  const tabs = await chrome.getByRole('tablist', { name: 'Browser tabs' }).boundingBox()
+  if (!controls || !tabs) throw new Error('Chrome toolbar is missing')
+  expect(Math.abs(controls.y + controls.height / 2 - tabs.y - tabs.height / 2)).toBeLessThan(5)
+  expect(tabs.x).toBeGreaterThan(controls.x + 72)
+
+  await dock.getByRole('button', { name: 'Open Finder' }).click()
+  const finder = page.getByRole('region', { name: 'Finder window' })
+  const close = await finder.getByRole('button', { name: 'Close Finder' }).boundingBox()
+  const back = await finder.getByRole('button', { name: 'Back', exact: true }).boundingBox()
+  if (!close || !back) throw new Error('Finder toolbar is missing')
+  expect(Math.abs(close.y + close.height / 2 - back.y - back.height / 2)).toBeLessThan(1)
+
+  await finder.getByRole('button', { name: 'Maximize Finder' }).click()
+  await dock.getByRole('button', { name: 'Open Chrome' }).click()
+  await expect(finder).toHaveAttribute('data-active', 'false')
+  await finder.locator('aside [data-window-drag-region]').click({ position: { x: 140, y: 26 } })
+  await expect(finder).toHaveAttribute('data-active', 'true')
+  await finder.getByRole('button', { name: 'Restore Finder' }).click()
+
+  await page.setViewportSize({ width: 390, height: 680 })
+  await finder.getByRole('button', { name: 'Maximize Finder' }).click()
+  const narrowControls = await finder.getByRole('button', { name: 'Close Finder' }).boundingBox()
+  const narrowBack = await finder.getByRole('button', { name: 'Back', exact: true }).boundingBox()
+  expect(narrowControls).not.toBeNull()
+  expect(narrowBack).not.toBeNull()
+  expect(narrowBack!.y).toBeGreaterThanOrEqual(narrowControls!.y + narrowControls!.height)
+  await finder.getByRole('button', { name: 'Close Finder' }).click()
+  await expect(finder).toHaveCount(0)
+})
+
+test('magnifies neighboring Dock icons without pointer-frame layout reads and respects reduced motion', async ({
+  page,
+}) => {
+  await mockTengri(page)
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.goto('/')
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  const code = dock.getByRole('button', { name: 'Open Code' })
+  const chrome = dock.getByRole('button', { name: 'Open Chrome' })
+  const before = await code.locator('img').boundingBox()
+  const button = await code.boundingBox()
+  if (!before || !button) throw new Error('Dock geometry is missing')
+  await page.mouse.move(button.x + button.width / 2, button.y + button.height / 2)
+  await expect.poll(async () => (await code.locator('img').boundingBox())!.width).toBeGreaterThan(before.width * 1.3)
+  await expect.poll(async () => (await chrome.locator('img').boundingBox())!.width).toBeGreaterThan(before.width * 1.1)
+  const geometryReads = dock.evaluate(
+    (element) =>
+      new Promise<string[]>((resolve) => {
+        const reads: string[] = []
+        const originals = [...element.querySelectorAll('button')].map((button) => {
+          const original = button.getBoundingClientRect.bind(button)
+          button.getBoundingClientRect = () => {
+            reads.push(new Error('Dock layout read during pointer movement').stack ?? button.id)
+            return original()
+          }
+          return { button, original }
+        })
+        element.addEventListener(
+          'pointerleave',
+          () => {
+            for (const { button, original } of originals) button.getBoundingClientRect = original
+            resolve(reads)
+          },
+          { once: true },
+        )
+      }),
+  )
+  await page.keyboard.press('Meta+n')
+  await expect(page.getByRole('region', { name: 'Chrome window' })).toHaveCount(2)
+  await page.mouse.move(button.x - 40, button.y + 30, { steps: 12 })
+  await page.mouse.move(button.x + 70, button.y + 30, { steps: 18 })
+  await page.mouse.move(0, 0)
+  expect(await geometryReads).toEqual([])
+  await expect.poll(async () => (await code.locator('img').boundingBox())!.width).toBeCloseTo(before.width, 0)
+
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await code.focus()
+  await code.hover()
+  await expect.poll(async () => (await code.locator('img').boundingBox())!.width).toBeCloseTo(before.width, 1)
+  await expect(code.locator('[role="tooltip"]')).toHaveCSS('opacity', '1')
+  await code.press('Enter')
+  await expect(page.getByRole('region', { name: 'Code window' })).toBeVisible()
+
+  await page.setViewportSize({ width: 320, height: 680 })
+  const narrowDock = await dock.boundingBox()
+  if (!narrowDock) throw new Error('Dock disappeared at mobile width')
+  expect(narrowDock.x).toBeGreaterThanOrEqual(0)
+  expect(narrowDock.x + narrowDock.width).toBeLessThanOrEqual(320)
+})
+
+test('minimizes to the app icon and leaves hidden window geometry idle during clock and menu updates', async ({
+  page,
+}) => {
+  await page.clock.install({ time: new Date('2026-08-26T12:34:00.000Z') })
+  await mockTengri(page)
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.goto('/')
+  const chrome = page.locator('[data-app="chrome"]')
+  const outer = chrome.locator('..')
+  await chrome.getByRole('button', { name: 'Minimize Chrome' }).click()
+  await expect(outer).toHaveCSS('visibility', 'hidden')
+  const target = await page.locator('#tengri-dock-chrome').boundingBox()
+  const minimized = await outer.evaluate((element) => {
+    const { x, y, width, height } = element.getBoundingClientRect()
+    return { x, y, width, height }
+  })
+  if (!target) throw new Error('Minimize target is missing')
+  expect(minimized.x + minimized.width / 2).toBeCloseTo(target.x + target.width / 2, 0)
+  expect(minimized.y + minimized.height / 2).toBeCloseTo(target.y + target.height / 2, 0)
+
+  await chrome.evaluate((element) => {
+    const stage = element.parentElement?.parentElement
+    if (!stage) throw new Error('Desktop stage is missing')
+    const original = stage.getBoundingClientRect.bind(stage)
+    stage.dataset.layoutReads = '0'
+    stage.getBoundingClientRect = () => {
+      stage.dataset.layoutReads = String(Number(stage.dataset.layoutReads) + 1)
+      return original()
+    }
+  })
+  const oldTime = await page.locator('time').textContent()
+  await page.clock.fastForward(61_000)
+  await expect(page.locator('time')).not.toHaveText(oldTime!)
+  await page.getByRole('menuitem', { name: 'File', exact: true }).click()
+  await expect(page.getByRole('menu')).toBeVisible()
+  expect(await chrome.evaluate((element) => element.parentElement?.parentElement?.dataset.layoutReads)).toBe('0')
+  await page.keyboard.press('Escape')
+  await page.locator('#tengri-dock-chrome').click()
+  await expect(outer).toHaveCSS('visibility', 'visible')
+  await expect(page.getByRole('region', { name: 'Chrome window' })).toBeVisible()
+})
+
+test('matches the macOS desktop at required production viewports', async ({ page }) => {
   await page.clock.setFixedTime(new Date('2026-08-26T12:34:00.000Z'))
   await mockTengri(page)
   await page.goto('/')
   await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
   await expect(page.getByTestId('agent-event-stream')).toHaveAttribute('data-state', 'connected')
   await expect(page.getByRole('button', { name: 'Open Next.js Dev Tools' })).toHaveCount(0)
+  const dockIcons = page.getByRole('navigation', { name: 'Dock' }).locator('img')
+  await expect(dockIcons).toHaveCount(5)
+  for (const icon of await dockIcons.all()) {
+    await expect.poll(() => icon.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0)
+    await expect(icon).toHaveAttribute('draggable', 'false')
+  }
   await expect.poll(async () => (await page.getByRole('region', { name: 'Finder window' }).boundingBox())?.x).toBe(212)
 
   await expect(page).toHaveScreenshot('tengri-desktop-1440x900.png', {
     fullPage: true,
   })
+  await page.getByRole('navigation', { name: 'Dock' }).screenshot({ path: test.info().outputPath('tengri-dock.png') })
 
   await page.evaluate(() => sessionStorage.clear())
   await page.setViewportSize({ width: 1728, height: 1117 })
@@ -2089,6 +2441,7 @@ test('renders native Finder and Settings layouts with accessible navigation', as
   await expect(settings.getByRole('heading', { name: 'General', exact: true })).toBeVisible()
   await page.mouse.move(0, 0)
   await expect(settings).toHaveScreenshot('tengri-settings.png')
+  await page.screenshot({ path: test.info().outputPath('tengri-desktop-polish.png') })
   await settings.getByRole('button', { name: 'Runtime', exact: true }).click()
   await expect(settings.getByRole('heading', { name: 'Runtime', exact: true })).toBeInViewport()
   await settings.getByRole('button', { name: 'Lifecycle', exact: true }).click()

@@ -2,9 +2,9 @@
 
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Bot, CircleAlert, CircleUserRound, Cloud, LoaderCircle, Moon, Play, RotateCw, Trash2 } from 'lucide-react'
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import { AnimatePresence, motion } from 'motion/react'
 import type { ReactNode } from 'react'
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 
 import { tengriAuthClient } from '@/lib/tengri/auth-client'
@@ -20,6 +20,7 @@ import {
 } from './desktop-session-storage'
 import { useModalFocus } from './modal-focus'
 import { ReadyDesktop } from './ready-desktop'
+import { useDesktopReducedMotion } from './use-desktop-reduced-motion'
 
 export default function DesktopOnboarding() {
   const mounted = useRef(false)
@@ -123,7 +124,7 @@ export default function DesktopOnboarding() {
 
   return (
     <main className="font-system relative min-h-[100svh] overflow-hidden bg-[#080b13] text-white selection:bg-[#6da8ff]/35">
-      <div aria-hidden="true" className="absolute inset-0 bg-[url('/tengri-wallpaper.svg')] bg-cover bg-center" />
+      <div aria-hidden="true" className="absolute inset-0 bg-[url('/tengri/wallpaper.webp')] bg-cover bg-center" />
       <div aria-hidden="true" className="absolute inset-0 bg-black/10" />
       <header className="absolute inset-x-0 top-0 z-20 flex h-8 items-center justify-between border-b border-white/10 bg-white/[0.055] px-4 text-[12px] text-white/72 backdrop-blur-2xl">
         <div className="flex items-center gap-2 font-semibold text-white/90">
@@ -542,7 +543,7 @@ function LifecycleWindow({
   title: string
 }) {
   const modalFocus = useModalFocus<HTMLElement>(interactive)
-  const reducedMotion = useHydratedReducedMotion()
+  const reducedMotion = useDesktopReducedMotion()
   return (
     <motion.section
       ref={modalFocus.ref}
@@ -606,7 +607,7 @@ function InlineError({ message }: { message: string }) {
 }
 
 function ProgressBar() {
-  const reducedMotion = useHydratedReducedMotion()
+  const reducedMotion = useDesktopReducedMotion()
   return (
     <div className="mt-6 h-1 overflow-hidden rounded-full bg-white/8">
       <motion.div
@@ -616,20 +617,6 @@ function ProgressBar() {
       />
     </div>
   )
-}
-
-function useHydratedReducedMotion() {
-  const reducedMotion = useReducedMotion()
-  const hydrated = useSyncExternalStore(
-    subscribeToHydration,
-    () => true,
-    () => false,
-  )
-  return hydrated && Boolean(reducedMotion)
-}
-
-function subscribeToHydration() {
-  return () => {}
 }
 
 function TengriMark() {
