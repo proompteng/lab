@@ -11,6 +11,13 @@ describe('intraday replay command', () => {
     })
   })
 
+  test('selects an explicit independent-session study', () => {
+    expect(Result.getOrThrow(parseIntradayReplayCommandArgs(['--study', '/tmp/study.json']))).toEqual({
+      _tag: 'Study',
+      inputPath: '/tmp/study.json',
+    })
+  })
+
   for (const args of [
     [],
     ['--input'],
@@ -20,6 +27,10 @@ describe('intraday replay command', () => {
     ['--unknown'],
     ['--help', 'extra'],
     ['--input', 'a.json', 'b.json'],
+    ['--study'],
+    ['--study', '--help'],
+    ['--study', ''],
+    ['--input', 'a.json', '--study', 'b.json'],
   ]) {
     test(`rejects ambiguous arguments: ${JSON.stringify(args)}`, () => {
       expect(Result.isFailure(parseIntradayReplayCommandArgs(args))).toBe(true)
@@ -61,5 +72,17 @@ describe('intraday replay command', () => {
     expect(new TextDecoder().decode(result.stdout) + new TextDecoder().decode(result.stderr)).toContain(
       'invalid replay input JSON',
     )
+  })
+
+  test('invalid study JSON fails before archive configuration or reads', () => {
+    const result = Bun.spawnSync({
+      cmd: [process.execPath, `${import.meta.dir}/intraday-replay-command.ts`, '--study', import.meta.path],
+      env: {},
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+    expect(result.exitCode).toBe(1)
+    expect(new TextDecoder().decode(result.stdout)).toBe('')
+    expect(new TextDecoder().decode(result.stderr)).toContain('invalid replay study JSON')
   })
 })

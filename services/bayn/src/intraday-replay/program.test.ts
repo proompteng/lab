@@ -61,8 +61,15 @@ const snapshotFor = (
   request: IntradaySnapshotRequest,
   premiums: Readonly<Record<string, number>> = {},
   bidSizes: Readonly<Record<string, number>> = {},
+  basePrice = 100,
 ): ArchiveVerifiedIntradayMarketSnapshot =>
-  makeIntradayMomentumTestSnapshot(protocol, request, premiums, 100, bidSizes) as ArchiveVerifiedIntradayMarketSnapshot
+  makeIntradayMomentumTestSnapshot(
+    protocol,
+    request,
+    premiums,
+    basePrice,
+    bidSizes,
+  ) as ArchiveVerifiedIntradayMarketSnapshot
 
 const phaseFor = (request: IntradaySnapshotQuery): ReplayPhase => {
   if (request.purpose === undefined) return 'decision'
@@ -252,6 +259,102 @@ describe('intraday replay program', () => {
       executionSessionCount: 2,
       netRealizedPnlAfterCostsMicros: '900000',
     })
+  })
+
+  test('retains an interim adverse bid drawdown after a profitable close', async () => {
+    const archive = makeArchive({
+      snapshot: (request, phase, occurrence) => {
+        if (phase === 'decision') return snapshotFor(request, { AAPL: 0.01 })
+        if (phase === 'entry-pricing') {
+          return occurrence >= 2 ? snapshotFor(request, {}, {}, 90) : snapshotFor(request)
+        }
+        return snapshotFor(request, { AAPL: 0.01 })
+      },
+    })
+    const report = await run(replayInput(['2026-09-04']), archive)
+    const session = report.sessions[0]
+    const mark = session?.observations.find(
+      (observation) => observation.kind === 'snapshot' && observation.purpose === 'mark',
+    )
+    const maximumObservedDrawdownMicros = session?.maximumObservedDrawdownMicros ?? '0'
+    const markDrawdownMicros = mark?.kind === 'snapshot' ? (mark.equity?.currentDrawdownMicros ?? '0') : '0'
+    expect(session).toMatchObject({
+      status: 'COMPLETE',
+      netRealizedPnlAfterCostsMicros: '950000',
+      maximumObservedDrawdownMicros: expect.any(String),
+    })
+    expect(Number(maximumObservedDrawdownMicros)).toBeGreaterThan(0)
+    expect(mark).toMatchObject({
+      kind: 'snapshot',
+      purpose: 'mark',
+      equity: { currentDrawdownMicros: expect.any(String) },
+    })
+    expect(Number(markDrawdownMicros)).toBeGreaterThan(0)
+    expect(report.totals.maximumObservedDrawdownMicros).toBe(maximumObservedDrawdownMicros)
+  })
+
+  test('keeps attempted close evidence while missing a required holding mark makes the session incomplete', async () => {
+    const archive = makeArchive({
+      snapshot: (request, phase) => {
+        if (phase === 'decision') return snapshotFor(request, { AAPL: 0.01 })
+        if (phase === 'entry-pricing') return snapshotFor(request)
+        return snapshotFor(request, { AAPL: 0.01 })
+      },
+    })
+    let entryPricingCalls = 0
+    const report = await Effect.runPromise(
+      runIntradayReplay(
+        replayInput(['2026-09-04']),
+        {
+          ...archive.service,
+          loadSnapshot: (request) => {
+            if (request.purpose === IntradaySnapshotPurpose.EntryPricing && entryPricingCalls++ === 2) {
+              return Effect.fail(
+                retryableOperationalError({
+                  component: 'market-data',
+                  operation: 'load-mark',
+                  message: 'required mark is unavailable',
+                }),
+              )
+            }
+            return archive.service.loadSnapshot(request)
+          },
+        },
+        finalizedNow,
+      ),
+    )
+    const session = report.sessions[0]
+    expect(session).toMatchObject({
+      status: 'INCOMPLETE',
+      reason: expect.stringContaining('mark evidence incomplete'),
+      netRealizedPnlAfterCostsMicros: null,
+      positions: [],
+    })
+    expect(session?.orders.some(({ side }) => side === OrderSide.Sell)).toBe(true)
+    expect(session?.observations).toContainEqual(
+      expect.objectContaining({ kind: 'unavailable', purpose: 'mark', retryable: true }),
+    )
+  })
+
+  test('carries the prior completed session peak into the next session drawdown', async () => {
+    const archive = makeArchive({
+      snapshot: (request, phase, occurrence) => {
+        if (phase === 'decision') return snapshotFor(request, { AAPL: 0.01 })
+        if (phase === 'entry-pricing') {
+          return occurrence >= 2 ? snapshotFor(request, {}, {}, 90) : snapshotFor(request)
+        }
+        return snapshotFor(request, request.sessionDate === '2026-09-04' ? { AAPL: 0.01 } : {})
+      },
+    })
+    const report = await run(replayInput(sessionDates), archive)
+    const first = report.sessions[0]
+    const second = report.sessions[1]
+    expect(first).toMatchObject({ status: 'COMPLETE', peakEquityMicros: '2000950000' })
+    expect(second).toMatchObject({ status: 'COMPLETE', peakEquityMicros: '2000950000' })
+    expect(Number(second?.maximumObservedDrawdownMicros ?? '0')).toBeGreaterThanOrEqual(
+      Number(first?.maximumObservedDrawdownMicros ?? '0'),
+    )
+    expect(report.totals.peakEquityMicros).toBe('2000950000')
   })
 
   test('keeps an unavailable entry window incomplete instead of calling it no-trade', async () => {

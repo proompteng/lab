@@ -121,7 +121,7 @@ replay_actual="$(
     "${image_id}" \
     --help
 )"
-expected_replay='Usage: bayn-intraday-replay --input <path> | --help'
+expected_replay='Usage: bayn-intraday-replay --input <path> | --study <path> | --help'
 if [[ "${replay_actual}" != "${expected_replay}" ]]; then
   printf 'Unexpected Bayn intraday-replay help output:\n%s\n' "${replay_actual}" >&2
   exit 1
