@@ -147,11 +147,14 @@ export function ChromeApp({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-zinc-900" onKeyDownCapture={handleShortcut}>
-      <div className="flex h-9 shrink-0 items-end gap-1 bg-zinc-800 px-2 pt-1">
+      <div
+        data-window-drag-region
+        className="flex h-10 shrink-0 touch-none select-none items-end gap-1 bg-[#252528] pt-1 pr-2 pl-[96px]"
+      >
         <div
           aria-label="Browser tabs"
           aria-orientation="horizontal"
-          className="flex min-w-0 flex-1 items-end gap-1 overflow-x-auto"
+          className="flex min-w-0 flex-1 items-end gap-1 overflow-x-auto [scrollbar-width:none]"
           role="tablist"
         >
           {state.tabs.map((tab, index) => {
@@ -162,8 +165,8 @@ export function ChromeApp({
                 aria-controls={`chrome-panel-${tab.id}`}
                 aria-keyshortcuts="Delete"
                 aria-selected={selected}
-                className={`flex h-8 max-w-52 min-w-32 shrink-0 items-center gap-2 rounded-t-xl px-3 text-[12px] outline-none focus-visible:ring-2 focus-visible:ring-white/50 ${
-                  selected ? 'bg-[#353535] text-white/85' : 'text-white/55 hover:bg-white/5'
+                className={`flex h-[34px] max-w-52 min-w-32 shrink-0 items-center gap-2 rounded-t-[10px] px-3 text-[12px] outline-none focus-visible:ring-2 focus-visible:ring-white/50 ${
+                  selected ? 'bg-[#353538] text-white/90' : 'text-white/60 hover:bg-white/5'
                 }`}
                 id={`chrome-tab-${tab.id}`}
                 key={tab.id}
@@ -225,7 +228,7 @@ export function ChromeApp({
         </button>
       </div>
       <form
-        className="flex h-11 shrink-0 items-center gap-2 border-b border-white/8 bg-[#353535] px-3"
+        className="flex h-11 shrink-0 items-center gap-2 border-b border-black/25 bg-[#353538] px-3"
         onSubmit={(event) => {
           event.preventDefault()
           navigate(address)
@@ -254,7 +257,7 @@ export function ChromeApp({
             <ArrowRight className="h-4 w-4" aria-hidden="true" />
           </ToolbarButton>
         )}
-        <label className="flex min-w-0 flex-1 items-center gap-2 rounded-full border border-black/15 bg-zinc-800 px-3 py-1.5 text-xs shadow-inner focus-within:border-white/16">
+        <label className="flex min-w-0 flex-1 items-center gap-2 rounded-full border border-black/15 bg-[#242427] px-3 py-1.5 text-xs focus-within:border-blue-400/80 focus-within:ring-2 focus-within:ring-blue-400/25">
           <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" />
           <span className="sr-only">Private Tengri address</span>
           <input

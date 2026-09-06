@@ -526,23 +526,30 @@ export function FinderApp({
 
   return (
     <div className="@container/finder relative flex h-full min-h-0 bg-[#1d1e20] text-[13px] text-white/82">
-      <aside className="w-48 shrink-0 overflow-y-auto border-r border-white/[0.08] bg-[#262729]/68 p-2.5 backdrop-blur-xl @max-[640px]/finder:hidden">
+      <aside className="w-48 shrink-0 overflow-y-auto border-r border-black/20 bg-gradient-to-b from-[#36363e] to-[#2b2b33] px-2.5 pt-[60px] pb-2.5 @max-[640px]/finder:hidden">
+        <div data-window-drag-region className="absolute top-0 left-0 h-[52px] w-48 touch-none select-none" />
         <p className="mb-1.5 px-2 py-1 text-[11px] font-semibold text-white/55">Favorites</p>
         {[{ label: 'Workspace', path: FINDER_WORKSPACE_PATH, icon: Folder }].map((item) => (
           <button
             type="button"
             key={item.label}
             onClick={() => navigate(item.path)}
-            className={`mb-0.5 flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-[12px] transition-colors focus-visible:ring-2 focus-visible:ring-white/35 focus-visible:outline-none ${path === item.path ? 'bg-white/[0.12] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]' : 'text-white/60 hover:bg-white/[0.07] hover:text-white/85'}`}
+            className={`mb-0.5 flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] transition-colors focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:outline-none ${path === item.path ? (active ? 'bg-[#2869ba] text-white' : 'bg-white/[0.12] text-white/85') : 'text-white/65 hover:bg-white/[0.07] hover:text-white/85'}`}
           >
-            <item.icon aria-hidden="true" className="h-4 w-4 text-[#72a7e8]" />
+            <item.icon
+              aria-hidden="true"
+              className={`h-4 w-4 ${active && path === item.path ? 'text-white' : 'text-[#72a7e8]'}`}
+            />
             {item.label}
           </button>
         ))}
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex h-10 shrink-0 items-center gap-1.5 overflow-x-auto border-b border-white/[0.08] bg-[#28292b]/72 px-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] @max-[640px]/finder:h-auto @max-[640px]/finder:flex-wrap @max-[640px]/finder:py-1.5">
+        <div
+          data-window-drag-region
+          className="flex min-h-[52px] shrink-0 touch-none select-none items-center gap-1.5 overflow-x-auto border-b border-black/25 bg-gradient-to-b from-[#343437] to-[#2d2d30] px-3 @max-[640px]/finder:flex-wrap @max-[640px]/finder:pt-[52px] @max-[640px]/finder:pb-2"
+        >
           <button
             type="button"
             aria-label="Back"

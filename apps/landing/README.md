@@ -63,6 +63,27 @@ the Deployment directly.
 
 ## Validation
 
+### Desktop design and interaction
+
+The Tengri desktop uses macOS-style unified toolbars, full-height sidebars, restrained window shadows, and a
+proximity-magnifying Dock. Apple’s original Big Sur wallpaper and application artwork are bundled locally; provenance
+is in [`public/tengri/README.md`](public/tengri/README.md). Finder, Chrome, Code, Terminal, and Settings continue to
+operate on the real guest workspace.
+
+Window movement and Dock magnification update transforms without React state changes per pointer frame. Pointer
+geometry is measured at gesture boundaries; app content is memoized independently from window placement. The clock
+updates its own leaf component. Minimized windows retain their application sessions and finish their animation at the
+corresponding Dock icon. Reduced-motion preferences update while the desktop is open.
+
+Design references: Apple [windows](https://developer.apple.com/design/human-interface-guidelines/windows),
+[toolbars](https://developer.apple.com/design/human-interface-guidelines/toolbars), and
+[materials](https://developer.apple.com/design/human-interface-guidelines/materials); web.dev
+[animation performance](https://web.dev/articles/animations-guide).
+
+`bun run test:e2e` covers toolbar alignment, narrow layouts, all resize corners, drag continuity, Dock magnification,
+minimize targets, reduced motion, idle geometry reads, and guest lifecycle behavior. Visual snapshots are generated
+with the pinned Playwright browser on both macOS and Linux.
+
 ```sh
 cd apps/landing
 bunx tsc --noEmit
