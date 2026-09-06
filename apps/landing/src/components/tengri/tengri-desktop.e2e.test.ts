@@ -733,12 +733,17 @@ async function resizeWindow(
   edge: 'e' | 'n' | 'ne' | 'nw' | 's' | 'se' | 'sw' | 'w',
   delta: { x: number; y: number },
   expected: { height: number; width: number; x: number; y: number },
+  grabPoint?: { x: number; y: number },
 ) {
   const before = await frame.boundingBox()
   expect(before).not.toBeNull()
   const handle = frame.locator('..').locator(`.cursor-${edge}-resize`)
   const handleBounds = await handle.boundingBox()
   expect(handleBounds).not.toBeNull()
+  const point = grabPoint ?? {
+    x: handleBounds!.x + handleBounds!.width / 2,
+    y: handleBounds!.y + handleBounds!.height / 2,
+  }
   await expect
     .poll(() =>
       page.evaluate(
@@ -746,21 +751,14 @@ async function resizeWindow(
           className: document.elementFromPoint(x, y)?.getAttribute('class'),
           tagName: document.elementFromPoint(x, y)?.tagName,
         }),
-        {
-          x: handleBounds!.x + handleBounds!.width / 2,
-          y: handleBounds!.y + handleBounds!.height / 2,
-        },
+        point,
       ),
     )
     .toMatchObject({ className: expect.stringContaining(`cursor-${edge}-resize`) })
 
-  await page.mouse.move(handleBounds!.x + handleBounds!.width / 2, handleBounds!.y + handleBounds!.height / 2)
+  await page.mouse.move(point.x, point.y)
   await page.mouse.down()
-  await page.mouse.move(
-    handleBounds!.x + handleBounds!.width / 2 + delta.x,
-    handleBounds!.y + handleBounds!.height / 2 + delta.y,
-    { steps: 3 },
-  )
+  await page.mouse.move(point.x + delta.x, point.y + delta.y, { steps: 3 })
   await page.mouse.up()
 
   for (const property of ['x', 'y', 'width', 'height'] as const) {
@@ -911,6 +909,24 @@ test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and win
   await expect(page.getByRole('region', { name: 'Terminal window' })).toHaveCount(1)
   await expect.poll(() => mock.actions.some((action) => action.action === 'terminate-terminal')).toBe(true)
   expect(terminalDisposeFailures).toEqual([])
+})
+
+test('keeps the terminal background continuous through its gutters after resizing', async ({ page }, testInfo) => {
+  await mockTengri(page)
+  await page.goto('/')
+  await page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Terminal' }).click()
+
+  const terminal = page.getByRole('region', { name: 'Terminal window' })
+  await expect(terminal.getByLabel('Interactive Tengri terminal')).toHaveAttribute('data-renderer', 'canvas')
+  await expect(terminal.getByText('Connected', { exact: true })).toBeVisible()
+  await testInfo.attach('terminal-before-resize', { body: await terminal.screenshot(), contentType: 'image/png' })
+  await expect(terminal.locator('.xterm-viewport')).toHaveCSS('background-color', 'rgb(30, 30, 30)')
+
+  await resizeWindow(page, terminal, 'se', { x: 73, y: 41 }, { x: 0, y: 0, width: 73, height: 41 })
+  await expect(terminal.locator('.xterm-viewport')).toHaveCSS('background-color', 'rgb(30, 30, 30)')
+  const screenshotPath = testInfo.outputPath('terminal-after-resize.png')
+  await terminal.screenshot({ path: screenshotPath })
+  await testInfo.attach('terminal-after-resize', { path: screenshotPath, contentType: 'image/png' })
 })
 
 test('preserves terminal identity on reload and BFCache restore while isolating a duplicated desktop tab', async ({
@@ -1847,6 +1863,130 @@ test('does not resurrect a turn completed while replay recovery is in flight', a
   expect(mock.actions.some((action) => action.action === 'steer-turn')).toBe(false)
 })
 
+test('resizes across all visible corners while keeping window controls clickable', async ({ page }) => {
+  await mockTengri(page)
+  await page.goto('/')
+  const frame = page.getByRole('region', { name: 'Chrome window' })
+  await expect(frame).toBeVisible()
+
+  for (const inset of [8, -8]) {
+    for (const edge of ['nw', 'ne', 'sw', 'se'] as const) {
+      const bounds = await frame.boundingBox()
+      expect(bounds).not.toBeNull()
+      const west = edge.includes('w')
+      const north = edge.includes('n')
+      await resizeWindow(
+        page,
+        frame,
+        edge,
+        { x: west ? 12 : -12, y: north ? 12 : -12 },
+        { x: west ? 12 : 0, y: north ? 12 : 0, width: -12, height: -12 },
+        {
+          x: bounds!.x + (west ? inset : bounds!.width - inset),
+          y: bounds!.y + (north ? inset : bounds!.height - inset),
+        },
+      )
+    }
+  }
+
+  for (const name of ['Close Chrome', 'Minimize Chrome', 'Maximize Chrome']) {
+    const button = frame.getByRole('button', { name, exact: true })
+    const bounds = await button.boundingBox()
+    expect(bounds).not.toBeNull()
+    for (const point of [
+      { x: 2, y: 12 },
+      { x: 12, y: 2 },
+      { x: 22, y: 12 },
+      { x: 12, y: 22 },
+    ]) {
+      await expect
+        .poll(() =>
+          page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('button')?.getAttribute('aria-label'), {
+            x: bounds!.x + point.x,
+            y: bounds!.y + point.y,
+          }),
+        )
+        .toBe(name)
+    }
+  }
+  await frame.getByRole('button', { name: 'Maximize Chrome', exact: true }).click()
+  await frame.getByRole('button', { name: 'Restore Chrome', exact: true }).click()
+  await frame.getByRole('button', { name: 'Minimize Chrome', exact: true }).click()
+  await expect(frame).toHaveCount(0)
+  await page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Chrome', exact: true }).click()
+  await frame.getByRole('button', { name: 'Close Chrome', exact: true }).click()
+  await expect(frame).toHaveCount(0)
+})
+
+test('tracks the pointer during dragging without repeated desktop layout reads or release snapback', async ({
+  page,
+}) => {
+  await mockTengri(page)
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.goto('/')
+  const frame = page.getByRole('region', { name: 'Chrome window' })
+  await expect(frame).toBeVisible()
+  const before = await frame.boundingBox()
+  const header = await frame.locator(':scope > header').boundingBox()
+  if (!before || !header) throw new Error('Chrome window is missing')
+  const start = { x: header.x + header.width / 2, y: header.y + header.height / 2 }
+  await page.mouse.move(start.x, start.y)
+  await page.mouse.down()
+
+  const layoutReads = frame.evaluate(
+    (element) =>
+      new Promise<number>((resolve) => {
+        const stage = element.parentElement?.parentElement
+        if (!stage) throw new Error('Desktop stage is missing')
+        const getBounds = stage.getBoundingClientRect.bind(stage)
+        let reads = 0
+        stage.getBoundingClientRect = () => {
+          reads += 1
+          return getBounds()
+        }
+        document.addEventListener(
+          'pointerup',
+          () => {
+            stage.getBoundingClientRect = getBounds
+            resolve(reads)
+          },
+          { once: true, capture: true },
+        )
+      }),
+  )
+  for (const delta of [12, 24, 36, 48, 60]) {
+    await page.mouse.move(start.x + delta, start.y - delta / 4, { steps: 3 })
+    await expect.poll(async () => (await frame.boundingBox())?.x).toBeCloseTo(before.x + delta, 0)
+    await expect.poll(async () => (await frame.boundingBox())?.y).toBeCloseTo(before.y - delta / 4, 0)
+  }
+  await page.mouse.up()
+  expect(await layoutReads).toBe(0)
+  await expect.poll(async () => (await frame.boundingBox())?.x).toBeCloseTo(before.x + 60, 0)
+  await expect.poll(async () => (await frame.boundingBox())?.y).toBeCloseTo(before.y - 15, 0)
+  await frame.getByRole('button', { name: 'Minimize Chrome', exact: true }).click()
+  await expect(frame).toHaveCount(0)
+  await page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Chrome', exact: true }).click()
+  await expect.poll(async () => (await frame.boundingBox())?.x).toBeCloseTo(before.x + 60, 0)
+  await expect.poll(async () => (await frame.boundingBox())?.y).toBeCloseTo(before.y - 15, 0)
+})
+
+test('keeps window dimensions within the desktop when the browser shrinks during a resize', async ({ page }) => {
+  await mockTengri(page)
+  await page.goto('/')
+  const frame = page.getByRole('region', { name: 'Chrome window' })
+  const handle = frame.locator('..').locator('.cursor-e-resize')
+  const bounds = await handle.boundingBox()
+  if (!bounds) throw new Error('Chrome resize handle is missing')
+  await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(bounds.x + bounds.width / 2 + 24, bounds.y + bounds.height / 2)
+  await page.setViewportSize({ width: 860, height: 650 })
+  await expect.poll(async () => (await frame.boundingBox())?.width).toBeLessThanOrEqual(848)
+  await page.mouse.up()
+  await expect.poll(async () => (await frame.boundingBox())?.width).toBeLessThanOrEqual(848)
+  await expect.poll(async () => (await frame.boundingBox())?.height).toBeLessThanOrEqual(512)
+})
+
 test('supports desktop window shortcuts, independent windows, drag, and eight-edge resize behavior', async ({
   page,
 }) => {
@@ -1899,6 +2039,7 @@ test('supports desktop window shortcuts, independent windows, drag, and eight-ed
     await resizeWindow(page, frontmost, edge, delta, expected)
   }
 
+  await frontmost.getByRole('button', { name: 'Minimize Chrome', exact: true }).focus()
   await page.keyboard.press('Meta+Backquote')
   await expect
     .poll(async () => {
