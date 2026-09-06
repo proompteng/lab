@@ -71,12 +71,12 @@ runtime proof, and rollback procedure is in `docs/runbooks/talos-latest-upgrade-
 
 ## PodCIDR maintenance checks
 
-Altra currently has a `/24` PodCIDR but advertises 500 pods. Before moving workloads onto it or draining either target,
-commit the temporary Altra-only change to `machine.kubelet.extraConfig.maxPods: 250` in `cluster-template.yaml`.
-Use the render, validate, dry-run, and Omni sync procedure above to apply that committed template, then verify
+The preparation template holds Turin and Altra at `maxPods: 250` and requests `/23` allocations for newly registered
+Nodes. Changing the allocation mask does not resize existing Nodes' immutable PodCIDRs. Before moving workloads onto
+Altra or draining either target, use the render, validate, dry-run, and Omni sync procedure above, then verify
 `kubectl --context galactic-lan -n default get node talos-192-168-1-85 -o jsonpath='{.status.capacity.pods}'` returns
 `250`. Keep that cap until Altra's new `/23` network passes acceptance. The gate intentionally fails on Altra's
-current `/24`/500 state; do not use `--migrated` to skip this preparation.
+old `/24`/500 state; do not use `--migrated` to skip this preparation.
 
 Run the read-only address and storage gate immediately before each node's maintenance:
 

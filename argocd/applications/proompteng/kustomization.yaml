@@ -8,4 +8,4 @@ resources:
 - ingressroute.yaml
 images:
 - name: registry.ide-newton.ts.net/lab/proompteng
-  digest: sha256:458807a841dc3a849c722b335b1e0fb6c2199a8409a065533b3274f7b4faf260
+  digest: sha256:21f4a87015fc28045c068f8858627cd6374ba404563e258a7f3630fbc1f89ee2

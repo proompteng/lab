@@ -9,6 +9,14 @@ features:
     interval: 24h
 patches:
   - file: image-factory-registry.yaml
+  - idOverride: 20-galactic-podcidr-23
+    annotations:
+      name: Allocate /23 IPv4 PodCIDRs to new Nodes
+    inline: |
+      cluster:
+        controllerManager:
+          extraArgs:
+            node-cidr-mask-size: "23"
 ---
 kind: ControlPlane
 machines:
@@ -158,7 +166,7 @@ patches:
           extraConfig:
             featureGates:
               RuntimeClassInImageCriApi: true
-            maxPods: 500
+            maxPods: 250
           nodeIP:
             validSubnets:
               - 100.100.244.128/25
