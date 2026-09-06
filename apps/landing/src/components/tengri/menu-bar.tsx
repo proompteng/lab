@@ -351,9 +351,9 @@ function MenuPopover({
             disabled={entry.disabled}
             aria-checked={entry.checked}
             onClick={() => {
-              void entry.run()
               onClose()
               returnFocus()
+              void entry.run()
             }}
             role={entry.checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
             type="button"

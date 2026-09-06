@@ -827,7 +827,9 @@ test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and win
   await expect(fileMenu).toBeFocused()
   await page.keyboard.press('Enter')
   await page.getByRole('menuitem', { name: /^New .* Window/ }).press('Enter')
-  await expect(fileMenu).toBeFocused()
+  const settingsWindows = page.getByRole('region', { name: 'Settings window' })
+  await expect(settingsWindows).toHaveCount(2)
+  await expect(settingsWindows.last()).toBeFocused()
 
   await dock.getByRole('button', { name: 'Open Finder' }).click()
   const finder = page.getByRole('region', { name: 'Finder window' })
