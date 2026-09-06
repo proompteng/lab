@@ -1,7 +1,7 @@
 'use client'
 
 import { FileSearch, Folder, Monitor, Play, Search } from 'lucide-react'
-import { motion, useReducedMotion } from 'motion/react'
+import { motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import type { TengriFileEntry, TengriFileSearchResult } from '@/lib/tengri/types'
@@ -10,6 +10,7 @@ import { runTengriAction } from './client'
 import { DOCK_APPS } from './desktop-apps'
 import { FINDER_WORKSPACE_PATH } from './finder-model'
 import { useModalFocus } from './modal-focus'
+import { useDesktopReducedMotion } from './use-desktop-reduced-motion'
 
 type SpotlightResult =
   | { id: string; kind: 'app'; label: string; detail: string; app: TengriApp }
@@ -38,7 +39,7 @@ export function Spotlight({
   onOpenFile: (path: string) => void
 }) {
   const modalFocus = useModalFocus<HTMLElement>()
-  const reducedMotion = useReducedMotion()
+  const reducedMotion = useDesktopReducedMotion()
   const [query, setQuery] = useState('')
   const [fileSearch, setFileSearch] = useState<FileSearchState>({ entries: [], query: '', truncated: false })
   const [recentIds, setRecentIds] = useState<string[]>([])
