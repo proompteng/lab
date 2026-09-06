@@ -52,7 +52,10 @@ export async function getRateLimitedTengriIdentity(request: Request) {
 
 export function tengriRouteError(error: unknown) {
   if (error instanceof TengriUnavailableError) {
-    return Response.json({ error: error.message }, { status: error.status, headers: noStoreHeaders() })
+    return Response.json(
+      { error: error.message, code: error.code },
+      { status: error.status, headers: noStoreHeaders() },
+    )
   }
   if (error instanceof SyntaxError) {
     return Response.json({ error: 'Request body is invalid JSON' }, { status: 400, headers: noStoreHeaders() })

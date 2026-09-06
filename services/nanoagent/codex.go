@@ -64,6 +64,16 @@ type codexPendingResult struct {
 	eventSequence uint64
 }
 
+type codexRPCError struct {
+	code    int
+	message string
+	raw     json.RawMessage
+}
+
+func (rpcError *codexRPCError) Error() string {
+	return fmt.Sprintf("Codex app-server request failed: %s", compactJSON(rpcError.raw))
+}
+
 type codexCallResult struct {
 	result        json.RawMessage
 	eventSequence uint64
@@ -433,7 +443,7 @@ func (supervisor *codexSupervisor) request(
 		return codexCallResult{}, ctx.Err()
 	case result := <-response:
 		if len(result.err) > 0 && string(result.err) != "null" {
-			return codexCallResult{}, fmt.Errorf("Codex app-server request failed: %s", compactJSON(result.err))
+			return codexCallResult{}, codexRPCErrorFromRaw(result.err)
 		}
 		return codexCallResult{
 			result:        result.result,
@@ -1103,6 +1113,52 @@ func compactJSON(value json.RawMessage) string {
 	return "request failed"
 }
 
+func codexRPCErrorFromRaw(raw json.RawMessage) error {
+	var encoded struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(raw, &encoded); err != nil {
+		return fmt.Errorf("Codex app-server request failed: %s", compactJSON(raw))
+	}
+	return &codexRPCError{
+		code:    encoded.Code,
+		message: encoded.Message,
+		raw:     append(json.RawMessage(nil), raw...),
+	}
+}
+
+const (
+	codexConversationNotFoundMessage = "Codex conversation could not be found"
+	codexMissingRolloutMessagePrefix = "no rollout found for thread id "
+)
+
+func isMissingCodexConversation(method string, params json.RawMessage, err error) bool {
+	if method != "thread/resume" {
+		return false
+	}
+	var rpcError *codexRPCError
+	if !errors.As(err, &rpcError) || rpcError.code != -32600 {
+		return false
+	}
+	threadID, ok := codexResumeThreadID(params)
+	return ok && rpcError.message == codexMissingRolloutMessagePrefix+threadID
+}
+
+func codexResumeThreadID(params json.RawMessage) (string, bool) {
+	var input struct {
+		ThreadID string `json:"threadId"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(params))
+	if err := decoder.Decode(&input); err != nil {
+		return "", false
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return "", false
+	}
+	return input.ThreadID, input.ThreadID != ""
+}
+
 func allowedCodexMethod(method string) bool {
 	switch method {
 	case "account/read", "account/login/start", "thread/start", "thread/resume", "turn/start", "turn/steer", "turn/interrupt":
@@ -1123,6 +1179,10 @@ func (server *apiServer) handleCodexCall(writer http.ResponseWriter, request *ht
 	}
 	result, err := server.codex.call(request.Context(), input.Method, input.Params)
 	if err != nil {
+		if isMissingCodexConversation(input.Method, input.Params, err) {
+			writeAPIError(writer, http.StatusNotFound, codexConversationNotFoundMessage)
+			return
+		}
 		writeAPIError(writer, http.StatusBadGateway, err.Error())
 		return
 	}

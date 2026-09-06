@@ -46,6 +46,123 @@ func TestAPIRoutesRequireBootstrapToken(t *testing.T) {
 	}
 }
 
+func TestCodexCallMapsOnlyMatchingMissingRolloutToNotFound(t *testing.T) {
+	tests := []struct {
+		name       string
+		method     string
+		params     json.RawMessage
+		err        json.RawMessage
+		wantStatus int
+		wantError  string
+	}{
+		{
+			name:       "matching missing rollout",
+			method:     "thread/resume",
+			params:     json.RawMessage(`{"threadId":"thread-1","cwd":"/workspace","runtimeWorkspaceRoots":["/workspace"],"approvalPolicy":"on-request","sandbox":"danger-full-access"}`),
+			err:        json.RawMessage(`{"code":-32600,"message":"no rollout found for thread id thread-1"}`),
+			wantStatus: http.StatusNotFound,
+			wantError:  codexConversationNotFoundMessage,
+		},
+		{
+			name:       "different thread ID",
+			method:     "thread/resume",
+			params:     json.RawMessage(`{"threadId":"thread-1"}`),
+			err:        json.RawMessage(`{"code":-32600,"message":"no rollout found for thread id thread-2"}`),
+			wantStatus: http.StatusBadGateway,
+			wantError:  `Codex app-server request failed: {"code":-32600,"message":"no rollout found for thread id thread-2"}`,
+		},
+		{
+			name:       "non-resume method",
+			method:     "thread/start",
+			params:     json.RawMessage(`{"threadId":"thread-1"}`),
+			err:        json.RawMessage(`{"code":-32600,"message":"no rollout found for thread id thread-1"}`),
+			wantStatus: http.StatusBadGateway,
+			wantError:  `Codex app-server request failed: {"code":-32600,"message":"no rollout found for thread id thread-1"}`,
+		},
+		{
+			name:       "other RPC error",
+			method:     "thread/resume",
+			params:     json.RawMessage(`{"threadId":"thread-1"}`),
+			err:        json.RawMessage(`{"code":-32602,"message":"invalid params"}`),
+			wantStatus: http.StatusBadGateway,
+			wantError:  `Codex app-server request failed: {"code":-32602,"message":"invalid params"}`,
+		},
+		{
+			name:       "invalid thread ID type",
+			method:     "thread/resume",
+			params:     json.RawMessage(`{"threadId":123}`),
+			err:        json.RawMessage(`{"code":-32600,"message":"no rollout found for thread id thread-1"}`),
+			wantStatus: http.StatusBadGateway,
+			wantError:  `Codex app-server request failed: {"code":-32600,"message":"no rollout found for thread id thread-1"}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := testAPIServer(t)
+			supervisor, wire := readyCodexSupervisor(t)
+			server.codex = supervisor
+			body, err := json.Marshal(codexCallRequest{Method: test.method, Params: test.params})
+			if err != nil {
+				t.Fatalf("encode Codex call: %v", err)
+			}
+
+			responseCh := make(chan *httptest.ResponseRecorder, 1)
+			go func() {
+				responseCh <- performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPost, "/v1/codex/call", body)
+			}()
+			request := readCodexWireRequest(t, wire)
+			respondToCodexWireRequest(t, supervisor, request, test.err)
+
+			var response *httptest.ResponseRecorder
+			select {
+			case response = <-responseCh:
+			case <-time.After(time.Second):
+				t.Fatal("Codex call handler did not return after the RPC response")
+			}
+			if response.Code != test.wantStatus {
+				t.Fatalf("Codex call status = %d body = %q, want %d", response.Code, response.Body.String(), test.wantStatus)
+			}
+			var payload struct {
+				Error string `json:"error"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+				t.Fatalf("decode Codex call error: %v", err)
+			}
+			if payload.Error != test.wantError {
+				t.Fatalf("Codex call error = %q, want %q", payload.Error, test.wantError)
+			}
+		})
+	}
+}
+
+func TestCodexCallKeepsTransportErrorsOnBadGateway(t *testing.T) {
+	t.Parallel()
+	server := testAPIServer(t)
+	supervisor, _ := readyCodexSupervisor(t)
+	server.codex = supervisor
+	request := httptest.NewRequest(http.MethodPost, "/v1/codex/call", strings.NewReader(`{"method":"thread/resume","params":{"threadId":"thread-1"}}`))
+	requestContext, cancel := context.WithCancel(context.Background())
+	cancel()
+	request = request.WithContext(requestContext)
+	request.Header.Set("Authorization", "Bearer test-bootstrap-token")
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.authenticatedRoutes().ServeHTTP(response, request)
+	if response.Code != http.StatusBadGateway {
+		t.Fatalf("canceled Codex call status = %d body = %q", response.Code, response.Body.String())
+	}
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode canceled Codex call error: %v", err)
+	}
+	if payload.Error != "context canceled" {
+		t.Fatalf("canceled Codex call error = %q, want context canceled", payload.Error)
+	}
+}
+
 func TestFileSearchStopsWhenRequestIsCanceled(t *testing.T) {
 	t.Parallel()
 	server := testAPIServer(t)
