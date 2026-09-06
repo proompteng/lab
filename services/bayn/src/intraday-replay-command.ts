@@ -75,11 +75,17 @@ const print = (output: string) =>
 
 export const makeArchiveStudySessionWriter = (fs: FileSystem.FileSystem, directory: string) =>
   Effect.gen(function* () {
-    yield* fs.makeDirectory(directory, { mode: 0o700 })
+    if (yield* fs.exists(directory))
+      return yield* new IntradayReplayFailure({
+        operation: 'report',
+        message: 'archive study output directory already exists',
+      })
+    const createDirectory = yield* Effect.cached(fs.makeDirectory(directory, { mode: 0o700 }))
     return (evidence: ArchiveReplayStudySessionEvidence): Effect.Effect<void, IntradayReplayFailure> =>
       Effect.scoped(
         Effect.gen(function* () {
           const output = yield* Effect.fromResult(canonicalJsonV1Result(evidence))
+          yield* createDirectory
           const temporaryPath = yield* fs.makeTempFileScoped({ directory, prefix: '.session-' })
           yield* fs.writeFileString(temporaryPath, `${output}\n`)
           const name = `${evidence.scenarioName}-${evidence.replay.input.range.start}-${evidence.replay.reportHash}.json`

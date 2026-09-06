@@ -261,4 +261,46 @@ describe('archive replay study', () => {
     expect(Exit.isFailure(exit)).toBe(true)
     expect(market.dates).toEqual(['2026-09-01'])
   })
+
+  test('does not consume an output path when study validation fails before the first session', async () => {
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem
+          const parent = yield* fs.makeTempDirectoryScoped()
+          const directory = `${parent}/evidence`
+          const input = yield* inputEffect
+          for (const [candidate, now] of [
+            [{ ...input, strategyProtocolHash: '0'.repeat(64) }, '2026-09-05T00:00:00.000Z'],
+            [input, '2026-09-02T15:00:00.000Z'],
+          ] as const) {
+            const persist = yield* makeArchiveStudySessionWriter(fs, directory)
+            const market = archive()
+            expect(
+              Exit.isFailure(yield* Effect.exit(runArchiveReplayStudy(candidate, market.service, now, persist))),
+            ).toBe(true)
+            expect(market.dates).toEqual([])
+            expect(yield* fs.exists(directory)).toBe(false)
+          }
+          const persist = yield* makeArchiveStudySessionWriter(fs, directory)
+          const report = yield* runArchiveReplayStudy(
+            input,
+            archive('2026-09-01').service,
+            '2026-09-05T00:00:00.000Z',
+            persist,
+          )
+          const files = yield* fs.readDirectory(directory)
+          expect(files.toSorted()).toEqual(
+            report.scenarios
+              .flatMap((scenario) =>
+                scenario.replays.map(
+                  (replay) => `${scenario.name}-${replay.input.range.start}-${replay.reportHash}.json`,
+                ),
+              )
+              .toSorted(),
+          )
+        }),
+      ).pipe(Effect.provide(NodeFileSystem.layer)),
+    )
+  })
 })
