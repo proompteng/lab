@@ -2243,12 +2243,12 @@ test('magnifies neighboring Dock icons without pointer-frame layout reads and re
   await expect.poll(async () => (await chrome.locator('img').boundingBox())!.width).toBeGreaterThan(before.width * 1.1)
   const geometryReads = dock.evaluate(
     (element) =>
-      new Promise<number>((resolve) => {
-        let reads = 0
+      new Promise<string[]>((resolve) => {
+        const reads: string[] = []
         const originals = [...element.querySelectorAll('button')].map((button) => {
           const original = button.getBoundingClientRect.bind(button)
           button.getBoundingClientRect = () => {
-            reads += 1
+            reads.push(new Error('Dock layout read during pointer movement').stack ?? button.id)
             return original()
           }
           return { button, original }
@@ -2263,10 +2263,12 @@ test('magnifies neighboring Dock icons without pointer-frame layout reads and re
         )
       }),
   )
+  await page.keyboard.press('Meta+n')
+  await expect(page.getByRole('region', { name: 'Chrome window' })).toHaveCount(2)
   await page.mouse.move(button.x - 40, button.y + 30, { steps: 12 })
   await page.mouse.move(button.x + 70, button.y + 30, { steps: 18 })
   await page.mouse.move(0, 0)
-  expect(await geometryReads).toBe(0)
+  expect(await geometryReads).toEqual([])
   await expect.poll(async () => (await code.locator('img').boundingBox())!.width).toBeCloseTo(before.width, 0)
 
   await page.emulateMedia({ reducedMotion: 'reduce' })

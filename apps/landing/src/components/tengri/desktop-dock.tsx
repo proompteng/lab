@@ -2,7 +2,7 @@
 
 import { motion, useMotionValue, useSpring } from 'motion/react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
-import { forwardRef, useCallback, useImperativeHandle, useLayoutEffect, useRef } from 'react'
+import { forwardRef, useCallback, useImperativeHandle, useLayoutEffect, useMemo, useRef } from 'react'
 
 import { APP_TITLES } from '@/lib/tengri/window-manager'
 import type { DesktopWindow, TengriApp } from '@/lib/tengri/window-manager'
@@ -147,11 +147,12 @@ export function DesktopDock({
 
   const registerItem = useCallback((app: TengriApp, handle: DockItemHandle | null) => {
     if (handle) itemHandlesRef.current.set(app, handle)
-    else {
-      itemHandlesRef.current.delete(app)
-      geometryRef.current.delete(app)
-    }
+    else itemHandlesRef.current.delete(app)
   }, [])
+  const items = useMemo(
+    () => DOCK_APPS.map((app) => ({ app, ref: (handle: DockItemHandle | null) => registerItem(app, handle) })),
+    [registerItem],
+  )
 
   const measureGeometry = useCallback(() => {
     const nextGeometry = new Map<TengriApp, DockGeometry>()
@@ -221,10 +222,10 @@ export function DesktopDock({
         aria-hidden="true"
         className="pointer-events-none absolute inset-x-5 top-px h-px rounded-full bg-gradient-to-r from-transparent via-white/35 to-transparent"
       />
-      {DOCK_APPS.map((app) => (
+      {items.map(({ app, ref }) => (
         <DockItem
           key={app}
-          ref={(handle) => registerItem(app, handle)}
+          ref={ref}
           app={app}
           motionDisabled={motionDisabled}
           onOpenApp={onOpenApp}
