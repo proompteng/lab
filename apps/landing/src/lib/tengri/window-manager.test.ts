@@ -152,6 +152,59 @@ describe('Tengri desktop window manager', () => {
     expect(state.windows.every((window) => window.bounds.y <= 444)).toBe(true)
   })
 
+  test('fits persisted normal windows above a shorter usable viewport before restore', () => {
+    const fullViewport = { x: 0, y: 0, width: 1440, height: 900 }
+    const usableViewport = { x: 0, y: 0, width: 1440, height: 774 }
+    const base = initialWindowState(fullViewport)
+    const chrome = base.windows.find((window) => window.app === 'chrome')!
+    const oldBounds = { x: 300, y: 149, width: 1060, height: 700 }
+    const persisted = {
+      ...base,
+      windows: base.windows.map((window) =>
+        window.id === chrome.id ? { ...window, bounds: oldBounds, restoredBounds: oldBounds } : window,
+      ),
+    }
+
+    const hydrated = windowReducer(base, { type: 'hydrate', state: persisted, viewport: usableViewport })
+    expectInsideViewport(hydrated.windows.find((window) => window.id === chrome.id)!.bounds, usableViewport)
+
+    const resized = windowReducer(persisted, { type: 'viewport', viewport: usableViewport })
+    expectInsideViewport(resized.windows.find((window) => window.id === chrome.id)!.bounds, usableViewport)
+
+    const minimized = {
+      ...persisted,
+      windows: persisted.windows.map((window) =>
+        window.id === chrome.id ? { ...window, mode: 'minimized' as const } : window,
+      ),
+    }
+    const restored = windowReducer(minimized, { type: 'restore', id: chrome.id, viewport: usableViewport })
+    expectInsideViewport(restored.windows.find((window) => window.id === chrome.id)!.bounds, usableViewport)
+  })
+
+  test('keeps maximized restore geometry until restoring it into the current viewport', () => {
+    const fullViewport = { x: 0, y: 0, width: 1440, height: 900 }
+    const usableViewport = { x: 0, y: 0, width: 1440, height: 774 }
+    const base = initialWindowState(fullViewport)
+    const chrome = base.windows.find((window) => window.app === 'chrome')!
+    const oldBounds = { x: 300, y: 149, width: 1060, height: 700 }
+    const maximized = {
+      ...base,
+      windows: base.windows.map((window) =>
+        window.id === chrome.id ? { ...window, mode: 'maximized' as const, restoredBounds: oldBounds } : window,
+      ),
+    }
+
+    const resized = windowReducer(maximized, { type: 'viewport', viewport: usableViewport })
+    const resizedChrome = resized.windows.find((window) => window.id === chrome.id)!
+    expectInsideViewport(resizedChrome.bounds, usableViewport)
+    expect(resizedChrome.restoredBounds).toEqual(oldBounds)
+
+    const restored = windowReducer(resized, { type: 'toggle-maximize', id: chrome.id, viewport: usableViewport })
+    const restoredChrome = restored.windows.find((window) => window.id === chrome.id)!
+    expectInsideViewport(restoredChrome.bounds, usableViewport)
+    expect(restoredChrome.restoredBounds).toEqual(restoredChrome.bounds)
+  })
+
   test('returns focus to Finder when every window is closed', () => {
     let state = initialWindowState(viewport)
     for (const window of state.windows) state = windowReducer(state, { type: 'close', id: window.id })
@@ -257,6 +310,20 @@ describe('Tengri desktop window manager', () => {
       width: compact.width,
       height: compact.height,
     })
+  })
+
+  test('contains initial and cascaded new windows in short usable viewports', () => {
+    for (const usableViewport of [
+      { x: 0, y: 0, width: 1_440, height: 774 },
+      { x: 0, y: 0, width: 390, height: 424 },
+    ]) {
+      let state = initialWindowState(usableViewport, ['finder', 'chrome', 'code', 'terminal', 'settings'])
+      for (let index = 0; index < 6; index += 1) {
+        state = windowReducer(state, { type: 'new', app: 'chrome', title: 'Chrome', viewport: usableViewport })
+      }
+
+      expect(state.windows.every((window) => isInsideViewport(window.bounds, usableViewport))).toBe(true)
+    }
   })
 
   test('preserves the opposite edge while clamping resizes', () => {

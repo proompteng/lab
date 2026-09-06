@@ -6,6 +6,8 @@ import ai.proompteng.dorvud.ta.stream.QuotePayload
 import ai.proompteng.dorvud.ta.stream.TradePayload
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment
+import org.apache.flink.streaming.runtime.partitioner.KeyGroupStreamPartitioner
 import org.apache.kafka.clients.consumer.OffsetResetStrategy
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
@@ -13,6 +15,7 @@ import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 
 class MarketDataArchiveJobTest {
   private val observationSymbols = setOf("DBC", "EFA", "IEF", "SPY", "VNQ")
@@ -203,37 +206,18 @@ class MarketDataArchiveJobTest {
 
   @Test
   fun `archive configuration rejects duplicate topics and unbounded values`() {
-    val valid =
-      mapOf(
-        "ARCHIVE_CORE_FEED" to "sip",
-        "ARCHIVE_CORE_BARS_TOPIC" to "torghut.bars.1m.v1",
-        "ARCHIVE_CORE_QUOTES_TOPIC" to "torghut.quotes.v1",
-        "ARCHIVE_CORE_TRADES_TOPIC" to "torghut.trades.v1",
-        "ARCHIVE_DELAYED_SIP_BARS_TOPIC" to "bayn.market-data.delayed-sip.bars.1m.v1",
-        "ARCHIVE_DELAYED_SIP_QUOTES_TOPIC" to "bayn.market-data.delayed-sip.quotes.v1",
-        "ARCHIVE_DELAYED_SIP_TRADES_TOPIC" to "bayn.market-data.delayed-sip.trades.v1",
-        "ARCHIVE_OVERNIGHT_BARS_TOPIC" to "bayn.market-data.overnight.bars.1m.v1",
-        "ARCHIVE_CLICKHOUSE_URL" to "jdbc:clickhouse://clickhouse:8123/signal",
-        "ARCHIVE_CLICKHOUSE_PASSWORD" to "clickhouse-password",
-        "ARCHIVE_KAFKA_PASSWORD" to "password",
-        "ARCHIVE_OFFSET_RESET" to "latest",
-        "ARCHIVE_CORE_UNIVERSE_ID" to coreUniverse.id,
-        "ARCHIVE_CORE_UNIVERSE_SYMBOLS" to coreUniverse.symbols.sorted().joinToString(","),
-        "ARCHIVE_CORE_UNIVERSE_SYMBOL_HASH" to coreUniverse.symbolHash,
-        "UNIVERSE_ID" to observationUniverse.id,
-        "UNIVERSE_SYMBOLS" to observationUniverse.symbols.sorted().joinToString(","),
-        "UNIVERSE_SYMBOL_HASH" to observationUniverse.symbolHash,
-      )
-    val config = MarketDataArchiveConfig.fromEnv(valid)
+    val valid = validEnvironment()
+    val config = MarketDataArchiveConfig.fromEnv(valid + ("ARCHIVE_PARALLELISM" to "16"))
     assertEquals(7, config.routes.size)
     assertEquals(coreUniverse, config.routes.getValue("torghut.bars.1m.v1").universe)
     assertEquals(
       observationUniverse,
       config.routes.getValue("bayn.market-data.delayed-sip.bars.1m.v1").universe,
     )
-    assertEquals(100, config.clickhouseBatchSize)
+    assertEquals(1_000, config.clickhouseBatchSize)
     assertEquals("signal_publisher", config.clickhouseUsername)
     assertEquals(OffsetResetStrategy.LATEST, config.offsetResetStrategy)
+    assertEquals(16, config.parallelism)
 
     val legacy =
       MarketDataArchiveConfig.fromEnv(
@@ -264,6 +248,9 @@ class MarketDataArchiveJobTest {
       MarketDataArchiveConfig.fromEnv(valid + ("ARCHIVE_CLICKHOUSE_BATCH_SIZE" to "1001"))
     }
     assertFailsWith<IllegalArgumentException> {
+      MarketDataArchiveConfig.fromEnv(valid + ("ARCHIVE_PARALLELISM" to "17"))
+    }
+    assertFailsWith<IllegalArgumentException> {
       MarketDataArchiveConfig.fromEnv(valid + ("ARCHIVE_OFFSET_RESET" to "middle"))
     }
     assertFailsWith<IllegalArgumentException> {
@@ -279,6 +266,42 @@ class MarketDataArchiveJobTest {
       MarketDataArchiveConfig.fromEnv(valid + ("ARCHIVE_CORE_UNIVERSE_SYMBOL_HASH" to "0".repeat(64)))
     }
   }
+
+  @Test
+  fun `partitions every archive stream by Kafka lineage before synchronous ClickHouse writes`() {
+    val environment = StreamExecutionEnvironment.getExecutionEnvironment()
+    configureMarketDataArchiveJob(environment, MarketDataArchiveConfig.fromEnv(validEnvironment()))
+
+    val graph = environment.streamGraph
+    val archiveSinks = graph.streamNodes.filter { node -> node.operatorName.endsWith(": Writer") }
+
+    assertEquals(3, archiveSinks.size)
+    archiveSinks.forEach { sink ->
+      assertIs<KeyGroupStreamPartitioner<*, *>>(sink.inEdges.single().partitioner)
+    }
+  }
+
+  private fun validEnvironment(): Map<String, String> =
+    mapOf(
+      "ARCHIVE_CORE_FEED" to "sip",
+      "ARCHIVE_CORE_BARS_TOPIC" to "torghut.bars.1m.v1",
+      "ARCHIVE_CORE_QUOTES_TOPIC" to "torghut.quotes.v1",
+      "ARCHIVE_CORE_TRADES_TOPIC" to "torghut.trades.v1",
+      "ARCHIVE_DELAYED_SIP_BARS_TOPIC" to "bayn.market-data.delayed-sip.bars.1m.v1",
+      "ARCHIVE_DELAYED_SIP_QUOTES_TOPIC" to "bayn.market-data.delayed-sip.quotes.v1",
+      "ARCHIVE_DELAYED_SIP_TRADES_TOPIC" to "bayn.market-data.delayed-sip.trades.v1",
+      "ARCHIVE_OVERNIGHT_BARS_TOPIC" to "bayn.market-data.overnight.bars.1m.v1",
+      "ARCHIVE_CLICKHOUSE_URL" to "jdbc:clickhouse://clickhouse:8123/signal",
+      "ARCHIVE_CLICKHOUSE_PASSWORD" to "clickhouse-password",
+      "ARCHIVE_KAFKA_PASSWORD" to "password",
+      "ARCHIVE_OFFSET_RESET" to "latest",
+      "ARCHIVE_CORE_UNIVERSE_ID" to coreUniverse.id,
+      "ARCHIVE_CORE_UNIVERSE_SYMBOLS" to coreUniverse.symbols.sorted().joinToString(","),
+      "ARCHIVE_CORE_UNIVERSE_SYMBOL_HASH" to coreUniverse.symbolHash,
+      "UNIVERSE_ID" to observationUniverse.id,
+      "UNIVERSE_SYMBOLS" to observationUniverse.symbols.sorted().joinToString(","),
+      "UNIVERSE_SYMBOL_HASH" to observationUniverse.symbolHash,
+    )
 
   private fun record(
     topic: String,

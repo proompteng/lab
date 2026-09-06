@@ -45,15 +45,16 @@ use proto::{
     CodexEvent, CodexEventKind, CodexLogin, CodexThread, CodexTurn, CreateAgentRequest,
     CreateCodexThreadRequest, CreateDirectoryRequest, CreateTerminalRequest, DeleteAgentRequest,
     DeleteFileRequest, Empty, FileEntry, FileEvent, FileEventKind, GetAgentRequest,
-    GetCodexAccountRequest, InterruptCodexTurnRequest, IssuePreviewSessionRequest,
-    IssueTerminalTicketRequest, ListAgentsRequest, ListAgentsResponse, ListFilesRequest,
-    ListFilesResponse, ListTerminalsRequest, ListTerminalsResponse, MoveFileRequest,
-    PreviewSession, ReadFileRequest, ReadFileResponse, ResolveCodexApprovalRequest,
-    ResumeAgentRequest, ResumeCodexThreadRequest, RevokePreviewSessionRequest, SearchFilesRequest,
-    SearchFilesResponse, SendCodexTurnRequest, SleepAgentRequest, StartCodexLoginRequest,
-    SteerCodexTurnRequest, TerminalSession, TerminalTicket, TerminateTerminalRequest,
-    WatchAgentRequest, WatchCodexEventsRequest, WatchFilesRequest, WriteFileRequest,
-    WriteFileResponse, micro_vm_control_plane_server::MicroVmControlPlane,
+    GetCodexAccountRequest, GetCodexLoginRequest, InterruptCodexTurnRequest,
+    IssuePreviewSessionRequest, IssueTerminalTicketRequest, ListAgentsRequest, ListAgentsResponse,
+    ListFilesRequest, ListFilesResponse, ListTerminalsRequest, ListTerminalsResponse,
+    MoveFileRequest, PreviewSession, ReadFileRequest, ReadFileResponse,
+    ResolveCodexApprovalRequest, ResumeAgentRequest, ResumeCodexThreadRequest,
+    RevokePreviewSessionRequest, SearchFilesRequest, SearchFilesResponse, SendCodexTurnRequest,
+    SleepAgentRequest, StartCodexLoginRequest, SteerCodexTurnRequest, TerminalSession,
+    TerminalTicket, TerminateTerminalRequest, WatchAgentRequest, WatchCodexEventsRequest,
+    WatchFilesRequest, WriteFileRequest, WriteFileResponse,
+    micro_vm_control_plane_server::MicroVmControlPlane,
 };
 
 const OWNER_LABEL: &str = "runtime.proompteng.ai/owner";
@@ -771,14 +772,31 @@ impl MicroVmControlPlane for ControlPlane {
             .codex_call("account/login/start", json!({"type": "chatgptDeviceCode"}))
             .await
             .map_err(map_guest_error)?;
-        Ok(Response::new(CodexLogin {
-            login_id: json_string(&value, &["/loginId"]),
-            verification_url: json_string(&value, &["/verificationUrl", "/authUrl"]),
-            user_code: json_string(&value, &["/userCode"]),
-            // App-server does not publish a device-code expiry, so Tengri bounds the UI attempt.
-            expires_at: codex_login_expires_at(Utc::now()),
-            raw_json: value.to_string(),
-        }))
+        Ok(Response::new(codex_login(value, Utc::now())))
+    }
+
+    async fn get_codex_login(
+        &self,
+        request: Request<GetCodexLoginRequest>,
+    ) -> Result<Response<CodexLogin>, Status> {
+        let principal = self.authorize(&request, "GetCodexLogin").await?;
+        let request = request.into_inner();
+        let snapshot = self
+            .guest(&principal, &request.agent_id)
+            .await?
+            .codex_login()
+            .await
+            .map_err(map_guest_error)?;
+        if !snapshot.active {
+            return Err(Status::not_found("no Codex device login is active"));
+        }
+        let started_at = DateTime::parse_from_rfc3339(&snapshot.started_at)
+            .map_err(|_| Status::internal("Nanoagent returned an invalid Codex login timestamp"))?
+            .with_timezone(&Utc);
+        if Utc::now() >= started_at + chrono::Duration::minutes(CODEX_LOGIN_ATTEMPT_TTL_MINUTES) {
+            return Err(Status::not_found("no Codex device login is active"));
+        }
+        Ok(Response::new(codex_login(snapshot.result, started_at)))
     }
 
     async fn create_codex_thread(
@@ -1247,6 +1265,17 @@ fn codex_event_is_failure(normalized_method: &str, raw: &Value) -> bool {
 
 fn codex_login_expires_at(now: DateTime<Utc>) -> String {
     (now + chrono::Duration::minutes(CODEX_LOGIN_ATTEMPT_TTL_MINUTES)).to_rfc3339()
+}
+
+fn codex_login(value: Value, started_at: DateTime<Utc>) -> CodexLogin {
+    CodexLogin {
+        login_id: json_string(&value, &["/loginId"]),
+        verification_url: json_string(&value, &["/verificationUrl", "/authUrl"]),
+        user_code: json_string(&value, &["/userCode"]),
+        // App-server does not publish a device-code expiry, so Tengri bounds the UI attempt.
+        expires_at: codex_login_expires_at(started_at),
+        raw_json: value.to_string(),
+    }
 }
 
 fn codex_thread_item_kind(normalized_method: &str, item: &Value) -> Option<CodexEventKind> {
@@ -2709,6 +2738,16 @@ mod tests {
             codex_login_expires_at(login_started_at),
             "2026-08-27T13:15:00+00:00"
         );
+        let login = codex_login(
+            json!({
+                "loginId": "login-one",
+                "verificationUrl": "https://example.test/device",
+                "userCode": "TENG-RI01"
+            }),
+            login_started_at,
+        );
+        assert_eq!(login.login_id, "login-one");
+        assert_eq!(login.expires_at, "2026-08-27T13:15:00+00:00");
         assert_eq!(
             codex_event_text(&json!({
                 "params": {"item": {"contentItems": [{"type": "inputImage", "imageUrl": "opaque"}]}}

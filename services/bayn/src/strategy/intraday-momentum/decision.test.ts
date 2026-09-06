@@ -146,7 +146,6 @@ const marketContextAt = (options: FixtureOptions) => {
       source_partition: '0',
       source_offset: String(quoteOffset++),
       schema_version: '1',
-      latest_payload_variants: '1',
       bid_price: String(midpoint - halfSpread),
       bid_size: String(
         options.bidSizeBySymbol?.[symbol] ?? options.displayedSizeBySymbol?.[symbol] ?? options.displayedSize ?? 100,
@@ -174,7 +173,6 @@ const marketContextAt = (options: FixtureOptions) => {
       source_partition: '0',
       source_offset: String(tradeOffset++),
       schema_version: '1',
-      latest_payload_variants: '1',
       price: String(reference * (1 + returnBps / 10_000)),
       size: '10',
     }

@@ -110,6 +110,21 @@ beforeAll(async () => {
       }
       callback(null, { authenticated: true, email: 'ada@example.test', plan: 'pro' })
     },
+    getCodexLogin(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      if (call.request.agentId === 'no-active-login') {
+        callback(serviceError(grpc.status.NOT_FOUND, 'no Codex device login is active'), null)
+        return
+      }
+      callback(null, {
+        loginId: 'login-one',
+        verificationUrl: 'https://auth.openai.com/device',
+        userCode: 'TENG-RI01',
+        expiresAt: '2026-08-31T09:15:00Z',
+      })
+    },
     readFile(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
@@ -408,6 +423,17 @@ describe('Tengri gRPC BFF transport', () => {
     ])
     codexAccountRequestStarted = null
     codexAccountRequestCancelled = null
+  })
+
+  test('restores an active Codex device login without creating another attempt', async () => {
+    const { getCodexLogin } = await import('./grpc')
+    await expect(getCodexLogin('github:42', 'agent-test')).resolves.toEqual({
+      loginId: 'login-one',
+      verificationUrl: 'https://auth.openai.com/device',
+      userCode: 'TENG-RI01',
+      expiresAt: '2026-08-31T09:15:00Z',
+    })
+    await expect(getCodexLogin('github:42', 'no-active-login')).resolves.toBeNull()
   })
 
   test('preserves a leading UTF-8 BOM for lossless editor round trips', async () => {

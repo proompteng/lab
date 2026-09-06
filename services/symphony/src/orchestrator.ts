@@ -1955,6 +1955,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
                   },
                   codex: {
                     command: '',
+                    model: 'gpt-6-astra',
                     approvalPolicy: null,
                     threadSandbox: null,
                     turnSandboxPolicy: null,
