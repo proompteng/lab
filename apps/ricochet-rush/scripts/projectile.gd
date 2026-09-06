@@ -58,7 +58,7 @@ func setup(
 
 func _ready() -> void:
 	_ensure_visual()
-	_model_instance.rotation.y = atan2(-direction.x, -direction.z)
+	_orient_tracer()
 
 
 func _physics_process(delta: float) -> void:
@@ -73,7 +73,7 @@ func _physics_process(delta: float) -> void:
 	elif speed > 0.0:
 		if _finite_vector(direction):
 			_advance_projectile(speed * step)
-			_model_instance.rotation.y = atan2(-direction.x, -direction.z)
+			_orient_tracer()
 		else:
 			_finish()
 
@@ -186,6 +186,11 @@ func _normalised_direction(value: Vector3) -> Vector3:
 	if _finite_vector(value) and value.length_squared() > 0.0001:
 		return value.normalized()
 	return Vector3(0.0, 0.0, -1.0)
+
+
+func _orient_tracer() -> void:
+	var up: Vector3 = Vector3.RIGHT if absf(direction.dot(Vector3.UP)) > 0.99 else Vector3.UP
+	_model_instance.basis = Basis.looking_at(direction, up)
 
 
 func _ensure_visual() -> void:

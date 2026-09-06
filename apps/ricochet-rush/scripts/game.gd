@@ -95,10 +95,16 @@ var shot_interval: float = 0.18
 var magnet_radius: float = 3.4
 var profile := RushProfile.new()
 var hud: RushHUD
-var camera: Camera3D
+var camera: RushCamera
 var world: Node3D
 var feedback: RushFeedback
 var sound: RushSoundscape
+var aiming: bool = false
+var drag_look: bool = false
+var aim_hit_enemy: bool = false
+var aim_blocked: bool = false
+var recent_hit: float = 0.0
+var aim_point: Vector3 = Vector3.ZERO
 
 var _rng := RandomNumberGenerator.new()
 var _shot_time: float = 0.0
@@ -106,10 +112,12 @@ var _spawn_time: float = 0.0
 var _spawn_count: int = 0
 var _pending_spawns: Array[Dictionary] = []
 var _last_health: int = 5
-var _reticle: MeshInstance3D
 var _echo_tape := RushEchoTape.new()
 var _echo_cooldown: float = 0.0
 var _frame_shots: Array[Dictionary] = []
+var _capture_grace: float = 0.0
+var _capture_seen: bool = false
+var _title_time: float = 0.0
 
 
 func _ready() -> void:
@@ -125,18 +133,17 @@ func _ready() -> void:
 	add_child(sound)
 	sound.set_muted(muted)
 	add_child(RushArena.new())
-	camera = Camera3D.new()
-	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
-	camera.size = 22.0
-	camera.position = Vector3(0.0, 24.0, 18.0)
+	camera = RushCamera.new()
 	add_child(camera)
-	camera.look_at(Vector3.ZERO)
 	camera.current = true
 	_build_world()
 	player.active = false
-	player.position = Vector3(3.0, 0.0, -1.0)
+	player.position = Vector3(2.0, 0.0, 0.0)
+	player.rotation.y = 0.4
+	camera.position = Vector3(5.0, 2.7, 6.0)
+	camera.look_at(Vector3(1.1, 1.2, 0.0))
 	for index: int in 4:
-		var enemy: RushEnemy = _spawn_enemy(index, Vector3(5.5 + float(index) * 1.2, 0, 2.0))
+		var enemy: RushEnemy = _spawn_enemy(index, Vector3(-4.5 + float(index) * 2.7, 0.0, -5.0))
 		enemy.set_physics_process(false)
 	var canvas := CanvasLayer.new()
 	add_child(canvas)
@@ -158,10 +165,11 @@ func _configure_inputs() -> void:
 	_add_keys(&"rush_down", [KEY_S, KEY_DOWN])
 	_add_keys(&"rush_dash", [KEY_SPACE])
 	_add_keys(&"rush_echo", [KEY_E])
-	var echo_click := InputEventMouseButton.new()
-	echo_click.button_index = MOUSE_BUTTON_RIGHT
-	if not InputMap.action_has_event(&"rush_echo", echo_click):
-		InputMap.action_add_event(&"rush_echo", echo_click)
+	if not InputMap.has_action(&"rush_aim"):
+		InputMap.add_action(&"rush_aim")
+		var aim_click := InputEventMouseButton.new()
+		aim_click.button_index = MOUSE_BUTTON_RIGHT
+		InputMap.action_add_event(&"rush_aim", aim_click)
 	_add_keys(&"rush_pause", [KEY_ESCAPE])
 	_add_keys(&"rush_mute", [KEY_M])
 	_add_keys(&"rush_restart", [KEY_R])
@@ -207,20 +215,7 @@ func _build_world() -> void:
 	player.died.connect(_end_run)
 	player.dashed.connect(_on_dash)
 	feedback.bind_player(player)
-	_reticle = MeshInstance3D.new()
-	var ring := TorusMesh.new()
-	ring.inner_radius = 0.19
-	ring.outer_radius = 0.24
-	ring.rings = 20
-	ring.ring_segments = 8
-	_reticle.mesh = ring
-	_reticle.scale.y = 0.2
-	var material := StandardMaterial3D.new()
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.albedo_color = Color("d8dbd5")
-	_reticle.material_override = material
-	_reticle.visible = false
-	world.add_child(_reticle)
+	camera.reset_follow(player)
 
 
 func start_run() -> void:
@@ -248,6 +243,10 @@ func start_run() -> void:
 	_spawn_count = 0
 	_last_health = player.health
 	fire_input = false
+	aiming = false
+	aim_hit_enemy = false
+	aim_blocked = false
+	recent_hit = 0.0
 	last_run_new_best = false
 	upgrade_choices.clear()
 	_set_phase(Phase.PLAYING)
@@ -256,8 +255,18 @@ func start_run() -> void:
 
 func _set_phase(value: Phase) -> void:
 	phase = value
+	if value == Phase.PLAYING:
+		_capture_seen = false
+		drag_look = false
 	get_tree().paused = value == Phase.PAUSED or value == Phase.UPGRADING or value == Phase.OVER
-	_reticle.visible = value == Phase.PLAYING
+	if not manual_input and DisplayServer.get_name() != "headless":
+		Input.mouse_mode = (
+			Input.MOUSE_MODE_CAPTURED if value == Phase.PLAYING else Input.MOUSE_MODE_VISIBLE
+		)
+		_capture_grace = 0.3
+	if value != Phase.PLAYING:
+		fire_input = false
+		aiming = false
 	if is_instance_valid(hud):
 		hud.set_phase(value)
 
@@ -275,6 +284,11 @@ func _notification(what: int) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion:
+		var dragging: bool = drag_look and (event.button_mask & MOUSE_BUTTON_MASK_RIGHT) != 0
+		if phase == Phase.PLAYING and (Input.mouse_mode == Input.MOUSE_MODE_CAPTURED or dragging):
+			camera.look(event.screen_relative)
+		return
 	if event.is_action_pressed(&"rush_mute"):
 		toggle_sound()
 	elif event.is_action_pressed(&"rush_pause"):
@@ -293,28 +307,75 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _process(delta: float) -> void:
-	if phase == Phase.PLAYING and not manual_input:
-		_update_aim()
+	if phase == Phase.TITLE:
+		_title_time += delta
+		var angle: float = 0.5 + sin(_title_time * 0.15) * 0.18
+		camera.fov = 50.0
+		camera.position = player.position + Vector3(sin(angle) * 3.8, 2.1, cos(angle) * 3.8)
+		camera.look_at(player.position + Vector3(-0.85, 1.0, 0.0))
+	elif phase == Phase.PLAYING:
+		camera.aiming = aiming
+		camera.step(delta)
+		player.set_camera_clearance(
+			camera.global_position.distance_to(player.global_position + Vector3.UP * 1.35)
+		)
+		recent_hit = maxf(0.0, recent_hit - delta)
+		if not manual_input:
+			_capture_grace = maxf(0.0, _capture_grace - delta)
+			if DisplayServer.get_name() != "headless" and _capture_grace <= 0.0:
+				_update_mouse_capture(Input.mouse_mode == Input.MOUSE_MODE_CAPTURED)
+			if phase == Phase.PLAYING:
+				_update_aim()
 	if is_instance_valid(hud):
 		hud.refresh(delta)
 	sound.intensity = clampf(float(wave) * 0.12, 0.0, 1.0) if phase == Phase.PLAYING else 0.0
 
 
+func _update_mouse_capture(captured: bool) -> void:
+	if captured:
+		_capture_seen = true
+		drag_look = false
+	elif _capture_seen:
+		toggle_pause()
+	else:
+		drag_look = true
+
+
 func _update_aim() -> void:
-	var mouse: Vector2 = get_viewport().get_mouse_position()
-	var point: Variant = Plane(Vector3.UP, 0.65).intersects_ray(
-		camera.project_ray_origin(mouse), camera.project_ray_normal(mouse)
-	)
-	if not point is Vector3:
-		return
-	var destination: Vector3 = point
-	destination.x = clampf(destination.x, -11.9, 11.9)
-	destination.z = clampf(destination.z, -7.9, 7.9)
-	_reticle.position = Vector3(destination.x, 0.04, destination.z)
-	var direction: Vector3 = destination - player.position
-	direction.y = 0.0
-	if direction.length_squared() > 0.01:
-		player.aim_direction = direction.normalized()
+	var center: Vector2 = get_viewport().get_visible_rect().size * 0.5
+	var ray_origin: Vector3 = camera.project_ray_origin(center)
+	var ray_direction: Vector3 = camera.project_ray_normal(center)
+	var camera_hit: Dictionary = _aim_ray(ray_origin, ray_origin + ray_direction * 100.0)
+	aim_point = camera_hit.get("position", ray_origin + ray_direction * 100.0)
+	aim_hit_enemy = camera_hit.get("collider") is RushEnemy
+	var origin: Vector3 = _weapon_origin()
+	var to_target: Vector3 = aim_point - origin
+	aim_blocked = to_target.dot(ray_direction) < 0.05
+	if aim_blocked:
+		aim_point = origin + ray_direction * 100.0
+		to_target = ray_direction
+	player.aim_direction = to_target.normalized()
+	var muzzle_hit: Dictionary = _aim_ray(origin, aim_point)
+	if not muzzle_hit.is_empty():
+		var obstruction: Vector3 = muzzle_hit["position"]
+		if obstruction.distance_to(aim_point) > 0.2:
+			aim_blocked = true
+
+
+func _aim_ray(origin: Vector3, destination: Vector3) -> Dictionary:
+	var query := PhysicsRayQueryParameters3D.create(origin, destination, 2 | 4)
+	query.exclude = [player.get_rid()]
+	return get_world_3d().direct_space_state.intersect_ray(query)
+
+
+func _weapon_origin() -> Vector3:
+	var anchor: Vector3 = player.position + Vector3.UP * RushPlayer.MUZZLE_HEIGHT
+	var muzzle: Vector3 = player.weapon_origin()
+	var query := PhysicsRayQueryParameters3D.create(anchor, muzzle, RushArena.COLLISION_LAYER)
+	var hit: Dictionary = get_world_3d().direct_space_state.intersect_ray(query)
+	if not hit.is_empty():
+		return hit["position"] + hit["normal"] * 0.025
+	return muzzle
 
 
 func _physics_process(delta: float) -> void:
@@ -323,8 +384,11 @@ func _physics_process(delta: float) -> void:
 	_frame_shots.clear()
 	_echo_cooldown = maxf(_echo_cooldown - delta, 0.0)
 	if not manual_input:
-		player.move_input = Input.get_vector(&"rush_left", &"rush_right", &"rush_up", &"rush_down")
+		player.move_input = camera.move_vector(
+			Input.get_vector(&"rush_left", &"rush_right", &"rush_up", &"rush_down")
+		)
 		fire_input = Input.is_action_pressed(&"rush_fire")
+		aiming = Input.is_action_pressed(&"rush_aim")
 	elapsed += delta
 	wave = 1 + int(elapsed / 20.0)
 	combo_time = maxf(combo_time - delta, 0.0)
@@ -340,11 +404,15 @@ func _physics_process(delta: float) -> void:
 
 
 func _fire_weapon() -> void:
-	var aim: Vector3 = player.aim_direction.normalized()
+	if not manual_input:
+		_update_aim()
+	var origin: Vector3 = _weapon_origin()
+	var aim: Vector3 = (
+		player.aim_direction.normalized() if manual_input else (aim_point - origin).normalized()
+	)
 	for index: int in pellets:
 		var angle: float = (float(index) - float(pellets - 1) * 0.5) * 0.16
 		var direction: Vector3 = aim.rotated(Vector3.UP, angle)
-		var origin: Vector3 = player.position + direction * 0.35 + Vector3.UP * 0.65
 		var projectile: RushProjectile = _spawn_projectile(
 			origin, direction, false, damage, bounces
 		)
@@ -361,7 +429,7 @@ func _fire_weapon() -> void:
 					}
 				)
 			)
-	feedback.play_event(&"shot", player.position + aim * 0.7 + Vector3.UP * 0.65)
+	feedback.play_event(&"shot", origin)
 	sound.play_cue(&"shot")
 
 
@@ -476,7 +544,9 @@ func _spawn_enemy(kind: int, at: Vector3) -> RushEnemy:
 	enemies.append(enemy)
 	enemy.killed.connect(_on_enemy_killed)
 	enemy.damaged.connect(
-		func(point: Vector3, _amount: int) -> void: feedback.play_event(&"hit", point)
+		func(point: Vector3, _amount: int) -> void:
+			recent_hit = 0.14
+			feedback.play_event(&"hit", point)
 	)
 	enemy.fired.connect(_on_enemy_fired)
 	return enemy
