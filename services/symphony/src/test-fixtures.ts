@@ -48,6 +48,7 @@ export const makeTestConfig = (overrides: SymphonyConfigOverrides = {}): Symphon
   },
   codex: {
     command: overrides.codex?.command ?? 'codex app-server',
+    model: overrides.codex?.model ?? 'gpt-6-astra',
     approvalPolicy: overrides.codex?.approvalPolicy ?? 'never',
     threadSandbox: overrides.codex?.threadSandbox ?? 'workspace-write',
     turnSandboxPolicy: overrides.codex?.turnSandboxPolicy ?? null,

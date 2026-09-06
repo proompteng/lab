@@ -198,9 +198,15 @@ export type IntradaySnapshotFailureReason =
   | 'lineage'
   | 'hash'
 
+export enum IntradayIngestionDelayDirection {
+  BelowMinimum = 'below-minimum',
+  AboveMaximum = 'above-maximum',
+}
+
 export class IntradaySnapshotFailure extends Data.TaggedError('IntradaySnapshotFailure')<{
   readonly reason: IntradaySnapshotFailureReason
   readonly message: string
+  readonly ingestionDelayDirection?: IntradayIngestionDelayDirection
   readonly facts?: Readonly<Record<string, unknown>>
   readonly cause?: unknown
 }> {}

@@ -26,11 +26,13 @@ export const productionPaths = {
   statefulSet: 'argocd/applications/hermes/statefulset.yaml',
   backupCronJob: 'argocd/applications/hermes/backup-cronjob.yaml',
   backupScript: 'argocd/applications/hermes/backup-once.sh',
+  backupPolicy: 'argocd/applications/hermes/backup-output-policy.sh',
   config: 'argocd/applications/hermes/config.yaml',
   externalSecret: 'argocd/applications/hermes/external-secret.yaml',
   exaExternalSecret: 'argocd/applications/hermes/exa-external-secret.yaml',
   discordSealedSecret: 'argocd/applications/hermes/discord-sealed-secret.yaml',
   githubSealedSecret: 'argocd/applications/hermes/github-sealed-secret.yaml',
+  tailscaleIngress: 'argocd/applications/hermes/tailscale-ingress.yaml',
   networkPolicy: 'argocd/applications/hermes/network-policy.yaml',
   egressProxy: 'argocd/applications/hermes/egress-proxy.yaml',
   squidConfig: 'argocd/applications/hermes/squid.conf',
@@ -143,6 +145,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'options:\n      disableNameSuffixHash: true',
     '- statefulset.yaml',
     '- backup-cronjob.yaml',
+    '- tailscale-ingress.yaml',
     '- network-policy.yaml',
     '- rbac.yaml',
     '- external-secret.yaml',
@@ -159,6 +162,30 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'operations/',
     'migration-apply-job.yaml',
     'restore-job.yaml',
+  ])
+  requireTerms(failures, productionPaths.tailscaleIngress, files.tailscaleIngress, [
+    'apiVersion: networking.k8s.io/v1',
+    'kind: Ingress',
+    'name: hermes-tailscale',
+    'namespace: hermes',
+    'tailscale.com/tags: tag:k8s',
+    'ingressClassName: tailscale',
+    'path: /',
+    'pathType: Prefix',
+    `backend:
+              service:
+                name: hermes
+                port:
+                  name: api`,
+  ])
+  if (count(files.tailscaleIngress, 'hermes.ide-newton.ts.net') !== 2) {
+    failures.push(`${productionPaths.tailscaleIngress}: TLS and routing must use only the Hermes MagicDNS hostname`)
+  }
+  forbidTerms(failures, productionPaths.tailscaleIngress, files.tailscaleIngress, [
+    'tailscale.com/funnel',
+    'loadBalancerClass:',
+    'type: LoadBalancer',
+    'ingressClassName: traefik',
   ])
   if (count(files.statefulSet, `image: ${hermesImage}`) !== 2) {
     failures.push(
@@ -343,10 +370,26 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   ])
   forbidTerms(failures, productionPaths.backupCronJob, files.backupCronJob, [':latest', 'restartPolicy: Never'])
 
+  requireTerms(failures, productionPaths.kustomization, files.kustomization, ['      - backup-output-policy.sh'])
+  requireTerms(failures, productionPaths.backupPolicy, files.backupPolicy, [
+    'hermes_backup_output_is_safe() (',
+    '*"SQLite safe copy failed"*|*"Raw copy also failed"*)',
+    '*"Backup incomplete:"*|*"Warnings ("*)',
+    'backup_policy_socket="$backup_policy_home/gateway.sock"',
+    "backup_policy_header='  Warnings (1 files skipped):'",
+    'backup_policy_detail="  gateway.sock: [Errno 6] No such device or address:',
+    '[ -S "$backup_policy_socket" ] || return 1',
+    '[ "$backup_policy_header_count" -eq 1 ] || return 1',
+    '[ "$backup_policy_detail_count" -eq 1 ] || return 1',
+    '*"Backup complete:"*) return 1',
+  ])
+
   const backupPublicationSteps = [
+    '. /opt/bootstrap/backup-output-policy.sh',
     'backup_output=$(/opt/hermes/.venv/bin/hermes backup --output "$pending_archive" 2>&1)',
-    '*"SQLite safe copy failed"*|*"Raw copy also failed"*|*"Warnings ("*)',
+    'if ! hermes_backup_output_is_safe "$backup_output" "${HERMES_HOME:-/opt/data}"; then',
     'corrupt_entry = backup.testzip()',
+    'if "gateway.sock" in backup.namelist():',
     'connection.execute("PRAGMA quick_check")',
     'if database_count == 0:',
     'pending_digest=$(sha256sum "$pending_archive")',
@@ -596,10 +639,36 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'cidr: 100.100.244.142/32',
     'cidr: 100.100.244.190/32',
     'port: 6443',
+    `        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: tailscale
+          podSelector:
+            matchLabels:
+              tailscale.com/managed: "true"
+              tailscale.com/parent-resource-ns: hermes
+              tailscale.com/parent-resource-type: ingress
+              tailscale.com/parent-resource: hermes-tailscale
+      ports:
+        - protocol: TCP
+          port: 8642`,
   ])
+  for (const tailscalePolicyTerm of [
+    'kubernetes.io/metadata.name: tailscale',
+    'tailscale.com/managed: "true"',
+    'tailscale.com/parent-resource-ns: hermes',
+    'tailscale.com/parent-resource-type: ingress',
+    'tailscale.com/parent-resource: hermes-tailscale',
+  ]) {
+    if (count(files.networkPolicy, tailscalePolicyTerm) !== 1) {
+      failures.push(
+        `${productionPaths.networkPolicy}: the Hermes Tailscale proxy selector must contain exactly one ${JSON.stringify(tailscalePolicyTerm)}`,
+      )
+    }
+  }
   forbidTerms(failures, productionPaths.networkPolicy, files.networkPolicy, [
     '          port: 80\n',
     '          port: 22\n',
+    '        - namespaceSelector: {}',
   ])
 
   if (count(files.egressProxy, `image: ${squidImage}`) !== 1) {
@@ -815,6 +884,10 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'kargo/hermes-toolchain',
     'There is no digest bump PR, release PR, manual SHA edit, or manual Argo sync.',
     'Bootstrap fails closed unless every tool reports the repository-pinned version.',
+    'https://hermes.ide-newton.ts.net',
+    'Kubernetes Ingress: `hermes-tailscale`',
+    'It does not enable Funnel or create a public Ingress.',
+    'both require bearer authentication',
   ])
   forbidPattern(
     failures,
@@ -1194,6 +1267,20 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'test "$sidecar_archive" = "$archive"',
     'printf "%s  %s\\n" "$expected_digest" "$archive_path" | sha256sum -c -',
     'printf "%s  %s\\n" "$expected_digest" "$archive" | sha256sum -c -',
+    'tailnet_url=https://hermes.ide-newton.ts.net',
+    'tailscale.com/parent-resource=hermes-tailscale',
+    "'https://hermes.ide-newton.ts.net (tailnet only)'",
+    'test "$tailnet_status" = 401',
+    'contains("HERMES_TAILNET_OK")',
+    "hermes_service_ip=$(kubectl -n hermes get service hermes -o jsonpath='{.spec.clusterIP}')",
+    "jq '[.items[].endpoints[] | select(.conditions.ready == true)] | length'",
+    '--resolve "${service_host}:8642:${HERMES_SERVICE_IP}"',
+    '"http://${service_host}:8642/health" >/tmp/out 2>/tmp/err || curl_status=$?',
+    'if [ "$curl_status" -ne 28 ]; then',
+    'echo gateway_access_blocked_by_timeout',
+    'never add `tailscale.com/funnel` or a public ingress class',
+    'DNS failure cannot masquerade as isolation',
+    'Only curl exit `28` (the bounded connection timeout)',
   ])
   const releaseEvidenceSection = files.runbook.match(/## Release evidence[\s\S]*?## Phase 0:/)?.[0] ?? ''
   requireTerms(failures, productionPaths.runbook, releaseEvidenceSection, [

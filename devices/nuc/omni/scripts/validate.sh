@@ -50,6 +50,10 @@ fi
 
 compose config --quiet
 compose config --format json | jq -e \
+  --arg expected "--machine-api-advertised-url=grpc://${NUC_TAILSCALE_IP}:8090/" \
+  '.services.omni.command | index($expected) != null' \
+  >/dev/null || die 'Omni machine API must advertise the raw Tailscale TCP endpoint with the grpc scheme'
+compose config --format json | jq -e \
   --arg source "${cluster_backup_dir}" \
   '.services.omni.volumes[] | select(.type == "bind" and .source == $source and .target == "/var/lib/omni/cluster-etcd-backups")' \
   >/dev/null || die 'Omni Compose configuration does not persist the cluster etcd backup directory'

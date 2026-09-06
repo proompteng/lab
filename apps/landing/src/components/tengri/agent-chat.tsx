@@ -130,6 +130,45 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     [agentId],
   )
 
+  const recoverLogin = useCallback(
+    async (signal?: AbortSignal) => {
+      try {
+        const next = await runTengriAction<TengriCodexLogin | null>({ action: 'codex-login-status', agentId }, signal)
+        if (signal?.aborted || !mountedRef.current || loginIdRef.current) return
+        if (!next) {
+          await refreshAccount(signal, false)
+          return
+        }
+        const expiresAt = Date.parse(next.expiresAt)
+        if (!Number.isFinite(expiresAt)) {
+          setError('Codex returned an invalid device-login deadline. Start a new login.')
+          return
+        }
+        if (expiresAt <= Date.now()) {
+          await refreshAccount(signal, false)
+          return
+        }
+        loginIdRef.current = next.loginId
+        setLogin(next)
+        setError('')
+      } catch (cause) {
+        if (!signal?.aborted && mountedRef.current) {
+          setError(cause instanceof Error ? cause.message : 'Codex device login state is unavailable')
+        }
+      }
+    },
+    [agentId, refreshAccount],
+  )
+
+  const refreshAccountAndRecoverLogin = useCallback(
+    async (signal?: AbortSignal) => {
+      const next = await refreshAccount(signal)
+      if (next && !next.authenticated && !signal?.aborted) await recoverLogin(signal)
+      return next
+    },
+    [recoverLogin, refreshAccount],
+  )
+
   useEffect(() => {
     setAccount(null)
     loginIdRef.current = ''
@@ -158,9 +197,9 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   useEffect(() => {
     if (!active) return
     const controller = new AbortController()
-    void refreshAccount(controller.signal)
+    void refreshAccountAndRecoverLogin(controller.signal)
     return () => controller.abort()
-  }, [active, refreshAccount])
+  }, [active, refreshAccountAndRecoverLogin])
 
   useEffect(() => {
     if (!active || !login || account?.authenticated) return
@@ -292,7 +331,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       if (eventMethod === 'account/login/completed') {
         const activeLoginId = loginIdRef.current
         if (codexLoginCompletionIsUncorrelated(event)) {
-          if (activeLoginId) void refreshAccount(undefined, false, activeLoginId)
+          void refreshAccount(undefined, false, activeLoginId)
           return
         }
         if (!codexLoginCompletionMatches(event, activeLoginId)) return
@@ -490,7 +529,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
             <button
               type="button"
               className="mt-4 rounded-xl bg-white/9 px-4 py-2 text-xs text-white/76 hover:bg-white/13"
-              onClick={() => void refreshAccount()}
+              onClick={() => void refreshAccountAndRecoverLogin()}
             >
               Retry
             </button>
@@ -517,7 +556,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[#0a0d13]">
+    <div className="flex h-full min-h-0 flex-col bg-[#202020]">
       <div className="flex h-10 shrink-0 items-center border-b border-white/8 px-4 text-xs text-white/48">
         <Bot className="mr-2 h-3.5 w-3.5 text-[#9ccfd8]" aria-hidden="true" />
         Agent Chat
@@ -531,7 +570,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           <Plus className="h-3.5 w-3.5" aria-hidden="true" /> New conversation
         </button>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto px-[max(20px,8vw)] py-6">
+      <div className="min-h-0 flex-1 overflow-auto px-[clamp(16px,4vw,48px)] py-6">
         {renderedHistoryItems.length === 0 && renderedEvents.length === 0 ? <EmptyConversation /> : null}
         <div className="mx-auto max-w-3xl space-y-3" role="log" aria-live="polite" aria-relevant="additions text">
           {renderedHistoryItems.map((item) => (
@@ -551,7 +590,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           <div ref={endRef} />
         </div>
       </div>
-      <div className="shrink-0 px-[max(20px,8vw)] pb-5">
+      <div className="shrink-0 px-[clamp(16px,4vw,48px)] pb-5">
         <StreamStatus error={error} state={eventStreamState} />
         {replayRecovering ? (
           <p className="mx-auto mb-2 max-w-3xl text-xs text-white/45" role="status">
@@ -568,7 +607,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         ) : null}
         <form
           aria-busy={replayRecovering}
-          className="mx-auto flex max-w-3xl items-end gap-2 rounded-2xl border border-white/10 bg-white/[0.055] p-2 shadow-[0_18px_55px_rgba(0,0,0,0.3)] backdrop-blur-xl"
+          className="mx-auto flex max-w-3xl items-end gap-2 rounded-2xl border border-white/10 bg-white/[0.055] p-2 shadow-sm backdrop-blur-xl"
           onSubmit={(event) => {
             event.preventDefault()
             void send()
@@ -643,8 +682,8 @@ export function CodexLogin({
 }) {
   const verificationUrl = safeVerificationUrl(login?.verificationUrl || '')
   return (
-    <div className="grid h-full place-items-center bg-[#0a0d13] p-8">
-      <div className="max-w-sm rounded-3xl border border-white/9 bg-white/[0.035] p-7 text-center shadow-2xl">
+    <div className="grid h-full place-items-center bg-[#202020] p-8">
+      <div className="max-w-sm rounded-2xl border border-white/10 bg-zinc-800/70 p-7 text-center shadow-lg">
         <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-[#2574e8] to-[#8b5cf6]">
           <Bot className="h-7 w-7" aria-hidden="true" />
         </div>

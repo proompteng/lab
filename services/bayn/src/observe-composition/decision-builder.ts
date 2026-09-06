@@ -21,14 +21,14 @@ import {
   type ExecutionSessionBinding,
   type ExecutionSessionBindingFailure,
 } from '../execution-session'
-import { OperationalError, operationalError } from '../errors'
+import { OperationalError, operationalError, retryableOperationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
 import {
-  IntradaySnapshotFailure,
   IntradaySnapshotPurpose,
   persistIntradaySnapshotRows,
   type PersistedIntradaySnapshotRows,
 } from '../market-data'
+import { isIntradaySnapshotPending } from '../market-data/intraday/pending'
 import {
   constrainExecutionTargetAllocationCapitalMicros,
   executionMandateAllocationCapitalMicros,
@@ -294,7 +294,7 @@ const compositionFailure = (
 const reconciliationOperationalError = (cause: ReconciliationPassError): OperationalError => {
   switch (cause._tag) {
     case 'BrokerReadError':
-      return operationalError({
+      return (cause.retryable ? retryableOperationalError : operationalError)({
         component: 'market-data',
         operation: 'reconciliation',
         message: 'same-pass broker reconciliation read failed',
@@ -326,7 +326,7 @@ const reconciliationOperationalError = (cause: ReconciliationPassError): Operati
         component: 'market-data',
         operation: 'reconciliation',
         message: cause.message,
-        retryable: false,
+        retryable: true,
         cause,
       })
   }
@@ -351,7 +351,7 @@ const operationalDecisionFailure = (
 export const decisionBuildError = (cause: ObserveDecisionFailure): CycleDecisionBuildError => {
   switch (cause._tag) {
     case 'OperationalError':
-      if (cause.cause instanceof IntradaySnapshotFailure && cause.cause.reason === 'not-ready') {
+      if (isIntradaySnapshotPending(cause.cause)) {
         return new CycleDecisionBuildError({ failure: 'not-ready', message: cause.message, cause })
       }
       return new CycleDecisionBuildError({
@@ -376,12 +376,12 @@ export const decisionBuildError = (cause: ObserveDecisionFailure): CycleDecision
   }
 }
 
-export const reconciliationRunnerError = (cause: ReconciliationPassError): CycleRunnerError => {
+export const reconciliationRunnerError = (cause: ReconciliationPassError, message?: string): CycleRunnerError => {
   const operational = reconciliationOperationalError(cause)
   return new CycleRunnerError({
     operation: 'reconcile',
     failure: operationalDecisionFailure(operational.component),
-    message: operational.message,
+    message: message ?? operational.message,
     cause: operational,
   })
 }
@@ -712,19 +712,13 @@ const intradayMomentumDefinition = (
   )
 }
 
-const intradayArchiveMaterializationPending = (cause: unknown): cause is IntradaySnapshotFailure =>
-  cause instanceof IntradaySnapshotFailure &&
-  (cause.reason === 'not-ready' ||
-    (cause.reason === 'watermark' &&
-      cause.message === 'intraday archive has not materialized the captured source offset'))
-
 const classifyIntradayEntrySnapshotFailure = (
   cause: OperationalError,
   observedAt: string,
   submissionCutoffAt: string,
 ): OperationalError | ObserveDecisionAwaitingSignal => {
   const snapshotFailure = cause.cause
-  return intradayArchiveMaterializationPending(snapshotFailure)
+  return isIntradaySnapshotPending(snapshotFailure)
     ? new ObserveDecisionAwaitingSignal({
         message: snapshotFailure.message,
         observedAt,
@@ -1317,7 +1311,7 @@ export const buildClosingExecutionCycleDecision = (
       })
     }
     const reconciliation = yield* reconcile.pipe(
-      Effect.mapError((cause) => mutationRunnerError({ message: 'execution close reconciliation failed', cause })),
+      Effect.mapError((cause) => reconciliationRunnerError(cause, 'execution close reconciliation failed')),
     )
     const evaluatedAt = yield* currentUtcInstant
     const executionAuthority = yield* Effect.fromResult(
@@ -1413,7 +1407,7 @@ export const buildClosingExecutionCycleDecision = (
       )
       const snapshot = yield* loadIntradaySnapshot(input.intradayMarketData, query).pipe(
         Effect.mapError((cause) =>
-          intradayArchiveMaterializationPending(cause.cause)
+          isIntradaySnapshotPending(cause.cause)
             ? new ExecutionCloseAwaitingMarketData({ message: cause.message, observedAt: evaluatedAt })
             : mutationRunnerError({ message: 'execution close market-data read failed', cause }),
         ),

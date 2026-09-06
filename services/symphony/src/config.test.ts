@@ -3,6 +3,16 @@ import { describe, expect, test } from 'bun:test'
 import { toSymphonyConfig } from './config'
 
 describe('config normalization', () => {
+  test('defaults Codex sessions to GPT-6 Astra and preserves an explicit model override', async () => {
+    const defaultConfig = await toSymphonyConfig('/tmp/WORKFLOW.md', {})
+    const overrideConfig = await toSymphonyConfig('/tmp/WORKFLOW.md', {
+      codex: { model: '  custom-model  ' },
+    })
+
+    expect(defaultConfig.codex.model).toBe('gpt-6-astra')
+    expect(overrideConfig.codex.model).toBe('custom-model')
+  })
+
   test('parses target, release, and health extensions', async () => {
     const config = await toSymphonyConfig(
       '/tmp/WORKFLOW.md',

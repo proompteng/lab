@@ -45,7 +45,7 @@ const modelsResponse = {
   object: 'list',
   data: [
     {
-      id: 'gpt-5.6-sol',
+      id: 'gpt-6-astra',
       object: 'model',
       created: 1717171717,
       owned_by: 'openai',
@@ -555,7 +555,7 @@ test('atlas enrich route screenshot', async ({ page }) => {
 test('api models route screenshot', async ({ page }) => {
   await page.goto('/api/models')
   await expect(page.getByRole('heading', { name: 'Models' })).toBeVisible()
-  await expect(page.getByText('gpt-5.6-sol')).toBeVisible()
+  await expect(page.getByText('gpt-6-astra')).toBeVisible()
   await expect(page).toHaveScreenshot('api-models.png', { fullPage: true, animations: 'disabled' })
 })
 
