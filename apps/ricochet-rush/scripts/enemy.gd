@@ -28,8 +28,8 @@ const SCORE_VALUES: Array[int] = [100, 140, 260, 180]
 const XP_VALUES: Array[int] = [1, 2, 4, 3]
 const MOVE_SPEEDS: Array[float] = [3.9, 4.8, 2.0, 0.0]
 const CONTACT_DAMAGE: Array[int] = [1, 1, 2, 0]
-const BODY_RADII: Array[float] = [0.45, 0.38, 0.65, 0.5]
-const BODY_HEIGHTS: Array[float] = [1.1, 1.0, 1.5, 1.1]
+const BODY_RADII: Array[float] = [0.45, 0.38, 0.68, 0.5]
+const BODY_HEIGHTS: Array[float] = [1.3, 0.95, 1.8, 1.25]
 
 const CONTACT_COOLDOWN: float = 0.65
 const SEPARATION_RADIUS_PADDING: float = 0.18
@@ -46,9 +46,10 @@ const TURRET_INITIAL_DELAY: float = 0.85
 const TURRET_TELEGRAPH_DURATION: float = 0.4
 const TURRET_FIRE_COOLDOWN: float = 1.45
 const TELEGRAPH_AMBER := Color("e5a34d")
-const DAMAGE_FLASH_WHITE := Color("fff7e8")
 const SYNC_WINDOW: float = 1.2
 const DAMAGE_FLASH_DURATION: float = 0.14
+const PLAYER_CENTER_HEIGHT: float = 0.925
+const FIRE_ORIGIN_MARGIN: float = 0.12
 
 var target: RushPlayer
 var health: int = 3
@@ -62,7 +63,9 @@ var _configured: bool = false
 var _dead: bool = false
 var _collision_shape: CollisionShape3D
 var _model_instance: Node
+var _visual_driver: RushActorVisual
 var _model_kind: int = -1
+var _aim_direction: Vector3 = Vector3(0.0, 0.0, -1.0)
 var _contact_cooldown: float = 0.0
 var _recoil_velocity: Vector3 = Vector3.ZERO
 var _simulated_time: float = 0.0
@@ -83,10 +86,8 @@ var _damage_flash_remaining: float = 0.0
 var _visual_time: float = 0.0
 var _telegraph_ring: MeshInstance3D
 var _telegraph_ray: MeshInstance3D
-var _damage_flash: MeshInstance3D
 var _telegraph_ring_material: StandardMaterial3D
 var _telegraph_ray_material: StandardMaterial3D
-var _damage_flash_material: StandardMaterial3D
 
 
 func setup(kind: int, level: int = 1) -> void:
@@ -100,6 +101,7 @@ func setup(kind: int, level: int = 1) -> void:
 	_dead = false
 	_contact_cooldown = 0.0
 	_recoil_velocity = Vector3.ZERO
+	_aim_direction = Vector3(0.0, 0.0, -1.0)
 	_simulated_time = 0.0
 	_last_real_hit_time = 0.0
 	_last_echo_hit_time = 0.0
@@ -113,6 +115,8 @@ func setup(kind: int, level: int = 1) -> void:
 	_turret_telegraph_remaining = 0.0
 	_turret_fire_cooldown = TURRET_INITIAL_DELAY
 	_damage_flash_remaining = 0.0
+	if is_instance_valid(_visual_driver):
+		_visual_driver.reset_motion()
 	if is_inside_tree():
 		collision_layer = ENEMY_LAYER
 		collision_mask = WORLD_LAYER | ENEMY_LAYER | PLAYER_LAYER
@@ -140,7 +144,9 @@ func _process(delta: float) -> void:
 	_visual_time += step
 	_damage_flash_remaining = maxf(_damage_flash_remaining - step, 0.0)
 	_update_telegraph_visuals()
-	_update_damage_flash()
+	if is_instance_valid(_visual_driver):
+		var flash_amount: float = _damage_flash_remaining / DAMAGE_FLASH_DURATION
+		_visual_driver.set_flash(flash_amount)
 
 
 func _physics_process(delta: float) -> void:
@@ -153,9 +159,12 @@ func _physics_process(delta: float) -> void:
 
 	if kind == Kind.TURRET:
 		_update_turret(step)
+		_update_visual(step)
 		return
 	if not _has_live_target():
+		_aim_direction = Vector3.ZERO
 		_move_character(Vector3.ZERO, 0.0, step)
+		_update_visual(step)
 		return
 
 	match kind:
@@ -167,6 +176,8 @@ func _physics_process(delta: float) -> void:
 			_update_chaser(step, MOVE_SPEEDS[Kind.CHASER])
 
 	_apply_contact_damage()
+	_aim_direction = _direction_to_target()
+	_update_visual(step)
 
 
 func take_hit(damage: int, direction: Vector3, ricochet: bool, by_echo: bool = false) -> bool:
@@ -233,21 +244,30 @@ func _update_runner(step: float) -> void:
 func _update_turret(step: float) -> void:
 	velocity = Vector3.ZERO
 	if not _has_live_target():
+		_aim_direction = Vector3.ZERO
 		_turret_telegraph_remaining = 0.0
 		return
+	var target_point: Vector3 = target.global_position + Vector3.UP * PLAYER_CENTER_HEIGHT
 	var direction: Vector3 = _direction_to_target()
-	_face_direction(direction, step)
+	var origin: Vector3 = _muzzle_origin(direction)
+	var to_target: Vector3 = target_point - origin
+	if _finite_vector(to_target) and to_target.length_squared() > 0.0001:
+		direction = to_target.normalized()
+	_aim_direction = direction
+	_face_direction(Vector3(direction.x, 0.0, direction.z), step)
+	_muzzle_origin(_aim_direction)
 	if _turret_telegraph_remaining > 0.0:
 		_turret_telegraph_remaining = maxf(_turret_telegraph_remaining - step, 0.0)
 		if _turret_telegraph_remaining <= 0.0:
-			var fire_direction: Vector3 = _direction_to_target()
-			if fire_direction.length_squared() > 0.0001:
-				var origin: Vector3 = (
-					global_position
-					+ Vector3.UP * BODY_HEIGHTS[Kind.TURRET] * 0.67
-					+ fire_direction * 0.55
-				)
-				emit_signal("fired", origin, fire_direction)
+			var fire_origin: Vector3 = _muzzle_origin(_aim_direction)
+			var fire_direction: Vector3 = target_point - fire_origin
+			if _finite_vector(fire_direction) and fire_direction.length_squared() > 0.0001:
+				fire_direction = fire_direction.normalized()
+				_aim_direction = fire_direction
+				fire_origin = _muzzle_origin(fire_direction)
+				fire_direction = target_point - fire_origin
+				if _finite_vector(fire_direction) and fire_direction.length_squared() > 0.0001:
+					emit_signal("fired", fire_origin, fire_direction.normalized())
 			_turret_fire_cooldown = TURRET_FIRE_COOLDOWN
 		return
 
@@ -267,6 +287,33 @@ func _record_hit_source(by_echo: bool) -> bool:
 		_has_real_hit
 		and _has_echo_hit
 		and absf(_last_real_hit_time - _last_echo_hit_time) <= SYNC_WINDOW
+	)
+
+
+func _muzzle_origin(direction: Vector3) -> Vector3:
+	var safe_direction: Vector3 = direction
+	if not _finite_vector(safe_direction) or safe_direction.length_squared() < 0.0001:
+		safe_direction = Vector3(0.0, 0.0, -1.0)
+	else:
+		safe_direction = safe_direction.normalized()
+	if (
+		is_instance_valid(_visual_driver)
+		and _visual_driver.marker_contract_valid
+		and _visual_driver.has_muzzle()
+	):
+		_visual_driver.set_weapon_aim(safe_direction)
+		return _clamp_fire_origin(_visual_driver.muzzle_global_position())
+	return Vector3.INF
+
+
+func _clamp_fire_origin(value: Vector3) -> Vector3:
+	if not _finite_vector(value):
+		return Vector3.INF
+	var half_extents: Vector2 = RushArena.INNER_HALF_EXTENTS
+	return Vector3(
+		clampf(value.x, -half_extents.x + FIRE_ORIGIN_MARGIN, half_extents.x - FIRE_ORIGIN_MARGIN),
+		maxf(value.y, 0.05),
+		clampf(value.z, -half_extents.y + FIRE_ORIGIN_MARGIN, half_extents.y - FIRE_ORIGIN_MARGIN)
 	)
 
 
@@ -297,23 +344,6 @@ func _ensure_telegraph_visuals() -> void:
 	_telegraph_ray.visible = false
 	add_child(_telegraph_ray)
 
-	_damage_flash = MeshInstance3D.new()
-	_damage_flash.name = "DamageFlash"
-	var flash_mesh := SphereMesh.new()
-	flash_mesh.radius = 0.58
-	flash_mesh.height = 1.2
-	flash_mesh.radial_segments = 12
-	flash_mesh.rings = 6
-	_damage_flash.mesh = flash_mesh
-	_damage_flash.position = Vector3(0.0, 0.58, 0.0)
-	_damage_flash_material = _unshaded_alpha_material(DAMAGE_FLASH_WHITE, 0.0)
-	_damage_flash_material.emission_enabled = true
-	_damage_flash_material.emission = DAMAGE_FLASH_WHITE
-	_damage_flash_material.emission_energy_multiplier = 2.5
-	_damage_flash.material_override = _damage_flash_material
-	_damage_flash.visible = false
-	add_child(_damage_flash)
-
 
 func _update_telegraph_visuals() -> void:
 	if not is_instance_valid(_telegraph_ring) or not is_instance_valid(_telegraph_ray):
@@ -342,7 +372,8 @@ func _update_telegraph_visuals() -> void:
 	var ring_scale: float = 1.0 + pulse * 0.08 + (1.0 - progress) * 0.16
 	_telegraph_ring.scale = Vector3.ONE * ring_scale
 	_telegraph_ray_material.albedo_color = _with_alpha(color, alpha * 0.75)
-	var direction: Vector3 = _direction_to_target()
+	var direction: Vector3 = _aim_direction if turret_active else _direction_to_target()
+	direction.y = 0.0
 	if not _finite_vector(direction) or direction.length_squared() < 0.0001:
 		_telegraph_ray.visible = false
 		return
@@ -353,18 +384,6 @@ func _update_telegraph_visuals() -> void:
 	_telegraph_ray.global_position = origin + direction * (ray_length * 0.5)
 	_telegraph_ray.global_rotation = Vector3(0.0, atan2(-direction.x, -direction.z), 0.0)
 	_telegraph_ray.scale = Vector3(1.0, 1.0, ray_length)
-
-
-func _update_damage_flash() -> void:
-	if not is_instance_valid(_damage_flash) or not is_instance_valid(_damage_flash_material):
-		return
-	if _dead or _damage_flash_remaining <= 0.0:
-		_damage_flash.visible = false
-		return
-	_damage_flash.visible = true
-	var progress: float = clampf(_damage_flash_remaining / DAMAGE_FLASH_DURATION, 0.0, 1.0)
-	_damage_flash_material.albedo_color = _with_alpha(DAMAGE_FLASH_WHITE, 0.1 + progress * 0.17)
-	_damage_flash.scale = Vector3.ONE * (1.0 + (1.0 - progress) * 0.08)
 
 
 func _unshaded_alpha_material(color: Color, alpha: float) -> StandardMaterial3D:
@@ -478,6 +497,7 @@ func _configure_body_for_kind() -> void:
 
 func _ensure_model() -> void:
 	if _model_kind == kind and is_instance_valid(_model_instance):
+		_ensure_visual_driver()
 		return
 	if is_instance_valid(_model_instance):
 		if _model_instance.get_parent() == self:
@@ -489,6 +509,7 @@ func _ensure_model() -> void:
 	if is_instance_valid(existing):
 		_model_instance = existing
 		_model_kind = kind
+		_ensure_visual_driver()
 		return
 	var model_path: String = MODEL_PATHS[kind]
 	var packed_model: PackedScene = load(model_path) as PackedScene
@@ -499,6 +520,24 @@ func _ensure_model() -> void:
 	_model_instance.name = "ModelAsset"
 	_model_kind = kind
 	add_child(_model_instance)
+	_ensure_visual_driver()
+
+
+func _ensure_visual_driver() -> void:
+	if not is_instance_valid(_model_instance):
+		return
+	if not is_instance_valid(_visual_driver):
+		_visual_driver = RushActorVisual.new()
+		_visual_driver.name = "ActorVisual"
+		_visual_driver.process_mode = Node.PROCESS_MODE_DISABLED
+		add_child(_visual_driver)
+	_visual_driver.bind_model(_model_instance)
+
+
+func _update_visual(step: float) -> void:
+	if not is_instance_valid(_visual_driver):
+		return
+	_visual_driver.step(step, velocity, _aim_direction)
 
 
 func _kill(by_ricochet: bool) -> void:

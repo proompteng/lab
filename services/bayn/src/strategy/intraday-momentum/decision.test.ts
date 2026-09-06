@@ -54,6 +54,7 @@ interface FixtureOptions {
   readonly askSizeBySymbol?: Readonly<Record<string, number>>
   readonly baselineEventAt?: string
   readonly evidenceEventAt?: string
+  readonly candidateQuery?: boolean
   readonly omitFirstBarFor?: string
   readonly sourceTopics?: {
     readonly bars: string
@@ -192,6 +193,7 @@ const marketContextAt = (options: FixtureOptions) => {
     universeSymbolHash: defaultIntradayMomentumProtocolDocument.universeSymbolHash,
     universe: defaultIntradayMomentumProtocolDocument.universe,
     symbols,
+    ...(options.candidateQuery ? { candidateSymbols: defaultIntradayMomentumProtocolDocument.candidateSymbols } : {}),
     feed: defaultIntradayMomentumProtocolDocument.feed,
     delayClass: defaultIntradayMomentumProtocolDocument.delayClass,
     sourceTopics,
@@ -617,11 +619,17 @@ describe('intraday momentum strategy', () => {
       ),
     )
     expect(decision.selectedSymbols).toEqual([])
-    expect(
-      decision.signals.every(({ rejectionReasons }) =>
-        rejectionReasons.includes(expectedReason as IntradayMomentumRejectionReason),
-      ),
-    ).toBe(true)
+    if (expectedReason === 'market-data-freshness') {
+      expect(decision.signals).toEqual([])
+      expect(decision.excludedCandidates).toHaveLength(protocol.candidateSymbols.length)
+      expect(decision.excludedCandidates.every(({ reason }) => reason === 'freshness')).toBe(true)
+    } else {
+      expect(
+        decision.signals.every(({ rejectionReasons }) =>
+          rejectionReasons.includes(expectedReason as IntradayMomentumRejectionReason),
+        ),
+      ).toBe(true)
+    }
   })
 
   test.each([
@@ -652,6 +660,31 @@ describe('intraday momentum strategy', () => {
         ),
       ),
     ).toMatchObject({ reason: 'snapshot-coverage', symbol: 'AAPL' })
+  })
+
+  test('locally excludes a candidate missing the first rolling bar while preserving a fresh peer', () => {
+    const protocol = success(decodeDefaultIntradayMomentumProtocol())
+    const decision = success(
+      decideIntradayMomentum(
+        marketContextAt({
+          rangeEndAt: '2026-08-18T18:00:00.000Z',
+          returnBps: qualifyingReturns,
+          omitFirstBarFor: 'AAPL',
+          candidateQuery: true,
+        }),
+        protocol,
+      ),
+    )
+
+    expect(decision.selectedSymbols).toEqual(['AMZN'])
+    expect(decision.signals.some(({ symbol }) => symbol === 'AAPL')).toBe(false)
+    expect(decision.excludedCandidates).toEqual([
+      {
+        symbol: 'AAPL',
+        reason: 'not-ready',
+        message: 'intraday candidate lacks a complete rolling bar window',
+      },
+    ])
   })
 
   test('accepts a complete rolling baseline expressed at equivalent nanosecond precision', () => {
@@ -717,7 +750,7 @@ describe('intraday momentum strategy', () => {
     ).toEqual(['AAPL'])
   })
 
-  test('retains the complete decision universe while adding held close targets', () => {
+  test('plans positive targets and held close targets', () => {
     const protocol = success(decodeDefaultIntradayMomentumProtocol())
     const decision = success(
       decideIntradayMomentum(
@@ -727,7 +760,7 @@ describe('intraday momentum strategy', () => {
     )
     const planningWeights = intradayMomentumPlanningTargetWeights(decision, ['TSLA'])
 
-    expect(Object.keys(planningWeights)).toEqual([...protocol.candidateSymbols, 'TSLA'].sort())
+    expect(Object.keys(planningWeights)).toEqual(['AAPL', 'TSLA'])
     expect(planningWeights['TSLA']).toBe(0)
   })
 })

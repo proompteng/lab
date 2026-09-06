@@ -827,6 +827,7 @@ impl MicroVmControlPlane for ControlPlane {
             id: json_string(&value, &["/thread/id"]),
             raw_json: value.to_string(),
             event_sequence: snapshot.event_sequence,
+            item_event_sequences: Default::default(),
         }))
     }
 
@@ -840,16 +841,7 @@ impl MicroVmControlPlane for ControlPlane {
         let snapshot = self
             .guest(&principal, &request.agent_id)
             .await?
-            .codex_call_with_sequence(
-                "thread/resume",
-                json!({
-                    "threadId": request.thread_id,
-                    "cwd": "/workspace",
-                    "runtimeWorkspaceRoots": ["/workspace"],
-                    "approvalPolicy": "on-request",
-                    "sandbox": "danger-full-access",
-                }),
-            )
+            .resume_codex_thread(&request.thread_id)
             .await
             .map_err(map_guest_error)?;
         let value = snapshot.result;
@@ -857,6 +849,7 @@ impl MicroVmControlPlane for ControlPlane {
             id: json_string(&value, &["/thread/id"]),
             raw_json: value.to_string(),
             event_sequence: snapshot.event_sequence,
+            item_event_sequences: snapshot.item_event_sequences,
         }))
     }
 
@@ -2191,6 +2184,12 @@ fn map_guest_error(error: GuestError) -> Status {
         GuestError::MissingCodexSnapshotCursor => Status::failed_precondition(
             "This agent cannot safely restore Codex threads; save the workspace, then delete and recreate the agent",
         ),
+        GuestError::CodexHistoryTimeout => {
+            Status::deadline_exceeded("Conversation history retrieval timed out")
+        }
+        GuestError::InvalidCodexHistory(message) => {
+            Status::failed_precondition(format!("Invalid conversation history: {message}"))
+        }
         other => Status::internal(other.to_string()),
     }
 }

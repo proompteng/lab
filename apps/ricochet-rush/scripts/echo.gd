@@ -22,6 +22,8 @@ var _next_shot_sample: int = 0
 var _pose_segment: int = 0
 var _visual_ready: bool = false
 var _model_instance: Node
+var _visual_driver: RushActorVisual
+var _replay_velocity: Vector3 = Vector3.ZERO
 var _ring: MeshInstance3D
 var _trail: MeshInstance3D
 var _trail_mesh: ImmediateMesh
@@ -36,6 +38,7 @@ func setup(samples: Array[Dictionary]) -> bool:
 	duration = 0.0
 	_next_shot_sample = 0
 	_pose_segment = 0
+	_replay_velocity = Vector3.ZERO
 	_valid = false
 	_finished = false
 	if samples.is_empty() or samples.size() > MAX_SAMPLES:
@@ -85,11 +88,19 @@ func _ready() -> void:
 func advance(delta: float) -> void:
 	if not _valid or _finished or not is_finite(delta) or delta < 0.0:
 		return
+	var previous_position: Vector3 = global_position if is_inside_tree() else position
 	var next_elapsed: float = minf(elapsed + delta, duration)
 	if not is_finite(next_elapsed):
 		return
 	elapsed = next_elapsed
 	_apply_pose(elapsed)
+	var current_position: Vector3 = global_position if is_inside_tree() else position
+	if delta > 0.0001 and _finite_vector(previous_position) and _finite_vector(current_position):
+		_replay_velocity = (current_position - previous_position) / delta
+	else:
+		_replay_velocity = Vector3.ZERO
+	if is_instance_valid(_visual_driver):
+		_visual_driver.step(delta, _replay_velocity, aim_direction)
 	_emit_shots_until(elapsed)
 	if elapsed >= duration - TIME_EPSILON:
 		_finish()
@@ -246,6 +257,13 @@ func _ensure_visual() -> void:
 		_model_instance.name = "HologramModel"
 		add_child(_model_instance)
 		_apply_hologram_materials(_model_instance)
+	_visual_driver = RushActorVisual.new()
+	_visual_driver.name = "ActorVisual"
+	_visual_driver.process_mode = Node.PROCESS_MODE_DISABLED
+	add_child(_visual_driver)
+	if is_instance_valid(_model_instance):
+		_visual_driver.bind_model(_model_instance)
+	_visual_driver.step(0.0, _replay_velocity, aim_direction)
 
 	_ring = MeshInstance3D.new()
 	_ring.name = "EchoRing"

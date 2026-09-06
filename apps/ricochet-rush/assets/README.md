@@ -9,13 +9,8 @@ cd apps/ricochet-rush
 make art
 ```
 
-The script is `tools/build_art.py`. Blender is the editable authoring and export stage; Godot loads the committed GLBs for real-time gameplay. CI consumes the committed GLBs and does not install or run Blender or Blender MCP.
+The entry point is `tools/build_art.py`. `tools/hero.py` authors the player's separate armor plates, articulated legs, exposed hydraulics, cannon, and power unit; `tools/mechs.py` builds the four enemy silhouettes. `tools/surfaces.py` bakes original paint color and roughness maps in Blender Cycles; metric UV projection keeps the finish consistent across rigid parts. Texture sources live in `art/textures/` and are embedded in the exported GLBs. Godot extracts their runtime textures beside `player.glb` during import. Blender is the editable authoring and export stage; Godot loads the committed GLBs for real-time gameplay. CI consumes the committed GLBs and does not install or run Blender or Blender MCP.
 
-Typography uses Space Grotesk by Florian Karsten and DM Mono by Colophon Foundry, distributed under the SIL Open Font License 1.1. The license text for each bundled font is beside the binary in `fonts/`.
-
-- Space Grotesk: https://github.com/google/fonts/tree/main/ofl/spacegrotesk
-- DM Mono: https://github.com/google/fonts/tree/main/ofl/dmmono
-
-The app-local names `SpaceGrotesk.ttf` and `DMMono.ttf` keep the runtime paths short; the current Google Fonts source names these binaries `SpaceGrotesk[wght].ttf` and `DMMono-Regular.ttf`, respectively.
+Typography uses Inter by Rasmus Andersson under the SIL Open Font License 1.1. `fonts/Inter.ttf` is the unmodified `InterVariable.ttf` from the [official Inter 4.1 release](https://github.com/rsms/inter/releases/tag/v4.1); its license is beside the binary in `fonts/Inter-OFL.txt`. The font is bundled with the game and does not need a system installation or runtime network request.
 
 The Godot engine is distributed under the MIT license. Its notice is included in `Godot-LICENSE.txt` and packaged with each export.

@@ -125,6 +125,7 @@ const requestFromSnapshot = (snapshot: IntradayMarketSnapshot): IntradaySnapshot
     universe: manifest.universe ?? manifest.symbols,
     ...(manifest.universe === undefined ? {} : { symbols: manifest.symbols }),
     ...(manifest.purpose === undefined ? {} : { purpose: manifest.purpose }),
+    ...(manifest.candidateSymbols === undefined ? {} : { candidateSymbols: manifest.candidateSymbols }),
     feed: manifest.feed,
     delayClass: manifest.delayClass,
     sourceTopics: manifest.sourceTopics,

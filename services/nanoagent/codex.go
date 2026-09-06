@@ -1161,7 +1161,7 @@ func codexResumeThreadID(params json.RawMessage) (string, bool) {
 
 func allowedCodexMethod(method string) bool {
 	switch method {
-	case "account/read", "account/login/start", "thread/start", "thread/resume", "turn/start", "turn/steer", "turn/interrupt":
+	case "account/read", "account/login/start", "thread/start", "thread/resume", "thread/turns/list", "thread/items/list", "turn/start", "turn/steer", "turn/interrupt":
 		return true
 	default:
 		return false

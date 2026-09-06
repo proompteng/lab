@@ -204,6 +204,7 @@ message CodexThread {
   string id = 1;
   string raw_json = 2;
   uint64 event_sequence = 3;
+  map<string, uint64> item_event_sequences = 4;
 }
 message CodexTurn { string id = 1; string thread_id = 2; string raw_json = 3; }
 
