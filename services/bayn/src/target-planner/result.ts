@@ -31,7 +31,7 @@ const NoTradeTargetPlanResultSchema = Schema.Struct({
   ...TargetPlanResultFields,
   status: Schema.Literal(TargetPlanStatus.NoTrade),
   reason: Schema.Literal(TargetPlanReason.TargetsSatisfied),
-  targets: Schema.Array(PlannedTargetQuantitySchema).check(Schema.isMinLength(1)),
+  targets: Schema.Array(PlannedTargetQuantitySchema),
   intentTargets: Schema.Tuple([]),
 })
 
@@ -224,6 +224,13 @@ const targetPlanStatusIssues = (
   facts: TargetPlanSemanticFacts,
 ): readonly Schema.FilterIssue[] => {
   const issues: Schema.FilterIssue[] = []
+  if (
+    result.schemaVersion === legacyReferenceTargetPlanSchemaVersion &&
+    result.status === TargetPlanStatus.NoTrade &&
+    result.targets.length === 0
+  ) {
+    issues.push({ path: ['targets'], issue: 'legacy no-trade plans require at least one target' })
+  }
   if (result.status === TargetPlanStatus.NoTrade && facts.nonzeroDeltaCount !== 0) {
     issues.push({ path: ['status'], issue: 'NO_TRADE requires every target quantity to be satisfied' })
   }
