@@ -706,11 +706,22 @@ printf '%s\\n' "$@"
         name: 'shell_start',
         arguments: {
           sessionId,
-          command: "trap '' TERM; while :; do sleep 1; done",
+          command: "trap '' TERM; printf '%s\\n' TRAP_READY; while :; do sleep 1; done",
           timeoutSeconds: 30,
         },
       })
       const jobId = (started.structuredContent as { jobId: string }).jobId
+
+      let trapReady = false
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const progress = await client.callTool({ name: 'shell_read', arguments: { jobId } })
+        if ((progress.structuredContent as { stdout?: string }).stdout?.includes('TRAP_READY')) {
+          trapReady = true
+          break
+        }
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 10))
+      }
+      expect(trapReady).toBe(true)
 
       const closed = await client.callTool({
         name: 'repo_session_close',
