@@ -80,6 +80,7 @@ export type TurnOutcome = {
 
 export type CodexSessionOptions = {
   command: string
+  model: string
   cwd: string
   approvalPolicy: AskForApproval | null
   threadSandbox: SandboxMode | null
@@ -733,7 +734,7 @@ export const makeCodexSessionLayer = (logger: Logger) =>
                   request('initialize', {
                     clientInfo: { name: 'symphony', version: '0.1.0' },
                     capabilities: {
-                      experimentalApi: options.dynamicTools.length > 0,
+                      experimentalApi: true,
                       requestAttestation: false,
                     },
                   }).pipe(
@@ -758,7 +759,7 @@ export const makeCodexSessionLayer = (logger: Logger) =>
           if (existing) return existing
 
           const params: ThreadStartParams = {
-            model: null,
+            model: options.model,
             modelProvider: null,
             cwd: options.cwd,
             approvalPolicy: options.approvalPolicy,
@@ -792,7 +793,7 @@ export const makeCodexSessionLayer = (logger: Logger) =>
               cwd: options.cwd,
               approvalPolicy: options.approvalPolicy,
               sandboxPolicy: toSandboxPolicy(options.threadSandbox, options.turnSandboxPolicy),
-              model: null,
+              model: options.model,
               serviceTier: null,
               effort: null,
               summary: null,

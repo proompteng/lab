@@ -58,6 +58,7 @@ export type AgentConfig = {
 
 export type CodexConfig = {
   command: string
+  model: string
   approvalPolicy: AskForApproval | null
   threadSandbox: SandboxMode | null
   turnSandboxPolicy: SandboxPolicy | null

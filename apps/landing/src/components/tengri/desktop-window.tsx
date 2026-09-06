@@ -2,7 +2,7 @@
 
 import { motion, useReducedMotion } from 'motion/react'
 import type { PointerEvent as ReactPointerEvent, ReactNode, RefObject } from 'react'
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 import { cn } from '@/lib/utils'
 import {
   clampToViewport,
@@ -18,8 +18,11 @@ type Interaction = {
   edge: ResizeEdge | null
   startX: number
   startY: number
+  pointerX: number
+  pointerY: number
   base: Bounds
   next: Bounds
+  viewport: Bounds
   frame: number | null
 }
 
@@ -42,6 +45,7 @@ export function DesktopWindowFrame({
 }) {
   const elementRef = useRef<HTMLDivElement | null>(null)
   const interactionRef = useRef<Interaction | null>(null)
+  const releasePendingRef = useRef(false)
   const reducedMotion = useReducedMotion()
 
   useEffect(
@@ -53,6 +57,12 @@ export function DesktopWindowFrame({
     },
     [],
   )
+
+  useLayoutEffect(() => {
+    if (!releasePendingRef.current) return
+    releasePendingRef.current = false
+    resetTransientStyles(elementRef.current)
+  }, [window.bounds])
 
   const viewport = useCallback((): Bounds => {
     const rect = stageRef.current?.getBoundingClientRect()
@@ -73,50 +83,52 @@ export function DesktopWindowFrame({
         edge,
         startX: event.clientX,
         startY: event.clientY,
+        pointerX: event.clientX,
+        pointerY: event.clientY,
         base: window.bounds,
         next: window.bounds,
+        viewport: viewport(),
         frame: null,
       }
-      if (elementRef.current) elementRef.current.style.willChange = edge ? 'left, top, width, height' : 'transform'
+      if (elementRef.current) elementRef.current.style.willChange = edge ? 'left, top, width, height' : 'translate'
     },
-    [dispatch, window.bounds, window.id, window.mode],
+    [dispatch, viewport, window.bounds, window.id, window.mode],
   )
 
-  const move = useCallback(
-    (event: ReactPointerEvent<HTMLElement>) => {
-      const interaction = interactionRef.current
-      if (!interaction || interaction.pointerId !== event.pointerId) return
-      const dx = event.clientX - interaction.startX
-      const dy = event.clientY - interaction.startY
-      interaction.next = interaction.edge
-        ? resizeBounds(interaction.base, interaction.edge, dx, dy, viewport())
-        : clampToViewport({ ...interaction.base, x: interaction.base.x + dx, y: interaction.base.y + dy }, viewport())
-      if (interaction.frame !== null) return
-      interaction.frame = requestAnimationFrame(() => {
-        interaction.frame = null
-        const element = elementRef.current
-        if (!element) return
-        paintWindowInteractionFrame(element.style, interaction, RESIZE_GUTTER)
-      })
-    },
-    [viewport],
-  )
+  const move = useCallback((event: ReactPointerEvent<HTMLElement>) => {
+    const interaction = interactionRef.current
+    if (!interaction || interaction.pointerId !== event.pointerId) return
+    interaction.pointerX = event.clientX
+    interaction.pointerY = event.clientY
+    if (interaction.frame !== null) return
+    interaction.frame = requestAnimationFrame(() => {
+      interaction.frame = null
+      updateInteractionBounds(interaction)
+      const element = elementRef.current
+      if (!element) return
+      paintWindowInteractionFrame(element.style, interaction, RESIZE_GUTTER)
+    })
+  }, [])
 
   const end = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
       const interaction = interactionRef.current
       if (!interaction || interaction.pointerId !== event.pointerId) return
       if (interaction.frame !== null) cancelAnimationFrame(interaction.frame)
+      interaction.viewport = viewport()
+      updateInteractionBounds(interaction)
+      interaction.next = clampToViewport(interaction.next, interaction.viewport)
       const element = elementRef.current
       if (element) paintWindowInteractionFrame(element.style, interaction, RESIZE_GUTTER)
       interactionRef.current = null
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId)
       }
-      resetTransientStyles(elementRef.current)
+      if (element) element.style.willChange = ''
+      releasePendingRef.current = true
       dispatch({ type: 'move', id: window.id, bounds: interaction.next })
     },
-    [dispatch, window.id],
+    [dispatch, viewport, window.id],
   )
 
   const bounds = window.bounds
@@ -150,7 +162,7 @@ export function DesktopWindowFrame({
         aria-hidden={window.mode === 'minimized'}
         inert={window.mode === 'minimized' ? true : undefined}
         className={cn(
-          'tengri-window absolute inset-3 flex flex-col overflow-hidden rounded-[18px] border border-black/50 bg-zinc-800/95 ring-1 ring-white/25 backdrop-blur-2xl',
+          'tengri-window absolute inset-3 flex flex-col overflow-hidden rounded-[18px] border border-black/50 bg-zinc-800/95 ring-1 ring-white/25',
           active
             ? 'shadow-[0_24px_64px_-10px_rgba(0,0,0,0.65),0_8px_20px_rgba(0,0,0,0.3)]'
             : 'shadow-[0_8px_28px_rgba(0,0,0,0.3)]',
@@ -168,7 +180,7 @@ export function DesktopWindowFrame({
           onPointerUp={end}
           onPointerCancel={end}
         >
-          <div className="group/controls flex items-center" aria-label="Window controls">
+          <div className="group/controls relative z-30 flex items-center" aria-label="Window controls">
             <button
               type="button"
               aria-label={`Close ${window.title}`}
@@ -247,14 +259,14 @@ export function DesktopWindowFrame({
 }
 
 export function paintWindowInteractionFrame(
-  style: Pick<CSSStyleDeclaration, 'height' | 'left' | 'top' | 'transform' | 'width'>,
+  style: Pick<CSSStyleDeclaration, 'height' | 'left' | 'top' | 'translate' | 'width'>,
   interaction: Pick<Interaction, 'base' | 'edge' | 'next'>,
   gutter = 0,
 ) {
   if (!interaction.edge) {
     const translateX = interaction.next.x - interaction.base.x
     const translateY = interaction.next.y - interaction.base.y
-    style.transform = `translate3d(${translateX}px, ${translateY}px, 0)`
+    style.translate = `${translateX}px ${translateY}px`
     return
   }
   style.left = `${interaction.next.x - gutter}px`
@@ -263,9 +275,20 @@ export function paintWindowInteractionFrame(
   style.height = `${interaction.next.height + gutter * 2}px`
 }
 
+function updateInteractionBounds(interaction: Interaction) {
+  const dx = interaction.pointerX - interaction.startX
+  const dy = interaction.pointerY - interaction.startY
+  interaction.next = interaction.edge
+    ? resizeBounds(interaction.base, interaction.edge, dx, dy, interaction.viewport)
+    : clampToViewport(
+        { ...interaction.base, x: interaction.base.x + dx, y: interaction.base.y + dy },
+        interaction.viewport,
+      )
+}
+
 function resetTransientStyles(element: HTMLDivElement | null) {
   if (!element) return
-  element.style.transform = ''
+  element.style.removeProperty('translate')
   element.style.willChange = ''
 }
 
@@ -276,10 +299,10 @@ function resizeHandleClass(edge: ResizeEdge) {
     s: 'bottom-0 left-3 right-3 h-3 cursor-s-resize',
     e: 'top-3 right-0 bottom-3 w-3 cursor-e-resize',
     w: 'top-3 bottom-3 left-0 w-3 cursor-w-resize',
-    ne: 'top-0 right-0 h-3 w-3 cursor-ne-resize',
-    nw: 'top-0 left-0 h-3 w-3 cursor-nw-resize',
-    se: 'right-0 bottom-0 h-3 w-3 cursor-se-resize',
-    sw: 'bottom-0 left-0 h-3 w-3 cursor-sw-resize',
+    ne: 'top-0 right-0 h-6 w-6 cursor-ne-resize',
+    nw: 'top-0 left-0 h-6 w-6 cursor-nw-resize',
+    se: 'right-0 bottom-0 h-6 w-6 cursor-se-resize',
+    sw: 'bottom-0 left-0 h-6 w-6 cursor-sw-resize',
   }
   return `${shared} ${classes[edge]}`
 }
