@@ -1,6 +1,6 @@
 'use client'
 
-import { Bot, CircleStop, Copy, ExternalLink, LoaderCircle, Plus, Send } from 'lucide-react'
+import { ArrowUp, Copy, ExternalLink, LoaderCircle, Plus, Square } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   TengriCodexAccount,
@@ -29,6 +29,7 @@ import {
   parseCodexEvent,
   reconcileCodexEventsWithRestoredHistory,
   type CodexApprovalDecision,
+  type CodexBufferedEvent,
   type CodexTranscriptItem,
 } from './codex-events'
 import { runTengriAction, TengriRequestError } from './client'
@@ -43,7 +44,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const [activeTurnId, setActiveTurnId] = useState('')
   const [historyItems, setHistoryItems] = useState<CodexTranscriptItem[]>([])
   const [restoredHistorySequence, setRestoredHistorySequence] = useState(0)
-  const [events, setEvents] = useState<TengriCodexEvent[]>([])
+  const [events, setEvents] = useState<CodexBufferedEvent[]>([])
   const [prompt, setPrompt] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [replayRecovering, setReplayRecovering] = useState(false)
@@ -64,11 +65,13 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const lastEventSequence = useRef(0)
   const lastTurnLifecycleSequence = useRef(0)
   const restoredHistoryRef = useRef<ReadonlyMap<string, CodexTranscriptItem>>(new Map())
+  const restoredItemSequencesRef = useRef<ReadonlyMap<string, number>>(new Map())
   const restoredHistorySequenceRef = useRef(0)
   const replayRecoveryRef = useRef(false)
   const threadResumeGeneration = useRef(0)
   const mountedRef = useRef(true)
   const accountChecked = account !== null
+  const showStopAction = Boolean(activeTurnId) && !prompt.trim()
   const canStartNewConversation = codexCanStartNewConversation({
     activeTurnId,
     recovering: replayRecovering,
@@ -189,6 +192,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     lastEventSequence.current = 0
     lastTurnLifecycleSequence.current = 0
     restoredHistoryRef.current = new Map()
+    restoredItemSequencesRef.current = new Map()
     restoredHistorySequenceRef.current = 0
     replayRecoveryRef.current = false
     threadResumeGeneration.current += 1
@@ -237,10 +241,12 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       const restored = commitThread(agentId, thread, threadIdRef, setThreadId, setHistoryItems)
       const sequence = thread.eventSequence
       const restoredById = new Map(restored.historyItems.map((item) => [item.id, item]))
+      const itemSequences = new Map(Object.entries(thread.itemEventSequences ?? {}))
       restoredHistoryRef.current = restoredById
+      restoredItemSequencesRef.current = itemSequences
       restoredHistorySequenceRef.current = sequence
       setRestoredHistorySequence(sequence)
-      setEvents((current) => reconcileCodexEventsWithRestoredHistory(current, restoredById, sequence))
+      setEvents((current) => reconcileCodexEventsWithRestoredHistory(current, restoredById, sequence, itemSequences))
       const restoredActiveTurnId = codexReconciledActiveTurnId(restored.activeTurnId, completedTurns.current)
       const activeTurnId = commitActiveTurn ? restoredActiveTurnId : activeTurnIdRef.current
       if (commitActiveTurn) setCurrentActiveTurnId(activeTurnId)
@@ -340,7 +346,13 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         if (!codexLoginCompletionMatches(event, activeLoginId)) return
       }
       setEvents((current) =>
-        appendCodexEventAfterRestore(current, event, restoredHistoryRef.current, restoredHistorySequenceRef.current),
+        appendCodexEventAfterRestore(
+          current,
+          event,
+          restoredHistoryRef.current,
+          restoredHistorySequenceRef.current,
+          restoredItemSequencesRef.current,
+        ),
       )
       if (eventMethod === 'account/login/completed') {
         const completionError = codexLoginCompletionError(event)
@@ -387,23 +399,31 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         ),
     [events, historyIds, restoredHistorySequence, threadId],
   )
-  const renderedEventItemIds = useMemo(
+  const restoredItemUpdates = useMemo(
     () =>
-      new Set(
+      new Map(
         renderedEvents
-          .map(({ event }) =>
-            codexEventSupersedesRestoredItem(event, historyById.get(event.itemId), restoredHistorySequence)
-              ? event.itemId
-              : '',
+          .filter(({ event }) =>
+            codexEventSupersedesRestoredItem(event, historyById.get(event.itemId), restoredHistorySequence),
           )
-          .filter(Boolean),
+          .map((update) => [update.event.itemId, update]),
       ),
     [historyById, renderedEvents, restoredHistorySequence],
   )
-  const renderedHistoryItems = useMemo(
-    () => historyItems.filter((item) => !renderedEventItemIds.has(item.id)),
-    [historyItems, renderedEventItemIds],
-  )
+
+  function renderEvent({ event, text }: (typeof renderedEvents)[number]) {
+    return (
+      <CodexEventCard
+        approvalDecisions={codexApprovalDecisions(event)}
+        approvalId={event.approvalId}
+        key={`${event.sequence}-${event.method}-${event.itemId}`}
+        kind={event.kind}
+        onResolveApproval={(decision) => void resolveApproval(event, decision)}
+        resolvingApproval={resolvingApprovals.has(event.approvalId)}
+        text={text}
+      />
+    )
+  }
 
   async function send() {
     const text = prompt.trim()
@@ -508,6 +528,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     removeStoredThread(agentId)
     threadIdRef.current = ''
     restoredHistoryRef.current = new Map()
+    restoredItemSequencesRef.current = new Map()
     restoredHistorySequenceRef.current = 0
     threadResumeGeneration.current += 1
     setThreadId('')
@@ -561,8 +582,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[#202020]">
-      <div className="flex h-10 shrink-0 items-center border-b border-white/8 px-4 text-xs text-white/48">
-        <Bot className="mr-2 h-3.5 w-3.5 text-[#9ccfd8]" aria-hidden="true" />
+      <div className="flex h-10 shrink-0 items-center border-b border-white/8 px-3 text-xs text-white/48">
         Agent Chat
         {account.plan ? <span className="ml-2 text-white/55">{account.plan}</span> : null}
         <button
@@ -574,40 +594,35 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           <Plus className="h-3.5 w-3.5" aria-hidden="true" /> New conversation
         </button>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto px-[clamp(16px,4vw,48px)] py-6">
-        {renderedHistoryItems.length === 0 && renderedEvents.length === 0 ? <EmptyConversation /> : null}
-        <div className="mx-auto max-w-3xl space-y-3" role="log" aria-live="polite" aria-relevant="additions text">
-          {renderedHistoryItems.map((item) => (
-            <CodexEventCard key={`history-${item.id}`} kind={item.kind} text={item.text} />
-          ))}
-          {renderedEvents.map(({ event, text }) => (
-            <CodexEventCard
-              approvalDecisions={codexApprovalDecisions(event)}
-              approvalId={event.approvalId}
-              key={`${event.sequence}-${event.method}-${event.itemId}`}
-              kind={event.kind}
-              onResolveApproval={(decision) => void resolveApproval(event, decision)}
-              resolvingApproval={resolvingApprovals.has(event.approvalId)}
-              text={text}
-            />
-          ))}
+      <div className="min-h-0 flex-1 overflow-auto px-3 py-3 sm:px-4">
+        {historyItems.length === 0 && renderedEvents.length === 0 ? <EmptyConversation /> : null}
+        <div className="mx-auto w-full space-y-2" role="log" aria-live="polite" aria-relevant="additions text">
+          {historyItems.map((item) => {
+            const update = restoredItemUpdates.get(item.id)
+            return update ? (
+              renderEvent(update)
+            ) : (
+              <CodexEventCard key={`history-${item.id}`} kind={item.kind} text={item.text} />
+            )
+          })}
+          {renderedEvents.filter((update) => restoredItemUpdates.get(update.event.itemId) !== update).map(renderEvent)}
           <div ref={endRef} />
         </div>
       </div>
-      <div className="shrink-0 px-[clamp(16px,4vw,48px)] pb-5">
+      <div className="shrink-0 px-3 pb-3 sm:px-4">
         <StreamStatus error={errorMessage} state={eventStreamState} />
         {replayRecovering ? (
-          <p className="mx-auto mb-2 max-w-3xl text-xs text-white/45" role="status">
+          <p className="mx-auto mb-2 w-full text-xs text-white/45" role="status">
             Recovering the active conversation…
           </p>
         ) : threadId && !threadReady ? (
-          <div className="mx-auto mb-3 max-w-3xl text-xs">
+          <div className="mx-auto mb-3 w-full text-xs">
             {conversationMissing ? (
               <p className="mb-2 text-white/60">
                 This saved conversation is no longer available. Start a new conversation to continue in this workspace.
               </p>
             ) : null}
-            <div className="flex items-center justify-center gap-4">
+            <div className="flex items-center justify-center gap-3">
               <button
                 type="button"
                 className="rounded text-[#79b8ff] outline-none hover:text-[#9bcaff] focus-visible:ring-2 focus-visible:ring-white/50"
@@ -629,8 +644,9 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           </div>
         ) : null}
         <form
+          aria-label="Message composer"
           aria-busy={replayRecovering}
-          className="mx-auto flex max-w-3xl items-end gap-2 rounded-2xl border border-white/10 bg-white/[0.055] p-2 shadow-sm backdrop-blur-xl"
+          className="mx-auto flex w-full items-end gap-1.5 rounded-2xl border border-white/10 bg-white/[0.055] p-1.5 shadow-sm backdrop-blur-xl"
           onSubmit={(event) => {
             event.preventDefault()
             void send()
@@ -658,31 +674,25 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
             }
             className="max-h-36 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-sm text-white/82 outline-none placeholder:text-white/28"
           />
-          {activeTurnId ? (
-            <button
-              type="button"
-              aria-label="Interrupt turn"
-              disabled={interrupting || replayRecovering}
-              className="grid h-9 w-9 place-items-center rounded-xl bg-white/8 outline-none hover:bg-white/12 focus-visible:ring-2 focus-visible:ring-white/50 disabled:opacity-40"
-              onClick={() => void interruptTurn()}
-            >
-              {interrupting ? (
-                <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
-              ) : (
-                <CircleStop className="h-4 w-4" aria-hidden="true" />
-              )}
-            </button>
-          ) : null}
           <button
-            type="submit"
-            aria-label={activeTurnId ? 'Steer turn' : 'Send message'}
-            disabled={!prompt.trim() || submitting || replayRecovering || Boolean(threadId && !threadReady)}
-            className="grid h-9 w-9 place-items-center rounded-xl bg-[#2574e8] outline-none hover:bg-[#3981e9] focus-visible:ring-2 focus-visible:ring-white/60 disabled:opacity-30"
+            type={showStopAction ? 'button' : 'submit'}
+            aria-label={showStopAction ? 'Stop response' : activeTurnId ? 'Steer turn' : 'Send message'}
+            disabled={
+              (!showStopAction && !prompt.trim()) ||
+              submitting ||
+              interrupting ||
+              replayRecovering ||
+              Boolean(threadId && !threadReady)
+            }
+            onClick={showStopAction ? () => void interruptTurn() : undefined}
+            className={`grid h-9 w-9 shrink-0 place-items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-white/60 disabled:opacity-30 ${showStopAction ? 'bg-white/90 text-zinc-900 hover:bg-white' : 'bg-[#2574e8] hover:bg-[#3981e9]'}`}
           >
-            {submitting ? (
+            {submitting || interrupting ? (
               <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
+            ) : showStopAction ? (
+              <Square className="h-3.5 w-3.5 fill-current" aria-hidden="true" />
             ) : (
-              <Send className="h-4 w-4" aria-hidden="true" />
+              <ArrowUp className="h-4 w-4" aria-hidden="true" />
             )}
           </button>
         </form>
@@ -707,10 +717,7 @@ export function CodexLogin({
   const verificationUrl = safeVerificationUrl(login?.verificationUrl || '')
   return (
     <div className="grid h-full place-items-center bg-[#202020] p-8">
-      <div className="max-w-sm rounded-2xl border border-white/10 bg-zinc-800/70 p-7 text-center shadow-lg">
-        <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-[#2574e8] to-[#8b5cf6]">
-          <Bot className="h-7 w-7" aria-hidden="true" />
-        </div>
+      <div className="max-w-sm rounded-2xl border border-white/10 bg-zinc-800/70 p-6 text-center shadow-lg">
         <h2 className="text-lg font-semibold text-white/90">Connect Codex in this microVM</h2>
         <p className="mt-2 text-sm leading-6 text-white/48">
           Your device login is stored only in this agent’s persistent workspace.
@@ -781,11 +788,8 @@ export function CodexLogin({
 
 function EmptyConversation() {
   return (
-    <div className="mx-auto mt-[12vh] max-w-xl text-center">
-      <div className="mx-auto mb-5 grid h-16 w-16 place-items-center rounded-[22px] bg-gradient-to-br from-[#2574e8] to-[#8b5cf6] shadow-[0_18px_50px_rgba(37,116,232,0.28)]">
-        <Bot className="h-8 w-8" aria-hidden="true" />
-      </div>
-      <h2 className="text-2xl font-semibold tracking-tight text-white/92">What should we build?</h2>
+    <div className="mx-auto mt-16 max-w-xl text-center">
+      <h2 className="text-xl font-semibold tracking-tight text-white/92">What should we build?</h2>
       <p className="mt-2 text-sm leading-6 text-white/56">
         This conversation, terminal, editor, and files share the same Firecracker microVM.
       </p>
@@ -804,12 +808,12 @@ function StreamStatus({ error, state }: { error: string; state: EventStreamState
             : 'Agent event stream reconnecting'}
       </span>
       {state === 'reconnecting' ? (
-        <p role="status" className="mx-auto mb-2 max-w-3xl text-xs text-amber-200/80">
+        <p role="status" className="mx-auto mb-2 w-full text-xs text-amber-200/80">
           Agent event stream is reconnecting
         </p>
       ) : null}
       {error ? (
-        <p role="alert" className="mx-auto mb-2 max-w-3xl text-xs text-amber-200/80">
+        <p role="alert" className="mx-auto mb-2 w-full text-xs text-amber-200/80">
           {error}
         </p>
       ) : null}
@@ -827,7 +831,7 @@ function commitThread(
   threadRef.current = thread.id
   setThreadId(thread.id)
   writeStoredThread(agentId, thread.id)
-  const historyItems = codexTranscriptFromThread(thread.rawJson)
+  const historyItems = codexTranscriptFromThread(thread.rawJson, thread.itemEventSequences)
   setHistoryItems(historyItems)
   return { activeTurnId: codexActiveTurnIdFromThread(thread.rawJson), historyItems }
 }

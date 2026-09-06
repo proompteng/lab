@@ -99,6 +99,7 @@ export type TengriCodexThread = {
   id: string
   rawJson: string
   eventSequence: number
+  itemEventSequences?: Record<string, number>
 }
 
 export type TengriCodexTurn = {
