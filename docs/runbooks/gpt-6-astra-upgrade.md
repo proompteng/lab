@@ -5,7 +5,7 @@ come from the [OpenAI migration guide](https://developers.openai.com/api/docs/gu
 
 ## Scope and compatibility
 
-- Codex clients, container and workspace templates, Agents providers, Jangar chat, Sag, Bumba's hosted completion
+- Codex clients, container and workspace templates, Agents providers, Jangar chat, Symphony, Sag, Bumba's hosted completion
   default, and Torghut's LLM default select Astra.
 - The `codex-spark` provider retains its resource name for existing consumers and selects Astra for new runs.
 - Existing supported reasoning efforts remain unchanged. Astra requests use `low` when an older configuration
@@ -19,6 +19,8 @@ come from the [OpenAI migration guide](https://developers.openai.com/api/docs/gu
 - Codex CLI must be at least `0.153.0` for Astra, as documented in
   [OpenAI's Codex setup guidance](https://help.openai.com/en/articles/20001354). The shared runtime pins `0.153.4`.
   Older clients reject Astra before inference, even with valid credentials.
+- Docker build defaults, Codex CI, and Nanoagent's verified bootstrap also pin CLI `0.153.4`. Symphony resolves an
+  explicit `codex.model` for every thread and turn, defaulting to Astra while preserving workflow overrides.
 - Jangar sets `HOME=/root` and `CODEX_HOME=/root/.codex`, includes the container configuration there, and uses the
   existing mounted `auth.json`. Renew an expired credential for the same verified account through
   `bun run scripts/sync-codex-auth-1password.ts sync` and the existing ExternalSecrets reconciliation. New pods

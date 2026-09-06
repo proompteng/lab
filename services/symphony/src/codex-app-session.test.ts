@@ -67,6 +67,7 @@ setInterval(() => {}, 1000)
           const sessions = yield* CodexSessionService
           const session = yield* sessions.createSession({
             command: `node ${JSON.stringify(scriptPath)}`,
+            model: 'gpt-6-astra',
             cwd: tempDir,
             approvalPolicy: null,
             threadSandbox: null,
@@ -158,6 +159,13 @@ rl.on('line', (line) => {
   }
 
   if (message.method === 'thread/start') {
+    if (message.params?.model !== 'gpt-6-astra') {
+      console.log(JSON.stringify({
+        id: message.id,
+        error: { code: -32602, message: 'thread/start must receive the configured model' },
+      }))
+      return
+    }
     if (requestAttestation !== false) {
       console.log(JSON.stringify({
         id: message.id,
@@ -200,6 +208,13 @@ rl.on('line', (line) => {
   }
 
   if (message.method === 'turn/start') {
+    if (message.params?.model !== 'gpt-6-astra') {
+      console.log(JSON.stringify({
+        id: message.id,
+        error: { code: -32602, message: 'turn/start must receive the configured model' },
+      }))
+      return
+    }
     console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'turn-1' } } }))
     console.log(JSON.stringify({
       method: 'turn/completed',
@@ -229,6 +244,7 @@ rl.on('line', (line) => {
           const sessions = yield* CodexSessionService
           const session = yield* sessions.createSession({
             command: `node ${JSON.stringify(scriptPath)}`,
+            model: 'gpt-6-astra',
             cwd: tempDir,
             approvalPolicy: null,
             threadSandbox: null,
@@ -333,6 +349,7 @@ rl.on('line', (line) => {
             const sessions = yield* CodexSessionService
             const session = yield* sessions.createSession({
               command: `SYMPHONY_SANDBOX_CASE=${threadSandbox} node ${JSON.stringify(scriptPath)}`,
+              model: 'gpt-6-astra',
               cwd: tempDir,
               approvalPolicy: null,
               threadSandbox,
@@ -421,6 +438,7 @@ rl.on('line', (line) => {
           const sessions = yield* CodexSessionService
           const session = yield* sessions.createSession({
             command: `node ${JSON.stringify(scriptPath)}`,
+            model: 'gpt-6-astra',
             cwd: tempDir,
             approvalPolicy: null,
             threadSandbox: null,
