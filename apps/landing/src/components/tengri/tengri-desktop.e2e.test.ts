@@ -2624,6 +2624,7 @@ test('preserves zoom across minimize and window switching and lists individual w
   await expect(chrome).toHaveCount(2)
   await page.getByRole('menuitem', { name: 'Window', exact: true }).click()
   const menu = page.getByRole('menu', { name: 'Window', exact: true })
+  await expect(menu.getByRole('menuitemcheckbox')).toHaveCount(2)
   await expect(menu.getByRole('menuitemcheckbox', { name: 'Chrome 2', exact: true })).toBeChecked()
   await menu.getByRole('menuitemcheckbox', { name: 'Chrome 1', exact: true }).click()
   await expect(chrome.first()).toHaveAttribute('data-active', 'true')

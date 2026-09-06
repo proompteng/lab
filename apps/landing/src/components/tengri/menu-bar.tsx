@@ -120,17 +120,19 @@ export const MenuBar = memo(function MenuBar({
     ],
     Window: [
       { label: 'Minimize', shortcut: '⌘M', run: onMinimizeActive, disabled: !activeWindow },
-      ...windows.map((window, index) => {
-        const siblings = windows.filter((candidate) => candidate.app === window.app)
-        const number =
-          siblings.length > 1 ? ` ${siblings.findIndex((candidate) => candidate.id === window.id) + 1}` : ''
-        return {
-          label: `${window.title}${number}${window.mode === 'minimized' ? ' — Minimized' : ''}`,
-          checked: window.id === activeWindow?.id,
-          separator: index === 0,
-          run: () => onActivateWindow(window.id),
-        }
-      }),
+      ...windows
+        .filter((window) => window.app === activeApp)
+        .map((window, index) => {
+          const siblings = windows.filter((candidate) => candidate.app === window.app)
+          const number =
+            siblings.length > 1 ? ` ${siblings.findIndex((candidate) => candidate.id === window.id) + 1}` : ''
+          return {
+            label: `${window.title}${number}${window.mode === 'minimized' ? ' — Minimized' : ''}`,
+            checked: window.id === activeWindow?.id,
+            separator: index === 0,
+            run: () => onActivateWindow(window.id),
+          }
+        }),
     ],
     Help: [
       {

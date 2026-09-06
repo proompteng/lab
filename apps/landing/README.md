@@ -78,7 +78,7 @@ corresponding Dock icon. Reduced-motion preferences update while the desktop is 
 Dock magnification reserves space between icons and expands the glass background with transforms, using cached
 geometry and limiting expansion at narrow viewport edges. Activating a window returns keyboard focus to its last
 control; Terminal is ready for typing when opened. Minimize preserves the window's zoom state and normal bounds.
-The Window menu lists individual open windows, identifies minimized windows, and marks the active window.
+The Window menu lists the active app's individual windows, identifies minimized windows, and marks the active window.
 
 Design references: Apple [windows](https://developer.apple.com/design/human-interface-guidelines/windows),
 [toolbars](https://developer.apple.com/design/human-interface-guidelines/toolbars), and
