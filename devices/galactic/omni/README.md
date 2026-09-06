@@ -95,10 +95,16 @@ Passing these checks does not prove workload continuity, data backups, disk iden
 authorize a drain. Verify those conditions in the reviewed maintenance procedure. In particular, a Kubernetes etcd
 snapshot does not back up application volumes, and node membership changes must preserve the existing OSD identities.
 
+The [Turin and Altra maintenance procedure](../../../docs/runbooks/galactic-turin-podcidr-23-migration-plan.md)
+records the rehearsed Node re-registration, workload availability decision, restoration, and recovery sequence.
+`podcidr_patch.py` renders temporary Omni patches from a drained target's snapshots; `podcidr_cleanup.py` performs
+the guarded CNI cleanup inside the maintenance static pod. Neither tool authorizes a production drain or a Talos reset.
+The cleanup waits for asynchronous bridge detachment and fails if ports remain owned; it never removes attached ports.
+
 Check the gate's failure cases with:
 
 ```bash
-python3 -m unittest discover -s devices/galactic/omni -p test_podcidr_preflight.py -v
-ruff check devices/galactic/omni/podcidr_preflight.py devices/galactic/omni/test_podcidr_preflight.py
-ruff format --check devices/galactic/omni/podcidr_preflight.py devices/galactic/omni/test_podcidr_preflight.py
+python3 -m unittest discover -s devices/galactic/omni -p 'test_podcidr_*.py' -v
+ruff check devices/galactic/omni/podcidr_*.py devices/galactic/omni/test_podcidr_*.py
+ruff format --check devices/galactic/omni/podcidr_*.py devices/galactic/omni/test_podcidr_*.py
 ```
