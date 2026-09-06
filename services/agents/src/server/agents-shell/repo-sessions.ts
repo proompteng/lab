@@ -15,6 +15,11 @@ export type RepoSession = {
   createdAt: string
 }
 
+type RepoSessionRecord = {
+  session: RepoSession
+  closing: boolean
+}
+
 const slugify = (value: string) => {
   const slug = value
     .toLowerCase()
@@ -34,7 +39,7 @@ export const createRepoSessionIdentity = (workspaceRoot: string, name?: string |
 }
 
 export class RepoSessionStore {
-  private readonly sessions = new Map<string, RepoSession>()
+  private readonly sessions = new Map<string, RepoSessionRecord>()
   private readonly metadataRoot: string
   private readonly worktreeRoot: string
 
@@ -71,7 +76,7 @@ export class RepoSessionStore {
           unlinkSync(path)
           continue
         }
-        this.sessions.set(session.id, session)
+        this.sessions.set(session.id, { session, closing: false })
       } catch (error) {
         console.warn('[agents-shell] ignoring invalid persisted repo session', { path, error: String(error) })
       }
@@ -87,15 +92,34 @@ export class RepoSessionStore {
 
   set(session: RepoSession) {
     this.persist(session)
-    this.sessions.set(session.id, session)
+    this.sessions.set(session.id, { session, closing: false })
     return session
   }
 
-  require(sessionId: string, auth: AuthContext) {
-    const session = this.sessions.get(sessionId)
-    if (!session) throw new Error(`unknown repo session: ${sessionId}`)
-    if (session.ownerSubject !== auth.subject) throw new Error(`repo session is owned by another subject: ${sessionId}`)
-    return session
+  require(sessionId: string, auth: AuthContext, options: { allowClosing?: boolean } = {}) {
+    const record = this.sessions.get(sessionId)
+    if (!record) throw new Error(`unknown repo session: ${sessionId}`)
+    if (record.session.ownerSubject !== auth.subject) {
+      throw new Error(`repo session is owned by another subject: ${sessionId}`)
+    }
+    if (record.closing && !options.allowClosing) throw new Error(`repo session is closing: ${sessionId}`)
+    return record.session
+  }
+
+  beginClose(sessionId: string, auth: AuthContext) {
+    const record = this.sessions.get(sessionId)
+    if (!record) throw new Error(`unknown repo session: ${sessionId}`)
+    if (record.session.ownerSubject !== auth.subject) {
+      throw new Error(`repo session is owned by another subject: ${sessionId}`)
+    }
+    if (record.closing) throw new Error(`repo session is already closing: ${sessionId}`)
+    record.closing = true
+    return record.session
+  }
+
+  cancelClose(sessionId: string) {
+    const record = this.sessions.get(sessionId)
+    if (record) record.closing = false
   }
 
   delete(sessionId: string) {

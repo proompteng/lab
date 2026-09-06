@@ -142,7 +142,7 @@ export class AgentsShellRunner {
   }
 
   async repoSessionStatus(sessionId: string, auth: AuthContext) {
-    const session = this.repoSessions.require(sessionId, auth)
+    const session = this.repoSessions.require(sessionId, auth, { allowClosing: true })
     const [head, status, divergence] = await Promise.all([
       this.runProcess({
         command: 'git',
@@ -153,7 +153,7 @@ export class AgentsShellRunner {
       }),
       this.runProcess({
         command: 'git',
-        args: ['status', '--porcelain=v1'],
+        args: ['status', '--porcelain=v1', '--untracked-files=normal', '--ignored=matching'],
         cwd: session.worktree,
         auth,
         auditEvent: 'repo_session_status_dirty',
@@ -183,30 +183,36 @@ export class AgentsShellRunner {
   }
 
   async closeRepoSession(args: { sessionId: string; force?: boolean }, auth: AuthContext) {
-    const status = await this.repoSessionStatus(args.sessionId, auth)
-    if (status.dirty && !args.force) {
-      throw new Error(`repo session has uncommitted changes; clean it or close with force: ${args.sessionId}`)
+    const session = this.repoSessions.beginClose(args.sessionId, auth)
+    let removed = false
+    try {
+      const status = await this.repoSessionStatus(args.sessionId, auth)
+      if (status.dirty && !args.force) {
+        throw new Error(`repo session has uncommitted changes; clean it or close with force: ${args.sessionId}`)
+      }
+      const activeJobs = this.runningJobs().filter((job) => isInsidePath(session.worktree, job.cwd))
+      if (activeJobs.length > 0 && !args.force) {
+        throw new Error(`repo session has running shell jobs; stop them or close with force: ${args.sessionId}`)
+      }
+      if (args.force) {
+        await Promise.all(activeJobs.map((job) => this.terminateJob(job, auth)))
+      }
+      const remove = await this.runProcess({
+        command: 'git',
+        args: ['worktree', 'remove', ...(args.force ? ['--force'] : []), session.worktree],
+        cwd: this.repoSeedPath(),
+        auth,
+        auditEvent: 'repo_session_worktree_remove',
+      })
+      if (!remove.ok) throw new Error(`failed to remove repo session worktree: ${remove.stderr || remove.stdout}`)
+      removed = true
+      this.repoSessions.delete(args.sessionId)
+      const closedAt = new Date().toISOString()
+      this.audit('repo_session_closed', auth, { sessionId: args.sessionId, branch: session.branch, closedAt })
+      return { ...status, closedAt }
+    } finally {
+      if (!removed) this.repoSessions.cancelClose(args.sessionId)
     }
-    const session = this.repoSessions.require(args.sessionId, auth)
-    const activeJobs = this.runningJobs().filter((job) => isInsidePath(session.worktree, job.cwd))
-    if (activeJobs.length > 0 && !args.force) {
-      throw new Error(`repo session has running shell jobs; stop them or close with force: ${args.sessionId}`)
-    }
-    if (args.force) {
-      await Promise.all(activeJobs.map((job) => this.terminateJob(job, auth)))
-    }
-    const remove = await this.runProcess({
-      command: 'git',
-      args: ['worktree', 'remove', ...(args.force ? ['--force'] : []), session.worktree],
-      cwd: this.repoSeedPath(),
-      auth,
-      auditEvent: 'repo_session_worktree_remove',
-    })
-    if (!remove.ok) throw new Error(`failed to remove repo session worktree: ${remove.stderr || remove.stdout}`)
-    this.repoSessions.delete(args.sessionId)
-    const closedAt = new Date().toISOString()
-    this.audit('repo_session_closed', auth, { sessionId: args.sessionId, branch: session.branch, closedAt })
-    return { ...status, closedAt }
   }
 
   audit(event: string, auth: AuthContext | null, payload: Record<string, unknown>) {

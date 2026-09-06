@@ -79,7 +79,8 @@ const initializeRepoFixture = (config: AgentsShellConfig) => {
   execFileSync('git', ['-C', repo, 'config', 'user.name', 'Agents Shell Test'])
   execFileSync('git', ['-C', repo, 'config', 'user.email', 'agents-shell@example.test'])
   writeFileSync(join(repo, 'README.md'), '# fixture\n')
-  execFileSync('git', ['-C', repo, 'add', 'README.md'])
+  writeFileSync(join(repo, '.gitignore'), '.env\n')
+  execFileSync('git', ['-C', repo, 'add', 'README.md', '.gitignore'])
   execFileSync('git', ['-C', repo, 'commit', '-m', 'fixture'])
   execFileSync('git', ['-C', repo, 'remote', 'add', 'origin', remote])
   execFileSync('git', ['-C', repo, 'push', '-u', 'origin', 'main'])
@@ -689,6 +690,68 @@ printf '%s\\n' "$@"
       await second.client.close()
       await second.server.close()
     }
+  })
+
+  it('treats ignored files as dirty so safe close cannot delete them', async () => {
+    const config = makeConfig()
+    initializeRepoFixture(config)
+    const { client, server, clientTransport, serverTransport } = await connectServer(config)
+
+    try {
+      const opened = await client.callTool({
+        name: 'repo_session_open',
+        arguments: { name: 'ignored-file-test' },
+      })
+      const sessionId = (opened.structuredContent as { sessionId: string }).sessionId
+      await client.callTool({
+        name: 'shell_run',
+        arguments: { sessionId, command: "printf '%s\\n' secret > .env" },
+      })
+
+      const ordinaryGitStatus = await client.callTool({
+        name: 'git',
+        arguments: { sessionId, args: ['status', '--short'] },
+      })
+      expect((ordinaryGitStatus.structuredContent as { stdout?: string }).stdout).toBe('')
+
+      const status = await client.callTool({
+        name: 'repo_session_status',
+        arguments: { sessionId },
+      })
+      expect((status.structuredContent as { dirty?: boolean }).dirty).toBe(true)
+
+      const safeClose = await client.callTool({
+        name: 'repo_session_close',
+        arguments: { sessionId },
+      })
+      expect(safeClose.isError).toBe(true)
+      expect(JSON.stringify(safeClose.content)).toContain('uncommitted changes')
+
+      const forcedClose = await client.callTool({
+        name: 'repo_session_close',
+        arguments: { sessionId, force: true },
+      })
+      expect(forcedClose.isError).not.toBe(true)
+    } finally {
+      await clientTransport.close()
+      await serverTransport.close()
+      await client.close()
+      await server.close()
+    }
+  })
+
+  it('marks a repo session as closing before asynchronous close checks', async () => {
+    const config = makeConfig()
+    initializeRepoFixture(config)
+    const auth = makeAuth()
+    const runner = new AgentsShellRunner(config)
+    const opened = await runner.openRepoSession({ name: 'closing-lock-test' }, auth)
+
+    const closing = runner.closeRepoSession({ sessionId: opened.sessionId }, auth)
+    expect(() => runner.parseCommandInput({ command: 'pwd', sessionId: opened.sessionId }, auth)).toThrow(
+      `repo session is closing: ${opened.sessionId}`,
+    )
+    await closing
   })
 
   it('waits for stubborn session jobs to terminate before forced close', async () => {
