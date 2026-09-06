@@ -11,6 +11,7 @@ import type { IntradaySnapshotManifest } from '../market-data/intraday/model'
 import { PositiveMicrosSchema, strictParseOptions } from '../schemas'
 import type { IntradayMomentumTargetPortfolio } from '../strategy/intraday-momentum/model'
 import type { IntradayReplayIocOutcome } from './execution'
+import type { IntradayReplayEquityMark } from './equity'
 
 export const IntradayReplayAssumptionsSchema = Schema.Struct({
   pollIntervalMs: Schema.Literal(30_000),
@@ -57,6 +58,7 @@ export type IntradayReplayObservation =
       readonly purpose: 'decision' | 'planning' | 'arrival' | 'mark' | 'close'
       readonly manifest: IntradaySnapshotManifest
       readonly decision?: IntradayMomentumTargetPortfolio
+      readonly equity?: IntradayReplayEquityMark
     }
   | {
       readonly kind: 'unavailable'
@@ -97,10 +99,13 @@ export interface IntradayReplaySession {
   readonly executionFeesMicros: string
   readonly netRealizedPnlAfterCostsMicros: string | null
   readonly maximumObservedDrawdownMicros: string | null
+  readonly peakEquityMicros: string | null
+  /** True when this session's baseline or observed marks exceeded an active risk limit. */
+  readonly riskLimitBreached: boolean
 }
 
 export interface IntradayReplayReport {
-  readonly schemaVersion: 'bayn.intraday-replay-report.v1'
+  readonly schemaVersion: 'bayn.intraday-replay-report.v2'
   readonly evidenceKind: 'COUNTERFACTUAL_RESEARCH'
   readonly qualification: 'NOT_QUALIFIED'
   readonly inputHash: string
@@ -116,6 +121,10 @@ export interface IntradayReplayReport {
     readonly incompleteSessionCount: number
     readonly executionSessionCount: number
     readonly netRealizedPnlAfterCostsMicros: string | null
+    readonly maximumObservedDrawdownMicros: string | null
+    readonly peakEquityMicros: string | null
+    /** True when any evaluated session exceeded an active risk limit. */
+    readonly riskLimitBreached: boolean
   }
   readonly limitations: readonly string[]
   readonly reportHash: string
