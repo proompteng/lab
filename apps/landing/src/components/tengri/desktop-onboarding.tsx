@@ -122,15 +122,9 @@ export default function DesktopOnboarding() {
   }
 
   return (
-    <main className="relative min-h-[100svh] overflow-hidden bg-[#080b13] text-white selection:bg-[#6da8ff]/35">
-      <div
-        aria-hidden="true"
-        className="absolute inset-0 bg-[radial-gradient(circle_at_18%_12%,rgba(76,118,196,0.28),transparent_38%),radial-gradient(circle_at_82%_78%,rgba(104,72,178,0.24),transparent_42%),linear-gradient(145deg,#0a1222_0%,#15172c_52%,#0b0a18_100%)]"
-      />
-      <div
-        aria-hidden="true"
-        className="absolute inset-0 opacity-30 [background-size:48px_48px] [background-image:linear-gradient(rgba(255,255,255,.018)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.018)_1px,transparent_1px)]"
-      />
+    <main className="font-system relative min-h-[100svh] overflow-hidden bg-[#080b13] text-white selection:bg-[#6da8ff]/35">
+      <div aria-hidden="true" className="absolute inset-0 bg-[url('/tengri-wallpaper.svg')] bg-cover bg-center" />
+      <div aria-hidden="true" className="absolute inset-0 bg-black/10" />
       <header className="absolute inset-x-0 top-0 z-20 flex h-8 items-center justify-between border-b border-white/10 bg-white/[0.055] px-4 text-[12px] text-white/72 backdrop-blur-2xl">
         <div className="flex items-center gap-2 font-semibold text-white/90">
           <TengriMark />
@@ -557,7 +551,7 @@ function LifecycleWindow({
       data-tengri-modal={interactive ? 'true' : undefined}
       aria-label={title}
       tabIndex={interactive ? -1 : undefined}
-      className="w-full max-w-lg overflow-hidden rounded-[28px] border border-white/18 bg-[rgba(27,30,39,0.88)] text-white shadow-[0_48px_140px_rgba(0,0,0,0.58),inset_0_1px_0_rgba(255,255,255,0.17)] backdrop-blur-3xl"
+      className="w-full max-w-lg overflow-hidden rounded-2xl border border-white/18 bg-zinc-800/90 text-white shadow-[0_48px_140px_rgba(0,0,0,0.58),inset_0_1px_0_rgba(255,255,255,0.17)] backdrop-blur-3xl"
       initial={reducedMotion ? false : { opacity: 0, scale: 0.97, y: 14 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}
       exit={reducedMotion ? undefined : { opacity: 0, scale: 0.985, y: -6 }}

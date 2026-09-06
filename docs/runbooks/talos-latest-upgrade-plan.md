@@ -220,8 +220,12 @@ cycle in `docs/runbooks/galactic-storage-and-workload-recovery.md`. Never print 
 
 Altra's firmware may reject the installer's `LoaderEntryDefault` EFI variable write after the new UKI is complete.
 The expected error is an `input/output error` for
-`LoaderEntryDefault-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f`. Stop for any earlier installer failure. The system disk is
-`/dev/nvme0n1`; `/dev/nvme1n1` is Ceph and must not be mounted or modified.
+`LoaderEntryDefault-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f`. Stop for any earlier installer failure. Altra's system
+disk is serial `2441E98EAAFB` and must be addressed as
+`/dev/disk/by-id/nvme-CT4000P3PSSD8_2441E98EAAFB`. NVMe enumeration has changed across boots, so never infer the
+system disk from `/dev/nvme0n1` or `/dev/nvme1n1`. Before every install, require the effective machine config to use
+that stable path and require Talos' `SystemDisks` resource plus the `EFI`, `STATE`, and `EPHEMERAL` volume statuses to
+resolve to the same serial. Do not mount or modify the other NVMe, which supplies Ceph BlueStore DB devices.
 
 Run the Altra installer with `--no-reboot`. If and only if it fails at the expected EFI-variable write, create a
 temporary privileged inspector pinned to Altra. This Pod is hardware recovery tooling, not part of the microVM
@@ -241,9 +245,11 @@ UKI under a timestamped rollback filename:
 
 ```bash
 kubectl --context galactic-lan -n kube-system exec efi-inspector-altra-r4 -- sh -ceu '
-  test "$(cat /host-sys/class/nvme/nvme0/serial)" = 2441E98EAAFB
+  system_disk=/host-dev/disk/by-id/nvme-CT4000P3PSSD8_2441E98EAAFB
+  system_name="$(basename "$(readlink -f "$system_disk")")"
+  test "$(cat "/host-sys/class/block/$system_name/device/serial")" = 2441E98EAAFB
   mkdir -p /mnt/esp
-  mount -t vfat /host-dev/nvme0n1p1 /mnt/esp
+  mount -t vfat "${system_disk}-part1" /mnt/esp
   trap "umount /mnt/esp" EXIT
   active=/mnt/esp/EFI/Linux/Talos-v1.12.4.efi
   staged=/mnt/esp/EFI/Linux/Talos-v1.13.9.efi

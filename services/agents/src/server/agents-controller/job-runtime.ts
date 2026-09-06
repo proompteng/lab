@@ -418,7 +418,7 @@ const sanitizeProviderAdapterForRunner = (adapter: Record<string, unknown>) => {
   }
 }
 
-const DEFAULT_CODEX_APP_SERVER_MODEL = 'gpt-5.6-sol'
+const DEFAULT_CODEX_APP_SERVER_MODEL = 'gpt-6-astra'
 const DEFAULT_CODEX_APP_SERVER_EFFORT = 'high'
 const DEFAULT_CODEX_APP_SERVER_SANDBOX = 'danger-full-access'
 const DEFAULT_CODEX_APP_SERVER_APPROVAL = 'never'

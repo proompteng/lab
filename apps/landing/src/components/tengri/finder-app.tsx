@@ -58,7 +58,7 @@ type QuickLookState = {
 }
 
 const toolbarButtonClass =
-  'grid h-7 w-7 shrink-0 place-items-center rounded-lg text-white/60 transition-colors hover:bg-white/8 hover:text-white disabled:pointer-events-none disabled:opacity-25'
+  'grid h-7 w-7 shrink-0 place-items-center rounded-md border border-transparent text-white/60 transition-colors hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-white/35 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-25'
 
 export function FinderApp({
   active,
@@ -525,24 +525,24 @@ export function FinderApp({
   }
 
   return (
-    <div className="@container/finder relative flex h-full min-h-0 bg-[#17191f] text-white/85">
-      <aside className="w-44 shrink-0 border-r border-white/8 bg-white/[0.025] p-3 text-[12px] @max-[640px]/finder:hidden">
-        <p className="mb-2 px-2 text-[10px] font-semibold tracking-wider text-white/58 uppercase">Favorites</p>
+    <div className="@container/finder relative flex h-full min-h-0 bg-[#1d1e20] text-[13px] text-white/82">
+      <aside className="w-48 shrink-0 overflow-y-auto border-r border-white/[0.08] bg-[#262729]/68 p-2.5 backdrop-blur-xl @max-[640px]/finder:hidden">
+        <p className="mb-1.5 px-2 py-1 text-[11px] font-semibold text-white/55">Favorites</p>
         {[{ label: 'Workspace', path: FINDER_WORKSPACE_PATH, icon: Folder }].map((item) => (
           <button
             type="button"
             key={item.label}
             onClick={() => navigate(item.path)}
-            className={`mb-1 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left ${path === item.path ? 'bg-[#2574e8]/35 text-white' : 'text-white/65 hover:bg-white/7'}`}
+            className={`mb-0.5 flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-[12px] transition-colors focus-visible:ring-2 focus-visible:ring-white/35 focus-visible:outline-none ${path === item.path ? 'bg-white/[0.12] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]' : 'text-white/60 hover:bg-white/[0.07] hover:text-white/85'}`}
           >
-            <item.icon className="h-4 w-4 text-[#79b8ff]" />
+            <item.icon aria-hidden="true" className="h-4 w-4 text-[#72a7e8]" />
             {item.label}
           </button>
         ))}
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex h-12 shrink-0 items-center gap-2 overflow-x-auto border-b border-white/8 px-3 @max-[640px]/finder:h-auto @max-[640px]/finder:flex-wrap @max-[640px]/finder:py-2">
+        <div className="flex h-10 shrink-0 items-center gap-1.5 overflow-x-auto border-b border-white/[0.08] bg-[#28292b]/72 px-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] @max-[640px]/finder:h-auto @max-[640px]/finder:flex-wrap @max-[640px]/finder:py-1.5">
           <button
             type="button"
             aria-label="Back"
@@ -561,14 +561,14 @@ export function FinderApp({
           >
             <ArrowRight className="h-4 w-4" />
           </button>
-          <label className="ml-1 flex min-w-40 flex-1 items-center rounded-lg border border-white/8 bg-black/20 px-2.5 py-1.5 text-xs @max-[640px]/finder:min-w-[calc(100%-5rem)]">
+          <label className="ml-1 flex h-7 min-w-40 flex-1 items-center rounded-md border border-white/[0.1] bg-black/15 px-2.5 text-[12px] @max-[640px]/finder:min-w-[calc(100%-5rem)]">
             <span className="sr-only">Go to folder</span>
             <input
               value={pathDraft}
               onChange={(event) => setPathDraft(event.target.value)}
               onKeyDown={(event) => event.key === 'Enter' && navigate(event.currentTarget.value)}
               onBlur={() => setPathDraft(path)}
-              className="w-full bg-transparent text-white/70 outline-none"
+              className="w-full bg-transparent text-white/72 outline-none placeholder:text-white/55"
             />
           </label>
           <button
@@ -626,10 +626,10 @@ export function FinderApp({
               <FileCode2 className="h-4 w-4" />
             </button>
           ) : null}
-          <div className="flex rounded-lg border border-white/8 bg-black/20 p-0.5">
+          <div className="flex rounded-md border border-white/[0.1] bg-black/15 p-0.5">
             <button
               type="button"
-              className={`rounded-md p-1.5 ${view === 'list' ? 'bg-white/12' : ''}`}
+              className={`rounded-[5px] p-1.5 text-white/60 focus-visible:ring-2 focus-visible:ring-white/35 focus-visible:outline-none ${view === 'list' ? 'bg-white/[0.14] text-white' : 'hover:bg-white/[0.07]'}`}
               aria-label="List view"
               aria-pressed={view === 'list'}
               onClick={() => setView('list')}
@@ -638,7 +638,7 @@ export function FinderApp({
             </button>
             <button
               type="button"
-              className={`rounded-md p-1.5 ${view === 'grid' ? 'bg-white/12' : ''}`}
+              className={`rounded-[5px] p-1.5 text-white/60 focus-visible:ring-2 focus-visible:ring-white/35 focus-visible:outline-none ${view === 'grid' ? 'bg-white/[0.14] text-white' : 'hover:bg-white/[0.07]'}`}
               aria-label="Icon view"
               aria-pressed={view === 'grid'}
               onClick={() => setView('grid')}
@@ -646,8 +646,8 @@ export function FinderApp({
               <Grid2X2 className="h-3.5 w-3.5" />
             </button>
           </div>
-          <label className="flex w-44 items-center gap-2 rounded-lg bg-black/25 px-2.5 py-1.5 text-xs @max-[640px]/finder:order-last @max-[640px]/finder:w-full">
-            <Search className="h-3.5 w-3.5 text-white/35" />
+          <label className="flex h-7 w-44 items-center gap-2 rounded-md border border-white/[0.08] bg-black/15 px-2.5 text-[12px] @max-[640px]/finder:order-last @max-[640px]/finder:w-full">
+            <Search aria-hidden="true" className="h-3.5 w-3.5 text-white/55" />
             <input
               value={query}
               aria-label="Search files"
@@ -664,10 +664,10 @@ export function FinderApp({
         {showCreate ? (
           <form
             noValidate
-            className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-1 border-b border-white/8 bg-[#2574e8]/10 px-4 py-2"
+            className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-1 border-b border-white/[0.08] bg-white/[0.035] px-3 py-1.5"
             onSubmit={createFolder}
           >
-            <Folder className="h-4 w-4 text-[#79b8ff]" />
+            <Folder aria-hidden="true" className="h-4 w-4 text-[#72a7e8]" />
             <input
               autoFocus
               aria-label="New folder name"
@@ -676,20 +676,20 @@ export function FinderApp({
               disabled={actionBusy}
               placeholder="New folder name"
               {...registerCreateFolder('name')}
-              className="min-w-0 rounded-md border border-white/12 bg-black/30 px-2 py-1 text-xs outline-none focus:border-[#79b8ff]/50"
+              className="min-w-0 rounded-md border border-white/[0.12] bg-black/20 px-2 py-1 text-[12px] outline-none focus:border-white/35"
             />
             <div className="col-start-2 flex min-w-0 flex-wrap items-center gap-2">
               <button
                 type="submit"
                 disabled={actionBusy}
-                className="rounded-md bg-[#2574e8] px-3 py-1 text-xs font-medium disabled:opacity-50"
+                className="rounded-md bg-white/[0.14] px-3 py-1 text-[12px] font-medium text-white/85 hover:bg-white/[0.2] focus-visible:ring-2 focus-visible:ring-white/35 focus-visible:outline-none disabled:opacity-50"
               >
                 Create
               </button>
               <button
                 type="button"
                 disabled={actionBusy}
-                className="px-2 py-1 text-xs text-white/55 disabled:opacity-40"
+                className="rounded-md px-2 py-1 text-[12px] text-white/55 hover:bg-white/[0.07] focus-visible:ring-2 focus-visible:ring-white/35 focus-visible:outline-none disabled:opacity-40"
                 onClick={() => {
                   setShowCreate(false)
                   resetCreateFolder()
@@ -709,10 +709,10 @@ export function FinderApp({
         {renaming ? (
           <form
             noValidate
-            className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-1 border-b border-white/8 bg-[#2574e8]/10 px-4 py-2"
+            className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-1 border-b border-white/[0.08] bg-white/[0.035] px-3 py-1.5"
             onSubmit={renameSelected}
           >
-            <Pencil className="h-4 w-4 text-[#79b8ff]" />
+            <Pencil aria-hidden="true" className="h-4 w-4 text-[#72a7e8]" />
             <input
               autoFocus
               aria-label="Rename item"
@@ -724,20 +724,20 @@ export function FinderApp({
                 event.currentTarget.setSelectionRange(0, extension > 0 ? extension : event.currentTarget.value.length)
               }}
               {...registerRename('name')}
-              className="min-w-0 rounded-md border border-white/12 bg-black/30 px-2 py-1 text-xs outline-none focus:border-[#79b8ff]/50"
+              className="min-w-0 rounded-md border border-white/[0.12] bg-black/20 px-2 py-1 text-[12px] outline-none focus:border-white/35"
             />
             <div className="col-start-2 flex min-w-0 flex-wrap items-center gap-2">
               <button
                 type="submit"
                 disabled={actionBusy}
-                className="rounded-md bg-[#2574e8] px-3 py-1 text-xs font-medium disabled:opacity-50"
+                className="rounded-md bg-white/[0.14] px-3 py-1 text-[12px] font-medium text-white/85 hover:bg-white/[0.2] focus-visible:ring-2 focus-visible:ring-white/35 focus-visible:outline-none disabled:opacity-50"
               >
                 Rename
               </button>
               <button
                 type="button"
                 disabled={actionBusy}
-                className="px-2 py-1 text-xs text-white/55 disabled:opacity-40"
+                className="rounded-md px-2 py-1 text-[12px] text-white/55 hover:bg-white/[0.07] focus-visible:ring-2 focus-visible:ring-white/35 focus-visible:outline-none disabled:opacity-40"
                 onClick={() => {
                   setRenaming(null)
                   resetRename()
@@ -756,7 +756,7 @@ export function FinderApp({
 
         <div
           ref={contentRef}
-          className="relative min-h-0 flex-1 overflow-auto p-3"
+          className="relative min-h-0 flex-1 overflow-auto bg-[#1f2022] p-2"
           onPointerDown={beginDragSelection}
           onPointerMove={updateDragSelection}
           onPointerUp={finishDragSelection}
@@ -765,23 +765,26 @@ export function FinderApp({
           {selectionBox ? (
             <div
               aria-hidden="true"
-              className="pointer-events-none absolute z-20 border border-[#79b8ff]/70 bg-[#2574e8]/18"
+              className="pointer-events-none absolute z-20 border border-white/45 bg-white/[0.1]"
               style={selectionBox}
             />
           ) : null}
           {loading ? (
-            <div role="status" className="flex h-full items-center justify-center gap-2 text-sm text-white/45">
-              <LoaderCircle className="h-4 w-4 animate-spin" />
+            <div role="status" className="flex h-full items-center justify-center gap-2 text-[12px] text-white/55">
+              <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" />
               Loading files…
             </div>
           ) : null}
           {!loading && error ? (
-            <div role="alert" className="m-4 rounded-xl border border-red-400/20 bg-red-500/8 p-4 text-sm text-red-200">
+            <div
+              role="alert"
+              className="m-3 rounded-lg border border-red-400/20 bg-red-500/8 p-3 text-[12px] text-red-200"
+            >
               {error}
             </div>
           ) : null}
           {!loading && !error && entries.length === 0 ? (
-            <div className="grid h-full place-items-center text-center text-sm text-white/38">
+            <div className="grid h-full place-items-center text-center text-[12px] text-white/55">
               <div>
                 <Folder className="mx-auto mb-3 h-10 w-10 text-white/18" />
                 <p>{query ? 'No matching files' : 'This folder is empty'}</p>
@@ -789,12 +792,8 @@ export function FinderApp({
             </div>
           ) : null}
           {!loading && !error && entries.length > 0 && view === 'list' ? (
-            <div
-              role="group"
-              aria-label="Files"
-              className="min-w-[560px] overflow-hidden rounded-xl border border-white/7"
-            >
-              <div className="grid grid-cols-[minmax(220px,1fr)_100px_170px] bg-white/[0.035] px-3 py-2 text-[10px] font-semibold tracking-wide text-white/35 uppercase">
+            <div role="group" aria-label="Files" className="min-w-[560px] overflow-hidden">
+              <div className="grid h-7 grid-cols-[minmax(220px,1fr)_100px_170px] items-center bg-white/[0.045] px-2 text-[11px] font-medium text-white/55">
                 <span>Name</span>
                 <span>Size</span>
                 <span>Modified</span>
@@ -825,7 +824,11 @@ export function FinderApp({
             </div>
           ) : null}
           {!loading && !error && entries.length > 0 && view === 'grid' ? (
-            <div role="group" aria-label="Files" className="grid grid-cols-[repeat(auto-fill,minmax(108px,1fr))] gap-2">
+            <div
+              role="group"
+              aria-label="Files"
+              className="grid grid-cols-[repeat(auto-fill,minmax(108px,1fr))] gap-1.5"
+            >
               {entries.map((entry) => (
                 <FinderEntry
                   elementRef={(element) => {
@@ -855,13 +858,18 @@ export function FinderApp({
 
         <div
           aria-live="polite"
-          className="flex h-7 shrink-0 items-center justify-between border-t border-white/7 px-3 py-1 text-[10px] text-white/35"
+          className="flex h-[26px] shrink-0 items-center gap-3 border-t border-white/[0.08] bg-[#262729]/72 px-3 text-[10px] text-white/55"
         >
-          <span>
+          <span className="min-w-0 flex-1 truncate" title={path}>
+            {path}
+          </span>
+          <span className="shrink-0">
             {searchTruncated ? 'Search limit reached · Narrow your search' : `${entries.length} items`}
             {!searchTruncated && selected.size ? ` · ${selected.size} selected` : ''}
           </span>
-          <span className={watchState === 'connected' ? 'text-emerald-300/60' : 'text-amber-200/65'}>{watchLabel}</span>
+          <span className={`shrink-0 ${watchState === 'connected' ? 'text-emerald-300/60' : 'text-amber-200/65'}`}>
+            {watchLabel}
+          </span>
         </div>
       </div>
 
@@ -871,11 +879,11 @@ export function FinderApp({
             <Dialog.Overlay className="fixed inset-0 z-[6800] bg-black/34 backdrop-blur-sm" />
             <Dialog.Content
               data-tengri-modal="true"
-              className="fixed top-1/2 left-1/2 z-[6801] flex h-[min(620px,calc(100vh-64px))] w-[min(820px,calc(100vw-48px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-white/18 bg-[#181b21]/96 shadow-2xl outline-none"
+              className="fixed top-1/2 left-1/2 z-[6801] flex h-[min(620px,calc(100vh-64px))] w-[min(820px,calc(100vw-48px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-white/[0.14] bg-[#242527]/96 shadow-2xl outline-none"
             >
-              <header className="flex h-11 shrink-0 items-center border-b border-white/9 px-4">
+              <header className="flex h-10 shrink-0 items-center border-b border-white/[0.1] bg-white/[0.025] px-3">
                 <FinderFileIcon entry={quickLook.entry} />
-                <Dialog.Title className="ml-2 min-w-0 flex-1 truncate text-xs font-semibold text-white/82">
+                <Dialog.Title className="ml-2 min-w-0 flex-1 truncate text-[12px] font-semibold text-white/82">
                   {quickLook.entry.name}
                 </Dialog.Title>
                 <Dialog.Description className="sr-only">
@@ -884,7 +892,7 @@ export function FinderApp({
                 {!quickLook.entry.directory && onOpenFile ? (
                   <button
                     type="button"
-                    className="mr-2 rounded-lg px-2 py-1 text-xs text-[#79b8ff] hover:bg-white/7"
+                    className="mr-2 rounded-md px-2 py-1 text-[12px] text-white/65 hover:bg-white/[0.07] focus-visible:ring-2 focus-visible:ring-white/35 focus-visible:outline-none"
                     onClick={() => {
                       onOpenFile(quickLook.entry.path)
                       closeQuickLook()
@@ -899,20 +907,20 @@ export function FinderApp({
                   </button>
                 </Dialog.Close>
               </header>
-              <div className="min-h-0 flex-1 overflow-auto p-5">
+              <div className="min-h-0 flex-1 overflow-auto p-4">
                 {quickLook.entry.directory ? (
-                  <div className="grid h-full place-items-center text-center text-white/45">
+                  <div className="grid h-full place-items-center text-center text-white/55">
                     <div>
                       <FinderFileIcon entry={quickLook.entry} large />
-                      <p className="mt-3 text-sm">{quickLook.entry.path}</p>
+                      <p className="mt-3 text-[12px]">{quickLook.entry.path}</p>
                     </div>
                   </div>
                 ) : quickLook.loading ? (
-                  <div className="flex h-full items-center justify-center gap-2 text-sm text-white/42">
-                    <LoaderCircle className="h-4 w-4 animate-spin" /> Loading preview…
+                  <div className="flex h-full items-center justify-center gap-2 text-[12px] text-white/55">
+                    <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" /> Loading preview…
                   </div>
                 ) : quickLook.error ? (
-                  <p role="alert" className="rounded-xl bg-red-500/10 p-4 text-sm text-red-200">
+                  <p role="alert" className="rounded-lg bg-red-500/10 p-3 text-[12px] text-red-200">
                     {quickLook.error}
                   </p>
                 ) : quickLook.content ? (
@@ -920,7 +928,7 @@ export function FinderApp({
                     {quickLook.content}
                   </pre>
                 ) : (
-                  <p className="text-center text-sm text-white/35">Empty file</p>
+                  <p className="text-center text-[12px] text-white/55">Empty file</p>
                 )}
               </div>
             </Dialog.Content>
@@ -994,11 +1002,11 @@ function FinderEntry({
         onClick={onSelect}
         onDoubleClick={onActivate}
         onKeyDown={handleKeyDown}
-        className={`flex min-h-28 flex-col items-center justify-center gap-2 rounded-xl p-3 text-center text-xs ${selected ? 'bg-[#2574e8]/42' : 'hover:bg-white/6'}`}
+        className={`flex min-h-28 flex-col items-center justify-center gap-2 rounded-lg p-3 text-center text-[12px] focus-visible:ring-2 focus-visible:ring-white/35 focus-visible:outline-none ${selected ? 'bg-white/[0.14] text-white' : 'hover:bg-white/[0.06]'}`}
       >
         <FinderFileIcon entry={entry} large />
         <span className="line-clamp-2 break-all">{entry.name}</span>
-        {showPath ? <span className="line-clamp-2 break-all text-[10px] text-white/38">{entry.path}</span> : null}
+        {showPath ? <span className="line-clamp-2 break-all text-[10px] text-white/55">{entry.path}</span> : null}
       </button>
     )
   }
@@ -1012,17 +1020,17 @@ function FinderEntry({
       onClick={onSelect}
       onDoubleClick={onActivate}
       onKeyDown={handleKeyDown}
-      className={`grid w-full grid-cols-[minmax(220px,1fr)_100px_170px] items-center border-t border-white/6 px-3 py-2 text-left text-xs ${selected ? 'bg-[#2574e8]/42' : 'hover:bg-white/[0.045]'}`}
+      className={`grid min-h-6 w-full grid-cols-[minmax(220px,1fr)_100px_170px] items-center border-t border-white/[0.06] px-2 text-left text-[12px] transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/35 focus-visible:outline-none ${selected ? 'bg-white/[0.14] text-white' : 'even:bg-white/[0.018] hover:bg-white/[0.07]'}`}
     >
       <span className="flex min-w-0 items-center gap-2">
         <FinderFileIcon entry={entry} />
         <span className="flex min-w-0 flex-col">
           <span className="truncate">{entry.name}</span>
-          {showPath ? <span className="truncate text-[10px] text-white/38">{entry.path}</span> : null}
+          {showPath ? <span className="truncate text-[10px] text-white/55">{entry.path}</span> : null}
         </span>
       </span>
-      <span className="text-white/42">{entry.directory ? '—' : formatFinderBytes(entry.size)}</span>
-      <span className="text-white/42">{formatFinderDate(entry.modifiedAt)}</span>
+      <span className="text-white/55">{entry.directory ? '—' : formatFinderBytes(entry.size)}</span>
+      <span className="text-white/55">{formatFinderDate(entry.modifiedAt)}</span>
     </button>
   )
 }
@@ -1031,10 +1039,10 @@ function FinderFileIcon({ entry, large = false }: { entry: TengriFileEntry; larg
   const className = large ? 'h-11 w-11' : 'h-4 w-4'
   switch (finderFileKind(entry)) {
     case 'folder':
-      return <Folder className={`${className} fill-[#79b8ff]/25 text-[#79b8ff]`} />
+      return <Folder className={`${className} fill-[#72a7e8]/25 text-[#72a7e8]`} />
     case 'code':
       return <FileCode2 className={`${className} text-[#9ccfd8]`} />
     default:
-      return <File className={`${className} text-white/45`} />
+      return <File className={`${className} text-white/55`} />
   }
 }

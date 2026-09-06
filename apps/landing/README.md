@@ -41,6 +41,8 @@ The server-only BFF uses stateless Better Auth GitHub OAuth and signed internal 
 receives Kubernetes credentials, the internal HMAC secret, or a guest bootstrap token.
 The BFF rate-limits the authenticated GitHub subject. GitOps adds a separate Traefik rate-limit middleware that uses
 Traefik's connection source, so the application never trusts caller-supplied forwarding headers for IP throttling.
+The BFF also restores an in-progress Codex device login from the guest after a browser reconnect; it does not start a
+replacement attempt or invalidate the code already shown to the user.
 
 1. Set the Better Auth, GitHub OAuth, gRPC endpoint, HMAC, and `TENGRI_PUBLIC_URL` variables from `.env.example`.
    The public URL must match the Rust controller and is exposed to the browser only as the allowlisted preview gateway

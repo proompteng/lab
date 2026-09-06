@@ -369,6 +369,7 @@ test('generateMainMergeMemoryNote asks Flamingo for structured durable knowledge
     model: 'qwen36-flamingo',
     stream: false,
     temperature: 0.1,
+    top_p: 0.8,
     reasoning_effort: 'none',
     response_format: { type: 'json_object' },
   })
@@ -386,6 +387,55 @@ test('generateMainMergeMemoryNote asks Flamingo for structured durable knowledge
   expect(userContent.indexOf('File: src/a.ts')).toBeLessThan(
     userContent.indexOf('File: .github/workflows/bumba-ci.yml'),
   )
+})
+
+test('generateMainMergeMemoryNote omits unsupported Astra sampling parameters', async () => {
+  process.env.OPENAI_API_BASE_URL = 'https://api.openai.com/v1'
+  process.env.OPENAI_COMPLETION_MODEL = 'gpt-6-astra'
+  process.env.BUMBA_MERGE_NOTE_REASONING_EFFORT = 'minimal'
+  let requestBody: Record<string, unknown> | undefined
+  globalThis.fetch = (async (_input: URL | RequestInfo, init?: RequestInit) => {
+    requestBody = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined
+    return Response.json({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              decision: 'save',
+              reason: 'The merge establishes a durable completion invariant.',
+              summary: 'Astra merge notes omit unsupported sampling controls.',
+              content: 'The event consumer normalizes legacy reasoning settings for Astra.',
+              tags: ['bumba', 'gpt-6-astra'],
+            }),
+          },
+        },
+      ],
+    })
+  }) as typeof fetch
+
+  const event = githubPushEvent(['src/a.ts'])
+  const note = await __test__.generateMainMergeMemoryNote(
+    event,
+    event.payload,
+    [
+      {
+        path: 'src/a.ts',
+        summary: 'Dispatches enrichment.',
+        content: '- Deterministic workflow IDs prevent duplicates.',
+      },
+    ],
+    [{ path: 'src/a.ts', status: 'modified', patch: '@@ -1 +1 @@\n-old behavior\n+retry missing targets' }],
+  )
+
+  expect(note.decision).toBe('save')
+  expect(requestBody).toMatchObject({
+    model: 'gpt-6-astra',
+    stream: false,
+    reasoning_effort: 'low',
+    response_format: { type: 'json_object' },
+  })
+  expect(requestBody).not.toHaveProperty('temperature')
+  expect(requestBody).not.toHaveProperty('top_p')
 })
 
 test('publishMainMergeMemoryNote does not persist a low-value merge', async () => {

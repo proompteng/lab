@@ -82,6 +82,20 @@ private const val MESSAGE_PACK_TIMESTAMP_32_UNSIGNED_MASK = 0xffffffffL
 private const val MESSAGE_PACK_TIMESTAMP_64_NANO_SHIFT = 34
 private const val MESSAGE_PACK_TIMESTAMP_64_SECONDS_MASK = 0x00000003ffffffffL
 
+internal data class KafkaDeliveryObservation(
+  val channel: String?,
+  val symbol: String,
+)
+
+internal fun kafkaDeliveryObservation(
+  env: Envelope<*>,
+  marketDataChannel: String?,
+): KafkaDeliveryObservation =
+  KafkaDeliveryObservation(
+    channel = marketDataFreshnessChannelFor(env, marketDataChannel),
+    symbol = env.symbol,
+  )
+
 internal fun alpacaMarketDataStreamUrl(config: ForwarderConfig): String =
   alpacaMarketDataStreamUrl(config, config.marketDataFeedConfigs().first())
 
@@ -1559,6 +1573,7 @@ class ForwarderApp(
     feed: MarketDataFeedRuntimeState? = null,
     serializedSequence: Long? = null,
   ) {
+    val delivery = kafkaDeliveryObservation(env, marketDataChannel)
     val payload = json.encodeToString(env)
     val record = ProducerRecord(topic, env.symbol, payload)
     val start = System.nanoTime()
@@ -1572,8 +1587,8 @@ class ForwarderApp(
         } else {
           metrics.recordKafkaProduceSuccess(topic)
           feed?.channelFreshness?.recordKafkaSuccess(
-            marketDataFreshnessChannelFor(env, marketDataChannel),
-            env.symbol,
+            delivery.channel,
+            delivery.symbol,
             serializedSequence,
           )
           recordKafkaSuccess(feed)

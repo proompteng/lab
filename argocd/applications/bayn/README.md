@@ -69,10 +69,15 @@ egress and its token-authenticated bootstrap call is made only by the labeled Gi
 
 ### Research mandate rotation
 
-A sealed research-mandate rotation must update the request content hash, build lineage, and activation generation in one
-reviewed change. Argo replaces the Secret in wave `-2`, rolls the controller in wave `-1`, runs the idempotent activation
-hook in wave `0`, and rolls the read-only status service in wave `1`. The expected impact is one normal controller/status
-rollout and a drained Restate worker revision; the activation hook itself cannot reach the broker.
+The sealed research mandate is standing authority for its exact strategy, sandbox account, risk policy, and reviewed
+build lineage. It has no calendar expiry and does not need a daily rotation. Every exchange session still creates a
+separate durable cycle with its own entry cutoff, forced-flatten window, risk budget, reconciliation gate, and terminal
+state. Rotate the mandate only when one of its bound identities changes.
+
+A mandate rotation must update the request content hash, build lineage, and activation generation in one reviewed
+change. Argo replaces the Secret in wave `-2`, rolls the controller in wave `-1`, runs the idempotent activation hook in
+wave `0`, and rolls the read-only status service in wave `1`. The expected impact is one normal controller/status rollout
+and a drained Restate worker revision; the activation hook itself cannot reach the broker.
 
 After sync, require the SealedSecret to be current, the hook to succeed for the committed generation, the controller
 sequence to advance naturally, `/readyz` and `/v1/status` to report the intended effective authority, and reconciliation
