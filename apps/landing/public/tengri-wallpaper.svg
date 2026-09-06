@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2560" height="1600" viewBox="0 0 2560 1600" fill="none">
+  <defs>
+    <linearGradient id="sky" x1="140" y1="0" x2="2140" y2="1600" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#084c94"/><stop offset=".48" stop-color="#122253"/><stop offset="1" stop-color="#130b30"/>
+    </linearGradient>
+    <linearGradient id="sun" x1="-120" y1="100" x2="1520" y2="1250" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffd59c"/><stop offset=".34" stop-color="#f99172"/><stop offset=".69" stop-color="#cb4f6b"/><stop offset="1" stop-color="#501e65"/>
+    </linearGradient>
+    <linearGradient id="ridge" x1="300" y1="650" x2="1620" y2="1390" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fdc7a3"/><stop offset=".24" stop-color="#ee876c"/><stop offset=".6" stop-color="#983d70"/><stop offset="1" stop-color="#281641"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="2560" y1="560" x2="1140" y2="1690" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#65b8e6"/><stop offset=".24" stop-color="#287bbb"/><stop offset=".53" stop-color="#154c8d"/><stop offset="1" stop-color="#101737"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="2160" y1="710" x2="1420" y2="1660" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#69b8e8"/><stop offset=".4" stop-color="#1767a2"/><stop offset="1" stop-color="#111737"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientTransform="translate(130 40) rotate(37) scale(1550 950)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffcdb3" stop-opacity=".45"/><stop offset="1" stop-color="#f89d87" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <path fill="url(#sky)" d="M0 0h2560v1600H0z"/>
+  <path fill="url(#sun)" d="M0 0h1480c-171 140-344 244-442 439-86 171-48 378 49 553 123 220 83 443-44 608H0Z"/>
+  <path fill="url(#ridge)" d="M0 312c250 147 530 214 758 254 185 34 270 154 329 426 51 235 38 437-44 608H0Z"/>
+  <path fill="url(#blue)" d="M2560 310c-341 250-707 239-987 457-248 193-308 478-363 833h1350Z"/>
+  <path fill="url(#edge)" d="M2560 525c-312 144-573 183-789 350-241 186-341 456-359 725h1148Z"/>
+  <path fill="url(#glow)" d="M0 0h2560v1600H0z"/>
+</svg>

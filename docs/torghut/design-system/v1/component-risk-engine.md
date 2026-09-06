@@ -7,11 +7,11 @@
 - Source of truth (config): `argocd/applications/torghut/**`
 - Implementation status: `Implemented` (verified with code + tests + runtime/config on 2026-02-21)
 
-## Source Implementation Audit (2026-07-04)
+## Historical Source Audit (2026-07-04)
 
 - Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
 - Implementation status: **Implemented as deterministic risk gates, but split into full-decision risk and simple-pipeline risk preparation.** The v1 policy exists, but current live/paper execution also depends on submission-council gates and simple-risk caps configured in GitOps.
-- Current source evidence:
+- Source evidence inspected:
   - `services/torghut/app/trading/risk.py::RiskEngine.evaluate` enforces trading enablement, crypto enablement/live gates, strategy enabled, symbol allowlist, fragility state, price extraction, max notional, buying power, max position percent, allocator cap, target sizing, shorts, cooldown, and adverse-selection risk.
   - `services/torghut/app/trading/simple_risk.py::prepare_simple_decision` handles the simple pipeline path, including fractional support, close-only adjustment, order notional cap, equity-order cap, symbol notional cap, gross exposure cap, buying-power reserve, and quantity rejection diagnostics.
   - `services/torghut/app/trading/scheduler/pipeline/submission_policy.py` invokes allocator rejection and submission preparation before execution.

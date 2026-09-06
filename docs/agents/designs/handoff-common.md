@@ -25,7 +25,7 @@ declared in:
   - Schema: `charts/agents/values.schema.json`
   - Environment overlays (examples): `charts/agents/values-{dev,kind,local,prod,ci}.yaml`
 - GitOps desired state (production install):
-  - Argo CD Application: `argocd/applications/agents/application.yaml`
+  - Argo CD ApplicationSet entry: `argocd/applicationsets/product.yaml` (`name: agents`)
   - Helm via kustomize: `argocd/applications/agents/kustomization.yaml`
   - Values overlay: `argocd/applications/agents/values.yaml`
   - Extra primitives (Agent/Provider/VCP/etc): `argocd/applications/agents/*.yaml`
@@ -34,7 +34,8 @@ declared in:
 
 ## Current GitOps Desired State
 
-- Argo CD app `agents` deploys to namespace `agents`. See `argocd/applications/agents/application.yaml`.
+- The Product ApplicationSet generates the Argo CD app `agents`, deploys it to namespace `agents`, and tracks
+  `kargo/agents`. See `argocd/applicationsets/product.yaml`.
 - Install mechanism: kustomize `helmCharts` with `includeCRDs: true` and Helm release name `agents`. See
   `argocd/applications/agents/kustomization.yaml`.
 - Chart version is defined by `charts/agents/Chart.yaml`.

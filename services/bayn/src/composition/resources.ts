@@ -12,7 +12,6 @@ import { ExecutionControllerStatusStoreLive } from '../db/execution-controller-s
 import { ExecutionCycleClosureStoreLive as ExecutionCycleClosureStorePostgresLive } from '../db/execution-cycle-closure-postgres'
 import { PostgresClientLive, postgresHealthCheck } from '../db/postgres-client'
 import { PostgresMigrationsLive } from '../db/postgres-migrations'
-import { ForwardPerformanceReceiptStoreLive } from '../db/forward-performance-receipt-postgres'
 import { ExecutionStoreLive } from '../db/execution-store'
 import { PersistedCapitalGrantStoreLive } from '../db/persisted-capital-grant'
 import { BlockedCycleIntentStoreLive, IntentStoreLive } from '../execution/intents'
@@ -123,7 +122,6 @@ export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlanFor<'Autonom
     MutationStoreLive,
     PersistedCapitalGrantStoreLive,
     ExecutionCycleClosureStorePostgresLive,
-    ForwardPerformanceReceiptStoreLive,
     ExecutionControllerStatusStoreLive,
   ).pipe(Layer.provideMerge(writerFence), Layer.provideMerge(postgres), Layer.provideMerge(journal))
   return Layer.mergeAll(

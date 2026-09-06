@@ -7,11 +7,11 @@
 - Source of truth (config): `argocd/applications/torghut/**`
 - Implementation status: `Implemented` (verified with code + tests + runtime/config on 2026-02-21)
 
-## Source Implementation Audit (2026-07-04)
+## Historical Source Audit (2026-07-04)
 
 - Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
 - Implementation status: **Implemented.** The strategy catalog is a declarative mounted ConfigMap parsed by Pydantic, refreshed by digest and interval, and applied to the `strategies` table with `merge` or `sync` semantics.
-- Current source evidence:
+- Source evidence inspected:
   - `services/torghut/app/strategies/catalog.py::StrategyConfig` defines the strict declarative schema with `extra="forbid"`, strategy id/type/version, params, priority, universe symbols, max notional, and max position percent.
   - `services/torghut/app/strategies/catalog.py::StrategyCatalog.from_settings` builds the catalog from `settings.trading_strategy_config_path`, `trading_strategy_config_mode`, and `trading_strategy_reload_seconds`.
   - `StrategyCatalog.refresh` rate-limits reloads, computes a SHA-256 digest, skips unchanged payloads, parses YAML/JSON, applies the catalog, commits, and stores the last digest.

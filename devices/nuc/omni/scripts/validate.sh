@@ -33,7 +33,8 @@ cluster_backup_dir="${OMNI_DATA_ROOT}/cluster-etcd-backups"
 [[ "$(stat -c '%a' "${cluster_backup_dir}")" == '700' ]] ||
   die "cluster etcd backup directory must have mode 700: ${cluster_backup_dir}"
 [[ -w "${cluster_backup_dir}" ]] || die "cluster etcd backup directory is not writable: ${cluster_backup_dir}"
-jq -e '.version == "0.0.1" and .TCP["443"].HTTPS and .TCP["8090"].HTTPS and .TCP["8100"].HTTPS' \
+jq -e \
+  '.version == "0.0.1" and .TCP["443"].HTTPS and .TCP["8090"].TCPForward == "127.0.0.1:8090" and .TCP["8100"].HTTPS' \
   "${OMNI_DIR}/tailscale-serve.json" >/dev/null
 
 if [[ "${mode}" == 'full' ]]; then
@@ -48,6 +49,10 @@ if [[ "${mode}" == 'full' ]]; then
 fi
 
 compose config --quiet
+compose config --format json | jq -e \
+  --arg expected "--machine-api-advertised-url=grpc://${NUC_TAILSCALE_IP}:8090/" \
+  '.services.omni.command | index($expected) != null' \
+  >/dev/null || die 'Omni machine API must advertise the raw Tailscale TCP endpoint with the grpc scheme'
 compose config --format json | jq -e \
   --arg source "${cluster_backup_dir}" \
   '.services.omni.volumes[] | select(.type == "bind" and .source == $source and .target == "/var/lib/omni/cluster-etcd-backups")' \

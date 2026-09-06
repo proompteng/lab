@@ -241,8 +241,26 @@ export async function getCodexAccount(
   }
 }
 
+export async function getCodexLogin(
+  subject: string,
+  agentId: string,
+  signal?: AbortSignal,
+): Promise<TengriCodexLogin | null> {
+  try {
+    const response = await unary<RawRecord>('getCodexLogin', { agentId }, subject, 130_000, signal)
+    return normalizeCodexLogin(response)
+  } catch (error) {
+    if (error instanceof TengriUnavailableError && error.status === 404) return null
+    throw error
+  }
+}
+
 export async function startCodexLogin(subject: string, agentId: string): Promise<TengriCodexLogin> {
   const response = await unary<RawRecord>('startCodexLogin', { agentId }, subject, 130_000)
+  return normalizeCodexLogin(response)
+}
+
+function normalizeCodexLogin(response: RawRecord): TengriCodexLogin {
   return {
     loginId: stringValue(response.loginId),
     verificationUrl: stringValue(response.verificationUrl),

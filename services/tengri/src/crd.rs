@@ -80,6 +80,8 @@ pub struct MicroVMStatus {
     #[serde(default)]
     pub pod_name: Option<String>,
     #[serde(default)]
+    pub pod_uid: Option<String>,
+    #[serde(default)]
     pub pvc_name: Option<String>,
     #[serde(default)]
     pub pod_ip: Option<String>,
@@ -95,6 +97,8 @@ pub struct MicroVMStatus {
     pub ready_at: Option<String>,
     #[serde(default)]
     pub last_activity_at: Option<String>,
+    #[serde(default)]
+    pub pod_sandbox_transition_at: Option<String>,
     #[serde(default)]
     pub conditions: Vec<MicroVMCondition>,
     #[serde(default)]
@@ -140,6 +144,7 @@ mod tests {
 
         for field in [
             "podName",
+            "podUid",
             "pvcName",
             "podIp",
             "nodeName",
@@ -147,6 +152,7 @@ mod tests {
             "message",
             "readyAt",
             "lastActivityAt",
+            "podSandboxTransitionAt",
         ] {
             assert_eq!(
                 serialized.get(field),

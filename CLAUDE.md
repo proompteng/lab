@@ -68,23 +68,14 @@ go test ./... # Run tests
 
 ### Infrastructure Management
 
-```bash
-# Terraform/OpenTofu operations
-bun run tf:plan     # Plan infrastructure changes
-bun run tf:apply    # Apply infrastructure changes
-bun run tf:destroy  # Destroy infrastructure
-
-# Ansible configuration management
-bun run ansible     # Run the configured Ansible playbook
-
-# Kubernetes operations
-bun run k:install   # Install K3s cluster
-bun run k:bootstrap # Bootstrap ArgoCD
-bun run harvester:apply # Apply Harvester templates
-
-# Direct kubectl operations
-kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./tofu/harvester/templates
-```
+- The current `galactic` cluster is Talos-based and managed by Omni; start with `devices/galactic/README.md`.
+- Argo CD owns normal Kubernetes desired state. Validate repository manifests with `bun run lint:argocd`, then commit the
+  change and let GitOps reconcile it.
+- Run OpenTofu or Ansible only from an explicitly selected, currently owned stack. The retained Harvester, Rancher, and
+  K3s assets are legacy material pending the checks in `docs/repository-cleanup-todo.md`; do not use them as current
+  cluster instructions.
+- Direct `kubectl apply` is limited to a documented initial bootstrap or emergency procedure. It is not a normal service
+  deployment path.
 
 ## Architecture & Structure
 
@@ -171,4 +162,5 @@ kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./tofu/harvester/templates
 
 - Use repo-relative paths in documentation links.
 - For stale or dated design docs, update the document authority/status directly instead of adding mechanical link-only checks.
+- Track verified repository retirement work in `docs/repository-cleanup-todo.md`.
 - Keep this file synchronized with `README.md`, `AGENTS.md`, root `package.json`, and nearby service READMEs.

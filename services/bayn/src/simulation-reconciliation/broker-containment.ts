@@ -1,17 +1,24 @@
 import { Cause, Effect, Exit } from 'effect'
 
+import { BrokerReadError } from '../broker/alpaca'
 import type { ExecutionStoreError, ReconciliationPersistence } from '../db/execution-store'
 import type { WriterFenceError, WriterFenceService } from '../execution/writer-fence'
 import { ReconciliationError, incompletePassReason, type ReconciliationPassError } from './broker-reconciler-model'
 import { Pipeable } from '../pipeable'
 
 export type ContainmentDecision =
-  | { readonly _tag: 'PreserveInterruption' }
+  | { readonly _tag: 'PreserveAuthority' }
   | { readonly _tag: 'RestrictAuthority'; readonly reason: typeof incompletePassReason }
 
-export const decideContainment = <E>(cause: Cause.Cause<E>): ContainmentDecision =>
-  Cause.hasInterruptsOnly(cause)
-    ? { _tag: 'PreserveInterruption' }
+const isRetryableBrokerReadFailure = (cause: Cause.Cause<ReconciliationPassError>): boolean =>
+  cause.reasons.length > 0 &&
+  cause.reasons.every(
+    (reason) => Cause.isFailReason(reason) && reason.error instanceof BrokerReadError && reason.error.retryable,
+  )
+
+export const decideContainment = (cause: Cause.Cause<ReconciliationPassError>): ContainmentDecision =>
+  Cause.hasInterruptsOnly(cause) || isRetryableBrokerReadFailure(cause)
+    ? { _tag: 'PreserveAuthority' }
     : { _tag: 'RestrictAuthority', reason: incompletePassReason }
 
 const restrictAuthority = (
@@ -62,7 +69,7 @@ const containRuntimeFailureDataFirst = <A, R>(
   Effect.matchCauseEffect(effect, {
     onFailure: (cause) => {
       const decision = decideContainment(cause)
-      if (decision._tag === 'PreserveInterruption') return Effect.failCause(cause)
+      if (decision._tag === 'PreserveAuthority') return Effect.failCause(cause)
       return Effect.exit(restrictAuthority(store, fence, now, decision)).pipe(
         Effect.flatMap((containmentExit) => preserveFailureAfterContainment(cause, containmentExit)),
       )
