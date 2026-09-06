@@ -2633,6 +2633,29 @@ test('preserves zoom across minimize and window switching and lists individual w
   await expect.poll(() => chrome.first().boundingBox()).toEqual(normalBounds)
 })
 
+test('opens Dock apps from the raised top of magnified artwork', async ({ page }) => {
+  await mockTengri(page)
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.goto('/')
+  const code = page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Code' })
+  await code.hover()
+  await expect.poll(async () => (await code.locator('img').boundingBox())?.width ?? 0).toBeGreaterThan(75)
+  const image = await code.locator('img').boundingBox()
+  const button = await code.boundingBox()
+  if (!image || !button) throw new Error('Dock artwork is missing')
+  expect(image.y + 2).toBeLessThan(button.y)
+  await page.mouse.move(image.x + image.width / 2, image.y + 2)
+  await expect(code.locator('[role="tooltip"]')).toHaveCSS('opacity', '1')
+  expect(
+    await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('button')?.id, {
+      x: image.x + image.width / 2,
+      y: image.y + 2,
+    }),
+  ).toBe('tengri-dock-code')
+  await page.mouse.click(image.x + image.width / 2, image.y + 2)
+  await expect(page.getByRole('region', { name: 'Code window' })).toBeVisible()
+})
+
 test('magnified Dock icons keep separate hit targets at desktop and narrow widths', async ({ page }) => {
   await mockTengri(page)
   await page.emulateMedia({ reducedMotion: 'no-preference' })

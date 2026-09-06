@@ -56,6 +56,7 @@ const DockItem = forwardRef<DockItemHandle, DockItemProps>(function DockItem(
   const lift = useSpring(targetLift, MAGNIFICATION_SPRING)
   const labelLift = useTransform(() => lift.get() - (scale.get() - BASE_SCALE) * 56)
   const hitWidth = useTransform(scale, (value) => value * 56)
+  const hitTop = useTransform(() => Math.min(0, (68 - 56) / 2 + 3 + labelLift.get()))
   useMotionValueEvent(scale, 'change', (value) => onScaleChange(app, value))
 
   const applyInteraction = useCallback(() => {
@@ -128,8 +129,8 @@ const DockItem = forwardRef<DockItemHandle, DockItemProps>(function DockItem(
     >
       <motion.span
         aria-hidden="true"
-        className="absolute inset-y-0 left-1/2 -translate-x-1/2"
-        style={{ width: hitWidth }}
+        className="absolute bottom-0 left-1/2 -translate-x-1/2"
+        style={{ top: hitTop, width: hitWidth }}
       />
       <motion.span
         aria-hidden="true"
