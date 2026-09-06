@@ -73,15 +73,17 @@ def make_plan(node, pods, operation):
     return plan, daemons
 
 
-def make_patches(plan, source):
+def make_patches(plan, source, retry_failed=False):
     code = base64.b64encode(source.encode()).decode()
     data = base64.b64encode(json.dumps(plan).encode()).decode()
-    command = (
+    command_prefix = (
         "apk add --no-cache iproute2 cri-tools >/tmp/maintenance-packages.log 2>&1\n"
         f"printf '%s' '{code}' | base64 -d > /tmp/podcidr_cleanup.py\n"
         f"printf '%s' '{data}' | base64 -d > /tmp/cni-plan.json\n"
-        "exec python3 /tmp/podcidr_cleanup.py --plan /tmp/cni-plan.json --hold\n"
     )
+    entrypoint = "exec python3 /tmp/podcidr_cleanup.py --plan /tmp/cni-plan.json"
+    retry_flag = " --retry-failed" if retry_failed else ""
+    command = command_prefix + entrypoint + retry_flag + " --hold\n"
     taint = {"key": MAINTENANCE_KEY, "value": "true", "effect": "NoSchedule"}
     machine = {
         "nodeTaints": {MAINTENANCE_KEY: "true:NoSchedule"},
@@ -125,6 +127,9 @@ def make_patches(plan, source):
     register = json.loads(json.dumps(standalone))
     register["machine"]["kubelet"]["skipNodeRegistration"] = False
     register["machine"]["kubelet"]["extraConfig"]["enableServer"] = True
+    register["machine"]["pods"][0]["spec"]["containers"][0]["command"][2] = (
+        command_prefix + entrypoint + " --hold\n"
+    )
     return standalone, register
 
 
@@ -156,9 +161,9 @@ def main():
         json.loads(args.pods_json.read_text()),
         args.operation,
     )
-    patches = make_patches(
-        plan, Path(__file__).with_name("podcidr_cleanup.py").read_text()
-    )
+    source = Path(__file__).with_name("podcidr_cleanup.py").read_text()
+    patches = make_patches(plan, source)
+    retry_patch, _ = make_patches(plan, source, retry_failed=True)
     resources = [omni_resource(plan["nodeName"], patch) for patch in patches]
     args.output_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
     files = {
@@ -168,6 +173,8 @@ def main():
         "register-patch.json": patches[1],
         "standalone-omni.yaml": resources[0],
         "register-omni.yaml": resources[1],
+        "retry-patch.json": retry_patch,
+        "retry-omni.yaml": omni_resource(plan["nodeName"], retry_patch),
     }
     for name, contents in files.items():
         path = args.output_dir / name

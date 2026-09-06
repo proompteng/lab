@@ -1,8 +1,11 @@
 import copy
+from contextlib import redirect_stdout
+import io
 import ipaddress
 import json
 from pathlib import Path
 import tempfile
+import subprocess
 import unittest
 from unittest.mock import patch
 
@@ -192,6 +195,51 @@ class CleanupTests(unittest.TestCase):
         different["oldCIDR"] = "10.244.0.0/23"
         with self.assertRaisesRegex(maintenance.MaintenanceError, "another plan"):
             maintenance.cleanup(different, self.root)
+
+    def test_failed_command_preserves_diagnostics_in_private_report(self):
+        self.run.side_effect = subprocess.CalledProcessError(
+            1,
+            ["ip", "link"],
+            output="partial runtime output",
+            stderr="device is still owned",
+        )
+        result = self.cleanup()
+        self.assertEqual(result["phase"], "failed")
+        saved = json.loads((self.state / "result.json").read_text())
+        self.assertEqual(saved["commandFailure"]["exitCode"], 1)
+        self.assertEqual(saved["commandFailure"]["stdout"], "partial runtime output")
+        self.assertEqual(saved["commandFailure"]["stderr"], "device is still owned")
+        self.assertEqual((self.state / "result.json").stat().st_mode & 0o777, 0o600)
+
+    def test_timeout_preserves_byte_diagnostics(self):
+        self.run.side_effect = subprocess.TimeoutExpired(
+            ["crictl", "inspectp"],
+            60,
+            output=b"partial reply",
+            stderr=b"runtime did not respond",
+        )
+        result = self.cleanup()
+        self.assertEqual(result["commandFailure"]["timeoutSeconds"], 60)
+        self.assertEqual(result["commandFailure"]["stdout"], "partial reply")
+        self.assertEqual(result["commandFailure"]["stderr"], "runtime did not respond")
+
+    def test_static_pod_log_omits_private_command_output(self):
+        plan_path = self.root / "plan.json"
+        plan_path.write_text(json.dumps(PLAN))
+        report = {
+            **PLAN,
+            "phase": "failed",
+            "commandFailure": {"stderr": "private diagnostic"},
+        }
+        output = io.StringIO()
+        with (
+            patch("sys.argv", ["podcidr_cleanup.py", "--plan", str(plan_path)]),
+            patch.object(maintenance, "cleanup", return_value=report),
+            redirect_stdout(output),
+        ):
+            self.assertEqual(maintenance.main(), 1)
+        self.assertEqual(json.loads(output.getvalue())["phase"], "failed")
+        self.assertNotIn("private diagnostic", output.getvalue())
 
     def test_plan_limits_network_and_operation_paths(self):
         for key, value in (

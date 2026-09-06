@@ -296,6 +296,21 @@ def cleanup(plan, root=Path("/proc/1/root"), retry_failed=False):
         except Exception as error:
             report["phase"] = "failed"
             report["error"] = str(error)
+            if isinstance(
+                error, (subprocess.CalledProcessError, subprocess.TimeoutExpired)
+            ):
+                diagnostics = {
+                    "command": error.cmd,
+                    "exitCode": getattr(error, "returncode", None),
+                    "timeoutSeconds": getattr(error, "timeout", None),
+                }
+                for field in ("stdout", "stderr"):
+                    value = getattr(error, field, None) or ""
+                    if isinstance(value, bytes):
+                        value = value.decode("utf-8", errors="replace")
+                    diagnostics[field] = value[-8192:]
+                    diagnostics[field + "Truncated"] = len(value) > 8192
+                report["commandFailure"] = diagnostics
         finally:
             save_report(state, report)
         return report
@@ -312,7 +327,12 @@ def main():
     )
     args = parser.parse_args()
     report = cleanup(json.loads(args.plan.read_text()), retry_failed=args.retry_failed)
-    print(json.dumps(report), flush=True)
+    print(
+        json.dumps(
+            {key: report[key] for key in ("operation", "nodeName", "oldCIDR", "phase")}
+        ),
+        flush=True,
+    )
     if args.hold:
         while True:
             time.sleep(60)

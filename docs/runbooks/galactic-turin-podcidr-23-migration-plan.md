@@ -79,7 +79,14 @@ Use the merged versions of:
 
 The cleanup writes a mode-0600 result under `/var/lib/podcidr23-ops/<operation>/result.json`. A completed operation is
 idempotent. A partial operation requires explicit `--retry-failed` after diagnosing its report; changing the plan under
-an existing operation is rejected. Archives remain on the host for recovery. Do not delete broad CNI directories.
+an existing operation is rejected. The renderer emits `retry-omni.yaml` for that exact original plan and ConfigPatch ID.
+After diagnosing a failed report, apply this artifact explicitly with `omnictl apply --file
+"$migration_dir/patches/retry-omni.yaml"`; do not recapture a different plan or hand-edit the command. Normal standalone
+and registration artifacts never enable retries. Archives remain on the host for recovery. Do not delete broad CNI directories.
+
+Failed-command reports retain the command, exit code or timeout, and the last 8192 characters of stdout and stderr
+with truncation indicators. These diagnostics stay in the private host result file. Static-pod logs contain only the
+operation, node, old CIDR, and phase. Read the result through Talos into the private operation directory before retrying.
 
 The static pod uses host networking and PID visibility with a pinned Python image. It installs `iproute2` and
 `cri-tools` into its disposable container. Confirm those packages and the image can be retrieved before maintenance.
