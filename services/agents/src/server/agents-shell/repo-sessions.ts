@@ -99,6 +99,19 @@ export class RepoSessionStore {
     renameSync(temporaryPath, path)
   }
 
+  private recordForPath(path: string) {
+    const candidate = resolve(path)
+    return Array.from(this.sessions.values()).find((record) => isInsidePath(record.session.worktree, candidate)) ?? null
+  }
+
+  private requireRecord(record: RepoSessionRecord, auth: AuthContext, options: { allowClosing?: boolean } = {}) {
+    if (record.session.ownerSubject !== auth.subject) {
+      throw new Error(`repo session is owned by another subject: ${record.session.id}`)
+    }
+    if (record.closing && !options.allowClosing) throw new Error(`repo session is closing: ${record.session.id}`)
+    return record
+  }
+
   set(session: RepoSession) {
     this.persist(session)
     this.sessions.set(session.id, repoSessionRecord(session))
@@ -108,11 +121,12 @@ export class RepoSessionStore {
   require(sessionId: string, auth: AuthContext, options: { allowClosing?: boolean } = {}) {
     const record = this.sessions.get(sessionId)
     if (!record) throw new Error(`unknown repo session: ${sessionId}`)
-    if (record.session.ownerSubject !== auth.subject) {
-      throw new Error(`repo session is owned by another subject: ${sessionId}`)
-    }
-    if (record.closing && !options.allowClosing) throw new Error(`repo session is closing: ${sessionId}`)
-    return record.session
+    return this.requireRecord(record, auth, options).session
+  }
+
+  requireForPath(path: string, auth: AuthContext, options: { allowClosing?: boolean } = {}) {
+    const record = this.recordForPath(path)
+    return record ? this.requireRecord(record, auth, options).session : null
   }
 
   beginClose(sessionId: string, auth: AuthContext) {
@@ -131,12 +145,20 @@ export class RepoSessionStore {
     if (record) record.closing = false
   }
 
-  acquire(sessionId: string, auth: AuthContext) {
-    const session = this.require(sessionId, auth)
+  acquire(sessionId: string, auth: AuthContext, options: { allowClosing?: boolean } = {}) {
+    const session = this.require(sessionId, auth, options)
     const record = this.sessions.get(sessionId)
     if (!record) throw new Error(`unknown repo session: ${sessionId}`)
     record.activeOperations += 1
     return session
+  }
+
+  acquireForPath(path: string, auth: AuthContext, options: { allowClosing?: boolean } = {}) {
+    const record = this.recordForPath(path)
+    if (!record) return null
+    this.requireRecord(record, auth, options)
+    record.activeOperations += 1
+    return record.session
   }
 
   release(sessionId: string) {

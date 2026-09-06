@@ -63,7 +63,9 @@ export class AgentsShellRunner {
   }
 
   resolveCwd(cwd: string | undefined, sessionId: string | undefined, auth: AuthContext) {
-    return resolveExistingDirectory(this.resolveRoot(sessionId, auth), cwd)
+    const resolved = resolveExistingDirectory(this.resolveRoot(sessionId, auth), cwd)
+    if (!sessionId) this.repoSessions.requireForPath(resolved, auth)
+    return resolved
   }
 
   async openRepoSession(args: { name?: string; baseBranch?: string }, auth: AuthContext) {
@@ -151,27 +153,30 @@ export class AgentsShellRunner {
     return this.repoSessionStatus(session.id, auth)
   }
 
-  async repoSessionStatus(sessionId: string, auth: AuthContext) {
-    const session = this.repoSessions.require(sessionId, auth, { allowClosing: true })
+  async repoSessionStatus(sessionId: string, auth: AuthContext, options: { allowClosing?: boolean } = {}) {
+    const session = this.repoSessions.require(sessionId, auth, options)
     const [head, status, divergence] = await Promise.all([
       this.runProcess({
         command: 'git',
         args: ['rev-parse', 'HEAD'],
-        cwd: session.worktree,
+        sessionId,
+        allowClosingSession: options.allowClosing,
         auth,
         auditEvent: 'repo_session_status_head',
       }),
       this.runProcess({
         command: 'git',
         args: ['status', '--porcelain=v1', '--untracked-files=normal', '--ignored=matching'],
-        cwd: session.worktree,
+        sessionId,
+        allowClosingSession: options.allowClosing,
         auth,
         auditEvent: 'repo_session_status_dirty',
       }),
       this.runProcess({
         command: 'git',
         args: ['rev-list', '--left-right', '--count', `${session.baseSha}...HEAD`],
-        cwd: session.worktree,
+        sessionId,
+        allowClosingSession: options.allowClosing,
         auth,
         auditEvent: 'repo_session_status_divergence',
       }),
@@ -197,7 +202,7 @@ export class AgentsShellRunner {
     let removed = false
     try {
       await this.repoSessions.waitForIdle(args.sessionId, auth)
-      const status = await this.repoSessionStatus(args.sessionId, auth)
+      const status = await this.repoSessionStatus(args.sessionId, auth, { allowClosing: true })
       if (status.dirty && !args.force) {
         throw new Error(`repo session has uncommitted changes; clean it or close with force: ${args.sessionId}`)
       }
@@ -367,6 +372,7 @@ export class AgentsShellRunner {
     args: string[]
     cwd?: string
     sessionId?: string
+    allowClosingSession?: boolean
     stdin?: string
     timeoutSeconds?: number
     maxOutputBytes?: number
@@ -376,9 +382,16 @@ export class AgentsShellRunner {
   }): Effect.Effect<ProcessResult, unknown> {
     return Effect.tryPromise({
       try: async () => {
-        const session = options.sessionId ? this.repoSessions.acquire(options.sessionId, options.auth) : null
+        let session = options.sessionId
+          ? this.repoSessions.acquire(options.sessionId, options.auth, { allowClosing: options.allowClosingSession })
+          : null
         try {
           const cwd = resolveExistingDirectory(session?.worktree ?? resolve(this.config.workspaceRoot), options.cwd)
+          if (!session) {
+            session = this.repoSessions.acquireForPath(cwd, options.auth, {
+              allowClosing: options.allowClosingSession,
+            })
+          }
           const timeoutSeconds = asPositiveInteger(
             options.timeoutSeconds,
             'timeoutSeconds',
@@ -455,7 +468,7 @@ export class AgentsShellRunner {
           })
           return processResult
         } finally {
-          if (options.sessionId) this.repoSessions.release(options.sessionId)
+          if (session) this.repoSessions.release(session.id)
         }
       },
       catch: (error) => error,

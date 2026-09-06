@@ -782,6 +782,34 @@ printf '%s\\n' "$@"
     await runner.closeRepoSession({ sessionId: opened.sessionId, force: true }, auth)
   })
 
+  it('tracks legacy cwd process tools inside a managed repo session worktree', async () => {
+    const config = makeConfig()
+    initializeRepoFixture(config)
+    const auth = makeAuth()
+    const runner = new AgentsShellRunner(config)
+    const opened = await runner.openRepoSession({ name: 'legacy-cwd-process' }, auth)
+    const readyPath = join(config.workspaceRoot, 'legacy-cwd-process-ready')
+
+    const process = runner.runProcess({
+      command: '/bin/bash',
+      args: ['-lc', `printf ready > ${JSON.stringify(readyPath)}; sleep 0.2; printf legacy > legacy.txt`],
+      cwd: opened.worktree,
+      auth,
+      auditEvent: 'repo_session_legacy_cwd_process_test',
+    })
+    for (let attempt = 0; attempt < 100 && !existsSync(readyPath); attempt += 1) {
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 10))
+    }
+    expect(existsSync(readyPath)).toBe(true)
+
+    const closing = runner.closeRepoSession({ sessionId: opened.sessionId }, auth)
+    expect((await process).ok).toBe(true)
+    await expect(closing).rejects.toThrow('repo session has uncommitted changes')
+    expect(readFileSync(join(opened.worktree, 'legacy.txt'), 'utf8')).toBe('legacy')
+
+    await runner.closeRepoSession({ sessionId: opened.sessionId, force: true }, auth)
+  })
+
   it('uses per-session fetch refs so concurrent opens do not share mutable fetch state', async () => {
     const config = makeConfig()
     const baseSha = initializeRepoFixture(config)
