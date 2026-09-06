@@ -258,6 +258,14 @@ targets:
       - .github/workflows/orbit-salvage-ci.yml
       - .github/ci/impact-map.yml
 
+  ricochet-rush:
+    kind: delegated
+    workflow: ricochet-rush-ci
+    paths:
+      - apps/ricochet-rush/**
+      - .github/workflows/ricochet-rush-ci.yml
+      - .github/ci/impact-map.yml
+
   golink:
     kind: delegated
     workflow: golink-ci
