@@ -52,6 +52,7 @@ import { SettingsApp } from './settings-app'
 import { commitDesktopLifecycleAction, selectSleepRequestError } from './settings-model'
 import { Spotlight } from './spotlight'
 import { TerminalApp } from './terminal-app'
+import { focusWindowContent } from './window-focus'
 
 type TargetedCodeOpenRequest = CodeOpenRequest & { targetWindowId: string }
 type TargetedFinderOpenRequest = FinderOpenRequest & { targetWindowId: string }
@@ -313,6 +314,13 @@ export function ReadyDesktop({
     return false
   }, [])
 
+  const focusActiveContent = useCallback(() => {
+    requestAnimationFrame(() => {
+      const id = windowStateRef.current.activeWindowId
+      focusWindowContent(stageRef.current?.querySelector<HTMLElement>(`[data-window-id="${id}"]`) ?? null)
+    })
+  }, [])
+
   const appendDesktopWindow = useCallback(
     (app: TengriApp) => {
       if (!requireWindowCapacity(true)) return false
@@ -327,9 +335,10 @@ export function ReadyDesktop({
       const alreadyOpen = windowStateRef.current.windows.some((candidate) => candidate.app === app)
       if (!requireWindowCapacity(!alreadyOpen)) return false
       dispatch({ type: 'open', app, title: APP_TITLES[app], viewport: viewport() })
+      focusActiveContent()
       return true
     },
-    [requireWindowCapacity, viewport],
+    [focusActiveContent, requireWindowCapacity, viewport],
   )
 
   const registerTerminalCloseHandler = useCallback((windowId: string, handler: () => void) => {
@@ -479,7 +488,6 @@ export function ReadyDesktop({
       appendDesktopWindow(app)
       return
     }
-    if (isEditableTarget(event.target)) return
     if (event.key === 'Tab') {
       event.preventDefault()
       const frontmostByApp = new Map<TengriApp, DesktopWindow>()
@@ -674,6 +682,14 @@ export function ReadyDesktop({
     const activeId = windowStateRef.current.activeWindowId
     if (activeId) dispatch({ type: 'toggle-maximize', id: activeId, viewport: viewport() })
   }, [viewport])
+  const activateWindow = useCallback(
+    (id: string) => {
+      dispatch({ type: 'restore', id, viewport: viewport() })
+      setMenuOpen(null)
+      focusActiveContent()
+    },
+    [focusActiveContent, viewport],
+  )
   const openSpotlight = useCallback(() => {
     setMenuOpen(null)
     setSpotlightOpen(true)
@@ -720,6 +736,7 @@ export function ReadyDesktop({
         <DesktopWallpaper />
         <MenuBar
           activeApp={activeApp}
+          activeWindow={activeWindow}
           agent={agent}
           connectionWarning={connectionWarning}
           menuOpen={menuOpen}
@@ -731,6 +748,8 @@ export function ReadyDesktop({
           onOpenSpotlight={openSpotlight}
           onSignOut={handleSignOut}
           onToggleMaximize={toggleMaximizeActiveWindow}
+          onActivateWindow={activateWindow}
+          windows={windowState.windows}
           userName={user.name}
         />
 
@@ -894,15 +913,6 @@ function LifecycleTransitionScreen({
         ) : null}
       </section>
     </main>
-  )
-}
-
-function isEditableTarget(target: EventTarget | null) {
-  return (
-    target instanceof HTMLInputElement ||
-    target instanceof HTMLTextAreaElement ||
-    target instanceof HTMLSelectElement ||
-    (target instanceof HTMLElement && target.isContentEditable)
   )
 }
 

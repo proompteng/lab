@@ -2578,6 +2578,100 @@ test('has no serious or critical Axe violations', async ({ page }) => {
   ).toEqual([])
 })
 
+test('restores keyboard focus when opening and switching desktop windows', async ({ page }) => {
+  await mockTengri(page)
+  await page.goto('/')
+  const prompt = page.getByRole('textbox', { name: 'Message your agent' })
+  await expect(prompt).toBeFocused()
+  await prompt.fill('Keep this draft')
+  await page.getByRole('button', { name: 'Open Terminal', exact: true }).click()
+  const terminal = page.getByRole('textbox', { name: 'Terminal input' })
+  await expect(terminal).toBeFocused()
+  await page.getByRole('button', { name: 'Open Chrome', exact: true }).click()
+  await expect(prompt).toBeFocused()
+  await expect(prompt).toHaveValue('Keep this draft')
+  await page.keyboard.press('Meta+m')
+  await expect(terminal).toBeFocused()
+  await page.getByRole('button', { name: 'Open Chrome', exact: true }).click()
+  await expect(prompt).toBeFocused()
+  const address = page.getByRole('textbox', { name: 'Address', exact: true })
+  await address.focus()
+  await page.getByRole('button', { name: 'Open Terminal', exact: true }).click()
+  await expect(terminal).toBeFocused()
+  await page.getByRole('button', { name: 'Open Chrome', exact: true }).click()
+  await expect(address).toBeFocused()
+  await page.getByRole('button', { name: 'Open Spotlight', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: 'Spotlight' }).getByRole('combobox')).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog', { name: 'Spotlight' })).toHaveCount(0)
+})
+
+test('preserves zoom across minimize and window switching and lists individual windows', async ({ page }) => {
+  await mockTengri(page)
+  await page.goto('/')
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  const normalBounds = await chrome.boundingBox()
+  await chrome.getByRole('button', { name: 'Maximize Chrome' }).click()
+  const zoomedBounds = await chrome.boundingBox()
+  await chrome.getByRole('button', { name: 'Minimize Chrome' }).click()
+  await page.getByRole('button', { name: 'Open Chrome', exact: true }).click()
+  await expect(chrome.getByRole('button', { name: 'Restore Chrome' })).toBeVisible()
+  await expect.poll(() => chrome.boundingBox()).toEqual(zoomedBounds)
+  await page.getByRole('menuitem', { name: 'View', exact: true }).click()
+  await expect(page.getByRole('menuitem', { name: 'Restore Window', exact: false })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await page.keyboard.press('Meta+n')
+  await expect(chrome).toHaveCount(2)
+  await page.getByRole('menuitem', { name: 'Window', exact: true }).click()
+  const menu = page.getByRole('menu', { name: 'Window', exact: true })
+  await expect(menu.getByRole('menuitemcheckbox', { name: 'Chrome 2', exact: true })).toBeChecked()
+  await menu.getByRole('menuitemcheckbox', { name: 'Chrome 1', exact: true }).click()
+  await expect(chrome.first()).toHaveAttribute('data-active', 'true')
+  await expect(chrome.first().getByRole('button', { name: 'Restore Chrome' })).toBeVisible()
+  await chrome.first().getByRole('button', { name: 'Restore Chrome' }).click()
+  await expect.poll(() => chrome.first().boundingBox()).toEqual(normalBounds)
+})
+
+test('magnified Dock icons keep separate hit targets at desktop and narrow widths', async ({ page }) => {
+  await mockTengri(page)
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.goto('/')
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  for (const width of [1440, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 })
+    for (const name of ['Open Finder', 'Open Chrome', 'Open Code', 'Open Settings']) {
+      await dock.getByRole('button', { name, exact: true }).hover()
+      await expect(dock.getByRole('button', { name, exact: true }).locator('[role="tooltip"]')).toHaveCSS(
+        'opacity',
+        '1',
+      )
+      const minimumGap = await dock.locator('img').evaluateAll(
+        (images) =>
+          new Promise<number>((resolve) => {
+            const start = performance.now()
+            let gap = Infinity
+            const measure = () => {
+              const bounds = images.map((image) => image.getBoundingClientRect())
+              bounds.forEach((bound, index) => {
+                gap = Math.min(
+                  gap,
+                  bound.left,
+                  innerWidth - bound.right,
+                  index === 0 ? Infinity : bound.left - bounds[index - 1]!.right,
+                )
+              })
+              if (performance.now() - start < 250) requestAnimationFrame(measure)
+              else resolve(gap)
+            }
+            measure()
+          }),
+      )
+      expect(minimumGap).toBeGreaterThanOrEqual(0)
+    }
+    await page.mouse.move(0, 0)
+  }
+})
+
 test('aligns native window controls with app toolbars and keeps narrow layouts usable', async ({ page }) => {
   await mockTengri(page)
   await page.goto('/')

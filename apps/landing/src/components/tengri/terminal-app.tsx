@@ -659,6 +659,7 @@ export function TerminalApp({
       const host = hostRef.current
       host.addEventListener('pointerdown', focusTerminal)
       host.addEventListener('focus', focusTerminal)
+      if (host.contains(document.activeElement)) focusTerminal()
       disposables.push(
         { dispose: () => host.removeEventListener('pointerdown', focusTerminal) },
         { dispose: () => host.removeEventListener('focus', focusTerminal) },
@@ -748,6 +749,7 @@ export function TerminalApp({
     >
       <div
         ref={hostRef}
+        data-window-default-focus
         className="h-full w-full bg-inherit outline-none"
         aria-label="Interactive Tengri terminal"
         data-renderer={renderer}
