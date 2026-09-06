@@ -5,6 +5,7 @@ import type { PointerEvent as ReactPointerEvent, ReactNode, RefObject } from 're
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { useDesktopReducedMotion } from './use-desktop-reduced-motion'
+import { focusWindowContent, rememberWindowFocus } from './window-focus'
 import {
   clampToViewport,
   resizeBounds,
@@ -45,10 +46,18 @@ export function DesktopWindowFrame({
   window: DesktopWindow
 }) {
   const elementRef = useRef<HTMLDivElement | null>(null)
+  const frameRef = useRef<HTMLElement | null>(null)
   const interactionRef = useRef<Interaction | null>(null)
   const releasePendingRef = useRef(false)
   const reducedMotion = useDesktopReducedMotion()
   const [minimizeTarget, setMinimizeTarget] = useState({ x: 0, y: 0, scale: 0.1 })
+
+  useLayoutEffect(() => {
+    if (!active || window.mode === 'minimized') return
+    // Expose restored content before focusing; Motion paints its visible target on the next frame.
+    if (elementRef.current) elementRef.current.style.visibility = 'visible'
+    focusWindowContent(frameRef.current)
+  }, [active, window.mode, window.z])
 
   useLayoutEffect(() => {
     if (window.mode !== 'minimized' || reducedMotion) return
@@ -174,18 +183,25 @@ export function DesktopWindowFrame({
       }}
     >
       <section
+        ref={frameRef}
+        tabIndex={-1}
+        data-window-id={window.id}
         aria-label={`${window.title} window`}
         aria-hidden={window.mode === 'minimized'}
         inert={window.mode === 'minimized' ? true : undefined}
         data-active={active}
         data-app={window.app}
         className={cn(
-          'tengri-window absolute inset-3 flex flex-col overflow-hidden rounded-xl bg-zinc-900 ring-1 ring-black/55 before:pointer-events-none before:absolute before:inset-0 before:z-40 before:rounded-[inherit] before:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.16)]',
+          'tengri-window absolute inset-3 flex flex-col overflow-hidden rounded-xl bg-zinc-900 outline-none ring-1 ring-black/55 before:pointer-events-none before:absolute before:inset-0 before:z-40 before:rounded-[inherit] before:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.16)]',
           active
             ? 'shadow-[0_20px_48px_-12px_rgba(0,0,0,0.52),0_4px_14px_rgba(0,0,0,0.24)]'
             : 'shadow-[0_7px_22px_-6px_rgba(0,0,0,0.3)]',
         )}
         style={{ pointerEvents: window.mode === 'minimized' ? 'none' : 'auto' }}
+        onFocusCapture={(event) => {
+          rememberWindowFocus(event.currentTarget, event.target)
+          if (!active) dispatch({ type: 'focus', id: window.id })
+        }}
         onPointerDown={(event) => {
           if (window.mode === 'normal' && isWindowDragTarget(event.target)) begin(event, null)
           else dispatch({ type: 'focus', id: window.id })

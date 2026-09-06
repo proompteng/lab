@@ -85,6 +85,13 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   }, [])
 
   useEffect(() => {
+    const prompt = promptRef.current
+    if (active && prompt && !prompt.disabled && document.activeElement === prompt.closest('[data-window-id]')) {
+      prompt.focus({ preventScroll: true })
+    }
+  }, [account?.authenticated, active, replayRecovering, threadReady])
+
+  useEffect(() => {
     mountedRef.current = true
     return () => {
       mountedRef.current = false
@@ -654,6 +661,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         >
           <textarea
             ref={promptRef}
+            data-window-default-focus
             aria-label={activeTurnId ? 'Steer the current turn' : 'Message your agent'}
             disabled={replayRecovering || Boolean(threadId && !threadReady)}
             value={prompt}

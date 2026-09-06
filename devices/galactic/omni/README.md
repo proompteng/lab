@@ -68,3 +68,37 @@ direct pull of the same host without the mirror defaults to HTTPS and is not an 
 
 Never commit the raw or rendered templates. Delete both temporary files after the operation. The full preflight,
 runtime proof, and rollback procedure is in `docs/runbooks/talos-latest-upgrade-plan.md`.
+
+## PodCIDR maintenance checks
+
+Altra currently has a `/24` PodCIDR but advertises 500 pods. Before moving workloads onto it or draining either target,
+commit the temporary Altra-only change to `machine.kubelet.extraConfig.maxPods: 250` in `cluster-template.yaml`.
+Use the render, validate, dry-run, and Omni sync procedure above to apply that committed template, then verify
+`kubectl --context galactic-lan -n default get node talos-192-168-1-85 -o jsonpath='{.status.capacity.pods}'` returns
+`250`. Keep that cap until Altra's new `/23` network passes acceptance. The gate intentionally fails on Altra's
+current `/24`/500 state; do not use `--migrated` to skip this preparation.
+
+Run the read-only address and storage gate immediately before each node's maintenance:
+
+```bash
+python3 devices/galactic/omni/podcidr_preflight.py --node turin
+python3 devices/galactic/omni/podcidr_preflight.py --node talos-192-168-1-85
+```
+
+The command uses only the `galactic-lan` Kubernetes context. It checks the reviewed three-node membership, readiness,
+distinct allocator `/23` blocks, current pod addresses, Ceph monitor/OSD/PG recovery, and active/standby CephFS MDS
+placement on separate hosts. It requires a 250-pod cap on the maintenance target. After migration, add `--migrated`
+to require both a `/23` PodCIDR and a 500-pod cap. Exit code 1 means a failed gate; exit code 2 means live evidence
+could not be established. A peer's existing address-capacity mismatch is reported separately as a warning.
+
+Passing these checks does not prove workload continuity, data backups, disk identity, GPU or Kata operation, or
+authorize a drain. Verify those conditions in the reviewed maintenance procedure. In particular, a Kubernetes etcd
+snapshot does not back up application volumes, and node membership changes must preserve the existing OSD identities.
+
+Check the gate's failure cases with:
+
+```bash
+python3 -m unittest discover -s devices/galactic/omni -p test_podcidr_preflight.py -v
+ruff check devices/galactic/omni/podcidr_preflight.py devices/galactic/omni/test_podcidr_preflight.py
+ruff format --check devices/galactic/omni/podcidr_preflight.py devices/galactic/omni/test_podcidr_preflight.py
+```
