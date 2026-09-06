@@ -734,7 +734,7 @@ export const makeCodexSessionLayer = (logger: Logger) =>
                   request('initialize', {
                     clientInfo: { name: 'symphony', version: '0.1.0' },
                     capabilities: {
-                      experimentalApi: options.dynamicTools.length > 0,
+                      experimentalApi: true,
                       requestAttestation: false,
                     },
                   }).pipe(

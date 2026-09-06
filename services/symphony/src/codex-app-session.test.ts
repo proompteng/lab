@@ -40,6 +40,13 @@ rl.on('line', (line) => {
   const message = JSON.parse(line)
 
   if (message.method === 'initialize') {
+    if (message.params?.capabilities?.experimentalApi !== true) {
+      console.log(JSON.stringify({
+        id: message.id,
+        error: { code: -32600, message: 'initialize must advertise experimentalApi for legacy history mode' },
+      }))
+      return
+    }
     console.log(JSON.stringify({ id: message.id, result: {} }))
     return
   }
