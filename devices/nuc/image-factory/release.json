@@ -4,5 +4,6 @@
   "upstreamCatalog": "ghcr.io/siderolabs/extensions:v1.14.0@sha256:67684a0ee0fe775933e4d53697703d4ad028bb00b670205d30c9f966e70de171",
   "kataSource": "registry.ide-newton.ts.net/lab/talos-kata-runtimes@sha256:8d34965e669a53d3f7d7565d674fbe140acc0874422676601bb5638c705f8e8d",
   "kataCatalogEntry": "ghcr.io/proompteng/talos-kata-runtimes:4.1.0-talos-v1.14.0-r5@sha256:8d34965e669a53d3f7d7565d674fbe140acc0874422676601bb5638c705f8e8d",
-  "catalogRepository": "ghcr.io/proompteng/talos-extensions"
+  "catalogRepository": "ghcr.io/proompteng/talos-extensions",
+  "catalogDigest": "sha256:dfb6e48e9e7362532b25b118a0fb751012501a33de40637bbd6171c7e306a63a"
 }

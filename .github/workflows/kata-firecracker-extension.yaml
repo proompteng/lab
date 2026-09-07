@@ -5,6 +5,9 @@ on:
     paths:
       - 'devices/galactic/extensions/kata/**'
       - 'devices/galactic/releases/**'
+      - 'devices/nuc/image-factory/release.json'
+      - 'flake.lock'
+      - '.github/actions/setup-nix-toolchain/**'
       - '.github/workflows/kata-firecracker-extension.yaml'
   push:
     branches:
@@ -12,6 +15,9 @@ on:
     paths:
       - 'devices/galactic/extensions/kata/**'
       - 'devices/galactic/releases/**'
+      - 'devices/nuc/image-factory/release.json'
+      - 'flake.lock'
+      - '.github/actions/setup-nix-toolchain/**'
       - '.github/workflows/kata-firecracker-extension.yaml'
   workflow_dispatch:
 

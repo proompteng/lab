@@ -4,7 +4,7 @@ set -Eeuo pipefail
 
 release_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 readonly release_dir
-readonly lock="$release_dir/v1.14.0.json"
+readonly lock="$release_dir/../../nuc/image-factory/release.json"
 readonly identity='https://github.com/proompteng/lab/.github/workflows/kata-firecracker-extension.yaml@refs/heads/main'
 readonly issuer='https://token.actions.githubusercontent.com'
 
@@ -20,11 +20,13 @@ source_ref=$(jq -er .kataSource "$lock")
 entry=$(jq -er .kataCatalogEntry "$lock")
 upstream=$(jq -er .upstreamCatalog "$lock")
 catalog=$(jq -er '.catalogRepository + ":" + .talos' "$lock")
-readonly source_ref entry upstream catalog
+expected_digest=$(jq -er .catalogDigest "$lock")
+readonly source_ref entry upstream catalog expected_digest
 [[ "$source_ref" =~ @sha256:[0-9a-f]{64}$ ]]
 [[ "$entry" =~ :[^/@]+@sha256:[0-9a-f]{64}$ ]]
 [[ "$upstream" =~ @sha256:[0-9a-f]{64}$ ]]
 [[ "${entry##*@}" == "${source_ref##*@}" ]]
+[[ "$expected_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
 
 mkdir -p -- "$2"
 output=$(cd -- "$2" && pwd)
@@ -41,6 +43,8 @@ if [[ "$1" == build ]]; then
     ([.manifests[].platform | select(.os == "linux") | .architecture] | sort) == ["amd64", "arm64"]
   ' "$output/kata-index.json" >/dev/null
   "$release_dir/../extensions/kata/build-catalog.sh" "$upstream" "$entry" "$output"
+  crane append --new_layer "$output/catalog.tar" --new_tag catalog:validation --output "$output/catalog-image.tar"
+  [[ "$(crane digest --tarball "$output/catalog-image.tar")" == "$expected_digest" ]]
   cp "$lock" "$output/release.json"
   exit 0
 fi
@@ -60,6 +64,7 @@ verify "$entry" >"$output/published-kata-signature.json"
 candidate="${catalog}-${GITHUB_SHA}"
 crane append --new_layer "$output/catalog.tar" --new_tag "$candidate"
 digest=$(crane digest "$candidate")
+[[ "$digest" == "$expected_digest" ]]
 immutable="${catalog%:*}@$digest"
 cosign sign --yes "$immutable"
 verify "$immutable" >"$output/catalog-signature.json"
