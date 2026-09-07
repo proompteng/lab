@@ -34,9 +34,39 @@ env:
   VERSION: 4.1.0-talos-v1.13.9-r5
 
 jobs:
+  changes:
+    name: Select Kata and catalog jobs
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: arc-amd64
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      extensions: ${{ steps.filter.outputs.extensions }}
+      catalog: ${{ steps.filter.outputs.catalog }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        if: github.event_name != 'workflow_dispatch'
+        id: filter
+        with:
+          filters: |
+            extensions:
+              - 'devices/galactic/extensions/kata/**'
+              - 'flake.lock'
+              - '.github/actions/setup-nix-toolchain/**'
+              - '.github/workflows/kata-firecracker-extension.yaml'
+            catalog:
+              - 'devices/galactic/releases/**'
+              - 'devices/nuc/image-factory/release.json'
+              - 'devices/galactic/extensions/kata/build-catalog.sh'
+              - '.github/workflows/kata-firecracker-extension.yaml'
+
   catalog:
     name: Validate Talos 1.14 catalog
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    needs: changes
+    if: needs.changes.outputs.catalog == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: arc-amd64
     timeout-minutes: 30
     steps:
@@ -85,7 +115,8 @@ jobs:
 
   build:
     name: Build ${{ matrix.architecture }} extension
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    needs: changes
+    if: needs.changes.outputs.extensions == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     strategy:
@@ -143,8 +174,8 @@ jobs:
 
   publish:
     name: Publish signed multi-architecture extension
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && (needs.changes.outputs.extensions == 'true' || github.event_name == 'workflow_dispatch')
+    needs: [changes, build]
     runs-on: arc-arm64
     timeout-minutes: 30
     permissions:
@@ -203,8 +234,8 @@ jobs:
 
   installers:
     name: Build ${{ matrix.profile }} installer
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    needs: publish
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && (needs.changes.outputs.extensions == 'true' || github.event_name == 'workflow_dispatch')
+    needs: [changes, publish]
     runs-on: arc-amd64
     timeout-minutes: 60
     permissions:
