@@ -1,0 +1,200 @@
+name: Tengri real guest acceptance
+
+on:
+  pull_request:
+    paths:
+      - 'packages/scripts/src/tengri/**'
+      - '.github/workflows/tengri-post-deploy.yml'
+      - 'packages/scripts/package.json'
+      - 'bun.lock'
+      - 'argocd/applications/agents-ci/runner-rbac-tengri.yaml'
+  push:
+    branches:
+      - kargo/tengri
+      - kargo/proompteng
+    paths:
+      - 'argocd/applications/tengri/**'
+      - 'argocd/applications/proompteng/**'
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: Kargo stage to diagnose
+        required: true
+        type: choice
+        options:
+          - tengri
+          - proompteng
+      expected_revision:
+        description: Full 40-character Kargo branch revision expected by the diagnostic run
+        required: true
+        type: string
+
+concurrency:
+  group: tengri-real-guest-acceptance
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
+      - name: Install acceptance dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/scripts
+
+      - name: Run acceptance helper tests
+        run: bun test packages/scripts/src/tengri/__tests__
+
+      - name: Lint acceptance sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          bunx oxfmt --check packages/scripts/src/tengri/acceptance.ts packages/scripts/src/tengri/creation-lease.ts packages/scripts/src/tengri/__tests__
+          bunx oxlint --config .oxlintrc.json packages/scripts/src/tengri/acceptance.ts packages/scripts/src/tengri/creation-lease.ts packages/scripts/src/tengri/__tests__
+
+      - name: Type-check acceptance sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          bunx oxlint --config .oxlintrc.json --type-aware \
+            --tsconfig packages/scripts/tsconfig.json \
+            packages/scripts/src/tengri/acceptance.ts packages/scripts/src/tengri/creation-lease.ts packages/scripts/src/tengri/__tests__
+
+  acceptance:
+    needs: validate
+    if: ${{ needs.validate.result == 'success' && github.event_name != 'pull_request' }}
+    runs-on: arc-arm64
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
+      - name: Install acceptance dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile --ignore-scripts --filter @proompteng/scripts
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.31.2
+
+      - name: Configure in-cluster kubeconfig when context is missing
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if kubectl config current-context >/dev/null 2>&1; then
+            echo "Kubectl context already configured"
+            exit 0
+          fi
+
+          if [ -z "${KUBERNETES_SERVICE_HOST:-}" ] || [ -z "${KUBERNETES_SERVICE_PORT:-}" ]; then
+            echo "KUBERNETES_SERVICE_HOST/PORT are not set and no kubectl context exists" >&2
+            exit 1
+          fi
+          if [ ! -f /var/run/secrets/kubernetes.io/serviceaccount/token ]; then
+            echo "Service account token is missing" >&2
+            exit 1
+          fi
+          if [ ! -f /var/run/secrets/kubernetes.io/serviceaccount/ca.crt ]; then
+            echo "Service account CA cert is missing" >&2
+            exit 1
+          fi
+
+          kubeconfig_path="${RUNNER_TEMP}/tengri-acceptance-kubeconfig"
+          echo "KUBECONFIG=${kubeconfig_path}" >> "${GITHUB_ENV}"
+
+          kubectl config set-cluster in-cluster \
+            --server="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}" \
+            --certificate-authority=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+            --embed-certs=true \
+            --kubeconfig="${kubeconfig_path}"
+          kubectl config set-credentials gha-runner \
+            --token="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+            --kubeconfig="${kubeconfig_path}"
+          kubectl config set-context in-cluster \
+            --cluster=in-cluster \
+            --user=gha-runner \
+            --namespace=tengri \
+            --kubeconfig="${kubeconfig_path}"
+          kubectl config use-context in-cluster --kubeconfig="${kubeconfig_path}"
+
+      - name: Validate Kubernetes identity and read access
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl config current-context
+          kubectl auth whoami -n tengri
+
+      - name: Run real guest acceptance
+        uses: actions/github-script@v8
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          DISPATCH_STAGE: ${{ inputs.stage || '' }}
+          DISPATCH_REVISION: ${{ inputs.expected_revision || '' }}
+          TENGRI_AUTH_COOKIE: ${{ secrets.TENGRI_AUTH_COOKIE }}
+          TENGRI_REJECTION_AUTH_COOKIE: ${{ secrets.TENGRI_REJECTION_AUTH_COOKIE }}
+          TENGRI_ACCEPTANCE_OUTPUT: ${{ runner.temp }}/tengri-real-guest-acceptance/evidence.json
+          TENGRI_ACCEPTANCE_LEASE_FILE: ${{ runner.temp }}/tengri-real-guest-acceptance/lease.json
+        with:
+          script: |
+            // A JavaScript action receives the artifact runtime credentials.
+            // Its child inherits them without writing credentials to GITHUB_ENV.
+            const branches = { 'kargo/tengri': 'tengri', 'kargo/proompteng': 'proompteng' }
+            let stage
+            let revision
+            if (process.env.EVENT_NAME === 'push') {
+              stage = branches[process.env.REF_NAME]
+              revision = process.env.GITHUB_SHA
+            } else if (process.env.EVENT_NAME === 'workflow_dispatch' && process.env.REF_NAME === 'main') {
+              stage = process.env.DISPATCH_STAGE
+              revision = process.env.DISPATCH_REVISION
+            }
+            if (!['tengri', 'proompteng'].includes(stage) || !/^[a-f0-9]{40}$/.test(revision || '')) {
+              throw new Error('Acceptance requires an exact Kargo push, or a diagnostic dispatch from main with a full revision')
+            }
+            const exitCode = await exec.exec('bun', [
+              'run', 'packages/scripts/src/tengri/acceptance.ts',
+              '--stage', stage,
+              '--expected-revision', revision,
+              '--run-id', `gha-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`,
+            ], { ignoreReturnCode: true })
+            if (exitCode !== 0) core.setFailed('Real guest acceptance failed; inspect the redacted evidence artifact')
+
+      - name: Upload redacted acceptance evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: tengri-real-guest-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/tengri-real-guest-acceptance/evidence.json
+          if-no-files-found: warn
+          retention-days: 14

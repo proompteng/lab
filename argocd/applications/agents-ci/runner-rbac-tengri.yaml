@@ -1,0 +1,51 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: tengri-acceptance-read
+  namespace: tengri
+rules:
+  - apiGroups: [runtime.proompteng.ai]
+    resources: [microvms]
+    verbs: [get, list]
+  - apiGroups: ['']
+    resources: [persistentvolumeclaims]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tengri-acceptance-read
+  namespace: tengri
+subjects:
+  - kind: ServiceAccount
+    name: arc-arm64-gha-rs-kube-mode
+    namespace: arc
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: tengri-acceptance-read
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: tengri-acceptance-read
+  namespace: lab-delivery
+rules:
+  - apiGroups: [kargo.akuity.io]
+    resources: [stages]
+    resourceNames: [tengri, proompteng]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tengri-acceptance-read
+  namespace: lab-delivery
+subjects:
+  - kind: ServiceAccount
+    name: arc-arm64-gha-rs-kube-mode
+    namespace: arc
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: tengri-acceptance-read
