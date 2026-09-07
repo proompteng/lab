@@ -71,17 +71,18 @@ runtime proof, and rollback procedure is in `docs/runbooks/talos-latest-upgrade-
 
 ## PodCIDR maintenance checks
 
-The preparation template holds Turin and Altra at `maxPods: 250` and requests `/23` allocations for newly registered
-Nodes. Changing the allocation mask does not resize existing Nodes' immutable PodCIDRs. Before moving workloads onto
-Altra or draining either target, use the render, validate, dry-run, and Omni sync procedure above, then verify
+The template sets Turin to `maxPods: 500` after its `/23` migration, holds Altra at `maxPods: 250`, and requests `/23`
+allocations for newly registered Nodes. Changing the allocation mask does not resize existing Nodes' immutable
+PodCIDRs. Before moving workloads onto Altra or draining it, use the render, validate, dry-run, and Omni sync procedure
+above, then verify
 `kubectl --context galactic-lan -n default get node talos-192-168-1-85 -o jsonpath='{.status.capacity.pods}'` returns
 `250`. Keep that cap until Altra's new `/23` network passes acceptance. The gate intentionally fails on Altra's
 old `/24`/500 state; do not use `--migrated` to skip this preparation.
 
-Run the read-only address and storage gate immediately before each node's maintenance:
+Use the migrated gate for Turin. Run the preparation gate immediately before Altra's maintenance:
 
 ```bash
-python3 devices/galactic/omni/podcidr_preflight.py --node turin
+python3 devices/galactic/omni/podcidr_preflight.py --node turin --migrated
 python3 devices/galactic/omni/podcidr_preflight.py --node talos-192-168-1-85
 ```
 
