@@ -19,6 +19,8 @@ Desired state:
 - Tailscale uses `nodivert`; `galactic-dns-firewall.service` installs explicit IPv4/IPv6 input, forwarding, and NAT
   hooks. Only provider-LAN DNS to this NUC bypasses the CGNAT drop rule. All other traffic retains the existing
   Tailscale chains and UFW rules. The service restores hooks after boot or a Tailscale/UFW service restart.
+  It is also enabled under `tailscaled.service.wants`, so a later Tailscale activation starts the hook service again
+  after an unexpected stop; `BindsTo` removes the hooks while Tailscale is inactive.
 - Pi-hole non-secret settings are sourced from this repo, not edited ad hoc on the host.
 
 Files:

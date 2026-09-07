@@ -1,6 +1,6 @@
 [Unit]
 Description=Provider DNS exception before Tailscale filtering
-Requires=tailscaled.service
+BindsTo=tailscaled.service
 After=tailscaled.service ufw.service
 PartOf=tailscaled.service ufw.service
 StartLimitIntervalSec=0
@@ -14,4 +14,4 @@ Restart=on-failure
 RestartSec=5
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=multi-user.target tailscaled.service
