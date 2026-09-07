@@ -85,7 +85,7 @@ describe('Omni cluster template secret rendering', () => {
 
     expect(altraMachine).toContain('maxPods: 500')
     expect(altraMachine).not.toContain('maxPods: 250')
-    expect(documents[0]).toContain('node-cidr-mask-size: "23"')
-    expect(clusterTemplate).not.toContain('node-cidr-mask-size-ipv4')
+    expect(documents[0]).toContain('node-cidr-mask-size-ipv4: "23"')
+    expect(clusterTemplate).not.toMatch(/node-cidr-mask-size:/)
   })
 })

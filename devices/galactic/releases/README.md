@@ -33,6 +33,13 @@ The fallback is explicit in Omni 1.11's
 
 ## Artifacts
 
+Use `node-cidr-mask-size-ipv4: "23"` for the IPv4 PodCIDR allocator. Talos 1.14 supplies an IPv4-specific mask by
+default; retaining the legacy `node-cidr-mask-size: "23"` produces both flags and prevents the controller manager
+from starting. This also stops certificate signing and can leave a rebooted kubelet waiting for its bootstrap CSR.
+Replace the generic flag in the shared Omni patch and effective node configurations without changing any existing
+Node PodCIDR. Verify the controller-manager commands contain only the IPv4 flag with value 23, all controller
+managers remain running, and pending verified node certificates are issued before proceeding.
+
 The CRI customization entry at `/etc/cri/conf.d/20-customization.part` must use `op: create` on every node. Talos 1.14
 does not initially provide that file. `op: overwrite` fails the boot sequence before etcd and trustd start. Talos'
 CRI customization controller handles this path specially, so `create` is supported even though ordinary created
