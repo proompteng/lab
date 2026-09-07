@@ -12,16 +12,19 @@ machines report `schematic.invalid: true`. Omni 1.11 deliberately generates an e
 and falls back to the stock Talos installer, even when the template requests extensions. A normal version sync in
 that state would lose the GPU and Kata extensions.
 
-For this migration, lock the whole cluster with `omnictl cluster lock galactic` and verify the lock before syncing
-the new desired version. Retain that maintenance annotation in the private rendered template if the dry run would
-remove it. With no active Omni lifecycle operation, use `talosctl` to install each verified factory image in Ryzen,
+For this migration, lock the whole cluster with `omnictl cluster lock galactic` and keep its existing desired version
+until the direct installations finish. Omni 1.11 rejects cluster specification changes while the lock remains set;
+its template validator also rejects the reserved lock annotation. Do not sync the template or unlock the cluster
+during the direct installations. With no active Omni lifecycle operation, use `talosctl` to install each verified factory image in Ryzen,
 Turin, Altra order. Drain only the current target, retain its data and identity, stage with `--drain=false --no-reboot`,
 then reboot after successful installation. The accepted Altra EFI and Turin BMC recovery procedures still apply.
 
 This single transition installs both Talos 1.14 and the missing factory metadata. Complete each node's acceptance
 before proceeding. Once all three report the expected version, valid schematic, and matching installer receipt,
-verify Omni's generated configuration preserves the extensions and disk identities, then run
-`omnictl cluster unlock galactic`. Confirm configuration convergence and workload recovery before starting Kubernetes.
+review the template sync dry run: the Cluster update must set Talos to 1.14.0 and remove the maintenance lock together,
+while retaining Kubernetes 1.36.4. Sync that committed template so the desired version and lock change in the same
+Cluster resource update. Do not unlock separately while Omni still targets 1.13.9. Verify the generated configuration
+preserves the extensions and disk identities, then confirm configuration convergence and workload recovery before starting Kubernetes.
 Keep the cluster locked if migration or artifact acceptance is incomplete. Future upgrades return to Omni's normal
 rolling lifecycle; this exception does not authorize stock installers or changes to controller-owned status resources.
 
@@ -29,6 +32,12 @@ The fallback is explicit in Omni 1.11's
 [schematic controller](https://github.com/siderolabs/omni/blob/v1.11.0/internal/backend/runtime/omni/controllers/omni/schematic/configuration.go).
 
 ## Artifacts
+
+The CRI customization entry at `/etc/cri/conf.d/20-customization.part` must use `op: create` on every node. Talos 1.14
+does not initially provide that file. `op: overwrite` fails the boot sequence before etcd and trustd start. Talos'
+CRI customization controller handles this path specially, so `create` is supported even though ordinary created
+files must live under `/var`. Preserve the file's blockfile, image retention, and sandbox settings. The existing
+`/etc/cri/containerd.toml` entry continues to use `overwrite`.
 
 [`devices/nuc/image-factory/release.json`](../../nuc/image-factory/release.json) pins the official extension catalog,
 the combined catalog digest, and the existing signed Kata `4.1.0-r5` multi-architecture image. The catalog builder
@@ -59,14 +68,18 @@ factory build logs before allowing that node to upgrade. A catalog build alone d
    off-host copy. Back up the Image Factory configuration and signing key without replacing its persistent storage.
 2. Deploy the committed Image Factory `v1.6.1` and Omni `v1.11.0` pins. Verify the factory's new catalog and Omni's
    machine connectivity. Omni's database migration requires full-state restoration for rollback, not an image downgrade.
-3. Export the live cluster through Omni 1.11. Move the imported `machine.install.disk` selections into each template
+3. Lock the cluster and verify the lock. Move the imported `machine.install.disk` selections into each template
    Machine's `install.diskSelector` field using its verified, unique disk serial. Omni's static `install.disk` field
    matches an enumerated device path, so use the serial selector to retain disk identity across enumeration changes.
    Preserve the other legacy install options. Omni 1.11 only automatically migrates its
    old generated disk patches; imported multi-purpose patches require this explicit migration. Validate a secret-filled
-   temporary template with the existing renderer and review its dry-run before sync. Keep Kubernetes at `v1.36.4`.
-4. Lock the cluster and verify the lock, then set Talos to `v1.14.0` through the committed Omni template while retaining
-   the maintenance lock. Follow the custom-installer transition above. Preserve the existing
+   temporary template with the existing renderer. If export fails because of the legacy disk fields, retrieve the
+   current ConfigPatch resources privately and use their decoded `spec.data` as the renderer's `--secrets-from` input.
+   Render the validated template to resources. Apply only the three MachineInstallDiskConfigs and three changed
+   imported ConfigPatches while locked, preserving their existing metadata. Review the resource apply dry run and
+   verify that each patch changes only its legacy disk field. Confirm a fresh template export now passes. Leave the
+   Cluster resource unchanged until all direct installations pass. Keep Kubernetes at `v1.36.4`.
+4. Follow the locked custom-installer transition above to install Talos `v1.14.0` on each node. Preserve the existing
    CRI configuration needed for Kata blockfile snapshots. Do not
    enable the new workload-isolation security profile during this upgrade. Preserve Argo-owned Flannel and its MTU.
 5. For each node, save an etcd snapshot from a peer, verify the installer receipt, drain, then perform the controlled
