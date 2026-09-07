@@ -75,8 +75,9 @@ the cluster template first installs an explicit `RegistryMirrorConfig` whose `na
 reference host, including port. Talos honors that mirror for its own installer pull as well as containerd pulls. A
 direct pull of the same host without the mirror defaults to HTTPS and is not an equivalent test.
 
-Never commit the raw or rendered templates. Delete both temporary files after the operation. The full preflight,
-runtime proof, and rollback procedure is in `docs/runbooks/talos-latest-upgrade-plan.md`.
+Never commit the raw or rendered templates. Delete both temporary files after the operation. Follow the current
+[Talos 1.14 and Kubernetes 1.37 release procedure](../releases/README.md) for preflight, runtime proof, and recovery.
+`docs/runbooks/talos-latest-upgrade-plan.md` retains the preceding release's artifact and hardware-recovery evidence.
 
 ## PodCIDR maintenance checks
 
