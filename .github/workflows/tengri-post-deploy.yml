@@ -52,7 +52,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bun install --frozen-lockfile --ignore-scripts --filter @proompteng/scripts
+          bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/scripts
 
       - name: Run acceptance helper tests
         run: bun test packages/scripts/src/tengri/__tests__/acceptance.test.ts
