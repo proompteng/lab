@@ -29,6 +29,9 @@ test('preserves HTTP status and recognized conversation errors without trusting 
       undefined,
     ],
     [404, { error: { internal: 'details' }, code: 'unknown' }, 'Tengri request failed with 404', undefined],
+    [409, { error: 'File changed', code: 'file_conflict' }, 'File changed', 'file_conflict'],
+    [429, { error: 'All slots occupied', code: 'capacity_full' }, 'All slots occupied', 'capacity_full'],
+    [503, { error: 'Unavailable', code: 'file_conflict' }, 'Unavailable', undefined],
   ] as const) {
     globalThis.fetch = Object.assign(async () => Response.json(body, { status }), {
       preconnect: originalFetch.preconnect,

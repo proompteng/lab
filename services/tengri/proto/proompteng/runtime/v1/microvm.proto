@@ -80,8 +80,12 @@ message Agent {
   string ready_at = 11;
   string last_activity_at = 12;
   string idle_deadline = 13;
+  // Empty for retained workspaces; legacy CR expiry values are not lifecycle deadlines.
   string expires_at = 14;
   repeated AgentCondition conditions = 15;
+  // Set while a newer configured Nanoagent digest is waiting for a safe
+  // sleep/resume boundary. The running guest remains on its current image.
+  string pending_image = 16;
 }
 
 message CreateAgentRequest { string display_name = 1; }
@@ -104,9 +108,26 @@ message FileEntry {
 message ListFilesRequest { string agent_id = 1; string path = 2; }
 message ListFilesResponse { string path = 1; repeated FileEntry entries = 2; }
 message ReadFileRequest { string agent_id = 1; string path = 2; }
-message ReadFileResponse { string path = 1; bytes content = 2; string content_type = 3; }
-message WriteFileRequest { string agent_id = 1; string path = 2; bytes content = 3; }
-message WriteFileResponse { string path = 1; int64 size = 2; }
+message ReadFileResponse {
+  string path = 1;
+  bytes content = 2;
+  string content_type = 3;
+  // Strong SHA-256 revision for the returned bytes. Legacy readers may ignore this field.
+  string revision = 4;
+}
+message WriteFileRequest {
+  string agent_id = 1;
+  string path = 2;
+  bytes content = 3;
+  // Required strong SHA-256 revision, or "missing" for a new file.
+  string expected_revision = 4;
+}
+message WriteFileResponse {
+  string path = 1;
+  int64 size = 2;
+  // Strong SHA-256 revision of the bytes accepted by Nanoagent.
+  string revision = 3;
+}
 message CreateDirectoryRequest { string agent_id = 1; string path = 2; }
 message MoveFileRequest { string agent_id = 1; string source_path = 2; string destination_path = 3; }
 message DeleteFileRequest { string agent_id = 1; string path = 2; bool recursive = 3; }
