@@ -43,7 +43,13 @@ const artifact = { id: 10, name, workflow_run: { id: 42 }, expired: false, diges
 type StoreDependencies = NonNullable<Parameters<typeof githubCreationLeaseStore>[1]>
 
 function fixture(
-  options: { artifacts?: (typeof artifact)[]; runOverride?: object; digestMismatch?: boolean; expired?: boolean } = {},
+  options: {
+    artifacts?: (typeof artifact)[]
+    runOverride?: object
+    digestMismatch?: boolean
+    omitDigest?: boolean
+    expired?: boolean
+  } = {},
 ) {
   const calls: string[] = []
   const downloads: number[] = []
@@ -71,7 +77,10 @@ function fixture(
       expect(downloadOptions?.findBy?.workflowRunId).toBe(42)
       if (!downloadOptions?.path) throw new Error('Download path required')
       writeFileSync(join(downloadOptions.path, 'creation-lease.json'), JSON.stringify(lease))
-      return { downloadPath: downloadOptions.path, digestMismatch: options.digestMismatch ?? false }
+      return {
+        downloadPath: downloadOptions.path,
+        ...(options.omitDigest ? {} : { digestMismatch: options.digestMismatch ?? false }),
+      }
     },
   }
   return { store: githubCreationLeaseStore(environment, { client, fetchImpl }), calls, downloads }
@@ -92,6 +101,12 @@ async function expectFailure<T>(promise: Promise<T>, message?: string): Promise<
 describe('durable Tengri canary creation leases', () => {
   it('binds recovery to an authenticated owner across cookie rotation and validates exact incarnation fields', () => {
     expect(parseCreationLease(lease, owner).canary).toEqual(canary)
+    expect(() =>
+      parseCreationLease(
+        { ...lease, canary: { ...canary, displayName: 'tengri-acceptance-' + 'x'.repeat(47) } },
+        owner,
+      ),
+    ).toThrow('exact disposable canary')
     expect(ownerFingerprint('dedicated-owner')).toBe(owner)
     expect(() => parseCreationLease(lease, ownerFingerprint('different-owner'))).toThrow('exact disposable canary')
     expect(() => parseCreationLease({ ...lease, canary: { ...canary, microvmUid: '' } }, owner)).toThrow(
@@ -175,6 +190,7 @@ describe('durable Tengri canary creation leases', () => {
   it('does not fall back to an older lease when the latest is expired or corrupt', async () => {
     await expectFailure(fixture({ expired: true }).store.latest(owner), 'expired')
     await expectFailure(fixture({ digestMismatch: true }).store.latest(owner), 'integrity check failed')
+    await expectFailure(fixture({ omitDigest: true }).store.latest(owner), 'integrity check failed')
   })
 
   it('rejects wrong workflow, repository, source, event, attempt, and unfinished run attestations', () => {

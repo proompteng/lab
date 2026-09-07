@@ -93,7 +93,7 @@ export function parseCreationLease(value: unknown, fingerprint: string): Creatio
     typeof canary.agentId !== 'string' ||
     !/^agent-[a-f0-9]{32}$/.test(canary.agentId) ||
     typeof canary.displayName !== 'string' ||
-    !/^tengri-acceptance-[A-Za-z0-9_-]{1,47}$/.test(canary.displayName) ||
+    !/^tengri-acceptance-[A-Za-z0-9_-]{1,46}$/.test(canary.displayName) ||
     typeof canary.agentCreatedAt !== 'string' ||
     !Number.isFinite(Date.parse(canary.agentCreatedAt)) ||
     typeof canary.microvmUid !== 'string' ||
@@ -259,7 +259,7 @@ export function githubCreationLeaseStore(
             expectedHash: artifact.digest,
             findBy: { token, workflowRunId: runId, repositoryOwner: 'proompteng', repositoryName: 'lab' },
           })
-          if (downloaded.digestMismatch) throw new Error('Canary creation artifact integrity check failed')
+          if (downloaded.digestMismatch !== false) throw new Error('Canary creation artifact integrity check failed')
           const path = join(directory, FILE_NAME)
           if (statSync(path).size > MAX_BYTES) throw new Error('Canary creation lease exceeds its size limit')
           const value: unknown = JSON.parse(readFileSync(path, 'utf8'))
