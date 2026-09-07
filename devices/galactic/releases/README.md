@@ -36,15 +36,23 @@ The fallback is explicit in Omni 1.11's
 Use `node-cidr-mask-size-ipv4: "23"` for the IPv4 PodCIDR allocator. Talos 1.14 supplies an IPv4-specific mask by
 default; retaining the legacy `node-cidr-mask-size: "23"` produces both flags and prevents the controller manager
 from starting. This also stops certificate signing and can leave a rebooted kubelet waiting for its bootstrap CSR.
-Replace the generic flag in the shared Omni patch and effective node configurations without changing any existing
-Node PodCIDR. Verify the controller-manager commands contain only the IPv4 flag with value 23, all controller
-managers remain running, and pending verified node certificates are issued before proceeding.
+Persist the IPv4 flag in the shared Omni patch while the cluster is locked. Include that flag replacement in each
+node's staged configuration for its Talos 1.14 boot, leaving the running Talos 1.13 configuration unchanged until
+restart. If a node has already booted 1.14 with both flags, apply the corrected configuration without another reboot.
+Do not change any existing Node PodCIDR. Verify the controller-manager commands contain only the IPv4 flag with
+value 23, all controller managers remain running, and pending verified node certificates are issued before proceeding.
 
 The CRI customization entry at `/etc/cri/conf.d/20-customization.part` must use `op: create` on every node. Talos 1.14
 does not initially provide that file. `op: overwrite` fails the boot sequence before etcd and trustd start. Talos'
 CRI customization controller handles this path specially, so `create` is supported even though ordinary created
 files must live under `/var`. Preserve the file's blockfile, image retention, and sandbox settings. The existing
 `/etc/cri/containerd.toml` entry continues to use `overwrite`.
+
+For a node still running Talos 1.13.9 during the locked transition, stage the corrected full configuration with
+`talosctl apply-config --mode=staged`. Its dry run must show only the CRI operation change and the allocator flag
+replacement above, except for changes already present. Immediate `no-reboot` mode rejects the CRI change on 1.13.9.
+After the installer finishes, verify that the persistent configuration still contains `op: create` and the IPv4
+allocator flag before rebooting; the active configuration retains the old settings until that restart.
 
 [`devices/nuc/image-factory/release.json`](../../nuc/image-factory/release.json) pins the official extension catalog,
 the combined catalog digest, and the existing signed Kata `4.1.0-r5` multi-architecture image. The catalog builder
@@ -82,9 +90,10 @@ factory build logs before allowing that node to upgrade. A catalog build alone d
    old generated disk patches; imported multi-purpose patches require this explicit migration. Validate a secret-filled
    temporary template with the existing renderer. If export fails because of the legacy disk fields, retrieve the
    current ConfigPatch resources privately and use their decoded `spec.data` as the renderer's `--secrets-from` input.
-   Render the validated template to resources. Apply only the three MachineInstallDiskConfigs and three changed
-   imported ConfigPatches while locked, preserving their existing metadata. Review the resource apply dry run and
-   verify that each patch only removes its legacy disk field and changes the CRI customization operation from
+   Render the validated template to resources. Apply only the three MachineInstallDiskConfigs, three changed
+   imported ConfigPatches, and the shared `20-galactic-podcidr-23` allocator patch while locked, preserving their
+   existing metadata. The shared patch replaces the generic mask flag with its IPv4-specific equivalent. Review the
+   resource apply dry run and verify that each imported patch only removes its legacy disk field and changes the CRI customization operation from
    `overwrite` to `create`. If either change was already applied, require that state to be retained. Confirm a fresh
    template export now passes. Leave the
    Cluster resource unchanged until all direct installations pass. Keep Kubernetes at `v1.36.4`.
