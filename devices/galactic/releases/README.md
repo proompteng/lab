@@ -77,7 +77,9 @@ factory build logs before allowing that node to upgrade. A catalog build alone d
    current ConfigPatch resources privately and use their decoded `spec.data` as the renderer's `--secrets-from` input.
    Render the validated template to resources. Apply only the three MachineInstallDiskConfigs and three changed
    imported ConfigPatches while locked, preserving their existing metadata. Review the resource apply dry run and
-   verify that each patch changes only its legacy disk field. Confirm a fresh template export now passes. Leave the
+   verify that each patch only removes its legacy disk field and changes the CRI customization operation from
+   `overwrite` to `create`. If either change was already applied, require that state to be retained. Confirm a fresh
+   template export now passes. Leave the
    Cluster resource unchanged until all direct installations pass. Keep Kubernetes at `v1.36.4`.
 4. Follow the locked custom-installer transition above to install Talos `v1.14.0` on each node. Preserve the existing
    CRI configuration needed for Kata blockfile snapshots. Do not
