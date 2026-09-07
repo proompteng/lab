@@ -49,6 +49,7 @@ describe('Omni cluster template secret rendering', () => {
       ),
     ).toHaveLength(3)
     expect(clusterTemplate.match(/RuntimeClassInImageCriApi: true/g)).toHaveLength(3)
+    expect(clusterTemplate.match(/op: create\n\s+path: "\/etc\/cri\/conf\.d\/20-customization\.part"/g)).toHaveLength(3)
   })
 
   test.each([
