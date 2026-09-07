@@ -63,18 +63,18 @@ describe('Omni cluster template secret rendering', () => {
 
     expect(turinMachine).toContain('maxPods: 500')
     expect(turinMachine).not.toContain('maxPods: 250')
-    expect(clusterTemplate.match(/maxPods: 250/g)).toHaveLength(1)
+    expect(clusterTemplate).not.toContain('maxPods: 250')
   })
 
-  test('caps Altra during the transition and changes allocation only for new Nodes', () => {
+  test('allows 500 pods after Altra receives its /23 PodCIDR and retains the allocation mask', () => {
     const clusterTemplate = readFileSync(new URL('./cluster-template.yaml', import.meta.url), 'utf8')
     const documents = clusterTemplate.split('\n---\n')
     const altraMachine = documents.find((document) =>
       document.startsWith('kind: Machine\nname: 12345678-9abc-deff-1234-56789abcdeff'),
     )
 
-    expect(altraMachine).toContain('maxPods: 250')
-    expect(altraMachine).not.toContain('maxPods: 500')
+    expect(altraMachine).toContain('maxPods: 500')
+    expect(altraMachine).not.toContain('maxPods: 250')
     expect(documents[0]).toContain('node-cidr-mask-size: "23"')
     expect(clusterTemplate).not.toContain('node-cidr-mask-size-ipv4')
   })

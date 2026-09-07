@@ -166,7 +166,7 @@ patches:
           extraConfig:
             featureGates:
               RuntimeClassInImageCriApi: true
-            maxPods: 250
+            maxPods: 500
           nodeIP:
             validSubnets:
               - 100.100.244.128/25

@@ -1,16 +1,17 @@
 # Turin and Altra /23 PodCIDR maintenance
 
-Status on 2026-09-07 UTC: Turin has re-registered with `10.244.0.0/23`; Altra retains `10.244.5.0/24`.
-The template now raises only Turin to 500 pods. Apply that cap after its storage recovery; Altra remains at 250.
-Migrate Turin completely, then Altra. Leave Ryzen's Node and kubelet limit unchanged.
+Status on 2026-09-07 UTC: Turin has re-registered with `10.244.0.0/23`; Altra has re-registered with `10.244.4.0/23`.
+Both retained their physical boot sessions, disks, and etcd members. DNS, Service routing, and bidirectional Pod
+traffic with 288 KiB payloads passed on both new networks. The template sets both targets to 500 pods; apply each
+cap after its network and storage acceptance. Ryzen's Node and kubelet limit remain unchanged.
 
 ## Desired state and current evidence
 
-| Node                         | Existing PodCIDR | Containing /23  | Prepared maxPods |
-| ---------------------------- | ---------------- | --------------- | ---------------- |
-| Turin, `turin`               | `10.244.0.0/24`  | `10.244.0.0/23` | 250              |
-| Altra, `talos-192-168-1-85`  | `10.244.5.0/24`  | `10.244.4.0/23` | 250              |
-| Ryzen, `talos-192-168-1-194` | `10.244.3.0/24`  | `10.244.2.0/23` | 500              |
+| Node                         | Allocated PodCIDR | Template maxPods |
+| ---------------------------- | ----------------- | ---------------- |
+| Turin, `turin`               | `10.244.0.0/23`   | 500              |
+| Altra, `talos-192-168-1-85`  | `10.244.4.0/23`   | 500              |
+| Ryzen, `talos-192-168-1-194` | `10.244.3.0/24`   | 500              |
 
 The final target is a distinct `/23` and `maxPods: 500` on Turin and Altra. A `/23` contains 512 total addresses.
 Flannel and host-local reserve addresses, so 512 is not the number available to application pods. A 500-pod limit
@@ -18,11 +19,11 @@ leaves address headroom but does not establish CPU, memory, disk, or workload ca
 
 Preparation merged in [PR #14358](https://github.com/proompteng/lab/pull/14358), commit
 `dbde3319853dadc807d2c2cf558fbf8a1c8ca493`, and was applied through the secret-safe Omni template workflow.
-All three running controller managers use `--node-cidr-mask-size=23`. Existing Node UIDs and `/24` allocations were
-retained. Both targets advertise 250 pods; all machines are Ready. The flag affects newly registered Nodes only.
+All three running controller managers use `--node-cidr-mask-size=23`. That preparation retained the existing Node
+UIDs and `/24` allocations and capped both targets at 250 pods. The flag affects newly registered Nodes only.
 
-CephFS placement merged in [PR #14355](https://github.com/proompteng/lab/pull/14355). Active `cephfs-a` is on Altra;
-standby-replay `cephfs-b` is on Turin. A dedicated RWX probe observed successful writes, fsyncs, renames, and readbacks
+CephFS placement merged in [PR #14355](https://github.com/proompteng/lab/pull/14355). At that preparation check, active
+`cephfs-a` was on Altra and standby-replay `cephfs-b` was on Turin. A dedicated RWX probe observed successful writes, fsyncs, renames, and readbacks
 through the MDS rollout. Its maximum observed stall was about 31 seconds. This does not prove uninterrupted latency
 or availability for every application. Fresh direct etcd and verified encrypted full Omni backups are held privately
 on the operator machine and NUC. Neither backup substitutes for application-volume recovery.
@@ -121,11 +122,17 @@ See the [Talos patch semantics](https://docs.siderolabs.com/talos/v1.13/configur
 4. Require Ceph HEALTH_OK, three monitors in quorum, six OSDs up/in with their original identities, clean PGs without
    recovery/backfill, and active/standby MDS on different hosts. All pools have two replicas across only Turin and
    Altra. Only one storage host may be maintained. Never begin Altra while Turin's storage is recovering.
-5. Run `python3 devices/galactic/omni/podcidr_preflight.py --node <node>`. This is only the address/storage gate.
+5. If the target advertises 500 pods, merge a template change lowering only that target to 250. Follow the
+   [Omni template procedure](../../devices/galactic/omni/README.md): export fresh live credentials, render, validate,
+   inspect the sync dry run, and sync through Omni. Verify
+   `kubectl --context galactic-lan -n default get node <node> -o jsonpath='{.status.capacity.pods}'` returns `250`
+   before proceeding. Keep the cap through re-registration and network/storage acceptance; restore 500 through the
+   same committed template procedure in the restoration phase below.
+6. Run `python3 devices/galactic/omni/podcidr_preflight.py --node <node>`. This is only the address/storage gate.
    Revalidate distinct containing `/23` blocks and prevent unrelated Node registrations during allocator maintenance.
-6. Start representative request and storage probes on a surviving node. Capture successful read/write behavior before
+7. Start representative request and storage probes on a surviving node. Capture successful read/write behavior before
    maintenance. Keep the CephFS probe on Altra for Turin's phase, then move it to restored Turin before Altra's phase.
-7. Confirm no existing custom static pods or registerWithTaints settings conflict with the temporary patch. Confirm
+8. Confirm no existing custom static pods or registerWithTaints settings conflict with the temporary patch. Confirm
    the target's ordinary services have stopped accepting new work or have failed over. Cordon and drain using eviction
    and the workload-specific procedure. `--ignore-daemonsets` leaves daemon pods for the guarded cleanup; it is not
    permission to leave ordinary pods. Preserve emptyDir data unless its owner's maintenance procedure permits loss.
