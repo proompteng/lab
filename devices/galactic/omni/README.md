@@ -90,6 +90,12 @@ preparation gate requires a 250-pod cap; retain that cap during any future Node 
 storage acceptance. Exit code 1 means a failed gate; exit code 2 means live evidence could not be established.
 A peer's existing address-capacity mismatch is reported separately as a warning.
 
+For a future Node re-registration, first merge a template change lowering only the selected target from 500 to 250.
+Export fresh live credentials, render the changed template, validate it, inspect the Omni sync dry run, and sync it
+using the commands above. Verify the target's `.status.capacity.pods` is `250` before running the preparation gate or
+draining. After its replacement `/23` network and storage pass acceptance, merge the target's return to 500 and repeat
+the render, validate, dry-run, and sync sequence before running the migrated gate and capacity test.
+
 Passing these checks does not prove workload continuity, data backups, disk identity, GPU or Kata operation, or
 authorize a drain. Verify those conditions in the reviewed maintenance procedure. In particular, a Kubernetes etcd
 snapshot does not back up application volumes, and node membership changes must preserve the existing OSD identities.

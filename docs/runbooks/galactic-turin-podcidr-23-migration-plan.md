@@ -122,11 +122,17 @@ See the [Talos patch semantics](https://docs.siderolabs.com/talos/v1.13/configur
 4. Require Ceph HEALTH_OK, three monitors in quorum, six OSDs up/in with their original identities, clean PGs without
    recovery/backfill, and active/standby MDS on different hosts. All pools have two replicas across only Turin and
    Altra. Only one storage host may be maintained. Never begin Altra while Turin's storage is recovering.
-5. Run `python3 devices/galactic/omni/podcidr_preflight.py --node <node>`. This is only the address/storage gate.
+5. If the target advertises 500 pods, merge a template change lowering only that target to 250. Follow the
+   [Omni template procedure](../../devices/galactic/omni/README.md): export fresh live credentials, render, validate,
+   inspect the sync dry run, and sync through Omni. Verify
+   `kubectl --context galactic-lan -n default get node <node> -o jsonpath='{.status.capacity.pods}'` returns `250`
+   before proceeding. Keep the cap through re-registration and network/storage acceptance; restore 500 through the
+   same committed template procedure in the restoration phase below.
+6. Run `python3 devices/galactic/omni/podcidr_preflight.py --node <node>`. This is only the address/storage gate.
    Revalidate distinct containing `/23` blocks and prevent unrelated Node registrations during allocator maintenance.
-6. Start representative request and storage probes on a surviving node. Capture successful read/write behavior before
+7. Start representative request and storage probes on a surviving node. Capture successful read/write behavior before
    maintenance. Keep the CephFS probe on Altra for Turin's phase, then move it to restored Turin before Altra's phase.
-7. Confirm no existing custom static pods or registerWithTaints settings conflict with the temporary patch. Confirm
+8. Confirm no existing custom static pods or registerWithTaints settings conflict with the temporary patch. Confirm
    the target's ordinary services have stopped accepting new work or have failed over. Cordon and drain using eviction
    and the workload-specific procedure. `--ignore-daemonsets` leaves daemon pods for the guarded cleanup; it is not
    permission to leave ordinary pods. Preserve emptyDir data unless its owner's maintenance procedure permits loss.
