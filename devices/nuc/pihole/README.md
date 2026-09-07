@@ -16,6 +16,11 @@ Desired state:
 - `nuc` accepts Tailscale subnet routes so it can reach the cluster pod/service CIDRs.
 - UFW allows DNS (`53/tcp` and `53/udp`) on `tailscale0`.
 - UFW also permits DNS on `eno1` from `100.100.244.128/25` to `100.100.244.148`.
+- Tailscale uses `nodivert`; `galactic-dns-firewall.service` installs explicit IPv4/IPv6 input, forwarding, and NAT
+  hooks. Only provider-LAN DNS to this NUC bypasses the CGNAT drop rule. All other traffic retains the existing
+  Tailscale chains and UFW rules. The service restores hooks after boot or a Tailscale/UFW service restart.
+  It is also enabled under `tailscaled.service.wants`, so a later Tailscale activation starts the hook service again
+  after an unexpected stop; `BindsTo` removes the hooks while Tailscale is inactive.
 - Pi-hole non-secret settings are sourced from this repo, not edited ad hoc on the host.
 
 Files:
@@ -33,6 +38,10 @@ Files:
   backs up and installs those rules, opens the bounded provider-LAN DNS rules, restarts Pi-hole, and requires public,
   registry, and Kubernetes A-record answers. Failure restores the previous forwarding file. It preserves the existing
   Pi-hole settings, DHCP leases, credentials, databases, and Tailscale preferences.
+- `apply-dns-firewall.sh --check` verifies the NUC identity and current Tailscale chains. Its `--apply` mode backs up
+  the firewall state, installs the service, and changes only Tailscale's netfilter mode to `nodivert`. It preserves
+  the existing Tailscale chains through separately named hooks that Tailscale does not remove or reposition.
+  On failure it restores the previous mode and helper/service files.
 
 Not stored in Git:
 
@@ -50,11 +59,13 @@ scp devices/nuc/pihole/pihole.toml kalmyk@192.168.1.130:~/pihole/pihole.toml
 scp devices/nuc/pihole/99-kubernetes-split-dns.conf kalmyk@192.168.1.130:~/pihole/99-kubernetes-split-dns.conf
 scp devices/nuc/pihole/apply.sh kalmyk@192.168.1.130:~/pihole/apply.sh
 scp devices/nuc/pihole/apply-split-dns.sh kalmyk@192.168.1.130:~/pihole/apply-split-dns.sh
-ssh kalmyk@192.168.1.130 'chmod +x ~/pihole/apply.sh ~/pihole/apply-split-dns.sh && sudo ~/pihole/apply.sh'
+scp devices/nuc/pihole/apply-dns-firewall.sh devices/nuc/pihole/galactic-dns-firewall.service kalmyk@192.168.1.130:~/pihole/
+ssh kalmyk@192.168.1.130 'chmod +x ~/pihole/apply*.sh && sudo ~/pihole/apply.sh'
 ```
 
-For the Talos 1.14 maintenance repair, deploy only the committed forwarding file and `apply-split-dns.sh`. Run its
-check mode, then apply mode. Verify public, private registry, and Kubernetes names from a cluster node over the
+For the Talos 1.14 maintenance repair, copy the committed forwarding file, both narrow helpers, and the firewall
+service. Run `apply-dns-firewall.sh --check`, then `--apply`, followed by `apply-split-dns.sh --check` and `--apply`.
+Verify public, private registry, and Kubernetes names from a cluster node over the
 provider LAN before syncing the Omni `ResolverConfig`. Repeat the probes through each CoreDNS replica and from a
 pod on each node afterward; require a real registry push from CI. This keeps CoreDNS under Talos ownership.
 
@@ -62,6 +73,15 @@ The helper prints its backup directory. Recovery restores the saved file to `/et
 (or removes it when the backup has a `previously-absent` marker) and restarts `pihole-FTL`.
 The provider DNS firewall rules remain after a failed apply so the same repair can be
 retried. Revert the Omni resolver change before removing those rules or stopping the NUC DNS service.
+
+To undo the firewall integration after reverting the nodes' resolver change, restore Tailscale's prior mode
+(`sudo tailscale set --netfilter-mode=on` for the recorded NUC baseline), then
+`sudo systemctl disable --now galactic-dns-firewall.service`. Stop removes only the six owned wrapper chains/hooks.
+Verify Tailscale's direct input, forwarding, and NAT hooks are restored. Do not restore a complete iptables snapshot
+over live Docker or UFW changes; the saved snapshots are audit evidence.
+
+The provider subnet is inside `100.64.0.0/10`, so an ordinary UFW allow is insufficient while Tailscale's automatic
+input hook runs first. See [Tailscale netfilter modes](https://tailscale.com/docs/reference/netfilter-modes).
 
 ## Verify on NUC
 
