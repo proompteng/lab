@@ -4,12 +4,14 @@ on:
   pull_request:
     paths:
       - 'devices/galactic/extensions/kata/**'
+      - 'devices/galactic/releases/**'
       - '.github/workflows/kata-firecracker-extension.yaml'
   push:
     branches:
       - main
     paths:
       - 'devices/galactic/extensions/kata/**'
+      - 'devices/galactic/releases/**'
       - '.github/workflows/kata-firecracker-extension.yaml'
   workflow_dispatch:
 
@@ -26,6 +28,35 @@ env:
   VERSION: 4.1.0-talos-v1.13.9-r5
 
 jobs:
+  catalog:
+    name: Validate and publish Talos 1.14 catalog
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: arc-amd64
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: imjasonh/setup-crane@v0.4
+      - uses: sigstore/cosign-installer@v3.10.0
+      - name: Verify immutable input and build catalog
+        run: devices/galactic/releases/catalog.sh build out/catalog
+      - name: Publish signed extension and catalog
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$GHCR_TOKEN" | crane auth login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          devices/galactic/releases/catalog.sh publish out/catalog
+      - name: Upload catalog receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: talos-v1.14.0-catalog
+          path: out/catalog/
+          if-no-files-found: error
+
   build:
     name: Build ${{ matrix.architecture }} extension
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository

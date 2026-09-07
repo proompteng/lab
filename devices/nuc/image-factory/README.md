@@ -1,6 +1,6 @@
 # NUC Image Factory
 
-This directory runs the community Sidero Labs Image Factory `v1.5.0` on the NUC. Omni uses it as the primary factory
+This directory runs the community Sidero Labs Image Factory `v1.6.1` on the NUC. Omni uses it as the primary factory
 for per-machine Talos schematics. The factory is reachable only on the Elauwit provider LAN at
 `http://100.100.244.148:8081`; port `8080` remains owned by Pi-hole, and the backing OCI registry is private to the
 Compose network.
