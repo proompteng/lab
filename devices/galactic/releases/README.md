@@ -12,7 +12,7 @@ Its extension manifest supports Talos `>= v1.13.0-alpha.2`. The catalog promotes
 them through the existing trusted Kata workflow. Ryzen already runs r5; this rollout also moves Turin and Altra from
 r4 to r5. Their runtime acceptance remains required.
 
-The catalog job verifies the source signature and both architectures, builds a catalog with deterministic contents,
+The catalog workflow verifies the source signature and both architectures, builds a catalog with deterministic contents,
 then signs the published extension and catalog before making the Talos version tag discoverable. It refuses to replace
 an existing version tag with different contents. The `v1.13.9` catalog and accepted installers remain available for
 recovery. `catalog.sh build <directory>` can repeat the artifact validation with Crane, Cosign, jq, and GNU tar.
