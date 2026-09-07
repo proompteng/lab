@@ -1,6 +1,7 @@
 # Turin and Altra /23 PodCIDR maintenance
 
-Status on 2026-09-06 UTC: production preparation is deployed; neither production Node has been replaced.
+Status on 2026-09-07 UTC: Turin has re-registered with `10.244.0.0/23`; Altra retains `10.244.5.0/24`.
+The template now raises only Turin to 500 pods. Apply that cap after its storage recovery; Altra remains at 250.
 Migrate Turin completely, then Altra. Leave Ryzen's Node and kubelet limit unchanged.
 
 ## Desired state and current evidence
@@ -79,7 +80,8 @@ Use the merged versions of:
 The cleanup writes a mode-0600 result under `/var/lib/podcidr23-ops/<operation>/result.json`.
 Physical Talos does not provide `/etc/hostname`: the helper reads the kernel hostname inside PID 1's UTS
 namespace and restores its original namespace afterward. This check and the boot ID must match before any runtime
-or CNI mutation. A completed operation is
+or CNI mutation. Bridge membership uses `ip link show master cni0`: physical NICs in VEB mode appear in
+`bridge link show` even when they are not CNI bridge ports. A completed operation is
 idempotent. A partial operation requires explicit `--retry-failed` after diagnosing its report; changing the plan under
 an existing operation is rejected. The renderer emits `retry-omni.yaml` for that exact original plan and ConfigPatch ID.
 After diagnosing a failed report, apply this artifact explicitly with `omnictl apply --file

@@ -150,7 +150,7 @@ def validate_links(links, old):
                 )
                 require(observed.network == old, "bridge has a different subnet")
         deadline = time.monotonic() + 120
-        while json.loads(run("bridge", "-j", "link", "show", "master", "cni0")):
+        while json.loads(run("ip", "-j", "link", "show", "master", "cni0")):
             require(time.monotonic() < deadline, "bridge has live ports")
             require(
                 standalone(), "standalone boundary changed while CNI detached ports"

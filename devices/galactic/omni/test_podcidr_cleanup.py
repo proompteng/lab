@@ -211,6 +211,45 @@ class CleanupTests(unittest.TestCase):
         sleep.assert_called_once_with(2)
         self.assertEqual(result["linksRemoved"], ["cni0"])
 
+    def test_physical_nic_bridge_mode_is_not_treated_as_a_cni_port(self):
+        physical = {"ifname": "eno2np1", "hwmode": "VEB", "mtu": 1500}
+
+        def network_command(*args):
+            if args == ("ip", "-j", "-d", "link", "show"):
+                return json.dumps(
+                    [
+                        {"ifname": "cni0", "linkinfo": {"info_kind": "bridge"}},
+                        physical,
+                    ]
+                )
+            if args == ("ip", "-j", "addr", "show", "dev", "cni0"):
+                return json.dumps(
+                    [
+                        {
+                            "addr_info": [
+                                {
+                                    "family": "inet",
+                                    "local": "10.244.0.1",
+                                    "prefixlen": 24,
+                                }
+                            ]
+                        }
+                    ]
+                )
+            if args == ("bridge", "-j", "link", "show", "master", "cni0"):
+                return json.dumps([physical])
+            if args == ("ip", "-j", "link", "show", "master", "cni0"):
+                return "[]"
+            if args == ("ip", "link", "delete", "cni0"):
+                return ""
+            self.fail(f"unexpected network mutation: {args}")
+
+        self.run.side_effect = network_command
+        with patch.object(maintenance.time, "monotonic", side_effect=[0, 0, 121]):
+            result = self.cleanup()
+        self.assertEqual(result["phase"], "complete")
+        self.assertEqual(result["linksRemoved"], ["cni0"])
+
     def test_foreign_subnet_file_prevents_lease_removal(self):
         (self.root / "run/flannel/subnet.env").write_text(
             "FLANNEL_SUBNET=10.244.2.1/24\n"

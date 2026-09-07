@@ -57,13 +57,13 @@ describe('Omni cluster template secret rendering', () => {
     expect(clusterTemplate).toContain('disk: "/dev/disk/by-id/nvme-CT4000P3PSSD8_2441E98EAAFB"\n          wipe: false')
   })
 
-  test('caps Turin scheduling within its /24 pod-address capacity', () => {
+  test('allows 500 pods after Turin receives its /23 PodCIDR', () => {
     const clusterTemplate = readFileSync(new URL('./cluster-template.yaml', import.meta.url), 'utf8')
     const turinMachine = clusterTemplate.split('\n---\n').find((document) => document.includes('TS_HOSTNAME=turin'))
 
-    expect(turinMachine).toContain('maxPods: 250')
-    expect(turinMachine).not.toContain('maxPods: 500')
-    expect(clusterTemplate.match(/maxPods: 250/g)).toHaveLength(2)
+    expect(turinMachine).toContain('maxPods: 500')
+    expect(turinMachine).not.toContain('maxPods: 250')
+    expect(clusterTemplate.match(/maxPods: 250/g)).toHaveLength(1)
   })
 
   test('caps Altra during the transition and changes allocation only for new Nodes', () => {
