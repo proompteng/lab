@@ -9,6 +9,14 @@ features:
     interval: 24h
 patches:
   - file: image-factory-registry.yaml
+  - idOverride: 25-galactic-split-dns
+    annotations:
+      name: Resolve public and tailnet names through NUC DNS
+    inline: |
+      apiVersion: v1alpha1
+      kind: ResolverConfig
+      nameservers:
+        - address: 100.100.244.148
   - idOverride: 20-galactic-podcidr-23
     annotations:
       name: Allocate /23 IPv4 PodCIDRs to new Nodes
@@ -175,10 +183,6 @@ patches:
           interfaces:
             - interface: enP5p1s0
               mtu: 1500
-          nameservers:
-            - 100.100.100.100
-            - 1.1.1.1
-            - 8.8.8.8
         nodeLabels:
           platform.proompteng.ai/altra-gpu-container-ready: "true"
         time:
@@ -327,11 +331,6 @@ patches:
           nodeIP:
             validSubnets:
             - 100.100.244.128/25
-        network:
-          nameservers:
-          - 100.100.100.100
-          - 1.1.1.1
-          - 8.8.8.8
         time:
           servers:
           - time.cloudflare.com
@@ -496,10 +495,6 @@ patches:
             - gateway: 100.100.244.129
               metric: 1024
               network: 0.0.0.0/0
-          nameservers:
-          - 100.100.100.100
-          - 1.1.1.1
-          - 8.8.8.8
         nodeLabels:
           kata-deploy: disabled
           kubevirt.io/schedulable: 'true'

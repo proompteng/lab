@@ -167,6 +167,10 @@ against the completed replacement build. Preserve both the previous receipt and 
 
 ## Execution order
 
+If private registry resolution fails during maintenance, apply and verify the committed
+[NUC split DNS repair](../../nuc/pihole/README.md) before syncing the template's `ResolverConfig`.
+The provider-LAN DNS address avoids a dependency on Tailscale during node startup.
+
 1. Record the current nodes, etcd members, Ceph, Argo applications, workload failures, Flink jobs, GPUs, and runtime
    versions. Save a fresh cluster etcd snapshot and an offline Omni archive; verify their checksums and retain an
    off-host copy. Back up the Image Factory configuration and signing key without replacing its persistent storage.
