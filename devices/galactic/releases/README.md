@@ -5,6 +5,11 @@ machine identities, boot disks, data volumes, provider networking, PodCIDRs, and
 by upgrading only one control-plane node at a time. Subsequent Omni upgrades use `maxParallelism: 1`. Individual
 control-plane nodes cannot be locked; the cluster-wide maintenance lock is supported.
 
+The Talos-only phase uses the
+[template at `bbef124de0f2e98959c80f416ce3d741b1626a5d`](https://github.com/proompteng/lab/blob/bbef124de0f2e98959c80f416ce3d741b1626a5d/devices/galactic/omni/cluster-template.yaml),
+which retains Kubernetes 1.36.4. Render that revision for the atomic Talos target and lock update below. The current
+template adds Kubernetes 1.37.0 and is synced only after Talos and workload acceptance.
+
 ## Transition from the existing custom installers
 
 The current r4/r5 installers contain the required extensions but no Image Factory schematic metadata. All three
@@ -92,8 +97,11 @@ factory build logs before allowing that node to upgrade. A catalog build alone d
    current ConfigPatch resources privately and use their decoded `spec.data` as the renderer's `--secrets-from` input.
    Render the validated template to resources. Apply only the three MachineInstallDiskConfigs, three changed
    imported ConfigPatches, and the shared `20-galactic-podcidr-23` allocator patch while locked, preserving their
-   existing metadata. The shared patch replaces the generic mask flag with its IPv4-specific equivalent. Review the
-   resource apply dry run and verify that each imported patch only removes its legacy disk field and changes the CRI customization operation from
+   existing metadata. The shared patch replaces the generic mask flag with its IPv4-specific equivalent.
+   Omit an empty `metadata.owner` when
+   converting exports to YAML: a YAML `null` value becomes the literal owner string `null` in COSI and blocks later
+   normal updates. Retain meaningful owners and all labels, annotations, and finalizers. Review the resource apply dry run and
+   verify that each imported patch only removes its legacy disk field and changes the CRI customization operation from
    `overwrite` to `create`. If either change was already applied, require that state to be retained. Confirm a fresh
    template export now passes. Leave the
    Cluster resource unchanged until all direct installations pass. Keep Kubernetes at `v1.36.4`.
@@ -117,6 +125,16 @@ factory build logs before allowing that node to upgrade. A catalog build alone d
 Stop progression on a failed node while the two other etcd members continue serving. Keep the node's current logs,
 boot identity and installer receipt. Use the accepted prior installer for that exact machine only through the recorded
 recovery procedure; never reset the machine or change its disk selector to an enumerated disk guessed from another boot.
+
+Turin's Kingston Ceph metadata NVMe can fail to enumerate after a firmware reboot. Keep Turin drained until serial
+`50026B76878F0B27` and its existing OSDs return. If a PCI rescan does not restore it, a verified local `/dev/ipmi0`
+interface provides an in-band path for the authorized chassis power cycle. Use a temporary privileged Pod pinned to
+`turin`, confirm the host product UUID is `8bf7ec00-171c-11f1-8000-7cc255f16774`, and check
+`ipmitool -I open mc info` and `ipmitool -I open chassis power status` before issuing
+`ipmitool -I open chassis power cycle`. This uses the existing host access without a network BMC credential. Require
+both peer etcd voters healthy, flush filesystem writes, record the response and changed boot ID, and remove the
+temporary Pod afterward. Complete the disk, Ceph, GPU, and Kata acceptance again before proceeding to Altra.
+
 Talos rollback and Kubernetes downgrade have different compatibility constraints: restore from a verified etcd snapshot
 only as a deliberate disaster-recovery action after evaluating the live quorum. An Omni rollback restores its entire
 pre-upgrade archive together with the previous pinned image.

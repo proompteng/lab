@@ -5,7 +5,7 @@ This directory is the repository source for the existing three-node Talos/Kubern
 - **Omni/Talos cluster name**: `galactic`
 - **kubectl context**: `galactic-lan`
 - **desired Talos**: `v1.14.0`
-- **desired Kubernetes**: `v1.36.4`
+- **desired Kubernetes**: `v1.37.0`
 - **Kubernetes API endpoint**: NUC HAProxy on `https://nuc:6443`
 
 The Elauwit provider LAN uses the following Talos API addresses. These are local-network endpoints even though they

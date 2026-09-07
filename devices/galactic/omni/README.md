@@ -4,7 +4,9 @@
 `galactic` cluster. It preserves every imported machine patch, removes the stale imported `machine.install.image`
 overrides so Omni can derive installers from schematics, and references the Elauwit Image Factory registry patch.
 
-The Talos 1.14 rollout uses Omni 1.11 and keeps Kubernetes at 1.36.4 until OS and workload acceptance pass. Each
+The template targets Talos 1.14.0 and Kubernetes 1.37.0 through Omni 1.11. Complete the Talos phase and its workload
+acceptance before syncing the Kubernetes change. The Talos-only template from the preceding release commit retains
+Kubernetes 1.36.4 for that phase. Each
 Machine's `install.diskSelector` selects its verified system-disk serial, replacing the imported `machine.install.disk`
 field while preserving the other install options. See the [release procedure](../releases/README.md) for artifact
 verification, rolling upgrades, acceptance, and recovery. Control-plane upgrades use `maxParallelism: 1`; individual
