@@ -4,6 +4,12 @@
 `galactic` cluster. It preserves every imported machine patch, removes the stale imported `machine.install.image`
 overrides so Omni can derive installers from schematics, and references the Elauwit Image Factory registry patch.
 
+The Talos 1.14 rollout uses Omni 1.11 and keeps Kubernetes at 1.36.4 until OS and workload acceptance pass. Each
+Machine's `install.diskSelector` selects its verified system-disk serial, replacing the imported `machine.install.disk`
+field while preserving the other install options. See the [release procedure](../releases/README.md) for artifact
+verification, rolling upgrades, acceptance, and recovery. Control-plane upgrades use `maxParallelism: 1`; individual
+control-plane locks are unsupported.
+
 Do not sync the checked-in file directly. Its six placeholders must be rendered into a temporary mode-`0600` file.
 Either provide `GALACTIC_TAILSCALE_AUTH_KEY` and `GALACTIC_OMNI_JOIN_TOKEN`, or extract the existing values from a fresh
 mode-`0600` live export:
@@ -35,7 +41,8 @@ omnictl cluster template sync \
   --verbose
 ```
 
-The first sync applies only `image-factory-registry.yaml` and removes the three stale installer-image overrides. Wait
+During the original Image Factory handoff, the first sync applied only `image-factory-registry.yaml` and removed the
+three stale installer-image overrides. For a future staged extension change, wait
 for those configuration updates to finish before adding any `systemExtensions` list. Then add the custom extension to
 one `kind: Machine` document at a time. A new rollout uses Ryzen, Turin, Altra order; a resumed rollout finishes the
 already-started machine before changing another. Rerender, validate, dry-run, and sync each phase. The control-plane
