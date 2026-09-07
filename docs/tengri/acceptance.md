@@ -65,10 +65,13 @@ Two interruption boundaries require manual review: termination between successfu
 
 It has one global concurrency group, `cancel-in-progress: false`, covering both stages. `workflow_dispatch` runs only from `main`, requires an explicit stage and full expected revision, and is diagnostic only. It does not replace the Kargo promotion path or perform deployment mutations.
 
-After the Kubernetes identity preflight, the command is:
+The command has a separate pinned package under `.github/actions/tengri-acceptance`.
+Its lockfile keeps the CI artifact client out of product image dependency inputs.
+From the repository root, install it and run after the Kubernetes identity preflight:
 
 ```bash
-bun run packages/scripts/src/tengri/acceptance.ts \
+bun install --cwd .github/actions/tengri-acceptance --frozen-lockfile --ignore-scripts
+bun run .github/actions/tengri-acceptance/src/acceptance.ts \
   --stage tengri \
   --expected-revision <full-kargo-branch-sha>
 ```

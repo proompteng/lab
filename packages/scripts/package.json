@@ -9,7 +9,6 @@
     "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json . && oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.jangar.json src/jangar src/shared"
   },
   "dependencies": {
-    "@actions/artifact": "6.2.1",
     "@proompteng/bumba": "workspace:*",
     "@proompteng/temporal-bun-sdk": "workspace:*",
     "yaml": "^2.8.4"

@@ -3,10 +3,12 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 fixture="$(mktemp -d)"
+fixture="$(cd "${fixture}" && pwd -P)"
 trap 'rm -rf "${fixture}"' EXIT
 
 mkdir -p \
   "${fixture}/apps/demo/src/existing" \
+  "${fixture}/.github/actions/setup-nix-toolchain" \
   "${fixture}/patches"
 
 cat > "${fixture}/package.json" <<'EOF'
@@ -35,15 +37,43 @@ printf 'registry=https://registry.npmjs.org/\n' > "${fixture}/.npmrc"
 printf 'fixture patch\n' > "${fixture}/patches/example.patch"
 printf 'export const existing = true\n' > "${fixture}/apps/demo/src/existing/index.ts"
 
+nixpkgs_lib="$(nix eval --impure --raw --expr "
+  let
+    lock = builtins.fromJSON (builtins.readFile ${repo_root}/flake.lock);
+    rootNode = builtins.getAttr lock.root lock.nodes;
+    nixpkgsNode = builtins.getAttr rootNode.inputs.nixpkgs lock.nodes;
+  in
+  (builtins.fetchTree nixpkgsNode.locked).outPath + \"/lib\"
+")"
+
 dependency_source() {
   nix eval --impure --raw --expr "
-    let
-      flake = builtins.getFlake (toString ${repo_root});
-    in
     import ${repo_root}/nix/images/bun-workspace-deps-source.nix {
-      lib = flake.inputs.nixpkgs.lib;
+      lib = import ${nixpkgs_lib};
       repoRoot = ${fixture};
     }
+  "
+}
+
+service_inputs() {
+  nix eval --impure --raw --expr "
+    let
+      runtime = import ${repo_root}/nix/images/bun-workspace-service.nix {
+        lib = import ${nixpkgs_lib};
+        repoRoot = ${fixture};
+        pkgs.stdenvNoCC.mkDerivation = attrs: attrs // { outPath = toString attrs.src; };
+        bun = null;
+        nodejs = null;
+        serviceName = \"fixture\";
+        packageName = \"@fixture/demo\";
+        depsHash = \"unused\";
+        installFilters = [ \"@fixture/demo\" ];
+        sourcePaths = [ \"apps/demo\" ];
+        command = [];
+        returnRuntimeRoot = true;
+      };
+    in
+    builtins.hashString \"sha256\" (runtime.buildPhase + toString runtime.src)
   "
 }
 
@@ -69,6 +99,15 @@ expect_different() {
 }
 
 baseline="$(dependency_source)"
+service_baseline="$(service_inputs)"
+
+mkdir -p "${fixture}/.github/actions/tengri-acceptance/src"
+printf '{"name":"@fixture/acceptance","dependencies":{"@actions/artifact":"6.2.1"}}\n' \
+  > "${fixture}/.github/actions/tengri-acceptance/package.json"
+printf '{"lockfileVersion":2}\n' > "${fixture}/.github/actions/tengri-acceptance/bun.lock"
+printf 'export const canary = true\n' > "${fixture}/.github/actions/tengri-acceptance/src/acceptance.ts"
+expect_same "standalone acceptance runner addition" "${baseline}" "$(dependency_source)"
+expect_same "standalone acceptance runner product inputs" "${service_baseline}" "$(service_inputs)"
 
 mapfile -t included_files < <(cd "${baseline}" && find . -type f -printf '%P\n' | sort)
 expected_files=(

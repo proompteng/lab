@@ -3,10 +3,11 @@ name: Tengri real guest acceptance
 on:
   pull_request:
     paths:
-      - 'packages/scripts/src/tengri/**'
+      - '.github/actions/tengri-acceptance/**'
       - '.github/workflows/tengri-post-deploy.yml'
-      - 'packages/scripts/package.json'
       - 'bun.lock'
+      - 'package.json'
+      - 'tsconfig.base.json'
       - 'argocd/applications/agents-ci/runner-rbac-tengri.yaml'
   push:
     branches:
@@ -55,25 +56,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/scripts
+          bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source
+          bun install --cwd .github/actions/tengri-acceptance --frozen-lockfile --ignore-scripts
 
       - name: Run acceptance helper tests
-        run: bun test packages/scripts/src/tengri/__tests__
+        run: bun run --cwd .github/actions/tengri-acceptance test
 
       - name: Lint acceptance sources
         shell: bash
         run: |
           set -euo pipefail
-          bunx oxfmt --check packages/scripts/src/tengri/acceptance.ts packages/scripts/src/tengri/creation-lease.ts packages/scripts/src/tengri/__tests__
-          bunx oxlint --config .oxlintrc.json packages/scripts/src/tengri/acceptance.ts packages/scripts/src/tengri/creation-lease.ts packages/scripts/src/tengri/__tests__
+          bunx oxfmt --check .github/actions/tengri-acceptance/src/acceptance.ts .github/actions/tengri-acceptance/src/creation-lease.ts .github/actions/tengri-acceptance/src/__tests__
+          bunx oxlint --config .oxlintrc.json .github/actions/tengri-acceptance/src/acceptance.ts .github/actions/tengri-acceptance/src/creation-lease.ts .github/actions/tengri-acceptance/src/__tests__
 
       - name: Type-check acceptance sources
         shell: bash
         run: |
           set -euo pipefail
           bunx oxlint --config .oxlintrc.json --type-aware \
-            --tsconfig packages/scripts/tsconfig.json \
-            packages/scripts/src/tengri/acceptance.ts packages/scripts/src/tengri/creation-lease.ts packages/scripts/src/tengri/__tests__
+            --tsconfig .github/actions/tengri-acceptance/tsconfig.json \
+            .github/actions/tengri-acceptance/src/acceptance.ts .github/actions/tengri-acceptance/src/creation-lease.ts .github/actions/tengri-acceptance/src/__tests__
 
   acceptance:
     needs: validate
@@ -98,7 +100,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bun install --frozen-lockfile --ignore-scripts --filter @proompteng/scripts
+          bun install --cwd .github/actions/tengri-acceptance --frozen-lockfile --ignore-scripts
 
       - name: Set up kubectl
         uses: azure/setup-kubectl@v4
@@ -183,7 +185,7 @@ jobs:
               throw new Error('Acceptance requires an exact Kargo push, or a diagnostic dispatch from main with a full revision')
             }
             const exitCode = await exec.exec('bun', [
-              'run', 'packages/scripts/src/tengri/acceptance.ts',
+              'run', '.github/actions/tengri-acceptance/src/acceptance.ts',
               '--stage', stage,
               '--expected-revision', revision,
               '--run-id', `gha-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`,

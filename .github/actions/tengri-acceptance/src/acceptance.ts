@@ -3161,7 +3161,7 @@ export async function executeAcceptance(
 
 function printUsage(): void {
   console.log(
-    'Usage: bun run packages/scripts/src/tengri/acceptance.ts --stage <tengri|proompteng> --expected-revision <sha40> [options]\n\n' +
+    'Usage: bun run .github/actions/tengri-acceptance/src/acceptance.ts --stage <tengri|proompteng> --expected-revision <sha40> [options]\n\n' +
       'Required environment: TENGRI_AUTH_COOKIE and TENGRI_REJECTION_AUTH_COOKIE, each from a different dedicated GitHub identity.\n' +
       'Options: --base-url <origin> --run-id <id> --lease-file <path> --output <path> --timeout-seconds <n> --poll-interval-seconds <n>',
   )

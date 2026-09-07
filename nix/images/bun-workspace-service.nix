@@ -53,25 +53,37 @@ let
 
   isUnder = prefix: rel: rel == prefix || lib.hasPrefix "${prefix}/" rel;
 
+  # This standalone CI package is outside the product Bun workspace. Exclude its
+  # directory as well as its manifest so it cannot change fixed-output closures.
+  isAcceptanceRunner = rel: isUnder ".github/actions/tengri-acceptance" rel;
+
   depsSource = lib.cleanSourceWith {
     src = repoRoot;
-    filter = path: type:
-      type == "directory" || isPackageManifest (relativePath path) || isUnder "patches" (relativePath path);
+    filter =
+      path: type:
+      let
+        rel = relativePath path;
+      in
+      !isAcceptanceRunner rel && (type == "directory" || isPackageManifest rel || isUnder "patches" rel);
   };
 
   runtimeSource = lib.cleanSourceWith {
     src = repoRoot;
-    filter = path: type:
+    filter =
+      path: type:
       let
         rel = relativePath path;
       in
-      type == "directory"
-      || rel == "package.json"
-      || rel == "bun.lock"
-      || rel == "bunfig.toml"
-      || rel == ".npmrc"
-      || rel == "tsconfig.base.json"
-      || (lib.any (prefix: isUnder prefix rel) sourcePaths && runtimeSourceFilter rel type);
+      !isAcceptanceRunner rel
+      && (
+        type == "directory"
+        || rel == "package.json"
+        || rel == "bun.lock"
+        || rel == "bunfig.toml"
+        || rel == ".npmrc"
+        || rel == "tsconfig.base.json"
+        || (lib.any (prefix: isUnder prefix rel) sourcePaths && runtimeSourceFilter rel type)
+      );
   };
 
   installFilterArgs = lib.concatMapStringsSep " " (filter: "--filter ${lib.escapeShellArg filter}") installFilters;
