@@ -32,4 +32,9 @@ export default Effect.gen(function* () {
     BEFORE UPDATE OR DELETE ON intraday_archive_availability
     FOR EACH ROW EXECUTE FUNCTION reject_evidence_mutation()
   `
+  yield* sql`
+    CREATE TRIGGER intraday_archive_availability_reject_truncate
+    BEFORE TRUNCATE ON intraday_archive_availability
+    FOR EACH STATEMENT EXECUTE FUNCTION reject_evidence_mutation()
+  `
 })

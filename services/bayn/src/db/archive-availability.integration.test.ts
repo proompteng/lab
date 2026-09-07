@@ -138,7 +138,7 @@ describePostgres('PostgreSQL archive reader availability', () => {
     expect(Exit.isFailure(result)).toBe(true)
   })
 
-  test('database evidence is append-only', async () => {
+  test('database evidence rejects UPDATE, DELETE, and TRUNCATE without losing its first receipt', async () => {
     const result = await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -146,15 +146,18 @@ describePostgres('PostgreSQL archive reader availability', () => {
         yield* makeArchiveAvailabilityRecorder(sql, fence)(receipts())
         const update = yield* Effect.exit(sql`UPDATE intraday_archive_availability SET available_at = available_at`)
         const deletion = yield* Effect.exit(sql`DELETE FROM intraday_archive_availability`)
+        const truncate = yield* Effect.exit(sql`TRUNCATE intraday_archive_availability`)
         return {
           update,
           deletion,
+          truncate,
           count: yield* sql`SELECT count(*)::integer AS count FROM intraday_archive_availability`,
         }
       }),
     )
     expect(Exit.isFailure(result.update)).toBe(true)
     expect(Exit.isFailure(result.deletion)).toBe(true)
+    expect(Exit.isFailure(result.truncate)).toBe(true)
     expect(result.count).toEqual([{ count: 1 }])
   })
 })
