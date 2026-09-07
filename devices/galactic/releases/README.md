@@ -204,13 +204,12 @@ The provider-LAN DNS address avoids a dependency on Tailscale during node startu
    Altra EFI and Turin BMC recovery procedures in `docs/runbooks/talos-latest-upgrade-plan.md` for their exact documented
    failure conditions.
 6. After all nodes pass, commit and sync the separate Kubernetes `v1.37.0` change through Omni. Verify all three
-   apiservers and kubelets, node readiness, DNS and cross-node traffic, Ceph and PVCs, Argo and workload recovery, Flink
+   apiservers and kubelets, then complete the [selective add-on rollout](#kubernetes-add-ons) before final acceptance.
+   Verify node readiness, DNS and cross-node traffic, Ceph and PVCs, Argo and workload recovery, Flink
    jobs and checkpoint progress, GPU inference, Kata guests, and a real CI runner job. Report pre-existing failures
    separately. Remove temporary maintenance flags and delete secret-filled local exports.
 
-## Recovery
-
-### Kubernetes add-ons
+## Kubernetes add-ons
 
 After the Kubernetes upgrade completes, update only Talos-generated `10-kube-proxy`, `11-core-dns`, and
 `11-core-dns-svc` manifests. For this release they contain nine resources and roll kube-proxy to `v1.37.0` and CoreDNS
@@ -225,7 +224,7 @@ Talos-owned while Argo owns `kube-flannel-cfg`; the staged manifest in `devices/
 ownership handoff. Preserve Flannel `v0.28.5` and the ConfigMap data, then verify DNS and traffic across all three
 nodes. Migrate Flannel ownership and its backend only as a separate, explicitly scoped change.
 
-### Node recovery
+## Recovery
 
 Stop progression on a failed node while the two other etcd members continue serving. Keep the node's current logs,
 boot identity and installer receipt. Use the accepted prior installer for that exact machine only through the recorded
