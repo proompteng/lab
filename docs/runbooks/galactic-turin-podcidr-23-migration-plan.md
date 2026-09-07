@@ -28,15 +28,14 @@ on the operator machine and NUC. Neither backup substitutes for application-volu
 
 ## Availability and maintenance authority
 
-Flamingo downtime on Turin and Saigak downtime on Altra are accepted. The requested availability condition for other
-services remains unresolved. Live inventory also found single-instance services, single-instance CNPG clusters,
+The operator explicitly accepted service downtime on 2026-09-07 UTC, including Flamingo on Turin and Saigak on Altra.
+Live inventory found single-instance services, single-instance CNPG clusters,
 local volumes, restrictive PDBs, and ARM-only applications on the cluster's only ARM node. Examples include Plex,
 Open WebUI, Redis, Forgejo, and ARM-only apps. They cannot all be treated as movable replicas.
 
-Before a production drain, either establish and prove service failover, or obtain an explicit decision allowing their
-brief maintenance outages. Do not infer that GPU downtime covers unrelated services. Do not bypass PDBs, lower Ceph
-pool safety settings, or call a successful drain proof of application continuity. The network tools below do not
-make this availability decision.
+Use workload-specific temporary maintenance controls and record their exact restoration before draining. Keep PVCs
+and local data, preserve etcd quorum, and recover one Ceph storage host completely before maintaining the other.
+Do not lower Ceph pool safety settings or call a successful drain proof of application continuity.
 
 ## Rehearsed lifecycle
 
@@ -77,7 +76,10 @@ Use the merged versions of:
   and bridge ownership. It archives only old host-local leases and Flannel subnet state, then removes only `cni0` and
   `flannel.1`. It never changes disks, etcd, Node objects, or Talos configuration.
 
-The cleanup writes a mode-0600 result under `/var/lib/podcidr23-ops/<operation>/result.json`. A completed operation is
+The cleanup writes a mode-0600 result under `/var/lib/podcidr23-ops/<operation>/result.json`.
+Physical Talos does not provide `/etc/hostname`: the helper reads the kernel hostname inside PID 1's UTS
+namespace and restores its original namespace afterward. This check and the boot ID must match before any runtime
+or CNI mutation. A completed operation is
 idempotent. A partial operation requires explicit `--retry-failed` after diagnosing its report; changing the plan under
 an existing operation is rejected. The renderer emits `retry-omni.yaml` for that exact original plan and ConfigPatch ID.
 After diagnosing a failed report, apply this artifact explicitly with `omnictl apply --file

@@ -9,6 +9,7 @@ import fcntl
 import hashlib
 import ipaddress
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -177,11 +178,19 @@ def save_report(state, report):
     temporary.replace(state / "result.json")
 
 
+def host_hostname(proc=Path("/proc")):
+    with (proc / "self/ns/uts").open("rb") as current:
+        with (proc / "1/ns/uts").open("rb") as host:
+            os.setns(host.fileno(), 0)
+            try:
+                return socket.gethostname()
+            finally:
+                os.setns(current.fileno(), 0)
+
+
 def cleanup(plan, root=Path("/proc/1/root"), retry_failed=False):
     old = validate_plan(plan)
-    require(
-        (root / "etc/hostname").read_text().strip() == plan["nodeName"], "wrong host"
-    )
+    require(host_hostname() == plan["nodeName"], "wrong host")
     require(
         (root / "proc/sys/kernel/random/boot_id").read_text().strip() == plan["bootID"],
         "host rebooted since the plan was captured",

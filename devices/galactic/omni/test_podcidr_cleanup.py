@@ -3,6 +3,7 @@ from contextlib import redirect_stdout
 import io
 import ipaddress
 import json
+import os
 from pathlib import Path
 import tempfile
 import subprocess
@@ -21,13 +22,52 @@ PLAN = {
 }
 
 
+class HostHostnameTests(unittest.TestCase):
+    def test_host_namespace_is_entered_and_original_restored_even_on_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            proc = Path(directory)
+            for name in ("self", "1"):
+                path = proc / name / "ns/uts"
+                path.parent.mkdir(parents=True)
+                path.touch()
+            expected = [
+                (proc / name / "ns/uts").stat().st_ino for name in ("1", "self")
+            ]
+            for fail in (False, True):
+                with self.subTest(fail=fail):
+                    entered = []
+
+                    def setns(fd, namespace_type):
+                        self.assertEqual(namespace_type, 0)
+                        entered.append(os.fstat(fd).st_ino)
+
+                    with (
+                        patch.object(
+                            maintenance.os, "setns", side_effect=setns, create=True
+                        ),
+                        patch.object(
+                            maintenance.socket,
+                            "gethostname",
+                            return_value="turin",
+                            side_effect=OSError("hostname unavailable")
+                            if fail
+                            else None,
+                        ),
+                    ):
+                        if fail:
+                            with self.assertRaises(OSError):
+                                maintenance.host_hostname(proc)
+                        else:
+                            self.assertEqual(maintenance.host_hostname(proc), "turin")
+                    self.assertEqual(entered, expected)
+
+
 class CleanupTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         for relative, content in {
-            "etc/hostname": "turin\n",
             "proc/sys/kernel/random/boot_id": PLAN["bootID"],
             "var/lib/cni/networks/cbr0/10.244.0.9": "old-sandbox-id",
             "var/lib/cni/networks/cbr0/last_reserved_ip.0": "10.244.0.9",
@@ -38,6 +78,9 @@ class CleanupTests(unittest.TestCase):
             path.write_text(content)
         self.lease_dir = self.root / "var/lib/cni/networks/cbr0"
         self.state = self.root / "var/lib/podcidr23-ops/test-turin"
+        self.hostname = patch.object(
+            maintenance, "host_hostname", return_value="turin"
+        ).start()
         self.standalone = patch.object(
             maintenance, "standalone", return_value=True
         ).start()
@@ -67,14 +110,13 @@ class CleanupTests(unittest.TestCase):
         self.assertEqual((self.state / "result.json").stat().st_mode & 0o777, 0o600)
 
     def test_wrong_host_or_reboot_prevents_any_runtime_action(self):
-        for relative in ("etc/hostname", "proc/sys/kernel/random/boot_id"):
-            with self.subTest(relative=relative):
-                path = self.root / relative
-                previous = path.read_text()
-                path.write_text("different")
-                with self.assertRaises(maintenance.MaintenanceError):
-                    self.cleanup()
-                path.write_text(previous)
+        self.hostname.return_value = "different"
+        with self.assertRaisesRegex(maintenance.MaintenanceError, "wrong host"):
+            self.cleanup()
+        self.hostname.return_value = "turin"
+        (self.root / "proc/sys/kernel/random/boot_id").write_text("different")
+        with self.assertRaisesRegex(maintenance.MaintenanceError, "host rebooted"):
+            self.cleanup()
         self.sandboxes.assert_not_called()
         self.assertTrue((self.lease_dir / "10.244.0.9").exists())
 
