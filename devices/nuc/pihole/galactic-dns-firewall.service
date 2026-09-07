@@ -1,0 +1,17 @@
+[Unit]
+Description=Provider DNS exception before Tailscale filtering
+Requires=tailscaled.service
+After=tailscaled.service ufw.service
+PartOf=tailscaled.service ufw.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/galactic-dns-firewall --reconcile
+ExecStop=/usr/local/sbin/galactic-dns-firewall --remove
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

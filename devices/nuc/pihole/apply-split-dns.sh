@@ -9,7 +9,7 @@ fi
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source_file="$script_dir/99-kubernetes-split-dns.conf"
 destination=/etc/dnsmasq.d/99-kubernetes-split-dns.conf
-for tool in pihole-FTL dig ip jq ufw systemctl; do
+for tool in pihole-FTL dig ip jq ufw systemctl iptables; do
   command -v "$tool" >/dev/null || { echo "missing required command: $tool" >&2; exit 1; }
 done
 test -s "$source_file"
@@ -17,6 +17,10 @@ test "$(pihole-FTL --config misc.etc_dnsmasq_d)" = true
 ip -j address show dev eno1 | jq -e \
   'any(.[].addr_info[]; .local == "100.100.244.148" and .prefixlen == 25)' >/dev/null
 pihole-FTL -- --test --conf-file="$source_file"
+iptables -w -C INPUT -j galactic-dns-in 2>/dev/null || {
+  echo 'install apply-dns-firewall.sh before enabling provider DNS; Tailscale otherwise drops provider CGNAT traffic' >&2
+  exit 1
+}
 
 answers() {
   dig +time=2 +tries=1 +short "@$1" "$2" A | awk '/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ {print}' | sort -u
