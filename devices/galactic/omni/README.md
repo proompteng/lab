@@ -12,6 +12,11 @@ field while preserving the other install options. See the [release procedure](..
 verification, rolling upgrades, acceptance, and recovery. Control-plane upgrades use `maxParallelism: 1`; individual
 control-plane locks are unsupported.
 
+For the Talos-only handoff, use the [pinned extraction and rendering commands](../releases/README.md) before the
+workflow below. They extract the Talos-phase template and its registry sidecar from the exact preceding commit and
+pass `--template` explicitly. The default renderer invocation below consumes the current Kubernetes 1.37 template;
+use it only after Talos acceptance and the atomic Talos target/lock update are complete.
+
 Do not sync the checked-in file directly. Its six placeholders must be rendered into a temporary mode-`0600` file.
 Either provide `GALACTIC_TAILSCALE_AUTH_KEY` and `GALACTIC_OMNI_JOIN_TOKEN`, or extract the existing values from a fresh
 mode-`0600` live export:

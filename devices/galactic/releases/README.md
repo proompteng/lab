@@ -10,6 +10,30 @@ The Talos-only phase uses the
 which retains Kubernetes 1.36.4. Render that revision for the atomic Talos target and lock update below. The current
 template adds Kubernetes 1.37.0 and is synced only after Talos and workload acceptance.
 
+For the Talos-only handoff, set `GALACTIC_SECRETS_FILE` to the private secret input already validated during
+preparation (execution step 3). Extract both files from the pinned commit and pass `--template` explicitly:
+
+```bash
+umask 077
+: "${GALACTIC_SECRETS_FILE:?Set the path to the validated private secret input}"
+talos_phase_dir="$(mktemp -d)"
+git show bbef124de0f2e98959c80f416ce3d741b1626a5d:devices/galactic/omni/cluster-template.yaml \
+  > "$talos_phase_dir/cluster-template.yaml"
+git show bbef124de0f2e98959c80f416ce3d741b1626a5d:devices/galactic/omni/image-factory-registry.yaml \
+  > "$talos_phase_dir/image-factory-registry.yaml"
+bun devices/galactic/omni/render-template.ts \
+  --template "$talos_phase_dir/cluster-template.yaml" \
+  --secrets-from "$GALACTIC_SECRETS_FILE" \
+  --output "$talos_phase_dir/rendered.yaml"
+omnictl cluster template validate --file "$talos_phase_dir/rendered.yaml"
+omnictl cluster template sync --file "$talos_phase_dir/rendered.yaml" --dry-run --verbose
+```
+
+After all three node acceptance checks pass, require the dry run to change only the Cluster Talos target and remove
+the maintenance lock while keeping Kubernetes at 1.36.4. Apply that reviewed file with
+`omnictl cluster template sync --file "$talos_phase_dir/rendered.yaml" --verbose`. Retain the private directory until
+convergence is verified, then remove its secret-bearing rendered file during cleanup.
+
 ## Transition from the existing custom installers
 
 The current r4/r5 installers contain the required extensions but no Image Factory schematic metadata. All three
