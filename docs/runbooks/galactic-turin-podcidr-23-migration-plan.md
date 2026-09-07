@@ -1,16 +1,17 @@
 # Turin and Altra /23 PodCIDR maintenance
 
-Status on 2026-09-07 UTC: Turin has re-registered with `10.244.0.0/23`; Altra retains `10.244.5.0/24`.
-The template now raises only Turin to 500 pods. Apply that cap after its storage recovery; Altra remains at 250.
-Migrate Turin completely, then Altra. Leave Ryzen's Node and kubelet limit unchanged.
+Status on 2026-09-07 UTC: Turin has re-registered with `10.244.0.0/23`; Altra has re-registered with `10.244.4.0/23`.
+Both retained their physical boot sessions, disks, and etcd members. DNS, Service routing, and bidirectional Pod
+traffic with 288 KiB payloads passed on both new networks. The template sets both targets to 500 pods; apply each
+cap after its network and storage acceptance. Ryzen's Node and kubelet limit remain unchanged.
 
 ## Desired state and current evidence
 
-| Node                         | Existing PodCIDR | Containing /23  | Prepared maxPods |
-| ---------------------------- | ---------------- | --------------- | ---------------- |
-| Turin, `turin`               | `10.244.0.0/24`  | `10.244.0.0/23` | 250              |
-| Altra, `talos-192-168-1-85`  | `10.244.5.0/24`  | `10.244.4.0/23` | 250              |
-| Ryzen, `talos-192-168-1-194` | `10.244.3.0/24`  | `10.244.2.0/23` | 500              |
+| Node                         | Allocated PodCIDR | Template maxPods |
+| ---------------------------- | ----------------- | ---------------- |
+| Turin, `turin`               | `10.244.0.0/23`   | 500              |
+| Altra, `talos-192-168-1-85`  | `10.244.4.0/23`   | 500              |
+| Ryzen, `talos-192-168-1-194` | `10.244.3.0/24`   | 500              |
 
 The final target is a distinct `/23` and `maxPods: 500` on Turin and Altra. A `/23` contains 512 total addresses.
 Flannel and host-local reserve addresses, so 512 is not the number available to application pods. A 500-pod limit
@@ -18,11 +19,11 @@ leaves address headroom but does not establish CPU, memory, disk, or workload ca
 
 Preparation merged in [PR #14358](https://github.com/proompteng/lab/pull/14358), commit
 `dbde3319853dadc807d2c2cf558fbf8a1c8ca493`, and was applied through the secret-safe Omni template workflow.
-All three running controller managers use `--node-cidr-mask-size=23`. Existing Node UIDs and `/24` allocations were
-retained. Both targets advertise 250 pods; all machines are Ready. The flag affects newly registered Nodes only.
+All three running controller managers use `--node-cidr-mask-size=23`. That preparation retained the existing Node
+UIDs and `/24` allocations and capped both targets at 250 pods. The flag affects newly registered Nodes only.
 
-CephFS placement merged in [PR #14355](https://github.com/proompteng/lab/pull/14355). Active `cephfs-a` is on Altra;
-standby-replay `cephfs-b` is on Turin. A dedicated RWX probe observed successful writes, fsyncs, renames, and readbacks
+CephFS placement merged in [PR #14355](https://github.com/proompteng/lab/pull/14355). At that preparation check, active
+`cephfs-a` was on Altra and standby-replay `cephfs-b` was on Turin. A dedicated RWX probe observed successful writes, fsyncs, renames, and readbacks
 through the MDS rollout. Its maximum observed stall was about 31 seconds. This does not prove uninterrupted latency
 or availability for every application. Fresh direct etcd and verified encrypted full Omni backups are held privately
 on the operator machine and NUC. Neither backup substitutes for application-volume recovery.

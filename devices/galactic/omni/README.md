@@ -71,26 +71,24 @@ runtime proof, and rollback procedure is in `docs/runbooks/talos-latest-upgrade-
 
 ## PodCIDR maintenance checks
 
-The template sets Turin to `maxPods: 500` after its `/23` migration, holds Altra at `maxPods: 250`, and requests `/23`
-allocations for newly registered Nodes. Changing the allocation mask does not resize existing Nodes' immutable
-PodCIDRs. Before moving workloads onto Altra or draining it, use the render, validate, dry-run, and Omni sync procedure
-above, then verify
-`kubectl --context galactic-lan -n default get node talos-192-168-1-85 -o jsonpath='{.status.capacity.pods}'` returns
-`250`. Keep that cap until Altra's new `/23` network passes acceptance. The gate intentionally fails on Altra's
-old `/24`/500 state; do not use `--migrated` to skip this preparation.
+Turin and Altra have re-registered with distinct `/23` PodCIDRs. The template sets both to `maxPods: 500` and requests
+`/23` allocations for newly registered Nodes. Apply each target's 500-pod cap through the render, validate, dry-run,
+and Omni sync procedure above after its network and storage acceptance. Changing the allocation mask does not resize
+existing Nodes' immutable PodCIDRs.
 
-Use the migrated gate for Turin. Run the preparation gate immediately before Altra's maintenance:
+Use the migrated gate after applying both caps:
 
 ```bash
 python3 devices/galactic/omni/podcidr_preflight.py --node turin --migrated
-python3 devices/galactic/omni/podcidr_preflight.py --node talos-192-168-1-85
+python3 devices/galactic/omni/podcidr_preflight.py --node talos-192-168-1-85 --migrated
 ```
 
 The command uses only the `galactic-lan` Kubernetes context. It checks the reviewed three-node membership, readiness,
 distinct allocator `/23` blocks, current pod addresses, Ceph monitor/OSD/PG recovery, and active/standby CephFS MDS
-placement on separate hosts. It requires a 250-pod cap on the maintenance target. After migration, add `--migrated`
-to require both a `/23` PodCIDR and a 500-pod cap. Exit code 1 means a failed gate; exit code 2 means live evidence
-could not be established. A peer's existing address-capacity mismatch is reported separately as a warning.
+placement on separate hosts. `--migrated` requires both a `/23` PodCIDR and a 500-pod cap. Without that flag, the
+preparation gate requires a 250-pod cap; retain that cap during any future Node re-registration until network and
+storage acceptance. Exit code 1 means a failed gate; exit code 2 means live evidence could not be established.
+A peer's existing address-capacity mismatch is reported separately as a warning.
 
 Passing these checks does not prove workload continuity, data backups, disk identity, GPU or Kata operation, or
 authorize a drain. Verify those conditions in the reviewed maintenance procedure. In particular, a Kubernetes etcd
