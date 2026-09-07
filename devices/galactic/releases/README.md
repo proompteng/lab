@@ -16,6 +16,11 @@ then signs the published extension and catalog before making the Talos version t
 an existing version tag with different contents. The `v1.13.9` catalog and accepted installers remain available for
 recovery. `catalog.sh build <directory>` can repeat the artifact validation with Crane, Cosign, jq, and GNU tar.
 
+The native Kata regression tests use `nix develop --file devices/galactic/extensions/kata/shell.nix` on Linux, with
+Rust 1.96 installed by the workflow. This
+provides the compiler, libclang, libmount, libseccomp, protobuf, and packaging tools from the repository's pinned
+nixpkgs input. The runner's host package database is not part of the build dependency contract.
+
 Image Factory builds the actual node installers from the new Talos version and each machine's existing extension
 selection. Record each schematic, installer index and architecture digest, resolved extension digest, and matching
 factory build logs before allowing that node to upgrade. A catalog build alone does not prove its installer.

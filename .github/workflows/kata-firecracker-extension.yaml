@@ -87,22 +87,15 @@ jobs:
         with:
           toolchain: '1.96'
 
-      - name: Install native test dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            build-essential \
-            clang \
-            libmount-dev \
-            libseccomp-dev \
-            pkg-config \
-            protobuf-compiler \
-            zstd
-          INSTALL_IN_GOPATH=false .kata-source/ci/install_yq.sh
+      - name: Set up pinned native test dependencies
+        uses: ./.github/actions/setup-nix-toolchain
+        with:
+          require-preinstalled: 'true'
 
       - name: Build and test patched Kata components
         run: |
-          devices/galactic/extensions/kata/build-patched-kata.sh \
+          nix develop --file devices/galactic/extensions/kata/shell.nix \
+            --command devices/galactic/extensions/kata/build-patched-kata.sh \
             .kata-source \
             "devices/galactic/extensions/kata/artifacts/${{ matrix.architecture }}"
 
