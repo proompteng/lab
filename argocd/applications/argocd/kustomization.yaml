@@ -9,7 +9,6 @@ resources:
   - base/kargo-dex-cors-middleware.yaml
   - base/secrets.yaml
   - base/argo-workflows-sso-sealedsecret.yaml
-  - base/tsag-repo-sealedsecret.yaml
   - alloy-rbac.yaml
   - alloy-configmap.yaml
   - alloy-deployment.yaml
