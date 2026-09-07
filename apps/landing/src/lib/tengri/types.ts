@@ -1,6 +1,6 @@
 export type AgentPhase = 'booting' | 'failed' | 'pending' | 'ready' | 'sleeping' | 'terminating' | 'unknown'
 export type AgentArchitecture = 'amd64' | 'arm64' | 'unknown'
-export type TengriErrorCode = 'conversation_not_found'
+export type TengriErrorCode = 'conversation_not_found' | 'file_conflict' | 'capacity_full'
 
 export type TengriCondition = {
   type: string
@@ -25,6 +25,7 @@ export type TengriAgent = {
   lastActivityAt: string
   idleDeadline: string
   expiresAt: string
+  pendingImage?: string
   conditions: TengriCondition[]
 }
 
@@ -148,7 +149,7 @@ export type TengriAction =
   | { action: 'resume-agent'; agentId: string }
   | { action: 'list-files'; agentId: string; path: string }
   | { action: 'read-file'; agentId: string; path: string }
-  | { action: 'write-file'; agentId: string; path: string; content: string }
+  | { action: 'write-file'; agentId: string; path: string; content: string; expectedRevision: string }
   | { action: 'create-directory'; agentId: string; path: string }
   | { action: 'move-file'; agentId: string; sourcePath: string; destinationPath: string }
   | { action: 'delete-file'; agentId: string; path: string; recursive: boolean }

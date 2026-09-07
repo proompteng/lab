@@ -29,6 +29,17 @@ Filesystem operations are confined with `os.Root`, reject symlink escapes, and h
 state. Editable files are capped at 4 MiB, directory traversal and watcher subscriptions are bounded, and cancellation
 stops searches and event streams.
 
+File-content reads return a strong SHA-256 ETag. Writes require `expectedRevision`, either the exact lowercase
+64-hex revision from the read or `missing` for create-only writes. Successful writes return the new revision; stale
+writes return HTTP 409. A workspace lock serializes revision comparison and mutation for Nanoagent API writers.
+Direct filesystem writers, including shell commands and Codex, do not participate in that lock; their changes are
+reported through file events and require editor reconciliation. The API does not claim atomic conditional writes
+against arbitrary external processes.
+
+Mutation acknowledgement includes syncing affected directory metadata. A storage failure after a rename or deletion
+can leave the mutation visible despite an error response. Re-read the affected path before retrying; an error does
+not imply rollback. Retaining the PVC across sleep and releases does not replace an independent backup policy.
+
 Preview requests can reach only `127.0.0.1`, reject privileged and reserved ports, strip credentials and hop-by-hop or
 forwarding headers, and support WebSocket upgrades for development-server HMR. Nanoagent never proxies arbitrary
 hosts, Kubernetes APIs, cluster addresses, LAN services, metadata endpoints, or Tailscale peers.

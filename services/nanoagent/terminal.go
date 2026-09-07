@@ -397,7 +397,7 @@ func (manager *terminalManager) terminateSession(session *terminalSession, reaso
 		connection.close(websocket.StatusNormalClosure, reason)
 	}
 	manager.cleanupProcessSession(session)
-	_ = session.terminal.Close()
+	session.closeTerminal()
 }
 
 func (manager *terminalManager) cleanupProcessSession(session *terminalSession) <-chan struct{} {
@@ -523,7 +523,7 @@ func (manager *terminalManager) waitForExit(session *terminalSession) {
 			close(session.processExited)
 			manager.beginProcessExit(session)
 			<-manager.cleanupProcessSession(session)
-			_ = session.terminal.Close()
+			session.closeTerminal()
 			manager.drainTerminalOutput(session)
 			err = session.command.Wait()
 			manager.finishExitedSession(session, terminalExitPayload(err))
@@ -541,7 +541,7 @@ func (manager *terminalManager) drainTerminalOutput(session *terminalSession) {
 	select {
 	case <-session.outputDrained:
 	case <-time.After(2 * time.Second):
-		_ = session.terminal.Close()
+		session.closeTerminal()
 		select {
 		case <-session.outputDrained:
 		case <-time.After(250 * time.Millisecond):
@@ -580,7 +580,7 @@ func (manager *terminalManager) finishExitedSession(session *terminalSession, ex
 	session.mu.Lock()
 	if session.closed {
 		session.mu.Unlock()
-		_ = session.terminal.Close()
+		session.closeTerminal()
 		return
 	}
 	session.closing = true
@@ -592,7 +592,7 @@ func (manager *terminalManager) finishExitedSession(session *terminalSession, ex
 	session.connections = make(map[string]*terminalConnection)
 	session.mu.Unlock()
 	manager.cleanupProcessSession(session)
-	_ = session.terminal.Close()
+	session.closeTerminal()
 	for _, connection := range connections {
 		connection.closeAfter(
 			websocket.StatusNormalClosure,
@@ -785,8 +785,10 @@ func (session *terminalSession) input(payload []byte) {
 	session.lastActivityAt = time.Now().UTC()
 	terminal := session.terminal
 	session.mu.Unlock()
-	session.ioMu.Lock()
-	defer session.ioMu.Unlock()
+	// Keep terminal writes outside ioMu so closeTerminal can interrupt a
+	// blocked PTY write during session shutdown. os.File permits concurrent
+	// use of Write and Close; the control operations below still serialize
+	// their descriptor access with Close.
 	_, _ = terminal.Write(payload)
 }
 
@@ -819,6 +821,8 @@ func (session *terminalSession) signal(name string) error {
 	terminal := session.terminal
 	session.lastActivityAt = time.Now().UTC()
 	session.mu.Unlock()
+	session.ioMu.Lock()
+	defer session.ioMu.Unlock()
 	err = signalTerminalForeground(terminal, process.Pid, signal, terminalForegroundProcessGroup, syscall.Kill)
 	if err != nil && !errors.Is(err, syscall.ESRCH) {
 		if fallbackErr := process.Signal(signal); fallbackErr != nil {
@@ -826,6 +830,12 @@ func (session *terminalSession) signal(name string) error {
 		}
 	}
 	return nil
+}
+
+func (session *terminalSession) closeTerminal() {
+	session.ioMu.Lock()
+	defer session.ioMu.Unlock()
+	_ = session.terminal.Close()
 }
 
 func signalTerminalForeground(

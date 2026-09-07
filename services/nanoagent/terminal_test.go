@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -637,6 +638,44 @@ func TestTerminalSignalsReachTheProcessGroup(t *testing.T) {
 	}
 	if _, err := terminalSignal("kill"); err == nil {
 		t.Fatal("unsupported terminal signal was accepted")
+	}
+}
+
+func TestTerminalCloseInterruptsBlockedInput(t *testing.T) {
+	master, slave, err := pty.Open()
+	if err != nil {
+		t.Fatalf("open PTY: %v", err)
+	}
+	t.Cleanup(func() { _ = master.Close() })
+	t.Cleanup(func() { _ = slave.Close() })
+
+	session := &terminalSession{terminal: master}
+	inputDone := make(chan struct{})
+	go func() {
+		session.input(bytes.Repeat([]byte{'x'}, 16<<20))
+		close(inputDone)
+	}()
+
+	select {
+	case <-inputDone:
+		t.Fatal("PTY input did not block before close")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	closeDone := make(chan struct{})
+	go func() {
+		session.closeTerminal()
+		close(closeDone)
+	}()
+	select {
+	case <-closeDone:
+	case <-time.After(time.Second):
+		t.Fatal("closing terminal blocked behind PTY input")
+	}
+	select {
+	case <-inputDone:
+	case <-time.After(time.Second):
+		t.Fatal("blocked PTY input did not finish after close")
 	}
 }
 
