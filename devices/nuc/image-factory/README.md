@@ -1,14 +1,13 @@
 # NUC Image Factory
 
-This directory runs the community Sidero Labs Image Factory `v1.5.0` on the NUC. Omni uses it as the primary factory
+This directory runs the community Sidero Labs Image Factory `v1.6.1` on the NUC. Omni uses it as the primary factory
 for per-machine Talos schematics. The factory is reachable only on the Elauwit provider LAN at
 `http://100.100.244.148:8081`; port `8080` remains owned by Pi-hole, and the backing OCI registry is private to the
 Compose network.
 
-The factory replaces the upstream extension catalog with the accepted signed r4 catalog at
-`ghcr.io/proompteng/talos-extensions:v1.13.9`. That catalog contains every official Sidero Labs extension plus
-`proompteng/talos-kata-runtimes`. The Kata workflow publishes signed r5 candidates to the private registry, but does
-not replace this accepted catalog or authorize a node rollout. This is the supported community path: the separate
+The factory serves the signed Talos `v1.14.0` catalog pinned in `release.json`. It contains every official Sidero Labs
+extension plus the existing signed Kata `4.1.0-r5` image. The accepted r4 catalog at
+`ghcr.io/proompteng/talos-extensions:v1.13.9` remains available for recovery. This is the supported community path: the separate
 `enterprise.extraExtensions` feature is not required.
 
 ## Trust and persistent state
@@ -32,7 +31,8 @@ cp .env.example .env
 ```
 
 `bootstrap.sh` is idempotent: it creates the persistent directories and signing key once, validates that the NUC owns
-`100.100.244.148/25`, pulls the digest-pinned images, starts both services, and verifies the signed Kata catalog.
+`100.100.244.148/25`, pulls the digest-pinned images, starts both services, and verifies the Talos 1.14 catalog and
+installer. Include `release.json` when syncing this directory. Docker Buildx is required for the catalog digest check.
 
 Only after `verify.sh` passes, deploy the updated `devices/nuc/omni/omni.yaml` and restart the Omni container. Confirm
 that Omni reports `http://100.100.244.148:8081/` as its primary Image Factory before changing any machine extensions.
@@ -62,7 +62,9 @@ curl -fsS "$FACTORY/version/v1.13.9/extensions/official" \
   | grep -Fx "$EXPECTED_KATA_DIGEST"
 ```
 
-`verify.sh` proves this catalog readback and a smoke schematic. It does not prove that every existing per-machine
+`verify.sh` requires the published Talos 1.14 catalog digest and the factory's resolved Kata digest to match
+`release.json`, then builds a Talos 1.14 smoke installer for both amd64 and arm64. It also requires the retained
+Talos 1.13.9 version to remain discoverable. It does not prove that every existing per-machine
 installer cache entry was rebuilt. A schematic ID hashes the ordered customization request, not the resolved extension
 image contents. Publishing a new digest under the catalog tag, restarting Image Factory, and receiving the same
 schematic ID can therefore leave an older `metal-installer` manifest cached for that schematic and Talos version.
@@ -158,8 +160,12 @@ Then add `proompteng/talos-kata-runtimes` to each machine's `systemExtensions`, 
 | Turin / `8bf7ec00-171c-11f1-8000-7cc255f16774` | `siderolabs/nvidia-open-gpu-kernel-modules-lts`, `siderolabs/nvidia-container-toolkit-lts`, `siderolabs/tailscale`, `proompteng/talos-kata-runtimes` |
 | Altra / `12345678-9abc-deff-1234-56789abcdeff` | `siderolabs/nvidia-open-gpu-kernel-modules-lts`, `siderolabs/nvidia-container-toolkit-lts`, `siderolabs/tailscale`, `proompteng/talos-kata-runtimes` |
 
-The control-plane machine-set upgrade strategy must remain rolling with `maxParallelism: 1`. Change and sync only one
+For future staged extension changes, the control-plane machine-set upgrade strategy remains rolling with
+`maxParallelism: 1`. Change and sync only one
 machine's extension list per phase. A new rollout uses Ryzen, Turin, Altra order; a resumed rollout finishes the
-already-started machine first. Do not lock the cluster or unrelated machines. Start the next phase only after the
+already-started machine first. Start the next phase only after the
 current target passes installer identity, Kubernetes, etcd, Ceph, drain, and all four runtime gates in the Galactic
 runbook.
+
+The current custom installers lack factory schematic metadata and require the separate
+[Talos 1.14 transition procedure](../../galactic/releases/README.md), including its cluster-wide maintenance lock.
