@@ -11,26 +11,33 @@ import type { AgentsShellConfig } from './config'
 import { ShellJobStore, appendTail, tail, type CommandInput, type ShellJob } from './jobs'
 import { asPositiveInteger } from './limits'
 import { formatCommand, toProcessResult, type ProcessResult } from './process-runner'
-import { resolveExistingDirectory } from './workspace-policy'
+import { createRepoSessionIdentity, RepoSessionStore } from './repo-sessions'
+import { isInsidePath, resolveExistingDirectory } from './workspace-policy'
 
 export class AgentsShellRunner {
   readonly config: AgentsShellConfig
   readonly jobs = new ShellJobStore()
+  readonly repoSessions: RepoSessionStore
 
   constructor(config: AgentsShellConfig) {
     this.config = config
     mkdirSync(resolve(config.workspaceRoot), { recursive: true })
+    this.repoSessions = new RepoSessionStore(config.workspaceRoot)
   }
 
-  parseCommandInput(args: {
-    command: string
-    cwd?: string
-    timeoutSeconds?: number
-    maxOutputBytes?: number
-  }): CommandInput {
+  parseCommandInput(
+    args: {
+      command: string
+      cwd?: string
+      sessionId?: string
+      timeoutSeconds?: number
+      maxOutputBytes?: number
+    },
+    auth: AuthContext,
+  ): CommandInput {
     return {
       command: args.command,
-      cwd: resolveExistingDirectory(this.config.workspaceRoot, args.cwd),
+      cwd: this.resolveCwd(args.cwd, args.sessionId, auth),
       timeoutSeconds: asPositiveInteger(
         args.timeoutSeconds,
         'timeoutSeconds',
@@ -47,12 +54,190 @@ export class AgentsShellRunner {
     }
   }
 
+  private repoSeedPath() {
+    return resolveExistingDirectory(this.config.workspaceRoot, 'lab')
+  }
+
+  resolveRoot(sessionId: string | undefined, auth: AuthContext) {
+    return sessionId ? this.repoSessions.require(sessionId, auth).worktree : resolve(this.config.workspaceRoot)
+  }
+
+  resolveCwd(cwd: string | undefined, sessionId: string | undefined, auth: AuthContext) {
+    const resolved = resolveExistingDirectory(this.resolveRoot(sessionId, auth), cwd)
+    if (!sessionId) this.repoSessions.requireForPath(resolved, auth)
+    return resolved
+  }
+
+  async openRepoSession(args: { name?: string; baseBranch?: string }, auth: AuthContext) {
+    const seed = this.repoSeedPath()
+    const baseBranch = args.baseBranch ?? this.config.agentBaseBranch
+    if (baseBranch.startsWith('-')) throw new Error(`invalid base branch: ${baseBranch}`)
+    const identity = createRepoSessionIdentity(this.config.workspaceRoot, args.name)
+    mkdirSync(resolve(this.config.workspaceRoot, 'worktrees', 'lab'), { recursive: true })
+
+    const checkBranch = await this.runProcess({
+      command: 'git',
+      args: ['check-ref-format', '--branch', baseBranch],
+      cwd: seed,
+      auth,
+      auditEvent: 'repo_session_check_base',
+    })
+    if (!checkBranch.ok) throw new Error(`invalid base branch: ${baseBranch}`)
+
+    const baseRef = `refs/agents-shell/repo-sessions/${identity.id}/base`
+    let baseSha = ''
+    try {
+      const fetch = await this.runProcess({
+        command: 'git',
+        args: ['fetch', '--no-write-fetch-head', 'origin', `+refs/heads/${baseBranch}:${baseRef}`],
+        cwd: seed,
+        auth,
+        auditEvent: 'repo_session_fetch',
+      })
+      if (!fetch.ok) throw new Error(`failed to fetch origin/${baseBranch}: ${fetch.stderr || fetch.stdout}`)
+
+      const base = await this.runProcess({
+        command: 'git',
+        args: ['rev-parse', '--verify', baseRef],
+        cwd: seed,
+        auth,
+        auditEvent: 'repo_session_base',
+      })
+      if (!base.ok) throw new Error(`failed to resolve fetched base: ${base.stderr || base.stdout}`)
+      baseSha = base.stdout.trim()
+
+      const add = await this.runProcess({
+        command: 'git',
+        args: ['worktree', 'add', '-b', identity.branch, identity.worktree, baseSha],
+        cwd: seed,
+        auth,
+        auditEvent: 'repo_session_worktree_add',
+      })
+      if (!add.ok) throw new Error(`failed to create repo session worktree: ${add.stderr || add.stdout}`)
+    } finally {
+      await this.runProcess({
+        command: 'git',
+        args: ['update-ref', '-d', baseRef],
+        cwd: seed,
+        auth,
+        auditEvent: 'repo_session_base_ref_cleanup',
+      })
+    }
+
+    let session
+    try {
+      session = this.repoSessions.set({
+        ...identity,
+        ownerSubject: auth.subject,
+        baseBranch,
+        baseSha,
+        createdAt: new Date().toISOString(),
+      })
+    } catch (error) {
+      await this.runProcess({
+        command: 'git',
+        args: ['worktree', 'remove', '--force', identity.worktree],
+        cwd: seed,
+        auth,
+        auditEvent: 'repo_session_persist_rollback',
+      })
+      throw error
+    }
+    this.audit('repo_session_opened', auth, {
+      sessionId: session.id,
+      branch: session.branch,
+      baseBranch,
+      baseSha,
+      worktree: session.worktree,
+    })
+    return this.repoSessionStatus(session.id, auth)
+  }
+
+  async repoSessionStatus(sessionId: string, auth: AuthContext, options: { allowClosing?: boolean } = {}) {
+    const session = this.repoSessions.require(sessionId, auth, options)
+    const [head, dirtyCheck, divergence] = await Promise.all([
+      this.runProcess({
+        command: 'git',
+        args: ['rev-parse', 'HEAD'],
+        sessionId,
+        allowClosingSession: options.allowClosing,
+        auth,
+        auditEvent: 'repo_session_status_head',
+      }),
+      this.runProcess({
+        command: '/bin/bash',
+        args: ['-lc', 'test -z "$(git status --porcelain=v1 --untracked-files=normal --ignored=matching)"'],
+        sessionId,
+        allowClosingSession: options.allowClosing,
+        okExitCodes: [0, 1],
+        auth,
+        auditEvent: 'repo_session_status_dirty',
+      }),
+      this.runProcess({
+        command: 'git',
+        args: ['rev-list', '--left-right', '--count', `${session.baseSha}...HEAD`],
+        sessionId,
+        allowClosingSession: options.allowClosing,
+        auth,
+        auditEvent: 'repo_session_status_divergence',
+      }),
+    ])
+    if (!head.ok || !dirtyCheck.ok || !divergence.ok) throw new Error('failed to inspect repo session state')
+    const [behindRaw = '0', aheadRaw = '0'] = divergence.stdout.trim().split(/\s+/)
+    return {
+      sessionId: session.id,
+      branch: session.branch,
+      baseBranch: session.baseBranch,
+      baseSha: session.baseSha,
+      headSha: head.stdout.trim(),
+      worktree: session.worktree,
+      createdAt: session.createdAt,
+      dirty: dirtyCheck.exitCode === 1,
+      ahead: Number(aheadRaw),
+      behind: Number(behindRaw),
+    }
+  }
+
+  async closeRepoSession(args: { sessionId: string; force?: boolean }, auth: AuthContext) {
+    const session = this.repoSessions.beginClose(args.sessionId, auth)
+    let removed = false
+    try {
+      await this.repoSessions.waitForIdle(args.sessionId, auth)
+      const status = await this.repoSessionStatus(args.sessionId, auth, { allowClosing: true })
+      if (status.dirty && !args.force) {
+        throw new Error(`repo session has uncommitted changes; clean it or close with force: ${args.sessionId}`)
+      }
+      const activeJobs = this.runningJobs().filter((job) => isInsidePath(session.worktree, job.cwd))
+      if (activeJobs.length > 0 && !args.force) {
+        throw new Error(`repo session has running shell jobs; stop them or close with force: ${args.sessionId}`)
+      }
+      if (args.force) {
+        await Promise.all(activeJobs.map((job) => this.terminateJob(job, auth)))
+      }
+      const remove = await this.runProcess({
+        command: 'git',
+        args: ['worktree', 'remove', ...(args.force ? ['--force'] : []), session.worktree],
+        cwd: this.repoSeedPath(),
+        auth,
+        auditEvent: 'repo_session_worktree_remove',
+      })
+      if (!remove.ok) throw new Error(`failed to remove repo session worktree: ${remove.stderr || remove.stdout}`)
+      removed = true
+      this.repoSessions.delete(args.sessionId)
+      const closedAt = new Date().toISOString()
+      this.audit('repo_session_closed', auth, { sessionId: args.sessionId, branch: session.branch, closedAt })
+      return { ...status, closedAt }
+    } finally {
+      if (!removed) this.repoSessions.cancelClose(args.sessionId)
+    }
+  }
+
   audit(event: string, auth: AuthContext | null, payload: Record<string, unknown>) {
     writeAuditLog(this.config, event, auth, payload)
   }
 
   runningJobs() {
-    return Array.from(this.jobs.values()).filter((job) => job.status === 'running')
+    return Array.from(this.jobs.values()).filter((job) => job.finishedAt === null)
   }
 
   start(input: CommandInput, auth: AuthContext): ShellJob {
@@ -138,7 +323,7 @@ export class AgentsShellRunner {
 
   kill(jobId: string, auth: AuthContext, signal = 'SIGTERM') {
     const job = this.requireJob(jobId)
-    if (job.status !== 'running') return job
+    if (job.finishedAt !== null) return job
     const killed = this.killProcessGroup(job, signal)
     if (killed) {
       job.status = 'killed'
@@ -146,6 +331,35 @@ export class AgentsShellRunner {
       this.audit('shell_job_killed', auth, { jobId: job.id, signal })
     }
     return job
+  }
+
+  private waitForJobClose(job: ShellJob, timeoutMs: number) {
+    if (job.finishedAt !== null) return Promise.resolve(true)
+    return new Promise<boolean>((resolvePromise) => {
+      let settled = false
+      const finish = (closed: boolean) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timeout)
+        job.process.off('close', onClose)
+        resolvePromise(closed)
+      }
+      const onClose = () => finish(true)
+      const timeout = setTimeout(() => finish(false), timeoutMs)
+      job.process.once('close', onClose)
+    })
+  }
+
+  private async terminateJob(job: ShellJob, auth: AuthContext) {
+    if (job.finishedAt !== null) return
+    this.kill(job.id, auth, 'SIGTERM')
+    if (await this.waitForJobClose(job, 1_000)) return
+
+    this.audit('shell_job_kill_escalated', auth, { jobId: job.id, signal: 'SIGKILL' })
+    this.killProcessGroup(job, 'SIGKILL')
+    if (!(await this.waitForJobClose(job, 1_000))) {
+      throw new Error(`shell job did not terminate after SIGKILL: ${job.id}`)
+    }
   }
 
   requireJob(jobId: string) {
@@ -158,6 +372,8 @@ export class AgentsShellRunner {
     command: string
     args: string[]
     cwd?: string
+    sessionId?: string
+    allowClosingSession?: boolean
     stdin?: string
     timeoutSeconds?: number
     maxOutputBytes?: number
@@ -167,82 +383,94 @@ export class AgentsShellRunner {
   }): Effect.Effect<ProcessResult, unknown> {
     return Effect.tryPromise({
       try: async () => {
-        const cwd = resolveExistingDirectory(this.config.workspaceRoot, options.cwd)
-        const timeoutSeconds = asPositiveInteger(
-          options.timeoutSeconds,
-          'timeoutSeconds',
-          this.config.defaultTimeoutSeconds,
-          this.config.maxTimeoutSeconds,
-        )
-        const maxOutputBytes = asPositiveInteger(
-          options.maxOutputBytes,
-          'maxOutputBytes',
-          this.config.defaultOutputBytes,
-          this.config.maxOutputBytes,
-          1024,
-        )
-        const commandLine = formatCommand(options.command, options.args)
-        const stdout = tail()
-        const stderr = tail()
-        let timedOut = false
+        let session = options.sessionId
+          ? this.repoSessions.acquire(options.sessionId, options.auth, { allowClosing: options.allowClosingSession })
+          : null
+        try {
+          const cwd = resolveExistingDirectory(session?.worktree ?? resolve(this.config.workspaceRoot), options.cwd)
+          if (!session) {
+            session = this.repoSessions.acquireForPath(cwd, options.auth, {
+              allowClosing: options.allowClosingSession,
+            })
+          }
+          const timeoutSeconds = asPositiveInteger(
+            options.timeoutSeconds,
+            'timeoutSeconds',
+            this.config.defaultTimeoutSeconds,
+            this.config.maxTimeoutSeconds,
+          )
+          const maxOutputBytes = asPositiveInteger(
+            options.maxOutputBytes,
+            'maxOutputBytes',
+            this.config.defaultOutputBytes,
+            this.config.maxOutputBytes,
+            1024,
+          )
+          const commandLine = formatCommand(options.command, options.args)
+          const stdout = tail()
+          const stderr = tail()
+          let timedOut = false
 
-        this.audit(options.auditEvent, options.auth, { command: commandLine, cwd, timeoutSeconds })
+          this.audit(options.auditEvent, options.auth, { command: commandLine, cwd, timeoutSeconds })
 
-        const child = spawn(options.command, options.args, {
-          cwd,
-          env: { ...process.env, TERM: process.env.TERM ?? 'dumb' },
-          stdio: ['pipe', 'pipe', 'pipe'],
-        })
+          const child = spawn(options.command, options.args, {
+            cwd,
+            env: { ...process.env, TERM: process.env.TERM ?? 'dumb' },
+            stdio: ['pipe', 'pipe', 'pipe'],
+          })
 
-        child.stdout.on('data', (chunk: Buffer) => appendTail(stdout, Buffer.from(chunk), maxOutputBytes))
-        child.stderr.on('data', (chunk: Buffer) => appendTail(stderr, Buffer.from(chunk), maxOutputBytes))
+          child.stdout.on('data', (chunk: Buffer) => appendTail(stdout, Buffer.from(chunk), maxOutputBytes))
+          child.stderr.on('data', (chunk: Buffer) => appendTail(stderr, Buffer.from(chunk), maxOutputBytes))
 
-        if (options.stdin != null) {
-          child.stdin.write(options.stdin)
+          if (options.stdin != null) {
+            child.stdin.write(options.stdin)
+          }
+          child.stdin.end()
+
+          const timeout = setTimeout(() => {
+            timedOut = true
+            child.kill('SIGTERM')
+          }, timeoutSeconds * 1000)
+
+          const result = await new Promise<{ exitCode: number | null; signal: string | null }>(
+            (resolvePromise, reject) => {
+              let settled = false
+              const finish = (exitCode: number | null, signal: NodeJS.Signals | null) => {
+                if (settled) return
+                settled = true
+                child.stdout.destroy()
+                child.stderr.destroy()
+                resolvePromise({ exitCode, signal })
+              }
+
+              child.once('error', reject)
+              child.once('exit', (exitCode, signal) => setImmediate(() => finish(exitCode, signal)))
+              child.once('close', (exitCode, signal) => finish(exitCode, signal))
+            },
+          ).finally(() => clearTimeout(timeout))
+
+          const processResult = toProcessResult(
+            commandLine,
+            cwd,
+            result.exitCode,
+            result.signal,
+            timedOut,
+            stdout,
+            stderr,
+            maxOutputBytes,
+            new Set(options.okExitCodes ?? [0]),
+          )
+          this.audit(`${options.auditEvent}_finished`, options.auth, {
+            command: commandLine,
+            cwd,
+            exitCode: result.exitCode,
+            signal: result.signal,
+            timedOut,
+          })
+          return processResult
+        } finally {
+          if (session) this.repoSessions.release(session.id)
         }
-        child.stdin.end()
-
-        const timeout = setTimeout(() => {
-          timedOut = true
-          child.kill('SIGTERM')
-        }, timeoutSeconds * 1000)
-
-        const result = await new Promise<{ exitCode: number | null; signal: string | null }>(
-          (resolvePromise, reject) => {
-            let settled = false
-            const finish = (exitCode: number | null, signal: NodeJS.Signals | null) => {
-              if (settled) return
-              settled = true
-              child.stdout.destroy()
-              child.stderr.destroy()
-              resolvePromise({ exitCode, signal })
-            }
-
-            child.once('error', reject)
-            child.once('exit', (exitCode, signal) => setImmediate(() => finish(exitCode, signal)))
-            child.once('close', (exitCode, signal) => finish(exitCode, signal))
-          },
-        ).finally(() => clearTimeout(timeout))
-
-        const processResult = toProcessResult(
-          commandLine,
-          cwd,
-          result.exitCode,
-          result.signal,
-          timedOut,
-          stdout,
-          stderr,
-          maxOutputBytes,
-          new Set(options.okExitCodes ?? [0]),
-        )
-        this.audit(`${options.auditEvent}_finished`, options.auth, {
-          command: commandLine,
-          cwd,
-          exitCode: result.exitCode,
-          signal: result.signal,
-          timedOut,
-        })
-        return processResult
       },
       catch: (error) => error,
     })

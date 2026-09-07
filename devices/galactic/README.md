@@ -4,7 +4,7 @@ This directory is the repository source for the existing three-node Talos/Kubern
 
 - **Omni/Talos cluster name**: `galactic`
 - **kubectl context**: `galactic-lan`
-- **desired Talos**: `v1.13.9`
+- **desired Talos**: `v1.14.0`
 - **desired Kubernetes**: `v1.36.4`
 - **Kubernetes API endpoint**: NUC HAProxy on `https://nuc:6443`
 
@@ -25,6 +25,7 @@ They are not current cluster instructions; follow `docs/repository-cleanup-todo.
 
 Runbooks:
 
+- `devices/galactic/releases/README.md` (Talos 1.14 and Kubernetes 1.37 rollout)
 - `devices/galactic/docs/add-control-plane-node.md`
 - `devices/galactic/docs/bootstrap-argocd.md`
 - `devices/galactic/docs/troubleshooting-networking.md`

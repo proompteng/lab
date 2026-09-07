@@ -3,7 +3,7 @@ name: galactic
 kubernetes:
   version: v1.36.4
 talos:
-  version: v1.13.9
+  version: v1.14.0
 features:
   backupConfiguration:
     interval: 24h
@@ -36,6 +36,8 @@ upgradeStrategy:
 ---
 kind: Machine
 name: 12345678-9abc-deff-1234-56789abcdeff
+install:
+  diskSelector: disk.serial == "2441E98EAAFB"
 systemExtensions:
   - siderolabs/nvidia-open-gpu-kernel-modules-lts
   - siderolabs/nvidia-container-toolkit-lts
@@ -154,7 +156,6 @@ patches:
             path: "/etc/cri/conf.d/20-customization.part"
             permissions: 420
         install:
-          disk: "/dev/disk/by-id/nvme-CT4000P3PSSD8_2441E98EAAFB"
           wipe: false
         kernel:
           modules:
@@ -166,7 +167,7 @@ patches:
           extraConfig:
             featureGates:
               RuntimeClassInImageCriApi: true
-            maxPods: 250
+            maxPods: 500
           nodeIP:
             validSubnets:
               - 100.100.244.128/25
@@ -208,6 +209,8 @@ patches:
 ---
 kind: Machine
 name: 8bf7ec00-171c-11f1-8000-7cc255f16774
+install:
+  diskSelector: disk.serial == "13CBMEK6HEW8CN2X9AKW"
 systemExtensions:
   - siderolabs/nvidia-open-gpu-kernel-modules-lts
   - siderolabs/nvidia-container-toolkit-lts
@@ -309,7 +312,6 @@ patches:
           path: "/etc/cri/conf.d/20-customization.part"
           permissions: 420
         install:
-          disk: "/dev/disk/by-id/nvme-ORICO_13CBMEK6HEW8CN2X9AKW"
           wipe: false
         kernel:
           modules:
@@ -321,7 +323,7 @@ patches:
           extraConfig:
             featureGates:
               RuntimeClassInImageCriApi: true
-            maxPods: 250
+            maxPods: 500
           nodeIP:
             validSubnets:
             - 100.100.244.128/25
@@ -343,6 +345,8 @@ patches:
 ---
 kind: Machine
 name: ff115a00-c307-11f0-a28f-648eab3e4100
+install:
+  diskSelector: disk.serial == "50026B73844BB6D7"
 systemExtensions:
   - siderolabs/amdgpu
   - siderolabs/amd-ucode
@@ -471,7 +475,6 @@ patches:
           path: "/etc/cri/conf.d/20-customization.part"
           permissions: 420
         install:
-          disk: "/dev/nvme0n1"
           grubUseUKICmdline: false
         kubelet:
           disableManifestsDirectory: false

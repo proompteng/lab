@@ -175,8 +175,13 @@ describe('Tengri BFF action schema', () => {
 
     const exact = 'é'.repeat(MAX_EDITABLE_FILE_BYTES / 2)
     expect(
-      tengriActionSchema.safeParse({ action: 'write-file', agentId: 'agent-123', path: spacedPath, content: exact })
-        .success,
+      tengriActionSchema.safeParse({
+        action: 'write-file',
+        agentId: 'agent-123',
+        path: spacedPath,
+        content: exact,
+        expectedRevision: 'missing',
+      }).success,
     ).toBe(true)
     expect(
       tengriActionSchema.safeParse({
@@ -184,8 +189,20 @@ describe('Tengri BFF action schema', () => {
         agentId: 'agent-123',
         path: spacedPath,
         content: `${exact}é`,
+        expectedRevision: 'missing',
       }).success,
     ).toBe(false)
+  })
+
+  test('requires a precise file revision or create-only precondition for saves', () => {
+    const save = { action: 'write-file', agentId: 'agent-123', path: '/workspace/main.ts', content: '' }
+    expect(tengriActionSchema.safeParse(save).success).toBe(false)
+    for (const expectedRevision of ['', '*', 'A'.repeat(64), 'f'.repeat(63), 'missing ']) {
+      expect(tengriActionSchema.safeParse({ ...save, expectedRevision }).success).toBe(false)
+    }
+    for (const expectedRevision of ['missing', 'a'.repeat(64)]) {
+      expect(tengriActionSchema.safeParse({ ...save, expectedRevision }).success).toBe(true)
+    }
   })
 
   test('bounds Codex prompts by UTF-8 bytes', () => {

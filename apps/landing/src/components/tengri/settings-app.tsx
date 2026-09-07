@@ -248,6 +248,15 @@ export function SettingsApp({
                     <span>{agent.message}</span>
                   </p>
                 ) : null}
+                {agent.pendingImage ? (
+                  <p
+                    role="status"
+                    className="mt-3 rounded-lg bg-blue-400/8 px-3 py-2 text-[11px] leading-5 text-blue-100/80"
+                  >
+                    A runtime update is available. Save your work, then sleep and resume the agent to update. The update
+                    will wait while this guest is running.
+                  </p>
+                ) : null}
               </section>
             </section>
 
@@ -263,7 +272,13 @@ export function SettingsApp({
               <SettingRow label="Uptime" value={formatAgentUptime(agent, now)} />
               <SettingRow label="Last activity" value={formatAgentDate(agent.lastActivityAt, hydrated)} />
               <SettingRow label="Idle sleep" value={formatAgentDate(agent.idleDeadline, hydrated)} />
-              <SettingRow label="Hard expiry" value={formatAgentDate(agent.expiresAt, hydrated)} last />
+              <SettingRow
+                label="Workspace retention"
+                value={
+                  agent.expiresAt ? `Until ${formatAgentDate(agent.expiresAt, hydrated)}` : 'Until you delete the agent'
+                }
+                last
+              />
             </SettingsSection>
 
             <SettingsSection
