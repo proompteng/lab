@@ -8,7 +8,10 @@ control-plane nodes cannot be locked; the cluster-wide maintenance lock is suppo
 The Talos-only phase uses the
 [template at `83ad18f4c768f37d79276eee49d7788a6e349688`](https://github.com/proompteng/lab/blob/83ad18f4c768f37d79276eee49d7788a6e349688/devices/galactic/omni/cluster-template.yaml),
 which retains Kubernetes 1.36.4. Render that revision for the atomic Talos target and lock update below. The current
-template adds Kubernetes 1.37.0 and is synced only after Talos and workload acceptance.
+template adds Kubernetes 1.37.0 and is synced only after Talos node acceptance and Omni configuration convergence.
+During the authorized outage, complete the remaining Kubernetes maintenance before final application recovery so
+stateful jobs do not repeatedly recover between drains. Preserve etcd quorum and verify Ceph redundancy before
+moving maintenance to another storage node. All workload acceptance remains required after both version rollouts.
 
 For the Talos-only handoff, set `GALACTIC_SECRETS_FILE` to the private secret input already validated during
 preparation (execution step 3). Extract both files from the pinned commit and pass `--template` explicitly:
@@ -53,7 +56,7 @@ before proceeding. Once all three report the expected version, valid schematic, 
 review the template sync dry run: the Cluster update must set Talos to 1.14.0 and remove the maintenance lock together,
 while retaining Kubernetes 1.36.4. Sync that committed template so the desired version and lock change in the same
 Cluster resource update. Do not unlock separately while Omni still targets 1.13.9. Verify the generated configuration
-preserves the extensions and disk identities, then confirm configuration convergence and workload recovery before starting Kubernetes.
+preserves the extensions and disk identities, then confirm configuration convergence and storage redundancy before starting Kubernetes.
 Keep the cluster locked if migration or artifact acceptance is incomplete. Future upgrades return to Omni's normal
 rolling lifecycle; this exception does not authorize stock installers or changes to controller-owned status resources.
 
@@ -105,6 +108,63 @@ Image Factory builds the actual node installers from the new Talos version and e
 selection. Record each schematic, installer index and architecture digest, resolved extension digest, and matching
 factory build logs before allowing that node to upgrade. A catalog build alone does not prove its installer.
 
+## Artifact identity gate
+
+[`talos-v1.14.0.json`](talos-v1.14.0.json) records the installed factory indexes, architecture manifests, and extension
+inputs for Ryzen, Turin, and Altra. Its request IDs come from the completed Image Factory builds retained with the
+rollout evidence. Both NVIDIA machines share an index and schematic, with different architecture manifests.
+
+Run this read-only gate from the repository root before each node phase. It requires Curl, jq, Crane, and Cosign:
+
+```bash
+: "${EVIDENCE_DIR:?Set a private rollout evidence directory}"
+devices/galactic/releases/verify-installer.sh ryzen "$EVIDENCE_DIR/ryzen-artifact"
+devices/galactic/releases/verify-installer.sh turin "$EVIDENCE_DIR/turin-artifact"
+devices/galactic/releases/verify-installer.sh altra "$EVIDENCE_DIR/altra-artifact"
+```
+
+The gate checks the receipt against the current release lock, verifies the catalog and Kata signatures against the
+main-branch workflow identity, checks the factory's resolved Kata digest, and requires the installer tag, immutable
+index, platform manifest, and architecture to match the recorded build. It saves the schematic request, catalog,
+signature output, index, configuration, and selected receipt. Retain the corresponding completed factory build logs
+with those records. The signed catalog and extension are separate from the factory-generated installer identity.
+
+An unchanged schematic or Talos version does not identify an extension's bytes. If a cache rebuild changes an index,
+this gate must fail until a reviewed receipt records the new index, platform digest, request ID, and exact extension
+inputs from the completed build. Use the [targeted cache procedure](../../nuc/image-factory/README.md#rebuild-exactly-one-cached-installer)
+to rebuild only that schematic and version; do not substitute the archived Talos 1.13.9 receipts.
+
+## Same-schematic artifact replacement
+
+Use this procedure only for a reviewed replacement whose schematic and Talos version already match the node. Omni
+will not schedule that replacement from a digest change alone. First update and pass the current artifact gate above
+against the completed replacement build. Preserve both the previous receipt and installer for recovery.
+
+1. Verify no Omni machine or cluster operation is active, then lock the cluster for the direct replacement. Keep its
+   desired Talos and Kubernetes versions unchanged. Finish an already-started operation before entering this path.
+2. Record the target identity, disks, PodCIDR, Kubernetes and etcd health, storage state, and an etcd snapshot from a
+   peer. Transfer etcd leadership to a healthy peer if the target is leader. Cordon and drain only the target; the
+   authorized downtime permits the documented PDB bypass, with affected workload recovery checked afterward.
+3. Select the exact target from the verified receipt and install without a second drain or an automatic reboot:
+
+   ```bash
+   : "${PROFILE:?Set ryzen, turin, or altra after its artifact gate passes}"
+   receipt=devices/galactic/releases/talos-v1.14.0.json
+   target="$(jq -er --arg p "$PROFILE" '.profiles[$p].talosAddress' "$receipt")"
+   installer="$(jq -er --arg p "$PROFILE" \
+     '(.factory | sub("^http://"; "")) + "/metal-installer/" + .profiles[$p].schematic + "@" + .profiles[$p].indexDigest' \
+     "$receipt")"
+   talosctl --nodes "$target" --endpoints "$target" upgrade \
+     --image "$installer" --drain=false --no-reboot --wait --timeout=30m --progress=plain
+   ```
+
+4. Require the installer digest in the pull evidence and successful installation. Apply the hardware recovery
+   procedure below only for its documented failure condition. Verify the full boot configuration retains the CRI
+   `create` operation and IPv4 allocator flag, then perform one controlled reboot.
+5. Keep the node cordoned until disk, etcd, storage, GPU, and all four Kata runtime checks pass. Verify Omni still
+   targets the installed Talos and Kubernetes versions before releasing the lock. Confirm configuration convergence,
+   uncordon the target, and prove workload recovery before another node phase.
+
 ## Execution order
 
 1. Record the current nodes, etcd members, Ceph, Argo applications, workload failures, Flink jobs, GPUs, and runtime
@@ -135,7 +195,7 @@ factory build logs before allowing that node to upgrade. A catalog build alone d
 5. For each node, save an etcd snapshot from a peer, verify the installer receipt, drain, then perform the controlled
    factory transition. If a PodDisruptionBudget prevents the authorized downtime, inspect the affected controllers and use the
    documented PDB bypass. Confirm the node's new Talos version, boot disk, network, PodCIDR, etcd membership, storage,
-   GPU, and QEMU/Cloud Hypervisor/Firecracker/Dragonball canaries as it returns. Complete all node and workload acceptance
+   GPU, and QEMU/Cloud Hypervisor/Firecracker/Dragonball canaries as it returns. Complete all node acceptance
    and verify Omni convergence after unlocking before starting Kubernetes. Retain the existing
    Altra EFI and Turin BMC recovery procedures in `docs/runbooks/talos-latest-upgrade-plan.md` for their exact documented
    failure conditions.

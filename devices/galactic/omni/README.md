@@ -58,14 +58,14 @@ already-started machine before changing another. Rerender, validate, dry-run, an
 `systemExtensions` is a customization request, not immutable artifact proof. Image Factory hashes the ordered request
 into a schematic ID, while the catalog can later resolve an extension name to a new digest. The same schematic ID and
 Talos version may therefore still address a cached installer built from an older catalog. Before each sync, use the
-artifact identity gate in `docs/runbooks/talos-latest-upgrade-plan.md` to tie the exact generated installer to the
+current [artifact identity gate](../releases/README.md#artifact-identity-gate) to tie the exact generated installer to the
 signed Kata digest. `MachineUpgradeStatus: machine is up to date`, a matching schematic ID, and extension version
 `4.1.0` prove convergence to that installer; they do not prove which extension digest built it.
 
 When a reviewed cache rebuild changes the installer manifest digest but leaves both the schematic ID and Talos version
 unchanged, Omni has no desired-state difference and correctly creates no new machine task. Do not mutate the template
 or fake a version change to force one. After proving there is no active Omni operation, use only the target-specific,
-already-drained same-schematic replacement procedure in `docs/runbooks/talos-latest-upgrade-plan.md`, then return to
+already-drained [same-schematic replacement procedure](../releases/README.md#same-schematic-artifact-replacement), then return to
 Omni ownership and the normal runtime-acceptance sequence.
 
 Omni's normal lifecycle cordons and drains before the installer reboot, then `FinalizeReboot` uncordons the Kubernetes
@@ -82,7 +82,7 @@ direct pull of the same host without the mirror defaults to HTTPS and is not an 
 
 Never commit the raw or rendered templates. Delete both temporary files after the operation. Follow the current
 [Talos 1.14 and Kubernetes 1.37 release procedure](../releases/README.md) for preflight, runtime proof, and recovery.
-`docs/runbooks/talos-latest-upgrade-plan.md` retains the preceding release's artifact and hardware-recovery evidence.
+`docs/runbooks/talos-latest-upgrade-plan.md` retains historical evidence and the referenced hardware-recovery procedures.
 
 ## PodCIDR maintenance checks
 
