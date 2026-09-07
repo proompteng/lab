@@ -4,11 +4,18 @@
 `galactic` cluster. It preserves every imported machine patch, removes the stale imported `machine.install.image`
 overrides so Omni can derive installers from schematics, and references the Elauwit Image Factory registry patch.
 
-The Talos 1.14 rollout uses Omni 1.11 and keeps Kubernetes at 1.36.4 until OS and workload acceptance pass. Each
+The template targets Talos 1.14.0 and Kubernetes 1.37.0 through Omni 1.11. Complete the Talos phase and its workload
+acceptance before syncing the Kubernetes change. The Talos-only template from the preceding release commit retains
+Kubernetes 1.36.4 for that phase. Each
 Machine's `install.diskSelector` selects its verified system-disk serial, replacing the imported `machine.install.disk`
 field while preserving the other install options. See the [release procedure](../releases/README.md) for artifact
 verification, rolling upgrades, acceptance, and recovery. Control-plane upgrades use `maxParallelism: 1`; individual
 control-plane locks are unsupported.
+
+For the Talos-only handoff, use the [pinned extraction and rendering commands](../releases/README.md) before the
+workflow below. They extract the Talos-phase template and its registry sidecar from the exact preceding commit and
+pass `--template` explicitly. The default renderer invocation below consumes the current Kubernetes 1.37 template;
+use it only after Talos acceptance and the atomic Talos target/lock update are complete.
 
 Do not sync the checked-in file directly. Its six placeholders must be rendered into a temporary mode-`0600` file.
 Either provide `GALACTIC_TAILSCALE_AUTH_KEY` and `GALACTIC_OMNI_JOIN_TOKEN`, or extract the existing values from a fresh
@@ -51,14 +58,14 @@ already-started machine before changing another. Rerender, validate, dry-run, an
 `systemExtensions` is a customization request, not immutable artifact proof. Image Factory hashes the ordered request
 into a schematic ID, while the catalog can later resolve an extension name to a new digest. The same schematic ID and
 Talos version may therefore still address a cached installer built from an older catalog. Before each sync, use the
-artifact identity gate in `docs/runbooks/talos-latest-upgrade-plan.md` to tie the exact generated installer to the
+current [artifact identity gate](../releases/README.md#artifact-identity-gate) to tie the exact generated installer to the
 signed Kata digest. `MachineUpgradeStatus: machine is up to date`, a matching schematic ID, and extension version
 `4.1.0` prove convergence to that installer; they do not prove which extension digest built it.
 
 When a reviewed cache rebuild changes the installer manifest digest but leaves both the schematic ID and Talos version
 unchanged, Omni has no desired-state difference and correctly creates no new machine task. Do not mutate the template
 or fake a version change to force one. After proving there is no active Omni operation, use only the target-specific,
-already-drained same-schematic replacement procedure in `docs/runbooks/talos-latest-upgrade-plan.md`, then return to
+already-drained [same-schematic replacement procedure](../releases/README.md#same-schematic-artifact-replacement), then return to
 Omni ownership and the normal runtime-acceptance sequence.
 
 Omni's normal lifecycle cordons and drains before the installer reboot, then `FinalizeReboot` uncordons the Kubernetes
@@ -73,8 +80,9 @@ the cluster template first installs an explicit `RegistryMirrorConfig` whose `na
 reference host, including port. Talos honors that mirror for its own installer pull as well as containerd pulls. A
 direct pull of the same host without the mirror defaults to HTTPS and is not an equivalent test.
 
-Never commit the raw or rendered templates. Delete both temporary files after the operation. The full preflight,
-runtime proof, and rollback procedure is in `docs/runbooks/talos-latest-upgrade-plan.md`.
+Never commit the raw or rendered templates. Delete both temporary files after the operation. Follow the current
+[Talos 1.14 and Kubernetes 1.37 release procedure](../releases/README.md) for preflight, runtime proof, and recovery.
+`docs/runbooks/talos-latest-upgrade-plan.md` retains historical evidence and the referenced hardware-recovery procedures.
 
 ## PodCIDR maintenance checks
 
