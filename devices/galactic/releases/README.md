@@ -126,6 +126,16 @@ Stop progression on a failed node while the two other etcd members continue serv
 boot identity and installer receipt. Use the accepted prior installer for that exact machine only through the recorded
 recovery procedure; never reset the machine or change its disk selector to an enumerated disk guessed from another boot.
 
+Altra's 2 GiB EFI partition can fill with inactive, timestamped UKI backups. A `no space left on device` error during
+the UKI copy is not the accepted EFI-variable exception: retain the running OS and do not reboot. Inspect only the
+EFI partition of system-disk serial `2441E98EAAFB` through its stable by-id path. Trim whitespace when comparing the
+sysfs serial, which is padded on this device. Mount read-only first and record the active UKI, inactive backups,
+partial new image, their sizes, and SHA-256 hashes. Archive only the identified inactive backups off the node and
+verify each archived file against its on-node hash before removing those copies. Verify the active UKI remains
+unchanged. Remove the incomplete new image only after confirming it is smaller than, and does not match, the
+installer receipt. Unmount the EFI partition and rerun the same verified installer. Apply the documented EFI-variable
+recovery only if the new UKI is complete and matches the receipt; retain the current active image as its rollback.
+
 Turin's Kingston Ceph metadata NVMe can fail to enumerate after a firmware reboot. Keep Turin drained until serial
 `50026B76878F0B27` and its existing OSDs return. If a PCI rescan does not restore it, a verified local `/dev/ipmi0`
 interface provides an in-band path for the authorized chassis power cycle. Use a temporary privileged Pod pinned to
