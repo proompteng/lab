@@ -129,6 +129,19 @@ beforeAll(async () => {
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
+      if (call.request.path === '/workspace/revision.txt' || call.request.path === '/workspace/wrong-revision.txt') {
+        const content = Buffer.from('versioned content\n')
+        callback(null, {
+          path: String(call.request.path),
+          content,
+          contentType: 'text/plain',
+          revision:
+            call.request.path === '/workspace/revision.txt'
+              ? createHash('sha256').update(content).digest('hex')
+              : '0'.repeat(64),
+        })
+        return
+      }
       if (call.request.path === '/workspace/bom.txt') {
         callback(null, {
           path: String(call.request.path),
@@ -141,6 +154,29 @@ beforeAll(async () => {
         path: String(call.request.path),
         content: Buffer.from([0xff, 0xfe, 0x00]),
         contentType: 'application/octet-stream',
+      })
+    },
+    writeFile(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedRequest = call.request
+      receivedMetadata = call.metadata
+      if (call.request.expectedRevision === '0'.repeat(64)) {
+        callback(serviceError(grpc.status.ALREADY_EXISTS, 'private guest conflict details'), null)
+        return
+      }
+      if (!Buffer.isBuffer(call.request.content)) {
+        callback(serviceError(grpc.status.INVALID_ARGUMENT, 'content bytes missing'), null)
+        return
+      }
+      callback(null, {
+        path: call.request.path,
+        size: call.request.content.byteLength,
+        revision:
+          call.request.path === '/workspace/unconfirmed.txt'
+            ? ''
+            : createHash('sha256').update(call.request.content).digest('hex'),
       })
     },
     searchFiles(
@@ -293,6 +329,53 @@ describe('Tengri gRPC BFF transport', () => {
       message: 'This file is not valid UTF-8 text',
       status: 415,
     })
+  })
+
+  test('verifies file content revisions and rejects a mismatched read receipt', async () => {
+    const { readFile } = await import('./grpc')
+    const result = await readFile('github:42', 'agent-test', '/workspace/revision.txt')
+    expect(result).toMatchObject({
+      content: 'versioned content\n',
+      revision: createHash('sha256').update('versioned content\n').digest('hex'),
+    })
+    expect(await rejection(readFile('github:42', 'agent-test', '/workspace/wrong-revision.txt'))).toMatchObject({
+      status: 503,
+    })
+  })
+
+  test('signs the file precondition and refuses unconfirmed save receipts', async () => {
+    const { writeFile } = await import('./grpc')
+    const content = 'saved content\n'
+    const expectedRevision = 'a'.repeat(64)
+    const result = await writeFile('github:42', 'agent-test', '/workspace/revision.txt', content, expectedRevision)
+    expect(receivedRequest).toMatchObject({
+      expectedRevision,
+      path: '/workspace/revision.txt',
+      content: Buffer.from(content),
+    })
+    expect(result).toEqual({
+      path: '/workspace/revision.txt',
+      size: Buffer.byteLength(content),
+      revision: createHash('sha256').update(content).digest('hex'),
+    })
+    const method = descriptor.proompteng.runtime.v1.MicroVMControlPlane.service.WriteFile
+    const bodyHash = createHash('sha256').update(method.requestSerialize(receivedRequest)).digest('hex')
+    expect(metadataValue('x-tengri-signature')).toBe(
+      createHmac('sha256', secret)
+        .update(
+          `${metadataValue('x-tengri-subject')}\n${metadataValue('x-tengri-timestamp')}\n${metadataValue('x-tengri-nonce')}\n${method.path}\n${bodyHash}`,
+        )
+        .digest('hex'),
+    )
+    expect(
+      await rejection(writeFile('github:42', 'agent-test', '/workspace/unconfirmed.txt', content, expectedRevision)),
+    ).toMatchObject({ status: 503 })
+    expect(
+      await rejection(writeFile('github:42', 'agent-test', '/workspace/revision.txt', content, '0'.repeat(64))),
+    ).toMatchObject({ status: 409, code: 'file_conflict' })
+    expect(await rejection(writeFile('github:42', 'agent-test', '/workspace/revision.txt', content, ''))).toMatchObject(
+      { status: 400 },
+    )
   })
 
   test('preserves bounded file-search metadata from the control plane', async () => {

@@ -72,17 +72,29 @@ const MemoizedSettingsApp = memo(SettingsApp)
 
 const MemoizedCodeEditor = memo(function MemoizedCodeEditor({
   agentId,
+  agentCreatedAt,
+  ownerId,
   onDirtyChange,
   request,
   windowId,
 }: {
   agentId: string
+  agentCreatedAt: string
+  ownerId: string
   onDirtyChange: (windowId: string, dirty: boolean) => void
   request: CodeOpenRequest | null
   windowId: string
 }) {
   const handleDirtyChange = useCallback((dirty: boolean) => onDirtyChange(windowId, dirty), [onDirtyChange, windowId])
-  return <CodeEditor agentId={agentId} onDirtyChange={handleDirtyChange} request={request} />
+  return (
+    <CodeEditor
+      agentId={agentId}
+      agentCreatedAt={agentCreatedAt}
+      ownerId={ownerId}
+      onDirtyChange={handleDirtyChange}
+      request={request}
+    />
+  )
 })
 
 const getServerGuestOperationSnapshot = () => false
@@ -799,7 +811,10 @@ export function ReadyDesktop({
                 />
               ) : desktopWindow.app === 'code' ? (
                 <MemoizedCodeEditor
+                  key={JSON.stringify([user.id, agent.id, agent.createdAt])}
                   agentId={agent.id}
+                  agentCreatedAt={agent.createdAt}
+                  ownerId={user.id}
                   onDirtyChange={handleCodeDirtyChange}
                   request={codeRequest?.targetWindowId === desktopWindow.id ? codeRequest : null}
                   windowId={desktopWindow.id}
