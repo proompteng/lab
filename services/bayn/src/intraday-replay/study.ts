@@ -3,7 +3,7 @@ import { Effect, Result, Schema } from 'effect'
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
 import { makeStrategyProtocolHashResult } from '../contracts'
 import { canonicalHashV1Result } from '../hash'
-import type { IntradayMarketDataService } from '../market-data'
+import { ArchiveAvailabilityPolicy, type ReplayMarketDataService } from '../market-data/intraday/availability'
 import { loadQuoteBoundExecutionRiskPolicy } from '../observe-composition/decision-builder'
 import { Sha256Schema, strictParseOptions, UtcInstantSchema } from '../schemas'
 import { activeStrategyBehaviorHash, activeStrategyName } from '../strategy'
@@ -39,10 +39,12 @@ export const ArchiveReplayStudyInputSchema = StudyBase.check(
         calendar: input.calendar,
         initialCapitalMicros: input.initialCapitalMicros,
         allocationCapitalMicros: input.allocationCapitalMicros,
+        archiveAvailability: input.archiveAvailability ?? ArchiveAvailabilityPolicy.RecordedReader,
       })
       if (Result.isFailure(material)) return 'study calendar and capital must be canonically hashable'
       expected ??= material.success
-      if (expected !== material.success) return 'all scenarios must use the same calendar, range, and capital'
+      if (expected !== material.success)
+        return 'all scenarios must use the same calendar, range, capital, and archive availability policy'
     }
     return undefined
   }),
@@ -120,7 +122,7 @@ const verifyStudyIdentity = (input: ArchiveReplayStudyInput) =>
 
 export const runArchiveReplayStudy = (
   input: ArchiveReplayStudyInput,
-  marketData: IntradayMarketDataService,
+  marketData: ReplayMarketDataService,
   now: string,
   onSessionComplete: (evidence: ArchiveReplayStudySessionEvidence) => Effect.Effect<void, IntradayReplayFailure> = () =>
     Effect.void,

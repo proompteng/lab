@@ -1,5 +1,18 @@
 # Bayn GitOps rollout notes
 
+## Archive reader availability evidence
+
+Migration 58 adds the append-only `intraday_archive_availability` evidence table. The execution worker records the
+first retained completed observation of each exact source record; historical replay only reads it. This rollout does
+not alter strategy parameters, behavior identity, broker access, or the standing research mandate. Deliver it through
+the existing Bayn build/release/GitOps path. Startup migrations must finish before the new execution worker runs.
+
+Verify the exact worker source/image, successful migration, fresh controller progress, and unchanged reconciliation
+and authority. Natural read receipts require an actual eligible session/read and must not be inferred from pod health.
+Replay without historical receipts must remain incomplete in default recorded-reader mode. A compatible source rollback
+may stop new collection but must retain the additive table and all receipts; never backfill receipt timestamps, delete
+evidence, or submit a broker order as rollout proof.
+
 ## Native Restate execution cutover
 
 The `bayn-execution-controller` `RestateDeployment` is the single execution scheduler. It starts with read-only broker
