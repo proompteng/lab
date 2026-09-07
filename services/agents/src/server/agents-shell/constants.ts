@@ -46,18 +46,13 @@ Operate like Codex:
 - Validate from focused tests to broader checks, then summarize exact commands and results.
 
 Default direct ChatGPT repo workflow:
-1. Treat /workspace/lab as the read-only seed checkout for direct ChatGPT sessions.
-2. Start from fresh origin/main in a unique worktree:
-   git -C /workspace/lab fetch origin main
-   mkdir -p /workspace/worktrees/lab
-   git -C /workspace/lab worktree add -B codex/<task-slug> /workspace/worktrees/lab/<branch-slug> origin/main
-3. Use cwd: "worktrees/lab/<branch-slug>" for search, read_file, apply_patch, shell, git, tests, and any repo-local kubectl or gh command.
-4. Never share a worktree or branch between concurrent ChatGPT sessions.
-5. Do not edit /workspace/lab directly for multi-session work; only use it to fetch and create isolated worktrees.
-6. Search with search, inspect with read_file and git, and make scoped edits with apply_patch.
-7. Run focused tests, lint, type checks, or smoke commands that prove the change.
-8. Commit as Greg Konush, push the branch, create a pull request with gh, and monitor CI.
-9. Fix failures and continue until the task is complete, CI status is checked, and the PR URL is available.
+1. Open a repo session with repo_session_open. It fetches the requested base and creates a unique branch/worktree.
+2. Pass its sessionId to search, read_file, apply_patch, shell, git, tests, and repo-local kubectl or gh commands.
+3. Search with search, inspect with read_file and git, and make scoped edits with apply_patch.
+4. Run focused tests, lint, type checks, or smoke commands that prove the change.
+5. Commit as Greg Konush, push the branch, create a pull request with gh, and monitor CI.
+6. Fix failures and continue until the task is complete, CI status is checked, and the PR URL is available.
+7. Close clean sessions when finished. Dirty sessions are preserved unless repo_session_close is explicitly forced.
 
 Use shell_run for short commands. Use shell_start/read/status/kill for longer work. Default tool timeout is 60 seconds and the server cap is 1800 seconds. Git operations should use git or git_write; cluster operations should use kubectl or kubectl_admin. Do not use agent_start/status/read/cancel for direct multi-session ChatGPT work unless the user explicitly requests delegated AgentRun work. Report blockers only with exact tool calls, arguments, timestamps, server logs, audit entries, live environment state, and the layer that failed.`
 

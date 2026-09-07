@@ -1,5 +1,7 @@
 import AxeBuilder from '@axe-core/playwright'
-import { expect, test, type Locator, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page, type WebSocketRoute } from '@playwright/test'
+import { createHash } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
 
 const user = {
   id: '424242',
@@ -67,6 +69,10 @@ function previewSessionToken(sequence: number) {
   return `${'c'.repeat(47)}${sequence.toString(36)}.${'d'.repeat(43)}`
 }
 
+function mockRevision(content: string) {
+  return createHash('sha256').update(content).digest('hex')
+}
+
 function previewBootstrapDocument() {
   return '<!doctype html><meta charset="utf-8"><title>Tengri Preview</title><script src="/_tengri/bootstrap.js" defer></script>'
 }
@@ -127,6 +133,7 @@ type MockOptions = {
   activeCodexLogin?: boolean
   authenticated?: boolean
   agent?: typeof readyAgent | null
+  blockDraftStorage?: boolean
   codexAuthenticated?: boolean
   deferSleepReconciliation?: boolean
   extraFiles?: typeof workspaceEntries
@@ -136,6 +143,7 @@ type MockOptions = {
   holdCodexAccountAfterLogin?: boolean
   holdLifecycleAction?: 'delete-agent' | 'sleep-agent'
   holdReplayResume?: boolean
+  legacyFileRevision?: boolean
   resumeThreadDelayMs?: number
   resumeThreadEventSequence?: number
   resumeThreadItemEventSequences?: Record<string, number>
@@ -143,6 +151,7 @@ type MockOptions = {
   resumeThreadRawJson?: string
   searchDelays?: Record<string, number>
   searchTruncated?: boolean
+  preserveDraftStorageOnReload?: boolean
   terminalStore?: TerminalStore
 }
 
@@ -150,7 +159,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   let agent = options.agent === undefined ? readyAgent : options.agent
   let snapshotFailuresRemaining = 0
   let snapshotRequests = 0
-  const authenticated = options.authenticated ?? true
+  let authenticated = options.authenticated ?? true
   const actions: Record<string, unknown>[] = []
   let resumeThreadRequests = 0
   let resumeThreadResponses = 0
@@ -159,6 +168,16 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   let searchRequestsInFlight = 0
   let maxConcurrentSearchRequests = 0
   const readFileFailures = new Map<string, number>()
+  const heldReads = new Map<
+    string,
+    {
+      consumed: boolean
+      markStarted: () => void
+      promise: Promise<void>
+      release: () => void
+      started: Promise<void>
+    }
+  >()
   let previewSessionSequence = 0
   let holdNextPreviewSession = false
   const pendingPreviewLaunches: Array<{
@@ -202,9 +221,12 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   })
   let files = [...workspaceEntries, ...sourceEntries, ...(options.extraFiles ?? [])]
   const terminalStore = options.terminalStore ?? { sessions: [] }
+  const terminalSockets: WebSocketRoute[] = []
+  const terminalInput: string[] = []
   const contents = new Map<string, string>([
     ['/README.md', '# Tengri\n\nA persistent Firecracker workspace.\n'],
     ['/package.json', '{\n  "name": "tengri-workspace"\n}\n'],
+    ['/src/main.ts', 'export const main = true\n'],
   ])
 
   page.on('pageerror', (error) => console.error(`[browser:pageerror] ${error.stack ?? error.message}`))
@@ -213,63 +235,94 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   })
 
   await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
-  await page.addInitScript(() => {
-    try {
-      localStorage.clear()
-    } catch {
-      // Sandboxed preview bootstrap documents can have an opaque origin before navigation.
-    }
-    const NativeEventSource = window.EventSource
-    const eventSourceState = { fileClosed: 0, fileOpened: 0 }
-    const eventSources: HealthyEventSource[] = []
-    Object.defineProperty(window, '__tengriTestEventSources', {
-      configurable: true,
-      value: eventSourceState,
-    })
-    class HealthyEventSource extends EventTarget {
-      static readonly CLOSED = 2
-      static readonly CONNECTING = 0
-      static readonly OPEN = 1
-      readonly CLOSED = 2
-      readonly CONNECTING = 0
-      readonly OPEN = 1
-      closed = false
-      readonly readyState = 1
-      readonly url: string
-      readonly withCredentials = false
-      onerror: ((event: Event) => void) | null = null
-      onmessage: ((event: MessageEvent) => void) | null = null
-      onopen: ((event: Event) => void) | null = null
-      readonly tracksFiles: boolean
-
-      constructor(url: string | URL) {
-        super()
-        this.url = String(url)
-        this.tracksFiles = new URL(this.url, window.location.href).pathname === '/api/tengri/files/events'
-        eventSources.push(this)
-        if (this.tracksFiles) eventSourceState.fileOpened += 1
-        queueMicrotask(() => this.onopen?.(new Event('open')))
+  await page.addInitScript(
+    ({ blockDraftStorage, clearDraftStorage }: { blockDraftStorage: boolean; clearDraftStorage: boolean }) => {
+      if (clearDraftStorage) {
+        try {
+          localStorage.clear()
+        } catch {
+          // Sandboxed preview bootstrap documents can have an opaque origin before navigation.
+        }
       }
-
-      close() {
-        this.closed = true
-        if (this.tracksFiles) eventSourceState.fileClosed += 1
+      if (blockDraftStorage) {
+        try {
+          const nativeStorage = localStorage
+          const blockedStorage = new Proxy(nativeStorage, {
+            get(target, property) {
+              if (property === 'length') {
+                throw new DOMException('Storage is blocked for this test', 'QuotaExceededError')
+              }
+              if (property === 'getItem' || property === 'key' || property === 'removeItem' || property === 'setItem') {
+                return () => {
+                  throw new DOMException('Storage is blocked for this test', 'QuotaExceededError')
+                }
+              }
+              return Reflect.get(target, property, target)
+            },
+          })
+          Object.defineProperty(window, 'localStorage', { configurable: true, value: blockedStorage })
+        } catch {
+          // The browser may expose an immutable localStorage property on opaque origins.
+        }
       }
-    }
-    const SelectiveEventSource = new Proxy(NativeEventSource, {
-      construct(target, args) {
-        const [url] = args as [string | URL]
-        const destination = new URL(String(url), window.location.href)
-        if (!destination.pathname.startsWith('/api/tengri/')) return Reflect.construct(target, args)
-        return new HealthyEventSource(url)
-      },
-    })
-    Object.defineProperty(window, 'EventSource', { configurable: true, value: SelectiveEventSource })
-    Object.defineProperty(window, '__tengriEventSources', { configurable: true, value: eventSources })
-  })
+      const NativeEventSource = window.EventSource
+      const eventSourceState = { fileClosed: 0, fileOpened: 0 }
+      const eventSources: HealthyEventSource[] = []
+      Object.defineProperty(window, '__tengriTestEventSources', {
+        configurable: true,
+        value: eventSourceState,
+      })
+      class HealthyEventSource extends EventTarget {
+        static readonly CLOSED = 2
+        static readonly CONNECTING = 0
+        static readonly OPEN = 1
+        readonly CLOSED = 2
+        readonly CONNECTING = 0
+        readonly OPEN = 1
+        closed = false
+        readonly readyState = 1
+        readonly url: string
+        readonly withCredentials = false
+        onerror: ((event: Event) => void) | null = null
+        onmessage: ((event: MessageEvent) => void) | null = null
+        onopen: ((event: Event) => void) | null = null
+        readonly tracksFiles: boolean
+
+        constructor(url: string | URL) {
+          super()
+          this.url = String(url)
+          this.tracksFiles = new URL(this.url, window.location.href).pathname === '/api/tengri/files/events'
+          eventSources.push(this)
+          if (this.tracksFiles) eventSourceState.fileOpened += 1
+          queueMicrotask(() => this.onopen?.(new Event('open')))
+        }
+
+        close() {
+          this.closed = true
+          if (this.tracksFiles) eventSourceState.fileClosed += 1
+        }
+      }
+      const SelectiveEventSource = new Proxy(NativeEventSource, {
+        construct(target, args) {
+          const [url] = args as [string | URL]
+          const destination = new URL(String(url), window.location.href)
+          if (!destination.pathname.startsWith('/api/tengri/')) return Reflect.construct(target, args)
+          return new HealthyEventSource(url)
+        },
+      })
+      Object.defineProperty(window, 'EventSource', { configurable: true, value: SelectiveEventSource })
+      Object.defineProperty(window, '__tengriEventSources', { configurable: true, value: eventSources })
+    },
+    {
+      blockDraftStorage: options.blockDraftStorage ?? false,
+      clearDraftStorage: !options.preserveDraftStorageOnReload,
+    },
+  )
   await page.routeWebSocket('ws://127.0.0.1:8080/**', (socket) => {
+    terminalSockets.push(socket)
     let ready = false
-    socket.onMessage(() => {
+    socket.onMessage((message) => {
+      if (typeof message !== 'string') terminalInput.push(message.toString('utf8'))
       if (ready) return
       ready = true
       socket.send(
@@ -297,6 +350,10 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
       contentType: 'text/html',
       body: `<!doctype html><title>Opening preview</title><script>location.replace(${JSON.stringify(launchLocations)}[decodeURIComponent(location.hash.slice(1))])</script>`,
     })
+  })
+  await page.route('**/api/auth/sign-out', async (route) => {
+    authenticated = false
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ success: true }) })
   })
   await page.context().route('**/*', async (route) => {
     const url = new URL(route.request().url())
@@ -435,25 +492,56 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
           })
           return
         }
-        result = {
-          path: action.path,
-          content: contents.get(String(action.path)) ?? '',
-          contentType: 'text/markdown; charset=utf-8',
+        {
+          const path = String(action.path)
+          const heldRead = heldReads.get(path)
+          if (heldRead && !heldRead.consumed) {
+            heldRead.consumed = true
+            heldRead.markStarted()
+            await heldRead.promise
+            heldReads.delete(path)
+          }
+          const content = contents.get(path)
+          if (content === undefined) {
+            await route.fulfill({
+              status: 404,
+              contentType: 'application/json',
+              body: JSON.stringify({ error: 'File not found' }),
+            })
+            return
+          }
+          result = {
+            path,
+            content,
+            contentType: 'text/markdown; charset=utf-8',
+            revision: options.legacyFileRevision ? '' : mockRevision(content),
+          }
         }
         break
       case 'write-file': {
         const path = String(action.path)
-        contents.set(path, String(action.content))
+        const content = String(action.content)
+        const currentContent = contents.get(path)
+        const currentRevision = currentContent === undefined ? 'missing' : mockRevision(currentContent)
+        if (action.expectedRevision !== currentRevision) {
+          await route.fulfill({
+            status: 409,
+            contentType: 'application/json',
+            body: JSON.stringify({ error: 'File changed on the guest', code: 'file_conflict' }),
+          })
+          return
+        }
+        contents.set(path, content)
         if (!files.some((entry) => entry.path === path)) {
           files.push({
             name: path.slice(path.lastIndexOf('/') + 1),
             path,
             directory: false,
-            size: String(action.content).length,
+            size: content.length,
             modifiedAt: '2026-08-26T12:34:00.000Z',
           })
         }
-        result = { path }
+        result = { path, size: Buffer.byteLength(content), revision: mockRevision(content) }
         break
       }
       case 'create-directory': {
@@ -641,6 +729,8 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
 
   return {
     actions,
+    terminalSockets,
+    terminalInput,
     completeSleepReconciliation: () => {
       agent = agent ? { ...agent, phase: 'sleeping' } : agent
     },
@@ -654,6 +744,17 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
     getMaxConcurrentSearchRequests: () => maxConcurrentSearchRequests,
     getResumeThreadResponseCount: () => resumeThreadResponses,
     getSnapshotRequestCount: () => snapshotRequests,
+    holdNextRead: (path: string) => {
+      let markStarted = () => {}
+      let release = () => {}
+      const started = new Promise<void>((resolve) => {
+        markStarted = resolve
+      })
+      const promise = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      heldReads.set(path, { consumed: false, markStarted, promise, release, started })
+    },
     holdNextPreviewSession: () => {
       holdNextPreviewSession = true
     },
@@ -664,12 +765,37 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
     releaseHeldLifecycleAction,
     releaseHeldPreviewSession,
     releaseHeldResume,
+    releaseHeldRead: (path: string) => {
+      heldReads.get(path)?.release()
+    },
+    deleteFileContent: (path: string) => {
+      contents.delete(path)
+    },
+    renameFileContent: (sourcePath: string, destinationPath: string) => {
+      files = files.map((entry) => {
+        if (entry.path !== sourcePath && !entry.path.startsWith(`${sourcePath}/`)) return entry
+        const path = destinationPath + entry.path.slice(sourcePath.length)
+        return { ...entry, path, name: path.slice(path.lastIndexOf('/') + 1) }
+      })
+      if (contents.has(sourcePath)) {
+        contents.set(destinationPath, contents.get(sourcePath) ?? '')
+        contents.delete(sourcePath)
+      }
+    },
+    setFileContent: (path: string, content: string) => {
+      contents.set(path, content)
+    },
     setAgent: (nextAgent: typeof readyAgent | null) => {
       agent = nextAgent
     },
     waitForHeldLifecycleAction: () => heldLifecycleActionStarted,
     waitForHeldCodexAccount: () => heldCodexAccountStarted,
     waitForHeldResume: () => heldResumeStarted,
+    waitForHeldRead: (path: string) => {
+      const heldRead = heldReads.get(path)
+      if (!heldRead) throw new Error(`No held read for ${path}`)
+      return heldRead.started
+    },
     waitForHeldPreviewSession: () => heldPreviewSessionStarted,
   }
 }
@@ -827,7 +953,9 @@ test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and win
   await expect(fileMenu).toBeFocused()
   await page.keyboard.press('Enter')
   await page.getByRole('menuitem', { name: /^New .* Window/ }).press('Enter')
-  await expect(fileMenu).toBeFocused()
+  const settingsWindows = page.getByRole('region', { name: 'Settings window' })
+  await expect(settingsWindows).toHaveCount(2)
+  await expect(settingsWindows.last()).toBeFocused()
 
   await dock.getByRole('button', { name: 'Open Finder' }).click()
   const finder = page.getByRole('region', { name: 'Finder window' })
@@ -921,6 +1049,50 @@ test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and win
   await expect(page.getByRole('region', { name: 'Terminal window' })).toHaveCount(1)
   await expect.poll(() => mock.actions.some((action) => action.action === 'terminate-terminal')).toBe(true)
   expect(terminalDisposeFailures).toEqual([])
+})
+
+test('disables terminal input while connecting and reconnecting without replaying blocked keystrokes', async ({
+  page,
+}) => {
+  const mock = await mockTengri(page)
+  let releaseTicket = () => {}
+  let ticketGate = new Promise<void>((resolve) => {
+    releaseTicket = resolve
+  })
+  await page.route('**/api/tengri', async (route) => {
+    const request = route.request()
+    if (request.method() === 'POST' && request.postDataJSON().action === 'terminal-ticket') await ticketGate
+    await route.fallback()
+  })
+  await page.goto('/')
+  await page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Terminal' }).click()
+  const terminal = page.getByRole('region', { name: 'Terminal window' })
+  const input = terminal.locator('.xterm-helper-textarea')
+  await expect(input).toHaveJSProperty('readOnly', true)
+  await input.focus()
+  await page.keyboard.type('BLOCKED_INITIAL')
+  releaseTicket()
+  await expect(terminal.locator('[data-connection-state="connected"]')).toBeAttached()
+  await expect(input).toHaveJSProperty('readOnly', false)
+  await input.focus()
+  await page.keyboard.type('connected')
+  await expect.poll(() => mock.terminalInput.join('')).toBe('connected')
+
+  ticketGate = new Promise<void>((resolve) => {
+    releaseTicket = resolve
+  })
+  await mock.terminalSockets[0]!.close({ code: 1012, reason: 'Release reconnect test' })
+  await expect(terminal.locator('[data-connection-state="reconnecting"]')).toBeAttached()
+  await expect(input).toHaveJSProperty('readOnly', true)
+  await input.focus()
+  await page.keyboard.type('BLOCKED_RECONNECT')
+  releaseTicket()
+  await expect(terminal.locator('[data-connection-state="connected"]')).toBeAttached()
+  await expect(input).toHaveJSProperty('readOnly', false)
+  await input.focus()
+  await page.keyboard.type('resumed')
+  await expect.poll(() => mock.terminalInput.join('')).toBe('connectedresumed')
+  expect(mock.terminalSockets).toHaveLength(2)
 })
 
 test('keeps the terminal background continuous through its gutters after resizing', async ({ page }, testInfo) => {
@@ -1312,6 +1484,301 @@ test('persists real Finder changes into Code and exposes a localhost preview fro
     .toBe(true)
 })
 
+test('preserves the latest dirty text across an external rename and recovers it at the new path', async ({ page }) => {
+  const mock = await mockTengri(page, { preserveDraftStorageOnReload: true })
+  await page.goto('/')
+
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  await dock.getByRole('button', { name: 'Open Finder' }).click()
+  const finder = page.getByRole('region', { name: 'Finder window' })
+  await finder.getByRole('button', { name: /README\.md/ }).click()
+  await finder.getByRole('button', { name: 'Open selected file in Code' }).click()
+
+  const code = page.getByRole('region', { name: 'Code window' })
+  const editor = code.locator('.monaco-editor')
+  const content = '# Latest text after an external rename'
+  await expect(editor).toHaveCount(1)
+  await editor.click()
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a')
+  await page.keyboard.insertText(content)
+  await expect(editor.locator('.view-line').first()).toContainText(content)
+
+  mock.renameFileContent('/README.md', '/README-renamed.md')
+  await emitFileEvent(page, '/', {
+    kind: 'renamed',
+    path: '/README-renamed.md',
+    previousPath: '/README.md',
+    sequence: 1,
+  })
+
+  await expect(code.getByRole('tab', { name: /README-renamed\.md/ })).toBeVisible()
+  await expect(editor.locator('.view-line').first()).toContainText(content)
+  expect(mock.actions.filter((action) => action.action === 'write-file')).toHaveLength(0)
+
+  await page.reload()
+  const reloadedDock = page.getByRole('navigation', { name: 'Dock' })
+  const reloadedCode = page.getByRole('region', { name: 'Code window' })
+  await reloadedDock.getByRole('button', { name: 'Open Finder' }).click()
+  const reloadedFinder = page.getByRole('region', { name: 'Finder window' })
+  await expect(reloadedFinder.getByRole('status')).toHaveCount(0)
+  await reloadedFinder.getByRole('button', { name: /README-renamed\.md/ }).click()
+  await reloadedFinder.getByRole('button', { name: 'Open selected file in Code' }).click()
+  await expect(reloadedCode.getByRole('tab', { name: /README-renamed\.md/ })).toBeVisible()
+  await expect(reloadedCode.getByRole('alert').filter({ hasText: 'recoverable draft' })).toBeVisible()
+  await reloadedCode.getByRole('button', { name: 'Recover draft' }).click()
+  await expect
+    .poll(() =>
+      mock.actions.some(
+        (action) =>
+          action.action === 'write-file' && action.path === '/README-renamed.md' && action.content === content,
+      ),
+    )
+    .toBe(true)
+})
+
+test('recovers a dirty Code draft after a forced sleep unmount and browser reload', async ({ page }) => {
+  const mock = await mockTengri(page, {
+    preserveDraftStorageOnReload: true,
+  })
+  await page.goto('/')
+
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  await dock.getByRole('button', { name: 'Open Finder' }).click()
+  const finder = page.getByRole('region', { name: 'Finder window' })
+  await finder.getByRole('button', { name: /README\.md/ }).click()
+  await finder.getByRole('button', { name: 'Open selected file in Code' }).click()
+
+  const code = page.getByRole('region', { name: 'Code window' })
+  const editor = code.locator('.monaco-editor')
+  await expect(editor).toHaveCount(1)
+  await editor.click()
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a')
+  await page.keyboard.type('# Preserved through lifecycle')
+
+  mock.setAgent({ ...readyAgent, phase: 'sleeping' })
+  await expect.poll(() => mock.getAgent()?.phase).toBe('sleeping')
+  expect(mock.actions.filter((action) => action.action === 'write-file' && action.path === '/README.md')).toHaveLength(
+    0,
+  )
+  await page.reload()
+
+  const sleeping = page.getByRole('dialog', { name: 'Tengri is sleeping' })
+  await expect(sleeping).toBeVisible()
+  await sleeping.getByRole('button', { name: 'Resume Agent' }).click()
+  await expect(dock).toBeVisible()
+  await expect.poll(() => mock.getAgent()?.phase).toBe('ready')
+  await dock.getByRole('button', { name: 'Open Finder' }).click()
+  const resumedFinder = page.getByRole('region', { name: 'Finder window' })
+  await resumedFinder.getByRole('button', { name: /README\.md/ }).click()
+  await resumedFinder.getByRole('button', { name: 'Open selected file in Code' }).click()
+  await expect(code.getByRole('tab', { name: /README\.md/ })).toBeVisible()
+  await expect(code.getByRole('alert').filter({ hasText: 'recoverable draft' })).toBeVisible()
+
+  await page.reload()
+  await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
+  const reloadedCode = page.getByRole('region', { name: 'Code window' })
+  const reloadedFinder = page.getByRole('region', { name: 'Finder window' })
+  await page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Finder' }).click()
+  await expect(reloadedFinder.getByRole('status')).toHaveCount(0)
+  await reloadedFinder.getByRole('button', { name: /README\.md/ }).click()
+  await reloadedFinder.getByRole('button', { name: 'Open selected file in Code' }).click()
+  await expect(reloadedCode.getByRole('tab', { name: /README\.md/ })).toBeVisible()
+  await expect(reloadedCode.getByRole('alert').filter({ hasText: 'recoverable draft' })).toBeVisible()
+  await reloadedCode.getByRole('button', { name: 'Recover draft' }).click()
+  await expect
+    .poll(() =>
+      mock.actions.some(
+        (action) =>
+          action.action === 'write-file' &&
+          action.path === '/README.md' &&
+          action.content === '# Preserved through lifecycle',
+      ),
+    )
+    .toBe(true)
+})
+
+test('preserves a stored draft for download when the guest returns a missing-file 404', async ({ page }) => {
+  const mock = await mockTengri(page, {
+    preserveDraftStorageOnReload: true,
+  })
+  await page.goto('/')
+
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  await dock.getByRole('button', { name: 'Open Finder' }).click()
+  const finder = page.getByRole('region', { name: 'Finder window' })
+  await finder.getByRole('button', { name: /README\.md/ }).click()
+  await finder.getByRole('button', { name: 'Open selected file in Code' }).click()
+
+  const code = page.getByRole('region', { name: 'Code window' })
+  const editor = code.locator('.monaco-editor')
+  const content = '# Keep this file after deletion'
+  await expect(editor).toHaveCount(1)
+  await editor.click()
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a')
+  await page.keyboard.type(content)
+  mock.deleteFileContent('/README.md')
+  await page.reload()
+
+  const reloadedCode = page.getByRole('region', { name: 'Code window' })
+  const reloadedFinder = page.getByRole('region', { name: 'Finder window' })
+  await page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Finder' }).click()
+  await expect(reloadedFinder.getByRole('status')).toHaveCount(0)
+  await reloadedFinder.getByRole('button', { name: /README\.md/ }).click()
+  await reloadedFinder.getByRole('button', { name: 'Open selected file in Code' }).click()
+  await expect(reloadedCode.getByRole('tab', { name: /README\.md/ })).toBeVisible()
+  const recovery = reloadedCode.getByRole('alert').filter({ hasText: 'file no longer exists' })
+  await expect(recovery).toBeVisible()
+
+  const downloadPromise = page.waitForEvent('download')
+  await recovery.getByRole('button', { name: 'Download draft' }).click()
+  const download = await downloadPromise
+  const downloadPath = await download.path()
+  expect(downloadPath).not.toBeNull()
+  expect((await readFile(downloadPath!)).toString()).toBe(content)
+})
+
+test('keeps a revisionless guest file read-only without attempting a write', async ({ page }) => {
+  const mock = await mockTengri(page, { legacyFileRevision: true })
+  await page.goto('/')
+
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  await dock.getByRole('button', { name: 'Open Finder' }).click()
+  const finder = page.getByRole('region', { name: 'Finder window' })
+  await finder.getByRole('button', { name: /README\.md/ }).click()
+  await finder.getByRole('button', { name: 'Open selected file in Code' }).click()
+
+  const code = page.getByRole('region', { name: 'Code window' })
+  const editor = code.locator('.monaco-editor')
+  await expect(editor).toHaveCount(1)
+  await expect(code.getByRole('alert').filter({ hasText: 'does not report file revisions' })).toBeVisible()
+  await editor.click()
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a')
+  await page.keyboard.insertText('# This edit must remain read-only')
+  await page.waitForTimeout(800)
+  expect(mock.actions.filter((action) => action.action === 'write-file')).toHaveLength(0)
+  await expect(editor.locator('.view-line').first()).toContainText('# Tengri')
+})
+
+test('keeps a storage-blocked draft visible and downloadable after forced sleep unmount', async ({ page }) => {
+  const mock = await mockTengri(page, {
+    agent: { ...readyAgent, idleDeadline: new Date(Date.now() + 5_000).toISOString() },
+    blockDraftStorage: true,
+  })
+  await page.goto('/')
+
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  await dock.getByRole('button', { name: 'Open Finder' }).click()
+  const finder = page.getByRole('region', { name: 'Finder window' })
+  await finder.getByRole('button', { name: /README\.md/ }).click()
+  await finder.getByRole('button', { name: 'Open selected file in Code' }).click()
+
+  const code = page.getByRole('region', { name: 'Code window' })
+  const editor = code.locator('.monaco-editor')
+  const content = '# Keep this copy'
+  await expect(editor).toHaveCount(1)
+  await editor.click()
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a')
+  await page.keyboard.type(content)
+  const recovery = page.getByLabel('Unsaved draft recovery')
+  await expect(recovery).toBeVisible()
+
+  mock.setAgent({ ...readyAgent, phase: 'sleeping' })
+  await expect(page.getByRole('dialog', { name: 'Tengri is sleeping' })).toBeVisible({ timeout: 10_000 })
+  await expect(recovery).toBeVisible()
+  expect(mock.actions.filter((action) => action.action === 'write-file' && action.path === '/README.md')).toHaveLength(
+    0,
+  )
+
+  const downloadPromise = page.waitForEvent('download')
+  await recovery.getByRole('button', { name: 'Download draft for /README.md' }).click()
+  const download = await downloadPromise
+  const downloadPath = await download.path()
+  expect(downloadPath).not.toBeNull()
+  expect((await readFile(downloadPath!)).toString()).toBe(content)
+})
+
+test('keeps volatile recovery available for download after signing out', async ({ page }) => {
+  const mock = await mockTengri(page, {
+    agent: { ...readyAgent, idleDeadline: new Date(Date.now() + 5_000).toISOString() },
+    blockDraftStorage: true,
+  })
+  await page.goto('/')
+
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  await dock.getByRole('button', { name: 'Open Finder' }).click()
+  const finder = page.getByRole('region', { name: 'Finder window' })
+  await finder.getByRole('button', { name: /README\.md/ }).click()
+  await finder.getByRole('button', { name: 'Open selected file in Code' }).click()
+
+  const code = page.getByRole('region', { name: 'Code window' })
+  const editor = code.locator('.monaco-editor')
+  const content = '# Keep this draft after sign out'
+  await expect(editor).toHaveCount(1)
+  await editor.click()
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a')
+  await page.keyboard.insertText(content)
+  const recovery = page.getByLabel('Unsaved draft recovery')
+  await expect(recovery).toBeVisible()
+
+  mock.setAgent({ ...readyAgent, phase: 'sleeping' })
+  const sleeping = page.getByRole('dialog', { name: 'Tengri is sleeping' })
+  await expect(sleeping).toBeVisible({ timeout: 10_000 })
+  await sleeping.getByRole('button', { name: 'Resume Agent' }).click()
+  await expect(dock).toBeVisible()
+  await expect.poll(() => mock.getAgent()?.phase).toBe('ready')
+
+  await dock.getByRole('button', { name: 'Open Settings' }).click()
+  const settings = page.getByRole('region', { name: 'Settings window' })
+  await settings.getByRole('button', { name: 'Sign Out' }).click()
+  await expect(page.getByRole('dialog', { name: 'Sign in to Tengri' })).toBeVisible({ timeout: 10_000 })
+  await expect(recovery).toBeVisible()
+
+  const downloadPromise = page.waitForEvent('download')
+  await recovery.getByRole('button', { name: `Download draft for /README.md` }).click()
+  const download = await downloadPromise
+  const downloadPath = await download.path()
+  expect(downloadPath).not.toBeNull()
+  expect((await readFile(downloadPath!)).toString()).toBe(content)
+})
+
+test('preserves local text when a conditional save conflicts and supports merge retry', async ({ page }) => {
+  const mock = await mockTengri(page)
+  await page.goto('/')
+
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  await dock.getByRole('button', { name: 'Open Finder' }).click()
+  const finder = page.getByRole('region', { name: 'Finder window' })
+  await finder.getByRole('button', { name: /README\.md/ }).click()
+  await finder.getByRole('button', { name: 'Open selected file in Code' }).click()
+
+  const code = page.getByRole('region', { name: 'Code window' })
+  const editor = code.locator('.monaco-editor')
+  await expect(editor).toHaveCount(1)
+  await editor.click()
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a')
+  await page.keyboard.type('# Local change')
+  mock.setFileContent('/README.md', '# Server change')
+
+  await expect
+    .poll(() => mock.actions.filter((action) => action.action === 'write-file' && action.path === '/README.md').length)
+    .toBe(1)
+  await expect(code.getByRole('button', { name: 'Merge', exact: true })).toBeVisible()
+  await expect(editor.locator('.view-line').first()).toContainText('# Local change')
+
+  await code.getByRole('button', { name: 'Merge', exact: true }).click()
+  await expect
+    .poll(() =>
+      mock.actions.some(
+        (action) =>
+          action.action === 'write-file' &&
+          action.path === '/README.md' &&
+          String(action.content).includes('<<<<<<< server') &&
+          String(action.content).includes('# Local change'),
+      ),
+    )
+    .toBe(true)
+})
+
 test('tracks an external preview that finishes opening after virtual Chrome closes', async ({ page }) => {
   const mock = await mockTengri(page)
   await page.goto('/')
@@ -1380,6 +1847,46 @@ test('re-verifies a clean file instead of overwriting it after a watcher read fa
     writeCount,
   )
   await expect(code.getByRole('alert')).toHaveCount(0)
+})
+
+test('ignores a delayed watcher result after closing and reopening the same path', async ({ page }) => {
+  const mock = await mockTengri(page)
+  await page.goto('/')
+
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  await dock.getByRole('button', { name: 'Open Finder' }).click()
+  const finder = page.getByRole('region', { name: 'Finder window' })
+  await finder.getByRole('button', { name: /README\.md/ }).click()
+  await finder.getByRole('button', { name: 'Open selected file in Code' }).click()
+
+  const code = page.getByRole('region', { name: 'Code window' })
+  const editor = code.locator('.monaco-editor')
+  await expect(editor).toHaveCount(1)
+  await expect(editor.locator('.view-line').first()).toContainText('# Tengri')
+
+  mock.holdNextRead('/README.md')
+  await emitFileEvent(page, '/', { kind: 'changed', path: '/README.md', sequence: 100 })
+  await mock.waitForHeldRead('/README.md')
+
+  await code.getByRole('button', { name: 'Close README.md' }).click()
+  await expect(code.getByRole('tab', { name: /README\.md/ })).toHaveCount(0)
+  await dock.getByRole('button', { name: 'Open Finder' }).click()
+  const reopenedFinder = page.getByRole('region', { name: 'Finder window' })
+  await reopenedFinder.getByRole('button', { name: /README\.md/ }).click()
+  await reopenedFinder.getByRole('button', { name: 'Open selected file in Code' }).click()
+
+  const reopenedEditor = code.locator('.monaco-editor')
+  const content = '# New same-path draft'
+  await expect(reopenedEditor).toHaveCount(1)
+  await expect(reopenedEditor.locator('.view-line').first()).toContainText('# Tengri')
+  await reopenedEditor.click()
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a')
+  await page.keyboard.insertText(content)
+  await expect(reopenedEditor.locator('.view-line').first()).toContainText(content)
+
+  mock.releaseHeldRead('/README.md')
+  await expect(reopenedEditor.locator('.view-line').first()).toContainText(content)
+  await expect(code.getByRole('alert').filter({ hasText: 'File changed outside Code' })).toHaveCount(0)
 })
 
 test('keeps the application menu and status controls separate on narrow viewports', async ({ page }) => {
@@ -2576,6 +3083,124 @@ test('has no serious or critical Axe violations', async ({ page }) => {
   expect(
     results.violations.filter((violation) => violation.impact === 'serious' || violation.impact === 'critical'),
   ).toEqual([])
+})
+
+test('restores keyboard focus when opening and switching desktop windows', async ({ page }) => {
+  await mockTengri(page)
+  await page.goto('/')
+  const prompt = page.getByRole('textbox', { name: 'Message your agent' })
+  await expect(prompt).toBeFocused()
+  await prompt.fill('Keep this draft')
+  await page.getByRole('button', { name: 'Open Terminal', exact: true }).click()
+  const terminal = page.getByRole('textbox', { name: 'Terminal input' })
+  await expect(terminal).toBeFocused()
+  await page.getByRole('button', { name: 'Open Chrome', exact: true }).click()
+  await expect(prompt).toBeFocused()
+  await expect(prompt).toHaveValue('Keep this draft')
+  await page.keyboard.press('Meta+m')
+  await expect(terminal).toBeFocused()
+  await page.getByRole('button', { name: 'Open Chrome', exact: true }).click()
+  await expect(prompt).toBeFocused()
+  const address = page.getByRole('textbox', { name: 'Address', exact: true })
+  await address.focus()
+  await page.getByRole('button', { name: 'Open Terminal', exact: true }).click()
+  await expect(terminal).toBeFocused()
+  await page.getByRole('button', { name: 'Open Chrome', exact: true }).click()
+  await expect(address).toBeFocused()
+  await page.getByRole('button', { name: 'Open Spotlight', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: 'Spotlight' }).getByRole('combobox')).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog', { name: 'Spotlight' })).toHaveCount(0)
+})
+
+test('preserves zoom across minimize and window switching and lists individual windows', async ({ page }) => {
+  await mockTengri(page)
+  await page.goto('/')
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  const normalBounds = await chrome.boundingBox()
+  await chrome.getByRole('button', { name: 'Maximize Chrome' }).click()
+  const zoomedBounds = await chrome.boundingBox()
+  await chrome.getByRole('button', { name: 'Minimize Chrome' }).click()
+  await page.getByRole('button', { name: 'Open Chrome', exact: true }).click()
+  await expect(chrome.getByRole('button', { name: 'Restore Chrome' })).toBeVisible()
+  await expect.poll(() => chrome.boundingBox()).toEqual(zoomedBounds)
+  await page.getByRole('menuitem', { name: 'View', exact: true }).click()
+  await expect(page.getByRole('menuitem', { name: 'Restore Window', exact: false })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await page.keyboard.press('Meta+n')
+  await expect(chrome).toHaveCount(2)
+  await page.getByRole('menuitem', { name: 'Window', exact: true }).click()
+  const menu = page.getByRole('menu', { name: 'Window', exact: true })
+  await expect(menu.getByRole('menuitemcheckbox')).toHaveCount(2)
+  await expect(menu.getByRole('menuitemcheckbox', { name: 'Chrome 2', exact: true })).toBeChecked()
+  await menu.getByRole('menuitemcheckbox', { name: 'Chrome 1', exact: true }).click()
+  await expect(chrome.first()).toHaveAttribute('data-active', 'true')
+  await expect(chrome.first().getByRole('button', { name: 'Restore Chrome' })).toBeVisible()
+  await chrome.first().getByRole('button', { name: 'Restore Chrome' }).click()
+  await expect.poll(() => chrome.first().boundingBox()).toEqual(normalBounds)
+})
+
+test('opens Dock apps from the raised top of magnified artwork', async ({ page }) => {
+  await mockTengri(page)
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.goto('/')
+  const code = page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Code' })
+  await code.hover()
+  await expect.poll(async () => (await code.locator('img').boundingBox())?.width ?? 0).toBeGreaterThan(75)
+  const image = await code.locator('img').boundingBox()
+  const button = await code.boundingBox()
+  if (!image || !button) throw new Error('Dock artwork is missing')
+  expect(image.y + 2).toBeLessThan(button.y)
+  await page.mouse.move(image.x + image.width / 2, image.y + 2)
+  await expect(code.locator('[role="tooltip"]')).toHaveCSS('opacity', '1')
+  expect(
+    await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('button')?.id, {
+      x: image.x + image.width / 2,
+      y: image.y + 2,
+    }),
+  ).toBe('tengri-dock-code')
+  await page.mouse.click(image.x + image.width / 2, image.y + 2)
+  await expect(page.getByRole('region', { name: 'Code window' })).toBeVisible()
+})
+
+test('magnified Dock icons keep separate hit targets at desktop and narrow widths', async ({ page }) => {
+  await mockTengri(page)
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.goto('/')
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  for (const width of [1440, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 })
+    for (const name of ['Open Finder', 'Open Chrome', 'Open Code', 'Open Settings']) {
+      await dock.getByRole('button', { name, exact: true }).hover()
+      await expect(dock.getByRole('button', { name, exact: true }).locator('[role="tooltip"]')).toHaveCSS(
+        'opacity',
+        '1',
+      )
+      const minimumGap = await dock.locator('img').evaluateAll(
+        (images) =>
+          new Promise<number>((resolve) => {
+            const start = performance.now()
+            let gap = Infinity
+            const measure = () => {
+              const bounds = images.map((image) => image.getBoundingClientRect())
+              bounds.forEach((bound, index) => {
+                gap = Math.min(
+                  gap,
+                  bound.left,
+                  innerWidth - bound.right,
+                  index === 0 ? Infinity : bound.left - bounds[index - 1]!.right,
+                )
+              })
+              if (performance.now() - start < 250) requestAnimationFrame(measure)
+              else resolve(gap)
+            }
+            measure()
+          }),
+      )
+      expect(minimumGap).toBeGreaterThanOrEqual(0)
+    }
+    await page.mouse.move(0, 0)
+  }
 })
 
 test('aligns native window controls with app toolbars and keeps narrow layouts usable', async ({ page }) => {

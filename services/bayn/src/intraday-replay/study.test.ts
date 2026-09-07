@@ -15,6 +15,7 @@ import {
 } from '../strategy/intraday-momentum/protocol'
 import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
 import { IntradayReplayFailure } from './model'
+import { ArchiveAvailabilityPolicy } from '../market-data/intraday/availability'
 import {
   ArchiveReplayStudyInputSchema,
   runArchiveReplayStudy,
@@ -46,6 +47,7 @@ const inputEffect = Effect.gen(function* () {
         name: 'stress',
         input: {
           schemaVersion: 'bayn.intraday-replay-input.v1',
+          archiveAvailability: ArchiveAvailabilityPolicy.SourceReceiptAssumption,
           range: { start: '2026-09-01', end: '2026-09-02' },
           calendar: [
             { date: '2026-09-01', open: '09:30', close: '16:00' },

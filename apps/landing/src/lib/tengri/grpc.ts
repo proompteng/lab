@@ -1,5 +1,6 @@
 import 'server-only'
 
+import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import * as grpc from '@grpc/grpc-js'
@@ -49,6 +50,7 @@ type RawAgent = RawRecord & {
   lastActivityAt?: string
   idleDeadline?: string
   expiresAt?: string
+  pendingImage?: string
   conditions?: RawRecord[]
 }
 
@@ -134,21 +136,48 @@ export async function listFiles(subject: string, agentId: string, filePath: stri
 }
 
 export async function readFile(subject: string, agentId: string, filePath: string) {
-  const response = await unary<{ path?: string; content?: Uint8Array; contentType?: string }>(
+  const response = await unary<{ path?: string; content?: Uint8Array; contentType?: string; revision?: string }>(
     'readFile',
     { agentId, path: filePath },
     subject,
     130_000,
   )
+  const content = response.content ?? new Uint8Array()
+  const revision = stringValue(response.revision)
+  if (revision && revision !== createHash('sha256').update(content).digest('hex')) {
+    throw new TengriUnavailableError('The file revision could not be verified. Reopen the file before editing.')
+  }
   return {
     path: stringValue(response.path, filePath),
-    content: decodeUtf8File(response.content ?? new Uint8Array()),
+    content: decodeUtf8File(content),
     contentType: stringValue(response.contentType, 'application/octet-stream'),
+    revision,
   }
 }
 
-export async function writeFile(subject: string, agentId: string, filePath: string, content: string) {
-  return unary('writeFile', { agentId, path: filePath, content: Buffer.from(content) }, subject, 130_000)
+export async function writeFile(
+  subject: string,
+  agentId: string,
+  filePath: string,
+  content: string,
+  expectedRevision: string,
+  signal?: AbortSignal,
+) {
+  if (!/^(?:[a-f0-9]{64}|missing)$/.test(expectedRevision)) {
+    throw new TengriUnavailableError('A base file revision is required before saving', 400)
+  }
+  const bytes = Buffer.from(content)
+  const response = await unary<{ path?: string; size?: number; revision?: string }>(
+    'writeFile',
+    { agentId, path: filePath, content: bytes, expectedRevision },
+    subject,
+    130_000,
+    signal,
+  )
+  if (response.revision !== createHash('sha256').update(bytes).digest('hex')) {
+    throw new TengriUnavailableError('The save could not be confirmed. Reopen the file to check its contents.')
+  }
+  return { path: stringValue(response.path, filePath), size: numberValue(response.size), revision: response.revision }
 }
 
 export async function createDirectory(subject: string, agentId: string, filePath: string) {
@@ -552,10 +581,30 @@ function mapGrpcError(error: grpc.ServiceError, methodName: string) {
       }
       return new TengriUnavailableError('Tengri resource was not found', 404)
     case grpc.status.ALREADY_EXISTS:
+      if (methodName === 'writeFile') {
+        return new TengriUnavailableError(
+          'File changed since it was opened. Review the changes before saving.',
+          409,
+          'file_conflict',
+        )
+      }
       return new TengriUnavailableError('Tengri resource already exists', 409)
     case grpc.status.FAILED_PRECONDITION:
+      if (methodName === 'writeFile') {
+        return new TengriUnavailableError(
+          'This guest needs an update before saving. Sleep and resume the agent, then reopen the file.',
+          412,
+        )
+      }
       return new TengriUnavailableError('Tengri request cannot be completed in the current state', 412)
     case grpc.status.RESOURCE_EXHAUSTED:
+      if (methodName === 'createAgent') {
+        return new TengriUnavailableError(
+          'All six workspace slots are occupied. Existing workspaces are retained until their owners delete them. Try again when a slot becomes available.',
+          429,
+          'capacity_full',
+        )
+      }
       return new TengriUnavailableError('Tengri capacity is exhausted', 429)
     case grpc.status.DEADLINE_EXCEEDED:
       return new TengriUnavailableError('Tengri request timed out', 504)
@@ -602,6 +651,7 @@ function normalizeAgent(agent: RawAgent): TengriAgent {
     lastActivityAt: stringValue(agent.lastActivityAt),
     idleDeadline: stringValue(agent.idleDeadline),
     expiresAt: stringValue(agent.expiresAt),
+    pendingImage: stringValue(agent.pendingImage),
     conditions: (agent.conditions ?? []).map(normalizeCondition),
   }
 }

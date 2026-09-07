@@ -12,6 +12,7 @@ import { PositiveMicrosSchema, strictParseOptions } from '../schemas'
 import type { IntradayMomentumTargetPortfolio } from '../strategy/intraday-momentum/model'
 import type { IntradayReplayIocOutcome } from './execution'
 import type { IntradayReplayEquityMark } from './equity'
+import { ArchiveAvailabilityPolicy, type ArchiveAvailabilityReceipt } from '../market-data/intraday/availability'
 
 export const IntradayReplayAssumptionsSchema = Schema.Struct({
   pollIntervalMs: Schema.Literal(30_000),
@@ -30,6 +31,8 @@ const ReplayInputBase = Schema.Struct({
   initialCapitalMicros: PositiveMicrosSchema,
   allocationCapitalMicros: PositiveMicrosSchema,
   assumptions: IntradayReplayAssumptionsSchema,
+  /** Omission fails closed to recorded reader evidence; the source-receipt counterfactual must be explicit. */
+  archiveAvailability: Schema.optionalKey(Schema.Enum(ArchiveAvailabilityPolicy)),
 })
 
 export const IntradayReplayInputSchema = ReplayInputBase.check(
@@ -105,7 +108,7 @@ export interface IntradayReplaySession {
 }
 
 export interface IntradayReplayReport {
-  readonly schemaVersion: 'bayn.intraday-replay-report.v2'
+  readonly schemaVersion: 'bayn.intraday-replay-report.v3'
   readonly evidenceKind: 'COUNTERFACTUAL_RESEARCH'
   readonly qualification: 'NOT_QUALIFIED'
   readonly inputHash: string
@@ -115,6 +118,16 @@ export interface IntradayReplayReport {
   readonly strategyProtocolHash: string
   readonly riskPolicyHash: string
   readonly calendarHash: string
+  readonly availability: {
+    readonly policy: ArchiveAvailabilityPolicy
+    readonly status: 'OBSERVED_ROWS_ONLY' | 'UNPROVEN'
+    readonly snapshots: readonly {
+      readonly snapshotId: string
+      readonly observedAt: string
+      readonly receiptHashes: readonly string[]
+    }[]
+    readonly receipts: readonly ArchiveAvailabilityReceipt[]
+  }
   readonly sessions: readonly IntradayReplaySession[]
   readonly totals: {
     readonly completedSessionCount: number

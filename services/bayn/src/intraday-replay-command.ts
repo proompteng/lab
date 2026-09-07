@@ -1,16 +1,20 @@
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { ClickhouseClient } from '@effect/sql-clickhouse'
+import { PgClient } from '@effect/sql-pg'
 import { Config, Data, Effect, FileSystem, Layer, Logger, Redacted, Result, Schema, Stdio, Stream } from 'effect'
 
-import { canonicalJsonV1Result } from './hash'
-import { IntradayReplayFailure, IntradayReplayInputSchema } from './intraday-replay/model'
+import { canonicalJsonV1Result, sha256 } from './hash'
+import { IntradayReplayFailure, IntradayReplayInputSchema, type IntradayReplayReport } from './intraday-replay/model'
 import { runIntradayReplay } from './intraday-replay/program'
 import {
   ArchiveReplayStudyInputSchema,
   runArchiveReplayStudy,
   type ArchiveReplayStudySessionEvidence,
+  type ArchiveReplayStudyReport,
 } from './intraday-replay/study'
-import type { IntradayMarketDataService } from './market-data'
+import { ArchiveAvailabilityPolicy, type ReplayMarketDataService } from './market-data/intraday/availability'
+import { makeArchiveAvailabilityReader } from './db/archive-availability'
+import { PostgresClientLive } from './db/postgres-client'
 import { makeIntradayMarketData } from './market-data/intraday/program'
 import { strictParseOptions, TrimmedNonEmptyStringSchema } from './schemas'
 import { currentUtcInstant } from './time'
@@ -66,6 +70,13 @@ const archiveConfig = Config.all({
   username: Config.schema(TrimmedNonEmptyStringSchema, 'BAYN_CLICKHOUSE_USERNAME'),
   password: Config.redacted('BAYN_CLICKHOUSE_PASSWORD'),
 })
+const availabilityPostgresConfig = Config.all({
+  url: Config.redacted('BAYN_POSTGRES_URL'),
+  tls: Config.boolean('BAYN_POSTGRES_TLS').pipe(Config.withDefault(true)),
+  caPath: Config.schema(TrimmedNonEmptyStringSchema, 'BAYN_POSTGRES_CA_PATH').pipe(
+    Config.withDefault('/var/run/secrets/bayn/postgres/ca.crt'),
+  ),
+})
 
 const print = (output: string) =>
   Effect.gen(function* () {
@@ -120,7 +131,12 @@ const replayFile = (inputPath: string, mode: 'Run' | 'Study', outputDirectory?: 
       const raw = yield* fs.readFileString(inputPath)
       const now = yield* currentUtcInstant
       // Decode before configuration or archive reads for either command mode.
-      const execute =
+      const execute: {
+        readonly recorded: boolean
+        readonly run: (
+          market: ReplayMarketDataService,
+        ) => Effect.Effect<IntradayReplayReport | ArchiveReplayStudyReport, IntradayReplayFailure>
+      } =
         mode === 'Study'
           ? yield* Effect.fromResult(decodeStudyJson(raw)).pipe(
               Effect.mapError(
@@ -133,12 +149,21 @@ const replayFile = (inputPath: string, mode: 'Run' | 'Study', outputDirectory?: 
                     outputDirectory === undefined
                       ? undefined
                       : yield* makeArchiveStudySessionWriter(fs, outputDirectory)
-                  return (market: IntradayMarketDataService) => runArchiveReplayStudy(input, market, now, persist)
+                  return {
+                    recorded: input.scenarios.some(
+                      ({ input: scenario }) =>
+                        scenario.archiveAvailability !== ArchiveAvailabilityPolicy.SourceReceiptAssumption,
+                    ),
+                    run: (market: ReplayMarketDataService) => runArchiveReplayStudy(input, market, now, persist),
+                  }
                 }),
               ),
             )
           : yield* Effect.fromResult(decodeInputJson(raw)).pipe(
-              Effect.map((input) => (market: IntradayMarketDataService) => runIntradayReplay(input, market, now)),
+              Effect.map((input) => ({
+                recorded: input.archiveAvailability !== ArchiveAvailabilityPolicy.SourceReceiptAssumption,
+                run: (market: ReplayMarketDataService) => runIntradayReplay(input, market, now),
+              })),
               Effect.mapError(
                 (cause) =>
                   new IntradayReplayFailure({ operation: 'input', message: 'invalid replay input JSON', cause }),
@@ -147,7 +172,14 @@ const replayFile = (inputPath: string, mode: 'Run' | 'Study', outputDirectory?: 
       const config = yield* archiveConfig
       const replay = Effect.gen(function* () {
         const marketData = yield* makeIntradayMarketData
-        return yield* execute(marketData)
+        if (!execute.recorded) return yield* execute.run(marketData)
+        const postgres = yield* availabilityPostgresConfig
+        return yield* Effect.flatMap(PgClient.PgClient, (sql) =>
+          execute.run({ ...marketData, recordedAvailability: makeArchiveAvailabilityReader(sql, sha256(config.url)) }),
+        ).pipe(
+          // @effect-diagnostics-next-line strictEffectProvide:off -- this command owns a SELECT-only receipt reader, never migrations or recording
+          Effect.provide(PostgresClientLive({ postgres, operationTimeoutMs: 30_000 })),
+        )
       })
       const report = yield* replay.pipe(
         // @effect-diagnostics-next-line strictEffectProvide:off -- the command owns its scoped read-only archive client

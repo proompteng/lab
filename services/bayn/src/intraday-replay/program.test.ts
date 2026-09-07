@@ -17,6 +17,14 @@ import { decodeDefaultIntradayMomentumProtocol } from '../strategy/intraday-mome
 import { OrderSide } from '../execution/contracts'
 import { runIntradayReplay } from './program'
 import type { IntradayReplayInput } from './model'
+import {
+  ArchiveAvailabilityPolicy,
+  archiveAvailabilityOperationalError,
+  makeArchiveAvailabilityReceipts,
+  verifyRecordedArchiveAvailability,
+} from '../market-data/intraday/availability'
+import { availabilityReader } from '../testing/archive-availability-fixture'
+import { canonicalHashV1 } from '../hash'
 
 const protocol = Result.getOrThrow(decodeDefaultIntradayMomentumProtocol())
 const sessionDates = ['2026-09-04', '2026-09-05'] as const
@@ -141,6 +149,7 @@ const replayInput = (dates: readonly string[], overrides: Partial<IntradayReplay
     initialCapitalMicros,
     allocationCapitalMicros: initialCapitalMicros,
     assumptions: defaultAssumptions,
+    archiveAvailability: ArchiveAvailabilityPolicy.SourceReceiptAssumption,
     ...overrides,
   } as IntradayReplayInput
 }
@@ -158,6 +167,174 @@ const entryAndCloseSnapshot: SnapshotFactory = (request, phase, occurrence) => {
 }
 
 describe('intraday replay program', () => {
+  test('omitted availability policy fails closed rather than opting into a source-time assumption', async () => {
+    const { archiveAvailability: _policy, ...input } = replayInput([sessionDates[0]])
+    const archive = makeArchive({ snapshot: entryAndCloseSnapshot })
+    const report = await run(input, archive)
+    expect(report.availability).toEqual({
+      policy: ArchiveAvailabilityPolicy.RecordedReader,
+      status: 'UNPROVEN',
+      snapshots: [],
+      receipts: [],
+    })
+    expect(report.sessions[0]?.status).toBe('INCOMPLETE')
+    expect(report.sessions[0]?.orders).toEqual([])
+    expect(report.totals.netRealizedPnlAfterCostsMicros).toBeNull()
+  })
+
+  test('explicit source-time research remains unproven and cannot acquire receipt capability', async () => {
+    const archive = makeArchive()
+    const report = await Effect.runPromise(
+      runIntradayReplay(
+        replayInput([sessionDates[0]]),
+        {
+          ...archive.service,
+          recordedAvailability: () => Effect.die('source-time research must not read or write receipts'),
+        },
+        finalizedNow,
+      ),
+    )
+    expect(report.sessions[0]?.status).toBe('COMPLETE')
+    expect(report.availability.status).toBe('UNPROVEN')
+    expect(report.availability.receipts).toEqual([])
+    expect(report.limitations.some((limitation) => limitation.includes('unproven availability assumption'))).toBe(true)
+  })
+
+  test('retains verified row receipts and snapshot bindings for every strict-mode execution observation', async () => {
+    const archive = makeArchive({
+      snapshot: (request, phase, occurrence) => {
+        const snapshot = snapshotFor(request, phase === 'decision' ? { AAPL: 0.01 } : {})
+        const rows = Result.getOrThrow(persistIntradaySnapshotRows(snapshot))
+        const offsetBase =
+          BigInt(Date.parse(request.observedAt)) * 1_000n + BigInt(phase === 'decision' ? 0 : occurrence + 20)
+        const sequence = (records: readonly unknown[]) =>
+          records.map((row, index) => {
+            if (typeof row !== 'object' || row === null) throw new Error('archive fixture row must be an object')
+            return { ...row, source_offset: String(offsetBase + BigInt(index)) }
+          })
+        return Result.getOrThrow(
+          verifyIntradaySnapshot(request, {
+            ...rows,
+            quotes: sequence(rows.quotes),
+            trades: sequence(rows.trades),
+            archiveWatermarks: request.archiveWatermarks.map((watermark) => ({
+              source_topic: watermark.sourceTopic,
+              source_partition: watermark.sourcePartition,
+              inclusive_last_offset: watermark.inclusiveLastOffset,
+            })),
+          }),
+        ) as ArchiveVerifiedIntradayMarketSnapshot
+      },
+    })
+    const report = await Effect.runPromise(
+      runIntradayReplay(
+        replayInput([sessionDates[0]], {
+          archiveAvailability: ArchiveAvailabilityPolicy.RecordedReader,
+          assumptions: { ...defaultAssumptions, firstPollDelayMs: 3_000 },
+        }),
+        {
+          ...archive.service,
+          captureVersion: () =>
+            Effect.succeed(
+              Object.values(protocol.sourceTopics)
+                .toSorted()
+                .map((sourceTopic) => ({
+                  sourceTopic,
+                  sourcePartition: 0,
+                  inclusiveLastOffset: '10000000000000000',
+                })),
+            ),
+          recordedAvailability: (snapshot) =>
+            Effect.fromResult(
+              Result.gen(function* () {
+                const sourceCutoff = new Date(Date.parse(snapshot.manifest.observedAt) - 250).toISOString()
+                const completedAt = new Date(Date.parse(snapshot.manifest.observedAt) - 100).toISOString()
+                const previous = yield* verifyIntradaySnapshot(
+                  {
+                    ...snapshot.manifest,
+                    universe: snapshot.manifest.universe ?? snapshot.manifest.symbols,
+                    observedAt: sourceCutoff,
+                  },
+                  {
+                    ...Result.getOrThrow(persistIntradaySnapshotRows(snapshot)),
+                    archiveWatermarks: snapshot.manifest.archiveWatermarks.map((watermark) => ({
+                      source_topic: watermark.sourceTopic,
+                      source_partition: watermark.sourcePartition,
+                      inclusive_last_offset: watermark.inclusiveLastOffset,
+                    })),
+                  },
+                )
+                const receipts = yield* makeArchiveAvailabilityReceipts(
+                  previous as ArchiveVerifiedIntradayMarketSnapshot,
+                  availabilityReader,
+                  sourceCutoff,
+                  completedAt,
+                )
+                return yield* verifyRecordedArchiveAvailability(snapshot, availabilityReader.endpointHash, receipts)
+              }),
+            ).pipe(Effect.mapError(archiveAvailabilityOperationalError)),
+        },
+        finalizedNow,
+      ),
+    )
+    expect(
+      report.sessions[0]?.observations.filter((observation) => observation.kind === 'unavailable').slice(0, 3),
+    ).toEqual([])
+    expect({ status: report.sessions[0]?.status, reason: report.sessions[0]?.reason }).toEqual({
+      status: 'COMPLETE',
+      reason: 'entry executed and position flattened',
+    })
+    expect(report.sessions[0]?.fills.length).toBe(2)
+    expect(report.availability.status).toBe('OBSERVED_ROWS_ONLY')
+    const receiptHashes = new Set(report.availability.receipts.map((receipt) => receipt.receiptHash))
+    expect(receiptHashes.size).toBe(report.availability.receipts.length)
+    expect(receiptHashes.size).toBeGreaterThan(0)
+    for (const observation of report.sessions.flatMap((session) => session.observations)) {
+      if (observation.kind !== 'snapshot') continue
+      const proof = report.availability.snapshots.find(
+        ({ snapshotId }) => snapshotId === observation.manifest.snapshotId,
+      )
+      expect(proof?.observedAt).toBe(observation.manifest.observedAt)
+      expect(proof?.receiptHashes.every((receiptHash) => receiptHashes.has(receiptHash))).toBe(true)
+    }
+    const { reportHash, ...material } = report
+    expect(reportHash).toBe(canonicalHashV1(material))
+  })
+
+  test('does not trade source-received rows lacking a completed reader observation before replay time', async () => {
+    const archive = makeArchive({ snapshot: entryAndCloseSnapshot })
+    let availabilityReads = 0
+    const service = {
+      ...archive.service,
+      recordedAvailability: (snapshot: ArchiveVerifiedIntradayMarketSnapshot) => {
+        availabilityReads += 1
+        return Effect.fail(
+          operationalError({
+            component: 'market-data',
+            operation: 'load-intraday',
+            message: 'archive reader visibility is unproven at the replay observation',
+            cause: new IntradaySnapshotFailure({
+              reason: 'not-ready',
+              message: 'archive reader visibility is unproven at the replay observation',
+              facts: {
+                observedAt: snapshot.manifest.observedAt,
+                readerCompletedAt: new Date(Date.parse(snapshot.manifest.observedAt) + 5_000).toISOString(),
+              },
+            }),
+          }),
+        )
+      },
+    }
+    const input = replayInput([sessionDates[0]], { archiveAvailability: ArchiveAvailabilityPolicy.RecordedReader })
+    const report = await Effect.runPromise(runIntradayReplay(input, service, finalizedNow))
+    expect(report.sessions[0]?.status).toBe('INCOMPLETE')
+    expect(report.sessions[0]?.fills).toEqual([])
+    expect(report.sessions[0]?.orders).toEqual([])
+    expect(report.sessions[0]?.netRealizedPnlAfterCostsMicros).toBeNull()
+    expect(report.totals.netRealizedPnlAfterCostsMicros).toBeNull()
+    expect(availabilityReads).toBeGreaterThan(0)
+  })
+
   test('replays an eligible candidate through fills while another candidate lacks a trade', async () => {
     const archive = makeArchive({
       snapshot: (request, phase) => {
