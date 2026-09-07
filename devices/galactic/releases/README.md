@@ -210,6 +210,23 @@ The provider-LAN DNS address avoids a dependency on Tailscale during node startu
 
 ## Recovery
 
+### Kubernetes add-ons
+
+After the Kubernetes upgrade completes, update only Talos-generated `10-kube-proxy`, `11-core-dns`, and
+`11-core-dns-svc` manifests. For this release they contain nine resources and roll kube-proxy to `v1.37.0` and CoreDNS
+to `v1.14.7`. Save the existing resources and their managed fields, preserve their inventory annotations, and inspect
+a server-side dry run before applying. If kube-proxy's image conflicts only with the existing `talos` field manager,
+transfer that field to the same manager with a separately reviewed apply of the DaemonSet; do not force conflicts
+across the entire resource set. Require both workloads to complete their rollout.
+
+Do not apply the bulk `omnictl cluster kubernetes manifest-sync` output during this migration. Its generated Flannel
+changes remove the existing MTU `1400` and switch its packet-filter backend. The live Flannel DaemonSet remains
+Talos-owned while Argo owns `kube-flannel-cfg`; the staged manifest in `devices/galactic/manifests/` is not an active
+ownership handoff. Preserve Flannel `v0.28.5` and the ConfigMap data, then verify DNS and traffic across all three
+nodes. Migrate Flannel ownership and its backend only as a separate, explicitly scoped change.
+
+### Node recovery
+
 Stop progression on a failed node while the two other etcd members continue serving. Keep the node's current logs,
 boot identity and installer receipt. Use the accepted prior installer for that exact machine only through the recorded
 recovery procedure; never reset the machine or change its disk selector to an enumerated disk guessed from another boot.

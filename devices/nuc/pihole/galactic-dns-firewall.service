@@ -2,7 +2,7 @@
 Description=Provider DNS exception before Tailscale filtering
 BindsTo=tailscaled.service
 After=tailscaled.service ufw.service
-PartOf=tailscaled.service ufw.service
+PartOf=tailscaled.service
 StartLimitIntervalSec=0
 
 [Service]
