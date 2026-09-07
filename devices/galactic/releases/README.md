@@ -6,7 +6,7 @@ by upgrading only one control-plane node at a time. Subsequent Omni upgrades use
 control-plane nodes cannot be locked; the cluster-wide maintenance lock is supported.
 
 The Talos-only phase uses the
-[template at `bbef124de0f2e98959c80f416ce3d741b1626a5d`](https://github.com/proompteng/lab/blob/bbef124de0f2e98959c80f416ce3d741b1626a5d/devices/galactic/omni/cluster-template.yaml),
+[template at `83ad18f4c768f37d79276eee49d7788a6e349688`](https://github.com/proompteng/lab/blob/83ad18f4c768f37d79276eee49d7788a6e349688/devices/galactic/omni/cluster-template.yaml),
 which retains Kubernetes 1.36.4. Render that revision for the atomic Talos target and lock update below. The current
 template adds Kubernetes 1.37.0 and is synced only after Talos and workload acceptance.
 
@@ -17,9 +17,9 @@ preparation (execution step 3). Extract both files from the pinned commit and pa
 umask 077
 : "${GALACTIC_SECRETS_FILE:?Set the path to the validated private secret input}"
 talos_phase_dir="$(mktemp -d)"
-git show bbef124de0f2e98959c80f416ce3d741b1626a5d:devices/galactic/omni/cluster-template.yaml \
+git show 83ad18f4c768f37d79276eee49d7788a6e349688:devices/galactic/omni/cluster-template.yaml \
   > "$talos_phase_dir/cluster-template.yaml"
-git show bbef124de0f2e98959c80f416ce3d741b1626a5d:devices/galactic/omni/image-factory-registry.yaml \
+git show 83ad18f4c768f37d79276eee49d7788a6e349688:devices/galactic/omni/image-factory-registry.yaml \
   > "$talos_phase_dir/image-factory-registry.yaml"
 bun devices/galactic/omni/render-template.ts \
   --template "$talos_phase_dir/cluster-template.yaml" \
