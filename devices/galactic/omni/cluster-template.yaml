@@ -16,7 +16,7 @@ patches:
       cluster:
         controllerManager:
           extraArgs:
-            node-cidr-mask-size: "23"
+            node-cidr-mask-size-ipv4: "23"
 ---
 kind: ControlPlane
 machines:
