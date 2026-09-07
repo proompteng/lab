@@ -6,9 +6,11 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -18,6 +20,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/creack/pty"
+	"golang.org/x/sys/unix"
 )
 
 func TestTerminalOutputFrameIncludesTypeSequenceAndPayload(t *testing.T) {
@@ -598,12 +601,22 @@ func TestTerminalResizeChangesPTYDimensions(t *testing.T) {
 	}
 
 	session.resize(177, 55)
-	size, err := pty.GetsizeFull(session.terminal)
+	connection, err := session.terminal.SyscallConn()
 	if err != nil {
-		t.Fatalf("read PTY dimensions: %v", err)
+		t.Fatalf("open PTY syscall connection: %v", err)
 	}
-	if size.Cols != 177 || size.Rows != 55 {
-		t.Fatalf("PTY dimensions = %dx%d, want 177x55", size.Cols, size.Rows)
+	var size *unix.Winsize
+	var sizeErr error
+	if err := connection.Control(func(fd uintptr) {
+		size, sizeErr = unix.IoctlGetWinsize(int(fd), unix.TIOCGWINSZ)
+	}); err != nil {
+		t.Fatalf("inspect PTY dimensions: %v", err)
+	}
+	if sizeErr != nil {
+		t.Fatalf("read PTY dimensions: %v", sizeErr)
+	}
+	if size.Col != 177 || size.Row != 55 {
+		t.Fatalf("PTY dimensions = %dx%d, want 177x55", size.Col, size.Row)
 	}
 }
 
@@ -641,6 +654,61 @@ func TestTerminalSignalsReachTheProcessGroup(t *testing.T) {
 	}
 }
 
+func TestTerminalInputPreservesBytesUnderBackpressure(t *testing.T) {
+	master, slave, err := pty.Open()
+	if err != nil {
+		t.Fatalf("open PTY: %v", err)
+	}
+	t.Cleanup(func() { _ = master.Close() })
+	t.Cleanup(func() { _ = slave.Close() })
+	command := exec.Command("stty", "raw", "-echo")
+	command.Stdin = slave
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("configure raw PTY: %v: %s", err, output)
+	}
+	terminal, err := prepareTerminal(master)
+	if err != nil {
+		t.Fatalf("prepare PTY master: %v", err)
+	}
+	t.Cleanup(func() { _ = terminal.Close() })
+	reader, err := prepareTerminal(slave)
+	if err != nil {
+		t.Fatalf("prepare PTY slave: %v", err)
+	}
+	t.Cleanup(func() { _ = reader.Close() })
+	deadline := time.Now().Add(5 * time.Second)
+	if err := terminal.SetWriteDeadline(deadline); err != nil {
+		t.Fatalf("set input deadline: %v", err)
+	}
+	if err := reader.SetReadDeadline(deadline); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
+	payload := bytes.Repeat([]byte("TENGRI_INPUT_0123"), 1<<16)
+	session := &terminalSession{terminal: terminal}
+	inputDone := make(chan struct{})
+	go func() {
+		session.input(payload)
+		close(inputDone)
+	}()
+	select {
+	case <-inputDone:
+		t.Fatal("input returned before the full PTY buffer could drain")
+	case <-time.After(100 * time.Millisecond):
+	}
+	received := make([]byte, len(payload))
+	if _, err := io.ReadFull(reader, received); err != nil {
+		t.Fatalf("read complete terminal input: %v", err)
+	}
+	select {
+	case <-inputDone:
+	case <-time.After(time.Second):
+		t.Fatal("input did not finish after the PTY buffer drained")
+	}
+	if !bytes.Equal(received, payload) {
+		t.Fatal("terminal input changed under backpressure")
+	}
+}
+
 func TestTerminalCloseInterruptsBlockedInput(t *testing.T) {
 	master, slave, err := pty.Open()
 	if err != nil {
@@ -648,8 +716,40 @@ func TestTerminalCloseInterruptsBlockedInput(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = master.Close() })
 	t.Cleanup(func() { _ = slave.Close() })
+	command := exec.Command("stty", "raw", "-echo")
+	command.Stdin = slave
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("configure raw PTY: %v: %s", err, output)
+	}
 
-	session := &terminalSession{terminal: master}
+	terminal, err := prepareTerminal(master)
+	if err != nil {
+		t.Fatalf("prepare PTY: %v", err)
+	}
+	session := &terminalSession{terminal: terminal}
+	t.Cleanup(session.closeTerminal)
+	session.resize(80, 24)
+	_, _ = terminalForegroundProcessGroup(terminal)
+	connection, err := terminal.SyscallConn()
+	if err != nil {
+		t.Fatalf("open PTY syscall connection: %v", err)
+	}
+	var flags int
+	var flagsErr error
+	if err := connection.Control(func(fd uintptr) {
+		flags, flagsErr = unix.FcntlInt(fd, unix.F_GETFL, 0)
+	}); err != nil {
+		t.Fatalf("inspect PTY flags: %v", err)
+	}
+	if flagsErr != nil {
+		t.Fatalf("read PTY flags: %v", flagsErr)
+	}
+	if flags&unix.O_NONBLOCK == 0 {
+		t.Fatal("PTY became blocking after control operations")
+	}
+	if err := terminal.SetWriteDeadline(time.Time{}); err != nil {
+		t.Fatalf("PTY does not support interruptible writes: %v", err)
+	}
 	inputDone := make(chan struct{})
 	go func() {
 		session.input(bytes.Repeat([]byte{'x'}, 16<<20))
