@@ -745,6 +745,8 @@ describe('Kargo direct-push GitOps contract', () => {
       expect(sourcePaths).toEqual(paths)
       expect(sourcePaths).toContain(`argocd/bootstrap/${name}`)
       expect(sourcePaths).toContain(`argocd/applicationsets/${selector}.yaml`)
+      // A root selector change must wait for the Stage's promoted revision.
+      expect(applicationSetElements.find((element) => element.name === name)?.automation).toBe('manual')
     }
   })
 

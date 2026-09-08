@@ -53,9 +53,9 @@ Select the bootstrap path in the application's Git-managed ApplicationSet entry
 (`platform.yaml` for Buzz, `product.yaml` for Jangar). Keep its `kargo/buzz` or
 `kargo/jangar` revision and existing promotion ownership. Both the publisher and
 Warehouse include the corresponding ApplicationSet selector and bootstrap directory,
-so either path switch creates a commit-qualified image and matching Freight. The
-Buzz Stage invokes its existing `argocd-update` even though the Application uses
-manual automation. Wait for the normal
+so either path switch creates a commit-qualified image and matching Freight. Both Applications use manual synchronization, so root reconciliation of a selector
+change cannot run resources from an older Kargo revision. Each Stage invokes its
+existing `argocd-update` only after committing the promoted revision. Wait for the normal
 publisher and Kargo promotion to copy the bootstrap overlay, then for Argo to create
 the source Redis. Verify the PVC is Bound, Redis is Ready, and PING and persistence
 checks pass. Commit the ApplicationSet path back to the parent application directory
