@@ -62,6 +62,10 @@ cephClusterSpec:
       # Prefer msgr2 CRC mode on the trusted in-cluster storage path. This avoids
       # secure-mode CPU cost while keeping msgr2 and wire CRCs.
       rbd_default_map_options: "ms_mode=prefer-crc"
+    mon:
+      # Generation 3 uses AES256K. Preserve old mounted clients while refusing
+      # creation of additional insecure keys during the remount migration.
+      mon_auth_allow_insecure_key: "false"
     rgw:
       # STS is unused by this single-site object store. Keep it explicitly off
       # so the pre-20.2.4 CBC token path cannot be re-enabled by default drift.

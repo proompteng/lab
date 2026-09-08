@@ -35,7 +35,7 @@ import {
   runTengriAction,
   subscribeTengriGuestOperations,
 } from './client'
-import { CodeEditor } from './code-editor'
+import { CodeWorkbench } from './code-workbench'
 import { type CodeOpenRequest, updateDirtyCodeWindows } from './code-editor-model'
 import { ConfirmationDialog } from './confirmation-dialog'
 import { DesktopDock } from './desktop-dock'
@@ -72,30 +72,17 @@ const MemoizedTerminalApp = memo(TerminalApp)
 const MemoizedSettingsApp = memo(SettingsApp)
 
 const MemoizedCodeEditor = memo(function MemoizedCodeEditor({
-  agentId,
-  agentCreatedAt,
-  ownerId,
   onDirtyChange,
-  request,
+  onFocus,
   windowId,
-}: {
-  agentId: string
-  agentCreatedAt: string
-  ownerId: string
+  ...props
+}: Omit<React.ComponentProps<typeof CodeWorkbench>, 'onDirtyChange' | 'onFocus'> & {
   onDirtyChange: (windowId: string, dirty: boolean) => void
-  request: CodeOpenRequest | null
-  windowId: string
+  onFocus: (windowId: string) => void
 }) {
   const handleDirtyChange = useCallback((dirty: boolean) => onDirtyChange(windowId, dirty), [onDirtyChange, windowId])
-  return (
-    <CodeEditor
-      agentId={agentId}
-      agentCreatedAt={agentCreatedAt}
-      ownerId={ownerId}
-      onDirtyChange={handleDirtyChange}
-      request={request}
-    />
-  )
+  const handleFocus = useCallback(() => onFocus(windowId), [onFocus, windowId])
+  return <CodeWorkbench {...props} onDirtyChange={handleDirtyChange} onFocus={handleFocus} windowId={windowId} />
 })
 
 const getServerGuestOperationSnapshot = () => false
@@ -280,6 +267,13 @@ export function ReadyDesktop({
   const finderRequestIdRef = useRef(0)
   const lifecycleTransitionReleaseRef = useRef<(() => void) | null>(null)
   const terminalCloseHandlersRef = useRef(new Map<string, () => void>())
+  const codeGuardsRef = useRef(new Map<string, (close: boolean) => Promise<boolean>>())
+  const registerCodeGuard = useCallback((id: string, guard: (close: boolean) => Promise<boolean>) => {
+    codeGuardsRef.current.set(id, guard)
+    return () => {
+      if (codeGuardsRef.current.get(id) === guard) codeGuardsRef.current.delete(id)
+    }
+  }, [])
   const windowStateRef = useRef(windowState)
   const dirtyCodeWindowsRef = useRef(dirtyCodeWindows)
   const openExternalPreview = useExternalPreviewLifecycle(agent.id, previewGatewayOrigin)
@@ -410,9 +404,17 @@ export function ReadyDesktop({
   )
 
   const closeWindow = useCallback((desktopWindow: Pick<DesktopWindow, 'app' | 'id'>) => {
-    if (desktopWindow.app === 'code' && dirtyCodeWindowsRef.current.has(desktopWindow.id)) {
-      setError('Save or close every edited Code tab before closing the Code window.')
+    if (desktopWindow.app === 'code') {
+      const guard = codeGuardsRef.current.get(desktopWindow.id)
+      if (!guard) return
       dispatch({ type: 'focus', id: desktopWindow.id })
+      void guard(true)
+        .then((canClose) => {
+          if (canClose) dispatch({ type: 'close', id: desktopWindow.id })
+        })
+        .catch((cause: unknown) =>
+          setError(cause instanceof Error ? cause.message : 'VS Code could not close its editors'),
+        )
       return
     }
     if (desktopWindow.app === 'terminal') terminalCloseHandlersRef.current.get(desktopWindow.id)?.()
@@ -613,6 +615,10 @@ export function ReadyDesktop({
       setError('')
       let committed = false
       try {
+        for (const guard of codeGuardsRef.current.values()) {
+          if (!(await guard(false)))
+            throw new Error('Save or close every edited Code tab before changing the agent lifecycle.')
+        }
         await commitDesktopLifecycleAction({
           action,
           request: () => runTengriAction<TengriAgent | null>({ action, agentId: agent.id }),
@@ -664,6 +670,10 @@ export function ReadyDesktop({
     setError('')
     let committed = false
     try {
+      for (const guard of codeGuardsRef.current.values()) {
+        if (!(await guard(false))) throw new Error('Save or close every edited Code tab before signing out.')
+      }
+      await runTengriAction<null>({ action: 'revoke-editor-sessions' })
       const result = await tengriAuthClient.signOut()
       if (result.error) throw new Error(result.error.message || 'Tengri could not sign out')
       committed = true
@@ -818,6 +828,11 @@ export function ReadyDesktop({
                   agentId={agent.id}
                   agentCreatedAt={agent.createdAt}
                   ownerId={user.id}
+                  desktopId={desktopId}
+                  registerGuard={registerCodeGuard}
+                  lifecycleBusy={busyAction !== null}
+                  previewGatewayOrigin={previewGatewayOrigin}
+                  onFocus={(id) => dispatch({ type: 'focus', id })}
                   onDirtyChange={handleCodeDirtyChange}
                   request={codeRequest?.targetWindowId === desktopWindow.id ? codeRequest : null}
                   windowId={desktopWindow.id}

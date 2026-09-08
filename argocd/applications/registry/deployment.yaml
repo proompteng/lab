@@ -60,11 +60,11 @@ spec:
             runAsUser: 99
           resources:
             limits:
-              cpu: "250m"
-              memory: "256Mi"
+              cpu: "1"
+              memory: "1Gi"
             requests:
-              cpu: "50m"
-              memory: "64Mi"
+              cpu: "250m"
+              memory: "512Mi"
           ports:
             - name: registry-http
               containerPort: 8080
