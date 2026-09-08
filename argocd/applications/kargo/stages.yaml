@@ -1397,7 +1397,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 35m0s
+            timeout: 1h15m0s
             errorThreshold: 3
           config:
             apps:

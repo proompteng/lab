@@ -799,7 +799,7 @@ describe('Kargo direct-push GitOps contract', () => {
 
       const argocdUpdate = steps.at(-1)
       expect(argocdUpdate?.retry).toEqual({
-        timeout: stageName === 'torghut' ? '1h45m0s' : stageName === 'bilig' ? '35m0s' : '20m0s',
+        timeout: stageName === 'torghut' ? '1h45m0s' : stageName === 'bilig' ? '1h15m0s' : '20m0s',
         errorThreshold: 3,
       })
       const apps = argocdUpdate?.config?.apps as Array<Record<string, any>>
