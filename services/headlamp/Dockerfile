@@ -1,0 +1,143 @@
+# syntax=docker/dockerfile:1
+
+ARG IMAGE_BASE=mirror.gcr.io/alpine:3.22.2@sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412
+ARG IMAGE_GO=mirror.gcr.io/golang:1.26.5@sha256:2005724102f45917a63e9d092fc0e4ea56ea575048ce147caad5f5f61502c365
+ARG IMAGE_NODE=mirror.gcr.io/node:22@sha256:4ad2c2b350ab49fb637ab40a269ffe207c61818bb7eb3a4ea122001a0c605e1f
+ARG HEADLAMP_REF=v0.44.0
+ARG HEADLAMP_SHA=7e2f255cc256a16c39681ffea31fa16e11a11eaf
+ARG LAB_GIT_SHA=dirty
+
+FROM ${IMAGE_BASE} AS source
+
+ARG HEADLAMP_REF
+ARG HEADLAMP_SHA
+
+WORKDIR /src
+
+COPY .upstream /src
+
+RUN test -f /src/.codex-upstream-sha \
+    && test "$(cat /src/.codex-upstream-sha)" = "${HEADLAMP_SHA}"
+
+FROM ${IMAGE_BASE} AS image-base
+
+FROM --platform=${BUILDPLATFORM} ${IMAGE_GO} AS backend-build
+
+WORKDIR /headlamp
+
+ARG TARGETOS
+ARG TARGETARCH
+ENV GOPATH=/go \
+    GOPROXY=https://proxy.golang.org \
+    GO111MODULE=on \
+    CGO_ENABLED=0 \
+    GOOS=${TARGETOS} \
+    GOARCH=${TARGETARCH}
+
+COPY --from=source /src/backend/go.* /headlamp/backend/
+COPY scripts /tools
+COPY patches /tools/patches
+
+RUN --mount=type=cache,target=/go/pkg/mod \
+    cd ./backend && go mod download
+
+COPY --from=source /src/backend /headlamp/backend
+COPY --from=source /src/frontend /headlamp/frontend
+
+RUN sh /tools/apply-upstream-patches.sh /headlamp \
+    && grep -q 'handleHTTPWatchStream' /headlamp/backend/cmd/multiplexer.go
+
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    cd ./backend && go build -o ./headlamp-server ./cmd/
+
+FROM --platform=${BUILDPLATFORM} ${IMAGE_NODE} AS frontend-build
+
+WORKDIR /headlamp
+
+COPY --from=source /src/.git /headlamp/.git
+COPY --from=source /src/app/package.json /headlamp/app/package.json
+COPY --from=source /src/frontend/package*.json /headlamp/frontend/
+COPY scripts /tools
+COPY patches /tools/patches
+
+RUN cd ./frontend && npm ci --only=prod
+
+FROM frontend-build AS frontend
+
+ENV REACT_APP_ENABLE_WEBSOCKET_MULTIPLEXER=true
+
+COPY --from=source /src/backend /headlamp/backend
+COPY --from=source /src/frontend /headlamp/frontend
+
+RUN sh /tools/apply-upstream-patches.sh /headlamp
+
+RUN cd ./frontend && npm run build
+
+RUN echo "*** Built Headlamp with version: ***"
+RUN cat ./frontend/.env
+
+RUN if [ -d /headlamp/plugins ]; then \
+      mv /headlamp/plugins /headlamp/plugins-old; \
+    else \
+      mkdir -p /headlamp/plugins-old; \
+    fi
+
+RUN mkdir -p /headlamp/plugins
+
+RUN set -eu; \
+    for filename in main.js package.json; do \
+      find /headlamp/plugins-old -mindepth 2 -maxdepth 2 -name "$filename" -print | while read -r plugin_file; do \
+        plugin_name=$(echo "$plugin_file" | cut -d'/' -f4); \
+        mkdir -p "/headlamp/plugins/$plugin_name"; \
+        cp "$plugin_file" "/headlamp/plugins/$plugin_name"; \
+      done; \
+    done
+
+FROM --platform=${BUILDPLATFORM} frontend-build AS static-plugins
+
+RUN apt-get update && apt-get install -y jq
+
+COPY --from=source /src/container/build-manifest.json /src/container/fetch-plugins.sh /tools/
+
+WORKDIR /tools
+
+RUN mkdir -p /plugins
+RUN ./fetch-plugins.sh /plugins/
+
+FROM image-base AS final
+
+ARG LAB_GIT_SHA
+ARG HEADLAMP_REF
+ARG HEADLAMP_SHA
+
+LABEL org.opencontainers.image.source="https://github.com/proompteng/lab" \
+      org.opencontainers.image.revision="${LAB_GIT_SHA}" \
+      org.opencontainers.image.version="${HEADLAMP_REF}" \
+      headlamp.proompteng.ai/upstream-sha="${HEADLAMP_SHA}"
+
+RUN if command -v apt-get > /dev/null; then \
+        apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+        && addgroup --system headlamp \
+        && adduser --system --ingroup headlamp headlamp \
+        && rm -rf /var/lib/apt/lists/*; \
+    else \
+        apk add --no-cache ca-certificates \
+        && addgroup -S headlamp \
+        && adduser -S headlamp -G headlamp; \
+    fi
+
+COPY --from=backend-build --link /headlamp/backend/headlamp-server /headlamp/headlamp-server
+COPY --from=frontend --link /headlamp/frontend/build /headlamp/frontend
+COPY --from=frontend --link /headlamp/plugins /headlamp/plugins
+COPY --from=static-plugins --link /plugins /headlamp/static-plugins
+
+RUN chown -R headlamp:headlamp /headlamp
+
+USER headlamp
+
+EXPOSE 4466
+
+ENV HEADLAMP_STATIC_PLUGINS_DIR=/headlamp/static-plugins
+
+ENTRYPOINT ["/headlamp/headlamp-server", "-html-static-dir", "/headlamp/frontend", "-plugins-dir", "/headlamp/plugins"]

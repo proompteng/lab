@@ -1,0 +1,5 @@
+# One allowed remote action repository per line.
+# Keep this list aligned with pinned SHAs in repo workflows.
+code.proompteng.ai/kalmyk/actions-checkout
+code.proompteng.ai/kalmyk/actions-setup-node
+code.proompteng.ai/kalmyk/actions-cache

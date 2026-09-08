@@ -1,0 +1,195 @@
+# Keycloak (OIDC) for Headlamp
+
+This runbook covers the in-cluster Keycloak deployment used for OIDC, plus the initial admin hardening steps and proxy notes.
+
+## Deployment layout
+
+- Argo CD app path: `argocd/applications/keycloak`
+- Namespace: `keycloak`
+- Manifests: `argocd/applications/keycloak/keycloak.yaml`
+- Database: CloudNativePG cluster `keycloak-db` (`rook-ceph-block`, 5Gi)
+- Public hostname: `auth.proompteng.ai`
+- Traefik route: `argocd/applications/keycloak/ingressroute.yaml`
+- Uses plain manifests (no Helm) under `argocd/applications/keycloak/`.
+
+For Headlamp-specific wiring (OIDC secret, RBAC, control-plane OIDC args), see `docs/headlamp-setup.md`.
+
+## OIDC client for ChatGPT agents-shell
+
+The ChatGPT MCP connector uses the confidential `agents-shell` OIDC client bootstrapped by
+`argocd/applications/keycloak/agents-shell-client-bootstrap-job.yaml`.
+
+Capabilities:
+
+- Client authentication: On
+- Standard flow: On
+- Direct access grants: Off
+- Implicit flow: Off
+- Service accounts roles: Off
+- PKCE: `S256`
+- Valid redirect URI: `https://chatgpt.com/connector/oauth/*`
+- Web origin: `https://chatgpt.com`
+
+Required scopes and role mapping:
+
+- Default client scopes: `agents-shell.read`, `agents-shell.write`, `offline_access`
+- Optional client scope: `agents-shell.admin`
+- User: `agents-shell-chatgpt`
+- Realm role: `offline_access`
+
+The `offline_access` client scope alone is not enough for durable ChatGPT connector sessions. The ChatGPT user must
+also have the realm `offline_access` role, otherwise Keycloak can issue ordinary access/refresh tokens but will not
+issue offline refresh tokens for long-lived reconnect-free sessions.
+
+## Operations model
+
+- Keycloak itself is GitOps-managed from `argocd/applications/keycloak`.
+- The `kubernetes` OIDC client used by Headlamp and the kube-apiserver is GitOps-managed by:
+  - `argocd/applications/keycloak/headlamp-client-sealedsecret.yaml`
+  - `argocd/applications/keycloak/headlamp-client-bootstrap-job.yaml`
+- The ChatGPT agents-shell OIDC client is GitOps-managed by:
+  - `argocd/applications/keycloak/agents-shell-client-sealedsecret.yaml`
+  - `argocd/applications/keycloak/agents-shell-user-sealedsecret.yaml`
+  - `argocd/applications/keycloak/agents-shell-client-bootstrap-job.yaml`
+- That bootstrap job also enforces the realm session defaults Headlamp depends on:
+  - Access token lifespan `300`
+  - SSO session idle `28800`
+  - SSO session max `86400`
+  - Client session idle `28800`
+  - Client session max `86400`
+- There is no Ansible playbook in this repo for Keycloak realm or client management.
+- The only OIDC-related Ansible playbook in this repo is `ansible/playbooks/k3s-oidc.yml`, and that is for `k3s` API server flags, not for Keycloak application state.
+
+For the current `galactic` environment:
+
+- Keycloak and Headlamp changes should be made in GitOps manifests and synced with Argo CD.
+- Kube-apiserver OIDC changes should be applied through the Talos machine config patch flow documented in `docs/headlamp-setup.md`.
+
+## Admin UI
+
+- Admin console URL: `https://auth.proompteng.ai/admin/`
+- Temporary bootstrap admin: stored in the sealed secret `keycloak-admin`
+
+### Create a permanent admin user (required)
+
+Keycloak warns if you are still using the bootstrap admin. Create a permanent admin and delete the temporary account.
+
+1. In the **master** realm, create a new user (Users → Add user) and set a non-temporary password.
+2. Assign realm roles:
+   - Go to the user → **Role mapping** → **Assign role**.
+   - Under **Realm roles**, select **admin** and assign it.
+3. Log out and log in with the new user.
+4. Delete the temporary bootstrap admin user.
+
+Note: In this Keycloak build, the realm-level admin role is named **admin** under Realm roles (not `realm-admin`).
+
+## OIDC client for Kubernetes/Headlamp
+
+Use a single confidential OIDC client for both the kube-apiserver and Headlamp (example client ID: `kubernetes`).
+This repo now bootstraps that client from `argocd/applications/keycloak/headlamp-client-bootstrap-job.yaml`.
+
+Capabilities:
+
+- Client authentication: **On**
+- Standard flow: **On**
+- Direct access grants: Off
+- Implicit flow: Off
+- Service accounts roles: Off
+- PKCE: None
+
+Login settings (Headlamp):
+
+- Valid redirect URIs:
+  - `https://headlamp.ide-newton.ts.net/oidc-callback`
+  - `https://headlamp.k8s.proompteng.ai/oidc-callback`
+- Web origins:
+  - `https://headlamp.ide-newton.ts.net`
+  - `https://headlamp.k8s.proompteng.ai`
+
+Issuer and scopes:
+
+- Issuer: Realm → **Realm settings** → **Endpoints** → **OpenID Endpoint Configuration** (`issuer`)
+- Scopes: `openid profile email offline_access`
+- The kube-apiserver on `galactic` binds Kubernetes usernames from the OIDC `preferred_username` claim with the `oidc:` prefix, so RBAC subjects should look like `oidc:<preferred_username>`.
+- The GitOps bootstrap job also enforces a `kubernetes-audience` protocol mapper so access tokens
+  include audience `kubernetes`, which Headlamp needs when it uses the OIDC access token for
+  websocket watches, logs, exec, and port-forward traffic.
+
+Optional (recommended) group mapper:
+
+- Mapper type: **Group Membership**
+- Token claim name: `groups`
+- Add to ID token: On
+- Add to access token: On
+
+## Proxy (Nginx Proxy Manager)
+
+Nginx Proxy Manager is terminating TLS and forwarding to Traefik. Keycloak is configured for proxy headers:
+
+- `KC_HOSTNAME=auth.proompteng.ai`
+- `KC_PROXY_HEADERS=xforwarded`
+- `KC_HTTP_ENABLED=true`
+
+No custom proxy config is required if NPM forwards standard X-Forwarded headers. If you see redirect loops or bad hostnames, add this custom location in NPM:
+
+```nginx
+location / {
+  proxy_set_header Host $host;
+  proxy_set_header X-Forwarded-Host $host;
+  proxy_set_header X-Forwarded-Proto $scheme;
+  proxy_set_header X-Forwarded-Port $server_port;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_pass $forward_scheme://$server:$port;
+}
+```
+
+## Database notes
+
+- CNPG cluster: `keycloak-db`
+- App secret (generated by CNPG): `keycloak-db-app`
+- Keycloak uses `keycloak-db-rw:5432` with the CNPG app secret for credentials.
+
+## Rotating the bootstrap admin password
+
+The bootstrap admin credentials are sealed in `argocd/applications/keycloak/keycloak-admin-sealedsecret.yaml`.
+To rotate:
+
+1. Generate a new secret (do not commit plaintext):
+
+```bash
+kubectl create secret generic keycloak-admin \
+  -n keycloak \
+  --from-literal=username=admin \
+  --from-literal=password='<new-password>' \
+  --dry-run=client -o yaml \
+  | kubeseal --controller-name sealed-secrets \
+  --controller-namespace sealed-secrets -o yaml \
+  > argocd/applications/keycloak/keycloak-admin-sealedsecret.yaml
+```
+
+2. Commit the updated sealed secret and sync Argo CD.
+
+## Applying manifests locally
+
+This app uses plain YAML manifests (no Helm). To apply directly:
+
+```bash
+kubectl apply -f argocd/applications/keycloak/headlamp-client-sealedsecret.yaml
+kubectl apply -f argocd/applications/keycloak/keycloak-admin-sealedsecret.yaml
+kubectl apply -f argocd/applications/keycloak/postgres-cluster.yaml
+kubectl apply -f argocd/applications/keycloak/keycloak.yaml
+kubectl apply -f argocd/applications/keycloak/ingressroute.yaml
+```
+
+To run the OIDC client bootstrap without waiting for Argo CD, apply the job after the secret:
+
+```bash
+kubectl apply -f argocd/applications/keycloak/headlamp-client-bootstrap-job.yaml
+```
+
+## Quick checks
+
+```bash
+kubectl -n keycloak get pods,svc,ingressroute,cluster
+```

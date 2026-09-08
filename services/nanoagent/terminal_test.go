@@ -1,0 +1,1026 @@
+package main
+
+import (
+	"context"
+	"encoding/binary"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/coder/websocket"
+	"github.com/creack/pty"
+)
+
+func TestTerminalOutputFrameIncludesTypeSequenceAndPayload(t *testing.T) {
+	t.Parallel()
+	frame := outputFrame(terminalChunk{sequence: 42, data: []byte("hello")})
+	if frame[0] != outputFrameType || binary.BigEndian.Uint32(frame[1:5]) != 42 || string(frame[5:]) != "hello" {
+		t.Fatalf("outputFrame() = %v", frame)
+	}
+}
+
+func TestTerminalAppendPreservesOutputWhileSessionIsClosing(t *testing.T) {
+	t.Parallel()
+	session := &terminalSession{
+		closing:     true,
+		connections: make(map[string]*terminalConnection),
+	}
+	session.append([]byte("final output"))
+	if len(session.buffer) != 1 || string(session.buffer[0].data) != "final output" {
+		t.Fatalf("closing terminal buffer = %#v, want final output", session.buffer)
+	}
+}
+
+func TestTerminalManagerEnforcesFourSessionLimit(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	workspace, err := newWorkspace(root)
+	if err != nil {
+		t.Fatalf("newWorkspace() error = %v", err)
+	}
+	// Capacity admission depends only on manager state; do not make it depend on concurrent PTY allocation.
+	manager := &terminalManager{workspace: workspace, sessions: make(map[string]*terminalSession)}
+	for index := 0; index < maxTerminalSessions; index++ {
+		id := fmt.Sprintf("terminal-session-%02d", index)
+		manager.sessions[id] = &terminalSession{id: id}
+	}
+	if _, _, err := manager.create("terminal-creation-overflow", "/", 80, 24); err == nil || !strings.Contains(err.Error(), "four") {
+		t.Fatalf("fifth terminal error = %v", err)
+	}
+}
+
+func TestTerminalManagerReturnsIdempotentSessionBeforeEnforcingCapacity(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	workspace, err := newWorkspace(root)
+	if err != nil {
+		t.Fatalf("newWorkspace() error = %v", err)
+	}
+	// Idempotent lookup must win before any filesystem or PTY work is attempted.
+	manager := &terminalManager{workspace: workspace, sessions: make(map[string]*terminalSession)}
+	stable := &terminalSession{
+		id:          "terminal-session-stable",
+		creationID:  "terminal-creation-stable",
+		cwd:         "/",
+		connections: make(map[string]*terminalConnection),
+	}
+	manager.sessions[stable.id] = stable
+	for index := 1; index < maxTerminalSessions; index++ {
+		id := fmt.Sprintf("terminal-session-%02d", index)
+		manager.sessions[id] = &terminalSession{id: id}
+	}
+	replayed, replayCreated, err := manager.create("terminal-creation-stable", "/different", 200, 50)
+	if err != nil {
+		t.Fatalf("replay terminal creation: %v", err)
+	}
+	want := stable.view()
+	if replayed.ID != want.ID || replayed.CreationID != want.CreationID {
+		t.Fatalf("idempotent create = %#v, want %#v", replayed, want)
+	}
+	if replayCreated {
+		t.Fatal("idempotent terminal replay was reported as a new creation")
+	}
+}
+
+func TestTerminalManagerFallsBackToAvailablePOSIXShell(t *testing.T) {
+	directory := t.TempDir()
+	shell := filepath.Join(directory, "sh")
+	if err := os.WriteFile(shell, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatalf("write shell fixture: %v", err)
+	}
+	t.Setenv("PATH", directory)
+
+	if resolved := resolveTerminalShell(filepath.Join(directory, "missing-bash")); resolved != shell {
+		t.Fatalf("resolveTerminalShell() = %q, want %q", resolved, shell)
+	}
+}
+
+func TestTerminalReplayResetReasonPreservesContiguousCursor(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		since       uint32
+		bufferStart uint32
+		bufferEnd   uint32
+		want        string
+	}{
+		{name: "initial replay", since: 0, bufferStart: 7, bufferEnd: 9},
+		{name: "contiguous cursor", since: 6, bufferStart: 7, bufferEnd: 9},
+		{name: "retained cursor", since: 7, bufferStart: 7, bufferEnd: 9},
+		{name: "buffer gap", since: 5, bufferStart: 7, bufferEnd: 9, want: "buffer_miss"},
+		{name: "future cursor", since: 10, bufferStart: 7, bufferEnd: 9, want: "invalid_cursor"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if actual := terminalReplayResetReason(test.since, test.bufferStart, test.bufferEnd); actual != test.want {
+				t.Fatalf("terminalReplayResetReason() = %q, want %q", actual, test.want)
+			}
+		})
+	}
+}
+
+func TestCreateTerminalCanBeReconciledAfterRequestCancellation(t *testing.T) {
+	workspace, err := newWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatalf("newWorkspace() error = %v", err)
+	}
+	manager := newTerminalManager(workspace, "/bin/sh", workspace.root)
+	t.Cleanup(manager.close)
+	server := &apiServer{terminals: manager}
+	request := httptest.NewRequest(http.MethodPost, "/v1/terminals", strings.NewReader(`{"creationId":"terminal-creation-cancelled","cwd":"/","columns":80,"rows":24}`))
+	cancelledContext, cancel := context.WithCancel(request.Context())
+	cancel()
+	request = request.WithContext(cancelledContext)
+	response := httptest.NewRecorder()
+
+	server.handleCreateTerminal(response, request)
+
+	sessions := manager.list()
+	if len(sessions) != 1 {
+		t.Fatalf("cancelled request retained %d terminal sessions, want one reconcilable session", len(sessions))
+	}
+	replayed, replayCreated, replayErr := manager.create("terminal-creation-cancelled", "/", 80, 24)
+	if replayErr != nil {
+		t.Fatalf("reconcile cancelled creation: %v", replayErr)
+	}
+	if replayed.ID != sessions[0].ID {
+		t.Fatalf("reconciled terminal ID = %q, want %q", replayed.ID, sessions[0].ID)
+	}
+	if replayCreated {
+		t.Fatal("reconciled terminal was reported as newly created")
+	}
+}
+
+func TestCreateTerminalReportsCreatedAndIdempotentReplay(t *testing.T) {
+	workspace, err := newWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatalf("newWorkspace() error = %v", err)
+	}
+	manager := newTerminalManager(workspace, "/bin/sh", workspace.root)
+	t.Cleanup(manager.close)
+	server := &apiServer{terminals: manager}
+	body := `{"creationId":"terminal-creation-status","cwd":"/","columns":80,"rows":24}`
+
+	first := httptest.NewRecorder()
+	server.handleCreateTerminal(first, httptest.NewRequest(http.MethodPost, "/v1/terminals", strings.NewReader(body)))
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first create status = %d, want %d", first.Code, http.StatusCreated)
+	}
+
+	replayed := httptest.NewRecorder()
+	server.handleCreateTerminal(replayed, httptest.NewRequest(http.MethodPost, "/v1/terminals", strings.NewReader(body)))
+	if replayed.Code != http.StatusOK {
+		t.Fatalf("replayed create status = %d, want %d", replayed.Code, http.StatusOK)
+	}
+}
+
+func TestTerminalManagerRunsInteractiveShell(t *testing.T) {
+	workspace, err := newWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatalf("newWorkspace() error = %v", err)
+	}
+	manager := newTerminalManager(workspace, "/bin/sh", workspace.root)
+	t.Cleanup(manager.close)
+
+	view, _, err := manager.create("terminal-creation-shell", "/", 80, 24)
+	if err != nil {
+		t.Fatalf("create terminal: %v", err)
+	}
+	session, found := manager.get(view.ID)
+	if !found {
+		t.Fatal("created terminal session was not retained")
+	}
+
+	const marker = "tengri-pty-ready-42"
+	session.input([]byte("printf '" + marker + "\\n'\n"))
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		session.mu.Lock()
+		var output strings.Builder
+		for _, chunk := range session.buffer {
+			output.Write(chunk.data)
+		}
+		session.mu.Unlock()
+		if strings.Contains(output.String(), marker) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("interactive PTY did not return shell output")
+}
+
+func TestTerminalManagerDrainsFinalOutputBeforeExit(t *testing.T) {
+	root := t.TempDir()
+	script := filepath.Join(root, "burst-output.sh")
+	content := "#!/bin/sh\nIFS= read -r ignored\ni=0\nwhile [ \"$i\" -lt 10000 ]; do printf 'output-%05d\\n' \"$i\"; i=$((i + 1)); done\nprintf 'tengri-final-output-marker\\n'\n"
+	if err := os.WriteFile(script, []byte(content), 0o700); err != nil {
+		t.Fatalf("write output fixture: %v", err)
+	}
+	workspace, err := newWorkspace(root)
+	if err != nil {
+		t.Fatalf("newWorkspace() error = %v", err)
+	}
+	manager := newTerminalManager(workspace, script, workspace.root)
+	t.Cleanup(manager.close)
+
+	view, _, err := manager.create("terminal-creation-output", "/", 80, 24)
+	if err != nil {
+		t.Fatalf("create terminal: %v", err)
+	}
+	session, found := manager.get(view.ID)
+	if !found {
+		t.Fatal("created terminal session was not retained")
+	}
+	session.input([]byte("start\r"))
+	select {
+	case <-session.outputDrained:
+	case <-time.After(10 * time.Second):
+		exited := false
+		select {
+		case <-session.processExited:
+			exited = true
+		default:
+		}
+		session.mu.Lock()
+		var buffered strings.Builder
+		for _, chunk := range session.buffer {
+			buffered.Write(chunk.data)
+		}
+		session.mu.Unlock()
+		output := buffered.String()
+		if len(output) > 512 {
+			output = output[len(output)-512:]
+		}
+		t.Fatalf("PTY output reader did not drain after shell exit (processExited=%t tail=%q)", exited, output)
+	}
+
+	session.mu.Lock()
+	var output strings.Builder
+	for _, chunk := range session.buffer {
+		output.Write(chunk.data)
+	}
+	session.mu.Unlock()
+	if !strings.Contains(output.String(), "tengri-final-output-marker") {
+		t.Fatal("terminal replay buffer lost output written immediately before process exit")
+	}
+}
+
+func TestTerminalManagerDefaultsToConfiguredWorkspaceRoot(t *testing.T) {
+	root := t.TempDir()
+	workspace, err := newWorkspace(root)
+	if err != nil {
+		t.Fatalf("newWorkspace() error = %v", err)
+	}
+	manager := newTerminalManager(workspace, "/bin/sh", workspace.root)
+	t.Cleanup(manager.close)
+
+	view, _, err := manager.create("terminal-creation-home", "", 80, 24)
+	if err != nil {
+		t.Fatalf("create terminal: %v", err)
+	}
+	session, found := manager.get(view.ID)
+	if !found {
+		t.Fatal("created terminal session was not retained")
+	}
+	if session.command.Dir != workspace.realRoot || view.Cwd != "/" {
+		t.Fatalf("default terminal cwd = physical %q virtual %q", session.command.Dir, view.Cwd)
+	}
+}
+
+func TestTerminalManagerSetsConfiguredHome(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	workspaceRoot := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatalf("create home: %v", err)
+	}
+	if err := os.MkdirAll(workspaceRoot, 0o700); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	workspace, err := newWorkspace(workspaceRoot)
+	if err != nil {
+		t.Fatalf("newWorkspace() error = %v", err)
+	}
+	manager := newTerminalManager(workspace, "/bin/sh", home)
+	t.Cleanup(manager.close)
+
+	view, _, err := manager.create("terminal-creation-process", "/", 80, 24)
+	if err != nil {
+		t.Fatalf("create terminal: %v", err)
+	}
+	session, found := manager.get(view.ID)
+	if !found {
+		t.Fatal("created terminal session was not retained")
+	}
+
+	homeEntries := 0
+	for _, entry := range session.command.Env {
+		if strings.HasPrefix(entry, "HOME=") {
+			homeEntries++
+			if entry != "HOME="+home {
+				t.Fatalf("terminal HOME = %q, want %q", entry, "HOME="+home)
+			}
+		}
+	}
+	if homeEntries != 1 {
+		t.Fatalf("terminal HOME entries = %d, want 1", homeEntries)
+	}
+}
+
+func TestTerminalManagerCloseIsIdempotent(t *testing.T) {
+	t.Parallel()
+	workspace, err := newWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatalf("newWorkspace() error = %v", err)
+	}
+	manager := newTerminalManager(workspace, "/bin/sh", workspace.root)
+	manager.close()
+	manager.close()
+}
+
+func TestStaleTerminalDetachDoesNotRemoveReconnectedClient(t *testing.T) {
+	t.Parallel()
+	token := strings.Repeat("a", 24)
+	previous := &terminalConnection{token: token}
+	current := &terminalConnection{token: token}
+	session := &terminalSession{connections: map[string]*terminalConnection{token: current}}
+
+	session.detach(previous)
+	if session.connections[token] != current {
+		t.Fatal("stale detach removed the replacement terminal connection")
+	}
+	session.detach(current)
+	if len(session.connections) != 0 {
+		t.Fatal("current terminal connection was not detached")
+	}
+}
+
+func TestTerminalReconnectReplacesDuplicateClientAndReplaysFromCursor(t *testing.T) {
+	t.Parallel()
+	token := strings.Repeat("a", 24)
+	session := &terminalSession{
+		id:          strings.Repeat("s", 24),
+		sequence:    2,
+		bufferBytes: 6,
+		buffer: []terminalChunk{
+			{sequence: 1, data: []byte("one")},
+			{sequence: 2, data: []byte("two")},
+		},
+		connections: make(map[string]*terminalConnection),
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		connection, err := websocket.Accept(writer, request, nil)
+		if err != nil {
+			return
+		}
+		since, _ := strconv.ParseUint(request.URL.Query().Get("since"), 10, 32)
+		attached, err := session.attach(connection, request.URL.Query().Get("reconnect"), uint32(since))
+		if err != nil {
+			_ = connection.Close(websocket.StatusPolicyViolation, "attach failed")
+			return
+		}
+		defer session.detach(attached)
+		defer attached.close(websocket.StatusNormalClosure, "test complete")
+		for {
+			if _, _, err := connection.Read(request.Context()); err != nil {
+				return
+			}
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	websocketURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	first, _, err := websocket.Dial(ctx, websocketURL+"?reconnect="+token, nil)
+	if err != nil {
+		t.Fatalf("dial first terminal client: %v", err)
+	}
+	defer first.CloseNow()
+	assertTerminalReady(t, ctx, first, token)
+	assertTerminalOutput(t, ctx, first, 1, "one")
+	assertTerminalOutput(t, ctx, first, 2, "two")
+
+	second, _, err := websocket.Dial(ctx, websocketURL+"?reconnect="+token+"&since=1", nil)
+	if err != nil {
+		t.Fatalf("dial replacement terminal client: %v", err)
+	}
+	defer second.CloseNow()
+	assertTerminalReady(t, ctx, second, token)
+	assertTerminalOutput(t, ctx, second, 2, "two")
+
+	session.mu.Lock()
+	connections := len(session.connections)
+	session.mu.Unlock()
+	if connections != 1 {
+		t.Fatalf("terminal connections = %d, want one replacement", connections)
+	}
+	if _, _, err := first.Read(ctx); err == nil {
+		t.Fatal("replaced terminal client remained connected")
+	}
+}
+
+func TestTerminalReconnectResetsCursorOutsideReplayBuffer(t *testing.T) {
+	t.Parallel()
+	session := &terminalSession{
+		id:             strings.Repeat("s", 24),
+		sequence:       7,
+		bufferBytes:    5,
+		buffer:         []terminalChunk{{sequence: 7, data: []byte("fresh")}},
+		connections:    make(map[string]*terminalConnection),
+		lastActivityAt: time.Now().UTC(),
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		connection, err := websocket.Accept(writer, request, nil)
+		if err != nil {
+			return
+		}
+		attached, err := session.attach(connection, request.URL.Query().Get("reconnect"), 3)
+		if err != nil {
+			_ = connection.Close(websocket.StatusPolicyViolation, "attach failed")
+			return
+		}
+		defer session.detach(attached)
+		defer attached.close(websocket.StatusNormalClosure, "test complete")
+		for {
+			if _, _, err := connection.Read(request.Context()); err != nil {
+				return
+			}
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	token := strings.Repeat("b", 24)
+	connection, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"?reconnect="+token, nil)
+	if err != nil {
+		t.Fatalf("dial terminal client: %v", err)
+	}
+	defer connection.CloseNow()
+	assertTerminalReady(t, ctx, connection, token)
+	messageType, payload, err := connection.Read(ctx)
+	if err != nil {
+		t.Fatalf("read terminal reset: %v", err)
+	}
+	var reset struct {
+		Type   string `json:"type"`
+		Reason string `json:"reason"`
+	}
+	if messageType != websocket.MessageText || json.Unmarshal(payload, &reset) != nil ||
+		reset.Type != "reset" || reset.Reason != "buffer_miss" {
+		t.Fatalf("terminal reset = %s", payload)
+	}
+	assertTerminalOutput(t, ctx, connection, 7, "fresh")
+}
+
+func assertTerminalReady(t *testing.T, ctx context.Context, connection *websocket.Conn, token string) {
+	t.Helper()
+	messageType, payload, err := connection.Read(ctx)
+	if err != nil {
+		t.Fatalf("read terminal ready: %v", err)
+	}
+	var ready struct {
+		Type  string `json:"type"`
+		Token string `json:"token"`
+	}
+	if messageType != websocket.MessageText || json.Unmarshal(payload, &ready) != nil ||
+		ready.Type != "ready" || ready.Token != token {
+		t.Fatalf("terminal ready = %s", payload)
+	}
+}
+
+func assertTerminalOutput(t *testing.T, ctx context.Context, connection *websocket.Conn, sequence uint32, output string) {
+	t.Helper()
+	messageType, payload, err := connection.Read(ctx)
+	if err != nil {
+		t.Fatalf("read terminal output: %v", err)
+	}
+	if messageType != websocket.MessageBinary || len(payload) < 5 || binary.BigEndian.Uint32(payload[1:5]) != sequence ||
+		string(payload[5:]) != output {
+		t.Fatalf("terminal output = type %d payload %v", messageType, payload)
+	}
+}
+
+func TestTerminalReplayBufferBoundsBytesAndChunkCount(t *testing.T) {
+	t.Parallel()
+	session := &terminalSession{connections: make(map[string]*terminalConnection)}
+	for index := 0; index < terminalBufferChunks+10; index++ {
+		session.append([]byte("x"))
+	}
+	if len(session.buffer) != terminalBufferChunks {
+		t.Fatalf("buffer chunks = %d, want %d", len(session.buffer), terminalBufferChunks)
+	}
+
+	session = &terminalSession{connections: make(map[string]*terminalConnection)}
+	session.append(make([]byte, terminalBufferBytes+1))
+	if len(session.buffer) != 1 || session.bufferBytes != terminalBufferBytes+1 {
+		t.Fatalf("single oversized buffer = %d chunks, %d bytes", len(session.buffer), session.bufferBytes)
+	}
+	session.append([]byte("y"))
+	if len(session.buffer) != 1 || session.bufferBytes != 1 {
+		t.Fatalf("trimmed buffer = %d chunks, %d bytes", len(session.buffer), session.bufferBytes)
+	}
+}
+
+func TestTerminalConnectionQueueRejectsSlowClient(t *testing.T) {
+	t.Parallel()
+	connection := &terminalConnection{
+		connection: nil,
+		done:       make(chan struct{}),
+		outbound:   make(chan terminalDelivery, 1),
+		token:      strings.Repeat("a", 24),
+	}
+	if !connection.enqueue(terminalMessage{messageType: websocket.MessageText, payload: []byte("first")}) {
+		t.Fatal("first terminal delivery was rejected")
+	}
+	if connection.enqueue(terminalMessage{messageType: websocket.MessageText, payload: []byte("second")}) {
+		t.Fatal("full terminal queue accepted another delivery")
+	}
+	if !connection.closed.Load() {
+		t.Fatal("slow terminal connection was not marked closed")
+	}
+}
+
+func TestTerminalReconnectTokensAreSecureAndValidated(t *testing.T) {
+	t.Parallel()
+	token, err := randomToken(24)
+	if err != nil {
+		t.Fatalf("randomToken() error = %v", err)
+	}
+	if len(token) != 24 || validateReconnectToken(token) != nil {
+		t.Fatalf("generated reconnect token = %q", token)
+	}
+	for _, invalid := range []string{"short", strings.Repeat("a", 129), strings.Repeat("a", 23) + "!"} {
+		if validateReconnectToken(invalid) == nil {
+			t.Fatalf("validateReconnectToken(%q) succeeded", invalid)
+		}
+	}
+}
+
+func TestTerminalDimensionsAreBounded(t *testing.T) {
+	t.Parallel()
+	if got := clampTerminalDimension(0, 120, 20, 400); got != 120 {
+		t.Fatalf("fallback dimension = %d", got)
+	}
+	if got := clampTerminalDimension(2, 120, 20, 400); got != 20 {
+		t.Fatalf("minimum dimension = %d", got)
+	}
+	if got := clampTerminalDimension(500, 120, 20, 400); got != 400 {
+		t.Fatalf("maximum dimension = %d", got)
+	}
+}
+
+func TestTerminalResizeChangesPTYDimensions(t *testing.T) {
+	workspace, err := newWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatalf("newWorkspace() error = %v", err)
+	}
+	manager := newTerminalManager(workspace, "/bin/sh", workspace.root)
+	t.Cleanup(manager.close)
+	view, _, err := manager.create("terminal-creation-replay", "/", 80, 24)
+	if err != nil {
+		t.Fatalf("create terminal: %v", err)
+	}
+	session, found := manager.get(view.ID)
+	if !found {
+		t.Fatal("created terminal session was not retained")
+	}
+
+	session.resize(177, 55)
+	size, err := pty.GetsizeFull(session.terminal)
+	if err != nil {
+		t.Fatalf("read PTY dimensions: %v", err)
+	}
+	if size.Cols != 177 || size.Rows != 55 {
+		t.Fatalf("PTY dimensions = %dx%d, want 177x55", size.Cols, size.Rows)
+	}
+}
+
+func TestTerminalSignalsReachTheProcessGroup(t *testing.T) {
+	directory := t.TempDir()
+	shell := filepath.Join(directory, "signal-shell")
+	script := "#!/bin/sh\ntrap 'exit 0' TERM\nwhile :; do sleep 1; done\n"
+	if err := os.WriteFile(shell, []byte(script), 0o700); err != nil {
+		t.Fatalf("write signal shell: %v", err)
+	}
+	workspace, err := newWorkspace(directory)
+	if err != nil {
+		t.Fatalf("newWorkspace() error = %v", err)
+	}
+	manager := newTerminalManager(workspace, shell, workspace.root)
+	t.Cleanup(manager.close)
+	view, _, err := manager.create("terminal-creation-signal", "/", 80, 24)
+	if err != nil {
+		t.Fatalf("create terminal: %v", err)
+	}
+	session, found := manager.get(view.ID)
+	if !found {
+		t.Fatal("created terminal session was not retained")
+	}
+	if err := session.signal("terminate"); err != nil {
+		t.Fatalf("signal terminal: %v", err)
+	}
+	select {
+	case <-session.processExited:
+	case <-time.After(3 * time.Second):
+		t.Fatal("terminal process did not exit after SIGTERM")
+	}
+	if _, err := terminalSignal("kill"); err == nil {
+		t.Fatal("unsupported terminal signal was accepted")
+	}
+}
+
+func TestTerminalSignalTargetsForegroundProcessGroup(t *testing.T) {
+	var signaled []int
+	err := signalTerminalForeground(
+		nil,
+		700,
+		syscall.SIGINT,
+		func(*os.File) (int, error) { return 701, nil },
+		func(pid int, _ syscall.Signal) error {
+			signaled = append(signaled, pid)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("signalTerminalForeground() error = %v", err)
+	}
+	if got, want := fmt.Sprint(signaled), "[-701]"; got != want {
+		t.Fatalf("signaled process groups = %s, want %s", got, want)
+	}
+}
+
+func TestProcessIDsInSessionParsesProcStatWithComplexCommandNames(t *testing.T) {
+	procRoot := t.TempDir()
+	for _, fixture := range []struct {
+		pid     int
+		session int
+		start   uint64
+	}{
+		{pid: 101, session: 77, start: 1001},
+		{pid: 102, session: 88, start: 1002},
+	} {
+		writeProcStatFixture(t, procRoot, fixture.pid, fixture.session, fixture.start, "shell ) worker")
+	}
+
+	processIDs, err := processIDsInSession(procRoot, 77)
+	if err != nil {
+		t.Fatalf("processIDsInSession() error = %v", err)
+	}
+	if len(processIDs) != 1 || processIDs[0] != 101 {
+		t.Fatalf("processIDsInSession() = %v, want [101]", processIDs)
+	}
+}
+
+func TestTerminalCleanupSignalsEveryProcessInTheSession(t *testing.T) {
+	procRoot := t.TempDir()
+	for _, fixture := range []struct {
+		pid     int
+		session int
+		start   uint64
+	}{
+		{pid: 700, session: 700, start: 1700},
+		{pid: 701, session: 700, start: 1701},
+		{pid: 702, session: 700, start: 1702},
+		{pid: 800, session: 800, start: 1800},
+	} {
+		writeProcStatFixture(t, procRoot, fixture.pid, fixture.session, fixture.start, "terminal process")
+		if fixture.session == 700 && fixture.pid != 702 {
+			writeProcEnvironmentFixture(t, procRoot, fixture.pid, "terminal-session")
+		}
+	}
+
+	processes, err := originalProcessSession(procRoot, 700, 1700, "terminal-session", nil)
+	if err != nil {
+		t.Fatalf("originalProcessSession() error = %v", err)
+	}
+	var signaled []int
+	err = signalProcessIdentities(processes, syscall.SIGTERM, func(identity processIdentity, signal syscall.Signal) error {
+		return signalProcessIdentity(procRoot, identity, signal, func(pid int, _ syscall.Signal) error {
+			signaled = append(signaled, pid)
+			return nil
+		})
+	})
+	if err != nil {
+		t.Fatalf("signalProcessIdentities() error = %v", err)
+	}
+	if got, want := fmt.Sprint(signaled), "[701 702 700]"; got != want {
+		t.Fatalf("signaled process IDs = %s, want %s", got, want)
+	}
+}
+
+func TestTerminalCleanupFallsBackToProcessGroupWithoutProcIdentity(t *testing.T) {
+	t.Parallel()
+	type signalEvent struct {
+		processID int
+		signal    syscall.Signal
+	}
+	signals := make(chan signalEvent, 2)
+	manager := &terminalManager{
+		killProcess: func(processID int, signal syscall.Signal) error {
+			signals <- signalEvent{processID: processID, signal: signal}
+			return nil
+		},
+		cleanupDelay: time.Millisecond,
+	}
+	session := &terminalSession{id: "terminal-session", processSessionID: 700}
+	done := manager.cleanupProcessSession(session)
+	for _, expectedSignal := range []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL} {
+		select {
+		case actual := <-signals:
+			if actual.processID != -700 || actual.signal != expectedSignal {
+				t.Fatalf("fallback cleanup signal = %#v, want process group -700 signal %v", actual, expectedSignal)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for process-group cleanup signal")
+		}
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("process-group cleanup did not complete")
+	}
+}
+
+func TestOriginalProcessSessionRejectsReusedLeader(t *testing.T) {
+	procRoot := t.TempDir()
+	writeProcStatFixture(t, procRoot, 700, 700, 2700, "replacement terminal")
+	writeProcStatFixture(t, procRoot, 701, 700, 1701, "replacement child")
+	writeProcEnvironmentFixture(t, procRoot, 700, "replacement-session")
+	writeProcEnvironmentFixture(t, procRoot, 701, "replacement-session")
+
+	processes, err := originalProcessSession(procRoot, 700, 1700, "terminal-session", nil)
+	if err == nil || !strings.Contains(err.Error(), "reused") {
+		t.Fatalf("originalProcessSession() error = %v, want reused-session error", err)
+	}
+	if len(processes) != 0 {
+		t.Fatalf("originalProcessSession() = %#v, want no replacement processes", processes)
+	}
+}
+
+func TestSignalProcessIdentitiesSkipsReusedProcesses(t *testing.T) {
+	procRoot := t.TempDir()
+	writeProcStatFixture(t, procRoot, 700, 700, 1700, "original terminal")
+	writeProcStatFixture(t, procRoot, 701, 700, 1701, "original child")
+	writeProcEnvironmentFixture(t, procRoot, 700, "terminal-session")
+	writeProcEnvironmentFixture(t, procRoot, 701, "terminal-session")
+	processes, err := originalProcessSession(procRoot, 700, 1700, "terminal-session", nil)
+	if err != nil {
+		t.Fatalf("originalProcessSession() error = %v", err)
+	}
+
+	writeProcStatFixture(t, procRoot, 700, 700, 2700, "replacement terminal")
+	writeProcStatFixture(t, procRoot, 701, 700, 2701, "replacement child")
+	writeProcEnvironmentFixture(t, procRoot, 700, "replacement-session")
+	writeProcEnvironmentFixture(t, procRoot, 701, "replacement-session")
+	var signaled []int
+	err = signalProcessIdentities(processes, syscall.SIGKILL, func(identity processIdentity, signal syscall.Signal) error {
+		return signalProcessIdentity(procRoot, identity, signal, func(processID int, _ syscall.Signal) error {
+			signaled = append(signaled, processID)
+			return nil
+		})
+	})
+	if err != nil {
+		t.Fatalf("signalProcessIdentities() error = %v", err)
+	}
+	if len(signaled) != 0 {
+		t.Fatalf("signalProcessIdentities() signaled replacement processes %v", signaled)
+	}
+}
+
+func TestOriginalProcessSessionSkipsReusedLeaderlessSession(t *testing.T) {
+	procRoot := t.TempDir()
+	writeProcStatFixture(t, procRoot, 701, 700, 2701, "replacement child")
+	writeProcEnvironmentFixture(t, procRoot, 701, "replacement-session")
+
+	processes, err := originalProcessSession(procRoot, 700, 1700, "terminal-session", nil)
+	if err != nil {
+		t.Fatalf("originalProcessSession() error = %v", err)
+	}
+	if len(processes) != 0 {
+		t.Fatalf("originalProcessSession() = %#v, want no replacement processes", processes)
+	}
+}
+
+func TestDelayedTerminalCleanupSkipsReusedProcessIDs(t *testing.T) {
+	procRoot := t.TempDir()
+	writeProcStatFixture(t, procRoot, 700, 700, 1700, "original terminal")
+	writeProcStatFixture(t, procRoot, 701, 700, 1701, "original child")
+	writeProcEnvironmentFixture(t, procRoot, 700, "terminal-session")
+	writeProcEnvironmentFixture(t, procRoot, 701, "terminal-session")
+
+	terminal, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("open terminal fixture: %v", err)
+	}
+	t.Cleanup(func() { _ = terminal.Close() })
+
+	type signalEvent struct {
+		processID int
+		signal    syscall.Signal
+	}
+	signals := make(chan signalEvent, 4)
+	manager := &terminalManager{
+		sessions: make(map[string]*terminalSession),
+		procRoot: procRoot,
+		signalProcess: func(procRoot string, identity processIdentity, signal syscall.Signal) error {
+			return signalProcessIdentity(procRoot, identity, signal, func(processID int, signal syscall.Signal) error {
+				signals <- signalEvent{processID: processID, signal: signal}
+				return nil
+			})
+		},
+		cleanupDelay: 25 * time.Millisecond,
+	}
+	session := &terminalSession{
+		id:                     "terminal-session",
+		processSessionID:       700,
+		processLeaderStartTime: 1700,
+		terminal:               terminal,
+		connections:            make(map[string]*terminalConnection),
+	}
+	manager.sessions[session.id] = session
+
+	manager.finishExitedSession(session, []byte(`{"type":"exit","exitCode":0}`))
+	for _, expectedProcessID := range []int{701, 700} {
+		select {
+		case actual := <-signals:
+			if actual.processID != expectedProcessID || actual.signal != syscall.SIGTERM {
+				t.Fatalf("initial cleanup signal = %#v, want process %d SIGTERM", actual, expectedProcessID)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for initial cleanup signal")
+		}
+	}
+
+	writeProcStatFixture(t, procRoot, 700, 700, 2700, "replacement terminal")
+	writeProcStatFixture(t, procRoot, 701, 700, 2701, "replacement child")
+	writeProcEnvironmentFixture(t, procRoot, 700, "replacement-session")
+	writeProcEnvironmentFixture(t, procRoot, 701, "replacement-session")
+	select {
+	case actual := <-signals:
+		t.Fatalf("delayed cleanup signaled reused process: %#v", actual)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestDelayedTerminalCleanupRescansForNewSessionMembers(t *testing.T) {
+	procRoot := t.TempDir()
+	writeProcStatFixture(t, procRoot, 700, 700, 1700, "original terminal")
+	writeProcStatFixture(t, procRoot, 701, 700, 1701, "original child")
+	writeProcEnvironmentFixture(t, procRoot, 700, "terminal-session")
+	writeProcEnvironmentFixture(t, procRoot, 701, "terminal-session")
+
+	type signalEvent struct {
+		processID int
+		signal    syscall.Signal
+	}
+	signals := make(chan signalEvent, 8)
+	manager := &terminalManager{
+		sessions: make(map[string]*terminalSession),
+		procRoot: procRoot,
+		signalProcess: func(procRoot string, identity processIdentity, signal syscall.Signal) error {
+			return signalProcessIdentity(procRoot, identity, signal, func(processID int, signal syscall.Signal) error {
+				signals <- signalEvent{processID: processID, signal: signal}
+				return nil
+			})
+		},
+		cleanupDelay: 25 * time.Millisecond,
+	}
+	session := &terminalSession{
+		id:                     "terminal-session",
+		processSessionID:       700,
+		processLeaderStartTime: 1700,
+		connections:            make(map[string]*terminalConnection),
+	}
+
+	manager.cleanupProcessSession(session)
+	for _, expectedProcessID := range []int{701, 700} {
+		select {
+		case actual := <-signals:
+			if actual.processID != expectedProcessID || actual.signal != syscall.SIGTERM {
+				t.Fatalf("initial cleanup signal = %#v, want process %d SIGTERM", actual, expectedProcessID)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for initial cleanup signal")
+		}
+	}
+
+	if err := os.RemoveAll(filepath.Join(procRoot, "701")); err != nil {
+		t.Fatalf("remove exited child fixture: %v", err)
+	}
+	writeProcStatFixture(t, procRoot, 702, 700, 1702, "late sanitized survivor")
+	for _, expectedProcessID := range []int{702, 700} {
+		select {
+		case actual := <-signals:
+			if actual.processID != expectedProcessID || actual.signal != syscall.SIGKILL {
+				t.Fatalf("delayed cleanup signal = %#v, want process %d SIGKILL", actual, expectedProcessID)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for delayed cleanup signal")
+		}
+	}
+}
+
+func TestFinishExitedSessionCleansRemainingProcessSession(t *testing.T) {
+	terminal, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("open terminal fixture: %v", err)
+	}
+	t.Cleanup(func() { _ = terminal.Close() })
+
+	type signalEvent struct {
+		processID int
+		signal    syscall.Signal
+	}
+	procRoot := t.TempDir()
+	writeProcStatFixture(t, procRoot, 700, 700, 1700, "terminal process")
+	writeProcEnvironmentFixture(t, procRoot, 700, "terminal-session")
+	signals := make(chan signalEvent, 2)
+	manager := &terminalManager{
+		sessions: make(map[string]*terminalSession),
+		procRoot: procRoot,
+		signalProcess: func(procRoot string, identity processIdentity, signal syscall.Signal) error {
+			return signalProcessIdentity(procRoot, identity, signal, func(processID int, signal syscall.Signal) error {
+				signals <- signalEvent{processID: processID, signal: signal}
+				return nil
+			})
+		},
+		cleanupDelay: time.Millisecond,
+	}
+	session := &terminalSession{
+		id:                     "terminal-session",
+		processSessionID:       700,
+		processLeaderStartTime: 1700,
+		terminal:               terminal,
+		connections:            make(map[string]*terminalConnection),
+	}
+	manager.sessions[session.id] = session
+
+	manager.finishExitedSession(session, []byte(`{"type":"exit","exitCode":0}`))
+
+	for _, expected := range []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL} {
+		select {
+		case actual := <-signals:
+			if actual.processID != 700 {
+				t.Fatalf("process ID = %d, want 700", actual.processID)
+			}
+			if actual.signal != expected {
+				t.Fatalf("cleanup signal = %v, want %v", actual.signal, expected)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for cleanup signal %v", expected)
+		}
+	}
+	if _, found := manager.get(session.id); found {
+		t.Fatal("naturally exited terminal remained in the manager")
+	}
+	session.mu.Lock()
+	closed := session.closed
+	session.mu.Unlock()
+	if !closed {
+		t.Fatal("naturally exited terminal was not closed")
+	}
+}
+
+func writeProcStatFixture(t *testing.T, procRoot string, processID, sessionID int, startTime uint64, command string) {
+	t.Helper()
+	directory := filepath.Join(procRoot, strconv.Itoa(processID))
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatalf("create proc fixture: %v", err)
+	}
+	fields := make([]string, 20)
+	for index := range fields {
+		fields[index] = "0"
+	}
+	fields[0] = "S"
+	fields[1] = "1"
+	fields[2] = "2"
+	fields[3] = strconv.Itoa(sessionID)
+	fields[19] = strconv.FormatUint(startTime, 10)
+	stat := fmt.Sprintf("%d (%s) %s\n", processID, command, strings.Join(fields, " "))
+	if err := os.WriteFile(filepath.Join(directory, "stat"), []byte(stat), 0o600); err != nil {
+		t.Fatalf("write proc fixture: %v", err)
+	}
+}
+
+func writeProcEnvironmentFixture(t *testing.T, procRoot string, processID int, terminalSessionID string) {
+	t.Helper()
+	directory := filepath.Join(procRoot, strconv.Itoa(processID))
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatalf("create proc fixture: %v", err)
+	}
+	environment := "PATH=/usr/bin\x00" + terminalSessionEnv + "=" + terminalSessionID + "\x00"
+	if err := os.WriteFile(filepath.Join(directory, "environ"), []byte(environment), 0o600); err != nil {
+		t.Fatalf("write proc environment fixture: %v", err)
+	}
+}

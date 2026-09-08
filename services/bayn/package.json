@@ -1,0 +1,44 @@
+{
+  "name": "@proompteng/bayn",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun build src/index.ts src/forward-performance-command.ts src/restate/restate-execution-server.ts src/restate/restate-execution-activate.ts --target=node --external tigerbeetle-node --entry-naming '[name].js' --outdir=dist",
+    "dev": "BAYN_PROVENANCE_MODE=development bun --watch src/index.ts",
+    "forward:performance": "BAYN_PROVENANCE_MODE=development node dist/forward-performance-command.js",
+    "start": "BAYN_PROVENANCE_MODE=development node dist/index.js",
+    "lint": "bun ../../node_modules/oxfmt/bin/oxfmt --check src",
+    "lint:oxlint": "bun ../../node_modules/oxlint/bin/oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "bun ../../node_modules/oxlint/bin/oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json .",
+    "test": "bun test",
+    "test:broker-sandbox": "bun test src/broker-sandbox-contract.test.ts",
+    "test:effect-runtime": "bun test src/clickhouse-patch.test.ts src/effect-runtime-compatibility.test.ts",
+    "test:postgres": "bun test src/cycle/store/observability.integration.test.ts && bun test src/db/execution-store.integration.test.ts && bun test src/db/execution-controller-status-postgres.integration.test.ts && bun test src/cycle/store/integration.test.ts",
+    "tsc": "bun run tsc:all && bun run tsc:production",
+    "tsc:all": "find ../../node_modules/.bun -path '*/@effect/tsgo-*/lib/tsc*' -type f ! -name '*.json' -exec chmod +x {} + 2>/dev/null || true; \"$(bun node_modules/@effect/tsgo/dist/effect-tsgo.js get-exe-path)\" --noEmit --project tsconfig.json",
+    "tsc:production": "\"$(bun node_modules/@effect/tsgo/dist/effect-tsgo.js get-exe-path)\" --noEmit --project tsconfig.production.json"
+  },
+  "dependencies": {
+    "@clickhouse/client": "1.23.1",
+    "@effect/platform-node": "4.0.0-beta.102",
+    "@effect/sql-clickhouse": "4.0.0-beta.102",
+    "@effect/sql-pg": "4.0.0-beta.102",
+    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/core": "2.10.0",
+    "@opentelemetry/exporter-trace-otlp-proto": "0.221.0",
+    "@opentelemetry/resources": "2.10.0",
+    "@opentelemetry/sdk-trace-node": "2.10.0",
+    "@restatedev/restate-sdk": "1.16.5",
+    "@restatedev/restate-sdk-opentelemetry": "1.16.5",
+    "effect": "4.0.0-beta.102",
+    "tigerbeetle-node": "0.17.9"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "0.24.3",
+    "@types/bun": "1.4.0",
+    "@types/node": "^25.6.0",
+    "typescript": "^7.0.2"
+  },
+  "packageManager": "bun@1.4.0"
+}

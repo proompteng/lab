@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: torghut-alloy
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut-alloy
+    app.kubernetes.io/component: observability
+spec:
+  revisionHistoryLimit: 2
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: torghut-alloy
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/restartedAt: "2026-03-19T06:31:00Z"
+        torghut.proompteng.ai/alloy-config-sha256: be2adb039b3b684c22547158b61e1903100df42fb7ea797401a49bfbfd6ff01c
+      labels:
+        app.kubernetes.io/name: torghut-alloy
+        app.kubernetes.io/component: observability
+    spec:
+      serviceAccountName: torghut-alloy
+      containers:
+        - name: alloy
+          image: grafana/alloy:v1.18.1
+          imagePullPolicy: IfNotPresent
+          args:
+            - run
+            - /etc/alloy/config.river
+          ports:
+            - name: http-metrics
+              containerPort: 12345
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            # alloy image runs as UID 0; Kubernetes rejects runAsNonRoot=true.
+            runAsNonRoot: false
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alloy
+      volumes:
+        - name: config
+          configMap:
+            name: torghut-alloy
+            items:
+              - key: config.river
+                path: config.river

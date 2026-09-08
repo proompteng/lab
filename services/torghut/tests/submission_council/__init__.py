@@ -1,0 +1,1 @@
+"""Split submission council tests."""

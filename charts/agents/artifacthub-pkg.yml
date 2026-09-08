@@ -1,0 +1,16 @@
+version: 0.9.29
+name: agents
+displayName: Agents Control Plane
+description: Minimal Agents control plane with CRDs and native workflow runtime.
+license: MIT
+homeURL: https://github.com/proompteng/charts/tree/main/charts/agents
+repository:
+  name: proompteng/charts
+  url: https://github.com/proompteng/charts
+keywords:
+  - agents
+  - control-plane
+  - codex
+maintainers:
+  - name: Greg Konush
+    email: greg@proompteng.ai

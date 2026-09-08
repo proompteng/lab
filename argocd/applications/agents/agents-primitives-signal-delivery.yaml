@@ -1,0 +1,11 @@
+apiVersion: signals.proompteng.ai/v1alpha1
+kind: SignalDelivery
+metadata:
+  name: agents-primitives-signal-delivery
+  namespace: agents
+spec:
+  signalRef:
+    name: agents-primitives-signal
+  deliveryId: agents-primitives-delivery
+  payload:
+    message: signal delivered

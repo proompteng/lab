@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+data:
+  controller.status.processors: "20"
+  controller.operation.processors: "10"
+  controller.repo.server.timeout.seconds: "60"
+  controller.k8s.client.qps: "100"
+  controller.k8s.client.burst: "200"
+  reposerver.parallelism.limit: "16"
+  reposerver.plugin.tar.exclusions: ".git/*;node_modules/*;tmp/*"
+  reposerver.log.level: "debug"
+  server.enable.gzip: "true"
+  server.insecure: "true"
+  otlp.address: "observability-tempo-gateway.observability.svc.cluster.local:4317"
+  otlp.insecure: "true"
+  applicationsetcontroller.otlp.address: "observability-tempo-gateway.observability.svc.cluster.local:4317"
+  controller.otlp.address: "observability-tempo-gateway.observability.svc.cluster.local:4317"
+  reposerver.otlp.address: "observability-tempo-gateway.observability.svc.cluster.local:4317"
+  server.otlp.address: "observability-tempo-gateway.observability.svc.cluster.local:4317"

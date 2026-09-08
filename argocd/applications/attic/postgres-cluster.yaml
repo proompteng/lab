@@ -1,0 +1,28 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: attic-db
+  namespace: attic
+  annotations:
+    argocd.argoproj.io/sync-wave: "-5"
+spec:
+  instances: 1
+  primaryUpdateStrategy: unsupervised
+  storage:
+    storageClass: rook-ceph-block
+    size: 20Gi
+  bootstrap:
+    initdb:
+      database: attic
+      owner: attic
+      encoding: "UTF8"
+      dataChecksums: true
+  inheritedMetadata:
+    annotations:
+      reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
+      reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "pgadmin"
+      reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
+      reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "pgadmin"
+  monitoring:
+    enablePodMonitor: true
+# CNPG emits app credentials in `attic-db-app`; Attic reads its `uri` key via ATTIC_SERVER_DATABASE_URL.

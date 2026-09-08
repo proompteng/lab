@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "declaration": true,
+    "declarationMap": true,
+    "rootDir": "src",
+    "moduleDetection": "force",
+    "paths": {
+      "@proompteng/otel": ["./src/index.ts"],
+      "@proompteng/otel/*": ["./src/*"]
+    }
+  },
+  "include": ["src"]
+}

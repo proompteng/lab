@@ -1,0 +1,60 @@
+model = "gpt-5.6-sol"
+model_reasoning_summary = "detailed"
+model_reasoning_effort = "high"
+model_verbosity = "medium"
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+suppress_unstable_features_warning = true
+web_search = "live"
+
+[features]
+shell_tool = true
+hooks = true
+enable_request_compression = true
+unified_exec = true
+shell_snapshot = true
+apply_patch_streaming_events = true
+code_mode = true
+runtime_metrics = true
+memories = true
+chronicle = true
+multi_agent = true
+multi_agent_v2 = true
+enable_fanout = true
+apps = true
+enable_mcp_apps = true
+tool_suggest = true
+plugins = true
+remote_plugin = true
+image_generation = true
+skill_mcp_dependency_install = true
+default_mode_request_user_input = true
+goals = true
+tool_call_mcp_elicitation = true
+auth_elicitation = true
+artifact = true
+fast_mode = true
+remote_compaction_v2 = true
+workspace_dependencies = true
+
+[mcp_servers.memories]
+url = "http://agents.agents.svc.cluster.local/mcp"
+
+[mcp_servers.atlas]
+url = "http://127.0.0.1:8080/mcp"
+
+[mcp_servers.alpaca]
+command = "/usr/local/bin/alpaca-mcp-server"
+
+[shell_environment_policy]
+ignore_default_excludes = true
+
+[projects."/workspace/lab"]
+trust_level = "trusted"
+
+[projects."/root"]
+trust_level = "trusted"
+
+[otel]
+log_user_prompt = true
+exporter = { otlp-http = { endpoint = "http://jangar-alloy.jangar.svc.cluster.local:4318/v1/logs", protocol = "binary" } }

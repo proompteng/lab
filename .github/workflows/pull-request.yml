@@ -1,0 +1,336 @@
+name: CI
+
+on:
+  pull_request:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: ci-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    name: Plan changed-area validation
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.impact.outputs.targets }}
+      delegated: ${{ steps.impact.outputs.delegated }}
+      changed_files: ${{ steps.impact.outputs.changed_files }}
+      changed_manifests: ${{ steps.active_files.outputs.changed_manifests }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
+      - name: Derive changed files from Git
+        id: files
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed_files="${RUNNER_TEMP}/changed-files.txt"
+          changed_manifests="${RUNNER_TEMP}/changed-manifests.txt"
+          git rev-parse --verify 'HEAD^1' >/dev/null
+          git rev-parse --verify 'HEAD^2' >/dev/null
+          git diff --merge-base --find-renames --name-only --diff-filter=ACDMRTUXB 'HEAD^1' 'HEAD^2' > "${changed_files}"
+          git diff --merge-base --find-renames --name-only --diff-filter=ACMRTUXB 'HEAD^1' 'HEAD^2' > "${changed_manifests}"
+          printf 'changed_files=%s\n' "${changed_files}" >> "${GITHUB_OUTPUT}"
+          printf 'changed_manifests=%s\n' "${changed_manifests}" >> "${GITHUB_OUTPUT}"
+
+      - name: Resolve impact targets
+        id: impact
+        env:
+          CHANGED_FILES: ${{ steps.files.outputs.changed_files }}
+        run: >-
+          bun run packages/scripts/src/ci/impact-router.ts
+          --files "${CHANGED_FILES}"
+          --map .github/ci/impact-map.yml
+          --github-output "${GITHUB_OUTPUT}"
+
+      - name: Serialize active changed files
+        id: active_files
+        env:
+          CHANGED_MANIFESTS: ${{ steps.files.outputs.changed_manifests }}
+        run: |
+          set -euo pipefail
+          printf 'changed_manifests=%s\n' "$(jq -Rsc 'split("\n") | map(select(length > 0))' "${CHANGED_MANIFESTS}")" >> "${GITHUB_OUTPUT}"
+
+      - name: Summarize impact plan
+        env:
+          TARGETS: ${{ steps.impact.outputs.targets }}
+          DELEGATED: ${{ steps.impact.outputs.delegated }}
+        run: |
+          {
+            echo '### PR impact plan'
+            echo
+            echo "- Router validations: \`${TARGETS}\`"
+            echo "- Delegated service workflows: \`${DELEGATED}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  validate:
+    name: PR validation (${{ matrix.target }})
+    needs: plan
+    if: ${{ needs.plan.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.plan.outputs.targets) }}
+    runs-on: >-
+      ${{
+        matrix.target == 'landing' && 'arc-amd64' ||
+        (matrix.target == 'docs' || matrix.target == 'app' || matrix.target == 'olden' || matrix.target == 'cms' || matrix.target == 'kitty-krew' || matrix.target == 'reviseur' || matrix.target == 'design') && 'arc-arm64' ||
+        'ubuntu-latest'
+      }}
+    env:
+      CHANGED_FILES_JSON: ${{ needs.plan.outputs.changed_files }}
+      CHANGED_MANIFESTS_JSON: ${{ needs.plan.outputs.changed_manifests }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Bun
+        if: ${{ matrix.target != 'shellcheck' && matrix.target != 'workflow-lint' && matrix.target != 'argo-lint' && matrix.target != 'kubeconform' }}
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
+      - name: Install build tools
+        if: ${{ matrix.target == 'docs' || matrix.target == 'landing' || matrix.target == 'app' || matrix.target == 'olden' || matrix.target == 'cms' || matrix.target == 'kitty-krew' || matrix.target == 'reviseur' || matrix.target == 'design' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential
+
+      - name: Set up Nix toolchain
+        if: ${{ matrix.target == 'shared-compat' || matrix.target == 'argo-lint' || matrix.target == 'kubeconform' || matrix.target == 'cdk8s' }}
+        uses: ./.github/actions/setup-nix-toolchain
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          extra-nix-config: |
+            experimental-features = nix-command flakes
+
+      - name: Run landing validation
+        if: ${{ matrix.target == 'landing' }}
+        shell: bash
+        env:
+          CONVEX_SELF_HOSTED_URL: ${{ secrets.CONVEX_SELF_HOSTED_URL }}
+          CONVEX_SELF_HOSTED_ADMIN_KEY: ${{ secrets.CONVEX_SELF_HOSTED_ADMIN_KEY }}
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter landing --filter @proompteng/backend --filter @proompteng/design
+          bunx playwright install --with-deps chromium
+          bun run --cwd apps/landing test
+          bun run --cwd apps/landing test:e2e
+          bun run --cwd apps/landing format:check
+          bun run --cwd apps/landing lint:oxlint
+          bun run --cwd apps/landing lint:oxlint:type
+          bun run --filter landing build
+
+      - name: Upload landing browser artifacts
+        if: ${{ always() && matrix.target == 'landing' }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: landing-browser-${{ github.run_attempt }}
+          path: |
+            apps/landing/playwright-report
+            apps/landing/test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Run selected validation
+        if: ${{ matrix.target != 'landing' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="${{ matrix.target }}"
+          case "${target}" in
+            planner)
+              echo 'No owned validation target; planner success is sufficient.'
+              ;;
+            docs)
+              bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter docs --filter @proompteng/design
+              bun run --cwd apps/docs lint:oxlint
+              bun run --cwd apps/docs lint:oxlint:type
+              bun run --filter docs build
+              ;;
+            app)
+              bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter app --filter @proompteng/design
+              bun run --cwd apps/app lint:oxlint
+              bun run --cwd apps/app lint:oxlint:type
+              bun run --filter app build
+              ;;
+            olden)
+              bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter olden --filter @proompteng/design
+              bunx oxfmt --check apps/olden
+              bun run --cwd apps/olden lint:oxlint
+              bun run --cwd apps/olden lint:oxlint:type
+              bun run --filter olden test
+              bun run --filter olden build
+              ;;
+            design)
+              bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/design --filter app
+              bunx oxfmt --check packages/design
+              bun run --cwd packages/design lint:oxlint
+              bun run --cwd packages/design lint:oxlint:type
+              bun run --filter @proompteng/design build
+              bun run --cwd apps/app lint:oxlint:type
+              bun run --filter app build
+              ;;
+            cms)
+              PAYLOAD_SECRET=ci-build-secret bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter cms
+              bun run --cwd apps/cms lint:oxlint
+              bun run --cwd apps/cms lint:oxlint:type
+              PAYLOAD_SECRET=ci-build-secret bun run --filter cms build
+              ;;
+            bonjour)
+              bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/bonjour --filter @proompteng/otel
+              bun run --filter @proompteng/otel build
+              bun run --filter @proompteng/bonjour build
+              bun run --filter @proompteng/bonjour synth
+              test "$(find services/bonjour/manifests -type f -name '*.yaml' | wc -l | tr -d ' ')" = 3
+              ! grep -R '^---$' services/bonjour/manifests
+              ;;
+            discord)
+              bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/discord
+              bun run --cwd packages/discord lint:oxlint
+              bun run --cwd packages/discord lint:oxlint:type
+              bun run --filter @proompteng/discord test
+              bun run --filter @proompteng/discord build
+              ;;
+            kitty-krew)
+              bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter tanstack-router-react-example-with-trpc-react-query
+              bun run --cwd apps/kitty-krew lint:oxlint
+              bun run --cwd apps/kitty-krew lint:oxlint:type
+              bunx oxfmt --check --no-error-on-unmatched-pattern 'apps/kitty-krew/**/*.{js,jsx,mjs,cjs,ts,tsx}'
+              bun tsc --noEmit --project apps/kitty-krew/tsconfig.json
+              bun run --cwd apps/kitty-krew build
+              ;;
+            reviseur)
+              bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter reviseur
+              bun run --cwd apps/reviseur lint:oxlint
+              bun run --cwd apps/reviseur lint:oxlint:type
+              bun run --cwd apps/reviseur build
+              ;;
+            root-scripts)
+              bun install --frozen-lockfile
+              bun run lint:flamingo-hard-migration
+              bun run scripts/hermes/validate-production.ts
+              bun test scripts/hermes/*.test.ts
+              bun run scripts/kube-router/validate-production.ts
+              bun test scripts/kube-router/*.test.ts
+              bunx oxlint --config .oxlintrc.json scripts/seal-tengri-runtime.ts scripts/seal-tengri-runtime.test.ts
+              bunx oxfmt --check scripts/seal-tengri-runtime.ts scripts/seal-tengri-runtime.test.ts
+              bun test scripts/seal-tengri-runtime.test.ts
+              ;;
+            sag)
+              bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/sag
+              bun run --filter @proompteng/sag lint:oxlint
+              bun run --filter @proompteng/sag lint:oxlint:type
+              bun run --filter @proompteng/sag tsc
+              bun run --filter @proompteng/sag test
+              bun run --filter @proompteng/sag build
+              ;;
+            shared-compat)
+              bun install --frozen-lockfile --ignore-scripts
+              if jq -e 'any(.[]; . == "flake.lock" or . == "flake.nix" or startswith("nix/") or startswith(".github/actions/setup-nix-toolchain/"))' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
+                nix flake check --no-build
+              fi
+              ;;
+            argo-lint)
+              nix run .#lint-argo-workflows
+              ;;
+            kubeconform)
+              mapfile -t changed_manifests < <(jq -r '.[] | select(test("^(argocd|kubernetes)/.*\\.ya?ml$"))' <<< "${CHANGED_MANIFESTS_JSON}")
+              if [ "${#changed_manifests[@]}" -gt 0 ]; then
+                nix develop -c scripts/kubeconform.sh "${changed_manifests[@]}"
+              else
+                nix develop -c scripts/kubeconform.sh argocd
+              fi
+              ;;
+            cdk8s)
+              bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/k8s
+              bunx oxfmt --check packages/k8s
+              bun run --filter @proompteng/k8s lint:oxlint
+              bun run --filter @proompteng/k8s lint:oxlint:type
+              bun run --filter @proompteng/k8s typecheck
+              bun run --filter @proompteng/k8s test
+              bun run --filter @proompteng/k8s imports:check
+              git diff --exit-code -- packages/k8s/src/imports
+              bun run --filter @proompteng/k8s synth:check -- --all
+              bun run --filter @proompteng/k8s synth:check -- --all
+              git diff --exit-code -- ':(glob)argocd/applications/*/generated/**'
+              mapfile -t applications < <(bun run packages/k8s/src/cli.ts list)
+              test "${#applications[@]}" -gt 0
+              for application in "${applications[@]}"; do
+                rendered="${RUNNER_TEMP}/${application}.yaml"
+                nix develop -c scripts/kubeconform.sh "argocd/applications/${application}/generated"
+                nix develop -c kustomize build "argocd/applications/${application}" >"${rendered}"
+                nix develop -c scripts/kubeconform.sh "${rendered}"
+              done
+              if grep -R -E '^kind: (Namespace|Secret)$' argocd/applications/{docs,analysis}/generated; then
+                echo 'Generated applications must not contain Namespace or plaintext Secret resources' >&2
+                exit 1
+              fi
+              grep -Eq 'image: registry\.ide-newton\.ts\.net/lab/docs@sha256:[0-9a-f]{64}$' "${RUNNER_TEMP}/docs.yaml"
+              grep -Eq 'image: registry\.ide-newton\.ts\.net/lab/analysis@sha256:[0-9a-f]{64}$' "${RUNNER_TEMP}/analysis.yaml"
+              ;;
+            shellcheck)
+              if ! command -v shellcheck >/dev/null 2>&1; then
+                sudo apt-get update
+                sudo apt-get install -y shellcheck
+              fi
+              mapfile -t shell_scripts < <(git ls-files '*.sh')
+              if [ "${#shell_scripts[@]}" -gt 0 ]; then shellcheck "${shell_scripts[@]}"; fi
+              ;;
+            workflow-lint)
+              go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+              "$(go env GOPATH)/bin/actionlint" -shellcheck '' -pyflakes ''
+              ;;
+            *)
+              echo "Unknown impact target: ${target}" >&2
+              exit 2
+              ;;
+          esac
+
+  agents:
+    name: Agents CI
+    needs: plan
+    if: ${{ needs.plan.result == 'success' && contains(fromJSON(needs.plan.outputs.delegated), 'agents-ci') }}
+    uses: ./.github/workflows/agents-ci.yml
+    with:
+      changed_files_json: ${{ needs.plan.outputs.changed_files }}
+    secrets: inherit
+
+  ci-pr:
+    name: ci-pr
+    if: ${{ always() }}
+    needs:
+      - plan
+      - validate
+      - agents
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce selected validation results
+        env:
+          PLAN_RESULT: ${{ needs.plan.result }}
+          VALIDATE_RESULT: ${{ needs.validate.result }}
+          AGENTS_RESULT: ${{ needs.agents.result }}
+          DELEGATED: ${{ needs.plan.outputs.delegated }}
+        run: |
+          set -euo pipefail
+          if [ "${PLAN_RESULT}" != success ] || [ "${VALIDATE_RESULT}" != success ]; then
+            echo "PR validation failed: plan=${PLAN_RESULT}, validate=${VALIDATE_RESULT}" >&2
+            exit 1
+          fi
+          if [ "${AGENTS_RESULT}" != success ] && [ "${AGENTS_RESULT}" != skipped ]; then
+            echo "Agents validation failed: agents=${AGENTS_RESULT}" >&2
+            exit 1
+          fi
+          echo "Router validation passed: agents=${AGENTS_RESULT}. Delegated workflows: ${DELEGATED}"

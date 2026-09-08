@@ -1,0 +1,157 @@
+# syntax=docker/dockerfile:1.6
+
+ARG BUN_VERSION=1.4.0
+ARG BUN_BASE_IMAGE=oven/bun
+ARG NODE_VERSION=24.11.1
+ARG UV_VERSION=0.11.14
+ARG ALPACA_MCP_SERVER_VERSION=2.0.1
+
+FROM node:${NODE_VERSION}-bookworm-slim AS node-runtime
+
+FROM ${BUN_BASE_IMAGE}:${BUN_VERSION}-slim AS codex-cli
+
+ARG CODEX_VERSION=0.144.4
+
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-runtime /usr/local/lib/node_modules /usr/local/lib/node_modules
+
+RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -sf ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
+
+RUN npm install -g "@openai/codex@${CODEX_VERSION}" \
+    && npm cache clean --force \
+    && test -x /usr/local/bin/codex
+
+FROM --platform=$BUILDPLATFORM ${BUN_BASE_IMAGE}:${BUN_VERSION}-slim AS codex-package-build
+
+RUN set -eux; \
+    apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 \
+    && apt-get install -y -V --no-install-recommends \
+      build-essential \
+      ca-certificates \
+      git \
+      pkg-config \
+      python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY packages/codex/package.json /opt/proompteng/packages/codex/package.json
+COPY packages/codex/tsconfig.json /opt/proompteng/packages/codex/tsconfig.json
+COPY packages/codex/src /opt/proompteng/packages/codex/src
+COPY tsconfig.base.json /opt/proompteng/tsconfig.base.json
+
+RUN bash -lc 'cd /opt/proompteng/packages/codex && bun install --no-save && bun run build && rm -rf node_modules'
+
+FROM --platform=$BUILDPLATFORM ${BUN_BASE_IMAGE}:${BUN_VERSION}-slim AS agents-runner-build
+
+WORKDIR /opt/proompteng
+
+COPY --from=codex-package-build /opt/proompteng/packages/codex/package.json packages/codex/package.json
+COPY --from=codex-package-build /opt/proompteng/packages/codex/dist packages/codex/dist
+COPY services/agents/package.json services/agents/package.json
+COPY services/agents/src/runner services/agents/src/runner
+COPY services/agents/src/linear-mcp/bridge-auth.ts services/agents/src/linear-mcp/bridge-auth.ts
+COPY services/agents/src/linear-mcp/config.ts services/agents/src/linear-mcp/config.ts
+COPY services/agents/src/linear-mcp/contract.ts services/agents/src/linear-mcp/contract.ts
+COPY services/agents/scripts/codex services/agents/scripts/codex
+
+RUN printf '%s\n' '{"type":"module","dependencies":{"@modelcontextprotocol/sdk":"1.29.0","effect":"3.21.2"}}' > package.json \
+    && bun install --production --no-save \
+    && mkdir -p node_modules/@proompteng \
+    && ln -s /opt/proompteng/packages/codex node_modules/@proompteng/codex \
+    && bun build services/agents/scripts/codex/agent-runner.ts --target bun --outfile /opt/agents-runner/agent-runner.js \
+    && bun build services/agents/scripts/codex/linear-mcp-bridge.ts --target bun --outfile /opt/agents-runner/linear-mcp-bridge.js \
+    && bun build services/agents/scripts/codex/fake-app-server.ts --target bun --outfile /opt/agents-runner/fake-app-server.js
+
+FROM ${BUN_BASE_IMAGE}:${BUN_VERSION}-slim
+
+ARG CODEX_AUTH_CHECKSUM=unspecified
+ARG UV_VERSION
+ARG ALPACA_MCP_SERVER_VERSION
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    WORKSPACE=/workspace \
+    WORKTREE=/workspace/lab \
+    GIT_TERMINAL_PROMPT=0 \
+    AGENTS_CODEX_BINARY=/usr/local/bin/codex \
+    CODEX_BINARY=/usr/local/bin/codex \
+    BUN_INSTALL=/usr/local \
+    BUN_INSTALL_CACHE_DIR=/opt/bun/install/cache \
+    BUN_INSTALL_CACHE_SEED_DIR=/opt/bun/install/cache
+
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=codex-cli /usr/local/lib/node_modules/@openai/codex /usr/local/lib/node_modules/@openai/codex
+
+RUN ln -sf ../lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/codex \
+    && ln -sf /usr/local/bin/codex /usr/bin/codex \
+    && test -x /usr/local/bin/codex \
+    && test -x /usr/bin/codex
+
+RUN set -eux; \
+    apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 \
+    && apt-get install -y -V --no-install-recommends \
+      bash \
+      ca-certificates \
+      curl \
+      gh \
+      git \
+      jq \
+      openssh-client \
+      python3 \
+      python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m pip install --break-system-packages --no-cache-dir "uv==${UV_VERSION}" \
+    && python3 -m pip install --break-system-packages --no-cache-dir \
+      "alpaca-py>=0.43" \
+      "duckdb>=1.3" \
+      "exchange-calendars>=4.10" \
+      "httpx>=0.28" \
+      "numpy>=2.0" \
+      "orjson>=3.10" \
+      "pandas>=2.2" \
+      "pandas-ta-classic>=0.3.54" \
+      "polars>=1.0" \
+      "pyarrow>=16.0" \
+      "pydantic>=2.8" \
+      "tenacity>=9.0" \
+    && uv tool install "alpaca-mcp-server==${ALPACA_MCP_SERVER_VERSION}" \
+    && ln -sf /root/.local/bin/alpaca-mcp-server /usr/local/bin/alpaca-mcp-server \
+    && test -x /usr/local/bin/alpaca-mcp-server
+
+RUN mkdir -p "$WORKSPACE" /root/.codex "$BUN_INSTALL_CACHE_DIR"
+
+RUN --mount=type=secret,id=codexauth,target=/tmp/codex_auth.json \
+    if [ -s /tmp/codex_auth.json ]; then cp /tmp/codex_auth.json /root/.codex/auth.json; else printf '{}\n' > /root/.codex/auth.json; fi \
+    && printf '%s\n' "${CODEX_AUTH_CHECKSUM}" > /root/.codex/auth.checksum
+
+COPY services/agents/scripts/codex-config-container.toml /root/.codex/config.toml
+RUN mkdir -p /app/services/agents/scripts/codex /app/node_modules/@proompteng/codex
+COPY --from=agents-runner-build /opt/agents-runner/agent-runner.js /app/services/agents/scripts/codex/agent-runner.js
+COPY --from=agents-runner-build /opt/agents-runner/linear-mcp-bridge.js /app/services/agents/scripts/codex/linear-mcp-bridge.js
+COPY --from=agents-runner-build /opt/agents-runner/fake-app-server.js /app/services/agents/scripts/codex/fake-app-server.js
+COPY --from=codex-package-build /opt/proompteng/packages/codex/package.json /app/node_modules/@proompteng/codex/package.json
+COPY --from=codex-package-build /opt/proompteng/packages/codex/dist /app/node_modules/@proompteng/codex/dist
+
+RUN printf '%s\n' '#!/bin/sh' 'exec bun /app/services/agents/scripts/codex/agent-runner.js "$@"' > /usr/local/bin/agent-runner \
+    && printf '%s\n' '#!/bin/sh' 'exec bun /app/services/agents/scripts/codex/linear-mcp-bridge.js "$@"' > /usr/local/bin/linear-mcp-bridge \
+    && printf '%s\n' '#!/bin/sh' 'exec bun /app/services/agents/scripts/codex/fake-app-server.js "$@"' > /usr/local/bin/agents-fake-codex-app-server \
+    && chmod +x \
+      /usr/local/bin/agent-runner \
+      /usr/local/bin/linear-mcp-bridge \
+      /usr/local/bin/agents-fake-codex-app-server \
+      /app/services/agents/scripts/codex/agent-runner.js \
+      /app/services/agents/scripts/codex/linear-mcp-bridge.js \
+      /app/services/agents/scripts/codex/fake-app-server.js
+
+RUN printf '%s\n' \
+    '{"implementation":{"text":"Write `/tmp/agents-runner-smoke/result.md` and respond OK."},"goal":{"objective":"image smoke"}}' \
+    > /tmp/agent-runner-run.json \
+    && printf '%s\n' \
+    '{"schemaVersion":"agents.proompteng.ai/runner/v1","provider":"image-smoke","payloads":{"eventFilePath":"/tmp/agent-runner-run.json"},"artifacts":{"statusPath":"/tmp/agent-runner-status.json","logPath":"/tmp/agent-runner.log"},"providerSpec":{"outputArtifacts":[{"name":"smoke-result","path":"/tmp/agents-runner-smoke/result.md"}]},"adapter":{"type":"codex-app-server","codex":{"binaryPath":"/usr/local/bin/agents-fake-codex-app-server","model":"agents-fake-codex-app-server","effort":"low","sandbox":"danger-full-access","approval":"never","prompt":"Write `/tmp/agents-runner-smoke/result.md` and respond OK.","goal":{"objective":"image smoke"}}}}' \
+    > /tmp/agent-runner-smoke.json \
+    && /usr/local/bin/agent-runner /tmp/agent-runner-smoke.json \
+    && test -s /tmp/agents-runner-smoke/result.md \
+    && rm -f /tmp/agent-runner-run.json /tmp/agent-runner-smoke.json /tmp/agent-runner-status.json /tmp/agent-runner.log /tmp/agents-runner-smoke/result.md
+
+WORKDIR /workspace
+CMD ["bash"]

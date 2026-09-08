@@ -1,0 +1,528 @@
+import { Result, Schema } from 'effect'
+
+import { EvaluationBoundsSchema, FinalizedSnapshotProvenanceSchema, IsoDateSchema, Sha256Schema } from './contracts'
+import { canonicalHashV1Result, renderCanonicalJsonFailure } from './hash'
+import { ExecutionModelSchema } from './execution-model-contract'
+import {
+  DigitsSchema as Micros,
+  ImageDigestSchema as ImageDigest,
+  NonNegativeFiniteSchema as NonNegativeFinite,
+  NonNegativeIntegerSchema as NonNegativeInteger,
+  PositiveIntegerSchema as PositiveInteger,
+  SignedMicrosSchema as SignedMicros,
+  SourceRevisionSchema as SourceRevision,
+  SymbolSchema as Symbol,
+  UnitIntervalSchema as UnitIntervalFinite,
+  strictParseOptions as StrictParseOptions,
+} from './schemas'
+import { MARKED_EQUITY_TOLERANCE_MICROS } from './simulation-reconciliation/constants'
+import { Pipeable } from './pipeable'
+
+const Scalar = Schema.Union([Schema.Finite, Schema.Boolean, Schema.String])
+
+const InputManifestFields = {
+  hash: Sha256Schema,
+  database: Schema.Literal('signal'),
+  bounds: EvaluationBoundsSchema,
+  rowCount: PositiveInteger,
+  sessionCount: PositiveInteger,
+  firstSession: IsoDateSchema,
+  lastSession: IsoDateSchema,
+  symbols: Schema.Array(
+    Schema.Struct({
+      symbol: Symbol,
+      rows: PositiveInteger,
+      firstSession: IsoDateSchema,
+      lastSession: IsoDateSchema,
+    }),
+  ).check(Schema.isMinLength(1)),
+} as const
+
+const InputManifestBase = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.input-manifest.v3'),
+  ...InputManifestFields,
+  tables: Schema.Struct({
+    bars: Schema.Literal('adjusted_daily_bars_v2'),
+    sessions: Schema.Literal('exchange_sessions_v1'),
+    manifests: Schema.Literal('snapshot_manifests_v2'),
+  }),
+  finalizedSnapshot: FinalizedSnapshotProvenanceSchema,
+})
+
+const inputManifestIssues = (manifest: typeof InputManifestBase.Type): readonly Schema.FilterIssue[] => {
+  const { hash, ...material } = manifest
+  const symbolNames = manifest.symbols.map((coverage) => coverage.symbol)
+  const issues: Schema.FilterIssue[] = []
+  const materialHash = canonicalHashV1Result(material)
+  if (Result.isFailure(materialHash)) {
+    issues.push({
+      path: ['hash'],
+      issue: `cannot hash the manifest: ${renderCanonicalJsonFailure(materialHash.failure)}`,
+    })
+  } else if (materialHash.success !== hash) {
+    issues.push({ path: ['hash'], issue: 'does not match the manifest' })
+  }
+  if (manifest.firstSession !== manifest.bounds.dataStart) {
+    issues.push({ path: ['firstSession'], issue: 'must equal bounds.dataStart' })
+  }
+  if (manifest.lastSession !== manifest.bounds.dataEnd) {
+    issues.push({ path: ['lastSession'], issue: 'must equal bounds.dataEnd' })
+  }
+  if (manifest.rowCount !== manifest.sessionCount * manifest.symbols.length) {
+    issues.push({ path: ['rowCount'], issue: 'must equal sessionCount multiplied by symbol count' })
+  }
+  const symbolNamesHash = canonicalHashV1Result(symbolNames)
+  const finalizedSymbolsHash = canonicalHashV1Result(manifest.finalizedSnapshot.symbols)
+  if (Result.isFailure(symbolNamesHash)) {
+    issues.push({
+      path: ['symbols'],
+      issue: `cannot hash the manifest universe: ${renderCanonicalJsonFailure(symbolNamesHash.failure)}`,
+    })
+  } else if (Result.isFailure(finalizedSymbolsHash)) {
+    issues.push({
+      path: ['finalizedSnapshot', 'symbols'],
+      issue: `cannot hash the finalized universe: ${renderCanonicalJsonFailure(finalizedSymbolsHash.failure)}`,
+    })
+  } else if (symbolNamesHash.success !== finalizedSymbolsHash.success) {
+    issues.push({ path: ['symbols'], issue: 'must match the finalized snapshot universe' })
+  }
+  for (const [index, coverage] of manifest.symbols.entries()) {
+    if (
+      coverage.rows !== manifest.sessionCount ||
+      coverage.firstSession !== manifest.firstSession ||
+      coverage.lastSession !== manifest.lastSession
+    ) {
+      issues.push({ path: ['symbols', index], issue: 'coverage does not match the bounded manifest' })
+    }
+  }
+  return issues
+}
+
+export const InputManifestArtifactSchema = InputManifestBase.check(Schema.makeFilter(inputManifestIssues))
+
+const PerformanceMetricsSchema = Schema.Struct({
+  observations: PositiveInteger,
+  totalReturn: Schema.Finite,
+  annualizedReturn: Schema.Finite,
+  annualizedVolatility: Schema.Finite,
+  sharpe: Schema.Finite,
+  maximumDrawdown: Schema.Finite,
+  annualTurnover: Schema.Finite,
+  totalFeesMicros: Micros,
+  totalSpreadCostMicros: Micros,
+  totalSlippageCostMicros: Micros,
+  totalCashYieldMicros: Micros,
+  endingEquityMicros: Micros,
+})
+
+const VerdictSchema = Schema.Struct({
+  status: Schema.Literals(['PASS', 'FAIL_CLOSED']),
+  gates: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      passed: Schema.Boolean,
+      actual: Scalar,
+      required: Scalar,
+    }),
+  ),
+})
+
+export const MarkedEquityReconciliationSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.marked-equity-reconciliation.v2'),
+  runId: Sha256Schema,
+  toleranceMicros: Schema.Literal(MARKED_EQUITY_TOLERANCE_MICROS.toString()),
+  maximumDailyDifferenceMicros: Micros,
+  reconstructedCashMicros: SignedMicros,
+  reconstructedPositionValueMicros: Micros,
+  evaluatorTotalFeesMicros: Micros,
+  reconstructedTotalFeesMicros: Micros,
+  feeDifferenceMicros: Micros,
+  evaluatorEndingEquityMicros: Micros,
+  reconstructedEndingEquityMicros: Micros,
+  differenceMicros: Micros,
+  exact: Schema.Boolean,
+  withinTolerance: Schema.Literal(true),
+})
+
+const EvaluationSummaryFields = {
+  runId: Sha256Schema,
+  codeRevision: SourceRevision,
+  protocolHash: Sha256Schema,
+  initialCapitalMicros: Micros,
+  input: Schema.Struct({
+    snapshotId: Sha256Schema,
+    publicationId: Sha256Schema,
+    manifestHash: Sha256Schema,
+    bounds: EvaluationBoundsSchema,
+    rowCount: PositiveInteger,
+    sessionCount: PositiveInteger,
+    symbols: Schema.Array(Schema.String).check(Schema.isMinLength(1)),
+  }),
+  strategy: PerformanceMetricsSchema,
+  buyAndHold: PerformanceMetricsSchema,
+  directVolTiming: PerformanceMetricsSchema,
+  doubleCostStrategy: PerformanceMetricsSchema,
+  verdict: VerdictSchema,
+  eventCount: PositiveInteger,
+  signalDecisionCount: PositiveInteger,
+  orderCount: PositiveInteger,
+  cashChangeCount: PositiveInteger,
+  dailyMarkCount: PositiveInteger,
+  benchmarkSeriesCounts: Schema.Struct({
+    buyAndHold: PositiveInteger,
+    directVolTiming: PositiveInteger,
+    doubleCostStrategy: PositiveInteger,
+  }),
+  markedEquityReconciliation: MarkedEquityReconciliationSchema,
+} as const
+
+export const EvaluationSummarySchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.evaluation-summary.v5'),
+  evaluationSchemaVersion: Schema.Literal('bayn.evaluation.v6'),
+  ...EvaluationSummaryFields,
+})
+
+export const ReconciliationResultSchema = Schema.Struct({
+  runId: Sha256Schema,
+  accountCount: PositiveInteger,
+  transferCount: PositiveInteger,
+  exact: Schema.Literal(true),
+})
+
+const DecisionEventSchema = Schema.Struct({
+  kind: Schema.Literal('decision'),
+  id: Sha256Schema,
+  signalDate: IsoDateSchema,
+  executionDate: IsoDateSchema,
+  targetWeights: Schema.Record(Schema.String, Schema.Finite),
+  terminalClose: Schema.optional(Schema.Literal(true)),
+})
+
+const FillEventSchema = Schema.Struct({
+  kind: Schema.Literal('fill'),
+  id: Sha256Schema,
+  orderId: Sha256Schema,
+  decisionId: Sha256Schema,
+  sessionDate: IsoDateSchema,
+  symbol: Schema.String,
+  side: Schema.Literals(['buy', 'sell']),
+  quantityMicros: Micros,
+  referencePriceMicros: Micros,
+  priceMicros: Micros,
+  notionalMicros: Micros,
+  spreadCostMicros: Micros,
+  slippageCostMicros: Micros,
+  costBasisMicros: Micros,
+})
+
+const FeeEventSchema = Schema.Struct({
+  kind: Schema.Literal('fee'),
+  id: Sha256Schema,
+  sessionDate: IsoDateSchema,
+  commissionMicros: Micros,
+  secMicros: Micros,
+  tafMicros: Micros,
+  catMicros: Micros,
+  totalMicros: Micros,
+})
+
+const CashYieldEventSchema = Schema.Struct({
+  kind: Schema.Literal('cash-yield'),
+  id: Sha256Schema,
+  sessionDate: IsoDateSchema,
+  elapsedDays: PositiveInteger,
+  annualYieldBps: Schema.Finite,
+  amountMicros: Micros,
+})
+
+export const EvaluationEventSchema = Schema.Union([
+  DecisionEventSchema,
+  FillEventSchema,
+  FeeEventSchema,
+  CashYieldEventSchema,
+])
+
+export const EvaluationEventsSchema = Schema.Array(EvaluationEventSchema)
+
+export const SimulatedOrdersArtifactSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.simulated-orders.v2'),
+  executionModel: ExecutionModelSchema,
+  costMultiplierMicros: Micros,
+  items: Schema.Array(
+    Schema.Struct({
+      id: Sha256Schema,
+      decisionId: Sha256Schema,
+      sessionDate: IsoDateSchema,
+      symbol: Schema.String,
+      side: Schema.Literals(['buy', 'sell']),
+      requestedQuantityMicros: Micros,
+      filledQuantityMicros: Micros,
+      status: Schema.Literals(['filled', 'partially-filled', 'rejected']),
+      rejectionReason: Schema.NullOr(
+        Schema.Literals(['below-minimum-buy-notional', 'zero-after-rounding', 'insufficient-buying-power']),
+      ),
+      unfilledRemainder: Schema.Literals(['none', 'canceled']),
+    }),
+  ).check(Schema.isMinLength(1)),
+})
+
+export const CashChangesArtifactSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.cash-changes.v2'),
+  items: Schema.Array(
+    Schema.Struct({
+      id: Sha256Schema,
+      sourceKind: Schema.Literals(['fill', 'fee', 'cash-yield']),
+      sourceId: Sha256Schema,
+      sessionDate: IsoDateSchema,
+      amountMicros: SignedMicros,
+      cashAfterMicros: SignedMicros,
+    }),
+  ).check(Schema.isMinLength(1)),
+})
+
+const DailyPerformanceFields = {
+  sessionDate: IsoDateSchema,
+  equityMicros: Micros,
+  netReturn: Schema.Finite,
+  turnoverMicros: Micros,
+  cumulativeTurnoverMicros: Micros,
+  feeMicros: Micros,
+  cumulativeFeesMicros: Micros,
+  spreadCostMicros: Micros,
+  cumulativeSpreadCostMicros: Micros,
+  slippageCostMicros: Micros,
+  cumulativeSlippageCostMicros: Micros,
+  cashYieldMicros: Micros,
+  cumulativeCashYieldMicros: Micros,
+  peakEquityMicros: Micros,
+  drawdown: Schema.Finite,
+} as const
+
+const DailyPerformancePointSchema = Schema.Struct(DailyPerformanceFields)
+
+export const DailyPositionMarksArtifactSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.daily-position-marks.v3'),
+  items: Schema.Array(
+    Schema.Struct({
+      ...DailyPerformanceFields,
+      cashMicros: Micros,
+      positions: Schema.Array(
+        Schema.Struct({
+          symbol: Schema.String,
+          quantityMicros: Micros,
+          costBasisMicros: Micros,
+          priceMicros: Micros,
+          marketValueMicros: Micros,
+        }),
+      ).check(Schema.isMinLength(1)),
+    }),
+  ).check(Schema.isMinLength(1)),
+})
+
+const DecisionCovarianceWindowSchema = Schema.Struct({
+  returnCount: PositiveInteger,
+  firstSession: IsoDateSchema,
+  lastSession: IsoDateSchema,
+  sessionsHash: Sha256Schema,
+})
+
+const DecisionHorizonSignalSchema = Schema.Struct({
+  horizonSessions: PositiveInteger,
+  return: Schema.Finite,
+  normalizedTrend: Schema.Finite,
+})
+
+const DecisionSymbolSignalSchema = Schema.Struct({
+  symbol: Symbol,
+  horizons: Schema.Array(DecisionHorizonSignalSchema).check(Schema.isMinLength(1)),
+  dailyVolatility: NonNegativeFinite,
+  annualizedVolatility: NonNegativeFinite,
+  compositeScore: Schema.Finite,
+  positiveScore: NonNegativeFinite,
+  eligible: Schema.Boolean,
+  uncappedWeight: UnitIntervalFinite,
+  cappedWeight: UnitIntervalFinite,
+  targetWeight: UnitIntervalFinite,
+})
+
+export const DecisionPlanSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.risk-balanced-trend-decision-plan.v1'),
+  signalDate: IsoDateSchema,
+  covarianceWindow: DecisionCovarianceWindowSchema,
+  estimatedAnnualizedPortfolioVolatility: NonNegativeFinite,
+  exposureScale: UnitIntervalFinite,
+  targetWeights: Schema.Record(Symbol, UnitIntervalFinite),
+  signals: Schema.Array(DecisionSymbolSignalSchema).check(Schema.isMinLength(1)),
+})
+
+const SignalDecisionSchema = Schema.Struct({
+  schemaVersion: DecisionPlanSchema.fields.schemaVersion,
+  decisionId: Sha256Schema,
+  signalDate: DecisionPlanSchema.fields.signalDate,
+  executionDate: IsoDateSchema,
+  covarianceWindow: DecisionPlanSchema.fields.covarianceWindow,
+  estimatedAnnualizedPortfolioVolatility: DecisionPlanSchema.fields.estimatedAnnualizedPortfolioVolatility,
+  exposureScale: DecisionPlanSchema.fields.exposureScale,
+  targetWeights: DecisionPlanSchema.fields.targetWeights,
+  signals: DecisionPlanSchema.fields.signals,
+})
+
+export const RiskBalancedTrendSignalDecisionsArtifactSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.risk-balanced-trend-decisions.v1'),
+  items: Schema.Array(SignalDecisionSchema).check(Schema.isMinLength(1)),
+})
+
+export const DailyPerformanceSeriesArtifactSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.daily-performance-series.v1'),
+  series: Schema.Literals(['buy-and-hold', 'direct-volatility-timing', 'double-cost-strategy']),
+  items: Schema.Array(DailyPerformancePointSchema).check(Schema.isMinLength(1)),
+})
+
+export const QualificationArtifactManifestSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.qualification-artifact-manifest.v1'),
+  identity: Schema.Struct({
+    runId: Sha256Schema,
+    evaluationSchemaVersion: Schema.Literal('bayn.evaluation.v6'),
+    protocolHash: Sha256Schema,
+    sourceRevision: SourceRevision,
+    image: Schema.Struct({ repository: Schema.String, digest: ImageDigest }),
+    snapshotId: Sha256Schema,
+    publicationId: Sha256Schema,
+    inputManifestHash: Sha256Schema,
+    bounds: EvaluationBoundsSchema,
+    calendarVersion: Schema.String,
+  }),
+  execution: Schema.Struct({
+    parameterSchemaVersion: Schema.String,
+    parameterHash: Sha256Schema,
+    simulationSchemaVersion: Schema.Literal('bayn.simulation-trace.v3'),
+    executionModel: ExecutionModelSchema,
+    costMultiplierMicros: Micros,
+  }),
+  artifacts: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      schemaVersion: Schema.String,
+      itemCount: NonNegativeInteger,
+      contentHash: Sha256Schema,
+    }),
+  ).check(Schema.isMinLength(1)),
+  events: Schema.Struct({ count: PositiveInteger, contentHash: Sha256Schema }),
+  gates: Schema.Struct({ count: PositiveInteger, contentHash: Sha256Schema }),
+})
+
+export const EquitySeriesArtifactSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.equity-series.v1'),
+  items: Schema.Array(
+    Schema.Struct({
+      sessionDate: IsoDateSchema,
+      evaluatorEquityMicros: Micros,
+      reconstructedEquityMicros: Micros,
+      differenceMicros: Micros,
+    }),
+  ).check(Schema.isMinLength(1)),
+})
+
+const decodeEvaluationSummaryDataFirst = Schema.decodeUnknownEffect(EvaluationSummarySchema, StrictParseOptions)
+
+export const decodeEvaluationSummary = Pipeable.dual(1, (input: unknown) => decodeEvaluationSummaryDataFirst(input))
+const decodeReconciliationResultDataFirst = Schema.decodeUnknownEffect(ReconciliationResultSchema, StrictParseOptions)
+
+export const decodeReconciliationResult = Pipeable.dual(1, (input: unknown) =>
+  decodeReconciliationResultDataFirst(input),
+)
+const decodeMarkedEquityReconciliationDataFirst = Schema.decodeUnknownEffect(
+  MarkedEquityReconciliationSchema,
+  StrictParseOptions,
+)
+
+export const decodeMarkedEquityReconciliation = Pipeable.dual(1, (input: unknown) =>
+  decodeMarkedEquityReconciliationDataFirst(input),
+)
+const decodeInputManifestArtifactDataFirst = Schema.decodeUnknownEffect(InputManifestArtifactSchema, StrictParseOptions)
+
+export const decodeInputManifestArtifact = Pipeable.dual(1, (input: unknown) =>
+  decodeInputManifestArtifactDataFirst(input),
+)
+const decodeEquitySeriesArtifactDataFirst = Schema.decodeUnknownEffect(EquitySeriesArtifactSchema, StrictParseOptions)
+
+export const decodeEquitySeriesArtifact = Pipeable.dual(1, (input: unknown) =>
+  decodeEquitySeriesArtifactDataFirst(input),
+)
+const decodeEvaluationEventsDataFirst = Schema.decodeUnknownEffect(EvaluationEventsSchema, StrictParseOptions)
+
+export const decodeEvaluationEvents = Pipeable.dual(1, (input: unknown) => decodeEvaluationEventsDataFirst(input))
+const decodeSimulatedOrdersArtifactDataFirst = Schema.decodeUnknownEffect(
+  SimulatedOrdersArtifactSchema,
+  StrictParseOptions,
+)
+
+export const decodeSimulatedOrdersArtifact = Pipeable.dual(1, (input: unknown) =>
+  decodeSimulatedOrdersArtifactDataFirst(input),
+)
+const decodeCashChangesArtifactDataFirst = Schema.decodeUnknownEffect(CashChangesArtifactSchema, StrictParseOptions)
+
+export const decodeCashChangesArtifact = Pipeable.dual(1, (input: unknown) => decodeCashChangesArtifactDataFirst(input))
+const decodeDailyPositionMarksArtifactDataFirst = Schema.decodeUnknownEffect(
+  DailyPositionMarksArtifactSchema,
+  StrictParseOptions,
+)
+
+export const decodeDailyPositionMarksArtifact = Pipeable.dual(1, (input: unknown) =>
+  decodeDailyPositionMarksArtifactDataFirst(input),
+)
+const decodeRiskBalancedTrendSignalDecisionsArtifactDataFirst = Schema.decodeUnknownEffect(
+  RiskBalancedTrendSignalDecisionsArtifactSchema,
+  StrictParseOptions,
+)
+
+export const decodeRiskBalancedTrendSignalDecisionsArtifact = Pipeable.dual(1, (input: unknown) =>
+  decodeRiskBalancedTrendSignalDecisionsArtifactDataFirst(input),
+)
+const decodeDailyPerformanceSeriesArtifactDataFirst = Schema.decodeUnknownEffect(
+  DailyPerformanceSeriesArtifactSchema,
+  StrictParseOptions,
+)
+
+export const decodeDailyPerformanceSeriesArtifact = Pipeable.dual(1, (input: unknown) =>
+  decodeDailyPerformanceSeriesArtifactDataFirst(input),
+)
+const decodeQualificationArtifactManifestDataFirst = Schema.decodeUnknownEffect(
+  QualificationArtifactManifestSchema,
+  StrictParseOptions,
+)
+
+export const decodeQualificationArtifactManifest = Pipeable.dual(1, (input: unknown) =>
+  decodeQualificationArtifactManifestDataFirst(input),
+)
+
+export const makeEquitySeriesArtifact = (items: (typeof EquitySeriesArtifactSchema.Type)['items']) => ({
+  schemaVersion: 'bayn.equity-series.v1' as const,
+  items,
+})
+
+export type InputManifest = typeof InputManifestArtifactSchema.Type
+export type SymbolCoverage = InputManifest['symbols'][number]
+export type PerformanceMetrics = typeof PerformanceMetricsSchema.Type
+export type EconomicVerdict = typeof VerdictSchema.Type
+export type GateResult = EconomicVerdict['gates'][number]
+export type MarkedEquityReconciliation = typeof MarkedEquityReconciliationSchema.Type
+export type EvaluationSummary = typeof EvaluationSummarySchema.Type
+export type ReconciliationResult = typeof ReconciliationResultSchema.Type
+export type EvaluationEvent = typeof EvaluationEventSchema.Type
+export type DecisionEvent = Extract<EvaluationEvent, { readonly kind: 'decision' }>
+export type FillEvent = Extract<EvaluationEvent, { readonly kind: 'fill' }>
+export type FeeEvent = Extract<EvaluationEvent, { readonly kind: 'fee' }>
+export type CashYieldEvent = Extract<EvaluationEvent, { readonly kind: 'cash-yield' }>
+export type SimulatedOrder = (typeof SimulatedOrdersArtifactSchema.Type)['items'][number]
+export type OrderStatus = SimulatedOrder['status']
+export type OrderRejectionReason = Exclude<SimulatedOrder['rejectionReason'], null>
+export type CashChange = (typeof CashChangesArtifactSchema.Type)['items'][number]
+export type DailyPositionMark = (typeof DailyPositionMarksArtifactSchema.Type)['items'][number]
+export type PositionMark = DailyPositionMark['positions'][number]
+export type SignalDecision = (typeof RiskBalancedTrendSignalDecisionsArtifactSchema.Type)['items'][number]
+export type DecisionPlan = typeof DecisionPlanSchema.Type
+export type SymbolSignal = SignalDecision['signals'][number]
+export type HorizonSignal = SymbolSignal['horizons'][number]
+export type DailyPerformancePoint = (typeof DailyPerformanceSeriesArtifactSchema.Type)['items'][number]
+export type EquityPoint = (typeof EquitySeriesArtifactSchema.Type)['items'][number]

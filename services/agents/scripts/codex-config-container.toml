@@ -1,0 +1,44 @@
+model = "gpt-5.6-sol"
+model_reasoning_summary = "detailed"
+model_reasoning_effort = "high"
+model_verbosity = "medium"
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+suppress_unstable_features_warning = true
+web_search = "live"
+
+[features]
+shell_tool = true
+hooks = true
+enable_request_compression = true
+unified_exec = true
+shell_snapshot = true
+apply_patch_streaming_events = true
+code_mode = true
+runtime_metrics = true
+multi_agent = true
+multi_agent_v2 = true
+enable_fanout = true
+apps = true
+enable_mcp_apps = true
+tool_suggest = true
+plugins = true
+remote_plugin = true
+image_generation = true
+skill_mcp_dependency_install = true
+goals = true
+tool_call_mcp_elicitation = true
+auth_elicitation = true
+artifact = true
+fast_mode = true
+remote_compaction_v2 = true
+workspace_dependencies = true
+
+[shell_environment_policy]
+ignore_default_excludes = true
+
+[projects."/workspace/lab"]
+trust_level = "trusted"
+
+[projects."/root"]
+trust_level = "trusted"

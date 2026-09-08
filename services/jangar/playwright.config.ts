@@ -1,0 +1,56 @@
+import { dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { defineConfig } from '@playwright/test'
+
+const port = Number.parseInt(process.env.PLAYWRIGHT_PORT ?? process.env.JANGAR_PORT ?? '3000', 10)
+const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? `http://localhost:${port}`
+const configDir = dirname(fileURLToPath(import.meta.url))
+const skipWebServer = process.env.PLAYWRIGHT_SKIP_WEBSERVER === '1'
+const webServerCommand = 'bun run dev'
+const webServerEnv = {
+  ...process.env,
+  VITEST: '1',
+  PGSSLMODE: 'disable',
+  JANGAR_SKIP_MIGRATIONS: '1',
+  ...(process.env.PLAYWRIGHT_OPENWEBUI_E2E === '1'
+    ? {
+        ...(process.env.JANGAR_CHAT_STATE_BACKEND ? {} : { JANGAR_CHAT_STATE_BACKEND: 'memory' }),
+        ...(process.env.JANGAR_MODELS ? {} : { JANGAR_MODELS: 'gpt-5.6-sol' }),
+        ...(process.env.JANGAR_DEFAULT_MODEL ? {} : { JANGAR_DEFAULT_MODEL: 'gpt-5.6-sol' }),
+      }
+    : {}),
+  JANGAR_LEADER_ELECTION_ENABLED: '0',
+  ...(process.env.DATABASE_URL ? {} : { DATABASE_URL: 'postgres://localhost:5432/jangar' }),
+}
+
+export default defineConfig({
+  testDir: './tests',
+  testMatch: ['**/*.e2e.ts', '**/*.spec.ts'],
+  timeout: 30_000,
+  expect: {
+    timeout: 10_000,
+    toHaveScreenshot: { maxDiffPixelRatio: 0.01 },
+  },
+  use: {
+    baseURL,
+    trace: 'on-first-retry',
+    viewport: { width: 1280, height: 720 },
+    colorScheme: 'dark',
+    locale: 'en-US',
+    timezoneId: 'UTC',
+    reducedMotion: 'reduce',
+    screenshot: 'only-on-failure',
+    video: 'retain-on-failure',
+  },
+  workers: 1,
+  webServer: skipWebServer
+    ? undefined
+    : {
+        command: webServerCommand,
+        url: baseURL,
+        reuseExistingServer: !process.env.CI,
+        timeout: 120_000,
+        cwd: configDir,
+        env: webServerEnv,
+      },
+})

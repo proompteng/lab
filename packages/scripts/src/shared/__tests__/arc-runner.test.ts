@@ -1,0 +1,229 @@
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
+
+import { describe, expect, it } from 'bun:test'
+
+const repoRoot = new URL('../../../../../', import.meta.url)
+const readRepoFile = (path: string): string => readFileSync(new URL(path, repoRoot), 'utf8')
+
+const setupAction = readRepoFile('.github/actions/setup-nix-toolchain/action.yml')
+const arcApplication = readRepoFile('argocd/applications/arc/application.yaml')
+const arcRunnerImage = readRepoFile('nix/images/arc-runner.nix')
+const arcRunnerBuildWorkflow = readRepoFile('.github/workflows/arc-runner-build-push.yml')
+const nixOciWorkflow = readRepoFile('.github/workflows/nix-oci-build-common.yml')
+const agentsBuildWorkflow = readRepoFile('.github/workflows/agents-build-push.yml')
+const argoLintWorkflow = readRepoFile('.github/workflows/argo-lint.yml')
+const kubeconformWorkflow = readRepoFile('.github/workflows/kubeconform.yml')
+const headlampWorkflow = readRepoFile('.github/workflows/headlamp-ci.yml')
+const flake = readRepoFile('flake.nix')
+const nixPackages = readRepoFile('nix/packages.nix')
+const toolchainDoctor = readRepoFile('nix/toolchain-doctor.sh')
+
+const runnerScaleSetBlock = (name: string): string => {
+  const start = arcApplication.indexOf(`runnerScaleSetName: ${name}`)
+  expect(start).toBeGreaterThan(-1)
+
+  const next = arcApplication.indexOf('runnerScaleSetName:', start + 1)
+  return arcApplication.slice(start, next === -1 ? arcApplication.length : next)
+}
+
+const arcRunnerBuildTriggerPaths = Array.from(
+  new Set(Array.from(arcRunnerBuildWorkflow.matchAll(/^\s+- '([^']+)'$/gm), ([, path]) => path)),
+)
+
+const arcRunnerToolchainScriptPaths = Array.from(
+  new Set(Array.from(flake.matchAll(/builtins\.readFile \.\/(nix\/[^)]+\.sh)/g), ([, path]) => path)),
+)
+describe('ARC Nix runner toolchain', () => {
+  it('keeps ARC runner scratch writes off shared Ceph while making runner images releasable by digest', () => {
+    expect(arcApplication).toContain('runnerScaleSetName: arc-arm64')
+    expect(arcApplication).toContain('runnerScaleSetName: arc-amd64')
+    expect(arcApplication).toContain('runnerScaleSetName: analysis-arm64')
+    expect(arcApplication).toContain('image: docker:dind')
+    for (const scaleSet of ['arc-arm64', 'arc-amd64']) {
+      const block = runnerScaleSetBlock(scaleSet)
+      expect(block).toContain('emptyDir:')
+      expect(block).toContain('sizeLimit: 80Gi')
+      expect(block).not.toContain('storageClassName: "rook-ceph-block"')
+      expect(block).not.toContain('volumeClaimTemplate:')
+    }
+    const analysisBlock = runnerScaleSetBlock('analysis-arm64')
+    expect(analysisBlock).toContain('emptyDir:')
+    expect(analysisBlock).toContain('sizeLimit: 20Gi')
+    expect(analysisBlock).not.toContain('volumeClaimTemplate:')
+    expect(analysisBlock).not.toContain('storageClassName: "rook-ceph-block"')
+    expect(arcRunnerBuildWorkflow).toContain('image_name: arc-runner')
+    expect(arcRunnerBuildWorkflow).toContain('latest: ${{')
+  })
+
+  it('keeps lab ARC runner concurrency capped', () => {
+    expect(runnerScaleSetBlock('arc-arm64')).toContain('maxRunners: 5')
+    expect(runnerScaleSetBlock('arc-arm64')).toContain('minRunners: 1')
+    expect(runnerScaleSetBlock('arc-amd64')).toContain('maxRunners: 5')
+    expect(runnerScaleSetBlock('arc-amd64')).toContain('minRunners: 1')
+    expect(runnerScaleSetBlock('analysis-arm64')).toContain('maxRunners: 1')
+    expect(runnerScaleSetBlock('analysis-arm64')).toContain('minRunners: 1')
+  })
+
+  it('serializes registry uploads from every runner scale set', () => {
+    for (const scaleSet of ['arc-arm64', 'arc-amd64', 'analysis-arm64']) {
+      const block = runnerScaleSetBlock(scaleSet)
+      expect(block).toContain('--max-concurrent-uploads=1')
+      expect(block).not.toContain('--max-concurrent-uploads=8')
+    }
+  })
+
+  it('keeps lab ARC ephemeral-storage requests small enough for the configured runner scale', () => {
+    for (const scaleSet of ['arc-arm64', 'arc-amd64']) {
+      const block = runnerScaleSetBlock(scaleSet)
+      expect(block).toContain('ephemeral-storage: "4Gi"')
+      expect(block).toContain('ephemeral-storage: "6Gi"')
+      expect(block).toContain('sizeLimit: 80Gi')
+      expect(block).not.toContain('storage: 20Gi')
+    }
+
+    expect(runnerScaleSetBlock('analysis-arm64')).toContain('sizeLimit: 20Gi')
+    expect(runnerScaleSetBlock('analysis-arm64')).not.toContain('volumeClaimTemplate:')
+  })
+
+  it('builds a custom actions runner image with pinned Nix CI tools preinstalled', () => {
+    expect(existsSync(new URL('images/arc-runner/Dockerfile', repoRoot))).toBe(false)
+    expect(arcRunnerImage).toContain('pkgs.dockerTools.pullImage')
+    expect(arcRunnerImage).toContain('pkgs.dockerTools.buildLayeredImageWithNixDb')
+    expect(arcRunnerImage).toContain('ciToolchain')
+    expect(arcRunnerImage).toContain('imageName = "ghcr.io/actions/actions-runner"')
+    expect(arcRunnerImage).toContain(
+      'imageDigest = "sha256:08c30b0a7105f64bddfc485d2487a22aa03932a791402393352fdf674bda2c29"',
+    )
+    expect(arcRunnerImage).not.toContain('ghcr.io/actions/actions-runner:latest')
+    expect(arcRunnerImage).toContain('LAB_ARC_RUNNER_TOOLCHAIN=1')
+    expect(arcRunnerImage).toContain('experimental-features = nix-command flakes')
+    expect(arcRunnerImage).toContain('build-users-group =')
+    expect(arcRunnerImage).toContain('NIX_PAGER=cat')
+    expect(arcRunnerImage).toContain('nix/store')
+    expect(arcRunnerImage).toContain('nix/var/nix/db')
+    expect(arcRunnerImage).toContain('fakeRootCommands =')
+    expect(arcRunnerImage).toContain('chown 1001:1001 ./nix ./nix/store')
+    expect(arcRunnerImage).toContain('chown -R 1001:1001 ./nix/var/nix')
+    expect(arcRunnerImage).toContain('chmod 1777 tmp var/tmp')
+    expect(arcRunnerImage).toContain('cat > etc/nix/nix.conf')
+    expect(arcRunnerImage).not.toContain('home/runner/.config')
+    expect(arcRunnerImage).not.toContain('home/runner/tmpDir')
+    expect(arcRunnerImage).not.toContain('chown -R 1001:1001 home/runner')
+    expect(arcRunnerImage).not.toContain('chmod -R u+rwX,go+rX home/runner')
+    expect(arcRunnerImage).toContain('User = "runner"')
+    expect(arcRunnerImage).toContain('/home/runner/run.sh')
+    expect(arcRunnerImage).not.toContain('curl')
+    expect(arcRunnerImage).not.toContain('apt-get')
+    expect(arcRunnerImage).not.toContain('created = "now"')
+    expect(flake).toContain('ciToolchain = pkgs.buildEnv')
+    expect(flake).toContain('"arc-runner-image" = import ./nix/images/arc-runner.nix')
+    expect(flake).toContain('name = "lab-ci-toolchain"')
+    expect(flake).toContain('pathsToLink = [ "/bin" ]')
+    expect(flake).toContain('ignoreCollisions = true')
+    expect(nixPackages).toContain('pkgs.kubernetes-helm')
+    expect(nixPackages).toContain('lib.versions.major')
+    expect(nixPackages).toContain('kubernetes-helm must stay on Helm 3')
+    expect(nixPackages).not.toContain('https://github.com/helm/helm/releases/download/v${helmVersion}/')
+    expect(nixPackages).not.toContain('https://get.helm.sh/helm-v${helmVersion}-')
+    expect(toolchainDoctor).toContain('expect_prefix helm v3.')
+    expect(toolchainDoctor).not.toContain('expect_eq helm v3.14.4')
+  })
+
+  it('publishes multi-arch ARC runner images for Kargo discovery', () => {
+    expect(arcRunnerBuildWorkflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
+    expect(arcRunnerBuildWorkflow).toContain('image_name: arc-runner')
+    expect(arcRunnerBuildWorkflow).toContain('package_attr: arc-runner-image')
+    expect(arcRunnerBuildWorkflow).toContain('publish_kargo_tag: true')
+    expect(arcRunnerBuildWorkflow).not.toContain('release_artifact_name:')
+    expect(arcRunnerBuildWorkflow).toContain(
+      "latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}",
+    )
+    expect(arcRunnerBuildTriggerPaths).not.toContain('flake.nix')
+    expect(arcRunnerBuildWorkflow).not.toContain('docker buildx')
+    expect(arcRunnerBuildWorkflow).not.toContain('docker/setup-buildx-action')
+    expect(arcRunnerBuildWorkflow).not.toContain('docker run')
+    expect(arcRunnerBuildWorkflow).not.toContain("- '.github/actions/setup-nix-toolchain/**'")
+    expect(arcRunnerBuildWorkflow).toContain("- '.github/workflows/nix-oci-build-common.yml'")
+    expect(arcRunnerBuildWorkflow).toContain("- 'nix/oci-push.sh'")
+    expect(arcRunnerBuildWorkflow).not.toContain("- '.github/workflows/arc-runner-build-push.yml'")
+    expect(arcRunnerBuildWorkflow).not.toContain("'packages/scripts/src/shared/__tests__/arc-runner.test.ts'")
+    expect(arcRunnerBuildTriggerPaths.length).toBeGreaterThan(0)
+    expect(arcRunnerToolchainScriptPaths.length).toBeGreaterThan(0)
+    for (const toolchainScriptPath of arcRunnerToolchainScriptPaths) {
+      if (
+        toolchainScriptPath === 'nix/oci-release-contract.sh' ||
+        toolchainScriptPath === 'nix/cache-push.sh' ||
+        toolchainScriptPath === 'nix/oci-inspect-archive.sh'
+      )
+        continue
+      expect(arcRunnerBuildTriggerPaths, `${toolchainScriptPath} must start ARC runner image builds`).toContain(
+        toolchainScriptPath,
+      )
+    }
+  })
+
+  it('uses a shared setup action so Nix jobs validate preinstalled tools before falling back', () => {
+    expect(setupAction).toContain('Detect preinstalled Nix')
+    expect(setupAction).toContain('require-preinstalled:')
+    expect(setupAction).toContain('Reject missing preinstalled Nix')
+    expect(setupAction).toContain("inputs.require-preinstalled == 'true'")
+    expect(setupAction).toContain("steps.detect.outputs.nix_available != 'true'")
+    expect(setupAction).toContain(
+      "steps.detect.outputs.nix_available != 'true' && inputs.require-preinstalled != 'true'",
+    )
+    expect(setupAction).toContain('uses: cachix/install-nix-action@v31')
+    expect(setupAction).toContain('extra_nix_config: ${{ inputs.extra-nix-config }}')
+    expect(setupAction).toContain('NIX_CONFIG<<__LAB_NIX_CONFIG__')
+    expect(setupAction).toContain('has_nixbld_group=false')
+    expect(setupAction).toContain('getent group nixbld')
+    expect(setupAction).toContain('build-users-group =')
+    expect(setupAction).toContain('Validate writable Nix store access')
+    expect(setupAction).toContain('nix store info')
+    expect(setupAction).toContain('NIX_REMOTE=daemon')
+    expect(setupAction).toContain('/nix/var/nix/daemon-socket/socket')
+    expect(setupAction).toContain('lab-nix-sudo-wrapper')
+    expect(setupAction).toContain('sudo -n --preserve-env=NIX_CONFIG,NIX_SSL_CERT_FILE')
+    expect(setupAction).toContain('LAB_NIX_WITH_SUDO=true')
+    expect(setupAction).toContain('neither daemon nor sudo store access is available')
+    expect(setupAction).toContain('REQUIRE_PREINSTALLED: ${{ inputs.require-preinstalled }}')
+    expect(setupAction).toContain('Required CI toolchain commands are missing from the preinstalled runner image')
+    expect(setupAction).toContain('command -v "${cmd}"')
+    expect(setupAction).toContain('node')
+    expect(setupAction).toContain('bun')
+    expect(setupAction).toContain('uv')
+    expect(setupAction).toContain('buildctl')
+    expect(setupAction).toContain('nix profile install .#ciToolchain --priority 4')
+    expect(setupAction).toContain('toolchain-doctor')
+    expect(setupAction).toContain('oci-doctor')
+
+    for (const workflow of [nixOciWorkflow, agentsBuildWorkflow, headlampWorkflow]) {
+      expect(workflow).toContain('uses: ./.github/actions/setup-nix-toolchain')
+      expect(workflow).toContain("require-preinstalled: 'true'")
+    }
+
+    for (const workflow of [argoLintWorkflow, kubeconformWorkflow]) {
+      expect(workflow).toContain('runs-on: ubuntu-latest')
+      expect(workflow).toContain('uses: ./.github/actions/setup-nix-toolchain')
+      expect(workflow).not.toContain("require-preinstalled: 'true'")
+    }
+
+    expect(nixOciWorkflow).not.toContain('Install xz for Nix installer')
+    expect(nixOciWorkflow).not.toContain('uses: cachix/install-nix-action@v31')
+  })
+
+  it('does not let ARC workflow callers silently use fallback Nix installation', () => {
+    const workflowDir = new URL('.github/workflows/', repoRoot)
+    const arcSetupCallers = readdirSync(workflowDir)
+      .filter((file) => file.endsWith('.yml') || file.endsWith('.yaml'))
+      .map((file) => [file, readRepoFile(`.github/workflows/${file}`)] as const)
+      .filter(([, content]) => content.includes('uses: ./.github/actions/setup-nix-toolchain'))
+      .filter(([, content]) => content.includes('runs-on: arc-') || content.includes('runner: arc-'))
+
+    expect(arcSetupCallers.length).toBeGreaterThan(0)
+    for (const [file, content] of arcSetupCallers) {
+      expect(content, `${file} must require the preinstalled ARC Nix toolchain`).toContain(
+        "require-preinstalled: 'true'",
+      )
+    }
+  })
+})

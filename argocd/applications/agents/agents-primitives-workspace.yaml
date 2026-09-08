@@ -1,0 +1,9 @@
+apiVersion: workspaces.proompteng.ai/v1alpha1
+kind: Workspace
+metadata:
+  name: agents-primitives-workspace
+  namespace: agents
+spec:
+  size: 10Gi
+  accessModes:
+    - ReadWriteOnce

@@ -1,0 +1,209 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: hermes-openclaw-migration-apply-
+  namespace: hermes
+  labels:
+    app.kubernetes.io/name: hermes
+    app.kubernetes.io/component: migration
+spec:
+  activeDeadlineSeconds: 600
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hermes
+        app.kubernetes.io/component: migration
+    spec:
+      serviceAccountName: hermes
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10000
+        runAsGroup: 10000
+        fsGroup: 10000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migration
+          image: registry.ide-newton.ts.net/lab/hermes-agent@sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ec
+          args:
+            - |
+              operator_files='/opt/data/SOUL.md /opt/data/IDENTITY.md /opt/data/TOOLS.md /opt/data/HEARTBEAT.md /opt/data/workspace/tuslagch/AGENTS.md'
+              operator_digests_before=$(sha256sum $operator_files)
+              migration_started_at=$(date +%s)
+              if migration_output=$(
+                /opt/hermes/.venv/bin/hermes claw migrate \
+                  --source /opt/data/migration/source \
+                  --preset user-data \
+                  --workspace-target /opt/data/workspace/tuslagch \
+                  --skill-conflict skip \
+                  --yes 2>&1
+              ); then
+                :
+              else
+                migration_status=$?
+                printf '%s\n' "$migration_output" >&2
+                exit "$migration_status"
+              fi
+              printf '%s\n' "$migration_output"
+              case "$migration_output" in
+                *"Secrets:     no"*) ;;
+                *) echo 'migration apply did not prove that secret migration is disabled' >&2; exit 1 ;;
+              esac
+              if printf '%s\n' "$migration_output" | grep -Fqx 'directory not found: /opt/data/migration/source'; then
+                echo 'migration command reported a refusal or failure' >&2
+                exit 1
+              fi
+              case "$migration_output" in
+                *"Refusing to apply"*|*"Migration failed"*|*"Migration preview failed"*)
+                  echo 'migration command reported a refusal or failure' >&2
+                  exit 1
+                  ;;
+              esac
+              operator_digests_after=$(sha256sum $operator_files)
+              test "$operator_digests_after" = "$operator_digests_before"
+              /opt/hermes/.venv/bin/python - "$migration_started_at" <<'PY'
+              import json
+              import pathlib
+              import sys
+
+              started_at = int(sys.argv[1])
+              report_root = pathlib.Path('/opt/data/migration') / ('open' + 'claw')
+              reports = [
+                  path
+                  for path in report_root.glob('*/report.json')
+                  if path.stat().st_mtime >= started_at - 1
+              ]
+              if len(reports) != 1:
+                  raise RuntimeError(f'expected one current migration report, found {len(reports)}')
+              report_path = reports[0]
+              report = json.loads(report_path.read_text())
+              summary = report.get('summary', {})
+              if report.get('mode') != 'execute':
+                  raise RuntimeError('migration report is not an execute report')
+              if report.get('source_root') != '/opt/data/migration/source':
+                  raise RuntimeError('migration report source does not match the audited staging tree')
+              if report.get('migrate_secrets') not in {False, '[redacted]'}:
+                  raise RuntimeError('migration report has an unexpected secret-migration marker')
+              if summary.get('conflict', 0) != 0 or summary.get('error', 0) != 0:
+                  raise RuntimeError('migration report contains conflicts or errors')
+
+              items = {item.get('kind'): item for item in report.get('items', [])}
+              selected = set(report.get('selection', {}).get('selected', []))
+              if {'secret-settings', 'provider-keys'} & selected:
+                  raise RuntimeError('migration report selected secret-bearing options')
+              expected_char_limits = {'user-profile': 2200, 'daily-memory': 4400}
+              for kind, expected_char_limit in expected_char_limits.items():
+                  item = items.get(kind)
+                  if item is None or item.get('status') not in {'migrated', 'skipped'}:
+                      raise RuntimeError(f'migration report lacks a resolved {kind} item')
+                  if item.get('reason') in {'Source file not found', 'No workspace/memory/ directory found'}:
+                      raise RuntimeError(f'migration report did not consume the audited {kind} source')
+                  if item.get('details', {}).get('char_limit') != expected_char_limit:
+                      raise RuntimeError(f'migration report did not use the production character limit: {kind}')
+              for kind in ('soul', 'workspace-agents'):
+                  item = items.get(kind)
+                  if item is None or item.get('status') != 'skipped':
+                      raise RuntimeError(f'GitOps-owned item was not skipped: {kind}')
+              for kind in ('secret-settings', 'provider-keys', 'discord-settings', 'slack-settings'):
+                  item = items.get(kind)
+                  if item is None or item.get('status') != 'skipped':
+                      raise RuntimeError(f'secret-bearing item was not skipped: {kind}')
+
+              backups = [
+                  path
+                  for path in pathlib.Path('/opt/data/backups').glob('pre-migration-*.zip')
+                  if path.stat().st_mtime >= started_at - 1
+              ]
+              if not backups:
+                  raise RuntimeError('migration did not create a current restore-point archive')
+              backup_path = max(backups, key=lambda path: path.stat().st_mtime)
+              print(
+                  'migration_report_verified=true '
+                  f'conflicts=0 errors=0 migrated={summary.get("migrated", 0)} '
+                  f'skipped={summary.get("skipped", 0)} '
+                  f'report={report_path.parent.name}/report.json '
+                  f'restore_point={backup_path.name}'
+              )
+              PY
+              printf '%s\n' 'operator_owned_identity_unchanged=true secrets=false'
+          env:
+            - name: HERMES_HOME
+              value: /opt/data
+            - name: HOME
+              value: /opt/data/home
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+              ephemeral-storage: 128Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+              ephemeral-storage: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10000
+            runAsGroup: 10000
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: data
+              mountPath: /opt/data
+            - name: config
+              mountPath: /opt/data/config.yaml
+              subPath: config.yaml
+              readOnly: true
+            - name: bootstrap
+              mountPath: /opt/data/SOUL.md
+              subPath: SOUL.md
+              readOnly: true
+            - name: bootstrap
+              mountPath: /opt/data/IDENTITY.md
+              subPath: IDENTITY.md
+              readOnly: true
+            - name: bootstrap
+              mountPath: /opt/data/TOOLS.md
+              subPath: TOOLS.md
+              readOnly: true
+            - name: bootstrap
+              mountPath: /opt/data/HEARTBEAT.md
+              subPath: HEARTBEAT.md
+              readOnly: true
+            - name: bootstrap
+              mountPath: /opt/data/workspace/tuslagch/AGENTS.md
+              subPath: AGENTS.md
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: data-hermes-0
+        - name: config
+          configMap:
+            name: hermes-operation-config
+            defaultMode: 0444
+        - name: bootstrap
+          configMap:
+            name: hermes-bootstrap
+            defaultMode: 0444
+        - name: tmp
+          emptyDir:
+            sizeLimit: 1Gi

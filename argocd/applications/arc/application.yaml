@@ -1,0 +1,420 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: arc-controller
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: ghcr.io
+      chart: actions/actions-runner-controller-charts/gha-runner-scale-set-controller
+      targetRevision: 0.14.2
+      helm:
+        releaseName: arc-controller
+        skipCrds: false
+        valuesObject:
+          nodeSelector:
+            kubernetes.io/arch: amd64
+    - repoURL: ghcr.io
+      chart: actions/actions-runner-controller-charts/gha-runner-scale-set
+      targetRevision: 0.14.2
+      helm:
+        releaseName: arc-runner-set
+        skipCrds: false
+        valuesObject:
+          controllerServiceAccount:
+            name: arc-controller-gha-rs-controller
+            namespace: arc
+          githubConfigUrl: https://github.com/proompteng/lab
+          githubConfigSecret: github-token
+          runnerScaleSetName: arc-arm64
+          scaleSetLabels:
+            - arc-arm64
+          minRunners: 1
+          maxRunners: 5
+          listenerTemplate:
+            spec:
+              nodeSelector:
+                kubernetes.io/arch: amd64
+              dnsConfig:
+                searches:
+                  - ide-newton.ts.net
+              containers:
+                - name: listener
+          template:
+            spec:
+              serviceAccountName: arc-arm64-gha-rs-kube-mode
+              nodeSelector:
+                kubernetes.io/arch: arm64
+              dnsConfig:
+                searches:
+                  - ide-newton.ts.net
+              securityContext:
+                runAsNonRoot: false
+                # ARC runners need a writable tool cache under /home/runner/_work/_tool.
+                # Keep lab runners on node-local work dirs so high-concurrency Nix image builds do not
+                # block on dynamic PVC provisioning before the runner can accept a job.
+                fsGroup: 1001
+                fsGroupChangePolicy: OnRootMismatch
+              initContainers:
+                - name: init-dind-externals
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:a8c4b666048512444f9304166a049fd18dff51367af568e1248f59ec5bb59ea0
+                  command: ["cp", "-r", "-v", "/home/runner/externals/.", "/home/runner/tmpDir/"]
+                  resources:
+                    requests:
+                      cpu: "100m"
+                      memory: "128Mi"
+                    limits:
+                      cpu: "200m"
+                      memory: "256Mi"
+              containers:
+                - name: runner
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:a8c4b666048512444f9304166a049fd18dff51367af568e1248f59ec5bb59ea0
+                  command: ["/bin/bash", "-lc"]
+                  args:
+                    - |
+                      set -euo pipefail
+                      for attempt in $(seq 1 60); do
+                        if docker version >/dev/null 2>&1; then
+                          exec /home/runner/run.sh
+                        fi
+                        sleep 2
+                      done
+                      docker version
+                  resources:
+                    requests:
+                      cpu: "2"
+                      memory: "8Gi"
+                      ephemeral-storage: "4Gi"
+                    limits:
+                      cpu: "8"
+                      memory: "16Gi"
+                      ephemeral-storage: "80Gi"
+                  env:
+                    - name: ACTIONS_RUNNER_CONTAINER_HOOKS
+                      value: /home/runner/k8s/index.js
+                    - name: ACTIONS_RUNNER_POD_NAME
+                      valueFrom:
+                        fieldRef:
+                          fieldPath: metadata.name
+                    - name: DOCKER_HOST
+                      value: unix:///var/run/docker.sock
+                    - name: ACTIONS_RUNNER_REQUIRE_JOB_CONTAINER
+                      value: "false"
+                  volumeMounts:
+                    - name: work
+                      mountPath: /home/runner/_work
+                    - name: dind-sock
+                      mountPath: /var/run
+                - name: dind
+                  image: docker:dind
+                  # The private registry is a single filesystem writer on shared Ceph RBD.
+                  # Serialize daemon-driven uploads so direct Docker pushes cannot burst
+                  # fsync traffic into Kafka's pool.
+                  args:
+                    - dockerd
+                    - --host=unix:///var/run/docker.sock
+                    - --group=$(DOCKER_GROUP_GID)
+                    - --max-concurrent-uploads=1
+                  resources:
+                    requests:
+                      cpu: "2"
+                      memory: "8Gi"
+                      ephemeral-storage: "6Gi"
+                    limits:
+                      cpu: "12"
+                      memory: "16Gi"
+                      ephemeral-storage: "50Gi"
+                  env:
+                    - name: DOCKER_GROUP_GID
+                      value: "123"
+                  securityContext:
+                    privileged: true
+                  volumeMounts:
+                    - name: work
+                      mountPath: /home/runner/_work
+                    - name: dind-sock
+                      mountPath: /var/run
+                    - name: dind-externals
+                      mountPath: /home/runner/externals
+              volumes:
+                - name: work
+                  emptyDir:
+                    sizeLimit: 80Gi
+                - name: dind-sock
+                  emptyDir: {}
+                - name: dind-externals
+                  emptyDir: {}
+    - repoURL: ghcr.io
+      chart: actions/actions-runner-controller-charts/gha-runner-scale-set
+      targetRevision: 0.14.2
+      helm:
+        releaseName: arc-runner-set-amd64
+        skipCrds: false
+        valuesObject:
+          controllerServiceAccount:
+            name: arc-controller-gha-rs-controller
+            namespace: arc
+          githubConfigUrl: https://github.com/proompteng/lab
+          githubConfigSecret: github-token
+          runnerScaleSetName: arc-amd64
+          scaleSetLabels:
+            - arc-amd64
+          minRunners: 1
+          maxRunners: 5
+          listenerTemplate:
+            spec:
+              nodeSelector:
+                kubernetes.io/arch: amd64
+              dnsConfig:
+                searches:
+                  - ide-newton.ts.net
+              containers:
+                - name: listener
+          template:
+            spec:
+              nodeSelector:
+                kubernetes.io/arch: amd64
+              dnsConfig:
+                searches:
+                  - ide-newton.ts.net
+              securityContext:
+                runAsNonRoot: false
+                fsGroup: 1001
+                fsGroupChangePolicy: OnRootMismatch
+              initContainers:
+                - name: init-dind-externals
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:a8c4b666048512444f9304166a049fd18dff51367af568e1248f59ec5bb59ea0
+                  command: ["cp", "-r", "-v", "/home/runner/externals/.", "/home/runner/tmpDir/"]
+                  resources:
+                    requests:
+                      cpu: "100m"
+                      memory: "128Mi"
+                    limits:
+                      cpu: "200m"
+                      memory: "256Mi"
+              containers:
+                - name: runner
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:a8c4b666048512444f9304166a049fd18dff51367af568e1248f59ec5bb59ea0
+                  command: ["/bin/bash", "-lc"]
+                  args:
+                    - |
+                      set -euo pipefail
+                      for attempt in $(seq 1 60); do
+                        if docker version >/dev/null 2>&1; then
+                          exec /home/runner/run.sh
+                        fi
+                        sleep 2
+                      done
+                      docker version
+                  resources:
+                    requests:
+                      cpu: "2"
+                      memory: "8Gi"
+                      ephemeral-storage: "4Gi"
+                    limits:
+                      cpu: "8"
+                      memory: "16Gi"
+                      ephemeral-storage: "80Gi"
+                  env:
+                    - name: ACTIONS_RUNNER_CONTAINER_HOOKS
+                      value: /home/runner/k8s/index.js
+                    - name: ACTIONS_RUNNER_POD_NAME
+                      valueFrom:
+                        fieldRef:
+                          fieldPath: metadata.name
+                    - name: DOCKER_HOST
+                      value: unix:///var/run/docker.sock
+                    - name: ACTIONS_RUNNER_REQUIRE_JOB_CONTAINER
+                      value: "false"
+                  volumeMounts:
+                    - name: work
+                      mountPath: /home/runner/_work
+                    - name: dind-sock
+                      mountPath: /var/run
+                - name: dind
+                  image: docker:dind
+                  # The private registry is a single filesystem writer on shared Ceph RBD.
+                  # Serialize daemon-driven uploads so direct Docker pushes cannot burst
+                  # fsync traffic into Kafka's pool.
+                  args:
+                    - dockerd
+                    - --host=unix:///var/run/docker.sock
+                    - --group=$(DOCKER_GROUP_GID)
+                    - --max-concurrent-uploads=1
+                  resources:
+                    requests:
+                      cpu: "2"
+                      memory: "8Gi"
+                      ephemeral-storage: "6Gi"
+                    limits:
+                      cpu: "12"
+                      memory: "16Gi"
+                      ephemeral-storage: "50Gi"
+                  env:
+                    - name: DOCKER_GROUP_GID
+                      value: "123"
+                  securityContext:
+                    privileged: true
+                  volumeMounts:
+                    - name: work
+                      mountPath: /home/runner/_work
+                    - name: dind-sock
+                      mountPath: /var/run
+                    - name: dind-externals
+                      mountPath: /home/runner/externals
+              volumes:
+                - name: work
+                  emptyDir:
+                    sizeLimit: 80Gi
+                - name: dind-sock
+                  emptyDir: {}
+                - name: dind-externals
+                  emptyDir: {}
+    - repoURL: ghcr.io
+      chart: actions/actions-runner-controller-charts/gha-runner-scale-set
+      targetRevision: 0.14.2
+      helm:
+        releaseName: arc-runner-set-analysis
+        skipCrds: false
+        valuesObject:
+          controllerServiceAccount:
+            name: arc-controller-gha-rs-controller
+            namespace: arc
+          githubConfigUrl: https://github.com/gregkonush/analysis
+          githubConfigSecret: github-token
+          runnerScaleSetName: analysis-arm64
+          scaleSetLabels:
+            - arc-arm64
+          minRunners: 1
+          # The Altra node currently has about 94Gi of kubelet-local free space. Keep one hard-capped analysis
+          # workspace until additional local capacity is provisioned instead of letting concurrent jobs evict pods.
+          maxRunners: 1
+          listenerTemplate:
+            spec:
+              nodeSelector:
+                kubernetes.io/arch: amd64
+              dnsConfig:
+                searches:
+                  - ide-newton.ts.net
+              containers:
+                - name: listener
+          template:
+            spec:
+              nodeSelector:
+                kubernetes.io/arch: arm64
+              dnsConfig:
+                searches:
+                  - ide-newton.ts.net
+              securityContext:
+                runAsNonRoot: false
+                # ARC runners need a writable tool cache under /home/runner/_work/_tool.
+                # The analysis work directory is a disposable node-local emptyDir; set an fsGroup so the
+                # non-root runner user can create directories before any workflow steps run.
+                fsGroup: 1001
+                fsGroupChangePolicy: OnRootMismatch
+              initContainers:
+                - name: init-dind-externals
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:a8c4b666048512444f9304166a049fd18dff51367af568e1248f59ec5bb59ea0
+                  command: ["cp", "-r", "-v", "/home/runner/externals/.", "/home/runner/tmpDir/"]
+                  resources:
+                    requests:
+                      cpu: "100m"
+                      memory: "128Mi"
+                    limits:
+                      cpu: "200m"
+                      memory: "256Mi"
+              containers:
+                - name: runner
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:a8c4b666048512444f9304166a049fd18dff51367af568e1248f59ec5bb59ea0
+                  command: ["/bin/bash", "-lc"]
+                  args:
+                    - |
+                      set -euo pipefail
+                      for attempt in $(seq 1 60); do
+                        if docker version >/dev/null 2>&1; then
+                          exec /home/runner/run.sh
+                        fi
+                        sleep 2
+                      done
+                      docker version
+                  resources:
+                    requests:
+                      cpu: "1"
+                      memory: "2Gi"
+                      ephemeral-storage: "8Gi"
+                    limits:
+                      cpu: "4"
+                      memory: "8Gi"
+                      ephemeral-storage: "32Gi"
+                  env:
+                    - name: ACTIONS_RUNNER_CONTAINER_HOOKS
+                      value: /home/runner/k8s/index.js
+                    - name: ACTIONS_RUNNER_POD_NAME
+                      valueFrom:
+                        fieldRef:
+                          fieldPath: metadata.name
+                    - name: DOCKER_HOST
+                      value: unix:///var/run/docker.sock
+                    - name: ACTIONS_RUNNER_REQUIRE_JOB_CONTAINER
+                      value: "false"
+                  volumeMounts:
+                    - name: work
+                      mountPath: /home/runner/_work
+                    - name: dind-sock
+                      mountPath: /var/run
+                - name: dind
+                  image: docker:dind
+                  # The private registry is a single filesystem writer on shared Ceph RBD.
+                  # Serialize daemon-driven uploads so direct Docker pushes cannot burst
+                  # fsync traffic into Kafka's pool.
+                  args:
+                    - dockerd
+                    - --host=unix:///var/run/docker.sock
+                    - --group=$(DOCKER_GROUP_GID)
+                    - --max-concurrent-uploads=1
+                  resources:
+                    requests:
+                      cpu: "1"
+                      memory: "2Gi"
+                      ephemeral-storage: "12Gi"
+                    limits:
+                      cpu: "6"
+                      memory: "10Gi"
+                      ephemeral-storage: "40Gi"
+                  env:
+                    - name: DOCKER_GROUP_GID
+                      value: "123"
+                  securityContext:
+                    privileged: true
+                  volumeMounts:
+                    - name: work
+                      mountPath: /home/runner/_work
+                    - name: dind-sock
+                      mountPath: /var/run
+                    - name: dind-externals
+                      mountPath: /home/runner/externals
+              volumes:
+                - name: work
+                  emptyDir:
+                    sizeLimit: 20Gi
+                - name: dind-sock
+                  emptyDir: {}
+                - name: dind-externals
+                  emptyDir: {}
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: arc
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /spec/preserveUnknownFields

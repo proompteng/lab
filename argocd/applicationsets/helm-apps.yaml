@@ -1,0 +1,207 @@
+# this template is created to use OCI helm charts
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: appset-helm
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - list:
+              elements: &clusters_default
+                - cluster: in-cluster
+                  suffix: ""
+                  destinationServer: https://kubernetes.default.svc
+          - list:
+              elements: &helm_elements
+                - name: kargo
+                  namespace: kargo
+                  repoUrl: ghcr.io/akuity/kargo-charts
+                  chart: kargo
+                  version: 1.11.0
+                  releaseName: kargo
+                  enabled: "true"
+                  managedNamespaceMetadata:
+                    labels:
+                      pod-security.kubernetes.io/enforce: baseline
+                      pod-security.kubernetes.io/audit: restricted
+                      pod-security.kubernetes.io/warn: restricted
+                  valuesObject:
+                    api:
+                      enabled: true
+                      host: kargo.ide-newton.ts.net
+                      secretManagementEnabled: false
+                      adminAccount:
+                        enabled: false
+                      oidc:
+                        enabled: true
+                        issuerURL: https://argocd.proompteng.ai/api/dex
+                        clientID: kargo-ui
+                        cliClientID: kargo-cli
+                        usernameClaim: email
+                        admins:
+                          claims:
+                            email:
+                              - admin@proompteng.ai
+                      argocd:
+                        urls:
+                          "": https://argocd.proompteng.ai
+                      rollouts:
+                        integrationEnabled: false
+                      tls:
+                        enabled: false
+                        terminatedUpstream: true
+                    externalWebhooksServer:
+                      enabled: false
+                    global:
+                      clusterSecretsNamespace: kargo
+                      createClusterSecretsNamespace: false
+                      systemResources:
+                        namespace: kargo
+                        createNamespace: false
+                      sharedResources:
+                        namespace: kargo
+                        createNamespace: false
+                    controller:
+                      reconcilers:
+                        warehouses:
+                          minReconciliationInterval: 1m0s
+                      argocd:
+                        integrationEnabled: true
+                        namespace: argocd
+                        watchArgocdNamespaceOnly: true
+                      rollouts:
+                        integrationEnabled: false
+                    extraObjects:
+                      - apiVersion: networking.k8s.io/v1
+                        kind: Ingress
+                        metadata:
+                          name: kargo-tailscale
+                          namespace: kargo
+                          annotations:
+                            tailscale.com/tags: tag:k8s
+                        spec:
+                          ingressClassName: tailscale
+                          tls:
+                            - hosts:
+                                - kargo.ide-newton.ts.net
+                          rules:
+                            - host: kargo.ide-newton.ts.net
+                              http:
+                                paths:
+                                  - path: /
+                                    pathType: Prefix
+                                    backend:
+                                      service:
+                                        name: kargo-api
+                                        port:
+                                          number: 80
+                - name: restate-operator-crds
+                  namespace: restate-operator
+                  repoUrl: ghcr.io/restatedev
+                  chart: restate-operator-crds
+                  version: 3.0.0
+                  releaseName: restate-operator-crds
+                  enabled: "true"
+                  managedNamespaceMetadata:
+                    labels:
+                      pod-security.kubernetes.io/enforce: restricted
+                      pod-security.kubernetes.io/audit: restricted
+                      pod-security.kubernetes.io/warn: restricted
+                      restate.proompteng.ai/admin-access: "true"
+                    annotations:
+                      argocd.argoproj.io/sync-options: Prune=false
+                  ignoreDifferences:
+                    - group: apiextensions.k8s.io
+                      kind: CustomResourceDefinition
+                      name: restatecloudenvironments.restate.dev
+                      jsonPointers:
+                        - /spec/versions/0/additionalPrinterColumns
+                - name: restate-operator
+                  namespace: restate-operator
+                  repoUrl: ghcr.io/restatedev
+                  chart: restate-operator-helm
+                  version: 3.0.0
+                  releaseName: restate-operator
+                  enabled: "true"
+                  valuesObject:
+                    installCrds: false
+                    version: 3.0.0
+                    podSecurityContext:
+                      seccompProfile:
+                        type: RuntimeDefault
+                    logging:
+                      env_filter: info,restate=info
+            selector:
+              matchExpressions:
+                - key: enabled
+                  operator: NotIn
+                  values: ["false", "False", "0"]
+  template:
+    metadata:
+      name: "{{ .name }}{{ .suffix }}"
+      namespace: argocd
+    spec:
+      project: default
+      destination:
+        namespace: "{{.namespace}}"
+      syncPolicy:
+        automated:
+          enabled: true
+          prune: true
+          selfHeal: true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
+          refresh: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+          - ApplyOutOfSyncOnly=true
+          - PruneLast=true
+          - ClientSideApplyMigration=false
+      source:
+        repoURL: "{{.repoUrl}}"
+        chart: "{{.chart}}"
+        targetRevision: "{{.version}}"
+        helm:
+          releaseName: "{{.releaseName}}"
+          skipCrds: false
+  templatePatch: |
+    {{- $hasDestServer := hasKey . "destinationServer" -}}
+    {{- $hasDestName := hasKey . "destinationName" -}}
+    {{- $hasValuesObject := hasKey . "valuesObject" -}}
+    {{- $hasManagedNamespaceMetadata := hasKey . "managedNamespaceMetadata" -}}
+    {{- $hasIgnoreDifferences := hasKey . "ignoreDifferences" -}}
+    {{- $needsSpec := or $hasDestServer $hasDestName $hasValuesObject $hasManagedNamespaceMetadata $hasIgnoreDifferences -}}
+    {{- if $needsSpec }}
+    spec:
+    {{- if or $hasDestServer $hasDestName }}
+      destination:
+        namespace: "{{.namespace}}"
+      {{- if $hasDestServer }}
+        server: '{{ .destinationServer }}'
+      {{- end }}
+      {{- if $hasDestName }}
+        name: '{{ .destinationName }}'
+      {{- end }}
+    {{- end }}
+    {{- if $hasValuesObject }}
+      source:
+        helm:
+          valuesObject: {{- .valuesObject | toYaml | nindent 8 }}
+    {{- end }}
+    {{- if $hasManagedNamespaceMetadata }}
+      syncPolicy:
+        managedNamespaceMetadata: {{- .managedNamespaceMetadata | toYaml | nindent 6 }}
+    {{- end }}
+    {{- if $hasIgnoreDifferences }}
+      ignoreDifferences: {{- .ignoreDifferences | toYaml | nindent 6 }}
+    {{- end }}
+    {{- end }}

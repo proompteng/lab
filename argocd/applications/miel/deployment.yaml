@@ -1,0 +1,161 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: miel
+  labels:
+    app.kubernetes.io/name: miel
+    app.kubernetes.io/part-of: miel
+    app.kubernetes.io/component: api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: miel
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: miel
+        app.kubernetes.io/part-of: miel
+    spec:
+      containers:
+        - name: miel
+          image: registry.ide-newton.ts.net/lab/miel:0.1.0
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: HTTP_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: HTTP_PORT
+            - name: ALPACA_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: ALPACA_BASE_URL
+            - name: ALPACA_DATA_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: ALPACA_DATA_BASE_URL
+            - name: ALPACA_REQUEST_TIMEOUT_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: ALPACA_REQUEST_TIMEOUT_SECONDS
+            - name: BACKTEST_MAX_BARS
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: BACKTEST_MAX_BARS
+            - name: OTEL_SERVICE_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: OTEL_SERVICE_NAME
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: OTEL_EXPORTER_OTLP_PROTOCOL
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+            - name: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+            - name: OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
+            - name: TIGERBEETLE_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_ENABLED
+            - name: TIGERBEETLE_ADDRESSES
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_ADDRESSES
+            - name: TIGERBEETLE_CLUSTER_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_CLUSTER_ID
+            - name: TIGERBEETLE_LEDGER
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_LEDGER
+            - name: TIGERBEETLE_ORDER_CODE
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_ORDER_CODE
+            - name: TIGERBEETLE_BACKTEST_CODE
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_BACKTEST_CODE
+            - name: TIGERBEETLE_AMOUNT_SCALE
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_AMOUNT_SCALE
+            - name: TIGERBEETLE_ORDER_DEBIT_ACCOUNT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_ORDER_DEBIT_ACCOUNT_ID
+            - name: TIGERBEETLE_ORDER_CREDIT_ACCOUNT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_ORDER_CREDIT_ACCOUNT_ID
+            - name: TIGERBEETLE_BACKTEST_DEBIT_ACCOUNT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_BACKTEST_DEBIT_ACCOUNT_ID
+            - name: TIGERBEETLE_BACKTEST_CREDIT_ACCOUNT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_BACKTEST_CREDIT_ACCOUNT_ID
+            - name: ALPACA_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: miel-secrets
+                  key: alpaca-api-key
+            - name: ALPACA_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: miel-secrets
+                  key: alpaca-secret-key
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

@@ -1,0 +1,52 @@
+name: froussard
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'apps/froussard/**'
+      - 'packages/agent-contracts/**'
+      - 'packages/codex/**'
+      - 'packages/discord/**'
+      - 'packages/otel/**'
+      - 'nix/images/froussard.nix'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - 'nix/oci-push.sh'
+      - 'argocd/applications/froussard/**'
+  pull_request:
+    paths:
+      - 'apps/froussard/**'
+      - 'packages/agent-contracts/**'
+      - 'nix/images/froussard.nix'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - 'nix/oci-push.sh'
+      - 'argocd/applications/froussard/**'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    uses: ./.github/workflows/common-monorepo.yml
+    with:
+      install-command: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/agent-contracts --filter froussard --filter @proompteng/codex --filter @proompteng/discord --filter @proompteng/otel && bun run --filter @proompteng/agent-contracts build && bun run --filter @proompteng/otel build && bun run --filter @proompteng/codex build && bun run --filter @proompteng/discord build
+      lint-command: bunx oxfmt --check apps/froussard
+      oxlint-command: bun run --cwd apps/froussard lint:oxlint
+      oxlint-type-command: bun run --cwd apps/froussard lint:oxlint:type
+      test-command: bun run --filter froussard test -- --coverage && node scripts/report-coverage.mjs
+    secrets: inherit
+
+  nix-image:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: froussard
+      package_attr: froussard-image
+      tag: sha-${{ github.sha }}
+      publish_kargo_tag: true
+      pr_number: ${{ github.event.pull_request.number || '' }}
+      latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
+    secrets: inherit

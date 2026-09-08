@@ -1,0 +1,27 @@
+name: codex-ci
+
+on:
+  pull_request:
+    paths:
+      - 'packages/codex/**'
+  push:
+    branches:
+      - main
+    paths:
+      - 'packages/codex/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-build:
+    uses: ./.github/workflows/common-monorepo.yml
+    with:
+      bun-version: 1.4.0
+      node-version: 24.11.1
+      install-command: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/codex && bun add -g @openai/codex@0.144.4
+      lint-command: bunx oxfmt --check packages/codex
+      oxlint-command: bun run --cwd packages/codex lint:oxlint
+      oxlint-type-command: bun run --cwd packages/codex lint:oxlint:type
+      test-command: bun run --filter @proompteng/codex test && bun run --cwd packages/codex check:app-server-types

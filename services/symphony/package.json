@@ -1,0 +1,29 @@
+{
+  "name": "@proompteng/symphony",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "lint": "bunx oxfmt --check src",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json .",
+    "test": "bun test",
+    "tsc": "bunx tsc --noEmit"
+  },
+  "dependencies": {
+    "@effect/schema": "^0.75.5",
+    "@proompteng/codex": "workspace:*",
+    "@proompteng/otel": "workspace:*",
+    "effect": "^3.21.2",
+    "handlebars": "^4.7.9",
+    "yaml": "^2.8.4"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.0",
+    "@types/node": "^25.6.0",
+    "typescript": "^7.0.2"
+  },
+  "packageManager": "bun@1.4.0"
+}

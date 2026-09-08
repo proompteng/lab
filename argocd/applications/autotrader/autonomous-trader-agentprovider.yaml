@@ -1,0 +1,648 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentProvider
+metadata:
+  name: autonomous-trader-codex
+  namespace: synthesis
+  labels:
+    app.kubernetes.io/part-of: autotrader
+    app.kubernetes.io/component: autonomous-trader
+spec:
+  binary: /usr/local/bin/agent-runner
+  adapter:
+    type: codex-app-server
+    codex:
+      model: gpt-5.6-sol
+      effort: high
+      sandbox: danger-full-access
+      approval: never
+      cwd: /workspace/lab
+      threadConfig:
+        mcp_servers:
+          alpaca:
+            command: /usr/bin/python3
+            args:
+              - -u
+              - /root/alpaca-mcp-stdio-bridge.py
+            env:
+              ALPACA_API_KEY: "{{ env.ALPACA_API_KEY }}"
+              ALPACA_SECRET_KEY: "{{ env.ALPACA_SECRET_KEY }}"
+              ALPACA_PAPER_TRADE: "{{ env.ALPACA_PAPER_TRADE }}"
+              AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED: "{{ env.AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED }}"
+              AUTONOMOUS_TRADER_MODE: "{{ env.AUTONOMOUS_TRADER_MODE }}"
+              FASTMCP_SHOW_SERVER_BANNER: "false"
+              FASTMCP_LOG_LEVEL: "ERROR"
+            startup_timeout_sec: 60
+          synthesis:
+            command: node
+            args:
+              - /root/.codex/synthesis-mcp-proxy.mjs
+            env:
+              SYNTHESIS_API_TOKEN_FILE: /var/run/synthesis/SYNTHESIS_API_TOKEN
+              SYNTHESIS_MCP_URL: http://synthesis.synthesis.svc.cluster.local:3000/mcp
+              AGENT_RUN_NAME: "{{ agentRun.name }}"
+              AGENT_RUN_NAMESPACE: "{{ agentRun.namespace }}"
+        web_search: live
+  argsTemplate: []
+  secretEnv:
+    - name: APCA_API_KEY_ID
+      secretName: autonomous-trader-alpaca-mcp
+      key: APCA_API_KEY_ID
+    - name: APCA_API_SECRET_KEY
+      secretName: autonomous-trader-alpaca-mcp
+      key: APCA_API_SECRET_KEY
+    - name: APCA_API_BASE_URL
+      secretName: autonomous-trader-alpaca-mcp
+      key: APCA_API_BASE_URL
+    - name: ALPACA_API_KEY
+      secretName: autonomous-trader-alpaca-mcp
+      key: ALPACA_API_KEY
+    - name: ALPACA_API_KEY_ID
+      secretName: autonomous-trader-alpaca-mcp
+      key: ALPACA_API_KEY_ID
+    - name: ALPACA_SECRET_KEY
+      secretName: autonomous-trader-alpaca-mcp
+      key: ALPACA_SECRET_KEY
+    - name: AGENTS_ARTIFACTS_ACCESS_KEY_ID
+      secretName: agents-artifacts
+      key: AWS_ACCESS_KEY_ID
+    - name: AGENTS_ARTIFACTS_SECRET_ACCESS_KEY
+      secretName: agents-artifacts
+      key: AWS_SECRET_ACCESS_KEY
+    - name: SYNTHESIS_API_TOKEN
+      secretName: synthesis-env
+      key: SYNTHESIS_API_TOKEN
+  envTemplate:
+    AGENT_RUN_NAME: "{{agentRun.name}}"
+    AGENT_RUN_NAMESPACE: "{{agentRun.namespace}}"
+    AGENTS_ARTIFACTS_BUCKET: agents-artifacts
+    AGENTS_ARTIFACTS_ENDPOINT: http://rook-ceph-rgw-objectstore.rook-ceph.svc:80
+    AGENTS_ARTIFACTS_SECURE: "false"
+    ALPACA_PAPER_TRADE: "true"
+    AUTONOMOUS_TRADER_ACCOUNT_TYPE: "{{parameters.accountType}}"
+    ANALYSIS_REPO_DIR: /workspace/analysis
+    ANALYSIS_REPO_URL: https://github.com/gregkonush/analysis.git
+    ANALYSIS_REQUIRED_COMMIT: 56be940b69bf1a56578040eda9bf2e3699c5220e
+    AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED: "{{parameters.brokerMutationEnabled}}"
+    AUTONOMOUS_TRADER_MODE: "{{parameters.mode}}"
+    AUTONOMOUS_TRADER_SESSION_RECONCILE_ENABLED: "{{parameters.sessionReconcileEnabled}}"
+    AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE: "{{parameters.synthesisSessionMode}}"
+    AUTONOMOUS_TRADER_TARGET_EQUITY_USD: "{{parameters.targetEquityUsd}}"
+    AUTONOMOUS_TRADER_WORK_DIR: /tmp/autonomous-trader-work
+    CODEX_CONFIG: /root/.codex/config.toml
+    CODEX_LOG_LEVEL: info
+    CODEX_MARKET_CONTEXT_ATTEMPT_TIMEOUT_SECONDS: "900"
+    CODEX_MARKET_CONTEXT_OVERALL_TIMEOUT_SECONDS: "32400"
+    CODEX_MAX_SESSION_ATTEMPTS: "1"
+    CODEX_MODEL: gpt-5.6-sol
+    FASTMCP_LOG_LEVEL: "ERROR"
+    FASTMCP_SHOW_SERVER_BANNER: "false"
+    HOME: /root
+    SYNTHESIS_API_TOKEN_FILE: /var/run/synthesis/SYNTHESIS_API_TOKEN
+    SYNTHESIS_MCP_URL: http://synthesis.synthesis.svc.cluster.local:3000/mcp
+  inputFiles:
+    - path: /root/.codex/config.toml
+      content: |-
+        model = "gpt-5.6-sol"
+        model_reasoning_summary = "none"
+        model_reasoning_effort = "high"
+        model_verbosity = "low"
+        approval_policy = "never"
+        sandbox_mode = "danger-full-access"
+        web_search = "live"
+        suppress_unstable_features_warning = true
+
+        [features]
+        enable_request_compression = true
+        unified_exec = true
+        shell_snapshot = true
+        multi_agent = true
+        goals = true
+
+        [shell_environment_policy]
+        ignore_default_excludes = true
+
+        [projects."/workspace/lab"]
+        trust_level = "trusted"
+
+        [projects."/workspace/analysis"]
+        trust_level = "trusted"
+
+        [projects."/root"]
+        trust_level = "trusted"
+
+        [mcp_servers.alpaca]
+        command = "/usr/bin/python3"
+        args = ["-u", "/root/alpaca-mcp-stdio-bridge.py"]
+        startup_timeout_sec = 60.0
+        env = { FASTMCP_SHOW_SERVER_BANNER = "false", FASTMCP_LOG_LEVEL = "ERROR", AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED = "{{ env.AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED }}" }
+
+        [mcp_servers.synthesis]
+        command = "node"
+        args = ["/root/.codex/synthesis-mcp-proxy.mjs"]
+        env = { SYNTHESIS_API_TOKEN_FILE = "/var/run/synthesis/SYNTHESIS_API_TOKEN", SYNTHESIS_MCP_URL = "http://synthesis.synthesis.svc.cluster.local:3000/mcp" }
+    - path: /root/bootstrap-analysis-daytrading.sh
+      content: |-
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        report_path="/workspace/.agentrun/autonomous-trader/report.md"
+        work_dir="${AUTONOMOUS_TRADER_WORK_DIR:-/tmp/autonomous-trader-work}"
+        analysis_dir="${ANALYSIS_REPO_DIR:-/workspace/analysis}"
+        analysis_repo_url="${ANALYSIS_REPO_URL:-https://github.com/gregkonush/analysis.git}"
+        required_commit="${ANALYSIS_REQUIRED_COMMIT:-56be940b69bf1a56578040eda9bf2e3699c5220e}"
+        analysis_context_path="${work_dir}/analysis-context.json"
+        analysis_fetch_depth="${ANALYSIS_FETCH_DEPTH:-256}"
+        analysis_fetch_deepen="${ANALYSIS_FETCH_DEEPEN:-2048}"
+        analysis_fetch_deepen_attempts="${ANALYSIS_FETCH_DEEPEN_ATTEMPTS:-3}"
+        analysis_fetch_timeout_seconds="${ANALYSIS_FETCH_TIMEOUT_SECONDS:-180}"
+        python_bin="${PYTHON_BIN:-python3}"
+
+        mkdir -p "${work_dir}"
+        mkdir -p "$(dirname "${report_path}")"
+
+        if [ ! -e "${report_path}" ]; then
+          printf '# Autonomous Trader Report\n\nstatus: bootstrapping\n' > "${report_path}"
+        fi
+
+        trader_mode="$(printf '%s' "${AUTONOMOUS_TRADER_MODE:-}" | tr '[:upper:]' '[:lower:]' | tr '_' '-')"
+        reconcile_enabled="$(printf '%s' "${AUTONOMOUS_TRADER_SESSION_RECONCILE_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')"
+        if [ "${trader_mode}" = "scorecard-readback" ]; then
+          readback_args=(
+            --report-path "${report_path}"
+            --scorecard-limit 20
+            --agent-run-name "${AGENT_RUN_NAME:-autonomous-trader-readback}"
+            --session-mode "${AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE:-scorecard_readback}"
+            --goal-equity "${AUTONOMOUS_TRADER_TARGET_EQUITY_USD:-500000}"
+          )
+          if [ "${reconcile_enabled}" = "true" ] || [ "${reconcile_enabled}" = "1" ] || [ "${reconcile_enabled}" = "yes" ]; then
+            readback_args+=(--finalize-stale-flat)
+            readback_args+=(--backfill-finalized-flat)
+          fi
+          "${python_bin}" /workspace/lab/scripts/autotrader/scorecard_readback.py "${readback_args[@]}"
+          exit 0
+        fi
+
+        if [ "${reconcile_enabled}" = "true" ] || [ "${reconcile_enabled}" = "1" ] || [ "${reconcile_enabled}" = "yes" ]; then
+          if "${python_bin}" /workspace/lab/scripts/autotrader/session_reconciler.py \
+            --finalize-stale-flat \
+            --backfill-finalized-flat \
+            --limit 50 \
+            --grace-minutes 5; then
+            printf '\nsession_reconciliation: completed\n' >> "${report_path}"
+          else
+            printf '\nsession_reconciliation: failed_or_unavailable\n' >> "${report_path}"
+          fi
+        fi
+
+        git_auth=()
+        git_token="${GITHUB_TOKEN:-}"
+        if [ -z "${git_token}" ]; then
+          git_token="${GH_TOKEN:-}"
+        fi
+        if [ -n "${git_token}" ]; then
+          git_basic_auth="$(printf 'x-access-token:%s' "${git_token}" | base64 | tr -d '\n')"
+          git_auth=(-c "http.https://github.com/.extraheader=Authorization: Basic ${git_basic_auth}")
+        fi
+
+        git_with_auth() {
+          if [ "${#git_auth[@]}" -gt 0 ]; then
+            git "${git_auth[@]}" "$@"
+          else
+            git "$@"
+          fi
+        }
+
+        git_with_auth_timeout() {
+          local timeout_seconds="$1"
+          shift
+          if command -v timeout >/dev/null 2>&1; then
+            if [ "${#git_auth[@]}" -gt 0 ]; then
+              timeout "${timeout_seconds}" git "${git_auth[@]}" "$@"
+            else
+              timeout "${timeout_seconds}" git "$@"
+            fi
+          else
+            git_with_auth "$@"
+          fi
+        }
+
+        fetch_analysis_main() {
+          git_with_auth_timeout "${analysis_fetch_timeout_seconds}" \
+            -C "${analysis_dir}" fetch --prune --filter=blob:none --depth="${analysis_fetch_depth}" \
+            origin refs/heads/main:refs/remotes/origin/main
+        }
+
+        if [ ! -d "${analysis_dir}/.git" ]; then
+          rm -rf "${analysis_dir}"
+          mkdir -p "${analysis_dir}"
+          git -C "${analysis_dir}" init -q
+          git -C "${analysis_dir}" remote add origin "${analysis_repo_url}"
+        fi
+
+        git -C "${analysis_dir}" remote set-url origin "${analysis_repo_url}"
+        git -C "${analysis_dir}" config gc.auto 0
+        git -C "${analysis_dir}" config remote.origin.promisor true
+        git -C "${analysis_dir}" config remote.origin.partialclonefilter blob:none
+        find "${analysis_dir}/.git/objects/pack" -name 'tmp_pack_*' -delete 2>/dev/null || true
+        fetch_analysis_main
+        analysis_main_sha="$(git -C "${analysis_dir}" rev-parse refs/remotes/origin/main^{commit})"
+        git -C "${analysis_dir}" checkout --force "${analysis_main_sha}"
+        git -C "${analysis_dir}" reset --hard "${analysis_main_sha}"
+        git -C "${analysis_dir}" clean -ffd
+
+        analysis_head="$(git -C "${analysis_dir}" rev-parse HEAD)"
+        deepen_attempt=0
+        while ! git -C "${analysis_dir}" merge-base --is-ancestor "${required_commit}" HEAD; do
+          if [ "$(git -C "${analysis_dir}" rev-parse --is-shallow-repository)" != "true" ] || \
+            [ "${deepen_attempt}" -ge "${analysis_fetch_deepen_attempts}" ]; then
+            printf 'analysis repo stale: head=%s required_commit=%s fetch_depth=%s deepen_attempts=%s\n' \
+              "${analysis_head}" "${required_commit}" "${analysis_fetch_depth}" "${deepen_attempt}" >&2
+            exit 42
+          fi
+          deepen_attempt=$((deepen_attempt + 1))
+          git_with_auth_timeout "${analysis_fetch_timeout_seconds}" \
+            -C "${analysis_dir}" fetch --filter=blob:none --deepen="${analysis_fetch_deepen}" \
+            origin refs/heads/main:refs/remotes/origin/main
+          analysis_head="$(git -C "${analysis_dir}" rev-parse HEAD)"
+        done
+        analysis_python="${python_bin}"
+        install_method="pythonpath"
+        rm -rf "${work_dir}/analysis-venv"
+        if PYTHONPATH="${analysis_dir}/src" "${python_bin}" -m stock_analysis daytrading-import-smoke; then
+          install_method="preinstalled-pythonpath"
+        elif command -v uv >/dev/null 2>&1; then
+          if uv venv --seed --python "${python_bin}" "${work_dir}/analysis-venv"; then
+            uv pip install --python "${work_dir}/analysis-venv/bin/python" -e "${analysis_dir}[daytrading]"
+            analysis_python="${work_dir}/analysis-venv/bin/python"
+            install_method="uv-venv"
+          else
+            printf 'analysis bootstrap warning: uv venv unavailable, trying python venv\n' >&2
+            rm -rf "${work_dir}/analysis-venv"
+          fi
+        fi
+        if [ "${install_method}" = "pythonpath" ] && "${python_bin}" -m venv "${work_dir}/analysis-venv"; then
+          "${work_dir}/analysis-venv/bin/python" -m pip install --upgrade pip
+          "${work_dir}/analysis-venv/bin/python" -m pip install -e "${analysis_dir}[daytrading]"
+          analysis_python="${work_dir}/analysis-venv/bin/python"
+          install_method="python-venv"
+        elif [ "${install_method}" = "pythonpath" ]; then
+          printf 'analysis bootstrap warning: venv unavailable, continuing with PYTHONPATH source checkout\n' >&2
+          if "${python_bin}" -m pip --version >/dev/null 2>&1; then
+            if "${python_bin}" -m pip install --user --break-system-packages -e "${analysis_dir}[daytrading]"; then
+              install_method="pip-user-break-system-packages"
+            else
+              printf 'analysis bootstrap warning: user install failed, continuing with PYTHONPATH\n' >&2
+            fi
+          fi
+        fi
+
+        analysis_cli="${work_dir}/stock_analysis"
+        {
+          printf '#!/usr/bin/env bash\n'
+          printf 'set -euo pipefail\n'
+          printf 'PYTHONPATH=%q %q -m stock_analysis "$@"\n' "${analysis_dir}/src" "${analysis_python}"
+        } > "${analysis_cli}"
+        chmod +x "${analysis_cli}"
+
+        (
+          cd "${analysis_dir}"
+          "${analysis_cli}" audit
+        )
+        "${analysis_cli}" daytrading-import-smoke
+        "${analysis_cli}" daytrading-context \
+          --repo-root "${analysis_dir}" \
+          --output "${analysis_context_path}"
+        "${analysis_cli}" daytrading-validate-context \
+          "${analysis_context_path}"
+
+        if [ "${trader_mode}" = "market-open" ]; then
+          "${python_bin}" /workspace/lab/scripts/autotrader/market_open_bootstrap.py \
+            --report-path "${report_path}" \
+            --work-dir "${work_dir}" \
+            --analysis-dir "${analysis_dir}" \
+            --analysis-context "${analysis_context_path}" \
+            --agent-run-name "${AGENT_RUN_NAME:-autonomous-trader-market-open}" \
+            --session-mode "${AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE:-market_open}" \
+            --goal-equity "${AUTONOMOUS_TRADER_TARGET_EQUITY_USD:-500000}"
+        fi
+    - path: /root/alpaca-mcp-stdio-bridge.py
+      content: |-
+        import json
+        import os
+        import subprocess
+        import sys
+        import threading
+
+        child_env = dict(os.environ)
+        child_env["FASTMCP_SHOW_SERVER_BANNER"] = "false"
+        child_env["FASTMCP_LOG_LEVEL"] = "ERROR"
+
+        MUTATION_ENABLED_VALUES = {"1", "true", "yes", "enabled", "allow", "allowed"}
+        MUTATION_TOOL_PREFIXES = (
+            "cancel_",
+            "close_",
+            "create_",
+            "delete_",
+            "exercise_",
+            "liquidate_",
+            "patch_",
+            "place_",
+            "replace_",
+            "submit_",
+            "update_",
+        )
+        MUTATION_TOOL_NAMES = {
+            "cancel_all_orders",
+            "cancel_order",
+            "close_all_positions",
+            "close_position",
+            "create_order",
+            "exercise_option",
+            "liquidate_position",
+            "place_order",
+            "replace_order",
+            "submit_order",
+            "update_account_configuration",
+        }
+
+        output_lock = threading.Lock()
+
+        child = subprocess.Popen(
+            ["/usr/local/bin/alpaca-mcp-server", "--transport", "stdio"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=sys.stderr,
+            env=child_env,
+        )
+
+        mode_lock = threading.Lock()
+        output_mode = "line"
+
+        def set_output_mode(mode):
+            global output_mode
+            with mode_lock:
+                output_mode = mode
+
+        def get_output_mode():
+            with mode_lock:
+                return output_mode
+
+        def broker_mutations_enabled():
+            enabled = os.environ.get(
+                "AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED", ""
+            ).strip().lower()
+            return enabled in MUTATION_ENABLED_VALUES
+
+        def is_mutation_tool(tool_name):
+            normalized = str(tool_name or "").strip().lower().replace("-", "_")
+            if not normalized:
+                return False
+            return normalized in MUTATION_TOOL_NAMES or normalized.startswith(
+                MUTATION_TOOL_PREFIXES
+            )
+
+        def write_client_payload(payload):
+            with output_lock:
+                if get_output_mode() == "framed":
+                    sys.stdout.buffer.write(
+                        b"Content-Length: "
+                        + str(len(payload)).encode("ascii")
+                        + b"\r\n\r\n"
+                    )
+                    sys.stdout.buffer.write(payload)
+                else:
+                    sys.stdout.buffer.write(payload + b"\n")
+                sys.stdout.buffer.flush()
+
+        def reject_broker_mutation(message, tool_name):
+            response_id = message.get("id") if isinstance(message, dict) else None
+            payload = json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": response_id,
+                    "error": {
+                        "code": -32000,
+                        "message": (
+                            "Alpaca broker mutation blocked: "
+                            "AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED=false "
+                            "because the autonomous trader broker mutation gate is disabled"
+                        ),
+                        "data": {
+                            "toolName": tool_name,
+                            "reason": "broker_mutation_gate_disabled",
+                            "mode": os.environ.get("AUTONOMOUS_TRADER_MODE"),
+                        },
+                    },
+                },
+                separators=(",", ":"),
+            ).encode("utf-8")
+            write_client_payload(payload)
+
+        def should_block_client_message(raw_message):
+            if broker_mutations_enabled():
+                return False
+            try:
+                message = json.loads(raw_message.decode("utf-8"))
+            except Exception:
+                return False
+            if not isinstance(message, dict) or message.get("method") != "tools/call":
+                return False
+            params = message.get("params")
+            if not isinstance(params, dict):
+                return False
+            tool_name = params.get("name")
+            if not is_mutation_tool(tool_name):
+                return False
+            reject_broker_mutation(message, tool_name)
+            return True
+
+        def read_client_message():
+            line = sys.stdin.buffer.readline()
+            if not line:
+                return None
+            if line.lower().startswith(b"content-length:"):
+                set_output_mode("framed")
+                length = int(line.split(b":", 1)[1].strip())
+                while True:
+                    header = sys.stdin.buffer.readline()
+                    if header in (b"\r\n", b"\n", b""):
+                        break
+                return sys.stdin.buffer.read(length)
+            set_output_mode("line")
+            return line.rstrip(b"\r\n")
+
+        def client_to_child():
+            assert child.stdin is not None
+            while True:
+                message = read_client_message()
+                if message is None:
+                    break
+                if not message:
+                    continue
+                if should_block_client_message(message):
+                    continue
+                child.stdin.write(message + b"\n")
+                child.stdin.flush()
+            child.stdin.close()
+
+        def child_to_client():
+            assert child.stdout is not None
+            for line in child.stdout:
+                payload = line.rstrip(b"\r\n")
+                if not payload:
+                    continue
+                write_client_payload(payload)
+
+        threads = [
+            threading.Thread(target=client_to_child, daemon=True),
+            threading.Thread(target=child_to_client, daemon=True),
+        ]
+        for thread in threads:
+            thread.start()
+
+        exit_code = child.wait()
+        sys.exit(exit_code)
+    - path: /root/.codex/synthesis-mcp-proxy.mjs
+      content: |-
+        #!/usr/bin/env node
+
+        import { readFileSync } from 'node:fs'
+        import readline from 'node:readline'
+
+        const readFirstTokenFile = (paths) => {
+          for (const path of paths) {
+            if (!path) continue
+            try {
+              const token = readFileSync(path, 'utf8').trim()
+              if (token) return token
+            } catch {}
+          }
+          return ''
+        }
+
+        const endpoint = process.env.SYNTHESIS_MCP_URL || 'http://synthesis.synthesis.svc.cluster.local:3000/mcp'
+        const token =
+          process.env.SYNTHESIS_API_TOKEN ||
+          process.env.SYNTHESIS_MCP_TOKEN ||
+          readFirstTokenFile([process.env.SYNTHESIS_API_TOKEN_FILE, '/var/run/synthesis/SYNTHESIS_API_TOKEN'])
+
+        const readJsonFile = (path) => {
+          try {
+            return JSON.parse(readFileSync(path, 'utf8'))
+          } catch {
+            return null
+          }
+        }
+
+        const isTemplatePlaceholder = (value) => typeof value === 'string' && value.includes('{{')
+        const cleanIdentityValue = (value) => {
+          if (typeof value !== 'string') return ''
+          const trimmed = value.trim()
+          return trimmed && !isTemplatePlaceholder(trimmed) ? trimmed : ''
+        }
+
+        const runEnvelope = readJsonFile('/workspace/run.json')
+        const agentRunName =
+          cleanIdentityValue(process.env.AGENT_RUN_NAME) || cleanIdentityValue(runEnvelope?.agentRun?.name)
+
+        const buildError = (id, code, message, data) => ({
+          jsonrpc: '2.0',
+          id,
+          error: {
+            code,
+            message,
+            ...(data == null ? {} : { data }),
+          },
+        })
+
+        const getId = (message) => {
+          if (!message || typeof message !== 'object') return null
+          const id = message.id
+          return typeof id === 'string' || typeof id === 'number' || id === null ? id : null
+        }
+
+        const isPlainObject = (value) => value != null && typeof value === 'object' && !Array.isArray(value)
+
+        const normalizeAutotraderArguments = (toolName, args) => {
+          if (!toolName.startsWith('autotrader_')) return args
+          if (!agentRunName) return args
+          if (toolName !== 'autotrader_start_session') return args
+
+          const nextArgs = isPlainObject(args) ? { ...args } : {}
+          nextArgs.agentRunName = agentRunName
+          return nextArgs
+        }
+
+        const normalizeMessage = (message) => {
+          if (!isPlainObject(message) || message.method !== 'tools/call') return message
+          const params = message.params
+          if (!isPlainObject(params)) return message
+          const toolName = typeof params.name === 'string' ? params.name : ''
+          const nextArgs = normalizeAutotraderArguments(toolName, params.arguments)
+          if (nextArgs === params.arguments) return message
+          return { ...message, params: { ...params, arguments: nextArgs } }
+        }
+
+        const writeJson = (message) => {
+          process.stdout.write(`${JSON.stringify(message)}\n`)
+        }
+
+        const forward = async (line) => {
+          if (!line.trim()) return
+
+          let message
+          try {
+            message = JSON.parse(line)
+          } catch {
+            writeJson(buildError(null, -32700, 'Parse error'))
+            return
+          }
+
+          const id = getId(message)
+          const headers = {
+            accept: 'application/json, text/event-stream',
+            'content-type': 'application/json',
+          }
+          if (token) headers.authorization = `Bearer ${token}`
+
+          try {
+            const outbound = normalizeMessage(message)
+            const response = await fetch(endpoint, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify(outbound),
+            })
+            const body = await response.text()
+
+            if (!body.trim()) return
+            if (!response.ok) {
+              writeJson(buildError(id, -32000, `Synthesis MCP HTTP ${response.status}`, body.slice(0, 1000)))
+              return
+            }
+
+            for (const event of body.split(/\n\n+/)) {
+              const dataLine = event.split(/\r?\n/).find((eventLine) => eventLine.startsWith('data:'))
+              if (dataLine) {
+                process.stdout.write(`${dataLine.slice(5).trim()}\n`)
+                continue
+              }
+              process.stdout.write(`${body.trim()}\n`)
+              break
+            }
+          } catch (error) {
+            writeJson(buildError(id, -32000, 'Synthesis MCP proxy failed', error instanceof Error ? error.message : error))
+          }
+        }
+
+        const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })
+        input.on('line', (line) => {
+          void forward(line)
+        })
+  outputArtifacts:
+    - name: autonomous-trader-report
+      path: /workspace/.agentrun/autonomous-trader/report.md
+      key: synthesis/autonomous-trader/{{ agentRun.name }}/report.md
+    - name: runner-log
+      path: /workspace/.agent/runner.log
+    - name: runner-status
+      path: /workspace/.agent/status.json

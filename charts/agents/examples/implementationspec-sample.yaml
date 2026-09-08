@@ -1,0 +1,29 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: codex-impl-sample
+spec:
+  source:
+    provider: manual
+    externalId: manual:sample
+    url: https://example.com/agents/specs/manual-sample
+  contract:
+    requiredKeys:
+      - repository
+      - base
+      - head
+      - url
+    mappings:
+      - from: linearRepo
+        to: repository
+      - from: linearUrl
+        to: url
+  summary: 'Implement onboarding flow'
+  text: |
+    Implement the onboarding flow described in the spec document.
+  acceptanceCriteria:
+    - Flow implemented end-to-end
+    - Status updates reflect completion
+  labels:
+    - agents
+    - control-plane

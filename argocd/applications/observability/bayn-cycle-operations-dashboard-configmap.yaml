@@ -1,0 +1,2438 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bayn-cycle-operations-dashboard
+  namespace: observability
+data:
+  bayn-cycle-operations-dashboard.json: |
+    {
+      "annotations": {
+        "list": [
+          {
+            "builtIn": 1,
+            "datasource": {
+              "type": "grafana",
+              "uid": "-- Grafana --"
+            },
+            "enable": true,
+            "hide": true,
+            "iconColor": "rgba(0, 211, 255, 1)",
+            "name": "Annotations & Alerts",
+            "type": "dashboard"
+          }
+        ]
+      },
+      "description": "Bayn trading operations from eligibility through strategy decision, broker execution, reconciliation, exposure, and economics. Read left-to-right and top-to-bottom; zero orders are explained by the first stage that did not advance.",
+      "editable": true,
+      "graphTooltip": 1,
+      "id": null,
+      "links": [],
+      "panels": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "All Bayn status replicas agree the service and required dependencies are ready.",
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [
+                {
+                  "options": {
+                    "0": {
+                      "text": "DEGRADED",
+                      "color": "red",
+                      "index": 0
+                    },
+                    "1": {
+                      "text": "READY",
+                      "color": "green",
+                      "index": 1
+                    }
+                  },
+                  "type": "value"
+                }
+              ],
+              "noValue": "NO DATA",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "green",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 0,
+            "y": 0
+          },
+          "id": 1,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "min(bayn_runtime_ready{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})",
+              "instant": true,
+              "legendFormat": "runtime",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Runtime",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "The Restate controller is readable and active; this is scheduling health, not proof of a trade.",
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [
+                {
+                  "options": {
+                    "0": {
+                      "text": "UNAVAILABLE",
+                      "color": "red",
+                      "index": 0
+                    },
+                    "1": {
+                      "text": "ACTIVE",
+                      "color": "green",
+                      "index": 1
+                    }
+                  },
+                  "type": "value"
+                }
+              ],
+              "noValue": "NO DATA",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "green",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 4,
+            "y": 0
+          },
+          "id": 2,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "min(bayn_execution_controller_read_available{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} * bayn_execution_controller_active{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})",
+              "instant": true,
+              "legendFormat": "controller",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Execution controller",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "The configured broker account is readable, identity-bound, and execution-eligible.",
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [
+                {
+                  "options": {
+                    "0": {
+                      "text": "BLOCKED",
+                      "color": "red",
+                      "index": 0
+                    },
+                    "1": {
+                      "text": "ELIGIBLE",
+                      "color": "green",
+                      "index": 1
+                    }
+                  },
+                  "type": "value"
+                }
+              ],
+              "noValue": "NO DATA",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "green",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 8,
+            "y": 0
+          },
+          "id": 3,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "min(bayn_broker_read_available{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} * bayn_broker_account_bound{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} * bayn_broker_execution_eligible{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})",
+              "instant": true,
+              "legendFormat": "broker",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Broker binding",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Latest reconciliation is exact, covers the latest mutation, and no mutation is unresolved.",
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [
+                {
+                  "options": {
+                    "0": {
+                      "text": "BLOCKED",
+                      "color": "red",
+                      "index": 0
+                    },
+                    "1": {
+                      "text": "EXACT",
+                      "color": "green",
+                      "index": 1
+                    }
+                  },
+                  "type": "value"
+                }
+              ],
+              "noValue": "NO DATA",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "green",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 12,
+            "y": 0
+          },
+          "id": 4,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "min(bayn_reconciliation_exact{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} * bayn_reconciliation_covers_latest_mutation{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} * (bayn_unresolved_mutations{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} == bool 0))",
+              "instant": true,
+              "legendFormat": "ledger",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Ledger safety",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Effective durable authority. OBSERVE cannot submit orders; PAPER can submit only through reviewed limits.",
+          "fieldConfig": {
+            "defaults": {
+              "noValue": "UNKNOWN"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 16,
+            "y": 0
+          },
+          "id": 5,
+          "options": {
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "name",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max by (authority) (bayn_authority_effective{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} == 1)",
+              "instant": true,
+              "legendFormat": "{{authority}}",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Execution authority",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Canonical operating condition derived from the durable cycle, authority, mutation, and reconciliation state.",
+          "fieldConfig": {
+            "defaults": {
+              "noValue": "UNKNOWN"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 20,
+            "y": 0
+          },
+          "id": 6,
+          "options": {
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "name",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max by (condition) (bayn_cycle_condition{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} == 1)",
+              "instant": true,
+              "legendFormat": "{{condition}}",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Cycle condition",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "The exact bounded reason Bayn is waiting, running, stalled, or failed. This is the first no-trade diagnostic.",
+          "fieldConfig": {
+            "defaults": {
+              "noValue": "UNKNOWN"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 8,
+            "x": 0,
+            "y": 4
+          },
+          "id": 7,
+          "options": {
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "name",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max by (reason) (bayn_cycle_reason{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} == 1)",
+              "instant": true,
+              "legendFormat": "{{reason}}",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Current blocker",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Current durable cycle phase, or the most recent terminal phase while idle.",
+          "fieldConfig": {
+            "defaults": {
+              "noValue": "UNKNOWN"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 8,
+            "y": 4
+          },
+          "id": 8,
+          "options": {
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "name",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max by (phase) (bayn_cycle_phase{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} == 1)",
+              "instant": true,
+              "legendFormat": "{{phase}}",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Cycle phase",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "All prerequisites required to submit safely in the active execution window.",
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [
+                {
+                  "options": {
+                    "0": {
+                      "text": "NOT READY",
+                      "color": "yellow",
+                      "index": 0
+                    },
+                    "1": {
+                      "text": "READY",
+                      "color": "green",
+                      "index": 1
+                    }
+                  },
+                  "type": "value"
+                }
+              ],
+              "noValue": "NO DATA",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "yellow",
+                    "value": null
+                  },
+                  {
+                    "color": "green",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 12,
+            "y": 4
+          },
+          "id": 9,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "min(bayn_execution_session_preflight_ready{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})",
+              "instant": true,
+              "legendFormat": "preflight",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Session preflight",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Whether the current cycle has an immutable market-data snapshot binding.",
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [
+                {
+                  "options": {
+                    "0": {
+                      "text": "WAITING",
+                      "color": "blue",
+                      "index": 0
+                    },
+                    "1": {
+                      "text": "BOUND",
+                      "color": "green",
+                      "index": 1
+                    }
+                  },
+                  "type": "value"
+                }
+              ],
+              "noValue": "NO DATA",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "blue",
+                    "value": null
+                  },
+                  {
+                    "color": "green",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 16,
+            "y": 4
+          },
+          "id": 10,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max(bayn_cycle_snapshot_bound{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "snapshot",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Snapshot",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Whether the current cycle has an immutable strategy and risk decision binding.",
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [
+                {
+                  "options": {
+                    "0": {
+                      "text": "WAITING",
+                      "color": "blue",
+                      "index": 0
+                    },
+                    "1": {
+                      "text": "BOUND",
+                      "color": "green",
+                      "index": 1
+                    }
+                  },
+                  "type": "value"
+                }
+              ],
+              "noValue": "NO DATA",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "blue",
+                    "value": null
+                  },
+                  {
+                    "color": "green",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 20,
+            "y": 4
+          },
+          "id": 11,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max(bayn_cycle_decision_bound{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "decision",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Decision",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Exact planner outcome and reason for the current or latest terminal cycle. NO DECISION means cycle evidence exists but planning has not completed; NO CYCLE means no cycle evidence exists.",
+          "fieldConfig": {
+            "defaults": {
+              "noValue": "NO CYCLE"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 8,
+            "x": 0,
+            "y": 8
+          },
+          "id": 12,
+          "options": {
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "name",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max by (status, reason) (bayn_cycle_target_plan_info{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "{{status}} · {{reason}}",
+              "range": false,
+              "refId": "A"
+            },
+            {
+              "expr": "max(((bayn_cycle_unfinished_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} >= bool 0) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) unless on(instance) (bayn_cycle_target_plan_info{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})))",
+              "instant": true,
+              "legendFormat": "NO DECISION",
+              "range": false,
+              "refId": "B"
+            }
+          ],
+          "title": "Target plan",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Targets in the current or latest terminal cycle. Zero is a decided no-target outcome; NO DECISION means the cycle is still awaiting a decision; NO CYCLE means no cycle evidence exists.",
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 0,
+              "mappings": [
+                {
+                  "options": {
+                    "-1": {
+                      "color": "yellow",
+                      "index": 0,
+                      "text": "NO DECISION"
+                    }
+                  },
+                  "type": "value"
+                }
+              ],
+              "noValue": "NO CYCLE"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 8,
+            "y": 8
+          },
+          "id": 13,
+          "options": {
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max(bayn_execution_funnel_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",stage=\"targets\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) or ((max(bayn_cycle_unfinished_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) >= bool 0) * -1)",
+              "instant": true,
+              "legendFormat": "targets",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Targets",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Intents in the current or latest terminal cycle. Zero is a durable count; NO CYCLE means no cycle evidence exists.",
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 0,
+              "noValue": "NO CYCLE"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 12,
+            "y": 8
+          },
+          "id": 14,
+          "options": {
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max(bayn_execution_funnel_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",stage=\"intents\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "intents",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Intents",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Orders in the current or latest terminal cycle. Zero is a durable count; NO CYCLE means no cycle evidence exists.",
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 0,
+              "noValue": "NO CYCLE"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 16,
+            "y": 8
+          },
+          "id": 15,
+          "options": {
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max(bayn_execution_funnel_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",stage=\"orders\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "orders",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Orders",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Fills in the current or latest terminal cycle. Zero is a durable count; NO CYCLE means no cycle evidence exists.",
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 0,
+              "noValue": "NO CYCLE"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 20,
+            "y": 8
+          },
+          "id": 16,
+          "options": {
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max(bayn_execution_funnel_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",stage=\"fills\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "fills",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Fills",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "The current cycle from strategy opportunity to broker fill. Each stage is a durable count, not a boolean tile.",
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 0,
+              "min": 0
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 0,
+            "y": 12
+          },
+          "id": 17,
+          "options": {
+            "displayMode": "gradient",
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "orientation": "horizontal",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "showUnfilled": true
+          },
+          "targets": [
+            {
+              "expr": "max by (stage) (bayn_execution_funnel_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "{{stage}}",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Opportunity → fill",
+          "type": "bargauge"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Verified records bound to the decision. Missing data means no immutable intraday decision exists yet.",
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 0,
+              "min": 0
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 6,
+            "x": 12,
+            "y": 12
+          },
+          "id": 18,
+          "options": {
+            "displayMode": "gradient",
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "orientation": "horizontal",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "showUnfilled": true
+          },
+          "targets": [
+            {
+              "expr": "max by (kind) (bayn_cycle_decision_market_data_records{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "{{kind}}",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Bound market data",
+          "type": "bargauge"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Submission and execution boundaries for the active cycle. Times are durable broker-calendar bindings.",
+          "fieldConfig": {
+            "defaults": {
+              "noValue": "NO ACTIVE CYCLE",
+              "unit": "dateTimeAsIso"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 6,
+            "x": 18,
+            "y": 12
+          },
+          "id": 19,
+          "options": {
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "left",
+            "orientation": "vertical",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value_and_name",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max(bayn_cycle_submission_open_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) * 1000 > 0",
+              "instant": true,
+              "legendFormat": "submission opens",
+              "range": false,
+              "refId": "A"
+            },
+            {
+              "expr": "max(bayn_cycle_submission_cutoff_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) * 1000 > 0",
+              "instant": true,
+              "legendFormat": "submission cutoff",
+              "range": false,
+              "refId": "B"
+            },
+            {
+              "expr": "max(bayn_cycle_execution_open_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) * 1000 > 0",
+              "instant": true,
+              "legendFormat": "execution opens",
+              "range": false,
+              "refId": "C"
+            },
+            {
+              "expr": "max(bayn_cycle_execution_close_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) * 1000 > 0",
+              "instant": true,
+              "legendFormat": "session close",
+              "range": false,
+              "refId": "D"
+            }
+          ],
+          "title": "Session window",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Nonzero positions from the latest complete broker snapshot. Hidden when that snapshot is older than the configured reconciliation freshness threshold.",
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 0,
+              "noValue": "STALE / NO SNAPSHOT"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 0,
+            "y": 19
+          },
+          "id": 20,
+          "options": {
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max(bayn_broker_position_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) (((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) >= 0) and on(instance) ((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) <= on(instance) bayn_reconciliation_stale_threshold_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "positions",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Open positions",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Absolute market exposure from the latest complete broker snapshot. Hidden when that snapshot is stale.",
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 2,
+              "noValue": "STALE / NO SNAPSHOT",
+              "unit": "currencyUSD"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 4,
+            "y": 19
+          },
+          "id": 21,
+          "options": {
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max(bayn_broker_gross_exposure_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) (((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) >= 0) and on(instance) ((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) <= on(instance) bayn_reconciliation_stale_threshold_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "gross",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Gross exposure",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Signed market exposure from the latest complete broker snapshot. Hidden when that snapshot is stale.",
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 2,
+              "noValue": "STALE / NO SNAPSHOT",
+              "unit": "currencyUSD"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 8,
+            "y": 19
+          },
+          "id": 22,
+          "options": {
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max(bayn_broker_net_exposure_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) (((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) >= 0) and on(instance) ((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) <= on(instance) bayn_reconciliation_stale_threshold_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "net",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Net exposure",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Buying power from the latest durable broker account snapshot. Hidden when that snapshot is stale.",
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 2,
+              "noValue": "STALE / NO SNAPSHOT",
+              "unit": "currencyUSD"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 12,
+            "y": 19
+          },
+          "id": 23,
+          "options": {
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max(bayn_broker_account_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",kind=\"buying_power\"} and on(instance) (((time() - bayn_broker_account_observed_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) >= 0) and on(instance) ((time() - bayn_broker_account_observed_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) <= on(instance) bayn_reconciliation_stale_threshold_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "buying power",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Buying power",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Unrealized P&L from the latest complete broker snapshot. Hidden when that snapshot is stale.",
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 2,
+              "noValue": "STALE / NO SNAPSHOT",
+              "unit": "currencyUSD"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 16,
+            "y": 19
+          },
+          "id": 24,
+          "options": {
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max(bayn_broker_unrealized_pnl_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) (((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) >= 0) and on(instance) ((time() - bayn_broker_position_snapshot_observed_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) <= on(instance) bayn_reconciliation_stale_threshold_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "unrealized",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Unrealized P&L",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Broker mutations without a reconciled final outcome. Any nonzero value blocks new orders.",
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 0,
+              "mappings": [
+                {
+                  "options": {
+                    "0": {
+                      "text": "NONE",
+                      "color": "green",
+                      "index": 0
+                    }
+                  },
+                  "type": "value"
+                }
+              ],
+              "noValue": "NO DATA",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 20,
+            "y": 19
+          },
+          "id": 25,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max(bayn_unresolved_mutations{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})",
+              "instant": true,
+              "legendFormat": "unresolved",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Unresolved mutations",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Running gross realized P&L from durable accounting transactions. NO FILLS means the cycle has no fills; NO ACCOUNTED FILLS means fills exist but no accounting transaction exists yet; NO CYCLE means no cycle evidence exists.",
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 2,
+              "noValue": "NO CYCLE",
+              "unit": "currencyUSD"
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byFrameRefID",
+                  "options": "B"
+                },
+                "properties": [
+                  {
+                    "id": "mappings",
+                    "value": [
+                      {
+                        "options": {
+                          "1": {
+                            "index": 0,
+                            "text": "NO FILLS"
+                          }
+                        },
+                        "type": "value"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byFrameRefID",
+                  "options": "C"
+                },
+                "properties": [
+                  {
+                    "id": "mappings",
+                    "value": [
+                      {
+                        "options": {
+                          "1": {
+                            "index": 0,
+                            "text": "NO ACCOUNTED FILLS"
+                          }
+                        },
+                        "type": "value"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 5,
+            "x": 0,
+            "y": 23
+          },
+          "id": 26,
+          "options": {
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max(bayn_accounting_gross_realized_pnl_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) (bayn_cycle_unfinished_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} >= bool 0) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "gross realized",
+              "range": false,
+              "refId": "A"
+            },
+            {
+              "expr": "max((bayn_accounting_state{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",state=\"idle\"} == 1) and on(instance) (bayn_cycle_unfinished_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} >= bool 0) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "no fills",
+              "range": false,
+              "refId": "B"
+            },
+            {
+              "expr": "max(((bayn_accounting_state{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",state=\"gap\"} == 1) * on(instance) ((bayn_accounting_activity_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",kind=\"transactions\"} == 0) + 1)) and on(instance) (bayn_cycle_unfinished_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} >= bool 0) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "fills awaiting accounting",
+              "range": false,
+              "refId": "C"
+            }
+          ],
+          "title": "Gross realized P&L",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Running broker execution fees recorded in durable accounting. NO FILLS means the cycle has no fills; NO ACCOUNTED FILLS means fills exist but no accounting transaction exists yet; NO CYCLE means no cycle evidence exists.",
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 2,
+              "noValue": "NO CYCLE",
+              "unit": "currencyUSD"
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byFrameRefID",
+                  "options": "B"
+                },
+                "properties": [
+                  {
+                    "id": "mappings",
+                    "value": [
+                      {
+                        "options": {
+                          "1": {
+                            "index": 0,
+                            "text": "NO FILLS"
+                          }
+                        },
+                        "type": "value"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byFrameRefID",
+                  "options": "C"
+                },
+                "properties": [
+                  {
+                    "id": "mappings",
+                    "value": [
+                      {
+                        "options": {
+                          "1": {
+                            "index": 0,
+                            "text": "NO ACCOUNTED FILLS"
+                          }
+                        },
+                        "type": "value"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 5,
+            "x": 5,
+            "y": 23
+          },
+          "id": 27,
+          "options": {
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max(bayn_accounting_execution_fees_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) (bayn_cycle_unfinished_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} >= bool 0) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "fees",
+              "range": false,
+              "refId": "A"
+            },
+            {
+              "expr": "max((bayn_accounting_state{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",state=\"idle\"} == 1) and on(instance) (bayn_cycle_unfinished_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} >= bool 0) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "no fills",
+              "range": false,
+              "refId": "B"
+            },
+            {
+              "expr": "max(((bayn_accounting_state{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",state=\"gap\"} == 1) * on(instance) ((bayn_accounting_activity_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",kind=\"transactions\"} == 0) + 1)) and on(instance) (bayn_cycle_unfinished_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} >= bool 0) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "fills awaiting accounting",
+              "range": false,
+              "refId": "C"
+            }
+          ],
+          "title": "Recorded costs",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Running realized P&L after recorded execution fees; terminal all-cost proof remains separate. NO FILLS means the cycle has no fills; NO ACCOUNTED FILLS means fills exist but no accounting transaction exists yet; NO CYCLE means no cycle evidence exists.",
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 2,
+              "noValue": "NO CYCLE",
+              "unit": "currencyUSD"
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byFrameRefID",
+                  "options": "B"
+                },
+                "properties": [
+                  {
+                    "id": "mappings",
+                    "value": [
+                      {
+                        "options": {
+                          "1": {
+                            "index": 0,
+                            "text": "NO FILLS"
+                          }
+                        },
+                        "type": "value"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byFrameRefID",
+                  "options": "C"
+                },
+                "properties": [
+                  {
+                    "id": "mappings",
+                    "value": [
+                      {
+                        "options": {
+                          "1": {
+                            "index": 0,
+                            "text": "NO ACCOUNTED FILLS"
+                          }
+                        },
+                        "type": "value"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 5,
+            "x": 10,
+            "y": 23
+          },
+          "id": 28,
+          "options": {
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max(bayn_accounting_net_realized_pnl_after_execution_fees_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) (bayn_cycle_unfinished_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} >= bool 0) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "net realized",
+              "range": false,
+              "refId": "A"
+            },
+            {
+              "expr": "max((bayn_accounting_state{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",state=\"idle\"} == 1) and on(instance) (bayn_cycle_unfinished_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} >= bool 0) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "no fills",
+              "range": false,
+              "refId": "B"
+            },
+            {
+              "expr": "max(((bayn_accounting_state{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",state=\"gap\"} == 1) * on(instance) ((bayn_accounting_activity_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",kind=\"transactions\"} == 0) + 1)) and on(instance) (bayn_cycle_unfinished_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} >= bool 0) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "fills awaiting accounting",
+              "range": false,
+              "refId": "C"
+            }
+          ],
+          "title": "Net realized P&L",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Latest immutable forward-performance profitability verdict after all recorded costs.",
+          "fieldConfig": {
+            "defaults": {
+              "noValue": "UNDETERMINED"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 5,
+            "x": 15,
+            "y": 23
+          },
+          "id": 29,
+          "options": {
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "name",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max by (profitability) ((bayn_forward_performance_profitability{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} == 1) and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "{{profitability}}",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Profitability",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Durable transactions and receipts cover all persisted fills when EXACT.",
+          "fieldConfig": {
+            "defaults": {
+              "noValue": "UNKNOWN"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 20,
+            "y": 23
+          },
+          "id": 30,
+          "options": {
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "name",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max by (state) ((bayn_accounting_state{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} == 1) and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "{{state}}",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Accounting coverage",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Status of the latest immutable forward-performance receipt. No receipt means no completed economic proof, not zero profit.",
+          "fieldConfig": {
+            "defaults": {
+              "noValue": "NO COMPLETED RECEIPT"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 0,
+            "y": 27
+          },
+          "id": 36,
+          "options": {
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "name",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max by (status) ((bayn_forward_performance_evidence{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} == 1) and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": true,
+              "legendFormat": "{{status}}",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Terminal receipt",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Total broker fees, other charged costs, and financing recorded by the latest immutable forward-performance receipt.",
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 2,
+              "mappings": [
+                {
+                  "options": {
+                    "match": "nan",
+                    "result": {
+                      "index": 0,
+                      "text": "INSUFFICIENT EVIDENCE"
+                    }
+                  },
+                  "type": "special"
+                }
+              ],
+              "noValue": "NO COMPLETED RECEIPT",
+              "unit": "currencyUSD"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 6,
+            "y": 27
+          },
+          "id": 37,
+          "options": {
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max(bayn_forward_performance_total_costs_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) or (vector(NaN) and on() max((bayn_forward_performance_evidence{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",status=\"insufficient_evidence\"} == 1) and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})))",
+              "instant": true,
+              "legendFormat": "all costs",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Terminal costs",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Immutable realized P&L after every recorded cost and cash-yield adjustment. Running partial accounting is never substituted here.",
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 2,
+              "mappings": [
+                {
+                  "options": {
+                    "match": "nan",
+                    "result": {
+                      "index": 0,
+                      "text": "INSUFFICIENT EVIDENCE"
+                    }
+                  },
+                  "type": "special"
+                }
+              ],
+              "noValue": "NO COMPLETED RECEIPT",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0
+                  },
+                  {
+                    "color": "green",
+                    "value": 0.000001
+                  }
+                ]
+              },
+              "unit": "currencyUSD"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 12,
+            "y": 27
+          },
+          "id": 38,
+          "options": {
+            "colorMode": "value",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max(bayn_forward_performance_net_realized_pnl_after_costs_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) or (vector(NaN) and on() max((bayn_forward_performance_evidence{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",status=\"insufficient_evidence\"} == 1) and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})))",
+              "instant": true,
+              "legendFormat": "net after all costs",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Terminal net P&L",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Immutable realized return after every recorded cost from the latest completed forward-performance receipt.",
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 3,
+              "mappings": [
+                {
+                  "options": {
+                    "match": "nan",
+                    "result": {
+                      "index": 0,
+                      "text": "INSUFFICIENT EVIDENCE"
+                    }
+                  },
+                  "type": "special"
+                }
+              ],
+              "noValue": "NO COMPLETED RECEIPT",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0
+                  },
+                  {
+                    "color": "green",
+                    "value": 0.000001
+                  }
+                ]
+              },
+              "unit": "percentunit"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 18,
+            "y": 27
+          },
+          "id": 39,
+          "options": {
+            "colorMode": "value",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max(bayn_forward_performance_net_realized_return_ratio{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) or (vector(NaN) and on() max((bayn_forward_performance_evidence{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",status=\"insufficient_evidence\"} == 1) and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})))",
+              "instant": true,
+              "legendFormat": "net realized return",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Terminal return",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "The cycle-scoped funnel over time. A drop between stages identifies whether the strategy, planner, broker, or fill path stopped progress.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 8,
+                "lineWidth": 2,
+                "showPoints": "never",
+                "spanNulls": false
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 0,
+            "y": 31
+          },
+          "id": 31,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "displayMode": "table",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "expr": "max by (stage) (bayn_execution_funnel_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": false,
+              "legendFormat": "{{stage}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Opportunity → fill history",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Canonical reason history without per-pod duplicates. Use the exact reason before opening logs or traces.",
+          "fieldConfig": {
+            "defaults": {
+              "noValue": "NO DATA"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 12,
+            "y": 31
+          },
+          "id": 32,
+          "options": {
+            "alignValue": "left",
+            "mergeValues": true,
+            "rowHeight": 0.8,
+            "showValue": "never",
+            "tooltip": {
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "targets": [
+            {
+              "expr": "max by (reason) (bayn_cycle_reason{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} == 1)",
+              "instant": false,
+              "legendFormat": "{{reason}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Blocker history",
+          "type": "state-timeline"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Maximum current-cycle intent-to-order acknowledgement and intent-to-fill latency.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 8,
+                "lineWidth": 2,
+                "showPoints": "never",
+                "spanNulls": false
+              },
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 0,
+            "y": 38
+          },
+          "id": 33,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "displayMode": "table",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "expr": "max(bayn_cycle_order_acknowledgement_latency_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": false,
+              "legendFormat": "order acknowledgement",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "expr": "max(bayn_cycle_fill_latency_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "instant": false,
+              "legendFormat": "fill",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Execution latency",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Age of the controller pass, reconciliation, and any unresolved mutation. Rising lines identify stale ownership or recovery.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 8,
+                "lineWidth": 2,
+                "showPoints": "never",
+                "spanNulls": false
+              },
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 12,
+            "y": 38
+          },
+          "id": 34,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "displayMode": "table",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "expr": "max(bayn_autonomous_cycle_loop_last_pass_age_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})",
+              "instant": false,
+              "legendFormat": "controller pass age",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "expr": "max(bayn_reconciliation_age_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})",
+              "instant": false,
+              "legendFormat": "reconciliation age",
+              "range": true,
+              "refId": "B"
+            },
+            {
+              "expr": "max(bayn_oldest_unresolved_mutation_age_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})",
+              "instant": false,
+              "legendFormat": "oldest unresolved mutation",
+              "range": true,
+              "refId": "C"
+            }
+          ],
+          "title": "Safety freshness",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Verified source revision and build-verification state reported by the running Bayn replicas.",
+          "fieldConfig": {
+            "defaults": {
+              "noValue": "NO VERIFIED BUILD"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 24,
+            "x": 0,
+            "y": 45
+          },
+          "id": 35,
+          "options": {
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "name",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max by (source_revision, verification) (bayn_build_info{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})",
+              "instant": true,
+              "legendFormat": "{{source_revision}} · {{verification}}",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Running build",
+          "type": "stat"
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 42,
+      "tags": [
+        "bayn",
+        "trading",
+        "operations"
+      ],
+      "templating": {
+        "list": []
+      },
+      "time": {
+        "from": "now-24h",
+        "to": "now"
+      },
+      "timepicker": {},
+      "timezone": "browser",
+      "title": "Bayn Trading Operations",
+      "uid": "bayn-cycle-operations",
+      "version": 7,
+      "weekStart": ""
+    }

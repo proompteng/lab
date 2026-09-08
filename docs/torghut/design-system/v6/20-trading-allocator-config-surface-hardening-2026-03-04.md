@@ -1,0 +1,102 @@
+# 20: Trading Allocator Config Surface Hardening (2026-03-04)
+
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
+
+
+## Problem
+
+Torghut allocator configuration in `services/torghut/app/config.py` had partially overlapping env-mapping surfaces before the canonical allocator config cleanup.
+
+This duplication caused inconsistent normalization/validation paths and duplicated merge logic in `portfolio.py`, increasing the chance of runtime drift, hidden misconfiguration, and rollout instability when one key family is used while another is silently ignored.
+
+## Decision
+
+Adopt one canonical allocator config surface and remove backward-compatible env aliases.
+
+- Canonical settings fields:
+  - `trading_allocator_symbol_correlation_groups`
+  - `trading_allocator_correlation_group_caps`
+- Canonical output maps are normalized once and reused by runtime allocation logic.
+- Remove duplicated merge behavior in allocator construction so one map is the source of truth.
+
+## Alternatives Considered
+
+1. Keep the duplicated fields as-is
+
+- Pros: zero migration cost and no test churn.
+- Cons: continues dual-parser ambiguity, repeated normalization paths, and risk of misaligned aliases during rollout.
+
+2. Drop legacy alias support immediately
+
+- Pros: cleanest schema with one-time change.
+- Cons: high blast radius; live runtimes and existing runbooks that still emit legacy keys would fail fast.
+
+3. Canonicalize with alias compatibility (selected)
+
+- Pros: reduces future config drift, preserves existing deployments, and makes a single allocator path enforceable.
+- Cons: requires one-time code+test update and explicit upgrade note in release docs.
+
+4. Add field-level schema linting to detect duplicate env aliases at startup (rejected)
+
+- Pros: gives runtime early warning when duplicate env definitions reappear or alias mappings drift.
+- Cons: adds complexity in settings bootstrap and does not prevent duplicate fields without additional migration burden.
+
+## Implementation
+
+1. `services/torghut/app/config.py`
+
+- Removed duplicated allocator field declarations.
+- `trading_allocator_symbol_correlation_groups` now has canonical alias and `AliasChoices` for legacy key support.
+- `trading_allocator_correlation_group_caps` now has canonical alias and `AliasChoices` for legacy key support.
+- Normalization functions now target canonical fields and enforce one non-duplicated post-processing path.
+- Added startup parity guard so canonical and legacy alias payloads are rejected when both are set with non-equivalent values.
+
+2. `services/torghut/app/trading/portfolio.py`
+
+- Uses canonical allocator maps directly in `allocator_from_settings` and removes merge logic.
+
+3. `services/torghut/tests/test_config.py`
+
+- Updated map assertions to canonical settings names.
+- Added explicit compatibility test for legacy aliases.
+- Added regression tests for equivalent alias payload parity and conflicting-alias startup failure.
+
+## Verification Matrix
+
+- `services/torghut/tests/test_config.py::TestSettings::test_allocator_budget_maps_are_normalized`
+  - validates normalization and canonical field mapping.
+- `services/torghut/tests/test_config.py::TestSettings::test_legacy_allocator_aliases_are_supported`
+  - validates compatibility for legacy alias values.
+- `services/torghut/tests/test_config.py::TestSettings::test_legacy_allocator_aliases_with_equivalent_values_pass`
+  - validates startup accepts equivalent canonical/legacy payloads with normalization.
+- `services/torghut/tests/test_config.py::TestSettings::test_allocator_alias_environment_conflict_raises`
+  - validates startup rejects diverged canonical/legacy alias payloads.
+
+## Risk and Rollback
+
+- Risk: if a deployment depends on both alias families in different services, only merge-time precedence applies via environment resolution order; behavior remains explicit and backward-compatible.
+- Rollback: revert this PR and redeploy the previous image if unexpected alias behavior is observed.
+
+## Discovery-Run Verification Updates (2026-03-04)
+
+- Added regression test `TestSettings::test_allocator_surface_uses_canonical_field_names` to catch reintroduction of removed duplicate model fields and enforce canonical aliases.
+- Updated source-of-truth assessment confirms:
+  - Canonical settings field `trading_allocator_symbol_correlation_groups` with legacy alias support.
+  - Canonical settings field `trading_allocator_correlation_group_caps` with legacy alias support.
+  - Canonical allocator budget maps (`trading_allocator_strategy_notional_caps`, `trading_allocator_symbol_notional_caps`) remain unchanged and are normalized through a single path.
+
+## Relation to Objective
+
+This change improves source reliability and maintainability while reducing rollout risk from mixed-config behavior. It is aligned with the torghut-quant discover objective of a single production-safe design change plus explicit tradeoff documentation.

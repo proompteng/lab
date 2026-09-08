@@ -1,0 +1,93 @@
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: karapace-schemas
+  namespace: kafka
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  topicName: _schemas
+  partitions: 1
+  replicas: 3
+  config:
+    cleanup.policy: compact
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: karapace
+  namespace: kafka
+  labels:
+    app.kubernetes.io/name: karapace
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: karapace
+  template:
+    metadata:
+      annotations:
+        app.proompteng.ai/schema-storage-generation: compact-v1
+      labels:
+        app.kubernetes.io/name: karapace
+    spec:
+      containers:
+        - name: karapace
+          image: ghcr.io/aiven-open/karapace:6.2.2@sha256:3c202789067f1bc3aa68d9dbb22d6298d254380a9e69c2705120c7434277238c
+          imagePullPolicy: IfNotPresent
+          command:
+            - python3
+            - -m
+            - karapace.__main__
+          ports:
+            - name: http
+              containerPort: 8081
+          env:
+            - name: KARAPACE_BOOTSTRAP_URI
+              value: kafka-kafka-bootstrap:9092
+            - name: KARAPACE_ADVERTISED_HOSTNAME
+              value: karapace
+            - name: KARAPACE_HOST
+              value: 0.0.0.0
+            - name: KARAPACE_PORT
+              value: "8081"
+            - name: KARAPACE_REST
+              value: "false"
+            - name: KARAPACE_REGISTRY
+              value: "true"
+            - name: KARAPACE_GROUP_ID
+              value: karapace-schema-registry
+            - name: KARAPACE_CLIENT_ID
+              value: karapace-schema-registry
+            - name: KARAPACE_TOPIC_NAME
+              value: _schemas
+            - name: KARAPACE_COMPATIBILITY
+              value: BACKWARD
+            - name: KARAPACE_SECURITY_PROTOCOL
+              value: SASL_PLAINTEXT
+            - name: KARAPACE_SASL_MECHANISM
+              value: SCRAM-SHA-512
+            - name: KARAPACE_SASL_PLAIN_USERNAME
+              value: karapace
+            - name: KARAPACE_SASL_PLAIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: karapace
+                  key: password
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: karapace
+  namespace: kafka
+  labels:
+    app.kubernetes.io/name: karapace
+spec:
+  selector:
+    app.kubernetes.io/name: karapace
+  ports:
+    - name: http
+      port: 8081
+      targetPort: http

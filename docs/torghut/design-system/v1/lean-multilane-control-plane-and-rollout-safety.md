@@ -1,0 +1,118 @@
+# LEAN Multi-Lane Control Plane And Rollout Safety
+
+## Execution Retirement Note (2026-07-14)
+
+The LEAN live-submit adapter, Alpaca fallback, session-router remnants, live-execution shadow telemetry, and live-canary
+controls described below were removed during profitability Slice 4. Current source had no production constructor for the
+LEAN submit adapter, while the adapter itself could mutate a second order endpoint without Torghut's durable
+claim/receipt coordinator. Keeping that dormant authority would make the broker-mutation boundary unverifiable.
+
+The non-mutating backtest and strategy-shadow research helpers remain. Strategy shadow now calls its research runtime
+directly instead of depending on a broker adapter. Historical database tables are retained for migration and data
+compatibility, but they are not evidence that retired live-submit or canary capabilities are active. Any future LEAN
+broker route must be introduced as a new coordinator-backed production capability with its own fault and rollout proof.
+
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: Jangar has route/API integration and many control-plane modules; historical Swarm prose is not a one-to-one runtime spec.
+- Matched implementation area: Jangar/control-plane integration.
+- Current source evidence:
+  - `services/jangar/src/routes/ready.tsx`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+  - `services/jangar/src/server/control-plane-source-serving-contract-verdict.ts`
+  - `services/jangar/src/routes/api/torghut/trading/control-plane/quant/snapshot.ts`
+  - `argocd/applications/agents/kustomization.yaml`
+- Design drift note: Verify against current Jangar modules/routes before treating design contracts as live behavior.
+
+
+## Scope
+
+This document defines production operations for Torghut LEAN multi-lane capability while preserving Torghut as control plane authority for risk, governance, and rollback safety.
+
+## Historical Intended Lanes
+
+- `execution`: retired; no current production submit authority.
+- `research_backtest`: asynchronous LEAN backtest submission/result flow with durable reproducibility metadata.
+- `live_shadow_execution`: retired with the disconnected submit adapter.
+- `live_canary_execution`: retired; dormant settings and metrics were removed.
+- `strategy_shadow_runtime`: LEAN strategy shadow evaluation path without replacing Torghut decision authority.
+
+## Contract And Safety Foundation
+
+- Torghut enforces submit/read payload contract checks before accepting LEAN responses.
+- LEAN runner requires contract-valid request bodies (`extra=forbid`) and records structured audit envelopes.
+- Order-routing calls carry:
+  - `X-Correlation-ID`
+  - `Idempotency-Key`
+  - Structured audit payload persisted on execution records (`execution_audit_json`).
+- Idempotency replay in LEAN runner returns previous response deterministically and marks replay in `_lean_audit.idempotent_replay`.
+
+## Data Model Additions
+
+Postgres entities:
+
+- `lean_backtest_runs`
+- `lean_execution_shadow_events`
+- `lean_canary_incidents`
+- `lean_strategy_shadow_evaluations`
+- `executions.execution_correlation_id`
+- `executions.execution_idempotency_key`
+- `executions.execution_audit_json`
+
+## Observability
+
+Prometheus metrics:
+
+- `torghut_trading_lean_request_total{operation}`
+- `torghut_trading_lean_latency_ms{operation}`
+- `torghut_trading_lean_failure_taxonomy_total{operation,taxonomy}`
+- `torghut_trading_lean_shadow_parity_total{status}`
+- `torghut_trading_lean_shadow_failure_total{taxonomy}`
+- `torghut_trading_lean_strategy_shadow_total{status}`
+- `torghut_trading_lean_canary_breach_total{breach_type}`
+
+Operational APIs:
+
+- `POST /trading/lean/backtests`
+- `GET /trading/lean/backtests/{backtest_id}`
+- `GET /trading/lean/shadow/parity`
+- LEAN runner observability: `GET /v1/observability`
+
+## Canary And Rollback Gates
+
+Live canary controls:
+
+- `TRADING_LEAN_LIVE_CANARY_ENABLED`
+- `TRADING_LEAN_LIVE_CANARY_CRYPTO_ONLY`
+- `TRADING_LEAN_LIVE_CANARY_SYMBOLS`
+- `TRADING_LEAN_LIVE_CANARY_FALLBACK_RATIO_LIMIT`
+- `TRADING_LEAN_LIVE_CANARY_HARD_ROLLBACK_ENABLED`
+
+Explicit disable switch:
+
+- `TRADING_LEAN_LANE_DISABLE_SWITCH=true` disables LEAN lanes and routes to Alpaca path.
+
+Hard rollback criteria:
+
+- Fallback ratio breach (`lean->alpaca`) above configured threshold.
+- On breach, Torghut records `lean_canary_incidents` evidence and triggers emergency stop when hard rollback is enabled.
+
+## Kafka/Flink/ClickHouse Operational Verification
+
+GitOps topics added for lane telemetry:
+
+- `torghut.lean.shadow.v1`
+- `torghut.lean.backtests.v1`
+
+Data-path verification checklist:
+
+1. Kafka topic presence and tail checks.
+2. Flink deployment/job healthy (`RUNNING` state).
+3. ClickHouse sink/table freshness checks.
+4. Torghut scheduler health via `/trading/status` and `/metrics`.
+
+Use existing helpers:
+
+- `services/torghut/scripts/ta_replay_runner.py`
+- `packages/scripts/src/kafka/tail-topic.ts`

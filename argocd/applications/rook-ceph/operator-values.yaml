@@ -1,0 +1,41 @@
+image:
+  repository: docker.io/rook/ceph
+  tag: v1.20.3
+  pullPolicy: IfNotPresent
+
+crds:
+  enabled: true
+
+logLevel: INFO
+
+resources:
+  limits:
+    memory: 1Gi
+  requests:
+    cpu: 200m
+    memory: 256Mi
+
+nodeSelector: {}
+
+tolerations:
+  - key: "node-role.kubernetes.io/storage"
+    operator: Exists
+    effect: NoSchedule
+
+rbacEnable: true
+rbacAggregate:
+  enableOBCs: true
+
+pspEnable: false
+
+allowLoopDevices: false
+
+# RGW admin paths can exceed the chart default during HDD compaction/recovery.
+# Keep OBC provisioning fail-closed, but do not interrupt healthy admin lookups.
+cephCommandsTimeoutSeconds: "120"
+
+csi:
+  installCsiOperator: true
+
+# Rook v1.20 transfers CSI configuration ownership to the ceph-csi-drivers chart.
+# The existing live Driver and OperatorConfig behavior is preserved in csi-driver-values.yaml.

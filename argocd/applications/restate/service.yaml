@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: restate
+  labels:
+    app: restate
+    app.kubernetes.io/name: restate
+    app.kubernetes.io/version: "1.7.2"
+spec:
+  type: ClusterIP
+  selector:
+    app: restate
+  ports:
+    - name: admin
+      port: 9070
+      targetPort: admin
+    - name: ingress
+      port: 8080
+      targetPort: ingress
+    - name: node
+      port: 5122
+      targetPort: node

@@ -1,0 +1,7 @@
+metadata:
+  namespace: default
+  type: Clusters.omni.sidero.dev
+  id: galactic
+spec:
+  talosversion: 1.13.9
+  kubernetesversion: 1.36.4

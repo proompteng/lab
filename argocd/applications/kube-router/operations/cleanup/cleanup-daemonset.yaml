@@ -1,0 +1,152 @@
+# Emergency-only cleanup. This manifest is intentionally excluded from the
+# production kustomization and must never run while the active controller runs.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: kube-router-cleanup
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: kube-router-cleanup
+    app.kubernetes.io/component: emergency-cleanup
+spec:
+  minReadySeconds: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kube-router-cleanup
+      app.kubernetes.io/component: emergency-cleanup
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kube-router-cleanup
+        app.kubernetes.io/component: emergency-cleanup
+    spec:
+      automountServiceAccountToken: false
+      priorityClassName: system-node-critical
+      hostNetwork: true
+      hostPID: true
+      dnsPolicy: ClusterFirstWithHostNet
+      nodeSelector:
+        kubernetes.io/os: linux
+      tolerations:
+        - operator: Exists
+      initContainers:
+        - name: cleanup
+          image: docker.io/cloudnativelabs/kube-router@sha256:0991f2cc7aaabe107b51c0c554d6b843f0483fd319b94f437fab638470c47c22
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/bash
+            - -ec
+          args:
+            - |
+              set -o pipefail
+
+              cleanup_filter_family() {
+                table_command=$1
+                save_command=$2
+
+                if ! "$save_command" -t filter >/dev/null 2>&1; then
+                  return
+                fi
+
+                for builtin_chain in INPUT FORWARD OUTPUT; do
+                  kube_router_chain="KUBE-ROUTER-$builtin_chain"
+                  while true; do
+                    rule_number=$(
+                      "$table_command" -w 10 -t filter -L "$builtin_chain" --line-numbers -n |
+                        awk -v target="$kube_router_chain" '$2 == target { print $1; exit }'
+                    )
+                    if [ -z "$rule_number" ]; then
+                      break
+                    fi
+                    "$table_command" -w 10 -t filter -D "$builtin_chain" "$rule_number"
+                  done
+                done
+
+                "$save_command" -t filter |
+                  awk '/^:KUBE-(ROUTER|NWPLCY|POD-FW)-/ { sub(/^:/, "", $1); print $1 }' |
+                  while IFS= read -r chain; do
+                    "$table_command" -w 10 -t filter -F "$chain"
+                  done
+                "$save_command" -t filter |
+                  awk '/^:KUBE-(ROUTER|NWPLCY|POD-FW)-/ { sub(/^:/, "", $1); print $1 }' |
+                  while IFS= read -r chain; do
+                    "$table_command" -w 10 -t filter -X "$chain"
+                  done
+
+                if "$save_command" -t filter | grep -Eq 'KUBE-(ROUTER|NWPLCY|POD-FW)-'; then
+                  echo "targeted kube-router cleanup left rules in $save_command" >&2
+                  exit 1
+                fi
+              }
+
+              cleanup_filter_family /usr/sbin/iptables /usr/sbin/iptables-save
+              cleanup_filter_family /usr/sbin/ip6tables /usr/sbin/ip6tables-save
+
+              /usr/sbin/ipset list -name |
+                awk '/^(inet6:)?KUBE-(SRC|DST)-|^(inet6:)?kube-router-local-pods$/ { print }' |
+                while IFS= read -r set_name; do
+                  /usr/sbin/ipset destroy "$set_name"
+                done
+              if /usr/sbin/ipset list -name |
+                grep -Eq '^(inet6:)?KUBE-(SRC|DST)-|^(inet6:)?kube-router-local-pods$'; then
+                echo 'targeted kube-router cleanup left NetworkPolicy ipsets' >&2
+                exit 1
+              fi
+          securityContext:
+            privileged: true
+            allowPrivilegeEscalation: true
+            readOnlyRootFilesystem: true
+            runAsUser: 0
+          volumeMounts:
+            - name: lib-modules
+              mountPath: /lib/modules
+              readOnly: true
+            - name: xtables-lock
+              mountPath: /run/xtables.lock
+      containers:
+        - name: verifier
+          image: docker.io/cloudnativelabs/kube-router@sha256:0991f2cc7aaabe107b51c0c554d6b843f0483fd319b94f437fab638470c47c22
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ec
+          args:
+            - |
+              trap 'exit 0' TERM INT
+              while true; do sleep 3600; done
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -ec
+                - iptables-save >/dev/null
+            periodSeconds: 5
+            timeoutSeconds: 2
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            privileged: true
+            allowPrivilegeEscalation: true
+            readOnlyRootFilesystem: true
+            runAsUser: 0
+          volumeMounts:
+            - name: lib-modules
+              mountPath: /lib/modules
+              readOnly: true
+            - name: xtables-lock
+              mountPath: /run/xtables.lock
+      terminationGracePeriodSeconds: 10
+      volumes:
+        - name: lib-modules
+          hostPath:
+            path: /usr/lib/modules
+            type: Directory
+        - name: xtables-lock
+          hostPath:
+            path: /run/xtables.lock
+            type: FileOrCreate

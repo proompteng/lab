@@ -1,0 +1,41 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: feature-flags
+
+resources:
+  - tailscale-service.yaml
+  - ingressroute-feature-flags-k8s-private.yaml
+
+helmCharts:
+  - name: flipt-v2
+    repo: https://helm.flipt.io
+    version: 2.11.0
+    releaseName: feature-flags
+    namespace: feature-flags
+    valuesFile: flipt-values.yaml
+
+images:
+  - name: docker.flipt.io/flipt/flipt
+    newName: mirror.gcr.io/flipt/flipt
+    newTag: v2.11.0
+    digest: sha256:d20384874048ef6ac326f4937cee64f1db175a1878a87db32916cc8db46c740e
+
+patches:
+  - target:
+      kind: ConfigMap
+      name: feature-flags
+    patch: |-
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-weight
+  - target:
+      kind: Deployment
+      name: feature-flags
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: feature-flags
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true

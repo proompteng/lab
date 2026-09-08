@@ -1,0 +1,67 @@
+gateway:
+  enabled: true
+
+global:
+  extraEnv:
+    - name: OBS_S3_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: rook-ceph-rgw-loki
+          key: AccessKey
+    - name: OBS_S3_SECRET_KEY
+      valueFrom:
+        secretKeyRef:
+          name: rook-ceph-rgw-loki
+          key: SecretKey
+
+traces:
+  otlp:
+    http:
+      enabled: true
+    grpc:
+      enabled: true
+
+distributor:
+  replicas: 1
+  extraArgs:
+    - -config.expand-env=true
+
+ingester:
+  replicas: 2
+  podDisruptionBudget:
+    enabled: true
+  maxUnavailable: 1
+  persistence:
+    enabled: false
+  extraArgs:
+    - -config.expand-env=true
+
+compactor:
+  replicas: 1
+  persistence:
+    enabled: true
+    size: 20Gi
+    storageClass: rook-ceph-block
+  extraArgs:
+    - -config.expand-env=true
+
+querier:
+  replicas: 1
+  extraArgs:
+    - -config.expand-env=true
+
+queryFrontend:
+  replicas: 1
+  extraArgs:
+    - -config.expand-env=true
+
+storage:
+  trace:
+    backend: s3
+    s3:
+      endpoint: rook-ceph-rgw-objectstore.rook-ceph.svc:80
+      bucket: tempo-traces
+      access_key: ${OBS_S3_ACCESS_KEY}
+      secret_key: ${OBS_S3_SECRET_KEY}
+      insecure: true
+      forcepathstyle: true

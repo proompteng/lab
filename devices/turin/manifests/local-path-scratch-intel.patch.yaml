@@ -1,0 +1,11 @@
+apiVersion: v1alpha1
+kind: UserVolumeConfig
+name: turin-nvme-intel
+provisioning:
+  # Turin-local scratch only. This disk is single-host and must not hold durable state.
+  # Live by-id proof on 2026-06-29:
+  # /dev/disk/by-id/nvme-INTEL_SSDPEKKF256G8L_BTHH851313AU256B -> /dev/nvme1n1
+  diskSelector:
+    match: "'/dev/disk/by-id/nvme-INTEL_SSDPEKKF256G8L_BTHH851313AU256B' in disk.symlinks && !system_disk"
+  minSize: 100GB
+  grow: true

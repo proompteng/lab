@@ -1,0 +1,271 @@
+"""Order execution and idempotency helpers."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import time
+from collections.abc import Mapping, Sequence
+from datetime import datetime, timezone
+from decimal import Decimal
+from typing import Any, NamedTuple, Optional, Protocol, cast
+
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from ...models import (
+    Execution,
+    Strategy,
+    TradeDecision,
+    coerce_json_payload,
+)
+from ...config import settings
+from ...snapshots import sync_order_to_db
+from ..route_metadata import resolve_order_route_metadata
+from ..models import ExecutionRequest, StrategyDecision, decision_hash
+from ..quantity_rules import (
+    QuantityResolution,
+    min_qty_for_symbol,
+    quantize_qty_for_symbol,
+    qty_has_valid_increment,
+    qty_step_for_symbol,
+    resolve_quantity_resolution,
+)
+from ..simulation import (
+    resolve_event_persisted_at,
+    resolve_simulation_context,
+    simulation_context_enabled,
+)
+from ..time_source import trading_now
+from ..tca import upsert_execution_tca_metric
+
+
+logger = logging.getLogger(__name__)
+
+_SHORTING_METADATA_CACHE_TTL_SECONDS = 30.0
+
+_EXECUTION_POLICY_HASH_KEYS = (
+    "execution_policy_hash",
+    "execution_policy_sha256",
+    "policy_hash",
+)
+
+_COST_MODEL_HASH_KEYS = (
+    "cost_model_hash",
+    "cost_model_sha256",
+    "fee_model_hash",
+)
+
+_COST_MODEL_PAYLOAD_KEYS = (
+    "cost_model",
+    "cost_model_config",
+    "transaction_cost_model",
+    "fee_model",
+    "fees_model",
+    "market_impact_cost_model",
+    "proportional_cost_model",
+)
+
+_LINEAGE_HASH_KEYS = (
+    "lineage_hash",
+    "candidate_lineage_hash",
+    "replay_lineage_hash",
+)
+
+_LINEAGE_PAYLOAD_KEYS = (
+    "lineage",
+    "candidate_lineage",
+    "source_lineage",
+    "runtime_lineage",
+    "replay_lineage",
+)
+
+_RUNTIME_COST_PAYLOAD_KEYS = (
+    "runtime_ledger_cost",
+    "execution_cost",
+    "explicit_execution_cost",
+)
+
+_RUNTIME_COST_AMOUNT_KEYS = (
+    "cost_amount",
+    "explicit_cost",
+    "commission",
+    "fees",
+    "fee_amount",
+    "broker_fee",
+)
+
+_RUNTIME_COST_BASIS_KEYS = (
+    "cost_basis",
+    "cost_source",
+    "fee_basis",
+    "commission_basis",
+    "broker_fee_basis",
+)
+
+
+class _OrderExecutorFields:
+    """Submit orders to a broker adapter with idempotency guards."""
+
+    _account_metadata_cache: dict[str, Any] | None
+    _account_metadata_cached_at_monotonic: float | None
+    _asset_metadata_cache: dict[str, tuple[dict[str, Any] | None, float]]
+    _shorting_metadata_status: dict[str, Any]
+
+
+class _OrderExecutorContract(Protocol):
+    _account_metadata_cache: dict[str, Any] | None
+    _account_metadata_cached_at_monotonic: float | None
+    _asset_metadata_cache: dict[str, tuple[dict[str, Any] | None, float]]
+    _shorting_metadata_status: dict[str, Any]
+
+    def _sync_submitted_order_execution(
+        self,
+        *,
+        session: Session,
+        execution_client: Any,
+        decision: StrategyDecision,
+        decision_row: TradeDecision,
+        account_label: str,
+        execution_expected_adapter: Optional[str],
+        execution_policy_context: dict[str, Any],
+        order_response: Mapping[str, object],
+        commit: bool,
+    ) -> Execution: ...
+
+    @classmethod
+    def _remaining_order_qty(cls, order: Mapping[str, Any]) -> Decimal: ...
+
+    def _quantity_resolution_for_request(
+        self,
+        execution_client: Any,
+        request: ExecutionRequest,
+        *,
+        durable_position_qty: Decimal | None = None,
+    ) -> QuantityResolution: ...
+
+    def _validate_short_sell_constraints(
+        self,
+        execution_client: Any,
+        request: ExecutionRequest,
+        *,
+        quantity_resolution: QuantityResolution,
+    ) -> dict[str, Any] | None: ...
+
+    @classmethod
+    def _position_qty_for_symbol(
+        cls,
+        execution_client: Any,
+        symbol: str,
+    ) -> Decimal | None: ...
+
+    @staticmethod
+    def _list_open_orders(execution_client: Any) -> list[dict[str, Any]]: ...
+
+    def _get_account(
+        self,
+        execution_client: Any,
+        *,
+        force_refresh: bool = False,
+    ) -> dict[str, Any] | None: ...
+
+    @classmethod
+    def _find_sell_inventory_conflict(
+        cls,
+        execution_client: Any,
+        request: ExecutionRequest,
+        open_orders: list[dict[str, Any]],
+    ) -> dict[str, Any] | None: ...
+
+    @classmethod
+    def _resolve_sell_inventory_conflict(
+        cls,
+        request: ExecutionRequest,
+        *,
+        conflict: Mapping[str, Any],
+        fractional_equities_enabled: bool,
+    ) -> tuple[
+        ExecutionRequest,
+        dict[str, Any] | None,
+        dict[str, Any] | None,
+    ]: ...
+
+
+# Public aliases used by split-module consumers.
+COST_MODEL_HASH_KEYS = _COST_MODEL_HASH_KEYS
+COST_MODEL_PAYLOAD_KEYS = _COST_MODEL_PAYLOAD_KEYS
+EXECUTION_POLICY_HASH_KEYS = _EXECUTION_POLICY_HASH_KEYS
+LINEAGE_HASH_KEYS = _LINEAGE_HASH_KEYS
+LINEAGE_PAYLOAD_KEYS = _LINEAGE_PAYLOAD_KEYS
+OrderExecutorFields = _OrderExecutorFields
+OrderExecutorContract = _OrderExecutorContract
+RUNTIME_COST_AMOUNT_KEYS = _RUNTIME_COST_AMOUNT_KEYS
+RUNTIME_COST_BASIS_KEYS = _RUNTIME_COST_BASIS_KEYS
+RUNTIME_COST_PAYLOAD_KEYS = _RUNTIME_COST_PAYLOAD_KEYS
+SHORTING_METADATA_CACHE_TTL_SECONDS = _SHORTING_METADATA_CACHE_TTL_SECONDS
+
+
+# Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
+__all__: tuple[str, ...] = (
+    "Any",
+    "COST_MODEL_HASH_KEYS",
+    "COST_MODEL_PAYLOAD_KEYS",
+    "Decimal",
+    "OrderExecutorContract",
+    "EXECUTION_POLICY_HASH_KEYS",
+    "Execution",
+    "ExecutionRequest",
+    "IntegrityError",
+    "LINEAGE_HASH_KEYS",
+    "LINEAGE_PAYLOAD_KEYS",
+    "Mapping",
+    "NamedTuple",
+    "Optional",
+    "OrderExecutorFields",
+    "RUNTIME_COST_AMOUNT_KEYS",
+    "RUNTIME_COST_BASIS_KEYS",
+    "RUNTIME_COST_PAYLOAD_KEYS",
+    "SHORTING_METADATA_CACHE_TTL_SECONDS",
+    "Sequence",
+    "Session",
+    "Strategy",
+    "StrategyDecision",
+    "TradeDecision",
+    "_COST_MODEL_HASH_KEYS",
+    "_COST_MODEL_PAYLOAD_KEYS",
+    "_EXECUTION_POLICY_HASH_KEYS",
+    "_LINEAGE_HASH_KEYS",
+    "_LINEAGE_PAYLOAD_KEYS",
+    "_OrderExecutorFields",
+    "_RUNTIME_COST_AMOUNT_KEYS",
+    "_RUNTIME_COST_BASIS_KEYS",
+    "_RUNTIME_COST_PAYLOAD_KEYS",
+    "_SHORTING_METADATA_CACHE_TTL_SECONDS",
+    "annotations",
+    "cast",
+    "coerce_json_payload",
+    "datetime",
+    "decision_hash",
+    "hashlib",
+    "json",
+    "logger",
+    "logging",
+    "min_qty_for_symbol",
+    "qty_has_valid_increment",
+    "qty_step_for_symbol",
+    "quantize_qty_for_symbol",
+    "resolve_event_persisted_at",
+    "resolve_order_route_metadata",
+    "resolve_quantity_resolution",
+    "resolve_simulation_context",
+    "select",
+    "settings",
+    "simulation_context_enabled",
+    "sync_order_to_db",
+    "time",
+    "timezone",
+    "trading_now",
+    "upsert_execution_tca_metric",
+)

@@ -1,0 +1,170 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - load-balancer.yaml
+  - load-balancer-frontend.yaml
+  - ingressroute-temporal-k8s-private.yaml
+
+patches:
+  - target:
+      kind: Secret
+      name: temporal-default-store
+    patch: |-
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-delete-policy
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-weight
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "-2"
+  - target:
+      kind: Secret
+      name: temporal-visibility-store
+    patch: |-
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-delete-policy
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-weight
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "-2"
+  - target:
+      kind: Job
+      name: temporal-schema
+    patch: |-
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-delete-policy
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-weight
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-options
+        value: Force=true,Replace=true
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "-1"
+      - op: remove
+        path: /spec/ttlSecondsAfterFinished
+
+helmCharts:
+  - name: cassandra
+    repo: https://charts.helm.sh/incubator
+    version: 0.15.4
+    releaseName: temporal
+    namespace: temporal
+    valuesInline:
+      persistence:
+        enabled: true
+        storageClass: rook-ceph-block
+        accessMode: ReadWriteOnce
+        size: 20Gi
+      config:
+        cluster_size: 3
+        seed_size: 2
+      image:
+        repo: mirror.gcr.io/cassandra
+        tag: 3.11.5
+  - name: elasticsearch
+    repo: https://helm.elastic.co
+    version: 8.5.1
+    releaseName: temporal
+    namespace: temporal
+    valuesInline:
+      replicas: 3
+      antiAffinity: ""
+      minimumMasterNodes: 2
+      protocol: http
+      createCert: false
+      secret:
+        enabled: true
+        password: temporal-elasticsearch-readiness
+      esConfig:
+        elasticsearch.yml: |
+          xpack.security.enabled: false
+          xpack.security.http.ssl.enabled: false
+          xpack.security.transport.ssl.enabled: false
+      clusterHealthCheckParams: "wait_for_status=green&timeout=1s"
+      persistence:
+        enabled: true
+      volumeClaimTemplate:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 5Gi
+        storageClassName: rook-ceph-block
+  - name: temporal
+    repo: https://go.temporal.io/helm-charts
+    version: 1.6.0
+    releaseName: temporal
+    namespace: temporal
+    includeCRDs: true
+    valuesInline:
+      server:
+        image:
+          repository: mirror.gcr.io/temporalio/server
+        config:
+          persistence:
+            defaultStore: default
+            visibilityStore: visibility
+            numHistoryShards: 512
+            datastores:
+              default:
+                cassandra:
+                  createDatabase: true
+                  manageSchema: true
+                  hosts: "temporal-cassandra.temporal,temporal-cassandra.temporal,temporal-cassandra.temporal"
+                  port: 9042
+                  keyspace: temporal
+                  user: user
+                  password: password
+                  replicationFactor: 1
+                  consistency:
+                    default:
+                      consistency: local_quorum
+                      serialConsistency: local_serial
+              visibility:
+                elasticsearch:
+                  manageSchema: true
+                  version: v7
+                  url:
+                    scheme: http
+                    host: "elasticsearch-master-headless:9200"
+                  username: ""
+                  password: ""
+                  logLevel: error
+                  indices:
+                    visibility: temporal_visibility_v1_dev
+      web:
+        image:
+          repository: mirror.gcr.io/temporalio/ui
+        # https://docs.temporal.io/references/web-ui-environment-variables
+        additionalEnv:
+          - name: TEMPORAL_CSRF_COOKIE_INSECURE
+            value: "true"
+      admintools:
+        image:
+          repository: mirror.gcr.io/temporalio/admin-tools
+      shims:
+        dockerize: false
+        elasticsearchTool: false
+
+images:
+  - name: mirror.gcr.io/temporalio/server
+    newName: mirror.gcr.io/temporalio/server
+    newTag: 1.31.2
+    digest: sha256:b5ecdb8282bededae2a10c36e8d862e27d0bc2d247fc73c5416025997ab4a1da
+  - name: mirror.gcr.io/temporalio/admin-tools
+    newName: mirror.gcr.io/temporalio/admin-tools
+    newTag: 1.31.2
+    digest: sha256:dbc5fcd6ee8f0f4d808bf765af9a87dea9d8a283abfdcfbd2fc148496ba66107
+  - name: mirror.gcr.io/temporalio/ui
+    newName: mirror.gcr.io/temporalio/ui
+    newTag: 2.52.0
+    digest: sha256:fc47cd8202c98ed868745fd9f2f011585232676d08da621b9a6d7bc4653c17aa

@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: restate-example
+resources:
+  - deployment.yaml
+  - service.yaml
+  - networkpolicy.yaml
+  - register-job.yaml
+  - smoke-job.yaml
+
+configMapGenerator:
+  - name: restate-example-bundle-00
+    files:
+      - part-00.b64=source/part-00.b64
+  - name: restate-example-bundle-01
+    files:
+      - part-01.b64=source/part-01.b64
+  - name: restate-example-bundle-02
+    files:
+      - part-02.b64=source/part-02.b64
+
+generatorOptions:
+  labels:
+    app.kubernetes.io/name: restate-example
+    app.kubernetes.io/part-of: restate-example

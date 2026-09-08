@@ -1,0 +1,1563 @@
+import { createHash } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
+
+const hermesImage =
+  'registry.ide-newton.ts.net/lab/hermes-agent@sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a'
+const squidImage = 'docker.io/ubuntu/squid@sha256:8a3baed477e2c282ab8aa5edad442f69873246964f225c5c2ae8364b6610963c'
+const kubectlImage = 'registry.k8s.io/kubectl@sha256:0bb95b2a450875fc8ceaea2f9987a99fe27c228846e2e00b93b65ebb0d59034e'
+const githubCliVersion = '2.96.0'
+const githubCliArchiveSha256 = '83d5c2ccad5498f58bf6368acb1ab32588cf43ab3a4b1c301bf36328b1c8bd60'
+const terminalPath =
+  '/opt/tools:/opt/lab-toolchain/bin:/opt/hermes/bin:/opt/hermes/.venv/bin:/opt/data/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+const hermesToolchainConcreteReferencePattern =
+  /registry\.ide-newton\.ts\.net\/lab\/hermes-toolchain@sha256:[a-f0-9]{64}/
+const hermesToolchainReferencePattern =
+  /^        - name: lab-toolchain-image\n          image:\n            reference: (registry\.ide-newton\.ts\.net\/lab\/hermes-toolchain@sha256:[a-f0-9]{64})$/gm
+
+export const productionPaths = {
+  kustomization: 'argocd/applications/hermes/kustomization.yaml',
+  statefulSet: 'argocd/applications/hermes/statefulset.yaml',
+  backupCronJob: 'argocd/applications/hermes/backup-cronjob.yaml',
+  backupScript: 'argocd/applications/hermes/backup-once.sh',
+  config: 'argocd/applications/hermes/config.yaml',
+  externalSecret: 'argocd/applications/hermes/external-secret.yaml',
+  exaExternalSecret: 'argocd/applications/hermes/exa-external-secret.yaml',
+  discordSealedSecret: 'argocd/applications/hermes/discord-sealed-secret.yaml',
+  githubSealedSecret: 'argocd/applications/hermes/github-sealed-secret.yaml',
+  networkPolicy: 'argocd/applications/hermes/network-policy.yaml',
+  egressProxy: 'argocd/applications/hermes/egress-proxy.yaml',
+  squidConfig: 'argocd/applications/hermes/squid.conf',
+  serviceAccount: 'argocd/applications/hermes/serviceaccount.yaml',
+  rbac: 'argocd/applications/hermes/rbac.yaml',
+  bootstrap: 'argocd/applications/hermes/bootstrap.sh',
+  labCheckout: 'argocd/applications/hermes/bootstrap-lab-checkout.sh',
+  githubBootstrap: 'argocd/applications/hermes/bootstrap-github.sh',
+  terminalProfile: 'argocd/applications/hermes/terminal-profile.sh',
+  workspaceAgents: 'argocd/applications/hermes/bootstrap/AGENTS.md',
+  workspaceTools: 'argocd/applications/hermes/bootstrap/TOOLS.md',
+  readme: 'argocd/applications/hermes/README.md',
+  migrationDryRun: 'argocd/applications/hermes/operations/migration-dry-run-job.yaml',
+  migrationApply: 'argocd/applications/hermes/operations/migration-apply-job.yaml',
+  restoreStage: 'argocd/applications/hermes/operations/restore-stage-pod.yaml',
+  restore: 'argocd/applications/hermes/operations/restore-job.yaml',
+  migrationAudit: 'scripts/hermes/audit-migration-source.ts',
+  networkPolicyProbe: 'scripts/hermes/verify-network-policy-enforcement.sh',
+  maintenanceWait: 'scripts/hermes/wait-for-maintenance.sh',
+  maintenanceLock: 'scripts/hermes/maintenance-lock.sh',
+  platform: 'argocd/applicationsets/platform.yaml',
+  mimirRules: 'argocd/applications/observability/graf-mimir-rules.yaml',
+  clusterMetrics: 'argocd/applications/observability/cluster-metrics-alloy-config.river',
+  clusterMetricsDeployment: 'argocd/applications/observability/cluster-metrics-alloy-deployment.yaml',
+  kubeStateMetrics: 'argocd/applications/observability/kube-state-metrics-values.yaml',
+  openClawKustomization: 'argocd/applications/openclaw/kustomization.yaml',
+  openClawVirtualMachine: 'argocd/applications/openclaw/virtualmachine.yaml',
+  openClawRbac: 'argocd/applications/openclaw/openclaw-vm-rbac.yaml',
+  runbook: 'docs/runbooks/hermes-production-rollout.md',
+  impactMap: '.github/ci/impact-map.yml',
+  pullRequestWorkflow: '.github/workflows/pull-request.yml',
+  toolchainImage: 'nix/images/hermes-toolchain.nix',
+  toolchainBuildWorkflow: '.github/workflows/hermes-toolchain-build-push.yml',
+} as const
+
+export type ProductionPath = keyof typeof productionPaths
+export type ProductionFiles = Record<ProductionPath, string>
+
+function count(content: string, term: string): number {
+  return content.split(term).length - 1
+}
+
+function sectionBetween(content: string, start: string, end: string): string {
+  const startIndex = content.indexOf(start)
+  if (startIndex < 0) return ''
+  const endIndex = content.indexOf(end, startIndex + start.length)
+  return endIndex < 0 ? content.slice(startIndex) : content.slice(startIndex, endIndex)
+}
+
+function namedListItemSection(content: string, indent: number, name: string): string {
+  const lines = content.split(/\r?\n/)
+  const itemPrefix = `${' '.repeat(indent)}- name: `
+  const startLine = lines.findIndex((line) => line === `${itemPrefix}${name}`)
+  if (startLine < 0) return ''
+  let endLine = lines.length
+  for (let index = startLine + 1; index < lines.length; index += 1) {
+    if (lines[index]?.startsWith(itemPrefix)) {
+      endLine = index
+      break
+    }
+  }
+  return `${lines.slice(startLine, endLine).join('\n')}\n`
+}
+
+function requireTerms(failures: string[], path: string, content: string, terms: string[]): void {
+  for (const term of terms) {
+    if (!content.includes(term)) {
+      failures.push(`${path}: missing production invariant ${JSON.stringify(term)}`)
+    }
+  }
+}
+
+function forbidTerms(failures: string[], path: string, content: string, terms: string[]): void {
+  for (const term of terms) {
+    if (content.includes(term)) {
+      failures.push(`${path}: contains forbidden production term ${JSON.stringify(term)}`)
+    }
+  }
+}
+
+function forbidPattern(failures: string[], path: string, content: string, pattern: RegExp, description: string): void {
+  if (pattern.test(content)) {
+    failures.push(`${path}: contains forbidden production pattern ${JSON.stringify(description)}`)
+  }
+}
+
+function deriveHermesToolchainImage(statefulSet: string): string | undefined {
+  const matches = [...statefulSet.matchAll(hermesToolchainReferencePattern)]
+  return matches.length === 1 ? matches[0]?.[1] : undefined
+}
+
+export async function loadProductionFiles(): Promise<ProductionFiles> {
+  const entries = await Promise.all(
+    Object.entries(productionPaths).map(async ([name, path]) => [name, await readFile(path, 'utf8')] as const),
+  )
+  return Object.fromEntries(entries) as ProductionFiles
+}
+
+export function validateProductionContent(files: ProductionFiles): string[] {
+  const failures: string[] = []
+  const hermesToolchainImage = deriveHermesToolchainImage(files.statefulSet)
+  const initContainersSection = sectionBetween(files.statefulSet, '      initContainers:\n', '      containers:\n')
+  const containersSection = sectionBetween(files.statefulSet, '      containers:\n', '      volumes:\n')
+  const bootstrapContainer = namedListItemSection(initContainersSection, 8, 'bootstrap')
+  const gatewayContainer = namedListItemSection(containersSection, 8, 'hermes')
+
+  requireTerms(failures, productionPaths.kustomization, files.kustomization, [
+    'namespace: hermes',
+    'name: hermes-operation-config',
+    'options:\n      disableNameSuffixHash: true',
+    '- statefulset.yaml',
+    '- backup-cronjob.yaml',
+    '- network-policy.yaml',
+    '- rbac.yaml',
+    '- external-secret.yaml',
+    '- exa-external-secret.yaml',
+    '- discord-sealed-secret.yaml',
+    '- github-sealed-secret.yaml',
+    '- bootstrap-lab-checkout.sh',
+    '- bootstrap-github.sh',
+    '- terminal-profile.sh',
+  ])
+  forbidTerms(failures, productionPaths.kustomization, files.kustomization, [
+    'kind: Namespace',
+    'maintenance-lease.yaml',
+    'operations/',
+    'migration-apply-job.yaml',
+    'restore-job.yaml',
+  ])
+  if (count(files.statefulSet, `image: ${hermesImage}`) !== 2) {
+    failures.push(
+      `${productionPaths.statefulSet}: the bootstrap and gateway containers must use the mirrored immutable amd64 digest`,
+    )
+  }
+  requireTerms(failures, productionPaths.statefulSet, files.statefulSet, [
+    'persistentVolumeClaimRetentionPolicy:',
+    'whenDeleted: Retain',
+    'whenScaled: Retain',
+    'automountServiceAccountToken: true',
+    'hermes.proompteng.ai/github-auth-revision: "2"',
+    'runAsUser: 10000',
+    'runAsGroup: 10000',
+    'readOnlyRootFilesystem: true',
+    'capabilities:\n              drop:\n                - ALL',
+    'seccompProfile:\n              type: RuntimeDefault',
+    'API_SERVER_KEY',
+    'EXA_API_KEY',
+    'DISCORD_BOT_TOKEN',
+    'DISCORD_ALLOWED_USERS',
+    'name: data',
+    'name: backups',
+    'mountPath: /opt/backups\n              readOnly: true',
+    'storageClassName: rook-ceph-block',
+    `reference: ${kubectlImage}`,
+    'mountPath: /opt/kubectl-image',
+    'mountPath: /opt/tools',
+    'mountPath: /opt/github-auth',
+    'mountPath: /etc/profile.d/hermes-tools.sh\n              subPath: terminal-profile.sh\n              readOnly: true',
+    'sizeLimit: 1Mi',
+    'value: /opt/tools:/opt/lab-toolchain/bin:/opt/hermes/bin:',
+    'name: KUBECONFIG',
+    'value: /opt/data/home/.kube/config',
+    'name: GH_CONFIG_DIR',
+    'value: /opt/github-auth',
+    'name: GH_PROMPT_DISABLED',
+    'name: GH_TOKEN',
+    'name: GIT_CONFIG_NOSYSTEM',
+    'name: GIT_CONFIG_GLOBAL',
+    'value: /opt/data/home/.gitconfig',
+    'name: GIT_TERMINAL_PROMPT',
+    'value: https://github.com/proompteng/lab.git',
+    'value: main',
+    'value: localhost,127.0.0.1,.svc,.svc.cluster.local,10.96.0.1',
+  ])
+  if (!gatewayContainer.includes('          workingDir: /opt/data/workspace/tuslagch/lab\n')) {
+    failures.push(
+      `${productionPaths.statefulSet}: missing production invariant "workingDir: /opt/data/workspace/tuslagch/lab"`,
+    )
+  }
+  if (count(files.statefulSet, 'mountPath: /etc/profile.d/hermes-tools.sh\n') !== 1) {
+    failures.push(`${productionPaths.statefulSet}: the gateway must mount exactly one immutable terminal login profile`)
+  }
+  const exaSecretKeyRef = [
+    '            - name: EXA_API_KEY',
+    '              valueFrom:',
+    '                secretKeyRef:',
+    '                  name: hermes-exa-auth',
+    '                  key: EXA_API_KEY',
+  ].join('\n')
+  if (count(files.statefulSet, exaSecretKeyRef) !== 1) {
+    failures.push(`${productionPaths.statefulSet}: the gateway must receive exactly one Exa SecretKeyRef`)
+  }
+  forbidTerms(failures, productionPaths.statefulSet, files.statefulSet, [
+    ':latest',
+    'privileged: true',
+    'hostPath:',
+    'hostNetwork: true',
+    'hostPID: true',
+    '        - name: backup\n',
+    'value: gho_',
+    'value: github_pat_',
+    'name: GITHUB_TOKEN',
+    'value: /opt/data/home/.config/gh',
+  ])
+  if (count(files.statefulSet, `reference: ${kubectlImage}`) !== 1) {
+    failures.push(`${productionPaths.statefulSet}: kubectl must use exactly one immutable Kubernetes 1.35 OCI volume`)
+  }
+  if (hermesToolchainImage === undefined) {
+    failures.push(
+      `${productionPaths.statefulSet}: Lab tools must use exactly one immutable Hermes toolchain OCI volume`,
+    )
+  }
+  const toolchainBinMount = [
+    '            - name: lab-toolchain-image',
+    '              mountPath: /opt/lab-toolchain/bin',
+    '              subPath: bin',
+    '              readOnly: true',
+  ].join('\n')
+  const toolchainStoreMount = [
+    '            - name: lab-toolchain-image',
+    '              mountPath: /nix/store',
+    '              subPath: nix/store',
+    '              readOnly: true',
+  ].join('\n')
+  if (count(files.statefulSet, toolchainBinMount) !== 2) {
+    failures.push(
+      `${productionPaths.statefulSet}: init and gateway must mount the immutable toolchain bin facade read-only`,
+    )
+  }
+  if (count(files.statefulSet, toolchainStoreMount) !== 2) {
+    failures.push(`${productionPaths.statefulSet}: init and gateway must mount the immutable Nix closure read-only`)
+  }
+  if (count(files.statefulSet, '        - name: lab-toolchain-image\n          image:\n') !== 1) {
+    failures.push(`${productionPaths.statefulSet}: the toolchain must use exactly one OCI image volume`)
+  }
+  for (const key of ['DISCORD_BOT_TOKEN', 'DISCORD_ALLOWED_USERS']) {
+    const reference = [
+      `            - name: ${key}`,
+      '              valueFrom:',
+      '                secretKeyRef:',
+      '                  name: hermes-discord-auth',
+      `                  key: ${key}`,
+    ].join('\n')
+    if (
+      count(files.statefulSet, `            - name: ${key}\n`) !== 1 ||
+      count(files.statefulSet, `                  key: ${key}\n`) !== 1 ||
+      count(files.statefulSet, reference) !== 1
+    ) {
+      failures.push(
+        `${productionPaths.statefulSet}: ${key} must have exactly one matching hermes-discord-auth SecretKeyRef`,
+      )
+    }
+  }
+  const githubTokenReference = [
+    '            - name: GH_TOKEN',
+    '              valueFrom:',
+    '                secretKeyRef:',
+    '                  name: hermes-github-auth',
+    '                  key: GH_TOKEN',
+  ].join('\n')
+  if (
+    count(bootstrapContainer, '            - name: GH_TOKEN\n') !== 1 ||
+    count(bootstrapContainer, githubTokenReference) !== 1 ||
+    containersSection.includes('            - name: GH_TOKEN\n')
+  ) {
+    failures.push(
+      `${productionPaths.statefulSet}: only the bootstrap init container may receive the sealed GitHub token`,
+    )
+  }
+  if (count(files.statefulSet, '            - name: GH_CONFIG_DIR\n') !== 2) {
+    failures.push(`${productionPaths.statefulSet}: init and gateway must share exactly one GitHub CLI config directory`)
+  }
+  if (count(files.statefulSet, 'name: github-auth\n') !== 3) {
+    failures.push(`${productionPaths.statefulSet}: GitHub auth must use two mounts and one ephemeral volume`)
+  }
+  requireTerms(failures, productionPaths.statefulSet, files.statefulSet, [
+    '            - name: github-auth\n              mountPath: /opt/github-auth\n              readOnly: true',
+    '        - name: github-auth\n          emptyDir:\n            sizeLimit: 1Mi',
+  ])
+
+  if (count(files.backupCronJob, `image: ${hermesImage}`) !== 1) {
+    failures.push(`${productionPaths.backupCronJob}: backup must use the immutable mirrored Hermes digest`)
+  }
+  requireTerms(failures, productionPaths.backupCronJob, files.backupCronJob, [
+    'kind: CronJob',
+    'suspend: false',
+    'concurrencyPolicy: Forbid',
+    'backoffLimit: 3',
+    'restartPolicy: OnFailure',
+    'requiredDuringSchedulingIgnoredDuringExecution:',
+    'jobTemplate:\n    metadata:\n      labels:\n        app.kubernetes.io/name: hermes\n        app.kubernetes.io/component: backup',
+    'app.kubernetes.io/component: gateway',
+    'kubernetes.io/arch: amd64',
+    'automountServiceAccountToken: false',
+    'runAsUser: 10000',
+    'readOnlyRootFilesystem: true',
+    '/opt/bootstrap/backup-once.sh',
+    'claimName: data-hermes-0',
+    'mountPath: /opt/data\n                  # SQLite read-only WAL connections still create or update shared-memory sidecars.\n                  readOnly: false',
+    'claimName: data-hermes-0\n                readOnly: false',
+    'claimName: backups-hermes-0',
+  ])
+  forbidTerms(failures, productionPaths.backupCronJob, files.backupCronJob, [':latest', 'restartPolicy: Never'])
+
+  const backupPublicationSteps = [
+    'backup_output=$(/opt/hermes/.venv/bin/hermes backup --output "$pending_archive" 2>&1)',
+    '*"SQLite safe copy failed"*|*"Raw copy also failed"*|*"Warnings ("*)',
+    'corrupt_entry = backup.testzip()',
+    'connection.execute("PRAGMA quick_check")',
+    'if database_count == 0:',
+    'pending_digest=$(sha256sum "$pending_archive")',
+    'printf \'%s  %s\\n\' "$expected_digest" "$pending_archive" | sha256sum -c -',
+    'mv -- "$pending_checksum" "$archive.sha256"',
+    'mv -- "$pending_archive" "$archive"',
+    '(cd "$backup_dir" && sha256sum -c "$archive_name.sha256")',
+  ]
+  requireTerms(failures, productionPaths.backupScript, files.backupScript, backupPublicationSteps)
+  const backupPublicationPositions = backupPublicationSteps.map((step) => files.backupScript.indexOf(step))
+  if (
+    backupPublicationPositions.some((position) => position < 0) ||
+    backupPublicationPositions.some(
+      (position, index) => index > 0 && position <= backupPublicationPositions[index - 1]!,
+    )
+  ) {
+    failures.push(
+      `${productionPaths.backupScript}: backup must verify the hidden archive before publishing its checksum and archive`,
+    )
+  }
+
+  requireTerms(failures, productionPaths.config, files.config, [
+    '_config_version: 33',
+    'base_url: http://flamingo.flamingo.svc.cluster.local/v1',
+    'terminal:\n  backend: local\n  cwd: /opt/data/workspace/tuslagch/lab',
+    'shell_init_files:\n    - /etc/profile.d/hermes-tools.sh',
+    'discord:\n    enabled: true',
+    'api_server:\n    enabled: true',
+    'cron_mode: deny',
+    'orchestrator_enabled: false',
+    'inherit_mcp_toolsets: false',
+    'web:\n  search_backend: exa\n  extract_backend: exa',
+    'mcp_servers:\n  exa:',
+    'url: "https://mcp.exa.ai/mcp?tools=web_search_exa,web_fetch_exa"',
+    'x-api-key: "${EXA_API_KEY}"',
+    'connect_timeout: 15',
+    'timeout: 120',
+    'tools:\n      include:\n        - web_search_exa\n        - web_fetch_exa',
+    'hooks_auto_accept: false',
+    'user_char_limit: 2200',
+    'memory_char_limit: 4400',
+    'code_execution:\n  timeout: 120\n  max_tool_calls: 100',
+    'Treat /opt/data/workspace/tuslagch/lab as the project root and default working directory',
+    'Use the authenticated tuslagch GitHub identity, codex/ branches, and pull requests',
+    'platform_toolsets:\n  cli: [file, memory, terminal, todo, web, exa]\n  api_server: [file, memory, terminal, todo, web, exa]\n  discord: [file, memory, terminal, todo, web, exa]',
+    'Kubernetes access is cluster-wide read-only',
+    '    - "*git push --force*"',
+    '  - "kubectl get *"',
+    '  - "kubectl * get *"',
+    '  - "kubectl logs *"',
+    '  - "kubectl * logs *"',
+    '  - "kubectl auth can-i *"',
+  ])
+  forbidTerms(failures, productionPaths.config, files.config, [
+    'api_key:',
+    'token:',
+    'allow_all_users: true',
+    'agent_run',
+    'web_search_advanced_exa',
+    '    - "*kubectl*"',
+  ])
+  for (const platform of ['cli', 'api_server', 'discord']) {
+    if (count(files.config, `  ${platform}: [file, memory, terminal, todo, web, exa]\n`) !== 1) {
+      failures.push(`${productionPaths.config}: ${platform} must have exactly one production web and terminal toolset`)
+    }
+  }
+  const expectedMcpConfig = [
+    'mcp_servers:',
+    '  exa:',
+    '    url: "https://mcp.exa.ai/mcp?tools=web_search_exa,web_fetch_exa"',
+    '    headers:',
+    '      x-api-key: "${EXA_API_KEY}"',
+    '    connect_timeout: 15',
+    '    timeout: 120',
+    '    tools:',
+    '      include:',
+    '        - web_search_exa',
+    '        - web_fetch_exa',
+  ].join('\n')
+  const mcpConfig = files.config.match(/\nmcp_servers:\n[\s\S]*?\n\ndelegation:/)?.[0] ?? ''
+  if (mcpConfig !== `\n${expectedMcpConfig}\n\ndelegation:`) {
+    failures.push(`${productionPaths.config}: Exa must be the only MCP server with exactly two read-only web tools`)
+  }
+
+  requireTerms(failures, productionPaths.externalSecret, files.externalSecret, [
+    'name: onepassword-infra',
+    'deletionPolicy: Retain',
+    'secretKey: API_SERVER_KEY',
+    'key: hermes-runtime/API_SERVER_KEY',
+  ])
+  forbidTerms(failures, productionPaths.externalSecret, files.externalSecret, [
+    'dataFrom:',
+    'kind: Secret',
+    'DISCORD_BOT_TOKEN',
+    'DISCORD_ALLOWED_USERS',
+  ])
+  if (
+    count(files.externalSecret, '    - secretKey: API_SERVER_KEY\n') !== 1 ||
+    count(files.externalSecret, '        key: hermes-runtime/API_SERVER_KEY\n') !== 1
+  ) {
+    failures.push(`${productionPaths.externalSecret}: API_SERVER_KEY must have exactly one 1Password mapping`)
+  }
+
+  requireTerms(failures, productionPaths.exaExternalSecret, files.exaExternalSecret, [
+    'name: hermes-exa-auth',
+    'name: onepassword-infra',
+    'deletionPolicy: Retain',
+    'secretKey: EXA_API_KEY',
+    'key: hermes-runtime/EXA_API_KEY',
+  ])
+  forbidTerms(failures, productionPaths.exaExternalSecret, files.exaExternalSecret, [
+    'dataFrom:',
+    'kind: Secret',
+    'API_SERVER_KEY',
+    'DISCORD_BOT_TOKEN',
+    'DISCORD_ALLOWED_USERS',
+  ])
+  if (
+    count(files.exaExternalSecret, '    - secretKey: EXA_API_KEY\n') !== 1 ||
+    count(files.exaExternalSecret, '        key: hermes-runtime/EXA_API_KEY\n') !== 1
+  ) {
+    failures.push(`${productionPaths.exaExternalSecret}: EXA_API_KEY must have exactly one 1Password mapping`)
+  }
+
+  requireTerms(failures, productionPaths.discordSealedSecret, files.discordSealedSecret, [
+    'apiVersion: bitnami.com/v1alpha1',
+    'kind: SealedSecret',
+    'name: hermes-discord-auth',
+    'namespace: hermes',
+    'argocd.argoproj.io/sync-wave: "-3"',
+    '  encryptedData:',
+    '  template:',
+    '    type: Opaque',
+  ])
+  forbidTerms(failures, productionPaths.discordSealedSecret, files.discordSealedSecret, [
+    'kind: Secret',
+    '\n  data:',
+    '\n  stringData:',
+    'sealedsecrets.bitnami.com/cluster-wide',
+    'sealedsecrets.bitnami.com/namespace-wide',
+  ])
+  const sealedDiscordKeys = [...files.discordSealedSecret.matchAll(/^    (DISCORD_[A-Z_]+): (\S+)$/gm)]
+  if (
+    sealedDiscordKeys.length !== 2 ||
+    sealedDiscordKeys
+      .map(([_, key]) => key)
+      .sort()
+      .join(',') !== 'DISCORD_ALLOWED_USERS,DISCORD_BOT_TOKEN'
+  ) {
+    failures.push(
+      `${productionPaths.discordSealedSecret}: encryptedData must contain exactly the Discord token and allowlist`,
+    )
+  }
+  for (const [_, key, ciphertext] of sealedDiscordKeys) {
+    if (!/^Ag[A-Za-z0-9+/=]{100,}$/.test(ciphertext)) {
+      failures.push(`${productionPaths.discordSealedSecret}: ${key} must contain non-placeholder sealed ciphertext`)
+    }
+  }
+
+  requireTerms(failures, productionPaths.githubSealedSecret, files.githubSealedSecret, [
+    'apiVersion: bitnami.com/v1alpha1',
+    'kind: SealedSecret',
+    'name: hermes-github-auth',
+    'namespace: hermes',
+    'argocd.argoproj.io/sync-wave: "-3"',
+    '  encryptedData:',
+    '  template:',
+    '    type: Opaque',
+  ])
+  forbidTerms(failures, productionPaths.githubSealedSecret, files.githubSealedSecret, [
+    'kind: Secret',
+    '\n  data:',
+    '\n  stringData:',
+    'sealedsecrets.bitnami.com/cluster-wide',
+    'sealedsecrets.bitnami.com/namespace-wide',
+    'gho_',
+    'github_pat_',
+  ])
+  const sealedGithubKeys = [...files.githubSealedSecret.matchAll(/^    ([A-Z_]+): (\S+)$/gm)]
+  if (sealedGithubKeys.length !== 1 || sealedGithubKeys[0]?.[1] !== 'GH_TOKEN') {
+    failures.push(`${productionPaths.githubSealedSecret}: encryptedData must contain exactly GH_TOKEN`)
+  } else if (!/^Ag[A-Za-z0-9+/=]{100,}$/.test(sealedGithubKeys[0][2] ?? '')) {
+    failures.push(`${productionPaths.githubSealedSecret}: GH_TOKEN must contain non-placeholder sealed ciphertext`)
+  }
+
+  requireTerms(failures, productionPaths.openClawKustomization, files.openClawKustomization, [
+    'namespace: openclaw',
+    '- cloud-init-secret.yaml',
+    '- datavolume-rootdisk-rbd.yaml',
+    '- virtualmachine.yaml',
+    '- service-ssh.yaml',
+    '- openclaw-vm-rbac.yaml',
+  ])
+  requireTerms(failures, productionPaths.openClawVirtualMachine, files.openClawVirtualMachine, [
+    'kind: VirtualMachine',
+    'name: openclaw',
+    'namespace: openclaw',
+    'runStrategy: Halted',
+    'name: openclaw-rootdisk-rbd',
+    'secretRef:\n              name: openclaw-cloud-init',
+  ])
+  forbidTerms(failures, productionPaths.openClawVirtualMachine, files.openClawVirtualMachine, [
+    'running: true',
+    'running: false',
+  ])
+  requireTerms(failures, productionPaths.openClawRbac, files.openClawRbac, [
+    'name: openclaw-vm-argocd-applications',
+    'name: openclaw-vm-agentruns',
+    'resourceNames: ["codex-github-token", "codex-openai-key"]',
+  ])
+  forbidTerms(failures, productionPaths.openClawRbac, files.openClawRbac, [
+    'name: openclaw-vm-cluster-admin',
+    'name: cluster-admin',
+  ])
+
+  requireTerms(failures, productionPaths.networkPolicy, files.networkPolicy, [
+    'name: hermes-default-deny',
+    'podSelector: {}',
+    'namespace: hermes',
+    'cidr: 0.0.0.0/0',
+    '- 0.0.0.0/8',
+    '- 10.0.0.0/8',
+    '- 100.64.0.0/10',
+    '- 127.0.0.0/8',
+    '- 169.254.0.0/16',
+    '- 172.16.0.0/12',
+    '- 192.0.0.0/29',
+    '- 192.0.0.8/32',
+    '- 192.0.0.170/31',
+    '- 192.0.2.0/24',
+    '- 192.88.99.0/24',
+    '- 192.168.0.0/16',
+    '- 198.18.0.0/15',
+    '- 198.51.100.0/24',
+    '- 203.0.113.0/24',
+    '- 224.0.0.0/4',
+    '- 240.0.0.0/4',
+    'cidr: 10.96.0.1/32',
+    'cidr: 100.100.244.141/32',
+    'cidr: 100.100.244.142/32',
+    'cidr: 100.100.244.190/32',
+    'port: 6443',
+  ])
+  forbidTerms(failures, productionPaths.networkPolicy, files.networkPolicy, [
+    '          port: 80\n',
+    '          port: 22\n',
+  ])
+
+  if (count(files.egressProxy, `image: ${squidImage}`) !== 1) {
+    failures.push(`${productionPaths.egressProxy}: Squid must use its immutable reviewed digest`)
+  }
+  requireTerms(failures, productionPaths.egressProxy, files.egressProxy, [
+    'automountServiceAccountToken: false',
+    'runAsUser: 13',
+    'readOnlyRootFilesystem: true',
+    'allowPrivilegeEscalation: false',
+  ])
+  requireTerms(failures, productionPaths.squidConfig, files.squidConfig, [
+    'acl SSL_ports port 443',
+    'acl CONNECT method CONNECT',
+    'acl blocked_private_v4 dst 0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.0.0.0/29 192.0.0.8/32 192.0.0.170/31 192.0.2.0/24 192.88.99.0/24 192.168.0.0/16 198.18.0.0/15 198.51.100.0/24 203.0.113.0/24 224.0.0.0/4 240.0.0.0/4',
+    'acl blocked_private_v6 dst ::1/128 fc00::/7 fe80::/10 ff00::/8',
+    'http_access deny all',
+  ])
+  forbidTerms(failures, productionPaths.squidConfig, files.squidConfig, [
+    'http_access allow all',
+    'http_access allow CONNECT allowed_',
+    'acl allowed_discord dstdomain',
+    'acl allowed_github dstdomain',
+  ])
+  const squidAccessRules = files.squidConfig
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('http_access '))
+  const expectedSquidAccessRules = [
+    'http_access deny !CONNECT',
+    'http_access deny CONNECT !SSL_ports',
+    'http_access deny blocked_private_v4',
+    'http_access deny blocked_private_v6',
+    'http_access allow CONNECT',
+    'http_access deny all',
+  ]
+  if (JSON.stringify(squidAccessRules) !== JSON.stringify(expectedSquidAccessRules)) {
+    failures.push(
+      `${productionPaths.squidConfig}: Squid must deny non-HTTPS and private destinations before allowing public HTTPS`,
+    )
+  }
+
+  requireTerms(failures, productionPaths.serviceAccount, files.serviceAccount, [
+    'kind: ServiceAccount',
+    'automountServiceAccountToken: true',
+  ])
+  forbidTerms(failures, productionPaths.serviceAccount, files.serviceAccount, [
+    'kind: Role',
+    'kind: ClusterRole',
+    'kind: RoleBinding',
+    'kind: ClusterRoleBinding',
+  ])
+
+  requireTerms(failures, productionPaths.rbac, files.rbac, [
+    'kind: ClusterRole',
+    'name: hermes-cluster-reader',
+    'apiGroups: [""]',
+    'resources: ["*"]',
+    'kind: ClusterRoleBinding',
+    'kind: ServiceAccount',
+    'name: hermes',
+    'namespace: hermes',
+    'name: hermes-cluster-reader',
+    '      - pods',
+    '      - pods/log',
+  ])
+  forbidTerms(failures, productionPaths.rbac, files.rbac, [
+    'apiGroups: ["*"]',
+    '      - secrets',
+    '      - serviceaccounts/token',
+    '      - pods/exec',
+    '      - pods/attach',
+    '      - pods/portforward',
+    '      - services/proxy',
+    '      - subresources.kubevirt.io',
+    'name: cluster-admin',
+  ])
+  const rbacVerbLists = [...files.rbac.matchAll(/^\s+verbs:\s+\[([^\]]+)]$/gm)]
+  if (rbacVerbLists.length !== 2 || rbacVerbLists.some((match) => match[1]?.replaceAll(' ', '') !== 'get,list,watch')) {
+    failures.push(`${productionPaths.rbac}: every RBAC rule must contain only get, list, and watch`)
+  }
+
+  requireTerms(failures, productionPaths.bootstrap, files.bootstrap, [
+    'toolchain_bin=/opt/lab-toolchain/bin',
+    'check_tool_version node v24.11.1 "$toolchain_bin/node" --version',
+    'check_tool_version bun 1.4.0 "$toolchain_bin/bun" --version',
+    'check_tool_version bunx 1.4.0 "$toolchain_bin/bunx" --version',
+    'check_tool_version go \'go version go1.25.5 linux/amd64\' "$toolchain_bin/go" version',
+    'check_tool_version helm v3.19.1 "$toolchain_bin/helm" version --template \'{{.Version}}\'',
+    'check_tool_version jq jq-1.8.1 "$toolchain_bin/jq" --version',
+    'check_tool_version kustomize v5.8.0 "$toolchain_bin/kustomize" version',
+    'check_tool_version kubeconform v0.7.0 "$toolchain_bin/kubeconform" -v',
+    'check_tool_version shellcheck 0.11.0',
+    'check_tool_version yq v4.49.2',
+    'install -m 0555 /opt/kubectl-image/bin/kubectl /opt/tools/kubectl',
+    '/opt/tools/kubectl version --client=true',
+    'install -d -m 0700 "$kubeconfig_dir"',
+    'certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt',
+    'server: https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}',
+    'tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token',
+    'chmod 0600 "$kubeconfig_tmp"',
+    '/bin/sh /opt/bootstrap/bootstrap-lab-checkout.sh',
+    '/bin/sh /opt/bootstrap/bootstrap-github.sh',
+  ])
+  forbidTerms(failures, productionPaths.bootstrap, files.bootstrap, [
+    'token: ${',
+    'token: $(cat',
+    'certificate-authority-data:',
+  ])
+  const configCheckPosition = files.bootstrap.indexOf(
+    '/opt/hermes/.venv/bin/hermes config check >/tmp/hermes-config-check.log',
+  )
+  const finalGithubBootstrap = 'exec /bin/sh /opt/bootstrap/bootstrap-github.sh'
+  const githubBootstrapPosition = files.bootstrap.indexOf(finalGithubBootstrap)
+  if (
+    configCheckPosition < 0 ||
+    githubBootstrapPosition <= configCheckPosition ||
+    !files.bootstrap.trimEnd().endsWith(finalGithubBootstrap)
+  ) {
+    failures.push(`${productionPaths.bootstrap}: GitHub auth must be the final bootstrap step`)
+  }
+  requireTerms(failures, productionPaths.labCheckout, files.labCheckout, [
+    'set -eu',
+    'GIT_TERMINAL_PROMPT',
+    'https://github.com/proompteng/lab.git',
+    'LAB_CHECKOUT_REF:-main',
+    'LAB_CHECKOUT_DIR:-/opt/data/workspace/tuslagch/lab',
+    'LAB_CHECKOUT_RETRY_ATTEMPTS:-5',
+    'LAB_CHECKOUT_RETRY_DELAY_SECONDS:-2',
+    'if [ -L "$checkout_dir" ]',
+    'retry_checkout_command()',
+    'if [ "$retry_attempts" -le 0 ]; then',
+    'retry_checkout_command clone clone_checkout',
+    'retry_checkout_command fetch fetch_checkout',
+    '--filter=blob:none',
+    'git -C "$checkout_dir" fetch',
+    'git -C "$checkout_dir" merge --ff-only',
+    'preserving local lab checkout state',
+    'preserving the existing verified worktree',
+    'lab_checkout_ready=true',
+  ])
+  requireTerms(failures, productionPaths.githubBootstrap, files.githubBootstrap, [
+    'set -eu',
+    `GH_CLI_VERSION:-${githubCliVersion}`,
+    `GH_CLI_ARCHIVE_SHA256:-${githubCliArchiveSha256}`,
+    'https://github.com/cli/cli/releases/download/v${gh_version}/${gh_archive_name}',
+    'maximum_bytes = 128 * 1024 * 1024',
+    'printf \'%s  %s\\n\' "$gh_archive_sha256" "$archive_tmp" | sha256sum -c -',
+    'member_name = f"gh_{version}_linux_amd64/bin/gh"',
+    'install -m 0555 "$extract_dir/gh" "$gh_install_path"',
+    'if [ ! -d "$gh_install_dir" ]; then',
+    'if [ ! -w "$gh_install_dir" ]; then',
+    'if [ ! -w "$gh_config_dir" ]; then',
+    'gh_cli_config_path=${gh_config_dir}/config.yml',
+    'rm -f -- "$gh_hosts_path" "$gh_cli_config_path"',
+    'git config --file "$git_config_tmp" user.name tuslagch',
+    'git config --file "$git_config_tmp" user.email 241203724+tuslagch@users.noreply.github.com',
+    'git config --file "$git_config_tmp" commit.gpgsign false',
+    '"!$gh_install_path auth git-credential"',
+    'env -u GH_TOKEN -u GITHUB_TOKEN',
+    '--with-token',
+    '--insecure-storage',
+    'if [ ! -s "$gh_auth_stage_dir/config.yml" ]; then',
+    'chmod 0600 "$gh_auth_stage_dir/hosts.yml" "$gh_auth_stage_dir/config.yml"',
+    'if [ "$github_login" != tuslagch ]; then',
+    'if [ "$github_permission" != ADMIN ]; then',
+    'mv -f -- "$gh_auth_stage_dir/config.yml" "$gh_cli_config_path"',
+    'rm -rf -- "$gh_auth_stage_dir"',
+    'github_bootstrap_ready=true',
+  ])
+  forbidTerms(failures, productionPaths.githubBootstrap, files.githubBootstrap, [
+    'rmdir -- "$gh_auth_stage_dir"',
+    'curl ',
+    'wget ',
+    ':latest',
+  ])
+  requireTerms(failures, productionPaths.terminalProfile, files.terminalProfile, [`export PATH='${terminalPath}'`])
+  requireTerms(failures, productionPaths.workspaceAgents, files.workspaceAgents, [
+    'Kubernetes access is cluster-wide read-only.',
+    'Kubernetes Secrets and service-account token subresources are outside your authority.',
+    '/opt/data/workspace/tuslagch/lab',
+    'authenticated `tuslagch` GitHub identity',
+    'Never force-push or push directly to `main`',
+  ])
+  requireTerms(failures, productionPaths.workspaceTools, files.workspaceTools, [
+    '`kubectl` has cluster-wide read access to non-secret resources.',
+    'Writes, Kubernetes Secrets, exec, attach, copy, proxy, and',
+    '/opt/data/workspace/tuslagch/lab',
+    'GitHub CLI `2.96.0` and Git are authenticated as `tuslagch`',
+    'Node `24.11.1`, Bun/Bunx `1.4.0`, Go `1.25.5`',
+    '/opt/lab-toolchain/bin',
+  ])
+  requireTerms(failures, productionPaths.readme, files.readme, [
+    'digest-pinned Kubernetes 1.35 `kubectl` binary',
+    'only `get`, `list`, and `watch`',
+    '`tuslagch` GitHub OAuth token is committed only as a namespace-scoped SealedSecret ciphertext',
+    'intentionally strips `GH_TOKEN` and `GITHUB_TOKEN` from model-authored terminal',
+    '`hermes.proompteng.ai/github-auth-revision` annotation',
+    'GitHub CLI `2.96.0`',
+    'per-Pod `emptyDir`',
+    'bounded retries for transient pod-network startup races',
+    '/etc/profile.d/hermes-tools.sh',
+    githubCliArchiveSha256,
+    'dedicated multi-architecture Nix OCI image is pinned by index digest',
+    'Kargo-managed StatefulSet reference',
+    'kargo/hermes-toolchain',
+    'There is no digest bump PR, release PR, manual SHA edit, or manual Argo sync.',
+    'Bootstrap fails closed unless every tool reports the repository-pinned version.',
+  ])
+  forbidPattern(
+    failures,
+    productionPaths.readme,
+    files.readme,
+    hermesToolchainConcreteReferencePattern,
+    'a concrete Hermes toolchain digest',
+  )
+  forbidPattern(
+    failures,
+    productionPaths.runbook,
+    files.runbook,
+    hermesToolchainConcreteReferencePattern,
+    'a concrete Hermes toolchain digest',
+  )
+
+  const expectedToolchainPackages = `tools = [
+    nodejs
+    bun
+    go
+    helm
+    kustomize
+    kubeconform
+    shellcheck
+    pkgs.jq
+    yq
+  ];`
+  requireTerms(failures, productionPaths.toolchainImage, files.toolchainImage, [
+    expectedToolchainPackages,
+    'name = "registry.ide-newton.ts.net/lab/hermes-toolchain";',
+    'created = "1970-01-01T00:00:01Z";',
+    'User = "10000:10000";',
+    '"proompteng.ai/toolchain.node" = lib.getVersion nodejs;',
+    '"proompteng.ai/toolchain.bun" = lib.getVersion bun;',
+    '"proompteng.ai/toolchain.go" = lib.getVersion go;',
+  ])
+  forbidTerms(failures, productionPaths.toolchainImage, files.toolchainImage, [
+    'pkgs.nix',
+    '    pkgs.docker-client\n',
+    '    pkgs.docker\n',
+    'pkgs.skopeo',
+    'pkgs.regclient',
+    'pkgs.gh',
+    'kubectl',
+    'argocd',
+    'opentofu',
+    'terraform',
+  ])
+  requireTerms(failures, productionPaths.toolchainBuildWorkflow, files.toolchainBuildWorkflow, [
+    'name: hermes-toolchain-build-push',
+    'image_name: hermes-toolchain',
+    'package_attr: hermes-toolchain-image',
+    'hermes-toolchain-release-contract',
+  ])
+  const operationDeadlines = {
+    migrationDryRun: 600,
+    migrationApply: 600,
+    restore: 900,
+  } as const
+  for (const path of Object.keys(operationDeadlines) as (keyof typeof operationDeadlines)[]) {
+    const content = files[path]
+    if (count(content, `image: ${hermesImage}`) !== 1) {
+      failures.push(`${productionPaths[path]}: operation must use the immutable mirrored Hermes digest`)
+    }
+    requireTerms(failures, productionPaths[path], content, [
+      'automountServiceAccountToken: false',
+      'kubernetes.io/arch: amd64',
+      'runAsUser: 10000',
+      'readOnlyRootFilesystem: true',
+      'backoffLimit: 0',
+      `activeDeadlineSeconds: ${operationDeadlines[path]}`,
+    ])
+    forbidTerms(failures, productionPaths[path], content, ['--migrate-secrets', 'kind: Secret', ':latest'])
+  }
+  if (count(files.restoreStage, `image: ${hermesImage}`) !== 1) {
+    failures.push(`${productionPaths.restoreStage}: restore staging must use the immutable mirrored Hermes digest`)
+  }
+  requireTerms(failures, productionPaths.restoreStage, files.restoreStage, [
+    'automountServiceAccountToken: false',
+    'kubernetes.io/arch: amd64',
+    'runAsUser: 10000',
+    'readOnlyRootFilesystem: true',
+    'claimName: backups-hermes-0',
+    'activeDeadlineSeconds: 3900',
+  ])
+  forbidTerms(failures, productionPaths.restoreStage, files.restoreStage, ['kind: Secret', ':latest'])
+  requireTerms(failures, productionPaths.migrationDryRun, files.migrationDryRun, [
+    '--source /opt/data/migration/source',
+    '--preset user-data',
+    '--dry-run',
+    "grep -Fqx 'directory not found: /opt/data/migration/source'",
+    '*"Secrets:     no"*) ;;',
+    'migration preview contains a conflict or refusal',
+    'migration_preview_verified=true conflicts=0 secrets=false',
+    'name: hermes-operation-config',
+    'mountPath: /opt/data/config.yaml',
+    'subPath: config.yaml',
+  ])
+  requireTerms(failures, productionPaths.migrationApply, files.migrationApply, [
+    '--source /opt/data/migration/source',
+    '--preset user-data',
+    '--yes',
+    "grep -Fqx 'directory not found: /opt/data/migration/source'",
+    '*"Secrets:     no"*) ;;',
+    'migration apply did not prove that secret migration is disabled',
+    'operator_digests_before=$(sha256sum $operator_files)',
+    "report.get('source_root') != '/opt/data/migration/source'",
+    "report.get('migrate_secrets') not in {False, '[redacted]'}",
+    "summary.get('conflict', 0) != 0 or summary.get('error', 0) != 0",
+    "{'secret-settings', 'provider-keys'} & selected",
+    "expected_char_limits = {'user-profile': 2200, 'daily-memory': 4400}",
+    'for kind, expected_char_limit in expected_char_limits.items():',
+    "item.get('details', {}).get('char_limit') != expected_char_limit",
+    "for kind in ('soul', 'workspace-agents'):",
+    "for kind in ('secret-settings', 'provider-keys', 'discord-settings', 'slack-settings'):",
+    "pathlib.Path('/opt/data/backups').glob('pre-migration-*.zip')",
+    'migration_report_verified=true',
+    'operator_owned_identity_unchanged=true secrets=false',
+    'name: hermes-operation-config',
+    'mountPath: /opt/data/config.yaml',
+    'subPath: config.yaml',
+    'mountPath: /opt/data/SOUL.md',
+    'mountPath: /opt/data/IDENTITY.md',
+    'mountPath: /opt/data/TOOLS.md',
+    'mountPath: /opt/data/HEARTBEAT.md',
+    'mountPath: /opt/data/workspace/tuslagch/AGENTS.md',
+    'name: hermes-bootstrap',
+  ])
+  forbidTerms(failures, productionPaths.migrationDryRun, files.migrationDryRun, ['--overwrite'])
+  forbidTerms(failures, productionPaths.migrationApply, files.migrationApply, ['--overwrite'])
+  requireTerms(failures, productionPaths.migrationAudit, files.migrationAudit, [
+    "allowedWorkspaceFiles = new Set(['MEMORY.md', 'USER.md'])",
+    "allowedWorkspaceDirectories = new Set(['memory', 'skills'])",
+    "requiredMigrationPaths = new Set(['workspace/USER.md', 'workspace/memory'])",
+    'source root must be a real directory',
+    'source contains no approved files',
+    'requiredMigrationPaths',
+    'required migration path is missing',
+    'symbolic links are forbidden',
+    'only regular files and directories are allowed',
+    "new TextDecoder('utf-8', { fatal: true })",
+    'binary content is forbidden',
+    'credentialPatterns',
+    'opaqueTokenPattern',
+    'shannonEntropy(candidate) >= 3.5',
+    "reason: 'opaque high-entropy value'",
+    'isCredentialLikePathComponent',
+    "'[redacted-credential-component]'",
+    "return 'credential-like path component is forbidden'",
+    'migration source audit failed',
+    '${issue.path}: ${issue.reason}',
+  ])
+  requireTerms(failures, productionPaths.networkPolicyProbe, files.networkPolicyProbe, [
+    'set -euo pipefail',
+    `readonly hermes_image='${hermesImage}'`,
+    'probe_namespace="hermes-network-policy-probe-$(openssl rand -hex 4)"',
+    'readonly probe_namespace',
+    'probe_namespace_created=false',
+    'cleanup_probe() {',
+    'if [[ "$probe_namespace_created" == true ]]',
+    'trap cleanup_probe EXIT',
+    'trap abort_probe HUP INT TERM',
+    'kubectl -n default create namespace "$probe_namespace"',
+    'kubectl -n default delete namespace "$probe_namespace" --ignore-not-found --wait=true --timeout=5m',
+    'pod-security.kubernetes.io/enforce=restricted',
+    'kind: NetworkPolicy',
+    'name: deny-client-egress',
+    'egress: []',
+    'baseline_reachable=false',
+    'policy_enforced=false',
+    'except urllib.error.HTTPError:',
+    'except (TimeoutError, OSError, urllib.error.URLError):',
+    'raise SystemExit(42)',
+    'raise SystemExit(43)',
+    'verify_probe_health() {',
+    'urllib.request.urlopen("http://127.0.0.1:8080/", timeout=2).read(1)',
+    'if [[ "$request_status" -eq 42 ]]',
+    'delete networkpolicy deny-client-egress --wait=true --timeout=1m',
+    'policy_released=false',
+    'if [[ "$policy_released" != true ]]',
+    "echo 'NetworkPolicy removal did not restore baseline connectivity; do not sync Hermes' >&2",
+    "echo 'NetworkPolicy is not enforced; do not sync Hermes' >&2",
+    "printf 'network_policy_enforced=true\\n'",
+  ])
+  for (const term of [
+    'activeDeadlineSeconds: 600',
+    'automountServiceAccountToken: false',
+    'kubernetes.io/arch: amd64',
+    'readOnlyRootFilesystem: true',
+    'requiredDuringSchedulingIgnoredDuringExecution:',
+  ]) {
+    if (count(files.networkPolicyProbe, term) !== 2) {
+      failures.push(`${productionPaths.networkPolicyProbe}: both probe Pods must enforce ${JSON.stringify(term)}`)
+    }
+  }
+  forbidTerms(failures, productionPaths.networkPolicyProbe, files.networkPolicyProbe, [
+    ':latest',
+    'privileged: true',
+    'hostNetwork: true',
+    'serviceAccountName:',
+    'if ! probe_request',
+  ])
+  const probeBaselineIndex = files.networkPolicyProbe.indexOf('if [[ "$baseline_reachable" != true ]]')
+  const probePolicyIndex = files.networkPolicyProbe.indexOf('name: deny-client-egress')
+  const probeEnforcementIndex = files.networkPolicyProbe.indexOf('if [[ "$policy_enforced" != true ]]')
+  const probeReleaseIndex = files.networkPolicyProbe.indexOf('if [[ "$policy_released" != true ]]')
+  if (
+    probeBaselineIndex < 0 ||
+    probePolicyIndex <= probeBaselineIndex ||
+    probeEnforcementIndex <= probePolicyIndex ||
+    probeReleaseIndex <= probeEnforcementIndex
+  ) {
+    failures.push(
+      `${productionPaths.networkPolicyProbe}: baseline connectivity must pass before the deny policy is tested`,
+    )
+  }
+  const probeHttpErrorIndex = files.networkPolicyProbe.indexOf('except urllib.error.HTTPError:')
+  const probeNetworkErrorIndex = files.networkPolicyProbe.indexOf(
+    'except (TimeoutError, OSError, urllib.error.URLError):',
+  )
+  if (probeHttpErrorIndex < 0 || probeNetworkErrorIndex <= probeHttpErrorIndex) {
+    failures.push(`${productionPaths.networkPolicyProbe}: HTTP responses must not count as policy denials`)
+  }
+  requireTerms(failures, productionPaths.maintenanceWait, files.maintenanceWait, [
+    'set -euo pipefail',
+    'readonly namespace=hermes',
+    'app.kubernetes.io/component in (migration,restore)',
+    'readonly restore_stage_pod=hermes-restore-stage',
+    '--cleanup-restore-stage',
+    'HERMES_MAINTENANCE_WAIT_TIMEOUT_SECONDS',
+    'kubectl -n "$namespace" get jobs -l "$selector" -o json',
+    '.type == "Complete" or .type == "Failed"',
+    'active Hermes migration or restore Job did not terminate',
+    'Hermes restore staging Pod exists; retry restore with --cleanup-restore-stage',
+    'delete pod "$restore_stage_pod" --wait=true --timeout=10m',
+  ])
+  requireTerms(failures, productionPaths.maintenanceLock, files.maintenanceLock, [
+    'set -euo pipefail',
+    'readonly lease=hermes-maintenance',
+    '^(acquire|release|recover)$',
+    'ensure_lease() {',
+    'kubectl -n "$namespace" create -f -',
+    'app.kubernetes.io/component: maintenance',
+    'holderIdentity: ""',
+    'leaseDurationSeconds: 14400',
+    '    ensure_lease',
+    'date -u +%Y-%m-%dT%H:%M:%S.000000Z',
+    '{op: "test", path: "/spec/holderIdentity", value: $expected}',
+    '{op: "replace", path: "/spec/holderIdentity", value: $replacement}',
+    'patch lease "$lease" --type=json',
+    'refusing to release a Hermes maintenance Lease held by another operator',
+    'wait-for-maintenance.sh',
+  ])
+
+  const openClawApplication = files.platform.match(/\n\s+- name: openclaw\n[\s\S]*?\n\s+- name: hermes\n/)?.[0] ?? ''
+  requireTerms(failures, productionPaths.platform, openClawApplication, [
+    'path: argocd/applications/openclaw',
+    'namespace: openclaw',
+    'automation: manual',
+  ])
+
+  const hermesApplication = files.platform.match(/\n\s+- name: hermes\n[\s\S]*?\n\s+- name: workers\n/)?.[0] ?? ''
+  requireTerms(failures, productionPaths.platform, hermesApplication, [
+    'path: argocd/applications/hermes',
+    'namespace: hermes',
+    'automation: manual',
+    'group: apps',
+    'kind: StatefulSet',
+    'name: hermes',
+    '- .spec.volumeClaimTemplates[].apiVersion',
+    '- .spec.volumeClaimTemplates[].kind',
+    '- .spec.volumeClaimTemplates[].spec.volumeMode',
+    '- .spec.volumeClaimTemplates[].status',
+    'external-secrets.proompteng.ai/enabled: "true"',
+    'observability.proompteng.ai/hermes-rollout-enabled: "true"',
+    'pod-security.kubernetes.io/enforce: restricted',
+    'argocd.argoproj.io/sync-options: Prune=false',
+  ])
+  forbidTerms(failures, productionPaths.platform, hermesApplication, [
+    'group: coordination.k8s.io',
+    'kind: Lease',
+    'name: hermes-maintenance',
+    '- .spec.volumeClaimTemplates\n',
+  ])
+
+  requireTerms(failures, productionPaths.runbook, files.runbook, [
+    'Never run OpenClaw and Hermes with the same Discord token at the same time.',
+    'Never pass `--migrate-secrets`',
+    'Never run `hermes claw cleanup`',
+    'Never create a migration or restore Job until every earlier Hermes maintenance Job is terminal.',
+    'Never enable Hermes Discord until a final audited migration is applied after the OpenClaw gateway is inactive.',
+    'Never sync Hermes until the disposable NetworkPolicy enforcement probe passes on the live cluster.',
+    'Never store or print the API key, Exa API key, or Discord token',
+    'kubectl -n hermes get namespace hermes -o json',
+    'Argo CD globally excludes Kubernetes Lease objects',
+    "stale_maintenance_holder=$(kubectl -n hermes get lease hermes-maintenance -o jsonpath='{.spec.holderIdentity}')",
+    'maintenance-lock.sh recover "$stale_maintenance_holder"',
+    'A standalone Job does not update the CronJob',
+    '## API key rotation',
+    'Every API key rotation must restart `hermes-0`',
+    'Every Exa API key rotation must restart `hermes-0`',
+    '## Exa API key rotation',
+    'previous_secret_version=',
+    'Authorization: Bearer $old_api_key',
+    'Authorization: Bearer $new_api_key',
+    'previous_exa_secret_version=',
+    'kubectl -n hermes annotate externalsecret hermes-exa-auth force-sync=',
+    'exa_rotation_native_web_canary=ok',
+    'exa_rotation_mcp_canary=ok tools=2',
+    'OpenClaw VM/PVC identities',
+    'single-writer Discord message lifecycle IDs',
+    'bun run scripts/hermes/audit-migration-source.ts "$hermes_stage_dir/openclaw"',
+    '`AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `TOOLS.md`, and `HEARTBEAT.md` remain GitOps-owned',
+    'An audit failure blocks migration:',
+    'redact or remove only the',
+    'flagged material in `$hermes_stage_dir`',
+    'Never weaken or bypass the patterns.',
+    '.metadata.labels["observability.proompteng.ai/hermes-rollout-enabled"] == "true"',
+    'kubectl -n hermes delete "$dry_run_job" --wait=true',
+    'kubectl -n hermes delete "$migration_job" --wait=true',
+    'kubectl -n hermes delete "$restore_job" --wait=true',
+    'for path in USER.md memory; do test -r "$path"; done',
+    'vm/openclaw </dev/null | tar -xzf -',
+    'migration_preview_verified=true conflicts=0 secrets=false',
+    'migration_report_verified=true conflicts=0 errors=0',
+    'operator_owned_identity_unchanged=true secrets=false',
+    'The CronJob must remain suspended until every prior backup',
+    'if kubectl -n hermes exec hermes-0 -c hermes -- /opt/hermes/.venv/bin/python -c',
+    'direct public egress unexpectedly succeeded',
+    'native_web_canary=ok search_results={len(results)} extracted_pages={len(pages)}',
+    'exa_mcp_canary=ok tools=2',
+    'git ls-remote --exit-code https://github.com/proompteng/lab.git refs/heads/main',
+    'opener.open("https://169.254.169.254", timeout=5)',
+    '*"403 Forbidden"*)',
+    'private destination did not receive Squid denial',
+    'test "$(kubectl auth can-i list pods --all-namespaces)" = yes',
+    'test "$(kubectl auth can-i get secrets --all-namespaces || true)" = no',
+    'test "$(kubectl auth can-i create deployments.apps --all-namespaces || true)" = no',
+    'test "$(pwd -P)" = /opt/data/workspace/tuslagch/lab',
+    'test "$(git rev-parse --show-toplevel)" = /opt/data/workspace/tuslagch/lab',
+    'test "$(command -v node)" = /opt/lab-toolchain/bin/node',
+    'test "$(command -v bun)" = /opt/lab-toolchain/bin/bun',
+    'test "$(command -v go)" = /opt/lab-toolchain/bin/go',
+    'test "$(node --version)" = v24.11.1',
+    'test "$(bun --version)" = 1.4.0',
+    'test "$(go version)" = "go version go1.25.5 linux/amd64"',
+    'bun run scripts/hermes/validate-production.ts',
+    'shellcheck argocd/applications/hermes/*.sh',
+    'kustomize build --enable-helm argocd/applications/hermes >/tmp/hermes-toolchain-render.yaml',
+    'kubeconform -strict -summary -ignore-missing-schemas /tmp/hermes-toolchain-render.yaml',
+    'go test ./services/prt -run "^$"',
+    'test "$(git status --short)" = "$workspace_status_before"',
+    'hermes_lab_toolchain_ready=true checkout=%s',
+    '! kubectl -n hermes get secret hermes-api-auth',
+    '! kubectl -n hermes create configmap hermes-readonly-proof',
+    'git -C /opt/data/workspace/tuslagch/lab remote get-url origin',
+    'cat /opt/data/workspace/tuslagch/.lab-source-revision',
+    'git -C /opt/data/workspace/tuslagch/lab cat-file -e HEAD:AGENTS.md',
+    'kubectl -n hermes exec hermes-0 -c hermes -- /usr/bin/bash -lc \'\n     set -eu\n     test "$(command -v gh)" = /opt/tools/gh',
+    'test "$(command -v gh)" = /opt/tools/gh',
+    'gh --version | grep -F "gh version 2.96.0"',
+    'test "$(env -u GH_TOKEN -u GITHUB_TOKEN gh api user --jq .login)" = tuslagch',
+    'test "$(env -u GH_TOKEN -u GITHUB_TOKEN gh repo view proompteng/lab --json viewerPermission --jq .viewerPermission)" = ADMIN',
+    'git config --global --get-all credential.https://github.com.helper',
+    '! grep -Eq "gh[opsu]_[A-Za-z0-9]+" /opt/data/home/.gitconfig',
+    'test -r /opt/github-auth/hosts.yml',
+    'test -r /opt/github-auth/config.yml',
+    'test "$(stat -c %a /opt/github-auth/hosts.yml)" = 600',
+    'test "$(stat -c %a /opt/github-auth/config.yml)" = 600',
+    'test ! -e /opt/data/home/.config/gh/hosts.yml',
+    'git push --dry-run origin HEAD:refs/heads/codex/hermes-github-auth-proof',
+    'gateway service-account identity, allowed cluster-wide reads, rejected Secret reads and writes, and the lab checkout SHA',
+    "'rm -rf -- /opt/data/migration/source && mkdir -p /opt/data/migration/source'",
+    "find /opt/backups -maxdepth 1 -type f -name 'hermes-backup-*.zip' -print",
+    'test "$sidecar_archive" = "$archive_name"',
+    'test "$sidecar_archive" = "$archive"',
+    'printf "%s  %s\\n" "$expected_digest" "$archive_path" | sha256sum -c -',
+    'printf "%s  %s\\n" "$expected_digest" "$archive" | sha256sum -c -',
+  ])
+  const releaseEvidenceSection = files.runbook.match(/## Release evidence[\s\S]*?## Phase 0:/)?.[0] ?? ''
+  requireTerms(failures, productionPaths.runbook, releaseEvidenceSection, [
+    'set -euo pipefail',
+    'git fetch --quiet origin main',
+    'git fetch --quiet origin kargo/hermes-toolchain',
+    'main_revision=$(git rev-parse origin/main)',
+    'kargo_revision=$(git rev-parse origin/kargo/hermes-toolchain)',
+    'test "$(git rev-parse origin/kargo/hermes-toolchain)" = "$kargo_revision"',
+    'test "$upstream_digest" = sha256:9c841866021c54c4596849f6135717e8a4d52ba510b7f52c50aef1de1a283973',
+    'test "$mirror_digest" = sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a',
+    'toolchain_ref=$(git show "origin/kargo/hermes-toolchain:argocd/applications/hermes/statefulset.yaml" |',
+    'test -n "$toolchain_ref"',
+    'test "$toolchain_digest" = "${toolchain_ref##*@}"',
+    'test "$toolchain_platforms" = linux/amd64,linux/arm64',
+    '.config.Labels["proompteng.ai/toolchain.node"] == "24.11.1"',
+    '.config.Labels["proompteng.ai/toolchain.yq"] == "4.49.2"',
+    'argocd app get hermes --refresh >/dev/null',
+    "hermes_revision=$(kubectl -n argocd get application hermes -o jsonpath='{.status.sync.revision}')",
+    'test "$hermes_revision" = "$kargo_revision"',
+  ])
+  const phaseZeroSection = files.runbook.match(/## Phase 0:[\s\S]*?## Phase 1:/)?.[0] ?? ''
+  requireTerms(failures, productionPaths.runbook, phaseZeroSection, [
+    'bash scripts/hermes/verify-network-policy-enforcement.sh',
+    '`NetworkPolicy is not enforced` is a hard rollout blocker.',
+    'unset hermes_api_key hermes_item_count hermes_item_id api_key_bytes exa_key_bytes',
+    'trap cleanup_api_key EXIT',
+    'hermes_item_count=$(op item list --vault infra --format json',
+    '[.[] | select(.title == "hermes-runtime")] | length',
+    'multiple hermes-runtime items found; reconcile them before continuing',
+    "op item template get 'Secure Note'",
+    'jq --rawfile api_server_key <(printf \'%s\' "$hermes_api_key")',
+    'op item create --vault infra -',
+    'hermes_item_id=$(op item list --vault infra --format json',
+    'if length == 1 then .[0] else error("exactly one hermes-runtime item is required") end',
+    'op item get --vault infra "$hermes_item_id" --format json',
+    'else error("exactly one concealed API_SERVER_KEY field is required")',
+    'else error("exactly one concealed EXA_API_KEY field is required")',
+    'test "$api_key_bytes" -ge 32',
+    'test "$exa_key_bytes" -ge 32',
+    'kubectl -n hermes wait externalsecret/hermes-exa-auth --for=condition=Ready --timeout=5m',
+    'test "$exa_secret_keys" = EXA_API_KEY',
+    'printf \'api_key_bytes=%s exa_key_bytes=%s\\n\' "$api_key_bytes" "$exa_key_bytes"',
+    "hermes_deployed_revision=$(kubectl -n argocd get application hermes -o json | jq -r '.status.history[-1].revision // empty')",
+    'test "$hermes_deployed_revision" = "$(git rev-parse HEAD)"',
+  ])
+  const networkPolicyProbeIndex = phaseZeroSection.indexOf('bash scripts/hermes/verify-network-policy-enforcement.sh')
+  const initialHermesSyncIndex = phaseZeroSection.indexOf('argocd app sync hermes --prune=false')
+  if (networkPolicyProbeIndex < 0 || initialHermesSyncIndex <= networkPolicyProbeIndex) {
+    failures.push(`${productionPaths.runbook}: NetworkPolicy enforcement must be proven before the first Hermes sync`)
+  }
+  if (count(phaseZeroSection, 'set -euo pipefail') !== 2) {
+    failures.push(`${productionPaths.runbook}: secret creation and bridge verification must both fail closed`)
+  }
+  if (count(phaseZeroSection, 'test "$api_key_bytes" -ge 32') !== 2) {
+    failures.push(`${productionPaths.runbook}: 1Password and bridged API keys must both enforce the minimum length`)
+  }
+  if (count(phaseZeroSection, 'test "$exa_key_bytes" -ge 32') !== 2) {
+    failures.push(`${productionPaths.runbook}: 1Password and bridged Exa keys must both enforce the minimum length`)
+  }
+  const rotationSection = files.runbook.match(/## API key rotation[\s\S]*?## Exa API key rotation/)?.[0] ?? ''
+  requireTerms(failures, productionPaths.runbook, rotationSection, [
+    'set -euo pipefail',
+    'trap cleanup_rotation EXIT',
+    'jq --rawfile api_server_key <(printf \'%s\' "$new_api_key")',
+    'error("exactly one API_SERVER_KEY field is required")',
+    'op item edit --vault infra hermes-runtime',
+    'kubectl -n hermes delete pod hermes-0',
+    'kubectl -n hermes rollout status statefulset/hermes --timeout=15m',
+    'rotation_port_forward_log=$(mktemp)',
+    'kubectl -n hermes port-forward service/hermes 18642:8642',
+    'test "$rotation_listener_ready" = true',
+    'test "$(curl -sS -o /dev/null -w \'%{http_code}\' -H "Authorization: Bearer $old_api_key"',
+    'curl -fsS -H "Authorization: Bearer $new_api_key"',
+    'cleanup_rotation',
+  ])
+  const exaRotationSection =
+    files.runbook.match(/## Exa API key rotation[\s\S]*?## Maintenance lock recovery/)?.[0] ?? ''
+  requireTerms(failures, productionPaths.runbook, exaRotationSection, [
+    'set -euo pipefail',
+    'trap cleanup_exa_rotation EXIT',
+    'previous_exa_secret_version=',
+    'kubectl -n hermes annotate externalsecret hermes-exa-auth force-sync=',
+    'kubectl -n hermes delete pod hermes-0',
+    'kubectl -n hermes rollout status statefulset/hermes --timeout=15m',
+    'exa_rotation_native_web_canary=ok',
+    'exa_rotation_mcp_canary=ok tools=2',
+    'cleanup_exa_rotation',
+  ])
+  forbidTerms(failures, productionPaths.runbook, files.runbook, [
+    '--ignore-failed-read',
+    'API_SERVER_KEY[password]=',
+    'DISCORD_BOT_TOKEN[password]=',
+    'DISCORD_ALLOWED_USERS[text]=',
+    'kubectl -n hermes exec hermes-0 -c hermes -- mkdir -p /opt/data/migration/openclaw',
+    'for path in AGENTS.md SOUL.md IDENTITY.md USER.md TOOLS.md HEARTBEAT.md memory',
+    "'rm -rf -- /opt/data/migration/openclaw && mkdir -p /opt/data/migration/openclaw'",
+    'vm/openclaw | tar -xzf -',
+    'kubectl -n hermes exec hermes-restore-stage -c stage -- ls -1 /opt/backups/hermes-backup-*.zip',
+  ])
+  const suspendBackupCommand =
+    'kubectl -n hermes patch cronjob hermes-backup --type=merge -p \'{"spec":{"suspend":true}}\''
+  if (count(files.runbook, suspendBackupCommand) !== 3) {
+    failures.push(`${productionPaths.runbook}: canary, migration, and restore must suspend the backup CronJob`)
+  }
+  const activeBackupSelector =
+    'kubectl -n hermes get jobs -l app.kubernetes.io/name=hermes,app.kubernetes.io/component=backup'
+  if (count(files.runbook, `while [ "$(${activeBackupSelector}`) !== 3) {
+    failures.push(`${productionPaths.runbook}: canary, migration, and restore must wait for active backup Jobs`)
+  }
+  const migrationSection = files.runbook.match(/## Phase 2:[\s\S]*?## Phase 3:/)?.[0] ?? ''
+  if (
+    migrationSection.indexOf(suspendBackupCommand) > migrationSection.indexOf('rm -rf -- /opt/data/migration/source')
+  ) {
+    failures.push(`${productionPaths.runbook}: migration must quiesce backups before replacing the staging tree`)
+  }
+  const maintenanceWaitCommand = 'bash scripts/hermes/wait-for-maintenance.sh'
+  const maintenanceAcquireCommand = 'bash scripts/hermes/maintenance-lock.sh acquire "$maintenance_holder"'
+  const maintenanceOwnershipAssertion =
+    'test "$(kubectl -n hermes get lease hermes-maintenance -o jsonpath=\'{.spec.holderIdentity}\')" = "$maintenance_holder"'
+  const restoreStageCleanupCommand = `${maintenanceWaitCommand} --cleanup-restore-stage`
+  const phaseOneSection = files.runbook.match(/## Phase 1:[\s\S]*?## API key rotation/)?.[0] ?? ''
+  const restoreSection = files.runbook.match(/### Restore Hermes data[\s\S]*?## Completion evidence/)?.[0] ?? ''
+  if (count(migrationSection, maintenanceWaitCommand) !== 3 || count(restoreSection, maintenanceWaitCommand) !== 3) {
+    failures.push(`${productionPaths.runbook}: every migration and restore operation must wait for maintenance Jobs`)
+  }
+  if (
+    count(phaseOneSection, maintenanceAcquireCommand) !== 1 ||
+    count(migrationSection, maintenanceAcquireCommand) !== 1 ||
+    count(restoreSection, maintenanceAcquireCommand) !== 1
+  ) {
+    failures.push(`${productionPaths.runbook}: every maintenance operation must acquire the atomic Lease`)
+  }
+  if (
+    count(phaseOneSection, 'trap release_maintenance_lock EXIT') !== 1 ||
+    count(migrationSection, 'trap release_maintenance_lock EXIT') !== 1 ||
+    count(restoreSection, 'trap release_maintenance_lock EXIT') !== 1 ||
+    count(phaseOneSection, 'abort_maintenance()') !== 1 ||
+    count(migrationSection, 'abort_maintenance()') !== 1 ||
+    count(restoreSection, 'abort_maintenance()') !== 1
+  ) {
+    failures.push(`${productionPaths.runbook}: every maintenance Lease must release on exit and signals`)
+  }
+  const initialBackupCreateIndex = phaseOneSection.indexOf(
+    'kubectl -n hermes create job --from=cronjob/hermes-backup "$initial_backup_job"',
+  )
+  const initialBackupAcquireIndex = phaseOneSection.indexOf(maintenanceAcquireCommand)
+  const initialBackupWaitIndex = phaseOneSection.indexOf(maintenanceWaitCommand)
+  const initialBackupReleaseIndex = phaseOneSection.lastIndexOf('\n   release_maintenance_lock\n')
+  if (
+    count(phaseOneSection, '\n   release_maintenance_lock\n') !== 1 ||
+    initialBackupAcquireIndex < 0 ||
+    initialBackupWaitIndex <= initialBackupAcquireIndex ||
+    initialBackupCreateIndex <= initialBackupWaitIndex ||
+    initialBackupReleaseIndex <= initialBackupCreateIndex
+  ) {
+    failures.push(`${productionPaths.runbook}: the one-off canary backup must hold the maintenance Lease`)
+  }
+  const migrationAcquireIndex = migrationSection.indexOf(maintenanceAcquireCommand)
+  const migrationDryRunIndex = migrationSection.indexOf('migration-dry-run-job.yaml')
+  const migrationApplyIndex = migrationSection.indexOf('migration-apply-job.yaml')
+  const migrationSyncIndex = migrationSection.indexOf('argocd app sync hermes --prune=false')
+  const migrationReleaseIndex = migrationSection.lastIndexOf('\n   release_maintenance_lock\n')
+  if (
+    count(migrationSection, maintenanceOwnershipAssertion) !== 3 ||
+    count(migrationSection, '\n   release_maintenance_lock\n') !== 1 ||
+    migrationAcquireIndex < 0 ||
+    migrationDryRunIndex <= migrationAcquireIndex ||
+    migrationApplyIndex <= migrationDryRunIndex ||
+    migrationSyncIndex <= migrationApplyIndex ||
+    migrationReleaseIndex <= migrationSyncIndex
+  ) {
+    failures.push(`${productionPaths.runbook}: migration must hold one Lease from staging through apply`)
+  }
+  for (const [section, createCommand] of [
+    [migrationSection, 'migration-dry-run-job.yaml'],
+    [migrationSection, 'migration-apply-job.yaml'],
+    [restoreSection, 'restore-job.yaml'],
+  ] as const) {
+    const createIndex = section.indexOf(createCommand)
+    if (createIndex < 0 || section.lastIndexOf(maintenanceWaitCommand, createIndex) < 0) {
+      failures.push(`${productionPaths.runbook}: ${createCommand} must be preceded by the maintenance Job wait`)
+    }
+  }
+  const restoreStageCreateIndex = restoreSection.indexOf('restore-stage-pod.yaml')
+  if (
+    restoreStageCreateIndex < 0 ||
+    restoreSection.lastIndexOf(restoreStageCleanupCommand, restoreStageCreateIndex) < 0 ||
+    !restoreSection.includes(
+      `${restoreStageCleanupCommand}\nkubectl -n hermes create -f argocd/applications/hermes/operations/restore-stage-pod.yaml`,
+    )
+  ) {
+    failures.push(`${productionPaths.runbook}: restore staging must clean up a stale staging Pod before create`)
+  }
+  const idempotentHermesStop = 'hermes_pod_name=$(kubectl -n hermes get pod hermes-0 --ignore-not-found -o name)'
+  if (
+    count(migrationSection, idempotentHermesStop) !== 1 ||
+    count(restoreSection, idempotentHermesStop) !== 1 ||
+    files.runbook.includes('kubectl -n hermes wait pod/hermes-0 --for=delete')
+  ) {
+    failures.push(
+      `${productionPaths.runbook}: migration and restore must treat an already-absent Hermes gateway as stopped`,
+    )
+  }
+  const cutoverSection = files.runbook.match(/## Phase 3:[\s\S]*?## Rollback/)?.[0] ?? ''
+  requireTerms(failures, productionPaths.runbook, cutoverSection, [
+    'cleanup_discord_credentials() {',
+    'trap cleanup_discord_credentials EXIT',
+    'kubeseal --raw --from-file=/dev/stdin',
+    '--namespace hermes --name hermes-discord-auth --scope strict',
+    'argocd/applications/hermes/discord-sealed-secret.yaml',
+    'kubeseal --validate --controller-name sealed-secrets --controller-namespace sealed-secrets',
+    '--resource bitnami.com:SealedSecret:hermes-discord-auth',
+    'wait sealedsecret/hermes-discord-auth --for=condition=Synced',
+    '.channels.discord.token | select(type == "string" and length >= 20)',
+    '.channels.discord.allowFrom[]?',
+    '.channels.discord.guilds[]?.users[]?',
+    'numeric Discord allowlist required',
+    'test "${#discord_bot_token}" -ge 20',
+    'case "$discord_allowed_users" in ""|,*|*,|*,,*|*[!0-9,]*) exit 1 ;; esac',
+    'test "$sealed_discord_bot_token" = "$discord_bot_token"',
+    'test "$sealed_discord_allowed_users" = "$discord_allowed_users"',
+    'test "$hermes_discord_ref_count" = 0',
+    'test "$(systemctl --user show openclaw-gateway.service --property=KillMode --value)" = control-group',
+    'systemctl --user stop openclaw-gateway.service',
+    'test "$(systemctl --user is-active openclaw-gateway.service || true)" = inactive',
+    'test "$(systemctl --user show openclaw-gateway.service --property=MainPID --value)" = 0',
+    'repeat Phase 2 steps 1 through 4 from a fresh',
+    '`hermes_stage_dir`',
+    'Do not reuse the earlier archive.',
+    'do not run Phase 2 step 5 because merged `main` now enables',
+    'Keep the same Phase 2 shell and Lease open through',
+    'cutover step 4.',
+    'openclaw_cluster_admin_binding=$(kubectl -n openclaw get clusterrolebinding openclaw-vm-cluster-admin --ignore-not-found -o name)',
+    'if [ -n "$openclaw_cluster_admin_binding" ]; then',
+    'argocd app sync openclaw --prune \\\n       --resource rbac.authorization.k8s.io:ClusterRoleBinding:openclaw-vm-cluster-admin',
+    'test -z "$openclaw_cluster_admin_binding"',
+    'openclaw_run_state=$(kubectl -n openclaw get virtualmachine openclaw -o json',
+    'if .spec.running == true and (.spec | has("runStrategy") | not) then "legacy-running"',
+    'elif .spec.runStrategy == "Always" and (.spec | has("running") | not) then "runstrategy-running"',
+    'elif .spec.runStrategy == "Halted" and (.spec | has("running") | not) then "halted"',
+    '-p=\'[{"op":"test","path":"/spec/running","value":true},{"op":"remove","path":"/spec/running"},{"op":"add","path":"/spec/runStrategy","value":"Halted"}]\'',
+    '-p=\'[{"op":"test","path":"/spec/runStrategy","value":"Always"},{"op":"replace","path":"/spec/runStrategy","value":"Halted"}]\'',
+    'OpenClaw VM has an unexpected run-state schema; refusing cutover',
+    'jq -e \'.spec.runStrategy == "Halted" and (.spec | has("running") | not)\'',
+    'argocd app sync openclaw --prune=false',
+    'openclaw_vmi_name=$(kubectl -n openclaw get virtualmachineinstance openclaw --ignore-not-found -o name)',
+    'cleanup_discord_credentials',
+    'Sync Hermes from merged `main` only after the OpenClaw VMI is gone',
+    'test "$api_secret_keys" = API_SERVER_KEY',
+    'test "$discord_secret_keys" = DISCORD_ALLOWED_USERS,DISCORD_BOT_TOKEN',
+    "rg -m1 '\\[discord\\] Connected as '",
+  ])
+  forbidTerms(failures, productionPaths.runbook, cutoverSection, [
+    'argocd app sync openclaw --prune=true',
+    'allow_all_users: true',
+    'pgrep -f "[o]penclaw.*gateway"',
+    'op item ',
+  ])
+  if (cutoverSection.includes('kubectl -n openclaw wait virtualmachineinstance/openclaw --for=delete')) {
+    failures.push(`${productionPaths.runbook}: cutover must treat an already-absent OpenClaw VMI as stopped`)
+  }
+  const sealedSecretStageIndex = cutoverSection.indexOf('--resource bitnami.com:SealedSecret:hermes-discord-auth')
+  const credentialCaptureIndex = cutoverSection.lastIndexOf('discord_bot_token=$(virtctl ssh')
+  const credentialMatchIndex = cutoverSection.indexOf('test "$sealed_discord_bot_token" = "$discord_bot_token"')
+  const noHermesDiscordRefIndex = cutoverSection.indexOf('test "$hermes_discord_ref_count" = 0')
+  const openClawGatewayStopIndex = cutoverSection.indexOf('systemctl --user stop openclaw-gateway.service')
+  const finalReconciliationIndex = cutoverSection.indexOf('repeat Phase 2 steps 1 through 4')
+  const clusterAdminPruneIndex = cutoverSection.indexOf('argocd app sync openclaw --prune \\')
+  const failClosedClusterAdminLookup =
+    'openclaw_cluster_admin_binding=$(kubectl -n openclaw get clusterrolebinding openclaw-vm-cluster-admin --ignore-not-found -o name)'
+  if (count(cutoverSection, failClosedClusterAdminLookup) !== 2) {
+    failures.push(`${productionPaths.runbook}: cutover cluster-admin lookups must distinguish NotFound from API errors`)
+  }
+  const clusterAdminAbsentIndex = cutoverSection.indexOf('test -z "$openclaw_cluster_admin_binding"')
+  const openClawRunStrategyTransitionIndex = cutoverSection.indexOf(
+    'openclaw_run_state=$(kubectl -n openclaw get virtualmachine openclaw -o json',
+  )
+  const cutoverOpenClawSyncIndex = cutoverSection.indexOf('argocd app sync openclaw --prune=false')
+  const openClawVmiAbsentIndex = cutoverSection.indexOf('if [ -z "$openclaw_vmi_name" ]')
+  const credentialCleanupIndex = cutoverSection.indexOf('\n   cleanup_discord_credentials\n')
+  const cutoverHermesSyncIndex = cutoverSection.indexOf('\n   argocd app sync hermes --prune=false\n')
+  const discordConnectedIndex = cutoverSection.indexOf("rg -m1 '\\[discord\\] Connected as '")
+  const cutoverReleaseIndex = cutoverSection.lastIndexOf('\n   release_maintenance_lock\n')
+  if (
+    count(cutoverSection, maintenanceOwnershipAssertion) !== 2 ||
+    count(cutoverSection, '\n   release_maintenance_lock\n') !== 1 ||
+    cutoverOpenClawSyncIndex < 0 ||
+    cutoverHermesSyncIndex <= cutoverOpenClawSyncIndex ||
+    cutoverReleaseIndex <= discordConnectedIndex
+  ) {
+    failures.push(`${productionPaths.runbook}: cutover must hold the migration Lease until Hermes is restored`)
+  }
+  if (
+    sealedSecretStageIndex < 0 ||
+    credentialCaptureIndex <= sealedSecretStageIndex ||
+    credentialMatchIndex <= credentialCaptureIndex ||
+    noHermesDiscordRefIndex <= credentialMatchIndex ||
+    openClawGatewayStopIndex <= noHermesDiscordRefIndex ||
+    credentialCleanupIndex <= openClawGatewayStopIndex ||
+    finalReconciliationIndex <= openClawGatewayStopIndex ||
+    clusterAdminPruneIndex <= finalReconciliationIndex ||
+    clusterAdminAbsentIndex <= clusterAdminPruneIndex ||
+    openClawRunStrategyTransitionIndex <= clusterAdminAbsentIndex ||
+    cutoverOpenClawSyncIndex <= openClawRunStrategyTransitionIndex ||
+    openClawVmiAbsentIndex <= cutoverOpenClawSyncIndex ||
+    cutoverHermesSyncIndex <= openClawVmiAbsentIndex ||
+    discordConnectedIndex <= cutoverHermesSyncIndex
+  ) {
+    failures.push(`${productionPaths.runbook}: Discord cutover operations are out of order`)
+  }
+  if (openClawGatewayStopIndex > finalReconciliationIndex) {
+    failures.push(`${productionPaths.runbook}: final reconciliation must happen after the OpenClaw gateway is stopped`)
+  }
+
+  const hermesRuleGroup =
+    files.mimirRules.match(/      - name: hermes-production\.rules[\s\S]*?(?=\n      - name:)/)?.[0] ?? ''
+  requireTerms(failures, productionPaths.mimirRules, hermesRuleGroup, [
+    'alert: HermesGatewayUnavailable',
+    'alert: HermesEgressProxyUnavailable',
+    'alert: HermesBackupStale',
+    'record: hermes_rollout_enabled',
+    'kube_argocd_application_deployment_history_info{',
+    'namespace="argocd"',
+    'application="hermes"',
+    'absent(\n                  kube_statefulset_status_replicas_ready{',
+    'absent(\n                  kube_deployment_status_replicas_available{',
+    'time() - kube_cronjob_status_last_successful_time{',
+    'time() - kube_cronjob_created{',
+    'unless on (namespace, cronjob)',
+    'absent(\n                  kube_cronjob_created{',
+  ])
+  if (count(hermesRuleGroup, '(hermes_rollout_enabled == 1)') !== 3) {
+    failures.push(`${productionPaths.mimirRules}: all absent-series alerts must be gated on rollout enablement`)
+  }
+  forbidTerms(failures, productionPaths.mimirRules, hermesRuleGroup, [
+    '[30d]',
+    'or\n                hermes_rollout_enabled',
+    'kube_namespace_labels',
+  ])
+
+  requireTerms(failures, productionPaths.clusterMetrics, files.clusterMetrics, [
+    'kube_argocd_application_deployment_history_info',
+    'kube_cronjob_created',
+    'kube_cronjob_status_last_successful_time',
+    'kube_statefulset_status_replicas_ready',
+  ])
+  const clusterMetricsHash = createHash('sha256').update(files.clusterMetrics).digest('hex')
+  requireTerms(failures, productionPaths.clusterMetricsDeployment, files.clusterMetricsDeployment, [
+    `observability.proompteng.ai/config-sha256: ${clusterMetricsHash}`,
+  ])
+  requireTerms(failures, productionPaths.kubeStateMetrics, files.kubeStateMetrics, [
+    '  - cronjobs',
+    '  - namespaces',
+    '  - statefulsets',
+    'customResourceState:\n  enabled: true',
+    'group: argoproj.io',
+    'kind: Application',
+    'metricNamePrefix: kube_argocd',
+    'name: application_deployment_history_info',
+    '                    - history\n                    - "0"',
+    '        - applications',
+    '        - list\n        - watch',
+  ])
+
+  requireTerms(failures, productionPaths.impactMap, files.impactMap, [
+    '- .github/ci/impact-map.yml',
+    '- .github/workflows/pull-request.yml',
+    '- argocd/applications/hermes/**',
+    '- argocd/applications/observability/cluster-metrics-alloy-config.river',
+    '- argocd/applications/observability/cluster-metrics-alloy-deployment.yaml',
+    '- argocd/applications/observability/graf-mimir-rules.yaml',
+    '- argocd/applications/observability/kube-state-metrics-values.yaml',
+    '- argocd/applicationsets/platform.yaml',
+    '- docs/runbooks/hermes-production-rollout.md',
+    '- scripts/**',
+  ])
+  requireTerms(failures, productionPaths.pullRequestWorkflow, files.pullRequestWorkflow, [
+    'bun run scripts/hermes/validate-production.ts',
+    'bun test scripts/hermes/*.test.ts',
+  ])
+
+  return failures
+}
+
+async function main(): Promise<void> {
+  const failures = validateProductionContent(await loadProductionFiles())
+  if (failures.length > 0) {
+    console.error(failures.join('\n'))
+    process.exit(1)
+  }
+  console.log(`validated ${Object.keys(productionPaths).length} Hermes production surfaces`)
+}
+
+if (import.meta.main) {
+  await main()
+}

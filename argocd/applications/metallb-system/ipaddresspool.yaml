@@ -1,0 +1,19 @@
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: metallb-ip-pool
+  namespace: metallb-system
+spec:
+  addresses:
+    # .190 is Turin's node address and must never be allocated to a Service.
+    - 100.100.244.181-100.100.244.189
+---
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: metallb-plex-pool
+  namespace: metallb-system
+spec:
+  addresses:
+    - 100.100.244.180/32
+  autoAssign: false

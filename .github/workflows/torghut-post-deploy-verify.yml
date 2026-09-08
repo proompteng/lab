@@ -1,0 +1,581 @@
+name: torghut-post-deploy-verify
+
+on:
+  push:
+    branches:
+      - kargo/torghut
+    paths:
+      - 'argocd/applications/torghut/**'
+      - 'argocd/applications/torghut-options/**'
+      - 'argocd/applications/torghut-hyperliquid-runtime/**'
+  workflow_dispatch:
+    inputs:
+      expected_revision:
+        description: Optional full commit SHA expected in Argo sync revision
+        required: false
+        type: string
+
+concurrency:
+  group: torghut-post-deploy-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: arc-arm64
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.31.2
+
+      - name: Configure in-cluster kubeconfig when context is missing
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if kubectl config current-context >/dev/null 2>&1; then
+            echo "Kubectl context already configured"
+            exit 0
+          fi
+
+          if [ -z "${KUBERNETES_SERVICE_HOST:-}" ] || [ -z "${KUBERNETES_SERVICE_PORT:-}" ]; then
+            echo "KUBERNETES_SERVICE_HOST/PORT are not set and no kubectl context exists"
+            exit 1
+          fi
+          if [ ! -f /var/run/secrets/kubernetes.io/serviceaccount/token ]; then
+            echo "Service account token is missing"
+            exit 1
+          fi
+          if [ ! -f /var/run/secrets/kubernetes.io/serviceaccount/ca.crt ]; then
+            echo "Service account CA cert is missing"
+            exit 1
+          fi
+
+          KUBECONFIG_PATH="${RUNNER_TEMP}/kubeconfig"
+          echo "KUBECONFIG=${KUBECONFIG_PATH}" >> "${GITHUB_ENV}"
+
+          kubectl config set-cluster in-cluster \
+            --server="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}" \
+            --certificate-authority=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+            --embed-certs=true \
+            --kubeconfig="${KUBECONFIG_PATH}"
+
+          kubectl config set-credentials gha-runner \
+            --token="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+            --kubeconfig="${KUBECONFIG_PATH}"
+
+          kubectl config set-context in-cluster \
+            --cluster=in-cluster \
+            --user=gha-runner \
+            --namespace=torghut \
+            --kubeconfig="${KUBECONFIG_PATH}"
+
+          kubectl config use-context in-cluster --kubeconfig="${KUBECONFIG_PATH}"
+
+      - name: Validate kubectl context
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl config current-context
+
+      - name: Verify Argo applications, workloads, and health endpoints
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_REVISION_INPUT: ${{ inputs.expected_revision || '' }}
+        run: |
+          set -euo pipefail
+
+          EXPECTED_REVISION=''
+          if [ "${EVENT_NAME}" = "push" ]; then
+            EXPECTED_REVISION="${GITHUB_SHA}"
+          elif [ -n "${EXPECTED_REVISION_INPUT}" ]; then
+            EXPECTED_REVISION="${EXPECTED_REVISION_INPUT}"
+          fi
+          if [ -n "${EXPECTED_REVISION}" ]; then
+            git fetch --no-tags --depth=200 origin main
+          fi
+
+          ensure_revision_known() {
+            local revision="$1"
+            if [ -z "${revision}" ]; then
+              return 1
+            fi
+            if git cat-file -e "${revision}^{commit}" >/dev/null 2>&1; then
+              return 0
+            fi
+            git fetch --no-tags --depth=200 origin main >/dev/null 2>&1 || true
+            git cat-file -e "${revision}^{commit}" >/dev/null 2>&1
+          }
+
+          dump_argocd_app_diagnostics() {
+            local app="$1"
+
+            echo "Argo application ${app} status:"
+            kubectl get application "${app}" -n argocd -o jsonpath='{.status.sync.status} {.status.health.status} {.status.sync.revision} {.status.operationState.phase} {.status.operationState.message}{"\n"}' || true
+            echo "Argo application ${app} OutOfSync resources:"
+            kubectl get application "${app}" -n argocd -o jsonpath='{range .status.resources[?(@.status=="OutOfSync")]}{.kind}{"/"}{.namespace}{"/"}{.name}{"\t"}{.status}{"\t"}{.health.status}{"\n"}{end}' || true
+          }
+
+          # The PreSync database migration may run for up to 90 minutes. Keep the verifier
+          # alive for that deadline plus five minutes of Argo reconciliation headroom. Kargo's
+          # argocd-update step owns the sync; this workflow only observes its result.
+          ARGO_SYNC_TIMEOUT_SECONDS=5700
+          ARGO_SYNC_POLL_INTERVAL_SECONDS=2
+          ARGO_SYNC_POLL_ATTEMPTS=$((ARGO_SYNC_TIMEOUT_SECONDS / ARGO_SYNC_POLL_INTERVAL_SECONDS))
+
+          for app in torghut torghut-options torghut-hyperliquid-runtime; do
+            for attempt in $(seq 1 "${ARGO_SYNC_POLL_ATTEMPTS}"); do
+              STATUS="$(kubectl get application "${app}" -n argocd -o jsonpath='{.status.sync.status} {.status.health.status} {.status.sync.revision} {.status.operationState.phase} {.status.operationState.syncResult.revision} {.status.history[-1].revision}')"
+              SYNC_STATUS="$(echo "${STATUS}" | awk '{print $1}')"
+              HEALTH_STATUS="$(echo "${STATUS}" | awk '{print $2}')"
+              DESIRED_REVISION="$(echo "${STATUS}" | awk '{print $3}')"
+              OPERATION_PHASE="$(echo "${STATUS}" | awk '{print $4}')"
+              SYNC_RESULT_REVISION="$(echo "${STATUS}" | awk '{print $5}')"
+              HISTORY_REVISION="$(echo "${STATUS}" | awk '{print $6}')"
+              REVISION="${DESIRED_REVISION}"
+              REVISION_OK='true'
+
+              if [ -n "${EXPECTED_REVISION}" ]; then
+                REVISION_OK='false'
+                for candidate in "${DESIRED_REVISION}" "${SYNC_RESULT_REVISION}" "${HISTORY_REVISION}"; do
+                  if [ -z "${candidate}" ]; then
+                    continue
+                  fi
+                  if [ "${candidate}" = "${EXPECTED_REVISION}" ]; then
+                    REVISION="${candidate}"
+                    REVISION_OK='true'
+                    break
+                  fi
+                  if ensure_revision_known "${candidate}" &&
+                    git merge-base --is-ancestor "${EXPECTED_REVISION}" "${candidate}" >/dev/null 2>&1; then
+                    REVISION="${candidate}"
+                    REVISION_OK='true'
+                    break
+                  fi
+                done
+                if [ "${REVISION_OK}" != 'true' ]; then
+                  if [ -n "${SYNC_RESULT_REVISION}" ]; then
+                    REVISION="${SYNC_RESULT_REVISION}"
+                  elif [ -n "${HISTORY_REVISION}" ]; then
+                    REVISION="${HISTORY_REVISION}"
+                  fi
+                fi
+              elif [ "${OPERATION_PHASE}" = 'Succeeded' ] && [ -n "${SYNC_RESULT_REVISION}" ]; then
+                REVISION="${SYNC_RESULT_REVISION}"
+              elif [ -z "${REVISION}" ] && [ -n "${HISTORY_REVISION}" ]; then
+                REVISION="${HISTORY_REVISION}"
+              fi
+
+              if [ "${SYNC_STATUS}" = 'Synced' ] && [ "${REVISION_OK}" = 'true' ]; then
+                if [ "${HEALTH_STATUS}" = 'Healthy' ]; then
+                  break
+                fi
+                if [ "${HEALTH_STATUS}" = 'Progressing' ] && [ "${OPERATION_PHASE}" = 'Succeeded' ]; then
+                  echo "Argo application ${app} sync operation succeeded while health is Progressing; runtime checks will verify readiness"
+                  break
+                fi
+                if [ "${app}" = 'torghut' ] && [ "${HEALTH_STATUS}" = 'Degraded' ] && [ "${OPERATION_PHASE}" = 'Succeeded' ]; then
+                  echo "Torghut Argo health is Degraded after sync; continuing to runtime safety checks"
+                  break
+                fi
+              fi
+
+              if [ "${attempt}" -eq "${ARGO_SYNC_POLL_ATTEMPTS}" ]; then
+                echo "Argo application ${app} did not become Synced/Healthy with expected revision"
+                dump_argocd_app_diagnostics "${app}"
+                exit 1
+              fi
+              echo "Attempt ${attempt}: ${app} sync=${SYNC_STATUS} health=${HEALTH_STATUS} revision=${REVISION} desired=${DESIRED_REVISION} operation=${OPERATION_PHASE} syncResult=${SYNC_RESULT_REVISION} history=${HISTORY_REVISION}"
+              sleep "${ARGO_SYNC_POLL_INTERVAL_SECONDS}"
+            done
+          done
+
+          TORGHUT_SCHEDULER_REPLICAS="$(
+            kubectl get deployment torghut-scheduler -n torghut -o jsonpath='{.spec.replicas}'
+          )"
+          case "${TORGHUT_SCHEDULER_REPLICAS}" in
+            0 | 1)
+              ;;
+            *)
+              echo "Torghut scheduler replicas must be exactly 0 or 1; got ${TORGHUT_SCHEDULER_REPLICAS:-unset}"
+              exit 1
+              ;;
+          esac
+          echo "Torghut scheduler desired replicas: ${TORGHUT_SCHEDULER_REPLICAS}"
+          if [ "${TORGHUT_SCHEDULER_REPLICAS}" = '1' ]; then
+            kubectl rollout status deployment/torghut-scheduler -n torghut --timeout=10m
+          fi
+
+          if ! TORGHUT_SIM_TRADING_ENABLED="$(
+            kubectl get ksvc torghut-sim -n torghut -o json |
+              jq -r '
+                [.spec.template.spec.containers[]
+                  | select(.name == "user-container")
+                  | (.env // [])[]
+                  | select(.name == "TRADING_ENABLED")
+                  | (.value // "")]
+                | if length == 1 then .[0] else "" end
+              '
+          )"; then
+            echo "Failed to read torghut-sim desired TRADING_ENABLED from the live Knative Service"
+            exit 1
+          fi
+          case "${TORGHUT_SIM_TRADING_ENABLED}" in
+            true | false)
+              ;;
+            *)
+              echo "torghut-sim desired TRADING_ENABLED must be exactly true or false; got ${TORGHUT_SIM_TRADING_ENABLED:-unset}"
+              exit 1
+              ;;
+          esac
+          export TORGHUT_SIM_TRADING_ENABLED
+          echo "torghut-sim desired TRADING_ENABLED=${TORGHUT_SIM_TRADING_ENABLED}"
+
+          KNSVC_READY_ATTEMPTS=60
+          KNSVC_READY_INTERVAL_SECONDS=2
+
+          wait_knative_service_ready() {
+            local service="$1"
+            local attempt
+            local status
+            local ready
+            local latest_ready
+            local latest_created
+            local output
+            local error_path="/tmp/${service}-ksvc-ready.err"
+
+            for attempt in $(seq 1 "${KNSVC_READY_ATTEMPTS}"); do
+              set +e
+              output="$(
+                kubectl get ksvc "${service}" -n torghut \
+                  -o jsonpath='{.status.conditions[?(@.type=="Ready")].status} {.status.latestReadyRevisionName} {.status.latestCreatedRevisionName}' \
+                  2> "${error_path}"
+              )"
+              status=$?
+              set -e
+
+              if [ "${status}" -ne 0 ]; then
+                if grep -qi 'not found' "${error_path}"; then
+                  echo "Knative Service ${service} was not found"
+                  cat "${error_path}"
+                  exit 1
+                fi
+                echo "Failed to read Knative Service ${service}"
+                cat "${error_path}"
+                exit 1
+              fi
+
+              ready="$(echo "${output}" | awk '{print $1}')"
+              latest_ready="$(echo "${output}" | awk '{print $2}')"
+              latest_created="$(echo "${output}" | awk '{print $3}')"
+              if [ "${ready}" = 'True' ]; then
+                return 0
+              fi
+
+              if [ "${attempt}" -eq "${KNSVC_READY_ATTEMPTS}" ]; then
+                echo "Knative Service ${service} did not become Ready after bounded retry window"
+                kubectl get ksvc "${service}" -n torghut -o yaml || true
+                exit 1
+              fi
+
+              echo "Attempt ${attempt}: Knative Service ${service} ready=${ready:-empty} latestReady=${latest_ready:-empty} latestCreated=${latest_created:-empty}"
+              sleep "${KNSVC_READY_INTERVAL_SECONDS}"
+            done
+          }
+
+          wait_knative_service_ready torghut
+          wait_knative_service_ready torghut-sim
+
+          for deployment in \
+            torghut-options-archive \
+            torghut-options-catalog \
+            torghut-options-enricher \
+            torghut-options-ta \
+            torghut-hyperliquid-runtime \
+            torghut-ta \
+            torghut-ta-sim \
+            torghut-ws \
+            torghut-ws-options; do
+            kubectl rollout status "deployment/${deployment}" -n torghut --timeout=10m
+          done
+
+          pull_failures="$(
+            kubectl get pods -n torghut -o json |
+              jq -r '
+                .items[] as $pod
+                | (($pod.status.initContainerStatuses // []) + ($pod.status.containerStatuses // []))[]?
+                | select(((.state.waiting.reason // "") == "ImagePullBackOff") or ((.state.waiting.reason // "") == "ErrImagePull"))
+                | select(.image | startswith("registry.ide-newton.ts.net/lab/torghut"))
+                | [$pod.metadata.name, .name, .image, .state.waiting.reason] | @tsv
+              '
+          )"
+          if [ -n "${pull_failures}" ]; then
+            echo "Torghut-managed image pull failures remain after deploy:"
+            printf '%s\n' "${pull_failures}"
+            exit 1
+          fi
+
+          EVIDENCE_DIR="${RUNNER_TEMP}/torghut-post-deploy"
+          mkdir -p "${EVIDENCE_DIR}"
+          HTTP_CONNECT_TIMEOUT_SECONDS=5
+          HTTP_MAX_TIME_SECONDS=15
+          JSON_EVIDENCE_ATTEMPTS=3
+          READYZ_EVIDENCE_ATTEMPTS=12
+          EVIDENCE_RETRY_INTERVAL_SECONDS=2
+          FULL_CONTRACT_ATTEMPTS=120
+          FULL_CONTRACT_INTERVAL_SECONDS=10
+
+          fetch_json() {
+            local url="$1"
+            local output_path="$2"
+            local label="$3"
+            local status
+
+            for attempt in $(seq 1 "${JSON_EVIDENCE_ATTEMPTS}"); do
+              status="$(
+                curl -sS --connect-timeout "${HTTP_CONNECT_TIMEOUT_SECONDS}" --max-time "${HTTP_MAX_TIME_SECONDS}" \
+                  -o "${output_path}" -w '%{http_code}' "${url}" || true
+              )"
+              if [[ "${status}" =~ ^[0-9]{3}$ ]] &&
+                [ "${status}" != '000' ] &&
+                python3 -m json.tool "${output_path}" >/dev/null 2>&1; then
+                printf '%s' "${status}"
+                return 0
+              fi
+
+              if [ "${attempt}" -eq "${JSON_EVIDENCE_ATTEMPTS}" ]; then
+                echo "${label} did not return a parseable JSON HTTP response; status=${status:-empty}" >&2
+                head -c 1000 "${output_path}" >&2 || true
+                echo >&2
+                return 1
+              fi
+
+              echo "Attempt ${attempt}: ${label} status=${status:-empty} not usable JSON yet; retrying" >&2
+              sleep "${EVIDENCE_RETRY_INTERVAL_SECONDS}"
+            done
+          }
+
+          fetch_readyz_json() {
+            local url="$1"
+            local output_path="$2"
+            local label="$3"
+            local status
+            local decision
+
+            for attempt in $(seq 1 "${READYZ_EVIDENCE_ATTEMPTS}"); do
+              status="$(
+                curl -sS --connect-timeout "${HTTP_CONNECT_TIMEOUT_SECONDS}" --max-time "${HTTP_MAX_TIME_SECONDS}" \
+                  -o "${output_path}" -w '%{http_code}' "${url}" || true
+              )"
+              if [[ "${status}" =~ ^[0-9]{3}$ ]] &&
+                [ "${status}" != '000' ] &&
+                python3 -m json.tool "${output_path}" >/dev/null 2>&1; then
+                decision="$(
+                  bun run packages/scripts/src/torghut/readyz-contract.ts \
+                    --status "${status}" \
+                    --readyz-json "${output_path}"
+                )"
+                case "${decision}" in
+                  acceptable)
+                    printf '%s' "${status}"
+                    return 0
+                    ;;
+                  retryable_database_timeout)
+                    if [ "${attempt}" -eq "${READYZ_EVIDENCE_ATTEMPTS}" ]; then
+                      echo "${label} still reports a retryable database-readiness timeout after ${attempt} attempts" >&2
+                      printf '%s' "${status}"
+                      return 0
+                    fi
+                    echo "Attempt ${attempt}: ${label} database readiness timed out; retrying until readyz contract is acceptable" >&2
+                    sleep "${EVIDENCE_RETRY_INTERVAL_SECONDS}"
+                    continue
+                    ;;
+                  *)
+                    printf '%s' "${status}"
+                    return 0
+                    ;;
+                esac
+              fi
+
+              if [ "${attempt}" -eq "${READYZ_EVIDENCE_ATTEMPTS}" ]; then
+                if [[ "${status}" =~ ^[0-9]{3}$ ]] &&
+                  [ "${status}" != '000' ] &&
+                  python3 -m json.tool "${output_path}" >/dev/null 2>&1; then
+                  echo "${label} returned HTTP ${status} without an acceptable readyz contract" >&2
+                else
+                  echo "${label} did not return a parseable JSON HTTP response; status=${status:-empty}" >&2
+                fi
+                head -c 1000 "${output_path}" >&2 || true
+                echo >&2
+                return 1
+              fi
+
+              if [[ "${status}" =~ ^[0-9]{3}$ ]] &&
+                [ "${status}" != '000' ] &&
+                python3 -m json.tool "${output_path}" >/dev/null 2>&1; then
+                echo "Attempt ${attempt}: ${label} returned HTTP ${status} without an acceptable readyz contract; retrying" >&2
+              else
+                echo "Attempt ${attempt}: ${label} status=${status:-empty} not usable JSON yet; retrying" >&2
+              fi
+              sleep "${EVIDENCE_RETRY_INTERVAL_SECONDS}"
+            done
+          }
+
+          append_contract_diagnostic() {
+            local message="$1"
+            if [ -n "${CONTRACT_DIAGNOSTICS}" ]; then
+              CONTRACT_DIAGNOSTICS="${CONTRACT_DIAGNOSTICS}; ${message}"
+            else
+              CONTRACT_DIAGNOSTICS="${message}"
+            fi
+          }
+
+          for contract_attempt in $(seq 1 "${FULL_CONTRACT_ATTEMPTS}"); do
+            rm -f \
+              "${EVIDENCE_DIR}/torghut-api-readyz.json" \
+              "${EVIDENCE_DIR}/torghut-scheduler-readyz.json" \
+              "${EVIDENCE_DIR}/torghut-sim-status.json" \
+              "${EVIDENCE_DIR}/torghut-status.json"
+            unset TORGHUT_SCHEDULER_READYZ_HTTP_STATUS TORGHUT_SCHEDULER_READYZ_PAYLOAD
+            CONTRACT_CAPTURE_OK='true'
+            CONTRACT_DIAGNOSTICS=''
+
+            if ! TORGHUT_API_READYZ_HTTP_STATUS="$(
+              fetch_json \
+                http://torghut.torghut.svc.cluster.local/readyz \
+                "${EVIDENCE_DIR}/torghut-api-readyz.json" \
+                "Torghut stable API /readyz" \
+                2> "${EVIDENCE_DIR}/torghut-api-readyz-fetch.err"
+            )"; then
+              CONTRACT_CAPTURE_OK='false'
+              append_contract_diagnostic 'stable API readiness capture failed'
+            elif ! [[ "${TORGHUT_API_READYZ_HTTP_STATUS}" =~ ^[0-9]{3}$ ]] ||
+              [ "${TORGHUT_API_READYZ_HTTP_STATUS}" = '000' ]; then
+              CONTRACT_CAPTURE_OK='false'
+              append_contract_diagnostic "stable API readiness returned invalid HTTP status ${TORGHUT_API_READYZ_HTTP_STATUS:-unset}"
+            fi
+
+            if [ "${TORGHUT_SCHEDULER_REPLICAS}" = '1' ]; then
+              if ! TORGHUT_SCHEDULER_READYZ_HTTP_STATUS="$(
+                fetch_readyz_json \
+                  http://torghut-scheduler.torghut.svc.cluster.local:8183/readyz \
+                  "${EVIDENCE_DIR}/torghut-scheduler-readyz.json" \
+                  "Torghut scheduler /readyz" \
+                  2> "${EVIDENCE_DIR}/torghut-scheduler-readyz-fetch.err"
+              )"; then
+                CONTRACT_CAPTURE_OK='false'
+                append_contract_diagnostic 'scheduler readiness capture failed'
+              elif ! [[ "${TORGHUT_SCHEDULER_READYZ_HTTP_STATUS}" =~ ^[0-9]{3}$ ]] ||
+                [ "${TORGHUT_SCHEDULER_READYZ_HTTP_STATUS}" = '000' ]; then
+                CONTRACT_CAPTURE_OK='false'
+                append_contract_diagnostic "scheduler readiness returned invalid HTTP status ${TORGHUT_SCHEDULER_READYZ_HTTP_STATUS:-unset}"
+              else
+                export TORGHUT_SCHEDULER_READYZ_HTTP_STATUS
+                export TORGHUT_SCHEDULER_READYZ_PAYLOAD="${EVIDENCE_DIR}/torghut-scheduler-readyz.json"
+              fi
+            fi
+
+            if ! TORGHUT_STATUS_HTTP_STATUS="$(
+              fetch_json \
+                http://torghut.torghut.svc.cluster.local/trading/status \
+                "${EVIDENCE_DIR}/torghut-status.json" \
+                "Torghut /trading/status" \
+                2> "${EVIDENCE_DIR}/torghut-status-fetch.err"
+            )"; then
+              CONTRACT_CAPTURE_OK='false'
+              append_contract_diagnostic 'trading status capture failed'
+            elif ! [[ "${TORGHUT_STATUS_HTTP_STATUS}" =~ ^[0-9]{3}$ ]] ||
+              [ "${TORGHUT_STATUS_HTTP_STATUS}" = '000' ]; then
+              CONTRACT_CAPTURE_OK='false'
+              append_contract_diagnostic "trading status returned invalid HTTP status ${TORGHUT_STATUS_HTTP_STATUS:-unset}"
+            fi
+
+            if ! TORGHUT_SIM_STATUS_HTTP_STATUS="$(
+              fetch_json \
+                http://torghut-sim.torghut.svc.cluster.local/trading/status \
+                "${EVIDENCE_DIR}/torghut-sim-status.json" \
+                "Torghut simulation /trading/status" \
+                2> "${EVIDENCE_DIR}/torghut-sim-status-fetch.err"
+            )"; then
+              CONTRACT_CAPTURE_OK='false'
+              append_contract_diagnostic 'simulation trading status capture failed'
+            elif ! [[ "${TORGHUT_SIM_STATUS_HTTP_STATUS}" =~ ^[0-9]{3}$ ]] ||
+              [ "${TORGHUT_SIM_STATUS_HTTP_STATUS}" = '000' ]; then
+              CONTRACT_CAPTURE_OK='false'
+              append_contract_diagnostic "simulation trading status returned invalid HTTP status ${TORGHUT_SIM_STATUS_HTTP_STATUS:-unset}"
+            fi
+
+            if [ "${CONTRACT_CAPTURE_OK}" = 'true' ]; then
+              export TORGHUT_SCHEDULER_REPLICAS
+              export TORGHUT_STATUS_HTTP_STATUS
+              export TORGHUT_STATUS_PAYLOAD="${EVIDENCE_DIR}/torghut-status.json"
+              export TORGHUT_API_READYZ_HTTP_STATUS
+              export TORGHUT_API_READYZ_PAYLOAD="${EVIDENCE_DIR}/torghut-api-readyz.json"
+              export TORGHUT_SIM_STATUS_HTTP_STATUS
+              export TORGHUT_SIM_STATUS_PAYLOAD="${EVIDENCE_DIR}/torghut-sim-status.json"
+              if CONTRACT_DIAGNOSTICS="$(
+                bun run packages/scripts/src/torghut/post-deploy-evidence.ts 2>&1
+              )"; then
+                printf '%s\n' "${CONTRACT_DIAGNOSTICS}"
+                echo "Torghut full post-deploy contract converged on attempt ${contract_attempt}"
+                break
+              fi
+            fi
+
+            CONTRACT_DIAGNOSTIC_LINE="$(
+              printf '%s\n' "${CONTRACT_DIAGNOSTICS}" | tail -n 1 | cut -c 1-500
+            )"
+            echo "Attempt ${contract_attempt}/${FULL_CONTRACT_ATTEMPTS}: Torghut full contract not converged: ${CONTRACT_DIAGNOSTIC_LINE:-unknown error}"
+            if [ "${contract_attempt}" -eq "${FULL_CONTRACT_ATTEMPTS}" ]; then
+              echo "Torghut full post-deploy contract did not converge after ${FULL_CONTRACT_ATTEMPTS} attempts"
+              exit 1
+            fi
+            sleep "${FULL_CONTRACT_INTERVAL_SECONDS}"
+          done
+
+      - name: Verify market-data freshness
+        shell: bash
+        env:
+          MARKET_DATA_FRESHNESS_MODE: auto
+          MARKET_DATA_MAX_LAG_SECONDS: '300'
+          MARKET_DATA_ACCEPTED_MAX_LAG_SECONDS: '300'
+          MARKET_DATA_HOLIDAYS: '2026-01-01,2026-01-19,2026-02-16,2026-04-03,2026-05-25,2026-06-19,2026-07-03,2026-09-07,2026-11-26,2026-12-25,2027-01-01,2027-01-18,2027-02-15,2027-03-26,2027-05-31,2027-06-18,2027-07-05,2027-09-06,2027-11-25,2027-12-24,2027-12-31,2028-01-17,2028-02-21,2028-04-14,2028-05-29,2028-06-19,2028-07-04,2028-09-04,2028-11-23,2028-12-25'
+          MARKET_DATA_PRINT_SUMMARIES: 'false'
+        run: |
+          set -euo pipefail
+          TA_FRESHNESS_ATTEMPTS=4
+          TA_FRESHNESS_INTERVAL_SECONDS=30
+          for ta_attempt in $(seq 1 "${TA_FRESHNESS_ATTEMPTS}"); do
+            if bun run smoke:torghut-market-data; then
+              echo "Torghut market-data freshness converged on attempt ${ta_attempt}."
+              exit 0
+            fi
+            if [ "${ta_attempt}" -eq "${TA_FRESHNESS_ATTEMPTS}" ]; then
+              echo "Torghut market-data freshness did not converge after ${TA_FRESHNESS_ATTEMPTS} attempts."
+              exit 1
+            fi
+            echo "Torghut market-data freshness is not converged on attempt ${ta_attempt}; waiting for the next TA heartbeat."
+            sleep "${TA_FRESHNESS_INTERVAL_SECONDS}"
+          done
+
+      - name: Upload revenue repair evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: torghut-revenue-repair-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/torghut-post-deploy/*.json
+          if-no-files-found: ignore

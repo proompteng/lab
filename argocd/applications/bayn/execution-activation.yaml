@@ -1,0 +1,216 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bayn-execution-activate
+  labels:
+    app.kubernetes.io/name: bayn-execution-activate
+    app.kubernetes.io/part-of: bayn
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: bayn-execution-activate
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: restate
+          podSelector:
+            matchLabels:
+              app: restate
+      ports:
+        - port: 8080
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tempo
+              app.kubernetes.io/component: distributor
+      ports:
+        - port: 4318
+          protocol: TCP
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: bayn-execution-activate-89115ae4b8e9
+  labels:
+    app.kubernetes.io/name: bayn-execution-activate
+    app.kubernetes.io/part-of: bayn
+    app.kubernetes.io/version: 89115ae4b8e9
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 900
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bayn-execution-activate
+        app.kubernetes.io/part-of: bayn
+        app.kubernetes.io/version: 89115ae4b8e9
+    spec:
+      serviceAccountName: bayn
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: activate
+          image: registry.ide-newton.ts.net/lab/bayn:sha-89115ae4b8e9ae53e9c7f5817e5e1f1dce8ece2a@sha256:6940717c4de931796e5893e8579d8e33aad9ea2c52ed4cd8db9471704d582c3a
+          imagePullPolicy: IfNotPresent
+          command:
+            - node
+            - dist/restate-execution-activate.js
+          env:
+            - name: BAYN_EXECUTION_ACTIVATION_GENERATION
+              # canonicalHashV1(bayn.execution-controller-activation.v3,
+              # plan hash, source revision, image digest, and activation request hash)
+              value: "f4a92983d5dd6ddde9b55fe1690453a1bce4b32d763b0088ff9bcecca2d3cb72"
+            - name: BAYN_CODE_REVISION
+              value: 89115ae4b8e9ae53e9c7f5817e5e1f1dce8ece2a
+            - name: BAYN_IMAGE_REPOSITORY
+              value: registry.ide-newton.ts.net/lab/bayn
+            - name: BAYN_IMAGE_DIGEST
+              value: sha256:6940717c4de931796e5893e8579d8e33aad9ea2c52ed4cd8db9471704d582c3a
+            - name: BAYN_EXECUTION_PREVIOUS_PLAN_HASH
+              value: "d75d49707af22ccdb5a2cdee0362e453a68380a4618b5a4b735e9d8d121c37f0"
+            - name: BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION
+              value: 8f4602324111bbb3dd5d8695aabf199f4a5328fa
+            - name: BAYN_STRATEGY_BEHAVIOR_HASH
+              value: "9b85a04413b635b35ad3dea33fcfc5e5bf3dd5590c1564390b454f1092988fa2"
+            - name: BAYN_STRATEGY_PARAMETER_HASH
+              value: "88f4bf9a18fd881226a123ba277a65daaaf92aba76acfde86072d03d143624ef"
+            - name: BAYN_CAPITAL_ACTIVATION_REQUEST
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: capital-activation-request
+            - name: BAYN_CAPITAL_ACTIVATION_KIND
+              value: ResearchCapitalActivationRequest
+            - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
+              value: "{\"schemaVersion\":\"bayn.research-capital-build-lineage.v1\",\"requestHash\":\"b873497405146d8bcaf3340a8a6744fa74f4a8729f18a35cf7484dde8c7163de\",\"authoredActivation\":{\"sourceRevision\":\"89115ae4b8e9ae53e9c7f5817e5e1f1dce8ece2a\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:6940717c4de931796e5893e8579d8e33aad9ea2c52ed4cd8db9471704d582c3a\"},\"activation\":{\"sourceRevision\":\"89115ae4b8e9ae53e9c7f5817e5e1f1dce8ece2a\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:6940717c4de931796e5893e8579d8e33aad9ea2c52ed4cd8db9471704d582c3a\"}}"
+            - name: BAYN_BROKER_ACCESS
+              value: read-only
+            - name: BAYN_CAPITAL_AUTHORITY
+              value: none
+            - name: BAYN_AUTHORITY_GENERATION_HASH
+              value: "22793abfac57568433147fb6d7a47ce7a34fb500ee47e035353ae8935a3e3fa7"
+            - name: BAYN_BROKER_PROVIDER
+              value: alpaca
+            - name: BAYN_BROKER_ENVIRONMENT
+              value: sandbox
+            - name: BAYN_ALPACA_BASE_URL
+              value: https://paper-api.alpaca.markets
+            - name: BAYN_ALPACA_ACCOUNT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: account-id
+            - name: BAYN_ALPACA_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: key-id
+            - name: BAYN_ALPACA_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: secret-key
+            - name: BAYN_CYCLE_POLL_INTERVAL_MS
+              value: "30000"
+            - name: BAYN_RECONCILIATION_INTERVAL_MS
+              value: "30000"
+            - name: BAYN_HEALTH_INTERVAL_MS
+              value: "30000"
+            - name: BAYN_OPERATION_TIMEOUT_MS
+              value: "30000"
+            - name: BAYN_CLICKHOUSE_URL
+              value: http://torghut-clickhouse.torghut.svc.cluster.local:8123
+            - name: BAYN_CLICKHOUSE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-clickhouse-auth
+                  key: username
+            - name: BAYN_CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-clickhouse-auth
+                  key: password
+            - name: BAYN_SIGNAL_SNAPSHOT_ID
+              value: "f50f63fecf62991203e8ddae519406a432b1d1a06c3376b18a2957b962c67a60"
+            - name: BAYN_SIGNAL_PUBLICATION_ASOF
+              value: "2026-08-04"
+            - name: BAYN_SIGNAL_CALENDAR_VERSION
+              value: "alpaca-us-equity-calendar-v1"
+            - name: BAYN_SIGNAL_DATA_START
+              value: "2016-01-04"
+            - name: BAYN_SIGNAL_DATA_END
+              value: "2026-08-04"
+            - name: BAYN_SIGNAL_LOOKBACK_START
+              value: "2016-01-04"
+            - name: BAYN_SIGNAL_EVALUATION_START
+              value: "2017-01-03"
+            - name: BAYN_SIGNAL_EVALUATION_END
+              value: "2026-08-04"
+            - name: BAYN_POSTGRES_URL
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-db-app
+                  key: fqdn-uri
+            - name: BAYN_POSTGRES_TLS
+              value: "true"
+            - name: BAYN_TIGERBEETLE_CLUSTER_ID
+              value: "122731676035874920802382025803517750735"
+            - name: BAYN_TIGERBEETLE_ADDRESSES
+              value: "ledger-0.ledger-headless.bayn.svc.cluster.local:3000,ledger-1.ledger-headless.bayn.svc.cluster.local:3000,ledger-2.ledger-headless.bayn.svc.cluster.local:3000"
+            - name: BAYN_TIGERBEETLE_LEDGER
+              value: "7001"
+            - name: BAYN_EXECUTION_BOOTSTRAP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-execution-bootstrap
+                  key: token
+            - name: RESTATE_INGRESS_ORIGIN
+              value: http://restate.restate.svc.cluster.local:8080
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              value: http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
+            - name: NODE_ENV
+              value: production
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL

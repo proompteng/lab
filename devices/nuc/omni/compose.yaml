@@ -1,0 +1,56 @@
+name: nuc-omni
+
+services:
+  tsidp:
+    image: ghcr.io/tailscale/tsidp:v0.0.15@sha256:9efe0bc423f08408d3a0427b493e09ff0bd270fb082ff51be5db26eb18a44067
+    platform: linux/amd64
+    restart: unless-stopped
+    stop_grace_period: 30s
+    environment:
+      TAILSCALE_USE_WIP_CODE: '1'
+      TS_AUTHKEY: ${TSIDP_AUTH_KEY:-}
+      TS_HOSTNAME: tsidp
+      TS_STATE_DIR: /var/lib/tsidp
+      TSIDP_LOG: info
+    volumes:
+      - ${OMNI_DATA_ROOT:-/var/lib/omni}/tsidp:/var/lib/tsidp
+    logging:
+      driver: json-file
+      options:
+        max-file: '5'
+        max-size: 10m
+
+  omni:
+    image: ghcr.io/siderolabs/omni:v1.10.4@sha256:d9a98ba84aeb7b0fff892592fa11f558df9ebc58be315982690df91f4692582b
+    platform: linux/amd64
+    restart: unless-stopped
+    stop_grace_period: 60s
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - ./omni.yaml:/etc/omni/omni.yaml:ro
+      - ${OMNI_DATA_ROOT:-/var/lib/omni}/secrets/omni.asc:/run/secrets/omni.asc:ro
+      - ${OMNI_DATA_ROOT:-/var/lib/omni}/etcd:/var/lib/omni/etcd
+      - ${OMNI_DATA_ROOT:-/var/lib/omni}/sqlite:/var/lib/omni/sqlite
+    command:
+      - --config-path=/etc/omni/omni.yaml
+      - --account-id=${OMNI_ACCOUNT_UUID:-}
+      - --advertised-api-url=https://${OMNI_HOST:-nuc.ide-newton.ts.net}/
+      - --machine-api-advertised-url=https://${OMNI_HOST:-nuc.ide-newton.ts.net}:8090/
+      - --advertised-kubernetes-proxy-url=https://${OMNI_HOST:-nuc.ide-newton.ts.net}:8100/
+      - --siderolink-wireguard-bind-addr=${NUC_TAILSCALE_IP:-100.78.240.108}:50180
+      - --siderolink-wireguard-advertised-addr=${NUC_TAILSCALE_IP:-100.78.240.108}:50180
+      - --event-sink-port=8091
+      - --log-server-port=8092
+      - --auth-oidc-provider-url=${OIDC_ISSUER_URL:-https://tsidp.ide-newton.ts.net}
+      - --auth-oidc-client-id=${OIDC_CLIENT_ID:-}
+      - --auth-oidc-client-secret=${OIDC_CLIENT_SECRET:-}
+      - --initial-users=${OMNI_ADMIN_EMAIL:-}
+    logging:
+      driver: json-file
+      options:
+        max-file: '5'
+        max-size: 20m

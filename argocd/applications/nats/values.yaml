@@ -1,0 +1,63 @@
+fullnameOverride: nats
+
+config:
+  cluster:
+    enabled: true
+    replicas: 3
+  jetstream:
+    enabled: true
+    fileStore:
+      enabled: true
+      pvc:
+        enabled: true
+        size: 20Gi
+        storageClassName: rook-ceph-block
+      maxSize: 20Gi
+  merge:
+    http_port: 8222
+    authorization:
+      users:
+        - nkey: UCS2E6U6Z27WUKFMRQOEKZC6TKUVLRU2OD677X7HCSVWYMFXEE2OEPIK
+          permissions:
+            publish:
+              - ">"
+            subscribe:
+              - ">"
+        - user: agents
+          password: << $NATS_AGENTS_PASSWORD >>
+          permissions:
+            publish:
+              - "$JS.API.>"
+              - "$JS.ACK.>"
+              - "agentrun.>"
+            subscribe:
+              - "_INBOX.>"
+              - "agentrun.>"
+        - user: jangar
+          password: << $NATS_JANGAR_PASSWORD >>
+          permissions:
+            publish:
+              - "$JS.API.>"
+              - "$JS.ACK.>"
+            subscribe:
+              - "_INBOX.>"
+
+container:
+  env:
+    NATS_AGENTS_PASSWORD:
+      valueFrom:
+        secretKeyRef:
+          name: nats-agents-credentials
+          key: password
+    NATS_JANGAR_PASSWORD:
+      valueFrom:
+        secretKeyRef:
+          name: nats-jangar-credentials
+          key: password
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1
+      memory: 2Gi

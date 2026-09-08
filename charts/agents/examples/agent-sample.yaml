@@ -1,0 +1,17 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: Agent
+metadata:
+  name: codex-agent
+spec:
+  providerRef:
+    name: codex-runner
+  memoryRef:
+    name: default-memory
+  config:
+    model: gpt-5.6-sol
+  env:
+    - name: CODEX_MODE
+      value: autonomous
+  defaults:
+    timeoutSeconds: 3600
+    retryLimit: 1

@@ -1,0 +1,58 @@
+---
+dagsterWebserver:
+  image:
+    repository: registry.ide-newton.ts.net/lab/alchimie
+    tag: latest
+    pullPolicy: Always
+
+dagster-user-deployments:
+  deployments:
+    - name: alchimie
+      port: 3030
+      image:
+        repository: registry.ide-newton.ts.net/lab/alchimie
+        tag: latest
+        pullPolicy: Always
+      dagsterApiGrpcArgs:
+        - "-f"
+        - "/app/alchimie/definitions.py"
+      volumes:
+        - name: postgres-secret
+          secret:
+            secretName: alchimie-cluster-app
+      volumeMounts:
+        - name: postgres-secret
+          mountPath: "/opt/dagster/postgres-secrets"
+          readOnly: true
+      env:
+        - name: POSTGRES_HOST
+          valueFrom:
+            secretKeyRef:
+              name: alchimie-cluster-app
+              key: host
+        - name: POSTGRES_PORT
+          valueFrom:
+            secretKeyRef:
+              name: alchimie-cluster-app
+              key: port
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: alchimie-cluster-app
+              key: dbname
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: alchimie-cluster-app
+              key: user
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: alchimie-cluster-app
+              key: password
+
+dagsterDaemon:
+  image:
+    repository: registry.ide-newton.ts.net/lab/alchimie
+    tag: latest
+    pullPolicy: Always

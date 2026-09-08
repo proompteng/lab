@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: graf-quarkus-config
+  namespace: graf
+  labels:
+    app.kubernetes.io/name: graf
+    app.kubernetes.io/component: persistence
+    app.kubernetes.io/part-of: lab
+data:
+  QUARKUS_HTTP_CORS: "true"
+  QUARKUS_HTTP_CORS_ORIGINS: "*"
+  QUARKUS_HTTP_CORS_METHODS: "GET,POST,PATCH,DELETE,OPTIONS"
+  QUARKUS_HTTP_CORS_HEADERS: "Authorization,Content-Type"
+  QUARKUS_HTTP_CORS_ACCESS_CONTROL_ALLOW_CREDENTIALS: "true"
+  QUARKUS_HTTP_CORS_EXPOSED_HEADERS: "Authorization,Content-Type"
+  QUARKUS_HTTP_HOST: "0.0.0.0"
+  QUARKUS_HTTP_PORT: "8080"

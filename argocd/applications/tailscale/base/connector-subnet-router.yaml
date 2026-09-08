@@ -1,0 +1,14 @@
+apiVersion: tailscale.com/v1alpha1
+kind: Connector
+metadata:
+  name: kubernetes-subnet-router
+  namespace: tailscale
+spec:
+  hostname: k8s-subnet-router
+  replicas: 1
+  tags:
+    - tag:k8s-subnet-router
+  subnetRouter:
+    advertiseRoutes:
+      - 10.244.0.0/16
+      - 10.96.0.0/12

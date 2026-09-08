@@ -1,0 +1,42 @@
+@import '@proompteng/design/globals.css';
+
+@source "../**/*.{js,jsx,ts,tsx,mdx}";
+@source not "../../node_modules";
+@source not "../../.next";
+@source not "../../../../.pnpm-store";
+@source not "../../../../.bun";
+
+@keyframes hero-glow {
+  0%,
+  100% {
+    transform: translate3d(-10%, -6%, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(12%, 10%, 0) scale(1.05);
+  }
+}
+
+@layer utilities {
+  .font-display {
+    font-family:
+      var(--font-space-grotesk, 'Space Grotesk'), 'Space Grotesk', var(--font-jetbrains-mono, 'JetBrains Mono'),
+      ui-sans-serif, sans-serif;
+  }
+
+  .font-inter {
+    font-family: var(--font-inter, 'Inter'), Inter, ui-sans-serif, sans-serif;
+  }
+
+  .animate-hero-glow {
+    animation: hero-glow 18s ease-in-out infinite;
+  }
+}
+
+@layer base {
+  html,
+  body {
+    font-family:
+      var(--font-jetbrains-mono, 'JetBrains Mono'), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      'Liberation Mono', 'Courier New', monospace;
+  }
+}

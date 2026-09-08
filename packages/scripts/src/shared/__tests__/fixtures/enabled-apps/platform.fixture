@@ -1,0 +1,886 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: platform
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - list:
+              elements: &clusters_default
+                - cluster: in-cluster
+                  suffix: ""
+                  destinationServer: https://kubernetes.default.svc
+          - list:
+              elements: &platform_elements
+              - name: cloudnative-pg
+                path: argocd/applications/cloudnative-pg
+                namespace: cloudnative-pg
+                annotations:
+                  argocd.argoproj.io/sync-wave: "-1"
+                automation: auto
+                enabled: "true"
+              - name: clickhouse-operator
+                path: argocd/applications/clickhouse-operator
+                namespace: clickhouse-operator
+                annotations:
+                  argocd.argoproj.io/sync-wave: "-1"
+                automation: manual
+                enabled: "true"
+              - name: redis-operator
+                path: argocd/applications/redis-operator
+                namespace: redis-operator
+                annotations:
+                  argocd.argoproj.io/sync-wave: "-1"
+                automation: auto
+                enabled: "true"
+              - name: cockroach-operator-system
+                path: argocd/applications/cockroach-operator
+                namespace: cockroach-operator-system
+                annotations:
+                  argocd.argoproj.io/sync-wave: "-1"
+                automation: auto
+                enabled: "true"
+              - name: tigresse
+                path: argocd/applications/tigresse
+                namespace: tigresse-system
+                annotations:
+                  argocd.argoproj.io/sync-wave: "-1"
+                automation: auto
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: privileged
+                    pod-security.kubernetes.io/audit: privileged
+                    pod-security.kubernetes.io/warn: privileged
+              - name: metrics-server
+                path: manifests/overlays/release-ha-1.21+
+                repoURL: https://github.com/kubernetes-sigs/metrics-server.git
+                targetRevision: v0.8.1
+                namespace: kube-system
+                renderWithLovely: false
+                kustomize:
+                  patches:
+                    - target:
+                        kind: Deployment
+                        name: metrics-server
+                        namespace: kube-system
+                      patch: |-
+                        - op: add
+                          path: /spec/template/spec/containers/0/args/-
+                          value: --kubelet-insecure-tls
+                annotations:
+                  argocd.argoproj.io/sync-wave: "-1"
+                automation: auto
+                enabled: "true"
+              - name: flannel-cni
+                path: argocd/applications/flannel-cni
+                namespace: kube-system
+                annotations:
+                  argocd.argoproj.io/sync-wave: "-1"
+                automation: auto
+                enabled: "true"
+              - name: volume-snapshot-controller
+                path: argocd/applications/volume-snapshot-controller
+                namespace: kube-system
+                annotations:
+                  argocd.argoproj.io/sync-wave: "-1"
+                automation: auto
+                enabled: "true"
+              - name: feature-flags
+                path: argocd/applications/feature-flags
+                namespace: feature-flags
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: auto
+                enabled: "true"
+              - name: kubevirt
+                path: argocd/applications/kubevirt
+                namespace: kubevirt
+                annotations:
+                  argocd.argoproj.io/sync-wave: "1"
+                automation: manual
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: privileged
+                    pod-security.kubernetes.io/audit: privileged
+                    pod-security.kubernetes.io/warn: privileged
+                  annotations:
+                    # Prevent accidental namespace deletion when an app stops managing the Namespace object.
+                    argocd.argoproj.io/sync-options: Prune=false
+              - name: cdi
+                path: argocd/applications/cdi
+                namespace: cdi
+                annotations:
+                  argocd.argoproj.io/sync-wave: "1"
+                automation: manual
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: privileged
+                    pod-security.kubernetes.io/audit: privileged
+                    pod-security.kubernetes.io/warn: privileged
+                  annotations:
+                    # Prevent accidental namespace deletion when an app stops managing the Namespace object.
+                    argocd.argoproj.io/sync-options: Prune=false
+              - name: nvidia-gpu-operator
+                path: argocd/applications/nvidia-gpu-operator
+                namespace: gpu-operator
+                annotations:
+                  argocd.argoproj.io/sync-wave: "1"
+                automation: manual
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: privileged
+                    pod-security.kubernetes.io/audit: privileged
+                    pod-security.kubernetes.io/warn: privileged
+              - name: flamingo
+                path: argocd/applications/flamingo
+                namespace: flamingo
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: manual
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: privileged
+                    pod-security.kubernetes.io/audit: privileged
+                    pod-security.kubernetes.io/warn: privileged
+              - name: saigak
+                path: argocd/applications/saigak
+                namespace: saigak
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                ignoreDifferences:
+                  - group: ""
+                    kind: PersistentVolumeClaim
+                    name: saigak-data
+                    jsonPointers:
+                      - /metadata/annotations
+                      - /spec/volumeMode
+                      - /spec/volumeName
+                  - group: ""
+                    kind: PersistentVolumeClaim
+                    name: saigak-altra-data
+                    jsonPointers:
+                      - /metadata/annotations
+                      - /spec/volumeMode
+                      - /spec/volumeName
+                  - group: apps
+                    kind: StatefulSet
+                    name: saigak
+                    jqPathExpressions:
+                      - .metadata.annotations
+                      - .spec.template.spec.containers[].livenessProbe.httpGet.scheme
+                      - .spec.template.spec.containers[].livenessProbe.successThreshold
+                      - .spec.template.spec.containers[].readinessProbe.httpGet.scheme
+                      - .spec.template.spec.containers[].readinessProbe.successThreshold
+                      - .spec.template.spec.containers[].startupProbe.httpGet.scheme
+                      - .spec.template.spec.containers[].startupProbe.successThreshold
+                      - .spec.template.spec.containers[].terminationMessagePath
+                      - .spec.template.spec.containers[].terminationMessagePolicy
+                      - .spec.template.spec.volumes[].configMap.defaultMode
+                automation: manual
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: privileged
+                    pod-security.kubernetes.io/audit: privileged
+                    pod-security.kubernetes.io/warn: privileged
+              - name: torghut-cuda-ranker
+                path: argocd/applications/torghut-cuda-ranker
+                namespace: torghut-cuda-ranker
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: manual
+                # Keep disabled: the 3090 is reserved for Saigak embeddings as a container GPU.
+                enabled: "false"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: privileged
+                    pod-security.kubernetes.io/audit: privileged
+                    pod-security.kubernetes.io/warn: privileged
+              - name: openclaw
+                path: argocd/applications/openclaw
+                namespace: openclaw
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: manual
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: privileged
+                    pod-security.kubernetes.io/audit: privileged
+                    pod-security.kubernetes.io/warn: privileged
+              - name: workers
+                path: argocd/applications/workers
+                namespace: workers
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: manual
+                enabled: "false"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: privileged
+                    pod-security.kubernetes.io/audit: privileged
+                    pod-security.kubernetes.io/warn: privileged
+              - name: external-dns
+                path: argocd/applications/external-dns
+                namespace: external-dns
+                annotations:
+                  argocd.argoproj.io/sync-wave: "0"
+                automation: auto
+                enabled: "false"
+              - name: cloudflare
+                path: argocd/applications/cloudflare
+                namespace: cloudflare
+                annotations:
+                  argocd.argoproj.io/sync-wave: "0"
+                automation: auto
+                enabled: "true"
+              - name: istio-system
+                path: argocd/applications/istio-system
+                namespace: istio-system
+                annotations:
+                  argocd.argoproj.io/sync-wave: "0"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: privileged
+                    pod-security.kubernetes.io/audit: privileged
+                    pod-security.kubernetes.io/warn: privileged
+                automation: auto
+                enabled: "true"
+              - name: istio-ingress
+                path: argocd/applications/istio-ingress
+                namespace: istio-ingress
+                annotations:
+                  argocd.argoproj.io/sync-wave: "1"
+                automation: auto
+                enabled: "true"
+              - name: knative
+                path: argocd/applications/knative
+                namespace: knative
+                annotations:
+                  argocd.argoproj.io/sync-wave: "1"
+                automation: auto
+                enabled: "true"
+              - name: knative-serving
+                path: argocd/applications/knative-serving
+                namespace: knative-serving
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: auto
+                enabled: "true"
+              - name: knative-eventing
+                path: argocd/applications/knative-eventing
+                namespace: knative-eventing
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: auto
+                enabled: "true"
+              - name: fission
+                path: argocd/applications/fission
+                namespace: fission
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: auto
+                enabled: "false"
+              - name: kafka
+                path: argocd/applications/kafka
+                namespace: kafka
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: auto
+                enabled: "true"
+              - name: nats
+                path: argocd/applications/nats
+                namespace: nats
+                annotations:
+                  argocd.argoproj.io/sync-wave: "3"
+                automation: auto
+                enabled: "true"
+              - name: nack
+                path: argocd/applications/nack
+                namespace: nack
+                annotations:
+                  argocd.argoproj.io/sync-wave: "4"
+                automation: auto
+                enabled: "true"
+              - name: kubernetes-reflector
+                path: argocd/applications/kubernetes-reflector
+                namespace: kubernetes-reflector
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: auto
+                enabled: "true"
+              - name: argo-rollouts
+                path: argocd/applications/argo-rollouts
+                namespace: argo-rollouts
+                annotations:
+                  argocd.argoproj.io/sync-wave: "3"
+                ignoreDifferences:
+                  - kind: CustomResourceDefinition
+                    group: apiextensions.k8s.io
+                    name: analysisruns.argoproj.io
+                    jqPathExpressions:
+                      - .spec.conversion
+                      - .spec.preserveUnknownFields
+                  - kind: CustomResourceDefinition
+                    group: apiextensions.k8s.io
+                    name: analysistemplates.argoproj.io
+                    jqPathExpressions:
+                      - .spec.conversion
+                      - .spec.preserveUnknownFields
+                  - kind: CustomResourceDefinition
+                    group: apiextensions.k8s.io
+                    name: clusteranalysistemplates.argoproj.io
+                    jqPathExpressions:
+                      - .spec.conversion
+                      - .spec.preserveUnknownFields
+                  - kind: CustomResourceDefinition
+                    group: apiextensions.k8s.io
+                    name: experiments.argoproj.io
+                    jqPathExpressions:
+                      - .spec.conversion
+                      - .spec.preserveUnknownFields
+                  - kind: CustomResourceDefinition
+                    group: apiextensions.k8s.io
+                    name: rollouts.argoproj.io
+                    jqPathExpressions:
+                      - .spec.conversion
+                      - .spec.preserveUnknownFields
+                automation: manual
+                enabled: "true"
+              - name: argo-workflows
+                path: argocd/applications/argo-workflows
+                namespace: argo-workflows
+                annotations:
+                  argocd.argoproj.io/sync-wave: "3"
+                automation: manual
+                enabled: "true"
+              - name: attic
+                path: argocd/applications/attic
+                namespace: attic
+                annotations:
+                  argocd.argoproj.io/sync-wave: "3"
+                managedNamespaceMetadata:
+                  labels:
+                    external-secrets.proompteng.ai/enabled: "true"
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false
+                automation: auto
+                enabled: "true"
+              - name: observability
+                path: argocd/applications/observability
+                namespace: observability
+                annotations:
+                  argocd.argoproj.io/sync-wave: "3"
+                managedNamespaceMetadata:
+                  labels:
+                    external-secrets.proompteng.ai/enabled: "true"
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false
+                automation: auto
+                enabled: "true"
+              - name: minio
+                path: argocd/applications/minio
+                namespace: minio
+                annotations:
+                  argocd.argoproj.io/sync-wave: "3"
+                automation: manual
+                enabled: "false"
+              - name: flink
+                path: argocd/applications/flink
+                namespace: flink
+                annotations:
+                  argocd.argoproj.io/sync-wave: "3"
+                ignoreDifferences:
+                  - kind: CustomResourceDefinition
+                    group: apiextensions.k8s.io
+                    name: flinkbluegreendeployments.flink.apache.org
+                    jqPathExpressions:
+                      - .spec.versions[].additionalPrinterColumns[].priority
+                  - kind: CustomResourceDefinition
+                    group: apiextensions.k8s.io
+                    name: flinkdeployments.flink.apache.org
+                    jqPathExpressions:
+                      - .spec.versions[].additionalPrinterColumns[].priority
+                  - kind: CustomResourceDefinition
+                    group: apiextensions.k8s.io
+                    name: flinksessionjobs.flink.apache.org
+                    jqPathExpressions:
+                      - .spec.versions[].additionalPrinterColumns[].priority
+                  - kind: CustomResourceDefinition
+                    group: apiextensions.k8s.io
+                    name: flinkstatesnapshots.flink.apache.org
+                    jqPathExpressions:
+                      - .spec.versions[].additionalPrinterColumns[].priority
+                automation: manual
+                enabled: "true"
+              - name: milvus
+                path: argocd/applications/milvus
+                namespace: milvus
+                annotations:
+                  argocd.argoproj.io/sync-wave: "4"
+                automation: auto
+                enabled: "false"
+              - name: temporal
+                path: argocd/applications/temporal
+                namespace: temporal
+                annotations:
+                  argocd.argoproj.io/sync-wave: "4"
+                automation: manual
+                enabled: "true"
+              - name: inngest
+                path: argocd/applications/inngest
+                namespace: inngest
+                annotations:
+                  argocd.argoproj.io/sync-wave: "4"
+                automation: auto
+                enabled: "false"
+              - name: airbyte
+                path: argocd/applications/airbyte
+                namespace: airbyte
+                annotations:
+                  argocd.argoproj.io/sync-wave: "4"
+                automation: auto
+                enabled: "false"
+              - name: dagster
+                path: argocd/applications/dagster
+                namespace: dagster
+                annotations:
+                  argocd.argoproj.io/sync-wave: "4"
+                automation: auto
+                enabled: "false"
+              - name: verdaccio
+                path: argocd/applications/verdaccio
+                namespace: verdaccio
+                annotations:
+                  argocd.argoproj.io/sync-wave: "3"
+                automation: auto
+                enabled: "false"
+              - name: spark
+                path: argocd/applications/spark
+                namespace: spark
+                annotations:
+                  argocd.argoproj.io/sync-wave: "3"
+                automation: auto
+                enabled: "false"
+              - name: coder
+                path: argocd/applications/coder
+                namespace: coder
+                annotations:
+                  argocd.argoproj.io/sync-wave: "3"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: privileged
+                    pod-security.kubernetes.io/audit: privileged
+                    pod-security.kubernetes.io/warn: privileged
+                automation: auto
+                enabled: "true"
+              - name: arc
+                path: argocd/applications/arc
+                namespace: arc
+                annotations:
+                  argocd.argoproj.io/sync-wave: "4"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: privileged
+                    pod-security.kubernetes.io/audit: privileged
+                    pod-security.kubernetes.io/warn: privileged
+                automation: auto
+                enabled: "true"
+              - name: forgejo-runners
+                path: argocd/applications/forgejo-runners
+                namespace: forgejo-runners
+                annotations:
+                  argocd.argoproj.io/sync-wave: "6"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: privileged
+                    pod-security.kubernetes.io/audit: privileged
+                    pod-security.kubernetes.io/warn: privileged
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false
+                ignoreDifferences:
+                  - kind: StatefulSet
+                    group: apps
+                    namespace: forgejo-runners
+                    name: forgejo-runners-amd64
+                    jqPathExpressions:
+                      - .spec.persistentVolumeClaimRetentionPolicy
+                      - .spec.revisionHistoryLimit
+                      - .spec.updateStrategy
+                      - .spec.volumeClaimTemplates[].apiVersion
+                      - .spec.volumeClaimTemplates[].kind
+                      - .spec.volumeClaimTemplates[].spec.volumeMode
+                      - .spec.volumeClaimTemplates[].status
+                      - '.spec.template.metadata.annotations["kubectl.kubernetes.io/restartedAt"]'
+                      - .spec.template.spec.containers[].terminationMessagePath
+                      - .spec.template.spec.containers[].terminationMessagePolicy
+                      - .spec.template.spec.initContainers[].resources
+                      - .spec.template.spec.initContainers[].terminationMessagePath
+                      - .spec.template.spec.initContainers[].terminationMessagePolicy
+                      - .spec.template.spec.dnsPolicy
+                      - .spec.template.spec.restartPolicy
+                      - .spec.template.spec.schedulerName
+                      - .spec.template.spec.securityContext
+                      - .spec.template.spec.serviceAccount
+                      - .spec.template.spec.volumes[].configMap.defaultMode
+                  - kind: StatefulSet
+                    group: apps
+                    namespace: forgejo-runners
+                    name: forgejo-runners-arm64
+                    jqPathExpressions:
+                      - .spec.persistentVolumeClaimRetentionPolicy
+                      - .spec.revisionHistoryLimit
+                      - .spec.updateStrategy
+                      - .spec.volumeClaimTemplates[].apiVersion
+                      - .spec.volumeClaimTemplates[].kind
+                      - .spec.volumeClaimTemplates[].spec.volumeMode
+                      - .spec.volumeClaimTemplates[].status
+                      - '.spec.template.metadata.annotations["kubectl.kubernetes.io/restartedAt"]'
+                      - .spec.template.spec.containers[].terminationMessagePath
+                      - .spec.template.spec.containers[].terminationMessagePolicy
+                      - .spec.template.spec.initContainers[].resources
+                      - .spec.template.spec.initContainers[].terminationMessagePath
+                      - .spec.template.spec.initContainers[].terminationMessagePolicy
+                      - .spec.template.spec.dnsPolicy
+                      - .spec.template.spec.restartPolicy
+                      - .spec.template.spec.schedulerName
+                      - .spec.template.spec.securityContext
+                      - .spec.template.spec.serviceAccount
+                      - .spec.template.spec.volumes[].configMap.defaultMode
+                automation: manual
+                enabled: "true"
+              - name: backstage
+                path: argocd/applications/backstage
+                namespace: backstage
+                annotations:
+                  argocd.argoproj.io/sync-wave: "4"
+                automation: auto
+                enabled: "false"
+              - name: keycloak
+                path: argocd/applications/keycloak
+                namespace: keycloak
+                annotations:
+                  argocd.argoproj.io/sync-wave: "4"
+                automation: auto
+                enabled: "true"
+              - name: headlamp
+                path: argocd/applications/headlamp
+                namespace: headlamp
+                annotations:
+                  argocd.argoproj.io/sync-wave: "4"
+                automation: auto
+                enabled: "true"
+              - name: pgadmin
+                path: argocd/applications/pgadmin
+                namespace: pgadmin
+                annotations:
+                  argocd.argoproj.io/sync-wave: "4"
+                automation: manual
+                enabled: "true"
+              - name: graf
+                path: argocd/applications/graf
+                namespace: graf
+                annotations:
+                  argocd.argoproj.io/sync-wave: "4"
+                  argocd.argoproj.io/compare-options: IgnoreExtraneous
+                ignoreDifferences:
+                  - group: serving.knative.dev
+                    kind: Service
+                    jsonPointers:
+                      - /metadata/annotations
+                      - /metadata/labels
+                      - /spec/traffic
+                      - /spec/template/metadata/annotations
+                      - /spec/template/metadata/creationTimestamp
+                      - /spec/template/metadata/labels
+                      - /spec/template/spec/containers/0/ports/0/protocol
+                      - /spec/template/spec/containers/0/readinessProbe
+                      - /spec/template/spec/enableServiceLinks
+                automation: manual
+                enabled: "false"
+              - name: convex
+                path: argocd/applications/convex
+                namespace: convex
+                annotations:
+                  argocd.argoproj.io/sync-wave: "4"
+                automation: auto
+                enabled: "false"
+            selector:
+              matchExpressions:
+                - key: enabled
+                  operator: NotIn
+                  values: ["false", "False", "0"]
+  template:
+    metadata:
+      name: "{{ .name }}{{ .suffix }}"
+    spec:
+      project: '{{ if hasKey . "project" }}{{ .project }}{{ else }}default{{ end }}'
+      destination:
+        namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
+      source:
+        repoURL: '{{ if hasKey . "repoURL" }}{{ .repoURL }}{{ else }}https://github.com/proompteng/lab.git{{ end }}'
+        targetRevision: '{{ if hasKey . "targetRevision" }}{{ .targetRevision }}{{ else }}main{{ end }}'
+        path: "{{ .path }}"
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+          - RespectIgnoreDifferences=true
+          - ApplyOutOfSyncOnly=true
+          - PruneLast=true
+          - ClientSideApplyMigration=false
+      ignoreDifferences:
+        - kind: StatefulSet
+          group: apps
+          namespace: dagster
+          jqPathExpressions:
+            - .spec.volumeClaimTemplates
+        - kind: StatefulSet
+          group: apps
+          namespace: graf
+          name: graf-db
+          jqPathExpressions:
+            - .spec.volumeClaimTemplates
+        - kind: StatefulSet
+          group: apps
+          namespace: temporal
+          name: elasticsearch-master
+          jqPathExpressions:
+            - .spec.volumeClaimTemplates[].apiVersion
+            - .spec.volumeClaimTemplates[].kind
+        - kind: StatefulSet
+          group: apps
+          namespace: temporal
+          name: temporal-cassandra
+          jqPathExpressions:
+            - .spec.persistentVolumeClaimRetentionPolicy
+            - .spec.revisionHistoryLimit
+            - .spec.updateStrategy
+            - .spec.volumeClaimTemplates[].apiVersion
+            - .spec.volumeClaimTemplates[].kind
+            - .spec.volumeClaimTemplates[].spec.volumeMode
+            - .spec.volumeClaimTemplates[].status
+        - kind: StatefulSet
+          group: apps
+          namespace: nats
+          name: nats
+          jqPathExpressions:
+            - .spec.persistentVolumeClaimRetentionPolicy
+            - .spec.revisionHistoryLimit
+            - .spec.updateStrategy
+            - .spec.volumeClaimTemplates[].apiVersion
+            - .spec.volumeClaimTemplates[].kind
+            - .spec.volumeClaimTemplates[].spec.volumeMode
+            - .spec.volumeClaimTemplates[].status
+            - .spec.template.spec.containers[].livenessProbe.httpGet.scheme
+            - .spec.template.spec.containers[].readinessProbe.httpGet.scheme
+            - .spec.template.spec.containers[].startupProbe.httpGet.scheme
+            - .spec.template.spec.containers[].terminationMessagePath
+            - .spec.template.spec.containers[].terminationMessagePolicy
+            - .spec.template.spec.dnsPolicy
+            - .spec.template.spec.restartPolicy
+            - .spec.template.spec.schedulerName
+            - .spec.template.spec.volumes[].configMap.defaultMode
+        - kind: StatefulSet
+          group: apps
+          namespace: forgejo-runners
+          name: forgejo-runners-amd64
+          jqPathExpressions:
+            - '.spec.template.metadata.annotations["kubectl.kubernetes.io/restartedAt"]'
+        - kind: StatefulSet
+          group: apps
+          namespace: forgejo-runners
+          name: forgejo-runners-arm64
+          jqPathExpressions:
+            - '.spec.template.metadata.annotations["kubectl.kubernetes.io/restartedAt"]'
+        - kind: Service
+          group: serving.knative.dev
+          namespace: graf
+          name: graf
+          jqPathExpressions:
+            - .spec.template.spec.containers[].ports[].protocol
+            - .spec.template.spec.containers[].readinessProbe.successThreshold
+        - kind: Deployment
+          group: apps
+          namespace: istio-system
+          name: istiod
+          jqPathExpressions:
+            - .spec.template.spec.containers[].env[].valueFrom.resourceFieldRef.divisor
+        - kind: Deployment
+          group: apps
+          namespace: clickhouse-operator
+          name: clickhouse-operator-altinity-clickhouse-operator
+          jqPathExpressions:
+            - .spec.template.spec.containers[].env[].valueFrom.resourceFieldRef.divisor
+            - .spec.template.spec.containers[].env[].valueFrom.fieldRef.apiVersion
+        - kind: DaemonSet
+          group: apps
+          namespace: istio-system
+          name: istio-cni-node
+          jqPathExpressions:
+            - .spec.template.spec.containers[].env[].valueFrom.resourceFieldRef.divisor
+        - kind: ValidatingWebhookConfiguration
+          group: admissionregistration.k8s.io
+          name: istio-validator-istio-system
+          jqPathExpressions:
+            - .webhooks[].failurePolicy
+        - kind: ValidatingWebhookConfiguration
+          group: admissionregistration.k8s.io
+          name: istiod-default-validator
+          jqPathExpressions:
+            - .webhooks[].failurePolicy
+        - kind: ClusterRole
+          group: rbac.authorization.k8s.io
+          name: knative-eventing-operator-aggregated-stable
+          jqPathExpressions:
+            - .rules
+        - kind: ClusterRole
+          group: rbac.authorization.k8s.io
+          name: knative-serving-operator-aggregated-stable
+          jqPathExpressions:
+            - .rules
+        - kind: CustomResourceDefinition
+          group: apiextensions.k8s.io
+          name: flinkdeployments.flink.apache.org
+          jqPathExpressions:
+            - .spec.conversion
+            - .spec.names.listKind
+            - .spec.versions[].additionalPrinterColumns[].priority
+        - kind: CustomResourceDefinition
+          group: apiextensions.k8s.io
+          name: flinksessionjobs.flink.apache.org
+          jqPathExpressions:
+            - .spec.conversion
+            - .spec.names.listKind
+            - .spec.versions[].additionalPrinterColumns[].priority
+        - kind: CustomResourceDefinition
+          group: apiextensions.k8s.io
+          name: flinkstatesnapshots.flink.apache.org
+          jqPathExpressions:
+            - .spec.conversion
+            - .spec.names.listKind
+            - .spec.versions[].additionalPrinterColumns[].priority
+        - kind: CustomResourceDefinition
+          group: apiextensions.k8s.io
+          name: cdis.cdi.kubevirt.io
+          jqPathExpressions:
+            - .spec.versions
+        - kind: VirtualMachine
+          group: kubevirt.io
+          namespace: workers
+          name: workers
+          jqPathExpressions:
+            - .metadata.annotations
+            - .metadata.finalizers
+            - .spec.dataVolumeTemplates[].metadata.creationTimestamp
+            - .spec.template.metadata.creationTimestamp
+            - .spec.template.spec.architecture
+            - .spec.template.spec.domain.firmware
+            - .spec.template.spec.domain.machine
+        - kind: VirtualMachine
+          group: kubevirt.io
+          namespace: openclaw
+          name: openclaw
+          jqPathExpressions:
+            - .metadata.annotations
+            - .metadata.finalizers
+            - .spec.dataVolumeTemplates[].metadata.creationTimestamp
+            - .spec.template.metadata.creationTimestamp
+            - .spec.template.spec.architecture
+            - .spec.template.spec.domain.firmware
+            - .spec.template.spec.domain.machine
+        - kind: VirtualMachine
+          group: kubevirt.io
+          namespace: torghut-cuda-ranker
+          name: torghut-cuda-ranker
+          jqPathExpressions:
+            - .metadata.annotations
+            - .metadata.finalizers
+            - .spec.dataVolumeTemplates[].metadata.creationTimestamp
+            - .spec.template.metadata.creationTimestamp
+        - kind: ClusterPolicy
+          group: nvidia.com
+          name: cluster-policy
+          jqPathExpressions:
+            - .spec.migManager.config.name
+  templatePatch: |
+    {{- if .annotations }}
+    metadata:
+      annotations:
+      {{- range $key, $value := .annotations }}
+          {{ $key }}: {{ $value | quote }}
+      {{- end }}
+    {{- end }}
+    {{- $hasDestServer := hasKey . "destinationServer" -}}
+    {{- $hasDestName := hasKey . "destinationName" -}}
+    {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
+    {{- $hasKustomize := hasKey . "kustomize" -}}
+    {{- $auto := eq .automation "auto" -}}
+    {{- $hasManagedNS := hasKey . "managedNamespaceMetadata" -}}
+    {{- $needsSpec := or $hasDestServer $hasDestName $useLovely $hasKustomize $auto $hasManagedNS (hasKey . "ignoreDifferences") -}}
+    {{- if $needsSpec }}
+    spec:
+    {{- if or $hasDestServer $hasDestName }}
+      destination:
+        namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
+      {{- if $hasDestServer }}
+        server: '{{ .destinationServer }}'
+      {{- end }}
+      {{- if $hasDestName }}
+        name: '{{ .destinationName }}'
+      {{- end }}
+    {{- end }}
+    {{- if or $useLovely $hasKustomize }}
+      source:
+      {{- if $useLovely }}
+        plugin:
+          name: lovely
+      {{- end }}
+      {{- if $hasKustomize }}
+        kustomize: {{ toJson .kustomize }}
+      {{- end }}
+    {{- end }}
+    {{- if or $auto $hasManagedNS }}
+      syncPolicy:
+      {{- if $auto }}
+        automated:
+          enabled: true
+          prune: true
+          selfHeal: true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
+          refresh: true
+      {{- end }}
+      {{- if $hasManagedNS }}
+        managedNamespaceMetadata:
+        {{- if hasKey .managedNamespaceMetadata "labels" }}
+          labels:
+          {{- range $key, $value := .managedNamespaceMetadata.labels }}
+            {{ $key }}: {{ $value | quote }}
+          {{- end }}
+        {{- end }}
+        {{- if hasKey .managedNamespaceMetadata "annotations" }}
+          annotations:
+          {{- range $key, $value := .managedNamespaceMetadata.annotations }}
+            {{ $key }}: {{ $value | quote }}
+          {{- end }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+    {{- if hasKey . "ignoreDifferences" }}
+      ignoreDifferences: {{ toJson .ignoreDifferences }}
+    {{- end }}
+    {{- end }}

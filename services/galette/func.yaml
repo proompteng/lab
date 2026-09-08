@@ -1,0 +1,17 @@
+# $schema: https://raw.githubusercontent.com/knative/func/d04ff0a3/schema/func_yaml-schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/knative/func/d04ff0a3/schema/func_yaml-schema.json
+specVersion: 1.17.0
+name: galette
+runtime: zig
+registry: registry.ide-newton.ts.net/lab
+namespace: galette
+created: 2025-10-03T00:00:00Z
+build:
+  builder: docker
+  dockerfile: Dockerfile
+deploy:
+  namespace: galette
+  image: registry.ide-newton.ts.net/lab/galette:main
+  options:
+    scale:
+      min: 1

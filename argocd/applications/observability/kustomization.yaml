@@ -1,0 +1,175 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+configMapGenerator:
+  - name: observability-cluster-metrics-alloy
+    files:
+      - config.river=cluster-metrics-alloy-config.river
+
+generatorOptions:
+  disableNameSuffixHash: true
+
+resources:
+  - rook-ceph-rgw-loki-reflected-secret.yaml
+  - tailscale-ingresses.yaml
+  - ingressroute-grafana-k8s-private.yaml
+  - graf-mimir-rules.yaml
+  - observability-alertmanager-email-externalsecret.yaml
+  - observability-mimir-rule-loader.yaml
+  - graf-graf-dashboard-configmap.yaml
+  - graf-bumba-dashboard-configmap.yaml
+  - symphony-fleet-dashboard-configmap.yaml
+  - codex-pipeline-dashboard-configmap.yaml
+  - torghut-execution-recovery-dashboard-configmap.yaml
+  - arc-runner-capacity-dashboard-configmap.yaml
+  - bayn-cycle-operations-dashboard-configmap.yaml
+  - cluster-metrics-alloy-rbac.yaml
+  - cluster-metrics-alloy-deployment.yaml
+
+helmCharts:
+  - name: kube-state-metrics
+    repo: https://prometheus-community.github.io/helm-charts
+    version: 8.2.0
+    releaseName: observability-kube-state-metrics
+    namespace: observability
+    includeCRDs: true
+    valuesFile: kube-state-metrics-values.yaml
+  - name: mimir-distributed
+    repo: https://grafana.github.io/helm-charts
+    version: 6.1.0
+    releaseName: observability-mimir
+    namespace: observability
+    includeCRDs: true
+    valuesFile: mimir-values.yaml
+  - name: loki-distributed
+    repo: https://grafana.github.io/helm-charts
+    version: 0.80.6
+    releaseName: observability-loki
+    namespace: observability
+    includeCRDs: true
+    valuesFile: loki-values.yaml
+  - name: tempo-distributed
+    repo: https://grafana.github.io/helm-charts
+    version: 1.61.3
+    releaseName: observability-tempo
+    namespace: observability
+    includeCRDs: true
+    valuesFile: tempo-values.yaml
+  - name: grafana
+    repo: https://grafana.github.io/helm-charts
+    version: 10.5.15
+    releaseName: observability-grafana
+    namespace: observability
+    valuesFile: grafana-values.yaml
+
+images:
+  - name: docker.io/nginxinc/nginx-unprivileged
+    newName: mirror.gcr.io/nginxinc/nginx-unprivileged
+    newTag: 1.29-alpine
+  - name: docker.io/memcached
+    newName: mirror.gcr.io/library/memcached
+    newTag: 1.6.39-alpine
+
+patches:
+  - target:
+      kind: StatefulSet
+      name: observability-mimir-compactor
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: observability-mimir-compactor
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
+  - target:
+      kind: StatefulSet
+      name: observability-mimir-ingester
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: observability-mimir-ingester
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
+  - target:
+      kind: StatefulSet
+      name: observability-mimir-store-gateway
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: observability-mimir-store-gateway
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
+  - target:
+      kind: StatefulSet
+      name: observability-mimir-kafka
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: observability-mimir-kafka
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
+  - target:
+      kind: StatefulSet
+      name: observability-tempo-ingester
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: observability-tempo-ingester
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
+  - target:
+      kind: StatefulSet
+      name: observability-tempo-memcached
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: observability-tempo-memcached
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
+  - target:
+      kind: StatefulSet
+      name: observability-loki-loki-distributed-ingester
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: observability-loki-loki-distributed-ingester
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
+  - target:
+      kind: StatefulSet
+      name: observability-loki-loki-distributed-querier
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: observability-loki-loki-distributed-querier
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
+  - target:
+      kind: Job
+      name: observability-mimir-smoke-test
+    patch: |-
+      $patch: delete
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: observability-mimir-smoke-test
+  - target:
+      kind: StatefulSet
+      name: observability-mimir-alertmanager
+    patch: |-
+      - op: add
+        path: /spec/template/metadata/annotations/observability.proompteng.ai~1alertmanager-fallback-config-revision
+        value: "2026-06-20-1"
+      - op: replace
+        path: /spec/template/spec/volumes/4
+        value:
+          name: alertmanager-fallback-config
+          secret:
+            secretName: observability-alertmanager-email

@@ -1,0 +1,11 @@
+version: v1alpha1
+metadata:
+  name: kata-runtimes
+  version: 4.1.0
+  author: proompteng
+  description: |
+    Kata Containers runtime-rs 4.1.0 with QEMU, Cloud Hypervisor,
+    Firecracker 1.12.1, and the built-in Dragonball VMM.
+  compatibility:
+    talos:
+      version: ">= v1.13.0-alpha.2"

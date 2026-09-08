@@ -1,0 +1,55 @@
+account:
+  name: proompteng-lab
+
+services:
+  api:
+    endpoint: 127.0.0.1:8180
+  metrics:
+    endpoint: 127.0.0.1:2122
+  kubernetesProxy:
+    endpoint: 127.0.0.1:8100
+  siderolink:
+    joinTokensMode: strict
+    wireGuard:
+      endpoint: 0.0.0.0:50180
+  machineAPI:
+    endpoint: 127.0.0.1:8090
+  localResourceService:
+    enabled: false
+  workloadProxy:
+    enabled: false
+
+auth:
+  auth0:
+    enabled: false
+  oidc:
+    enabled: true
+    scopes:
+      - openid
+      - profile
+      - email
+
+logs:
+  level: info
+  format: json
+
+storage:
+  default:
+    kind: etcd
+    etcd:
+      embedded: true
+      embeddedDBPath: /var/lib/omni/etcd
+      runElections: false
+      privateKeySource: file:///run/secrets/omni.asc
+  sqlite:
+    path: /var/lib/omni/sqlite/omni.db
+
+features:
+  enableBreakGlassConfigs: false
+  enableConfigDataCompression: true
+  enableClusterImport: true
+
+registries:
+  factories:
+    primary:
+      url: http://100.100.244.148:8081/

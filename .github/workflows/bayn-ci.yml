@@ -1,0 +1,310 @@
+name: bayn
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      bayn: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.bayn || steps.filter.outputs.bayn }}
+      image: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.image || steps.filter.outputs.image }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Detect Bayn release inputs
+        id: filter
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          bayn=false
+          image=false
+          while IFS= read -r path; do
+            case "${path}" in
+              services/bayn/* | \
+              packages/scripts/src/bayn/* | \
+              argocd/applications/bayn/* | \
+              argocd/applications/torghut/clickhouse/* | \
+              argocd/applicationsets/product.yaml | \
+              nix/images/bayn.nix | \
+              nix/images/bayn-runtime-root.nix | \
+              nix/images/bun-workspace-service.nix | \
+              nix/images/bun-workspace-deps-source.nix | \
+              nix/images/bun-workspace-deps-source.test.sh | \
+              nix/packages.nix | \
+              nix/cache-push.sh | \
+              nix/ci-nix-oci-summary.sh | \
+              nix/ci-run-timed.sh | \
+              nix/oci-inspect-archive.sh | \
+              nix/oci-push.sh | \
+              nix/oci-release-contract.sh | \
+              nix/verify-bayn-image-command.sh | \
+              nix/verify-bayn-image-command.test.sh | \
+              flake.nix | flake.lock | bun.lock | package.json | */package.json | \
+              .npmrc | bunfig.toml | patches/* | tsconfig.base.json | \
+              .github/actions/setup-nix-toolchain/* | \
+              .github/workflows/bayn-*.yml | \
+              .github/workflows/common-monorepo.yml | \
+              .github/workflows/nix-oci-build-common.yml)
+                bayn=true
+                ;;
+            esac
+            case "${path}" in
+              services/bayn/* | \
+              packages/scripts/src/bayn/update-manifests.ts | \
+              nix/images/bayn.nix | \
+              nix/images/bayn-runtime-root.nix | \
+              nix/images/bun-workspace-service.nix | \
+              nix/images/bun-workspace-deps-source.nix | \
+              nix/packages.nix | \
+              nix/cache-push.sh | \
+              nix/ci-nix-oci-summary.sh | \
+              nix/ci-run-timed.sh | \
+              nix/oci-inspect-archive.sh | \
+              nix/oci-push.sh | \
+              nix/verify-bayn-image-command.sh | \
+              nix/verify-bayn-image-command.test.sh | \
+              flake.nix | flake.lock | bun.lock | package.json | */package.json | \
+              .npmrc | bunfig.toml | patches/* | tsconfig.base.json)
+                image=true
+                ;;
+              .github/actions/setup-nix-toolchain/* | \
+              .github/workflows/bayn-*.yml | \
+              .github/workflows/nix-oci-build-common.yml)
+                image=true
+                ;;
+            esac
+          done < <(git diff --no-renames --name-only "${BASE_SHA}...${HEAD_SHA}")
+          {
+            echo "bayn=${bayn}"
+            echo "image=${image}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Select all checks for manual validation
+        id: manual
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          {
+            echo 'bayn=true'
+            echo 'image=false'
+          } >> "$GITHUB_OUTPUT"
+
+  pr-checks:
+    needs: changes
+    if: needs.changes.outputs.bayn == 'true'
+    uses: ./.github/workflows/common-monorepo.yml
+    with:
+      bun-version: 1.4.0
+      node-version: 24.11.1
+      install-command: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/bayn --filter @proompteng/scripts
+      lint-command: bunx oxfmt --check services/bayn argocd/applications/bayn argocd/applications/torghut/clickhouse/bayn-sealed-secret.yaml argocd/applications/torghut/clickhouse/clickhouse-cluster.yaml
+      oxlint-command: bun run --cwd services/bayn lint:oxlint
+      oxlint-type-command: bun run --cwd services/bayn lint:oxlint:type
+      test-command: bun run --cwd services/bayn tsc && bun run --cwd services/bayn test && bun test packages/scripts/src/bayn
+      build-command: bun run --cwd services/bayn build
+    secrets: inherit
+
+  effect-runtime-compatibility:
+    needs: changes
+    if: needs.changes.outputs.bayn == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - name: Install focused dependencies
+        run: >-
+          bun install --frozen-lockfile --ignore-scripts
+          --filter @proompteng/source
+          --filter @proompteng/bayn
+      - name: Verify Effect runtime compatibility cohort
+        run: bun run --cwd services/bayn test:effect-runtime
+
+  broker-sandbox-contract:
+    needs: changes
+    if: needs.changes.outputs.bayn == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - name: Install focused dependencies
+        run: >-
+          bun install --frozen-lockfile --ignore-scripts
+          --filter @proompteng/source
+          --filter @proompteng/bayn
+      - name: Verify OBSERVE sandbox contract without broker I/O
+        run: >-
+          env -u BAYN_ALPACA_ACCOUNT_ID
+          -u BAYN_ALPACA_KEY_ID
+          -u BAYN_ALPACA_SECRET_KEY
+          bun run --cwd services/bayn test:broker-sandbox
+
+  postgres-integration:
+    needs: changes
+    if: needs.changes.outputs.bayn == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: bayn
+          POSTGRES_PASSWORD: bayn
+          POSTGRES_DB: bayn_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bayn -d bayn_test"
+          --health-interval 1s
+          --health-timeout 5s
+          --health-retries 30
+      clickhouse:
+        image: altinity/clickhouse-server:25.3.6.10034.altinitystable
+        env:
+          CLICKHOUSE_SKIP_USER_SETUP: 1
+        ports:
+          - 8123:8123
+        options: >-
+          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-interval 1s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      BAYN_TEST_POSTGRES_URL: postgresql://bayn:bayn@127.0.0.1:5432/bayn_test
+      BAYN_TEST_CLICKHOUSE_URL: http://127.0.0.1:8123
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - name: Install focused dependencies
+        run: >-
+          bun install --frozen-lockfile --ignore-scripts
+          --filter @proompteng/source
+          --filter @proompteng/bayn
+      - name: Bind ClickHouse endpoint to the disposable job service
+        env:
+          CLICKHOUSE_SERVICE_CONTAINER: ${{ job.services.clickhouse.id }}
+        run: |
+          set -euo pipefail
+          guard_token="$(tr -d '-' < /proc/sys/kernel/random/uuid)"
+          docker exec "${CLICKHOUSE_SERVICE_CONTAINER}" clickhouse-client --multiquery --query "
+            CREATE DATABASE bayn_ci_guard;
+            CREATE TABLE bayn_ci_guard.endpoint_identity
+            (
+              token FixedString(32)
+            )
+            ENGINE = Memory;
+            INSERT INTO bayn_ci_guard.endpoint_identity VALUES ('${guard_token}');
+          "
+          echo "BAYN_TEST_CLICKHOUSE_GUARD_TOKEN=${guard_token}" >> "${GITHUB_ENV}"
+      - name: Verify complete Bayn PostgreSQL persistence workflows
+        run: bun run --cwd services/bayn test:postgres
+      - name: Verify Bayn ClickHouse Date query semantics
+        run: bun test services/bayn/src/market-data.clickhouse.integration.test.ts
+
+  dependency-input-invariant:
+    needs: changes
+    if: needs.changes.outputs.bayn == 'true'
+    runs-on: arc-amd64
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: Set up Nix toolchain
+        uses: ./.github/actions/setup-nix-toolchain
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          require-preinstalled: 'true'
+          install-ci-toolchain: 'false'
+          extra-nix-config: |
+            experimental-features = nix-command flakes
+            substituters = https://cache.nixos.org/
+      - name: Prove dependency source boundary
+        run: |
+          bash nix/images/bun-workspace-deps-source.test.sh
+          bash nix/verify-bayn-image-command.test.sh
+
+  image:
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.image == 'true'
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: bayn
+      package_attr: bayn-image
+      tag: sha-${{ github.event.pull_request.head.sha || github.sha }}
+      publish_kargo_tag: false
+      source_revision: ${{ github.event.pull_request.head.sha }}
+      pr_number: ''
+      latest: false
+      publish_on_dispatch: false
+    secrets: inherit
+
+  required:
+    name: Bayn release gate
+    if: always()
+    needs:
+      - changes
+      - pr-checks
+      - effect-runtime-compatibility
+      - broker-sandbox-contract
+      - postgres-integration
+      - dependency-input-invariant
+      - image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every applicable Bayn release check
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          BAYN_RELEVANT: ${{ needs.changes.outputs.bayn }}
+          IMAGE_RELEVANT: ${{ needs.changes.outputs.image }}
+          PR_CHECKS_RESULT: ${{ needs.pr-checks.result }}
+          EFFECT_RESULT: ${{ needs.effect-runtime-compatibility.result }}
+          BROKER_RESULT: ${{ needs.broker-sandbox-contract.result }}
+          POSTGRES_RESULT: ${{ needs.postgres-integration.result }}
+          DEPENDENCY_INPUT_RESULT: ${{ needs.dependency-input-invariant.result }}
+          IMAGE_RESULT: ${{ needs.image.result }}
+        run: |
+          set -euo pipefail
+          if [[ "${CHANGES_RESULT}" != 'success' ]]; then
+            echo "Bayn change detection failed: ${CHANGES_RESULT}" >&2
+            exit 1
+          fi
+          if [[ "${BAYN_RELEVANT}" != 'true' ]]; then
+            echo 'No Bayn release inputs changed; the required gate is satisfied without running Bayn-specific jobs.'
+            exit 0
+          fi
+          for result_name in \
+            PR_CHECKS_RESULT \
+            EFFECT_RESULT \
+            BROKER_RESULT \
+            POSTGRES_RESULT \
+            DEPENDENCY_INPUT_RESULT; do
+            result="${!result_name}"
+            if [[ "${result}" != 'success' ]]; then
+              echo "${result_name} must be success, got ${result}" >&2
+              exit 1
+            fi
+          done
+          if [[ "${IMAGE_RELEVANT}" == 'true' && "${IMAGE_RESULT}" != 'success' ]]; then
+            echo "IMAGE_RESULT must be success for image-affecting changes, got ${IMAGE_RESULT}" >&2
+            exit 1
+          fi
+          echo 'All applicable Bayn unit, type, Effect, PostgreSQL, dependency-boundary, and multi-architecture image checks passed.'

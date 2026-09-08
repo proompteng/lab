@@ -1,0 +1,506 @@
+kind: Cluster
+name: galactic
+kubernetes:
+  version: v1.36.4
+talos:
+  version: v1.13.9
+patches:
+  - file: image-factory-registry.yaml
+---
+kind: ControlPlane
+machines:
+  - 12345678-9abc-deff-1234-56789abcdeff
+  - 8bf7ec00-171c-11f1-8000-7cc255f16774
+  - ff115a00-c307-11f0-a28f-648eab3e4100
+upgradeStrategy:
+  type: Rolling
+  rolling:
+    maxParallelism: 1
+---
+kind: Workers
+updateStrategy:
+  type: Unset
+upgradeStrategy:
+  type: Unset
+---
+kind: Machine
+name: 12345678-9abc-deff-1234-56789abcdeff
+systemExtensions:
+  - siderolabs/nvidia-open-gpu-kernel-modules-lts
+  - siderolabs/nvidia-container-toolkit-lts
+  - siderolabs/tailscale
+  - proompteng/talos-kata-runtimes
+patches:
+  - idOverride: 10-12345678-9abc-deff-1234-56789abcdeff
+    annotations:
+      description: Config patch imported from existing Talos node
+      name: User defined patch
+    inline: |
+      apiVersion: v1alpha1
+      environment:
+        - TS_AUTHKEY=__GALACTIC_TAILSCALE_AUTH_KEY__
+        - TS_HOSTNAME=altra
+        - TS_ROUTES=10.96.0.0/12,10.244.0.0/16
+        - TS_ACCEPT_DNS=false
+        - TS_EXTRA_ARGS=--netfilter-mode=nodivert
+      kind: ExtensionServiceConfig
+      name: tailscale
+      ---
+      apiVersion: v1alpha1
+      kind: VolumeConfig
+      name: EPHEMERAL
+      provisioning:
+        diskSelector:
+          match: disk.dev_path == "/dev/nvme1n1"
+        grow: false
+        maxSize: 300GB
+        minSize: 300GB
+      ---
+      apiVersion: v1alpha1
+      kind: UserVolumeConfig
+      name: local-path-provisioner
+      provisioning:
+        diskSelector:
+          match: disk.dev_path == "/dev/nvme1n1"
+        grow: true
+        minSize: 100GB
+      ---
+      apiUrl: grpc://100.78.240.108:8090?jointoken=__GALACTIC_OMNI_JOIN_TOKEN__
+      apiVersion: v1alpha1
+      kind: SideroLinkConfig
+      ---
+      apiVersion: v1alpha1
+      endpoint: '[fdae:41e4:649b:9303::1]:8091'
+      kind: EventSinkConfig
+      ---
+      apiVersion: v1alpha1
+      kind: KmsgLogConfig
+      name: omni-kmsg
+      url: tcp://[fdae:41e4:649b:9303::1]:8092
+      ---
+      cluster:
+        allowSchedulingOnControlPlanes: true
+        apiServer:
+          certSANs:
+            - 100.100.244.141
+            - 100.94.129.1
+            - 100.100.244.142
+            - ryzen
+            - ryzen-1.ide-newton.ts.net
+            - ryzen.ide-newton.ts.net
+            - altra
+          extraArgs:
+            oidc-client-id: kubernetes
+            oidc-groups-claim: groups
+            oidc-groups-prefix: 'oidc:'
+            oidc-issuer-url: https://auth.proompteng.ai/realms/master
+            oidc-username-claim: preferred_username
+            oidc-username-prefix: 'oidc:'
+        controlPlane: {}
+        etcd:
+          advertisedSubnets:
+            - 100.100.244.128/25
+          extraArgs:
+            quota-backend-bytes: "4294967296"
+          listenSubnets:
+            - 100.100.244.128/25
+      machine:
+        certSANs:
+          $patch: delete
+        files:
+          - content: |
+              version = 3
+
+              disabled_plugins = [
+                  "io.containerd.differ.v1.erofs",
+                  "io.containerd.internal.v1.tracing",
+                  "io.containerd.snapshotter.v1.erofs",
+                  "io.containerd.ttrpc.v1.otelttrpc",
+                  "io.containerd.tracing.processor.v1.otlp",
+              ]
+
+              imports = [
+                  "/etc/cri/conf.d/cri.toml",
+              ]
+
+              [debug]
+              level = "info"
+              format = "json"
+            op: overwrite
+            path: "/etc/cri/containerd.toml"
+            permissions: 420
+          - content: |
+              [plugins."io.containerd.cri.v1.images"]
+                discard_unpacked_layers = false
+                use_local_image_pull = true
+
+              [plugins."io.containerd.cri.v1.images".runtime_platforms.kata-fc]
+                snapshotter = "blockfile"
+
+              [plugins."io.containerd.cri.v1.images".pinned_images]
+                sandbox = "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a"
+            op: overwrite
+            path: "/etc/cri/conf.d/20-customization.part"
+            permissions: 420
+        install:
+          disk: /dev/nvme0n1
+        kernel:
+          modules:
+            - name: nvidia
+            - name: nvidia_uvm
+            - name: nvidia_drm
+            - name: nvidia_modeset
+        kubelet:
+          extraConfig:
+            featureGates:
+              RuntimeClassInImageCriApi: true
+            maxPods: 500
+          nodeIP:
+            validSubnets:
+              - 100.100.244.128/25
+        network:
+          interfaces:
+            - interface: enP5p1s0
+              mtu: 1500
+          nameservers:
+            - 100.100.100.100
+            - 1.1.1.1
+            - 8.8.8.8
+        nodeLabels:
+          platform.proompteng.ai/altra-gpu-container-ready: "true"
+        time:
+          servers:
+            - time.cloudflare.com
+            - time.google.com
+      version: v1alpha1
+      ---
+      apiVersion: v1alpha1
+      auto: "off"
+      hostname: talos-192-168-1-85
+      kind: HostnameConfig
+  - idOverride: 20-12345678-9abc-deff-1234-56789abcdeff
+    annotations:
+      description: Config patch imported from existing Talos node
+      name: User defined patch
+    inline: |
+      machine:
+        certSANs:
+          - 100.100.244.141
+          - 100.94.129.1
+          - 100.100.244.142
+          - ryzen
+          - ryzen-1.ide-newton.ts.net
+          - ryzen.ide-newton.ts.net
+          - altra
+      version: v1alpha1
+---
+kind: Machine
+name: 8bf7ec00-171c-11f1-8000-7cc255f16774
+systemExtensions:
+  - siderolabs/nvidia-open-gpu-kernel-modules-lts
+  - siderolabs/nvidia-container-toolkit-lts
+  - siderolabs/tailscale
+  - proompteng/talos-kata-runtimes
+patches:
+  - idOverride: 10-8bf7ec00-171c-11f1-8000-7cc255f16774
+    annotations:
+      description: Config patch imported from existing Talos node
+      name: User defined patch
+    inline: |
+      ---
+      apiVersion: v1alpha1
+      endpoint: "[fdae:41e4:649b:9303::1]:8091"
+      kind: EventSinkConfig
+      ---
+      apiVersion: v1alpha1
+      kind: KmsgLogConfig
+      name: omni-kmsg
+      url: tcp://[fdae:41e4:649b:9303::1]:8092
+      ---
+      apiVersion: v1alpha1
+      environment:
+      - TS_AUTHKEY=__GALACTIC_TAILSCALE_AUTH_KEY__
+      - TS_HOSTNAME=turin
+      - TS_ROUTES=10.96.0.0/12,10.244.0.0/16
+      - TS_EXTRA_ARGS=--netfilter-mode=nodivert
+      - TS_ACCEPT_DNS=false
+      kind: ExtensionServiceConfig
+      name: tailscale
+      ---
+      apiVersion: v1alpha1
+      kind: UserVolumeConfig
+      name: turin-nvme-intel
+      provisioning:
+        diskSelector:
+          match: "'/dev/disk/by-id/nvme-INTEL_SSDPEKKF256G8L_BTHH851313AU256B' in disk.symlinks
+            && !system_disk"
+        grow: true
+        minSize: 100GB
+      ---
+      apiVersion: v1alpha1
+      kind: UserVolumeConfig
+      name: turin-nvme-transcend
+      provisioning:
+        diskSelector:
+          match: "'/dev/disk/by-id/nvme-TS256GMTE652T2_I203860329' in disk.symlinks && !system_disk"
+        grow: true
+        minSize: 100GB
+      ---
+      apiUrl: grpc://100.78.240.108:8090?jointoken=__GALACTIC_OMNI_JOIN_TOKEN__
+      apiVersion: v1alpha1
+      kind: SideroLinkConfig
+      ---
+      cluster:
+        allowSchedulingOnControlPlanes: true
+        controlPlane: {}
+        etcd:
+          advertisedSubnets:
+          - 100.100.244.128/25
+          extraArgs:
+            quota-backend-bytes: '4294967296'
+          listenSubnets:
+          - 100.100.244.128/25
+      machine:
+        files:
+        - content: |
+            version = 3
+
+            disabled_plugins = [
+                "io.containerd.differ.v1.erofs",
+                "io.containerd.internal.v1.tracing",
+                "io.containerd.snapshotter.v1.erofs",
+                "io.containerd.ttrpc.v1.otelttrpc",
+                "io.containerd.tracing.processor.v1.otlp",
+            ]
+
+            imports = [
+                "/etc/cri/conf.d/cri.toml",
+            ]
+
+            [debug]
+            level = "info"
+            format = "json"
+          op: overwrite
+          path: "/etc/cri/containerd.toml"
+          permissions: 420
+        - content: |
+            [plugins."io.containerd.cri.v1.images"]
+              discard_unpacked_layers = false
+              use_local_image_pull = true
+
+            [plugins."io.containerd.cri.v1.images".runtime_platforms.kata-fc]
+              snapshotter = "blockfile"
+
+            [plugins."io.containerd.cri.v1.images".pinned_images]
+              sandbox = "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a"
+          op: overwrite
+          path: "/etc/cri/conf.d/20-customization.part"
+          permissions: 420
+        install:
+          disk: "/dev/disk/by-id/nvme-ORICO_13CBMEK6HEW8CN2X9AKW"
+          wipe: false
+        kernel:
+          modules:
+          - name: nvidia
+          - name: nvidia_uvm
+          - name: nvidia_drm
+          - name: nvidia_modeset
+        kubelet:
+          extraConfig:
+            featureGates:
+              RuntimeClassInImageCriApi: true
+            maxPods: 500
+          nodeIP:
+            validSubnets:
+            - 100.100.244.128/25
+        network:
+          nameservers:
+          - 100.100.100.100
+          - 1.1.1.1
+          - 8.8.8.8
+        time:
+          servers:
+          - time.cloudflare.com
+          - time.google.com
+      version: v1alpha1
+      ---
+      apiVersion: v1alpha1
+      auto: 'off'
+      hostname: turin
+      kind: HostnameConfig
+---
+kind: Machine
+name: ff115a00-c307-11f0-a28f-648eab3e4100
+systemExtensions:
+  - siderolabs/amdgpu
+  - siderolabs/amd-ucode
+  - siderolabs/glibc
+  - siderolabs/tailscale
+  - proompteng/talos-kata-runtimes
+patches:
+  - idOverride: 10-ff115a00-c307-11f0-a28f-648eab3e4100
+    annotations:
+      description: Config patch imported from existing Talos node
+      name: User defined patch
+    inline: |
+      ---
+      apiUrl: grpc://100.78.240.108:8090?jointoken=__GALACTIC_OMNI_JOIN_TOKEN__
+      apiVersion: v1alpha1
+      kind: SideroLinkConfig
+      ---
+      apiVersion: v1alpha1
+      endpoint: "[fdae:41e4:649b:9303::1]:8091"
+      kind: EventSinkConfig
+      ---
+      apiVersion: v1alpha1
+      kind: KmsgLogConfig
+      name: omni-kmsg
+      url: tcp://[fdae:41e4:649b:9303::1]:8092
+      ---
+      apiVersion: v1alpha1
+      environment:
+      - TS_AUTHKEY=__GALACTIC_TAILSCALE_AUTH_KEY__
+      - TS_HOSTNAME=ryzen
+      - TS_ROUTES=10.96.0.0/12,10.244.0.0/16
+      - TS_ACCEPT_DNS=false
+      - TS_EXTRA_ARGS=--netfilter-mode=nodivert
+      kind: ExtensionServiceConfig
+      name: tailscale
+      ---
+      apiVersion: v1alpha1
+      kind: VolumeConfig
+      name: EPHEMERAL
+      provisioning:
+        diskSelector:
+          match: disk.transport == 'nvme'
+        grow: false
+        maxSize: 200GB
+        minSize: 200GB
+      ---
+      apiVersion: v1alpha1
+      kind: UserVolumeConfig
+      name: local-path-provisioner
+      provisioning:
+        diskSelector:
+          match: disk.transport == 'nvme'
+        grow: true
+        minSize: 100GB
+      ---
+      cluster:
+        allowSchedulingOnControlPlanes: true
+        apiServer:
+          certSANs:
+          - 192.168.1.130
+          - 192.168.1.194
+          - 192.168.1.202
+          - 192.168.1.130
+          - 192.168.1.194
+          - 192.168.1.202
+          - 192.168.1.85
+          - nuc
+          - nuc.ide-newton.ts.net
+          - 192.168.1.130
+          - 192.168.1.194
+          - 192.168.1.203
+          - 192.168.1.85
+          - 100.94.129.1
+          - 100.100.244.141
+          - ryzen-1.ide-newton.ts.net
+          - ryzen.ide-newton.ts.net
+          extraArgs:
+            oidc-client-id: kubernetes
+            oidc-groups-claim: groups
+            oidc-groups-prefix: 'oidc:'
+            oidc-issuer-url: https://auth.proompteng.ai/realms/master
+            oidc-username-claim: preferred_username
+            oidc-username-prefix: 'oidc:'
+        controlPlane: {}
+        etcd:
+          advertisedSubnets:
+          - 100.100.244.128/25
+          extraArgs:
+            quota-backend-bytes: '4294967296'
+          listenSubnets:
+          - 100.100.244.128/25
+      machine:
+        files:
+        - content: |
+            version = 3
+
+            disabled_plugins = [
+                "io.containerd.differ.v1.erofs",
+                "io.containerd.internal.v1.tracing",
+                "io.containerd.snapshotter.v1.erofs",
+                "io.containerd.ttrpc.v1.otelttrpc",
+                "io.containerd.tracing.processor.v1.otlp",
+            ]
+
+            imports = [
+                "/etc/cri/conf.d/cri.toml",
+            ]
+
+            [debug]
+            level = "info"
+            format = "json"
+          op: overwrite
+          path: "/etc/cri/containerd.toml"
+          permissions: 420
+        - content: |
+            [plugins."io.containerd.cri.v1.images"]
+              discard_unpacked_layers = false
+              use_local_image_pull = true
+
+            [plugins."io.containerd.cri.v1.images".runtime_platforms.kata-fc]
+              snapshotter = "blockfile"
+
+            [plugins."io.containerd.cri.v1.images".pinned_images]
+              sandbox = "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a"
+          op: overwrite
+          path: "/etc/cri/conf.d/20-customization.part"
+          permissions: 420
+        install:
+          disk: "/dev/nvme0n1"
+          grubUseUKICmdline: false
+        kubelet:
+          disableManifestsDirectory: false
+          extraConfig:
+            featureGates:
+              RuntimeClassInImageCriApi: true
+            maxPods: 500
+          nodeIP:
+            validSubnets:
+            - 100.100.244.128/25
+        network:
+          interfaces:
+          - addresses:
+            - 100.100.244.141/25
+            dhcp: false
+            interface: eno1
+            mtu: 1500
+            routes:
+            - gateway: 100.100.244.129
+              metric: 1024
+              network: 0.0.0.0/0
+          nameservers:
+          - 100.100.100.100
+          - 1.1.1.1
+          - 8.8.8.8
+        nodeLabels:
+          kata-deploy: disabled
+          kubevirt.io/schedulable: 'true'
+          node.kubernetes.io/exclude-from-external-load-balancers:
+            "$patch": delete
+        time:
+          servers:
+          - time.cloudflare.com
+          - time.google.com
+      version: v1alpha1
+      ---
+      apiVersion: v1alpha1
+      auto: 'off'
+      hostname: talos-192-168-1-194
+      kind: HostnameConfig
+kernelArgs:
+  - amd_iommu=off
+  - amdgpu.gttsize=131072
+  - ttm.pages_limit=33554432

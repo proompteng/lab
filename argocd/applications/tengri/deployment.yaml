@@ -1,0 +1,127 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tengri
+  labels:
+    app.kubernetes.io/name: tengri
+    app.kubernetes.io/component: control-plane
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tengri
+      app.kubernetes.io/component: control-plane
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tengri
+        app.kubernetes.io/component: control-plane
+        app.kubernetes.io/part-of: tengri
+    spec:
+      serviceAccountName: tengri
+      automountServiceAccountToken: true
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: tengri
+          image: registry.ide-newton.ts.net/lab/tengri
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: grpc
+              containerPort: 50051
+              protocol: TCP
+            - name: gateway
+              containerPort: 8080
+              protocol: TCP
+            - name: preview
+              containerPort: 8081
+              protocol: TCP
+          env:
+            - name: TENGRI_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: TENGRI_GUEST_ARCHITECTURE
+              value: amd64
+            # Keep the predecessor controller stable until the v2 image promotion lands.
+            # The v2 controller ignores this variable and always creates home-workspace-v2.
+            - name: TENGRI_NEW_AGENT_STORAGE_LAYOUT
+              value: home-workspace-v1
+            - name: TENGRI_DEFAULT_IMAGE
+              valueFrom:
+                configMapKeyRef:
+                  name: tengri-release
+                  key: NANOAGENT_IMAGE
+            - name: TENGRI_PUBLIC_URL
+              value: https://tengri.proompteng.ai
+            - name: TENGRI_PREVIEW_URL_TEMPLATE
+              value: https://tengri-{session}.proompteng.ai
+            - name: TENGRI_DESKTOP_ORIGIN
+              value: https://proompteng.ai
+            - name: TENGRI_PREVIEW_ADDRESS
+              value: 0.0.0.0:8081
+            - name: TENGRI_RUNTIME_SECRET_DIRECTORY
+              value: /var/run/secrets/tengri-runtime
+            - name: TENGRI_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          envFrom:
+            - secretRef:
+                name: tengri-runtime
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: gateway
+            periodSeconds: 2
+            failureThreshold: 30
+            timeoutSeconds: 2
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: gateway
+            periodSeconds: 5
+            failureThreshold: 3
+            timeoutSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: gateway
+            periodSeconds: 15
+            failureThreshold: 3
+            timeoutSeconds: 2
+          resources:
+            requests:
+              cpu: 200m
+              memory: 192Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+            privileged: false
+            runAsNonRoot: true
+          volumeMounts:
+            - name: runtime-secret
+              mountPath: /var/run/secrets/tengri-runtime
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: runtime-secret
+          secret:
+            secretName: tengri-runtime
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

@@ -1,0 +1,59 @@
+# openclaw VM bootstrap notes
+
+The `openclaw` VM consumes `cloud-init-secret.yaml` as a **SealedSecret**.
+
+> This repo intentionally does **not** store plaintext cloud-init userdata.
+
+Because the payload is encrypted, update flow is:
+
+1. Prepare a local `cloud-init-userdata.yaml` file (temporary, do not commit).
+2. Seal it with `kubeseal`.
+3. Overwrite `argocd/applications/openclaw/cloud-init-secret.yaml` with the sealed output.
+
+## Baseline bootstrap expectations
+
+Cloud-init should ensure:
+
+- CLI tools installed on the VM:
+  - `kubectl`
+  - `argocd`
+  - `kubeseal`
+- OpenClaw workspace default set to:
+  - `/home/ubuntu/github.com/lab/services/tuslagch`
+- in-VM Kubernetes access is bootstrapped by mounting the `serviceAccount` disk
+  (`K8S_SA_DISK`) and writing `/home/ubuntu/.kube/config`.
+
+## Scheduling notes
+
+- The root disk is an existing `local-path` PVC. Kubernetes must schedule the VM
+  launcher on the node that owns the bound local PV.
+- Keep the VM memory request small enough to fit on that disk-owning node. If the
+  scheduler reports `Insufficient memory`, check the PVC's selected node and that
+  node's allocated memory before changing storage or recreating the disk.
+
+## VM access model
+
+- ServiceAccount: `openclaw-vm` (namespace `openclaw`)
+- RBAC scope:
+  - can `create/delete/get/list/patch/update/watch` Argo CD `applications`
+  - can `create/delete/get/list/watch` `agents.proompteng.ai/AgentRun`
+  - can `get/list/watch` `Agent`, `ImplementationSpec`, and `VersionControlProvider` in `agents`
+  - can `get` the allowlisted AgentRun Secrets `codex-github-token` and `codex-openai-key`
+  - can `get/list/watch` Jobs, Pods, and ConfigMaps plus `get` Pod logs for AgentRun inspection
+- Implementation note:
+  - these permissions are bound with `ClusterRole`/`ClusterRoleBinding` because the OpenClaw app applies `namespace: openclaw`, which would rewrite namespaced RBAC objects into the wrong namespace during GitOps sync
+
+## Re-seal command (example)
+
+Run from repo root (`~/github.com/lab`):
+
+```bash
+kubectl create secret generic openclaw-cloud-init \
+  --namespace openclaw \
+  --from-file=userdata=./cloud-init-userdata.yaml \
+  --dry-run=client -o yaml \
+| kubeseal --format yaml --namespace openclaw --name openclaw-cloud-init \
+> argocd/applications/openclaw/cloud-init-secret.yaml
+```
+
+Then commit and let ArgoCD sync the app.

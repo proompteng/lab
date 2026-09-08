@@ -1,0 +1,134 @@
+[
+  {
+    "hostname": "kube-master-00",
+    "ip": "192.168.1.150"
+  },
+  {
+    "hostname": "kube-master-01",
+    "ip": "192.168.1.151"
+  },
+  {
+    "hostname": "kube-master-02",
+    "ip": "192.168.1.152"
+  },
+  {
+    "hostname": "kube-worker-00",
+    "ip": "192.168.1.160"
+  },
+  {
+    "hostname": "kube-worker-01",
+    "ip": "192.168.1.161"
+  },
+  {
+    "hostname": "kube-worker-02",
+    "ip": "192.168.1.162"
+  },
+  {
+    "hostname": "kube-worker-03",
+    "ip": "192.168.1.163"
+  },
+  {
+    "hostname": "kube-worker-04",
+    "ip": "192.168.1.164"
+  },
+  {
+    "hostname": "kube-worker-05",
+    "ip": "192.168.1.165"
+  },
+  {
+    "hostname": "kube-worker-06",
+    "ip": "192.168.1.166"
+  },
+  {
+    "hostname": "kube-worker-07",
+    "ip": "192.168.1.167"
+  },
+  {
+    "hostname": "kube-worker-08",
+    "ip": "192.168.1.168"
+  },
+  {
+    "hostname": "kube-worker-09",
+    "ip": "192.168.1.169"
+  },
+  {
+    "hostname": "kube-worker-10",
+    "ip": "192.168.1.170"
+  },
+  {
+    "hostname": "kube-worker-11",
+    "ip": "192.168.1.171"
+  },
+  {
+    "hostname": "kube-worker-12",
+    "ip": "192.168.1.172"
+  },
+  {
+    "hostname": "kube-worker-13",
+    "ip": "192.168.1.173"
+  },
+  {
+    "hostname": "kube-worker-14",
+    "ip": "192.168.1.174"
+  },
+  {
+    "hostname": "kube-worker-15",
+    "ip": "192.168.1.175"
+  },
+  {
+    "hostname": "kube-worker-16",
+    "ip": "192.168.1.176"
+  },
+  {
+    "hostname": "kube-worker-17",
+    "ip": "192.168.1.177"
+  },
+  {
+    "hostname": "kube-worker-18",
+    "ip": "192.168.1.178"
+  },
+  {
+    "hostname": "kube-worker-19",
+    "ip": "192.168.1.179"
+  },
+  {
+    "hostname": "kube-worker-20",
+    "ip": "192.168.1.180"
+  },
+  {
+    "hostname": "kube-worker-21",
+    "ip": "192.168.1.181"
+  },
+  {
+    "hostname": "kube-worker-22",
+    "ip": "192.168.1.182"
+  },
+  {
+    "hostname": "kube-worker-23",
+    "ip": "192.168.1.183"
+  },
+  {
+    "hostname": "kube-worker-24",
+    "ip": "192.168.1.184"
+  },
+  {
+    "hostname": "kube-worker-25",
+    "ip": "192.168.1.185"
+  },
+  {
+    "hostname": "kube-worker-26",
+    "ip": "192.168.1.186"
+  },
+  {
+    "hostname": "kube-worker-27",
+    "ip": "192.168.1.187"
+  },
+  {
+    "hostname": "kube-worker-28",
+    "ip": "192.168.1.188"
+  },
+  {
+    "hostname": "kube-worker-29",
+    "ip": "192.168.1.189"
+  }
+]

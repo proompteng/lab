@@ -1,0 +1,18 @@
+---
+- name: Install NFS client utilities for Longhorn RWX mounts
+  hosts: k3s_cluster
+  remote_user: kalmyk
+  become: true
+  tasks:
+    - name: Install NFS client packages on Debian/Ubuntu
+      ansible.builtin.apt:
+        name: nfs-common
+        state: present
+        update_cache: true
+      when: ansible_facts.os_family == 'Debian'
+
+    - name: Install NFS client packages on RHEL/CentOS
+      ansible.builtin.yum:
+        name: nfs-utils
+        state: present
+      when: ansible_facts.os_family == 'RedHat'

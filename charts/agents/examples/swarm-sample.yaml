@@ -1,0 +1,60 @@
+apiVersion: swarm.proompteng.ai/v1alpha1
+kind: Swarm
+metadata:
+  name: platform-swarm
+  namespace: agents
+spec:
+  owner:
+    id: platform-owner
+    channel: swarm://owner/platform
+  domains:
+    - platform-reliability
+    - platform-evolution
+  objectives:
+    - continuously discover and implement control-plane improvements
+    - expand platform capabilities through measurable delivery gates
+  mode: assisted
+  timezone: UTC
+  cadence:
+    discoverEvery: 30m
+    planEvery: 1h
+    implementEvery: 1h
+    verifyEvery: 30m
+  discovery:
+    minCitations: 2
+    minConfidence: 0.75
+    sources:
+      - name: github-issues
+      - name: runtime-alerts
+  delivery:
+    repoAllowlist:
+      - example/platform
+    requiredChecks:
+      - lint
+      - type-check
+      - unit-tests
+    mergePolicy: merge-queue
+    deploymentTargets:
+      - agents
+  risk:
+    budgetRef: default-budget
+    approvalPolicyRef: default-approval
+    freezeAfterFailures: 3
+    freezeDuration: 60m
+  execution:
+    discover:
+      targetRef:
+        kind: AgentRun
+        name: agentrun-sample
+    plan:
+      targetRef:
+        kind: AgentRun
+        name: agentrun-sample
+    implement:
+      targetRef:
+        kind: OrchestrationRun
+        name: orchestrationrun-sample
+    verify:
+      targetRef:
+        kind: AgentRun
+        name: agentrun-sample
