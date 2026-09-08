@@ -1,6 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
+- postgres-upgrade-backup.yaml
 - postgres-cluster.yaml
 - objectbucketclaim.yaml
 - synthesis-env-sealedsecret.yaml
@@ -11,4 +12,4 @@ resources:
 - agents-domain
 images:
 - name: registry.ide-newton.ts.net/lab/synthesis
-  digest: sha256:697e4fdea8c4c09c3e696779cd6c6f4d7a2f94948f8f26e20c43d4dd20d3dde3
+  digest: sha256:00f1173a88c58653cf83bbcee2c53c2ae8f5964b307c4244c03337db8a71b6fc
