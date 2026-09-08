@@ -51,7 +51,11 @@ when the serving PVC does not exist; never select them for an existing Redis 8 P
 
 Select the bootstrap path in the application's Git-managed ApplicationSet entry
 (`platform.yaml` for Buzz, `product.yaml` for Jangar). Keep its `kargo/buzz` or
-`kargo/jangar` revision and existing promotion ownership. Wait for the normal
+`kargo/jangar` revision and existing promotion ownership. Both the publisher and
+Warehouse include the corresponding ApplicationSet selector and bootstrap directory,
+so either path switch creates a commit-qualified image and matching Freight. The
+Buzz Stage invokes its existing `argocd-update` even though the Application uses
+manual automation. Wait for the normal
 publisher and Kargo promotion to copy the bootstrap overlay, then for Argo to create
 the source Redis. Verify the PVC is Bound, Redis is Ready, and PING and persistence
 checks pass. Commit the ApplicationSet path back to the parent application directory
