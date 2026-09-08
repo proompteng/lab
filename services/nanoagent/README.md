@@ -63,7 +63,10 @@ a shared `OPENAI_API_KEY`.
 ## Firecracker rootfs and persistent tools
 
 Kata's Firecracker snapshotter extracts the guest OCI image into a 512 MiB blockfile. The Dockerfile therefore enforces
-a 480 MiB uncompressed-rootfs ceiling. The image contains a minimal Ubuntu 24.04 shell environment, Nanoagent, and a
+a real 512 MiB ext4 population and filesystem check, with at least 16 MiB and 256 inodes left for extraction overhead.
+The check runs in a separate build stage and copies only its receipt into the image. Packaged manuals, translated
+messages, and documentation other than copyright notices are omitted to keep the guest within that limit.
+The image contains a minimal Ubuntu 24.04 shell environment, Nanoagent, and a
 compressed multi-architecture bundle for the pinned Node 24.11.1, Bun 1.4.0, uv 0.11.14, Go 1.25.5, Rust/Cargo
 1.90.0, and native GCC 13.3.0 guest toolchain. Ubuntu's system `bubblewrap` package satisfies Codex's Linux sandbox
 prerequisite instead of showing a bundled-helper fallback warning after device login.
@@ -99,6 +102,9 @@ The owner-scoped browser-to-guest flow, replay behavior, and live acceptance pro
 cd services/nanoagent
 bash -n bootstrap-codex.sh
 bash -n bootstrap-toolchain.sh
+bash -n validate-rootfs.sh validate-rootfs.test.sh
+# On Linux with e2fsprogs and at least 1 GiB of temporary disk space:
+bash validate-rootfs.test.sh
 bash bootstrap-codex.sh --validate-manifest
 gofmt -w *.go
 go vet ./...

@@ -99,7 +99,9 @@ RUN set -eux; \
       tini \
       xz-utils; \
     apt-get clean; \
-    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* \
+      /usr/share/man/* /usr/share/info/* /usr/share/locale/*; \
+    find /usr/share/doc -type f ! -name copyright -delete; \
     runtime_group="$(getent group 1000 | cut -d: -f1 || true)"; \
     if [ -n "$runtime_group" ]; then \
       groupmod --new-name nanoagent "$runtime_group"; \
@@ -356,19 +358,24 @@ USER 1000:1000
 RUN mkdir -p "$HOME" && bootstrap-code-server --install-only && \
     "$HOME/.local/bin/code-server" --config "$HOME/config.yaml" --version > /tmp/code-server-version
 
-FROM runtime-with-toolchain
+FROM runtime-with-toolchain AS guest-rootfs
 
-# Firecracker's Kata snapshotter extracts an OCI image into a 512 MiB blockfile.
-# Keep 32 MiB of explicit headroom for filesystem metadata and extraction overhead.
-ARG FIRECRACKER_ROOTFS_LIMIT_BYTES=503316480
 COPY --from=code-server-smoke /tmp/code-server-version /usr/share/nanoagent/code-server-version
 COPY --from=codex-smoke /tmp/codex-version /usr/share/nanoagent/codex-version
 COPY --from=toolchain-smoke /tmp/toolchain-version /usr/share/nanoagent/toolchain-version
-RUN set -eux; \
-    rootfs_bytes="$(du -sx -B1 / 2>/dev/null | cut -f1)"; \
-    test "$rootfs_bytes" -le "$FIRECRACKER_ROOTFS_LIMIT_BYTES"; \
-    printf '%s\n' "$rootfs_bytes" > /usr/share/nanoagent/rootfs-size-bytes
 
+FROM --platform=$BUILDPLATFORM ${UBUNTU_BASE_IMAGE}:24.04 AS rootfs-check
+
+RUN apt-get update -o Acquire::Retries=3 && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends e2fsprogs && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+COPY --from=guest-rootfs / /rootfs/
+COPY --chmod=0555 validate-rootfs.sh /usr/local/bin/validate-rootfs
+RUN validate-rootfs /rootfs /rootfs-validation.txt
+
+FROM guest-rootfs
+
+COPY --from=rootfs-check /rootfs-validation.txt /usr/share/nanoagent/rootfs-validation.txt
 USER 1000:1000
 WORKDIR /home/nanoagent
 EXPOSE 8080
