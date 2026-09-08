@@ -185,6 +185,22 @@ spec:
                   annotations:
                     # Prevent accidental namespace deletion when an app stops managing the Namespace object.
                     argocd.argoproj.io/sync-options: Prune=false
+              - name: storage-upgrade-acceptance
+                path: argocd/applications/storage-upgrade-acceptance
+                namespace: rook-ceph
+                renderWithLovely: false
+                annotations:
+                  argocd.argoproj.io/sync-wave: "0"
+                automation: manual
+                enabled: "true"
+              - name: ryzen-amdgpu
+                path: devices/ryzen/manifests/k8s
+                namespace: kube-system
+                renderWithLovely: false
+                annotations:
+                  argocd.argoproj.io/sync-wave: "-1"
+                automation: auto
+                enabled: "true"
               - name: nvidia-gpu-operator
                 path: argocd/applications/nvidia-gpu-operator
                 namespace: gpu-operator
@@ -269,8 +285,10 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "2"
                 automation: manual
-                enabled: "true"
+                enabled: "false"
                 managedNamespaceMetadata:
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
                   labels:
                     pod-security.kubernetes.io/enforce: privileged
                     pod-security.kubernetes.io/audit: privileged

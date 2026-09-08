@@ -1,3 +1,4 @@
+import { intradayMomentumPlanningTargetWeights } from './strategy/intraday-momentum/model'
 import { describe, expect, test } from 'bun:test'
 
 import { Effect, Exit, Result, Schema } from 'effect'
@@ -254,6 +255,11 @@ const fixture = (premiums: Readonly<Record<string, number>> = {}): ObserveShadow
   )
   const executionPolicy = policy()
   const broker = brokerState()
+  const planningTargetWeights = intradayMomentumPlanningTargetWeights(
+    compiledDecision,
+    broker.positions.filter(({ quantityMicros }) => BigInt(quantityMicros) !== 0n).map(({ symbol }) => symbol),
+  )
+  const planningSymbols = Object.keys(planningTargetWeights)
   const hasEntryTargets = compiledDecision.selectedSymbols.length > 0
   const pricingMarketData = hasEntryTargets
     ? executionMarketData(
@@ -261,7 +267,7 @@ const fixture = (premiums: Readonly<Record<string, number>> = {}): ObserveShadow
           protocol,
           {
             ...snapshotRequest(),
-            symbols: protocol.candidateSymbols,
+            symbols: planningSymbols,
             purpose: IntradaySnapshotPurpose.EntryPricing,
           },
           premiums,
@@ -269,7 +275,6 @@ const fixture = (premiums: Readonly<Record<string, number>> = {}): ObserveShadow
       )
     : decisionMarketData
   const marketData = pricingMarketData
-  const planningSymbols = protocol.candidateSymbols
   const priceMicros = Object.fromEntries(planningSymbols.map((symbol) => [symbol, '100010000']))
   const bidPriceMicros = Object.fromEntries(planningSymbols.map((symbol) => [symbol, '99990000']))
   const askPriceMicros = Object.fromEntries(planningSymbols.map((symbol) => [symbol, '100010000']))
@@ -292,7 +297,7 @@ const fixture = (premiums: Readonly<Record<string, number>> = {}): ObserveShadow
     policyHash: canonicalHashV1(executionPolicy),
     accountId,
     signalDate: sessionDate,
-    targetWeights: compiledDecision.targetWeights,
+    targetWeights: planningTargetWeights,
     referencePrices: { ...priceMaterial, contentHash: canonicalHashV1(priceMaterial) },
     brokerState: {
       account: broker.account,
@@ -454,7 +459,7 @@ describe('intraday shadow decision', () => {
     expect(document.strategyDecision).toEqual(input.compiledDecision)
   })
 
-  test('decodes immutable intraday-v1 execution evidence without allowing new legacy material', async () => {
+  test('decodes immutable intraday-v1 and v2 execution evidence without allowing new legacy material', async () => {
     const input = fixture()
     const current = await Effect.runPromise(
       buildExecutionDecision({
@@ -463,7 +468,7 @@ describe('intraday shadow decision', () => {
         executionSession: executionSession(input),
       }),
     )
-    if (current.strategyDecision?.schemaVersion !== 'bayn.intraday-momentum.target.v2') {
+    if (current.strategyDecision?.schemaVersion !== 'bayn.intraday-momentum.target.v3') {
       throw new Error('legacy decoder fixture requires one current intraday decision')
     }
     if (current.plannerInput === undefined) throw new Error('legacy decoder fixture requires planner evidence')
@@ -513,13 +518,34 @@ describe('intraday shadow decision', () => {
 
     expect(Result.isSuccess(decodeExecutionDecisionDocument(persisted))).toBeTrue()
     expect(Result.isFailure(makeExecutionDecisionDocument(legacyMaterial))).toBeTrue()
+
+    const { excludedCandidates: _exclusions, ...currentDecision } = current.strategyDecision
+    const legacyV2Decision = { ...currentDecision, schemaVersion: 'bayn.intraday-momentum.target.v2' as const }
+    const legacyV2DecisionHash = canonicalHashV1(legacyV2Decision)
+    const legacyV2Planner = { ...current.plannerInput, decisionHash: legacyV2DecisionHash }
+    const legacyV2Material = {
+      ...currentMaterial,
+      bindings: { ...currentMaterial.bindings, strategyDecisionHash: legacyV2DecisionHash },
+      strategyDecision: legacyV2Decision,
+      plannerInput: legacyV2Planner,
+      targetPlan: value(planTargets(legacyV2Planner)),
+    }
+    expect(
+      Result.isSuccess(
+        decodeExecutionDecisionDocument({
+          ...legacyV2Material,
+          contentHash: canonicalHashV1(legacyV2Material),
+        }),
+      ),
+    ).toBeTrue()
+    expect(Result.isFailure(makeExecutionDecisionDocument(legacyV2Material))).toBeTrue()
   })
 
   test('binds durable execution material to the exact snapshot and complete target universe', async () => {
     const selectedSymbol = protocol.candidateSymbols[0]
     if (selectedSymbol === undefined) throw new Error('intraday fixture requires one candidate symbol')
     const input = fixture({ [protocol.benchmarkSymbol]: 0.005, [selectedSymbol]: 0.02 })
-    if (input.compiledDecision.schemaVersion !== 'bayn.intraday-momentum.target.v2') {
+    if (input.compiledDecision.schemaVersion !== 'bayn.intraday-momentum.target.v3') {
       throw new Error('intraday fixture requires one entry decision')
     }
     expect(input.compiledDecision.selectedSymbols).toEqual([selectedSymbol])
@@ -659,8 +685,7 @@ describe('intraday shadow decision', () => {
       }
     }
 
-    const omittedSymbol = input.targetPlan.targets.find(({ targetWeight }) => targetWeight === 0)?.symbol
-    if (omittedSymbol === undefined) throw new Error('intraday fixture requires one zero-weight target')
+    const omittedSymbol = selectedSymbol
     const { outputHash: _outputHash, ...targetPlanMaterial } = material.targetPlan
     const rehashTargetPlan = (targets: typeof targetPlanMaterial.targets) => {
       const forgedTargetPlanMaterial = { ...targetPlanMaterial, targets }
@@ -700,7 +725,7 @@ describe('intraday shadow decision', () => {
     })
     expect(Result.isFailure(forgedReferencePrice)).toBe(true)
     if (Result.isFailure(forgedReferencePrice)) {
-      expect(String(forgedReferencePrice.failure.cause)).toContain('persisted target-planner evidence')
+      expect(String(forgedReferencePrice.failure.cause)).toContain('exact aggregate reference notional')
     }
 
     const reducedTargetPlanMaterial = {
@@ -717,7 +742,7 @@ describe('intraday shadow decision', () => {
 
     expect(Result.isFailure(forged)).toBeTrue()
     if (Result.isFailure(forged)) {
-      expect(String(forged.failure.cause)).toContain('retain every strategy weight')
+      expect(String(forged.failure.cause)).toContain('must contain at most one delta for each persisted target')
     }
   })
 

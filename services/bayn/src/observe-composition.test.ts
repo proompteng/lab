@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Deferred, Duration, Effect, Exit, Fiber, Option, Result } from 'effect'
+import { Cause, Deferred, Duration, Effect, Exit, Fiber, Logger, Option, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import type { AutonomousCycleLoop } from './app'
@@ -71,6 +71,7 @@ import {
 import type { ArchiveVerifiedIntradayMarketSnapshot } from './market-data/intraday/model'
 import { intradayMomentumBehaviorHash, makeIntradayMomentumDefinition } from './strategy/intraday-momentum/decision'
 import { intradayTestArchiveTopics, makeIntradayMomentumTestSnapshot } from './strategy/intraday-momentum/test-support'
+import { persistIntradaySnapshotRows, verifyIntradaySnapshot } from './market-data/intraday/verification'
 import { decodeDefaultIntradayMomentumProtocol } from './strategy/intraday-momentum/protocol'
 import { makePersistedSnapshotFixture } from './testing/persisted-snapshot-fixture'
 import {
@@ -3661,8 +3662,8 @@ describe('OBSERVE runtime composition', () => {
       expect(prepared.success.executionModel.schemaVersion).toBe('bayn.execution-model.v5')
       expect(prepared.success.executionPolicy).toMatchObject({
         schemaVersion: 'bayn.autonomous-cycle-execution-policy.v3',
-        warmupAfterOpenMs: 3_600_000,
-        submissionCutoffBeforeCloseMs: 3_600_000,
+        warmupAfterOpenMs: 0,
+        submissionCutoffBeforeCloseMs: 300_000,
       })
     }
 
@@ -3760,6 +3761,7 @@ describe('OBSERVE runtime composition', () => {
       observedAt,
     }
     const archiveRequests: IntradaySnapshotRequest[] = []
+    let excludedTradeSymbols: readonly string[] = ['AAPL']
     let displayedBidSizes: Readonly<Record<string, number>> = {}
     const archive: IntradayMarketDataService = {
       check: Effect.void,
@@ -3776,12 +3778,22 @@ describe('OBSERVE runtime composition', () => {
       loadSnapshot: (request) =>
         Effect.sync(() => {
           archiveRequests.push(request)
-          return makeIntradayMomentumTestSnapshot(
-            protocol,
-            request,
-            { NVDA: 0.02 },
-            10,
-            displayedBidSizes,
+          const snapshot = makeIntradayMomentumTestSnapshot(protocol, request, { NVDA: 0.02 }, 10, displayedBidSizes)
+          const rows = Result.getOrThrow(
+            persistIntradaySnapshotRows({
+              ...snapshot,
+              trades: snapshot.trades.filter(({ symbol }) => !excludedTradeSymbols.includes(symbol)),
+            }),
+          )
+          return Result.getOrThrow(
+            verifyIntradaySnapshot(request, {
+              ...rows,
+              archiveWatermarks: request.archiveWatermarks.map((watermark) => ({
+                source_topic: watermark.sourceTopic,
+                source_partition: watermark.sourcePartition,
+                inclusive_last_offset: watermark.inclusiveLastOffset,
+              })),
+            }),
           ) as ArchiveVerifiedIntradayMarketSnapshot
         }),
       verifyArchiveSnapshot: (snapshot) => Effect.succeed(snapshot as ArchiveVerifiedIntradayMarketSnapshot),
@@ -3797,6 +3809,10 @@ describe('OBSERVE runtime composition', () => {
     } as const
     const preparation = Result.getOrThrow(prepareObserveStartup(input))
     const policy = await Effect.runPromise(loadStrategyExecutionRiskPolicy(accountId, strategy))
+    const candidateObservations: unknown[] = []
+    const observationLogger = Logger.make(({ message }) => {
+      candidateObservations.push(...(Array.isArray(message) ? message : [message]))
+    })
     const document = await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(observedAt))
@@ -3813,15 +3829,26 @@ describe('OBSERVE runtime composition', () => {
       }).pipe(
         (program) => provideDecisionServices(program, marketData([]), calendarRead([])),
         Effect.provide(TestClock.layer()),
+        Effect.provide(Logger.layer([observationLogger])),
       ),
     )
 
+    expect(candidateObservations).toContainEqual(
+      expect.objectContaining({
+        event: 'bayn.intraday-candidate-observation.v1',
+        cycleId: activeCycle.identity.cycleId,
+        decision: expect.objectContaining({
+          selectedSymbols: ['NVDA'],
+          excludedCandidates: [expect.objectContaining({ symbol: 'AAPL', reason: 'not-ready' })],
+        }),
+      }),
+    )
     expect(archiveRequests).toHaveLength(2)
     expect(archiveRequests[0]).toMatchObject({
       symbols: ['AAPL', 'AMZN', 'IWM', 'NVDA', 'QQQ', 'SMH', 'SPY'],
     })
     expect(archiveRequests[1]).toMatchObject({
-      symbols: ['AAPL', 'AMD', 'AMZN', 'IWM', 'NVDA', 'QQQ', 'SMH'],
+      symbols: ['AMD', 'NVDA'],
       purpose: IntradaySnapshotPurpose.EntryPricing,
     })
     expect(document).toMatchObject({
@@ -3832,9 +3859,12 @@ describe('OBSERVE runtime composition', () => {
         strategyName: 'intraday-momentum',
         accountId,
         cycleId: activeCycle.identity.cycleId,
-        decisionMarketData: { symbols: ['AAPL', 'AMZN', 'IWM', 'NVDA', 'QQQ', 'SMH', 'SPY'] },
+        decisionMarketData: {
+          symbols: ['AAPL', 'AMZN', 'IWM', 'NVDA', 'QQQ', 'SMH', 'SPY'],
+          candidateExclusions: [{ symbol: 'AAPL', reason: 'not-ready' }],
+        },
         executionMarketData: {
-          symbols: ['AAPL', 'AMD', 'AMZN', 'IWM', 'NVDA', 'QQQ', 'SMH'],
+          symbols: ['AMD', 'NVDA'],
           purpose: IntradaySnapshotPurpose.EntryPricing,
         },
       },
@@ -3912,22 +3942,14 @@ describe('OBSERVE runtime composition', () => {
     expect(archiveRequests.slice(2)).toEqual([
       expect.objectContaining({ symbols: ['AAPL', 'AMZN', 'IWM', 'NVDA', 'QQQ', 'SMH', 'SPY'] }),
       expect.objectContaining({
-        symbols: ['AAPL', 'AMD', 'AMZN', 'IWM', 'NVDA', 'QQQ', 'SMH'],
+        symbols: ['AMD', 'NVDA'],
         purpose: IntradaySnapshotPurpose.EntryPricing,
       }),
     ])
-    expect(partiallySatisfied.targetPlan.targets.map(({ symbol }) => symbol)).toEqual([
-      'AAPL',
-      'AMD',
-      'AMZN',
-      'IWM',
-      'NVDA',
-      'QQQ',
-      'SMH',
-    ])
+    expect(partiallySatisfied.targetPlan.targets.map(({ symbol }) => symbol)).toEqual(['AMD', 'NVDA'])
     expect(partiallySatisfied.targetPlan.intentTargets.map(({ symbol }) => symbol)).toEqual(['AMD'])
     expect(partiallySatisfied.bindings.executionMarketData).toMatchObject({
-      symbols: ['AAPL', 'AMD', 'AMZN', 'IWM', 'NVDA', 'QQQ', 'SMH'],
+      symbols: ['AMD', 'NVDA'],
     })
 
     displayedBidSizes = { AMD: 0.5 }
@@ -3955,7 +3977,7 @@ describe('OBSERVE runtime composition', () => {
       intentTargets: [],
     })
     expect(lowLiquidityDocument.bindings.executionMarketData).toMatchObject({
-      symbols: ['AAPL', 'AMD', 'AMZN', 'IWM', 'NVDA', 'QQQ', 'SMH'],
+      symbols: ['AMD', 'NVDA'],
       purpose: IntradaySnapshotPurpose.EntryPricing,
     })
     displayedBidSizes = {}
@@ -4002,7 +4024,45 @@ describe('OBSERVE runtime composition', () => {
     expect(noTradeCompiled.decisionMarketData).toBeUndefined()
     expect('purpose' in noTradeCompiled.executionMarketData).toBe(false)
 
-    const closeObservedAt = '2020-05-01T15:30:01.000Z'
+    excludedTradeSymbols = protocol.candidateSymbols
+    const unavailableRequestsStart = archiveRequests.length
+    const unavailable = await Effect.runPromiseExit(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(observedAt))
+        return yield* buildMutationShadowCycleDecision({
+          authorityGenerationHash: generationHash,
+          cycle: activeCycle,
+          executionModel: preparation.executionModel,
+          policy,
+          reconcile: Effect.succeed(reconciliationResultAt(observedAt, 0, 0, [])),
+          strategy,
+          intradayMarketData: archive,
+          decisionFinalizationHeadroomMs: 60_000,
+        })
+      }).pipe(
+        (program) => provideDecisionServices(program, marketData([]), calendarRead([])),
+        Effect.provide(TestClock.layer()),
+        Effect.provide(Logger.layer([observationLogger])),
+      ),
+    )
+    expect(Exit.isFailure(unavailable)).toBeTrue()
+    if (Exit.isFailure(unavailable)) expect(Cause.pretty(unavailable.cause)).toContain('ObserveDecisionAwaitingSignal')
+    expect(archiveRequests.length - unavailableRequestsStart).toBe(1)
+    expect(candidateObservations).toContainEqual(
+      expect.objectContaining({
+        event: 'bayn.intraday-candidate-observation.v1',
+        decision: expect.objectContaining({
+          signals: [],
+          selectedSymbols: [],
+          excludedCandidates: protocol.candidateSymbols.map((symbol) =>
+            expect.objectContaining({ symbol, reason: 'not-ready' }),
+          ),
+        }),
+      }),
+    )
+    excludedTradeSymbols = ['AAPL']
+
+    const closeObservedAt = '2020-05-01T16:25:01.000Z'
     const closeCycle = Effect.runSync(
       decodeAutonomousCycle({
         ...activeCycle,
@@ -4023,7 +4083,7 @@ describe('OBSERVE runtime composition', () => {
           reconcile: Effect.succeed(
             reconciliationResultAt(closeObservedAt, 0, 0, [{ ...heldPosition, observedAt: closeObservedAt }]),
           ),
-          closeExpiresAt: '2020-05-01T16:00:00.000Z',
+          closeExpiresAt: executionCalendar.executionCloseAt,
         })
       }).pipe(
         Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
@@ -4041,8 +4101,8 @@ describe('OBSERVE runtime composition', () => {
     expect(closeDocument.bindings.executionMarketData).toMatchObject({
       schemaVersion: 'bayn.execution-market-data-binding.v2',
       purpose: IntradaySnapshotPurpose.Liquidation,
-      rangeStartAt: '2020-05-01T15:29:00.000Z',
-      rangeEndAt: '2020-05-01T15:30:00.000Z',
+      rangeStartAt: '2020-05-01T16:24:00.000Z',
+      rangeEndAt: '2020-05-01T16:25:00.000Z',
       observedAt: closeObservedAt,
     })
     const { contentHash: _closeContentHash, ...closeMaterial } = closeDocument

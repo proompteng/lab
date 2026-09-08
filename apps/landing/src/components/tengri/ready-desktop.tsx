@@ -1,8 +1,9 @@
 'use client'
 
 import { LoaderCircle, LogOut, Moon, Trash2 } from 'lucide-react'
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import { AnimatePresence } from 'motion/react'
 import {
+  memo,
   useCallback,
   useEffect,
   useEffectEvent,
@@ -15,7 +16,6 @@ import {
 
 import { tengriAuthClient } from '@/lib/tengri/auth-client'
 import type { TengriAgent, TengriUser } from '@/lib/tengri/types'
-import { cn } from '@/lib/utils'
 import {
   APP_TITLES,
   initialWindowState,
@@ -38,7 +38,7 @@ import {
 import { CodeEditor } from './code-editor'
 import { type CodeOpenRequest, updateDirtyCodeWindows } from './code-editor-model'
 import { ConfirmationDialog } from './confirmation-dialog'
-import { DesktopAppIcon } from './desktop-app-icon'
+import { DesktopDock } from './desktop-dock'
 import { DesktopWindowFrame } from './desktop-window'
 import {
   clearDeletedDesktopState,
@@ -52,6 +52,7 @@ import { SettingsApp } from './settings-app'
 import { commitDesktopLifecycleAction, selectSleepRequestError } from './settings-model'
 import { Spotlight } from './spotlight'
 import { TerminalApp } from './terminal-app'
+import { focusWindowContent } from './window-focus'
 
 type TargetedCodeOpenRequest = CodeOpenRequest & { targetWindowId: string }
 type TargetedFinderOpenRequest = FinderOpenRequest & { targetWindowId: string }
@@ -63,6 +64,38 @@ type DesktopIdentityLease = {
   release: () => void
   releaseTimer: ReturnType<typeof setTimeout> | null
 }
+
+const MemoizedFinderApp = memo(FinderApp)
+const MemoizedChromeApp = memo(ChromeApp)
+const MemoizedTerminalApp = memo(TerminalApp)
+const MemoizedSettingsApp = memo(SettingsApp)
+
+const MemoizedCodeEditor = memo(function MemoizedCodeEditor({
+  agentId,
+  agentCreatedAt,
+  ownerId,
+  onDirtyChange,
+  request,
+  windowId,
+}: {
+  agentId: string
+  agentCreatedAt: string
+  ownerId: string
+  onDirtyChange: (windowId: string, dirty: boolean) => void
+  request: CodeOpenRequest | null
+  windowId: string
+}) {
+  const handleDirtyChange = useCallback((dirty: boolean) => onDirtyChange(windowId, dirty), [onDirtyChange, windowId])
+  return (
+    <CodeEditor
+      agentId={agentId}
+      agentCreatedAt={agentCreatedAt}
+      ownerId={ownerId}
+      onDirtyChange={handleDirtyChange}
+      request={request}
+    />
+  )
+})
 
 const getServerGuestOperationSnapshot = () => false
 const DESKTOP_ID_PATTERN = /^[0-9a-f]{32}$/
@@ -231,7 +264,6 @@ export function ReadyDesktop({
   const [windowState, dispatch] = useReducer(windowReducer, { x: 0, y: 0, width: 1_280, height: 760 }, (viewport) =>
     initialWindowState(viewport, ['finder', 'chrome']),
   )
-  const [clock, setClock] = useState<Date | null>(null)
   const [busyAction, setBusyAction] = useState<'delete' | 'sign-out' | 'sleep' | null>(null)
   const [error, setError] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
@@ -247,8 +279,14 @@ export function ReadyDesktop({
   const finderRequestIdRef = useRef(0)
   const lifecycleTransitionReleaseRef = useRef<(() => void) | null>(null)
   const terminalCloseHandlersRef = useRef(new Map<string, () => void>())
-  const reducedMotion = useReducedMotion()
+  const windowStateRef = useRef(windowState)
+  const dirtyCodeWindowsRef = useRef(dirtyCodeWindows)
   const openExternalPreview = useExternalPreviewLifecycle(agent.id, previewGatewayOrigin)
+
+  useLayoutEffect(() => {
+    windowStateRef.current = windowState
+    dirtyCodeWindowsRef.current = dirtyCodeWindows
+  }, [dirtyCodeWindows, windowState])
 
   useEffect(
     () =>
@@ -282,14 +320,18 @@ export function ReadyDesktop({
     }
   }, [])
 
-  const requireWindowCapacity = useCallback(
-    (requiresNewWindow: boolean) => {
-      if (!requiresNewWindow || windowState.windows.length < MAX_DESKTOP_WINDOWS) return true
-      setError(`Tengri supports at most ${MAX_DESKTOP_WINDOWS} open windows. Close one before opening another.`)
-      return false
-    },
-    [windowState.windows.length],
-  )
+  const requireWindowCapacity = useCallback((requiresNewWindow: boolean) => {
+    if (!requiresNewWindow || windowStateRef.current.windows.length < MAX_DESKTOP_WINDOWS) return true
+    setError(`Tengri supports at most ${MAX_DESKTOP_WINDOWS} open windows. Close one before opening another.`)
+    return false
+  }, [])
+
+  const focusActiveContent = useCallback(() => {
+    requestAnimationFrame(() => {
+      const id = windowStateRef.current.activeWindowId
+      focusWindowContent(stageRef.current?.querySelector<HTMLElement>(`[data-window-id="${id}"]`) ?? null)
+    })
+  }, [])
 
   const appendDesktopWindow = useCallback(
     (app: TengriApp) => {
@@ -302,12 +344,13 @@ export function ReadyDesktop({
 
   const openDesktopApp = useCallback(
     (app: TengriApp) => {
-      const alreadyOpen = windowState.windows.some((candidate) => candidate.app === app)
+      const alreadyOpen = windowStateRef.current.windows.some((candidate) => candidate.app === app)
       if (!requireWindowCapacity(!alreadyOpen)) return false
       dispatch({ type: 'open', app, title: APP_TITLES[app], viewport: viewport() })
+      focusActiveContent()
       return true
     },
-    [requireWindowCapacity, viewport, windowState.windows],
+    [focusActiveContent, requireWindowCapacity, viewport],
   )
 
   const registerTerminalCloseHandler = useCallback((windowId: string, handler: () => void) => {
@@ -363,34 +406,27 @@ export function ReadyDesktop({
     [agent.id],
   )
 
-  const closeWindow = useCallback(
-    (desktopWindow: Pick<DesktopWindow, 'app' | 'id'>) => {
-      if (desktopWindow.app === 'code' && dirtyCodeWindows.has(desktopWindow.id)) {
-        setError('Save or close every edited Code tab before closing the Code window.')
-        dispatch({ type: 'focus', id: desktopWindow.id })
-        return
-      }
-      if (desktopWindow.app === 'terminal') terminalCloseHandlersRef.current.get(desktopWindow.id)?.()
-      dispatch({ type: 'close', id: desktopWindow.id })
-    },
-    [dirtyCodeWindows],
-  )
+  const closeWindow = useCallback((desktopWindow: Pick<DesktopWindow, 'app' | 'id'>) => {
+    if (desktopWindow.app === 'code' && dirtyCodeWindowsRef.current.has(desktopWindow.id)) {
+      setError('Save or close every edited Code tab before closing the Code window.')
+      dispatch({ type: 'focus', id: desktopWindow.id })
+      return
+    }
+    if (desktopWindow.app === 'terminal') terminalCloseHandlersRef.current.get(desktopWindow.id)?.()
+    dispatch({ type: 'close', id: desktopWindow.id })
+  }, [])
 
   const handleCodeDirtyChange = useCallback((windowId: string, dirty: boolean) => {
     setDirtyCodeWindows((current) => updateDirtyCodeWindows(current, windowId, dirty))
   }, [])
+
+  const closeChromeWindow = useCallback((id: string) => closeWindow({ app: 'chrome', id }), [closeWindow])
 
   useEffect(() => {
     if (dirtyCodeWindows.size === 0) {
       setError((current) => (current.startsWith('Save or close every edited Code tab') ? '' : current))
     }
   }, [dirtyCodeWindows])
-
-  useEffect(() => {
-    setClock(new Date())
-    const timer = window.setInterval(() => setClock(new Date()), 30_000)
-    return () => window.clearInterval(timer)
-  }, [])
 
   useEffect(() => {
     let frame = 0
@@ -464,7 +500,6 @@ export function ReadyDesktop({
       appendDesktopWindow(app)
       return
     }
-    if (isEditableTarget(event.target)) return
     if (event.key === 'Tab') {
       event.preventDefault()
       const frontmostByApp = new Map<TengriApp, DesktopWindow>()
@@ -510,20 +545,20 @@ export function ReadyDesktop({
 
   const openFinder = useCallback(
     (path?: string) => {
-      const targetWindowId = windowIdForOpen(windowState, 'finder')
+      const targetWindowId = windowIdForOpen(windowStateRef.current, 'finder')
       if (!openDesktopApp('finder')) return
       if (path) setFinderRequest({ path, requestId: ++finderRequestIdRef.current, targetWindowId })
     },
-    [openDesktopApp, windowState],
+    [openDesktopApp],
   )
 
   const openCode = useCallback(
     (path?: string) => {
-      const targetWindowId = windowIdForOpen(windowState, 'code')
+      const targetWindowId = windowIdForOpen(windowStateRef.current, 'code')
       if (!openDesktopApp('code')) return
       if (path) setCodeRequest({ path, requestId: ++codeRequestIdRef.current, targetWindowId })
     },
-    [openDesktopApp, windowState],
+    [openDesktopApp],
   )
 
   const openTerminal = useCallback(() => void openDesktopApp('terminal'), [openDesktopApp])
@@ -551,68 +586,72 @@ export function ReadyDesktop({
   )
 
   const newActiveWindow = useCallback(() => {
-    const active = windowState.windows.find((candidate) => candidate.id === windowState.activeWindowId)
-    const app = active?.app ?? windowState.activeApp
+    const current = windowStateRef.current
+    const active = current.windows.find((candidate) => candidate.id === current.activeWindowId)
+    const app = active?.app ?? current.activeApp
     appendDesktopWindow(app)
     setMenuOpen(null)
-  }, [appendDesktopWindow, windowState.activeApp, windowState.activeWindowId, windowState.windows])
+  }, [appendDesktopWindow])
 
-  async function mutate(action: 'delete-agent' | 'sleep-agent') {
-    if (lifecycleTransitionReleaseRef.current) return
-    if (hasActiveTengriGuestOperations(agent.id)) {
-      setError('Wait for the current guest request to finish before changing the agent lifecycle.')
-      return
-    }
-    if (dirtyCodeWindows.size > 0) {
-      setError('Save or close every edited Code tab before changing the agent lifecycle.')
-      return
-    }
-    const releaseLifecycleTransition = beginTengriLifecycleTransition(agent.id)
-    lifecycleTransitionReleaseRef.current = releaseLifecycleTransition
-    setBusyAction(action === 'delete-agent' ? 'delete' : 'sleep')
-    setError('')
-    let committed = false
-    try {
-      await commitDesktopLifecycleAction({
-        action,
-        request: () => runTengriAction<TengriAgent | null>({ action, agentId: agent.id }),
-        onCommitted: (committedAction) => {
-          committed = true
-          setCommittedTransition(committedAction === 'sleep-agent' ? 'sleep' : 'delete')
-          if (committedAction === 'delete-agent') {
-            for (const closeTerminal of terminalCloseHandlersRef.current.values()) closeTerminal()
-            publishDeletedDesktopState(agent.id)
-            setConfirmOpen(false)
-          }
-        },
-      })
-      if (action === 'delete-agent') await onChanged()
-    } catch (cause) {
-      setError(
-        committed
-          ? 'The lifecycle request was accepted, but the latest controller state could not be loaded.'
-          : cause instanceof Error
-            ? cause.message
-            : 'The agent lifecycle request failed',
-      )
-    } finally {
-      if (!committed) {
-        releaseLifecycleTransition()
-        if (lifecycleTransitionReleaseRef.current === releaseLifecycleTransition) {
-          lifecycleTransitionReleaseRef.current = null
-        }
+  const mutate = useCallback(
+    async (action: 'delete-agent' | 'sleep-agent') => {
+      if (lifecycleTransitionReleaseRef.current) return
+      if (hasActiveTengriGuestOperations(agent.id)) {
+        setError('Wait for the current guest request to finish before changing the agent lifecycle.')
+        return
       }
-      setBusyAction(null)
-    }
-  }
+      if (dirtyCodeWindowsRef.current.size > 0) {
+        setError('Save or close every edited Code tab before changing the agent lifecycle.')
+        return
+      }
+      const releaseLifecycleTransition = beginTengriLifecycleTransition(agent.id)
+      lifecycleTransitionReleaseRef.current = releaseLifecycleTransition
+      setBusyAction(action === 'delete-agent' ? 'delete' : 'sleep')
+      setError('')
+      let committed = false
+      try {
+        await commitDesktopLifecycleAction({
+          action,
+          request: () => runTengriAction<TengriAgent | null>({ action, agentId: agent.id }),
+          onCommitted: (committedAction) => {
+            committed = true
+            setCommittedTransition(committedAction === 'sleep-agent' ? 'sleep' : 'delete')
+            if (committedAction === 'delete-agent') {
+              for (const closeTerminal of terminalCloseHandlersRef.current.values()) closeTerminal()
+              publishDeletedDesktopState(agent.id)
+              setConfirmOpen(false)
+            }
+          },
+        })
+        if (action === 'delete-agent') await onChanged()
+      } catch (cause) {
+        setError(
+          committed
+            ? 'The lifecycle request was accepted, but the latest controller state could not be loaded.'
+            : cause instanceof Error
+              ? cause.message
+              : 'The agent lifecycle request failed',
+        )
+      } finally {
+        if (!committed) {
+          releaseLifecycleTransition()
+          if (lifecycleTransitionReleaseRef.current === releaseLifecycleTransition) {
+            lifecycleTransitionReleaseRef.current = null
+          }
+        }
+        setBusyAction(null)
+      }
+    },
+    [agent.id, onChanged],
+  )
 
-  async function signOut() {
+  const signOut = useCallback(async () => {
     if (lifecycleTransitionReleaseRef.current) return
     if (hasActiveTengriGuestOperations(agent.id)) {
       setError('Wait for the current guest request to finish before signing out.')
       return
     }
-    if (dirtyCodeWindows.size > 0) {
+    if (dirtyCodeWindowsRef.current.size > 0) {
       setError('Save or close every edited Code tab before signing out.')
       return
     }
@@ -638,15 +677,41 @@ export function ReadyDesktop({
       }
       setBusyAction(null)
     }
-  }
+  }, [agent.id, onChanged])
 
-  const chromeRunning = windowState.windows.some((candidate) => candidate.app === 'chrome')
-  const codeRunning = windowState.windows.some((candidate) => candidate.app === 'code')
-  const finderRunning = windowState.windows.some((candidate) => candidate.app === 'finder')
-  const settingsRunning = windowState.windows.some((candidate) => candidate.app === 'settings')
-  const terminalRunning = windowState.windows.some((candidate) => candidate.app === 'terminal')
   const activeWindow = windowState.windows.find((candidate) => candidate.id === windowState.activeWindowId)
   const activeApp = activeWindow?.app ?? windowState.activeApp
+  const closeActiveWindow = useCallback(() => {
+    const current = windowStateRef.current
+    const active = current.windows.find((candidate) => candidate.id === current.activeWindowId)
+    if (active) closeWindow(active)
+  }, [closeWindow])
+  const minimizeActiveWindow = useCallback(() => {
+    const activeId = windowStateRef.current.activeWindowId
+    if (activeId) dispatch({ type: 'minimize', id: activeId })
+  }, [])
+  const toggleMaximizeActiveWindow = useCallback(() => {
+    const activeId = windowStateRef.current.activeWindowId
+    if (activeId) dispatch({ type: 'toggle-maximize', id: activeId, viewport: viewport() })
+  }, [viewport])
+  const activateWindow = useCallback(
+    (id: string) => {
+      dispatch({ type: 'restore', id, viewport: viewport() })
+      setMenuOpen(null)
+      focusActiveContent()
+    },
+    [focusActiveContent, viewport],
+  )
+  const openSpotlight = useCallback(() => {
+    setMenuOpen(null)
+    setSpotlightOpen(true)
+  }, [])
+  const openDeleteConfirmation = useCallback(() => {
+    setError('')
+    setConfirmOpen(true)
+  }, [])
+  const handleSignOut = useCallback(() => void signOut(), [signOut])
+  const handleSleep = useCallback(() => void mutate('sleep-agent'), [mutate])
   const layoutReady = desktopId !== null && hydratedDesktopId === desktopId
 
   if (committedTransition) {
@@ -683,23 +748,20 @@ export function ReadyDesktop({
         <DesktopWallpaper />
         <MenuBar
           activeApp={activeApp}
+          activeWindow={activeWindow}
           agent={agent}
-          clock={clock}
           connectionWarning={connectionWarning}
           menuOpen={menuOpen}
-          onCloseActive={() => activeWindow && closeWindow(activeWindow)}
+          onCloseActive={closeActiveWindow}
           onMenuChange={setMenuOpen}
-          onMinimizeActive={() => activeWindow && dispatch({ type: 'minimize', id: activeWindow.id })}
+          onMinimizeActive={minimizeActiveWindow}
           onNewWindow={newActiveWindow}
           onOpenApp={openApp}
-          onOpenSpotlight={() => {
-            setMenuOpen(null)
-            setSpotlightOpen(true)
-          }}
-          onSignOut={() => void signOut()}
-          onToggleMaximize={() =>
-            activeWindow && dispatch({ type: 'toggle-maximize', id: activeWindow.id, viewport: viewport() })
-          }
+          onOpenSpotlight={openSpotlight}
+          onSignOut={handleSignOut}
+          onToggleMaximize={toggleMaximizeActiveWindow}
+          onActivateWindow={activateWindow}
+          windows={windowState.windows}
           userName={user.name}
         />
 
@@ -732,46 +794,49 @@ export function ReadyDesktop({
               window={desktopWindow}
             >
               {desktopWindow.app === 'finder' ? (
-                <FinderApp
+                <MemoizedFinderApp
                   active={desktopWindow.id === windowState.activeWindowId}
                   agentId={agent.id}
                   onOpenFile={openCode}
                   request={finderRequest?.targetWindowId === desktopWindow.id ? finderRequest : null}
                 />
               ) : desktopWindow.app === 'chrome' ? (
-                <ChromeApp
+                <MemoizedChromeApp
                   active={desktopWindow.id === windowState.activeWindowId}
                   agentId={agent.id}
+                  onCloseWindow={closeChromeWindow}
                   onOpenExternalPreview={openExternalPreview}
                   previewGatewayOrigin={previewGatewayOrigin}
+                  windowId={desktopWindow.id}
                 />
               ) : desktopWindow.app === 'code' ? (
-                <CodeEditor
+                <MemoizedCodeEditor
+                  key={JSON.stringify([user.id, agent.id, agent.createdAt])}
                   agentId={agent.id}
-                  onDirtyChange={(dirty) => handleCodeDirtyChange(desktopWindow.id, dirty)}
+                  agentCreatedAt={agent.createdAt}
+                  ownerId={user.id}
+                  onDirtyChange={handleCodeDirtyChange}
                   request={codeRequest?.targetWindowId === desktopWindow.id ? codeRequest : null}
+                  windowId={desktopWindow.id}
                 />
               ) : desktopWindow.app === 'terminal' ? (
-                <TerminalApp
+                <MemoizedTerminalApp
                   agentId={agent.id}
                   desktopId={desktopId}
                   registerCloseHandler={registerTerminalCloseHandler}
                   windowId={desktopWindow.id}
                 />
               ) : (
-                <SettingsApp
+                <MemoizedSettingsApp
                   active={desktopWindow.id === windowState.activeWindowId}
                   agent={agent}
                   busyAction={busyAction}
                   error={error}
                   instanceId={desktopWindow.id}
                   lifecycleDisabled={guestOperationActive}
-                  onDelete={() => {
-                    setError('')
-                    setConfirmOpen(true)
-                  }}
-                  onSignOut={() => void signOut()}
-                  onSleep={() => void mutate('sleep-agent')}
+                  onDelete={openDeleteConfirmation}
+                  onSignOut={handleSignOut}
+                  onSleep={handleSleep}
                   user={user}
                 />
               )}
@@ -779,76 +844,7 @@ export function ReadyDesktop({
           ))}
         </div>
         <div className="pointer-events-none absolute inset-x-0 bottom-3 z-[1500] flex justify-center">
-          <nav
-            aria-label="Dock"
-            className="pointer-events-auto flex h-[76px] items-end gap-2.5 rounded-[22px] border border-white/30 bg-zinc-200/20 px-3 pb-1.5 shadow-[0_5px_20px_rgba(0,0,0,0.28),inset_0_0_0_1px_rgba(0,0,0,0.08)] backdrop-blur-2xl backdrop-saturate-150"
-          >
-            <motion.button
-              type="button"
-              aria-label="Open Finder"
-              className="group relative flex flex-col items-center rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-white/80"
-              onClick={() => openFinder()}
-              whileHover={reducedMotion ? undefined : dockHoverAnimation}
-              whileTap={reducedMotion ? undefined : dockTapAnimation}
-              transition={dockTransition}
-            >
-              <DockTooltip label="Finder" />
-              <DesktopAppIcon app="finder" className="size-14" />
-              <DockIndicator running={finderRunning} />
-            </motion.button>
-            <motion.button
-              type="button"
-              aria-label="Open Chrome"
-              className="group relative flex flex-col items-center rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-white/80"
-              onClick={openChrome}
-              whileHover={reducedMotion ? undefined : dockHoverAnimation}
-              whileTap={reducedMotion ? undefined : dockTapAnimation}
-              transition={dockTransition}
-            >
-              <DockTooltip label="Chrome" />
-              <DesktopAppIcon app="chrome" className="size-14" />
-              <DockIndicator running={chromeRunning} />
-            </motion.button>
-            <motion.button
-              type="button"
-              aria-label="Open Code"
-              className="group relative flex flex-col items-center rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-white/80"
-              onClick={() => openCode()}
-              whileHover={reducedMotion ? undefined : dockHoverAnimation}
-              whileTap={reducedMotion ? undefined : dockTapAnimation}
-              transition={dockTransition}
-            >
-              <DockTooltip label="Code" />
-              <DesktopAppIcon app="code" className="size-14" />
-              <DockIndicator running={codeRunning} />
-            </motion.button>
-            <motion.button
-              type="button"
-              aria-label="Open Terminal"
-              className="group relative flex flex-col items-center rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-white/80"
-              onClick={openTerminal}
-              whileHover={reducedMotion ? undefined : dockHoverAnimation}
-              whileTap={reducedMotion ? undefined : dockTapAnimation}
-              transition={dockTransition}
-            >
-              <DockTooltip label="Terminal" />
-              <DesktopAppIcon app="terminal" className="size-14" />
-              <DockIndicator running={terminalRunning} />
-            </motion.button>
-            <motion.button
-              type="button"
-              aria-label="Open Settings"
-              className="group relative flex flex-col items-center rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-white/80"
-              onClick={openSettings}
-              whileHover={reducedMotion ? undefined : dockHoverAnimation}
-              whileTap={reducedMotion ? undefined : dockTapAnimation}
-              transition={dockTransition}
-            >
-              <DockTooltip label="Settings" />
-              <DesktopAppIcon app="settings" className="size-14" />
-              <DockIndicator running={settingsRunning} />
-            </motion.button>
-          </nav>
+          <DesktopDock onOpenApp={openApp} windows={windowState.windows} />
         </div>
       </main>
 
@@ -935,34 +931,11 @@ function LifecycleTransitionScreen({
   )
 }
 
-function DockTooltip({ label }: { label: string }) {
-  return (
-    <span className="pointer-events-none absolute -top-11 whitespace-nowrap rounded-lg border border-white/25 bg-zinc-800/80 px-3 py-1 text-[13px] text-white opacity-0 backdrop-blur-md transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
-      {label}
-    </span>
-  )
-}
-
-function DockIndicator({ running }: { running: boolean }) {
-  return (
-    <span aria-hidden="true" className={cn('mt-1 h-1 w-1 rounded-full', running ? 'bg-white/85' : 'bg-transparent')} />
-  )
-}
-
-function isEditableTarget(target: EventTarget | null) {
-  return (
-    target instanceof HTMLInputElement ||
-    target instanceof HTMLTextAreaElement ||
-    target instanceof HTMLSelectElement ||
-    (target instanceof HTMLElement && target.isContentEditable)
-  )
-}
-
 function DesktopWallpaper() {
   return (
     <div
       aria-hidden="true"
-      className="pointer-events-none absolute inset-0 bg-[#142849] bg-[url('/tengri-wallpaper.svg')] bg-cover bg-center"
+      className="pointer-events-none absolute inset-0 bg-[#142849] bg-[url('/tengri/wallpaper.webp')] bg-cover bg-center"
     />
   )
 }
@@ -975,7 +948,3 @@ function TengriMark() {
     </span>
   )
 }
-
-const dockHoverAnimation = { scale: 1.18, y: -8 }
-const dockTapAnimation = { scale: 0.96 }
-const dockTransition = { damping: 28, stiffness: 520, type: 'spring' as const }

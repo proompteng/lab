@@ -37,18 +37,18 @@ The chat, Finder, Code, Terminal, and preview tabs all operate on the same guest
 
 The public browser surface uses strict action schemas rather than exposing arbitrary app-server calls:
 
-| Browser action     | Internal gRPC          | Guest app-server operation          |
-| ------------------ | ---------------------- | ----------------------------------- |
-| `codex-account`    | `GetCodexAccount`      | `account/read`                      |
-| `codex-login-status` | `GetCodexLogin`      | Nanoagent active-login snapshot     |
-| `codex-login`      | `StartCodexLogin`      | `account/login/start`               |
-| `create-thread`    | `CreateCodexThread`    | `thread/start`                      |
-| `resume-thread`    | `ResumeCodexThread`    | `thread/resume`                     |
-| `send-turn`        | `SendCodexTurn`        | `turn/start`                        |
-| `steer-turn`       | `SteerCodexTurn`       | `turn/steer`                        |
-| `interrupt-turn`   | `InterruptCodexTurn`   | `turn/interrupt`                    |
-| `resolve-approval` | `ResolveCodexApproval` | pending server-request response     |
-| event stream       | `WatchCodexEvents`     | replayable app-server notifications |
+| Browser action       | Internal gRPC          | Guest app-server operation          |
+| -------------------- | ---------------------- | ----------------------------------- |
+| `codex-account`      | `GetCodexAccount`      | `account/read`                      |
+| `codex-login-status` | `GetCodexLogin`        | Nanoagent active-login snapshot     |
+| `codex-login`        | `StartCodexLogin`      | `account/login/start`               |
+| `create-thread`      | `CreateCodexThread`    | `thread/start`                      |
+| `resume-thread`      | `ResumeCodexThread`    | `thread/resume`                     |
+| `send-turn`          | `SendCodexTurn`        | `turn/start`                        |
+| `steer-turn`         | `SteerCodexTurn`       | `turn/steer`                        |
+| `interrupt-turn`     | `InterruptCodexTurn`   | `turn/interrupt`                    |
+| `resolve-approval`   | `ResolveCodexApproval` | pending server-request response     |
+| event stream         | `WatchCodexEvents`     | replayable app-server notifications |
 
 Caller-supplied IDs and prompts are bounded and validated at the BFF and control-plane boundaries. The controller waits
 for truthful guest readiness before forwarding an operation, so a sleeping agent resumes before the request continues.
@@ -67,6 +67,10 @@ for truthful guest readiness before forwarding an operation, so a sleeping agent
 - A resolved approval removes the matching pending approval card. The UI presents only the decisions advertised by the
   request, including command-policy and network-policy amendments when supplied.
 - A failed turn renders the app-server failure text as an error before clearing active-turn controls.
+- A missing saved conversation returns HTTP 404 with `code: conversation_not_found`, rather than a control-plane
+  outage. The desktop keeps the saved thread ID during retries and offers **Start a new conversation** beside the
+  error. Only that explicit action clears the browser's selection; the next message creates a thread in the same
+  guest workspace. Temporary failures remain retryable without replacing the conversation or resetting the agent.
 - Account refreshes and login-completion events are tied to the current device-login attempt so stale responses cannot
   overwrite a newer login.
 - A reconnecting browser restores the active device-login snapshot from the same app-server generation. Nanoagent

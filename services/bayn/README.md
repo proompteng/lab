@@ -9,25 +9,38 @@ rows remain decodable for audit and reconciliation, but they are not runtime fal
 
 ## Active strategy
 
-Each regular session, after a 60-minute warmup and until 60 minutes before the close, Bayn evaluates the latest fully
-elapsed 30-minute IEX window. It compares AAPL, AMZN, IWM, NVDA, QQQ, and SMH against SPY and requires:
+The submission window opens with the regular session. Bayn waits for its first fully elapsed 30-minute IEX window and
+the two-second decision delay, without an additional clock warmup. It evaluates subsequent rolling windows until
+five minutes before the close. It compares AAPL, AMZN, IWM, NVDA, QQQ, and SMH against SPY and requires:
 
 - positive candidate momentum and non-negative SPY momentum;
 - at least 10 basis points of excess momentum;
 - a top-quartile location in the rolling range;
 - a spread no wider than 5 basis points; and
-- complete bars plus fresh executable quotes and trades.
+- valid rolling-bar evidence plus fresh executable quotes and trades.
 
 The strategy selects at most one long position and caps it at 10% of the mandate allocation. A valid `NO_TRADE` is a
-normal decision; absent or late market data is a lifecycle blocker, not a strategy result. New entries use whole-share
-IOC limit orders at an adverse verified quote boundary. Bayn starts flattening 30 minutes before the close and must be
-flat 15 minutes before the close.
+normal decision; unavailable mandatory evidence blocks evaluation. New entries use whole-share
+IOC limit orders at an adverse verified quote boundary. Bayn starts flattening five minutes before the close and
+requires a flat account at the closing bell. Entries stop when flattening starts, and close orders remain eligible
+until the actual close, including early-close sessions. The five-minute exit budget is an operational policy;
+unfilled exits or unresolved reconciliation remain incomplete and visible.
 
-Quotes, trades, and finalized bars ingested beyond their declared delay limits remain invalid. Entry and flattening
-wait for a subsequently captured, fully verified snapshot within their existing deadlines. An invalid historical bar
-remains invalid while it is in the rolling window; waiting only helps once a compliant window is available. Premature
-feed evidence, non-final bars, and unclassified freshness violations remain errors. Historical replay uses the same
-retry classification and retains every rejected observation.
+Entry observations evaluate candidate availability independently. Missing or late candidate bars, quotes, or trades
+exclude that candidate with an explicit reason while other candidates remain eligible for evaluation. SPY is the
+mandatory benchmark. Source identity, canonical ordering, watermarks, finality, and premature data still fail the
+whole observation. Raw candidate rows and their exclusions remain in the hashed snapshot for revalidation.
+
+The v3 strategy target records measured signals separately from excluded candidates. Measured signals retain their
+threshold rejections and selection rank; eligible candidates outside the position limit remain visible. An observation
+with every candidate excluded remains unavailable and cannot establish a valid `NO_TRADE`. Execution pricing requires
+fresh quotes for positive targets and reconciled holdings. Legacy v2 targets remain readable for audit.
+
+Quotes, trades, and finalized bars ingested beyond their declared delay limits remain invalid. Candidate exclusion
+does not relax those limits. Required benchmark and execution evidence must become available within the existing
+deadlines. An invalid historical bar remains invalid while it is in the rolling window; waiting only helps once a
+compliant window is available. Premature feed evidence, non-final bars, and unclassified freshness violations remain
+errors. Historical replay uses the same candidate evaluation and retains every rejected observation.
 
 The protocol, universe, thresholds, feed contract, and execution model are source-controlled TypeScript. The image
 embeds and verifies the source revision and the behavior, parameter, protocol, and risk-policy hashes.
@@ -104,8 +117,11 @@ and any future cycle with durable execution work still prevent a sufficient rece
 ## Historical intraday replay
 
 `bayn-intraday-replay --input <path>` evaluates finalized sessions from an exported Alpaca calendar against the retained
-intraday archive. It reads only ClickHouse using `BAYN_CLICKHOUSE_URL`, `BAYN_CLICKHOUSE_USERNAME`, and
-`BAYN_CLICKHOUSE_PASSWORD`. The command has no broker mutation, PostgreSQL, TigerBeetle, or capital-grant capability.
+intraday archive. It reads ClickHouse using `BAYN_CLICKHOUSE_URL`, `BAYN_CLICKHOUSE_USERNAME`, and
+`BAYN_CLICKHOUSE_PASSWORD`. By default, `archiveAvailability: "recorded-reader"` also requires the configured PostgreSQL
+receipt store (`BAYN_POSTGRES_URL`, `BAYN_POSTGRES_TLS`, and `BAYN_POSTGRES_CA_PATH`). Its PostgreSQL transactions are
+read-only and bounded; it does not run migrations or record receipts. The command has no broker mutation, TigerBeetle,
+or capital-grant capability.
 Run `bun run --filter @proompteng/bayn build` for the local equivalent:
 
 ```sh
@@ -122,6 +138,7 @@ the exact calendar response for this date range:
   "calendar": [{ "date": "2026-09-04", "open": "09:30", "close": "16:00" }],
   "initialCapitalMicros": "100000000000",
   "allocationCapitalMicros": "100000000000",
+  "archiveAvailability": "recorded-reader",
   "assumptions": {
     "pollIntervalMs": 30000,
     "firstPollDelayMs": 2000,
@@ -134,19 +151,85 @@ the exact calendar response for this date range:
 ```
 
 The range is bounded to 31 calendar days. Preserve the complete calendar response; archive date presence cannot
-establish that a session was open or that its data is complete. Each scheduled observation captures its own archive
-watermarks with event and ingestion times bounded by that observation. The report retains the manifests for decision,
-planning, and arrival quotes, as well as data failures, canceled IOC quantities, fees, cash, and unclosed positions.
+establish that a session was open or that its data is complete. Each scheduled observation reconstructs archive
+watermarks with event and source-receipt times bounded by that observation. Source receipt is the WebSocket mapper's
+timestamp, before Kafka, Flink, and ClickHouse delivery; neither that timestamp nor a retrospectively reconstructed
+watermark proves historical reader visibility.
+
+The execution worker therefore records append-only `bayn.archive-record-availability.v1` receipts after a successful
+archive read completes. Each retains the raw record, canonical Kafka identity and content hash, snapshot identity,
+source cutoff, read-start and completion clocks, reader endpoint hash, and verified source/image identity. The
+completion time is rounded up to the next millisecond, never backdated to the source cutoff. Retries retain the first
+stored observation; changed content under the same source identity fails closed. The public status service and replay
+commands cannot mint these receipts. Recording failure prevents release of that read to the execution caller.
+
+Default replay requires a matching production-reader receipt for every used row, completed no later than the simulated
+observation. Missing or late receipts for an independent decision candidate exclude that candidate with zero weight;
+the shared strategy core ranks the remaining candidates. These reader-derived exclusions are bound separately in
+`availability.snapshots[].candidateExclusions`, without rewriting the immutable archive manifest or discarding raw
+excluded rows. Valid late receipts are retained as exclusion evidence, never as proof of availability at the cutoff.
+Missing benchmark or execution-pricing evidence still rejects the whole observation. Corrupt, duplicate, unrelated,
+development-only, or conflicting receipts remain global failures, including receipts belonging to excluded candidates.
+An entry window with all candidates unavailable remains incomplete, not a clean `NO_TRADE`, and prevents aggregate P&L.
+Receipts cover rows actually
+observed by the worker, not the entire feed. They are conservative availability upper bounds, not earliest visibility,
+simultaneous snapshot proof, reader uptime, or actual execution evidence. In particular, a read completing after its
+query cutoff cannot certify replay at that cutoff. Strict-mode coverage can remain sparse; this does not reconstruct
+missing historical delivery times or establish a complete live-equivalent backtest.
+
+Existing source-time experiments may explicitly freeze `archiveAvailability: "source-receipt-assumption"` in their input.
+That mode remains ClickHouse-only and retains the original economic counterfactual, but its availability is always
+`UNPROVEN`; it cannot be presented as production-visible or causal execution evidence. Omitted policy now defaults to
+recorded receipts, not this assumption. There is no automatic fallback or historical receipt backfill.
+
+The report retains decision, planning, arrival and mark manifests, receipt bindings and deduplicated raw receipts,
+data failures, canceled IOC quantities, fees, cash, and unclosed positions. Retain the report alongside the frozen input.
 
 The fill model uses whole shares, the opposite arrival quote, a declared share of displayed liquidity, and adverse
 slippage. A modeled price beyond the submitted limit cancels the order. Zero added slippage still includes crossing
 the quoted spread and the protocol's fees. `feeMultiplierPpm` scales the fees before their normal rounding. Execution
 assumptions describe a counterfactual; they do not measure queue position or actual broker fills.
 
+The `bayn.intraday-replay-report.v3` report includes explicit availability policy/evidence and holding-period equity marks from adverse verified archive bids,
+observed drawdown, carried peak equity, and diagnostic daily-loss/drawdown-limit breaches. Marks use the declared
+30-second poll interval, so excursions between observations can be missed. Missing required mark evidence makes the
+session incomplete while preserving attempted closes, fees, fills, and remaining positions. These diagnostics do not
+change order decisions or represent the full live risk controller.
+
 Every report is `COUNTERFACTUAL_RESEARCH` and `NOT_QUALIFIED`, including a positive result. A report does not create a
 qualification, change a strategy, activate capital, or replace the forward-performance receipt. Use a declared
 chronological holdout and sufficient independent sessions before drawing a profitability conclusion; inspect the
 report's limitations and incomplete sessions rather than selecting only favorable dates or assumptions.
+
+### Archive study across independent sessions
+
+Use `bayn-intraday-replay --study <path>` to evaluate every declared archive session under multiple frozen execution
+assumptions. The command uses the same availability policy, read-only data configuration, and active strategy implementation.
+Each date starts flat with the same initial capital. An incomplete date remains in the report and does not skip later
+dates; these independent experiments do not represent a continuous portfolio. The ordinary `--input` mode continues
+to carry cash and stop after incomplete sessions.
+
+The study input has `schemaVersion: "bayn.archive-replay-study-input.v1"`, `sessionMode: "independent-flat-start"`,
+`experimentPlanHash`, the frozen `strategyProtocolHash` and `riskPolicyHash`, and `scenarios: [{ name, input }]`.
+Each scenario's `input` is the complete `bayn.intraday-replay-input.v1` object above. Scenarios must have unique names
+and identical calendars, date ranges, and starting/allocation capital and availability policy. Only execution assumptions may differ. Freeze
+the plan and all scenarios before examining their evaluation returns; a supplied plan hash records identity, not proof
+of preregistration. The command rejects strategy/risk identity drift before archive reads.
+
+Every nested replay retains its report hash, exact Kafka topic/partition offsets, event and ingestion times through
+the verified snapshot manifests, data failures, orders, fills, and accounting. Aggregate independent-session P&L is
+null whenever any declared date is incomplete. Winning/losing counts describe completed independent experiments only;
+they are not a win/loss rate over the whole calendar. Zero fills are reported explicitly and do not establish an edge. All
+results remain research-only and cannot change broker or capital authority. Progress is JSON on stderr; stdout contains
+one complete JSON report. Add `--output-directory <new-directory>` to atomically save each completed session's full
+report and frozen study/plan identity before starting the next session. The directory must not exist and its parent
+must exist; existing evidence is never overwritten. These files survive interruption but are not a completed study
+or a resume cache. Neither the study nor the normal replay consumes or commits a Kafka consumer-group offset.
+
+```sh
+node services/bayn/dist/intraday-replay-command.js --study archive-study.json \
+  --output-directory archive-study-sessions > archive-study-report.json
+```
 
 ## Vendor historical research
 
