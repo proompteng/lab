@@ -20,6 +20,9 @@ targets:
       - apps/landing/**
       - packages/backend/**
       - packages/design/**
+      - services/nanoagent/**
+      - services/tengri/**
+      - .github/workflows/tengri.yaml
 
   app:
     kind: validation

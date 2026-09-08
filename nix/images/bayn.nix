@@ -38,8 +38,8 @@ let
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = {
     # Refreshed from both Linux builders after adding writer-fence lifecycle integration to the manifest.
-    x86_64-linux = "sha256-yAxmJ5wQYpC2o0knYamaQokBg7QEnRAVXQe3Q450MUE=";
-    aarch64-linux = "sha256-iUdV2SCqtLssuByqrrl958FkvyUSYgyKU5T5bGahxTg=";
+    x86_64-linux = "sha256-L1pJa2JHGQV/XtrKNeSt4omI1UMDREXrTUBT2ZkJpFM=";
+    aarch64-linux = "sha256-isxhTa/QV1bXkl7tuz/aA+gCXcm9P26dig9RRnOZjSA=";
   };
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
