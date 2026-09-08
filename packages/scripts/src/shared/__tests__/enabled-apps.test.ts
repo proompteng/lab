@@ -419,7 +419,7 @@ describe('enabled app inventory', () => {
       'sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839',
     )
     expect(natsKustomization).toContain('newTag: v1.19.2')
-    expect(observabilityKustomization).toContain('version: 8.2.0')
+    expect(observabilityKustomization).toContain('version: 8.4.2')
   })
 
   it('pins the enabled service image upgrade wave', () => {
