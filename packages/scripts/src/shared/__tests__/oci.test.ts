@@ -939,7 +939,9 @@ describe('native OCI build workflows', () => {
       sagBuildWorkflow,
     ]) {
       expect(workflow).not.toContain("- 'flake.lock'")
-      expect(workflow).not.toContain("- 'nix/images/bun-workspace-service.nix'")
+      if (![oiratWorkflow, bumbaWorkflow, froussardWorkflow].includes(workflow)) {
+        expect(workflow).not.toContain("- 'nix/images/bun-workspace-service.nix'")
+      }
     }
     expect(atticWorkflow).not.toContain("- 'flake.lock'")
     expect(atticWorkflow).toContain("- 'nix/images/attic.nix'")
@@ -949,10 +951,19 @@ describe('native OCI build workflows', () => {
     expect(headlampWorkflow).not.toContain("- 'flake.nix'")
   })
 
-  it('checks default Bun dependency closures when the lockfile changes', () => {
-    for (const workflow of [oiratWorkflow, bumbaWorkflow, froussardWorkflow]) {
+  it('checks default Bun dependency closures when their dependency inputs change', () => {
+    for (const workflow of [oiratWorkflow, bumbaWorkflow, froussardWorkflow, signalPublisherBuildWorkflow]) {
       const triggers = workflow.slice(0, workflow.indexOf('concurrency:'))
       expect(triggers.match(/- 'bun\.lock'/g)).toHaveLength(2)
+      for (const input of [
+        'nix/images/bun-workspace-service.nix',
+        'nix/images/bun-workspace-deps-source.nix',
+        'nix/images/bun-workspace-deps-source.test.sh',
+        'nix/check-bun-dependency-closure.sh',
+        '.github/workflows/nix-bun-dependency-closure.yml',
+      ]) {
+        expect(triggers.split(`- '${input}'`)).toHaveLength(3)
+      }
       expect(workflow).toContain('uses: ./.github/workflows/nix-bun-dependency-closure.yml')
       expect(workflow).toContain('needs: dependency-closure')
     }

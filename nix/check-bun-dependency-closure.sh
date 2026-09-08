@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  printf 'Usage: %s <app|bumba|froussard|oirat> <x86_64-linux|aarch64-linux>\n' "$0" >&2
+  printf 'Usage: %s <app|bumba|froussard|oirat|signal-publisher> <x86_64-linux|aarch64-linux>\n' "$0" >&2
 }
 
 if [[ "$#" -ne 2 ]]; then
@@ -12,7 +12,7 @@ fi
 
 service="$1"
 case "${service}" in
-  app | bumba | froussard | oirat) ;;
+  app | bumba | froussard | oirat | signal-publisher) ;;
   *)
     printf 'Unsupported Bun dependency-closure service: %s\n' "${service}" >&2
     exit 2

@@ -51,6 +51,10 @@ jobs:
             stalled-download-timeout = 60
             download-attempts = 1
 
+      - name: Prove dependency source boundary
+        if: inputs.service != 'app'
+        run: bash nix/images/bun-workspace-deps-source.test.sh
+
       - name: Recompute Bun fixed-output dependency closure
         env:
           BUN_SYSTEM: ${{ matrix.system }}

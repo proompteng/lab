@@ -221,6 +221,17 @@ spec:
           - services/bumba
           - packages/temporal-bun-sdk
           - nix/images/bumba.nix
+          - .github/workflows/bumba-ci.yml
+          - .github/workflows/nix-bun-dependency-closure.yml
+          - nix/check-bun-dependency-closure.sh
+          - nix/images/bun-workspace-service.nix
+          - nix/images/bun-workspace-deps-source.nix
+          - nix/images/bun-workspace-deps-source.test.sh
+          - bun.lock
+          - glob:**/package.json
+          - bunfig.toml
+          - .npmrc
+          - patches
           - .github/workflows/nix-oci-build-common.yml
           - packages/scripts/src/shared/oci.ts
           - nix/oci-push.sh
@@ -260,6 +271,17 @@ spec:
           - services/oirat
           - packages/discord
           - nix/images/oirat.nix
+          - .github/workflows/oirat-ci.yml
+          - .github/workflows/nix-bun-dependency-closure.yml
+          - nix/check-bun-dependency-closure.sh
+          - nix/images/bun-workspace-service.nix
+          - nix/images/bun-workspace-deps-source.nix
+          - nix/images/bun-workspace-deps-source.test.sh
+          - bun.lock
+          - glob:**/package.json
+          - bunfig.toml
+          - .npmrc
+          - patches
           - .github/workflows/nix-oci-build-common.yml
           - packages/scripts/src/shared/oci.ts
           - nix/oci-push.sh
@@ -302,6 +324,17 @@ spec:
           - packages/discord
           - packages/otel
           - nix/images/froussard.nix
+          - .github/workflows/froussard-ci.yml
+          - .github/workflows/nix-bun-dependency-closure.yml
+          - nix/check-bun-dependency-closure.sh
+          - nix/images/bun-workspace-service.nix
+          - nix/images/bun-workspace-deps-source.nix
+          - nix/images/bun-workspace-deps-source.test.sh
+          - bun.lock
+          - glob:**/package.json
+          - bunfig.toml
+          - .npmrc
+          - patches
           - .github/workflows/nix-oci-build-common.yml
           - packages/scripts/src/shared/oci.ts
           - nix/oci-push.sh
@@ -617,10 +650,18 @@ spec:
           - nix/images/torghut-ws.nix
           - nix/images/signal-publisher.nix
           - nix/images/bun-workspace-service.nix
+          - nix/images/bun-workspace-deps-source.nix
+          - nix/images/bun-workspace-deps-source.test.sh
+          - nix/check-bun-dependency-closure.sh
+          - .github/workflows/nix-bun-dependency-closure.yml
           - services/torghut/uv.lock
           - flake.nix
           - flake.lock
           - bun.lock
+          - glob:**/package.json
+          - bunfig.toml
+          - .npmrc
+          - patches
           - package.json
           - .github/workflows/nix-oci-build-common.yml
           - packages/scripts/src/shared/oci.ts

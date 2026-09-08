@@ -6,8 +6,12 @@
   nodejs,
 }:
 
+let
+  dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
+in
 import ./bun-workspace-service.nix {
   inherit pkgs lib repoRoot bun nodejs;
+  inherit dependencySource;
   serviceName = "oirat";
   packageName = "@proompteng/oirat";
   depsHash = {
