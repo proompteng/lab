@@ -39,11 +39,11 @@ const decodeLead = (
   field: string,
 ): Result.Result<number, ExecutionCycleCloseWindowFailure> => {
   const lead = value ?? fallback
-  return Number.isSafeInteger(lead) && lead > 0
+  return Number.isSafeInteger(lead) && lead >= 0
     ? Result.succeed(lead)
     : Result.fail({
         _tag: 'ExecutionCycleCloseWindowInvalid',
-        reason: `${field} must be a positive safe integer`,
+        reason: `${field} must be a nonnegative safe integer`,
       })
 }
 

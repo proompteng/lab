@@ -76,7 +76,7 @@ export const intradayMomentumExecutionModel: Extract<
     fillPriceReference: 'limit-or-better',
     buyingPowerPolicy: 'pre-submit-cash-without-sell-proceeds',
     warmupAfterOpenMs: 0,
-    submissionCutoffBeforeCloseMs: 60 * 60_000,
+    submissionCutoffBeforeCloseMs: 5 * 60_000,
   }),
   precision: Object.freeze({
     ...defaultExecutionModel.precision,
@@ -106,7 +106,7 @@ const IntradayMomentumProtocolBase = Schema.Struct({
   warmupMinutesAfterOpen: SessionBoundaryMinuteOffsetSchema,
   entryCutoffMinutesBeforeClose: IntradayMinuteOffsetSchema,
   flattenBeforeCloseMinutes: IntradayMinuteOffsetSchema,
-  hardFlatBeforeCloseMinutes: IntradayMinuteOffsetSchema,
+  hardFlatBeforeCloseMinutes: SessionBoundaryMinuteOffsetSchema,
   maximumPositions: PositiveIntegerSchema,
   maximumGrossWeight: PositiveUnitIntervalSchema,
   maximumSymbolWeight: PositiveUnitIntervalSchema,
@@ -188,12 +188,12 @@ const protocolIssues = (protocol: typeof IntradayMomentumProtocolBase.Type): rea
     issues.push({ path: ['decisionDelaySeconds'], issue: 'must leave a non-empty regular-session decision interval' })
   }
   if (
-    protocol.entryCutoffMinutesBeforeClose <= protocol.flattenBeforeCloseMinutes ||
+    protocol.entryCutoffMinutesBeforeClose < protocol.flattenBeforeCloseMinutes ||
     protocol.flattenBeforeCloseMinutes <= protocol.hardFlatBeforeCloseMinutes
   ) {
     issues.push({
       path: ['entryCutoffMinutesBeforeClose'],
-      issue: 'entry cutoff, flatten, and hard-flat boundaries must be ordered before the close',
+      issue: 'entry cutoff must be at or before flattening, which must precede the hard-flat boundary',
     })
   }
   if (protocol.maximumPositions > protocol.candidateSymbols.length) {
@@ -282,9 +282,9 @@ export const defaultIntradayMomentumProtocolDocument = Object.freeze({
   maximumDecisionLagMs: 60_000,
   maximumQuoteAgeMs: 2_000,
   warmupMinutesAfterOpen: 0,
-  entryCutoffMinutesBeforeClose: 60,
-  flattenBeforeCloseMinutes: 30,
-  hardFlatBeforeCloseMinutes: 15,
+  entryCutoffMinutesBeforeClose: 5,
+  flattenBeforeCloseMinutes: 5,
+  hardFlatBeforeCloseMinutes: 0,
   maximumPositions: 1,
   maximumGrossWeight: 0.1,
   maximumSymbolWeight: 0.1,

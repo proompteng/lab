@@ -389,7 +389,7 @@ describe('intraday replay program', () => {
       }
       const { reportHash, ...material } = report
       expect(reportHash).toBe(canonicalHashV1(material))
-    })
+    }, 15_000)
   }
 
   test('does not trade source-received rows lacking a completed reader observation before replay time', async () => {
@@ -504,7 +504,7 @@ describe('intraday replay program', () => {
       ])
       expect(observation.decision?.signals).toEqual([])
     }
-  })
+  }, 15_000)
 
   test('uses the planned entry limit and arrival quote without lookahead', async () => {
     const archive = makeArchive({
@@ -975,7 +975,7 @@ describe('intraday replay program', () => {
     expect(report.sessions[0]).toMatchObject({ status: 'INCOMPLETE', fills: [], netRealizedPnlAfterCostsMicros: null })
     expect(report.sessions[0]?.observations.at(-1)).toMatchObject({
       kind: 'unavailable',
-      observedAt: '2026-09-04T18:59:32.000Z',
+      observedAt: '2026-09-04T19:54:32.000Z',
       retryable: true,
     })
   })

@@ -147,6 +147,7 @@ describe('intraday-momentum runtime decision boundary', () => {
   test.each([
     ['late morning', '2026-08-18T16:00:02.000Z', '2026-08-18T15:30:00.000Z', '2026-08-18T16:00:00.000Z'],
     ['afternoon', '2026-08-18T18:30:02.000Z', '2026-08-18T18:00:00.000Z', '2026-08-18T18:30:00.000Z'],
+    ['final entry minute', '2026-08-18T19:54:02.000Z', '2026-08-18T19:24:00.000Z', '2026-08-18T19:54:00.000Z'],
   ])('queries the latest completed rolling window in the %s', (_, observedAt, rangeStartAt, rangeEndAt) => {
     const cycle = makeActiveCycle()
     const query = success(intradayMomentumEntryQuery(cycle, protocol, calendarFor(cycle), observedAt))
@@ -281,12 +282,12 @@ describe('intraday-momentum runtime decision boundary', () => {
     const cycle = makeActiveCycle('2026-08-18T13:30:00.000Z', '2026-08-18T17:00:00.000Z')
     const calendar = calendarFor(cycle)
 
-    expect(cycle.window.submissionCutoffAt).toBe('2026-08-18T16:00:00.000Z')
-    expect(success(intradayMomentumEntryQuery(cycle, protocol, calendar, '2026-08-18T15:40:02.000Z'))).toMatchObject({
-      rangeStartAt: '2026-08-18T15:10:00.000Z',
-      rangeEndAt: '2026-08-18T15:40:00.000Z',
+    expect(cycle.window.submissionCutoffAt).toBe('2026-08-18T16:55:00.000Z')
+    expect(success(intradayMomentumEntryQuery(cycle, protocol, calendar, '2026-08-18T16:54:02.000Z'))).toMatchObject({
+      rangeStartAt: '2026-08-18T16:24:00.000Z',
+      rangeEndAt: '2026-08-18T16:54:00.000Z',
     })
-    expect(failure(intradayMomentumEntryQuery(cycle, protocol, calendar, '2026-08-18T16:00:00.000Z'))).toMatchObject({
+    expect(failure(intradayMomentumEntryQuery(cycle, protocol, calendar, '2026-08-18T16:55:00.000Z'))).toMatchObject({
       operation: 'entry-query',
     })
   })

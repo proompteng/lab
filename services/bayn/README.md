@@ -11,7 +11,7 @@ rows remain decodable for audit and reconciliation, but they are not runtime fal
 
 The submission window opens with the regular session. Bayn waits for its first fully elapsed 30-minute IEX window and
 the two-second decision delay, without an additional clock warmup. It evaluates subsequent rolling windows until
-60 minutes before the close. It compares AAPL, AMZN, IWM, NVDA, QQQ, and SMH against SPY and requires:
+five minutes before the close. It compares AAPL, AMZN, IWM, NVDA, QQQ, and SMH against SPY and requires:
 
 - positive candidate momentum and non-negative SPY momentum;
 - at least 10 basis points of excess momentum;
@@ -21,8 +21,10 @@ the two-second decision delay, without an additional clock warmup. It evaluates 
 
 The strategy selects at most one long position and caps it at 10% of the mandate allocation. A valid `NO_TRADE` is a
 normal decision; unavailable mandatory evidence blocks evaluation. New entries use whole-share
-IOC limit orders at an adverse verified quote boundary. Bayn starts flattening 30 minutes before the close and must be
-flat 15 minutes before the close.
+IOC limit orders at an adverse verified quote boundary. Bayn starts flattening five minutes before the close and
+requires a flat account at the closing bell. Entries stop when flattening starts, and close orders remain eligible
+until the actual close, including early-close sessions. The five-minute exit budget is an operational policy;
+unfilled exits or unresolved reconciliation remain incomplete and visible.
 
 Entry observations evaluate candidate availability independently. Missing or late candidate bars, quotes, or trades
 exclude that candidate with an explicit reason while other candidates remain eligible for evaluation. SPY is the

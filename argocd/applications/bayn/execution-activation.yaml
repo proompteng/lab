@@ -102,9 +102,9 @@ spec:
             - name: BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION
               value: 8f4602324111bbb3dd5d8695aabf199f4a5328fa
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "86d5d2557ee6cb2100a358fdfdaf54cb5d9b27f6837efd9ff265bf17ff7b9194"
+              value: "1d3b93a585e9b37836507880323f57ba7f7db385241dccf09234c43125ee5285"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "88f4bf9a18fd881226a123ba277a65daaaf92aba76acfde86072d03d143624ef"
+              value: "104bb22429eb54e025a092a8434be2b8390059c24515512de8cbb99c66cbb797"
             - name: BAYN_CAPITAL_ACTIVATION_REQUEST
               valueFrom:
                 secretKeyRef:

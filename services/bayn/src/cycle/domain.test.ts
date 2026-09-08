@@ -182,15 +182,15 @@ describe('autonomous cycle identity and calendar', () => {
     expect(policy).toMatchObject({
       strategyExecutionModelHash: canonicalHashV1(intradayMomentumExecutionModel),
       warmupAfterOpenMs: 0,
-      submissionCutoffBeforeCloseMs: 3_600_000,
+      submissionCutoffBeforeCloseMs: 300_000,
     })
     expect(regularWindow).toMatchObject({
       submissionOpenAt: '2026-03-09T13:30:00.000Z',
-      submissionCutoffAt: '2026-03-09T19:00:00.000Z',
+      submissionCutoffAt: '2026-03-09T19:55:00.000Z',
     })
     expect(earlyCloseWindow).toMatchObject({
       submissionOpenAt: '2026-03-09T13:30:00.000Z',
-      submissionCutoffAt: '2026-03-09T16:00:00.000Z',
+      submissionCutoffAt: '2026-03-09T16:55:00.000Z',
     })
     expect(makeCycleDraftSuccess(identity, regularWindow)).toMatchObject({
       schemaVersion: 'bayn.autonomous-cycle.v3',

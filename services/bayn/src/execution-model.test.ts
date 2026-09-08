@@ -71,7 +71,7 @@ describe('explicit execution model', () => {
         timeInForce: 'ioc',
         planAfter: 'verified-intraday-window',
         warmupAfterOpenMs: 0,
-        submissionCutoffBeforeCloseMs: 3_600_000,
+        submissionCutoffBeforeCloseMs: 300_000,
       },
       precision: { quantityIncrementMicros: '1000000' },
     })
