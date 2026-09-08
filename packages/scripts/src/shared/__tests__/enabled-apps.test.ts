@@ -287,7 +287,7 @@ describe('enabled app inventory', () => {
 
   it('pins the identity and metrics controller upgrade wave', () => {
     expect(certManagerKustomization).toContain('version: v1.21.1')
-    expect(externalSecretsKustomization).toContain('version: 2.8.0')
+    expect(externalSecretsKustomization).toContain('version: 2.10.0')
     expect(platformApplicationSet).toContain('targetRevision: v0.9.0')
   })
 
@@ -396,8 +396,8 @@ describe('enabled app inventory', () => {
 
     expect(kubeVirtKustomization).toContain('kubevirt/releases/download/v1.9.0/')
     expect(kubeVirtKustomization).not.toContain('MultiArchitecture')
-    expect(cdiKustomization).toContain('containerized-data-importer/releases/download/v1.66.0/')
-    expect(knativeKustomization).toContain('knative/operator/releases/download/knative-v1.23.0/operator.yaml')
+    expect(cdiKustomization).toContain('containerized-data-importer/releases/download/v1.66.1/')
+    expect(knativeKustomization).toContain('knative/operator/releases/download/knative-v1.23.1/operator.yaml')
     expect(knativeKustomization).toContain('$patch: delete')
     expect(knativeKustomization).not.toContain('argocd.argoproj.io/sync-options: Prune=false')
     expect(knativeServingManifest).toContain('version: 1.23.0')
