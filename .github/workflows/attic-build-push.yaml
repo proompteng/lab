@@ -12,6 +12,7 @@ on:
       - 'docs/nix-cache.md'
       - 'docs/nix-oci-real-image-build-adoption-plan.md'
       - '.github/workflows/nix-oci-build-common.yml'
+      - 'packages/scripts/src/shared/oci.ts'
       - 'nix/oci-push.sh'
       - 'argocd/applications/attic/**'
   workflow_dispatch:

@@ -50,9 +50,6 @@ spec:
         name: torghut
       autoPromotionEnabled: true
     - stageSelector:
-        name: torghut-hyperliquid-feed
-      autoPromotionEnabled: true
-    - stageSelector:
         name: bilig
       autoPromotionEnabled: true
     - stageSelector:

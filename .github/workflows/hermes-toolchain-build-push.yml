@@ -11,6 +11,7 @@ on:
       - '.github/actions/setup-nix-toolchain/**'
       - '.github/workflows/hermes-toolchain-build-push.yml'
       - '.github/workflows/nix-oci-build-common.yml'
+      - 'packages/scripts/src/shared/oci.ts'
       - 'flake.lock'
       - 'flake.nix'
       - 'nix/ci-nix-oci-summary.sh'

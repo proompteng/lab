@@ -1,12 +1,14 @@
 import { Effect } from 'effect'
 
 import { MutationOperation } from '../broker/alpaca-mutations'
+import { CycleRunnerError } from '../cycle/runner'
+import { CycleStoreError } from '../cycle/store'
 import { AuthorityRestrictionStore } from '../db/execution-store'
+import { OperationalError } from '../errors'
 import { MutationEventType, MutationStore, type MutationEvent } from '../execution/mutations'
 import { executionCycleRestrictionSubject } from '../execution/mandate'
 import type { ExecutionProgram } from '../execution/runtime-program'
 import { WriterFence } from '../execution/writer-fence'
-import { CycleRunnerError } from '../cycle/runner'
 import { currentUtcInstant } from '../time'
 import { decideMutationIntentSettlement, type MutationIntentExecutionResult } from './mutation-decisions'
 import { Pipeable } from '../pipeable'
@@ -24,6 +26,7 @@ export type ExecutionMutationExecutor<E, R> = {
 export const mutationConsistencyDelayMs = 1_000
 
 export interface MutationRunnerErrorInput {
+  readonly operation?: CycleRunnerError['operation']
   readonly message: string
   readonly cause?: unknown
   readonly failure?: CycleRunnerError['failure']
@@ -31,11 +34,26 @@ export interface MutationRunnerErrorInput {
 
 export const mutationRunnerError = (input: MutationRunnerErrorInput): CycleRunnerError =>
   new CycleRunnerError({
-    operation: 'recover-cycle',
+    operation: input.operation ?? 'recover-cycle',
     failure: input.failure ?? 'operational',
     message: input.message,
     cause: input.cause,
   })
+
+const isTransientCycleStoreFailure = (cause: unknown): cause is CycleStoreError =>
+  cause instanceof CycleStoreError &&
+  (cause.persistenceFailure === 'connectivity' || cause.persistenceFailure === 'transaction')
+
+const isRetryableReconciliationFailure = (error: CycleRunnerError): boolean =>
+  error.cause instanceof OperationalError && error.cause.operation === 'reconciliation' && error.cause.retryable
+
+/** These failures do not create an unknown broker mutation and are safe to retry. */
+export const shouldRestrictMutationLoopFailure = (error: CycleRunnerError): boolean =>
+  error.operation !== 'build-decision' &&
+  !isRetryableReconciliationFailure(error) &&
+  (error.operation !== 'read-oldest-unfinished' ||
+    error.failure !== 'store' ||
+    !isTransientCycleStoreFailure(error.cause))
 
 const restrictMutationAuthorityDataFirst = (
   subject: string,

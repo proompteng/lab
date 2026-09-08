@@ -110,10 +110,38 @@ beforeAll(async () => {
       }
       callback(null, { authenticated: true, email: 'ada@example.test', plan: 'pro' })
     },
+    getCodexLogin(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      if (call.request.agentId === 'no-active-login') {
+        callback(serviceError(grpc.status.NOT_FOUND, 'no Codex device login is active'), null)
+        return
+      }
+      callback(null, {
+        loginId: 'login-one',
+        verificationUrl: 'https://auth.openai.com/device',
+        userCode: 'TENG-RI01',
+        expiresAt: '2026-08-31T09:15:00Z',
+      })
+    },
     readFile(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
+      if (call.request.path === '/workspace/revision.txt' || call.request.path === '/workspace/wrong-revision.txt') {
+        const content = Buffer.from('versioned content\n')
+        callback(null, {
+          path: String(call.request.path),
+          content,
+          contentType: 'text/plain',
+          revision:
+            call.request.path === '/workspace/revision.txt'
+              ? createHash('sha256').update(content).digest('hex')
+              : '0'.repeat(64),
+        })
+        return
+      }
       if (call.request.path === '/workspace/bom.txt') {
         callback(null, {
           path: String(call.request.path),
@@ -126,6 +154,29 @@ beforeAll(async () => {
         path: String(call.request.path),
         content: Buffer.from([0xff, 0xfe, 0x00]),
         contentType: 'application/octet-stream',
+      })
+    },
+    writeFile(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedRequest = call.request
+      receivedMetadata = call.metadata
+      if (call.request.expectedRevision === '0'.repeat(64)) {
+        callback(serviceError(grpc.status.ALREADY_EXISTS, 'private guest conflict details'), null)
+        return
+      }
+      if (!Buffer.isBuffer(call.request.content)) {
+        callback(serviceError(grpc.status.INVALID_ARGUMENT, 'content bytes missing'), null)
+        return
+      }
+      callback(null, {
+        path: call.request.path,
+        size: call.request.content.byteLength,
+        revision:
+          call.request.path === '/workspace/unconfirmed.txt'
+            ? ''
+            : createHash('sha256').update(call.request.content).digest('hex'),
       })
     },
     searchFiles(
@@ -144,6 +195,18 @@ beforeAll(async () => {
           },
         ],
         truncated: true,
+      })
+    },
+    issuePreviewSession(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedRequest = call.request
+      callback(null, {
+        id: 'preview12345678901234567',
+        launchUrl: 'https://tengri.example/v1/preview/open#ticket.signature',
+        expiresAt: '2026-08-27T00:00:30Z',
+        previewOrigin: 'https://tengri-preview12345678901234567.example',
       })
     },
     watchFiles(call: grpc.ServerWritableStream<Record<string, unknown>, Record<string, unknown>>) {
@@ -168,11 +231,32 @@ beforeAll(async () => {
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
       receivedRequest = call.request
+      if (call.request.threadId === 'missing-conversation') {
+        callback(serviceError(grpc.status.NOT_FOUND, '{"error":"Codex conversation could not be found"}\n'), null)
+        return
+      }
+      if (call.request.threadId === 'missing-resource') {
+        callback(serviceError(grpc.status.NOT_FOUND, '{"error":"internal resource at 10.244.1.42 is missing"}'), null)
+        return
+      }
+      if (call.request.threadId === 'unavailable-conversation') {
+        callback(serviceError(grpc.status.UNAVAILABLE, '{"error":"Codex conversation could not be found"}'), null)
+        return
+      }
       if (call.request.threadId === 'invalid-sequence') {
         callback(null, {
           id: String(call.request.threadId),
           rawJson: '{"thread":{"id":"invalid-sequence"}}',
           eventSequence: '-1',
+        })
+        return
+      }
+      if (call.request.threadId === 'paged-thread' || call.request.threadId === 'outdated-item-cursor') {
+        callback(null, {
+          id: String(call.request.threadId),
+          rawJson: '{"thread":{"id":"paged-thread"}}',
+          eventSequence: '42',
+          itemEventSequences: { 'message-1': call.request.threadId === 'paged-thread' ? '52' : '41' },
         })
         return
       }
@@ -247,6 +331,53 @@ describe('Tengri gRPC BFF transport', () => {
     })
   })
 
+  test('verifies file content revisions and rejects a mismatched read receipt', async () => {
+    const { readFile } = await import('./grpc')
+    const result = await readFile('github:42', 'agent-test', '/workspace/revision.txt')
+    expect(result).toMatchObject({
+      content: 'versioned content\n',
+      revision: createHash('sha256').update('versioned content\n').digest('hex'),
+    })
+    expect(await rejection(readFile('github:42', 'agent-test', '/workspace/wrong-revision.txt'))).toMatchObject({
+      status: 503,
+    })
+  })
+
+  test('signs the file precondition and refuses unconfirmed save receipts', async () => {
+    const { writeFile } = await import('./grpc')
+    const content = 'saved content\n'
+    const expectedRevision = 'a'.repeat(64)
+    const result = await writeFile('github:42', 'agent-test', '/workspace/revision.txt', content, expectedRevision)
+    expect(receivedRequest).toMatchObject({
+      expectedRevision,
+      path: '/workspace/revision.txt',
+      content: Buffer.from(content),
+    })
+    expect(result).toEqual({
+      path: '/workspace/revision.txt',
+      size: Buffer.byteLength(content),
+      revision: createHash('sha256').update(content).digest('hex'),
+    })
+    const method = descriptor.proompteng.runtime.v1.MicroVMControlPlane.service.WriteFile
+    const bodyHash = createHash('sha256').update(method.requestSerialize(receivedRequest)).digest('hex')
+    expect(metadataValue('x-tengri-signature')).toBe(
+      createHmac('sha256', secret)
+        .update(
+          `${metadataValue('x-tengri-subject')}\n${metadataValue('x-tengri-timestamp')}\n${metadataValue('x-tengri-nonce')}\n${method.path}\n${bodyHash}`,
+        )
+        .digest('hex'),
+    )
+    expect(
+      await rejection(writeFile('github:42', 'agent-test', '/workspace/unconfirmed.txt', content, expectedRevision)),
+    ).toMatchObject({ status: 503 })
+    expect(
+      await rejection(writeFile('github:42', 'agent-test', '/workspace/revision.txt', content, '0'.repeat(64))),
+    ).toMatchObject({ status: 409, code: 'file_conflict' })
+    expect(await rejection(writeFile('github:42', 'agent-test', '/workspace/revision.txt', content, ''))).toMatchObject(
+      { status: 400 },
+    )
+  })
+
   test('preserves bounded file-search metadata from the control plane', async () => {
     const { searchFiles } = await import('./grpc')
     const result = await searchFiles('github:42', 'agent-test', '/workspace', 'main')
@@ -266,28 +397,69 @@ describe('Tengri gRPC BFF transport', () => {
     })
   })
 
-  test('canonicalizes proto3 scalar defaults before signing streaming requests', async () => {
+  test('keeps the preview fragment separate from the guest proxy path', async () => {
+    const { issuePreviewSession } = await import('./grpc')
+    const session = await issuePreviewSession('github:42', 'agent-test', 4321, '/app?mode=dev', '#editor')
+
+    expect(receivedRequest).toEqual({
+      agentId: 'agent-test',
+      port: 4321,
+      path: '/app?mode=dev',
+      fragment: '#editor',
+    })
+    expect(session).toEqual({
+      id: 'preview12345678901234567',
+      launchUrl: 'https://tengri.example/v1/preview/open#ticket.signature',
+      expiresAt: '2026-08-27T00:00:30Z',
+      previewOrigin: 'https://tengri-preview12345678901234567.example',
+    })
+  })
+
+  test('distinguishes an initial file watch from an explicit zero resume cursor', async () => {
     const { watchFiles } = await import('./grpc')
-    const stream = watchFiles('github:42', 'agent-test', '/workspace', 0)
+    const stream = watchFiles('github:42', 'agent-test', '/workspace')
     await new Promise<void>((resolve, reject) => {
       stream.on('error', reject)
       stream.on('end', resolve)
       stream.resume()
     })
 
-    expect(receivedRequest).toMatchObject({ agentId: 'agent-test', path: '/workspace', afterSequence: '0' })
+    expect(receivedRequest).toMatchObject({ agentId: 'agent-test', path: '/workspace' })
+    expect(receivedRequest).not.toHaveProperty('afterSequence')
+    expect(receivedRequest?._afterSequence).toBeUndefined()
     const subject = metadataValue('x-tengri-subject')
     const timestamp = metadataValue('x-tengri-timestamp')
     const nonce = metadataValue('x-tengri-nonce')
     const method = descriptor.proompteng.runtime.v1.MicroVMControlPlane.service.WatchFiles
-    const canonicalBody = method.requestSerialize({ agentId: 'agent-test', path: '/workspace' })
-    const noncanonicalBody = method.requestSerialize({ agentId: 'agent-test', path: '/workspace', afterSequence: 0 })
-    expect(noncanonicalBody.equals(canonicalBody)).toBeFalse()
-    const bodyHash = createHash('sha256').update(canonicalBody).digest('hex')
+    const initialBody = method.requestSerialize({ agentId: 'agent-test', path: '/workspace' })
+    const explicitZeroBody = method.requestSerialize({ agentId: 'agent-test', path: '/workspace', afterSequence: 0 })
+    expect(explicitZeroBody.equals(initialBody)).toBeFalse()
+    const bodyHash = createHash('sha256').update(initialBody).digest('hex')
 
     expect(metadataValue('x-tengri-signature')).toBe(
       createHmac('sha256', secret)
         .update(`${subject}\n${timestamp}\n${nonce}\n${method.path}\n${bodyHash}`)
+        .digest('hex'),
+    )
+
+    const resumed = watchFiles('github:42', 'agent-test', '/workspace', 0)
+    await new Promise<void>((resolve, reject) => {
+      resumed.on('error', reject)
+      resumed.on('end', resolve)
+      resumed.resume()
+    })
+    expect(receivedRequest).toMatchObject({
+      agentId: 'agent-test',
+      path: '/workspace',
+      afterSequence: '0',
+      _afterSequence: 'afterSequence',
+    })
+    const resumedBodyHash = createHash('sha256').update(explicitZeroBody).digest('hex')
+    expect(metadataValue('x-tengri-signature')).toBe(
+      createHmac('sha256', secret)
+        .update(
+          `${metadataValue('x-tengri-subject')}\n${metadataValue('x-tengri-timestamp')}\n${metadataValue('x-tengri-nonce')}\n${method.path}\n${resumedBodyHash}`,
+        )
         .digest('hex'),
     )
   })
@@ -357,6 +529,17 @@ describe('Tengri gRPC BFF transport', () => {
     codexAccountRequestCancelled = null
   })
 
+  test('restores an active Codex device login without creating another attempt', async () => {
+    const { getCodexLogin } = await import('./grpc')
+    expect(await getCodexLogin('github:42', 'agent-test')).toEqual({
+      loginId: 'login-one',
+      verificationUrl: 'https://auth.openai.com/device',
+      userCode: 'TENG-RI01',
+      expiresAt: '2026-08-31T09:15:00Z',
+    })
+    expect(await getCodexLogin('github:42', 'no-active-login')).toBeNull()
+  })
+
   test('preserves a leading UTF-8 BOM for lossless editor round trips', async () => {
     const { readFile } = await import('./grpc')
     const file = await readFile('github:42', 'agent-test', '/workspace/bom.txt')
@@ -416,6 +599,7 @@ describe('Tengri gRPC BFF transport', () => {
       id: 'thread-test',
       rawJson: '{"thread":{"id":"thread-test"}}',
       eventSequence: 42,
+      itemEventSequences: {},
     })
   })
 
@@ -425,6 +609,38 @@ describe('Tengri gRPC BFF transport', () => {
     expect(await rejection(resumeCodexThread('github:42', 'agent-test', 'invalid-sequence'))).toMatchObject({
       message: 'Tengri control plane returned an invalid Codex event cursor',
       status: 503,
+    })
+  })
+
+  test('preserves item page cursors and rejects pages older than the recovery baseline', async () => {
+    const { resumeCodexThread } = await import('./grpc')
+    expect(await resumeCodexThread('github:42', 'agent-test', 'paged-thread')).toMatchObject({
+      eventSequence: 42,
+      itemEventSequences: { 'message-1': 52 },
+    })
+    expect(await rejection(resumeCodexThread('github:42', 'agent-test', 'outdated-item-cursor'))).toMatchObject({
+      message: 'Tengri control plane returned an outdated Codex item cursor',
+      status: 503,
+    })
+  })
+
+  test('identifies only the guest missing-conversation response as recoverable with a new conversation', async () => {
+    const { resumeCodexThread } = await import('./grpc')
+
+    expect(await rejection(resumeCodexThread('github:42', 'agent-test', 'missing-conversation'))).toMatchObject({
+      message: 'Codex conversation could not be found',
+      status: 404,
+      code: 'conversation_not_found',
+    })
+    expect(await rejection(resumeCodexThread('github:42', 'agent-test', 'missing-resource'))).toMatchObject({
+      message: 'Tengri resource was not found',
+      status: 404,
+      code: undefined,
+    })
+    expect(await rejection(resumeCodexThread('github:42', 'agent-test', 'unavailable-conversation'))).toMatchObject({
+      message: 'Tengri control plane is unavailable',
+      status: 503,
+      code: undefined,
     })
   })
 

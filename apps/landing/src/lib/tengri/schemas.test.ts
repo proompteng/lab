@@ -81,11 +81,18 @@ describe('Tengri BFF action schema', () => {
         agentId: 'agent-123',
         port: 4321,
         path: '/app?mode=dev',
+        fragment: '#editor',
       }).success,
     ).toBe(true)
     for (const path of ['https://example.test/app', '/app#ticket', '/app\u0000private']) {
       expect(
-        tengriActionSchema.safeParse({ action: 'preview-session', agentId: 'agent-123', port: 4321, path }).success,
+        tengriActionSchema.safeParse({
+          action: 'preview-session',
+          agentId: 'agent-123',
+          port: 4321,
+          path,
+          fragment: '',
+        }).success,
       ).toBe(false)
     }
     const exactPreviewPath = `/${'é'.repeat(2047)}x`
@@ -96,6 +103,7 @@ describe('Tengri BFF action schema', () => {
         agentId: 'agent-123',
         port: 4321,
         path: exactPreviewPath,
+        fragment: '',
       }).success,
     ).toBe(true)
     expect(
@@ -104,8 +112,31 @@ describe('Tengri BFF action schema', () => {
         agentId: 'agent-123',
         port: 4321,
         path: `${exactPreviewPath}é`,
+        fragment: '',
       }).success,
     ).toBe(false)
+    const exactPreviewFragment = `#${'é'.repeat(2047)}x`
+    expect(Buffer.byteLength(exactPreviewFragment, 'utf8')).toBe(4096)
+    expect(
+      tengriActionSchema.safeParse({
+        action: 'preview-session',
+        agentId: 'agent-123',
+        port: 4321,
+        path: '/',
+        fragment: exactPreviewFragment,
+      }).success,
+    ).toBe(true)
+    for (const fragment of ['editor', '#editor\nprivate', `#${'é'.repeat(2048)}`]) {
+      expect(
+        tengriActionSchema.safeParse({
+          action: 'preview-session',
+          agentId: 'agent-123',
+          port: 4321,
+          path: '/',
+          fragment,
+        }).success,
+      ).toBe(false)
+    }
     expect(
       tengriActionSchema.safeParse({
         action: 'revoke-preview-session',
@@ -144,8 +175,13 @@ describe('Tengri BFF action schema', () => {
 
     const exact = 'é'.repeat(MAX_EDITABLE_FILE_BYTES / 2)
     expect(
-      tengriActionSchema.safeParse({ action: 'write-file', agentId: 'agent-123', path: spacedPath, content: exact })
-        .success,
+      tengriActionSchema.safeParse({
+        action: 'write-file',
+        agentId: 'agent-123',
+        path: spacedPath,
+        content: exact,
+        expectedRevision: 'missing',
+      }).success,
     ).toBe(true)
     expect(
       tengriActionSchema.safeParse({
@@ -153,8 +189,20 @@ describe('Tengri BFF action schema', () => {
         agentId: 'agent-123',
         path: spacedPath,
         content: `${exact}é`,
+        expectedRevision: 'missing',
       }).success,
     ).toBe(false)
+  })
+
+  test('requires a precise file revision or create-only precondition for saves', () => {
+    const save = { action: 'write-file', agentId: 'agent-123', path: '/workspace/main.ts', content: '' }
+    expect(tengriActionSchema.safeParse(save).success).toBe(false)
+    for (const expectedRevision of ['', '*', 'A'.repeat(64), 'f'.repeat(63), 'missing ']) {
+      expect(tengriActionSchema.safeParse({ ...save, expectedRevision }).success).toBe(false)
+    }
+    for (const expectedRevision of ['missing', 'a'.repeat(64)]) {
+      expect(tengriActionSchema.safeParse({ ...save, expectedRevision }).success).toBe(true)
+    }
   })
 
   test('bounds Codex prompts by UTF-8 bytes', () => {

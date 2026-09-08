@@ -183,6 +183,75 @@ test('rejects omitting the translated Kubernetes API endpoints', async () => {
   )
 })
 
+test('rejects omitting the private Hermes Tailscale Ingress from the rendered application', async () => {
+  const files = await loadProductionFiles()
+  files.kustomization = files.kustomization.replace('  - tailscale-ingress.yaml\n', '')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.kustomization}: missing production invariant "- tailscale-ingress.yaml"`,
+  )
+})
+
+test('rejects changing the Hermes Tailscale TLS or routing hostname', async () => {
+  const files = await loadProductionFiles()
+  files.tailscaleIngress = files.tailscaleIngress.replaceAll('hermes.ide-newton.ts.net', 'hermes-public.example.com')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.tailscaleIngress}: TLS and routing must use only the Hermes MagicDNS hostname`,
+  )
+})
+
+test('rejects routing the Hermes Tailscale Ingress to another backend', async () => {
+  const files = await loadProductionFiles()
+  files.tailscaleIngress = files.tailscaleIngress.replace('                name: hermes', '                name: other')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.tailscaleIngress}: missing production invariant "backend:\\n              service:\\n                name: hermes\\n                port:\\n                  name: api"`,
+  )
+})
+
+test('rejects enabling public Funnel access for Hermes', async () => {
+  const files = await loadProductionFiles()
+  files.tailscaleIngress = files.tailscaleIngress.replace(
+    '    tailscale.com/tags: tag:k8s',
+    '    tailscale.com/funnel: "true"',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.tailscaleIngress}: contains forbidden production term "tailscale.com/funnel"`,
+  )
+})
+
+test('rejects widening Hermes ingress beyond its exact Tailscale proxy', async () => {
+  const files = await loadProductionFiles()
+  files.networkPolicy = files.networkPolicy.replace(
+    '        - namespaceSelector:\n            matchLabels:\n              kubernetes.io/metadata.name: tailscale',
+    '        - namespaceSelector: {}\n        - namespaceSelector:\n            matchLabels:\n              kubernetes.io/metadata.name: tailscale',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.networkPolicy}: contains forbidden production term "        - namespaceSelector: {}"`,
+  )
+})
+
+test('rejects a tailnet isolation check that depends on cluster DNS', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace('--resolve "${service_host}:8642:${HERMES_SERVICE_IP}"', '')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "--resolve \\"\${service_host}:8642:\${HERMES_SERVICE_IP}\\""`,
+  )
+})
+
+test('rejects treating arbitrary tailnet probe failures as policy denial', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace('if [ "$curl_status" -ne 28 ]; then', 'if [ "$curl_status" -eq 0 ]; then')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "if [ \\"$curl_status\\" -ne 28 ]; then"`,
+  )
+})
+
 test('rejects restoring a domain-only Squid egress allowlist', async () => {
   const files = await loadProductionFiles()
   files.squidConfig = files.squidConfig.replace(
@@ -246,12 +315,30 @@ test('rejects a mutable Hermes runtime image', async () => {
 test('rejects release evidence that does not enforce the mirrored digest', async () => {
   const files = await loadProductionFiles()
   files.runbook = files.runbook.replace(
-    'test "$mirror_digest" = sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a',
+    'test "$mirror_digest" = sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843',
     'printf \'%s\\n\' "$mirror_digest"',
   )
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.runbook}: missing production invariant "test \\"$mirror_digest\\" = sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a"`,
+    `${productionPaths.runbook}: missing production invariant "test \\"$mirror_digest\\" = sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843"`,
+  )
+})
+
+test('rejects a Hermes config that is not pre-migrated to schema 39', async () => {
+  const files = await loadProductionFiles()
+  files.config = files.config.replace('_config_version: 39', '_config_version: 33')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.config}: missing production invariant "_config_version: 39"`,
+  )
+})
+
+test('rejects changing the Qwen Flamingo model during the runtime upgrade', async () => {
+  const files = await loadProductionFiles()
+  files.config = files.config.replace('default: qwen36-flamingo', 'default: replacement-model')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.config}: missing production invariant "model:\\n  default: qwen36-flamingo\\n  provider: custom\\n  base_url: http://flamingo.flamingo.svc.cluster.local/v1\\n  api_mode: chat_completions\\n  context_length: 262144"`,
   )
 })
 
@@ -320,6 +407,18 @@ test('rejects a terminal login profile that omits the production tools path', as
 
   expect(validateProductionContent(files)).toContain(
     `${productionPaths.terminalProfile}: missing production invariant ${JSON.stringify(expectedExport)}`,
+  )
+})
+
+test('rejects a gateway that shadows the release-bundled Node with the terminal toolchain', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replace(
+    '/opt/tools:/opt/hermes/bin:/opt/hermes/.venv/bin:/opt/data/.local/bin:/usr/local/sbin:/usr/local/bin:/opt/lab-toolchain/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+    '/opt/tools:/opt/lab-toolchain/bin:/opt/hermes/bin:/opt/hermes/.venv/bin:/opt/data/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.statefulSet}: the gateway must use the release-bundled Node before the Lab terminal toolchain`,
   )
 })
 
@@ -822,10 +921,40 @@ test('rejects a read-only data mount that prevents SQLite WAL-safe backup', asyn
 
 test('rejects publishing a backup after SQLite falls back to a raw copy', async () => {
   const files = await loadProductionFiles()
-  files.backupScript = files.backupScript.replace('*"SQLite safe copy failed"*|', '')
+  files.backupPolicy = files.backupPolicy.replace('*"SQLite safe copy failed"*|', '')
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.backupScript}: missing production invariant "*\\\"SQLite safe copy failed\\\"*|*\\\"Raw copy also failed\\\"*|*\\\"Warnings (\\\"*)"`,
+    `${productionPaths.backupPolicy}: missing production invariant "*\\\"SQLite safe copy failed\\\"*|*\\\"Raw copy also failed\\\"*)"`,
+  )
+})
+
+test('rejects accepting the gateway socket warning without proving it is a Unix socket', async () => {
+  const files = await loadProductionFiles()
+  files.backupPolicy = files.backupPolicy.replace('[ -S "$backup_policy_socket" ] || return 1', ':')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.backupPolicy}: missing production invariant "[ -S \\"$backup_policy_socket\\" ] || return 1"`,
+  )
+})
+
+test('rejects a broad backup warning allowance', async () => {
+  const files = await loadProductionFiles()
+  files.backupPolicy = files.backupPolicy.replace(
+    "backup_policy_header='  Warnings (1 files skipped):'",
+    "backup_policy_header='  Warnings ('",
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.backupPolicy}: missing production invariant "backup_policy_header='  Warnings (1 files skipped):'"`,
+  )
+})
+
+test('rejects a backup archive that can publish the transient gateway socket', async () => {
+  const files = await loadProductionFiles()
+  files.backupScript = files.backupScript.replace('if "gateway.sock" in backup.namelist():', 'if False:')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.backupScript}: missing production invariant "if \\"gateway.sock\\" in backup.namelist():"`,
   )
 })
 

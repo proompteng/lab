@@ -174,15 +174,7 @@ export const capitalGrantFromLegacyGeneration = (generation: LegacyCapitalGrantG
         },
       }
 
-export type ExecutionMandateFailure =
-  | { readonly _tag: 'IdentityDrift' }
-  | { readonly _tag: 'InvalidCloseWindow'; readonly reason: string }
-
-export interface ExecutionMandateMarketSession {
-  readonly date: string
-  readonly openAt: string
-  readonly closeAt: string
-}
+export type ExecutionMandateFailure = { readonly _tag: 'IdentityDrift' }
 
 export interface ExecutionMandateAuthorityFacts {
   readonly generationHash: string
@@ -211,6 +203,13 @@ export const isExecutionMandateFailureRestriction = (reason: string | undefined)
   reason?.startsWith(legacyExecutionMandateFailureRestrictionPrefix) === true ||
   (reason !== undefined && legacyExecutionMandateFailureRestriction.test(reason))
 
+const unfinishedCycleReadFailure = 'oldest unfinished mutation cycle read failed'
+
+/** A database read failed before a cycle, intent, or broker mutation could advance. */
+export const isExecutionCyclePreflightStoreRestriction = (reason: string | undefined): boolean =>
+  reason === `${executionMandateFailureRestrictionPrefix} read-oldest-unfinished: ${unfinishedCycleReadFailure}` ||
+  reason === `${executionMandateFailureRestrictionPrefix} recover-cycle: ${unfinishedCycleReadFailure}`
+
 /** Restrictions whose current bound cycle must be allowed to reach the existing terminal recovery owner. */
 export const isExecutionMandateRecoveryRestriction = (reason: string | undefined): boolean =>
   reason === reconciliationIncompleteRestrictionReason || isExecutionMandateFailureRestriction(reason)
@@ -222,6 +221,12 @@ export const legacyV1CompletedRestrictionReason =
 export const executionActivationExpiredRestrictionReason = `${executionActivationRestrictionSubject} restricted effective authority: immutable activation request expired`
 export const legacyExecutionActivationExpiredRestrictionReason =
   'PAPER activation lease restricted effective authority: immutable activation request expired'
+
+const isRetiredOneShotMandateRestriction = (reason: string | undefined): boolean =>
+  reason === executionMandateCompletedRestrictionReason ||
+  reason === legacyV1CompletedRestrictionReason ||
+  reason === executionActivationExpiredRestrictionReason ||
+  reason === legacyExecutionActivationExpiredRestrictionReason
 
 export type ExecutionMandateAuthorityDecision =
   | { readonly _tag: 'Activate' }
@@ -265,51 +270,16 @@ export const decideExecutionMandateAuthority = (
   if (isRestrictedPaperAuthority && facts.reason === reconciliationIncompleteRestrictionReason) {
     return Result.succeed({ _tag: 'Rearm' })
   }
+  if (isRestrictedPaperAuthority && isExecutionCyclePreflightStoreRestriction(facts.reason)) {
+    return Result.succeed({ _tag: 'Rearm' })
+  }
+  if (isRestrictedPaperAuthority && isRetiredOneShotMandateRestriction(facts.reason)) {
+    return Result.succeed({ _tag: 'Rearm' })
+  }
   if (isRestrictedPaperAuthority && isExecutionMandateFailureRestriction(facts.reason)) {
     return Result.succeed({ _tag: facts.currentGenerationMatchesRequest ? 'ResumeRestricted' : 'Rearm' })
   }
   return Result.fail({ _tag: 'IdentityDrift' })
-}
-
-export const validateExecutionMandateCloseWindow = (input: {
-  readonly cutoffAt: string
-  readonly expiresAt: string
-  readonly maximumCloseSessions: number
-  readonly sessions: readonly ExecutionMandateMarketSession[]
-}): Result.Result<readonly ExecutionMandateMarketSession[], ExecutionMandateFailure> => {
-  if (!Number.isSafeInteger(input.maximumCloseSessions) || input.maximumCloseSessions < 1) {
-    return Result.fail({ _tag: 'InvalidCloseWindow', reason: 'maximum close sessions must be positive' })
-  }
-  if (input.cutoffAt >= input.expiresAt) {
-    return Result.fail({ _tag: 'InvalidCloseWindow', reason: 'close expiry must follow the cutoff' })
-  }
-  const ordered = [...input.sessions].sort((left, right) => left.openAt.localeCompare(right.openAt))
-  for (let index = 0; index < ordered.length; index += 1) {
-    const session = ordered[index]
-    const previous = ordered[index - 1]
-    if (session === undefined || session.openAt >= session.closeAt) {
-      return Result.fail({ _tag: 'InvalidCloseWindow', reason: 'market session interval is invalid' })
-    }
-    if (previous !== undefined && (session.date === previous.date || session.openAt <= previous.openAt)) {
-      return Result.fail({ _tag: 'InvalidCloseWindow', reason: 'market sessions are not unique and ordered' })
-    }
-  }
-  const closeSessions = ordered.filter(
-    (session) => session.closeAt > input.cutoffAt && session.openAt < input.expiresAt,
-  )
-  if (closeSessions.length === 0) {
-    return Result.fail({ _tag: 'InvalidCloseWindow', reason: 'close window contains no market session' })
-  }
-  if (closeSessions.length > input.maximumCloseSessions) {
-    return Result.fail({ _tag: 'InvalidCloseWindow', reason: 'close window exceeds its market-session limit' })
-  }
-  if (closeSessions[0]?.openAt !== input.cutoffAt) {
-    return Result.fail({ _tag: 'InvalidCloseWindow', reason: 'close cutoff must equal the first session open' })
-  }
-  if (closeSessions.some((session) => session.closeAt > input.expiresAt)) {
-    return Result.fail({ _tag: 'InvalidCloseWindow', reason: 'close expiry truncates a market session' })
-  }
-  return Result.succeed(closeSessions)
 }
 
 export type ExecutionMandateCycleTerminalizationDecision =

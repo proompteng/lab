@@ -18,6 +18,7 @@ import {
 } from './utils'
 
 const DEFAULT_LINEAR_ENDPOINT = 'https://api.linear.app/graphql'
+const DEFAULT_CODEX_MODEL = 'gpt-6-astra'
 const DEFAULT_ACTIVE_STATES = ['Todo', 'In Progress']
 const DEFAULT_TERMINAL_STATES = ['Closed', 'Cancelled', 'Canceled', 'Duplicate', 'Done']
 const DEFAULT_BLOCKED_LABELS = ['manual-only', 'secret-rotation', 'cluster-recovery', 'cross-repo', 'db-migration']
@@ -76,6 +77,7 @@ const RawSectionSchema = Schema.Struct({
   codex: Schema.optionalWith(
     Schema.Struct({
       command: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      model: Schema.optionalWith(Schema.Unknown, { nullable: true }),
       approval_policy: Schema.optionalWith(Schema.Unknown, { nullable: true }),
       thread_sandbox: Schema.optionalWith(Schema.Unknown, { nullable: true }),
       turn_sandbox_policy: Schema.optionalWith(Schema.Unknown, { nullable: true }),
@@ -350,6 +352,7 @@ const normalizeConfig = (
         typeof codex.command === 'string' && codex.command.trim().length > 0
           ? codex.command.trim()
           : 'codex app-server',
+      model: readString(codex.model, DEFAULT_CODEX_MODEL),
       approvalPolicy: typeof codex.approval_policy === 'string' ? (codex.approval_policy as never) : null,
       threadSandbox: typeof codex.thread_sandbox === 'string' ? (codex.thread_sandbox as never) : null,
       turnSandboxPolicy:

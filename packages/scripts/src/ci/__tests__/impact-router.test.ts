@@ -61,6 +61,20 @@ describe('impact router', () => {
     expect(plan.delegatedWorkflows).toEqual(['agents-ci'])
   })
 
+  test('routes only inventory-owning Agents sources through Jangar inventory validation', () => {
+    const sourcePlan = selectImpactPlan(['services/agents/src/server/control-plane-cache.ts'], map)
+    expect(sourcePlan.validationTargets).toEqual(['planner'])
+    expect(sourcePlan.delegatedWorkflows).toEqual(['agents-ci', 'jangar-ci'])
+
+    const uiPlan = selectImpactPlan(['services/agents/src/app-routes/primitives.tsx'], map)
+    expect(uiPlan.validationTargets).toEqual(['planner'])
+    expect(uiPlan.delegatedWorkflows).toEqual(['agents-ci', 'jangar-ci'])
+
+    const testPlan = selectImpactPlan(['services/agents/src/server/control-plane-cache.test.ts'], map)
+    expect(testPlan.validationTargets).toEqual(['planner'])
+    expect(testPlan.delegatedWorkflows).toEqual(['agents-ci'])
+  })
+
   test('routes Agents chart changes to published-image smoke', () => {
     const plan = selectImpactPlan(['charts/agents/templates/deployment.yaml'], map)
     expect(plan.validationTargets).toEqual(['planner'])

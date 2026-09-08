@@ -23,6 +23,8 @@ export interface IntradaySnapshotQuery {
   readonly universe: readonly string[]
   /** Canonical subset required by this snapshot. Omission means the full universe. */
   readonly symbols?: readonly string[]
+  /** Decision candidates whose unavailable data is recorded separately from the required benchmark. */
+  readonly candidateSymbols?: readonly string[]
   /** Quote-only execution evidence; omission keeps the full decision-time bar and trade contract. */
   readonly purpose?: IntradaySnapshotPurpose
   readonly feed: IntradayFeed
@@ -95,6 +97,12 @@ export interface IntradayTrade extends IntradayRecordIdentity {
   readonly size: number
 }
 
+export interface IntradayCandidateExclusion {
+  readonly symbol: string
+  readonly reason: 'not-ready' | 'freshness'
+  readonly message: string
+}
+
 export interface IntradaySnapshotManifest {
   readonly schemaVersion: 'bayn.intraday-market-snapshot.v1'
   readonly sessionDate: IsoDate
@@ -107,6 +115,8 @@ export interface IntradaySnapshotManifest {
   /** Added for subset snapshots; omitted only by legacy v1 material. */
   readonly universe?: readonly string[]
   readonly symbols: readonly string[]
+  readonly candidateSymbols?: readonly string[]
+  readonly candidateExclusions?: readonly IntradayCandidateExclusion[]
   readonly purpose?: IntradaySnapshotPurpose
   readonly feed: IntradayFeed
   readonly delayClass: IntradayDelayClass
@@ -198,9 +208,15 @@ export type IntradaySnapshotFailureReason =
   | 'lineage'
   | 'hash'
 
+export enum IntradayIngestionDelayDirection {
+  BelowMinimum = 'below-minimum',
+  AboveMaximum = 'above-maximum',
+}
+
 export class IntradaySnapshotFailure extends Data.TaggedError('IntradaySnapshotFailure')<{
   readonly reason: IntradaySnapshotFailureReason
   readonly message: string
+  readonly ingestionDelayDirection?: IntradayIngestionDelayDirection
   readonly facts?: Readonly<Record<string, unknown>>
   readonly cause?: unknown
 }> {}

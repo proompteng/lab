@@ -1,5 +1,6 @@
 export type AgentPhase = 'booting' | 'failed' | 'pending' | 'ready' | 'sleeping' | 'terminating' | 'unknown'
 export type AgentArchitecture = 'amd64' | 'arm64' | 'unknown'
+export type TengriErrorCode = 'conversation_not_found' | 'file_conflict' | 'capacity_full'
 
 export type TengriCondition = {
   type: string
@@ -24,6 +25,7 @@ export type TengriAgent = {
   lastActivityAt: string
   idleDeadline: string
   expiresAt: string
+  pendingImage?: string
   conditions: TengriCondition[]
 }
 
@@ -98,6 +100,7 @@ export type TengriCodexThread = {
   id: string
   rawJson: string
   eventSequence: number
+  itemEventSequences?: Record<string, number>
 }
 
 export type TengriCodexTurn = {
@@ -136,6 +139,7 @@ export type TengriPreviewSession = {
   id: string
   launchUrl: string
   expiresAt: string
+  previewOrigin: string
 }
 
 export type TengriAction =
@@ -145,7 +149,7 @@ export type TengriAction =
   | { action: 'resume-agent'; agentId: string }
   | { action: 'list-files'; agentId: string; path: string }
   | { action: 'read-file'; agentId: string; path: string }
-  | { action: 'write-file'; agentId: string; path: string; content: string }
+  | { action: 'write-file'; agentId: string; path: string; content: string; expectedRevision: string }
   | { action: 'create-directory'; agentId: string; path: string }
   | { action: 'move-file'; agentId: string; sourcePath: string; destinationPath: string }
   | { action: 'delete-file'; agentId: string; path: string; recursive: boolean }
@@ -155,6 +159,7 @@ export type TengriAction =
   | { action: 'terminate-terminal'; agentId: string; terminalId: string }
   | { action: 'terminal-ticket'; agentId: string; terminalId: string }
   | { action: 'codex-account'; agentId: string }
+  | { action: 'codex-login-status'; agentId: string }
   | { action: 'codex-login'; agentId: string }
   | { action: 'create-thread'; agentId: string }
   | { action: 'resume-thread'; agentId: string; threadId: string }
@@ -172,5 +177,5 @@ export type TengriAction =
         | 'approve-network-policy-amendment'
         | 'deny'
     }
-  | { action: 'preview-session'; agentId: string; port: number; path: string }
+  | { action: 'preview-session'; agentId: string; port: number; path: string; fragment: string }
   | { action: 'revoke-preview-session'; agentId: string; sessionId: string }

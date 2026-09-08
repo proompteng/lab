@@ -69,6 +69,7 @@ const torghutCoBuildPaths = [
   'services/dorvud/technical-analysis-flink/**',
   'services/dorvud/websockets/**',
   'services/signal-publisher/**',
+  'packages/scripts/src/shared/oci.ts',
   'nix/images/torghut.nix',
   'nix/images/torghut-notebook.nix',
   'nix/images/torghut-ta.nix',

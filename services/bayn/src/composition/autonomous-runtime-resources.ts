@@ -14,7 +14,6 @@ import {
   ReconciliationStore,
   ValuationStore,
 } from '../db/execution-store'
-import { ForwardPerformanceReceiptStore } from '../db/forward-performance-receipt'
 import { PersistedCapitalGrantStore } from '../db/persisted-capital-grant'
 import { BlockedCycleIntentStore, IntentStore } from '../execution/intents'
 import { MutationStore } from '../execution/mutations'
@@ -39,7 +38,6 @@ export const autonomousRuntimeServices = Effect.all({
   capitalGrantLifecycleStore: CapitalGrantLifecycleStore,
   authorityRestrictionStore: AuthorityRestrictionStore,
   executionCycleClosureStore: ExecutionCycleClosureStore,
-  forwardPerformanceReceiptStore: ForwardPerformanceReceiptStore,
 })
 
 export type AutonomousRuntimeServices = Effect.Success<typeof autonomousRuntimeServices>

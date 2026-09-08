@@ -3,7 +3,6 @@
 import {
   ArrowLeft,
   ArrowRight,
-  Bot,
   ExternalLink,
   LoaderCircle,
   MonitorUp,
@@ -25,6 +24,7 @@ import {
   parseChromeAddress,
   parsePreviewBridgeMessage,
   safePreviewLaunchUrl,
+  safePreviewSessionOrigin,
   type ChromePage,
   type ChromePreviewNavigationMode,
   type ChromePreviewShortcut,
@@ -32,6 +32,16 @@ import {
 import { runTengriAction } from './client'
 
 type PreviewPage = Extract<ChromePage, { kind: 'preview' }>
+type EmbeddedPreviewSession = {
+  id: string
+  launchUrl: string
+  previewOrigin: string
+}
+type ExternalPreviewLifecycle = {
+  agentId: string
+  disposed: boolean
+  sessions: Map<string, { popup: Window; sessionId: string }>
+}
 
 function chromeTabKeyTarget(key: string, currentIndex: number, tabCount: number) {
   if (tabCount < 1) return null
@@ -42,20 +52,26 @@ function chromeTabKeyTarget(key: string, currentIndex: number, tabCount: number)
   return null
 }
 
-function focusChromeTab(tabId: string) {
+function focusChromeTab(windowId: string, tabId: string) {
   window.requestAnimationFrame(() => {
-    document.getElementById(`chrome-tab-${tabId}`)?.focus()
+    document.getElementById(`chrome-tab-${windowId}-${tabId}`)?.focus()
   })
 }
 
 export function ChromeApp({
   active: applicationActive = true,
   agentId,
+  onCloseWindow,
+  onOpenExternalPreview,
   previewGatewayOrigin,
+  windowId,
 }: {
   active?: boolean
   agentId: string
+  onCloseWindow: (windowId: string) => void
+  onOpenExternalPreview: (page: PreviewPage) => Promise<void>
   previewGatewayOrigin: string
+  windowId: string
 }) {
   const [state, dispatch] = useReducer(chromeReducer, undefined, initialChromeState)
   const activeTab = activeChromeTab(state)
@@ -63,6 +79,14 @@ export function ChromeApp({
   const [address, setAddress] = useState(activePage.displayUrl)
   const [navigationError, setNavigationError] = useState('')
   const addressRef = useRef<HTMLInputElement | null>(null)
+  const mountedRef = useRef(false)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
 
   useEffect(() => {
     setAddress(activePage.displayUrl)
@@ -87,25 +111,24 @@ export function ChromeApp({
   async function openExternally() {
     if (activePage.kind !== 'preview') return
     setNavigationError('')
-    const popup = window.open('about:blank', '_blank')
-    if (!popup) {
-      setNavigationError('Allow pop-ups to open this preview in a browser tab.')
-      return
-    }
-    popup.opener = null
-    let issuedSessionId = ''
     try {
-      const session = await issuePreview(agentId, activePage)
-      issuedSessionId = session.id
-      const launchUrl = safePreviewLaunchUrl(session.launchUrl, previewGatewayOrigin)
-      if (!launchUrl) throw new Error('Tengri returned an invalid preview URL')
-      popup.location.replace(launchUrl)
+      await onOpenExternalPreview(activePage)
     } catch (cause) {
-      if (issuedSessionId) void revokePreview(agentId, issuedSessionId)
-      popup.close()
+      if (!mountedRef.current) return
       setNavigationError(cause instanceof Error ? cause.message : 'The microVM preview could not be opened')
     }
   }
+
+  const closeTab = useCallback(
+    (id: string) => {
+      if (state.tabs.length === 1) {
+        onCloseWindow(windowId)
+        return
+      }
+      dispatch({ type: 'close', id })
+    },
+    [onCloseWindow, state.tabs.length, windowId],
+  )
 
   const runShortcut = useCallback(
     (key: ChromePreviewShortcut) => {
@@ -117,10 +140,10 @@ export function ChromeApp({
       } else if (key === 't') {
         dispatch({ type: 'new-tab' })
       } else {
-        dispatch({ type: 'close', id: state.activeId })
+        closeTab(state.activeId)
       }
     },
-    [state.activeId],
+    [closeTab, state.activeId],
   )
 
   function handleShortcut(event: KeyboardEvent<HTMLDivElement>) {
@@ -137,12 +160,15 @@ export function ChromeApp({
   }, [])
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[#101216]" onKeyDownCapture={handleShortcut}>
-      <div className="flex h-9 shrink-0 items-end gap-1 border-b border-white/8 bg-white/[0.025] px-2 pt-1">
+    <div className="flex h-full min-h-0 flex-col bg-zinc-900" onKeyDownCapture={handleShortcut}>
+      <div
+        data-window-drag-region
+        className="flex h-10 shrink-0 touch-none select-none items-end gap-1 bg-[#252528] pt-1 pr-3 pl-[88px]"
+      >
         <div
           aria-label="Browser tabs"
           aria-orientation="horizontal"
-          className="flex min-w-0 flex-1 items-end gap-1 overflow-x-auto"
+          className="flex min-w-0 items-end overflow-x-auto [scrollbar-width:none]"
           role="tablist"
         >
           {state.tabs.map((tab, index) => {
@@ -150,28 +176,34 @@ export function ChromeApp({
             const selected = tab.id === state.activeId
             return (
               <button
-                aria-controls={`chrome-panel-${tab.id}`}
+                aria-controls={`chrome-panel-${windowId}-${tab.id}`}
                 aria-keyshortcuts="Delete"
                 aria-selected={selected}
-                className={`flex h-8 max-w-52 min-w-32 shrink-0 items-center gap-2 rounded-t-lg px-3 text-xs outline-none focus-visible:ring-2 focus-visible:ring-white/50 ${
-                  selected ? 'bg-[#1b1e25] text-white/85' : 'text-white/55 hover:bg-white/5'
+                className={`relative flex w-52 min-w-28 shrink items-center gap-2 rounded-t-[10px] px-3 text-[12px] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/50 ${
+                  selected
+                    ? 'z-10 h-9 bg-[#353538] text-white/90 before:absolute before:right-full before:bottom-0 before:h-2 before:w-2 before:rounded-br-full before:shadow-[2px_2px_0_2px_#353538] after:absolute after:bottom-0 after:left-full after:h-2 after:w-2 after:rounded-bl-full after:shadow-[-2px_2px_0_2px_#353538]'
+                    : 'my-1 h-7 rounded-lg text-white/60 hover:bg-white/8'
                 }`}
-                id={`chrome-tab-${tab.id}`}
+                id={`chrome-tab-${windowId}-${tab.id}`}
                 key={tab.id}
                 onClick={(event) => {
                   if (event.target instanceof Element && event.target.closest('[data-close-chrome-tab]')) {
-                    dispatch({ type: 'close', id: tab.id })
+                    closeTab(tab.id)
                     return
                   }
                   dispatch({ type: 'activate', id: tab.id })
                 }}
+                onAuxClick={(event) => {
+                  if (event.button !== 1) return
+                  event.preventDefault()
+                  closeTab(tab.id)
+                }}
                 onKeyDown={(event) => {
                   if (event.key === 'Delete') {
                     event.preventDefault()
-                    const nextTabId =
-                      state.tabs[index + 1]?.id ?? state.tabs[index - 1]?.id ?? `tab-${state.nextTabNumber}`
-                    dispatch({ type: 'close', id: tab.id })
-                    focusChromeTab(nextTabId)
+                    const nextTabId = state.tabs[index + 1]?.id ?? state.tabs[index - 1]?.id
+                    closeTab(tab.id)
+                    if (nextTabId) focusChromeTab(windowId, nextTabId)
                     return
                   }
 
@@ -181,22 +213,20 @@ export function ChromeApp({
                   const targetTab = state.tabs[targetIndex]
                   if (!targetTab) return
                   dispatch({ type: 'activate', id: targetTab.id })
-                  focusChromeTab(targetTab.id)
+                  focusChromeTab(windowId, targetTab.id)
                 }}
                 role="tab"
                 tabIndex={selected ? 0 : -1}
                 type="button"
               >
-                {page.kind === 'agent' ? (
-                  <Bot className="h-3.5 w-3.5 shrink-0 text-[#9ccfd8]" aria-hidden="true" />
-                ) : (
+                {page.kind === 'preview' ? (
                   <MonitorUp className="h-3.5 w-3.5 shrink-0 text-[#79b8ff]" aria-hidden="true" />
-                )}
+                ) : null}
                 <span className="truncate">{page.title}</span>
                 <span className="sr-only">. Press Delete to close.</span>
                 <span
                   aria-hidden="true"
-                  className="ml-auto rounded p-0.5 text-white/50 hover:bg-white/10 hover:text-white/80"
+                  className="ml-auto grid h-5 w-5 shrink-0 place-items-center rounded-full text-white/60 hover:bg-white/15 hover:text-white/90"
                   data-close-chrome-tab
                 >
                   <X className="h-3 w-3" />
@@ -208,7 +238,7 @@ export function ChromeApp({
         <button
           type="button"
           aria-label="New tab"
-          className="mb-1 rounded-md p-1 text-white/40 outline-none hover:bg-white/8 focus-visible:ring-2 focus-visible:ring-white/50 disabled:opacity-25"
+          className="mb-1 grid h-7 w-7 shrink-0 place-items-center rounded-full text-white/60 outline-none hover:bg-white/8 focus-visible:ring-2 focus-visible:ring-white/50 disabled:opacity-25"
           disabled={state.tabs.length >= MAX_CHROME_TABS}
           onClick={() => dispatch({ type: 'new-tab' })}
         >
@@ -216,7 +246,7 @@ export function ChromeApp({
         </button>
       </div>
       <form
-        className="flex h-11 shrink-0 items-center gap-2 border-b border-white/8 bg-[#1b1e25] px-3"
+        className="flex h-11 shrink-0 items-center gap-2 border-b border-black/25 bg-[#353538] px-3"
         onSubmit={(event) => {
           event.preventDefault()
           navigate(address)
@@ -245,14 +275,14 @@ export function ChromeApp({
             <ArrowRight className="h-4 w-4" aria-hidden="true" />
           </ToolbarButton>
         )}
-        <label className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-white/8 bg-black/25 px-3 py-1.5 text-xs shadow-inner focus-within:border-white/16">
+        <label className="flex min-w-0 flex-1 items-center gap-2 rounded-full border border-black/15 bg-[#242427] px-3 py-1.5 text-xs focus-within:border-blue-400/80 focus-within:ring-2 focus-within:ring-blue-400/25">
           <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" />
           <span className="sr-only">Private Tengri address</span>
           <input
             ref={addressRef}
             value={address}
             onChange={(event) => setAddress(event.target.value)}
-            className="min-w-0 flex-1 bg-transparent text-center text-white/66 outline-none focus:text-left"
+            className="min-w-0 flex-1 bg-transparent text-left text-white/80 outline-none focus:text-left"
             aria-label="Address"
             autoCapitalize="none"
             autoComplete="off"
@@ -272,16 +302,16 @@ export function ChromeApp({
           {navigationError}
         </div>
       ) : null}
-      <div className="relative min-h-0 flex-1 bg-[#0e1014]">
+      <div className="relative min-h-0 flex-1 bg-[#202020]">
         {state.tabs.map((tab) => {
           const page = currentChromePage(tab)
           const selected = tab.id === state.activeId
           return (
             <div
-              aria-labelledby={`chrome-tab-${tab.id}`}
+              aria-labelledby={`chrome-tab-${windowId}-${tab.id}`}
               className="absolute inset-0"
               hidden={!selected}
-              id={`chrome-panel-${tab.id}`}
+              id={`chrome-panel-${windowId}-${tab.id}`}
               key={tab.id}
               role="tabpanel"
             >
@@ -311,6 +341,62 @@ export function ChromeApp({
   )
 }
 
+export function useExternalPreviewLifecycle(agentId: string, previewGatewayOrigin: string) {
+  const lifecycleRef = useRef<ExternalPreviewLifecycle | null>(null)
+  if (lifecycleRef.current?.agentId !== agentId) {
+    lifecycleRef.current = { agentId, disposed: false, sessions: new Map() }
+  }
+  const lifecycle = lifecycleRef.current
+
+  useEffect(() => {
+    lifecycle.disposed = false
+    const interval = window.setInterval(() => {
+      for (const [sessionId, session] of lifecycle.sessions) {
+        if (!session.popup.closed) continue
+        lifecycle.sessions.delete(sessionId)
+        void revokePreview(agentId, session.sessionId)
+      }
+    }, 250)
+    return () => {
+      lifecycle.disposed = true
+      window.clearInterval(interval)
+      for (const session of lifecycle.sessions.values()) {
+        void revokePreview(agentId, session.sessionId, true)
+      }
+      lifecycle.sessions.clear()
+    }
+  }, [agentId, lifecycle])
+
+  return useCallback(
+    async (page: PreviewPage) => {
+      if (lifecycle.disposed) throw new Error('The Tengri desktop is no longer available')
+      const popup = window.open('about:blank', '_blank')
+      if (!popup) throw new Error('Allow pop-ups to open this preview in a browser tab.')
+      popup.opener = null
+      let issuedSessionId = ''
+      try {
+        const session = await issuePreview(agentId, page)
+        issuedSessionId = session.id
+        if (lifecycle.disposed || popup.closed) {
+          await revokePreview(agentId, session.id, lifecycle.disposed)
+          popup.close()
+          return
+        }
+        const launchUrl = safePreviewLaunchUrl(session.launchUrl, previewGatewayOrigin)
+        if (!launchUrl) throw new Error('Tengri returned an invalid preview URL')
+        popup.location.replace(launchUrl)
+        // expiresAt is the one-use bootstrap ticket deadline, not the lifetime of the active preview.
+        lifecycle.sessions.set(session.id, { popup, sessionId: session.id })
+      } catch (cause) {
+        if (issuedSessionId) await revokePreview(agentId, issuedSessionId, lifecycle.disposed)
+        popup.close()
+        throw cause
+      }
+    },
+    [agentId, lifecycle, previewGatewayOrigin],
+  )
+}
+
 function PreviewFrame({
   active,
   agentId,
@@ -329,7 +415,7 @@ function PreviewFrame({
   previewGatewayOrigin: string
 }) {
   const [attempt, setAttempt] = useState(0)
-  const [session, setSession] = useState<{ id: string; launchUrl: string } | null>(null)
+  const [session, setSession] = useState<EmbeddedPreviewSession | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState('')
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
@@ -340,10 +426,11 @@ function PreviewFrame({
     if (!active) return
     let disposed = false
     let issuedSessionId = ''
+    const requestedPage = pageRef.current
     setSession(null)
     setLoaded(false)
     setError('')
-    void issuePreview(agentId, pageRef.current)
+    void issuePreview(agentId, requestedPage)
       .then((issued) => {
         issuedSessionId = issued.id
         if (disposed) {
@@ -352,7 +439,13 @@ function PreviewFrame({
         }
         const safeUrl = safePreviewLaunchUrl(issued.launchUrl, previewGatewayOrigin)
         if (!safeUrl) throw new Error('Tengri returned an invalid preview URL')
-        setSession({ id: issued.id, launchUrl: safeUrl })
+        const previewOrigin = safePreviewSessionOrigin(issued.previewOrigin, issued.id)
+        if (!previewOrigin) throw new Error('Tengri returned an invalid preview origin')
+        setSession({
+          id: issued.id,
+          launchUrl: safeUrl,
+          previewOrigin,
+        })
       })
       .catch((cause: unknown) => {
         if (!disposed) {
@@ -369,8 +462,7 @@ function PreviewFrame({
     if (!session) return
     const handleMessage = (event: MessageEvent<unknown>) => {
       if (event.source !== iframeRef.current?.contentWindow) return
-      const expectedOrigin = new URL(session.launchUrl).origin
-      const message = parsePreviewBridgeMessage(event.data, event.origin, expectedOrigin, session.id, page.port)
+      const message = parsePreviewBridgeMessage(event.data, event.origin, session.previewOrigin, session.id, page.port)
       if (!message) return
       if (message.kind === 'shortcut') onShortcut(message.key)
       else onNavigate(message.page, message.mode)
@@ -409,7 +501,7 @@ function PreviewFrame({
       {!loaded ? (
         <div
           role="status"
-          className="absolute inset-0 z-10 flex items-center justify-center gap-2 bg-[#0e1014] text-sm text-white/48"
+          className="absolute inset-0 z-10 flex items-center justify-center gap-2 bg-[#202020] text-sm text-white/48"
         >
           <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" /> Connecting to localhost…
         </div>
@@ -460,11 +552,14 @@ function issuePreview(agentId: string, page: PreviewPage, signal?: AbortSignal) 
       agentId,
       port: page.port,
       path: page.path,
+      fragment: page.fragment,
     },
     signal,
   )
 }
 
-function revokePreview(agentId: string, sessionId: string) {
-  return runTengriAction<null>({ action: 'revoke-preview-session', agentId, sessionId }).catch(() => null)
+function revokePreview(agentId: string, sessionId: string, keepalive = false) {
+  return runTengriAction<null>({ action: 'revoke-preview-session', agentId, sessionId }, { keepalive }).catch(
+    () => null,
+  )
 }

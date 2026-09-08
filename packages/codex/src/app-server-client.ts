@@ -506,7 +506,7 @@ export class CodexAppServerClient {
     cwd,
     sandbox = 'danger-full-access',
     approval = 'never',
-    defaultModel = 'gpt-5.6-sol',
+    defaultModel = 'gpt-6-astra',
     defaultEffort = DEFAULT_EFFORT,
     threadConfig,
     experimentalRawEvents = false,

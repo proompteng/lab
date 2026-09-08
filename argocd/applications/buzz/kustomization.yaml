@@ -12,6 +12,7 @@ resources:
   - postgres-scheduled-backup.yaml
   - redis-config.yaml
   - redis.yaml
+  - redis-upgrade-backup.yaml
   - buzz-externalsecret.yaml
   - networkpolicy.yaml
   - alloy-rbac.yaml
@@ -31,8 +32,8 @@ helmCharts:
 images:
   - name: ghcr.io/block/buzz
     newName: registry.ide-newton.ts.net/lab/buzz
-    newTag: kargo-sha-a391a84997af5bda4bc55a4294bafe844e016357
-    digest: sha256:382be2f029d2a7acc5c1da4b01bb7daaf8d3ef45c530e15c881b7cd6558ce55b
+    newTag: kargo-sha-e6240b280a7e35c4f178c482b0e027d39216e883
+    digest: sha256:9b08550f31973cfb958b4c3a969d6f8dab968dfb52a4e4222febb2a88608f5d0
 
 patches:
   - target:

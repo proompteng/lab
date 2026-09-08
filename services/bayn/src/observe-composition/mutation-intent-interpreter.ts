@@ -48,9 +48,8 @@ export type MutationIntentInput = {
   readonly accountId: string
   readonly authorityGenerationHash: string
   readonly mutationPhase?: 'ENTRY' | 'CLOSE'
-  readonly executionMandateCutoffAt?: string
-  readonly executionMandateCloseSubmitCutoffAt?: string
-  readonly executionMandateExpiresAt?: string
+  readonly executionCycleCloseSubmitCutoffAt?: string
+  readonly executionCycleCloseExpiresAt?: string
 }
 
 export type MutationPreparation = {
@@ -137,21 +136,21 @@ const boundExecutionSubmissionCutoff = (
 ): Result.Result<string, CycleRunnerError> => {
   if (input.mutationPhase === 'CLOSE') {
     if (
-      input.executionMandateCloseSubmitCutoffAt === undefined ||
-      input.executionMandateExpiresAt === undefined ||
-      document.submissionCutoffAt !== input.executionMandateExpiresAt ||
-      document.expiresAt !== input.executionMandateExpiresAt ||
-      input.executionMandateCloseSubmitCutoffAt > input.executionMandateExpiresAt
+      input.executionCycleCloseSubmitCutoffAt === undefined ||
+      input.executionCycleCloseExpiresAt === undefined ||
+      document.submissionCutoffAt !== input.executionCycleCloseExpiresAt ||
+      document.expiresAt !== input.executionCycleCloseExpiresAt ||
+      input.executionCycleCloseSubmitCutoffAt > input.executionCycleCloseExpiresAt
     ) {
       return Result.fail(
         mutationRunnerError({
-          message: 'durable execution close plan changed from its immutable activation close window',
+          message: 'durable execution close plan changed from its immutable session close window',
           cause: undefined,
           failure: 'contract',
         }),
       )
     }
-    return Result.succeed(input.executionMandateCloseSubmitCutoffAt)
+    return Result.succeed(input.executionCycleCloseSubmitCutoffAt)
   }
   if (
     document.submissionCutoffAt !== cycle.window.submissionCutoffAt ||
@@ -165,11 +164,7 @@ const boundExecutionSubmissionCutoff = (
       }),
     )
   }
-  return Result.succeed(
-    input.executionMandateCutoffAt !== undefined && input.executionMandateCutoffAt < cycle.window.submissionCutoffAt
-      ? input.executionMandateCutoffAt
-      : cycle.window.submissionCutoffAt,
-  )
+  return Result.succeed(cycle.window.submissionCutoffAt)
 }
 
 const immutableIntentBindingMatches = (stored: Intent, expected: Intent): boolean =>
@@ -710,8 +705,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
     }
 
     if (unsuccessfulIntentFound) {
-      const recoveryDeadline =
-        input.mutationPhase === 'CLOSE' ? input.executionMandateExpiresAt : input.executionMandateCutoffAt
+      const recoveryDeadline = input.mutationPhase === 'CLOSE' ? input.executionCycleCloseExpiresAt : submissionCutoffAt
       if (
         (hasFilledIntent || (input.mutationPhase === 'CLOSE' && hasOpenPosition)) &&
         recoveryDeadline !== undefined &&

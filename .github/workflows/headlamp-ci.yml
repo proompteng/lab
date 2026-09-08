@@ -8,6 +8,7 @@ on:
     paths:
       - '.github/workflows/headlamp-ci.yml'
       - '.github/workflows/nix-oci-build-common.yml'
+      - 'packages/scripts/src/shared/oci.ts'
       - 'nix/oci-push.sh'
       - 'nix/verify-headlamp-image-assets.sh'
       - 'services/headlamp/**'
@@ -19,6 +20,7 @@ on:
     paths:
       - '.github/workflows/headlamp-ci.yml'
       - '.github/workflows/nix-oci-build-common.yml'
+      - 'packages/scripts/src/shared/oci.ts'
       - 'nix/oci-push.sh'
       - 'nix/verify-headlamp-image-assets.sh'
       - 'services/headlamp/**'
