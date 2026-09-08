@@ -5,7 +5,7 @@ metadata:
   labels:
     app: restate
     app.kubernetes.io/name: restate
-    app.kubernetes.io/version: "1.7.2"
+    app.kubernetes.io/version: "1.7.9"
 spec:
   clusterIP: None
   publishNotReadyAddresses: true

@@ -15,6 +15,7 @@ type Kustomization = {
   helmCharts: HelmChart[]
   patches: Array<{
     patch?: string
+    path?: string
     target: {
       group?: string
       version: string
@@ -37,7 +38,7 @@ type Driver = {
   cephFsClientType: string
   nodePlugin: {
     imagePullPolicy: string
-    updateStrategy: { type: string }
+    updateStrategy: { type: string; rollingUpdate: { maxUnavailable: number } }
     topology: { domainLabels: string[] }
     resources: {
       liveness: ResourceRequirements
@@ -56,9 +57,9 @@ test('keeps the Rook v1.20 operator, CSI, and cluster charts aligned', () => {
   const kustomization = readYaml<Kustomization>('argocd/applications/rook-ceph/kustomization.yaml')
 
   expect(kustomization.helmCharts).toMatchObject([
-    { name: 'rook-ceph', version: 'v1.20.3' },
+    { name: 'rook-ceph', version: 'v1.20.7' },
     { name: 'ceph-csi-drivers', version: '1.0.4' },
-    { name: 'rook-ceph-cluster', version: 'v1.20.3' },
+    { name: 'rook-ceph-cluster', version: 'v1.20.7' },
   ])
   expect(kustomization.resources).not.toContain('csi-legacy-service-account-bridge.yaml')
 
@@ -109,6 +110,17 @@ test('keeps the Rook v1.20 operator, CSI, and cluster charts aligned', () => {
       },
     },
   })
+
+  const cephClusterPatch = kustomization.patches.find(({ target }) => target.kind === 'CephCluster')
+  expect(cephClusterPatch?.path).toBe('cephcluster-osd-config-rollout.yaml')
+  const cephClusterPatchResource = readYaml<{
+    metadata: { annotations: { 'argocd.argoproj.io/sync-wave': string } }
+  }>('argocd/applications/rook-ceph/cephcluster-osd-config-rollout.yaml')
+  expect(cephClusterPatchResource).toMatchObject({
+    metadata: {
+      annotations: { 'argocd.argoproj.io/sync-wave': '3' },
+    },
+  })
 })
 
 test('preserves the Ceph data plane and live CSI behavior after the v1.20 migration', () => {
@@ -122,6 +134,26 @@ test('preserves the Ceph data plane and live CSI behavior after the v1.20 migrat
     cephImage: { repository: string; tag: string }
     monitoring: { enabled: boolean; createPrometheusRules: boolean }
     cephClusterSpec: {
+      cephConfig: {
+        mon: { mon_auth_allow_insecure_key: string }
+        rgw: { rgw_s3_auth_use_sts: string }
+      }
+      security: {
+        cephx: {
+          daemon: { keyRotationPolicy: string; keyGeneration: number }
+          csi: {
+            keyRotationPolicy: string
+            keyGeneration: number
+            keepPriorKeyCountMax: number
+            keyType: string
+          }
+          rbdMirrorPeer: {
+            keyRotationPolicy: string
+            keyGeneration: number
+            keyType: string
+          }
+        }
+      }
       upgradeOSDRequiresHealthyPGs: boolean
       csi: { cephfs: { kernelMountOptions: string } }
     }
@@ -143,13 +175,33 @@ test('preserves the Ceph data plane and live CSI behavior after the v1.20 migrat
     }
   }>('argocd/applications/rook-ceph/csi-driver-values.yaml')
 
-  expect(operatorValues.image).toMatchObject({ repository: 'docker.io/rook/ceph', tag: 'v1.20.3' })
-  expect(operatorValues.csi).toEqual({ installCsiOperator: true })
+  expect(operatorValues.image).toMatchObject({ repository: 'docker.io/rook/ceph', tag: 'v1.20.7' })
+  expect(operatorValues.csi).toMatchObject({
+    installCsiOperator: true,
+    snapshotter: { tag: 'v8.6.0' },
+  })
   expect(operatorValues.monitoring?.enabled ?? false).toBe(false)
   expect(operatorValues['ceph-csi-operator']).toBeUndefined()
   expect(clusterValues.cephImage).toMatchObject({
     repository: 'quay.io/ceph/ceph',
-    tag: 'v20.2.3-20260804',
+    tag: 'v20.2.4-20260818',
+  })
+  expect(clusterValues.cephClusterSpec.cephConfig.rgw.rgw_s3_auth_use_sts).toBe('false')
+  expect(clusterValues.cephClusterSpec.cephConfig.mon.mon_auth_allow_insecure_key).toBe('false')
+  expect(clusterValues.cephClusterSpec.security.cephx.daemon).toEqual({
+    keyRotationPolicy: 'KeyGeneration',
+    keyGeneration: 2,
+  })
+  expect(clusterValues.cephClusterSpec.security.cephx.csi).toEqual({
+    keyRotationPolicy: 'KeyGeneration',
+    keyGeneration: 3,
+    keepPriorKeyCountMax: 2,
+    keyType: 'aes256k',
+  })
+  expect(clusterValues.cephClusterSpec.security.cephx.rbdMirrorPeer).toEqual({
+    keyRotationPolicy: 'KeyGeneration',
+    keyGeneration: 2,
+    keyType: 'aes256k',
   })
   expect(clusterValues.monitoring).toEqual({ enabled: false, createPrometheusRules: false })
   expect(clusterValues.cephClusterSpec.upgradeOSDRequiresHealthyPGs).toBe(true)
@@ -165,7 +217,10 @@ test('preserves the Ceph data plane and live CSI behavior after the v1.20 migrat
     expect(driver.enabled).toBe(true)
     expect(driver.grpcTimeout).toBe(150)
     expect(driver.cephFsClientType).toBe('autodetect')
-    expect(driver.nodePlugin.updateStrategy.type).toBe('OnDelete')
+    expect(driver.nodePlugin.updateStrategy).toEqual({
+      type: 'RollingUpdate',
+      rollingUpdate: { maxUnavailable: 1 },
+    })
     expect(driver.nodePlugin.imagePullPolicy).toBe('')
     expect(driver.nodePlugin.topology.domainLabels).toEqual(['kubernetes.io/hostname'])
     expect(driver.controllerPlugin).toMatchObject({ hostNetwork: true, replicas: 2, imagePullPolicy: '' })
@@ -191,11 +246,77 @@ test('preserves the Ceph data plane and live CSI behavior after the v1.20 migrat
   expect(driverValues.drivers.nvmeof.enabled).toBe(false)
 })
 
-test('removes the temporary legacy CSI identity bridge after every OnDelete pod is rolled', () => {
+test('removes the temporary legacy CSI identity bridge after CSI node plugins use rolling updates', () => {
   const kustomization = readYaml<Kustomization>('argocd/applications/rook-ceph/kustomization.yaml')
 
   expect(kustomization.resources).not.toContain('csi-legacy-service-account-bridge.yaml')
   expect(existsSync(new URL('argocd/applications/rook-ceph/csi-legacy-service-account-bridge.yaml', repoRoot))).toBe(
     false,
   )
+})
+
+test('runs retained storage acceptance PVCs through ordered Argo PostSync hooks', () => {
+  const rookKustomization = readYaml<Kustomization>('argocd/applications/rook-ceph/kustomization.yaml')
+  const acceptanceKustomization = readYaml<{ namespace: string; resources: string[] }>(
+    'argocd/applications/storage-upgrade-acceptance/kustomization.yaml',
+  )
+
+  expect(rookKustomization.resources).not.toContain('storage-canary.yaml')
+  expect(acceptanceKustomization).toEqual({
+    apiVersion: 'kustomize.config.k8s.io/v1beta1',
+    kind: 'Kustomization',
+    namespace: 'rook-ceph',
+    resources: ['storage-canary.yaml'],
+  })
+  expect(existsSync(new URL('argocd/applications/rook-ceph/storage-canary.yaml', repoRoot))).toBe(false)
+
+  const resources = YAML.parseAllDocuments(
+    readFileSync(new URL('argocd/applications/storage-upgrade-acceptance/storage-canary.yaml', repoRoot), 'utf8'),
+  )
+    .map((document) => document.toJSON())
+    .filter(Boolean) as Array<{
+    kind: string
+    metadata: {
+      name: string
+      namespace: string
+      annotations?: Record<string, string>
+    }
+    spec: {
+      accessModes?: string[]
+      activeDeadlineSeconds?: number
+      annotations?: Record<string, string>
+      template?: { spec: { nodeSelector?: Record<string, string> } }
+    }
+  }>
+
+  expect(resources.some(({ kind }) => kind === 'Namespace')).toBe(false)
+  expect(resources.every(({ metadata }) => metadata.namespace === 'rook-ceph')).toBe(true)
+
+  const pvcNames = resources.filter(({ kind }) => kind === 'PersistentVolumeClaim').map(({ metadata }) => metadata.name)
+  expect(pvcNames).toEqual(['storage-rbd-canary', 'storage-cephfs-canary'])
+  for (const pvc of resources.filter(({ kind }) => kind === 'PersistentVolumeClaim')) {
+    expect(pvc.metadata.annotations).toMatchObject({
+      'argocd.argoproj.io/sync-options': 'Prune=false,Delete=false',
+    })
+    expect(pvc.spec.accessModes).toEqual(['ReadWriteOncePod'])
+  }
+
+  const jobs = resources.filter(({ kind }) => kind === 'Job')
+  expect(jobs).toHaveLength(7)
+  for (const backend of ['rbd', 'cephfs']) {
+    for (const [suffix, wave, node] of [
+      ['write', '20', 'talos-192-168-1-194'],
+      ['readback', '21', 'talos-192-168-1-85'],
+      ['readback-turin', '22', 'turin'],
+    ]) {
+      const job = jobs.find(({ metadata }) => metadata.name === `storage-${backend}-canary-${suffix}`)
+      expect(job?.metadata.annotations?.['argocd.argoproj.io/sync-wave']).toBe(wave)
+      expect(job?.spec.template?.spec.nodeSelector?.['kubernetes.io/hostname']).toBe(node)
+    }
+  }
+  for (const job of jobs) {
+    expect(job.metadata.annotations?.['argocd.argoproj.io/hook']).toBe('PostSync')
+    expect(job.metadata.annotations?.['argocd.argoproj.io/hook-delete-policy']).toBe('BeforeHookCreation,HookSucceeded')
+    expect(job.spec.activeDeadlineSeconds).toBe(300)
+  }
 })

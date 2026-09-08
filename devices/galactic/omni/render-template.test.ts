@@ -49,6 +49,7 @@ describe('Omni cluster template secret rendering', () => {
       ),
     ).toHaveLength(3)
     expect(clusterTemplate.match(/RuntimeClassInImageCriApi: true/g)).toHaveLength(3)
+    expect(clusterTemplate.match(/op: create\n\s+path: "\/etc\/cri\/conf\.d\/20-customization\.part"/g)).toHaveLength(3)
   })
 
   test.each([
@@ -84,7 +85,7 @@ describe('Omni cluster template secret rendering', () => {
 
     expect(altraMachine).toContain('maxPods: 500')
     expect(altraMachine).not.toContain('maxPods: 250')
-    expect(documents[0]).toContain('node-cidr-mask-size: "23"')
-    expect(clusterTemplate).not.toContain('node-cidr-mask-size-ipv4')
+    expect(documents[0]).toContain('node-cidr-mask-size-ipv4: "23"')
+    expect(clusterTemplate).not.toMatch(/node-cidr-mask-size:/)
   })
 })

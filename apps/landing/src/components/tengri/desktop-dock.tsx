@@ -55,8 +55,7 @@ const DockItem = forwardRef<DockItemHandle, DockItemProps>(function DockItem(
   const scale = useSpring(targetScale, MAGNIFICATION_SPRING)
   const lift = useSpring(targetLift, MAGNIFICATION_SPRING)
   const labelLift = useTransform(() => lift.get() - (scale.get() - BASE_SCALE) * 56)
-  const hitWidth = useTransform(scale, (value) => value * 56)
-  const hitTop = useTransform(() => Math.min(0, (68 - 56) / 2 + 3 + labelLift.get()))
+  const hitScaleY = useTransform(() => 1 - Math.min(0, (68 - 56) / 2 + 3 + labelLift.get()) / 68)
   useMotionValueEvent(scale, 'change', (value) => onScaleChange(app, value))
 
   const applyInteraction = useCallback(() => {
@@ -129,8 +128,8 @@ const DockItem = forwardRef<DockItemHandle, DockItemProps>(function DockItem(
     >
       <motion.span
         aria-hidden="true"
-        className="absolute bottom-0 left-1/2 -translate-x-1/2"
-        style={{ top: hitTop, width: hitWidth }}
+        className="absolute bottom-0 left-1/2 h-[68px] w-14 origin-bottom -translate-x-1/2"
+        style={{ scaleX: scale, scaleY: hitScaleY }}
       />
       <motion.span
         aria-hidden="true"
@@ -277,11 +276,9 @@ export function DesktopDock({
     >
       <motion.span
         aria-hidden="true"
-        className="absolute -inset-px rounded-[24px] border border-white/25 bg-[rgba(31,35,49,0.46)] shadow-[0_12px_30px_rgba(0,0,0,0.34),inset_0_1px_0_rgba(255,255,255,0.2)] backdrop-blur-2xl backdrop-saturate-150"
+        className="absolute -inset-px rounded-[24px] border border-white/25 bg-[rgba(31,35,49,0.46)] shadow-[0_12px_30px_rgba(0,0,0,0.34)] backdrop-blur-2xl backdrop-saturate-150"
         style={{ scaleX: plateScale }}
-      >
-        <span className="pointer-events-none absolute inset-x-5 top-px h-px rounded-full bg-gradient-to-r from-transparent via-white/35 to-transparent" />
-      </motion.span>
+      />
       {items.map(({ app, ref }) => (
         <DockItem
           key={app}

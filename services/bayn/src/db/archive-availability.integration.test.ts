@@ -12,6 +12,8 @@ import {
   availabilityRequest,
   availabilitySnapshot,
   reobserveAvailabilitySnapshot,
+  makeAvailabilityDecisionFixture,
+  receiptHasSymbol,
 } from '../testing/archive-availability-fixture'
 import { config as fixtureConfig } from '../testing/runtime-fixtures'
 import { makeArchiveAvailabilityReader, makeArchiveAvailabilityRecorder } from './archive-availability'
@@ -159,5 +161,23 @@ describePostgres('PostgreSQL archive reader availability', () => {
     expect(Exit.isFailure(result.deletion)).toBe(true)
     expect(Exit.isFailure(result.truncate)).toBe(true)
     expect(result.count).toEqual([{ count: 1 }])
+  })
+
+  test('the read-only receipt path excludes a missing candidate but not its valid peers', async () => {
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const fence = yield* WriterFence
+        const { snapshot, receipts } = makeAvailabilityDecisionFixture(true)
+        yield* makeArchiveAvailabilityRecorder(
+          sql,
+          fence,
+        )(receipts.filter((receipt) => !receiptHasSymbol(receipt, 'AAPL')))
+        return yield* makeArchiveAvailabilityReader(sql, availabilityReader.endpointHash)(snapshot)
+      }),
+    )
+    expect(result.candidateExclusions?.map(({ symbol }) => symbol)).toEqual(['AAPL'])
+    expect(result.receipts.some((receipt) => receiptHasSymbol(receipt, 'AMZN'))).toBe(true)
+    expect(result.receipts.some((receipt) => receiptHasSymbol(receipt, 'SPY'))).toBe(true)
   })
 })
