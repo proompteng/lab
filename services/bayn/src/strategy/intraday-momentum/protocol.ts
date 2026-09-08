@@ -11,13 +11,20 @@ import {
   maximumIntradayQuoteAgeMs,
   minimumIntradayQuoteAgeMs,
 } from '../../market-data/intraday/verification'
-import { PositiveIntegerSchema, Sha256Schema, SymbolSchema, strictParseOptions } from '../../schemas'
+import {
+  NonNegativeIntegerSchema,
+  PositiveIntegerSchema,
+  Sha256Schema,
+  SymbolSchema,
+  strictParseOptions,
+} from '../../schemas'
 import { defaultExecutionModel } from '../execution-model/model'
 
 const PositiveUnitIntervalSchema = Schema.Finite.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(1))
 const BasisPointsSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(10_000))
 const PartsPerMillionSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(1_000_000))
 const IntradayMinuteOffsetSchema = PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(24 * 60))
+const SessionBoundaryMinuteOffsetSchema = NonNegativeIntegerSchema.check(Schema.isLessThanOrEqualTo(24 * 60))
 
 const coreUniverse = {
   id: 'torghut-core-equity-v2',
@@ -68,7 +75,7 @@ export const intradayMomentumExecutionModel: Extract<
     planningBrokerStateReference: 'reconciled-pre-plan-broker-state',
     fillPriceReference: 'limit-or-better',
     buyingPowerPolicy: 'pre-submit-cash-without-sell-proceeds',
-    warmupAfterOpenMs: 60 * 60_000,
+    warmupAfterOpenMs: 0,
     submissionCutoffBeforeCloseMs: 60 * 60_000,
   }),
   precision: Object.freeze({
@@ -96,7 +103,7 @@ const IntradayMomentumProtocolBase = Schema.Struct({
   decisionDelaySeconds: PositiveIntegerSchema,
   maximumDecisionLagMs: PositiveIntegerSchema,
   maximumQuoteAgeMs: PositiveIntegerSchema,
-  warmupMinutesAfterOpen: IntradayMinuteOffsetSchema,
+  warmupMinutesAfterOpen: SessionBoundaryMinuteOffsetSchema,
   entryCutoffMinutesBeforeClose: IntradayMinuteOffsetSchema,
   flattenBeforeCloseMinutes: IntradayMinuteOffsetSchema,
   hardFlatBeforeCloseMinutes: IntradayMinuteOffsetSchema,
@@ -157,9 +164,6 @@ const protocolIssues = (protocol: typeof IntradayMomentumProtocolBase.Type): rea
   if (protocol.lookbackMinutes > 30) {
     issues.push({ path: ['lookbackMinutes'], issue: 'must fit the verified bounded intraday archive window' })
   }
-  if (protocol.warmupMinutesAfterOpen < protocol.lookbackMinutes) {
-    issues.push({ path: ['warmupMinutesAfterOpen'], issue: 'must contain one complete rolling lookback' })
-  }
   if (protocol.decisionDelaySeconds * 1_000 > maximumIntradayObservationLagMs) {
     issues.push({ path: ['decisionDelaySeconds'], issue: 'must fit the verified post-window observation lag' })
   }
@@ -176,7 +180,7 @@ const protocolIssues = (protocol: typeof IntradayMomentumProtocolBase.Type): rea
     issues.push({ path: ['maximumQuoteAgeMs'], issue: 'must fit the verified quote and trade freshness bounds' })
   }
   if (
-    protocol.warmupMinutesAfterOpen * 60_000 +
+    Math.max(protocol.warmupMinutesAfterOpen, protocol.lookbackMinutes) * 60_000 +
       protocol.decisionDelaySeconds * 1_000 +
       protocol.entryCutoffMinutesBeforeClose * 60_000 >=
     usEquityRegularSessionDurationMs
@@ -228,12 +232,34 @@ export const intradayMomentumSessionHasDecisionInterval = (
 ): boolean => {
   const openAt = Date.parse(session.openAt)
   const closeAt = Date.parse(session.closeAt)
-  const earliestDecisionAt = openAt + protocol.warmupMinutesAfterOpen * 60_000 + protocol.decisionDelaySeconds * 1_000
+  const earliestDecisionAt =
+    openAt +
+    Math.max(protocol.warmupMinutesAfterOpen, protocol.lookbackMinutes) * 60_000 +
+    protocol.decisionDelaySeconds * 1_000
   const entryCutoffAt = closeAt - protocol.entryCutoffMinutesBeforeClose * 60_000
   return (
     [openAt, closeAt, earliestDecisionAt, entryCutoffAt].every(Number.isSafeInteger) &&
     openAt < closeAt &&
     earliestDecisionAt < entryCutoffAt
+  )
+}
+
+export const intradayMomentumFirstDecisionPollMs = (
+  protocol: IntradayMomentumProtocol,
+  window: { readonly executionOpenAt: string; readonly submissionOpenAt: string },
+  schedule: { readonly firstPollDelayMs: number; readonly pollIntervalMs: number },
+): number => {
+  const firstPollMs = Date.parse(window.submissionOpenAt) + schedule.firstPollDelayMs
+  const firstRangeEndMs =
+    Math.ceil(
+      Math.max(
+        Date.parse(window.submissionOpenAt),
+        Date.parse(window.executionOpenAt) + protocol.lookbackMinutes * 60_000,
+      ) / 60_000,
+    ) * 60_000
+  const readyMs = firstRangeEndMs + protocol.decisionDelaySeconds * 1_000
+  return (
+    firstPollMs + Math.max(0, Math.ceil((readyMs - firstPollMs) / schedule.pollIntervalMs)) * schedule.pollIntervalMs
   )
 }
 
@@ -255,7 +281,7 @@ export const defaultIntradayMomentumProtocolDocument = Object.freeze({
   decisionDelaySeconds: 2,
   maximumDecisionLagMs: 60_000,
   maximumQuoteAgeMs: 2_000,
-  warmupMinutesAfterOpen: 60,
+  warmupMinutesAfterOpen: 0,
   entryCutoffMinutesBeforeClose: 60,
   flattenBeforeCloseMinutes: 30,
   hardFlatBeforeCloseMinutes: 15,

@@ -3662,7 +3662,7 @@ describe('OBSERVE runtime composition', () => {
       expect(prepared.success.executionModel.schemaVersion).toBe('bayn.execution-model.v5')
       expect(prepared.success.executionPolicy).toMatchObject({
         schemaVersion: 'bayn.autonomous-cycle-execution-policy.v3',
-        warmupAfterOpenMs: 3_600_000,
+        warmupAfterOpenMs: 0,
         submissionCutoffBeforeCloseMs: 3_600_000,
       })
     }

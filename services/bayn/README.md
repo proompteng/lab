@@ -9,8 +9,9 @@ rows remain decodable for audit and reconciliation, but they are not runtime fal
 
 ## Active strategy
 
-Each regular session, after a 60-minute warmup and until 60 minutes before the close, Bayn evaluates the latest fully
-elapsed 30-minute IEX window. It compares AAPL, AMZN, IWM, NVDA, QQQ, and SMH against SPY and requires:
+The submission window opens with the regular session. Bayn waits for its first fully elapsed 30-minute IEX window and
+the two-second decision delay, without an additional clock warmup. It evaluates subsequent rolling windows until
+60 minutes before the close. It compares AAPL, AMZN, IWM, NVDA, QQQ, and SMH against SPY and requires:
 
 - positive candidate momentum and non-negative SPY momentum;
 - at least 10 basis points of excess momentum;

@@ -530,14 +530,14 @@ describe('intraday replay program', () => {
       reason: 'adverse-price-exceeds-limit',
       side: OrderSide.Buy,
       limitPriceMicros: '100010000',
-      submittedAt: '2026-09-04T14:30:02.000Z',
-      observedAt: '2026-09-04T14:30:03.000Z',
+      submittedAt: '2026-09-04T14:00:02.000Z',
+      observedAt: '2026-09-04T14:00:03.000Z',
     })
     expect(archive.requests).toHaveLength(3)
     expect(archive.requests.map(({ purpose, observedAt }) => [purpose, observedAt])).toEqual([
-      [undefined, '2026-09-04T14:30:02.000Z'],
-      [IntradaySnapshotPurpose.EntryPricing, '2026-09-04T14:30:02.000Z'],
-      [IntradaySnapshotPurpose.EntryPricing, '2026-09-04T14:30:03.000Z'],
+      [undefined, '2026-09-04T14:00:02.000Z'],
+      [IntradaySnapshotPurpose.EntryPricing, '2026-09-04T14:00:02.000Z'],
+      [IntradaySnapshotPurpose.EntryPricing, '2026-09-04T14:00:03.000Z'],
     ])
   })
 
@@ -876,7 +876,7 @@ describe('intraday replay program', () => {
       if (retryable) {
         expect(report.sessions[0]?.status).toBe('COMPLETE')
         expect(report.sessions[0]?.fills.length).toBeGreaterThan(0)
-        expect(archive.requests[0]?.observedAt).toBe('2026-09-04T14:30:32.000Z')
+        expect(archive.requests[0]?.observedAt).toBe('2026-09-04T14:00:32.000Z')
       } else {
         expect(report.sessions[0]).toMatchObject({ status: 'INCOMPLETE', fills: [] })
         expect(calls).toBe(1)
@@ -907,8 +907,8 @@ describe('intraday replay program', () => {
               persistIntradaySnapshotRows({
                 ...snapshot,
                 bars: snapshot.bars.map((bar) =>
-                  bar.symbol === 'AAPL' && bar.eventAt === '2026-09-04T14:00:00.000Z'
-                    ? { ...bar, ingestedAt: '2026-09-04T14:01:03.065Z' }
+                  bar.symbol === 'AAPL' && bar.eventAt === '2026-09-04T13:30:00.000Z'
+                    ? { ...bar, ingestedAt: '2026-09-04T13:31:03.065Z' }
                     : bar,
                 ),
               }),
@@ -947,13 +947,13 @@ describe('intraday replay program', () => {
       { kind: 'snapshot', decision: { excludedCandidates: [{ symbol: 'AAPL', reason: 'freshness' }] } },
     ])
     expect(captures.slice(0, 3).map(({ rangeStartAt }) => rangeStartAt)).toEqual([
-      '2026-09-04T14:00:00.000Z',
-      '2026-09-04T14:00:00.000Z',
-      '2026-09-04T14:01:00.000Z',
+      '2026-09-04T13:30:00.000Z',
+      '2026-09-04T13:30:00.000Z',
+      '2026-09-04T13:31:00.000Z',
     ])
     expect(verifiedWindows).toHaveLength(3)
-    expect(verifiedWindows[2]?.observedAt).toBe('2026-09-04T14:31:02.000Z')
-    expect(session?.orders[0]?.submittedAt).toBe('2026-09-04T14:31:02.000Z')
+    expect(verifiedWindows[2]?.observedAt).toBe('2026-09-04T14:01:02.000Z')
+    expect(session?.orders[0]?.submittedAt).toBe('2026-09-04T14:01:02.000Z')
     expect(session?.status).toBe('COMPLETE')
   })
 

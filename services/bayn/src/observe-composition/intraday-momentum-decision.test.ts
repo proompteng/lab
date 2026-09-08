@@ -19,6 +19,7 @@ import { makeIntradayMomentumDefinition } from '../strategy/intraday-momentum/de
 import {
   decodeDefaultIntradayMomentumProtocol,
   intradayMomentumExecutionModel,
+  intradayMomentumFirstDecisionPollMs,
 } from '../strategy/intraday-momentum/protocol'
 import {
   evaluateIntradayMomentumDecision,
@@ -162,11 +163,11 @@ describe('intraday-momentum runtime decision boundary', () => {
     })
   })
 
-  test('rejects entry before warmup and at or after the session-relative cutoff', () => {
+  test('rejects entry before the market opens and at or after the session-relative cutoff', () => {
     const cycle = makeActiveCycle()
     const calendar = calendarFor(cycle)
 
-    expect(failure(intradayMomentumEntryQuery(cycle, protocol, calendar, '2026-08-18T13:59:59.999Z'))).toMatchObject({
+    expect(failure(intradayMomentumEntryQuery(cycle, protocol, calendar, '2026-08-18T13:29:59.999Z'))).toMatchObject({
       operation: 'entry-query',
     })
     expect(
@@ -176,24 +177,51 @@ describe('intraday-momentum runtime decision boundary', () => {
     })
   })
 
-  test('classifies the first decision-delay interval as retryable snapshot waiting', () => {
+  test('waits for the signal lookback, then admits the first complete window without an extra warmup', () => {
     const cycle = makeActiveCycle()
     const calendar = calendarFor(cycle)
     const availableAt = new Date(
-      Date.parse(cycle.window.submissionOpenAt) + protocol.decisionDelaySeconds * 1_000,
+      Date.parse(cycle.window.executionOpenAt) +
+        protocol.lookbackMinutes * 60_000 +
+        protocol.decisionDelaySeconds * 1_000,
     ).toISOString()
 
     expect(failure(intradayMomentumEntryQuery(cycle, protocol, calendar, cycle.window.submissionOpenAt))).toEqual(
       new IntradayMomentumEntryAwaitingSnapshot({
-        message: 'full-session intraday entry is waiting for its first decision-delay-complete snapshot',
+        message: 'intraday entry is waiting for a complete rolling lookback and its decision delay',
         availableAt,
       }),
     )
     expect(success(intradayMomentumEntryQuery(cycle, protocol, calendar, availableAt))).toMatchObject({
-      rangeEndAt: cycle.window.submissionOpenAt,
+      rangeStartAt: cycle.window.executionOpenAt,
+      rangeEndAt: '2026-08-18T14:00:00.000Z',
       observedAt: availableAt,
     })
   })
+
+  test.each([
+    [30_000, 0, '2026-08-18T14:00:30.000Z'],
+    [30_000, 3_000, '2026-08-18T14:00:03.000Z'],
+    [45_000, 2_000, '2026-08-18T14:00:02.000Z'],
+    [30_000, 31_000, '2026-08-18T14:00:31.000Z'],
+  ])(
+    'preserves the replay poll cadence when signal evidence becomes eligible (%i/%i)',
+    (pollIntervalMs, firstPollDelayMs, expected) => {
+      const cycle = makeActiveCycle()
+      const calendar = calendarFor(cycle)
+      const firstPoll = intradayMomentumFirstDecisionPollMs(protocol, cycle.window, {
+        pollIntervalMs,
+        firstPollDelayMs,
+      })
+      expect(new Date(firstPoll).toISOString()).toBe(expected)
+      expect(Result.isSuccess(intradayMomentumEntryQuery(cycle, protocol, calendar, expected))).toBeTrue()
+      expect(
+        failure(
+          intradayMomentumEntryQuery(cycle, protocol, calendar, new Date(firstPoll - pollIntervalMs).toISOString()),
+        ),
+      ).toBeInstanceOf(IntradayMomentumEntryAwaitingSnapshot)
+    },
+  )
 
   test('classifies a missing rolling baseline as retryable snapshot waiting', () => {
     const definition = {

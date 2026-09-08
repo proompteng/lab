@@ -460,16 +460,16 @@ describe('intraday momentum strategy', () => {
     ).toMatchObject({ reason: 'snapshot-window' })
   })
 
-  test('rejects the old opening-only decision window instead of silently reusing it all day', () => {
+  test('admits the first complete rolling signal window without the extra opening delay', () => {
     const protocol = success(decodeDefaultIntradayMomentumProtocol())
     expect(
-      error(
+      success(
         decideIntradayMomentum(
           marketContextAt({ rangeEndAt: '2026-08-18T14:00:00.000Z', returnBps: qualifyingReturns }),
           protocol,
         ),
       ),
-    ).toMatchObject({ reason: 'snapshot-window' })
+    ).toMatchObject({ selectedSymbols: ['AAPL'] })
   })
 
   test('fails closed at the entry cutoff', () => {

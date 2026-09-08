@@ -61,6 +61,7 @@ import { desiredQuantityMicros, notionalMicros } from '../execution-model'
 import {
   decodeDefaultIntradayMomentumProtocol,
   hashIntradayMomentumProtocol,
+  intradayMomentumFirstDecisionPollMs,
   type IntradayMomentumProtocol,
 } from '../strategy/intraday-momentum/protocol'
 import type { IntradayMomentumTargetPortfolio } from '../strategy/intraday-momentum/model'
@@ -431,7 +432,7 @@ const replaySession = (
       return mark
     }
 
-    const entryStartMs = Date.parse(context.window.submissionOpenAt) + input.assumptions.firstPollDelayMs
+    const entryStartMs = intradayMomentumFirstDecisionPollMs(protocol, context.window, input.assumptions)
     const entryCutoffMs = Date.parse(context.window.submissionCutoffAt)
     for (let observedMs = entryStartMs; observedMs < entryCutoffMs; observedMs += input.assumptions.pollIntervalMs) {
       const observedAt = utcInstantFromEpochMillis(observedMs)
