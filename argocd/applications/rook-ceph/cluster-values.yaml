@@ -37,6 +37,22 @@ cephClusterSpec:
         # Ceph rollout. Current generation is 1; generation 2 is one-shot.
         keyRotationPolicy: KeyGeneration
         keyGeneration: 2
+      csi:
+        # Rotate the Ceph-CSI node/provisioner users while retaining one
+        # prior generation for already-mounted PVCs. Kernel 6.18 nodes
+        # require the AES key type; AES256K is deferred until kernel 7.0+.
+        keyRotationPolicy: KeyGeneration
+        keyGeneration: 2
+        keepPriorKeyCountMax: 1
+        keyType: aes
+      rbdMirrorPeer:
+        # No CephBlockPool mirror peer is configured in this cluster. Rotate
+        # the unused bootstrap peer identity to AES256K so it does not remain
+        # an insecure client principal. If a legacy peer is added later, set
+        # this explicitly to aes before creating that peer.
+        keyRotationPolicy: KeyGeneration
+        keyGeneration: 2
+        keyType: aes256k
   cephConfig:
     global:
       # This cluster currently runs OSDs on 2 hosts, so the default replicated pool size must be 2.
