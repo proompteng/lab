@@ -51,6 +51,7 @@ import { MenuBar } from './menu-bar'
 import { SettingsApp } from './settings-app'
 import { commitDesktopLifecycleAction, selectSleepRequestError } from './settings-model'
 import { Spotlight } from './spotlight'
+import { TengriMark } from './tengri-mark'
 import { TerminalApp } from './terminal-app'
 import { focusWindowContent } from './window-focus'
 
@@ -327,7 +328,9 @@ export function ReadyDesktop({
   }, [])
 
   const focusActiveContent = useCallback(() => {
+    const previousFocus = document.activeElement
     requestAnimationFrame(() => {
+      if (document.activeElement !== previousFocus && document.activeElement !== document.body) return
       const id = windowStateRef.current.activeWindowId
       focusWindowContent(stageRef.current?.querySelector<HTMLElement>(`[data-window-id="${id}"]`) ?? null)
     })
@@ -937,14 +940,5 @@ function DesktopWallpaper() {
       aria-hidden="true"
       className="pointer-events-none absolute inset-0 bg-[#142849] bg-[url('/tengri/wallpaper.webp')] bg-cover bg-center"
     />
-  )
-}
-
-function TengriMark() {
-  return (
-    <span aria-hidden="true" className="relative grid h-4 w-4 place-items-center rounded-full border border-white/60">
-      <span className="h-1.5 w-1.5 rounded-full bg-white/85" />
-      <span className="absolute -top-1 h-1.5 w-px bg-white/60" />
-    </span>
   )
 }

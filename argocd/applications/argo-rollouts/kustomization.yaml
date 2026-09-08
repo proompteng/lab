@@ -18,3 +18,12 @@ helmCharts:
         extraEnv:
           - name: ARGO_ROLLOUTS_ANALYSIS_JOB_NAMESPACE
             value: torghut
+        readinessProbe:
+          httpGet:
+            path: /metrics
+            port: metrics
+          initialDelaySeconds: 15
+          periodSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+          timeoutSeconds: 4

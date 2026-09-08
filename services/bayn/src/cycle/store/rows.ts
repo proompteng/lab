@@ -3,6 +3,7 @@ import { Effect, Result, Schema } from 'effect'
 import { Pipeable } from '../../pipeable'
 import {
   IsoDateSchema,
+  NonNegativeIntegerSchema,
   PositiveIntegerSchema,
   Sha256Schema,
   StrictNonEmptyStringSchema,
@@ -42,8 +43,8 @@ const StoredCycleRowSchema = Schema.Struct({
   submission_window_ms: PositiveIntegerSchema,
   submission_cutoff_before_open_ms: Schema.NullOr(PositiveIntegerSchema),
   submission_cutoff_after_open_ms: Schema.NullOr(PositiveIntegerSchema),
-  warmup_after_open_ms: Schema.NullOr(PositiveIntegerSchema),
-  submission_cutoff_before_close_ms: Schema.NullOr(PositiveIntegerSchema),
+  warmup_after_open_ms: Schema.NullOr(NonNegativeIntegerSchema),
+  submission_cutoff_before_close_ms: Schema.NullOr(NonNegativeIntegerSchema),
   window_schema_version: Schema.Literals([
     'bayn.autonomous-cycle-window.v1',
     'bayn.autonomous-cycle-window.v2',

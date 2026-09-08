@@ -1,0 +1,616 @@
+# GitOps-owned storage acceptance resources. The PVCs are retained and reused;
+# the PostSync Jobs run only after the storage application has synchronized and
+# Argo removes successful hook Jobs before the next creation. Failed hooks stay
+# available for evidence and block the sync until they are reviewed.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: storage-rbd-canary
+  namespace: rook-ceph
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    argocd.argoproj.io/sync-wave: "10"
+  labels:
+    storage.proompteng.ai/purpose: upgrade-canary
+    storage.proompteng.ai/backend: rbd
+spec:
+  accessModes:
+    # RWOP makes the writer/readback handoff wait for the writer Pod to finish
+    # and release its mount before Kubernetes schedules the readback Pod.
+    - ReadWriteOncePod
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: rook-ceph-block
+  volumeMode: Filesystem
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: storage-cephfs-canary
+  namespace: rook-ceph
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    argocd.argoproj.io/sync-wave: "10"
+  labels:
+    storage.proompteng.ai/purpose: upgrade-canary
+    storage.proompteng.ai/backend: cephfs
+spec:
+  accessModes:
+    # Ceph-CSI supports RWOP for CephFS; use it here so the remount proof has
+    # the same single-Pod completion/unmount gate as the RBD proof.
+    - ReadWriteOncePod
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: rook-cephfs
+  volumeMode: Filesystem
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: storage-rbd-canary-write
+  namespace: rook-ceph
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "20"
+  labels:
+    storage.proompteng.ai/purpose: upgrade-canary
+    storage.proompteng.ai/backend: rbd
+    storage.proompteng.ai/phase: write
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        storage.proompteng.ai/purpose: upgrade-canary
+        storage.proompteng.ai/backend: rbd
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: talos-192-168-1-194
+      securityContext:
+        fsGroup: 65532
+        runAsGroup: 65532
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: write
+          image: docker.io/library/busybox:1.36.1@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
+          command:
+            - sh
+            - -ec
+            - |
+              mkdir -p /mnt/canary
+              printf '%s\n' 'rook-ceph-rbd-upgrade-canary-v1' > /mnt/canary/marker.tmp
+              mv /mnt/canary/marker.tmp /mnt/canary/marker
+              sync
+              test "$(cat /mnt/canary/marker)" = 'rook-ceph-rbd-upgrade-canary-v1'
+              echo 'rbd write and readback: PASS'
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          volumeMounts:
+            - name: canary
+              mountPath: /mnt/canary
+      volumes:
+        - name: canary
+          persistentVolumeClaim:
+            claimName: storage-rbd-canary
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: storage-rbd-canary-readback
+  namespace: rook-ceph
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "21"
+  labels:
+    storage.proompteng.ai/purpose: upgrade-canary
+    storage.proompteng.ai/backend: rbd
+    storage.proompteng.ai/phase: readback
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        storage.proompteng.ai/purpose: upgrade-canary
+        storage.proompteng.ai/backend: rbd
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: talos-192-168-1-85
+      securityContext:
+        fsGroup: 65532
+        runAsGroup: 65532
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: wait-for-writer
+          image: docker.io/library/busybox:1.36.1@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
+          command:
+            - sh
+            - -ec
+            - |
+              # The PostSync wave waits for the writer Job to complete. This
+              # marker check also protects a reused PVC from an empty mount.
+              for attempt in $(seq 1 60); do
+                test -f /mnt/canary/marker && exit 0
+                sleep 2
+              done
+              echo 'writer marker was not observed' >&2
+              exit 1
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: canary
+              mountPath: /mnt/canary
+      containers:
+        - name: readback
+          image: docker.io/library/busybox:1.36.1@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
+          command:
+            - sh
+            - -ec
+            - |
+              test "$(cat /mnt/canary/marker)" = 'rook-ceph-rbd-upgrade-canary-v1'
+              echo 'rbd remount readback: PASS'
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: canary
+              mountPath: /mnt/canary
+      volumes:
+        - name: canary
+          persistentVolumeClaim:
+            claimName: storage-rbd-canary
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: storage-cephfs-canary-write
+  namespace: rook-ceph
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "20"
+  labels:
+    storage.proompteng.ai/purpose: upgrade-canary
+    storage.proompteng.ai/backend: cephfs
+    storage.proompteng.ai/phase: write
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        storage.proompteng.ai/purpose: upgrade-canary
+        storage.proompteng.ai/backend: cephfs
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: talos-192-168-1-194
+      securityContext:
+        fsGroup: 65532
+        runAsGroup: 65532
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: write
+          image: docker.io/library/busybox:1.36.1@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
+          command:
+            - sh
+            - -ec
+            - |
+              mkdir -p /mnt/canary
+              printf '%s\n' 'rook-ceph-cephfs-upgrade-canary-v1' > /mnt/canary/marker.tmp
+              mv /mnt/canary/marker.tmp /mnt/canary/marker
+              sync
+              test "$(cat /mnt/canary/marker)" = 'rook-ceph-cephfs-upgrade-canary-v1'
+              echo 'cephfs write and readback: PASS'
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          volumeMounts:
+            - name: canary
+              mountPath: /mnt/canary
+      volumes:
+        - name: canary
+          persistentVolumeClaim:
+            claimName: storage-cephfs-canary
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: storage-cephfs-canary-readback
+  namespace: rook-ceph
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "21"
+  labels:
+    storage.proompteng.ai/purpose: upgrade-canary
+    storage.proompteng.ai/backend: cephfs
+    storage.proompteng.ai/phase: readback
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        storage.proompteng.ai/purpose: upgrade-canary
+        storage.proompteng.ai/backend: cephfs
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: talos-192-168-1-85
+      securityContext:
+        fsGroup: 65532
+        runAsGroup: 65532
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: wait-for-writer
+          image: docker.io/library/busybox:1.36.1@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
+          command:
+            - sh
+            - -ec
+            - |
+              # The PostSync wave waits for the writer Job to complete. This
+              # marker check also protects a reused PVC from an empty mount.
+              for attempt in $(seq 1 60); do
+                test -f /mnt/canary/marker && exit 0
+                sleep 2
+              done
+              echo 'writer marker was not observed' >&2
+              exit 1
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: canary
+              mountPath: /mnt/canary
+      containers:
+        - name: readback
+          image: docker.io/library/busybox:1.36.1@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
+          command:
+            - sh
+            - -ec
+            - |
+              test "$(cat /mnt/canary/marker)" = 'rook-ceph-cephfs-upgrade-canary-v1'
+              echo 'cephfs remount readback: PASS'
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: canary
+              mountPath: /mnt/canary
+      volumes:
+        - name: canary
+          persistentVolumeClaim:
+            claimName: storage-cephfs-canary
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: storage-rbd-canary-readback-turin
+  namespace: rook-ceph
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "22"
+  labels:
+    storage.proompteng.ai/purpose: upgrade-canary
+    storage.proompteng.ai/backend: rbd
+    storage.proompteng.ai/phase: readback-turin
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        storage.proompteng.ai/purpose: upgrade-canary
+        storage.proompteng.ai/backend: rbd
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: turin
+      securityContext:
+        fsGroup: 65532
+        runAsGroup: 65532
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: wait-for-previous-readback
+          image: docker.io/library/busybox:1.36.1@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
+          command:
+            - sh
+            - -ec
+            - |
+              # Wave 22 follows both the writer and first readback wave. This
+              # marker check also protects a reused PVC from an empty mount.
+              for attempt in $(seq 1 60); do
+                test -f /mnt/canary/marker && exit 0
+                sleep 2
+              done
+              echo 'previous readback marker was not observed' >&2
+              exit 1
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: canary
+              mountPath: /mnt/canary
+      containers:
+        - name: readback
+          image: docker.io/library/busybox:1.36.1@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
+          command:
+            - sh
+            - -ec
+            - |
+              test "$(cat /mnt/canary/marker)" = 'rook-ceph-rbd-upgrade-canary-v1'
+              echo 'rbd Turin remount readback: PASS'
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: canary
+              mountPath: /mnt/canary
+      volumes:
+        - name: canary
+          persistentVolumeClaim:
+            claimName: storage-rbd-canary
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: storage-cephfs-canary-readback-turin
+  namespace: rook-ceph
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "22"
+  labels:
+    storage.proompteng.ai/purpose: upgrade-canary
+    storage.proompteng.ai/backend: cephfs
+    storage.proompteng.ai/phase: readback-turin
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        storage.proompteng.ai/purpose: upgrade-canary
+        storage.proompteng.ai/backend: cephfs
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: turin
+      securityContext:
+        fsGroup: 65532
+        runAsGroup: 65532
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: wait-for-previous-readback
+          image: docker.io/library/busybox:1.36.1@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
+          command:
+            - sh
+            - -ec
+            - |
+              # Wave 22 follows both the writer and first readback wave. This
+              # marker check also protects a reused PVC from an empty mount.
+              for attempt in $(seq 1 60); do
+                test -f /mnt/canary/marker && exit 0
+                sleep 2
+              done
+              echo 'previous readback marker was not observed' >&2
+              exit 1
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: canary
+              mountPath: /mnt/canary
+      containers:
+        - name: readback
+          image: docker.io/library/busybox:1.36.1@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
+          command:
+            - sh
+            - -ec
+            - |
+              test "$(cat /mnt/canary/marker)" = 'rook-ceph-cephfs-upgrade-canary-v1'
+              echo 'cephfs Turin remount readback: PASS'
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: canary
+              mountPath: /mnt/canary
+      volumes:
+        - name: canary
+          persistentVolumeClaim:
+            claimName: storage-cephfs-canary
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: storage-rgw-canary
+  namespace: rook-ceph
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "22"
+  labels:
+    storage.proompteng.ai/purpose: upgrade-canary
+    storage.proompteng.ai/backend: rgw
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        storage.proompteng.ai/purpose: upgrade-canary
+        storage.proompteng.ai/backend: rgw
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsGroup: 65532
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: s3
+          image: public.ecr.aws/aws-cli/aws-cli:2.27.41@sha256:1c2d7a51b1ff4f460bc3f1e1ee46a6cef47c7429ad9089ef99012a95e472a1a5
+          command:
+            - sh
+            - -ec
+            - |
+              export AWS_PAGER=''
+              export AWS_EC2_METADATA_DISABLED=true
+              bucket="rook-ceph-upgrade-canary-${HOSTNAME}"
+              body=/tmp/canary-body
+              readback=/tmp/canary-readback
+              cleanup_error=/tmp/rgw-canary-cleanup-error
+              printf '%s\n' 'rook-ceph-rgw-upgrade-canary-v1' >"$body"
+              created=0
+              verify_missing() {
+                resource="$1"
+                shift
+                attempt=1
+                while [ "$attempt" -le 5 ]; do
+                  if "$@" >/dev/null 2>"$cleanup_error"; then
+                    sleep 1
+                    attempt=$((attempt + 1))
+                    continue
+                  fi
+                  if grep -Eq '(^|[^0-9])404([^0-9]|$)|NoSuch|NotFound' "$cleanup_error"; then
+                    return 0
+                  fi
+                  echo "could not verify ${resource} cleanup: $(cat "$cleanup_error")" >&2
+                  return 1
+                done
+                echo "${resource} still exists after cleanup: $(cat "$cleanup_error")" >&2
+                return 1
+              }
+              cleanup() {
+                original_status=$?
+                trap - EXIT
+                cleanup_status=0
+                if [ "$created" = 1 ]; then
+                  if ! aws --endpoint-url "$S3_ENDPOINT" s3api delete-object --bucket "$bucket" --key canary.txt \
+                    >/dev/null 2>"$cleanup_error"; then
+                    echo "could not delete RGW canary object: $(cat "$cleanup_error")" >&2
+                    cleanup_status=1
+                  fi
+                  if ! verify_missing "RGW canary object" aws --endpoint-url "$S3_ENDPOINT" s3api head-object \
+                    --bucket "$bucket" --key canary.txt; then
+                    cleanup_status=1
+                  fi
+                  if ! aws --endpoint-url "$S3_ENDPOINT" s3api delete-bucket --bucket "$bucket" \
+                    >/dev/null 2>"$cleanup_error"; then
+                    echo "could not delete RGW canary bucket: $(cat "$cleanup_error")" >&2
+                    cleanup_status=1
+                  fi
+                  if ! verify_missing "RGW canary bucket" aws --endpoint-url "$S3_ENDPOINT" s3api head-bucket \
+                    --bucket "$bucket"; then
+                    cleanup_status=1
+                  fi
+                fi
+                if [ "$original_status" -ne 0 ]; then
+                  [ "$cleanup_status" -eq 0 ] || echo "RGW canary failed with exit ${original_status}; cleanup also failed" >&2
+                  exit "$original_status"
+                fi
+                if [ "$cleanup_status" -ne 0 ]; then
+                  echo 'RGW canary cleanup failed' >&2
+                  exit 1
+                fi
+              }
+              trap cleanup EXIT
+              aws --endpoint-url "$S3_ENDPOINT" s3api create-bucket --bucket "$bucket" >/dev/null
+              created=1
+              etag="$(aws --endpoint-url "$S3_ENDPOINT" s3api put-object --bucket "$bucket" --key canary.txt --body "$body" --query ETag --output text | tr -d '"')"
+              test -n "$etag"
+              aws --endpoint-url "$S3_ENDPOINT" s3api put-object --bucket "$bucket" --key canary.txt --body "$body" --if-match "$etag" >/dev/null
+              aws --endpoint-url "$S3_ENDPOINT" s3api get-object --bucket "$bucket" --key canary.txt "$readback" >/dev/null
+              test "$(cat "$readback")" = 'rook-ceph-rgw-upgrade-canary-v1'
+              echo 'rgw conditional PUT and readback: PASS'
+          env:
+            - name: HOME
+              value: /tmp
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: rook-ceph-object-user-objectstore-loki
+                  key: AccessKey
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: rook-ceph-object-user-objectstore-loki
+                  key: SecretKey
+            - name: AWS_DEFAULT_REGION
+              value: us-east-1
+            - name: S3_ENDPOINT
+              value: http://rook-ceph-rgw-objectstore.rook-ceph.svc:80
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 25m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
