@@ -176,6 +176,7 @@ describe('torghut post-deploy verifier workflow', () => {
   it('runs market-data freshness verification after deploy evidence is accepted', () => {
     expect(workflow).toContain('Verify market-data freshness')
     expect(workflow).toContain('MARKET_DATA_FRESHNESS_MODE: auto')
+    expect(workflow).toContain("TORGHUT_SCHEDULER_EXPECTED: 'false'")
     expect(workflow).toContain("MARKET_DATA_MAX_LAG_SECONDS: '300'")
     expect(workflow).toContain("MARKET_DATA_ACCEPTED_MAX_LAG_SECONDS: '300'")
     expect(workflow).toContain(

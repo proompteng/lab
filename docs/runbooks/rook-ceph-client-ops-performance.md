@@ -31,9 +31,17 @@ Live evidence captured on 2026-08-16 identified a separate correctness issue in 
 1. The first `v20.2.2-20260616` rollout exposed an ARM64 packaging incompatibility on the Ampere monitor host:
    `ceph-mon` crashed in `libunwind 1.6.2` while constructing global options. The same binary succeeded with
    `TCMALLOC_STACKTRACE_METHOD=generic_fp`, isolating the failure to the packaged unwinder rather than monitor data.
-1. The GitOps fix-forward target is the immutable production image tag `quay.io/ceph/ceph:v20.2.3-20260804`. Its
-   ARM64 manifest upgrades `libunwind` to `1.8.0-4.el9`, whose package enables AArch64 tests and includes the upstream
-   AArch64 unwinding fixes. Do not replace this with an environment-variable workaround or a floating version tag.
+1. The ARM64 packaging fix arrived in `v20.2.3-20260804`, whose ARM64 manifest upgrades `libunwind` to `1.8.0-4.el9`.
+   The current GitOps target is `quay.io/ceph/ceph:v20.2.4-20260818` with Rook `v1.20.7`, incorporating the Tentacle
+   security fixes. Verify the Ampere monitor starts normally; do not substitute an environment-variable workaround
+   or a floating version tag.
+
+The September security upgrade also sets daemon CephX `keyRotationPolicy: KeyGeneration` and `keyGeneration: 2`.
+Apply the operator and CSI resources before the wave-3 CephCluster. Rook owns daemon upgrades and key migration;
+retain existing pools, PVCs, identities, and prior keys. This single-site object store does not use STS, so
+`rgw_s3_auth_use_sts` remains explicitly false. Do not enable the multisite-only insecure signature compatibility
+setting. Review principals with `mon allow r` for CVE-2026-50152 exposure and rotate affected credentials through
+their existing secret-sync path without printing key material.
 
 The pre-merge live gate is strict: Argo `rook-ceph` must be `Synced/Healthy`; Ceph must be `HEALTH_OK`; all six OSDs
 must be `up/in`; all 601 PGs must be `active+clean` apart from scrub suffixes; and no recovery, remap, degraded, or
@@ -45,7 +53,11 @@ so both chart-managed ServiceMonitor integrations must remain disabled.
 
 After GitOps reconciliation, acceptance requires all of the following:
 
-1. `ceph versions` reports only `20.2.3`, `ceph -s` remains `HEALTH_OK`, and every Rook/Ceph Deployment is ready.
+1. `ceph versions` reports only `20.2.4`, `ceph -s` remains `HEALTH_OK`, and every Rook/Ceph Deployment is ready.
+1. CephCluster and child-resource CephX status reaches generation 2. Old service tickets can take two to three hours
+   to expire; investigate insecure-key warnings and let tickets expire instead of silencing the warnings.
+1. CSI controller and node-plugin images reach the generated `v3.17.1` target, existing volume consumers remain
+   healthy, and RBD/CephFS mount/read/write checks succeed. Confirm `rgw_s3_auth_use_sts=false` after RGW restarts.
 1. Restate advances all 24 partition `latest.json` pointers and snapshot age returns below the configured one-hour
    alert threshold without direct object-store mutation.
 1. `RestateSnapshotUploadFailure` and `RestateSnapshotStale` resolve from fresh successful evidence; they are not
@@ -54,8 +66,9 @@ After GitOps reconciliation, acceptance requires all of the following:
 1. Failed snapshot attempts stop creating unreferenced objects. Historical objects are retained until a separate,
    reviewed retention cleanup proves exact reachability; do not bulk-delete the bucket during this rollout.
 
-Do not downgrade Ceph by reverting the image after any daemon has migrated to Tentacle. A failed major-version rollout
-is a fix-forward incident on the pinned `v20.2.3-20260804` build. The Rook operator performs the documented rolling
+Do not downgrade Ceph by reverting the image after a daemon has migrated to Tentacle or daemon key generation has
+advanced. Recovery uses patched `v20.2.4-20260818` or a later reviewed patched build, retains prior key generations,
+and fixes the failing health gate. Reverting the image alone does not undo key migration. Rook performs the rolling
 daemon upgrade and gates each step on cluster health; do not patch the live `CephCluster` directly.
 
 References:
@@ -64,6 +77,7 @@ References:
 - <https://rook.io/docs/rook/latest-release/Getting-Started/maintenance-and-support/>
 - <https://rook.io/docs/rook/latest-release/Upgrade/ceph-upgrade/>
 - <https://docs.ceph.com/en/latest/releases/tentacle/>
+- <https://rook.io/docs/rook/latest/Storage-Configuration/Advanced/cephx-key-rotation/>
 
 ## Non-Network Performance Pass
 
