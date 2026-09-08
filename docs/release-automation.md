@@ -16,6 +16,11 @@ and delivery resources remain declarative GitOps inputs. The UI is an operator v
 Promotion, and Argo state. Normal application upgrades remain automatic and must not be replaced with UI-driven image
 selection, manifest edits, or manual Argo synchronization.
 
+Kargo completes the OIDC authorization-code exchange in the browser. The public Argo Dex route therefore attaches the
+`kargo-dex-cors` Traefik middleware, which permits only the Kargo Tailscale origin and handles token-endpoint preflight
+requests. Argo CD's Dex wrapper owns the generated `web` configuration and does not preserve `web.allowedOrigins` from
+`dex.config`; do not move this policy back into `argocd-cm`.
+
 The CLI uses the same SSO provider:
 
 ```bash

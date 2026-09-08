@@ -319,7 +319,7 @@ const validateBindings = (
   ) {
     return Result.fail(error('binding', 'flat execution targets require the explicit bounded close-only lease'))
   }
-  const intradayEntry = decision.schemaVersion === 'bayn.intraday-momentum.target.v2'
+  const intradayEntry = decision.schemaVersion === 'bayn.intraday-momentum.target.v3'
   const intradayClose =
     decision.schemaVersion === 'bayn.execution-flat-target.v1' && decision.strategyName === 'intraday-momentum'
   const intradayDecision = intradayEntry || intradayClose
@@ -353,14 +353,16 @@ const validateBindings = (
   if (intradayEntry && decisionMarketData?.purpose !== undefined) {
     return Result.fail(error('binding', 'intraday entry decision requires bar-and-trade market-data evidence'))
   }
-  if (
-    decision.schemaVersion === 'bayn.intraday-momentum.target.v2' &&
-    executionMarketData?.schemaVersion !== 'bayn.execution-market-data-binding.v2'
-  ) {
+  if (intradayEntry && executionMarketData?.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
     return Result.fail(error('binding', 'intraday-momentum entry requires execution market-data binding v2'))
   }
   if (intradayEntry && decisionMarketData?.schemaVersion === 'bayn.execution-market-data-binding.v2') {
-    const decisionSymbols = [...decision.signals.map(({ symbol }) => symbol), decision.benchmark.symbol].toSorted()
+    const excludedSymbols = decision.excludedCandidates.map(({ symbol }) => symbol)
+    const decisionSymbols = [
+      ...decision.signals.map(({ symbol }) => symbol),
+      ...excludedSymbols,
+      decision.benchmark.symbol,
+    ].toSorted()
     const bindsDecisionSignals =
       decisionMarketData.symbols.length === decisionSymbols.length &&
       decisionMarketData.symbols.every((symbol, index) => symbol === decisionSymbols[index])
@@ -440,7 +442,7 @@ const validateBindings = (
     return Result.fail(error('binding', 'execution market data must match the intraday strategy decision and cycle'))
   }
   const expectedPlanningWeights =
-    input.compiledDecision.schemaVersion === 'bayn.intraday-momentum.target.v2'
+    input.compiledDecision.schemaVersion === 'bayn.intraday-momentum.target.v3'
       ? intradayMomentumPlanningTargetWeights(
           input.compiledDecision,
           plannerInput.brokerState.positions

@@ -6,13 +6,17 @@ import {
   decideExecutionMandateAuthority,
   decideExecutionMandateCycleTerminalization,
   constrainExecutionTargetAllocationCapitalMicros,
+  executionActivationExpiredRestrictionReason,
   executionMandateAllocationCapitalMicros,
+  executionMandateCompletedRestrictionReason,
   executionMandateFailureRestrictionPrefix,
+  isExecutionCyclePreflightStoreRestriction,
   isExecutionMandateFailureRestriction,
   isExecutionMandateRecoveryRestriction,
+  legacyExecutionActivationExpiredRestrictionReason,
+  legacyV1CompletedRestrictionReason,
   capitalGrantFromLegacyGeneration,
   capitalGrantKey,
-  validateExecutionMandateCloseWindow,
 } from './mandate'
 
 describe('executionMandateAllocationCapitalMicros', () => {
@@ -140,6 +144,16 @@ describe('execution mandate decisions', () => {
     ).toBe(false)
     expect(isExecutionMandateRecoveryRestriction(reconciliationIncompleteRestrictionReason)).toBe(true)
     expect(isExecutionMandateRecoveryRestriction('operator requested PAPER stop')).toBe(false)
+    expect(
+      isExecutionCyclePreflightStoreRestriction(
+        `${executionMandateFailureRestrictionPrefix} recover-cycle: oldest unfinished mutation cycle read failed`,
+      ),
+    ).toBe(true)
+    expect(
+      isExecutionCyclePreflightStoreRestriction(
+        `${executionMandateFailureRestrictionPrefix} recover-cycle: durable submit recovery read failed`,
+      ),
+    ).toBe(false)
   })
 
   test('adapts legacy qualification history and research history to one grant boundary', () => {
@@ -236,6 +250,23 @@ describe('execution mandate decisions', () => {
         reason: 'PAPER autonomous cycle loop restricted effective authority: build-decision failed',
       }),
     ).toEqual(Result.succeed({ _tag: 'Rearm' }))
+    for (const reason of [
+      executionActivationExpiredRestrictionReason,
+      executionMandateCompletedRestrictionReason,
+      legacyExecutionActivationExpiredRestrictionReason,
+      legacyV1CompletedRestrictionReason,
+    ]) {
+      expect(
+        decideExecutionMandateAuthority({
+          ...common,
+          generationHash: 'b'.repeat(64),
+          maximum: 'PAPER',
+          effective: 'OBSERVE',
+          kill: 'ACTIVE',
+          reason,
+        }),
+      ).toEqual(Result.succeed({ _tag: 'Rearm' }))
+    }
     expect(
       decideExecutionMandateAuthority({
         ...common,
@@ -247,6 +278,17 @@ describe('execution mandate decisions', () => {
         reason: 'PAPER autonomous cycle loop restricted effective authority: build-decision failed',
       }),
     ).toEqual(Result.succeed({ _tag: 'ResumeRestricted' }))
+    expect(
+      decideExecutionMandateAuthority({
+        ...common,
+        generationHash: 'b'.repeat(64),
+        maximum: 'PAPER',
+        effective: 'OBSERVE',
+        kill: 'ACTIVE',
+        currentGenerationMatchesRequest: true,
+        reason: `${executionMandateFailureRestrictionPrefix} recover-cycle: oldest unfinished mutation cycle read failed`,
+      }),
+    ).toEqual(Result.succeed({ _tag: 'Rearm' }))
     expect(
       decideExecutionMandateAuthority({
         ...common,
@@ -331,55 +373,5 @@ describe('execution mandate decisions', () => {
       currentGenerationMatchesRequest: false,
     })
     expect(result).toEqual(Result.fail({ _tag: 'IdentityDrift' }))
-  })
-
-  test('accepts a close lease containing at most three complete market sessions', () => {
-    const sessions = [
-      { date: '2026-09-01', openAt: '2026-09-01T13:30:00.000Z', closeAt: '2026-09-01T20:00:00.000Z' },
-      { date: '2026-09-02', openAt: '2026-09-02T13:30:00.000Z', closeAt: '2026-09-02T20:00:00.000Z' },
-      { date: '2026-09-03', openAt: '2026-09-03T13:30:00.000Z', closeAt: '2026-09-03T20:00:00.000Z' },
-    ]
-    expect(
-      validateExecutionMandateCloseWindow({
-        cutoffAt: sessions[0].openAt,
-        expiresAt: sessions[2].closeAt,
-        maximumCloseSessions: 3,
-        sessions: [...sessions].reverse(),
-      }),
-    ).toEqual(Result.succeed(sessions))
-  })
-
-  test('rejects a partial, late-starting, or fourth-session close lease', () => {
-    const sessions = [
-      { date: '2026-09-01', openAt: '2026-09-01T13:30:00.000Z', closeAt: '2026-09-01T20:00:00.000Z' },
-      { date: '2026-09-02', openAt: '2026-09-02T13:30:00.000Z', closeAt: '2026-09-02T20:00:00.000Z' },
-      { date: '2026-09-03', openAt: '2026-09-03T13:30:00.000Z', closeAt: '2026-09-03T20:00:00.000Z' },
-      { date: '2026-09-04', openAt: '2026-09-04T13:30:00.000Z', closeAt: '2026-09-04T20:00:00.000Z' },
-    ]
-    const invalid = [
-      {
-        cutoffAt: '2026-09-01T14:00:00.000Z',
-        expiresAt: sessions[2].closeAt,
-        maximumCloseSessions: 3,
-        sessions,
-      },
-      {
-        cutoffAt: sessions[0].openAt,
-        expiresAt: '2026-09-03T19:00:00.000Z',
-        maximumCloseSessions: 3,
-        sessions,
-      },
-      {
-        cutoffAt: sessions[0].openAt,
-        expiresAt: sessions[3].closeAt,
-        maximumCloseSessions: 3,
-        sessions,
-      },
-    ]
-    for (const input of invalid) {
-      const result = validateExecutionMandateCloseWindow(input)
-      expect(Result.isFailure(result)).toBe(true)
-      if (Result.isFailure(result)) expect(result.failure._tag).toBe('InvalidCloseWindow')
-    }
   })
 })

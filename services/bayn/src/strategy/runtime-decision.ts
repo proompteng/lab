@@ -12,7 +12,10 @@ import {
   UtcOrderTimestampSchema,
   UnsignedMicrosSchema,
 } from '../schemas'
-import { IntradayMomentumTargetPortfolioSchema } from './intraday-momentum/model'
+import {
+  IntradayMomentumLegacyTargetPortfolioV2Schema,
+  IntradayMomentumTargetPortfolioSchema,
+} from './intraday-momentum/model'
 
 const LegacyRiskBalancedHorizonSchema = Schema.Struct({
   horizonSessions: PositiveIntegerSchema,
@@ -164,12 +167,13 @@ export const PersistedStrategyDecisionSchema = Schema.Union([
   LegacyRiskBalancedDecisionPlanSchema,
   LegacyOpeningDriveTargetPortfolioSchema,
   LegacyIntradayTargetPortfolioSchema,
+  IntradayMomentumLegacyTargetPortfolioV2Schema,
   RuntimeStrategyDecisionSchema,
 ])
 
 export const runtimeDecisionMatchesStrategy = (decision: RuntimeStrategyDecision, strategyName: string): boolean => {
   switch (decision.schemaVersion) {
-    case 'bayn.intraday-momentum.target.v2':
+    case 'bayn.intraday-momentum.target.v3':
       return strategyName === 'intraday-momentum'
     case 'bayn.execution-flat-target.v1':
       return decision.strategyName === strategyName

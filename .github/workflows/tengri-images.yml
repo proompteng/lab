@@ -204,11 +204,11 @@ jobs:
 
             for architecture in amd64 arm64; do
               local reference="${image}:${tag}-${architecture}"
-              crane mutate "${reference}" \
+              crane mutate --platform "linux/${architecture}" "${reference}" \
                 --label "org.opencontainers.image.created=${SOURCE_TIMESTAMP}" \
                 --label "org.opencontainers.image.revision=${SOURCE_SHA}" \
                 --tag "${reference}" >/dev/null
-              crane config "${reference}" | jq -e \
+              crane config --platform "linux/${architecture}" "${reference}" | jq -e \
                 --arg source_timestamp "${SOURCE_TIMESTAMP}" \
                 --arg source_sha "${SOURCE_SHA}" \
                 '.config.Labels["org.opencontainers.image.created"] == $source_timestamp and
@@ -252,10 +252,7 @@ jobs:
             local probe_error
             probe_error="$(mktemp)"
             if kargo_digest="$(
-              docker buildx imagetools inspect \
-                --format '{{json .Manifest}}' \
-                "${kargo_reference}" 2>"${probe_error}" |
-                jq -er '.digest' 2>>"${probe_error}"
+              crane digest "${kargo_reference}" 2>"${probe_error}"
             )"; then
               [[ "${kargo_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
               [[ "${kargo_digest}" == "${digest}" ]]
@@ -268,10 +265,7 @@ jobs:
               fi
               docker buildx imagetools create --tag "${kargo_reference}" "${image}:${tag}" >&2
               kargo_digest="$(
-                docker buildx imagetools inspect \
-                  --format '{{json .Manifest}}' \
-                  "${kargo_reference}" |
-                  jq -er '.digest'
+                crane digest "${kargo_reference}"
               )"
               [[ "${kargo_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
               [[ "${kargo_digest}" == "${digest}" ]]

@@ -49,7 +49,7 @@ export const translateRuleWithCodex = async (text: string): Promise<RuleIntent> 
       cwd: process.env.SAG_CODEX_CWD ?? '/tmp',
       sandbox: 'read-only',
       approval: 'never',
-      defaultModel: process.env.SAG_CODEX_MODEL ?? 'gpt-5.6-sol',
+      defaultModel: process.env.SAG_CODEX_MODEL ?? 'gpt-6-astra',
       defaultEffort: 'high',
       threadConfig: { mcp_servers: {}, web_search: 'live' },
       bootstrapTimeoutMs: 15_000,

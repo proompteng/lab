@@ -56,6 +56,9 @@ import fullSessionIntradayCycles from '../../migrations/0053_full_session_intrad
 import benignZeroFillIocCompletion from '../../migrations/0054_benign_zero_fill_ioc_completion'
 import intradaySnapshotReferences from '../../migrations/0055_intraday_snapshot_references'
 import intradayStrategyCutover from '../../migrations/0056_intraday_strategy_cutover'
+import recoverPreopenAuthorityCycle from '../../migrations/0057_recover_preopen_authority_cycle'
+import archiveReaderAvailability from '../../migrations/0058_archive_reader_availability'
+import regularSessionBoundaries from '../../migrations/0059_regular_session_boundaries'
 
 export const migrationLoader = PgMigrator.fromRecord({
   '1_initial_schema': initialSchema,
@@ -114,4 +117,7 @@ export const migrationLoader = PgMigrator.fromRecord({
   '54_benign_zero_fill_ioc_completion': benignZeroFillIocCompletion,
   '55_intraday_snapshot_references': intradaySnapshotReferences,
   '56_intraday_strategy_cutover': intradayStrategyCutover,
+  '57_recover_preopen_authority_cycle': recoverPreopenAuthorityCycle,
+  '58_archive_reader_availability': archiveReaderAvailability,
+  '59_regular_session_boundaries': regularSessionBoundaries,
 })

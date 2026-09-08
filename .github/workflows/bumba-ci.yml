@@ -9,6 +9,7 @@ on:
       - 'packages/temporal-bun-sdk/**'
       - 'nix/images/bumba.nix'
       - '.github/workflows/nix-oci-build-common.yml'
+      - 'packages/scripts/src/shared/oci.ts'
       - 'nix/oci-push.sh'
       - 'argocd/applications/bumba/**'
   pull_request:
@@ -17,6 +18,7 @@ on:
       - 'packages/temporal-bun-sdk/**'
       - 'nix/images/bumba.nix'
       - '.github/workflows/nix-oci-build-common.yml'
+      - 'packages/scripts/src/shared/oci.ts'
       - 'nix/oci-push.sh'
       - 'argocd/applications/bumba/**'
   workflow_dispatch:

@@ -3,7 +3,6 @@ import { describe, expect, mock, test } from 'bun:test'
 import {
   buildTerminalWebSocketUrl,
   normalizeTerminalSize,
-  parseLegacyTerminalResumeState,
   parseTerminalControlFrame,
   parseTerminalCleanupState,
   parseTerminalOutputFrame,
@@ -11,7 +10,6 @@ import {
   safelyDisposeTerminal,
   settleTerminalCreation,
   terminalCreationId,
-  terminalCreationScope,
   terminalHeartbeatAction,
   terminalPlainText,
   terminalReconnectDelay,
@@ -137,63 +135,16 @@ describe('Tengri terminal protocol', () => {
     expect(parseTerminalResumeState(serialized, 'agent-a', 'desktop-b')).toBeNull()
   })
 
-  test('upgrades only the legacy resume shape into the active desktop', () => {
-    const legacyState = {
-      agentId: 'agent-a',
-      sessionId: 'abcdefghijklmnopqrstuvwx',
-      reconnectToken: 'zyxwvutsrqponmlkjihgfedc',
-      sequence: 42,
-      cleanupPending: false,
-    }
-    const legacy = JSON.stringify(legacyState)
-
-    expect(parseLegacyTerminalResumeState(legacy, 'agent-a', 'desktop-a')).toEqual({
-      ...legacyState,
-      desktopId: 'desktop-a',
-    })
-    expect(parseLegacyTerminalResumeState(legacy, 'agent-b', 'desktop-a')).toBeNull()
-    expect(
-      parseLegacyTerminalResumeState(
-        JSON.stringify({ ...legacyState, desktopId: 'desktop-a' }),
-        'agent-a',
-        'desktop-a',
-      ),
-    ).toBeNull()
-  })
-
-  test('reconciles a transient desktop window with an existing guest session', () => {
+  test('reconciles only the exact terminal creation identity', () => {
     const sessions = [
       { id: 'detached-session', creationId: 'tengri-agent-a-desktop-a-terminal-1', attached: false },
       { id: 'exact-session', creationId: 'tengri-agent-a-desktop-a-terminal-2', attached: true },
       { id: 'other-detached', creationId: 'tengri-agent-a-desktop-a-terminal-3', attached: false },
       { id: 'other-desktop', creationId: 'tengri-agent-a-desktop-b-terminal-1', attached: false },
     ]
-    const scope = terminalCreationScope('agent-a', 'desktop-a')
-
-    expect(terminalReconciliationCandidate(sessions, sessions[1].creationId, scope, new Set())).toBe(sessions[1])
-    expect(terminalReconciliationCandidate(sessions, 'missing-window', scope, new Set())).toBe(sessions[0])
-    expect(terminalReconciliationCandidate(sessions, 'missing-window', scope, new Set(['detached-session']))).toBe(
-      sessions[2],
-    )
-    expect(
-      terminalReconciliationCandidate(
-        sessions.filter((session) => session.attached),
-        'missing-window',
-        scope,
-        new Set(),
-      ),
-    ).toBeNull()
-    expect(terminalReconciliationCandidate(sessions, sessions[1].creationId, scope, new Set(['exact-session']))).toBe(
-      sessions[0],
-    )
-    expect(
-      terminalReconciliationCandidate(
-        sessions.filter((session) => session.id === 'other-desktop'),
-        'missing-window',
-        scope,
-        new Set(),
-      ),
-    ).toBeNull()
+    expect(terminalReconciliationCandidate(sessions, sessions[1].creationId, new Set())).toBe(sessions[1])
+    expect(terminalReconciliationCandidate(sessions, 'missing-window', new Set())).toBeNull()
+    expect(terminalReconciliationCandidate(sessions, sessions[1].creationId, new Set(['exact-session']))).toBeNull()
   })
 
   test('cleans an accepted terminal when its window closes before creation returns', async () => {
@@ -236,9 +187,28 @@ describe('Tengri terminal protocol', () => {
             throw new Error('context lost')
           },
         },
+        [],
         { warn },
       ),
     ).not.toThrow()
     expect(warn).toHaveBeenCalledTimes(1)
+  })
+
+  test('disposes terminal addons in reverse load order before the terminal core', () => {
+    const order: string[] = []
+    const warn = mock(() => undefined)
+
+    safelyDisposeTerminal(
+      { dispose: () => order.push('terminal') },
+      [
+        { dispose: () => order.push('fit') },
+        { dispose: () => order.push('canvas') },
+        { dispose: () => order.push('links') },
+      ],
+      { warn },
+    )
+
+    expect(order).toEqual(['links', 'canvas', 'fit', 'terminal'])
+    expect(warn).not.toHaveBeenCalled()
   })
 })

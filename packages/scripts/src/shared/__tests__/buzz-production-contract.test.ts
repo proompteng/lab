@@ -66,11 +66,17 @@ describe('Buzz production GitOps contract', () => {
     expect(workflow).toContain('any(.manifests[]?; .platform.os == "linux"')
     expect(workflow).toContain('org.opencontainers.image.created=${SOURCE_TIMESTAMP}')
     expect(workflow).toContain('org.opencontainers.image.revision=${SOURCE_SHA}')
+    expect(workflow).toContain('crane mutate --platform "linux/${architecture}"')
+    expect(workflow).toContain('crane config --platform "linux/${architecture}"')
     expect(workflow).toContain('--annotation "index:org.opencontainers.image.source=${SOURCE_URL}"')
     expect(workflow).toContain('--annotation "index:org.opencontainers.image.revision=${SOURCE_SHA}"')
     expect(workflow).toContain('.annotations["org.opencontainers.image.source"] == $source_url')
     expect(workflow).toContain('.annotations["org.opencontainers.image.revision"] == $source_sha')
     expect(workflow).toContain('kargo-sha-${SOURCE_SHA}')
+    expect(workflow.match(/crane digest "\$\{kargo_reference\}"/g)).toHaveLength(2)
+    expect(workflow).not.toMatch(
+      /docker buildx imagetools inspect[\s\\]+--format '\{\{json \.Manifest\}\}'[\s\\]+"\$\{kargo_reference\}"/,
+    )
     expect(workflow).toContain('[[ "${GITHUB_REF}" == "refs/heads/main" ]]')
     expect(workflow).not.toContain('${IMAGE_REPOSITORY}:latest')
     expect(dockerfile).toContain('cargo test --release --locked -p buzz-relay api::git::store::tests:: --lib')

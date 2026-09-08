@@ -7,11 +7,11 @@
 - Source of truth (config): `argocd/applications/torghut/**`
 - Implementation status: `Implemented` (verified with code + tests + runtime/config on 2026-02-21)
 
-## Source Implementation Audit (2026-07-04)
+## Historical Source Audit (2026-07-04)
 
 - Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
 - Implementation status: **Partially implemented and currently inactive in deployment.** The circuit-breaker class, guardrail evaluator, and deterministic DSPy fallback exist, but the current Knative manifest sets `LLM_ENABLED=false` and `LLM_DSPY_RUNTIME_MODE=disabled`.
-- Current source evidence:
+- Source evidence inspected:
   - `services/torghut/app/trading/llm/circuit.py::LLMCircuitBreaker` tracks recent error timestamps, opens the circuit for a cooldown window, clears open state after cooldown, and exposes `snapshot()` with open/cooldown/error-count fields.
   - `services/torghut/app/trading/llm/review_engine.py::_deterministic_fallback_response` returns a schema-valid veto response with deterministic required checks when DSPy runtime execution fails.
   - `services/torghut/app/trading/llm/guardrails.py::evaluate_llm_guardrails` blocks or shadows requests for token-budget, prompt allowlist, rollout-stage, missing prompt template, missing governance evidence, missing adjustment approval, and invalid committee-role conditions.
@@ -31,7 +31,6 @@
   - circuit state is in-process and not durable across pod restarts;
   - metrics are readback, not proof that model execution is active;
   - activation requires explicit model inventory, artifact hash, rollout stage, and governance evidence.
-
 
 ## Purpose
 

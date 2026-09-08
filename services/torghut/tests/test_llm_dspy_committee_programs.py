@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch
 
+from app.trading.llm.dspy_programs import committee_programs
 from app.trading.llm.dspy_programs.committee_programs import (
     HeuristicCommitteeProgram,
     LiveDSPyCommitteeProgram,
@@ -210,6 +211,73 @@ class TestDSPyTransportHardening(TestCase):
             program._ensure_predictor()
 
         self.assertEqual(captured["lm_kwargs"]["temperature"], 1.0)
+
+    def test_live_program_disables_unsupported_temperature_for_gpt6_models(
+        self,
+    ) -> None:
+        captured: dict[str, dict[str, object]] = {}
+
+        class _TrackingLM(_FakeLM):
+            def __init__(self, **kwargs) -> None:
+                super().__init__(**kwargs)
+                captured["lm_kwargs"] = kwargs
+
+        fake_dspy = SimpleNamespace(
+            Signature=type("Signature", (), {}),
+            LM=_TrackingLM,
+            InputField=lambda *_args, **_kwargs: None,
+            OutputField=lambda *_args, **_kwargs: None,
+            Predict=lambda *_args, **_kwargs: _FakePredictor(),
+            context=None,
+            configure=lambda **_kwargs: None,
+        )
+
+        with patch("app.trading.llm.dspy_programs.committee_programs.dspy", fake_dspy):
+            program = LiveDSPyCommitteeProgram(
+                model_name="openai/gpt-6-astra",
+                api_base="https://jangar.openai.local/openai/v1",
+            )
+            program._ensure_predictor()
+
+        self.assertIsNone(captured["lm_kwargs"]["temperature"])
+
+    def test_gpt6_request_serialization_omits_temperature(self) -> None:
+        real_dspy = committee_programs.dspy
+        if real_dspy is None:
+            self.skipTest("dspy_dependency_unavailable")
+
+        import litellm
+
+        captured: dict[str, dict[str, object]] = {}
+
+        def _capture_completion(**kwargs: object) -> None:
+            captured["request"] = kwargs
+            raise RuntimeError("stop before HTTP")
+
+        program = LiveDSPyCommitteeProgram(
+            model_name="openai/gpt-6-astra",
+            api_base="https://jangar.openai.local/openai/v1",
+        )
+        program._ensure_predictor()
+
+        with patch(
+            "dspy.clients.lm.litellm.completion",
+            side_effect=_capture_completion,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "stop before HTTP"):
+                program._lm.forward(
+                    messages=[{"role": "user", "content": "hello"}],
+                    cache=False,
+                )
+
+        request = captured["request"]
+        serialized_params = litellm.get_optional_params(
+            model=request["model"],
+            temperature=request.get("temperature"),
+            max_tokens=request.get("max_tokens"),
+        )
+        self.assertIsNone(request["temperature"])
+        self.assertNotIn("temperature", serialized_params)
 
     def test_live_program_rejects_non_dict_response_json(self) -> None:
         request_payload = SimpleNamespace(request_json='{"foo":"bar"}')

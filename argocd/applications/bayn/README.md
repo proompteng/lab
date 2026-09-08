@@ -1,5 +1,34 @@
 # Bayn GitOps rollout notes
 
+## Regular-session trading boundaries
+
+Migration 59 admits zero session-boundary offsets while retaining calendar ordering, exact offset bindings, and
+historical cycle contracts. It changes constraints without rewriting cycle or execution evidence. Apply it through
+normal worker startup before activating the new strategy identity. The submission window can start at market open;
+the strategy still waits for its complete rolling lookback and decision delay.
+
+The active day-trading policy admits entries until five minutes before the actual calendar close and starts forced
+flattening at that same boundary. Close submissions remain eligible until the closing bell. Verify both regular and
+early-close windows; unresolved exits must stay visible and cannot complete the cycle as flat.
+
+This strategy change requires a reviewed research mandate rotation through `bayn-release`. Verify the exact image,
+activation identity, stored cycle boundaries, natural controller progress, and unchanged broker/accounting state.
+After zero-offset cycles exist, rollback must retain a runtime that can decode them. Do not restore the old positive-only
+constraints or delete cycles to make an incompatible binary start.
+
+## Archive reader availability evidence
+
+Migration 58 adds the append-only `intraday_archive_availability` evidence table. The execution worker records the
+first retained completed observation of each exact source record; historical replay only reads it. This rollout does
+not alter strategy parameters, behavior identity, broker access, or the standing research mandate. Deliver it through
+the existing Bayn build/release/GitOps path. Startup migrations must finish before the new execution worker runs.
+
+Verify the exact worker source/image, successful migration, fresh controller progress, and unchanged reconciliation
+and authority. Natural read receipts require an actual eligible session/read and must not be inferred from pod health.
+Replay without historical receipts must remain incomplete in default recorded-reader mode. A compatible source rollback
+may stop new collection but must retain the additive table and all receipts; never backfill receipt timestamps, delete
+evidence, or submit a broker order as rollout proof.
+
 ## Native Restate execution cutover
 
 The `bayn-execution-controller` `RestateDeployment` is the single execution scheduler. It starts with read-only broker
@@ -69,10 +98,15 @@ egress and its token-authenticated bootstrap call is made only by the labeled Gi
 
 ### Research mandate rotation
 
-A sealed research-mandate rotation must update the request content hash, build lineage, and activation generation in one
-reviewed change. Argo replaces the Secret in wave `-2`, rolls the controller in wave `-1`, runs the idempotent activation
-hook in wave `0`, and rolls the read-only status service in wave `1`. The expected impact is one normal controller/status
-rollout and a drained Restate worker revision; the activation hook itself cannot reach the broker.
+The sealed research mandate is standing authority for its exact strategy, sandbox account, risk policy, and reviewed
+build lineage. It has no calendar expiry and does not need a daily rotation. Every exchange session still creates a
+separate durable cycle with its own entry cutoff, forced-flatten window, risk budget, reconciliation gate, and terminal
+state. Rotate the mandate only when one of its bound identities changes.
+
+A mandate rotation must update the request content hash, build lineage, and activation generation in one reviewed
+change. Argo replaces the Secret in wave `-2`, rolls the controller in wave `-1`, runs the idempotent activation hook in
+wave `0`, and rolls the read-only status service in wave `1`. The expected impact is one normal controller/status rollout
+and a drained Restate worker revision; the activation hook itself cannot reach the broker.
 
 After sync, require the SealedSecret to be current, the hook to succeed for the committed generation, the controller
 sequence to advance naturally, `/readyz` and `/v1/status` to report the intended effective authority, and reconciliation

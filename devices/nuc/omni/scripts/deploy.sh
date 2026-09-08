@@ -11,8 +11,9 @@ for command in curl seq; do
   require_command "${command}"
 done
 
-"${SCRIPT_DIR}/validate.sh" full
 load_omni_env
+ensure_cluster_etcd_backup_directory
+"${SCRIPT_DIR}/validate.sh" full
 
 curl --fail --silent --show-error --output /dev/null \
   "${OIDC_ISSUER_URL}/.well-known/openid-configuration" ||

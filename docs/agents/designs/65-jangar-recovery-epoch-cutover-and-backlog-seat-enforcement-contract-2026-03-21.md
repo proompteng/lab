@@ -1,9 +1,11 @@
-# 65. Jangar Recovery Epoch Cutover and Backlog Seat Enforcement Contract (2026-03-21)
+# 65. Jangar Recovery Epoch, Release-Lane, and Backlog Seat Enforcement Contract (2026-03-21)
 
 Status: Approved for implementation (`plan`)
 Date: `2026-03-21`
 Owner: Victor Chen (Jangar Engineering)
 Mission: `codex/swarm-jangar-control-plane-plan`
+Canonical scope: This contract consolidates the March 21 recovery-epoch, backlog-seat, release-lane, and rollout
+proof-fence requirements.
 Swarm impacts:
 
 - `jangar-control-plane`
@@ -21,7 +23,7 @@ Extends:
 
 ## Executive summary
 
-The decision is to implement the March 21 recovery-epoch and backlog-seat model through a staged cutover:
+The decision is to implement the March 21 recovery-epoch, backlog-seat, and release-lane model through a staged cutover:
 shadow compilation first, then seal-and-reseat, then dispatch and rollout enforcement. I am not taking the one-release
 hard cutover because the live system is already in the exact state that would make that unsafe.
 

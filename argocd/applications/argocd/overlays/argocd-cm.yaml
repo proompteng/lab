@@ -9,6 +9,38 @@ data:
   kustomize.buildOptions: --enable-helm
   application.resourceTrackingMethod: annotation
   timeout.reconciliation: 180s
+  # CNPG Backup is a custom resource without a built-in Argo health check.
+  # Keep sync waves behind the backup until the operator reports a completed
+  # backup with a terminal timestamp; an incomplete or failed backup must stop
+  # the PostgreSQL image wave.
+  resource.customizations.health.postgresql.cnpg.io_Backup: |
+    hs = {}
+    local status = obj.status or {}
+    local phase = status.phase or ""
+
+    if phase == "completed" and status.stoppedAt ~= nil and status.stoppedAt ~= "" then
+      hs.status = "Healthy"
+      hs.message = "CNPG Backup completed at " .. status.stoppedAt .. "."
+      return hs
+    end
+
+    if phase == "failed" then
+      hs.status = "Degraded"
+      local message = status.error or ""
+      if message == "" then
+        message = status.commandError or ""
+      end
+      hs.message = message ~= "" and message or "CNPG Backup failed."
+      return hs
+    end
+
+    hs.status = "Progressing"
+    if phase == "" then
+      hs.message = "Waiting for CNPG Backup status."
+    else
+      hs.message = "CNPG Backup phase: " .. phase .. "."
+    end
+    return hs
   resource.customizations.health.bitnami.com_SealedSecret: |
     hs = {}
 
@@ -215,8 +247,6 @@ data:
         inCluster: true
     web:
       http: 0.0.0.0:5556
-      allowedOrigins:
-        - https://kargo.ide-newton.ts.net
     telemetry:
       http: 0.0.0.0:5558
     grpc:

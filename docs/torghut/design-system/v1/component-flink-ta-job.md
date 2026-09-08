@@ -7,11 +7,11 @@
 - Source of truth (config): `argocd/applications/torghut/**`
 - Implementation status: `Implemented` (verified with code + tests + runtime/config on 2026-02-21)
 
-## Source Implementation Audit (2026-07-04)
+## Historical Source Audit (2026-07-04)
 
 - Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
 - Implementation status: **Implemented and expanded.** The Flink TA job exists as a production FlinkDeployment with Kafka sources/sinks, ClickHouse JDBC sinks, schema initialization, optional quote/bars streams, status heartbeat, and quote-freshness logic.
-- Current source evidence:
+- Source evidence inspected:
   - `FlinkTechnicalAnalysisJob.kt::main` builds Kafka sources for trades plus optional quotes/bars1m, assigns event-time watermarks, creates microbars, computes TA signals, optionally emits status, writes Kafka sinks, applies ClickHouse sinks, and executes `torghut-technical-analysis-flink`.
   - `FlinkTaConfig.kt` defines current env contract: topics, group/client ids, checkpoint/savepoint dirs, checkpoint interval/timeout/pause, max out-of-order ms, quote stale after ms, parallelism, S3 checkpoint config, delivery guarantee, and ClickHouse sink/schema-init settings.
   - `FlinkTechnicalAnalysisJob.kt::ensureClickhouseSchema` applies `ta-schema.sql` with retry/strictness before ClickHouse sinks are used.

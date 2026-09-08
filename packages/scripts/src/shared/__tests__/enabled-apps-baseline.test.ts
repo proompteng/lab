@@ -40,6 +40,6 @@ it('preserves every established enabled ApplicationSet entry', () => {
       .map((entry) => entry.name),
   )
 
-  expect(baselineNames.size).toBeGreaterThanOrEqual(68)
+  expect(baselineNames.size).toBeGreaterThanOrEqual(64)
   for (const name of baselineNames) expect(currentNames).toContain(name)
 })

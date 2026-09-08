@@ -30,11 +30,17 @@ describe('Tengri image workflow', () => {
     expect(source).toContain("jq -er '.digest'")
     expect(source).toContain('org.opencontainers.image.created=${SOURCE_TIMESTAMP}')
     expect(source).toContain('org.opencontainers.image.revision=${SOURCE_SHA}')
+    expect(source).toContain('crane mutate --platform "linux/${architecture}"')
+    expect(source).toContain('crane config --platform "linux/${architecture}"')
     expect(source).toContain('--annotation "index:org.opencontainers.image.source=${SOURCE_URL}"')
     expect(source).toContain('--annotation "index:org.opencontainers.image.revision=${SOURCE_SHA}"')
     expect(source).toContain('.annotations["org.opencontainers.image.source"] == $source_url')
     expect(source).toContain('.annotations["org.opencontainers.image.revision"] == $source_sha')
     expect(source).toContain('kargo-sha-${SOURCE_SHA}')
+    expect(source.match(/crane digest "\$\{kargo_reference\}"/g)).toHaveLength(2)
+    expect(source).not.toMatch(
+      /docker buildx imagetools inspect[\s\\]+--format '\{\{json \.Manifest\}\}'[\s\\]+"\$\{kargo_reference\}"/,
+    )
     expect(source).toContain("if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'")
     expect(source).not.toContain(':latest')
     expect(source).not.toContain('latest_digest')

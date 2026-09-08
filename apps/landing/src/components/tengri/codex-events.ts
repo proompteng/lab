@@ -26,6 +26,7 @@ const CODEX_EVENT_KINDS = new Set<TengriCodexEventKind>([
   'warning',
   'unknown',
 ])
+const CODEX_ITEM_LIFECYCLE_METHODS = new Set(['item/started', 'item/completed'])
 
 export type CodexTranscriptItem = {
   id: string
@@ -34,11 +35,25 @@ export type CodexTranscriptItem = {
     'assistant-text' | 'file-diff' | 'plan' | 'reasoning-summary' | 'tool-call' | 'tool-output' | 'user-message'
   >
   text: string
+  eventSequence?: number
 }
 
 export type CodexApprovalDecision = (typeof CODEX_APPROVAL_DECISION_ORDER)[number]
 
-export function appendCodexEvent(current: TengriCodexEvent[], event: TengriCodexEvent, restoredPrefix = '') {
+type CodexTextSegment = {
+  sequence: number
+  text: string
+  replacement: boolean
+  bytes: number
+  previous?: CodexTextSegment
+}
+export type CodexBufferedEvent = TengriCodexEvent & { textSegments?: CodexTextSegment }
+
+export function appendCodexEvent(
+  current: CodexBufferedEvent[],
+  event: CodexBufferedEvent,
+  restoredPrefix = '',
+): CodexBufferedEvent[] {
   const resolvedApprovalId = codexResolvedApprovalId(event)
   if (resolvedApprovalId) {
     const next = current.filter((candidate) => candidate.approvalId !== resolvedApprovalId)
@@ -48,6 +63,18 @@ export function appendCodexEvent(current: TengriCodexEvent[], event: TengriCodex
   const key = codexEventKey(event)
   if (current.some((candidate) => codexEventKey(candidate) === key)) return current
   const eventText = commandOutputDeltaText(event)
+
+  const usageSnapshotKey = authoritativeUsageSnapshotKey(event)
+  const usageSnapshotIndex = usageSnapshotKey
+    ? current.findIndex((candidate) => authoritativeUsageSnapshotKey(candidate) === usageSnapshotKey)
+    : -1
+
+  if (usageSnapshotIndex >= 0) {
+    if (current[usageSnapshotIndex]!.sequence >= event.sequence) return current
+    const next = [...current]
+    next[usageSnapshotIndex] = mergeAuthoritativeUsageSnapshot(current[usageSnapshotIndex]!, event, eventText)
+    return next
+  }
 
   const snapshotMethod = authoritativeTurnSnapshotMethod(event)
   const snapshotIndex = snapshotMethod
@@ -65,35 +92,72 @@ export function appendCodexEvent(current: TengriCodexEvent[], event: TengriCodex
     return next
   }
 
-  const itemIndex = event.itemId
+  const itemIdentity = codexEventItemIdentity(event)
+  const itemIndex = itemIdentity
     ? current.findIndex(
         (candidate) =>
-          candidate.itemId === event.itemId &&
-          candidate.threadId === event.threadId &&
-          candidate.kind === event.kind &&
-          (isDeltaEvent(candidate) || isDeltaEvent(event)),
+          codexEventItemIdentity(candidate) === itemIdentity &&
+          (isDeltaEvent(candidate) || isDeltaEvent(event) || isItemLifecycleTransition(candidate, event)),
       )
     : -1
 
   if (itemIndex >= 0) {
     const previous = current[itemIndex]!
+    if (event.sequence <= previous.sequence) return current
     const next = [...current]
-    next[itemIndex] = {
-      ...event,
-      text: isDeltaEvent(event)
-        ? appendBoundedText(previous.text, eventText)
-        : truncateEventText(eventText || previous.text),
-    }
+    next[itemIndex] = isDeltaEvent(event)
+      ? appendTextSegment(previous, event, eventText)
+      : { ...event, text: truncateEventText(eventText || previous.text) }
     return next
   }
 
   return [
     ...current.slice(-(MAX_CODEX_EVENTS - 1)),
-    {
-      ...event,
-      text: isDeltaEvent(event) ? appendBoundedText(restoredPrefix, eventText) : truncateEventText(eventText),
-    },
+    isDeltaEvent(event)
+      ? {
+          ...event,
+          text: appendBoundedText(restoredPrefix, eventText),
+          textSegments: textSegment(undefined, event.sequence, eventText, false),
+        }
+      : { ...event, text: truncateEventText(eventText) },
   ]
+}
+
+function textSegment(
+  previous: CodexTextSegment | undefined,
+  sequence: number,
+  text: string,
+  replacement: boolean,
+): CodexTextSegment | undefined {
+  if (!text || previous?.text.endsWith(TRUNCATION_MARKER)) return previous
+  const bytes = new TextEncoder().encode(text)
+  const remaining = MAX_EVENT_TEXT_BYTES - (previous?.bytes ?? 0)
+  let bounded = text
+  if (bytes.length > remaining) {
+    const markerBytes = new TextEncoder().encode(TRUNCATION_MARKER).length
+    let end = Math.max(0, remaining - markerBytes)
+    while (end > 0 && (bytes[end] & 0xc0) === 0x80) end -= 1
+    bounded = new TextDecoder().decode(bytes.subarray(0, end)) + TRUNCATION_MARKER
+  }
+  return {
+    sequence,
+    text: bounded,
+    replacement,
+    previous,
+    bytes: (previous?.bytes ?? 0) + new TextEncoder().encode(bounded).length,
+  }
+}
+
+function appendTextSegment(previous: CodexBufferedEvent, event: CodexBufferedEvent, text: string): CodexBufferedEvent {
+  const segments =
+    previous.textSegments ?? textSegment(undefined, previous.sequence, previous.text, !isDeltaEvent(previous))
+  return {
+    ...event,
+    text: appendBoundedText(previous.text, text),
+    textSegments: previous.text.endsWith(TRUNCATION_MARKER)
+      ? segments
+      : textSegment(segments, event.sequence, text, false),
+  }
 }
 
 export function parseCodexEvent(data: string): TengriCodexEvent | null {
@@ -181,6 +245,14 @@ export function codexEventMatchesThread(event: TengriCodexEvent, threadId: strin
   return !event.threadId || event.threadId === threadId
 }
 
+function codexEventIsIndependentOfThreadSnapshot(event: TengriCodexEvent) {
+  return event.kind === 'approval' || event.kind === 'warning' || event.kind === 'error' || event.kind === 'usage'
+}
+
+function codexEventRequiresReplayAfterRestore(event: TengriCodexEvent) {
+  return codexEventIsIndependentOfThreadSnapshot(event) || Boolean(codexResolvedApprovalId(event))
+}
+
 export function codexEventShouldRender(
   event: TengriCodexEvent,
   threadId: string,
@@ -188,7 +260,8 @@ export function codexEventShouldRender(
   restoredHistorySequence = Number.POSITIVE_INFINITY,
 ) {
   if (!codexEventMatchesThread(event, threadId)) return false
-  if (event.kind === 'approval') return true
+  if (codexEventIsIndependentOfThreadSnapshot(event)) return true
+  if (restoredHistorySequence > 0 && event.sequence <= restoredHistorySequence) return false
   return !event.itemId || !restoredItemIds.has(event.itemId) || event.sequence > restoredHistorySequence
 }
 
@@ -201,7 +274,7 @@ export function codexEventContinuesRestoredItem(
     restoredItem &&
     event.itemId === restoredItem.id &&
     event.kind === restoredItem.kind &&
-    event.sequence > restoredHistorySequence,
+    event.sequence > (restoredItem.eventSequence ?? restoredHistorySequence),
   )
 }
 
@@ -210,28 +283,57 @@ export function codexEventSupersedesRestoredItem(
   restoredItem: CodexTranscriptItem | undefined,
   restoredHistorySequence: number,
 ) {
-  return Boolean(restoredItem && event.itemId === restoredItem.id && event.sequence > restoredHistorySequence)
-}
-
-export function reconcileCodexEventsWithRestoredHistory(
-  current: TengriCodexEvent[],
-  restoredHistory: ReadonlyMap<string, CodexTranscriptItem>,
-  snapshotSequence: number,
-) {
-  return current.reduce<TengriCodexEvent[]>(
-    (next, event) => appendCodexEventAfterRestore(next, event, restoredHistory, snapshotSequence),
-    [],
+  return Boolean(
+    restoredItem &&
+    event.itemId === restoredItem.id &&
+    !codexEventIsIndependentOfThreadSnapshot(event) &&
+    event.sequence > (restoredItem.eventSequence ?? restoredHistorySequence),
   )
 }
 
+export function reconcileCodexEventsWithRestoredHistory(
+  current: CodexBufferedEvent[],
+  restoredHistory: ReadonlyMap<string, CodexTranscriptItem>,
+  snapshotSequence: number,
+  itemSequences?: ReadonlyMap<string, number>,
+) {
+  return current.reduce<CodexBufferedEvent[]>((next, event) => {
+    if (!event.textSegments) {
+      return appendCodexEventAfterRestore(next, event, restoredHistory, snapshotSequence, itemSequences)
+    }
+    const restoredItem = restoredHistory.get(event.itemId)
+    const cursor = itemSequences?.get(event.itemId) ?? restoredItem?.eventSequence ?? snapshotSequence
+    const segments: CodexTextSegment[] = []
+    for (
+      let segment: CodexTextSegment | undefined = event.textSegments;
+      segment && segment.sequence > cursor;
+      segment = segment.previous
+    ) {
+      segments.push(segment)
+    }
+    if (!segments.length) return next
+    let text = restoredItem?.kind === event.kind ? restoredItem.text : ''
+    let textSegments: CodexTextSegment | undefined
+    for (const segment of segments.reverse()) {
+      text = segment.replacement ? truncateEventText(segment.text) : appendBoundedText(text, segment.text)
+      textSegments = textSegment(textSegments, segment.sequence, segment.text, segment.replacement)
+    }
+    return [...next, { ...event, text, textSegments }]
+  }, [])
+}
+
 export function appendCodexEventAfterRestore(
-  current: TengriCodexEvent[],
+  current: CodexBufferedEvent[],
   event: TengriCodexEvent,
   restoredHistory: ReadonlyMap<string, CodexTranscriptItem>,
   snapshotSequence: number,
+  itemSequences?: ReadonlyMap<string, number>,
 ) {
   const restoredItem = restoredHistory.get(event.itemId)
-  if (event.kind !== 'approval' && restoredItem && event.sequence <= snapshotSequence) return current
+  const itemSequence = itemSequences?.get(event.itemId) ?? restoredItem?.eventSequence ?? snapshotSequence
+  if (event.sequence <= itemSequence && !codexEventRequiresReplayAfterRestore(event)) {
+    return current
+  }
   const restoredPrefix =
     restoredItem && codexEventContinuesRestoredItem(event, restoredItem, snapshotSequence) ? restoredItem.text : ''
   return appendCodexEvent(current, event, restoredPrefix)
@@ -309,7 +411,10 @@ export function codexLoginCompletionError(event: TengriCodexEvent) {
   return string(record(error).message) || event.text || 'Codex device login failed. Start a new login.'
 }
 
-export function codexTranscriptFromThread(rawJson: string): CodexTranscriptItem[] {
+export function codexTranscriptFromThread(
+  rawJson: string,
+  itemEventSequences: Readonly<Record<string, number>> = {},
+): CodexTranscriptItem[] {
   try {
     const response = record(JSON.parse(rawJson))
     const thread = record(response.thread)
@@ -323,6 +428,9 @@ export function codexTranscriptFromThread(rawJson: string): CodexTranscriptItem[
         const item = record(itemValue)
         const transcriptItem = transcriptItemFromCodex(string(item.id), string(item.type), item)
         if (transcriptItem && !seen.has(transcriptItem.id)) {
+          if (Object.hasOwn(itemEventSequences, transcriptItem.id)) {
+            transcriptItem.eventSequence = itemEventSequences[transcriptItem.id]
+          }
           seen.add(transcriptItem.id)
           transcript.push(transcriptItem)
           if (transcript.length > MAX_CODEX_EVENTS) transcript.shift()
@@ -852,7 +960,22 @@ function number(value: unknown) {
 }
 
 function isDeltaEvent(event: TengriCodexEvent) {
-  return event.method.toLowerCase().endsWith('delta')
+  return !codexEventIsIndependentOfThreadSnapshot(event) && event.method.toLowerCase().endsWith('delta')
+}
+
+function codexEventItemIdentity(event: TengriCodexEvent) {
+  if (!event.itemId) return ''
+  return JSON.stringify([event.threadId, event.turnId, event.itemId, event.kind])
+}
+
+function isItemLifecycleTransition(previous: TengriCodexEvent, next: TengriCodexEvent) {
+  const previousMethod = previous.method.toLowerCase()
+  const nextMethod = next.method.toLowerCase()
+  return (
+    previousMethod !== nextMethod &&
+    CODEX_ITEM_LIFECYCLE_METHODS.has(previousMethod) &&
+    CODEX_ITEM_LIFECYCLE_METHODS.has(nextMethod)
+  )
 }
 
 function authoritativeTurnSnapshotMethod(event: TengriCodexEvent) {
@@ -861,6 +984,48 @@ function authoritativeTurnSnapshotMethod(event: TengriCodexEvent) {
   if (event.kind === 'plan' && method === 'turn/plan/updated') return method
   if (event.kind === 'file-diff' && method === 'turn/diff/updated') return method
   return ''
+}
+
+function authoritativeUsageSnapshotKey(event: TengriCodexEvent) {
+  if (event.kind !== 'usage') return ''
+  const method = event.method.toLowerCase()
+  if (method.includes('tokenusage')) return `token-usage:${event.threadId}`
+  if (method.includes('ratelimits')) {
+    const params = record(parseRawEvent(event.rawJson).params)
+    const limitId = string(record(params.rateLimits).limitId) || 'codex'
+    return `rate-limits:${limitId}`
+  }
+  return ''
+}
+
+function mergeAuthoritativeUsageSnapshot(previous: TengriCodexEvent, event: TengriCodexEvent, eventText: string) {
+  const next = { ...event, text: truncateEventText(eventText) }
+  if (!event.method.toLowerCase().includes('ratelimits')) return next
+
+  const previousRaw = parseRawEvent(previous.rawJson)
+  const eventRaw = parseRawEvent(event.rawJson)
+  const previousParams = record(previousRaw.params)
+  const eventParams = record(eventRaw.params)
+  const previousRateLimits = record(previousParams.rateLimits)
+  const eventRateLimits = record(eventParams.rateLimits)
+  if (Object.keys(previousRateLimits).length === 0 || Object.keys(eventRateLimits).length === 0) return next
+
+  const mergedRateLimits = { ...previousRateLimits }
+  for (const [key, value] of Object.entries(eventRateLimits)) {
+    if (value !== null && value !== undefined) mergedRateLimits[key] = value
+  }
+  const rawJson = boundedRawJson(
+    JSON.stringify({
+      ...previousRaw,
+      ...eventRaw,
+      params: {
+        ...previousParams,
+        ...eventParams,
+        rateLimits: mergedRateLimits,
+      },
+    }),
+  )
+  return rawJson ? { ...next, rawJson } : next
 }
 
 function isRawReasoningDelta(event: TengriCodexEvent) {

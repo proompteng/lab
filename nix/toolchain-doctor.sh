@@ -39,7 +39,7 @@ expect_prefix() {
   esac
 }
 
-for cmd in nix node bun go ruby python3.11 python3.12 uv tofu helm kustomize kubeconform kubectl argo argocd buf gh shellcheck jq yq rg fd fzf; do
+for cmd in nix node bun go ruby python3.11 python3.12 uv tofu helm kustomize kubeconform kubectl kubeseal curl stat realpath argo argocd buf gh shellcheck jq yq rg fd fzf; do
   have "$cmd"
 done
 

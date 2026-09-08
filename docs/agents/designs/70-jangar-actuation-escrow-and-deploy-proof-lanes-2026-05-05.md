@@ -17,7 +17,7 @@ Extends:
 
 - `docs/agents/designs/69-jangar-evidence-escrow-and-repair-cell-contract-2026-05-05.md`
 - `docs/agents/designs/68-jangar-evidence-clock-arbiter-and-rollout-veto-contract-2026-05-05.md`
-- `docs/agents/designs/66-jangar-recovery-release-lanes-and-rollout-proof-fence-contract-2026-03-21.md`
+- `docs/agents/designs/65-jangar-recovery-epoch-cutover-and-backlog-seat-enforcement-contract-2026-03-21.md`
 - `docs/torghut/design-system/v6/74-torghut-profit-cells-and-evidence-escrow-promotion-veto-2026-05-05.md`
 
 ## Executive Summary

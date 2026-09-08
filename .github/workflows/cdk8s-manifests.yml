@@ -104,4 +104,4 @@ jobs:
             exit 1
           fi
           grep -Eq 'image: registry\.ide-newton\.ts\.net/lab/docs@sha256:[0-9a-f]{64}$' "${RUNNER_TEMP}/docs.yaml"
-          grep -Eq 'image: registry\.ide-newton\.ts\.net/lab/analysis:[0-9a-f]{40}$' "${RUNNER_TEMP}/analysis.yaml"
+          grep -Eq 'image: registry\.ide-newton\.ts\.net/lab/analysis@sha256:[0-9a-f]{64}$' "${RUNNER_TEMP}/analysis.yaml"

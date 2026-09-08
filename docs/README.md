@@ -13,6 +13,7 @@ Start here when deciding which documentation to trust.
 
 - Atlas code search: `atlas/README.md`
 - Deployment automation: `release-automation.md` (Kargo is the image-promotion authority)
+- Repository cleanup backlog: `repository-cleanup-todo.md`
 - Agents/Jangar: `agents/README.md`
 - Agents/Jangar source-read state: `agents/current-source-state.md`
 - Torghut: `torghut/README.md`
