@@ -372,10 +372,13 @@ test('the twelve owned clusters use only approved images from the rerunnable pla
     expect(plan).toContain(`preparationImage: ${entry.preparation}`)
     expect(plan).toContain(`majorImage: ${entry.major}`)
     if (entry.configWave) {
-      expect(image).toBe(entry.current)
       expect(source).toContain('className: rook-ceph-block')
       const kustomization = await readFile(resolve(root, entry.path.replace(/\/[^/]+$/, '/kustomization.yaml')), 'utf8')
-      expect(kustomization).not.toContain('postgres-upgrade-backup.yaml')
+      if (image === entry.current) {
+        expect(kustomization).not.toContain('postgres-upgrade-backup.yaml')
+      } else {
+        expect(kustomization).toContain('postgres-upgrade-backup.yaml')
+      }
       const backupPath = entry.path.replace(/\/[^/]+$/, '/postgres-upgrade-backup.yaml')
       expect(plan).toContain(`backupManifest: ${backupPath}`)
       const backup = await readFile(resolve(root, backupPath), 'utf8')
