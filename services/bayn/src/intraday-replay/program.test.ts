@@ -23,7 +23,7 @@ import {
   makeArchiveAvailabilityReceipts,
   verifyRecordedArchiveAvailability,
 } from '../market-data/intraday/availability'
-import { availabilityReader } from '../testing/archive-availability-fixture'
+import { availabilityReader, receiptHasSymbol } from '../testing/archive-availability-fixture'
 import { canonicalHashV1 } from '../hash'
 
 const protocol = Result.getOrThrow(decodeDefaultIntradayMomentumProtocol())
@@ -200,106 +200,175 @@ describe('intraday replay program', () => {
     expect(report.limitations.some((limitation) => limitation.includes('unproven availability assumption'))).toBe(true)
   })
 
-  test('retains verified row receipts and snapshot bindings for every strict-mode execution observation', async () => {
-    const archive = makeArchive({
-      snapshot: (request, phase, occurrence) => {
-        const snapshot = snapshotFor(request, phase === 'decision' ? { AAPL: 0.01 } : {})
-        const rows = Result.getOrThrow(persistIntradaySnapshotRows(snapshot))
-        const offsetBase =
-          BigInt(Date.parse(request.observedAt)) * 1_000n + BigInt(phase === 'decision' ? 0 : occurrence + 20)
-        const sequence = (records: readonly unknown[]) =>
-          records.map((row, index) => {
-            if (typeof row !== 'object' || row === null) throw new Error('archive fixture row must be an object')
-            return { ...row, source_offset: String(offsetBase + BigInt(index)) }
-          })
-        return Result.getOrThrow(
-          verifyIntradaySnapshot(request, {
-            ...rows,
-            quotes: sequence(rows.quotes),
-            trades: sequence(rows.trades),
-            archiveWatermarks: request.archiveWatermarks.map((watermark) => ({
-              source_topic: watermark.sourceTopic,
-              source_partition: watermark.sourcePartition,
-              inclusive_last_offset: watermark.inclusiveLastOffset,
-            })),
-          }),
-        ) as ArchiveVerifiedIntradayMarketSnapshot
-      },
-    })
-    const report = await Effect.runPromise(
-      runIntradayReplay(
-        replayInput([sessionDates[0]], {
-          archiveAvailability: ArchiveAvailabilityPolicy.RecordedReader,
-          assumptions: { ...defaultAssumptions, firstPollDelayMs: 3_000 },
-        }),
-        {
-          ...archive.service,
-          captureVersion: () =>
-            Effect.succeed(
-              Object.values(protocol.sourceTopics)
-                .toSorted()
-                .map((sourceTopic) => ({
-                  sourceTopic,
-                  sourcePartition: 0,
-                  inclusiveLastOffset: '10000000000000000',
-                })),
-            ),
-          recordedAvailability: (snapshot) =>
-            Effect.fromResult(
-              Result.gen(function* () {
-                const sourceCutoff = new Date(Date.parse(snapshot.manifest.observedAt) - 250).toISOString()
-                const completedAt = new Date(Date.parse(snapshot.manifest.observedAt) - 100).toISOString()
-                const previous = yield* verifyIntradaySnapshot(
-                  {
-                    ...snapshot.manifest,
-                    universe: snapshot.manifest.universe ?? snapshot.manifest.symbols,
-                    observedAt: sourceCutoff,
-                  },
-                  {
-                    ...Result.getOrThrow(persistIntradaySnapshotRows(snapshot)),
-                    archiveWatermarks: snapshot.manifest.archiveWatermarks.map((watermark) => ({
-                      source_topic: watermark.sourceTopic,
-                      source_partition: watermark.sourcePartition,
-                      inclusive_last_offset: watermark.inclusiveLastOffset,
-                    })),
-                  },
-                )
-                const receipts = yield* makeArchiveAvailabilityReceipts(
-                  previous as ArchiveVerifiedIntradayMarketSnapshot,
-                  availabilityReader,
-                  sourceCutoff,
-                  completedAt,
-                )
-                return yield* verifyRecordedArchiveAvailability(snapshot, availabilityReader.endpointHash, receipts)
-              }),
-            ).pipe(Effect.mapError(archiveAvailabilityOperationalError)),
+  for (const receiptMode of [
+    'complete',
+    'missing-candidate',
+    'late-candidate',
+    'all-candidates-unavailable',
+    'missing-benchmark',
+  ] as const) {
+    test(`retains independent candidates with ${receiptMode} availability evidence`, async () => {
+      const archive = makeArchive({
+        snapshot: (request, phase, occurrence) => {
+          const snapshot = snapshotFor(request, phase === 'decision' ? { AAPL: 0.02, AMZN: 0.01 } : {})
+          const rows = Result.getOrThrow(persistIntradaySnapshotRows(snapshot))
+          const offsetBase =
+            BigInt(Date.parse(request.observedAt)) * 1_000n + BigInt(phase === 'decision' ? 0 : occurrence + 20)
+          const sequence = (records: readonly unknown[]) =>
+            records.map((row, index) => {
+              if (typeof row !== 'object' || row === null) throw new Error('archive fixture row must be an object')
+              return { ...row, source_offset: String(offsetBase + BigInt(index)) }
+            })
+          return Result.getOrThrow(
+            verifyIntradaySnapshot(request, {
+              ...rows,
+              quotes: sequence(rows.quotes),
+              trades: sequence(rows.trades),
+              archiveWatermarks: request.archiveWatermarks.map((watermark) => ({
+                source_topic: watermark.sourceTopic,
+                source_partition: watermark.sourcePartition,
+                inclusive_last_offset: watermark.inclusiveLastOffset,
+              })),
+            }),
+          ) as ArchiveVerifiedIntradayMarketSnapshot
         },
-        finalizedNow,
-      ),
-    )
-    expect(
-      report.sessions[0]?.observations.filter((observation) => observation.kind === 'unavailable').slice(0, 3),
-    ).toEqual([])
-    expect({ status: report.sessions[0]?.status, reason: report.sessions[0]?.reason }).toEqual({
-      status: 'COMPLETE',
-      reason: 'entry executed and position flattened',
-    })
-    expect(report.sessions[0]?.fills.length).toBe(2)
-    expect(report.availability.status).toBe('OBSERVED_ROWS_ONLY')
-    const receiptHashes = new Set(report.availability.receipts.map((receipt) => receipt.receiptHash))
-    expect(receiptHashes.size).toBe(report.availability.receipts.length)
-    expect(receiptHashes.size).toBeGreaterThan(0)
-    for (const observation of report.sessions.flatMap((session) => session.observations)) {
-      if (observation.kind !== 'snapshot') continue
-      const proof = report.availability.snapshots.find(
-        ({ snapshotId }) => snapshotId === observation.manifest.snapshotId,
+      })
+      const report = await Effect.runPromise(
+        runIntradayReplay(
+          replayInput([sessionDates[0]], {
+            archiveAvailability: ArchiveAvailabilityPolicy.RecordedReader,
+            assumptions: { ...defaultAssumptions, firstPollDelayMs: 3_000 },
+            ...(receiptMode === 'all-candidates-unavailable' || receiptMode === 'missing-benchmark'
+              ? { calendar: [{ date: sessionDates[0], open: '09:30', close: '11:31' }] }
+              : {}),
+          }),
+          {
+            ...archive.service,
+            captureVersion: () =>
+              Effect.succeed(
+                Object.values(protocol.sourceTopics)
+                  .toSorted()
+                  .map((sourceTopic) => ({
+                    sourceTopic,
+                    sourcePartition: 0,
+                    inclusiveLastOffset: '10000000000000000',
+                  })),
+              ),
+            recordedAvailability: (snapshot) =>
+              Effect.fromResult(
+                Result.gen(function* () {
+                  const sourceCutoff = new Date(Date.parse(snapshot.manifest.observedAt) - 250).toISOString()
+                  const completedAt = new Date(Date.parse(snapshot.manifest.observedAt) - 100).toISOString()
+                  const previous = yield* verifyIntradaySnapshot(
+                    {
+                      ...snapshot.manifest,
+                      universe: snapshot.manifest.universe ?? snapshot.manifest.symbols,
+                      observedAt: sourceCutoff,
+                    },
+                    {
+                      ...Result.getOrThrow(persistIntradaySnapshotRows(snapshot)),
+                      archiveWatermarks: snapshot.manifest.archiveWatermarks.map((watermark) => ({
+                        source_topic: watermark.sourceTopic,
+                        source_partition: watermark.sourcePartition,
+                        inclusive_last_offset: watermark.inclusiveLastOffset,
+                      })),
+                    },
+                  )
+                  const receipts = yield* makeArchiveAvailabilityReceipts(
+                    previous as ArchiveVerifiedIntradayMarketSnapshot,
+                    availabilityReader,
+                    sourceCutoff,
+                    completedAt,
+                  )
+                  const observedReceipts =
+                    snapshot.manifest.purpose !== undefined || receiptMode === 'complete'
+                      ? receipts
+                      : receipts.flatMap((receipt) => {
+                          if (receiptMode === 'all-candidates-unavailable')
+                            return receiptHasSymbol(receipt, 'SPY') ? [receipt] : []
+                          if (receiptMode === 'missing-benchmark')
+                            return receiptHasSymbol(receipt, 'SPY') ? [] : [receipt]
+                          if (!receiptHasSymbol(receipt, 'AAPL')) return [receipt]
+                          if (receiptMode === 'missing-candidate') return []
+                          const { receiptHash: _hash, ...material } = receipt
+                          const delayed = {
+                            ...material,
+                            availableAt: new Date(Date.parse(snapshot.manifest.observedAt) + 500).toISOString(),
+                          }
+                          return [{ ...delayed, receiptHash: canonicalHashV1(delayed) }]
+                        })
+                  return yield* verifyRecordedArchiveAvailability(
+                    snapshot,
+                    availabilityReader.endpointHash,
+                    observedReceipts,
+                  )
+                }),
+              ).pipe(Effect.mapError(archiveAvailabilityOperationalError)),
+          },
+          finalizedNow,
+        ),
       )
-      expect(proof?.observedAt).toBe(observation.manifest.observedAt)
-      expect(proof?.receiptHashes.every((receiptHash) => receiptHashes.has(receiptHash))).toBe(true)
-    }
-    const { reportHash, ...material } = report
-    expect(reportHash).toBe(canonicalHashV1(material))
-  })
+      if (receiptMode === 'all-candidates-unavailable' || receiptMode === 'missing-benchmark') {
+        expect(report.sessions[0]?.status).toBe('INCOMPLETE')
+        expect(report.sessions[0]?.orders).toEqual([])
+        expect(report.sessions[0]?.fills).toEqual([])
+        expect(report.totals.netRealizedPnlAfterCostsMicros).toBeNull()
+        const observations = report.sessions[0]?.observations ?? []
+        if (receiptMode === 'all-candidates-unavailable') {
+          const decisions = observations.filter((item) => item.kind === 'snapshot' && item.purpose === 'decision')
+          expect(decisions.length).toBeGreaterThan(0)
+          for (const observation of decisions) {
+            if (observation.kind !== 'snapshot') throw new Error('expected snapshot')
+            expect(observation.decision?.excludedCandidates?.map(({ symbol }) => symbol)).toEqual([
+              ...protocol.candidateSymbols,
+            ])
+            expect(observation.decision?.signals).toEqual([])
+          }
+        } else {
+          expect(observations.length).toBeGreaterThan(0)
+          expect(observations.every((item) => item.kind === 'unavailable')).toBe(true)
+        }
+        return
+      }
+      expect(
+        report.sessions[0]?.observations.filter((observation) => observation.kind === 'unavailable').slice(0, 3),
+      ).toEqual([])
+      expect({ status: report.sessions[0]?.status, reason: report.sessions[0]?.reason }).toEqual({
+        status: 'COMPLETE',
+        reason: 'entry executed and position flattened',
+      })
+      expect(report.sessions[0]?.fills.length).toBe(2)
+      const expectedSymbol = receiptMode === 'complete' ? 'AAPL' : 'AMZN'
+      expect(report.sessions[0]?.fills.map(({ symbol }) => symbol)).toEqual([expectedSymbol, expectedSymbol])
+      if (receiptMode !== 'complete') {
+        const observation = report.sessions[0]?.observations.find(
+          (item) => item.kind === 'snapshot' && item.purpose === 'decision',
+        )
+        if (observation?.kind !== 'snapshot') throw new Error('expected a decision snapshot')
+        expect(observation.decision?.targetWeights['AAPL']).toBe(0)
+        expect(observation.decision?.signals.some(({ symbol }) => symbol === 'AAPL')).toBe(false)
+        expect(observation.decision?.excludedCandidates?.some(({ symbol }) => symbol === 'AAPL')).toBe(true)
+        const availabilityProof = report.availability.snapshots.find(
+          ({ snapshotId }) => snapshotId === observation.manifest.snapshotId,
+        )
+        expect(availabilityProof?.candidateExclusions?.map(({ symbol }) => symbol)).toEqual(['AAPL'])
+      }
+      expect(report.availability.status).toBe('OBSERVED_ROWS_ONLY')
+      const receiptHashes = new Set(report.availability.receipts.map((receipt) => receipt.receiptHash))
+      expect(receiptHashes.size).toBe(report.availability.receipts.length)
+      expect(receiptHashes.size).toBeGreaterThan(0)
+      for (const observation of report.sessions.flatMap((session) => session.observations)) {
+        if (observation.kind !== 'snapshot') continue
+        const proof = report.availability.snapshots.find(
+          ({ snapshotId }) => snapshotId === observation.manifest.snapshotId,
+        )
+        expect(proof?.observedAt).toBe(observation.manifest.observedAt)
+        expect(proof?.receiptHashes.every((receiptHash) => receiptHashes.has(receiptHash))).toBe(true)
+      }
+      const { reportHash, ...material } = report
+      expect(reportHash).toBe(canonicalHashV1(material))
+    })
+  }
 
   test('does not trade source-received rows lacking a completed reader observation before replay time', async () => {
     const archive = makeArchive({ snapshot: entryAndCloseSnapshot })
