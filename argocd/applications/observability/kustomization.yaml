@@ -173,3 +173,15 @@ patches:
           name: alertmanager-fallback-config
           secret:
             secretName: observability-alertmanager-email
+  - path: tempo-ingester-preserve-buffers.patch.yaml
+    target:
+      group: apps
+      version: v1
+      kind: StatefulSet
+      name: observability-tempo-ingester
+  - path: mimir-kafka-preserve-buffer.patch.yaml
+    target:
+      group: apps
+      version: v1
+      kind: StatefulSet
+      name: observability-mimir-kafka
