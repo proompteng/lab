@@ -116,8 +116,13 @@ digest-pinned guest image.
 - Resume: any authenticated file, terminal, preview, lifecycle, or Codex action sets the desired state to `Running` and
   waits for observed guest readiness before continuing.
 - Delete: the finalizer removes the Pod, bootstrap Secret, terminal capabilities, and PVC before removing the CR.
-- Expiry: four hours after original creation, the controller performs the same finalizer-backed deletion regardless of
-  activity.
+- Retention: workspaces remain until their owner explicitly deletes the agent. Sleeping, elapsed creation deadlines,
+  and controller releases never delete the CR or PVC. The legacy CR `expiresAt` field does not control retention;
+  the public API returns an empty expiry for retained workspaces.
+
+Admission remains bounded to one workspace per GitHub owner and six workspaces installation-wide, backed by the
+namespace ResourceQuota. Sleeping workspaces continue to occupy their storage slot. Capacity exhaustion returns an
+explicit retryable response; the controller never evicts another owner's workspace to admit a new one.
 
 Exact failure reasons are published in CR status. Do not infer success from a created Pod alone.
 
@@ -134,11 +139,11 @@ Exact failure reasons are published in CR status. Do not infer success from a cr
    digest/build metadata to `kargo/tengri`, and pushes that branch without a pull request. The Argo Applications track
    the branch and wait for `Synced`/`Healthy`. No generated promotion PR, release branch, or manifest digest bump is part
    of this flow.
-4. Let Argo reconcile. The controller updates every existing `MicroVM.spec.image` to the promoted Nanoagent digest.
-   Sleeping agents retain their CR and PVC and use that digest when resumed. Running agents publish a truthful
-   `GuestImageUpdate` booting condition, revoke their old terminal and preview capabilities, and replace only their
-   owned Firecracker Pod. The CR and PVC are never deleted by this migration. Verify the controller Deployment,
-   Service endpoints, `/livez`, `/readyz`, unchanged PVC identities, and unchanged node scheduling.
+4. Let Argo reconcile. Running guests keep their image, processes and workspace during a controller release.
+   Sleeping agents retain their CR and PVC and adopt the current guest image before starting their next Pod.
+   An existing running guest receives the update at its next sleep/resume boundary. Verify the controller Deployment,
+   Service endpoints, `/livez`, `/readyz`, unchanged running guest Pod and PVC identities, and unchanged node scheduling.
+   A new canary must use the promoted digest; an intentionally retained running guest may still use its prior digest.
 5. Run the bounded Firecracker acceptance path: create one authenticated agent, prove `runtimeClassName: kata-fc`,
    guest kernel isolation, fresh-image pull, interactive PTY, persistent file round trip, Codex event, and localhost
    preview WebSocket/HMR.
@@ -174,7 +179,7 @@ Tengri supports only `runtime.proompteng.ai/storage-layout=home-workspace-v2`:
 
 Promote or roll back the controller and Nanoagent digests together through Kargo. Do not mix a controller and guest
 image from different releases. A controller predating `home-workspace-v2` cannot safely resume a v2 guest. Before
-re-promoting a Freight pair predating v2, let every v2 agent expire or delete it through Tengri, then require this
+re-promoting a Freight pair predating v2, have each owner explicitly delete their v2 agent through Tengri, then require this
 zero-result check:
 
 ```bash
@@ -186,10 +191,10 @@ kubectl --context galactic-lan -n tengri get microvms.runtime.proompteng.ai -o j
 
 The Kargo `proompteng` Stage copies the source commit and full image/build metadata to `kargo/proompteng` and pushes it
 without a pull request. The Argo Application tracks that branch. The repository Kustomization on `main` remains the
-reviewed configuration baseline. The production Deployment has one replica with `maxSurge: 0` and `maxUnavailable: 1`,
-so Argo replaces the existing Pod without a surge Pod. A short interval with no ready web Pod is expected; an open
-desktop can show a reconnecting or degraded state until the replacement Pod passes its startup and readiness probes. The
-Firecracker guest Pod and its PVC continue running during this web-only rollout.
+reviewed configuration baseline. The production Deployment has one replica with `maxSurge: 1` and `maxUnavailable: 0`.
+Kubernetes keeps the existing ready Pod until its replacement passes readiness. If capacity prevents the surge Pod
+from scheduling, the rollout waits with the existing Pod serving traffic. Existing streams reconnect when their web
+Pod terminates. The Firecracker guest Pod and its PVC continue running during this web-only rollout.
 
 After Kargo promotes a Freight, require all of the following before calling the rollout complete:
 

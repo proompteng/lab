@@ -67,6 +67,10 @@ spec:
         name: cnpg-default-monitoring
     disableDefaultQueries: false
     enablePodMonitor: true
+  backup:
+    volumeSnapshot:
+      className: rook-ceph-block
+      snapshotOwnerReference: backup
   postgresql:
     parameters:
       archive_mode: "on"

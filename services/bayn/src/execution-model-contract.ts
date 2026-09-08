@@ -10,6 +10,7 @@ const BasisPoints = NonNegativeFinite.check(Schema.isLessThanOrEqualTo(10_000))
 const PartsPerMillion = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 1_000_000 }))
 const SubmissionCutoffLeadMinutes = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 120 }))
 const IntradayOrderOffsetMs = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 86_400_000 }))
+const SessionBoundaryOffsetMs = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 86_400_000 }))
 export const usEquityRegularSessionDurationMs = 6.5 * 60 * 60 * 1_000
 
 const ExecutionModelCommon = {
@@ -122,8 +123,8 @@ const ExecutionModelV5Base = Schema.Struct({
     planningBrokerStateReference: Schema.Literal('reconciled-pre-plan-broker-state'),
     fillPriceReference: Schema.Literal('limit-or-better'),
     buyingPowerPolicy: Schema.Literal('pre-submit-cash-without-sell-proceeds'),
-    warmupAfterOpenMs: IntradayOrderOffsetMs,
-    submissionCutoffBeforeCloseMs: IntradayOrderOffsetMs,
+    warmupAfterOpenMs: SessionBoundaryOffsetMs,
+    submissionCutoffBeforeCloseMs: SessionBoundaryOffsetMs,
   }),
 })
 

@@ -340,6 +340,15 @@ func (manager *terminalManager) create(creationID, cwd string, columns, rows uin
 		processExited:          make(chan struct{}),
 		outputDrained:          make(chan struct{}),
 	}
+	preparedTerminal, err := prepareTerminal(terminal)
+	if err != nil {
+		session.releaseProcessIdentity()
+		_ = terminal.Close()
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		return terminalSessionView{}, false, fmt.Errorf("set terminal nonblocking: %w", err)
+	}
+	session.terminal = preparedTerminal
 	manager.sessions[id] = session
 	go manager.readOutput(session)
 	go manager.waitForExit(session)
@@ -397,7 +406,7 @@ func (manager *terminalManager) terminateSession(session *terminalSession, reaso
 		connection.close(websocket.StatusNormalClosure, reason)
 	}
 	manager.cleanupProcessSession(session)
-	_ = session.terminal.Close()
+	session.closeTerminal()
 }
 
 func (manager *terminalManager) cleanupProcessSession(session *terminalSession) <-chan struct{} {
@@ -523,8 +532,8 @@ func (manager *terminalManager) waitForExit(session *terminalSession) {
 			close(session.processExited)
 			manager.beginProcessExit(session)
 			<-manager.cleanupProcessSession(session)
-			_ = session.terminal.Close()
 			manager.drainTerminalOutput(session)
+			session.closeTerminal()
 			err = session.command.Wait()
 			manager.finishExitedSession(session, terminalExitPayload(err))
 			return
@@ -541,7 +550,7 @@ func (manager *terminalManager) drainTerminalOutput(session *terminalSession) {
 	select {
 	case <-session.outputDrained:
 	case <-time.After(2 * time.Second):
-		_ = session.terminal.Close()
+		session.closeTerminal()
 		select {
 		case <-session.outputDrained:
 		case <-time.After(250 * time.Millisecond):
@@ -580,7 +589,7 @@ func (manager *terminalManager) finishExitedSession(session *terminalSession, ex
 	session.mu.Lock()
 	if session.closed {
 		session.mu.Unlock()
-		_ = session.terminal.Close()
+		session.closeTerminal()
 		return
 	}
 	session.closing = true
@@ -592,7 +601,7 @@ func (manager *terminalManager) finishExitedSession(session *terminalSession, ex
 	session.connections = make(map[string]*terminalConnection)
 	session.mu.Unlock()
 	manager.cleanupProcessSession(session)
-	_ = session.terminal.Close()
+	session.closeTerminal()
 	for _, connection := range connections {
 		connection.closeAfter(
 			websocket.StatusNormalClosure,
@@ -785,8 +794,10 @@ func (session *terminalSession) input(payload []byte) {
 	session.lastActivityAt = time.Now().UTC()
 	terminal := session.terminal
 	session.mu.Unlock()
-	session.ioMu.Lock()
-	defer session.ioMu.Unlock()
+	// Keep terminal writes outside ioMu so closeTerminal can interrupt a
+	// blocked PTY write during session shutdown. os.File permits concurrent
+	// use of Write and Close; the control operations below still serialize
+	// their descriptor access with Close.
 	_, _ = terminal.Write(payload)
 }
 
@@ -802,7 +813,7 @@ func (session *terminalSession) resize(columns, rows uint16) {
 	session.mu.Unlock()
 	session.ioMu.Lock()
 	defer session.ioMu.Unlock()
-	_ = pty.Setsize(terminal, &pty.Winsize{Cols: columns, Rows: rows})
+	_ = setTerminalSize(terminal, columns, rows)
 }
 
 func (session *terminalSession) signal(name string) error {
@@ -819,11 +830,76 @@ func (session *terminalSession) signal(name string) error {
 	terminal := session.terminal
 	session.lastActivityAt = time.Now().UTC()
 	session.mu.Unlock()
+	session.ioMu.Lock()
+	defer session.ioMu.Unlock()
 	err = signalTerminalForeground(terminal, process.Pid, signal, terminalForegroundProcessGroup, syscall.Kill)
 	if err != nil && !errors.Is(err, syscall.ESRCH) {
 		if fallbackErr := process.Signal(signal); fallbackErr != nil {
 			return fmt.Errorf("signal terminal process: %w", fallbackErr)
 		}
+	}
+	return nil
+}
+
+func (session *terminalSession) closeTerminal() {
+	session.ioMu.Lock()
+	defer session.ioMu.Unlock()
+	_ = session.terminal.Close()
+}
+
+func prepareTerminal(terminal *os.File) (*os.File, error) {
+	if terminal == nil {
+		return nil, errors.New("terminal is nil")
+	}
+	connection, err := terminal.SyscallConn()
+	if err != nil {
+		return nil, fmt.Errorf("open terminal syscall connection: %w", err)
+	}
+	var duplicateFD int
+	var controlErr error
+	if err := connection.Control(func(fd uintptr) {
+		duplicateFD, controlErr = unix.FcntlInt(fd, unix.F_DUPFD_CLOEXEC, 0)
+	}); err != nil {
+		return nil, fmt.Errorf("control terminal descriptor: %w", err)
+	}
+	if controlErr != nil {
+		return nil, fmt.Errorf("duplicate terminal descriptor: %w", controlErr)
+	}
+	if err := unix.SetNonblock(duplicateFD, true); err != nil {
+		_ = unix.Close(duplicateFD)
+		return nil, fmt.Errorf("set terminal descriptor nonblocking: %w", err)
+	}
+	prepared := os.NewFile(uintptr(duplicateFD), terminal.Name())
+	if prepared == nil {
+		_ = unix.Close(duplicateFD)
+		return nil, errors.New("wrap terminal descriptor")
+	}
+	if err := terminal.Close(); err != nil {
+		_ = prepared.Close()
+		return nil, fmt.Errorf("close original terminal descriptor: %w", err)
+	}
+	return prepared, nil
+}
+
+func setTerminalSize(terminal *os.File, columns, rows uint16) error {
+	if terminal == nil {
+		return errors.New("terminal is nil")
+	}
+	connection, err := terminal.SyscallConn()
+	if err != nil {
+		return fmt.Errorf("open terminal syscall connection: %w", err)
+	}
+	var controlErr error
+	if err := connection.Control(func(fd uintptr) {
+		controlErr = unix.IoctlSetWinsize(int(fd), unix.TIOCSWINSZ, &unix.Winsize{
+			Row: rows,
+			Col: columns,
+		})
+	}); err != nil {
+		return fmt.Errorf("control terminal descriptor: %w", err)
+	}
+	if controlErr != nil {
+		return fmt.Errorf("set terminal size: %w", controlErr)
 	}
 	return nil
 }
@@ -847,9 +923,22 @@ func signalTerminalForeground(
 }
 
 func terminalForegroundProcessGroup(terminal *os.File) (int, error) {
-	processGroup, err := unix.IoctlGetInt(int(terminal.Fd()), unix.TIOCGPGRP)
+	if terminal == nil {
+		return 0, errors.New("terminal is nil")
+	}
+	connection, err := terminal.SyscallConn()
 	if err != nil {
-		return 0, fmt.Errorf("read terminal foreground process group: %w", err)
+		return 0, fmt.Errorf("open terminal syscall connection: %w", err)
+	}
+	var processGroup int
+	var controlErr error
+	if err := connection.Control(func(fd uintptr) {
+		processGroup, controlErr = unix.IoctlGetInt(int(fd), unix.TIOCGPGRP)
+	}); err != nil {
+		return 0, fmt.Errorf("control terminal descriptor: %w", err)
+	}
+	if controlErr != nil {
+		return 0, fmt.Errorf("read terminal foreground process group: %w", controlErr)
 	}
 	if processGroup <= 0 {
 		return 0, errors.New("terminal has no foreground process group")
