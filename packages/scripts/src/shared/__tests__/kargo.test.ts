@@ -155,6 +155,8 @@ const expected = {
       'apps/app',
       'packages/design',
       'nix/images/app.nix',
+      'nix/check-app-dependency-closure.sh',
+      '.github/workflows/product-nix-images.yml',
       ...productImageCommonInputs,
       'argocd/applications/app',
     ],

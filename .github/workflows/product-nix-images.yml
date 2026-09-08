@@ -17,6 +17,8 @@ on:
       - 'packages/design/**'
       - 'services/tengri/proto/**'
       - 'nix/images/app.nix'
+      - 'nix/check-app-dependency-closure.sh'
+      - '.github/workflows/product-nix-images.yml'
       - 'nix/images/docs.nix'
       - 'nix/images/proompteng.nix'
       - 'nix/images/synthesis.nix'
@@ -48,6 +50,8 @@ on:
       - 'packages/design/**'
       - 'services/tengri/proto/**'
       - 'nix/images/app.nix'
+      - 'nix/check-app-dependency-closure.sh'
+      - '.github/workflows/product-nix-images.yml'
       - 'nix/images/docs.nix'
       - 'nix/images/proompteng.nix'
       - 'nix/images/synthesis.nix'
@@ -137,6 +141,8 @@ jobs:
               - 'apps/app/**'
               - 'packages/design/**'
               - 'nix/images/app.nix'
+              - 'nix/check-app-dependency-closure.sh'
+              - '.github/workflows/product-nix-images.yml'
               - 'nix/images/bun-workspace-service.nix'
               - 'nix/packages.nix'
               - 'nix/cache-push.sh'
@@ -208,8 +214,57 @@ jobs:
       latest: true
     secrets: inherit
 
-  build-app:
+  verify-app-dependency-closure:
+    name: Verify App dependency closure (${{ matrix.arch }})
     needs: changes
+    if: needs.changes.outputs.app == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: arc-amd64
+            system: x86_64-linux
+          - arch: arm64
+            runner: arc-arm64
+            system: aarch64-linux
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    env:
+      ATTIC_CACHE_ENDPOINT: http://attic.attic.svc.cluster.local
+      ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}
+      NIX_APP_FOD_TIMEOUT: 10m
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Require Attic public key
+        run: test -n "${ATTIC_PUBLIC_KEY}"
+
+      - name: Set up Nix toolchain
+        uses: ./.github/actions/setup-nix-toolchain
+        with:
+          github-token: ${{ github.token }}
+          require-preinstalled: 'true'
+          install-ci-toolchain: 'false'
+          extra-nix-config: |
+            experimental-features = nix-command flakes
+            substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
+            extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
+            fallback = true
+            connect-timeout = 10
+            stalled-download-timeout = 60
+            download-attempts = 1
+
+      - name: Recompute App fixed-output dependency closure
+        env:
+          APP_SYSTEM: ${{ matrix.system }}
+        run: bash nix/check-app-dependency-closure.sh "${APP_SYSTEM}"
+
+  build-app:
+    needs:
+      - changes
+      - verify-app-dependency-closure
     if: needs.changes.outputs.app == 'true'
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:

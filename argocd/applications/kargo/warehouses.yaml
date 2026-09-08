@@ -74,6 +74,8 @@ spec:
           - apps/app
           - packages/design
           - nix/images/app.nix
+          - nix/check-app-dependency-closure.sh
+          - .github/workflows/product-nix-images.yml
           - nix/images/bun-workspace-service.nix
           - nix/packages.nix
           - nix/cache-push.sh
