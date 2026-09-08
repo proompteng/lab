@@ -176,3 +176,17 @@ diff -u /tmp/tengri-crd.yaml argocd/applications/tengri/crd.yaml
 
 Runtime configuration is documented in [`../../docs/tengri/operations.md`](../../docs/tengri/operations.md). The
 protobuf contract is [`proto/proompteng/runtime/v1/microvm.proto`](proto/proompteng/runtime/v1/microvm.proto).
+
+## Editor sessions
+
+`IssueEditorSession(agent_id, window_id)` authorizes the owner, starts the guest workbench, and returns an ordinary
+preview launch ticket for virtual port 13337. Its DNS-safe origin derives from owner, agent, CR UID, and desktop window
+identity, so reload restores the native workspace and backups while another owner, incarnation, or window gets another
+origin. Session cookies expire after 24 hours. The one-use launch token is also the revocation generation: a delayed
+cleanup cannot revoke a replacement session on the same origin. Generic preview revocation retains its existing behavior.
+
+The gateway injects the desktop integration script only into the workbench document. Native Markdown and extension
+webviews retain their own HTML and CSP; editor frame ancestors allow both the issued origin and desktop origin.
+Packaged assets under an exact upstream revision are compressed and privately cached. Workspace resources, HTML,
+tickets, and integration scripts remain uncached. The private extension bridge binds its session query to the
+cookie-authenticated preview origin. Ordinary preview sessions cannot select either reserved editor port.

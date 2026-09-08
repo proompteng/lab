@@ -9,7 +9,9 @@ use chrono::{DateTime, Utc};
 use hmac::{Hmac, Mac};
 use http::Uri;
 use rand::distr::{Alphanumeric, SampleString};
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
+
+use crate::guest::EDITOR_PORT;
 use tonic::Status;
 
 const TICKET_LIFETIME: Duration = Duration::from_secs(30);
@@ -26,6 +28,7 @@ pub enum TicketScope {
         terminal_id: String,
     },
     Preview {
+        incarnation: Option<String>,
         session_id: String,
         port: u16,
         initial_path: String,
@@ -43,6 +46,8 @@ pub struct TicketRecord {
 
 #[derive(Clone, Debug)]
 pub struct PreviewSessionRecord {
+    pub incarnation: Option<String>,
+    pub revocation_token: String,
     pub id: String,
     pub token: String,
     pub owner_hash: String,
@@ -123,6 +128,7 @@ impl TicketStore {
             owner_hash,
             agent_id,
             TicketScope::Preview {
+                incarnation: None,
                 session_id: session_id.clone(),
                 port,
                 initial_path: initial_path.to_owned(),
@@ -133,6 +139,62 @@ impl TicketStore {
         )?;
         issued.id = session_id;
         Ok(issued)
+    }
+
+    pub fn issue_editor(
+        &self,
+        owner_hash: &str,
+        agent_id: &str,
+        incarnation: &str,
+        window_id: &str,
+    ) -> Result<IssuedTicket, Status> {
+        let identity = format!("{owner_hash}\0{agent_id}\0{incarnation}\0{window_id}");
+        let session_id = format!("{:x}", Sha256::digest(identity.as_bytes()))
+            [..PREVIEW_SESSION_LABEL_LENGTH]
+            .to_owned();
+        let mut issued = self.issue(
+            owner_hash,
+            agent_id,
+            TicketScope::Preview {
+                incarnation: Some(incarnation.to_owned()),
+                session_id: session_id.clone(),
+                port: EDITOR_PORT,
+                initial_path: "/_tengri/editor/open".to_owned(),
+                initial_fragment: String::new(),
+            },
+            "/v1/preview/open",
+            Some('#'),
+        )?;
+        issued.id = session_id;
+        Ok(issued)
+    }
+
+    pub fn revoke_preview_lease(
+        &self,
+        owner_hash: &str,
+        agent_id: &str,
+        session_id: &str,
+        revocation_token: &str,
+    ) -> Result<(), Status> {
+        self.tickets
+            .lock()
+            .map_err(|_| Status::internal("ticket state is unavailable"))?
+            .retain(|token, ticket| {
+                !(token == revocation_token
+                    && ticket.owner_hash == owner_hash
+                    && ticket.agent_id == agent_id
+                    && matches!(&ticket.scope, TicketScope::Preview { session_id: id, .. } if id == session_id))
+            });
+        self.previews
+            .lock()
+            .map_err(|_| Status::internal("preview state is unavailable"))?
+            .retain(|id, session| {
+                !(id == session_id
+                    && session.owner_hash == owner_hash
+                    && session.agent_id == agent_id
+                    && session.revocation_token == revocation_token)
+            });
+        Ok(())
     }
 
     pub fn consume(&self, token: &str) -> Result<TicketRecord, Status> {
@@ -161,6 +223,7 @@ impl TicketStore {
             Status::unauthenticated("ticket is invalid, expired, or already used")
         })?;
         let TicketScope::Preview {
+            incarnation,
             session_id,
             port,
             initial_path,
@@ -176,12 +239,13 @@ impl TicketStore {
             .lock()
             .map_err(|_| Status::internal("preview state is unavailable"))?;
         previews.retain(|_, active| active.expires_at > now);
-        if previews.len() >= PREVIEW_SESSION_LIMIT
-            || previews
-                .values()
-                .filter(|active| active.agent_id == ticket.agent_id)
-                .count()
-                >= PREVIEW_SESSION_LIMIT_PER_AGENT
+        if !previews.contains_key(&session_id)
+            && (previews.len() >= PREVIEW_SESSION_LIMIT
+                || previews
+                    .values()
+                    .filter(|active| active.agent_id == ticket.agent_id)
+                    .count()
+                    >= PREVIEW_SESSION_LIMIT_PER_AGENT)
         {
             tickets.remove(token);
             return Err(Status::resource_exhausted(
@@ -190,6 +254,8 @@ impl TicketStore {
         }
         tickets.remove(token);
         let session = PreviewSessionRecord {
+            incarnation,
+            revocation_token: token.to_owned(),
             id: session_id,
             token: self.signed_token(),
             owner_hash: ticket.owner_hash,
@@ -197,7 +263,12 @@ impl TicketStore {
             port,
             initial_path,
             initial_fragment,
-            expires_at: SystemTime::now() + PREVIEW_SESSION_LIFETIME,
+            expires_at: SystemTime::now()
+                + if port == EDITOR_PORT {
+                    Duration::from_secs(24 * 60 * 60)
+                } else {
+                    PREVIEW_SESSION_LIFETIME
+                },
         };
         previews.insert(session.id.clone(), session.clone());
         Ok(session)
@@ -399,6 +470,68 @@ fn validate_public_url(public_url: &str) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn editor_origins_survive_reload_and_isolate_identity() {
+        let store = TicketStore::new("https://tengri.example".to_owned(), "s".repeat(32)).unwrap();
+        let owner = "a".repeat(64);
+        let other_owner = "b".repeat(64);
+        let issue = |owner: &str, agent: &str, incarnation: &str, window: &str| {
+            store
+                .issue_editor(owner, agent, incarnation, window)
+                .unwrap()
+        };
+        let first = issue(&owner, "agent", "incarnation", "window");
+        let replacement = issue(&owner, "agent", "incarnation", "window");
+        assert_eq!(first.id, replacement.id);
+        assert_ne!(first.token, replacement.token);
+        for other in [
+            issue(&other_owner, "agent", "incarnation", "window"),
+            issue(&owner, "other", "incarnation", "window"),
+            issue(&owner, "agent", "other", "window"),
+            issue(&owner, "agent", "incarnation", "other"),
+        ] {
+            assert_ne!(first.id, other.id);
+        }
+        let old_session = store.consume_preview(&first.token).unwrap();
+        let session = store.consume_preview(&replacement.token).unwrap();
+        assert!(
+            store
+                .preview_session(&session.id, &old_session.token)
+                .is_err()
+        );
+        store
+            .revoke_preview_lease(&owner, "agent", &first.id, &first.token)
+            .unwrap();
+        assert!(store.preview_session(&session.id, &session.token).is_ok());
+        store
+            .revoke_preview_lease(&other_owner, "agent", &session.id, &replacement.token)
+            .unwrap();
+        assert!(store.preview_session(&session.id, &session.token).is_ok());
+        store
+            .revoke_preview_lease(&owner, "agent", &session.id, &replacement.token)
+            .unwrap();
+        assert!(store.preview_session(&session.id, &session.token).is_err());
+    }
+
+    #[test]
+    fn editor_lease_revocation_binds_pending_ticket_scope() {
+        let store = TicketStore::new("https://tengri.example".to_owned(), "s".repeat(32)).unwrap();
+        let ticket = store
+            .issue_editor("owner", "agent", "incarnation", "window")
+            .unwrap();
+        store
+            .revoke_preview_lease("owner", "agent", "wrong-session", &ticket.token)
+            .unwrap();
+        assert!(store.consume_preview(&ticket.token).is_ok());
+        let ticket = store
+            .issue_editor("owner", "agent", "incarnation", "window")
+            .unwrap();
+        store
+            .revoke_preview_lease("owner", "agent", &ticket.id, &ticket.token)
+            .unwrap();
+        assert!(store.consume_preview(&ticket.token).is_err());
+    }
 
     #[test]
     fn tickets_are_single_use_and_scope_preserving() {

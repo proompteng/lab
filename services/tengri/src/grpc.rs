@@ -30,7 +30,10 @@ use crate::{
         MicroVMResources, MicroVMSpec,
     },
     gateway::PreviewOrigin,
-    guest::{GuestClient, GuestError, TerminalCreation as GuestTerminalCreation},
+    guest::{
+        EDITOR_BRIDGE_PORT, EDITOR_PORT, GuestClient, GuestError,
+        TerminalCreation as GuestTerminalCreation,
+    },
     metrics,
     pod::{SINGLE_MOUNT_STORAGE_LAYOUT, STORAGE_LAYOUT_ANNOTATION},
     tickets::TicketStore,
@@ -46,10 +49,10 @@ use proto::{
     CreateCodexThreadRequest, CreateDirectoryRequest, CreateTerminalRequest, DeleteAgentRequest,
     DeleteFileRequest, Empty, FileEntry, FileEvent, FileEventKind, GetAgentRequest,
     GetCodexAccountRequest, GetCodexLoginRequest, InterruptCodexTurnRequest,
-    IssuePreviewSessionRequest, IssueTerminalTicketRequest, ListAgentsRequest, ListAgentsResponse,
-    ListFilesRequest, ListFilesResponse, ListTerminalsRequest, ListTerminalsResponse,
-    MoveFileRequest, PreviewSession, ReadFileRequest, ReadFileResponse,
-    ResolveCodexApprovalRequest, ResumeAgentRequest, ResumeCodexThreadRequest,
+    IssueEditorSessionRequest, IssuePreviewSessionRequest, IssueTerminalTicketRequest,
+    ListAgentsRequest, ListAgentsResponse, ListFilesRequest, ListFilesResponse,
+    ListTerminalsRequest, ListTerminalsResponse, MoveFileRequest, PreviewSession, ReadFileRequest,
+    ReadFileResponse, ResolveCodexApprovalRequest, ResumeAgentRequest, ResumeCodexThreadRequest,
     RevokePreviewSessionRequest, SearchFilesRequest, SearchFilesResponse, SendCodexTurnRequest,
     SleepAgentRequest, StartCodexLoginRequest, SteerCodexTurnRequest, TerminalSession,
     TerminalTicket, TerminateTerminalRequest, WatchAgentRequest, WatchCodexEventsRequest,
@@ -983,6 +986,51 @@ impl MicroVmControlPlane for ControlPlane {
         Ok(Response::new(Box::pin(stream)))
     }
 
+    async fn issue_editor_session(
+        &self,
+        request: Request<IssueEditorSessionRequest>,
+    ) -> Result<Response<PreviewSession>, Status> {
+        let principal = self.authorize(&request, "IssueEditorSession").await?;
+        let request = request.into_inner();
+        if request.window_id.len() < 16
+            || request.window_id.len() > 128
+            || !request
+                .window_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+        {
+            return Err(Status::invalid_argument("invalid editor window identity"));
+        }
+        let agent = self.owned_agent(&principal, &request.agent_id).await?;
+        let incarnation = agent
+            .uid()
+            .ok_or_else(|| Status::unavailable("agent identity is unavailable"))?;
+        GuestClient::for_agent_incarnation(
+            self.client.clone(),
+            &self.namespace,
+            &request.agent_id,
+            Some(&incarnation),
+        )
+        .await
+        .map_err(map_guest_error)?
+        .open_editor()
+        .await
+        .map_err(map_guest_error)?;
+        let issued = self.tickets.issue_editor(
+            &principal.owner_hash,
+            &request.agent_id,
+            &incarnation,
+            &request.window_id,
+        )?;
+        let preview_origin = self.preview_origin.origin(&issued.id);
+        Ok(Response::new(PreviewSession {
+            id: issued.id,
+            launch_url: issued.url,
+            expires_at: issued.expires_at,
+            preview_origin,
+        }))
+    }
+
     async fn issue_preview_session(
         &self,
         request: Request<IssuePreviewSessionRequest>,
@@ -991,10 +1039,10 @@ impl MicroVmControlPlane for ControlPlane {
         let request = request.into_inner();
         let port = u16::try_from(request.port)
             .ok()
-            .filter(|port| *port >= 1024 && *port != 8080)
+            .filter(|port| *port >= 1024 && ![8080, EDITOR_PORT, EDITOR_BRIDGE_PORT].contains(port))
             .ok_or_else(|| {
                 Status::invalid_argument(
-                    "preview port must be between 1024 and 65535 and cannot be 8080",
+                    "preview port must be between 1024 and 65535 and cannot use a reserved guest port",
                 )
             })?;
         let path = validate_preview_path(&request.path)?;
@@ -1025,6 +1073,18 @@ impl MicroVmControlPlane for ControlPlane {
         let request = request.into_inner();
         validate_preview_session_id(&request.session_id)?;
         self.owned_agent(&principal, &request.agent_id).await?;
+        if request.revocation_token.len() > 256 {
+            return Err(Status::invalid_argument("invalid revocation token"));
+        }
+        if !request.revocation_token.is_empty() {
+            self.tickets.revoke_preview_lease(
+                &principal.owner_hash,
+                &request.agent_id,
+                &request.session_id,
+                &request.revocation_token,
+            )?;
+            return Ok(Response::new(Empty {}));
+        }
         self.tickets.revoke_preview(
             &principal.owner_hash,
             &request.agent_id,

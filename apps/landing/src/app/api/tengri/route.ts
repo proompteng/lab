@@ -11,6 +11,7 @@ import {
   interruptCodexTurn,
   isTengriControlPlaneConfigured,
   issuePreviewSession,
+  issueEditorSession,
   issueTerminalTicket,
   listAgents,
   listFiles,
@@ -182,8 +183,11 @@ export async function POST(request: Request) {
       case 'preview-session':
         result = await issuePreviewSession(identity.subject, action.agentId, action.port, action.path, action.fragment)
         break
+      case 'editor-session':
+        result = await issueEditorSession(identity.subject, action.agentId, action.windowId)
+        break
       case 'revoke-preview-session':
-        await revokePreviewSession(identity.subject, action.agentId, action.sessionId)
+        await revokePreviewSession(identity.subject, action.agentId, action.sessionId, action.revocationToken)
         result = null
         break
     }

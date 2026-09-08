@@ -1,6 +1,15 @@
 name: Tengri desktop browser
 
 on:
+  pull_request:
+    paths:
+      - 'apps/landing/**'
+      - 'services/nanoagent/**'
+      - 'services/tengri/**'
+      - 'packages/backend/**'
+      - 'packages/design/**'
+      - 'bun.lock'
+      - '.github/workflows/tengri.yaml'
   push:
     branches:
       - main
@@ -8,7 +17,8 @@ on:
       - 'apps/landing/**'
       - 'packages/backend/**'
       - 'packages/design/**'
-      - 'services/tengri/proto/**'
+      - 'services/nanoagent/**'
+      - 'services/tengri/**'
       - 'bun.lock'
       - '.github/workflows/tengri.yaml'
   workflow_dispatch:
@@ -44,8 +54,30 @@ jobs:
       - name: Install Chromium
         run: bunx playwright install --with-deps chromium
 
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: services/nanoagent/go.mod
+          cache-dependency-path: services/nanoagent/go.sum
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.90.0
+
+      - name: Install protobuf compiler
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends protobuf-compiler
+
       - name: Run Tengri desktop browser suite
         run: bun run --cwd apps/landing test:e2e
+
+      - name: Build desktop for VS Code acceptance
+        run: bun run --cwd apps/landing build
+
+      - name: Run real VS Code acceptance
+        env:
+          TENGRI_EDITOR_NEXT_MODE: start
+        run: bash services/nanoagent/test-vscode-browser.sh
 
       - name: Upload browser diagnostics
         if: ${{ failure() }}
@@ -55,5 +87,10 @@ jobs:
           path: |
             apps/landing/playwright-report
             apps/landing/test-results
+            /tmp/tengri-vscode.*/guest.log
+            /tmp/tengri-vscode.*/gateway.log
+            /tmp/tengri-vscode.*/desktop.log
+            /tmp/tengri-vscode.*/proxy.log
+            /tmp/tengri-vscode.*/home/.tengri/vscode/server.log
           if-no-files-found: ignore
           retention-days: 7

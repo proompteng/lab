@@ -39,6 +39,26 @@ let codexAccountRequestCancelled: (() => void) | null = null
 beforeAll(async () => {
   server = new grpc.Server()
   server.addService(descriptor.proompteng.runtime.v1.MicroVMControlPlane.service, {
+    issueEditorSession(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedMetadata = call.metadata
+      receivedRequest = call.request
+      callback(null, {
+        id: 'a'.repeat(24),
+        launchUrl: 'https://tengri.example/v1/preview/open#lease',
+        previewOrigin: `https://tengri-${'a'.repeat(24)}.example`,
+        expiresAt: '2026-09-09T00:00:00Z',
+      })
+    },
+    revokePreviewSession(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedRequest = call.request
+      callback(null, {})
+    },
     createAgent(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
@@ -288,6 +308,16 @@ afterAll(async () => {
 })
 
 describe('Tengri gRPC BFF transport', () => {
+  test('binds real editor sessions to the window and revokes only their issued lease', async () => {
+    const { issueEditorSession, revokePreviewSession } = await import('./grpc')
+    const session = await issueEditorSession('github:42', 'agent-test', 'desktop-stable-code-window')
+    expect(receivedRequest).toEqual({ agentId: 'agent-test', windowId: 'desktop-stable-code-window' })
+    expect(session.id).toBe('a'.repeat(24))
+    expect(metadataValue('x-tengri-subject')).toBe('github:42')
+    await revokePreviewSession('github:42', 'agent-test', session.id, 'lease')
+    expect(receivedRequest).toEqual({ agentId: 'agent-test', sessionId: session.id, revocationToken: 'lease' })
+  })
+
   test('projects the public request and signs the GitHub subject for the Rust service', async () => {
     const { createAgent } = await import('./grpc')
     const agent = await createAgent('github:42', 'Tengri')
