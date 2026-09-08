@@ -46,13 +46,17 @@ claims, the maintenance sequence is:
    members, all six OSDs are up/in, and every PG is active and clean. Confirm
    generation 3 is reconciled and both prior generations remain retained.
 2. Verify the exact Pod UID, owner, node, PVCs, RBD image names, readiness, and
-   applicable PodDisruptionBudgets. Record the node's scheduling state.
-3. Temporarily cordon that node. Evict the selected Pod through the Kubernetes
+   applicable PodDisruptionBudgets. Record the node's scheduling state and
+   refuse a node already cordoned or owned by another maintenance operation.
+3. Temporarily cordon that node with a unique ownership annotation and an
+   atomic resource-version check. Evict the selected Pod through the Kubernetes
    eviction API with its UID precondition. Preserve PDB enforcement.
 4. Wait for the old Pod UID to disappear **and** each corresponding RBD device
    to be unmapped on that node. A deleted Pod or detached VolumeAttachment alone
    does not establish that the old kernel client was removed.
-5. Restore node scheduling. Verify a replacement belonging to the same
+5. Restore the recorded scheduling state only while the ownership annotation
+   still matches this operation. Uncordon only a node this operation cordoned;
+   preserve unrelated maintenance state. Verify a replacement belonging to the same
    controller uses the same claims, becomes Ready, and maps each image with
    `csi-rbd-node.3`. Check the service's own replication or functional behavior.
 6. Refresh the inventory before choosing the next Pod. Stop after any failed
