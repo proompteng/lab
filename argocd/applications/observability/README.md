@@ -5,8 +5,11 @@ Loki, Mimir, and Tempo read S3 access credentials from secret `rook-ceph-rgw-lok
 namespace.
 That secret should be a reflected copy of the Rook-managed source secret
 `rook-ceph-object-user-objectstore-loki` in namespace `rook-ceph`, not a hand-sealed credential copy.
-The RGW endpoint is not sourced from the reflected secret. Keep it explicit in the Helm values as
-`rook-ceph-rgw-objectstore.rook-ceph.svc:80` (or `http://...` only where the chart expects a URL string).
+Keep the RGW endpoint explicit in Helm values; it is not sourced from the reflected secret. Loki uses
+`rook-ceph-rgw-objectstore.rook-ceph.svc:80`. Mimir and Tempo use the internal TLS endpoint
+`rook-ceph-rgw-tls.rook-ceph.svc:443` with `insecure: false` and TLS server name `ceph.k8s.proompteng.ai`.
+Their embedded MinIO HTTP signer is incompatible with Ceph 20.2.4. The [compatibility runbook](../../../docs/runbooks/ceph-rgw-sigv4-compatibility.md)
+documents the verified TLS path, preservation of existing Tempo buffers, and recovery procedure.
 
 ## Sources of truth
 

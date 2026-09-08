@@ -25,32 +25,38 @@ mimir:
       bucket_store:
         sync_dir: /data/tsdb-sync
       s3:
-        endpoint: rook-ceph-rgw-objectstore.rook-ceph.svc:80
+        endpoint: rook-ceph-rgw-tls.rook-ceph.svc:443
         bucket_name: mimir-blocks
         access_key_id: ${OBS_S3_ACCESS_KEY}
         secret_access_key: ${OBS_S3_SECRET_KEY}
         region: ${OBS_S3_REGION}
-        insecure: true
+        insecure: false
+        http:
+          tls_server_name: ceph.k8s.proompteng.ai
         bucket_lookup_type: path
     alertmanager_storage:
       backend: s3
       s3:
-        endpoint: rook-ceph-rgw-objectstore.rook-ceph.svc:80
+        endpoint: rook-ceph-rgw-tls.rook-ceph.svc:443
         bucket_name: mimir-alertmanager
         access_key_id: ${OBS_S3_ACCESS_KEY}
         secret_access_key: ${OBS_S3_SECRET_KEY}
         region: ${OBS_S3_REGION}
-        insecure: true
+        insecure: false
+        http:
+          tls_server_name: ceph.k8s.proompteng.ai
         bucket_lookup_type: path
     ruler_storage:
       backend: s3
       s3:
-        endpoint: rook-ceph-rgw-objectstore.rook-ceph.svc:80
+        endpoint: rook-ceph-rgw-tls.rook-ceph.svc:443
         bucket_name: mimir-ruler
         access_key_id: ${OBS_S3_ACCESS_KEY}
         secret_access_key: ${OBS_S3_SECRET_KEY}
         region: ${OBS_S3_REGION}
-        insecure: true
+        insecure: false
+        http:
+          tls_server_name: ceph.k8s.proompteng.ai
         bucket_lookup_type: path
     ruler:
       # /data/ruler is the writable working directory used by the ruler.
