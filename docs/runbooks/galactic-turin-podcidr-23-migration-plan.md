@@ -19,7 +19,9 @@ leaves address headroom but does not establish CPU, memory, disk, or workload ca
 
 Preparation merged in [PR #14358](https://github.com/proompteng/lab/pull/14358), commit
 `dbde3319853dadc807d2c2cf558fbf8a1c8ca493`, and was applied through the secret-safe Omni template workflow.
-All three running controller managers use `--node-cidr-mask-size=23`. That preparation retained the existing Node
+The Talos 1.13.9 preparation used `--node-cidr-mask-size=23`. Talos 1.14 requires the IPv4-specific
+`--node-cidr-mask-size-ipv4=23` instead; see the [current upgrade procedure](../../devices/galactic/releases/README.md).
+The preparation retained the existing Node
 UIDs and `/24` allocations and capped both targets at 250 pods. The flag affects newly registered Nodes only.
 
 CephFS placement merged in [PR #14355](https://github.com/proompteng/lab/pull/14355). At that preparation check, active

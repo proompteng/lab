@@ -92,6 +92,16 @@ geometry and limiting expansion at narrow viewport edges. Activating a window re
 control; Terminal is ready for typing when opened. Minimize preserves the window's zoom state and normal bounds.
 The Window menu lists the active app's individual windows, identifies minimized windows, and marks the active window.
 
+Finder's toolbar, sidebar proportions, row density, action menu, and icon view were compared directly with Finder
+on macOS 26.5.2. The toolbar shows the current folder; Go to Folder opens a validated location dialog. Sortable
+Name, Date Modified, Size, and Kind columns share their ordering with range selection. Breadcrumbs navigate the real
+workspace, and the status bar reports selection counts. File mutations remain in the action menu with confirmation
+before permanent deletion. The sidebar only advertises the available workspace.
+
+Dock hit areas use transforms with fixed layout dimensions. Minimize and restore animate an explicit transform
+through the browser's native animation API; drag translation stays independent. Browser coverage measures Dock
+layout recalculations under 4x CPU throttling and verifies native transform keyframes and restored window geometry.
+
 Design references: Apple [windows](https://developer.apple.com/design/human-interface-guidelines/windows),
 [toolbars](https://developer.apple.com/design/human-interface-guidelines/toolbars), and
 [materials](https://developer.apple.com/design/human-interface-guidelines/materials); web.dev

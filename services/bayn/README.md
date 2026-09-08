@@ -161,8 +161,14 @@ stored observation; changed content under the same source identity fails closed.
 commands cannot mint these receipts. Recording failure prevents release of that read to the execution caller.
 
 Default replay requires a matching production-reader receipt for every used row, completed no later than the simulated
-observation. Missing, late, development-only, or conflicting evidence cannot authorize a simulated trade. Missing
-coverage remains unavailable/incomplete, not a clean `NO_TRADE`, and prevents aggregate P&L. Receipts cover rows actually
+observation. Missing or late receipts for an independent decision candidate exclude that candidate with zero weight;
+the shared strategy core ranks the remaining candidates. These reader-derived exclusions are bound separately in
+`availability.snapshots[].candidateExclusions`, without rewriting the immutable archive manifest or discarding raw
+excluded rows. Valid late receipts are retained as exclusion evidence, never as proof of availability at the cutoff.
+Missing benchmark or execution-pricing evidence still rejects the whole observation. Corrupt, duplicate, unrelated,
+development-only, or conflicting receipts remain global failures, including receipts belonging to excluded candidates.
+An entry window with all candidates unavailable remains incomplete, not a clean `NO_TRADE`, and prevents aggregate P&L.
+Receipts cover rows actually
 observed by the worker, not the entire feed. They are conservative availability upper bounds, not earliest visibility,
 simultaneous snapshot proof, reader uptime, or actual execution evidence. In particular, a read completing after its
 query cutoff cannot certify replay at that cutoff. Strict-mode coverage can remain sparse; this does not reconstruct

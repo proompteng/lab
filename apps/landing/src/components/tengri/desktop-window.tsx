@@ -165,13 +165,13 @@ export function DesktopWindowFrame({
         window.mode === 'minimized'
           ? {
               opacity: 0,
-              scale: reducedMotion ? 1 : minimizeTarget.scale,
-              x: reducedMotion ? 0 : minimizeTarget.x,
-              y: reducedMotion ? 0 : minimizeTarget.y,
+              transform: reducedMotion
+                ? 'translate(0px, 0px) scale(1)'
+                : `translate(${minimizeTarget.x}px, ${minimizeTarget.y}px) scale(${minimizeTarget.scale})`,
               pointerEvents: 'none',
               transitionEnd: { visibility: 'hidden' },
             }
-          : { opacity: 1, scale: 1, x: 0, y: 0, pointerEvents: 'auto', visibility: 'visible' }
+          : { opacity: 1, transform: 'translate(0px, 0px) scale(1)', pointerEvents: 'auto', visibility: 'visible' }
       }
       transition={reducedMotion ? { duration: 0 } : { type: 'spring', stiffness: 440, damping: 38, mass: 0.8 }}
       style={{
