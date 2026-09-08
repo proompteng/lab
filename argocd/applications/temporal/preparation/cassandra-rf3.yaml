@@ -142,7 +142,7 @@ roleRef:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: temporal-cassandra-rf3-repair
+  name: temporal-cassandra-rf3-repair-v1
   namespace: temporal
   labels:
     app.kubernetes.io/name: temporal

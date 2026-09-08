@@ -42,10 +42,29 @@ only after confirming ALTER was not reached.
 
 After ALTER, keep Temporal stopped until full repair has succeeded on every
 node. Do not lower the replication factor as a rollback. Investigate the
-specific repair failure and retry the idempotent RF3/full-repair sequence with
-the retained backup generation and unchanged identities. Do not delete the
-snapshots, PVCs, or PVs. A restored service is accepted only after the runtime
-checks above pass.
+specific repair failure before retrying. Repair attempts use versioned Job names;
+`temporal-cassandra-rf3-repair-v1` is the first attempt. A failed Job remains
+terminal, so its retry is a reviewed GitOps change:
+
+1. Confirm the previous Job has a terminal `Failed` condition, zero active Pods,
+   and no remaining repair process or streams on any Cassandra node. Capture
+   its logs and verify the retained snapshots and volume identities.
+2. Change only the repair Job's `metadata.name` in
+   `preparation/cassandra-rf3.yaml` to the next unused version, such as
+   `temporal-cassandra-rf3-repair-v2`.
+   Keep all four Temporal deployments at zero replicas. Preserve the original
+   quiesce Job, snapshot names, backup generation, and identity guards.
+3. Render, run the maintenance tests, and deliver that change through its PR
+   and GitOps. Argo creates the newly named Job; it does not require an
+   imperative Job deletion or a forced sync. The same RF3/full-repair sequence
+   revalidates its preconditions and repairs all three nodes, including those
+   completed by the earlier attempt.
+4. Carry the new repair Job name into the prepared resume PR. Resume only after
+   the new attempt completes and the runtime checks above pass.
+
+Do not delete the snapshots, PVCs, or PVs, or lower the replication factor.
+Automatic Job retries remain disabled so a lost client connection cannot start
+another repair before the previous Cassandra-side operation is inspected.
 
 Later version overlays must preserve `replicationFactor: 3`. Remove the completed
 maintenance Jobs in a reviewed later stage before changing their pinned

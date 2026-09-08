@@ -4,6 +4,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
@@ -12,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = r"""#!/usr/bin/env python3
 import json, os, sys
 from pathlib import Path
+import re
 args = sys.argv[1:]
 assert args[:2] == ["-n", "temporal"], args
 args = args[2:]
@@ -113,6 +115,15 @@ process.stdout.write(JSON.stringify(Object.fromEntries(jobs.map(job =>
             )
         )
 
+        repairs = [
+            name
+            for name in cls.scripts
+            if re.fullmatch(r"temporal-cassandra-rf3-repair-v[1-9][0-9]*", name)
+        ]
+        if len(repairs) != 1:
+            raise AssertionError("Expected one versioned repair attempt")
+        cls.scripts["temporal-cassandra-rf3-repair"] = cls.scripts.pop(repairs[0])
+
     def run_gate(self, *, factor="1", job="repair", **overrides):
         with tempfile.TemporaryDirectory(prefix="temporal-rf3-test-") as directory:
             work = Path(directory)
@@ -141,7 +152,11 @@ process.stdout.write(JSON.stringify(Object.fromEntries(jobs.map(job =>
                 **overrides,
             }
             result = subprocess.run(
-                ["bash", "-c", self.scripts[f"temporal-cassandra-rf3-{job}"]],
+                [
+                    "bash",
+                    "-c",
+                    self.scripts[f"temporal-cassandra-rf3-{job}"],
+                ],
                 env=env,
                 text=True,
                 capture_output=True,
@@ -236,6 +251,18 @@ process.stdout.write(JSON.stringify(Object.fromEntries(jobs.map(job =>
         self.assertEqual(
             [c[1] for c in commands if "nodetool repair -full temporal" in " ".join(c)],
             ["temporal-cassandra-0", "temporal-cassandra-1"],
+        )
+
+        retry, retried_commands, after_retry = self.run_gate(factor=current)
+        self.assertEqual(retry.returncode, 0, retry.stderr)
+        self.assertEqual(after_retry, "3")
+        self.assertEqual(
+            [
+                c[1]
+                for c in retried_commands
+                if "nodetool repair -full temporal" in " ".join(c)
+            ],
+            [f"temporal-cassandra-{n}" for n in range(3)],
         )
 
 
