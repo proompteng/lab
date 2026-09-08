@@ -25,6 +25,9 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
   daemon data root and the containerd image store. The runner's Nix store and cache remain owned by UID 1001. Keep the
   concurrency cap and validate `/var` I/O under the actual workload before resuming storage maintenance or increasing
   build capacity.
+- The AMD64 scratch init requests 2Gi and is limited to 8Gi of memory. Its full Nix-tree bootstrap exceeded the prior
+  512Mi limit and was OOM-killed before the runner could register. This stays within the Pod's existing 16Gi aggregate
+  memory request for runner and DinD, so the init does not increase its scheduling reservation.
 - Tailscale connectivity comes from the Omni-owned node configuration in
   `devices/galactic/omni/cluster-template.yaml`; no sidecar or additional secret is required in the runner pods. Follow
   `devices/galactic/omni/README.md` for changes. The retained Harvester/Ansible fleet configuration is not current Talos
