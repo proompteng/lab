@@ -9,7 +9,7 @@ cleanup() {
   trap - EXIT INT TERM
   curl --max-time 3 -fsS -X POST http://127.0.0.1:8080/_test/shutdown >/dev/null 2>&1 || true
   curl --max-time 3 -fsS -X POST http://localhost:33082/_test/shutdown >/dev/null 2>&1 || true
-  for attempt in {1..50}; do
+  for ((attempt = 0; attempt < 50; attempt++)); do
     if [[ -z "${fixture_guest_pid:-}" ]] || ! kill -0 "$fixture_guest_pid" 2>/dev/null; then break; fi
     sleep .1
   done
@@ -59,7 +59,7 @@ fixture_pids="$fixture_pids $!"
   cd "$repository/apps/landing"
   export NEXT_TELEMETRY_DISABLED=1
   export TENGRI_PUBLIC_URL=https://gateway.tengri.localhost:3443
-  export TENGRI_PREVIEW_FRAME_SOURCE=https://*.tengri.localhost:3443
+  export TENGRI_PREVIEW_FRAME_SOURCE='https://*.tengri.localhost:3443'
   export BETTER_AUTH_SECRET=playwright-better-auth-secret-000000000000
   export BETTER_AUTH_URL="$TENGRI_PLAYWRIGHT_BASE_URL"
   export GITHUB_CLIENT_ID=playwright GITHUB_CLIENT_SECRET=playwright
