@@ -7,6 +7,7 @@ import {
   deleteAgent,
   deleteFile,
   getCodexAccount,
+  getCodexLogin,
   interruptCodexTurn,
   isTengriControlPlaneConfigured,
   issuePreviewSession,
@@ -73,7 +74,7 @@ export async function POST(request: Request) {
   try {
     requireSameOrigin(request)
     const identity = await requireTengriIdentity(request)
-    const parsed = tengriActionSchema.safeParse(await readTengriJsonBody(request))
+    const parsed = tengriActionSchema.safeParse(await readTengriJsonBody(request, { subject: identity.subject }))
     if (!parsed.success) {
       return Response.json(
         {
@@ -106,7 +107,14 @@ export async function POST(request: Request) {
         result = await readFile(identity.subject, action.agentId, action.path)
         break
       case 'write-file':
-        result = await writeFile(identity.subject, action.agentId, action.path, action.content)
+        result = await writeFile(
+          identity.subject,
+          action.agentId,
+          action.path,
+          action.content,
+          action.expectedRevision,
+          request.signal,
+        )
         break
       case 'create-directory':
         result = await createDirectory(identity.subject, action.agentId, action.path)
@@ -144,6 +152,9 @@ export async function POST(request: Request) {
         break
       case 'codex-account':
         result = await getCodexAccount(identity.subject, action.agentId, request.signal)
+        break
+      case 'codex-login-status':
+        result = await getCodexLogin(identity.subject, action.agentId, request.signal)
         break
       case 'codex-login':
         result = await startCodexLogin(identity.subject, action.agentId)

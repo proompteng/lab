@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 )
 
 const (
@@ -33,9 +34,11 @@ type apiServer struct {
 	bootstrapToken   string
 	codex            *codexSupervisor
 	evidence         evidence
+	fileMutationMu   sync.RWMutex
 	fileWatcher      *fileWatcher
 	previewRequests  *previewRequestTracker
 	previewTransport http.RoundTripper
+	syncDirectories  func(workspace, ...string) error
 	terminals        *terminalManager
 	workspace        workspace
 }
@@ -69,6 +72,7 @@ func newAPIServer(config apiConfig) (*apiServer, error) {
 		fileWatcher:      files,
 		previewRequests:  newPreviewRequestTracker(),
 		previewTransport: transport,
+		syncDirectories:  syncWorkspaceDirectories,
 		terminals:        newTerminalManager(workspace, config.shell, config.homeRoot),
 		workspace:        workspace,
 	}
@@ -111,6 +115,7 @@ func (server *apiServer) authenticatedRoutes() http.Handler {
 	mux.HandleFunc("DELETE /v1/terminals/{id}", server.handleTerminateTerminal)
 	mux.HandleFunc("GET /v1/terminals/{id}/ws", server.handleTerminalWebSocket)
 	mux.HandleFunc("POST /v1/codex/call", server.handleCodexCall)
+	mux.HandleFunc("GET /v1/codex/login", server.handleCodexLogin)
 	mux.HandleFunc("GET /v1/codex/events", server.handleCodexEvents)
 	mux.HandleFunc("POST /v1/codex/approvals/{id}", server.handleCodexApproval)
 	mux.HandleFunc("/v1/preview/{port}/{path...}", server.handlePreview)

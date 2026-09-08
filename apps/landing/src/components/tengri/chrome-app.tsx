@@ -3,7 +3,6 @@
 import {
   ArrowLeft,
   ArrowRight,
-  Bot,
   ExternalLink,
   LoaderCircle,
   MonitorUp,
@@ -53,22 +52,26 @@ function chromeTabKeyTarget(key: string, currentIndex: number, tabCount: number)
   return null
 }
 
-function focusChromeTab(tabId: string) {
+function focusChromeTab(windowId: string, tabId: string) {
   window.requestAnimationFrame(() => {
-    document.getElementById(`chrome-tab-${tabId}`)?.focus()
+    document.getElementById(`chrome-tab-${windowId}-${tabId}`)?.focus()
   })
 }
 
 export function ChromeApp({
   active: applicationActive = true,
   agentId,
+  onCloseWindow,
   onOpenExternalPreview,
   previewGatewayOrigin,
+  windowId,
 }: {
   active?: boolean
   agentId: string
+  onCloseWindow: (windowId: string) => void
   onOpenExternalPreview: (page: PreviewPage) => Promise<void>
   previewGatewayOrigin: string
+  windowId: string
 }) {
   const [state, dispatch] = useReducer(chromeReducer, undefined, initialChromeState)
   const activeTab = activeChromeTab(state)
@@ -116,6 +119,17 @@ export function ChromeApp({
     }
   }
 
+  const closeTab = useCallback(
+    (id: string) => {
+      if (state.tabs.length === 1) {
+        onCloseWindow(windowId)
+        return
+      }
+      dispatch({ type: 'close', id })
+    },
+    [onCloseWindow, state.tabs.length, windowId],
+  )
+
   const runShortcut = useCallback(
     (key: ChromePreviewShortcut) => {
       if (key === 'l') {
@@ -126,10 +140,10 @@ export function ChromeApp({
       } else if (key === 't') {
         dispatch({ type: 'new-tab' })
       } else {
-        dispatch({ type: 'close', id: state.activeId })
+        closeTab(state.activeId)
       }
     },
-    [state.activeId],
+    [closeTab, state.activeId],
   )
 
   function handleShortcut(event: KeyboardEvent<HTMLDivElement>) {
@@ -146,12 +160,15 @@ export function ChromeApp({
   }, [])
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[#101216]" onKeyDownCapture={handleShortcut}>
-      <div className="flex h-9 shrink-0 items-end gap-1 border-b border-white/8 bg-white/[0.025] px-2 pt-1">
+    <div className="flex h-full min-h-0 flex-col bg-zinc-900" onKeyDownCapture={handleShortcut}>
+      <div
+        data-window-drag-region
+        className="flex h-10 shrink-0 touch-none select-none items-end gap-1 bg-[#252528] pt-1 pr-3 pl-[88px]"
+      >
         <div
           aria-label="Browser tabs"
           aria-orientation="horizontal"
-          className="flex min-w-0 flex-1 items-end gap-1 overflow-x-auto"
+          className="flex min-w-0 items-end overflow-x-auto [scrollbar-width:none]"
           role="tablist"
         >
           {state.tabs.map((tab, index) => {
@@ -159,28 +176,34 @@ export function ChromeApp({
             const selected = tab.id === state.activeId
             return (
               <button
-                aria-controls={`chrome-panel-${tab.id}`}
+                aria-controls={`chrome-panel-${windowId}-${tab.id}`}
                 aria-keyshortcuts="Delete"
                 aria-selected={selected}
-                className={`flex h-8 max-w-52 min-w-32 shrink-0 items-center gap-2 rounded-t-lg px-3 text-xs outline-none focus-visible:ring-2 focus-visible:ring-white/50 ${
-                  selected ? 'bg-[#1b1e25] text-white/85' : 'text-white/55 hover:bg-white/5'
+                className={`relative flex w-52 min-w-28 shrink items-center gap-2 rounded-t-[10px] px-3 text-[12px] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/50 ${
+                  selected
+                    ? 'z-10 h-9 bg-[#353538] text-white/90 before:absolute before:right-full before:bottom-0 before:h-2 before:w-2 before:rounded-br-full before:shadow-[2px_2px_0_2px_#353538] after:absolute after:bottom-0 after:left-full after:h-2 after:w-2 after:rounded-bl-full after:shadow-[-2px_2px_0_2px_#353538]'
+                    : 'my-1 h-7 rounded-lg text-white/60 hover:bg-white/8'
                 }`}
-                id={`chrome-tab-${tab.id}`}
+                id={`chrome-tab-${windowId}-${tab.id}`}
                 key={tab.id}
                 onClick={(event) => {
                   if (event.target instanceof Element && event.target.closest('[data-close-chrome-tab]')) {
-                    dispatch({ type: 'close', id: tab.id })
+                    closeTab(tab.id)
                     return
                   }
                   dispatch({ type: 'activate', id: tab.id })
                 }}
+                onAuxClick={(event) => {
+                  if (event.button !== 1) return
+                  event.preventDefault()
+                  closeTab(tab.id)
+                }}
                 onKeyDown={(event) => {
                   if (event.key === 'Delete') {
                     event.preventDefault()
-                    const nextTabId =
-                      state.tabs[index + 1]?.id ?? state.tabs[index - 1]?.id ?? `tab-${state.nextTabNumber}`
-                    dispatch({ type: 'close', id: tab.id })
-                    focusChromeTab(nextTabId)
+                    const nextTabId = state.tabs[index + 1]?.id ?? state.tabs[index - 1]?.id
+                    closeTab(tab.id)
+                    if (nextTabId) focusChromeTab(windowId, nextTabId)
                     return
                   }
 
@@ -190,22 +213,20 @@ export function ChromeApp({
                   const targetTab = state.tabs[targetIndex]
                   if (!targetTab) return
                   dispatch({ type: 'activate', id: targetTab.id })
-                  focusChromeTab(targetTab.id)
+                  focusChromeTab(windowId, targetTab.id)
                 }}
                 role="tab"
                 tabIndex={selected ? 0 : -1}
                 type="button"
               >
-                {page.kind === 'agent' ? (
-                  <Bot className="h-3.5 w-3.5 shrink-0 text-[#9ccfd8]" aria-hidden="true" />
-                ) : (
+                {page.kind === 'preview' ? (
                   <MonitorUp className="h-3.5 w-3.5 shrink-0 text-[#79b8ff]" aria-hidden="true" />
-                )}
+                ) : null}
                 <span className="truncate">{page.title}</span>
                 <span className="sr-only">. Press Delete to close.</span>
                 <span
                   aria-hidden="true"
-                  className="ml-auto rounded p-0.5 text-white/50 hover:bg-white/10 hover:text-white/80"
+                  className="ml-auto grid h-5 w-5 shrink-0 place-items-center rounded-full text-white/60 hover:bg-white/15 hover:text-white/90"
                   data-close-chrome-tab
                 >
                   <X className="h-3 w-3" />
@@ -217,7 +238,7 @@ export function ChromeApp({
         <button
           type="button"
           aria-label="New tab"
-          className="mb-1 rounded-md p-1 text-white/40 outline-none hover:bg-white/8 focus-visible:ring-2 focus-visible:ring-white/50 disabled:opacity-25"
+          className="mb-1 grid h-7 w-7 shrink-0 place-items-center rounded-full text-white/60 outline-none hover:bg-white/8 focus-visible:ring-2 focus-visible:ring-white/50 disabled:opacity-25"
           disabled={state.tabs.length >= MAX_CHROME_TABS}
           onClick={() => dispatch({ type: 'new-tab' })}
         >
@@ -225,7 +246,7 @@ export function ChromeApp({
         </button>
       </div>
       <form
-        className="flex h-11 shrink-0 items-center gap-2 border-b border-white/8 bg-[#1b1e25] px-3"
+        className="flex h-11 shrink-0 items-center gap-2 border-b border-black/25 bg-[#353538] px-3"
         onSubmit={(event) => {
           event.preventDefault()
           navigate(address)
@@ -254,14 +275,14 @@ export function ChromeApp({
             <ArrowRight className="h-4 w-4" aria-hidden="true" />
           </ToolbarButton>
         )}
-        <label className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-white/8 bg-black/25 px-3 py-1.5 text-xs shadow-inner focus-within:border-white/16">
+        <label className="flex min-w-0 flex-1 items-center gap-2 rounded-full border border-black/15 bg-[#242427] px-3 py-1.5 text-xs focus-within:border-blue-400/80 focus-within:ring-2 focus-within:ring-blue-400/25">
           <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" />
           <span className="sr-only">Private Tengri address</span>
           <input
             ref={addressRef}
             value={address}
             onChange={(event) => setAddress(event.target.value)}
-            className="min-w-0 flex-1 bg-transparent text-center text-white/66 outline-none focus:text-left"
+            className="min-w-0 flex-1 bg-transparent text-left text-white/80 outline-none focus:text-left"
             aria-label="Address"
             autoCapitalize="none"
             autoComplete="off"
@@ -281,16 +302,16 @@ export function ChromeApp({
           {navigationError}
         </div>
       ) : null}
-      <div className="relative min-h-0 flex-1 bg-[#0e1014]">
+      <div className="relative min-h-0 flex-1 bg-[#202020]">
         {state.tabs.map((tab) => {
           const page = currentChromePage(tab)
           const selected = tab.id === state.activeId
           return (
             <div
-              aria-labelledby={`chrome-tab-${tab.id}`}
+              aria-labelledby={`chrome-tab-${windowId}-${tab.id}`}
               className="absolute inset-0"
               hidden={!selected}
-              id={`chrome-panel-${tab.id}`}
+              id={`chrome-panel-${windowId}-${tab.id}`}
               key={tab.id}
               role="tabpanel"
             >
@@ -480,7 +501,7 @@ function PreviewFrame({
       {!loaded ? (
         <div
           role="status"
-          className="absolute inset-0 z-10 flex items-center justify-center gap-2 bg-[#0e1014] text-sm text-white/48"
+          className="absolute inset-0 z-10 flex items-center justify-center gap-2 bg-[#202020] text-sm text-white/48"
         >
           <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" /> Connecting to localhost…
         </div>

@@ -19,6 +19,8 @@ unauthenticated.
 - `POST /v1/terminals`, `GET /v1/terminals`, and `DELETE /v1/terminals/{id}`: PTY lifecycle;
 - `GET /v1/terminals/{id}/ws`: interactive terminal attachment, resize, signals, replay, and reconnect;
 - `POST /v1/codex/call`: authenticated Codex account, login, thread, turn, steering, and interruption calls;
+- `GET /v1/codex/login`: the current device-login attempt, so a reconnecting desktop can resume it without
+  invalidating the displayed code;
 - `GET /v1/codex/events`: bounded, replayable Codex app-server events;
 - `POST /v1/codex/approvals/{id}`: resolve a pending Codex approval request;
 - `/v1/preview/{port}/{path...}`: HTTP and WebSocket proxying to an allowed loopback development port.
@@ -26,6 +28,17 @@ unauthenticated.
 Filesystem operations are confined with `os.Root`, reject symlink escapes, and hide `.codex` and `.tengri` internal
 state. Editable files are capped at 4 MiB, directory traversal and watcher subscriptions are bounded, and cancellation
 stops searches and event streams.
+
+File-content reads return a strong SHA-256 ETag. Writes require `expectedRevision`, either the exact lowercase
+64-hex revision from the read or `missing` for create-only writes. Successful writes return the new revision; stale
+writes return HTTP 409. A workspace lock serializes revision comparison and mutation for Nanoagent API writers.
+Direct filesystem writers, including shell commands and Codex, do not participate in that lock; their changes are
+reported through file events and require editor reconciliation. The API does not claim atomic conditional writes
+against arbitrary external processes.
+
+Mutation acknowledgement includes syncing affected directory metadata. A storage failure after a rename or deletion
+can leave the mutation visible despite an error response. Re-read the affected path before retrying; an error does
+not imply rollback. Retaining the PVC across sleep and releases does not replace an independent backup policy.
 
 Preview requests can reach only `127.0.0.1`, reject privileged and reserved ports, strip credentials and hop-by-hop or
 forwarding headers, and support WebSocket upgrades for development-server HMR. Nanoagent never proxies arbitrary
@@ -65,7 +78,7 @@ compilation and doctests use the bundled architecture-specific `rust-lld` and mi
 atomically generated wrappers. Go uses the bundled target-platform GCC and sysroot with CGO enabled by default. Rust,
 C, and CGO projects therefore build without `apt`, `sudo`, or any mutation of the read-only guest rootfs.
 
-On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.149.0 package from the npm registry,
+On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.153.4 package from the npm registry,
 verifies its pinned SHA-512 digest, and atomically installs the complete native package under the 16 GiB PVC-backed
 `~/.tengri/codex` directory. Subsequent boots reuse that verified install. Nanoagent does not become ready until the
 Codex app server is available, and the `MicroVM` startup probe allows fifteen minutes for the sequential toolchain and

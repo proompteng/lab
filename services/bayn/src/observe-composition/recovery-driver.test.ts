@@ -3,10 +3,94 @@ import { expect, test } from 'bun:test'
 import { Cause, Deferred, Effect, Exit, Fiber, Semaphore } from 'effect'
 import { TestClock } from 'effect/testing'
 
+import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca'
+import { CycleRunnerError } from '../cycle/runner'
+import { CycleStoreError } from '../cycle/store'
 import { operationalError } from '../errors'
 import { IntradaySnapshotFailure } from '../market-data'
-import { ObserveDecisionAwaitingSignal, decisionBuildError } from './decision-builder'
+import { IntradayIngestionDelayDirection } from '../market-data/intraday/model'
+import { ObserveDecisionAwaitingSignal, decisionBuildError, reconciliationRunnerError } from './decision-builder'
 import { runRestateAdvanceWithinTimeout } from './recovery-driver'
+import { shouldRestrictMutationLoopFailure } from './mutation-interpreter'
+
+test('retries an oldest-unfinished preflight read without permanently restricting execution authority', () => {
+  expect(
+    shouldRestrictMutationLoopFailure(
+      new CycleRunnerError({
+        operation: 'read-oldest-unfinished',
+        failure: 'store',
+        message: 'oldest unfinished mutation cycle read failed',
+        cause: new CycleStoreError({
+          operation: 'read-oldest-unfinished',
+          failure: 'query',
+          persistenceFailure: 'connectivity',
+          message: 'connection closed during failover',
+        }),
+      }),
+    ),
+  ).toBe(false)
+  expect(
+    shouldRestrictMutationLoopFailure(
+      new CycleRunnerError({
+        operation: 'recover-cycle',
+        failure: 'store',
+        message: 'durable submit recovery read failed',
+      }),
+    ),
+  ).toBe(true)
+})
+
+test('keeps non-transient oldest-unfinished failures fail-closed', () => {
+  const failures = [
+    { failure: 'decode', persistenceFailure: 'decode' },
+    { failure: 'invariant', persistenceFailure: 'invariant' },
+    { failure: 'query', persistenceFailure: 'query' },
+  ] as const
+  for (const failure of failures) {
+    expect(
+      shouldRestrictMutationLoopFailure(
+        new CycleRunnerError({
+          operation: 'read-oldest-unfinished',
+          failure: 'store',
+          message: 'oldest unfinished mutation cycle read failed',
+          cause: new CycleStoreError({
+            operation: 'read-oldest-unfinished',
+            failure: failure.failure,
+            persistenceFailure: failure.persistenceFailure,
+            message: 'persisted cycle cannot be read safely',
+          }),
+        }),
+      ),
+    ).toBe(true)
+  }
+})
+
+test('does not revoke execution authority when decision construction fails before broker I/O', () => {
+  expect(
+    shouldRestrictMutationLoopFailure(
+      new CycleRunnerError({
+        operation: 'build-decision',
+        failure: 'operational',
+        message: 'intraday strategy rejected its verified runtime snapshot',
+      }),
+    ),
+  ).toBe(false)
+})
+
+test('preserves only retryable broker reads through reconciliation error wrapping', () => {
+  const reconciliationError = (retryable: boolean) =>
+    reconciliationRunnerError(
+      new BrokerReadError({
+        operation: 'account',
+        kind: retryable ? BrokerReadErrorKind.Transport : BrokerReadErrorKind.InvalidResponse,
+        message: retryable ? 'temporary network failure' : 'malformed account response',
+        retryable,
+      }),
+    )
+
+  expect(shouldRestrictMutationLoopFailure(reconciliationError(true))).toBe(false)
+  expect(shouldRestrictMutationLoopFailure(reconciliationError(false))).toBe(true)
+})
 
 test('maps an expected armed-entry wait to a non-terminal decision outcome', () => {
   const error = decisionBuildError(
@@ -47,6 +131,25 @@ test('keeps an incomplete intraday archive retryable without weakening malformed
 
   expect(incomplete).toMatchObject({ _tag: 'CycleDecisionBuildError', failure: 'not-ready' })
   expect(malformed).toMatchObject({ _tag: 'CycleDecisionBuildError', failure: 'market-data' })
+})
+
+test('waits only for explicitly late ingestion and preserves other freshness failures', () => {
+  const classify = (ingestionDelayDirection?: IntradayIngestionDelayDirection) =>
+    decisionBuildError(
+      operationalError({
+        component: 'market-data',
+        operation: 'load-intraday',
+        message: 'intraday evidence does not match its declared feed delay',
+        cause: new IntradaySnapshotFailure({
+          reason: 'freshness',
+          message: 'intraday evidence does not match its declared feed delay',
+          ...(ingestionDelayDirection === undefined ? {} : { ingestionDelayDirection }),
+        }),
+      }),
+    )
+  expect(classify(IntradayIngestionDelayDirection.AboveMaximum)).toMatchObject({ failure: 'not-ready' })
+  expect(classify(IntradayIngestionDelayDirection.BelowMinimum)).toMatchObject({ failure: 'market-data' })
+  expect(classify()).toMatchObject({ failure: 'market-data' })
 })
 
 test('the aggregate lifecycle budget interrupts stalled maintenance before cycle work', async () => {

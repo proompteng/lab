@@ -50,16 +50,9 @@ export type {
   ReconciliationPassError,
 } from './observe-composition/decision-builder'
 
-export {
-  executionMandateCloseExpiresAt,
-  executionMandateCloseGraceMs,
-  executionMandateReceiptFinalizationExpiresAt,
-  executionMandateReceiptFinalizationGraceMs,
-} from './observe-composition/model'
 export type {
-  LifecycleAdvanceDisposition,
-  LifecycleAdvanceMaintenance,
   MutationAutonomousCycleInput,
+  MutationCycleExecutionMode,
   ObserveAutonomousCycleInput,
   ObserveStartupPreparation,
   RecoveryFirstCycleAdvance,
@@ -70,6 +63,7 @@ export type {
 
 export {
   blockedEntryRequiresCloseOnlyContainment,
+  decideUnboundExecutionCycleTerminalization,
   decideReconciledExecutionCycleCompletion,
   decideReconciledExecutionCycleTerminalization,
   decideExecutionCycleCloseDocument,

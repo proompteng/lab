@@ -77,15 +77,13 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).not.toContain('torghut-hyperliquid')
   })
 
-  it('delegates distinct API, scheduler, and status evidence to the runtime contract validator', () => {
+  it('delegates API and status evidence to the runtime contract validator', () => {
     expect(workflow).toContain('TORGHUT_SCHEDULER_REPLICAS')
     expect(workflow).toContain('TORGHUT_API_READYZ_HTTP_STATUS')
-    expect(workflow).toContain('TORGHUT_SCHEDULER_READYZ_HTTP_STATUS')
     expect(workflow).toContain('TORGHUT_SIM_TRADING_ENABLED')
     expect(workflow).toContain('TORGHUT_SIM_STATUS_HTTP_STATUS')
     expect(workflow).toContain('TORGHUT_STATUS_HTTP_STATUS')
     expect(workflow).toContain('TORGHUT_API_READYZ_PAYLOAD="${EVIDENCE_DIR}/torghut-api-readyz.json"')
-    expect(workflow).toContain('TORGHUT_SCHEDULER_READYZ_PAYLOAD="${EVIDENCE_DIR}/torghut-scheduler-readyz.json"')
     expect(workflow).toContain('TORGHUT_SIM_STATUS_PAYLOAD="${EVIDENCE_DIR}/torghut-sim-status.json"')
     expect(workflow).toContain('TORGHUT_STATUS_PAYLOAD="${EVIDENCE_DIR}/torghut-status.json"')
     expect(workflow).toContain('bun run packages/scripts/src/torghut/post-deploy-evidence.ts')
@@ -93,21 +91,73 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).not.toContain('/trading/proofs')
   })
 
-  it('reads and bounds the live scheduler replica count after Argo convergence', () => {
-    const replicaRead = workflow.indexOf(
-      "kubectl get deployment torghut-scheduler -n torghut -o jsonpath='{.spec.replicas}'",
-    )
-    const argoWait = workflow.indexOf('for app in torghut; do')
+  const removalCheck = workflow.slice(
+    workflow.indexOf('          for removal_attempt in $(seq 1 18); do'),
+    workflow.indexOf('          if ! TORGHUT_SIM_TRADING_ENABLED'),
+  )
 
-    expect(replicaRead).toBeGreaterThan(argoWait)
-    expect(workflow).toContain('case "${TORGHUT_SCHEDULER_REPLICAS}" in')
-    expect(workflow).toContain('0 | 1)')
-    expect(workflow).toContain(
-      'Torghut scheduler replicas must be exactly 0 or 1; got ${TORGHUT_SCHEDULER_REPLICAS:-unset}',
+  it('requires scheduler removal after Argo convergence', () => {
+    expect(workflow.indexOf('          for removal_attempt in $(seq 1 18); do')).toBeGreaterThan(
+      workflow.indexOf('for app in torghut; do'),
     )
-    expect(workflow).toContain('if [ "${TORGHUT_SCHEDULER_REPLICAS}" = \'1\' ]; then')
-    expect(workflow).toContain('kubectl rollout status deployment/torghut-scheduler -n torghut --timeout=10m')
+    expect(removalCheck).toContain('kubectl get deployment/torghut-scheduler')
+    expect(removalCheck).toContain('kubectl get application torghut -n argocd -o json')
+    expect(removalCheck).not.toContain('service/torghut-scheduler')
+    expect(removalCheck).toContain('--ignore-not-found -o name')
+    expect(removalCheck).toContain('app.kubernetes.io/name=torghut,app.kubernetes.io/component=trading-scheduler')
+    expect(removalCheck).toContain("TORGHUT_SCHEDULER_REPLICAS='0'")
   })
+
+  const emptyInventory = { status: { resources: [] } }
+  const trackedService = {
+    status: { resources: [{ kind: 'Service', namespace: 'torghut', name: 'torghut-scheduler' }] },
+  }
+  for (const [name, resources, pods, inventory, exitCode, succeeds] of [
+    ['all scheduler resources absent', '', '', emptyInventory, 0, true],
+    ['scaled-down Deployment still exists', 'deployment.apps/torghut-scheduler', '', emptyInventory, 0, false],
+    ['Argo still tracks the Service', '', '', trackedService, 0, false],
+    ['scheduler pod still terminating', '', 'pod/torghut-scheduler-old', emptyInventory, 0, false],
+    ['Argo inventory is missing', '', '', {}, 0, false],
+    ['cluster access denied', '', '', emptyInventory, 1, false],
+  ] as const) {
+    it(`checks scheduler removal when ${name}`, () => {
+      const result = Bun.spawnSync(
+        [
+          'bash',
+          '-euo',
+          'pipefail',
+          '-c',
+          `
+          sleep() { :; }
+          kubectl() {
+            if [ "$TEST_EXIT_CODE" != '0' ]; then return "$TEST_EXIT_CODE"; fi
+            case "$2" in
+              deployment/torghut-scheduler) printf '%s' "$TEST_RESOURCES" ;;
+              pods) printf '%s' "$TEST_PODS" ;;
+              application) printf '%s' "$TEST_INVENTORY" ;;
+              *) return 99 ;;
+            esac
+          }
+          ${removalCheck}
+        `,
+        ],
+        {
+          env: {
+            ...process.env,
+            TEST_RESOURCES: resources,
+            TEST_PODS: pods,
+            TEST_INVENTORY: JSON.stringify(inventory),
+            TEST_EXIT_CODE: String(exitCode),
+          },
+        },
+      )
+      expect(result.exitCode === 0).toBe(succeeds)
+      if (succeeds)
+        expect(result.stdout.toString()).toContain(
+          'Deployment and pods are absent; Service is absent from Argo inventory',
+        )
+    })
+  }
 
   it('reads and exports the desired torghut-sim trading state from the live Knative Service', () => {
     const desiredStateRead = workflow.indexOf('kubectl get ksvc torghut-sim -n torghut -o json')
@@ -126,6 +176,7 @@ describe('torghut post-deploy verifier workflow', () => {
   it('runs market-data freshness verification after deploy evidence is accepted', () => {
     expect(workflow).toContain('Verify market-data freshness')
     expect(workflow).toContain('MARKET_DATA_FRESHNESS_MODE: auto')
+    expect(workflow).toContain("TORGHUT_SCHEDULER_EXPECTED: 'false'")
     expect(workflow).toContain("MARKET_DATA_MAX_LAG_SECONDS: '300'")
     expect(workflow).toContain("MARKET_DATA_ACCEPTED_MAX_LAG_SECONDS: '300'")
     expect(workflow).toContain(
@@ -136,29 +187,11 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).toContain('bun run smoke:torghut-market-data')
   })
 
-  it('retries database-timeout readyz 503 payloads until they match an accepted readyz contract', () => {
-    expect(workflow).toContain('fetch_readyz_json()')
-    expect(workflow).toContain('packages/scripts/src/torghut/readyz-contract.ts')
-    expect(workflow).toContain('retryable_database_timeout')
-    expect(workflow).toContain('database readiness timed out; retrying')
-    expect(workflow).toContain('without an acceptable readyz contract')
-    expect(workflow).toContain('READYZ_EVIDENCE_ATTEMPTS=12')
-    expect(workflow).toContain('fetch_readyz_json \\')
-    expect(workflow).toContain('http://torghut-scheduler.torghut.svc.cluster.local:8183/readyz')
-  })
-
-  it('always captures stable API readiness and conditionally captures scheduler readiness', () => {
-    const apiCapture = workflow.indexOf('TORGHUT_API_READYZ_HTTP_STATUS="$(')
-    const schedulerCondition = workflow.indexOf('if [ "${TORGHUT_SCHEDULER_REPLICAS}" = \'1\' ]; then', apiCapture)
-    const schedulerCapture = workflow.indexOf('TORGHUT_SCHEDULER_READYZ_HTTP_STATUS="$(')
-    const schedulerPayloadExport = workflow.indexOf('export TORGHUT_SCHEDULER_READYZ_PAYLOAD', schedulerCapture)
-
-    expect(apiCapture).toBeGreaterThan(-1)
+  it('captures API readiness without probing the removed scheduler', () => {
     expect(workflow).toContain('http://torghut.torghut.svc.cluster.local/readyz')
-    expect(schedulerCondition).toBeGreaterThan(apiCapture)
-    expect(schedulerCapture).toBeGreaterThan(schedulerCondition)
-    expect(schedulerPayloadExport).toBeGreaterThan(schedulerCapture)
-    expect(workflow).not.toContain('touch "${EVIDENCE_DIR}/torghut-scheduler-readyz.json"')
+    expect(workflow).not.toContain('http://torghut-scheduler.torghut.svc.cluster.local:8183/readyz')
+    expect(workflow).not.toContain('TORGHUT_SCHEDULER_READYZ_HTTP_STATUS')
+    expect(workflow).not.toContain('kubectl rollout status deployment/torghut-scheduler')
   })
 
   it('bounds full-contract convergence and fails after the final attempt', () => {
@@ -193,13 +226,11 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(loopEnd).toBeGreaterThan(loopStart)
     expect(loopBody).toContain('rm -f \\')
     expect(loopBody).toContain('TORGHUT_API_READYZ_HTTP_STATUS="$(')
-    expect(loopBody).toContain('TORGHUT_SCHEDULER_READYZ_HTTP_STATUS="$(')
     expect(loopBody).toContain('TORGHUT_SIM_STATUS_HTTP_STATUS="$(')
     expect(loopBody).toContain('TORGHUT_STATUS_HTTP_STATUS="$(')
     expect(loopBody).toContain('http://torghut-sim.torghut.svc.cluster.local/trading/status')
     expect(loopBody).toContain('"${EVIDENCE_DIR}/torghut-sim-status.json"')
     expect(loopBody).toContain('bun run packages/scripts/src/torghut/post-deploy-evidence.ts 2>&1')
-    expect(loopBody).toContain('[ "${TORGHUT_SCHEDULER_REPLICAS}" = \'1\' ]')
     expect(loopBody).not.toContain('contract_mismatch_accepted')
   })
 

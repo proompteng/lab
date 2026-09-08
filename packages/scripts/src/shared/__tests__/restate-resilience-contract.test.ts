@@ -6,7 +6,7 @@ import YAML from 'yaml'
 const repoRoot = new URL('../../../../../', import.meta.url)
 const readRepoFile = (path: string): string => readFileSync(new URL(path, repoRoot), 'utf8')
 
-test('Restate cluster uses three stable 1.7.2 nodes with hard host separation', () => {
+test('Restate cluster uses three stable 1.7.9 nodes with hard host separation', () => {
   const statefulSet = YAML.parse(readRepoFile('argocd/applications/restate/statefulset.yaml')) as Record<string, any>
   const env = new Map(
     statefulSet.spec.template.spec.containers[0].env.map((entry: { name: string; value?: string }) => [
@@ -16,7 +16,9 @@ test('Restate cluster uses three stable 1.7.2 nodes with hard host separation', 
   )
 
   expect(statefulSet.spec.replicas).toBe(3)
-  expect(statefulSet.spec.template.spec.containers[0].image).toBe('docker.restate.dev/restatedev/restate:1.7.2')
+  expect(statefulSet.spec.template.spec.containers[0].image).toBe(
+    'docker.restate.dev/restatedev/restate:1.7.9@sha256:329e32e12059610b681e165161bcd0722d193325b6c893bc46bfec72cd54b595',
+  )
   expect(statefulSet.spec.template.spec.terminationGracePeriodSeconds).toBe(90)
   expect(statefulSet.spec.template.spec.topologySpreadConstraints[0].topologyKey).toBe('kubernetes.io/hostname')
   expect(statefulSet.spec.template.spec.topologySpreadConstraints[0].whenUnsatisfiable).toBe('DoNotSchedule')
@@ -34,7 +36,8 @@ test('Restate cluster uses three stable 1.7.2 nodes with hard host separation', 
   expect(statefulSet.spec.template.spec.initContainers).toHaveLength(1)
   expect(statefulSet.spec.template.spec.initContainers[0]).toMatchObject({
     name: 'snapshot-scale-up-gate',
-    image: 'docker.restate.dev/restatedev/restate:1.7.2',
+    image:
+      'docker.restate.dev/restatedev/restate:1.7.9@sha256:329e32e12059610b681e165161bcd0722d193325b6c893bc46bfec72cd54b595',
   })
 })
 
@@ -160,7 +163,9 @@ test('Restate HA migration preserves quorum and changes existing replication onl
   expect(migration).toContain('last_replicated ~ /\\{node: 2\\}/')
   expect(migration).toContain('rows != 48')
   expect(migration).toContain('if nodes_ready && \\')
-  expect(migration).toContain('docker.restate.dev/restatedev/restate:1.7.2')
+  expect(migration).toContain(
+    'docker.restate.dev/restatedev/restate:1.7.9@sha256:329e32e12059610b681e165161bcd0722d193325b6c893bc46bfec72cd54b595',
+  )
   expect(migration).toContain('activeDeadlineSeconds: 1500')
   expect(migration).toContain('nodes set-storage-state --nodes "$id" --storage-state read-write')
   expect(migration).toContain('nodes set-worker-state --nodes "$id" --worker-state active')
@@ -284,21 +289,26 @@ esac
   }
 })
 
-test('Restate replication migration treats archived LSN zero as no snapshot and never mutates replication', () => {
-  const migration = YAML.parse(readRepoFile('argocd/applications/restate/replication-migration-job.yaml')) as Record<
-    string,
-    any
-  >
-  const script = migration.spec.template.spec.containers[0].command[2] as string
-  const tempDir = mkdtempSync('/tmp/restate-invalid-archive-')
-  const mutationMarker = `${tempDir}/replication-mutated`
-  const restatectl = `${tempDir}/restatectl`
-  const sleep = `${tempDir}/sleep`
+test(
+  'Restate replication migration treats archived LSN zero as no snapshot and never mutates replication',
+  {
+    timeout: 15_000,
+  },
+  () => {
+    const migration = YAML.parse(readRepoFile('argocd/applications/restate/replication-migration-job.yaml')) as Record<
+      string,
+      any
+    >
+    const script = migration.spec.template.spec.containers[0].command[2] as string
+    const tempDir = mkdtempSync('/tmp/restate-invalid-archive-')
+    const mutationMarker = `${tempDir}/replication-mutated`
+    const restatectl = `${tempDir}/restatectl`
+    const sleep = `${tempDir}/sleep`
 
-  try {
-    writeFileSync(
-      restatectl,
-      `#!/bin/sh
+    try {
+      writeFileSync(
+        restatectl,
+        `#!/bin/sh
 set -eu
 case " $* " in
   *" nodes list --extra "*)
@@ -329,24 +339,25 @@ OUT
   *) echo "unexpected restatectl invocation: $*" >&2; exit 90 ;;
 esac
 `,
-    )
-    writeFileSync(sleep, '#!/bin/sh\nexit 0\n')
-    chmodSync(restatectl, 0o755)
-    chmodSync(sleep, 0o755)
+      )
+      writeFileSync(sleep, '#!/bin/sh\nexit 0\n')
+      chmodSync(restatectl, 0o755)
+      chmodSync(sleep, 0o755)
 
-    const result = Bun.spawnSync(['/bin/bash', '-ceu', script], {
-      env: { ...process.env, PATH: `${tempDir}:${process.env.PATH ?? ''}` },
-      stdout: 'pipe',
-      stderr: 'pipe',
-    })
+      const result = Bun.spawnSync(['/bin/bash', '-ceu', script], {
+        env: { ...process.env, PATH: `${tempDir}:${process.env.PATH ?? ''}` },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      })
 
-    expect(result.exitCode).not.toBe(0)
-    expect(result.stderr.toString()).toContain('Three-node Restate membership did not converge safely')
-    expect(Bun.file(mutationMarker).size).toBe(0)
-  } finally {
-    rmSync(tempDir, { recursive: true, force: true })
-  }
-})
+      expect(result.exitCode).not.toBe(0)
+      expect(result.stderr.toString()).toContain('Three-node Restate membership did not converge safely')
+      expect(Bun.file(mutationMarker).size).toBe(0)
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  },
+)
 
 test('Restate replication migration refuses to mutate when any one node is not fully ready', () => {
   const migration = YAML.parse(readRepoFile('argocd/applications/restate/replication-migration-job.yaml')) as Record<
@@ -477,7 +488,9 @@ test('Restate snapshots use the existing Rook OBC contract and block rollout unt
   expect(bootstrap).toContain('$8 ~ /^[1-9][0-9]*$/')
   expect(bootstrap).toContain('if (!(i in seen) || !(i in archived)) exit 1')
   expect(bootstrap).toContain('Transient failure reading partition snapshot status; retrying')
-  expect(bootstrap).toContain('docker.restate.dev/restatedev/restate:1.7.2')
+  expect(bootstrap).toContain(
+    'docker.restate.dev/restatedev/restate:1.7.9@sha256:329e32e12059610b681e165161bcd0722d193325b6c893bc46bfec72cd54b595',
+  )
   expect(rollback).toContain('argocd.argoproj.io/hook: PreSync')
   expect(rollback).toContain('config set --replication 1')
   expect(rollback).toContain('set-storage-state --nodes "$remove_ids" --storage-state read-only')

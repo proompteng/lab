@@ -507,6 +507,7 @@ spec:
           - services/jangar
           - services/bumba
           - nix/images/jangar.nix
+          - nix/images/openai-codex-cli.nix
           - .github/workflows/nix-oci-build-common.yml
           - packages/scripts/src/shared/oci.ts
           - .github/workflows/jangar-post-deploy-verify.yml
@@ -546,6 +547,7 @@ spec:
         includePaths:
           - services/symphony
           - nix/images/symphony.nix
+          - nix/images/openai-codex-cli.nix
           - .github/workflows/nix-oci-build-common.yml
           - packages/scripts/src/shared/oci.ts
           - .github/workflows/symphony-post-deploy-verify.yml
@@ -697,7 +699,7 @@ spec:
         strictSemvers: true
         allowTagsRegexes:
           - '^[0-9a-f]{40}$'
-        platform: linux/arm64
+        platform: linux/arm64/v8
         cacheByTag: true
 ---
 apiVersion: kargo.akuity.io/v1alpha1

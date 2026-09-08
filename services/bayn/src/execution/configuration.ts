@@ -33,9 +33,9 @@ export interface GrantedCapitalRequest {
 }
 
 export const capitalActivationRequestSchemaVersion = 'bayn.paper-activation-request.v1' as const
-export const researchCapitalActivationRequestSchemaVersion = 'bayn.paper-research-activation-request.v1' as const
-export const researchCapitalPlanSchemaVersion = 'bayn.paper-research-plan.v1' as const
-export const researchCapitalBuildContinuationSchemaVersion = 'bayn.paper-research-build-continuation.v1' as const
+export const researchCapitalActivationRequestSchemaVersion = 'bayn.research-execution-mandate.v1' as const
+export const researchCapitalPlanSchemaVersion = 'bayn.research-execution-plan.v1' as const
+export const researchCapitalBuildContinuationSchemaVersion = 'bayn.research-execution-build-continuation.v1' as const
 export const researchCapitalBuildLineageSchemaVersion = 'bayn.research-capital-build-lineage.v1' as const
 
 const CapitalActivationStrategySchema = Schema.Struct({
@@ -115,9 +115,6 @@ const ResearchCapitalPlanFields = {
     maxOpenOrders: Schema.Literal(0),
     maxPositions: Schema.Literal(0),
   }),
-  cutoffAt: UtcInstantSchema,
-  expiresAt: UtcInstantSchema,
-  maximumCloseSessions: Schema.Literal(3),
 } as const
 
 const ResearchCapitalPlanMaterialSchema = Schema.Struct({
@@ -149,9 +146,6 @@ const researchPlanMaterial = (
   broker: request.broker,
   riskPolicyHash: request.riskPolicyHash,
   limits: request.limits,
-  cutoffAt: request.cutoffAt,
-  expiresAt: request.expiresAt,
-  maximumCloseSessions: request.maximumCloseSessions,
 })
 
 export const ResearchCapitalActivationRequestSchema = Schema.Struct({
@@ -160,7 +154,6 @@ export const ResearchCapitalActivationRequestSchema = Schema.Struct({
 }).check(
   Schema.makeFilter(
     (request: typeof ResearchCapitalActivationRequestMaterialSchema.Type & { readonly requestHash: string }) => {
-      if (request.expiresAt <= request.cutoffAt) return false
       const planHash = makeResearchCapitalPlanHash(researchPlanMaterial(request))
       if (Result.isFailure(planHash) || request.grant.planHash !== planHash.success) return false
       const expected = canonicalHashV1Result(requestWithoutHash(request))
@@ -388,11 +381,8 @@ export const makeResearchCapitalActivationRequest = (
   material: typeof ResearchCapitalActivationRequestMaterialSchema.Type,
 ): Result.Result<
   ResearchCapitalActivationRequest,
-  | 'CapitalActivationRequestCanonicalizationFailed'
-  | 'ResearchCapitalCloseWindowInvalid'
-  | 'ResearchCapitalPlanHashMismatch'
+  'CapitalActivationRequestCanonicalizationFailed' | 'ResearchCapitalPlanHashMismatch'
 > => {
-  if (material.expiresAt <= material.cutoffAt) return Result.fail('ResearchCapitalCloseWindowInvalid')
   const planHash = makeResearchCapitalPlanHash(researchPlanMaterial(material))
   if (Result.isFailure(planHash)) return Result.fail('CapitalActivationRequestCanonicalizationFailed')
   if (material.grant.planHash !== planHash.success) return Result.fail('ResearchCapitalPlanHashMismatch')
