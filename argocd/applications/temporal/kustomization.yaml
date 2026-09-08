@@ -10,54 +10,6 @@ resources:
 
 patches:
   - target:
-      kind: Deployment
-      name: temporal-frontend
-    patch: |-
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata:
-        name: temporal-frontend
-        annotations:
-          argocd.argoproj.io/sync-wave: "-20"
-      spec:
-        replicas: 0
-  - target:
-      kind: Deployment
-      name: temporal-history
-    patch: |-
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata:
-        name: temporal-history
-        annotations:
-          argocd.argoproj.io/sync-wave: "-20"
-      spec:
-        replicas: 0
-  - target:
-      kind: Deployment
-      name: temporal-matching
-    patch: |-
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata:
-        name: temporal-matching
-        annotations:
-          argocd.argoproj.io/sync-wave: "-20"
-      spec:
-        replicas: 0
-  - target:
-      kind: Deployment
-      name: temporal-worker
-    patch: |-
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata:
-        name: temporal-worker
-        annotations:
-          argocd.argoproj.io/sync-wave: "-20"
-      spec:
-        replicas: 0
-  - target:
       kind: Secret
       name: temporal-default-store
     patch: |-
