@@ -64,6 +64,8 @@ a shared `OPENAI_API_KEY`.
 
 Kata's Firecracker snapshotter extracts the guest OCI image into a 512 MiB blockfile. The Dockerfile therefore enforces
 a real 512 MiB ext4 population and filesystem check, with at least 16 MiB and 256 inodes left for extraction overhead.
+Regenerable Python bytecode caches and packaged documentation are omitted from the rootfs; Python source, libraries,
+executables, and copyright files remain. Native image checks exercise Python SSL, SQLite, JSON, and virtual environments.
 The check runs in a separate build stage and copies only its receipt into the image. Packaged manuals, translated
 messages, and documentation other than copyright notices are omitted to keep the guest within that limit.
 The image contains a minimal Ubuntu 24.04 shell environment, Nanoagent, and a

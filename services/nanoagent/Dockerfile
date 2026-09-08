@@ -102,6 +102,7 @@ RUN set -eux; \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* \
       /usr/share/man/* /usr/share/info/* /usr/share/locale/*; \
     find /usr/share/doc -type f ! -name copyright -delete; \
+    find /usr/lib -type d -name __pycache__ -prune -exec rm -rf {} +; \
     runtime_group="$(getent group 1000 | cut -d: -f1 || true)"; \
     if [ -n "$runtime_group" ]; then \
       groupmod --new-name nanoagent "$runtime_group"; \
@@ -296,6 +297,7 @@ ENV BUN_INSTALL=/home/nanoagent/.toolchain-smoke/.local \
 USER 1000:1000
 RUN mkdir -p "$HOME" && \
     bootstrap-toolchain --install-only && \
+    python3 -B -c 'import json, sqlite3, ssl, venv; assert sqlite3.connect(":memory:").execute("SELECT 42").fetchone() == (42,); assert ssl.create_default_context(); assert json.loads("42") == 42' && \
     test "$(command -v bwrap)" = '/usr/bin/bwrap' && \
     test "$(node --version)" = 'v24.11.1' && \
     test "$(npm --version | cut -d. -f1)" -ge 10 && \
