@@ -264,7 +264,9 @@ if ! jq -e 'length > 0 and all(.[]; .attached == true and .deleting == null and 
   >/dev/null <<<"$attachment_snapshot"; then
   record_failure "a RBD/CephFS VolumeAttachment is detached, deleting, or reports an attach error"
 fi
-attachment_digest="$(printf '%s\n' "$attachment_snapshot" | sha256sum | awk '{print $1}')"
+# Keep the original baseline representation; attachError is validated above.
+attachment_baseline="$(jq -S -c 'map(del(.error))' <<<"$attachment_snapshot")"
+attachment_digest="$(printf '%s\n' "$attachment_baseline" | sha256sum | awk '{print $1}')"
 if [[ -n "$baseline_file" ]]; then
   if [[ ! -r "$baseline_file" ]]; then
     record_failure "baseline file is not readable: $baseline_file"

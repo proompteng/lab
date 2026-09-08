@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from 'bun:test'
+import { createHash } from 'node:crypto'
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -246,6 +247,18 @@ test('strict mode completes functional evidence before rejecting approved securi
   const calls = (await readFile(fixture.log, 'utf8')).trim().split('\n').filter(Boolean)
   expect(calls.some((call) => call.includes('get volumeattachments'))).toBe(true)
   expect(calls.some((call) => call.includes('get pods --all-namespaces'))).toBe(true)
+})
+
+test('accepts an unchanged attachment baseline produced before the error check was added', async () => {
+  const fixture = await createFixture('healthy')
+  const priorCanonical =
+    '[{"attached":true,"deleting":null,"name":"csi-va-1","node":"node-1","persistentVolume":"pv-1"}]\n'
+  const digest = createHash('sha256').update(priorCanonical).digest('hex')
+  const baseline = join(fixture.bin, 'previous-baseline.sha256')
+  await writeFile(baseline, `${digest}\n`)
+  const result = runScript(fixture, ['--baseline', baseline])
+  expect(result.exitCode).toBe(0)
+  expect(result.stdout).toContain(`attachmentDigest=${digest}`)
 })
 
 test.each(['approved-warning', 'service-key-expired'] as const)(
