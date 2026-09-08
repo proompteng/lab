@@ -1,4 +1,4 @@
-import { Deferred, Effect, Layer, Option, Ref, Result, Scope } from 'effect'
+import { Deferred, Effect, Layer, Ref, Result, Scope } from 'effect'
 import {
   makeApplicationPlan,
   recordAutonomousCyclePass,
@@ -13,13 +13,15 @@ import {
   advanceRestrictedGenerationRecovery,
   recognizeRestrictedGenerationRebind,
   recoverTerminalGenerationToObserve,
-  type TerminalGenerationRolloverReceipt,
 } from '../blocked-generation-recovery'
 import { makeMutation } from '../broker/alpaca-mutations'
 import type { LoadedRuntimeConfig } from '../config'
 import { readFinalExecutionRiskContext } from '../db/reconciliation'
+import { makeArchiveAvailabilityRecorder } from '../db/archive-availability'
+import { sha256 } from '../hash'
+import { withRecordedArchiveReads } from '../market-data/intraday/availability'
 import { BrokerAccess } from '../execution/authority'
-import { Authority, KillState } from '../execution/contracts'
+import { Authority, KillState, type ResearchCapitalGrantGeneration } from '../execution/contracts'
 import {
   type ResearchCapitalActivationRequest,
   type ResearchCapitalBuildContinuation,
@@ -34,7 +36,6 @@ import {
   isExecutionMandateRecoveryRestriction,
 } from '../execution/mandate'
 import {
-  executionMandateCloseExpiresAt,
   loadStrategyExecutionRiskPolicy,
   type RecoveryFirstCycleDriver,
   type RecoveryFirstCycleDriverOwner,
@@ -48,7 +49,6 @@ import { autonomousRuntimeServices, makeAutonomousCycleResources } from './auton
 import { AutonomousRuntimeResourcesLive, applicationDependencies } from './resources'
 import {
   executionProgramError,
-  lifecycleMaintenanceCycle,
   mutationCycle,
   observeCycle,
   observeCycleGenerationHash,
@@ -56,28 +56,15 @@ import {
 } from './lifecycle'
 import {
   capitalActivationOperationalError,
-  completedCapitalActivation,
   decodeConfiguredCapitalActivation,
   pendingCapitalActivation,
   prepareOrRecoverResearchCapitalActivation,
-  readCompletedExecutionLifecycle,
   readOnlyExecutionPolicy,
   realizedCapitalActivation,
   researchCapitalRecoveryRequestIsCompatible,
-  recoverCapitalActivationGeneration,
-  recoverCapitalReceiptFinalizationGeneration,
   refreshResearchCapitalActivationReconciliation,
-  type CapitalActivationStartupResolution,
   type ConfiguredCapitalActivation,
 } from './capital-activation'
-import {
-  capitalReceiptFinalizationWindowOpen,
-  closedCycleReceiptEmissionAllowed,
-  completeExecutionLifecycle,
-  finalizeExecutionMandate,
-  makeClosedCycleReceiptEmitter,
-  runExecutionLifecycleMaintenance,
-} from './capital-lifecycle'
 
 export interface AutonomousServiceRuntimeOptions {
   readonly ownCycleDriver: RecoveryFirstCycleDriverOwner
@@ -162,8 +149,7 @@ export const makeAutonomousServiceRuntime = (
           }
           return Result.succeed({ request, buildContinuation, buildLineage })
         }
-        const observedAt = yield* currentUtcInstant
-        const validation = researchCapitalRecoveryRequestIsCompatible(request, observePlan, observedAt, true)
+        const validation = researchCapitalRecoveryRequestIsCompatible(request, observePlan)
         if (Result.isFailure(validation)) {
           yield* pendingCapitalActivation(state, request, 'PREPARATION_FAILED')
           return Result.fail(validation.failure)
@@ -187,7 +173,17 @@ export const makeAutonomousServiceRuntime = (
                   Effect.flatMap((runtimeContext) =>
                     autonomousRuntimeServices.pipe(
                       Effect.flatMap((runtimeServices) => {
-                        const cycleResources = makeAutonomousCycleResources(runtimeServices, dependencies.marketData)
+                        const recordedMarketData = withRecordedArchiveReads(
+                          dependencies.intradayMarketData,
+                          {
+                            endpointHash: sha256(plan.config.clickhouse.url),
+                            sourceRevision: plan.config.build.sourceRevision,
+                            imageDigest: plan.config.build.imageDigest,
+                            verification: plan.config.build.verification,
+                          },
+                          makeArchiveAvailabilityRecorder(runtimeServices.pgClient, runtimeServices.writerFence),
+                        )
+                        const cycleResources = makeAutonomousCycleResources(runtimeServices, recordedMarketData)
                         const readStartCycle = (startup: AutonomousCycleStartupInput) =>
                           Effect.gen(function* () {
                             if (runtimeServices.authorityGenerationStore.readAuthorityState === undefined) {
@@ -204,7 +200,7 @@ export const makeAutonomousServiceRuntime = (
                               observeCycleGenerationHash(authority),
                             ).pipe(Effect.mapError((message) => capitalActivationOperationalError(message)))
                             return yield* ownCycleDriverStartup(
-                              observeCycle(observePlan, authorityGenerationHash, dependencies.intradayMarketData),
+                              observeCycle(observePlan, authorityGenerationHash, recordedMarketData),
                               options.ownCycleDriver,
                             )(startup)
                           }).pipe(
@@ -270,207 +266,25 @@ export const makeAutonomousServiceRuntime = (
                             observePlan.config.operationTimeoutMs,
                           ),
                         })
-                        const recoverTerminalExecutionGeneration: Effect.Effect<
-                          TerminalGenerationRolloverReceipt,
-                          OperationalError
-                        > = recoverBlockedGeneration.pipe(
-                          Effect.flatMap(
-                            (receipt): Effect.Effect<TerminalGenerationRolloverReceipt, OperationalError> => {
-                              if (receipt._tag === 'RolledOver') return Effect.succeed(receipt)
-                              if (runtimeServices.authorityGenerationStore.readAuthorityState === undefined) {
-                                return Effect.fail(
-                                  capitalActivationOperationalError(
-                                    'terminal execution rollover requires durable authority state reads',
-                                  ),
-                                )
-                              }
-                              return runtimeServices.authorityGenerationStore.readAuthorityState.pipe(
-                                Effect.mapError((cause) =>
-                                  capitalActivationOperationalError(
-                                    'terminal execution rollover authority read failed',
-                                    cause,
-                                  ),
-                                ),
-                                Effect.flatMap((authority) =>
-                                  authority.maximum === Authority.Observe &&
-                                  authority.effective === Authority.Observe &&
-                                  authority.kill === KillState.Clear
-                                    ? Effect.succeed(receipt)
-                                    : Effect.fail(
-                                        capitalActivationOperationalError(
-                                          'terminal execution rollover did not reach clear OBSERVE authority',
-                                        ),
-                                      ),
-                                ),
-                              )
-                            },
-                          ),
-                        )
                         if (request === null) {
                           return recoverBlockedGeneration.pipe(Effect.andThen(readCurrentObserveRuntime()))
                         }
-                        const completedLifecycle = readCompletedExecutionLifecycle(
+                        const prepareOrRecover = prepareOrRecoverResearchCapitalActivation(
                           observePlan,
                           request,
                           buildContinuation,
                           buildLineage,
+                          runtimeServices.session,
                           runtimeServices.authorityGenerationStore,
-                          (authorityGenerationHash) =>
-                            runtimeServices.forwardPerformanceReceiptStore.read(authorityGenerationHash).pipe(
-                              Effect.mapError((cause) =>
-                                capitalActivationOperationalError(
-                                  'completed execution lifecycle receipt read failed',
-                                  cause,
-                                ),
-                              ),
-                              Effect.map(Option.map((receipt) => receipt.receiptHash)),
-                            ),
+                          runtimeServices.capitalGrantLifecycleStore,
+                          runOnce.pipe(
+                            // @effect-diagnostics-next-line strictEffectProvide:off -- value-only cycle services have no resource lifetime
+                            Effect.provide(cycleResources),
+                          ),
+                          observePlan.config.operationTimeoutMs,
                         )
-                        const prepareOrRecover: Effect.Effect<CapitalActivationStartupResolution, OperationalError> =
-                          currentUtcInstant.pipe(
-                            Effect.flatMap(
-                              (observedAt): Effect.Effect<CapitalActivationStartupResolution, OperationalError> =>
-                                observedAt >= executionMandateCloseExpiresAt(request.expiresAt)
-                                  ? recoverCapitalReceiptFinalizationGeneration(
-                                      observePlan,
-                                      request,
-                                      buildContinuation,
-                                      buildLineage,
-                                      runtimeServices.authorityGenerationStore,
-                                      runtimeServices.authorityRestrictionStore,
-                                      runtimeServices.writerFence,
-                                    ).pipe(
-                                      Effect.map((generation) => ({
-                                        _tag: 'ReceiptFinalization' as const,
-                                        generation,
-                                      })),
-                                    )
-                                  : observedAt >= request.cutoffAt
-                                    ? recoverCapitalActivationGeneration(
-                                        observePlan,
-                                        request,
-                                        buildContinuation,
-                                        buildLineage,
-                                        runtimeServices.authorityGenerationStore,
-                                        runtimeServices.authorityRestrictionStore,
-                                        runtimeServices.writerFence,
-                                      ).pipe(Effect.map((generation) => ({ _tag: 'Mutation' as const, generation })))
-                                    : prepareOrRecoverResearchCapitalActivation(
-                                        observePlan,
-                                        request,
-                                        buildContinuation,
-                                        buildLineage,
-                                        runtimeServices.session,
-                                        runtimeServices.authorityGenerationStore,
-                                        runtimeServices.capitalGrantLifecycleStore,
-                                        runOnce.pipe(
-                                          // @effect-diagnostics-next-line strictEffectProvide:off -- value-only cycle services have no resource lifetime
-                                          Effect.provide(cycleResources),
-                                        ),
-                                        observePlan.config.operationTimeoutMs,
-                                      ).pipe(Effect.map((generation) => ({ _tag: 'Mutation' as const, generation }))),
-                            ),
-                          )
-                        const resolveReceiptFinalization = (
-                          prepared: Extract<
-                            CapitalActivationStartupResolution,
-                            { readonly _tag: 'ReceiptFinalization' }
-                          >,
-                        ): Effect.Effect<AutonomousRuntime<never, never>, OperationalError, Scope.Scope> => {
-                          const emitClosedCycleReceipt = makeClosedCycleReceiptEmitter(
-                            observePlan.config,
-                            runtimeServices.pgClient,
-                            prepared.generation.generationHash,
-                            runtimeServices.forwardPerformanceReceiptStore,
-                          )
-                          const finalizeClosedCycleReceipt = (cycleId: string | undefined, observedAt: string) =>
-                            finalizeExecutionMandate(
-                              state,
-                              request,
-                              prepared.generation.generationHash,
-                              runtimeServices.authorityRestrictionStore,
-                              runtimeServices.writerFence,
-                              emitClosedCycleReceipt,
-                              cycleId,
-                              observedAt,
-                            )
-                          const finalizeExecutionLifecycleReceipt = (cycleId: string | undefined, observedAt: string) =>
-                            completeExecutionLifecycle(
-                              finalizeClosedCycleReceipt(cycleId, observedAt),
-                              recoverTerminalExecutionGeneration,
-                            )
-                          return Effect.gen(function* () {
-                            yield* pendingCapitalActivation(state, request, 'REQUEST_EXPIRED')
-                            const observedAt = yield* currentUtcInstant
-                            if (!capitalReceiptFinalizationWindowOpen(request.expiresAt, observedAt)) {
-                              const existing = yield* runtimeServices.forwardPerformanceReceiptStore
-                                .read(prepared.generation.generationHash)
-                                .pipe(
-                                  Effect.mapError((cause) =>
-                                    capitalActivationOperationalError(
-                                      'durable capital receipt recovery read failed',
-                                      cause,
-                                    ),
-                                  ),
-                                )
-                              if (Option.isSome(existing)) {
-                                yield* completeExecutionLifecycle(
-                                  finalizeExecutionMandate(
-                                    state,
-                                    request,
-                                    prepared.generation.generationHash,
-                                    runtimeServices.authorityRestrictionStore,
-                                    runtimeServices.writerFence,
-                                    () => Effect.succeed(existing.value.receiptHash),
-                                    existing.value.cycleId,
-                                    observedAt,
-                                  ),
-                                  recoverTerminalExecutionGeneration,
-                                ).pipe(
-                                  Effect.mapError((cause) =>
-                                    capitalActivationOperationalError(
-                                      'durable capital receipt terminal rollover failed',
-                                      cause,
-                                    ),
-                                  ),
-                                )
-                              }
-                              return readRuntime()
-                            }
-                            const maintainReconciliation = runOnce.pipe(
-                              // @effect-diagnostics-next-line strictEffectProvide:off -- value-only reconciliation services have no resource lifetime
-                              Effect.provide(cycleResources),
-                              Effect.asVoid,
-                            )
-                            const maintainLifecycle = runExecutionLifecycleMaintenance(
-                              request,
-                              runtimeServices.authorityRestrictionStore,
-                              runtimeServices.writerFence,
-                              finalizeExecutionLifecycleReceipt,
-                            )
-                            const startCycle: AutonomousCycleStartup = (startup) =>
-                              ownCycleDriverStartup(
-                                lifecycleMaintenanceCycle(observePlan, maintainReconciliation, maintainLifecycle),
-                                options.ownCycleDriver,
-                              )(startup).pipe(
-                                // @effect-diagnostics-next-line strictEffectProvide:off -- value-only lifecycle services have no resource lifetime
-                                Effect.provide(cycleResources),
-                                Effect.map((loop) =>
-                                  loop.pipe(
-                                    // @effect-diagnostics-next-line strictEffectProvide:off -- value-only lifecycle services have no resource lifetime
-                                    Effect.provide(cycleResources),
-                                  ),
-                                ),
-                              )
-                            return {
-                              ...readRuntime(),
-                              cycleBindingId: prepared.generation.generationHash,
-                              startCycle,
-                            }
-                          })
-                        }
                         const resolvePrepared = (
-                          prepared: CapitalActivationStartupResolution,
+                          generation: ResearchCapitalGrantGeneration,
                         ): Effect.Effect<AutonomousRuntime<never, never>, OperationalError, Scope.Scope> => {
                           if (runtimeServices.authorityGenerationStore.readAuthorityState === undefined) {
                             return Effect.fail(
@@ -488,18 +302,15 @@ export const makeAutonomousServiceRuntime = (
                             ),
                             Effect.flatMap((authorityState) => {
                               const restricted =
-                                authorityState.generationHash === prepared.generation.generationHash &&
+                                authorityState.generationHash === generation.generationHash &&
                                 authorityState.maximum === Authority.Execution &&
                                 authorityState.effective === Authority.Observe &&
                                 authorityState.kill === KillState.Active &&
                                 isExecutionMandateRecoveryRestriction(authorityState.reason)
-                              if (prepared._tag === 'ReceiptFinalization' && !restricted) {
-                                return resolveReceiptFinalization(prepared)
-                              }
                               const realizedPolicy = resolvePreparedExecutionPolicy({
                                 configured: plan.config.execution,
                                 brokerIdentity: plan.config.alpaca.identity,
-                                preparedGenerationHash: prepared.generation.generationHash,
+                                preparedGenerationHash: generation.generationHash,
                               })
                               if (Result.isFailure(realizedPolicy)) {
                                 return Effect.fail(
@@ -533,46 +344,8 @@ export const makeAutonomousServiceRuntime = (
                                   capitalActivationOperationalError('prepared execution authority is invalid', cause),
                                 ),
                                 Effect.flatMap((authority) => {
-                                  const capitalGrant = capitalGrantFromLegacyGeneration(prepared.generation)
+                                  const capitalGrant = capitalGrantFromLegacyGeneration(generation)
                                   const cycleBindingId = capitalGrantKey(capitalGrant)
-                                  const emitClosedCycleReceipt = makeClosedCycleReceiptEmitter(
-                                    realizedPlan.config,
-                                    runtimeServices.pgClient,
-                                    prepared.generation.generationHash,
-                                    runtimeServices.forwardPerformanceReceiptStore,
-                                  )
-                                  const finalizeClosedCycleReceipt = (
-                                    cycleId: string | undefined,
-                                    observedAt: string,
-                                  ) =>
-                                    finalizeExecutionMandate(
-                                      state,
-                                      request,
-                                      prepared.generation.generationHash,
-                                      runtimeServices.authorityRestrictionStore,
-                                      runtimeServices.writerFence,
-                                      emitClosedCycleReceipt,
-                                      cycleId,
-                                      observedAt,
-                                    )
-                                  const finalizeExecutionLifecycleReceipt = (
-                                    cycleId: string | undefined,
-                                    observedAt: string,
-                                  ) =>
-                                    completeExecutionLifecycle(
-                                      finalizeClosedCycleReceipt(cycleId, observedAt),
-                                      recoverTerminalExecutionGeneration,
-                                    )
-                                  const onClosedCycle = (cycleId: string, observedAt: string) =>
-                                    closedCycleReceiptEmissionAllowed(request.cutoffAt, observedAt)
-                                      ? finalizeClosedCycleReceipt(cycleId, observedAt).pipe(Effect.asVoid)
-                                      : Effect.void
-                                  const maintainExecutionLifecycle = runExecutionLifecycleMaintenance(
-                                    request,
-                                    runtimeServices.authorityRestrictionStore,
-                                    runtimeServices.writerFence,
-                                    finalizeExecutionLifecycleReceipt,
-                                  )
                                   return makeMutation(
                                     runtimeServices.session,
                                     authority,
@@ -603,8 +376,6 @@ export const makeAutonomousServiceRuntime = (
                                                   observedAt,
                                                 ),
                                               currentUtcInstant,
-                                              entrySubmitExpiresAt: request.cutoffAt,
-                                              closeSubmitExpiresAt: executionMandateCloseExpiresAt(request.expiresAt),
                                               isCloseOnlyIntent: (intentId) =>
                                                 runtimeServices.executionCycleClosureStore.containsIntent(intentId),
                                               intentStore: runtimeServices.intentStore,
@@ -625,12 +396,10 @@ export const makeAutonomousServiceRuntime = (
                                           mutationCycle(
                                             realizedPlan,
                                             executionProgram,
-                                            request,
                                             runtimeServices.executionCycleClosureStore,
                                             runtimeServices.blockedCycleIntentStore,
-                                            onClosedCycle,
-                                            maintainExecutionLifecycle,
-                                            dependencies.intradayMarketData,
+                                            recordedMarketData,
+                                            restricted ? 'RecoveryOnly' : 'Mutation',
                                           ),
                                           owner,
                                         )(startup).pipe(
@@ -653,7 +422,7 @@ export const makeAutonomousServiceRuntime = (
                                       const activate = realizedCapitalActivation(
                                         state,
                                         request,
-                                        prepared.generation.generationHash,
+                                        generation.generationHash,
                                       ).pipe(Effect.as(runtime))
                                       if (!restricted) return activate
 
@@ -688,7 +457,7 @@ export const makeAutonomousServiceRuntime = (
                                                     Effect.map((authority) =>
                                                       recognizeRestrictedGenerationRebind(
                                                         step,
-                                                        prepared.generation.generationHash,
+                                                        generation.generationHash,
                                                         authority.generationHash,
                                                       ),
                                                     ),
@@ -733,22 +502,8 @@ export const makeAutonomousServiceRuntime = (
                             }),
                           )
                         }
-                        return completedLifecycle.pipe(
-                          Effect.flatMap(
-                            (
-                              completed,
-                            ): Effect.Effect<AutonomousRuntime<never, never>, OperationalError, Scope.Scope> => {
-                              if (completed === undefined) {
-                                return prepareOrRecover.pipe(Effect.flatMap(resolvePrepared))
-                              }
-                              return completedCapitalActivation(
-                                state,
-                                request,
-                                completed.authorityGenerationHash,
-                                completed.receiptHash,
-                              ).pipe(Effect.as(readRuntime()))
-                            },
-                          ),
+                        return prepareOrRecover.pipe(
+                          Effect.flatMap(resolvePrepared),
                           Effect.catch((cause) =>
                             Effect.logWarning('Bayn capital activation remains in OBSERVE').pipe(
                               Effect.annotateLogs({

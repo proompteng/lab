@@ -58,6 +58,12 @@ export const executionMarketDataBinding = (
       universeSymbolHash: snapshot.manifest.universeSymbolHash,
       ...(snapshot.manifest.universe === undefined ? {} : { universe: snapshot.manifest.universe }),
       symbols: snapshot.manifest.symbols,
+      ...(snapshot.manifest.candidateSymbols === undefined
+        ? {}
+        : { candidateSymbols: snapshot.manifest.candidateSymbols }),
+      ...(snapshot.manifest.candidateExclusions === undefined
+        ? {}
+        : { candidateExclusions: snapshot.manifest.candidateExclusions }),
       ...(snapshot.manifest.purpose === undefined ? {} : { purpose: snapshot.manifest.purpose }),
       feed: snapshot.manifest.feed,
       delayClass: snapshot.manifest.delayClass,
@@ -84,7 +90,9 @@ export interface AdverseQuotePrices {
 }
 
 export const adverseQuotePrices = (
-  snapshot: IntradayMarketSnapshot,
+  snapshot: {
+    readonly latestQuotes: Readonly<Record<string, { readonly bidPrice: number; readonly askPrice: number }>>
+  },
   symbols: readonly string[],
 ): Result.Result<AdverseQuotePrices, IntradayMarketDataFailure> => {
   const bidPriceMicros: Record<string, string> = {}
@@ -151,7 +159,7 @@ export const requireFreshIntradayPositionQuotes = (
 }
 
 export const maximumBuyQuantities = (
-  snapshot: IntradayMarketSnapshot,
+  snapshot: { readonly latestQuotes: Readonly<Record<string, { readonly askSize: number }>> },
   targetWeights: Readonly<Record<string, number>>,
 ): Result.Result<Readonly<Record<string, string>>, IntradayMarketDataFailure> => {
   const quantities: Record<string, string> = {}

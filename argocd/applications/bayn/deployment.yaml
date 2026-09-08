@@ -25,7 +25,7 @@ spec:
         app.kubernetes.io/name: bayn
         app.kubernetes.io/part-of: bayn
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-08-29T18:15:00Z"
+        kubectl.kubernetes.io/restartedAt: "2026-09-08T06:37:35.585Z"
     spec:
       serviceAccountName: bayn
       automountServiceAccountToken: false
@@ -36,6 +36,8 @@ spec:
           topologyKey: kubernetes.io/hostname
           whenUnsatisfiable: DoNotSchedule
           nodeTaintsPolicy: Honor
+          matchLabelKeys:
+            - pod-template-hash
           labelSelector:
             matchLabels:
               app.kubernetes.io/name: bayn
@@ -56,7 +58,7 @@ spec:
               protocol: TCP
           env:
             - name: BAYN_CODE_REVISION
-              value: 89115ae4b8e9ae53e9c7f5817e5e1f1dce8ece2a
+              value: ee60493eb5a9b5f8572e868b6ff31c17675501a3
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
               value: http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
             - name: POD_NAMESPACE
@@ -74,17 +76,17 @@ spec:
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:6940717c4de931796e5893e8579d8e33aad9ea2c52ed4cd8db9471704d582c3a
+              value: sha256:47143f3136a8ef2bd00910ff970c75db98c2e1229f2a7c028019bd82833c5ba7
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "9b85a04413b635b35ad3dea33fcfc5e5bf3dd5590c1564390b454f1092988fa2"
+              value: "1d3b93a585e9b37836507880323f57ba7f7db385241dccf09234c43125ee5285"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "88f4bf9a18fd881226a123ba277a65daaaf92aba76acfde86072d03d143624ef"
+              value: "104bb22429eb54e025a092a8434be2b8390059c24515512de8cbb99c66cbb797"
             # Reviewed activation identity pins used by the release verifier. Runtime derives the same
             # identity from its compiled strategy contract before serving.
             - name: BAYN_STRATEGY_NAME
               value: intraday-momentum
             - name: BAYN_STRATEGY_PROTOCOL_HASH
-              value: "b2cb0303849ff30d64214f0faeea689b78bcb93554eb517251f914001ec50318"
+              value: "28582fcf9c63d0409a06d27abf53c05286d1b785374f33e228b88696b990ab40"
             - name: BAYN_EXECUTION_RISK_POLICY_HASH
               value: "2e60270036900493a121a87c73730960154278778a8aa71b663b138effd82227"
             - name: BAYN_CAPITAL_ACTIVATION_REQUEST
@@ -95,7 +97,7 @@ spec:
             - name: BAYN_CAPITAL_ACTIVATION_KIND
               value: ResearchCapitalActivationRequest
             - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: "{\"schemaVersion\":\"bayn.research-capital-build-lineage.v1\",\"requestHash\":\"b873497405146d8bcaf3340a8a6744fa74f4a8729f18a35cf7484dde8c7163de\",\"authoredActivation\":{\"sourceRevision\":\"89115ae4b8e9ae53e9c7f5817e5e1f1dce8ece2a\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:6940717c4de931796e5893e8579d8e33aad9ea2c52ed4cd8db9471704d582c3a\"},\"activation\":{\"sourceRevision\":\"89115ae4b8e9ae53e9c7f5817e5e1f1dce8ece2a\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:6940717c4de931796e5893e8579d8e33aad9ea2c52ed4cd8db9471704d582c3a\"}}"
+              value: "{\"schemaVersion\":\"bayn.research-capital-build-lineage.v1\",\"requestHash\":\"423c6c805917f05d5dcf80da7e439cf8c6a373762298148b15306ed8acfe2625\",\"authoredActivation\":{\"sourceRevision\":\"ee60493eb5a9b5f8572e868b6ff31c17675501a3\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:47143f3136a8ef2bd00910ff970c75db98c2e1229f2a7c028019bd82833c5ba7\"},\"activation\":{\"sourceRevision\":\"ee60493eb5a9b5f8572e868b6ff31c17675501a3\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:47143f3136a8ef2bd00910ff970c75db98c2e1229f2a7c028019bd82833c5ba7\"}}"
             - name: BAYN_BROKER_ACCESS
               value: read-only
             - name: BAYN_CAPITAL_AUTHORITY

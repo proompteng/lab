@@ -1,38 +1,25 @@
 'use client'
 
-import { Wifi } from 'lucide-react'
-import { useEffect, useRef } from 'react'
+import { Check, Search, SlidersHorizontal, Wifi } from 'lucide-react'
+import { memo, useEffect, useRef, useState } from 'react'
 
 import type { TengriAgent } from '@/lib/tengri/types'
-import { APP_TITLES, type TengriApp } from '@/lib/tengri/window-manager'
-import { DOCK_APPS } from './desktop-apps'
+import { APP_TITLES, type DesktopWindow, type TengriApp } from '@/lib/tengri/window-manager'
+import { TengriMark } from './tengri-mark'
 
 type MenuEntry = {
   label: string
   shortcut?: string
   run: () => void | Promise<void>
   separator?: boolean
+  checked?: boolean
+  disabled?: boolean
 }
 
-export function MenuBar({
-  activeApp,
-  agent,
-  clock,
-  connectionWarning,
-  menuOpen,
-  onCloseActive,
-  onMenuChange,
-  onMinimizeActive,
-  onNewWindow,
-  onOpenApp,
-  onOpenSpotlight,
-  onSignOut,
-  onToggleMaximize,
-  userName,
-}: {
+type MenuBarProps = {
   activeApp: TengriApp
+  activeWindow: DesktopWindow | undefined
   agent: TengriAgent
-  clock: Date | null
   connectionWarning: string
   menuOpen: string | null
   onCloseActive: () => void
@@ -43,8 +30,29 @@ export function MenuBar({
   onOpenSpotlight: () => void
   onSignOut: () => void
   onToggleMaximize: () => void
+  onActivateWindow: (id: string) => void
+  windows: readonly DesktopWindow[]
   userName: string
-}) {
+}
+
+export const MenuBar = memo(function MenuBar({
+  activeApp,
+  activeWindow,
+  agent,
+  connectionWarning,
+  menuOpen,
+  onCloseActive,
+  onMenuChange,
+  onMinimizeActive,
+  onNewWindow,
+  onOpenApp,
+  onOpenSpotlight,
+  onSignOut,
+  onToggleMaximize,
+  onActivateWindow,
+  windows,
+  userName,
+}: MenuBarProps) {
   const triggerRefs = useRef(new Map<string, HTMLButtonElement>())
   const editTargetRef = useRef<HTMLElement | null>(null)
 
@@ -83,12 +91,18 @@ export function MenuBar({
     ],
     [APP_TITLES[activeApp]]: [
       { label: `About ${APP_TITLES[activeApp]}`, run: () => onOpenApp('settings') },
-      { label: `Close ${APP_TITLES[activeApp]} Window`, shortcut: '⌘W', run: onCloseActive, separator: true },
+      {
+        label: `Close ${APP_TITLES[activeApp]} Window`,
+        shortcut: '⌘W',
+        run: onCloseActive,
+        separator: true,
+        disabled: !activeWindow,
+      },
     ],
     File: [
       { label: `New ${APP_TITLES[activeApp]} Window`, shortcut: '⌘N', run: onNewWindow },
       { label: 'Open…', shortcut: '⌘O', run: onOpenSpotlight },
-      { label: 'Close Window', shortcut: '⌘W', run: onCloseActive },
+      { label: 'Close Window', shortcut: '⌘W', run: onCloseActive, disabled: !activeWindow },
     ],
     Edit: [
       { label: 'Undo', shortcut: '⌘Z', run: () => runEditCommand('undo') },
@@ -97,12 +111,29 @@ export function MenuBar({
       { label: 'Paste', shortcut: '⌘V', run: () => runEditCommand('paste') },
     ],
     View: [
-      { label: 'Enter Full Screen', shortcut: '⌃⌘F', run: onToggleMaximize },
+      {
+        label: activeWindow?.mode === 'maximized' ? 'Restore Window' : 'Fill Window',
+        shortcut: '⌃⌘F',
+        run: onToggleMaximize,
+        disabled: !activeWindow,
+      },
       { label: 'Open Spotlight', shortcut: '⌘Space', run: onOpenSpotlight },
     ],
     Window: [
-      { label: 'Minimize', shortcut: '⌘M', run: onMinimizeActive },
-      ...DOCK_APPS.map((app) => ({ label: APP_TITLES[app], run: () => onOpenApp(app) })),
+      { label: 'Minimize', shortcut: '⌘M', run: onMinimizeActive, disabled: !activeWindow },
+      ...windows
+        .filter((window) => window.app === activeApp)
+        .map((window, index) => {
+          const siblings = windows.filter((candidate) => candidate.app === window.app)
+          const number =
+            siblings.length > 1 ? ` ${siblings.findIndex((candidate) => candidate.id === window.id) + 1}` : ''
+          return {
+            label: `${window.title}${number}${window.mode === 'minimized' ? ' — Minimized' : ''}`,
+            checked: window.id === activeWindow?.id,
+            separator: index === 0,
+            run: () => onActivateWindow(window.id),
+          }
+        }),
     ],
     Help: [
       {
@@ -126,7 +157,7 @@ export function MenuBar({
   }
 
   return (
-    <header className="absolute inset-x-0 top-0 z-[2000] flex h-[30px] items-center justify-between border-b border-white/10 bg-[rgba(16,20,31,0.5)] px-3 text-[12px] shadow-sm backdrop-blur-2xl">
+    <header className="absolute inset-x-0 top-0 z-[2000] flex h-[30px] items-center justify-between bg-black/20 px-3 text-[13px] text-white shadow-[0_1px_0_rgba(0,0,0,0.12)] backdrop-blur-2xl backdrop-saturate-150">
       <nav aria-label="Application menu" className="flex h-full min-w-0 items-center gap-0.5" role="menubar">
         {menuNames.map((menu, index) => {
           const key = menu === APP_TITLES[activeApp] ? 'active' : menu
@@ -147,7 +178,7 @@ export function MenuBar({
                 aria-expanded={menuOpen === menu}
                 aria-haspopup="menu"
                 aria-label={menu === 'tengri' ? 'Tengri menu' : undefined}
-                className={`flex h-full items-center rounded px-2 text-white/82 outline-none hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-white/50 ${key === 'active' ? 'font-semibold' : ''}`}
+                className={`flex h-full items-center rounded px-2.5 text-white/95 outline-none hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-white/50 ${key === 'active' ? 'font-semibold' : ''}`}
                 id={`${menuId}-trigger`}
                 onClick={(event) => {
                   event.stopPropagation()
@@ -199,7 +230,7 @@ export function MenuBar({
           )
         })}
       </nav>
-      <div aria-label="Desktop status" className="flex min-w-0 shrink-0 items-center gap-2 text-white/72 sm:gap-3">
+      <div aria-label="Desktop status" className="flex min-w-0 shrink-0 items-center gap-2 text-white/90 sm:gap-3.5">
         <span className="hidden items-center gap-1.5 lg:flex">
           <span
             aria-hidden="true"
@@ -211,14 +242,50 @@ export function MenuBar({
           <Wifi aria-hidden="true" className="h-3.5 w-3.5" />
           <span className="sr-only">{connectionWarning ? 'Connection degraded' : 'Connected'}</span>
         </span>
-        <span className="hidden max-w-32 truncate xl:inline">{userName || 'GitHub user'}</span>
-        <time className="tabular-nums" dateTime={clock?.toISOString()}>
-          {clock
-            ? new Intl.DateTimeFormat(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' }).format(clock)
-            : '\u00a0'}
-        </time>
+        <span className="hidden max-w-32 truncate 2xl:inline">{userName || 'GitHub user'}</span>
+        <button
+          type="button"
+          aria-label="Open Spotlight"
+          className="hidden size-6 items-center justify-center rounded hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-white sm:flex"
+          onClick={onOpenSpotlight}
+        >
+          <Search aria-hidden="true" className="size-3.5" />
+        </button>
+        <button
+          type="button"
+          aria-label="Open System Settings"
+          className="hidden size-6 items-center justify-center rounded hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-white sm:flex"
+          onClick={() => onOpenApp('settings')}
+        >
+          <SlidersHorizontal aria-hidden="true" className="size-4" />
+        </button>
+        <DesktopClock />
       </div>
     </header>
+  )
+})
+
+function DesktopClock() {
+  const [clock, setClock] = useState<Date | null>(null)
+
+  useEffect(() => {
+    setClock(new Date())
+    const timer = window.setInterval(() => setClock(new Date()), 30_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  return (
+    <time className="tabular-nums" dateTime={clock?.toISOString()}>
+      {clock
+        ? new Intl.DateTimeFormat(undefined, {
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+          }).format(clock)
+        : '\u00a0'}
+    </time>
   )
 }
 
@@ -247,7 +314,7 @@ function MenuPopover({
     <div
       ref={menuRef}
       aria-labelledby={labelledBy}
-      className="absolute top-[28px] left-0 min-w-56 rounded-xl border border-white/18 bg-[rgba(34,38,50,0.88)] p-1.5 shadow-2xl backdrop-blur-3xl"
+      className="absolute top-[28px] left-0 min-w-56 rounded-lg border border-white/20 bg-zinc-800/90 p-1 shadow-[0_12px_32px_rgba(0,0,0,0.4)] backdrop-blur-3xl"
       id={id}
       onKeyDown={(event) => {
         const items = [...(menuRef.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])]
@@ -281,29 +348,27 @@ function MenuPopover({
       {entries.map((entry) => (
         <div className={entry.separator ? 'mt-1 border-t border-white/9 pt-1' : ''} key={entry.label}>
           <button
-            className="flex w-full items-center justify-between rounded-lg px-3 py-1.5 text-left text-[12px] text-white/85 outline-none hover:bg-[#2574e8] focus-visible:bg-[#2574e8]"
+            className="flex w-full items-center justify-between rounded px-2.5 py-1 text-left text-[13px] text-white/85 outline-none enabled:hover:bg-[#2574e8] focus-visible:bg-[#2574e8] disabled:text-white/30"
+            disabled={entry.disabled}
+            aria-checked={entry.checked}
             onClick={() => {
-              void entry.run()
               onClose()
               returnFocus()
+              void entry.run()
             }}
-            role="menuitem"
+            role={entry.checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
             type="button"
           >
-            <span>{entry.label}</span>
-            <span className="ml-6 text-white/38">{entry.shortcut}</span>
+            <span className="flex items-center gap-1.5">
+              {entry.checked === undefined ? null : (
+                <Check aria-hidden="true" className={`size-3 ${entry.checked ? '' : 'invisible'}`} />
+              )}
+              {entry.label}
+            </span>
+            <span className="ml-6 text-white/65">{entry.shortcut}</span>
           </button>
         </div>
       ))}
     </div>
-  )
-}
-
-function TengriMark() {
-  return (
-    <span className="relative grid h-4 w-4 place-items-center rounded-full border border-white/65">
-      <span className="h-1.5 w-1.5 rounded-full bg-white/85" />
-      <span className="absolute -top-1 h-1.5 w-px bg-white/65" />
-    </span>
   )
 }
