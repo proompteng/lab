@@ -1918,7 +1918,15 @@ test('keeps the application menu and status controls separate on narrow viewport
 
   const applicationMenu = page.getByRole('menubar', { name: 'Application menu' })
   const desktopStatus = page.getByLabel('Desktop status')
-  await expect(applicationMenu.getByRole('menuitem', { name: 'Tengri menu' })).toBeVisible()
+  const tengriMenu = applicationMenu.getByRole('menuitem', { name: 'Tengri menu' })
+  await expect(tengriMenu).toBeVisible()
+  await expect
+    .poll(() =>
+      tengriMenu
+        .locator('img')
+        .evaluate((image) => image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0),
+    )
+    .toBe(true)
   await expect(applicationMenu.getByRole('menuitem', { name: 'Chrome', exact: true })).toBeVisible()
   await expect(applicationMenu.getByRole('menuitem', { name: 'File', exact: true, includeHidden: true })).toBeHidden()
   await expect(applicationMenu.getByRole('menuitem', { name: 'Help', exact: true, includeHidden: true })).toBeHidden()
@@ -3178,6 +3186,30 @@ test('has no serious or critical Axe violations', async ({ page }) => {
   ).toEqual([])
 })
 
+test('preserves a menu focus choice made before a pending window activation frame', async ({ page }) => {
+  await mockTengri(page)
+  await page.goto('/')
+  await expect(page.getByRole('region', { name: 'Chrome window' })).toBeVisible()
+  await page.clock.install({ time: new Date('2026-09-08T12:00:00Z') })
+  await page.clock.pauseAt(new Date('2026-09-08T12:00:01Z'))
+
+  await page.keyboard.press('Meta+Space')
+  const spotlight = page.getByRole('dialog', { name: 'Spotlight' })
+  await spotlight.getByRole('combobox').fill('Settings')
+  await page.clock.runFor(500)
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('region', { name: 'Settings window' })).toBeFocused()
+
+  const fileMenu = page.getByRole('menuitem', { name: 'File', exact: true })
+  await fileMenu.focus()
+  await page.clock.runFor(32)
+  await expect(fileMenu).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('menuitem', { name: /^New Settings Window/ })).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(fileMenu).toBeFocused()
+})
+
 test('restores keyboard focus when opening and switching desktop windows', async ({ page }) => {
   await mockTengri(page)
   await page.goto('/')
@@ -3595,11 +3627,11 @@ test('navigates Finder with sortable columns, breadcrumbs, Go to Folder, and fil
   const files = finder.locator('[data-file-entry]')
   const names = () => files.evaluateAll((elements) => elements.map((element) => element.getAttribute('aria-label')))
   await expect(files).toHaveCount(3)
-  expect(await names()).toEqual(['package.json', 'README.md', 'src'])
+  await expect.poll(names).toEqual(['package.json', 'README.md', 'src'])
   await finder.getByRole('button', { name: 'Sort by Size', exact: true }).click()
-  expect(await names()).toEqual(['src', 'package.json', 'README.md'])
+  await expect.poll(names).toEqual(['src', 'package.json', 'README.md'])
   await finder.getByRole('button', { name: 'Sort by Size', exact: true }).click()
-  expect(await names()).toEqual(['README.md', 'package.json', 'src'])
+  await expect.poll(names).toEqual(['README.md', 'package.json', 'src'])
   await files.first().click()
   await files.last().click({ modifiers: ['Shift'] })
   await expect(finder.getByRole('status', { name: 'Folder status' })).toHaveText('3 of 3 selected')
