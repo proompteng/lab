@@ -2779,7 +2779,11 @@ test('stops a failed agent without deleting its persistent workspace', async ({ 
 test('shows native-feeling unauthenticated and create-agent states', async ({ page }) => {
   await mockTengri(page, { authenticated: false })
   await page.goto('/')
-  await expect(page.getByRole('dialog', { name: 'Sign in to Tengri' })).toBeVisible()
+  const signIn = page.getByRole('dialog', { name: 'Sign in to Tengri' })
+  await expect(signIn).toBeVisible()
+  const signInControls = signIn.getByRole('group', { name: 'Window controls' }).getByRole('button')
+  await expect(signInControls).toHaveCount(3)
+  for (const button of await signInControls.all()) await expect(button).toBeDisabled()
   await expect(page.getByRole('button', { name: 'Continue with GitHub' })).toBeVisible()
 
   await page.unrouteAll({ behavior: 'wait' })
@@ -2787,6 +2791,9 @@ test('shows native-feeling unauthenticated and create-agent states', async ({ pa
   await page.reload()
   const create = page.getByRole('dialog', { name: 'Create your agent' })
   await expect(create).toBeVisible()
+  const createControls = create.getByRole('group', { name: 'Window controls' }).getByRole('button')
+  await expect(createControls).toHaveCount(3)
+  for (const button of await createControls.all()) await expect(button).toBeDisabled()
   await create.getByLabel('Agent name').fill('Ada')
   await create.getByRole('button', { name: 'Create Agent' }).click()
   await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
@@ -2944,6 +2951,95 @@ test('magnified Dock icons keep separate hit targets at desktop and narrow width
     await page.mouse.move(0, 0)
   }
 })
+
+test('uses functional close controls and disables unavailable actions in confirmation windows', async ({
+  page,
+}, testInfo) => {
+  const mock = await mockTengri(page, { holdLifecycleAction: 'delete-agent' })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+  const settings = page.getByRole('region', { name: 'Settings window' })
+  await settings.getByRole('button', { name: 'Delete Agent' }).click()
+  const dialog = page.getByRole('alertdialog', { name: /Delete “Tengri”/ })
+  const controls = dialog.getByRole('group', { name: 'Window controls' })
+  await expect(controls.getByRole('button', { name: 'Minimize Tengri' })).toBeDisabled()
+  await expect(controls.getByRole('button', { name: 'Maximize Tengri' })).toBeDisabled()
+  await dialog.screenshot({ path: testInfo.outputPath('confirmation-window.png') })
+  await controls.getByRole('button', { name: 'Close Tengri' }).click()
+  await expect(dialog).toHaveCount(0)
+  expect(mock.actions.some((action) => action.action === 'delete-agent')).toBe(false)
+  await expect(settings.getByRole('button', { name: 'Delete Agent' })).toBeFocused()
+
+  await settings.getByRole('button', { name: 'Delete Agent' }).click()
+  await dialog.getByRole('button', { name: 'Delete Agent' }).click()
+  await mock.waitForHeldLifecycleAction()
+  for (const button of await controls.getByRole('button').all()) await expect(button).toBeDisabled()
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeVisible()
+  mock.releaseHeldLifecycleAction()
+  await expect(page.getByRole('dialog', { name: 'Create your agent' })).toBeVisible()
+})
+
+for (const app of ['Finder', 'Chrome', 'Code', 'Terminal', 'Settings']) {
+  test(`keeps native window control states and actions correct in ${app}`, async ({ page }, testInfo) => {
+    await mockTengri(page)
+    await page.goto('/')
+    const dock = page.getByRole('navigation', { name: 'Dock' })
+    await dock.getByRole('button', { name: `Open ${app}`, exact: true }).click()
+    const frame = page.locator(`section[aria-label="${app} window"]`)
+    const controls = frame.locator('[aria-label="Window controls"]')
+    const buttons = controls.getByRole('button')
+    await expect(buttons).toHaveCount(3)
+    await page.mouse.move(0, 0)
+    await frame.focus()
+    await expect(frame).toHaveAttribute('data-active', 'true')
+    const bounds = await frame.boundingBox()
+    if (!bounds) throw new Error(`${app} window is missing`)
+    const colors = ['rgb(255, 95, 87)', 'rgb(254, 188, 46)', 'rgb(40, 200, 64)']
+    for (const [index, color] of colors.entries()) {
+      const button = buttons.nth(index)
+      const light = button.locator(':scope > span')
+      await expect(light).toHaveCSS('background-color', color)
+      await expect(light).toHaveCSS('width', '12px')
+      await expect(light).toHaveCSS('height', '12px')
+      await expect(light.locator(':scope > span')).toHaveCSS('opacity', '0')
+      const target = await button.boundingBox()
+      if (!target) throw new Error(`${app} window control is missing`)
+      expect(target.width).toBeGreaterThanOrEqual(24)
+      expect(target.height).toBeGreaterThanOrEqual(24)
+    }
+    await controls.screenshot({ path: testInfo.outputPath(`${app.toLowerCase()}-controls-idle.png`) })
+    await controls.getByRole('button', { name: `Minimize ${app}` }).hover()
+    for (const button of await buttons.all()) {
+      await expect(button.locator(':scope > span > span')).toHaveCSS('opacity', '1')
+    }
+    await controls.screenshot({ path: testInfo.outputPath(`${app.toLowerCase()}-controls-hover.png`) })
+    await controls.getByRole('button', { name: `Maximize ${app}` }).click()
+    const restore = controls.getByRole('button', { name: `Restore ${app}` })
+    await expect(restore).toBeVisible()
+    await expect.poll(async () => (await frame.boundingBox())?.width).toBeGreaterThan(bounds.width)
+    await restore.click()
+    await expect.poll(() => frame.boundingBox()).toEqual(bounds)
+
+    await controls.getByRole('button', { name: `Minimize ${app}` }).click()
+    await expect(frame).toHaveAttribute('aria-hidden', 'true')
+    await dock.getByRole('button', { name: `Open ${app}`, exact: true }).click()
+    await expect(frame).toHaveAttribute('aria-hidden', 'false')
+    await expect.poll(() => frame.boundingBox()).toEqual(bounds)
+
+    await dock.getByRole('button', { name: `Open ${app === 'Chrome' ? 'Finder' : 'Chrome'}`, exact: true }).click()
+    await page.mouse.move(0, 0)
+    await expect(frame).toHaveAttribute('data-active', 'false')
+    const inactiveColors = await buttons
+      .locator(':scope > span')
+      .evaluateAll((elements) => elements.map((light) => getComputedStyle(light).backgroundColor))
+    expect(new Set(inactiveColors).size).toBe(1)
+    expect(colors).not.toContain(inactiveColors[0])
+    await dock.getByRole('button', { name: `Open ${app}`, exact: true }).click()
+    await controls.getByRole('button', { name: `Close ${app}` }).press('Enter')
+    await expect(frame).toHaveCount(0)
+  })
+}
 
 test('aligns native window controls with app toolbars and keeps narrow layouts usable', async ({ page }) => {
   await mockTengri(page)

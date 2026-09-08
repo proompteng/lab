@@ -518,20 +518,20 @@ describe('enabled app inventory', () => {
 
   it('pins Keycloak to the immutable multi-architecture security release', () => {
     expect(keycloakManifest).toContain(
-      'quay.io/keycloak/keycloak:26.7.1@sha256:f1f1f01e472c8a78df40d8f2a49a925274eda4d3d80d5f6edbb5c880ee3c01c6',
+      'quay.io/keycloak/keycloak:26.7.3@sha256:ff4257d0d64efbe99ed1ddfaf07765cc3c36dc7518bf8324d41961327f441c54',
     )
   })
 
   it('pins Coder to the immutable multi-architecture stable release', () => {
     expect(coderChart).toMatchObject({
-      appVersion: '2.35.3',
-      version: '2.35.3',
+      appVersion: '2.36.4',
+      version: '2.36.4',
     })
-    expect(coderChart.dependencies?.find((dependency) => dependency.name === 'coder')?.version).toBe('2.35.3')
+    expect(coderChart.dependencies?.find((dependency) => dependency.name === 'coder')?.version).toBe('2.36.4')
     expect(coderValues.coder?.coder).toMatchObject({
       replicaCount: 1,
       image: {
-        tag: 'v2.35.3@sha256:8e34e774ebde1813f03294498374cd955264eee6cd2b61a72baf7634a0ca7de4',
+        tag: 'v2.36.4@sha256:85e6d04d33ed4184ca689d6b736e305cc73eb8588e56657f6457835788092d6d',
       },
     })
   })
