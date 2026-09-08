@@ -111,9 +111,7 @@ const acquire = Effect.gen(function* () {
       Effect.scoped(
         Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
-            const connection = yield* restore(sql.reserve).pipe(
-              Effect.mapError((cause) => unavailable('acquire', cause)),
-            )
+            const connection = yield* sql.reserve.pipe(Effect.mapError((cause) => unavailable('acquire', cause)))
             activeConnection = connection
             yield* connection
               .executeUnprepared('BEGIN', [], undefined)
