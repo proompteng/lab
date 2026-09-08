@@ -19,10 +19,10 @@ test('rejects a mutable controller image', async () => {
   const files = copy(await loadProductionFiles())
   files.daemonSet = files.daemonSet.replace(
     /docker\.io\/cloudnativelabs\/kube-router@sha256:[a-f0-9]+/,
-    'docker.io/cloudnativelabs/kube-router:v2.10.0',
+    'docker.io/cloudnativelabs/kube-router:v2.11.1',
   )
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.daemonSet}: kube-router must use the immutable multi-architecture v2.10.0 index`,
+    `${productionPaths.daemonSet}: kube-router must use the immutable multi-architecture v2.11.1 index`,
   )
 })
 
