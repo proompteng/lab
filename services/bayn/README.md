@@ -65,6 +65,9 @@ embeds and verifies the source revision and the behavior, parameter, protocol, a
 - The execution worker runs one bounded `advanceExecutionOnce` pass per tick. Restate is not treated as broker
   exactly-once delivery; durable intents and deterministic IDs remain the external-side-effect boundary.
 - PostgreSQL is the authoritative cycle, grant, intent, mutation, reconciliation, and controller-status ledger.
+- Each writer transaction reserves its own PostgreSQL connection and holds the advisory fence through commit or
+  rollback. A disconnected transaction fails without replaying its writes; the next pass obtains a usable connection
+  and reconciles durable state. Nested fence calls stay in their owning transaction.
 - TigerBeetle is the authoritative fee, cost-basis, cash, and realized-P&L ledger.
 - The public Bayn deployment serves read-only status and health. It does not schedule execution or hold mutation
   authority.
