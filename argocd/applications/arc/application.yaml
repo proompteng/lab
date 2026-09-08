@@ -311,10 +311,10 @@ spec:
                   resources:
                     requests:
                       cpu: "1"
-                      memory: "256Mi"
+                      memory: "2Gi"
                     limits:
                       cpu: "2"
-                      memory: "512Mi"
+                      memory: "8Gi"
               containers:
                 - name: runner
                   image: registry.ide-newton.ts.net/lab/arc-runner@sha256:a8c4b666048512444f9304166a049fd18dff51367af568e1248f59ec5bb59ea0
