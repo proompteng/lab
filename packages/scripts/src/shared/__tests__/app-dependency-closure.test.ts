@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'bun:test'
 
-const script = fileURLToPath(new URL('../../../../../nix/check-app-dependency-closure.sh', import.meta.url))
+const script = fileURLToPath(new URL('../../../../../nix/check-bun-dependency-closure.sh', import.meta.url))
 const drv = '/nix/store/00000000000000000000000000000000-app-bun-deps-0.drv'
 const dependency = { env: { name: 'app-bun-deps-0' }, outputs: { out: {} } }
 
@@ -97,7 +97,7 @@ esac
       writeFileSync(join(fixture, 'timeout'), '#!/usr/bin/env bash\nset -euo pipefail\nshift 2\nexec "$@"\n', {
         mode: 0o755,
       })
-      const result = Bun.spawnSync(['bash', script, 'x86_64-linux'], {
+      const result = Bun.spawnSync(['bash', script, 'app', 'x86_64-linux'], {
         env: {
           ...process.env,
           PATH: `${fixture}:${process.env.PATH}`,

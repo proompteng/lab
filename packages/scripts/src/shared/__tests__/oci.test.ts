@@ -949,6 +949,15 @@ describe('native OCI build workflows', () => {
     expect(headlampWorkflow).not.toContain("- 'flake.nix'")
   })
 
+  it('checks default Bun dependency closures when the lockfile changes', () => {
+    for (const workflow of [oiratWorkflow, bumbaWorkflow, froussardWorkflow]) {
+      const triggers = workflow.slice(0, workflow.indexOf('concurrency:'))
+      expect(triggers.match(/- 'bun\.lock'/g)).toHaveLength(2)
+      expect(workflow).toContain('uses: ./.github/workflows/nix-bun-dependency-closure.yml')
+      expect(workflow).toContain('needs: dependency-closure')
+    }
+  })
+
   it('validates Bumba pull requests when the Temporal SDK changes', () => {
     const pullRequestTrigger = bumbaWorkflow.match(/\n  pull_request:\n([\s\S]*?)\n  workflow_dispatch:/)?.[1]
     expect(pullRequestTrigger).toContain("- 'packages/temporal-bun-sdk/**'")
