@@ -131,7 +131,6 @@ const store: ReconciliationPersistence = {
 }
 
 const fence: WriterFenceService = {
-  backendPid: 1,
   check: Effect.void,
   transaction: (effect) => effect,
 }
