@@ -30,7 +30,8 @@ flake_attr=".#packages.${system}.app-image"
 derivation_json="$(nix derivation show -r "${flake_attr}")"
 
 matching_derivations_json="$(jq -c '
-  [.derivations | to_entries[] | select(.value.name == "app-bun-deps-0") | .key]
+  [(.derivations // .) | to_entries[] |
+    select((.value.name // .value.env.name) == "app-bun-deps-0")]
 ' <<<"${derivation_json}")"
 matching_derivation_count="$(jq -r 'length' <<<"${matching_derivations_json}")"
 
@@ -40,13 +41,16 @@ if [[ "${matching_derivation_count}" -ne 1 ]]; then
   exit 1
 fi
 
-deps_drv="$(jq -r '.[0]' <<<"${matching_derivations_json}")"
+deps_drv="$(jq -r '.[0].key' <<<"${matching_derivations_json}")"
+if [[ "${deps_drv}" =~ ^[0-9a-z]{32}-app-bun-deps-0\.drv$ ]]; then
+  deps_drv="/nix/store/${deps_drv}"
+fi
 if [[ "${deps_drv}" != /nix/store/*.drv ]]; then
   printf 'Selected App dependency derivation is not an absolute Nix store path: %s\n' "${deps_drv}" >&2
   exit 1
 fi
 
-outputs_json="$(jq -c --arg drv "${deps_drv}" '.derivations[$drv].outputs | keys' <<<"${derivation_json}")"
+outputs_json="$(jq -c '.[0].value.outputs | keys' <<<"${matching_derivations_json}")"
 output_count="$(jq -r 'length' <<<"${outputs_json}")"
 output_name="$(jq -r '.[0] // empty' <<<"${outputs_json}")"
 if [[ "${output_count}" -ne 1 || "${output_name}" != out ]]; then

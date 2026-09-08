@@ -7,13 +7,24 @@ import { describe, expect, it } from 'bun:test'
 
 const script = fileURLToPath(new URL('../../../../../nix/check-app-dependency-closure.sh', import.meta.url))
 const drv = '/nix/store/00000000000000000000000000000000-app-bun-deps-0.drv'
-const dependency = { name: 'app-bun-deps-0', outputs: { out: {} } }
+const dependency = { env: { name: 'app-bun-deps-0' }, outputs: { out: {} } }
 
 describe('App fixed-output dependency verification', () => {
   it.each([
     {
-      name: 'realizes then rebuilds the selected output',
+      name: 'realizes then rebuilds the selected Nix 2.28 output',
       entries: { [drv]: dependency },
+      realize: 0,
+      rebuild: 0,
+      code: 0,
+      builds: 2,
+    },
+    {
+      name: 'accepts Nix 2.34 version 4 with store-relative keys',
+      entries: {
+        version: 4,
+        derivations: { [drv.replace('/nix/store/', '')]: { ...dependency, name: 'app-bun-deps-0', version: 4 } },
+      },
       realize: 0,
       rebuild: 0,
       code: 0,
@@ -63,7 +74,7 @@ describe('App fixed-output dependency verification', () => {
   ])('$name', ({ entries, realize, rebuild, code, builds }) => {
     const fixture = mkdtempSync(join(tmpdir(), 'app-fod-test-'))
     try {
-      writeFileSync(join(fixture, 'derivations.json'), JSON.stringify({ derivations: entries }))
+      writeFileSync(join(fixture, 'derivations.json'), JSON.stringify(entries))
       writeFileSync(join(fixture, 'calls'), '')
       writeFileSync(
         join(fixture, 'nix'),
