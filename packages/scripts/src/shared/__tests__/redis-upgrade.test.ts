@@ -2,10 +2,11 @@ import { afterEach, expect, test } from 'bun:test'
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { parseAllDocuments } from 'yaml'
+import { parse, parseAllDocuments } from 'yaml'
 
 type Container = {
   name: string
+  image?: string
   command: string[]
   volumeMounts?: { name: string; mountPath: string; readOnly?: boolean }[]
 }
@@ -54,6 +55,28 @@ for (const [namespace, filename, claim] of [
   ['buzz', 'redis.yaml', 'buzz-redis-buzz-redis-0'],
   ['jangar', 'openwebui-redis.yaml', 'jangar-openwebui-redis-jangar-openwebui-redis-0'],
 ]) {
+  test(`${namespace} bootstraps the rehearsal source version before clients without migration gates`, async () => {
+    const migration = await resources(namespace, 'redis-upgrade-backup.yaml')
+    const overlay = parse(await readFile(join(root, 'argocd/bootstrap', namespace, 'kustomization.yaml'), 'utf8')) as {
+      resources: string[]
+      patches: { patch: string }[]
+    }
+    expect(overlay.resources).toEqual([`../../applications/${namespace}`])
+    const patches = overlay.patches.map(({ patch }) => parse(patch))
+    const deleted = patches.filter((patch) => patch.$patch === 'delete') as Resource[]
+    const identities = (items: Resource[]) => items.map((item) => `${item.kind}/${item.metadata.name}`).sort()
+    expect(identities(deleted)).toEqual(identities(migration))
+    const edits = patches.find(Array.isArray) as { path: string; value: string }[]
+    const bootstrapWave = Number(edits.find((edit) => edit.path.endsWith('sync-wave'))?.value)
+    expect(bootstrapWave).toBeLessThan(-3)
+    const rehearsal = requireResource(migration, 'Job', '-v2-rehearsal')
+    const sourceImage = rehearsal.spec?.template?.spec.initContainers?.find(
+      (container) => container.name === 'restore-old-format',
+    )?.image
+    expect(sourceImage).toMatch(/redis:v7\./)
+    expect(edits.find((edit) => edit.path === '/spec/kubernetesConfig/image')?.value).toBe(sourceImage)
+  })
+
   test(`${namespace} keeps the serving Redis behind a snapshot restore rehearsal`, async () => {
     const items = await resources(namespace, 'redis-upgrade-backup.yaml')
     const save = requireResource(items, 'Job', '-v2-save')

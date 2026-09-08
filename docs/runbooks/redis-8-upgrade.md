@@ -43,10 +43,24 @@ version onto a separate PVC from its original snapshot and verify it before any
 controlled consumer cutover. Do not point Redis 7 at files already rewritten by
 Redis 8 or overwrite the original serving PVC to attempt an in-place downgrade.
 
-These resources describe an upgrade of the existing instances, not fresh-cluster
-bootstrap. A fresh installation must omit these one-time migration Jobs until its
-initial Redis instance exists. Remove completed migration Jobs from desired state
-in a subsequent reviewed cleanup while retaining the recorded recovery artifacts.
+For an empty namespace, use the checked-in first-phase paths
+`argocd/bootstrap/buzz` and `argocd/bootstrap/jangar`.
+These overlays remove all migration Jobs, snapshots and clone PVCs, and create the
+pinned Redis 7 source version at wave -7, before its clients. They must only be used
+when the serving PVC does not exist; never select them for an existing Redis 8 PVC.
+
+Select the bootstrap path in the application's Git-managed ApplicationSet entry
+(`platform.yaml` for Buzz, `product.yaml` for Jangar). Keep its `kargo/buzz` or
+`kargo/jangar` revision and existing promotion ownership. Wait for the normal
+publisher and Kargo promotion to copy the bootstrap overlay, then for Argo to create
+the source Redis. Verify the PVC is Bound, Redis is Ready, and PING and persistence
+checks pass. Commit the ApplicationSet path back to the parent application directory
+to run the snapshot, restore rehearsal and Redis 8 upgrade above. This two-phase path
+needs no manual deployment or renderer lookup of live cluster state.
+
+Remove completed migration Jobs from desired state in a subsequent reviewed cleanup
+while retaining the recorded recovery artifacts. Retire the bootstrap overlays with
+that migration so they cannot later select an obsolete source version.
 
 Redis documents the supported 7.x to 8 standalone path, saving and copying the
 persistence files, and testing the upgrade before production in its
