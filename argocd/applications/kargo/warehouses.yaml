@@ -549,6 +549,7 @@ spec:
           - .github/workflows/jangar-post-deploy-verify.yml
           - nix/oci-push.sh
           - argocd/applications/jangar
+          - argocd/bootstrap/jangar
     - image:
         repoURL: registry.ide-newton.ts.net/lab/jangar
         imageSelectionStrategy: NewestBuild
@@ -955,6 +956,7 @@ spec:
           - third_party/buzz
           - .github/workflows/buzz-relay-build-push.yml
           - argocd/applications/buzz
+          - argocd/bootstrap/buzz
     - image:
         repoURL: registry.ide-newton.ts.net/lab/buzz
         imageSelectionStrategy: NewestBuild

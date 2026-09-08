@@ -345,6 +345,7 @@ const expected = {
       '.github/workflows/jangar-post-deploy-verify.yml',
       'nix/oci-push.sh',
       'argocd/applications/jangar',
+      'argocd/bootstrap/jangar',
     ],
   },
   symphony: {
@@ -494,7 +495,12 @@ const expected = {
     creationCriteria: 'single',
     images: [imageRepo('buzz')],
     apps: ['buzz'],
-    includePaths: ['third_party/buzz', '.github/workflows/buzz-relay-build-push.yml', 'argocd/applications/buzz'],
+    includePaths: [
+      'third_party/buzz',
+      '.github/workflows/buzz-relay-build-push.yml',
+      'argocd/applications/buzz',
+      'argocd/bootstrap/buzz',
+    ],
   },
 } as const
 
@@ -723,6 +729,22 @@ describe('Kargo direct-push GitOps contract', () => {
 
     expect(git?.includePaths).toEqual(includePaths)
     expect(git?.excludePaths).toEqual(excludePaths)
+  })
+
+  it('pairs promoted Redis bootstrap selection with the matching publisher and Warehouse', () => {
+    for (const [name, workflowPath] of [
+      ['buzz', '.github/workflows/buzz-relay-build-push.yml'],
+      ['jangar', '.github/workflows/jangar-build-push.yaml'],
+    ]) {
+      const workflow = YAML.parse(readFileSync(workflowPath, 'utf8'))
+      const paths = workflow.on.push.paths.map((path: string) => path.replace(/\/\*\*$/, ''))
+      const subscriptions = byName(warehouses).get(name)?.spec?.subscriptions as Array<Record<string, any>>
+      const sourcePaths = subscriptions.find((subscription) => subscription.git)?.git?.includePaths
+      expect(sourcePaths).toEqual(paths)
+      expect(sourcePaths).toContain(`argocd/bootstrap/${name}`)
+      expect(sourcePaths).toContain(`argocd/applications/${name}`)
+      expect(applicationSetElements.find((element) => element.name === name)?.path).toBe(`argocd/applications/${name}`)
+    }
   })
 
   it('keeps every stage direct, automatic, branch-backed, and free of pull-request promotion', () => {
