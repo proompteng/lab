@@ -142,8 +142,11 @@ source/image identity. Direct deployment and manual broker orders are not valid 
 ## Completion evidence
 
 Historical archive replay defaults to requiring production-reader receipts for every used row by the simulated
-observation time. Missing coverage remains incomplete; source receipt timestamps cannot stand in for Kafka/Flink/
-ClickHouse availability. Explicit `source-receipt-assumption` research remains possible but is labeled `UNPROVEN`.
+observation time. Missing or late candidate receipts become candidate-local, zero-weight exclusions before the shared
+core ranks the remaining symbols; the report binds those exclusions separately from the unchanged archive manifest.
+Missing benchmark/pricing receipts and an entirely unavailable candidate universe remain incomplete. Malformed,
+conflicting, or unrelated receipt evidence still fails the whole observation. Source receipt timestamps cannot stand
+in for Kafka/Flink/ClickHouse availability. Explicit `source-receipt-assumption` research remains possible but is labeled `UNPROVEN`.
 Receipts establish conservative observed row-availability bounds, not earliest visibility, a simultaneous historical
 snapshot, the original worker's uptime, or actual execution. They cannot repair missing delivery evidence from before
 recording was deployed. See the service README for report v3 and read-only receipt configuration.
