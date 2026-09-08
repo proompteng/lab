@@ -1,15 +1,6 @@
 name: Tengri desktop browser
 
 on:
-  pull_request:
-    paths:
-      - 'apps/landing/**'
-      - 'services/nanoagent/**'
-      - 'services/tengri/**'
-      - 'packages/backend/**'
-      - 'packages/design/**'
-      - 'bun.lock'
-      - '.github/workflows/tengri.yaml'
   push:
     branches:
       - main
