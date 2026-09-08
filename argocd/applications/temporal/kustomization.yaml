@@ -2,11 +2,61 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
+  - preparation/cassandra-quiesce.yaml
+  - preparation/cassandra-rf3.yaml
   - load-balancer.yaml
   - load-balancer-frontend.yaml
   - ingressroute-temporal-k8s-private.yaml
 
 patches:
+  - target:
+      kind: Deployment
+      name: temporal-frontend
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: temporal-frontend
+        annotations:
+          argocd.argoproj.io/sync-wave: "-20"
+      spec:
+        replicas: 0
+  - target:
+      kind: Deployment
+      name: temporal-history
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: temporal-history
+        annotations:
+          argocd.argoproj.io/sync-wave: "-20"
+      spec:
+        replicas: 0
+  - target:
+      kind: Deployment
+      name: temporal-matching
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: temporal-matching
+        annotations:
+          argocd.argoproj.io/sync-wave: "-20"
+      spec:
+        replicas: 0
+  - target:
+      kind: Deployment
+      name: temporal-worker
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: temporal-worker
+        annotations:
+          argocd.argoproj.io/sync-wave: "-20"
+      spec:
+        replicas: 0
   - target:
       kind: Secret
       name: temporal-default-store
@@ -124,7 +174,7 @@ helmCharts:
                   keyspace: temporal
                   user: user
                   password: password
-                  replicationFactor: 1
+                  replicationFactor: 3
                   consistency:
                     default:
                       consistency: local_quorum

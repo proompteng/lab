@@ -1,0 +1,74 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: temporal-cassandra-rf3-quiesce
+  namespace: temporal
+  annotations:
+    argocd.argoproj.io/sync-wave: "-15"
+spec:
+  activeDeadlineSeconds: 900
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: temporal
+        app.kubernetes.io/component: cassandra-rf3-quiesce
+    spec:
+      serviceAccountName: temporal-cassandra-rf3
+      automountServiceAccountToken: true
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: quiesce
+          image: docker.io/bitnami/kubectl@sha256:a67b11e95e953f550f020a41970185ccc5f83d78b86b8c575d02c904aa0f9cd7
+          command:
+            - /bin/bash
+            - -ec
+          args:
+            - |
+              set -Eeuo pipefail
+              for component in frontend history matching worker; do
+                replicas=$(kubectl -n temporal get "deployment/temporal-${component}" \
+                  -o jsonpath='{.spec.replicas}')
+                [[ "${replicas}" == 0 ]] || {
+                  echo "Temporal ${component} must be stopped through GitOps before RF3 expansion." >&2
+                  exit 1
+                }
+                kubectl -n temporal wait --for=delete pod \
+                  -l "app.kubernetes.io/name=temporal,app.kubernetes.io/component=${component}" \
+                  --timeout=10m
+                remaining=$(kubectl -n temporal get pods \
+                  -l "app.kubernetes.io/name=temporal,app.kubernetes.io/component=${component}" \
+                  -o name)
+                [[ -z "${remaining}" ]] || exit 1
+              done
+              for ordinal in 0 1 2; do
+                kubectl -n temporal exec "temporal-cassandra-${ordinal}" -- nodetool flush temporal
+              done
+              echo "Temporal writers are stopped and the keyspace is flushed on all three Cassandra nodes."
+          env:
+            - name: HOME
+              value: /tmp
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
