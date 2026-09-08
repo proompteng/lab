@@ -50,7 +50,11 @@ claims, the maintenance sequence is:
    refuse a node already cordoned or owned by another maintenance operation.
 3. Temporarily cordon that node with a unique ownership annotation and an
    atomic resource-version check. Evict the selected Pod through the Kubernetes
-   eviction API with its UID precondition. Preserve PDB enforcement.
+   eviction API with its UID precondition. Preserve PDB enforcement. Cordon is
+   node-wide: other workloads on the node can react, including a CNPG primary
+   switchover. Inventory affected database and operator workloads before
+   execution and verify their replication and health after the operation; the
+   selected Pod's checks do not bound the node-wide impact.
 4. Wait for the old Pod UID to disappear **and** each corresponding RBD device
    to be unmapped on that node. A deleted Pod or detached VolumeAttachment alone
    does not establish that the old kernel client was removed.
@@ -66,6 +70,33 @@ If an error occurs after cordoning, restore the scheduling state owned by this
 operation and retain the old keys. A failure may leave a replacement using an
 old staging mount; record that outcome and repeat inventory before retrying.
 Never remove old keys to force a client to reconnect.
+
+The repository helper implements this sequence for one ordinary Pod. Read the
+current Pod/PVC/PV and kernel mapping before supplying the explicit identities:
+
+```sh
+python3 scripts/cluster-upgrades/ceph-csi-remount.py \
+  --context galactic-lan --namespace <namespace> --pod <pod> --node <node> \
+  --expected-pod-uid <uid> --expected-rbd-image <csi-vol-uuid> \
+  --expected-fsid 5ade350d-92fe-49df-829e-37c1fbaf6c50 \
+  --audit-file /tmp/ceph-remount-plan.json
+```
+
+Repeat `--expected-rbd-image` for each RBD claim. The default is a read-only
+plan; `--execute` performs the reviewed maintenance and requires an audit file.
+The audit records the node ownership token, each phase, and failure state.
+An already migrated target completes without eviction. The helper refuses
+shared claims, raw block volumes, operator-managed Pods, and exhausted PDBs.
+It verifies the replacement on its actual node and requires unchanged PVC/PV
+UIDs plus the exact `csi-rbd-node.3` principal.
+
+The diagnosed retained BlueStore alert requires explicit
+`--allow-bluestore-alert`. This records the exception while still requiring all
+six OSD latencies at or below 75 ms for three consecutive samples, full monitor
+quorum, and clean PGs before and after maintenance. A high sample resets the
+count; a quiet window must occur within 90 seconds. Each spike is recorded.
+This does not mute the warning or make strict
+storage acceptance pass. Any unrecognized warning remains a blocker.
 
 ## Workloads requiring a separate procedure
 
