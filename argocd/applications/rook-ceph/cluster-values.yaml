@@ -38,13 +38,12 @@ cephClusterSpec:
         keyRotationPolicy: KeyGeneration
         keyGeneration: 2
       csi:
-        # Rotate the Ceph-CSI node/provisioner users while retaining one
-        # prior generation for already-mounted PVCs. Kernel 6.18 nodes
-        # require the AES key type; AES256K is deferred until kernel 7.0+.
+        # Talos 1.14 backports AES256K to its 6.18 kernel. Keep both AES
+        # generations until all existing mounts use generation 3.
         keyRotationPolicy: KeyGeneration
-        keyGeneration: 2
-        keepPriorKeyCountMax: 1
-        keyType: aes
+        keyGeneration: 3
+        keepPriorKeyCountMax: 2
+        keyType: aes256k
       rbdMirrorPeer:
         # No CephBlockPool mirror peer is configured in this cluster. Rotate
         # the unused bootstrap peer identity to AES256K so it does not remain
