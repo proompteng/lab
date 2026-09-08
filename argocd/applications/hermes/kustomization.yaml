@@ -38,6 +38,7 @@ resources:
   - discord-sealed-secret.yaml
   - github-sealed-secret.yaml
   - service.yaml
+  - tailscale-ingress.yaml
   - egress-proxy.yaml
   - network-policy.yaml
   - statefulset.yaml

@@ -1,0 +1,124 @@
+name: hermes-agent-mirror
+
+permissions:
+  contents: read
+  packages: read
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/hermes-agent-mirror.yml
+  workflow_dispatch: {}
+
+env:
+  SOURCE_REF: docker.io/nousresearch/hermes-agent@sha256:63bfb6d732f49a55d453e801057273785cc61e0f6ee43db3fa2f2a79846301b7
+  SOURCE_INDEX_DIGEST: sha256:63bfb6d732f49a55d453e801057273785cc61e0f6ee43db3fa2f2a79846301b7
+  SOURCE_AMD64_DIGEST: sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b
+  SOURCE_ATTESTATION_DIGEST: sha256:5fc02b8e0b89c3436a203c3261dd7d9e52e339461edb4d2afaaa87dd3f8d66db
+  SOURCE_PROVENANCE_LAYER_DIGEST: sha256:ae6c21ad6159175419b5c83d866c96f94e79f0726c0cf32df0c5918664ead91e
+  EXPECTED_SOURCE_REVISION: 2237be355906fbe6065ce1815711eee52b2d646e
+  TARGET_REF: registry.registry.svc.cluster.local/lab/hermes-agent:v2026.9.7-amd64
+  PUBLIC_TARGET_REF: registry.ide-newton.ts.net/lab/hermes-agent:v2026.9.7-amd64
+
+jobs:
+  mirror:
+    if: github.ref == 'refs/heads/main'
+    runs-on: arc-arm64
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install crane
+        uses: imjasonh/setup-crane@v0.4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+        with:
+          buildkitd-config-inline: |
+            [registry."registry.registry.svc.cluster.local"]
+              http = true
+              insecure = true
+
+      - name: Verify pinned upstream release
+        id: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect --raw "$SOURCE_REF" > source-index.json
+          test "sha256:$(sha256sum source-index.json | cut -d ' ' -f1)" = "$SOURCE_INDEX_DIGEST"
+          jq -e --arg amd64 "$SOURCE_AMD64_DIGEST" --arg attestation "$SOURCE_ATTESTATION_DIGEST" '
+            any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "amd64" and .digest == $amd64) and
+            any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "arm64") and
+            any(.manifests[]?; .annotations["vnd.docker.reference.type"] == "attestation-manifest" and
+              .annotations["vnd.docker.reference.digest"] == $amd64 and .digest == $attestation)
+          ' source-index.json
+          docker buildx imagetools inspect --raw "docker.io/nousresearch/hermes-agent@$SOURCE_ATTESTATION_DIGEST" > attestation.json
+          provenance_subject="$(jq -er '.subject.digest' attestation.json)"
+          case "$provenance_subject" in
+            sha256:*) ;;
+            *) provenance_subject="sha256:$provenance_subject" ;;
+          esac
+          test "$provenance_subject" = "$SOURCE_AMD64_DIGEST"
+          test "$(jq -er '[.layers[] | select(.mediaType == "application/vnd.in-toto+json") | .digest] | if length == 1 then .[0] else error("expected exactly one SLSA provenance layer") end' attestation.json)" = "$SOURCE_PROVENANCE_LAYER_DIGEST"
+          crane blob "docker.io/nousresearch/hermes-agent@$SOURCE_PROVENANCE_LAYER_DIGEST" > provenance.json
+          test "$(sha256sum provenance.json | cut -d ' ' -f1)" = "${SOURCE_PROVENANCE_LAYER_DIGEST#sha256:}"
+          test "$(jq -er '.predicateType' provenance.json)" = 'https://slsa.dev/provenance/v1'
+          test "$(jq -er '.subject | map(select(("sha256:" + .digest.sha256) == $digest)) | length' --arg digest "$SOURCE_AMD64_DIGEST" provenance.json)" = 1
+          provenance_revision="$(jq -er '.predicate.buildDefinition.externalParameters.request.args["build-arg:HERMES_GIT_SHA"]' provenance.json)"
+          test "$provenance_revision" = "$EXPECTED_SOURCE_REVISION"
+          {
+            echo "source_revision=$provenance_revision"
+            echo "source_amd64_digest=$SOURCE_AMD64_DIGEST"
+            echo "source_attestation_digest=$SOURCE_ATTESTATION_DIGEST"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Refuse a conflicting existing mirror tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          docker buildx imagetools inspect --raw "$TARGET_REF" > existing-target.json 2>existing-target.error
+          inspect_status=$?
+          set -e
+          if ((inspect_status == 0)); then
+            test "sha256:$(sha256sum existing-target.json | cut -d ' ' -f1)" = "$SOURCE_INDEX_DIGEST"
+          elif grep -Eiq 'manifest unknown|name unknown|status code: 404|404 Not Found|(^|:)[[:space:]]*not found[[:space:]]*$' existing-target.error; then
+            rm -f existing-target.json existing-target.error
+          else
+            cat existing-target.error >&2
+            exit "$inspect_status"
+          fi
+
+      - name: Copy complete immutable OCI index
+        run: docker buildx imagetools create --tag "$TARGET_REF" "$SOURCE_REF"
+
+      - name: Verify mirrored release and provenance attachment
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect --raw "$TARGET_REF" > mirrored-index.json
+          test "sha256:$(sha256sum mirrored-index.json | cut -d ' ' -f1)" = "$SOURCE_INDEX_DIGEST"
+          jq -e --arg amd64 "$SOURCE_AMD64_DIGEST" --arg attestation "$SOURCE_ATTESTATION_DIGEST" '
+            any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "amd64" and .digest == $amd64) and
+            any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "arm64") and
+            any(.manifests[]?; .annotations["vnd.docker.reference.type"] == "attestation-manifest" and
+              .annotations["vnd.docker.reference.digest"] == $amd64 and .digest == $attestation)
+          ' mirrored-index.json
+
+      - name: Summarize mirror
+        shell: bash
+        run: |
+          {
+            echo '### Hermes Agent OCI mirror complete'
+            echo
+            echo "- Source: $SOURCE_REF"
+            echo "- Source revision: ${{ steps.upstream.outputs.source_revision }}"
+            echo "- Source amd64 manifest: $SOURCE_AMD64_DIGEST"
+            echo "- Source attestation manifest: $SOURCE_ATTESTATION_DIGEST"
+            echo "- Source SLSA provenance layer: $SOURCE_PROVENANCE_LAYER_DIGEST"
+            echo "- Target: $PUBLIC_TARGET_REF"
+            echo '- Platforms: linux/amd64, linux/arm64'
+            echo '- The complete source index digest and attestation attachment were preserved.'
+          } >> "$GITHUB_STEP_SUMMARY"

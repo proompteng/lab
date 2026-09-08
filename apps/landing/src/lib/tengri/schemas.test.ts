@@ -7,6 +7,32 @@ import {
 } from './schemas'
 
 describe('Tengri BFF action schema', () => {
+  test('editor logout revocation cannot select another owner', () => {
+    expect(tengriActionSchema.safeParse({ action: 'revoke-editor-sessions' }).success).toBe(true)
+    expect(tengriActionSchema.safeParse({ action: 'revoke-editor-sessions', ownerId: 'someone-else' }).success).toBe(
+      false,
+    )
+  })
+
+  test('validates editor window identity and rejects editor ports in ordinary previews', () => {
+    const editor = { action: 'editor-session', agentId: 'agent-test', windowId: 'desktop-stable-code-window' }
+    expect(tengriActionSchema.safeParse(editor).success).toBe(true)
+    for (const windowId of ['short', '../arbitrary-window-path', 'a'.repeat(129)]) {
+      expect(tengriActionSchema.safeParse({ ...editor, windowId }).success).toBe(false)
+    }
+    for (const port of [13337, 13338]) {
+      expect(
+        tengriActionSchema.safeParse({
+          action: 'preview-session',
+          agentId: 'agent-test',
+          port,
+          path: '/',
+          fragment: '',
+        }).success,
+      ).toBe(false)
+    }
+  })
+
   test('CreateAgent accepts only a display name and rejects resource escalation fields', () => {
     expect(tengriActionSchema.safeParse({ action: 'create-agent', displayName: 'Tengri' }).success).toBe(true)
     expect(
@@ -175,8 +201,13 @@ describe('Tengri BFF action schema', () => {
 
     const exact = 'é'.repeat(MAX_EDITABLE_FILE_BYTES / 2)
     expect(
-      tengriActionSchema.safeParse({ action: 'write-file', agentId: 'agent-123', path: spacedPath, content: exact })
-        .success,
+      tengriActionSchema.safeParse({
+        action: 'write-file',
+        agentId: 'agent-123',
+        path: spacedPath,
+        content: exact,
+        expectedRevision: 'missing',
+      }).success,
     ).toBe(true)
     expect(
       tengriActionSchema.safeParse({
@@ -184,8 +215,20 @@ describe('Tengri BFF action schema', () => {
         agentId: 'agent-123',
         path: spacedPath,
         content: `${exact}é`,
+        expectedRevision: 'missing',
       }).success,
     ).toBe(false)
+  })
+
+  test('requires a precise file revision or create-only precondition for saves', () => {
+    const save = { action: 'write-file', agentId: 'agent-123', path: '/workspace/main.ts', content: '' }
+    expect(tengriActionSchema.safeParse(save).success).toBe(false)
+    for (const expectedRevision of ['', '*', 'A'.repeat(64), 'f'.repeat(63), 'missing ']) {
+      expect(tengriActionSchema.safeParse({ ...save, expectedRevision }).success).toBe(false)
+    }
+    for (const expectedRevision of ['missing', 'a'.repeat(64)]) {
+      expect(tengriActionSchema.safeParse({ ...save, expectedRevision }).success).toBe(true)
+    }
   })
 
   test('bounds Codex prompts by UTF-8 bytes', () => {

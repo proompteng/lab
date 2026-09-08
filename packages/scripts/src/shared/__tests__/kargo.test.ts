@@ -303,6 +303,7 @@ const expected = {
       'services/jangar',
       'services/bumba',
       'nix/images/jangar.nix',
+      'nix/images/openai-codex-cli.nix',
       '.github/workflows/nix-oci-build-common.yml',
       'packages/scripts/src/shared/oci.ts',
       '.github/workflows/jangar-post-deploy-verify.yml',
@@ -317,6 +318,7 @@ const expected = {
     includePaths: [
       'services/symphony',
       'nix/images/symphony.nix',
+      'nix/images/openai-codex-cli.nix',
       '.github/workflows/nix-oci-build-common.yml',
       'packages/scripts/src/shared/oci.ts',
       '.github/workflows/symphony-post-deploy-verify.yml',
@@ -374,7 +376,7 @@ const expected = {
     images: [imageRepo('bilig-app')],
     apps: ['bilig'],
     includePaths: ['argocd/applications/bilig'],
-    platform: 'linux/arm64',
+    platform: 'linux/arm64/v8',
     tagRegex: '^[0-9a-f]{40}$',
   },
   analysis: {
@@ -459,7 +461,7 @@ const byName = (manifests: Manifest[]): Map<string, Manifest> =>
 
 describe('Kargo direct-push GitOps contract', () => {
   it('uses the current Kargo patch and persists Argo resource health for Stage checks', () => {
-    expect(kargoHelmElement?.version).toBe('1.11.2')
+    expect(kargoHelmElement?.version).toBe('1.11.4')
     expect(argoCDCommandParameters.data?.['controller.resource.health.persist']).toBe('true')
     expect(argoCDControllerStatefulSetPatch.spec?.template).toMatchObject({
       metadata: {

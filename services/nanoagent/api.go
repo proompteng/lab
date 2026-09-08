@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 )
 
 const (
@@ -20,22 +21,27 @@ const (
 )
 
 type apiConfig struct {
-	bootstrapToken string
-	codexBinary    string
-	evidence       evidence
-	homeRoot       string
-	shell          string
-	startCodex     bool
-	workspaceRoot  string
+	bootstrapToken      string
+	codexBinary         string
+	codeServerBinary    string
+	codeServerBootstrap string
+	evidence            evidence
+	homeRoot            string
+	shell               string
+	startCodex          bool
+	workspaceRoot       string
 }
 
 type apiServer struct {
 	bootstrapToken   string
 	codex            *codexSupervisor
+	editor           *editorSupervisor
 	evidence         evidence
+	fileMutationMu   sync.RWMutex
 	fileWatcher      *fileWatcher
 	previewRequests  *previewRequestTracker
 	previewTransport http.RoundTripper
+	syncDirectories  func(workspace, ...string) error
 	terminals        *terminalManager
 	workspace        workspace
 }
@@ -69,12 +75,16 @@ func newAPIServer(config apiConfig) (*apiServer, error) {
 		fileWatcher:      files,
 		previewRequests:  newPreviewRequestTracker(),
 		previewTransport: transport,
+		syncDirectories:  syncWorkspaceDirectories,
 		terminals:        newTerminalManager(workspace, config.shell, config.homeRoot),
 		workspace:        workspace,
 	}
 	if config.startCodex {
 		server.codex = newCodexSupervisor(config.codexBinary, workspace.realRoot)
 		server.codex.start()
+	}
+	if config.codeServerBinary != "" {
+		server.editor = newEditorSupervisor(config.codeServerBinary, config.codeServerBootstrap, config.homeRoot, workspace)
 	}
 	return server, nil
 }
@@ -93,11 +103,15 @@ func (server *apiServer) beginShutdown() {
 	if server.codex != nil {
 		server.codex.close()
 	}
+	if server.editor != nil {
+		server.editor.close()
+	}
 }
 
 func (server *apiServer) authenticatedRoutes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/evidence", server.handleEvidence)
+	mux.HandleFunc("POST /v1/editor", server.handleOpenEditor)
 	mux.HandleFunc("GET /v1/files", server.handleListFiles)
 	mux.HandleFunc("GET /v1/files/search", server.handleSearchFiles)
 	mux.HandleFunc("GET /v1/files/watch", server.handleWatchFiles)
@@ -111,6 +125,7 @@ func (server *apiServer) authenticatedRoutes() http.Handler {
 	mux.HandleFunc("DELETE /v1/terminals/{id}", server.handleTerminateTerminal)
 	mux.HandleFunc("GET /v1/terminals/{id}/ws", server.handleTerminalWebSocket)
 	mux.HandleFunc("POST /v1/codex/call", server.handleCodexCall)
+	mux.HandleFunc("GET /v1/codex/login", server.handleCodexLogin)
 	mux.HandleFunc("GET /v1/codex/events", server.handleCodexEvents)
 	mux.HandleFunc("POST /v1/codex/approvals/{id}", server.handleCodexApproval)
 	mux.HandleFunc("/v1/preview/{port}/{path...}", server.handlePreview)
@@ -162,8 +177,8 @@ func writeAPIError(writer http.ResponseWriter, status int, message string) {
 }
 
 func validatePreviewPort(port int) error {
-	if port < 1024 || port > 65535 || port == 8080 {
-		return fmt.Errorf("preview port must be between 1024 and 65535 and cannot be 8080")
+	if port < 1024 || port > 65535 || port == 8080 || port == editorBridgePort {
+		return fmt.Errorf("preview port must be between 1024 and 65535 and cannot use a reserved guest port")
 	}
 	return nil
 }

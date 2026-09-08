@@ -61,7 +61,7 @@ describe('private registry write-pressure boundary', () => {
     expect(service).toContain('targetPort: registry-http')
     expect(deployment).toContain('type: Recreate')
     expect(deployment).toContain(
-      'haproxy:3.2.21-alpine@sha256:66e25cc9a8332635f4e897f7f4b1e5622c25f09f0ee23cddc6ce9bdb3a24772a',
+      'haproxy:3.4.4-alpine@sha256:c0afc4864dca9c68694cd1290433f0ee79b5c55be80f6745a165ffe373b9a564',
     )
     expect(deployment).toContain('runAsNonRoot: true')
     expect(deployment).toContain('readOnlyRootFilesystem: true')

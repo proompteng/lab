@@ -5,6 +5,7 @@ metadata:
   namespace: coder
 spec:
   instances: 2
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.11@sha256:70664ebcfa1100361b5bdc28bbf06fdbe08db2dc4ad7bd14de33c5e05fe8ea8e
   inheritedMetadata:
     annotations:
       reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
@@ -20,3 +21,7 @@ spec:
       encoding: "UTF8"
       database: coder
       owner: coder
+  backup:
+    volumeSnapshot:
+      className: rook-ceph-block
+      snapshotOwnerReference: backup
