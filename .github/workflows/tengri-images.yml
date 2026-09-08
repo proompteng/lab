@@ -271,6 +271,7 @@ jobs:
         with:
           name: tengri-image-indexes-${{ github.sha }}
           path: .artifacts/tengri/*-index.json
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
 

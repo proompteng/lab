@@ -75,7 +75,17 @@ describe('Tengri image workflow', () => {
 
   it('withholds Kargo aliases until both images and their retained indexes succeed', () => {
     const images = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
-      jobs: { publish: { steps: Array<{ id?: string; name?: string; uses?: string; run?: string }> } }
+      jobs: {
+        publish: {
+          steps: Array<{
+            id?: string
+            name?: string
+            uses?: string
+            run?: string
+            with?: { path?: string; 'include-hidden-files'?: boolean }
+          }>
+        }
+      }
     }
     const steps = images.jobs.publish.steps
     const prepared = steps.findIndex((step) => step.id === 'images')
@@ -84,6 +94,8 @@ describe('Tengri image workflow', () => {
     expect(prepared).toBeGreaterThanOrEqual(0)
     expect(retained).toBeGreaterThan(prepared)
     expect(exposed).toBeGreaterThan(retained)
+    expect(steps[retained]?.with?.path).toBe('.artifacts/tengri/*-index.json')
+    expect(steps[retained]?.with?.['include-hidden-files']).toBe(true)
     expect(steps[prepared]?.run).toContain('nanoagent_digest="$(publish_image "${NANOAGENT_IMAGE}")"')
     expect(steps[prepared]?.run).not.toContain('kargo-sha-')
     expect(steps[exposed]?.run).toContain('publish_kargo_alias "${TENGRI_IMAGE}" "${TENGRI_DIGEST}"')
