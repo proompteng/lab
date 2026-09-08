@@ -16,12 +16,19 @@ spec:
       labels:
         app: bilig-zero
     spec:
+      terminationGracePeriodSeconds: 600
       containers:
         - name: bilig-zero
-          image: rocicorp/zero:1.1.1
+          image: rocicorp/zero:1.9.0@sha256:f80683bf3ddf08be26c68ddd94589fada29a0b8a4597668b090006c09041d4cd
           ports:
             - name: http
               containerPort: 4848
+          startupProbe:
+            httpGet:
+              path: /keepalive
+              port: http
+            periodSeconds: 5
+            failureThreshold: 120
           readinessProbe:
             httpGet:
               path: /keepalive
