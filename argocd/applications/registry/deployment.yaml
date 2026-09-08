@@ -48,7 +48,7 @@ spec:
             - name: registry-data
               mountPath: /var/lib/registry
         - name: registry-proxy
-          image: haproxy:3.2.21-alpine@sha256:66e25cc9a8332635f4e897f7f4b1e5622c25f09f0ee23cddc6ce9bdb3a24772a
+          image: haproxy:3.4.4-alpine@sha256:c0afc4864dca9c68694cd1290433f0ee79b5c55be80f6745a165ffe373b9a564
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

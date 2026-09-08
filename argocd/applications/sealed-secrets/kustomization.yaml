@@ -9,13 +9,13 @@ resources:
 helmCharts:
   - name: sealed-secrets
     repo: https://bitnami.github.io/sealed-secrets
-    version: 2.19.1
+    version: 2.19.3
     releaseName: sealed-secrets
     namespace: sealed-secrets
     includeCRDs: true
   - name: sealed-secrets-web
     repo: https://charts.bakito.net
-    version: 3.3.1
+    version: 3.3.2
     releaseName: sealed-secrets-web
     namespace: sealed-secrets
     valuesInline:
@@ -34,7 +34,7 @@ helmCharts:
 images:
   - name: docker.io/bitnami/sealed-secrets-controller
     newName: mirror.gcr.io/bitnami/sealed-secrets-controller
-    newTag: 0.38.4
+    newTag: 0.39.1
   - name: ghcr.io/bakito/sealed-secrets-web
     newName: ghcr.io/bakito/sealed-secrets-web
-    newTag: v3.1.9
+    newTag: v3.3.2
