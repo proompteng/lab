@@ -5,11 +5,12 @@ Loki, Mimir, and Tempo read S3 access credentials from secret `rook-ceph-rgw-lok
 namespace.
 That secret should be a reflected copy of the Rook-managed source secret
 `rook-ceph-object-user-objectstore-loki` in namespace `rook-ceph`, not a hand-sealed credential copy.
-Keep the RGW endpoint explicit in Helm values; it is not sourced from the reflected secret. Tempo uses the internal
+Keep the RGW endpoint explicit in Helm values; it is not sourced from the reflected secret. Mimir and Tempo use the internal
 TLS endpoint `rook-ceph-rgw-tls.rook-ceph.svc:443` with `insecure: false` and TLS server name
-`ceph.k8s.proompteng.ai`. Loki and Mimir currently use `rook-ceph-rgw-objectstore.rook-ceph.svc:80`.
-Mimir's MinIO HTTP signer is incompatible with Ceph 20.2.4; its TLS transition requires a controlled rollout that
-preserves its buffered blocks and accounts for the chart's bundled Kafka restart. The
+`ceph.k8s.proompteng.ai`. Loki uses `rook-ceph-rgw-objectstore.rook-ceph.svc:80`.
+Mimir's MinIO HTTP signer is incompatible with Ceph 20.2.4. Its StatefulSets, including bundled Kafka, use `OnDelete`
+while the [Mimir recovery procedure](../../../docs/runbooks/mimir-rgw-tls-recovery.md) reloads one process at a time
+and verifies retained blocks without replacing Pods or remounting volumes. The
 [compatibility runbook](../../../docs/runbooks/ceph-rgw-sigv4-compatibility.md) documents the verified TLS path,
 preservation of existing Tempo buffers, and recovery procedure.
 
