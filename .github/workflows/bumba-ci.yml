@@ -8,6 +8,20 @@ on:
       - 'services/bumba/**'
       - 'packages/temporal-bun-sdk/**'
       - 'nix/images/bumba.nix'
+      - '.github/workflows/bumba-ci.yml'
+      - '.github/workflows/nix-bun-dependency-closure.yml'
+      - 'nix/check-bun-dependency-closure.sh'
+      - 'nix/images/bun-workspace-service.nix'
+      - 'nix/images/bun-workspace-deps-source.nix'
+      - 'nix/packages.nix'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'package.json'
+      - 'bun.lock'
+      - 'bunfig.toml'
+      - '.npmrc'
+      - 'patches/**'
+      - '**/package.json'
       - '.github/workflows/nix-oci-build-common.yml'
       - 'packages/scripts/src/shared/oci.ts'
       - 'nix/oci-push.sh'
@@ -17,6 +31,20 @@ on:
       - 'services/bumba/**'
       - 'packages/temporal-bun-sdk/**'
       - 'nix/images/bumba.nix'
+      - '.github/workflows/bumba-ci.yml'
+      - '.github/workflows/nix-bun-dependency-closure.yml'
+      - 'nix/check-bun-dependency-closure.sh'
+      - 'nix/images/bun-workspace-service.nix'
+      - 'nix/images/bun-workspace-deps-source.nix'
+      - 'nix/packages.nix'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'package.json'
+      - 'bun.lock'
+      - 'bunfig.toml'
+      - '.npmrc'
+      - 'patches/**'
+      - '**/package.json'
       - '.github/workflows/nix-oci-build-common.yml'
       - 'packages/scripts/src/shared/oci.ts'
       - 'nix/oci-push.sh'
@@ -71,7 +99,14 @@ jobs:
       - run: bun run --filter @proompteng/temporal-bun-sdk build
       - run: bun test services/bumba/src/atlas/reconciliation.integration.test.ts
 
+  dependency-closure:
+    uses: ./.github/workflows/nix-bun-dependency-closure.yml
+    with:
+      service: bumba
+    secrets: inherit
+
   nix-image:
+    needs: dependency-closure
     if: >-
       ${{
         github.event_name == 'workflow_dispatch' ||
