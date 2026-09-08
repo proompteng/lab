@@ -5,6 +5,7 @@ import type { PointerEvent as ReactPointerEvent, ReactNode, RefObject } from 're
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { useDesktopReducedMotion } from './use-desktop-reduced-motion'
+import { WindowControls } from './window-controls'
 import { focusWindowContent, rememberWindowFocus } from './window-focus'
 import {
   clampToViewport,
@@ -224,69 +225,14 @@ export function DesktopWindowFrame({
               : 'relative h-9 border-b border-black/25 bg-gradient-to-b from-[#38383b] to-[#303033]',
           )}
         >
-          <div
-            className="group/controls pointer-events-auto relative z-30 flex items-center"
-            aria-label="Window controls"
-          >
-            <button
-              type="button"
-              aria-label={`Close ${window.title}`}
-              className="group grid h-6 w-6 place-items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={() => (onCloseRequest ? onCloseRequest() : dispatch({ type: 'close', id: window.id }))}
-            >
-              <span
-                aria-hidden="true"
-                className={cn(
-                  'grid size-3 place-items-center rounded-full border border-black/15 text-black/60',
-                  active ? 'bg-[#ff5f57]' : 'bg-zinc-500/65 group-hover/controls:bg-[#ff5f57]',
-                )}
-              >
-                <span className="relative size-2 opacity-0 before:absolute before:inset-x-0 before:top-1/2 before:h-px before:-translate-y-1/2 before:rotate-45 before:bg-current after:absolute after:inset-x-0 after:top-1/2 after:h-px after:-translate-y-1/2 after:-rotate-45 after:bg-current group-hover/controls:opacity-100 group-focus-visible:opacity-100" />
-              </span>
-            </button>
-            <button
-              type="button"
-              aria-label={`Minimize ${window.title}`}
-              className="group grid h-6 w-6 place-items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={() => dispatch({ type: 'minimize', id: window.id })}
-            >
-              <span
-                aria-hidden="true"
-                className={cn(
-                  'grid size-3 place-items-center rounded-full border border-black/15 text-black/60',
-                  active ? 'bg-[#febc2e]' : 'bg-zinc-500/65 group-hover/controls:bg-[#febc2e]',
-                )}
-              >
-                <span className="h-px w-2 bg-current opacity-0 group-hover/controls:opacity-100 group-focus-visible:opacity-100" />
-              </span>
-            </button>
-            <button
-              type="button"
-              aria-label={`${window.mode === 'maximized' ? 'Restore' : 'Maximize'} ${window.title}`}
-              className="group grid h-6 w-6 place-items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={() => dispatch({ type: 'toggle-maximize', id: window.id, viewport: viewport() })}
-            >
-              <span
-                aria-hidden="true"
-                className={cn(
-                  'grid size-3 place-items-center rounded-full border border-black/15 text-black/60',
-                  active ? 'bg-[#28c840]' : 'bg-zinc-500/65 group-hover/controls:bg-[#28c840]',
-                )}
-              >
-                <span
-                  className={cn(
-                    'relative size-[7px] opacity-0 before:absolute before:size-[3px] before:bg-current before:[clip-path:polygon(0_0,100%_0,0_100%)] after:absolute after:size-[3px] after:bg-current after:[clip-path:polygon(100%_0,100%_100%,0_100%)] group-hover/controls:opacity-100 group-focus-visible:opacity-100',
-                    window.mode === 'maximized'
-                      ? 'before:right-0 before:bottom-0 after:top-0 after:left-0'
-                      : 'before:top-0 before:left-0 after:right-0 after:bottom-0',
-                  )}
-                />
-              </span>
-            </button>
-          </div>
+          <WindowControls
+            active={active}
+            maximized={window.mode === 'maximized'}
+            onClose={onCloseRequest ?? (() => dispatch({ type: 'close', id: window.id }))}
+            onMinimize={() => dispatch({ type: 'minimize', id: window.id })}
+            onToggleMaximize={() => dispatch({ type: 'toggle-maximize', id: window.id, viewport: viewport() })}
+            title={window.title}
+          />
           <h2
             className={
               unifiedToolbar

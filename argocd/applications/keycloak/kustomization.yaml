@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: keycloak
 resources:
   - postgres-upgrade-backup.yaml
+  - server-upgrade-backup.yaml
   - agents-shell-client-bootstrap-job.yaml
   - agents-shell-client-sealedsecret.yaml
   - agents-shell-user-sealedsecret.yaml
