@@ -52,16 +52,14 @@ records require them; they are not runtime fallbacks and cannot start new cycles
 
 ## Active strategy
 
-The submission window opens with the regular session. After its first complete 30-minute IEX window and two-second
-decision delay, Bayn evaluates rolling windows until five minutes before the close, without an extra clock warmup.
-It compares AAPL, AMZN, IWM, NVDA, QQQ, and SMH with SPY and requires positive candidate
+After a 60-minute warmup and until 60 minutes before the regular-session close, Bayn evaluates the latest fully
+elapsed 30-minute IEX window. It compares AAPL, AMZN, IWM, NVDA, QQQ, and SMH with SPY and requires positive candidate
 momentum, non-negative benchmark momentum, at least 10 basis points of excess momentum, top-quartile range location,
 a spread no wider than 5 basis points, displayed liquidity, and complete fresh bars, quotes, and trades.
 
 The strategy selects at most one long position and caps it at 10% of mandate allocation. Entry uses whole-share IOC
-limit orders at the verified adverse quote boundary. Entries stop and forced flattening starts five minutes before
-the actual session close. Close orders remain eligible until the bell; residual positions or unresolved reconciliation
-remain incomplete. The protocol, universe, thresholds, feed contract, and execution model are
+limit orders at the verified adverse quote boundary. Bayn begins flattening 30 minutes before the close and must be
+flat 15 minutes before the close. The protocol, universe, thresholds, feed contract, and execution model are
 source-controlled and included in the image's verified behavior, parameter, and protocol hashes.
 
 ## Mutation and risk boundary
@@ -144,11 +142,8 @@ source/image identity. Direct deployment and manual broker orders are not valid 
 ## Completion evidence
 
 Historical archive replay defaults to requiring production-reader receipts for every used row by the simulated
-observation time. Missing or late candidate receipts become candidate-local, zero-weight exclusions before the shared
-core ranks the remaining symbols; the report binds those exclusions separately from the unchanged archive manifest.
-Missing benchmark/pricing receipts and an entirely unavailable candidate universe remain incomplete. Malformed,
-conflicting, or unrelated receipt evidence still fails the whole observation. Source receipt timestamps cannot stand
-in for Kafka/Flink/ClickHouse availability. Explicit `source-receipt-assumption` research remains possible but is labeled `UNPROVEN`.
+observation time. Missing coverage remains incomplete; source receipt timestamps cannot stand in for Kafka/Flink/
+ClickHouse availability. Explicit `source-receipt-assumption` research remains possible but is labeled `UNPROVEN`.
 Receipts establish conservative observed row-availability bounds, not earliest visibility, a simultaneous historical
 snapshot, the original worker's uptime, or actual execution. They cannot repair missing delivery evidence from before
 recording was deployed. See the service README for report v3 and read-only receipt configuration.

@@ -5,7 +5,7 @@ This directory maintains the pinned upstream source and local patch set for the 
 `nix/images/headlamp.nix`; the Dockerfile is a parity path for local builds.
 
 It intentionally pins the upstream source to `kubernetes-sigs/headlamp`
-`v0.45.0` and enables the frontend websocket multiplexer at build time with
+`v0.44.0` and enables the frontend websocket multiplexer at build time with
 `REACT_APP_ENABLE_WEBSOCKET_MULTIPLEXER=true`.
 
 Before using the Docker build path, fetch the pinned upstream source into its build context:

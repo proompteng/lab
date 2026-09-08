@@ -1,14 +1,14 @@
 # kube-router NetworkPolicy controller
 
-This manual Argo CD application runs kube-router v2.11.1 only as a Kubernetes NetworkPolicy controller. Flannel remains
+This manual Argo CD application runs kube-router v2.10.0 only as a Kubernetes NetworkPolicy controller. Flannel remains
 the CNI and kube-proxy remains the nftables service proxy. Routing, service proxying, load-balancer allocation, CNI
 installation, and IPv6 are explicitly disabled.
 
 The image is pinned to the multi-architecture index
-`sha256:64da9a538d29e13780e256ce3897a52932a68657793bef009063bbeb2762146a`. Its expected Linux platform manifests are:
+`sha256:0991f2cc7aaabe107b51c0c554d6b843f0483fd319b94f437fab638470c47c22`. Its expected Linux platform manifests are:
 
-- amd64: `sha256:05d1c7c903721ac202ce261fff33f61526e55188dc2135cdc39b4bcd173960a2`
-- arm64: `sha256:fec5ac13d36a812636d545263fda75e5b729ac9dac624f1f19f1170d3372324b`
+- amd64: `sha256:81619a698b981a5c4fd6c89ae015d0faadce5d7a5270df7562c1743e58e3283f`
+- arm64: `sha256:b8df3247641d5f4e84e14d30b673b6362a0e3d56901218a1e1ee38a40f37afd8`
 
 ## Activation safety
 

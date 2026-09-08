@@ -7,7 +7,7 @@ import {
   responseParseOptions,
 } from '../broker/alpaca/model'
 import type { EmbeddedBuildMetadata } from '../build'
-import type { IntradaySnapshotManifest, IntradayCandidateExclusion } from '../market-data/intraday/model'
+import type { IntradaySnapshotManifest } from '../market-data/intraday/model'
 import { PositiveMicrosSchema, strictParseOptions } from '../schemas'
 import type { IntradayMomentumTargetPortfolio } from '../strategy/intraday-momentum/model'
 import type { IntradayReplayIocOutcome } from './execution'
@@ -125,7 +125,6 @@ export interface IntradayReplayReport {
       readonly snapshotId: string
       readonly observedAt: string
       readonly receiptHashes: readonly string[]
-      readonly candidateExclusions?: readonly IntradayCandidateExclusion[]
     }[]
     readonly receipts: readonly ArchiveAvailabilityReceipt[]
   }

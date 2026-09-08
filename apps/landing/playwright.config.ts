@@ -2,8 +2,6 @@ import { defineConfig } from '@playwright/test'
 
 const port = Number.parseInt(process.env.TENGRI_PLAYWRIGHT_PORT ?? '3000', 10)
 const baseURL = process.env.TENGRI_PLAYWRIGHT_BASE_URL ?? `http://127.0.0.1:${port}`
-const fixtureCertificate =
-  process.env.TENGRI_EDITOR_TEST_HTTPS === '1' ? process.env.TENGRI_EDITOR_TEST_CERT_SPKI : undefined
 export default defineConfig({
   testDir: './src/components/tengri',
   testMatch: '**/*.e2e.test.ts',
@@ -22,9 +20,6 @@ export default defineConfig({
   reporter: process.env.CI ? [['line'], ['html', { open: 'never' }]] : 'line',
   use: {
     baseURL,
-    launchOptions: fixtureCertificate
-      ? { args: [`--ignore-certificate-errors-spki-list=${fixtureCertificate}`] }
-      : undefined,
     colorScheme: 'dark',
     locale: 'en-US',
     screenshot: 'only-on-failure',

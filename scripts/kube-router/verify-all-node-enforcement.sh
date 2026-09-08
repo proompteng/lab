@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-readonly probe_image='docker.io/cloudnativelabs/kube-router@sha256:64da9a538d29e13780e256ce3897a52932a68657793bef009063bbeb2762146a'
+readonly probe_image='docker.io/cloudnativelabs/kube-router@sha256:0991f2cc7aaabe107b51c0c554d6b843f0483fd319b94f437fab638470c47c22'
 probe_namespace="kube-router-network-policy-probe-$(openssl rand -hex 4)"
 readonly probe_namespace
 probe_namespace_created=false

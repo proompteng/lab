@@ -69,7 +69,7 @@ impl UpstreamWebSocketError {
 }
 const PREVIEW_BOOTSTRAP_SCRIPT: &str = r#"(() => {
   const token = decodeURIComponent(window.location.hash.slice(1));
-  const target = window.location.pathname === '/_tengri/editor/open' ? '/' : window.location.pathname + window.location.search;
+  const target = window.location.pathname + window.location.search;
   history.replaceState(null, '', target);
   if (!token) {
     document.body.textContent = 'Preview session is missing or expired.';
@@ -166,7 +166,6 @@ pub(crate) struct PreviewOrigin {
 }
 
 struct PreviewGuestBinding {
-    incarnation: Option<String>,
     session_token: String,
     owner_hash: String,
     agent_id: String,
@@ -234,16 +233,9 @@ impl GatewayState {
         let client = self.client.clone();
         let namespace = self.namespace.clone();
         let agent_id = session.agent_id.clone();
-        let incarnation = session.incarnation.clone();
         let guest = binding
             .get_or_try_init(|| async move {
-                GuestClient::for_agent_incarnation(
-                    client,
-                    &namespace,
-                    &agent_id,
-                    incarnation.as_deref(),
-                )
-                .await
+                GuestClient::for_agent(client, &namespace, &agent_id).await
             })
             .await?
             .clone();
@@ -271,7 +263,6 @@ impl GatewayState {
 impl PreviewGuestBinding {
     fn new(session: &PreviewSessionRecord) -> Self {
         Self {
-            incarnation: session.incarnation.clone(),
             session_token: session.token.clone(),
             owner_hash: session.owner_hash.clone(),
             agent_id: session.agent_id.clone(),
@@ -282,8 +273,7 @@ impl PreviewGuestBinding {
     }
 
     fn matches(&self, session: &PreviewSessionRecord) -> bool {
-        self.incarnation == session.incarnation
-            && self.session_token == session.token
+        self.session_token == session.token
             && self.owner_hash == session.owner_hash
             && self.agent_id == session.agent_id
             && self.port == session.port
@@ -396,8 +386,6 @@ pub fn preview_router(state: GatewayState) -> Router {
         .route("/_tengri/bootstrap", post(preview_bootstrap))
         .route("/_tengri/bootstrap.js", get(serve_preview_bootstrap_script))
         .route("/_tengri/bridge.js", get(serve_preview_bridge_script))
-        .route("/_tengri/vscode.js", get(serve_vscode_bridge_script))
-        .route("/_tengri/editor/open", get(open_editor_bootstrap))
         .fallback(preview_host_proxy)
         .with_state(state)
 }
@@ -577,13 +565,8 @@ async fn preview_bootstrap(
         Err(error) => return status_response(error.code(), error.message()),
     };
     state.activity.touch(&session.agent_id);
-    let lifetime = if session.port == crate::guest::EDITOR_PORT {
-        86400
-    } else {
-        1800
-    };
     let cookie = format!(
-        "{PREVIEW_COOKIE}={}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age={lifetime}",
+        "{PREVIEW_COOKIE}={}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=1800",
         session.token,
     );
     (
@@ -626,38 +609,6 @@ async fn serve_preview_bridge_script(
         return StatusCode::NOT_FOUND.into_response();
     }
     script_response(preview_bridge_script(&state.preview_origin.desktop_origin))
-}
-
-async fn open_editor_bootstrap(
-    State(state): State<GatewayState>,
-    request: Request<Body>,
-) -> axum::response::Response {
-    if request_authority(&request)
-        .and_then(|authority| state.preview_origin.session_id(&authority))
-        .is_none()
-    {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-    preview_bootstrap_document(&state.preview_origin.desktop_origin)
-}
-
-async fn serve_vscode_bridge_script(
-    State(state): State<GatewayState>,
-    request: Request<Body>,
-) -> axum::response::Response {
-    if request_authority(&request)
-        .and_then(|authority| state.preview_origin.session_id(&authority))
-        .is_none()
-    {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-    script_response(
-        include_str!("vscode_bridge.js").replace(
-            "__TENGRI_DESKTOP_ORIGIN__",
-            &serde_json::to_string(state.preview_origin.desktop_origin.as_ref())
-                .expect("desktop origin JSON"),
-        ),
-    )
 }
 
 fn preview_bridge_script(desktop_origin: &str) -> String {
@@ -722,12 +673,6 @@ async fn preview_host_proxy(
         .query()
         .map(|value| format!("?{value}"))
         .unwrap_or_default();
-    if session.port == crate::guest::EDITOR_PORT
-        && path == "/_tengri/editor-bridge"
-        && request.uri().query() != Some(format!("session={}", session.id).as_str())
-    {
-        return StatusCode::FORBIDDEN.into_response();
-    }
     let target = format!(
         "{}/v1/preview/{}{}{}",
         guest.client.base_url(),
@@ -764,25 +709,7 @@ async fn preview_host_proxy(
             websocket
         };
         return websocket
-            .on_upgrade(move |socket| async move {
-                let revoked = async {
-                    let mut interval = tokio::time::interval(Duration::from_secs(1));
-                    loop {
-                        interval.tick().await;
-                        if state
-                            .tickets
-                            .preview_session(&session.id, &session.token)
-                            .is_err()
-                        {
-                            return;
-                        }
-                    }
-                };
-                tokio::select! {
-                    _ = bridge_open_websocket(socket, upstream, activity, agent_id) => {},
-                    _ = revoked => {},
-                }
-            })
+            .on_upgrade(move |socket| bridge_open_websocket(socket, upstream, activity, agent_id))
             .into_response();
     }
     proxy_http(state, session, guest, target, request).await
@@ -842,8 +769,6 @@ async fn proxy_http(
 ) -> axum::response::Response {
     let (parts, body) = request.into_parts();
     let request_method = parts.method.clone();
-    let editor_asset =
-        session.port == crate::guest::EDITOR_PORT && is_editor_asset(parts.uri.path());
     let body = match to_bytes(body, MAX_PROXY_BODY).await {
         Ok(body) => body,
         Err(_) => {
@@ -859,7 +784,7 @@ async fn proxy_http(
         .request(parts.method, target)
         .bearer_auth(guest.client.token());
     for (name, value) in &parts.headers {
-        if forward_request_header(name) || (editor_asset && name == header::ACCEPT_ENCODING) {
+        if forward_request_header(name) {
             if name == header::COOKIE {
                 if let Ok(value) = value.to_str() {
                     let cookies = strip_cookie(value, PREVIEW_COOKIE);
@@ -895,7 +820,6 @@ async fn proxy_http(
             .await;
     }
     let headers = upstream.headers().clone();
-    let is_editor = session.port == crate::guest::EDITOR_PORT;
     let inject_bridge = should_inject_preview_bridge(&request_method, status, &headers);
     let (body, bridge_nonce) = if inject_bridge {
         let bytes = match to_bytes(Body::from_stream(upstream.bytes_stream()), MAX_PROXY_BODY).await
@@ -909,14 +833,7 @@ async fn proxy_http(
                     .into_response();
             }
         };
-        match inject_preview_script(
-            &bytes,
-            if is_editor {
-                "/_tengri/vscode.js"
-            } else {
-                "/_tengri/bridge.js"
-            },
-        ) {
+        match inject_preview_bridge(&bytes) {
             Some((bytes, nonce)) => (Body::from(bytes), Some(nonce)),
             None => (Body::from(bytes), None),
         }
@@ -924,16 +841,11 @@ async fn proxy_http(
         (Body::from_stream(upstream.bytes_stream()), None)
     };
     let preview_origin = state.preview_origin.origin(&session.id);
-    let frame_ancestors = if is_editor {
-        format!("'self' {}", state.preview_origin.desktop_origin)
-    } else {
-        state.preview_origin.desktop_origin.to_string()
-    };
-    let default_frame_policy = default_preview_frame_policy(&headers, &frame_ancestors);
+    let default_frame_policy =
+        default_preview_frame_policy(&headers, &state.preview_origin.desktop_origin);
     let mut response = Response::builder().status(status);
     for (name, value) in &headers {
         if forward_response_header(name)
-            && name != header::CACHE_CONTROL
             && !(bridge_nonce.is_some() && stale_after_bridge_injection(name))
         {
             if name == header::SET_COOKIE {
@@ -953,9 +865,13 @@ async fn proxy_http(
             } else if name == HeaderName::from_static("content-security-policy") {
                 if let Ok(value) = value.to_str() {
                     let rewritten = bridge_nonce.as_deref().map_or_else(
-                        || rewrite_frame_ancestors(value, &frame_ancestors),
+                        || rewrite_frame_ancestors(value, &state.preview_origin.desktop_origin),
                         |nonce| {
-                            rewrite_preview_content_security_policy(value, &frame_ancestors, nonce)
+                            rewrite_preview_content_security_policy(
+                                value,
+                                &state.preview_origin.desktop_origin,
+                                nonce,
+                            )
                         },
                     );
                     if let Ok(value) = HeaderValue::from_str(&rewritten) {
@@ -970,14 +886,7 @@ async fn proxy_http(
     if let Some(policy) = default_frame_policy {
         response = response.header(header::CONTENT_SECURITY_POLICY, policy);
     }
-    response = response.header(
-        header::CACHE_CONTROL,
-        if editor_asset && status.is_success() && !is_html_response(&headers) {
-            "private, max-age=31536000, immutable"
-        } else {
-            "no-store"
-        },
-    );
+    response = response.header(header::CACHE_CONTROL, "no-store");
     response
         .body(body)
         .unwrap_or_else(|_| StatusCode::BAD_GATEWAY.into_response())
@@ -1301,20 +1210,12 @@ fn should_inject_preview_bridge(method: &Method, status: StatusCode, headers: &H
         && !headers.contains_key(header::CONTENT_ENCODING)
 }
 
-#[cfg(test)]
 fn inject_preview_bridge(body: &[u8]) -> Option<(Vec<u8>, String)> {
-    inject_preview_script(body, "/_tengri/bridge.js")
-}
-
-fn inject_preview_script(body: &[u8], script: &str) -> Option<(Vec<u8>, String)> {
     let html = std::str::from_utf8(body).ok()?;
-    if script == "/_tengri/vscode.js" && !html.contains("id=\"vscode-workbench-web-configuration\"")
-    {
-        return None;
-    }
     let nonce = Alphanumeric.sample_string(&mut rand::rng(), 32);
-    let tag =
-        format!("<script nonce=\"{nonce}\" src=\"{script}\" data-tengri-preview-bridge></script>");
+    let tag = format!(
+        "<script nonce=\"{nonce}\" src=\"/_tengri/bridge.js\" data-tengri-preview-bridge></script>"
+    );
     let lower = html.to_ascii_lowercase();
     let insertion = lower
         .find("</head>")
@@ -1343,24 +1244,6 @@ fn stale_after_bridge_injection(name: &HeaderName) -> bool {
 fn default_preview_frame_policy(headers: &HeaderMap, desktop_origin: &str) -> Option<String> {
     (!headers.contains_key(header::CONTENT_SECURITY_POLICY))
         .then(|| format!("frame-ancestors {desktop_origin}"))
-}
-
-fn is_editor_asset(path: &str) -> bool {
-    let Some((revision, asset)) = path
-        .strip_prefix("/stable-")
-        .and_then(|path| path.split_once("/static/"))
-    else {
-        return false;
-    };
-    revision.len() == 40
-        && revision.bytes().all(|byte| byte.is_ascii_hexdigit())
-        && ["out/", "node_modules/", "extensions/"]
-            .iter()
-            .any(|prefix| asset.starts_with(prefix))
-        && !asset.contains(['%', '\\'])
-        && !asset
-            .split('/')
-            .any(|segment| segment == ".." || segment == ".")
 }
 
 fn forward_request_header(name: &HeaderName) -> bool {
@@ -1405,9 +1288,6 @@ fn nanoagent_auth_failed(status: StatusCode, headers: &HeaderMap) -> bool {
             .get(NANOAGENT_AUTH_FAILURE_HEADER)
             .is_some_and(|value| value.as_bytes() == NANOAGENT_AUTH_FAILURE_HEADER_VALUE)
 }
-
-#[cfg(test)]
-mod editor_browser_fixture;
 
 #[cfg(test)]
 mod tests {
@@ -1648,76 +1528,6 @@ mod tests {
         assert_eq!(unavailable, StatusCode::SERVICE_UNAVAILABLE);
     }
 
-    #[tokio::test]
-    async fn editor_launch_bootstraps_over_an_expired_cookie_without_serving_guest_content() {
-        let (service, _handle) = tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
-        let state = test_gateway_state(Client::new(service, "tengri"));
-        let response = preview_router(state)
-            .oneshot(
-                Request::builder()
-                    .uri("/_tengri/editor/open")
-                    .header(
-                        header::HOST,
-                        format!("tengri-{}.proompteng.ai", "a".repeat(24)),
-                    )
-                    .header(header::COOKIE, format!("{PREVIEW_COOKIE}=expired-cookie"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
-        let body = to_bytes(response.into_body(), MAX_BOOTSTRAP_BODY)
-            .await
-            .unwrap();
-        assert!(
-            String::from_utf8(body.to_vec())
-                .unwrap()
-                .contains("/_tengri/bootstrap.js")
-        );
-    }
-
-    #[test]
-    fn caches_only_versioned_workbench_assets_and_leaves_webviews_unmodified() {
-        let asset = format!(
-            "/stable-{}/static/out/vs/code/browser/workbench/workbench.js",
-            "a".repeat(40)
-        );
-        assert!(is_editor_asset(&asset));
-        for path in [
-            "/vscode-remote-resource?path=/workspace/private.ts",
-            "/stable-no/static/out/main.js",
-            "/static/out/main.js",
-            &asset.replace("out/vs", "out/../vs"),
-            &asset.replace("out/vs", "out/%2e%2e/vs"),
-        ] {
-            assert!(!is_editor_asset(path), "cached {path}");
-        }
-        assert!(
-            inject_preview_script(
-                b"<html><head></head><body>Markdown webview</body></html>",
-                "/_tengri/vscode.js"
-            )
-            .is_none()
-        );
-        let (injected, _) = inject_preview_script(
-            b"<html><head><meta id=\"vscode-workbench-web-configuration\"></head></html>",
-            "/_tengri/vscode.js",
-        )
-        .unwrap();
-        assert!(
-            String::from_utf8(injected)
-                .unwrap()
-                .contains("src=\"/_tengri/vscode.js\"")
-        );
-        let policy = rewrite_frame_ancestors(
-            "default-src 'self'; frame-ancestors 'none'",
-            "'self' https://desktop.example",
-        );
-        assert!(policy.contains("frame-ancestors 'self' https://desktop.example"));
-    }
-
     #[test]
     fn preview_cookie_is_not_forwarded_to_guest_app() {
         let cookies = format!("theme=dark; {PREVIEW_COOKIE}=secret; app=value");
@@ -1869,8 +1679,6 @@ mod tests {
     #[test]
     fn preview_guest_bindings_are_scoped_to_the_authorized_session() {
         let session = PreviewSessionRecord {
-            incarnation: None,
-            revocation_token: "test-revocation-token".to_owned(),
             id: "a1b2c3d4e5f6a1b2c3d4e5f6".to_owned(),
             token: "session-token".to_owned(),
             owner_hash: "a".repeat(64),
@@ -1887,10 +1695,6 @@ mod tests {
         other_owner.owner_hash = "b".repeat(64);
         assert!(!binding.matches(&other_owner));
 
-        let mut other_incarnation = session.clone();
-        other_incarnation.incarnation = Some("new-agent".to_owned());
-        assert!(!binding.matches(&other_incarnation));
-
         let mut other_token = session.clone();
         other_token.token = "different-session-token".to_owned();
         assert!(!binding.matches(&other_token));
@@ -1905,8 +1709,6 @@ mod tests {
         let (service, _handle) = tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
         let state = test_gateway_state(Client::new(service, "tengri"));
         let session = PreviewSessionRecord {
-            incarnation: None,
-            revocation_token: "test-revocation-token".to_owned(),
             id: "a1b2c3d4e5f6a1b2c3d4e5f6".to_owned(),
             token: "session-token".to_owned(),
             owner_hash: "a".repeat(64),

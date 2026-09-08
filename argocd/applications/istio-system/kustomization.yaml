@@ -8,21 +8,21 @@ resources:
   - knative-local-gateway-deployment.yaml
 helmCharts:
   - name: base
-    repo: https://blob.istio.io/istio-release/charts
-    version: 1.31.0
+    repo: https://istio-release.storage.googleapis.com/charts
+    version: 1.30.3
     releaseName: istio-base
     namespace: istio-system
     includeCRDs: true
     valuesInline:
       defaultRevision: default
   - name: istiod
-    repo: https://blob.istio.io/istio-release/charts
-    version: 1.31.0
+    repo: https://istio-release.storage.googleapis.com/charts
+    version: 1.30.3
     releaseName: istiod
     namespace: istio-system
   - name: cni
-    repo: https://blob.istio.io/istio-release/charts
-    version: 1.31.0
+    repo: https://istio-release.storage.googleapis.com/charts
+    version: 1.30.3
     releaseName: istio-cni
     namespace: istio-system
 patches:

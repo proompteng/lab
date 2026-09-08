@@ -21,7 +21,6 @@ describe('landing browser validation workflow', () => {
 
     expect(landingStep).toContain('bunx playwright install --with-deps chromium')
     expect(landingStep).toContain('bun run --cwd apps/landing test:e2e')
-    expect(landingStep).toContain('TENGRI_EDITOR_NEXT_MODE=start bash services/nanoagent/test-vscode-browser.sh')
     expect(runner).toContain("matrix.target == 'landing' && 'arc-amd64'")
     expect(runner).not.toContain("matrix.target == 'docs' || matrix.target == 'landing'")
     expect(artifactStep).toContain("always() && matrix.target == 'landing'")

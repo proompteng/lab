@@ -58,7 +58,6 @@ import intradaySnapshotReferences from '../../migrations/0055_intraday_snapshot_
 import intradayStrategyCutover from '../../migrations/0056_intraday_strategy_cutover'
 import recoverPreopenAuthorityCycle from '../../migrations/0057_recover_preopen_authority_cycle'
 import archiveReaderAvailability from '../../migrations/0058_archive_reader_availability'
-import regularSessionBoundaries from '../../migrations/0059_regular_session_boundaries'
 
 export const migrationLoader = PgMigrator.fromRecord({
   '1_initial_schema': initialSchema,
@@ -119,5 +118,4 @@ export const migrationLoader = PgMigrator.fromRecord({
   '56_intraday_strategy_cutover': intradayStrategyCutover,
   '57_recover_preopen_authority_cycle': recoverPreopenAuthorityCycle,
   '58_archive_reader_availability': archiveReaderAvailability,
-  '59_regular_session_boundaries': regularSessionBoundaries,
 })

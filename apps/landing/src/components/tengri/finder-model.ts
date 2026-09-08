@@ -5,67 +5,6 @@ export const FINDER_SEARCH_REFRESH_MS = 2_000
 
 const protectedFinderPaths = new Set([FINDER_WORKSPACE_PATH])
 
-export type FinderSort = { column: 'name' | 'modified' | 'size' | 'kind'; direction: 'ascending' | 'descending' }
-
-const finderNameCollator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' })
-
-export function finderBreadcrumbs(path: string): { name: string; path: string }[] {
-  const segments = path.split('/').filter(Boolean)
-  return [
-    { name: 'Workspace', path: FINDER_WORKSPACE_PATH },
-    ...segments.map((name, index) => ({ name, path: `/${segments.slice(0, index + 1).join('/')}` })),
-  ]
-}
-
-export function finderKindLabel(entry: Pick<TengriFileEntry, 'directory' | 'name'>): string {
-  if (entry.directory) return 'Folder'
-  const extension = entry.name.includes('.') ? entry.name.split('.').at(-1)?.toLowerCase() : ''
-  switch (extension) {
-    case 'md':
-      return 'Markdown document'
-    case 'txt':
-      return 'Plain text document'
-    case 'json':
-      return 'JSON document'
-    case 'ts':
-    case 'tsx':
-      return 'TypeScript source'
-    case 'js':
-    case 'jsx':
-      return 'JavaScript source'
-    case 'png':
-    case 'jpg':
-    case 'jpeg':
-    case 'gif':
-    case 'webp':
-      return 'Image'
-    default:
-      return finderFileKind(entry) === 'code' ? 'Source code' : 'Document'
-  }
-}
-
-export function sortFinderEntries(entries: readonly TengriFileEntry[], sort: FinderSort): TengriFileEntry[] {
-  return [...entries].sort((left, right) => {
-    let difference = 0
-    switch (sort.column) {
-      case 'name':
-        difference = finderNameCollator.compare(left.name, right.name)
-        break
-      case 'kind':
-        difference = finderNameCollator.compare(finderKindLabel(left), finderKindLabel(right))
-        break
-      case 'size':
-        difference = left.size - right.size
-        break
-      case 'modified':
-        difference = (Date.parse(left.modifiedAt) || 0) - (Date.parse(right.modifiedAt) || 0)
-        break
-    }
-    const order = difference || finderNameCollator.compare(left.path, right.path)
-    return sort.direction === 'ascending' ? order : -order
-  })
-}
-
 const finderDateFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: 'medium',
   timeStyle: 'short',

@@ -31,7 +31,7 @@ spec:
         - operator: Exists
       initContainers:
         - name: cleanup
-          image: docker.io/cloudnativelabs/kube-router@sha256:64da9a538d29e13780e256ce3897a52932a68657793bef009063bbeb2762146a
+          image: docker.io/cloudnativelabs/kube-router@sha256:0991f2cc7aaabe107b51c0c554d6b843f0483fd319b94f437fab638470c47c22
           imagePullPolicy: IfNotPresent
           command:
             - /bin/bash
@@ -105,7 +105,7 @@ spec:
               mountPath: /run/xtables.lock
       containers:
         - name: verifier
-          image: docker.io/cloudnativelabs/kube-router@sha256:64da9a538d29e13780e256ce3897a52932a68657793bef009063bbeb2762146a
+          image: docker.io/cloudnativelabs/kube-router@sha256:0991f2cc7aaabe107b51c0c554d6b843f0483fd319b94f437fab638470c47c22
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh

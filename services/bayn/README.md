@@ -9,9 +9,8 @@ rows remain decodable for audit and reconciliation, but they are not runtime fal
 
 ## Active strategy
 
-The submission window opens with the regular session. Bayn waits for its first fully elapsed 30-minute IEX window and
-the two-second decision delay, without an additional clock warmup. It evaluates subsequent rolling windows until
-five minutes before the close. It compares AAPL, AMZN, IWM, NVDA, QQQ, and SMH against SPY and requires:
+Each regular session, after a 60-minute warmup and until 60 minutes before the close, Bayn evaluates the latest fully
+elapsed 30-minute IEX window. It compares AAPL, AMZN, IWM, NVDA, QQQ, and SMH against SPY and requires:
 
 - positive candidate momentum and non-negative SPY momentum;
 - at least 10 basis points of excess momentum;
@@ -21,10 +20,8 @@ five minutes before the close. It compares AAPL, AMZN, IWM, NVDA, QQQ, and SMH a
 
 The strategy selects at most one long position and caps it at 10% of the mandate allocation. A valid `NO_TRADE` is a
 normal decision; unavailable mandatory evidence blocks evaluation. New entries use whole-share
-IOC limit orders at an adverse verified quote boundary. Bayn starts flattening five minutes before the close and
-requires a flat account at the closing bell. Entries stop when flattening starts, and close orders remain eligible
-until the actual close, including early-close sessions. The five-minute exit budget is an operational policy;
-unfilled exits or unresolved reconciliation remain incomplete and visible.
+IOC limit orders at an adverse verified quote boundary. Bayn starts flattening 30 minutes before the close and must be
+flat 15 minutes before the close.
 
 Entry observations evaluate candidate availability independently. Missing or late candidate bars, quotes, or trades
 exclude that candidate with an explicit reason while other candidates remain eligible for evaluation. SPY is the
@@ -65,9 +62,6 @@ embeds and verifies the source revision and the behavior, parameter, protocol, a
 - The execution worker runs one bounded `advanceExecutionOnce` pass per tick. Restate is not treated as broker
   exactly-once delivery; durable intents and deterministic IDs remain the external-side-effect boundary.
 - PostgreSQL is the authoritative cycle, grant, intent, mutation, reconciliation, and controller-status ledger.
-- Each writer transaction reserves its own PostgreSQL connection and holds the advisory fence through commit or
-  rollback. A disconnected transaction fails without replaying its writes; the next pass obtains a usable connection
-  and reconciles durable state. Nested fence calls stay in their owning transaction.
 - TigerBeetle is the authoritative fee, cost-basis, cash, and realized-P&L ledger.
 - The public Bayn deployment serves read-only status and health. It does not schedule execution or hold mutation
   authority.
@@ -167,14 +161,8 @@ stored observation; changed content under the same source identity fails closed.
 commands cannot mint these receipts. Recording failure prevents release of that read to the execution caller.
 
 Default replay requires a matching production-reader receipt for every used row, completed no later than the simulated
-observation. Missing or late receipts for an independent decision candidate exclude that candidate with zero weight;
-the shared strategy core ranks the remaining candidates. These reader-derived exclusions are bound separately in
-`availability.snapshots[].candidateExclusions`, without rewriting the immutable archive manifest or discarding raw
-excluded rows. Valid late receipts are retained as exclusion evidence, never as proof of availability at the cutoff.
-Missing benchmark or execution-pricing evidence still rejects the whole observation. Corrupt, duplicate, unrelated,
-development-only, or conflicting receipts remain global failures, including receipts belonging to excluded candidates.
-An entry window with all candidates unavailable remains incomplete, not a clean `NO_TRADE`, and prevents aggregate P&L.
-Receipts cover rows actually
+observation. Missing, late, development-only, or conflicting evidence cannot authorize a simulated trade. Missing
+coverage remains unavailable/incomplete, not a clean `NO_TRADE`, and prevents aggregate P&L. Receipts cover rows actually
 observed by the worker, not the entire feed. They are conservative availability upper bounds, not earliest visibility,
 simultaneous snapshot proof, reader uptime, or actual execution evidence. In particular, a read completing after its
 query cutoff cannot certify replay at that cutoff. Strict-mode coverage can remain sparse; this does not reconstruct

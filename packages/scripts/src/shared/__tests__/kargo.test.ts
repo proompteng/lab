@@ -376,7 +376,7 @@ const expected = {
     images: [imageRepo('bilig-app')],
     apps: ['bilig'],
     includePaths: ['argocd/applications/bilig'],
-    platform: 'linux/arm64/v8',
+    platform: 'linux/arm64',
     tagRegex: '^[0-9a-f]{40}$',
   },
   analysis: {
@@ -461,7 +461,7 @@ const byName = (manifests: Manifest[]): Map<string, Manifest> =>
 
 describe('Kargo direct-push GitOps contract', () => {
   it('uses the current Kargo patch and persists Argo resource health for Stage checks', () => {
-    expect(kargoHelmElement?.version).toBe('1.11.4')
+    expect(kargoHelmElement?.version).toBe('1.11.2')
     expect(argoCDCommandParameters.data?.['controller.resource.health.persist']).toBe('true')
     expect(argoCDControllerStatefulSetPatch.spec?.template).toMatchObject({
       metadata: {

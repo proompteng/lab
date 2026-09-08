@@ -181,7 +181,7 @@ const makeFixtureClient = (options: HistoricalFixtureOptions = {}): FixtureClien
       if (cached !== undefined) return Effect.succeed(cached)
       const openMs = Date.parse(query.sessionOpenAt)
       const closeMs = Date.parse(query.sessionCloseAt)
-      const decisionAt = openMs + 30 * 60_000 + firstPollDelayMs
+      const decisionAt = openMs + 60 * 60_000 + firstPollDelayMs
       const arrivalAt = decisionAt + orderLatencyMs
       const hardFlatAt = closeMs - protocol.hardFlatBeforeCloseMinutes * 60_000
       const closeStartAt = closeMs - protocol.flattenBeforeCloseMinutes * 60_000 + firstPollDelayMs

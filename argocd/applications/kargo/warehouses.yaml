@@ -699,7 +699,7 @@ spec:
         strictSemvers: true
         allowTagsRegexes:
           - '^[0-9a-f]{40}$'
-        platform: linux/arm64/v8
+        platform: linux/arm64
         cacheByTag: true
 ---
 apiVersion: kargo.akuity.io/v1alpha1

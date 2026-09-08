@@ -5,7 +5,6 @@ import { memo, useEffect, useRef, useState } from 'react'
 
 import type { TengriAgent } from '@/lib/tengri/types'
 import { APP_TITLES, type DesktopWindow, type TengriApp } from '@/lib/tengri/window-manager'
-import { TengriMark } from './tengri-mark'
 
 type MenuEntry = {
   label: string
@@ -370,5 +369,14 @@ function MenuPopover({
         </div>
       ))}
     </div>
+  )
+}
+
+function TengriMark() {
+  return (
+    <span className="relative grid h-4 w-4 place-items-center rounded-full border border-white/65">
+      <span className="h-1.5 w-1.5 rounded-full bg-white/85" />
+      <span className="absolute -top-1 h-1.5 w-px bg-white/65" />
+    </span>
   )
 }

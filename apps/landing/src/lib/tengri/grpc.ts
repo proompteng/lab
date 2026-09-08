@@ -383,31 +383,8 @@ export async function issuePreviewSession(
   }
 }
 
-export async function issueEditorSession(
-  subject: string,
-  agentId: string,
-  windowId: string,
-): Promise<TengriPreviewSession> {
-  const response = await unary<RawRecord>('issueEditorSession', { agentId, windowId }, subject, 400_000)
-  return {
-    id: stringValue(response.id),
-    launchUrl: stringValue(response.launchUrl),
-    expiresAt: stringValue(response.expiresAt),
-    previewOrigin: stringValue(response.previewOrigin),
-  }
-}
-
-export async function revokeEditorSessions(subject: string) {
-  await unary('revokeEditorSessions', {}, subject)
-}
-
-export async function revokePreviewSession(
-  subject: string,
-  agentId: string,
-  sessionId: string,
-  revocationToken?: string,
-) {
-  await unary('revokePreviewSession', { agentId, sessionId, revocationToken }, subject)
+export async function revokePreviewSession(subject: string, agentId: string, sessionId: string) {
+  await unary('revokePreviewSession', { agentId, sessionId }, subject)
 }
 
 export function watchCodexEvents(subject: string, agentId: string, afterSequence: number) {

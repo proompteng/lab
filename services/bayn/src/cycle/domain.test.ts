@@ -181,44 +181,21 @@ describe('autonomous cycle identity and calendar', () => {
 
     expect(policy).toMatchObject({
       strategyExecutionModelHash: canonicalHashV1(intradayMomentumExecutionModel),
-      warmupAfterOpenMs: 0,
-      submissionCutoffBeforeCloseMs: 300_000,
+      warmupAfterOpenMs: 3_600_000,
+      submissionCutoffBeforeCloseMs: 3_600_000,
     })
     expect(regularWindow).toMatchObject({
-      submissionOpenAt: '2026-03-09T13:30:00.000Z',
-      submissionCutoffAt: '2026-03-09T19:55:00.000Z',
+      submissionOpenAt: '2026-03-09T14:30:00.000Z',
+      submissionCutoffAt: '2026-03-09T19:00:00.000Z',
     })
     expect(earlyCloseWindow).toMatchObject({
-      submissionOpenAt: '2026-03-09T13:30:00.000Z',
-      submissionCutoffAt: '2026-03-09T16:55:00.000Z',
+      submissionOpenAt: '2026-03-09T14:30:00.000Z',
+      submissionCutoffAt: '2026-03-09T16:00:00.000Z',
     })
     expect(makeCycleDraftSuccess(identity, regularWindow)).toMatchObject({
       schemaVersion: 'bayn.autonomous-cycle.v3',
       identity: { strategyName: 'intraday-momentum' },
     })
-  })
-
-  test('binds zero offsets to the complete regular and shortened market session', () => {
-    const policy = makeCycleExecutionPolicyFromModelSuccess({
-      ...intradayMomentumExecutionModel,
-      order: { ...intradayMomentumExecutionModel.order, warmupAfterOpenMs: 0, submissionCutoffBeforeCloseMs: 0 },
-    })
-    for (const closeAt of ['2026-03-09T20:00:00.000Z', '2026-03-09T17:00:00.000Z']) {
-      const calendar = executionCalendar({ ...springDstSession, closeAt })
-      const window = makeIntradayCycleWindowSuccess(calendar, policy)
-      expect(window.submissionOpenAt).toBe(calendar.executionOpenAt)
-      expect(window.submissionCutoffAt).toBe(calendar.executionCloseAt)
-    }
-    for (const offset of [-1, 0.5, 86_400_001]) {
-      expect(
-        Result.isFailure(
-          makeIntradayCycleWindow(executionCalendar(), {
-            warmupAfterOpenMs: offset,
-            submissionCutoffBeforeCloseMs: 0,
-          }),
-        ),
-      ).toBeTrue()
-    }
   })
 
   test('derives stable identities from all Signal, execution-calendar, account, and policy inputs', () => {

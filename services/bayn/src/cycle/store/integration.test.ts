@@ -46,10 +46,7 @@ const value = <A, E>(result: Result.Result<A, E>): A => {
   return result.success
 }
 
-const draft = (
-  strategyProtocolHash = canonicalHashV1({ strategy: 'intraday-momentum', version: 1 }),
-  executionModel = intradayMomentumExecutionModel,
-) => {
+const draft = (strategyProtocolHash = canonicalHashV1({ strategy: 'intraday-momentum', version: 1 })) => {
   const calendar = value(
     makeExecutionCalendarObservation({
       schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
@@ -59,7 +56,7 @@ const draft = (
       closeAt: '2026-08-28T20:00:00.000Z',
     }),
   )
-  const executionPolicy = value(makeCycleExecutionPolicyFromModel(executionModel))
+  const executionPolicy = value(makeCycleExecutionPolicyFromModel(intradayMomentumExecutionModel))
   const identity = value(
     makeCycleIdentity({
       schemaVersion: 'bayn.autonomous-cycle-identity.v3',
@@ -138,24 +135,6 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     ])
     expect(Option.getOrThrow(result.stored)).toMatchObject({ state: CycleState.Pending, stateVersion: 1 })
     expect(Option.getOrThrow(result.slot).identity.cycleId).toBe(candidate.identity.cycleId)
-  })
-
-  test('persists and reloads an exact full-session cycle with zero boundary offsets', async () => {
-    const candidate = draft(canonicalHashV1({ strategy: 'intraday-momentum', boundaries: 'regular-session' }), {
-      ...intradayMomentumExecutionModel,
-      order: { ...intradayMomentumExecutionModel.order, warmupAfterOpenMs: 0, submissionCutoffBeforeCloseMs: 0 },
-    })
-    const stored = await runtime.runPromise(
-      Effect.gen(function* () {
-        const store = yield* CycleStore
-        yield* store.acquire(candidate, acquiredAt)
-        return Option.getOrThrow(yield* store.read(candidate.identity.cycleId))
-      }),
-    )
-    expect(stored.identity).toEqual(candidate.identity)
-    expect(stored.window).toEqual(candidate.window)
-    expect(stored.window.submissionOpenAt).toBe(stored.window.executionOpenAt)
-    expect(stored.window.submissionCutoffAt).toBe(stored.window.executionCloseAt)
   })
 
   test('recovers the oldest active cycle and releases it after terminal blocking', async () => {

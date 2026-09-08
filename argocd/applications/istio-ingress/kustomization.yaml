@@ -5,8 +5,8 @@ resources:
   - external-gateway.yaml
 helmCharts:
   - name: gateway
-    repo: https://blob.istio.io/istio-release/charts
-    version: 1.31.0
+    repo: https://istio-release.storage.googleapis.com/charts
+    version: 1.30.3
     releaseName: gateway
     namespace: istio-ingress
     valuesInline:

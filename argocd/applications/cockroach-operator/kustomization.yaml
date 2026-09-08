@@ -3,8 +3,8 @@ kind: Kustomization
 namespace: cockroach-operator-system
 
 resources:
-  - https://raw.githubusercontent.com/cockroachdb/cockroach-operator/v2.18.4/install/crds.yaml
-  - https://raw.githubusercontent.com/cockroachdb/cockroach-operator/v2.18.4/install/operator.yaml
+  - https://raw.githubusercontent.com/cockroachdb/cockroach-operator/v2.18.3/install/crds.yaml
+  - https://raw.githubusercontent.com/cockroachdb/cockroach-operator/v2.18.3/install/operator.yaml
 
 patches:
   - target:

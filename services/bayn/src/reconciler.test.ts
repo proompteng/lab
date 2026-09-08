@@ -242,6 +242,7 @@ const emptyRead = (): BrokerReadShape => ({
 })
 
 const fence: WriterFenceService = {
+  backendPid: 1,
   check: Effect.void,
   transaction: (effect) => effect,
 }
@@ -831,6 +832,7 @@ describe('execution reconciliation loop', () => {
     const transactionEvents: string[] = []
     let transactionDepth = 0
     const writerFence: WriterFenceService = {
+      backendPid: 2,
       check: Effect.void,
       transaction: (effect) =>
         Effect.sync(() => {
@@ -907,6 +909,7 @@ describe('execution reconciliation loop', () => {
     }
     let transactions = 0
     const writerFence: WriterFenceService = {
+      backendPid: 4,
       check: Effect.void,
       transaction: (effect) =>
         Effect.sync(() => {

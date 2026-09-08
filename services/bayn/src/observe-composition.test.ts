@@ -797,6 +797,7 @@ const makeExactReconciliationServices = () => {
     AuthorityGenerationStoreShape &
     AuthorityRestrictionStoreShape
   const writerFence: WriterFenceService = {
+    backendPid: 1,
     check: Effect.void,
     transaction: (effect) => effect,
   }
@@ -1074,6 +1075,7 @@ const prepareStoredExecutionStep = async (
     restrictAuthority: (reason, updatedAt) => Effect.sync(() => onRestriction(reason, updatedAt)),
   }
   const writerFence: WriterFenceService = {
+    backendPid: 1,
     check: Effect.void,
     transaction: (effect) => effect,
   }
@@ -2439,6 +2441,7 @@ describe('OBSERVE runtime composition', () => {
         }),
     }
     const writerFence: WriterFenceService = {
+      backendPid: 1,
       check: unused,
       transaction: (effect) => effect,
     }
@@ -2523,6 +2526,7 @@ describe('OBSERVE runtime composition', () => {
         Effect.die(new Error('pre-commit expiry must not restrict authority before cycle block')),
     }
     const writerFence: WriterFenceService = {
+      backendPid: 1,
       check: Effect.die(new Error('pre-commit expiry must not enter the writer fence')),
       transaction: () => Effect.die(new Error('pre-commit expiry must not open a writer-fenced transaction')),
     }
@@ -3658,8 +3662,8 @@ describe('OBSERVE runtime composition', () => {
       expect(prepared.success.executionModel.schemaVersion).toBe('bayn.execution-model.v5')
       expect(prepared.success.executionPolicy).toMatchObject({
         schemaVersion: 'bayn.autonomous-cycle-execution-policy.v3',
-        warmupAfterOpenMs: 0,
-        submissionCutoffBeforeCloseMs: 300_000,
+        warmupAfterOpenMs: 3_600_000,
+        submissionCutoffBeforeCloseMs: 3_600_000,
       })
     }
 
@@ -4058,7 +4062,7 @@ describe('OBSERVE runtime composition', () => {
     )
     excludedTradeSymbols = ['AAPL']
 
-    const closeObservedAt = '2020-05-01T16:25:01.000Z'
+    const closeObservedAt = '2020-05-01T15:30:01.000Z'
     const closeCycle = Effect.runSync(
       decodeAutonomousCycle({
         ...activeCycle,
@@ -4079,7 +4083,7 @@ describe('OBSERVE runtime composition', () => {
           reconcile: Effect.succeed(
             reconciliationResultAt(closeObservedAt, 0, 0, [{ ...heldPosition, observedAt: closeObservedAt }]),
           ),
-          closeExpiresAt: executionCalendar.executionCloseAt,
+          closeExpiresAt: '2020-05-01T16:00:00.000Z',
         })
       }).pipe(
         Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
@@ -4097,8 +4101,8 @@ describe('OBSERVE runtime composition', () => {
     expect(closeDocument.bindings.executionMarketData).toMatchObject({
       schemaVersion: 'bayn.execution-market-data-binding.v2',
       purpose: IntradaySnapshotPurpose.Liquidation,
-      rangeStartAt: '2020-05-01T16:24:00.000Z',
-      rangeEndAt: '2020-05-01T16:25:00.000Z',
+      rangeStartAt: '2020-05-01T15:29:00.000Z',
+      rangeEndAt: '2020-05-01T15:30:00.000Z',
       observedAt: closeObservedAt,
     })
     const { contentHash: _closeContentHash, ...closeMaterial } = closeDocument
@@ -4188,6 +4192,7 @@ describe('OBSERVE runtime composition', () => {
       }),
     }
     const writerFence: WriterFenceService = {
+      backendPid: 1,
       check: unused,
       transaction: (effect) => effect,
     }
@@ -4394,6 +4399,7 @@ describe('OBSERVE runtime composition', () => {
             AuthorityGenerationStoreShape &
             AuthorityRestrictionStoreShape
           const writerFence: WriterFenceService = {
+            backendPid: 1,
             check: Effect.void,
             transaction: (effect) =>
               Effect.sync(() => {

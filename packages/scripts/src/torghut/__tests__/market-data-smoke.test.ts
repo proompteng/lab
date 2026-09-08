@@ -2,12 +2,7 @@ import { readFileSync } from 'node:fs'
 
 import { describe, expect, it } from 'bun:test'
 
-import {
-  evaluateMarketDataSmoke,
-  marketSessionState,
-  parseSchedulerExpected,
-  selectLatestKafkaRecord,
-} from '../market-data-smoke'
+import { evaluateMarketDataSmoke, marketSessionState, selectLatestKafkaRecord } from '../market-data-smoke'
 import { decodeTaStatusHeartbeatAvro } from '../ta-status-heartbeat'
 
 const marketDataSmokeSource = readFileSync(new URL('../market-data-smoke.ts', import.meta.url), 'utf8')
@@ -393,74 +388,6 @@ const encodeTaStatusFixture = (heartbeat: typeof freshTaStatusHeartbeat & { stat
   ])
 
 describe('market data smoke freshness evaluation', () => {
-  const schedulerRemovedInput = {
-    now: new Date('2026-07-07T17:00:30Z'),
-    mode: 'enforce' as const,
-    holidays: new Set<string>(),
-    maxKafkaLagSeconds: 300,
-    acceptedMaxLagSeconds: 300,
-    latestKafkaByRole: {
-      trades: { topic: 'torghut.trades.v1', eventTs: '2026-07-07T17:00:00Z', symbol: 'NVDA' },
-      quotes: { topic: 'torghut.quotes.v1', eventTs: '2026-07-07T17:00:00Z', symbol: 'NVDA' },
-      bars: { topic: 'torghut.bars.1m.v1', eventTs: '2026-07-07T17:00:00Z', symbol: 'NVDA' },
-    },
-    wsReadyz: freshWsReadyz,
-    tradingStatus: undefined,
-    schedulerExpected: false,
-    taRuntimeConfig: liveTaRuntimeConfig,
-    taFlinkJob: freshTaFlinkJob,
-    taStatusHeartbeat: freshTaStatusHeartbeat,
-  }
-
-  it('checks the live data pipeline when the trading scheduler is explicitly removed', () => {
-    const result = evaluateMarketDataSmoke(schedulerRemovedInput)
-    expect(result.ok).toBe(true)
-    expect(result.enforceFreshness).toBe(true)
-    expect(result.summaryLines.join('\n')).toContain('Trading scheduler: `removed`')
-  })
-
-  it('still requires scheduler acceptance evidence by default', () => {
-    const result = evaluateMarketDataSmoke({ ...schedulerRemovedInput, schedulerExpected: undefined })
-    expect(result.ok).toBe(false)
-    expect(result.failures.join('\n')).toContain('accepted_ta_source_missing')
-  })
-
-  it('requires an explicit valid scheduler expectation', () => {
-    expect(parseSchedulerExpected(undefined)).toBe(true)
-    expect(parseSchedulerExpected('true')).toBe(true)
-    expect(parseSchedulerExpected('false')).toBe(false)
-    for (const value of ['', '0', 'removed', 'FALSE']) {
-      expect(() => parseSchedulerExpected(value)).toThrow('TORGHUT_SCHEDULER_EXPECTED must be true or false')
-    }
-  })
-
-  it('retains websocket freshness checks without a scheduler', () => {
-    const result = evaluateMarketDataSmoke({ ...schedulerRemovedInput, wsReadyz: staleWsReadyz })
-    expect(result.ok).toBe(false)
-    expect(result.failures.join('\n')).toContain('ws_trades')
-  })
-
-  it('retains Kafka freshness checks without a scheduler', () => {
-    const result = evaluateMarketDataSmoke({ ...schedulerRemovedInput, latestKafkaByRole: {} })
-    expect(result.ok).toBe(false)
-    expect(result.failures.join('\n')).toContain('kafka_trades_stale')
-  })
-
-  it('retains Flink job health checks without a scheduler', () => {
-    const result = evaluateMarketDataSmoke({
-      ...schedulerRemovedInput,
-      taFlinkJob: { ...freshTaFlinkJob, state: 'FAILED' },
-    })
-    expect(result.ok).toBe(false)
-    expect(result.failures.join('\n')).toContain('ta_flink_not_running')
-  })
-
-  it('retains TA heartbeat freshness checks without a scheduler', () => {
-    const result = evaluateMarketDataSmoke({ ...schedulerRemovedInput, taStatusHeartbeat: undefined })
-    expect(result.ok).toBe(false)
-    expect(result.failures.join('\n')).toContain('ta_status')
-  })
-
   it('decodes TA status heartbeat Avro evidence from Kafka bytes', () => {
     const encoded = encodeTaStatusFixture(freshTaStatusHeartbeat)
     const decoded = decodeTaStatusHeartbeatAvro(encoded, {

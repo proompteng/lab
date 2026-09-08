@@ -2,34 +2,22 @@
 
 This directory contains the Argo CD application resources for the `torghut` namespace.
 
-## API ownership and removed trading scheduler
+## Live API and scheduler ownership
 
-The trading scheduler is removed from the Argo resource set. Argo prunes `Deployment/torghut-scheduler` and
-`Service/torghut-scheduler`, including the scheduler pods. The Knative API remains a stateless reader with
-`TORGHUT_PROCESS_ROLE=api` and `TRADING_ENABLED=false`. TA, market-data ingestion, simulation, databases, and volumes
-remain in the resource set.
+The Knative `Service/torghut` is a stateless API reader (`TORGHUT_PROCESS_ROLE=api`). It must never start trading or
+reconciliation loops. `Deployment/torghut-scheduler` is the only workload configured with
+`TORGHUT_PROCESS_ROLE=scheduler`; it uses `Recreate` rollout semantics and starts at zero replicas for P0a containment.
+The API proxies only the scheduler-owned `/trading/status` surface and returns `503` while the scheduler is unavailable.
+API `/metrics` is process-local API health telemetry, not scheduler or writer proof. Scheduler metrics are exposed
+directly by `Service/torghut-scheduler` and are intentionally unavailable while its Deployment has zero replicas.
 
-API `/readyz` remains available. `/trading/status` returns the existing `scheduler_runtime_unavailable` HTTP 503
-contract because there is no trading scheduler. Scheduler metrics and notebook scheduler-status queries are likewise
-unavailable. The API does not start a replacement trading or reconciliation loop.
-
-`scheduler-deployment.yaml` and `scheduler-service.yaml` remain inactive source files because release tooling and
-Kargo maintain their image metadata. They are deliberately absent from `kustomization.yaml`; updating those files
-cannot recreate the scheduler. After Argo converges, the post-deploy verifier requires the Deployment and scheduler
-pods to be absent and the Service to be absent from Argo's resource inventory. It uses the runner's existing read
-permissions, then checks API containment and TA health. Its market-data check sets `TORGHUT_SCHEDULER_EXPECTED=false`
-because the scheduler no longer accepts trading signals. Kafka, websocket, Flink, and TA heartbeat checks remain
-active; the preceding API containment check still requires the unavailable-scheduler HTTP 503 contract. Standalone
-market-data checks require scheduler acceptance evidence by default. The rollout operator also confirms Service
-absence directly.
-Scheduler alerts already require a positive desired replica count, so removal does not require disabling alert rules.
-
-The normal rollout is a main merge, Kargo promotion, then Argo pruning. To restore the scheduler, review a separate
-GitOps change that adds both resources and restores the active single-writer post-deploy checks. Check the retained
-scheduler configuration and trading safety gates before authorizing that rollout.
-
-The P0a procedure below is retained for historical legacy-revision cleanup. It assumes an existing scheduler
-Deployment at zero replicas and is not part of scheduler removal or restoration. Do not run it for this change.
+Rollout is deliberately two-stage. First promote and prove the scheduler-free API image while the scheduler
+Deployment remains at zero. Then perform the documented one-time emergency removal of legacy Knative revisions and
+prove that no scheduler loop remains. Only after those checks pass may a follow-up GitOps change scale the advisory-
+locked scheduler Deployment to one replica. Do not add a persistent revision-cleanup Job or combine those stages.
+Do not restore `autoscaling.knative.dev/minScale` on the API template: the annotation is copied onto immutable
+revisions and was the reason stale revisions remained hot. Activate the current API revision with an explicit request
+when rollout proof needs a running pod.
 
 ### P0a one-time legacy Knative revision cleanup
 

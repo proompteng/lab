@@ -460,34 +460,24 @@ describe('intraday momentum strategy', () => {
     ).toMatchObject({ reason: 'snapshot-window' })
   })
 
-  test('admits the first complete rolling signal window without the extra opening delay', () => {
+  test('rejects the old opening-only decision window instead of silently reusing it all day', () => {
     const protocol = success(decodeDefaultIntradayMomentumProtocol())
     expect(
-      success(
+      error(
         decideIntradayMomentum(
           marketContextAt({ rangeEndAt: '2026-08-18T14:00:00.000Z', returnBps: qualifyingReturns }),
           protocol,
         ),
       ),
-    ).toMatchObject({ selectedSymbols: ['AAPL'] })
+    ).toMatchObject({ reason: 'snapshot-window' })
   })
-
-  test.each(['2026-08-18T19:00:00.000Z', '2026-08-18T19:30:00.000Z', '2026-08-18T19:54:00.000Z'])(
-    'admits a qualifying signal in the final trading hour at %s',
-    (rangeEndAt) => {
-      const protocol = success(decodeDefaultIntradayMomentumProtocol())
-      expect(
-        success(decideIntradayMomentum(marketContextAt({ rangeEndAt, returnBps: qualifyingReturns }), protocol)),
-      ).toMatchObject({ selectedSymbols: ['AAPL'] })
-    },
-  )
 
   test('fails closed at the entry cutoff', () => {
     const protocol = success(decodeDefaultIntradayMomentumProtocol())
     expect(
       error(
         decideIntradayMomentum(
-          marketContextAt({ rangeEndAt: '2026-08-18T19:55:00.000Z', returnBps: qualifyingReturns }),
+          marketContextAt({ rangeEndAt: '2026-08-18T19:00:00.000Z', returnBps: qualifyingReturns }),
           protocol,
         ),
       ),

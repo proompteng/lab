@@ -117,10 +117,10 @@ describe('intraday execution-session binding', () => {
         openAt: '2026-02-02T14:30:00.000Z',
         closeAt: '2026-02-02T21:00:00.000Z',
       },
-      submissionOpenAt: '2026-02-02T14:30:00.000Z',
-      submissionCutoffAt: '2026-02-02T20:55:00.000Z',
-      decisionAfterOpenMs: 0,
-      submissionCutoffAfterOpenMs: 23_100_000,
+      submissionOpenAt: '2026-02-02T15:30:00.000Z',
+      submissionCutoffAt: '2026-02-02T20:00:00.000Z',
+      decisionAfterOpenMs: 3_600_000,
+      submissionCutoffAfterOpenMs: 19_800_000,
     })
     expect(
       Schema.decodeUnknownSync(ExecutionSessionBindingSchema, strictParseOptions)(structuredClone(binding)),
@@ -140,7 +140,7 @@ describe('intraday execution-session binding', () => {
     const exhausted = bindCycleExecutionSession(
       input({
         planningBrokerState: {
-          observedAt: '2026-02-02T20:55:00.000Z',
+          observedAt: '2026-02-02T20:00:00.000Z',
           contentHash: hash('5'),
         },
       }),

@@ -97,7 +97,7 @@ export const selectIntradayExecutionSession = (
     const cutoffAtMillis = Date.parse(session.closeAt) - executionPolicy.submissionCutoffBeforeCloseMs
     const hasExecutableWindow =
       openAtMillis +
-        Math.max(executionPolicy.warmupAfterOpenMs, defaultIntradayMomentumProtocolDocument.lookbackMinutes * 60_000) +
+        executionPolicy.warmupAfterOpenMs +
         defaultIntradayMomentumProtocolDocument.decisionDelaySeconds * 1_000 <
       cutoffAtMillis
     if (!Number.isFinite(cutoffAtMillis) || !hasExecutableWindow || observedAtMillis >= cutoffAtMillis) return selected

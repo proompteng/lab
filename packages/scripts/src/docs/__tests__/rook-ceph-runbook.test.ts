@@ -1,7 +1,6 @@
 import { expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import YAML from 'yaml'
 
 import { repoRoot } from '../../shared/cli'
 
@@ -55,9 +54,5 @@ it('rolls OSDs when scrub configuration changes', () => {
   expect(kustomization).toContain('name: rook-ceph')
   expect(rolloutPatch).toContain('spec:\n  annotations:\n    osd:')
   expect(rolloutPatch).toContain('ops.proompteng.ai/osd-config-revision: scrub-auto-repair-v1')
-  expect(YAML.parse(rolloutPatch)).not.toHaveProperty([
-    'metadata',
-    'annotations',
-    'ops.proompteng.ai/osd-config-revision',
-  ])
+  expect(rolloutPatch).not.toContain('metadata:\n  name: rook-ceph\n  annotations:')
 })

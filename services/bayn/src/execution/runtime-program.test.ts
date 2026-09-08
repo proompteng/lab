@@ -341,7 +341,7 @@ describe('same-code execution program composition', () => {
         mutationStore: {
           authorizeSubmit: () => Effect.void,
         } as unknown as ExecutionProgramDependencies['mutationStore'],
-        writerFence: { check: Effect.void, transaction: (effect) => effect },
+        writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
         persistedCapitalGrants: {
           read: () => Effect.die(new Error('final authorization must use the locked grant read')),
           lockForSubmit:
@@ -393,7 +393,7 @@ describe('same-code execution program composition', () => {
       mutationStore: {
         authorizeSubmit: () => Effect.void,
       } as unknown as ExecutionProgramDependencies['mutationStore'],
-      writerFence: { check: Effect.void, transaction: (effect) => effect },
+      writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
       persistedCapitalGrants: {
         read: () => Effect.die(new Error('final authorization must use the locked grant read')),
         lockForSubmit: () => Effect.succeed(grantedCapitalAuthority(fixture.grant)),
@@ -445,7 +445,7 @@ describe('same-code execution program composition', () => {
       mutationStore: {
         authorizeSubmit: () => Effect.void,
       } as unknown as ExecutionProgramDependencies['mutationStore'],
-      writerFence: { check: Effect.void, transaction: (effect) => effect },
+      writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
       persistedCapitalGrants: {
         read: () => Effect.die(new Error('final authorization must use the locked grant read')),
         lockForSubmit: () => Effect.succeed(grantedCapitalAuthority(fixture.grant)),
@@ -499,7 +499,7 @@ describe('same-code execution program composition', () => {
       mutationStore: {
         authorizeSubmit: () => Effect.void,
       } as unknown as ExecutionProgramDependencies['mutationStore'],
-      writerFence: { check: Effect.void, transaction: (effect) => effect },
+      writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
       persistedCapitalGrants: {
         read: () => Effect.die(new Error('final authorization must use the locked grant read')),
         lockForSubmit: () => Effect.succeed(grantedCapitalAuthority(fixture.grant)),
@@ -537,7 +537,7 @@ describe('same-code execution program composition', () => {
       mutationStore: {
         authorizeSubmit: () => Effect.void,
       } as unknown as ExecutionProgramDependencies['mutationStore'],
-      writerFence: { check: Effect.void, transaction: (effect) => effect },
+      writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
       persistedCapitalGrants: {
         read: () => Effect.die(new Error('final authorization must use the locked grant read')),
         lockForSubmit: () => Effect.succeed(grantedCapitalAuthority(fixture.grant)),
@@ -576,7 +576,7 @@ describe('same-code execution program composition', () => {
       mutationStore: {
         authorizeSubmit: () => Effect.void,
       } as unknown as ExecutionProgramDependencies['mutationStore'],
-      writerFence: { check: Effect.void, transaction: (effect) => effect },
+      writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
       persistedCapitalGrants: {
         read: () => Effect.die(new Error('final authorization must use the locked grant read')),
         lockForSubmit: () => Effect.succeed(grantedCapitalAuthority(fixture.grant)),
@@ -626,7 +626,7 @@ describe('same-code execution program composition', () => {
       mutationStore: {
         authorizeSubmit: () => Effect.void,
       } as unknown as ExecutionProgramDependencies['mutationStore'],
-      writerFence: { check: Effect.void, transaction: (effect) => effect },
+      writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
       currentUtcInstant: Effect.sync(() => instants[instantReads++] ?? expiresAt),
       entrySubmitExpiresAt: expiresAt,
       isCloseOnlyIntent: () => Effect.succeed(false),
@@ -688,7 +688,7 @@ describe('same-code execution program composition', () => {
       mutationStore: {
         authorizeSubmit: () => Effect.void,
       } as unknown as ExecutionProgramDependencies['mutationStore'],
-      writerFence: { check: Effect.void, transaction: (effect) => effect },
+      writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
       persistedCapitalGrants: {
         read: () => Effect.die(new Error('final authorization must use the locked grant read')),
         lockForSubmit: () => Effect.succeed(grantedCapitalAuthority(fixture.grant)),
@@ -743,7 +743,7 @@ describe('same-code execution program composition', () => {
       mutationStore: {
         authorizeSubmit: () => Effect.void,
       } as unknown as ExecutionProgramDependencies['mutationStore'],
-      writerFence: { check: Effect.void, transaction: (effect) => effect },
+      writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
     }
 
     const exit = await Effect.runPromise(
@@ -796,6 +796,7 @@ describe('same-code execution program composition', () => {
         },
       } as unknown as ExecutionProgramDependencies['mutationStore'],
       writerFence: {
+        backendPid: 1,
         check: Effect.void,
         transaction: (effect) => effect,
       },
@@ -892,7 +893,7 @@ describe('same-code execution program composition', () => {
       mutationStore: {
         authorizeSubmit: () => Effect.void,
       } as unknown as ExecutionProgramDependencies['mutationStore'],
-      writerFence: { check: Effect.void, transaction: (effect) => effect },
+      writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
       isCloseOnlyIntent: () => Effect.succeed(true),
     }
 
@@ -981,7 +982,7 @@ describe('same-code execution program composition', () => {
       mutationStore: {
         authorizeSubmit: () => Effect.void,
       } as unknown as ExecutionProgramDependencies['mutationStore'],
-      writerFence: { check: Effect.void, transaction: (effect) => effect },
+      writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
       persistedCapitalGrants: {
         read: () => Effect.die(new Error('final authorization must use the locked grant read')),
         lockForSubmit: () => Effect.succeed(grantedCapitalAuthority(grant)),
@@ -1092,6 +1093,7 @@ describe('same-code execution program composition', () => {
         authorizeSubmit: () => Effect.void,
       } as unknown as ExecutionProgramDependencies['mutationStore'],
       writerFence: {
+        backendPid: 1,
         check: Effect.void,
         transaction: (effect) => effect,
       },
@@ -1162,7 +1164,7 @@ describe('same-code execution program composition', () => {
         read: () => Effect.succeed(Option.some(stored)),
       },
       mutationStore: { authorizeSubmit: () => Effect.void } as unknown as ExecutionProgramDependencies['mutationStore'],
-      writerFence: { check: Effect.void, transaction: (effect) => effect },
+      writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
       persistedCapitalGrants: {
         read: () => Effect.die(new Error('post-lock position proof must use the locked grant read')),
         lockForSubmit: () =>
@@ -1225,7 +1227,7 @@ describe('same-code execution program composition', () => {
         read: () => Effect.succeed(Option.some(stored)),
       },
       mutationStore: { authorizeSubmit: () => Effect.void } as unknown as ExecutionProgramDependencies['mutationStore'],
-      writerFence: { check: Effect.void, transaction: (effect) => effect },
+      writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
       persistedCapitalGrants: {
         read: () => Effect.die(new Error('post-lock quote proof must use the locked grant read')),
         lockForSubmit: () =>
@@ -1320,6 +1322,7 @@ describe('same-code execution program composition', () => {
         authorizeSubmit: () => Effect.void,
       } as unknown as ExecutionProgramDependencies['mutationStore'],
       writerFence: {
+        backendPid: 1,
         check: Effect.void,
         transaction: (effect) => effect.pipe(Effect.andThen(Effect.fail(commitFailure))),
       },

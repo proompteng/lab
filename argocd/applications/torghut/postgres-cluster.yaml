@@ -12,8 +12,6 @@ spec:
   # Planned pod-spec updates must hand writes to the ready standby instead of
   # stopping the active primary in place.
   primaryUpdateMethod: switchover
-  # Preparation wave: retain the Debian bullseye family before the gated major cutover.
-  imageName: ghcr.io/cloudnative-pg/postgresql:17.11@sha256:70664ebcfa1100361b5bdc28bbf06fdbe08db2dc4ad7bd14de33c5e05fe8ea8e
   affinity:
     nodeAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:

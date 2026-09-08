@@ -87,18 +87,6 @@ func (server *apiServer) handlePreview(writer http.ResponseWriter, request *http
 		writeAPIError(writer, http.StatusBadRequest, "invalid preview path")
 		return
 	}
-	if port == editorPort && !allowedEditorProxyPath(path) {
-		writeAPIError(writer, http.StatusForbidden, "this guest port is reserved")
-		return
-	}
-	if port == editorPort && path == "/_tengri/editor-bridge" {
-		if server.editor == nil {
-			writeAPIError(writer, http.StatusServiceUnavailable, "VS Code is unavailable")
-			return
-		}
-		server.editor.bridge.browser(writer, request)
-		return
-	}
 	previewContext, release, tracked := server.previewRequests.track(request.Context())
 	if !tracked {
 		writeAPIError(writer, http.StatusServiceUnavailable, "Nanoagent is shutting down")
@@ -109,9 +97,6 @@ func (server *apiServer) handlePreview(writer http.ResponseWriter, request *http
 	target, _ := url.Parse(fmt.Sprintf("http://%s", loopbackAddress(port)))
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	proxy.Transport = server.previewTransport
-	if port == editorPort && server.editor != nil {
-		proxy.Transport = server.editor.transport
-	}
 	originalDirector := proxy.Director
 	proxy.Director = func(upstream *http.Request) {
 		originalDirector(upstream)
@@ -133,24 +118,11 @@ func (server *apiServer) handlePreview(writer http.ResponseWriter, request *http
 		// must not be able to spoof an authentication failure and evict Tengri's cached guest binding.
 		response.Header.Del(nanoagentAuthFailureHeader)
 		response.Header.Del("Server")
-		if port != editorPort {
-			response.Header.Set("Cache-Control", "no-store")
-		}
+		response.Header.Set("Cache-Control", "no-store")
 		return nil
 	}
 	proxy.ErrorHandler = func(writer http.ResponseWriter, _ *http.Request, _ error) {
 		writeAPIError(writer, http.StatusBadGateway, "preview service is unavailable inside the microVM")
 	}
 	proxy.ServeHTTP(writer, request)
-}
-
-func allowedEditorProxyPath(path string) bool {
-	for _, prefix := range []string{"/proxy/", "/absproxy/"} {
-		if portPath, ok := strings.CutPrefix(path, prefix); ok {
-			portValue, _, _ := strings.Cut(portPath, "/")
-			port, err := strconv.Atoi(portValue)
-			return err == nil && validatePreviewPort(port) == nil && port != editorPort
-		}
-	}
-	return true
 }

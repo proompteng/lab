@@ -12,7 +12,7 @@ resources:
 helmCharts:
   - name: rook-ceph
     repo: https://charts.rook.io/release
-    version: v1.20.7
+    version: v1.20.3
     releaseName: rook-ceph
     namespace: rook-ceph
     includeCRDs: true
@@ -25,7 +25,7 @@ helmCharts:
     valuesFile: csi-driver-values.yaml
   - name: rook-ceph-cluster
     repo: https://charts.rook.io/release
-    version: v1.20.7
+    version: v1.20.3
     releaseName: rook-ceph-cluster
     namespace: rook-ceph
     includeCRDs: true

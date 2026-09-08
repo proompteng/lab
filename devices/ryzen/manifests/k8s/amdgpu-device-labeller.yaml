@@ -53,7 +53,7 @@ spec:
         - key: CriticalAddonsOnly
           operator: Exists
       containers:
-        - image: docker.io/rocm/k8s-device-plugin:labeller-1.31.0.10@sha256:60deb236b5fc00cdca36a911d436eb397502cfd78fa45256491fc095cc8e773d
+        - image: rocm/k8s-device-plugin@sha256:302ef02bff5190fbac61922fc6fe7e15a8b5936fa78b080472fb7931597ec7bb
           name: amdgpu-lr-cntr
           imagePullPolicy: Always
           workingDir: /root

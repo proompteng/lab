@@ -5,30 +5,30 @@
 }:
 
 let
-  version = "0.45.0";
-  headlampSha = "0e9fe810cb618964172f420666727c9a67fd6ebf";
-  headlampNixpkgsRevision = "dc5d91f840324650bac8c379428c7037a416959a";
+  version = "0.44.0";
+  headlampSha = "7e2f255cc256a16c39681ffea31fa16e11a11eaf";
+  headlampNixpkgsRevision = "104240a772428cc2e20d8fd86c9ddbb886bbaff2";
 
   headlampNixpkgs = builtins.fetchTarball {
     url = "https://github.com/NixOS/nixpkgs/archive/${headlampNixpkgsRevision}.tar.gz";
-    sha256 = "sha256-VaWGJ6+cIYN2erfSecbRV+4ljI185Ty2wUrXyvQbgOw=";
+    sha256 = "sha256-D740uKsMbgsfK2oaDenJLLPIZfq7W0/g4KN/Fls8eKs=";
   };
   headlampPkgs = import headlampNixpkgs {
     system = pkgs.stdenv.hostPlatform.system;
     config.allowUnfree = false;
   };
   headlampGo =
-    if headlampPkgs.go.version == "1.26.7" then
+    if headlampPkgs.go.version == "1.26.5" then
       headlampPkgs.go
     else
-      throw "expected Headlamp Go 1.26.7, got ${headlampPkgs.go.version}";
+      throw "expected Headlamp Go 1.26.5, got ${headlampPkgs.go.version}";
   headlampBuildGoModule = headlampPkgs.buildGoModule.override { go = headlampGo; };
 
   upstreamSrc = pkgs.fetchFromGitHub {
     owner = "kubernetes-sigs";
     repo = "headlamp";
     rev = headlampSha;
-    hash = "sha256-Q/15vBSO3vjTrYQW6YZ9oMGVr2EjFor+hKGehFTaQNQ=";
+    hash = "sha256-ajkiKoCYbwn5pvIzzz4IIxWIVQmnTbNvzdwWksj1kEU=";
   };
 
   patchedSrc = pkgs.stdenvNoCC.mkDerivation {
@@ -69,7 +69,7 @@ let
     inherit version;
     src = patchedSrc;
     modRoot = "backend";
-    vendorHash = "sha256-6hOxJpC9SlR6Oa0mKA8SziTdNS81l27eNYM1v0KOod0=";
+    vendorHash = "sha256-5nh4IxYr3wdXA8WLlK8LVCm4DqHFB4r+fA+Ix0e5EAc=";
     subPackages = [ "cmd" ];
     doCheck = false;
     env.CGO_ENABLED = 0;
@@ -92,11 +92,10 @@ let
     pname = "headlamp-frontend";
     inherit version;
     src = patchedSrc + "/frontend";
-    npmDepsHash = "sha256-khcVcOtzu9oGJigs6N+Za5z4Np3dkbHnylOoQiBa06g=";
+    npmDepsHash = "sha256-VcwKNpHjQlpeDxqhDxNZnTt0BaUPHWZUivU4kqSi6yw=";
     makeCacheWritable = false;
     env = {
       NODE_OPTIONS = "--max-old-space-size=8096";
-      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1";
       REACT_APP_ENABLE_WEBSOCKET_MULTIPLEXER = "true";
     };
     preBuild = ''
@@ -151,7 +150,7 @@ pkgs.dockerTools.buildLayeredImage {
   extraCommands = ''
     mkdir -p headlamp tmp var/tmp etc/ssl/certs
     # dockerTools materializes `contents` as store-backed symlinks. Headlamp
-    # 0.45 serves static files through os.OpenRoot, which rejects symlinks that
+    # 0.44 serves static files through os.OpenRoot, which rejects symlinks that
     # escape the frontend root. Copy with dereferencing into this image layer.
     cp -RL ${runtimeRoot}/headlamp/. headlamp/
     remaining_headlamp_link="$(find headlamp -type l -print -quit)"

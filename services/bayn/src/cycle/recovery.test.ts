@@ -88,7 +88,7 @@ describe('intraday cycle recovery', () => {
     expect(value(selectCycleRecovery(recoveryState(undefined)))).toEqual({ action: 'DISCOVER' })
   })
 
-  test('activates a pending cycle and delegates signal readiness during the open session', () => {
+  test('activates a pending cycle, then waits through warmup before building a decision', () => {
     const pending = pendingCycle()
     expect(
       value(
@@ -113,7 +113,7 @@ describe('intraday cycle recovery', () => {
           }),
         ),
       ),
-    ).toEqual({ action: 'BUILD_DECISION', cycle: active })
+    ).toEqual({ action: 'WAIT', cycle: active, observedAt: '2026-02-02T15:00:00.000Z' })
 
     expect(value(selectCycleRecovery(recoveryState(active)))).toEqual({ action: 'BUILD_DECISION', cycle: active })
   })

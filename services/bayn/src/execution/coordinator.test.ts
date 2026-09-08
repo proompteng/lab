@@ -1626,6 +1626,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
       Effect.provideService(BrokerMutation, mutation),
       Effect.provideService(BrokerRead, read),
       Effect.provideService(WriterFence, {
+        backendPid: 1,
         check: fenceCheck,
         transaction: (effect) => effect,
       }),

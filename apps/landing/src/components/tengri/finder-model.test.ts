@@ -9,48 +9,16 @@ import {
   finderDeletionDescription,
   finderDeletionTargets,
   finderFileKind,
-  finderBreadcrumbs,
-  finderKindLabel,
   finderRenamePath,
   finderSearchRefreshInterval,
   formatFinderBytes,
   formatFinderDate,
   normalizeFinderPath,
   retainVisibleFinderEntry,
-  sortFinderEntries,
   updateFinderSelection,
 } from './finder-model'
 
 describe('Finder model', () => {
-  test('keeps breadcrumb navigation inside the workspace', () => {
-    expect(finderBreadcrumbs('/src/my folder')).toEqual([
-      { name: 'Workspace', path: '/' },
-      { name: 'src', path: '/src' },
-      { name: 'my folder', path: '/src/my folder' },
-    ])
-    expect(finderBreadcrumbs('/')).toEqual([{ name: 'Workspace', path: '/' }])
-  })
-
-  test('sorts naturally in both directions without changing the server order', () => {
-    const entries = [
-      { name: 'file10.ts', path: '/file10.ts', directory: false, size: 10, modifiedAt: '2026-09-01T00:00:00Z' },
-      { name: 'file2.ts', path: '/file2.ts', directory: false, size: 2, modifiedAt: '2026-09-02T00:00:00Z' },
-      { name: 'src', path: '/src', directory: true, size: 0, modifiedAt: '' },
-    ]
-    expect(sortFinderEntries(entries, { column: 'name', direction: 'ascending' }).map((entry) => entry.name)).toEqual([
-      'file2.ts',
-      'file10.ts',
-      'src',
-    ])
-    expect(sortFinderEntries(entries, { column: 'size', direction: 'descending' }).map((entry) => entry.size)).toEqual([
-      10, 2, 0,
-    ])
-    expect(sortFinderEntries(entries, { column: 'modified', direction: 'descending' })[0]?.name).toBe('file2.ts')
-    expect(sortFinderEntries(entries, { column: 'kind', direction: 'ascending' })[0]?.name).toBe('src')
-    expect(entries[0]?.name).toBe('file10.ts')
-    expect(finderKindLabel({ name: 'README.md', directory: false })).toBe('Markdown document')
-  })
-
   test('normalizes absolute paths without allowing root escape', () => {
     expect(normalizeFinderPath('/workspace//src/./app/../index.ts')).toBe('/workspace/src/index.ts')
     expect(normalizeFinderPath('/')).toBe('/')

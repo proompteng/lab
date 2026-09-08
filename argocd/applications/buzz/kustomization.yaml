@@ -12,7 +12,6 @@ resources:
   - postgres-scheduled-backup.yaml
   - redis-config.yaml
   - redis.yaml
-  - redis-upgrade-backup.yaml
   - buzz-externalsecret.yaml
   - networkpolicy.yaml
   - alloy-rbac.yaml

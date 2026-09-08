@@ -64,10 +64,10 @@ admin API after the revert before resuming the Bayn worker layer.
 
 ## Resilience migration
 
-Restate stays pinned at 1.7.9. `restate-0` and its retained RBD PVC seed the existing cluster; all nodes use
+Restate stays pinned at 1.7.2. `restate-0` and its retained RBD PVC seed the existing cluster; all nodes use
 `RESTATE_AUTO_PROVISION=false` and stable StatefulSet addresses so scaling cannot create a second cluster.
 Migration order is strict: protect the Rook `restate-snapshots` OBC, enable 30-minute snapshots with retention two,
-and require all 24 partitions archived before replication changes. In Restate 1.7.9, `ARCHIVED=0` is the invalid-LSN
+and require all 24 partitions archived before replication changes. In Restate 1.7.2, `ARCHIVED=0` is the invalid-LSN
 sentinel and must be treated as no snapshot; the bootstrap retries only missing/invalid partitions until every partition
 has a positive archived LSN. RGW stores snapshots only; metadata/Raft and logs stay on
 RBD. Host anti-affinity/`DoNotSchedule`, `minAvailable: 3`, and 60s/90s shutdown windows bound disruption; the PDB
@@ -101,7 +101,7 @@ replication two and healthy three-node quorum are proven live.
 `restate-replication-migration` is a PostSync hook and is the only component allowed to change the already-provisioned
 cluster replication setting. It first requires all three stable node names to be alive and ready, all three metadata
 servers to report the same three-member Raft configuration, and partition snapshots to remain archived. It then uses
-the Restate 1.7.9-supported `restatectl config set --replication 2 --yes` operation. It refuses mixed or unexpected
+the Restate 1.7.2-supported `restatectl config set --replication 2 --yes` operation. It refuses mixed or unexpected
 replication state and succeeds only after all 24 logs are replication two and all 24 partitions have exactly two active
 processors. A sealed idle log tail is accepted only when `logs describe --all --extra` proves its latest replicated
 segment is replication two. On roll-forward after singleton rollback it reactivates only the exact retained
@@ -118,7 +118,7 @@ operator-initiated troubleshooting because a recurring full-cluster scan compete
 The digest-pinned `restate-tools` drill opens all 24 RGW snapshots in isolated `emptyDir` storage and runs read-only SQL
 without writing RGW or contacting production Restate. This proves snapshots, not metadata/log DR.
 
-Do not use `restate_partition_applied_lsn_lag` as the workload-backlog alert. In Restate 1.7.9 it is a per-processor
+Do not use `restate_partition_applied_lsn_lag` as the workload-backlog alert. In Restate 1.7.2 it is a per-processor
 replay-target gauge and replicated followers can retain non-zero values while the live partition table is fully caught
 up. Inspect invocation and queue state with a bounded, operator-initiated SQL query only when exported metrics or a
 runtime symptom requires troubleshooting.

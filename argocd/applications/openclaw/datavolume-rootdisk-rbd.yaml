@@ -3,8 +3,6 @@ kind: DataVolume
 metadata:
   name: openclaw-rootdisk-rbd
   namespace: openclaw
-  annotations:
-    argocd.argoproj.io/sync-options: Prune=false,Delete=false
 spec:
   source:
     pvc:

@@ -4,4 +4,4 @@ metadata:
   id: galactic
 spec:
   talosversion: 1.14.0
-  kubernetesversion: 1.37.0
+  kubernetesversion: 1.36.4

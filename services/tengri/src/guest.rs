@@ -15,8 +15,6 @@ use crate::crd::{MicroVM, MicroVMPhase};
 mod codex_history;
 
 const GUEST_API_PORT: u16 = 8080;
-pub const EDITOR_PORT: u16 = 13337;
-pub const EDITOR_BRIDGE_PORT: u16 = 13338;
 const BOOTSTRAP_TOKEN_KEY: &str = "token";
 const MAX_GUEST_ERROR_BYTES: usize = 64 << 10;
 const MAX_GUEST_FILE_BYTES: usize = 4 << 20;
@@ -189,23 +187,8 @@ impl GuestClient {
         namespace: &str,
         agent_id: &str,
     ) -> Result<Self, GuestError> {
-        Self::for_agent_incarnation(client, namespace, agent_id, None).await
-    }
-
-    pub async fn for_agent_incarnation(
-        client: Client,
-        namespace: &str,
-        agent_id: &str,
-        incarnation: Option<&str>,
-    ) -> Result<Self, GuestError> {
         let microvms: Api<MicroVM> = Api::namespaced(client.clone(), namespace);
         let microvm = microvms.get(agent_id).await?;
-        if incarnation.is_some_and(|expected| microvm.metadata.uid.as_deref() != Some(expected)) {
-            return Err(GuestError::Api {
-                status: StatusCode::GONE,
-                message: "This editor session belongs to a previous agent. Reopen Code.".to_owned(),
-            });
-        }
         let status = microvm
             .status
             .as_ref()
@@ -245,27 +228,6 @@ impl GuestClient {
 
     pub fn token(&self) -> &str {
         &self.token
-    }
-
-    pub async fn open_editor(&self) -> Result<(), GuestError> {
-        let response = self
-            .request(Method::POST, "/v1/editor")
-            .timeout(Duration::from_secs(300))
-            .send()
-            .await?;
-        if response.status() == StatusCode::NOT_FOUND {
-            return Err(GuestError::Api { status: StatusCode::SERVICE_UNAVAILABLE, message: "This guest predates VS Code. Sleep and resume the agent to use the current guest image.".to_owned() });
-        }
-        let response = checked_response(response).await?;
-        let body = bounded_response_body(response, 4096).await?;
-        let value: Value = serde_json::from_slice(&body)?;
-        if value.get("port").and_then(Value::as_u64) != Some(u64::from(EDITOR_PORT)) {
-            return Err(GuestError::Api {
-                status: StatusCode::BAD_GATEWAY,
-                message: "invalid VS Code endpoint".to_owned(),
-            });
-        }
-        Ok(())
     }
 
     pub async fn list_files(&self, path: &str) -> Result<FileList, GuestError> {
@@ -721,91 +683,6 @@ mod tests {
             "lastActivityAt": "2026-08-28T00:00:00Z",
             "attached": false
         })
-    }
-
-    #[tokio::test]
-    async fn editor_start_authenticates_and_rejects_invalid_or_legacy_guests() {
-        for (status, body, expected) in [
-            (StatusCode::OK, r#"{"port":13337}"#, None),
-            (
-                StatusCode::OK,
-                r#"{"port":8080}"#,
-                Some(StatusCode::BAD_GATEWAY),
-            ),
-            (
-                StatusCode::NOT_FOUND,
-                "old guest",
-                Some(StatusCode::SERVICE_UNAVAILABLE),
-            ),
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "installer failed",
-                Some(StatusCode::SERVICE_UNAVAILABLE),
-            ),
-        ] {
-            let router = Router::new().route(
-                "/v1/editor",
-                post(move |headers: http::HeaderMap| async move {
-                    assert_eq!(
-                        headers[http::header::AUTHORIZATION],
-                        "Bearer editor-test-token"
-                    );
-                    (status, body)
-                }),
-            );
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let address = listener.local_addr().unwrap();
-            let server = tokio::spawn(async move {
-                axum::serve(listener, router).await.unwrap();
-            });
-            let guest = GuestClient {
-                http: reqwest::Client::new(),
-                base_url: format!("http://{address}"),
-                token: "editor-test-token".to_owned(),
-            };
-            let result = guest.open_editor().await;
-            match expected {
-                None => assert!(result.is_ok()),
-                Some(expected) => assert!(
-                    matches!(result, Err(GuestError::Api { status, .. }) if status == expected)
-                ),
-            }
-            server.abort();
-        }
-    }
-
-    #[tokio::test]
-    async fn an_editor_session_cannot_bind_to_a_recreated_microvm() {
-        let service = tower::service_fn(|request: http::Request<kube::client::Body>| async move {
-            assert!(
-                request.uri().path().ends_with("/microvms/editor-fixture"),
-                "stale session read a bootstrap secret"
-            );
-            let value = serde_json::json!({"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM","metadata":{"name":"editor-fixture","uid":"new-incarnation"},"spec":{
-                "displayName":"Editor fixture","ownerHash":"a".repeat(64),"desiredState":"Running","image":"test","architecture":"amd64",
-                "resources":{"cpuMillis":2000,"memoryMib":4096,"workspaceGib":16},"createdAt":"2026-09-08T00:00:00Z","idleDeadline":"2099-01-01T00:00:00Z"
-            }});
-            Ok::<_, std::io::Error>(
-                http::Response::builder()
-                    .header(http::header::CONTENT_TYPE, "application/json")
-                    .body(kube::client::Body::from(value.to_string().into_bytes()))
-                    .unwrap(),
-            )
-        });
-        let result = GuestClient::for_agent_incarnation(
-            Client::new(service, "tengri"),
-            "tengri",
-            "editor-fixture",
-            Some("old-incarnation"),
-        )
-        .await;
-        assert!(matches!(
-            result,
-            Err(GuestError::Api {
-                status: StatusCode::GONE,
-                ..
-            })
-        ));
     }
 
     #[tokio::test]

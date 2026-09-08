@@ -121,27 +121,3 @@ The Nanoagent workflow runs the focused Go validation. Tengri's image workflow t
 `registry.ide-newton.ts.net/lab/nanoagent` by immutable digest. CI publishes matching `kargo-sha-<source>` tags for the
 controller and guest; the automatic Tengri Warehouse and Stage promote only the matched pair and pin both digests on
 `kargo/tengri` for Argo reconciliation.
-
-## VS Code workbench
-
-Authenticated `POST /v1/editor` starts code-server on demand. `bootstrap-code-server.sh` pins version 4.135.0 and verifies
-platform-specific SHA-256 digests before installing into `$HOME/.tengri/code-server`. The large upstream payload stays
-on the persistent home volume, outside Firecracker's 512 MiB rootfs. Each image build verifies the native Linux archive;
-first use requires HTTPS access to GitHub release assets. An unavailable download fails visibly and can be retried.
-
-`CODE_SERVER_BINARY` and `CODE_SERVER_BOOTSTRAP_COMMAND` select the executable and installer. The supervisor starts one
-process group per guest with sanitized credentials, a private Unix socket, persistent user settings and extensions under
-`$HOME/.tengri/vscode`, and logs at `server.log`. Port 13337 is a virtual preview route to that socket. Port 13338 binds
-only loopback for the bundled desktop extension. Both preview routes and native VS Code port forwarding reject reserved
-guest ports (8080, 13337, 13338); other application ports retain native forwarding. Shutdown kills the editor process
-group and closes bridge connections. The desktop uses the existing authenticated preview gateway; code-server's own
-password login is disabled behind that boundary.
-
-Initial settings use Dark Modern, explicit saves, native hot-exit backups, and guest execution for TypeScript language
-features. The upstream `remote.extensionKind` override includes `-web` to exclude the browser host, whose TypeScript
-bundle is absent from the standalone release. Existing user settings are preserved. Workspace trust remains enabled.
-The upstream optional `vsda` browser assets are absent from this open-source distribution; their 404s do not disable the
-workbench. Acceptance tests exercise TypeScript diagnostics to detect actual language-extension failures.
-
-See [the desktop acceptance runner](../../apps/landing/README.md#vs-code-in-the-desktop). Existing running guests built
-before this API must be slept and resumed onto the current image; the editor reports that requirement explicitly.

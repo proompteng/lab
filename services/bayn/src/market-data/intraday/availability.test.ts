@@ -8,8 +8,6 @@ import {
   availabilityRequest,
   availabilitySnapshot,
   reobserveAvailabilitySnapshot,
-  makeAvailabilityDecisionFixture,
-  receiptHasSymbol,
 } from '../../testing/archive-availability-fixture'
 import {
   makeArchiveAvailabilityReceipts,
@@ -19,7 +17,6 @@ import {
   type ArchiveAvailabilityReceipt,
 } from './availability'
 import type { IntradayMarketDataService } from './model'
-import { reverifyIntradayMarketSnapshot } from './verification'
 
 const completedAt = '2026-09-04T14:30:02.500Z'
 const receipts = () =>
@@ -39,110 +36,6 @@ const market = (read = Effect.succeed(availabilitySnapshot)): IntradayMarketData
 })
 
 describe('recorded archive reader availability', () => {
-  test('missing candidate receipts are local and do not rewrite the immutable snapshot', () => {
-    const { snapshot, receipts } = makeAvailabilityDecisionFixture()
-    const snapshotHash = canonicalHashV1(snapshot)
-    const proof = Result.getOrThrow(
-      verifyRecordedArchiveAvailability(
-        snapshot,
-        availabilityReader.endpointHash,
-        receipts.filter((receipt) => !receiptHasSymbol(receipt, 'AAPL')),
-      ),
-    )
-    expect(proof.candidateExclusions?.map(({ symbol }) => symbol)).toEqual(['AAPL'])
-    expect(canonicalHashV1(snapshot)).toBe(snapshotHash)
-    expect(Result.isSuccess(reverifyIntradayMarketSnapshot(snapshot))).toBe(true)
-  })
-
-  test('retained over-late rows for an already excluded candidate do not block peers', () => {
-    const { snapshot, receipts } = makeAvailabilityDecisionFixture(true)
-    expect(snapshot.manifest.candidateExclusions?.map(({ symbol }) => symbol)).toEqual(['AAPL'])
-    const proof = Result.getOrThrow(
-      verifyRecordedArchiveAvailability(
-        snapshot,
-        availabilityReader.endpointHash,
-        receipts.filter((receipt) => !receiptHasSymbol(receipt, 'AAPL')),
-      ),
-    )
-    expect(proof.candidateExclusions?.map(({ symbol }) => symbol)).toEqual(['AAPL'])
-    expect(snapshot.bars.some((bar) => bar.symbol === 'AAPL')).toBe(true)
-    expect(Result.isSuccess(reverifyIntradayMarketSnapshot(snapshot))).toBe(true)
-  })
-
-  test('all candidates unavailable remain explicitly excluded while a missing benchmark fails globally', () => {
-    const { snapshot, receipts } = makeAvailabilityDecisionFixture()
-    const benchmarkOnly = receipts.filter((receipt) => receiptHasSymbol(receipt, 'SPY'))
-    const proof = Result.getOrThrow(
-      verifyRecordedArchiveAvailability(snapshot, availabilityReader.endpointHash, benchmarkOnly),
-    )
-    expect(proof.candidateExclusions?.map(({ symbol }) => symbol)).toEqual([
-      ...(snapshot.manifest.candidateSymbols ?? []),
-    ])
-    expect(
-      Result.isFailure(
-        verifyRecordedArchiveAvailability(
-          snapshot,
-          availabilityReader.endpointHash,
-          receipts.filter((receipt) => !receiptHasSymbol(receipt, 'SPY')),
-        ),
-      ),
-    ).toBe(true)
-  })
-
-  test('late benchmark receipts and missing execution-pricing receipts are never candidate exclusions', () => {
-    const { snapshot, receipts } = makeAvailabilityDecisionFixture()
-    const delayed = receipts.map((receipt) => {
-      if (!receiptHasSymbol(receipt, 'SPY')) return receipt
-      const { receiptHash: _hash, ...material } = receipt
-      const changed = { ...material, availableAt: '2026-09-04T14:30:03.000Z' }
-      return { ...changed, receiptHash: canonicalHashV1(changed) }
-    })
-    expect(
-      Result.isFailure(verifyRecordedArchiveAvailability(snapshot, availabilityReader.endpointHash, delayed)),
-    ).toBe(true)
-    expect(
-      Result.isFailure(
-        verifyRecordedArchiveAvailability(
-          reobserveAvailabilitySnapshot(completedAt),
-          availabilityReader.endpointHash,
-          [],
-        ),
-      ),
-    ).toBe(true)
-  })
-
-  test('corrupt, duplicate, or wrong-reader candidate receipts fail globally even for excluded candidates', () => {
-    const { snapshot, receipts } = makeAvailabilityDecisionFixture(true)
-    const corrupted = receipts.map((receipt) =>
-      receiptHasSymbol(receipt, 'AAPL') ? { ...receipt, receiptHash: 'f'.repeat(64) } : receipt,
-    )
-    expect(
-      Result.isFailure(verifyRecordedArchiveAvailability(snapshot, availabilityReader.endpointHash, corrupted)),
-    ).toBe(true)
-    const wrongReader = receipts.map((receipt) => {
-      if (!receiptHasSymbol(receipt, 'AAPL')) return receipt
-      const { receiptHash: _hash, ...material } = receipt
-      const changed = { ...material, reader: { ...material.reader, endpointHash: 'f'.repeat(64) } }
-      return { ...changed, receiptHash: canonicalHashV1(changed) }
-    })
-    expect(
-      Result.isFailure(verifyRecordedArchiveAvailability(snapshot, availabilityReader.endpointHash, wrongReader)),
-    ).toBe(true)
-    const quoteProof = Result.getOrThrow(
-      makeArchiveAvailabilityReceipts(
-        availabilitySnapshot,
-        availabilityReader,
-        availabilityRequest.observedAt,
-        completedAt,
-      ),
-    )
-    expect(
-      Result.isFailure(
-        verifyRecordedArchiveAvailability(snapshot, availabilityReader.endpointHash, [...receipts, ...quoteProof]),
-      ),
-    ).toBe(true)
-  })
-
   test('a source-received row is unavailable until its completed reader observation', () => {
     const evidence = receipts()
     const earlier = verifyRecordedArchiveAvailability(availabilitySnapshot, availabilityReader.endpointHash, evidence)

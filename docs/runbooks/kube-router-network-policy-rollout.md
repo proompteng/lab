@@ -25,8 +25,8 @@ set -euo pipefail
 git fetch --quiet origin main
 main_revision=$(git rev-parse origin/main)
 test "$(git rev-parse HEAD)" = "$main_revision"
-test "$(crane digest docker.io/cloudnativelabs/kube-router:v2.11.1)" = \
-  sha256:64da9a538d29e13780e256ce3897a52932a68657793bef009063bbeb2762146a
+test "$(crane digest docker.io/cloudnativelabs/kube-router:v2.10.0)" = \
+  sha256:0991f2cc7aaabe107b51c0c554d6b843f0483fd319b94f437fab638470c47c22
 test "$(kubectl -n default get service kubernetes -o jsonpath='{.spec.clusterIP}')" = 10.96.0.1
 kubectl -n kube-system get daemonset kube-proxy -o json |
   jq -e '.spec.template.spec.containers[0].command | any(. == "--proxy-mode=nftables")'
@@ -85,7 +85,7 @@ ready=$(kubectl -n kube-system get daemonset kube-router -o jsonpath='{.status.n
 test "$desired" -gt 0
 test "$ready" = "$desired"
 
-kube_router_index_digest=sha256:64da9a538d29e13780e256ce3897a52932a68657793bef009063bbeb2762146a
+kube_router_index_digest=sha256:0991f2cc7aaabe107b51c0c554d6b843f0483fd319b94f437fab638470c47c22
 pod_rows=$(
   kubectl -n kube-system get pods -l app.kubernetes.io/name=kube-router -o json |
     jq -er '

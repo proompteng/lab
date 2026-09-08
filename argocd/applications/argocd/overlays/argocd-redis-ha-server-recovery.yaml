@@ -1,0 +1,5 @@
+# Preserve ordinal 0 while its ARM node has no free pod IPs. Ordinals 1 and 2 run the restored cross-node revision.
+- op: add
+  path: /spec/updateStrategy/rollingUpdate
+  value:
+    partition: 1

@@ -21,7 +21,6 @@ import {
 } from './desktop-session-storage'
 import { useModalFocus } from './modal-focus'
 import { ReadyDesktop } from './ready-desktop'
-import { TengriMark } from './tengri-mark'
 import { useDesktopReducedMotion } from './use-desktop-reduced-motion'
 
 const RecoveryOwnerContext = createContext<string | undefined>(undefined)
@@ -629,6 +628,15 @@ function ProgressBar() {
         transition={reducedMotion ? undefined : { repeat: Number.POSITIVE_INFINITY, duration: 1.2, ease: 'easeInOut' }}
       />
     </div>
+  )
+}
+
+function TengriMark() {
+  return (
+    <span aria-hidden="true" className="relative grid h-4 w-4 place-items-center rounded-full border border-white/60">
+      <span className="h-1.5 w-1.5 rounded-full bg-white/85" />
+      <span className="absolute -top-1 h-1.5 w-px bg-white/60" />
+    </span>
   )
 }
 

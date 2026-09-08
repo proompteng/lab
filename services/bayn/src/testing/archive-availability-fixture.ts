@@ -2,11 +2,7 @@ import { Result } from 'effect'
 
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
 import { sha256 } from '../hash'
-import {
-  makeArchiveAvailabilityReceipts,
-  type ArchiveReaderIdentity,
-  type ArchiveAvailabilityReceipt,
-} from '../market-data/intraday/availability'
+import type { ArchiveReaderIdentity } from '../market-data/intraday/availability'
 import {
   IntradaySnapshotPurpose,
   type ArchiveVerifiedIntradayMarketSnapshot,
@@ -73,48 +69,3 @@ export const reobserveAvailabilitySnapshot = (
       },
     ),
   ) as ArchiveVerifiedIntradayMarketSnapshot
-
-export const receiptHasSymbol = (receipt: ArchiveAvailabilityReceipt, symbol: string): boolean => {
-  const record = receipt.record
-  return record !== null && typeof record === 'object' && 'symbol' in record && record['symbol'] === symbol
-}
-
-export const makeAvailabilityDecisionFixture = (lateCandidateBar = false) => {
-  const { purpose: _purpose, ...common } = availabilityRequest
-  const request: IntradaySnapshotRequest = {
-    ...common,
-    rangeStartAt: '2026-09-04T14:00:00.000Z',
-    symbols: [...protocol.candidateSymbols, protocol.benchmarkSymbol].toSorted(),
-    candidateSymbols: protocol.candidateSymbols,
-  }
-  const source = makeIntradayMomentumTestSnapshot(protocol, request, { AAPL: 0.02, AMZN: 0.01 })
-  const rows = Result.getOrThrow(
-    persistIntradaySnapshotRows({
-      ...source,
-      bars: source.bars.map((bar) =>
-        lateCandidateBar && bar.symbol === 'AAPL' && bar.eventAt === request.rangeStartAt
-          ? { ...bar, ingestedAt: new Date(Date.parse(bar.eventAt) + 65_000).toISOString() }
-          : bar,
-      ),
-    }),
-  )
-  const archiveRows = {
-    ...rows,
-    archiveWatermarks: request.archiveWatermarks.map((watermark) => ({
-      source_topic: watermark.sourceTopic,
-      source_partition: watermark.sourcePartition,
-      inclusive_last_offset: watermark.inclusiveLastOffset,
-    })),
-  }
-  const captured = Result.getOrThrow(
-    verifyIntradaySnapshot(request, archiveRows),
-  ) as ArchiveVerifiedIntradayMarketSnapshot
-  const observedAt = '2026-09-04T14:30:02.500Z'
-  const snapshot = Result.getOrThrow(
-    verifyIntradaySnapshot({ ...request, observedAt }, archiveRows),
-  ) as ArchiveVerifiedIntradayMarketSnapshot
-  const receipts = Result.getOrThrow(
-    makeArchiveAvailabilityReceipts(captured, availabilityReader, request.observedAt, observedAt),
-  )
-  return { snapshot, receipts }
-}

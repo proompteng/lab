@@ -1,14 +1,7 @@
-# Historical Galactic Talos 1.13.9 and Kubernetes 1.36.4 rollout
+# Galactic Talos, Kubernetes, and Kata rollout
 
-**Archived release procedure.** The current production procedure is the
-[Talos 1.14 and Kubernetes 1.37 rollout](../../devices/galactic/releases/README.md). Use that procedure and its pinned
-template revisions for new upgrades. The version pins, installer commands, and acceptance targets below describe the
-preceding release and must not be applied to the upgraded cluster. Retained artifact identity and hardware recovery
-sections are historical references; the current procedure specifies when and how they may be reused with newly
-verified artifacts.
-
-This preceding rollout covered the three-control-plane `galactic` cluster. Omni owns machine configuration and
-Talos/Kubernetes upgrades. Argo CD owns Kubernetes resources. The rollout installed one signed Kata Containers system
+This is the production runbook for the three-control-plane `galactic` cluster. Omni owns machine configuration and
+Talos/Kubernetes upgrades. Argo CD owns Kubernetes resources. The rollout installs one signed Kata Containers system
 extension that exposes QEMU, Cloud Hypervisor, Firecracker, and Dragonball without a custom controller, CRD,
 privileged launcher, AgentRun, or KubeVirt.
 

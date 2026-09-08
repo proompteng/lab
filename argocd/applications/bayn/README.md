@@ -1,21 +1,5 @@
 # Bayn GitOps rollout notes
 
-## Regular-session trading boundaries
-
-Migration 59 admits zero session-boundary offsets while retaining calendar ordering, exact offset bindings, and
-historical cycle contracts. It changes constraints without rewriting cycle or execution evidence. Apply it through
-normal worker startup before activating the new strategy identity. The submission window can start at market open;
-the strategy still waits for its complete rolling lookback and decision delay.
-
-The active day-trading policy admits entries until five minutes before the actual calendar close and starts forced
-flattening at that same boundary. Close submissions remain eligible until the closing bell. Verify both regular and
-early-close windows; unresolved exits must stay visible and cannot complete the cycle as flat.
-
-This strategy change requires a reviewed research mandate rotation through `bayn-release`. Verify the exact image,
-activation identity, stored cycle boundaries, natural controller progress, and unchanged broker/accounting state.
-After zero-offset cycles exist, rollback must retain a runtime that can decode them. Do not restore the old positive-only
-constraints or delete cycles to make an incompatible binary start.
-
 ## Archive reader availability evidence
 
 Migration 58 adds the append-only `intraday_archive_availability` evidence table. The execution worker records the

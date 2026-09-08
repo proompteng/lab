@@ -21,7 +21,6 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY *.go ./
-COPY vscode-extension ./vscode-extension
 RUN go test ./... && \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
       go build -trimpath -ldflags='-s -w' -o /out/nanoagent .
@@ -60,8 +59,6 @@ FROM ${UV_BASE_IMAGE}:${UV_VERSION} AS uv-runtime
 FROM ${UBUNTU_BASE_IMAGE}:24.04 AS runtime
 
 ENV CARGO_HOME=/home/nanoagent/.cargo \
-    CODE_SERVER_BINARY=/home/nanoagent/.local/bin/code-server \
-    CODE_SERVER_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-code-server \
     CODEX_BINARY=/home/nanoagent/.local/bin/codex \
     CODEX_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-codex \
     CODEX_HOME=/home/nanoagent/.codex \
@@ -119,7 +116,6 @@ RUN set -eux; \
 
 COPY --from=build /out/nanoagent /usr/local/bin/nanoagent
 COPY --chmod=0555 bootstrap-codex.sh /usr/local/bin/bootstrap-codex
-COPY --chmod=0555 bootstrap-code-server.sh /usr/local/bin/bootstrap-code-server
 RUN test -x /usr/local/bin/bootstrap-codex && test -x /usr/local/bin/nanoagent
 
 FROM runtime AS c-toolchain-runtime
@@ -349,19 +345,11 @@ RUN mkdir -p "$HOME" "$CODEX_HOME" && \
     bootstrap-codex --install-only && \
     "$CODEX_BINARY" --version > /tmp/codex-version
 
-FROM runtime AS code-server-smoke
-
-ENV HOME=/home/nanoagent/.vscode-smoke
-USER 1000:1000
-RUN mkdir -p "$HOME" && bootstrap-code-server --install-only && \
-    "$HOME/.local/bin/code-server" --config "$HOME/config.yaml" --version > /tmp/code-server-version
-
 FROM runtime-with-toolchain
 
 # Firecracker's Kata snapshotter extracts an OCI image into a 512 MiB blockfile.
 # Keep 32 MiB of explicit headroom for filesystem metadata and extraction overhead.
 ARG FIRECRACKER_ROOTFS_LIMIT_BYTES=503316480
-COPY --from=code-server-smoke /tmp/code-server-version /usr/share/nanoagent/code-server-version
 COPY --from=codex-smoke /tmp/codex-version /usr/share/nanoagent/codex-version
 COPY --from=toolchain-smoke /tmp/toolchain-version /usr/share/nanoagent/toolchain-version
 RUN set -eux; \

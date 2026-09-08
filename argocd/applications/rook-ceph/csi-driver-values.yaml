@@ -25,13 +25,6 @@ operatorConfig:
       priorityClassName: system-node-critical
       kubeletDirPath: /var/lib/kubelet
       enableSeLinuxHostMount: false
-      # Let the CSI operator rotate one node plugin at a time. DaemonSet
-      # readiness is the operator gate; storage acceptance additionally checks
-      # existing mounts and VolumeAttachments before the wave is accepted.
-      updateStrategy:
-        type: RollingUpdate
-        rollingUpdate:
-          maxUnavailable: 1
       affinity:
         nodeAffinity: {}
       # Turin is intentionally a control-plane node and needs CSI node plugins
@@ -74,9 +67,7 @@ drivers:
     nodePlugin:
       # Node pods contain the mount processes, so roll them one node at a time.
       updateStrategy:
-        type: RollingUpdate
-        rollingUpdate:
-          maxUnavailable: 1
+        type: OnDelete
       tolerations:
         - key: node-role.kubernetes.io/control-plane
           operator: Exists
@@ -173,12 +164,10 @@ drivers:
     kernelMountOptions: {}
     fuseMountOptions: {}
     nodePlugin:
-      # FUSE mount processes live inside this pod. Keep one node unavailable at
-      # most; the acceptance helper checks mounts and attachments after rollout.
+      # FUSE mount processes live inside this pod. Preserve OnDelete even though
+      # current consumers use the kernel client, and roll nodes explicitly.
       updateStrategy:
-        type: RollingUpdate
-        rollingUpdate:
-          maxUnavailable: 1
+        type: OnDelete
       tolerations:
         - key: node-role.kubernetes.io/control-plane
           operator: Exists

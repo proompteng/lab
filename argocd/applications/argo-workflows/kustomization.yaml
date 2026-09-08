@@ -74,7 +74,7 @@ patches:
 helmCharts:
   - name: argo-workflows
     repo: https://argoproj.github.io/argo-helm
-    version: 2.0.4
+    version: 1.0.23
     releaseName: argo-workflows
     namespace: argo-workflows
     valuesInline:
