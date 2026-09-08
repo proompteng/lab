@@ -36,8 +36,13 @@ const clusterFixture = (image: string, majorVersion: number, currentPrimary?: st
 const fakeKubectlSource = String.raw`#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$FAKE_KUBECTL_LOG"
+printf '%s' "$1" >> "$FAKE_KUBECTL_ARGV_LOG"
+for argument in "__DOLLAR__{@:2}"; do
+  printf '\t%s' "$argument" >> "$FAKE_KUBECTL_ARGV_LOG"
+done
+printf '\n' >> "$FAKE_KUBECTL_ARGV_LOG"
 
-if [[ "__DOLLAR__{1:-}" != "--context" || "__DOLLAR__{2:-}" != "$FAKE_EXPECTED_CONTEXT" ]]; then
+if [[ "__DOLLAR__{1:-}" != "cnpg" && ( "__DOLLAR__{1:-}" != "--context" || "__DOLLAR__{2:-}" != "$FAKE_EXPECTED_CONTEXT" ) ]]; then
   echo "unexpected kube context: $*" >&2
   exit 90
 fi
@@ -53,6 +58,10 @@ if [[ "$*" == *"get backups.postgresql.cnpg.io"* ]]; then
 fi
 
 if [[ "$*" == *"cnpg psql"* ]]; then
+  if [[ -n "__DOLLAR__{FAKE_FAIL_SQL:-}" && "__DOLLAR__{FAKE_FAIL_SQL:-}" == "__DOLLAR__{13:-}" ]]; then
+    echo "controlled cnpg query failure: __DOLLAR__{13:-}" >&2
+    exit 92
+  fi
   if [[ "$*" == *"current_setting('server_version_num')"* ]]; then
     printf '180006\n'
   elif [[ "$*" == *"FROM pg_database"* ]]; then
@@ -96,6 +105,7 @@ const createFixture = async (mode: 'preflight' | 'postflight', backups: string) 
   const clusterJson = join(directory, 'cluster.json')
   const backupsJson = join(directory, 'backups.json')
   const kubectlLog = join(directory, 'kubectl.log')
+  const kubectlArgvLog = join(directory, 'kubectl-argv.log')
   const applyLog = join(directory, 'apply.log')
   await writeFile(fakeKubectl, fakeKubectlSource, 'utf8')
   await chmod(fakeKubectl, 0o755)
@@ -106,8 +116,9 @@ const createFixture = async (mode: 'preflight' | 'postflight', backups: string) 
   )
   await writeFile(backupsJson, backups, 'utf8')
   await writeFile(kubectlLog, '', 'utf8')
+  await writeFile(kubectlArgvLog, '', 'utf8')
   await writeFile(applyLog, '', 'utf8')
-  return { applyLog, backupsJson, bin, clusterJson, fakeKubectl, kubectlLog }
+  return { applyLog, backupsJson, bin, clusterJson, fakeKubectl, kubectlArgvLog, kubectlLog }
 }
 
 const runScript = (
@@ -125,6 +136,7 @@ const runScript = (
       FAKE_BACKUPS_JSON: fixture.backupsJson,
       FAKE_CLUSTER_JSON: fixture.clusterJson,
       FAKE_EXPECTED_CONTEXT: 'galactic-lan',
+      FAKE_KUBECTL_ARGV_LOG: fixture.kubectlArgvLog,
       FAKE_KUBECTL_LOG: fixture.kubectlLog,
       JQ_BIN: 'jq',
       KUBECTL_BIN: fixture.fakeKubectl,
@@ -188,6 +200,52 @@ test('passes the verified kube context to every preflight kubectl call and suppo
   expect(overrideCalls.every((call) => call.includes('--context galactic-test'))).toBe(true)
 })
 
+test('places CNPG plugin flags after the plugin and fails closed on a query error', async () => {
+  const fixture = await createFixture('preflight', '{"items":[]}')
+  const args = ['--namespace', 'demo', '--cluster', 'demo', '--target-image', preparationImage, '--phase', 'prepare']
+  const databaseQuery = 'SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY 1;'
+  const extensionQuery = 'SELECT extname FROM pg_extension ORDER BY 1;'
+
+  const result = runScript(preflight, args, fixture)
+  expect(result.exitCode).toBe(0)
+
+  const calls = (await readFile(fixture.kubectlArgvLog, 'utf8'))
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((call) => call.split('\t'))
+  const cnpgCalls = calls.filter((call) => call[0] === 'cnpg')
+  expect(cnpgCalls).toHaveLength(2)
+  for (const call of cnpgCalls) {
+    expect(call.slice(0, 8)).toEqual(['cnpg', 'psql', 'demo', '--context', 'galactic-lan', '--namespace', 'demo', '--'])
+    expect(call.slice(8, 12)).toEqual(['-d', call[9], '-At', '-c'])
+  }
+  expect(cnpgCalls.map((call) => call[9])).toEqual(['postgres', 'app'])
+  expect(cnpgCalls.map((call) => call[12])).toEqual([databaseQuery, extensionQuery])
+
+  await writeFile(fixture.kubectlArgvLog, '', 'utf8')
+  const failedResult = runScript(preflight, args, fixture, { FAKE_FAIL_SQL: extensionQuery })
+  expect(failedResult.exitCode).toBe(1)
+  expect(failedResult.stderr).toContain('unable to inspect extensions in database app')
+
+  const failedCalls = (await readFile(fixture.kubectlArgvLog, 'utf8'))
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((call) => call.split('\t'))
+  const failedCnpgCall = failedCalls.find((call) => call[0] === 'cnpg' && call[12] === extensionQuery)
+  expect(failedCnpgCall?.slice(0, 8)).toEqual([
+    'cnpg',
+    'psql',
+    'demo',
+    '--context',
+    'galactic-lan',
+    '--namespace',
+    'demo',
+    '--',
+  ])
+})
+
 test('fails closed for missing and stale major-upgrade backups', async () => {
   const scenarios = [
     { backups: '{"items":[]}', message: 'no completed CNPG Backup exists' },
@@ -218,9 +276,15 @@ test('fails closed for missing and stale major-upgrade backups', async () => {
   }
 })
 
-test('accepts tabbed extension rows and runs update_extensions.sql once for the cluster', async () => {
+test('accepts tabbed extension rows, validates postflight plugin argv, and runs update_extensions.sql once', async () => {
   const fixture = await createFixture('postflight', '{"items":[]}')
   const args = ['--namespace', 'demo', '--cluster', 'demo', '--expected-image', majorImage]
+  const expectedQueries = [
+    "SELECT current_setting('server_version_num');",
+    'SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY 1;',
+    'SELECT extname || chr(9) || extversion FROM pg_extension ORDER BY 1;',
+    'SELECT pg_size_pretty(pg_database_size(current_database()));',
+  ]
 
   const pendingResult = runScript(postflight, args, fixture, { FAKE_SCRIPT_PRESENT: '1' })
   expect(pendingResult.exitCode).toBe(1)
@@ -229,6 +293,7 @@ test('accepts tabbed extension rows and runs update_extensions.sql once for the 
   expect(pendingResult.stderr).not.toContain('unsupported extension')
 
   await writeFile(fixture.kubectlLog, '', 'utf8')
+  await writeFile(fixture.kubectlArgvLog, '', 'utf8')
   await writeFile(fixture.applyLog, '', 'utf8')
   const applyResult = runScript(postflight, [...args, '--apply-extension-updates'], fixture, {
     FAKE_SCRIPT_PRESENT: '1',
@@ -242,8 +307,49 @@ test('accepts tabbed extension rows and runs update_extensions.sql once for the 
   expect(applyCalls[0]).toContain('--file /var/lib/postgresql/data/pgdata/update_extensions.sql')
   expect(applyCalls[0]).not.toContain('--dbname')
 
+  const argvCalls = (await readFile(fixture.kubectlArgvLog, 'utf8'))
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((call) => call.split('\t'))
+  const cnpgCalls = argvCalls.filter((call) => call[0] === 'cnpg')
+  expect(cnpgCalls).toHaveLength(expectedQueries.length)
+  for (const call of cnpgCalls) {
+    expect(call.slice(0, 8)).toEqual(['cnpg', 'psql', 'demo', '--context', 'galactic-lan', '--namespace', 'demo', '--'])
+    expect(call.slice(8, 12)).toEqual(['-d', call[9], '-At', '-c'])
+  }
+  expect(cnpgCalls.map((call) => call[12])).toEqual(expectedQueries)
+
   const calls = (await readFile(fixture.kubectlLog, 'utf8')).trim().split('\n').filter(Boolean)
   expect(calls.every((call) => call.includes('--context galactic-lan'))).toBe(true)
+})
+
+test('postflight fails closed when a CNPG query fails and preserves plugin context argv', async () => {
+  const fixture = await createFixture('postflight', '{"items":[]}')
+  const args = ['--namespace', 'demo', '--cluster', 'demo', '--expected-image', majorImage]
+  const serverVersionQuery = "SELECT current_setting('server_version_num');"
+
+  const result = runScript(postflight, args, fixture, { FAKE_FAIL_SQL: serverVersionQuery })
+  expect(result.exitCode).toBe(1)
+  expect(result.stderr).toContain('unable to query PostgreSQL server_version_num')
+
+  const calls = (await readFile(fixture.kubectlArgvLog, 'utf8'))
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((call) => call.split('\t'))
+  const failedCall = calls.find((call) => call[0] === 'cnpg')
+  expect(failedCall?.slice(0, 8)).toEqual([
+    'cnpg',
+    'psql',
+    'demo',
+    '--context',
+    'galactic-lan',
+    '--namespace',
+    'demo',
+    '--',
+  ])
+  expect(failedCall?.[12]).toBe(serverVersionQuery)
 })
 
 test('the twelve owned clusters use only approved images from the rerunnable plan', async () => {
