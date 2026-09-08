@@ -9,7 +9,8 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 toml_src="${script_dir}/pihole.toml"
 toml_dest="/etc/pihole/pihole.toml"
 config_src="${script_dir}/99-kubernetes-split-dns.conf"
-config_dest="/etc/dnsmasq.d/99-kubernetes-split-dns.conf"
+split_dns_apply="${script_dir}/apply-split-dns.sh"
+dns_firewall_apply="${script_dir}/apply-dns-firewall.sh"
 tailscale_interface="${TAILSCALE_INTERFACE:-tailscale0}"
 lan_cidr="${LAN_CIDR:-192.168.1.0/24}"
 coredns_ip="${COREDNS_IP:-10.96.0.10}"
@@ -43,9 +44,16 @@ if [[ ! -f "${config_src}" ]]; then
   echo "missing config source: ${config_src}" >&2
   exit 1
 fi
+if [[ ! -x "${split_dns_apply}" ]]; then
+  echo "missing executable split DNS helper: ${split_dns_apply}" >&2
+  exit 1
+fi
+if [[ ! -x "${dns_firewall_apply}" || ! -f "${script_dir}/galactic-dns-firewall.service" ]]; then
+  echo 'missing provider DNS firewall helper or service' >&2
+  exit 1
+fi
 
 install -D -o pihole -g pihole -m 0644 "${toml_src}" "${toml_dest}"
-install -D -m 0644 "${config_src}" "${config_dest}"
 
 # Pi-hole can only forward cluster.local if this host accepts the advertised cluster routes.
 tailscale set --accept-routes=true
@@ -62,7 +70,8 @@ if command -v ufw >/dev/null 2>&1; then
   ufw allow from "${lan_cidr}" to any port 53 proto udp
 fi
 
-systemctl restart pihole-FTL
+"${dns_firewall_apply}" --apply
+"${split_dns_apply}" --apply
 
 if ! timeout 5 bash -lc "until ip route get ${coredns_ip} >/dev/null 2>&1; do sleep 1; done"; then
   echo "no route to CoreDNS service IP ${coredns_ip} after enabling tailscale routes" >&2

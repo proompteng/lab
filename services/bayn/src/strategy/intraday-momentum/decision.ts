@@ -32,7 +32,7 @@ import {
 
 const minuteMs = 60_000
 
-export const intradayMomentumBehaviorVersion = 'bayn.intraday-momentum.behavior.v10' as const
+export const intradayMomentumBehaviorVersion = 'bayn.intraday-momentum.behavior.v11' as const
 export const intradayMomentumBehaviorHash = sha256(intradayMomentumBehaviorVersion)
 
 const compareCanonicalText = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
@@ -152,7 +152,7 @@ const validateSnapshot = (
   const observed = Date.parse(manifest.observedAt)
   const sessionOpen = Date.parse(session.openAt)
   const sessionClose = Date.parse(session.closeAt)
-  const earliestRangeEnd = sessionOpen + protocol.warmupMinutesAfterOpen * minuteMs
+  const earliestRangeEnd = sessionOpen + Math.max(protocol.warmupMinutesAfterOpen, protocol.lookbackMinutes) * minuteMs
   const entryCutoff = sessionClose - protocol.entryCutoffMinutesBeforeClose * minuteMs
   const earliestDecision = rangeEnd + protocol.decisionDelaySeconds * 1_000
   const latestDecision = earliestDecision + protocol.maximumDecisionLagMs

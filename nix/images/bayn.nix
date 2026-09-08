@@ -9,13 +9,13 @@
 
 let
   imageRepository = "registry.ide-newton.ts.net/lab/bayn";
-  # SHA-256 identity for bayn.intraday-momentum.behavior.v10, verified by the production executable.
-  strategyBehaviorHash = "86d5d2557ee6cb2100a358fdfdaf54cb5d9b27f6837efd9ff265bf17ff7b9194";
+  # SHA-256 identity for bayn.intraday-momentum.behavior.v11, verified by the production executable.
+  strategyBehaviorHash = "1d3b93a585e9b37836507880323f57ba7f7db385241dccf09234c43125ee5285";
   # Canonical hash of the compiled bayn.intraday-momentum.protocol.v2 document.
-  strategyParameterHash = "88f4bf9a18fd881226a123ba277a65daaaf92aba76acfde86072d03d143624ef";
+  strategyParameterHash = "104bb22429eb54e025a092a8434be2b8390059c24515512de8cbb99c66cbb797";
   strategyName = "intraday-momentum";
   # Canonical bayn.strategy-protocol.v1 identity: name, behavior, parameters, and parameter schema.
-  strategyProtocolHash = "b993c96dc17bd9ad0d5303e6dced8c8f68f1345354edb4835429e6419dcf946a";
+  strategyProtocolHash = "28582fcf9c63d0409a06d27abf53c05286d1b785374f33e228b88696b990ab40";
   # Canonical quote-bound policy for the build-contract account sentinel. It binds every source-controlled risk limit
   # without embedding a broker account identity; runtime separately verifies the account-bound activation policy.
   executionRiskPolicyHash = "2e60270036900493a121a87c73730960154278778a8aa71b663b138effd82227";
@@ -37,9 +37,9 @@ let
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = {
-    # Refreshed from both Linux builders after adding archive-availability persistence integration to the manifest.
-    x86_64-linux = "sha256-Mmv6CqxJZcgc9EJo3SYx9ddJ6u5ltl2ThwIT9vknivE=";
-    aarch64-linux = "sha256-LrE45qY9XhyaIIdF4ipunfKNFaje0fvBK/njY85yzqA=";
+    # Refreshed from both Linux builders after adding writer-fence lifecycle integration to the manifest.
+    x86_64-linux = "sha256-L1pJa2JHGQV/XtrKNeSt4omI1UMDREXrTUBT2ZkJpFM=";
+    aarch64-linux = "sha256-isxhTa/QV1bXkl7tuz/aA+gCXcm9P26dig9RRnOZjSA=";
   };
   buildCommands = [
     "bun --cwd=services/bayn run tsc"

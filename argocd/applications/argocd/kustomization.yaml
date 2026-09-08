@@ -12,7 +12,28 @@ resources:
   - alloy-rbac.yaml
   - alloy-configmap.yaml
   - alloy-deployment.yaml
+images:
+  - name: public.ecr.aws/docker/library/redis
+    newTag: 8.10.1-alpine
+    digest: sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
+  - name: public.ecr.aws/docker/library/haproxy
+    newTag: 3.4.4-alpine
+    digest: sha256:c0afc4864dca9c68694cd1290433f0ee79b5c55be80f6745a165ffe373b9a564
 patches:
+  - target:
+      kind: StatefulSet
+      name: argocd-redis-ha-server
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: argocd-redis-ha-server
+      spec:
+        updateStrategy:
+          type: RollingUpdate
+          rollingUpdate:
+            maxUnavailable: 1
+            partition: 0
   - path: overlays/argocd-cm.yaml
   - path: overlays/argocd-cmd-params-cm.yaml
   - path: overlays/argocd-lovely-plugin.yaml
@@ -39,10 +60,6 @@ patches:
     target:
       kind: Deployment
       name: argocd-redis-ha-haproxy
-  - path: overlays/argocd-redis-ha-server-recovery.yaml
-    target:
-      kind: StatefulSet
-      name: argocd-redis-ha-server
   - path: overlays/argocd-application-controller-statefulset.yaml
     target:
       kind: StatefulSet

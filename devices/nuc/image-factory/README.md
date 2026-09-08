@@ -48,16 +48,16 @@ docker compose --env-file .env logs --tail 100 image-factory
 
 ## Catalog and installer cache semantics
 
-`ghcr.io/proompteng/talos-extensions:v1.13.9` is a transport tag. Rollout authority is the signed catalog digest and
-the digest-pinned `proompteng/talos-kata-runtimes` entry inside it. Confirm the live factory resolution before every
-node phase. The accepted r4 catalog is
-`ghcr.io/proompteng/talos-extensions@sha256:9cc2637cbf2ad061f5d39164ce558d71ab4608cdea702d42753f94d87539433a`:
+The catalog version tag is a discovery pointer. Rollout authority is the signed catalog digest and digest-pinned Kata
+entry in `release.json`, together with the target installer receipt. Run the following from this directory on the NUC
+to confirm the live factory resolution before every node phase:
 
 ```bash
 export FACTORY='http://100.100.244.148:8081'
-export EXPECTED_KATA_DIGEST='sha256:b7384435ad1393288e0235d8e467303348b252c2feb73973d309d07fee9afc44'
+export TALOS_VERSION="$(jq -er .talos release.json)"
+export EXPECTED_KATA_DIGEST="$(jq -er '.kataCatalogEntry | split("@") | .[1]' release.json)"
 
-curl -fsS "$FACTORY/version/v1.13.9/extensions/official" \
+curl -fsS "$FACTORY/version/$TALOS_VERSION/extensions/official" \
   | jq -er '.[] | select(.name == "proompteng/talos-kata-runtimes") | .digest' \
   | grep -Fx "$EXPECTED_KATA_DIGEST"
 ```
@@ -74,7 +74,7 @@ Before Omni reboots a target, capture its exact schematic customization with
 factory or registry build evidence tying that installer to `EXPECTED_KATA_DIGEST`. Extension name/version, catalog
 tag, schematic ID, or a successful pull is not sufficient. If that chain cannot be established, stop and rebuild or
 invalidate only the target artifact through a reviewed procedure. The complete gate and rollout sequence are in
-`docs/runbooks/talos-latest-upgrade-plan.md`.
+the current [artifact identity gate](../../galactic/releases/README.md#artifact-identity-gate).
 
 ### Rebuild exactly one cached installer
 
@@ -84,9 +84,9 @@ one top-level installer index; its shared blobs and every other schematic remain
 
 ```bash
 export SCHEMATIC_ID='<64-character target schematic ID>'
-export TALOS_VERSION='v1.13.9'
+export TALOS_VERSION="$(jq -er .talos release.json)"
 export EXPECTED_OLD_INSTALLER_DIGEST='sha256:<64-character current index digest>'
-export EXPECTED_KATA_DIGEST='sha256:b7384435ad1393288e0235d8e467303348b252c2feb73973d309d07fee9afc44'
+export EXPECTED_KATA_DIGEST="$(jq -er '.kataCatalogEntry | split("@") | .[1]' release.json)"
 export FACTORY='http://100.100.244.148:8081'
 
 [[ "$SCHEMATIC_ID" =~ ^[0-9a-f]{64}$ ]]
@@ -131,7 +131,8 @@ printf 'rebuilt installer: %s\n' "$rebuilt_digest"
 
 Retain the old and new index digests, the selected architecture child digest and config creation time, and the matching
 factory log line. If the schematic and Talos version did not change, continue with the same-schematic replacement
-procedure in the cluster runbook; Omni will correctly report the machine as up to date and will not reinstall it.
+[procedure for the current release](../../galactic/releases/README.md#same-schematic-artifact-replacement);
+Omni will correctly report the machine as up to date and will not reinstall it.
 
 ## Omni handoff
 
