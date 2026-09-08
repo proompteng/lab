@@ -15,6 +15,7 @@ type Kustomization = {
   helmCharts: HelmChart[]
   patches: Array<{
     patch?: string
+    path?: string
     target: {
       group?: string
       version: string
@@ -56,9 +57,9 @@ test('keeps the Rook v1.20 operator, CSI, and cluster charts aligned', () => {
   const kustomization = readYaml<Kustomization>('argocd/applications/rook-ceph/kustomization.yaml')
 
   expect(kustomization.helmCharts).toMatchObject([
-    { name: 'rook-ceph', version: 'v1.20.3' },
+    { name: 'rook-ceph', version: 'v1.20.7' },
     { name: 'ceph-csi-drivers', version: '1.0.4' },
-    { name: 'rook-ceph-cluster', version: 'v1.20.3' },
+    { name: 'rook-ceph-cluster', version: 'v1.20.7' },
   ])
   expect(kustomization.resources).not.toContain('csi-legacy-service-account-bridge.yaml')
 
@@ -109,6 +110,17 @@ test('keeps the Rook v1.20 operator, CSI, and cluster charts aligned', () => {
       },
     },
   })
+
+  const cephClusterPatch = kustomization.patches.find(({ target }) => target.kind === 'CephCluster')
+  expect(cephClusterPatch?.path).toBe('cephcluster-osd-config-rollout.yaml')
+  const cephClusterPatchResource = readYaml<{
+    metadata: { annotations: { 'argocd.argoproj.io/sync-wave': string } }
+  }>('argocd/applications/rook-ceph/cephcluster-osd-config-rollout.yaml')
+  expect(cephClusterPatchResource).toMatchObject({
+    metadata: {
+      annotations: { 'argocd.argoproj.io/sync-wave': '3' },
+    },
+  })
 })
 
 test('preserves the Ceph data plane and live CSI behavior after the v1.20 migration', () => {
@@ -122,6 +134,8 @@ test('preserves the Ceph data plane and live CSI behavior after the v1.20 migrat
     cephImage: { repository: string; tag: string }
     monitoring: { enabled: boolean; createPrometheusRules: boolean }
     cephClusterSpec: {
+      cephConfig: { rgw: { rgw_s3_auth_use_sts: string } }
+      security: { cephx: { daemon: { keyRotationPolicy: string; keyGeneration: number } } }
       upgradeOSDRequiresHealthyPGs: boolean
       csi: { cephfs: { kernelMountOptions: string } }
     }
@@ -143,13 +157,18 @@ test('preserves the Ceph data plane and live CSI behavior after the v1.20 migrat
     }
   }>('argocd/applications/rook-ceph/csi-driver-values.yaml')
 
-  expect(operatorValues.image).toMatchObject({ repository: 'docker.io/rook/ceph', tag: 'v1.20.3' })
+  expect(operatorValues.image).toMatchObject({ repository: 'docker.io/rook/ceph', tag: 'v1.20.7' })
   expect(operatorValues.csi).toEqual({ installCsiOperator: true })
   expect(operatorValues.monitoring?.enabled ?? false).toBe(false)
   expect(operatorValues['ceph-csi-operator']).toBeUndefined()
   expect(clusterValues.cephImage).toMatchObject({
     repository: 'quay.io/ceph/ceph',
-    tag: 'v20.2.3-20260804',
+    tag: 'v20.2.4-20260818',
+  })
+  expect(clusterValues.cephClusterSpec.cephConfig.rgw.rgw_s3_auth_use_sts).toBe('false')
+  expect(clusterValues.cephClusterSpec.security.cephx.daemon).toEqual({
+    keyRotationPolicy: 'KeyGeneration',
+    keyGeneration: 2,
   })
   expect(clusterValues.monitoring).toEqual({ enabled: false, createPrometheusRules: false })
   expect(clusterValues.cephClusterSpec.upgradeOSDRequiresHealthyPGs).toBe(true)
