@@ -180,7 +180,7 @@ spec:
                     pod-security.kubernetes.io/enforce: privileged
                     pod-security.kubernetes.io/audit: privileged
                     pod-security.kubernetes.io/warn: privileged
-                automation: manual
+                automation: auto
                 enabled: "true"
               - name: agents
                 path: argocd/applications/agents

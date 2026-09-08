@@ -43,28 +43,40 @@ version onto a separate PVC from its original snapshot and verify it before any
 controlled consumer cutover. Do not point Redis 7 at files already rewritten by
 Redis 8 or overwrite the original serving PVC to attempt an in-place downgrade.
 
-For an empty namespace, use the checked-in first-phase paths
-`argocd/bootstrap/buzz` and `argocd/bootstrap/jangar`.
-These overlays remove all migration Jobs, snapshots and clone PVCs, and create the
-pinned Redis 7 source version at wave -7, before its clients. They must only be used
-when the serving PVC does not exist; never select them for an existing Redis 8 PVC.
+For an empty namespace, use the checked-in Kustomize components
+`argocd/bootstrap/buzz` and `argocd/bootstrap/jangar`. They remove all migration
+Jobs, snapshots and clone PVCs, and select the pinned Redis 7 source version at
+wave -7, before its clients. Use them only when the corresponding serving PVC
+does not exist; never select Redis 7 for an existing Redis 8 PVC. The serving PVCs
+are `buzz/buzz-redis-buzz-redis-0` and
+`jangar/jangar-openwebui-redis-jangar-openwebui-redis-0`.
 
-Select the bootstrap path in the application's Git-managed ApplicationSet entry
-(`platform.yaml` for Buzz, `product.yaml` for Jangar). Keep its `kargo/buzz` or
-`kargo/jangar` revision and existing promotion ownership. Both the publisher and
-Warehouse include the corresponding ApplicationSet selector and bootstrap directory,
-so either path switch creates a commit-qualified image and matching Freight. Both Applications use manual synchronization, so root reconciliation of a selector
-change cannot run resources from an older Kargo revision. Each Stage invokes its
-existing `argocd-update` only after committing the promoted revision. Wait for the normal
-publisher and Kargo promotion to copy the bootstrap overlay, then for Argo to create
-the source Redis. Verify the PVC is Bound, Redis is Ready, and PING and persistence
-checks pass. Commit the ApplicationSet path back to the parent application directory
-to run the snapshot, restore rehearsal and Redis 8 upgrade above. This two-phase path
-needs no manual deployment or renderer lookup of live cluster state.
+Keep the ApplicationSet source paths, `kargo/buzz` and `kargo/jangar` revisions,
+and synchronization policies unchanged. Bootstrap selection belongs to the
+application Kustomization that Kargo promotes:
+
+1. Verify the serving PVC named above is absent in the new namespace. In
+   `argocd/applications/buzz/kustomization.yaml` or
+   `argocd/applications/jangar/kustomization.yaml`, add a `components` list with
+   `../../bootstrap/buzz` or `../../bootstrap/jangar`, respectively, and commit it.
+2. Wait for the normal publisher, matching Warehouse Freight and Stage promotion.
+   Kargo copies that exact commit and selects the bootstrap component on its
+   delivery branch. Require the source Redis PVC to be Bound, Redis to be Ready,
+   and PING and persistence checks to pass.
+3. Commit removal of that component entry from the same application Kustomization.
+   The next normal publisher and Kargo promotion select the guarded Redis 8
+   migration. Jangar's automatic synchronization can see this change only after
+   Kargo publishes the promoted branch; the root Application never switches paths.
+   Buzz's Stage invokes its existing `argocd-update`.
+
+Both publishers and Warehouses include the application and bootstrap directories.
+Each first-phase or return-phase selection therefore follows the same image,
+Freight, Stage and Argo delivery path as production. No manual deployment, dummy
+commit or live-state renderer lookup is needed.
 
 Remove completed migration Jobs from desired state in a subsequent reviewed cleanup
-while retaining the recorded recovery artifacts. Retire the bootstrap overlays with
-that migration so they cannot later select an obsolete source version.
+while retaining the recorded recovery artifacts. Retire the bootstrap components
+with that migration so they cannot later select an obsolete source version.
 
 Redis documents the supported 7.x to 8 standalone path, saving and copying the
 persistence files, and testing the upgrade before production in its

@@ -58,10 +58,14 @@ for (const [namespace, filename, claim] of [
   test(`${namespace} bootstraps the rehearsal source version before clients without migration gates`, async () => {
     const migration = await resources(namespace, 'redis-upgrade-backup.yaml')
     const overlay = parse(await readFile(join(root, 'argocd/bootstrap', namespace, 'kustomization.yaml'), 'utf8')) as {
-      resources: string[]
+      apiVersion: string
+      kind: string
+      resources?: string[]
       patches: { patch: string }[]
     }
-    expect(overlay.resources).toEqual([`../../applications/${namespace}`])
+    expect(overlay.apiVersion).toBe('kustomize.config.k8s.io/v1alpha1')
+    expect(overlay.kind).toBe('Component')
+    expect(overlay.resources).toBeUndefined()
     const patches = overlay.patches.map(({ patch }) => parse(patch))
     const deleted = patches.filter((patch) => patch.$patch === 'delete') as Resource[]
     const identities = (items: Resource[]) => items.map((item) => `${item.kind}/${item.metadata.name}`).sort()

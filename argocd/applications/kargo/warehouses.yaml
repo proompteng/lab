@@ -550,7 +550,6 @@ spec:
           - nix/oci-push.sh
           - argocd/applications/jangar
           - argocd/bootstrap/jangar
-          - argocd/applicationsets/product.yaml
     - image:
         repoURL: registry.ide-newton.ts.net/lab/jangar
         imageSelectionStrategy: NewestBuild
@@ -958,7 +957,6 @@ spec:
           - .github/workflows/buzz-relay-build-push.yml
           - argocd/applications/buzz
           - argocd/bootstrap/buzz
-          - argocd/applicationsets/platform.yaml
     - image:
         repoURL: registry.ide-newton.ts.net/lab/buzz
         imageSelectionStrategy: NewestBuild

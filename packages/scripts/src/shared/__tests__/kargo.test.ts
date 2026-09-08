@@ -346,7 +346,6 @@ const expected = {
       'nix/oci-push.sh',
       'argocd/applications/jangar',
       'argocd/bootstrap/jangar',
-      'argocd/applicationsets/product.yaml',
     ],
   },
   symphony: {
@@ -501,7 +500,6 @@ const expected = {
       '.github/workflows/buzz-relay-build-push.yml',
       'argocd/applications/buzz',
       'argocd/bootstrap/buzz',
-      'argocd/applicationsets/platform.yaml',
     ],
   },
 } as const
@@ -733,10 +731,10 @@ describe('Kargo direct-push GitOps contract', () => {
     expect(git?.excludePaths).toEqual(excludePaths)
   })
 
-  it('pairs Redis bootstrap and selector changes with the matching publisher and Warehouse', () => {
-    for (const [name, workflowPath, selector] of [
-      ['buzz', '.github/workflows/buzz-relay-build-push.yml', 'platform'],
-      ['jangar', '.github/workflows/jangar-build-push.yaml', 'product'],
+  it('pairs promoted Redis bootstrap selection with the matching publisher and Warehouse', () => {
+    for (const [name, workflowPath] of [
+      ['buzz', '.github/workflows/buzz-relay-build-push.yml'],
+      ['jangar', '.github/workflows/jangar-build-push.yaml'],
     ]) {
       const workflow = YAML.parse(readFileSync(workflowPath, 'utf8'))
       const paths = workflow.on.push.paths.map((path: string) => path.replace(/\/\*\*$/, ''))
@@ -744,9 +742,8 @@ describe('Kargo direct-push GitOps contract', () => {
       const sourcePaths = subscriptions.find((subscription) => subscription.git)?.git?.includePaths
       expect(sourcePaths).toEqual(paths)
       expect(sourcePaths).toContain(`argocd/bootstrap/${name}`)
-      expect(sourcePaths).toContain(`argocd/applicationsets/${selector}.yaml`)
-      // A root selector change must wait for the Stage's promoted revision.
-      expect(applicationSetElements.find((element) => element.name === name)?.automation).toBe('manual')
+      expect(sourcePaths).toContain(`argocd/applications/${name}`)
+      expect(applicationSetElements.find((element) => element.name === name)?.path).toBe(`argocd/applications/${name}`)
     }
   })
 

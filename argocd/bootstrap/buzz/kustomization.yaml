@@ -1,9 +1,7 @@
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
 
-# Empty-namespace first phase only. The normal application path runs the guarded upgrade.
-resources:
-  - ../../applications/buzz
+# Empty-namespace first phase only. Select this component in the promoted application.
 
 patches:
   - patch: |-

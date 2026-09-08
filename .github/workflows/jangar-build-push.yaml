@@ -18,7 +18,6 @@ on:
       - 'nix/oci-push.sh'
       - 'argocd/applications/jangar/**'
       - 'argocd/bootstrap/jangar/**'
-      - 'argocd/applicationsets/product.yaml'
   workflow_dispatch:
 
 concurrency:
