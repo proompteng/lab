@@ -50,7 +50,11 @@ claims, the maintenance sequence is:
    refuse a node already cordoned or owned by another maintenance operation.
 3. Temporarily cordon that node with a unique ownership annotation and an
    atomic resource-version check. Evict the selected Pod through the Kubernetes
-   eviction API with its UID precondition. Preserve PDB enforcement.
+   eviction API with its UID precondition. Preserve PDB enforcement. Cordon is
+   node-wide: other workloads on the node can react, including a CNPG primary
+   switchover. Inventory affected database and operator workloads before
+   execution and verify their replication and health after the operation; the
+   selected Pod's checks do not bound the node-wide impact.
 4. Wait for the old Pod UID to disappear **and** each corresponding RBD device
    to be unmapped on that node. A deleted Pod or detached VolumeAttachment alone
    does not establish that the old kernel client was removed.

@@ -49,6 +49,9 @@ class FakeKubectl:
         terminating_consumer: bool = False,
         uncertain_cordon: bool = False,
         image_from_handle: bool = False,
+        health_sequence: list[dict[str, Any]] | None = None,
+        node_failures: set[int] | None = None,
+        node_not_ready: set[int] | None = None,
     ) -> None:
         self.calls: list[tuple[tuple[str, ...], str | None]] = []
         self.node_reads = 0
@@ -66,6 +69,10 @@ class FakeKubectl:
         self.uncertain_cordon = uncertain_cordon
         self.uncertain_cordon_seen = False
         self.image_from_handle = image_from_handle
+        self.health_sequence = health_sequence or [{"health": {"status": "HEALTH_OK"}}]
+        self.health_reads = 0
+        self.node_failures = node_failures or set()
+        self.node_not_ready = node_not_ready or set()
         self.evicted = False
         self.node_state: dict[str, Any] = {
             "metadata": {"resourceVersion": "10"},
@@ -82,7 +89,12 @@ class FakeKubectl:
         command = args[3:]
         if command[:2] == ("get", "node"):
             self.node_reads += 1
-            return output(copy.deepcopy(self.node_state))
+            if self.node_reads in self.node_failures:
+                return output("", 1, "temporary node read failure")
+            node = copy.deepcopy(self.node_state)
+            if self.node_reads in self.node_not_ready:
+                node["status"]["conditions"] = [{"type": "Ready", "status": "False"}]
+            return output(node)
         if command[:3] == ("get", "pod", "nats-1") and "--all-namespaces" not in command:
             if self.evicted:
                 return output("", 1, 'Error from server (NotFound): pods "nats-1" not found')
@@ -134,7 +146,9 @@ class FakeKubectl:
         if command[:2] == ("exec", "-n") and "ceph fsid" in " ".join(command):
             return output(FSID + "\n")
         if command[:2] == ("exec", "-n") and "ceph status -f json" in " ".join(command):
-            return output({"health": {"status": "HEALTH_OK"}})
+            health = self.health_sequence[min(self.health_reads, len(self.health_sequence) - 1)]
+            self.health_reads += 1
+            return output(health)
         if command[:2] == ("exec", "-n") and "ceph osd perf -f json" in " ".join(command):
             return output(
                 {
@@ -310,6 +324,20 @@ class RemountTests(unittest.TestCase):
             MODULE.Workflow(config(), runner).run()
         self.assertFalse(runner.node_state["spec"]["unschedulable"])
 
+    def test_postcheck_repeats_health_gate_for_unknown_checks_mutes_and_errors(self) -> None:
+        unhealthy = (
+            {"health": {"status": "HEALTH_WARN", "checks": {"NEW_CHECK": {}}}},
+            {"health": {"status": "HEALTH_OK", "mutes": ["AUTH_INSECURE_KEYS_ALLOWED"]}},
+            {"health": {"status": "HEALTH_ERR"}},
+        )
+        for payload in unhealthy:
+            runner = FakeKubectl(health_sequence=[{"health": {"status": "HEALTH_OK"}}, payload])
+            workflow = MODULE.Workflow(config(), runner)
+            with self.assertRaises(MODULE.RemountError):
+                workflow.run()
+            self.assertFalse(runner.node_state["spec"]["unschedulable"])
+            self.assertTrue(any(item["name"] == "failed-after-uncordon" for item in workflow.audit["events"]))
+
     def test_success_allows_cross_node_replacement_and_updates_plugin(self) -> None:
         runner = FakeKubectl()
         workflow = MODULE.Workflow(config(), runner)
@@ -344,6 +372,21 @@ class RemountTests(unittest.TestCase):
         self.assertFalse(runner.node_state["spec"]["unschedulable"])
         self.assertNotIn(MODULE.OWNER_ANNOTATION, runner.node_state["metadata"].get("annotations", {}))
         self.assertTrue(any(item["name"] == "cordon-confirmed-after-error" for item in workflow.audit["events"]))
+
+    def test_cleanup_and_confirmation_node_reads_retry_boundedly(self) -> None:
+        cleanup_runner = FakeKubectl(node_failures={3})
+        self.assertEqual(MODULE.Workflow(config(), cleanup_runner).run()["outcome"], "complete")
+        self.assertGreaterEqual(cleanup_runner.node_reads, 4)
+
+        confirmation_runner = FakeKubectl(uncertain_cordon=True, node_failures={3})
+        self.assertEqual(MODULE.Workflow(config(), confirmation_runner).run()["outcome"], "complete")
+        self.assertGreaterEqual(confirmation_runner.node_reads, 4)
+
+    def test_fresh_cordon_read_requires_node_ready(self) -> None:
+        runner = FakeKubectl(node_not_ready={2})
+        with self.assertRaisesRegex(MODULE.RemountError, "immediately before cordon"):
+            MODULE.Workflow(config(), runner).run()
+        self.assertFalse(any(args[3] in {"patch", "create"} for args, _ in runner.calls))
 
     def test_exact_principal_rejects_dot_thirty(self) -> None:
         runner = FakeKubectl(mapped_principal="csi-rbd-node.30")

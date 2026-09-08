@@ -78,6 +78,7 @@ class CSIPlugin:
 OWNER_ANNOTATION = "storage.proompteng.ai/ceph-remount-owner"
 MAX_OSD_LATENCY_MS = 75
 MAX_NODE_PATCH_ATTEMPTS = 4
+MAX_NODE_READ_ATTEMPTS = 3
 KNOWN_CSI_PRINCIPALS = {"csi-rbd-node", "csi-rbd-node.2", "csi-rbd-node.3"}
 
 
@@ -399,6 +400,20 @@ class Workflow:
     def command(self, args: Sequence[str], input_text: str | None = None) -> str:
         return kubectl(self.c, args, self.runner, input_text)
 
+    def node_json(self, node_name: str, purpose: str) -> Mapping[str, Any]:
+        last_error: RemountError | None = None
+        for attempt in range(1, MAX_NODE_READ_ATTEMPTS + 1):
+            try:
+                node = self.json(["get", "node", node_name, "-n", self.c.ceph_namespace, "-o", "json"])
+                if not isinstance(node, Mapping):
+                    raise RemountError(f"node response is not an object during {purpose}")
+                return node
+            except RemountError as exc:
+                last_error = exc
+                if attempt < MAX_NODE_READ_ATTEMPTS:
+                    self.sleep(min(self.c.poll or 0.1, 5))
+        raise RemountError(f"node read failed during {purpose} after {MAX_NODE_READ_ATTEMPTS} attempts: {last_error}")
+
     def ceph(self, *args: str) -> dict[str, Any]:
         output = self.command(["exec", "-n", self.c.ceph_namespace, "deploy/rook-ceph-tools", "--", *args])
         try:
@@ -606,13 +621,21 @@ class Workflow:
         observed_fsid = self.command(["exec", "-n", self.c.ceph_namespace, "deploy/rook-ceph-tools", "--", "ceph", "fsid"]).strip()
         if observed_fsid != fsid:
             raise RemountError(f"Ceph FSID mismatch: expected {fsid}, observed {observed_fsid}")
+        health_status = self.check_ceph_health("preflight")
+        self.wait_for_quiet_io()
+        self.record("ceph-posture-ready", fsid=fsid, health=health_status, priorKeyCount=actual_prior)
+
+    def check_ceph_health(self, phase: str) -> str:
         health = self.ceph("ceph", "status", "-f", "json")
-        health_status = health.get("health", {}).get("status")
-        checks = set(health.get("health", {}).get("checks") or {})
-        mutes = health.get("health", {}).get("mutes") or []
+        health_data = health.get("health", {})
+        if not isinstance(health_data, Mapping):
+            raise RemountError(f"Ceph health response is malformed during {phase}")
+        health_status = health_data.get("status")
+        checks = set(health_data.get("checks") or {})
+        mutes = health_data.get("mutes") or []
         allowed = APPROVED_HEALTH_WARNINGS | ({"BLUESTORE_SLOW_OP_ALERT"} if self.c.allow_bluestore_alert else set())
         if health_status == "HEALTH_ERR" or health_status not in {"HEALTH_OK", "HEALTH_WARN"} or mutes or checks - allowed:
-            raise RemountError(f"Ceph health is not an approved preflight state: {health_status}")
+            raise RemountError(f"Ceph health is not an approved {phase} state: {health_status}")
         if "BLUESTORE_SLOW_OP_ALERT" in checks:
             if not self.c.allow_bluestore_alert:
                 raise RemountError("BLUESTORE_SLOW_OP_ALERT requires --allow-bluestore-alert")
@@ -620,9 +643,8 @@ class Workflow:
                 "ceph-csi-remount: allowing retained BLUESTORE_SLOW_OP_ALERT; OSD latency and functional gates are required",
                 file=sys.stderr,
             )
-            self.record("ceph-health-warning", check="BLUESTORE_SLOW_OP_ALERT", acknowledged=True)
-        self.wait_for_quiet_io()
-        self.record("ceph-posture-ready", fsid=fsid, health=health_status, priorKeyCount=actual_prior)
+            self.record("ceph-health-warning", check="BLUESTORE_SLOW_OP_ALERT", acknowledged=True, phase=phase)
+        return str(health_status)
 
     def check_osd_latency(self, perf: Mapping[str, Any]) -> None:
         entries = perf.get("osdstats", {}).get("osd_perf_infos", [])
@@ -712,7 +734,7 @@ class Workflow:
         self.record("cordon-start")
         last_error: RemountError | None = None
         for attempt in range(1, MAX_NODE_PATCH_ATTEMPTS + 1):
-            node = self.json(["get", "node", node_name, "-n", self.c.ceph_namespace, "-o", "json"])
+            node = self.node_json(node_name, "cordon")
             if not isinstance(node, Mapping):
                 raise RemountError("node response is not an object while cordoning")
             metadata = node.get("metadata", {})
@@ -729,6 +751,8 @@ class Workflow:
                 raise RemountError("node has no resourceVersion while cordoning")
             if bool(spec.get("unschedulable", False)):
                 raise RemountError("target node became cordoned before this operation")
+            if not node_ready(node):
+                raise RemountError(f"target node {node_name} is not Ready immediately before cordon")
             existing_owner = annotations.get(OWNER_ANNOTATION)
             if existing_owner:
                 raise RemountError("target node already has a remount owner")
@@ -780,7 +804,7 @@ class Workflow:
             finally:
                 if patch_started and not self.cordoned:
                     try:
-                        observed = self.json(["get", "node", node_name, "-n", self.c.ceph_namespace, "-o", "json"])
+                        observed = self.node_json(node_name, "cordon confirmation")
                         observed_meta = observed.get("metadata", {}) if isinstance(observed, Mapping) else {}
                         observed_spec = observed.get("spec", {}) if isinstance(observed, Mapping) else {}
                         observed_annotations = observed_meta.get("annotations", {}) if isinstance(observed_meta, Mapping) else {}
@@ -856,7 +880,7 @@ class Workflow:
         _, _, node_name, _, _ = self.target()
         last_error: RemountError | None = None
         for attempt in range(1, MAX_NODE_PATCH_ATTEMPTS + 1):
-            node = self.json(["get", "node", node_name, "-n", self.c.ceph_namespace, "-o", "json"])
+            node = self.node_json(node_name, "uncordon")
             if not isinstance(node, Mapping):
                 raise RemountError("node response is not an object while uncordoning")
             metadata = node.get("metadata", {})
@@ -912,7 +936,7 @@ class Workflow:
                 return
             except RemountError as exc:
                 patch_error = exc
-            observed = self.json(["get", "node", node_name, "-n", self.c.ceph_namespace, "-o", "json"])
+            observed = self.node_json(node_name, "uncordon confirmation")
             observed_meta = observed.get("metadata", {}) if isinstance(observed, Mapping) else {}
             observed_spec = observed.get("spec", {}) if isinstance(observed, Mapping) else {}
             observed_annotations = observed_meta.get("annotations", {}) if isinstance(observed_meta, Mapping) else {}
@@ -966,6 +990,7 @@ class Workflow:
             raise RemountError("PVC/PV identity or RBD image changed during remount")
         self.record("rbd-claims-stable", claims=sorted(self.claim_set), images=sorted(volume.image for volume in post_volumes))
         self.wait_for_quiet_io()
+        self.check_ceph_health("postcheck")
         self.functional_checks("postcheck")
         self.record("ceph-postcheck", osds="6/6/6", quorum=3, pg="active+clean")
 
