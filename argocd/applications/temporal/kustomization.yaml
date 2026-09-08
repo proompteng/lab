@@ -2,6 +2,8 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
+  - preparation/cassandra-quiesce.yaml
+  - preparation/cassandra-rf3.yaml
   - load-balancer.yaml
   - load-balancer-frontend.yaml
   - ingressroute-temporal-k8s-private.yaml
@@ -124,7 +126,7 @@ helmCharts:
                   keyspace: temporal
                   user: user
                   password: password
-                  replicationFactor: 1
+                  replicationFactor: 3
                   consistency:
                     default:
                       consistency: local_quorum
