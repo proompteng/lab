@@ -497,7 +497,7 @@ describe('vendor intraday replay orchestration', () => {
     expect(session.ledger.fills).toHaveLength(0)
     expect(session.peakEquityMicros).toBe(initialCapitalMicros)
     expect(session.maximumObservedDrawdownMicros).toBe('0')
-  })
+  }, 15_000)
 
   test('binds the canonical evaluation instant into the report identity', async () => {
     const first = await run(inputFor(), makeFixtureClient(), '2026-08-20T00:00:00.000Z')

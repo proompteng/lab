@@ -797,7 +797,6 @@ const makeExactReconciliationServices = () => {
     AuthorityGenerationStoreShape &
     AuthorityRestrictionStoreShape
   const writerFence: WriterFenceService = {
-    backendPid: 1,
     check: Effect.void,
     transaction: (effect) => effect,
   }
@@ -1075,7 +1074,6 @@ const prepareStoredExecutionStep = async (
     restrictAuthority: (reason, updatedAt) => Effect.sync(() => onRestriction(reason, updatedAt)),
   }
   const writerFence: WriterFenceService = {
-    backendPid: 1,
     check: Effect.void,
     transaction: (effect) => effect,
   }
@@ -2441,7 +2439,6 @@ describe('OBSERVE runtime composition', () => {
         }),
     }
     const writerFence: WriterFenceService = {
-      backendPid: 1,
       check: unused,
       transaction: (effect) => effect,
     }
@@ -2526,7 +2523,6 @@ describe('OBSERVE runtime composition', () => {
         Effect.die(new Error('pre-commit expiry must not restrict authority before cycle block')),
     }
     const writerFence: WriterFenceService = {
-      backendPid: 1,
       check: Effect.die(new Error('pre-commit expiry must not enter the writer fence')),
       transaction: () => Effect.die(new Error('pre-commit expiry must not open a writer-fenced transaction')),
     }
@@ -4192,7 +4188,6 @@ describe('OBSERVE runtime composition', () => {
       }),
     }
     const writerFence: WriterFenceService = {
-      backendPid: 1,
       check: unused,
       transaction: (effect) => effect,
     }
@@ -4399,7 +4394,6 @@ describe('OBSERVE runtime composition', () => {
             AuthorityGenerationStoreShape &
             AuthorityRestrictionStoreShape
           const writerFence: WriterFenceService = {
-            backendPid: 1,
             check: Effect.void,
             transaction: (effect) =>
               Effect.sync(() => {

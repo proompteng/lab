@@ -84,7 +84,7 @@ jobs:
           set -e
           if ((inspect_status == 0)); then
             test "sha256:$(sha256sum existing-target.json | cut -d ' ' -f1)" = "$SOURCE_INDEX_DIGEST"
-          elif grep -Eiq 'manifest unknown|name unknown|status code: 404|404 Not Found' existing-target.error; then
+          elif grep -Eiq 'manifest unknown|name unknown|status code: 404|404 Not Found|(^|:)[[:space:]]*not found[[:space:]]*$' existing-target.error; then
             rm -f existing-target.json existing-target.error
           else
             cat existing-target.error >&2

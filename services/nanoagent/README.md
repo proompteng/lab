@@ -63,7 +63,12 @@ a shared `OPENAI_API_KEY`.
 ## Firecracker rootfs and persistent tools
 
 Kata's Firecracker snapshotter extracts the guest OCI image into a 512 MiB blockfile. The Dockerfile therefore enforces
-a 480 MiB uncompressed-rootfs ceiling. The image contains a minimal Ubuntu 24.04 shell environment, Nanoagent, and a
+a real 512 MiB ext4 population and filesystem check, with at least 16 MiB and 256 inodes left for extraction overhead.
+Regenerable Python bytecode caches and packaged documentation are omitted from the rootfs; Python source, libraries,
+executables, and copyright files remain. Native image checks exercise Python SSL, SQLite, JSON, and virtual environments.
+The check runs in a separate build stage and copies only its receipt into the image. Packaged manuals, translated
+messages, and documentation other than copyright notices are omitted to keep the guest within that limit.
+The image contains a minimal Ubuntu 24.04 shell environment, Nanoagent, and a
 compressed multi-architecture bundle for the pinned Node 24.11.1, Bun 1.4.0, uv 0.11.14, Go 1.25.5, Rust/Cargo
 1.90.0, and native GCC 13.3.0 guest toolchain. Ubuntu's system `bubblewrap` package satisfies Codex's Linux sandbox
 prerequisite instead of showing a bundled-helper fallback warning after device login.
@@ -99,6 +104,9 @@ The owner-scoped browser-to-guest flow, replay behavior, and live acceptance pro
 cd services/nanoagent
 bash -n bootstrap-codex.sh
 bash -n bootstrap-toolchain.sh
+bash -n validate-rootfs.sh validate-rootfs.test.sh
+# On Linux with e2fsprogs and at least 1 GiB of temporary disk space:
+bash validate-rootfs.test.sh
 bash bootstrap-codex.sh --validate-manifest
 gofmt -w *.go
 go vet ./...
@@ -121,3 +129,27 @@ The Nanoagent workflow runs the focused Go validation. Tengri's image workflow t
 `registry.ide-newton.ts.net/lab/nanoagent` by immutable digest. CI publishes matching `kargo-sha-<source>` tags for the
 controller and guest; the automatic Tengri Warehouse and Stage promote only the matched pair and pin both digests on
 `kargo/tengri` for Argo reconciliation.
+
+## VS Code workbench
+
+Authenticated `POST /v1/editor` starts code-server on demand. `bootstrap-code-server.sh` pins version 4.135.0 and verifies
+platform-specific SHA-256 digests before installing into `$HOME/.tengri/code-server`. The large upstream payload stays
+on the persistent home volume, outside Firecracker's 512 MiB rootfs. Each image build verifies the native Linux archive;
+first use requires HTTPS access to GitHub release assets. An unavailable download fails visibly and can be retried.
+
+`CODE_SERVER_BINARY` and `CODE_SERVER_BOOTSTRAP_COMMAND` select the executable and installer. The supervisor starts one
+process group per guest with sanitized credentials, a private Unix socket, persistent user settings and extensions under
+`$HOME/.tengri/vscode`, and logs at `server.log`. Port 13337 is a virtual preview route to that socket. Port 13338 binds
+only loopback for the bundled desktop extension. Both preview routes and native VS Code port forwarding reject reserved
+guest ports (8080, 13337, 13338); other application ports retain native forwarding. Shutdown kills the editor process
+group and closes bridge connections. The desktop uses the existing authenticated preview gateway; code-server's own
+password login is disabled behind that boundary.
+
+Initial settings use Dark Modern, explicit saves, native hot-exit backups, and guest execution for TypeScript language
+features. The upstream `remote.extensionKind` override includes `-web` to exclude the browser host, whose TypeScript
+bundle is absent from the standalone release. Existing user settings are preserved. Workspace trust remains enabled.
+The upstream optional `vsda` browser assets are absent from this open-source distribution; their 404s do not disable the
+workbench. Acceptance tests exercise TypeScript diagnostics to detect actual language-extension failures.
+
+See [the desktop acceptance runner](../../apps/landing/README.md#vs-code-in-the-desktop). Existing running guests built
+before this API must be slept and resumed onto the current image; the editor reports that requirement explicitly.
