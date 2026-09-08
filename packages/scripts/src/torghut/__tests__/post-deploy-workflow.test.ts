@@ -100,18 +100,25 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow.indexOf('          for removal_attempt in $(seq 1 18); do')).toBeGreaterThan(
       workflow.indexOf('for app in torghut; do'),
     )
-    expect(removalCheck).toContain('kubectl get deployment/torghut-scheduler service/torghut-scheduler')
+    expect(removalCheck).toContain('kubectl get deployment/torghut-scheduler')
+    expect(removalCheck).toContain('kubectl get application torghut -n argocd -o json')
+    expect(removalCheck).not.toContain('service/torghut-scheduler')
     expect(removalCheck).toContain('--ignore-not-found -o name')
     expect(removalCheck).toContain('app.kubernetes.io/name=torghut,app.kubernetes.io/component=trading-scheduler')
     expect(removalCheck).toContain("TORGHUT_SCHEDULER_REPLICAS='0'")
   })
 
-  for (const [name, resources, pods, exitCode, succeeds] of [
-    ['all scheduler resources absent', '', '', 0, true],
-    ['scaled-down Deployment still exists', 'deployment.apps/torghut-scheduler', '', 0, false],
-    ['orphaned Service still exists', 'service/torghut-scheduler', '', 0, false],
-    ['scheduler pod still terminating', '', 'pod/torghut-scheduler-old', 0, false],
-    ['cluster access denied', '', '', 1, false],
+  const emptyInventory = { status: { resources: [] } }
+  const trackedService = {
+    status: { resources: [{ kind: 'Service', namespace: 'torghut', name: 'torghut-scheduler' }] },
+  }
+  for (const [name, resources, pods, inventory, exitCode, succeeds] of [
+    ['all scheduler resources absent', '', '', emptyInventory, 0, true],
+    ['scaled-down Deployment still exists', 'deployment.apps/torghut-scheduler', '', emptyInventory, 0, false],
+    ['Argo still tracks the Service', '', '', trackedService, 0, false],
+    ['scheduler pod still terminating', '', 'pod/torghut-scheduler-old', emptyInventory, 0, false],
+    ['Argo inventory is missing', '', '', {}, 0, false],
+    ['cluster access denied', '', '', emptyInventory, 1, false],
   ] as const) {
     it(`checks scheduler removal when ${name}`, () => {
       const result = Bun.spawnSync(
@@ -127,16 +134,28 @@ describe('torghut post-deploy verifier workflow', () => {
             case "$2" in
               deployment/torghut-scheduler) printf '%s' "$TEST_RESOURCES" ;;
               pods) printf '%s' "$TEST_PODS" ;;
+              application) printf '%s' "$TEST_INVENTORY" ;;
               *) return 99 ;;
             esac
           }
           ${removalCheck}
         `,
         ],
-        { env: { ...process.env, TEST_RESOURCES: resources, TEST_PODS: pods, TEST_EXIT_CODE: String(exitCode) } },
+        {
+          env: {
+            ...process.env,
+            TEST_RESOURCES: resources,
+            TEST_PODS: pods,
+            TEST_INVENTORY: JSON.stringify(inventory),
+            TEST_EXIT_CODE: String(exitCode),
+          },
+        },
       )
       expect(result.exitCode === 0).toBe(succeeds)
-      if (succeeds) expect(result.stdout.toString()).toContain('Deployment, Service, and pods are absent')
+      if (succeeds)
+        expect(result.stdout.toString()).toContain(
+          'Deployment and pods are absent; Service is absent from Argo inventory',
+        )
     })
   }
 

@@ -203,18 +203,30 @@ jobs:
 
           for removal_attempt in $(seq 1 18); do
             SCHEDULER_RESOURCES="$(
-              kubectl get deployment/torghut-scheduler service/torghut-scheduler \
+              kubectl get deployment/torghut-scheduler \
                 -n torghut --ignore-not-found -o name
+            )"
+            SCHEDULER_SERVICE="$(
+              kubectl get application torghut -n argocd -o json |
+                jq -r '
+                  .status.resources
+                  | if type != "array" then error("Argo resource inventory is unavailable")
+                    else .[]
+                      | select((.group // "") == "" and .kind == "Service"
+                        and .namespace == "torghut" and .name == "torghut-scheduler")
+                      | .name
+                    end
+                '
             )"
             SCHEDULER_PODS="$(
               kubectl get pods -n torghut \
                 -l app.kubernetes.io/name=torghut,app.kubernetes.io/component=trading-scheduler -o name
             )"
-            if [ -z "${SCHEDULER_RESOURCES}" ] && [ -z "${SCHEDULER_PODS}" ]; then
+            if [ -z "${SCHEDULER_RESOURCES}" ] && [ -z "${SCHEDULER_SERVICE}" ] && [ -z "${SCHEDULER_PODS}" ]; then
               break
             fi
             if [ "${removal_attempt}" -eq 18 ]; then
-              echo "Torghut scheduler removal is incomplete: ${SCHEDULER_RESOURCES} ${SCHEDULER_PODS}"
+              echo "Torghut scheduler removal is incomplete: ${SCHEDULER_RESOURCES} ${SCHEDULER_SERVICE} ${SCHEDULER_PODS}"
               exit 1
             fi
             echo "Waiting for scheduler resources and pods to finish terminating"
@@ -222,7 +234,7 @@ jobs:
           done
           # Zero writers selects the existing API containment evidence contract.
           TORGHUT_SCHEDULER_REPLICAS='0'
-          echo "Torghut scheduler Deployment, Service, and pods are absent"
+          echo "Torghut scheduler Deployment and pods are absent; Service is absent from Argo inventory"
 
           if ! TORGHUT_SIM_TRADING_ENABLED="$(
             kubectl get ksvc torghut-sim -n torghut -o json |

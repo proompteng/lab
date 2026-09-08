@@ -15,9 +15,10 @@ unavailable. The API does not start a replacement trading or reconciliation loop
 
 `scheduler-deployment.yaml` and `scheduler-service.yaml` remain inactive source files because release tooling and
 Kargo maintain their image metadata. They are deliberately absent from `kustomization.yaml`; updating those files
-cannot recreate the scheduler. The post-deploy verifier requires the Deployment, Service, and scheduler pods to be
-absent before checking API containment and TA health. Scheduler alerts already require a positive desired replica
-count, so removal does not require disabling alert rules.
+cannot recreate the scheduler. After Argo converges, the post-deploy verifier requires the Deployment and scheduler
+pods to be absent and the Service to be absent from Argo's resource inventory. It uses the runner's existing read
+permissions, then checks API containment and TA health. The rollout operator also confirms Service absence directly.
+Scheduler alerts already require a positive desired replica count, so removal does not require disabling alert rules.
 
 The normal rollout is a main merge, Kargo promotion, then Argo pruning. To restore the scheduler, review a separate
 GitOps change that adds both resources and restores the active single-writer post-deploy checks. Check the retained
