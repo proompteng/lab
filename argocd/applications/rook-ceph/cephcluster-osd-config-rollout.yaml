@@ -2,6 +2,10 @@ apiVersion: ceph.rook.io/v1
 kind: CephCluster
 metadata:
   name: rook-ceph
+  annotations:
+    # Apply the data-plane image change after the v1.20.7 operator and CSI
+    # resources are healthy. Rook then performs its own daemon-by-daemon gate.
+    argocd.argoproj.io/sync-wave: "3"
 spec:
   annotations:
     osd:

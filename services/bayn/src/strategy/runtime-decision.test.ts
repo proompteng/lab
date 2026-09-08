@@ -99,7 +99,103 @@ const legacyDecisions = [
       },
     ],
   },
+  {
+    schemaVersion: 'bayn.intraday-momentum.target.v2',
+    strategy: 'intraday-momentum',
+    sessionDate: '2026-07-22',
+    snapshotId: hash('6'),
+    observedAt,
+    calendarHash: hash('7'),
+    benchmark: {
+      symbol: 'SPY',
+      referencePriceMicros: '100000000',
+      bidPriceMicros: '100000000',
+      askPriceMicros: '100100000',
+      bidSizeMicros: '1000000',
+      askSizeMicros: '1000000',
+      quoteObservedAt: observedAt,
+    },
+    selectedSymbols: [],
+    targetWeights: { AMD: 0 },
+    signals: [
+      {
+        symbol: 'AMD',
+        referencePriceMicros: '100000000',
+        rangeHighPriceMicros: '101000000',
+        rangeLowPriceMicros: '99000000',
+        bidPriceMicros: '100000000',
+        askPriceMicros: '100100000',
+        bidSizeMicros: '1000000',
+        askSizeMicros: '1000000',
+        quoteObservedAt: observedAt,
+        confirmationTradePriceMicros: '100000000',
+        confirmationTradeObservedAt: observedAt,
+        excessReturnNumerator: '0',
+        excessReturnDenominator: '1',
+        lookbackReturnBps: 0,
+        benchmarkReturnBps: 0,
+        excessReturnBps: 0,
+        breakoutBps: -100,
+        rangeLocationPpm: 500_000,
+        spreadBps: 10,
+        eligible: false,
+        rejectionReasons: ['lookback-return'],
+        rank: null,
+      },
+    ],
+  },
 ] as const
+
+const validIndependentDecision = {
+  schemaVersion: 'bayn.intraday-momentum.target.v3',
+  strategy: 'intraday-momentum',
+  sessionDate: '2026-07-22',
+  snapshotId: hash('8'),
+  observedAt,
+  calendarHash: hash('9'),
+  benchmark: {
+    symbol: 'SPY',
+    referencePriceMicros: '100000000',
+    bidPriceMicros: '100000000',
+    askPriceMicros: '100100000',
+    bidSizeMicros: '1000000',
+    askSizeMicros: '1000000',
+    quoteObservedAt: observedAt,
+  },
+  selectedSymbols: [],
+  targetWeights: { AAPL: 0, AMZN: 0, IWM: 0, NVDA: 0, QQQ: 0, SMH: 0 },
+  signals: [
+    {
+      symbol: 'AAPL',
+      referencePriceMicros: '100000000',
+      rangeHighPriceMicros: '101000000',
+      rangeLowPriceMicros: '99000000',
+      bidPriceMicros: '100000000',
+      askPriceMicros: '100100000',
+      bidSizeMicros: '1000000',
+      askSizeMicros: '1000000',
+      quoteObservedAt: observedAt,
+      confirmationTradePriceMicros: '100000000',
+      confirmationTradeObservedAt: observedAt,
+      excessReturnNumerator: '0',
+      excessReturnDenominator: '1',
+      lookbackReturnBps: 0,
+      benchmarkReturnBps: 0,
+      excessReturnBps: 0,
+      breakoutBps: -100,
+      rangeLocationPpm: 500_000,
+      spreadBps: 10,
+      eligible: false,
+      rejectionReasons: ['lookback-return'],
+      rank: null,
+    },
+  ],
+  excludedCandidates: ['AMZN', 'IWM', 'NVDA', 'QQQ', 'SMH'].map((symbol) => ({
+    symbol,
+    reason: 'not-ready',
+    message: 'candidate unavailable',
+  })),
+} as const
 
 describe('strategy decision persistence boundary', () => {
   test('decodes immutable legacy evidence without making it executable', () => {
@@ -110,5 +206,26 @@ describe('strategy decision persistence boundary', () => {
       expect(Result.isSuccess(decodePersisted(decision))).toBeTrue()
       expect(Result.isFailure(decodeRuntime(decision))).toBeTrue()
     }
+  })
+
+  test('rejects exclusion and weight tampering in an independent target', () => {
+    const decodeRuntime = Schema.decodeUnknownResult(RuntimeStrategyDecisionSchema, strictParseOptions)
+    expect(Result.isSuccess(decodeRuntime(validIndependentDecision))).toBeTrue()
+    expect(
+      Result.isFailure(
+        decodeRuntime({
+          ...validIndependentDecision,
+          targetWeights: { ...validIndependentDecision.targetWeights, SMH: undefined },
+        }),
+      ),
+    ).toBeTrue()
+    expect(
+      Result.isFailure(
+        decodeRuntime({
+          ...validIndependentDecision,
+          targetWeights: { ...validIndependentDecision.targetWeights, SMH: 0.1 },
+        }),
+      ),
+    ).toBeTrue()
   })
 })

@@ -1,14 +1,30 @@
 kind: Cluster
 name: galactic
 kubernetes:
-  version: v1.36.4
+  version: v1.37.0
 talos:
-  version: v1.13.9
+  version: v1.14.0
 features:
   backupConfiguration:
     interval: 24h
 patches:
   - file: image-factory-registry.yaml
+  - idOverride: 25-galactic-split-dns
+    annotations:
+      name: Resolve public and tailnet names through NUC DNS
+    inline: |
+      apiVersion: v1alpha1
+      kind: ResolverConfig
+      nameservers:
+        - address: 100.100.244.148
+  - idOverride: 20-galactic-podcidr-23
+    annotations:
+      name: Allocate /23 IPv4 PodCIDRs to new Nodes
+    inline: |
+      cluster:
+        controllerManager:
+          extraArgs:
+            node-cidr-mask-size-ipv4: "23"
 ---
 kind: ControlPlane
 machines:
@@ -28,6 +44,8 @@ upgradeStrategy:
 ---
 kind: Machine
 name: 12345678-9abc-deff-1234-56789abcdeff
+install:
+  diskSelector: disk.serial == "2441E98EAAFB"
 systemExtensions:
   - siderolabs/nvidia-open-gpu-kernel-modules-lts
   - siderolabs/nvidia-container-toolkit-lts
@@ -142,11 +160,11 @@ patches:
 
               [plugins."io.containerd.cri.v1.images".pinned_images]
                 sandbox = "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a"
-            op: overwrite
+            op: create
             path: "/etc/cri/conf.d/20-customization.part"
             permissions: 420
         install:
-          disk: /dev/nvme0n1
+          wipe: false
         kernel:
           modules:
             - name: nvidia
@@ -165,10 +183,6 @@ patches:
           interfaces:
             - interface: enP5p1s0
               mtu: 1500
-          nameservers:
-            - 100.100.100.100
-            - 1.1.1.1
-            - 8.8.8.8
         nodeLabels:
           platform.proompteng.ai/altra-gpu-container-ready: "true"
         time:
@@ -199,6 +213,8 @@ patches:
 ---
 kind: Machine
 name: 8bf7ec00-171c-11f1-8000-7cc255f16774
+install:
+  diskSelector: disk.serial == "13CBMEK6HEW8CN2X9AKW"
 systemExtensions:
   - siderolabs/nvidia-open-gpu-kernel-modules-lts
   - siderolabs/nvidia-container-toolkit-lts
@@ -296,11 +312,10 @@ patches:
 
             [plugins."io.containerd.cri.v1.images".pinned_images]
               sandbox = "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a"
-          op: overwrite
+          op: create
           path: "/etc/cri/conf.d/20-customization.part"
           permissions: 420
         install:
-          disk: "/dev/disk/by-id/nvme-ORICO_13CBMEK6HEW8CN2X9AKW"
           wipe: false
         kernel:
           modules:
@@ -316,11 +331,6 @@ patches:
           nodeIP:
             validSubnets:
             - 100.100.244.128/25
-        network:
-          nameservers:
-          - 100.100.100.100
-          - 1.1.1.1
-          - 8.8.8.8
         time:
           servers:
           - time.cloudflare.com
@@ -334,6 +344,8 @@ patches:
 ---
 kind: Machine
 name: ff115a00-c307-11f0-a28f-648eab3e4100
+install:
+  diskSelector: disk.serial == "50026B73844BB6D7"
 systemExtensions:
   - siderolabs/amdgpu
   - siderolabs/amd-ucode
@@ -458,11 +470,10 @@ patches:
 
             [plugins."io.containerd.cri.v1.images".pinned_images]
               sandbox = "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a"
-          op: overwrite
+          op: create
           path: "/etc/cri/conf.d/20-customization.part"
           permissions: 420
         install:
-          disk: "/dev/nvme0n1"
           grubUseUKICmdline: false
         kubelet:
           disableManifestsDirectory: false
@@ -484,10 +495,6 @@ patches:
             - gateway: 100.100.244.129
               metric: 1024
               network: 0.0.0.0/0
-          nameservers:
-          - 100.100.100.100
-          - 1.1.1.1
-          - 8.8.8.8
         nodeLabels:
           kata-deploy: disabled
           kubevirt.io/schedulable: 'true'

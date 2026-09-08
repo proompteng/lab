@@ -1,9 +1,8 @@
 # Hermes production
 
-Hermes is the planned production runtime for the Tuslagch assistant. The initial GitOps state exposes only the authenticated
-cluster-local API. Keep the manual application unsynced until the live NetworkPolicy enforcement probe passes. Discord
-remains disabled until migration and API canary gates pass; the cutover is a separate reviewed change so Hermes and OpenClaw
-never use the Discord token concurrently.
+Hermes is the production runtime for the Tuslagch assistant. GitOps exposes its authenticated API through the cluster-local
+Service and a private Tailscale Ingress; neither path bypasses bearer authentication. Keep the manual application unsynced
+until the live NetworkPolicy enforcement probe passes. Hermes and OpenClaw must never use the Discord token concurrently.
 
 ## Release and supply chain
 
@@ -68,7 +67,8 @@ validating a rollout.
   sources it while capturing each terminal session, so model-authored terminals retain repository-pinned Node `24.11.1`
   and bare `gh` and `kubectl` resolve consistently from API and Discord terminals.
 - API key rotation requires a bounded Secret refresh, gateway Pod restart, and old-key rejection/new-key acceptance proof.
-- The API is cluster-local and requires bearer authentication for model requests and detailed health.
+- The API is available through the cluster-local Service and the private tailnet URL
+  `https://hermes.ide-newton.ts.net`; both require bearer authentication for model requests and detailed health.
 - Native Exa-backed `web_search` and `web_extract` are enabled for CLI, authenticated API, and Discord sessions. The
   authenticated Exa MCP server is restricted to its read-only `web_search_exa` and `web_fetch_exa` tools. Plugins,
   delegation, cron, hooks, and speech-to-text remain disabled; manual approvals and unconditional deny rules remain
@@ -79,6 +79,23 @@ validating a rollout.
   operations use the sealed `tuslagch` identity. Clean `main` checkouts fast-forward on restart; dirty worktrees and non-main
   branches are preserved. Both the gateway's documented `terminal.cwd` and the container working directory point at this
   repository root.
+
+## Private tailnet API
+
+The `hermes-tailscale` layer-7 Ingress exposes the gateway only to authorized tailnet clients. The Tailscale operator
+terminates TLS for `https://hermes.ide-newton.ts.net` and forwards HTTP to the cluster-internal `hermes` Service on named
+port `api` / `8642`. It does not enable Funnel or create a public Ingress. The gateway's existing bearer authentication
+remains mandatory after Tailscale has authorized network access.
+
+- Canonical URL: `https://hermes.ide-newton.ts.net`
+- MagicDNS hostname: `hermes`
+- Kubernetes Ingress: `hermes-tailscale`
+- Backend: `hermes.hermes.svc.cluster.local:8642`
+
+The gateway NetworkPolicy admits port `8642` only from the exact operator-managed proxy labeled for
+`hermes/hermes-tailscale` and from existing same-namespace callers. Ordinary Pods in other namespaces remain denied.
+Use the fully qualified URL so TLS validates against the tailnet certificate; an unauthenticated request to
+`/health/detailed` must return `401`.
 
 ## State and recovery
 

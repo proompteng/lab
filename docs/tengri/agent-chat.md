@@ -20,8 +20,9 @@ signed GitHub subject and the server-owned `MicroVM` owner hash.
 ## User flow
 
 1. Chrome opens its first tab at `tengri://agent` and renders the agent chat for the active microVM.
-2. The BFF reads the guest's Codex account state. If the user is not authenticated, the UI starts a ChatGPT device-code
-   login. The code and verification URL are short-lived and can be restarted without remounting the desktop.
+2. The BFF reads the guest's Codex account state. If the user is not authenticated, it also reads any active
+   ChatGPT device-code login from Nanoagent. A browser reconnect keeps the same code and original expiry; only an
+   explicit restart invalidates that attempt.
 3. Nanoagent persists the resulting Codex login under the PVC-backed user home. Tengri does not inject or share an
    `OPENAI_API_KEY`.
 4. The first message creates a thread. Later messages resume the browser's persisted thread ID, and **New
@@ -36,17 +37,18 @@ The chat, Finder, Code, Terminal, and preview tabs all operate on the same guest
 
 The public browser surface uses strict action schemas rather than exposing arbitrary app-server calls:
 
-| Browser action     | Internal gRPC          | Guest app-server operation          |
-| ------------------ | ---------------------- | ----------------------------------- |
-| `codex-account`    | `GetCodexAccount`      | `account/read`                      |
-| `codex-login`      | `StartCodexLogin`      | `account/login/start`               |
-| `create-thread`    | `CreateCodexThread`    | `thread/start`                      |
-| `resume-thread`    | `ResumeCodexThread`    | `thread/resume`                     |
-| `send-turn`        | `SendCodexTurn`        | `turn/start`                        |
-| `steer-turn`       | `SteerCodexTurn`       | `turn/steer`                        |
-| `interrupt-turn`   | `InterruptCodexTurn`   | `turn/interrupt`                    |
-| `resolve-approval` | `ResolveCodexApproval` | pending server-request response     |
-| event stream       | `WatchCodexEvents`     | replayable app-server notifications |
+| Browser action       | Internal gRPC          | Guest app-server operation          |
+| -------------------- | ---------------------- | ----------------------------------- |
+| `codex-account`      | `GetCodexAccount`      | `account/read`                      |
+| `codex-login-status` | `GetCodexLogin`        | Nanoagent active-login snapshot     |
+| `codex-login`        | `StartCodexLogin`      | `account/login/start`               |
+| `create-thread`      | `CreateCodexThread`    | `thread/start`                      |
+| `resume-thread`      | `ResumeCodexThread`    | `thread/resume`                     |
+| `send-turn`          | `SendCodexTurn`        | `turn/start`                        |
+| `steer-turn`         | `SteerCodexTurn`       | `turn/steer`                        |
+| `interrupt-turn`     | `InterruptCodexTurn`   | `turn/interrupt`                    |
+| `resolve-approval`   | `ResolveCodexApproval` | pending server-request response     |
+| event stream         | `WatchCodexEvents`     | replayable app-server notifications |
 
 Caller-supplied IDs and prompts are bounded and validated at the BFF and control-plane boundaries. The controller waits
 for truthful guest readiness before forwarding an operation, so a sleeping agent resumes before the request continues.
@@ -65,8 +67,14 @@ for truthful guest readiness before forwarding an operation, so a sleeping agent
 - A resolved approval removes the matching pending approval card. The UI presents only the decisions advertised by the
   request, including command-policy and network-policy amendments when supplied.
 - A failed turn renders the app-server failure text as an error before clearing active-turn controls.
+- A missing saved conversation returns HTTP 404 with `code: conversation_not_found`, rather than a control-plane
+  outage. The desktop keeps the saved thread ID during retries and offers **Start a new conversation** beside the
+  error. Only that explicit action clears the browser's selection; the next message creates a thread in the same
+  guest workspace. Temporary failures remain retryable without replacing the conversation or resetting the agent.
 - Account refreshes and login-completion events are tied to the current device-login attempt so stale responses cannot
   overwrite a newer login.
+- A reconnecting browser restores the active device-login snapshot from the same app-server generation. Nanoagent
+  rejects a stale snapshot after the app server restarts, and Tengri preserves the attempt's original expiry.
 - The UI caps retained events and rendered text. It does not render remote Markdown images or raw unbounded app-server
   payloads.
 

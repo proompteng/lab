@@ -31,6 +31,7 @@ _SAFE_DEFAULT_CHECKS = ["risk_engine", "order_firewall", "execution_policy"]
 _DSPY_OPENAI_BASE_PATH = "/openai/v1"
 _DSPY_OPENAI_CHAT_COMPLETION_SUFFIX = "/chat/completions"
 _DSPY_TEMPERATURE_ONE_MODEL_PREFIXES = ("gpt-5",)
+_DSPY_TEMPERATURE_UNSUPPORTED_MODEL_PREFIXES = ("gpt-6",)
 
 
 class DSPyCommitteeProgram(Protocol):
@@ -161,9 +162,14 @@ class LiveDSPyCommitteeProgram:
 
         lm_kwargs: dict[str, Any] = {
             "model": normalized_model,
-            "temperature": _resolve_dspy_temperature(normalized_model),
             "max_tokens": 900,
         }
+        if _dspy_temperature_is_unsupported(normalized_model):
+            # GPT-6 rejects temperature. LiteLLM drops an explicit None before
+            # serializing the OpenAI-compatible request.
+            lm_kwargs["temperature"] = None
+        else:
+            lm_kwargs["temperature"] = _resolve_dspy_temperature(normalized_model)
         api_base = _coerce_dspy_api_base(
             api_base=self.api_base,
             api_completion_url=self.api_completion_url,
@@ -298,6 +304,13 @@ def _resolve_dspy_temperature(model_name: str) -> float:
     if candidate.startswith(_DSPY_TEMPERATURE_ONE_MODEL_PREFIXES):
         return 1.0
     return 0.0
+
+
+def _dspy_temperature_is_unsupported(model_name: str) -> bool:
+    normalized = model_name.strip().lower()
+    _, _, model_id = normalized.partition("/")
+    candidate = model_id if model_id else normalized
+    return candidate.startswith(_DSPY_TEMPERATURE_UNSUPPORTED_MODEL_PREFIXES)
 
 
 __all__ = [

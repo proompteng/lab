@@ -38,7 +38,7 @@ export const createShellTools = (): EffectTool[] => [
     handler: (args: ShellInput, { runner, auth }) =>
       Effect.tryPromise({
         try: async () => {
-          const input = runner.parseCommandInput(args)
+          const input = runner.parseCommandInput(args, auth)
           const job = await runner.run(input, auth)
           return jsonTextResult(summarizeJob(job, input.maxOutputBytes))
         },
@@ -57,7 +57,7 @@ export const createShellTools = (): EffectTool[] => [
     handler: (args: ShellInput, { runner, auth }) =>
       Effect.try({
         try: () => {
-          const input = runner.parseCommandInput(args)
+          const input = runner.parseCommandInput(args, auth)
           const job = runner.start(input, auth)
           return jsonTextResult(summarizeJob(job, input.maxOutputBytes))
         },

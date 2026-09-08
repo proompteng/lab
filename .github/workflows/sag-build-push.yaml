@@ -10,6 +10,7 @@ on:
     paths:
       - 'services/sag/**'
       - 'nix/images/sag.nix'
+      - 'nix/images/openai-codex-cli.nix'
   workflow_dispatch:
 
 concurrency:

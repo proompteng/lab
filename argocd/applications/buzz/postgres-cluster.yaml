@@ -14,7 +14,8 @@ spec:
     annotations:
       argocd.argoproj.io/sync-options: Prune=false,Delete=false
   instances: 3
-  imageName: ghcr.io/cloudnative-pg/postgresql:17.7-system-trixie@sha256:08775f8bdeb112878b8f2ef63578c47959ee332fc9e076d5d6735a710c4500e2
+  # Preparation wave: patch PostgreSQL 17 on Debian trixie before the gated major cutover.
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.11-system-trixie@sha256:362b039f643f1c09a34edd63d9a78903e5f1f4f43c24236cc8459621eb676d12
   imagePullPolicy: IfNotPresent
   enablePDB: true
   enableSuperuserAccess: false
