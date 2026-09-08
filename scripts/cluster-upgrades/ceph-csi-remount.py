@@ -27,6 +27,10 @@ class RemountError(RuntimeError):
     pass
 
 
+class LatencyAboveLimit(RemountError):
+    pass
+
+
 Runner = Callable[[Sequence[str], str | None, float], tuple[int, str, str]]
 
 
@@ -617,7 +621,7 @@ class Workflow:
                 file=sys.stderr,
             )
             self.record("ceph-health-warning", check="BLUESTORE_SLOW_OP_ALERT", acknowledged=True)
-        self.check_osd_latency(self.ceph("ceph", "osd", "perf", "-f", "json"))
+        self.wait_for_quiet_io()
         self.record("ceph-posture-ready", fsid=fsid, health=health_status, priorKeyCount=actual_prior)
 
     def check_osd_latency(self, perf: Mapping[str, Any]) -> None:
@@ -629,10 +633,28 @@ class Workflow:
             stats = entry.get("perf_stats", {}) if isinstance(entry, Mapping) else {}
             for field in ("commit_latency_ms", "apply_latency_ms"):
                 value = stats.get(field)
-                if not isinstance(value, (int, float)) or value < 0 or value > MAX_OSD_LATENCY_MS:
+                if not isinstance(value, (int, float)) or value < 0:
                     raise RemountError(f"Ceph OSD {entry.get('id')} {field}={value!r}ms is outside normal <= {MAX_OSD_LATENCY_MS}ms")
+                if value > MAX_OSD_LATENCY_MS:
+                    self.record("osd-latency-above-limit", osd=entry.get("id"), field=field, latencyMs=value)
+                    raise LatencyAboveLimit(f"Ceph OSD {entry.get('id')} {field}={value}ms exceeds {MAX_OSD_LATENCY_MS}ms")
                 values.append(value)
         self.record("osd-latency-ready", maxLatencyMs=max(values))
+
+    def wait_for_quiet_io(self) -> None:
+        deadline = self.clock() + min(self.c.timeout, 90)
+        consecutive = 0
+        while self.clock() < deadline:
+            try:
+                self.check_osd_latency(self.ceph("ceph", "osd", "perf", "-f", "json"))
+                consecutive += 1
+            except LatencyAboveLimit:
+                consecutive = 0
+            if consecutive == 3:
+                self.record("osd-quiet-window", consecutiveSamples=consecutive)
+                return
+            self.sleep(self.c.poll)
+        raise RemountError("Ceph I/O did not produce three consecutive samples below the latency limit within 90 seconds")
 
     def functional_checks(self, phase: str) -> None:
         osd = self.ceph("ceph", "osd", "stat", "-f", "json")
@@ -943,7 +965,7 @@ class Workflow:
         if post_volumes != self.volumes:
             raise RemountError("PVC/PV identity or RBD image changed during remount")
         self.record("rbd-claims-stable", claims=sorted(self.claim_set), images=sorted(volume.image for volume in post_volumes))
-        self.check_osd_latency(self.ceph("ceph", "osd", "perf", "-f", "json"))
+        self.wait_for_quiet_io()
         self.functional_checks("postcheck")
         self.record("ceph-postcheck", osds="6/6/6", quorum=3, pg="active+clean")
 

@@ -260,6 +260,34 @@ class RemountTests(unittest.TestCase):
     def tearDown(self) -> None:
         AUDIT.unlink(missing_ok=True)
 
+    def test_latency_spike_resets_consecutive_quiet_samples(self) -> None:
+        samples = iter([20, 30, 90, 15, 25, 35])
+        now = [0.0]
+
+        def runner(argv, input_text, timeout):
+            value = next(samples)
+            return output({"osdstats": {"osd_perf_infos": [
+                {"id": index, "perf_stats": {"commit_latency_ms": value, "apply_latency_ms": value}}
+                for index in range(6)
+            ]}})
+
+        workflow = MODULE.Workflow(config(timeout=10), runner, clock=lambda: now[0], sleep=lambda _: now.__setitem__(0, now[0] + 1))
+        workflow.wait_for_quiet_io()
+        self.assertEqual(now[0], 5)
+        self.assertEqual(workflow.audit["events"][-1]["name"], "osd-quiet-window")
+        self.assertEqual(sum(event["name"] == "osd-latency-above-limit" for event in workflow.audit["events"]), 1)
+
+    def test_sustained_high_latency_never_admits_maintenance(self) -> None:
+        now = [0.0]
+        perf = {"osdstats": {"osd_perf_infos": [
+            {"id": index, "perf_stats": {"commit_latency_ms": 90, "apply_latency_ms": 90}}
+            for index in range(6)
+        ]}}
+        workflow = MODULE.Workflow(config(timeout=3), lambda *_: output(perf), clock=lambda: now[0], sleep=lambda _: now.__setitem__(0, now[0] + 1))
+        with self.assertRaisesRegex(MODULE.RemountError, "three consecutive samples"):
+            workflow.wait_for_quiet_io()
+        self.assertFalse(any(event["name"] == "osd-quiet-window" for event in workflow.audit["events"]))
+
     def test_empty_pdb_selector_matches_all_but_absent_selector_matches_none(self) -> None:
         labels = {"app": "nats"}
         self.assertTrue(MODULE.match_selector({}, labels))

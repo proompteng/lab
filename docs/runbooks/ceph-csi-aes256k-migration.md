@@ -88,8 +88,10 @@ UIDs plus the exact `csi-rbd-node.3` principal.
 
 The diagnosed retained BlueStore alert requires explicit
 `--allow-bluestore-alert`. This records the exception while still requiring all
-six OSD latency samples at or below 75 ms, full monitor quorum, and clean PGs
-before and after maintenance. It does not mute the warning or make strict
+six OSD latencies at or below 75 ms for three consecutive samples, full monitor
+quorum, and clean PGs before and after maintenance. A high sample resets the
+count; a quiet window must occur within 90 seconds. Each spike is recorded.
+This does not mute the warning or make strict
 storage acceptance pass. Any unrecognized warning remains a blocker.
 
 ## Workloads requiring a separate procedure
