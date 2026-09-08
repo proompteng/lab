@@ -38,8 +38,9 @@ endpoint intact. Certificate renewal remains owned by the existing cert-manager 
 3. Only after that evidence, deliver the client configuration. Mimir's three S3 blocks use `insecure: false` and
    `http.tls_server_name: ceph.k8s.proompteng.ai`. Tempo's `storage.trace.s3` uses `insecure: false` and
    `tls_server_name: ceph.k8s.proompteng.ai`. Both use the internal endpoint above and the image CA bundle.
-4. Mimir retains its PVC-backed WAL and unshipped blocks. Verify their identities and recovered uploads during its
-   controlled rollout. Tempo's current ingesters use `emptyDir`; retain three ingesters on distinct nodes and require
+4. Mimir retains its PVC-backed WAL and unshipped blocks. Follow the [Mimir recovery procedure](mimir-rgw-tls-recovery.md)
+   to guard all five StatefulSets, preserve the Kafka broker, and reload one process at a time with retained-block proof.
+   Tempo's current ingesters use `emptyDir`; retain three ingesters on distinct nodes and require
    all three to be Ready and ACTIVE before reloading either original container. Preserve both original Pod identities
    through the procedure below. Do not use Tempo's `/shutdown` handler as a reload API: it waits for remote flushes
    and does not itself exit the process.
