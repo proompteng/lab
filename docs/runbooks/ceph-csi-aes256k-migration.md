@@ -67,6 +67,31 @@ operation and retain the old keys. A failure may leave a replacement using an
 old staging mount; record that outcome and repeat inventory before retrying.
 Never remove old keys to force a client to reconnect.
 
+The repository helper implements this sequence for one ordinary Pod. Read the
+current Pod/PVC/PV and kernel mapping before supplying the explicit identities:
+
+```sh
+python3 scripts/cluster-upgrades/ceph-csi-remount.py \
+  --context galactic-lan --namespace <namespace> --pod <pod> --node <node> \
+  --expected-pod-uid <uid> --expected-rbd-image <csi-vol-uuid> \
+  --expected-fsid 5ade350d-92fe-49df-829e-37c1fbaf6c50 \
+  --audit-file /tmp/ceph-remount-plan.json
+```
+
+Repeat `--expected-rbd-image` for each RBD claim. The default is a read-only
+plan; `--execute` performs the reviewed maintenance and requires an audit file.
+The audit records the node ownership token, each phase, and failure state.
+An already migrated target completes without eviction. The helper refuses
+shared claims, raw block volumes, operator-managed Pods, and exhausted PDBs.
+It verifies the replacement on its actual node and requires unchanged PVC/PV
+UIDs plus the exact `csi-rbd-node.3` principal.
+
+The diagnosed retained BlueStore alert requires explicit
+`--allow-bluestore-alert`. This records the exception while still requiring all
+six OSD latency samples at or below 75 ms, full monitor quorum, and clean PGs
+before and after maintenance. It does not mute the warning or make strict
+storage acceptance pass. Any unrecognized warning remains a blocker.
+
 ## Workloads requiring a separate procedure
 
 - CNPG primaries, Kafka, Restate, and other operator-managed databases require
