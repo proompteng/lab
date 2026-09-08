@@ -95,7 +95,13 @@ export const intradayMomentumEntryQuery = (
   const rangeStartEpoch = rangeEndEpoch - protocol.lookbackMinutes * minuteMs
   const rangeStartAt = utcInstantFromEpochMillis(rangeStartEpoch)
   const rangeEndAt = utcInstantFromEpochMillis(rangeEndEpoch)
-  const firstEligibleRangeEndEpoch = Math.ceil(Date.parse(cycle.window.submissionOpenAt) / minuteMs) * minuteMs
+  const firstEligibleRangeEndEpoch =
+    Math.ceil(
+      Math.max(
+        Date.parse(cycle.window.submissionOpenAt),
+        Date.parse(cycle.window.executionOpenAt) + protocol.lookbackMinutes * minuteMs,
+      ) / minuteMs,
+    ) * minuteMs
   const availableAt = utcInstantFromEpochMillis(firstEligibleRangeEndEpoch + decisionDelayMs)
   if (
     cycle.schemaVersion !== 'bayn.autonomous-cycle.v3' ||
@@ -103,16 +109,15 @@ export const intradayMomentumEntryQuery = (
     cycle.identity.executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3' ||
     observedAt < cycle.window.submissionOpenAt ||
     observedAt >= cycle.window.submissionCutoffAt ||
-    rangeStartAt < cycle.window.executionOpenAt ||
     rangeEndAt > cycle.window.submissionCutoffAt ||
     observedEpoch < rangeEndEpoch + decisionDelayMs
   ) {
     return Result.fail(failure('entry-query', 'cycle does not admit a complete rolling intraday snapshot at this time'))
   }
-  if (rangeEndAt < cycle.window.submissionOpenAt) {
+  if (rangeEndEpoch < firstEligibleRangeEndEpoch) {
     return Result.fail(
       new IntradayMomentumEntryAwaitingSnapshot({
-        message: 'full-session intraday entry is waiting for its first decision-delay-complete snapshot',
+        message: 'intraday entry is waiting for a complete rolling lookback and its decision delay',
         availableAt,
       }),
     )
