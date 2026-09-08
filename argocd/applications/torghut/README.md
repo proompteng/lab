@@ -17,7 +17,11 @@ unavailable. The API does not start a replacement trading or reconciliation loop
 Kargo maintain their image metadata. They are deliberately absent from `kustomization.yaml`; updating those files
 cannot recreate the scheduler. After Argo converges, the post-deploy verifier requires the Deployment and scheduler
 pods to be absent and the Service to be absent from Argo's resource inventory. It uses the runner's existing read
-permissions, then checks API containment and TA health. The rollout operator also confirms Service absence directly.
+permissions, then checks API containment and TA health. Its market-data check sets `TORGHUT_SCHEDULER_EXPECTED=false`
+because the scheduler no longer accepts trading signals. Kafka, websocket, Flink, and TA heartbeat checks remain
+active; the preceding API containment check still requires the unavailable-scheduler HTTP 503 contract. Standalone
+market-data checks require scheduler acceptance evidence by default. The rollout operator also confirms Service
+absence directly.
 Scheduler alerts already require a positive desired replica count, so removal does not require disabling alert rules.
 
 The normal rollout is a main merge, Kargo promotion, then Argo pruning. To restore the scheduler, review a separate
