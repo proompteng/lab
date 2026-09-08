@@ -17,6 +17,7 @@ on:
       - '.github/workflows/jangar-post-deploy-verify.yml'
       - 'nix/oci-push.sh'
       - 'argocd/applications/jangar/**'
+      - 'argocd/bootstrap/jangar/**'
   workflow_dispatch:
 
 concurrency:
