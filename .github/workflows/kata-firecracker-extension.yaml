@@ -4,12 +4,20 @@ on:
   pull_request:
     paths:
       - 'devices/galactic/extensions/kata/**'
+      - 'devices/galactic/releases/**'
+      - 'devices/nuc/image-factory/release.json'
+      - 'flake.lock'
+      - '.github/actions/setup-nix-toolchain/**'
       - '.github/workflows/kata-firecracker-extension.yaml'
   push:
     branches:
       - main
     paths:
       - 'devices/galactic/extensions/kata/**'
+      - 'devices/galactic/releases/**'
+      - 'devices/nuc/image-factory/release.json'
+      - 'flake.lock'
+      - '.github/actions/setup-nix-toolchain/**'
       - '.github/workflows/kata-firecracker-extension.yaml'
   workflow_dispatch:
 
@@ -26,9 +34,89 @@ env:
   VERSION: 4.1.0-talos-v1.13.9-r5
 
 jobs:
+  changes:
+    name: Select Kata and catalog jobs
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: arc-amd64
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      extensions: ${{ steps.filter.outputs.extensions }}
+      catalog: ${{ steps.filter.outputs.catalog }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        if: github.event_name != 'workflow_dispatch'
+        id: filter
+        with:
+          filters: |
+            extensions:
+              - 'devices/galactic/extensions/kata/**'
+              - 'flake.lock'
+              - '.github/actions/setup-nix-toolchain/**'
+              - '.github/workflows/kata-firecracker-extension.yaml'
+            catalog:
+              - 'devices/galactic/releases/**'
+              - 'devices/nuc/image-factory/release.json'
+              - 'devices/galactic/extensions/kata/build-catalog.sh'
+              - '.github/workflows/kata-firecracker-extension.yaml'
+
+  catalog:
+    name: Validate Talos 1.14 catalog
+    needs: changes
+    if: needs.changes.outputs.catalog == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: arc-amd64
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: imjasonh/setup-crane@v0.4
+      - uses: sigstore/cosign-installer@v3.10.0
+      - name: Verify immutable input and build catalog
+        run: devices/galactic/releases/catalog.sh build out/catalog
+      - name: Upload catalog receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: talos-v1.14.0-catalog
+          path: out/catalog/
+          if-no-files-found: error
+
+  publish-catalog:
+    name: Publish signed Talos 1.14 catalog
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: catalog
+    runs-on: arc-amd64
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: imjasonh/setup-crane@v0.4
+      - uses: sigstore/cosign-installer@v3.10.0
+      - uses: actions/download-artifact@v4
+        with:
+          name: talos-v1.14.0-catalog
+          path: out/catalog
+      - name: Publish signed extension and catalog
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$GHCR_TOKEN" | crane auth login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          devices/galactic/releases/catalog.sh publish out/catalog
+      - name: Upload publication receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: talos-v1.14.0-published-catalog
+          path: out/catalog/
+          if-no-files-found: error
+
   build:
     name: Build ${{ matrix.architecture }} extension
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    needs: changes
+    if: needs.changes.outputs.extensions == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     strategy:
@@ -56,22 +144,15 @@ jobs:
         with:
           toolchain: '1.96'
 
-      - name: Install native test dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            build-essential \
-            clang \
-            libmount-dev \
-            libseccomp-dev \
-            pkg-config \
-            protobuf-compiler \
-            zstd
-          INSTALL_IN_GOPATH=false .kata-source/ci/install_yq.sh
+      - name: Set up pinned native test dependencies
+        uses: ./.github/actions/setup-nix-toolchain
+        with:
+          require-preinstalled: 'true'
 
       - name: Build and test patched Kata components
         run: |
-          devices/galactic/extensions/kata/build-patched-kata.sh \
+          nix develop --file devices/galactic/extensions/kata/shell.nix \
+            --command devices/galactic/extensions/kata/build-patched-kata.sh \
             .kata-source \
             "devices/galactic/extensions/kata/artifacts/${{ matrix.architecture }}"
 
@@ -93,8 +174,8 @@ jobs:
 
   publish:
     name: Publish signed multi-architecture extension
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && (needs.changes.outputs.extensions == 'true' || github.event_name == 'workflow_dispatch')
+    needs: [changes, build]
     runs-on: arc-arm64
     timeout-minutes: 30
     permissions:
@@ -153,8 +234,8 @@ jobs:
 
   installers:
     name: Build ${{ matrix.profile }} installer
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    needs: publish
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && (needs.changes.outputs.extensions == 'true' || github.event_name == 'workflow_dispatch')
+    needs: [changes, publish]
     runs-on: arc-amd64
     timeout-minutes: 60
     permissions:

@@ -19,8 +19,6 @@ resources:
 - tigerbeetle-cluster.yaml
 - tigerbeetle-smoke-job.yaml
 - knative-service.yaml
-- scheduler-deployment.yaml
-- scheduler-service.yaml
 - knative-service-sim.yaml
 - tailscale-service.yaml
 - ingressroute-flink-k8s-private.yaml
@@ -57,10 +55,10 @@ resources:
 - notebooks
 images:
 - name: registry.ide-newton.ts.net/lab/signal-publisher
-  digest: sha256:26d3a37b7211b55355733d5163a9db1bea6e3844e9ac27e1070c2c5d3eb8a992
+  digest: sha256:12187c473e744b127a6d38827f783d100f847532f801e2f77f081c4bdb6672cd
 - name: registry.ide-newton.ts.net/lab/torghut
-  digest: sha256:ac93db29ff16c4b33b6a6c362dc59c4ab3c4d26930bbe1064a913a58ad76ac15
+  digest: sha256:6d65014cbeb949cd2af2ef51b3dcf063bba79d0c2fdb621b463efa0578514e27
 - name: registry.ide-newton.ts.net/lab/torghut-ta
-  digest: sha256:a12af74d23576b5ab0108d3fb19fcf9cae4a5370f0de4e1a5401e6ed85d92921
+  digest: sha256:67880e35f1014c1a390942adc3e7368c701cfb71ac41c55475ab4e4370326676
 - name: registry.ide-newton.ts.net/lab/torghut-ws
-  digest: sha256:73349de5f1ffa7d7a471a6e9c8658b6b439b08b98fc568809698a851eb885723
+  digest: sha256:fd77a32de875900fc88340e008824af988b1e9d47ae6abdd7d92beead8a3ff2b

@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { TengriTerminalSession, TengriTerminalTicket } from '@/lib/tengri/types'
 
 import { runTengriAction } from './client'
+import styles from './terminal-app.module.css'
 import {
   buildTerminalWebSocketUrl,
   normalizeTerminalSize,
@@ -36,6 +37,7 @@ type ConnectionState = {
 }
 
 const encoder = new TextEncoder()
+const TERMINAL_BACKGROUND = '#1e1e1e'
 const claimedTerminalSessionIds = new Set<string>()
 
 export function TerminalApp({
@@ -101,6 +103,10 @@ export function TerminalApp({
     const disposables: Array<{ dispose(): void }> = []
     const terminalAddons: ITerminalAddon[] = []
     const requestSignal = () => AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)])
+    const setInputEnabled = (enabled: boolean) => {
+      const terminal = terminalRef.current
+      if (terminal) terminal.options.disableStdin = !enabled
+    }
 
     const updateConnection = (next: ConnectionState) => {
       if (!disposed) setConnection(next)
@@ -387,7 +393,9 @@ export function TerminalApp({
     }
 
     function scheduleReconnect(reason = '') {
-      if (disposed || terminalEnded || reconnectTimer !== null) return
+      if (disposed) return
+      setInputEnabled(false)
+      if (terminalEnded || reconnectTimer !== null) return
       reconnectAttempt += 1
       updateConnection({
         phase: 'reconnecting',
@@ -401,7 +409,10 @@ export function TerminalApp({
     }
 
     function reconnectNow() {
-      if (disposed || terminalEnded) return
+      if (disposed) return
+      setInputEnabled(false)
+      if (terminalEnded) return
+      updateConnection({ phase: 'reconnecting', message: 'Reconnecting Terminal…', action: 'reconnect' })
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
       reconnectTimer = null
       if (socket && (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN)) {
@@ -417,6 +428,7 @@ export function TerminalApp({
       const terminal = terminalRef.current
       if (disposed || terminalEnded || connecting || !terminal) return
       if (socket && (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN)) return
+      setInputEnabled(false)
       connecting = true
       updateConnection({
         phase: reconnectAttempt ? 'reconnecting' : 'connecting',
@@ -455,10 +467,12 @@ export function TerminalApp({
         nextSocket.addEventListener('open', () => {
           if (disposed || socket !== nextSocket) return
           if (nextSocket.protocol !== protocol) {
+            setInputEnabled(false)
             nextSocket.close(1_002, 'Terminal ticket protocol was not acknowledged')
             return
           }
           sendResize()
+          setInputEnabled(true)
           startHeartbeat(nextSocket)
         })
         nextSocket.addEventListener('message', (event) => {
@@ -486,6 +500,7 @@ export function TerminalApp({
               terminal.write(`\r\n\x1b[31m${message}\x1b[0m\r\n`)
             } else if (control.type === 'exit') {
               terminalEnded = true
+              setInputEnabled(false)
               const current = session
               session = null
               if (current) clearPendingCleanup(current.id)
@@ -510,17 +525,20 @@ export function TerminalApp({
         })
         nextSocket.addEventListener('close', () => {
           if (socket !== nextSocket) return
+          setInputEnabled(false)
           socket = null
           stopHeartbeat()
           if (!disposed && !terminalEnded) scheduleReconnect()
         })
         nextSocket.addEventListener('error', () => {
           if (disposed || socket !== nextSocket) return
+          setInputEnabled(false)
           updateConnection({ phase: 'error', message: 'Terminal connection failed', action: 'reconnect' })
           nextSocket.close()
         })
       } catch (cause) {
         if (disposed || controller.signal.aborted) return
+        setInputEnabled(false)
         await reconcileSession()
         const message = terminalPlainText(cause instanceof Error ? cause.message : '') || 'Terminal could not connect'
         updateConnection({ phase: 'error', message, action: 'reconnect' })
@@ -541,6 +559,7 @@ export function TerminalApp({
       if (disposed || !hostRef.current) return
       const terminal = new xterm.Terminal({
         allowProposedApi: true,
+        disableStdin: true,
         cursorBlink: true,
         cursorInactiveStyle: 'outline',
         cursorStyle: 'bar',
@@ -551,7 +570,7 @@ export function TerminalApp({
         rightClickSelectsWord: true,
         scrollback: 10_000,
         theme: {
-          background: '#1e1e1e',
+          background: TERMINAL_BACKGROUND,
           foreground: '#d9e0ee',
           cursor: '#9ccfd8',
           selectionBackground: '#3e4c76aa',
@@ -657,11 +676,13 @@ export function TerminalApp({
       const host = hostRef.current
       host.addEventListener('pointerdown', focusTerminal)
       host.addEventListener('focus', focusTerminal)
+      if (host.contains(document.activeElement)) focusTerminal()
       disposables.push(
         { dispose: () => host.removeEventListener('pointerdown', focusTerminal) },
         { dispose: () => host.removeEventListener('focus', focusTerminal) },
         terminal.onData((data) => {
-          if (socket?.readyState === WebSocket.OPEN) socket.send(encoder.encode(data))
+          if (terminal.options.disableStdin || socket?.readyState !== WebSocket.OPEN) return
+          socket?.send(encoder.encode(data))
         }),
         terminal.onResize(sendResize),
       )
@@ -687,6 +708,7 @@ export function TerminalApp({
     const handleOnline = () => reconnectNow()
     const unregisterCloseHandler = registerCloseHandler(windowId, () => {
       closeRequested = true
+      setInputEnabled(false)
       const current = session
       if (current) {
         recordPendingCleanup(current.id)
@@ -714,6 +736,7 @@ export function TerminalApp({
       if (resizeFrame !== null) cancelAnimationFrame(resizeFrame)
       if (persistFrame !== null) cancelAnimationFrame(persistFrame)
       resizeObserver?.disconnect()
+      setInputEnabled(false)
       socket?.close(1_000, closeRequested ? 'Terminal window closed' : 'Terminal view disconnected')
       for (const disposable of disposables) disposable.dispose()
       searchAddonRef.current = null
@@ -739,10 +762,15 @@ export function TerminalApp({
 
   const busy = ['connecting', 'initializing', 'reconnecting'].includes(connection.phase)
   return (
-    <div className="relative h-full bg-[#1e1e1e] p-2" data-shortcuts="native">
+    <div
+      className={`relative h-full p-3 ${styles.terminal}`}
+      style={{ backgroundColor: TERMINAL_BACKGROUND }}
+      data-shortcuts="native"
+    >
       <div
         ref={hostRef}
-        className="h-full w-full outline-none [&_.xterm]:h-full [&_.xterm]:p-[0.3rem] [&_.xterm-viewport]:[scrollbar-color:rgb(255_255_255/0.2)_transparent]"
+        data-window-default-focus
+        className="h-full w-full bg-inherit outline-none"
         aria-label="Interactive Tengri terminal"
         data-renderer={renderer}
         role="application"
@@ -750,7 +778,12 @@ export function TerminalApp({
       />
 
       <div
-        className="absolute top-2 right-3 flex max-w-[min(70%,28rem)] items-center gap-1.5 rounded-full border border-white/7 bg-black/55 px-2 py-1 text-[10px] text-white/58 shadow-lg backdrop-blur-md"
+        className={
+          connection.phase === 'connected'
+            ? 'sr-only'
+            : 'absolute top-2 right-3 flex max-w-[min(70%,28rem)] items-center gap-1.5 rounded-full border border-white/7 bg-black/55 px-2 py-1 text-[10px] text-white/58 shadow-lg backdrop-blur-md'
+        }
+        data-connection-state={connection.phase}
         role="status"
         aria-live="polite"
       >

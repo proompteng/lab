@@ -36,6 +36,10 @@ records require them; they are not runtime fallbacks and cannot start new cycles
    and content hashes.
 4. The pure strategy returns a target portfolio or a typed no-trade result. Missing or late data is a lifecycle
    blocker, not `NO_TRADE`.
+   Successful worker archive reads additionally retain append-only, content-bound row-availability receipts in
+   PostgreSQL before releasing the snapshot to the caller. The receipt clock is the completed reader observation,
+   not the source envelope's receipt time or the snapshot query cutoff. Public status and historical replay cannot
+   write these receipts.
 5. The target planner derives whole-share deltas from the reconciled account and verified execution prices. The
    strategy decision, exact decision rows, planner input, target plan, risk decisions, and deterministic intent IDs are
    committed before broker I/O.
@@ -136,6 +140,13 @@ Rollback must deactivate the current controller epoch and prove the writer fence
 source/image identity. Direct deployment and manual broker orders are not valid rollout or trading proof.
 
 ## Completion evidence
+
+Historical archive replay defaults to requiring production-reader receipts for every used row by the simulated
+observation time. Missing coverage remains incomplete; source receipt timestamps cannot stand in for Kafka/Flink/
+ClickHouse availability. Explicit `source-receipt-assumption` research remains possible but is labeled `UNPROVEN`.
+Receipts establish conservative observed row-availability bounds, not earliest visibility, a simultaneous historical
+snapshot, the original worker's uptime, or actual execution. They cannot repair missing delivery evidence from before
+recording was deployed. See the service README for report v3 and read-only receipt configuration.
 
 Operational rollout requires the exact reviewed source/image live, fresh controller ticks after worker replacement,
 fresh status projections, exact reconciliation, and zero unresolved mutations. Autonomous trading requires additional

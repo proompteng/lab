@@ -22,7 +22,7 @@ import {
   verifyStrategyName,
   verifyStrategyProtocolHash,
 } from '../build'
-import { OperationalError } from '../errors'
+import { OperationalError, operationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
 import {
   IntradaySnapshotFailure,
@@ -77,10 +77,30 @@ import {
 import { allocationForDecision } from './allocation'
 import { applyReplayIoc, createReplayLedger, type IntradayReplayLedger } from './ledger'
 import { simulateIntradayReplayIoc, type IntradayReplayIocFailure, type IntradayReplayIocOutcome } from './execution'
+import { markIntradayReplayEquity, type IntradayReplayEquityFailure, type IntradayReplayEquityMark } from './equity'
+import {
+  ArchiveAvailabilityPolicy,
+  type ArchiveAvailabilityReceipt,
+  type ArchiveSnapshotAvailability,
+  type ReplayMarketDataService,
+} from '../market-data/intraday/availability'
 
 const rollingBaselineMessage = 'intraday symbol lacks the complete rolling lookback baseline'
 const replayCycleSchemaVersion = 'bayn.autonomous-cycle.v3' as const
 const replayPolicySchemaVersion = 'bayn.autonomous-cycle-execution-policy.v3' as const
+const minuteMs = 60_000
+
+interface ReplayEquityState {
+  peakEquityMicros: string
+  maximumObservedDrawdownMicros: string
+  riskLimitBreached: boolean
+}
+
+interface SessionEquityDiagnostics {
+  readonly peakEquityMicros: string | null
+  readonly maximumObservedDrawdownMicros: string | null
+  readonly riskLimitBreached: boolean
+}
 
 interface ReplaySessionContext {
   readonly marketCalendar: MarketCalendarObservation
@@ -126,6 +146,12 @@ const isValidUtcInstant = (value: string): boolean =>
   Schema.is(UtcInstantSchema)(value) && Number.isFinite(Date.parse(value))
 
 const minBigInt = (left: bigint, right: bigint): bigint => (left < right ? left : right)
+
+const noEquityDiagnostics: SessionEquityDiagnostics = {
+  peakEquityMicros: null,
+  maximumObservedDrawdownMicros: null,
+  riskLimitBreached: false,
+}
 
 const pushUnavailable = (
   observations: IntradayReplayObservation[],
@@ -231,6 +257,7 @@ const emptySession = (
   openingCashMicros: string,
   reason: string,
   positions: readonly IntradayReplayPosition[] = [],
+  equity: SessionEquityDiagnostics = noEquityDiagnostics,
 ): IntradayReplaySession => ({
   date,
   calendarHash,
@@ -244,7 +271,9 @@ const emptySession = (
   cashMicros: openingCashMicros,
   executionFeesMicros: '0',
   netRealizedPnlAfterCostsMicros: null,
-  maximumObservedDrawdownMicros: null,
+  maximumObservedDrawdownMicros: equity.maximumObservedDrawdownMicros,
+  peakEquityMicros: equity.peakEquityMicros,
+  riskLimitBreached: equity.riskLimitBreached,
 })
 
 const applyOutcome = (
@@ -265,6 +294,7 @@ const incompleteSession = (
   observations: readonly IntradayReplayObservation[],
   orders: readonly IntradayReplayIocOutcome[],
   reason: string,
+  equity: SessionEquityDiagnostics = noEquityDiagnostics,
 ): IntradayReplaySession => ({
   date: context.calendar.executionSessionDate,
   calendarHash: context.calendar.executionCalendarHash,
@@ -278,7 +308,9 @@ const incompleteSession = (
   cashMicros: ledger.cashMicros,
   executionFeesMicros: ledger.executionFeesMicros,
   netRealizedPnlAfterCostsMicros: null,
-  maximumObservedDrawdownMicros: null,
+  maximumObservedDrawdownMicros: equity.maximumObservedDrawdownMicros,
+  peakEquityMicros: equity.peakEquityMicros,
+  riskLimitBreached: equity.riskLimitBreached,
 })
 
 const completeSession = (
@@ -287,6 +319,7 @@ const completeSession = (
   observations: readonly IntradayReplayObservation[],
   orders: readonly IntradayReplayIocOutcome[],
   reason: string,
+  equity: SessionEquityDiagnostics = noEquityDiagnostics,
 ): IntradayReplaySession => ({
   date: context.calendar.executionSessionDate,
   calendarHash: context.calendar.executionCalendarHash,
@@ -300,7 +333,9 @@ const completeSession = (
   cashMicros: ledger.cashMicros,
   executionFeesMicros: ledger.executionFeesMicros,
   netRealizedPnlAfterCostsMicros: ledger.netRealizedPnlAfterCostsMicros,
-  maximumObservedDrawdownMicros: null,
+  maximumObservedDrawdownMicros: equity.maximumObservedDrawdownMicros,
+  peakEquityMicros: equity.peakEquityMicros,
+  riskLimitBreached: equity.riskLimitBreached,
 })
 
 const replaySession = (
@@ -310,6 +345,7 @@ const replaySession = (
   policy: Policy,
   context: ReplaySessionContext,
   openingCashMicros: string,
+  equityState: ReplayEquityState,
 ): Effect.Effect<IntradayReplaySession, IntradayReplayFailure> =>
   Effect.gen(function* () {
     const ledgerResult = createReplayLedger(openingCashMicros)
@@ -327,6 +363,44 @@ const replaySession = (
     let selectedDecisionSnapshot: ArchiveVerifiedIntradayMarketSnapshot | undefined
     let structuralFailure: string | undefined
     let retryableEntryFailure = false
+    const dayStartEquityMicros = openingCashMicros
+    let sessionPeakEquityMicros: string | null = null
+    let sessionMaximumDrawdownMicros: string | null = null
+    let sessionRiskLimitBreached = false
+    let markEvidenceFailure: string | undefined
+
+    const equityDiagnostics = (): SessionEquityDiagnostics => ({
+      peakEquityMicros: sessionPeakEquityMicros,
+      maximumObservedDrawdownMicros: sessionMaximumDrawdownMicros,
+      riskLimitBreached: sessionRiskLimitBreached,
+    })
+
+    const recordEquityMark = (mark: IntradayReplayEquityMark): void => {
+      equityState.peakEquityMicros = mark.peakEquityMicros
+      equityState.maximumObservedDrawdownMicros = mark.maximumObservedDrawdownMicros
+      equityState.riskLimitBreached ||= mark.dailyLossLimit?.exceeded === true || mark.drawdownLimit?.exceeded === true
+      sessionPeakEquityMicros = mark.peakEquityMicros
+      sessionMaximumDrawdownMicros = mark.maximumObservedDrawdownMicros
+      sessionRiskLimitBreached ||= mark.dailyLossLimit?.exceeded === true || mark.drawdownLimit?.exceeded === true
+    }
+
+    const markEquity = (
+      bidPriceMicros: Readonly<Record<string, string>>,
+    ): Result.Result<IntradayReplayEquityMark, IntradayReplayEquityFailure> => {
+      const mark = markIntradayReplayEquity({
+        ledger,
+        bidPriceMicros,
+        dayStartEquityMicros,
+        previousPeakEquityMicros: equityState.peakEquityMicros,
+        previousMaximumObservedDrawdownMicros: equityState.maximumObservedDrawdownMicros,
+        limits: {
+          maxDailyLossMicros: policy.maxDailyLossMicros,
+          maxDrawdownMicros: policy.maxDrawdownMicros,
+        },
+      })
+      if (Result.isSuccess(mark)) recordEquityMark(mark.success)
+      return mark
+    }
 
     const entryStartMs = Date.parse(context.window.submissionOpenAt) + input.assumptions.firstPollDelayMs
     const entryCutoffMs = Date.parse(context.window.submissionCutoffAt)
@@ -373,7 +447,10 @@ const replaySession = (
 
       const decision = decisionResult.success
       observations.push({ kind: 'snapshot', purpose: 'decision', manifest: decisionSnapshot.manifest, decision })
-      if (decision.selectedSymbols.length === 0) continue
+      if (decision.selectedSymbols.length === 0) {
+        retryableEntryFailure ||= decision.excludedCandidates?.length === protocol.candidateSymbols.length
+        continue
+      }
       if (decision.selectedSymbols.length > 1) {
         structuralFailure = 'active intraday-momentum selected more than one entry symbol'
         break
@@ -397,13 +474,44 @@ const replaySession = (
           'entry evidence incomplete: no-trade result followed unavailable decision observations',
         )
       }
-      return completeSession(context, ledger, observations, orders, 'no qualifying intraday-momentum signal')
+      const flatMark = markEquity({})
+      if (Result.isFailure(flatMark)) {
+        return incompleteSession(
+          context,
+          ledger,
+          observations,
+          orders,
+          'flat equity accounting failed before the no-trade result',
+          equityDiagnostics(),
+        )
+      }
+      return completeSession(
+        context,
+        ledger,
+        observations,
+        orders,
+        'no qualifying intraday-momentum signal',
+        equityDiagnostics(),
+      )
     }
 
     const symbol = selectedDecision.selectedSymbols[0]
     if (symbol === undefined) {
       return incompleteSession(context, ledger, observations, orders, 'entry decision selected no executable symbol')
     }
+    const baselineMark = markEquity({})
+    if (Result.isFailure(baselineMark)) {
+      return incompleteSession(
+        context,
+        ledger,
+        observations,
+        orders,
+        'baseline equity accounting failed before entry planning',
+        equityDiagnostics(),
+      )
+    }
+    const incompleteAfterBaseline = (reason: string): IntradayReplaySession =>
+      incompleteSession(context, ledger, observations, orders, reason, equityDiagnostics())
     const decisionRangeEndAt = selectedDecisionSnapshot.manifest.rangeEndAt
     const decisionObservedAt = selectedDecisionSnapshot.manifest.observedAt
     const planningQueryResult = intradayMomentumPricingQuery(
@@ -416,11 +524,7 @@ const replaySession = (
     )
     if (Result.isFailure(planningQueryResult)) {
       pushUnavailable(observations, 'planning', decisionObservedAt, planningQueryResult.failure, false)
-      return incompleteSession(
-        context,
-        ledger,
-        observations,
-        orders,
+      return incompleteAfterBaseline(
         `entry planning query failed: ${failureDescription(planningQueryResult.failure).message}`,
       )
     }
@@ -428,11 +532,7 @@ const replaySession = (
     if (planningLoaded._tag === 'Failure') {
       const retryable = isRetryableArchiveFailure(planningLoaded.error)
       pushUnavailable(observations, 'planning', decisionObservedAt, planningLoaded.error, retryable)
-      return incompleteSession(
-        context,
-        ledger,
-        observations,
-        orders,
+      return incompleteAfterBaseline(
         `entry planning evidence incomplete: ${failureDescription(planningLoaded.error).message}`,
       )
     }
@@ -442,22 +542,18 @@ const replaySession = (
     const planningPrices = adverseQuotePrices(planningSnapshot, [symbol])
     if (Result.isFailure(planningPrices)) {
       pushUnavailable(observations, 'planning', decisionObservedAt, planningPrices.failure, false)
-      return incompleteSession(
-        context,
-        ledger,
-        observations,
-        orders,
+      return incompleteAfterBaseline(
         `entry price construction failed: ${failureDescription(planningPrices.failure).message}`,
       )
     }
     const askPriceMicrosText = planningPrices.success.askPriceMicros[symbol]
     if (askPriceMicrosText === undefined) {
-      return incompleteSession(context, ledger, observations, orders, 'entry planning omitted the selected symbol')
+      return incompleteAfterBaseline('entry planning omitted the selected symbol')
     }
     const askPriceMicros = BigInt(askPriceMicrosText)
     const targetWeight = selectedDecision.targetWeights[symbol]
     if (targetWeight === undefined || targetWeight <= 0) {
-      return incompleteSession(context, ledger, observations, orders, 'selected entry has no positive target weight')
+      return incompleteAfterBaseline('selected entry has no positive target weight')
     }
     const allocation = allocationForDecision(
       ledger,
@@ -469,35 +565,17 @@ const replaySession = (
     )
     if (Result.isFailure(allocation)) {
       pushUnavailable(observations, 'planning', decisionObservedAt, allocation.failure, false)
-      return incompleteSession(
-        context,
-        ledger,
-        observations,
-        orders,
-        'entry allocation could not satisfy the active risk policy',
-      )
+      return incompleteAfterBaseline('entry allocation could not satisfy the active risk policy')
     }
     const desired = desiredQuantityMicros(allocation.success, targetWeight, askPriceMicros, protocol.executionModel)
     if (Result.isFailure(desired)) {
       pushUnavailable(observations, 'planning', decisionObservedAt, desired.failure, false)
-      return incompleteSession(
-        context,
-        ledger,
-        observations,
-        orders,
-        'entry quantity could not be represented at the active precision',
-      )
+      return incompleteAfterBaseline('entry quantity could not be represented at the active precision')
     }
     const displayed = maximumBuyQuantities(planningSnapshot, { [symbol]: targetWeight })
     if (Result.isFailure(displayed)) {
       pushUnavailable(observations, 'planning', decisionObservedAt, displayed.failure, false)
-      return incompleteSession(
-        context,
-        ledger,
-        observations,
-        orders,
-        'entry displayed-liquidity evidence could not be compiled',
-      )
+      return incompleteAfterBaseline('entry displayed-liquidity evidence could not be compiled')
     }
     const displayedQuantity = BigInt(displayed.success[symbol] ?? '0')
     const requestedQuantity = minBigInt(desired.success, displayedQuantity)
@@ -509,12 +587,19 @@ const replaySession = (
         new Error('selected entry has no whole-share displayed ask capacity'),
         false,
       )
-      return completeSession(context, ledger, observations, orders, 'selected entry had no displayed ask capacity')
+      return completeSession(
+        context,
+        ledger,
+        observations,
+        orders,
+        'selected entry had no displayed ask capacity',
+        equityDiagnostics(),
+      )
     }
     const requestedNotional = notionalMicros(requestedQuantity, askPriceMicros)
     if (Result.isFailure(requestedNotional)) {
       pushUnavailable(observations, 'planning', decisionObservedAt, requestedNotional.failure, false)
-      return incompleteSession(context, ledger, observations, orders, 'entry notional could not be calculated')
+      return incompleteAfterBaseline('entry notional could not be calculated')
     }
     const minimumBuyNotional = BigInt(protocol.executionModel.precision.minimumBuyNotionalMicros)
     if (requestedNotional.success < minimumBuyNotional) {
@@ -525,7 +610,14 @@ const replaySession = (
         new Error('selected entry is below the active minimum buy notional'),
         false,
       )
-      return completeSession(context, ledger, observations, orders, 'selected entry was below the minimum buy notional')
+      return completeSession(
+        context,
+        ledger,
+        observations,
+        orders,
+        'selected entry was below the minimum buy notional',
+        equityDiagnostics(),
+      )
     }
 
     const arrivalAt = utcInstantFromEpochMillis(Date.parse(decisionObservedAt) + input.assumptions.orderLatencyMs)
@@ -539,11 +631,7 @@ const replaySession = (
     )
     if (Result.isFailure(arrivalQueryResult)) {
       pushUnavailable(observations, 'arrival', arrivalAt, arrivalQueryResult.failure, false)
-      return incompleteSession(
-        context,
-        ledger,
-        observations,
-        orders,
+      return incompleteAfterBaseline(
         `entry arrival query failed: ${failureDescription(arrivalQueryResult.failure).message}`,
       )
     }
@@ -551,11 +639,7 @@ const replaySession = (
     if (arrivalLoaded._tag === 'Failure') {
       const retryable = isRetryableArchiveFailure(arrivalLoaded.error)
       pushUnavailable(observations, 'arrival', arrivalAt, arrivalLoaded.error, retryable)
-      return incompleteSession(
-        context,
-        ledger,
-        observations,
-        orders,
+      return incompleteAfterBaseline(
         `entry arrival evidence incomplete: ${failureDescription(arrivalLoaded.error).message}`,
       )
     }
@@ -580,13 +664,13 @@ const replaySession = (
     })
     if (Result.isFailure(entryOutcome)) {
       pushUnavailable(observations, 'arrival', arrivalAt, iocFailure(entryOutcome.failure), false)
-      return incompleteSession(context, ledger, observations, orders, 'entry IOC simulation failed')
+      return incompleteAfterBaseline('entry IOC simulation failed')
     }
     orders.push(entryOutcome.success)
     const entryLedger = applyOutcome(ledger, entryOutcome.success, protocol, input.assumptions.feeMultiplierPpm)
     if (Result.isFailure(entryLedger)) {
       pushUnavailable(observations, 'arrival', arrivalAt, entryLedger.failure, false)
-      return incompleteSession(context, ledger, observations, orders, 'entry IOC accounting failed')
+      return incompleteAfterBaseline('entry IOC accounting failed')
     }
     ledger = entryLedger.success
     if (entryOutcome.success.status === 'canceled' || ledger.positions.length === 0) {
@@ -598,6 +682,7 @@ const replaySession = (
         entryOutcome.success.status === 'canceled'
           ? 'entry IOC canceled without exposure'
           : 'entry completed and left no exposure',
+        equityDiagnostics(),
       )
     }
 
@@ -607,11 +692,70 @@ const replaySession = (
       protocol.flattenBeforeCloseMinutes * 60_000 +
       input.assumptions.firstPollDelayMs
     const hardFlatMs = Date.parse(context.calendar.executionCloseAt) - protocol.hardFlatBeforeCloseMinutes * 60_000
+    let nextMarkMs = Date.parse(arrivalAt)
     for (
       let observedMs = closeStartMs;
       observedMs < hardFlatMs && ledger.positions.length > 0;
       observedMs += input.assumptions.pollIntervalMs
     ) {
+      while (nextMarkMs <= observedMs && nextMarkMs <= hardFlatMs && ledger.positions.length > 0) {
+        const markObservedAt = utcInstantFromEpochMillis(nextMarkMs)
+        const heldSymbols = ledger.positions.map(({ symbol: positionSymbol }) => positionSymbol)
+        const markRangeEndMs =
+          nextMarkMs % minuteMs === 0 ? nextMarkMs - minuteMs : Math.floor(nextMarkMs / minuteMs) * minuteMs
+        const markRangeEndAt = utcInstantFromEpochMillis(markRangeEndMs)
+        const markQueryResult = intradayMomentumPricingQuery(
+          context.queryContext,
+          protocol,
+          context.marketCalendar,
+          markObservedAt,
+          markRangeEndAt,
+          heldSymbols,
+        )
+        if (Result.isFailure(markQueryResult)) {
+          const retryable = markQueryResult.failure instanceof IntradayMomentumCloseAwaitingSnapshot
+          pushUnavailable(observations, 'mark', markObservedAt, markQueryResult.failure, retryable)
+          markEvidenceFailure ??= `mark query failed: ${failureDescription(markQueryResult.failure).message}`
+          nextMarkMs += input.assumptions.pollIntervalMs
+          continue
+        }
+        const markLoaded = yield* readSnapshot(marketData, markQueryResult.success)
+        if (markLoaded._tag === 'Failure') {
+          const retryable = isRetryableArchiveFailure(markLoaded.error)
+          pushUnavailable(observations, 'mark', markObservedAt, markLoaded.error, retryable)
+          markEvidenceFailure ??= `mark evidence unavailable: ${failureDescription(markLoaded.error).message}`
+          nextMarkMs += input.assumptions.pollIntervalMs
+          continue
+        }
+        const markSnapshot = markLoaded.snapshot
+        const markPrices = adverseClosingQuotePrices(markSnapshot, heldSymbols)
+        if (Result.isFailure(markPrices)) {
+          pushUnavailable(observations, 'mark', markObservedAt, markPrices.failure, false)
+          markEvidenceFailure ??= `mark quote construction failed: ${failureDescription(markPrices.failure).message}`
+          nextMarkMs += input.assumptions.pollIntervalMs
+          continue
+        }
+        const mark = markEquity(markPrices.success.bidPriceMicros)
+        if (Result.isFailure(mark)) {
+          pushUnavailable(
+            observations,
+            'mark',
+            markObservedAt,
+            new Error(`${mark.failure.field}: ${mark.failure.reason}`),
+            false,
+          )
+          markEvidenceFailure ??= `mark-to-market accounting failed: ${mark.failure.field}`
+          nextMarkMs += input.assumptions.pollIntervalMs
+          continue
+        }
+        observations.push({
+          kind: 'snapshot',
+          purpose: 'mark',
+          manifest: markSnapshot.manifest,
+          equity: mark.success,
+        })
+        nextMarkMs += input.assumptions.pollIntervalMs
+      }
       const observedAt = utcInstantFromEpochMillis(observedMs)
       const positions = ledger.positions
       const closeQueryResult = intradayMomentumCloseQuery(
@@ -758,18 +902,26 @@ const replaySession = (
     }
 
     if (closeFailure !== undefined) {
-      return incompleteSession(context, ledger, observations, orders, `close evidence incomplete: ${closeFailure}`)
+      return incompleteAfterBaseline(`close evidence incomplete: ${closeFailure}`)
     }
     if (ledger.positions.length > 0) {
-      return incompleteSession(
-        context,
-        ledger,
-        observations,
-        orders,
-        'positions remained open at the hard-flat boundary',
-      )
+      return incompleteAfterBaseline('positions remained open at the hard-flat boundary')
     }
-    return completeSession(context, ledger, observations, orders, 'entry executed and position flattened')
+    const flatMark = markEquity({})
+    if (Result.isFailure(flatMark)) {
+      return incompleteAfterBaseline('flat equity accounting failed after position flattening')
+    }
+    if (markEvidenceFailure !== undefined) {
+      return incompleteAfterBaseline(`mark evidence incomplete: ${markEvidenceFailure}`)
+    }
+    return completeSession(
+      context,
+      ledger,
+      observations,
+      orders,
+      'entry executed and position flattened',
+      equityDiagnostics(),
+    )
   })
 
 const skippedSession = (
@@ -791,7 +943,7 @@ const reportWithHash = (
 
 export const runIntradayReplay = (
   input: IntradayReplayInput,
-  marketData: IntradayMarketDataService,
+  marketData: ReplayMarketDataService,
   now: string,
 ): Effect.Effect<IntradayReplayReport, IntradayReplayFailure> =>
   Effect.gen(function* () {
@@ -800,6 +952,39 @@ export const runIntradayReplay = (
         (cause) => new IntradayReplayFailure({ operation: 'input', message: 'invalid replay input', cause }),
       ),
     )
+    const availabilityPolicy = decodedInput.archiveAvailability ?? ArchiveAvailabilityPolicy.RecordedReader
+    const availabilitySnapshots = new Map<string, ArchiveSnapshotAvailability>()
+    const availabilityReceipts = new Map<string, ArchiveAvailabilityReceipt>()
+    const verifyAvailability = marketData.recordedAvailability
+    const requireAvailability = (snapshot: ArchiveVerifiedIntradayMarketSnapshot) =>
+      Effect.gen(function* () {
+        if (availabilityPolicy === ArchiveAvailabilityPolicy.SourceReceiptAssumption) return snapshot
+        if (verifyAvailability === undefined) {
+          return yield* operationalError({
+            component: 'market-data',
+            operation: 'archive-availability',
+            message: 'recorded reader availability is required; source receipt time is not a substitute',
+            cause: new IntradaySnapshotFailure({
+              reason: 'not-ready',
+              message: 'no recorded archive availability reader was supplied',
+            }),
+          })
+        }
+        const proof = yield* verifyAvailability(snapshot)
+        availabilitySnapshots.set(proof.snapshotId, proof)
+        for (const receipt of proof.receipts) availabilityReceipts.set(receipt.receiptHash, receipt)
+        return snapshot
+      })
+    const replayMarket: IntradayMarketDataService =
+      availabilityPolicy === ArchiveAvailabilityPolicy.SourceReceiptAssumption
+        ? marketData
+        : {
+            check: marketData.check,
+            captureVersion: marketData.captureVersion,
+            loadSnapshot: (request) => marketData.loadSnapshot(request).pipe(Effect.flatMap(requireAvailability)),
+            verifyArchiveSnapshot: (snapshot) =>
+              marketData.verifyArchiveSnapshot(snapshot).pipe(Effect.flatMap(requireAvailability)),
+          }
     if (!isValidUtcInstant(now)) {
       return yield* new IntradayReplayFailure({
         operation: 'input',
@@ -975,6 +1160,11 @@ export const runIntradayReplay = (
     let nextCashMicros = decodedInput.initialCapitalMicros
     let nextPositions: readonly IntradayReplayPosition[] = []
     let stopped = false
+    const equityState: ReplayEquityState = {
+      peakEquityMicros: decodedInput.initialCapitalMicros,
+      maximumObservedDrawdownMicros: '0',
+      riskLimitBreached: false,
+    }
     for (const calendarSession of normalizedCalendar.sessions) {
       if (stopped) {
         const contextResult = replayContext(calendarSession, normalizedCalendar, executionPolicy)
@@ -1000,11 +1190,12 @@ export const runIntradayReplay = (
       }
       const session = yield* replaySession(
         decodedInput,
-        marketData,
+        replayMarket,
         protocol,
         riskPolicy,
         contextResult.success,
         nextCashMicros,
+        equityState,
       )
       sessions.push(session)
       nextCashMicros = session.cashMicros
@@ -1021,7 +1212,7 @@ export const runIntradayReplay = (
           .toString()
       : null
     const material: Omit<IntradayReplayReport, 'reportHash'> = {
-      schemaVersion: 'bayn.intraday-replay-report.v1',
+      schemaVersion: 'bayn.intraday-replay-report.v3',
       evidenceKind: 'COUNTERFACTUAL_RESEARCH',
       qualification: 'NOT_QUALIFIED',
       inputHash,
@@ -1031,18 +1222,43 @@ export const runIntradayReplay = (
       strategyProtocolHash,
       riskPolicyHash,
       calendarHash: normalizedCalendar.normalizedResponseHash,
+      availability: {
+        policy: availabilityPolicy,
+        status: availabilitySnapshots.size > 0 ? 'OBSERVED_ROWS_ONLY' : 'UNPROVEN',
+        snapshots: [...availabilitySnapshots.values()].map((proof) => ({
+          snapshotId: proof.snapshotId,
+          observedAt: proof.observedAt,
+          receiptHashes: proof.receipts.map((receipt) => receipt.receiptHash),
+        })),
+        receipts: [...availabilityReceipts.values()],
+      },
       sessions,
       totals: {
         completedSessionCount,
         incompleteSessionCount,
         executionSessionCount,
         netRealizedPnlAfterCostsMicros: totalPnl,
+        maximumObservedDrawdownMicros: sessions.some(
+          ({ maximumObservedDrawdownMicros }) => maximumObservedDrawdownMicros !== null,
+        )
+          ? equityState.maximumObservedDrawdownMicros
+          : null,
+        peakEquityMicros: sessions.some(({ peakEquityMicros }) => peakEquityMicros !== null)
+          ? equityState.peakEquityMicros
+          : null,
+        riskLimitBreached: equityState.riskLimitBreached,
       },
       limitations: [
+        availabilityPolicy === ArchiveAvailabilityPolicy.RecordedReader
+          ? 'every used row requires a retained production-reader receipt completed no later than replay time; missing coverage remains unavailable, never a clean no-trade'
+          : 'source receipt time is an explicit unproven availability assumption; Kafka/Flink/ClickHouse visibility and production reader availability are not established',
+        'reader receipts are conservative observed upper bounds, not earliest archive visibility, simultaneous snapshot proof, reader uptime, or actual execution evidence',
         'counterfactual flat-start session lifecycle; only cash carries between sessions',
         'no broker, authority, PostgreSQL, TigerBeetle, or risk receipt is fabricated',
         'full broker and risk-controller gates are not modeled; replay applies sizing and declared exposure caps only',
-        'periodic mark-to-market drawdown is not implemented and is reported as null',
+        'holding-period marks use verified archive snapshots and adverse bids at the replay poll interval; excursions between marks can be missed',
+        'mark-to-market risk limits are diagnostic only and do not authorize liquidation or alter replay order decisions',
+        'a missing required holding-period mark makes that session incomplete while retaining attempted closes and open positions',
         'positive replay output remains research evidence and cannot qualify or activate the strategy',
         'execution assumptions model adverse quote crossing and declared displayed liquidity, not queue position or actual fills',
       ],

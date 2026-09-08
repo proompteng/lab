@@ -54,14 +54,52 @@ For a zero-downtime HMAC rotation, temporarily set `TENGRI_INTERNAL_HMAC_SECRET`
 signatures until the controller has refreshed the same bundle; remove the previous key only after both sides have
 observed it.
 
-Changing `TENGRI_PUBLIC_URL` rolls the landing Deployment through GitOps and briefly interrupts the web UI and BFF.
+Changing `TENGRI_PUBLIC_URL` rolls the landing Deployment through GitOps. One surge Pod keeps a ready web endpoint
+available while the replacement starts; existing streams reconnect when the old Pod terminates.
 Merge the reviewed configuration, let Argo follow the Kargo deployment branch and replace the Pod, then verify
 `kubectl --context galactic-lan -n proompteng rollout status deployment/proompteng --timeout=5m` and confirm an
 authenticated `/api/tengri` snapshot reports the expected `previewGatewayOrigin`. Existing MicroVM Pods and PVCs are
 not touched. Roll back an image by re-promoting the last known-good Proompteng Freight through Kargo; do not apply or undo
 the Deployment directly.
 
+Code keeps recoverable drafts scoped to the GitHub owner and agent creation identity. File reads include a SHA-256
+revision; saves require that base revision and verify the returned revision. A competing API save returns a conflict
+and preserves the local draft. Guests from before conditional-save support remain readable, but editing requires a
+sleep/resume update. Refresh the browser after both web and runtime promotion; older clients cannot submit
+unconditional writes to the updated runtime.
+
+Draft storage never evicts another unsaved edit to make room. When browser storage is unavailable or full, Tengri
+keeps a temporary recovery copy and exposes a download on the desktop and lifecycle screens. A page-unload warning
+remains active until those edits are saved or discarded. Temporary copies cannot survive a browser restart, so
+download them before closing the tab if storage cannot be restored.
+
 ## Validation
+
+### Desktop design and interaction
+
+The Tengri desktop uses macOS-style unified toolbars, full-height sidebars, restrained window shadows, and a
+proximity-magnifying Dock. Apple’s original Big Sur wallpaper and application artwork are bundled locally; provenance
+is in [`public/tengri/README.md`](public/tengri/README.md). Finder, Chrome, Code, Terminal, and Settings continue to
+operate on the real guest workspace.
+
+Window movement and Dock magnification update transforms without React state changes per pointer frame. Pointer
+geometry is measured at gesture boundaries; app content is memoized independently from window placement. The clock
+updates its own leaf component. Minimized windows retain their application sessions and finish their animation at the
+corresponding Dock icon. Reduced-motion preferences update while the desktop is open.
+
+Dock magnification reserves space between icons and expands the glass background with transforms, using cached
+geometry and limiting expansion at narrow viewport edges. Activating a window returns keyboard focus to its last
+control; Terminal is ready for typing when opened. Minimize preserves the window's zoom state and normal bounds.
+The Window menu lists the active app's individual windows, identifies minimized windows, and marks the active window.
+
+Design references: Apple [windows](https://developer.apple.com/design/human-interface-guidelines/windows),
+[toolbars](https://developer.apple.com/design/human-interface-guidelines/toolbars), and
+[materials](https://developer.apple.com/design/human-interface-guidelines/materials); web.dev
+[animation performance](https://web.dev/articles/animations-guide).
+
+`bun run test:e2e` covers toolbar alignment, narrow layouts, all resize corners, drag continuity, Dock magnification,
+minimize targets, reduced motion, idle geometry reads, and guest lifecycle behavior. Visual snapshots are generated
+with the pinned Playwright browser on both macOS and Linux.
 
 ```sh
 cd apps/landing

@@ -25,7 +25,7 @@ spec:
         app.kubernetes.io/name: bayn
         app.kubernetes.io/part-of: bayn
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-09-04T03:00:00Z"
+        kubectl.kubernetes.io/restartedAt: "2026-09-06T06:04:13.881Z"
     spec:
       serviceAccountName: bayn
       automountServiceAccountToken: false
@@ -58,7 +58,7 @@ spec:
               protocol: TCP
           env:
             - name: BAYN_CODE_REVISION
-              value: 88a00e82f7fc727bcf8f2423ea9319a22c1b3bc5
+              value: 63a6356e644399c07f0fcfdce7961dc51d5f2372
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
               value: http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
             - name: POD_NAMESPACE
@@ -76,9 +76,9 @@ spec:
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:65349a368762d42937dabb9d420e46d9199715f8a61f88d80bc5b7101df3735c
+              value: sha256:add071efd680dd4ff2a56b4e3c16bdd84aebbdc117778e3b4fdbc748bf8b12c5
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "9b85a04413b635b35ad3dea33fcfc5e5bf3dd5590c1564390b454f1092988fa2"
+              value: "86d5d2557ee6cb2100a358fdfdaf54cb5d9b27f6837efd9ff265bf17ff7b9194"
             - name: BAYN_STRATEGY_PARAMETER_HASH
               value: "88f4bf9a18fd881226a123ba277a65daaaf92aba76acfde86072d03d143624ef"
             # Reviewed activation identity pins used by the release verifier. Runtime derives the same
@@ -86,7 +86,7 @@ spec:
             - name: BAYN_STRATEGY_NAME
               value: intraday-momentum
             - name: BAYN_STRATEGY_PROTOCOL_HASH
-              value: "b2cb0303849ff30d64214f0faeea689b78bcb93554eb517251f914001ec50318"
+              value: "b993c96dc17bd9ad0d5303e6dced8c8f68f1345354edb4835429e6419dcf946a"
             - name: BAYN_EXECUTION_RISK_POLICY_HASH
               value: "2e60270036900493a121a87c73730960154278778a8aa71b663b138effd82227"
             - name: BAYN_CAPITAL_ACTIVATION_REQUEST
@@ -97,7 +97,7 @@ spec:
             - name: BAYN_CAPITAL_ACTIVATION_KIND
               value: ResearchCapitalActivationRequest
             - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: "{\"schemaVersion\":\"bayn.research-capital-build-lineage.v1\",\"requestHash\":\"a544148ebed42b639dc1efa9cf8bf7c1272031dee71dbcc1fa76ea78a01d2092\",\"authoredActivation\":{\"sourceRevision\":\"88a00e82f7fc727bcf8f2423ea9319a22c1b3bc5\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:65349a368762d42937dabb9d420e46d9199715f8a61f88d80bc5b7101df3735c\"},\"activation\":{\"sourceRevision\":\"88a00e82f7fc727bcf8f2423ea9319a22c1b3bc5\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:65349a368762d42937dabb9d420e46d9199715f8a61f88d80bc5b7101df3735c\"}}"
+              value: "{\"schemaVersion\":\"bayn.research-capital-build-lineage.v1\",\"requestHash\":\"b7e026156d76a09bd7272d240eb82add1a7c9d3c302aeed60172dd7ba5d09586\",\"authoredActivation\":{\"sourceRevision\":\"63a6356e644399c07f0fcfdce7961dc51d5f2372\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:add071efd680dd4ff2a56b4e3c16bdd84aebbdc117778e3b4fdbc748bf8b12c5\"},\"activation\":{\"sourceRevision\":\"63a6356e644399c07f0fcfdce7961dc51d5f2372\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:add071efd680dd4ff2a56b4e3c16bdd84aebbdc117778e3b4fdbc748bf8b12c5\"}}"
             - name: BAYN_BROKER_ACCESS
               value: read-only
             - name: BAYN_CAPITAL_AUTHORITY

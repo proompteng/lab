@@ -5,12 +5,20 @@ import { TengriUnavailableError } from '@/lib/tengri/grpc'
 import { MAX_EDITABLE_FILE_BYTES } from '@/lib/tengri/schemas'
 
 type RateWindow = { count: number; resetsAt: number }
+export type ReadTengriJsonBodyOptions = Readonly<{
+  subject?: string
+  totalTimeoutMs?: number
+  inactivityTimeoutMs?: number
+}>
 
 const RATE_WINDOW_MS = 60_000
 const SUBJECT_LIMIT = 120
 const RATE_WINDOW_CAP = 20_000
 export const MAX_TENGRI_ACTION_BODY_BYTES = MAX_EDITABLE_FILE_BYTES * 6 + 64 * 1024
 export const MAX_CONCURRENT_TENGRI_ACTION_BODIES = 4
+export const MAX_CONCURRENT_TENGRI_ACTION_BODIES_PER_SUBJECT = 2
+export const TENGRI_BODY_TOTAL_TIMEOUT_MS = 15_000
+export const TENGRI_BODY_INACTIVITY_TIMEOUT_MS = 5_000
 
 export async function requireTengriIdentity(request: Request) {
   const identity = await getRateLimitedTengriIdentity(request)
@@ -52,15 +60,21 @@ export async function getRateLimitedTengriIdentity(request: Request) {
 
 export function tengriRouteError(error: unknown) {
   if (error instanceof TengriUnavailableError) {
-    return Response.json({ error: error.message }, { status: error.status, headers: noStoreHeaders() })
+    return Response.json(
+      { error: error.message, code: error.code },
+      { status: error.status, headers: noStoreHeaders() },
+    )
   }
   if (error instanceof SyntaxError) {
     return Response.json({ error: 'Request body is invalid JSON' }, { status: 400, headers: noStoreHeaders() })
   }
+  if (error instanceof Error && error.name === 'AbortError') {
+    return Response.json({ error: error.message }, { status: 499, headers: noStoreHeaders() })
+  }
   return Response.json({ error: 'Tengri request failed unexpectedly' }, { status: 500, headers: noStoreHeaders() })
 }
 
-export async function readTengriJsonBody(request: Request): Promise<unknown> {
+export async function readTengriJsonBody(request: Request, options: ReadTengriJsonBodyOptions = {}): Promise<unknown> {
   const contentType = request.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase()
   if (contentType !== 'application/json') {
     throw new TengriUnavailableError('Tengri actions require application/json', 415)
@@ -73,47 +87,169 @@ export async function readTengriJsonBody(request: Request): Promise<unknown> {
     }
   }
 
-  if (!request.body) throw new SyntaxError('Request body is empty')
-  const releaseBodySlot = acquireTengriActionBodySlot()
-  const reader = request.body.getReader()
-  const decoder = new TextDecoder('utf-8', { fatal: true })
-  let totalBytes = 0
-  let text = ''
+  const body = request.body
+  if (!body) throw new SyntaxError('Request body is empty')
+  const signal = request.signal
+  if (signal?.aborted) throw abortedRequestError()
+
+  const inactivityTimeoutMs = resolveBodyTimeout(options.inactivityTimeoutMs, TENGRI_BODY_INACTIVITY_TIMEOUT_MS)
+  const totalTimeoutMs = resolveBodyTimeout(options.totalTimeoutMs, TENGRI_BODY_TOTAL_TIMEOUT_MS)
+  const releaseBodySlot = acquireTengriActionBodySlot(options.subject)
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+  let cancelRequested = false
+  let finished = false
+  let terminationError: Error | undefined
+  let rejectRead: ((reason?: unknown) => void) | undefined
+  let totalTimer: ReturnType<typeof setTimeout> | undefined
+  let inactivityTimer: ReturnType<typeof setTimeout> | undefined
+  let abortListenerAttached = false
+
+  const cancelReader = (reason: string) => {
+    if (cancelRequested || !reader) return
+    cancelRequested = true
+    try {
+      void Promise.resolve(reader.cancel(reason)).catch(() => undefined)
+    } catch {
+      // A reader may reject cancellation synchronously after the request has already failed.
+    }
+  }
+
+  const failForTimeout = () => {
+    if (finished) return
+    const error = new TengriUnavailableError('Tengri action body timed out', 408)
+    terminationError = error
+    finished = true
+    cancelReader(error.message)
+    rejectRead?.(error)
+  }
+
+  const onAbort = () => {
+    if (finished) return
+    const error = abortedRequestError()
+    terminationError = error
+    finished = true
+    cancelReader(error.message)
+    rejectRead?.(error)
+  }
+
+  const clearTimers = () => {
+    if (totalTimer !== undefined) clearTimeout(totalTimer)
+    if (inactivityTimer !== undefined) clearTimeout(inactivityTimer)
+    totalTimer = undefined
+    inactivityTimer = undefined
+  }
+
+  let completed = false
+
   try {
+    reader = body.getReader()
+    if (signal) {
+      signal.addEventListener('abort', onAbort, { once: true })
+      abortListenerAttached = true
+    }
+    if (signal?.aborted) onAbort()
+
+    totalTimer = setTimeout(failForTimeout, totalTimeoutMs)
+    const armInactivityTimer = () => {
+      if (inactivityTimer !== undefined) clearTimeout(inactivityTimer)
+      inactivityTimer = setTimeout(failForTimeout, inactivityTimeoutMs)
+    }
+    armInactivityTimer()
+
+    const decoder = new TextDecoder('utf-8', { fatal: true })
+    let totalBytes = 0
+    let text = ''
     while (true) {
-      const { done, value } = await reader.read()
+      if (terminationError) throw terminationError
+      const readAbort = new Promise<never>((_, reject) => {
+        rejectRead = reject
+      })
+      void readAbort.catch(() => undefined)
+      let readResult: Awaited<ReturnType<typeof reader.read>>
+      try {
+        const pendingRead = reader.read()
+        void pendingRead.catch(() => undefined)
+        readResult = await Promise.race([pendingRead, readAbort])
+      } finally {
+        rejectRead = undefined
+      }
+      const { done, value } = readResult
+      if (terminationError) throw terminationError
       if (done) break
       totalBytes += value.byteLength
       if (totalBytes > MAX_TENGRI_ACTION_BODY_BYTES) {
-        await reader.cancel('Tengri action body is too large').catch(() => undefined)
+        cancelReader('Tengri action body is too large')
         throw new TengriUnavailableError('Tengri action body is too large', 413)
       }
       try {
         text += decoder.decode(value, { stream: true })
       } catch {
-        await reader.cancel('Request body is not valid UTF-8').catch(() => undefined)
+        cancelReader('Request body is not valid UTF-8')
         throw new SyntaxError('Request body is not valid UTF-8')
       }
+      if (value.byteLength > 0) armInactivityTimer()
     }
     try {
       text += decoder.decode()
     } catch {
+      cancelReader('Request body is not valid UTF-8')
       throw new SyntaxError('Request body is not valid UTF-8')
     }
+    completed = true
+    return JSON.parse(text)
+  } catch (error) {
+    if (!completed) cancelReader(error instanceof Error ? error.message : 'Tengri action body read failed')
+    throw error
   } finally {
-    reader.releaseLock()
+    finished = true
+    clearTimers()
+    if (signal && abortListenerAttached) {
+      try {
+        signal.removeEventListener('abort', onAbort)
+      } catch {
+        // Request cleanup must not prevent returning body capacity.
+      }
+    }
+    if (reader) {
+      try {
+        reader.releaseLock()
+      } catch {
+        // Releasing a reader can race an underlying stream cancellation; capacity still must be returned.
+      }
+    }
     releaseBodySlot()
   }
-  return JSON.parse(text)
 }
 
-function acquireTengriActionBodySlot() {
-  const state = globalThis as typeof globalThis & { tengriActiveActionBodies?: number }
+function resolveBodyTimeout(value: number | undefined, fallback: number) {
+  if (value === undefined || !Number.isFinite(value)) return fallback
+  return Math.max(0, value)
+}
+
+function abortedRequestError() {
+  const error = new Error('Tengri request was canceled')
+  error.name = 'AbortError'
+  return error
+}
+
+function acquireTengriActionBodySlot(subject?: string) {
+  const state = globalThis as typeof globalThis & {
+    tengriActiveActionBodies?: number
+    tengriActiveActionBodiesBySubject?: Map<string, number>
+  }
   const activeBodies = state.tengriActiveActionBodies ?? 0
   if (activeBodies >= MAX_CONCURRENT_TENGRI_ACTION_BODIES) {
     throw new TengriUnavailableError('Too many concurrent Tengri action bodies', 429)
   }
+  const subjectActiveBodies = subject ? (state.tengriActiveActionBodiesBySubject?.get(subject) ?? 0) : 0
+  if (subject && subjectActiveBodies >= MAX_CONCURRENT_TENGRI_ACTION_BODIES_PER_SUBJECT) {
+    throw new TengriUnavailableError('Too many concurrent Tengri action bodies for this subject', 429)
+  }
   state.tengriActiveActionBodies = activeBodies + 1
+  if (subject) {
+    const activeBySubject = (state.tengriActiveActionBodiesBySubject ??= new Map())
+    activeBySubject.set(subject, subjectActiveBodies + 1)
+  }
 
   let released = false
   return () => {
@@ -122,6 +258,13 @@ function acquireTengriActionBodySlot() {
     const remaining = (state.tengriActiveActionBodies ?? 1) - 1
     if (remaining <= 0) delete state.tengriActiveActionBodies
     else state.tengriActiveActionBodies = remaining
+    if (subject) {
+      const activeBySubject = state.tengriActiveActionBodiesBySubject
+      const subjectRemaining = (activeBySubject?.get(subject) ?? 1) - 1
+      if (activeBySubject && subjectRemaining > 0) activeBySubject.set(subject, subjectRemaining)
+      else activeBySubject?.delete(subject)
+      if (activeBySubject?.size === 0) delete state.tengriActiveActionBodiesBySubject
+    }
   }
 }
 
