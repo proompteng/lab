@@ -13,10 +13,16 @@ enforce this order:
 | -3 | Redis answers authenticated PING where configured, SAVE returns OK, and persistence reports success. A connection failure retries within the Job deadline; a failed save stops the rollout. |
 | -2 | Create a fresh volume snapshot while retaining the previous upgrade snapshots. |
 | -1 | Bind a separate PVC restored from that snapshot. The clone cannot bind before its snapshot is usable. |
-| 0 | Restore the clone with the pinned existing Redis version, write a proof key, and shut it down cleanly. Start the actual Redis 8 image against the same AOF and require the proof key, new writes, SAVE, and exporter 1.91.1 metrics with `redis_up=1`. |
+| 0 | Copy the pristine clone into fresh disposable storage, restore it with the pinned existing Redis version, write a proof key, and shut it down cleanly. Start the actual Redis 8 image against the same AOF and require the proof key, new writes, SAVE, and exporter 1.91.1 metrics with `redis_up=1`. |
 | 1 | Update the serving Redis CR to 8.10.1 and its exporter to 1.91.1. |
 
-The rehearsal mounts only its clone, binds Redis and exporter listeners to loopback,
+Each rehearsal Pod mounts its pristine clone read-only and copies its files to a new
+`emptyDir`. Redis only writes to that disposable copy. Recreating a failed Job
+therefore starts with the original snapshot data, including after a Redis 8 failure.
+The Buzz rehearsal includes the serving Redis ConfigMap, preserving its memory
+limit and eviction policy. Open WebUI uses the same image defaults as its server.
+
+The rehearsal binds Redis and exporter listeners to loopback,
 has no Service, and receives no Kubernetes API token. Its proof keys never touch the
 serving data. Kubernetes terminates the native Redis and exporter sidecars when the
 verification Job finishes. Snapshots and clone PVCs have `Prune=false,Delete=false`;

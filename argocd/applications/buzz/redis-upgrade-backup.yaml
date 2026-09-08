@@ -113,10 +113,8 @@ metadata:
     argocd.argoproj.io/sync-wave: "-1"
 data:
   redis.conf: |
+    include /serving-config/redis-additional.conf
     bind 127.0.0.1
-    appendfsync everysec
-    maxmemory 192mb
-    maxmemory-policy noeviction
 ---
 apiVersion: batch/v1
 kind: Job
@@ -143,6 +141,46 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       initContainers:
+        - name: copy-pristine-snapshot
+          image: redis:8.10.1-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
+          command:
+            - sh
+            - -ec
+            - |
+              set -eu
+              test -d "$SNAPSHOT_DIR"
+              test -z "$(ls -A "$DATA_DIR")"
+              cp -R "$SNAPSHOT_DIR/." "$DATA_DIR/"
+              echo "Copied the pristine snapshot into fresh disposable rehearsal storage"
+          env:
+            - name: SNAPSHOT_DIR
+              value: /snapshot
+            - name: DATA_DIR
+              value: /data
+          volumeMounts:
+            - name: snapshot
+              mountPath: /snapshot
+              readOnly: true
+            - name: data
+              mountPath: /data
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            readOnlyRootFilesystem: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+              ephemeral-storage: 5Gi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+              ephemeral-storage: 5Gi
         - name: restore-old-format
           image: quay.io/opstree/redis:v7.4.8@sha256:b3bbb254bfe964f4333c581e1461e738853ec2351aa3a620a5fff45b94fba2b3
           command:
@@ -172,7 +210,7 @@ spec:
               trap - EXIT INT TERM
               printf 'Old Redis loaded the retained snapshot; original key count: '
               cat /proof/restored-dbsize
-          env: &a1
+          env:
             - name: PERSISTENCE_ENABLED
               value: "true"
             - name: REDIS_PORT
@@ -182,13 +220,13 @@ spec:
             - name: SERVER_MODE
               value: standalone
             - name: REDIS_PASSWORD
-              valueFrom: &a5
+              valueFrom:
                 secretKeyRef:
                   name: buzz-redis-auth
                   key: password
             - name: EXTERNAL_CONFIG_FILE
               value: /probe-config/redis.conf
-          volumeMounts: &a2
+          volumeMounts:
             - name: data
               mountPath: /data
             - name: proof
@@ -196,16 +234,19 @@ spec:
             - name: config
               mountPath: /probe-config
               readOnly: true
-          resources: &a3
+            - name: serving-config
+              mountPath: /serving-config
+              readOnly: true
+          resources:
             requests:
               cpu: 50m
               memory: 64Mi
             limits:
               cpu: 500m
               memory: 512Mi
-          securityContext: &a4
+          securityContext:
             allowPrivilegeEscalation: false
-            capabilities: &a6
+            capabilities:
               drop:
                 - ALL
             runAsNonRoot: true
@@ -214,10 +255,48 @@ spec:
         - name: redis-eight
           image: quay.io/opstree/redis:v8.10.1@sha256:d3ef5a7f11eb501034b6612b842c864e1946088c52c04b29a22f38b1fe37c99b
           restartPolicy: Always
-          env: *a1
-          volumeMounts: *a2
-          resources: *a3
-          securityContext: *a4
+          env:
+            - name: PERSISTENCE_ENABLED
+              value: "true"
+            - name: REDIS_PORT
+              value: "6379"
+            - name: SETUP_MODE
+              value: standalone
+            - name: SERVER_MODE
+              value: standalone
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: buzz-redis-auth
+                  key: password
+            - name: EXTERNAL_CONFIG_FILE
+              value: /probe-config/redis.conf
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: proof
+              mountPath: /proof
+            - name: config
+              mountPath: /probe-config
+              readOnly: true
+            - name: serving-config
+              mountPath: /serving-config
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
           startupProbe:
             exec:
               command:
@@ -233,13 +312,24 @@ spec:
             - name: REDIS_ADDR
               value: redis://127.0.0.1:6379
             - name: REDIS_PASSWORD
-              valueFrom: *a5
+              valueFrom:
+                secretKeyRef:
+                  name: buzz-redis-auth
+                  key: password
             - name: REDIS_EXPORTER_WEB_LISTEN_ADDRESS
               value: 127.0.0.1:9121
-          resources: *a3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
           securityContext:
             allowPrivilegeEscalation: false
-            capabilities: *a6
+            capabilities:
+              drop:
+                - ALL
             runAsNonRoot: true
             runAsUser: 1000
             runAsGroup: 1000
@@ -271,24 +361,42 @@ spec:
               redis-cli -e --raw DBSIZE
           env:
             - name: REDISCLI_AUTH
-              valueFrom: *a5
+              valueFrom:
+                secretKeyRef:
+                  name: buzz-redis-auth
+                  key: password
           volumeMounts:
             - name: proof
               mountPath: /proof
-          resources: *a3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
           securityContext:
             allowPrivilegeEscalation: false
-            capabilities: *a6
+            capabilities:
+              drop:
+                - ALL
             runAsNonRoot: true
             runAsUser: 1000
             runAsGroup: 1000
             readOnlyRootFilesystem: true
       volumes:
-        - name: data
+        - name: snapshot
           persistentVolumeClaim:
             claimName: buzz-redis-8-10-1-v2-rehearsal
+            readOnly: true
         - name: proof
           emptyDir: {}
         - name: config
           configMap:
             name: buzz-redis-8-10-1-v2-rehearsal
+        - name: data
+          emptyDir:
+            sizeLimit: 5Gi
+        - name: serving-config
+          configMap:
+            name: buzz-redis-config

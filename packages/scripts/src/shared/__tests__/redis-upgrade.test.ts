@@ -1,16 +1,35 @@
 import { afterEach, expect, test } from 'bun:test'
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { parseAllDocuments } from 'yaml'
 
+type Container = {
+  name: string
+  command: string[]
+  volumeMounts?: { name: string; mountPath: string; readOnly?: boolean }[]
+}
+
 type Resource = {
   kind: string
   metadata: { name: string; annotations?: Record<string, string> }
+  data?: Record<string, string>
   spec?: {
     source?: { persistentVolumeClaimName: string }
     dataSource?: { name: string }
-    template?: { spec: { containers: { name: string; command: string[] }[] } }
+    redisConfig?: { additionalRedisConfig: string }
+    template?: {
+      spec: {
+        containers: Container[]
+        initContainers?: Container[]
+        volumes?: {
+          name: string
+          persistentVolumeClaim?: { claimName: string; readOnly?: boolean }
+          configMap?: { name: string }
+          emptyDir?: { sizeLimit: string }
+        }[]
+      }
+    }
   }
 }
 
@@ -49,6 +68,54 @@ for (const [namespace, filename, claim] of [
     for (const retained of [snapshot, clone]) {
       expect(retained.metadata.annotations?.['argocd.argoproj.io/sync-options']).toBe('Prune=false,Delete=false')
     }
+    const pod = rehearsal.spec?.template?.spec
+    const sourceVolume = pod?.volumes?.find((volume) => volume.name === 'snapshot')
+    expect(sourceVolume?.persistentVolumeClaim).toEqual({ claimName: clone.metadata.name, readOnly: true })
+    expect(pod?.volumes?.find((volume) => volume.name === 'data')?.emptyDir).toBeDefined()
+    for (const server of pod?.initContainers?.filter((container) =>
+      ['restore-old-format', 'redis-eight'].includes(container.name),
+    ) ?? []) {
+      expect(server.volumeMounts?.some((mount) => mount.name === 'snapshot')).toBe(false)
+      const paths = server.volumeMounts?.map((mount) => mount.mountPath) ?? []
+      expect(new Set(paths).size).toBe(paths.length)
+    }
+    const config = requireResource(items, 'ConfigMap', '-v2-rehearsal')
+    expect(config.data?.['redis.conf']).not.toContain('maxmemory ')
+    if (namespace === 'buzz') {
+      expect(config.data?.['redis.conf']).toContain('include /serving-config/redis-additional.conf')
+      expect(pod?.volumes?.find((volume) => volume.name === 'serving-config')?.configMap?.name).toBe(
+        redis.spec?.redisConfig?.additionalRedisConfig,
+      )
+    }
+  })
+
+  test(`${namespace} recreates pristine rehearsal data after a failed Redis 8 attempt`, async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'redis-rehearsal-retry-'))
+    temporaryDirectories.push(directory)
+    const snapshot = join(directory, 'snapshot')
+    const first = join(directory, 'first-attempt')
+    const retry = join(directory, 'retry')
+    await Promise.all([mkdir(join(snapshot, 'appendonlydir'), { recursive: true }), mkdir(first), mkdir(retry)])
+    await writeFile(join(snapshot, 'appendonlydir', 'appendonly.aof'), 'redis-seven-original-data')
+    const job = requireResource(await resources(namespace, 'redis-upgrade-backup.yaml'), 'Job', '-v2-rehearsal')
+    const seed = job.spec?.template?.spec.initContainers?.find(
+      (container) => container.name === 'copy-pristine-snapshot',
+    )
+    if (!seed) throw new Error('Missing pristine snapshot copy step')
+    const copy = async (destination: string) => {
+      const child = Bun.spawn(seed.command, {
+        env: { ...Bun.env, SNAPSHOT_DIR: snapshot, DATA_DIR: destination },
+        stdout: 'ignore',
+        stderr: 'ignore',
+      })
+      return child.exited
+    }
+    expect(await copy(first)).toBe(0)
+    await writeFile(join(first, 'appendonlydir', 'appendonly.aof'), 'redis-eight-rewritten-data')
+    expect(await copy(first)).not.toBe(0)
+    expect(await copy(retry)).toBe(0)
+    expect(await readFile(join(retry, 'appendonlydir', 'appendonly.aof'), 'utf8')).toBe('redis-seven-original-data')
+    expect(await readFile(join(snapshot, 'appendonlydir', 'appendonly.aof'), 'utf8')).toBe('redis-seven-original-data')
   })
 
   for (const scenario of ['delayed-ready', 'unreachable', 'save-error', 'persistence-error']) {
