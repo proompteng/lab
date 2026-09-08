@@ -11,11 +11,19 @@ and both CSI node DaemonSets have completed their intended image rollout. Verify
 CSI key generation and existing workload mounts before creating these test Pods.
 
 Sync the complete `storage-upgrade-acceptance` Application after those checks;
-selecting individual resources skips hooks. RBD/CephFS writers run at PostSync
-wave 20, remount readers at wave 21, and the RGW check at wave 22. ReadWriteOncePod
-prevents writer and reader Pods from mounting the same claim concurrently. RGW
-uses a unique temporary bucket and the existing Loki user without changing its
-permissions.
+selecting individual resources skips hooks. The RBD and CephFS writers are pinned
+to `talos-192-168-1-194` at PostSync wave 20, and their first remount readers are
+pinned to `talos-192-168-1-85` at wave 21. A second fresh RBD and CephFS mount
+and readback runs on `turin` at wave 22, alongside the existing RGW check. The
+two retained PVCs use ReadWriteOncePod, so each later wave waits for the prior
+Pod to finish and release its mount before the next node can mount the claim.
+RGW uses a unique temporary bucket and the existing Loki user without changing
+its permissions.
+
+The application contains seven PostSync Jobs: the original RBD writer/readback,
+CephFS writer/readback, and RGW checks plus the two Turin readbacks. Successful
+hooks are removed; failed hooks remain for inspection and block the sync until
+they are reviewed.
 
 This Application reports functional storage results independently from Ceph's
 security health. The strict `scripts/cluster-upgrades/storage-csi-acceptance.sh`
