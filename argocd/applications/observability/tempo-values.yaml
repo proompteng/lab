@@ -27,7 +27,16 @@ distributor:
     - -config.expand-env=true
 
 ingester:
-  replicas: 2
+  replicas: 3
+  affinity: |
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: tempo
+              app.kubernetes.io/instance: observability-tempo
+              app.kubernetes.io/component: ingester
+          topologyKey: kubernetes.io/hostname
   podDisruptionBudget:
     enabled: true
   maxUnavailable: 1
@@ -59,9 +68,10 @@ storage:
   trace:
     backend: s3
     s3:
-      endpoint: rook-ceph-rgw-objectstore.rook-ceph.svc:80
+      endpoint: rook-ceph-rgw-tls.rook-ceph.svc:443
       bucket: tempo-traces
       access_key: ${OBS_S3_ACCESS_KEY}
       secret_key: ${OBS_S3_SECRET_KEY}
-      insecure: true
+      insecure: false
+      tls_server_name: ceph.k8s.proompteng.ai
       forcepathstyle: true

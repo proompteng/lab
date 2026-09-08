@@ -37,9 +37,8 @@ let
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = {
-    # Refreshed from both Linux builders after adding writer-fence lifecycle integration to the manifest.
-    x86_64-linux = "sha256-L1pJa2JHGQV/XtrKNeSt4omI1UMDREXrTUBT2ZkJpFM=";
-    aarch64-linux = "sha256-isxhTa/QV1bXkl7tuz/aA+gCXcm9P26dig9RRnOZjSA=";
+    x86_64-linux = "sha256-Cw9ZS/ZLSaAXgTPkNzTGBLspoWMp2GXJE+qvBnbc6Fk=";
+    aarch64-linux = "sha256-7eHkNniN0mAv9vp0Ia7UidpKFOolvEcDyziUqNuQuvk=";
   };
   buildCommands = [
     "bun --cwd=services/bayn run tsc"

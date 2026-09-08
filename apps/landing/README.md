@@ -82,6 +82,10 @@ proximity-magnifying Dock. Apple’s original Big Sur wallpaper and application 
 is in [`public/tengri/README.md`](public/tengri/README.md). Finder, Chrome, Code, Terminal, and Settings continue to
 operate on the real guest workspace.
 
+Desktop, setup, and confirmation windows share their traffic-light controls. Available actions show symbols on hover
+or keyboard focus; unavailable actions are gray and disabled. Closing a confirmation cancels it, and its controls stay
+disabled while the confirmed operation runs.
+
 Window movement and Dock magnification update transforms without React state changes per pointer frame. Pointer
 geometry is measured at gesture boundaries; app content is memoized independently from window placement. The clock
 updates its own leaf component. Minimized windows retain their application sessions and finish their animation at the
