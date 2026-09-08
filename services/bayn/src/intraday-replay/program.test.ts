@@ -17,6 +17,14 @@ import { decodeDefaultIntradayMomentumProtocol } from '../strategy/intraday-mome
 import { OrderSide } from '../execution/contracts'
 import { runIntradayReplay } from './program'
 import type { IntradayReplayInput } from './model'
+import {
+  ArchiveAvailabilityPolicy,
+  archiveAvailabilityOperationalError,
+  makeArchiveAvailabilityReceipts,
+  verifyRecordedArchiveAvailability,
+} from '../market-data/intraday/availability'
+import { availabilityReader, receiptHasSymbol } from '../testing/archive-availability-fixture'
+import { canonicalHashV1 } from '../hash'
 
 const protocol = Result.getOrThrow(decodeDefaultIntradayMomentumProtocol())
 const sessionDates = ['2026-09-04', '2026-09-05'] as const
@@ -141,6 +149,7 @@ const replayInput = (dates: readonly string[], overrides: Partial<IntradayReplay
     initialCapitalMicros,
     allocationCapitalMicros: initialCapitalMicros,
     assumptions: defaultAssumptions,
+    archiveAvailability: ArchiveAvailabilityPolicy.SourceReceiptAssumption,
     ...overrides,
   } as IntradayReplayInput
 }
@@ -158,6 +167,266 @@ const entryAndCloseSnapshot: SnapshotFactory = (request, phase, occurrence) => {
 }
 
 describe('intraday replay program', () => {
+  test('omitted availability policy fails closed rather than opting into a source-time assumption', async () => {
+    const { archiveAvailability: _policy, ...input } = replayInput([sessionDates[0]])
+    const archive = makeArchive({ snapshot: entryAndCloseSnapshot })
+    const report = await run(input, archive)
+    expect(report.availability).toEqual({
+      policy: ArchiveAvailabilityPolicy.RecordedReader,
+      status: 'UNPROVEN',
+      snapshots: [],
+      receipts: [],
+    })
+    expect(report.sessions[0]?.status).toBe('INCOMPLETE')
+    expect(report.sessions[0]?.orders).toEqual([])
+    expect(report.totals.netRealizedPnlAfterCostsMicros).toBeNull()
+  })
+
+  test('explicit source-time research remains unproven and cannot acquire receipt capability', async () => {
+    const archive = makeArchive()
+    const report = await Effect.runPromise(
+      runIntradayReplay(
+        replayInput([sessionDates[0]]),
+        {
+          ...archive.service,
+          recordedAvailability: () => Effect.die('source-time research must not read or write receipts'),
+        },
+        finalizedNow,
+      ),
+    )
+    expect(report.sessions[0]?.status).toBe('COMPLETE')
+    expect(report.availability.status).toBe('UNPROVEN')
+    expect(report.availability.receipts).toEqual([])
+    expect(report.limitations.some((limitation) => limitation.includes('unproven availability assumption'))).toBe(true)
+  })
+
+  for (const receiptMode of [
+    'complete',
+    'missing-candidate',
+    'late-candidate',
+    'manifest-excluded-candidate',
+    'all-candidates-unavailable',
+    'missing-benchmark',
+  ] as const) {
+    test(`retains independent candidates with ${receiptMode} availability evidence`, async () => {
+      const archive = makeArchive({
+        snapshot: (request, phase, occurrence) => {
+          const snapshot = snapshotFor(request, phase === 'decision' ? { AAPL: 0.02, AMZN: 0.01 } : {})
+          const rows = Result.getOrThrow(
+            persistIntradaySnapshotRows({
+              ...snapshot,
+              bars: snapshot.bars.map((bar) =>
+                receiptMode === 'manifest-excluded-candidate' &&
+                phase === 'decision' &&
+                bar.symbol === 'AAPL' &&
+                bar.eventAt === request.rangeStartAt
+                  ? { ...bar, ingestedAt: new Date(Date.parse(bar.eventAt) + 65_000).toISOString() }
+                  : bar,
+              ),
+            }),
+          )
+          const offsetBase =
+            BigInt(Date.parse(request.observedAt)) * 1_000n + BigInt(phase === 'decision' ? 0 : occurrence + 20)
+          const sequence = (records: readonly unknown[]) =>
+            records.map((row, index) => {
+              if (typeof row !== 'object' || row === null) throw new Error('archive fixture row must be an object')
+              return { ...row, source_offset: String(offsetBase + BigInt(index)) }
+            })
+          return Result.getOrThrow(
+            verifyIntradaySnapshot(request, {
+              ...rows,
+              quotes: sequence(rows.quotes),
+              trades: sequence(rows.trades),
+              archiveWatermarks: request.archiveWatermarks.map((watermark) => ({
+                source_topic: watermark.sourceTopic,
+                source_partition: watermark.sourcePartition,
+                inclusive_last_offset: watermark.inclusiveLastOffset,
+              })),
+            }),
+          ) as ArchiveVerifiedIntradayMarketSnapshot
+        },
+      })
+      const report = await Effect.runPromise(
+        runIntradayReplay(
+          replayInput([sessionDates[0]], {
+            archiveAvailability: ArchiveAvailabilityPolicy.RecordedReader,
+            assumptions: { ...defaultAssumptions, firstPollDelayMs: 3_000 },
+            ...(receiptMode === 'all-candidates-unavailable' || receiptMode === 'missing-benchmark'
+              ? { calendar: [{ date: sessionDates[0], open: '09:30', close: '10:06' }] }
+              : {}),
+          }),
+          {
+            ...archive.service,
+            captureVersion: () =>
+              Effect.succeed(
+                Object.values(protocol.sourceTopics)
+                  .toSorted()
+                  .map((sourceTopic) => ({
+                    sourceTopic,
+                    sourcePartition: 0,
+                    inclusiveLastOffset: '10000000000000000',
+                  })),
+              ),
+            recordedAvailability: (snapshot) =>
+              Effect.fromResult(
+                Result.gen(function* () {
+                  const sourceCutoff = new Date(Date.parse(snapshot.manifest.observedAt) - 250).toISOString()
+                  const completedAt = new Date(Date.parse(snapshot.manifest.observedAt) - 100).toISOString()
+                  const previous = yield* verifyIntradaySnapshot(
+                    {
+                      ...snapshot.manifest,
+                      universe: snapshot.manifest.universe ?? snapshot.manifest.symbols,
+                      observedAt: sourceCutoff,
+                    },
+                    {
+                      ...Result.getOrThrow(persistIntradaySnapshotRows(snapshot)),
+                      archiveWatermarks: snapshot.manifest.archiveWatermarks.map((watermark) => ({
+                        source_topic: watermark.sourceTopic,
+                        source_partition: watermark.sourcePartition,
+                        inclusive_last_offset: watermark.inclusiveLastOffset,
+                      })),
+                    },
+                  )
+                  const receipts = yield* makeArchiveAvailabilityReceipts(
+                    previous as ArchiveVerifiedIntradayMarketSnapshot,
+                    availabilityReader,
+                    sourceCutoff,
+                    completedAt,
+                  )
+                  const observedReceipts =
+                    snapshot.manifest.purpose !== undefined || receiptMode === 'complete'
+                      ? receipts
+                      : receipts.flatMap((receipt) => {
+                          if (receiptMode === 'all-candidates-unavailable')
+                            return receiptHasSymbol(receipt, 'SPY') ? [receipt] : []
+                          if (receiptMode === 'missing-benchmark')
+                            return receiptHasSymbol(receipt, 'SPY') ? [] : [receipt]
+                          if (!receiptHasSymbol(receipt, 'AAPL')) return [receipt]
+                          if (receiptMode === 'missing-candidate' || receiptMode === 'manifest-excluded-candidate')
+                            return []
+                          const { receiptHash: _hash, ...material } = receipt
+                          const delayed = {
+                            ...material,
+                            availableAt: new Date(Date.parse(snapshot.manifest.observedAt) + 500).toISOString(),
+                          }
+                          return [{ ...delayed, receiptHash: canonicalHashV1(delayed) }]
+                        })
+                  return yield* verifyRecordedArchiveAvailability(
+                    snapshot,
+                    availabilityReader.endpointHash,
+                    observedReceipts,
+                  )
+                }),
+              ).pipe(Effect.mapError(archiveAvailabilityOperationalError)),
+          },
+          finalizedNow,
+        ),
+      )
+      if (receiptMode === 'all-candidates-unavailable' || receiptMode === 'missing-benchmark') {
+        expect(report.sessions[0]?.status).toBe('INCOMPLETE')
+        expect(report.sessions[0]?.orders).toEqual([])
+        expect(report.sessions[0]?.fills).toEqual([])
+        expect(report.totals.netRealizedPnlAfterCostsMicros).toBeNull()
+        const observations = report.sessions[0]?.observations ?? []
+        expect(observations).toHaveLength(2)
+        if (receiptMode === 'all-candidates-unavailable') {
+          const decisions = observations.filter((item) => item.kind === 'snapshot' && item.purpose === 'decision')
+          expect(decisions.length).toBeGreaterThan(0)
+          for (const observation of decisions) {
+            if (observation.kind !== 'snapshot') throw new Error('expected snapshot')
+            expect(observation.decision?.excludedCandidates?.map(({ symbol }) => symbol)).toEqual([
+              ...protocol.candidateSymbols,
+            ])
+            expect(observation.decision?.signals).toEqual([])
+          }
+        } else {
+          expect(observations.length).toBeGreaterThan(0)
+          expect(observations.every((item) => item.kind === 'unavailable')).toBe(true)
+        }
+        return
+      }
+      expect(
+        report.sessions[0]?.observations.filter((observation) => observation.kind === 'unavailable').slice(0, 3),
+      ).toEqual([])
+      expect({ status: report.sessions[0]?.status, reason: report.sessions[0]?.reason }).toEqual({
+        status: 'COMPLETE',
+        reason: 'entry executed and position flattened',
+      })
+      expect(report.sessions[0]?.fills.length).toBe(2)
+      const expectedSymbol = receiptMode === 'complete' ? 'AAPL' : 'AMZN'
+      expect(report.sessions[0]?.fills.map(({ symbol }) => symbol)).toEqual([expectedSymbol, expectedSymbol])
+      if (receiptMode !== 'complete') {
+        const observation = report.sessions[0]?.observations.find(
+          (item) => item.kind === 'snapshot' && item.purpose === 'decision',
+        )
+        if (observation?.kind !== 'snapshot') throw new Error('expected a decision snapshot')
+        expect(observation.decision?.targetWeights['AAPL']).toBe(0)
+        expect(observation.decision?.signals.some(({ symbol }) => symbol === 'AAPL')).toBe(false)
+        expect(observation.decision?.excludedCandidates?.some(({ symbol }) => symbol === 'AAPL')).toBe(true)
+        const availabilityProof = report.availability.snapshots.find(
+          ({ snapshotId }) => snapshotId === observation.manifest.snapshotId,
+        )
+        expect(availabilityProof?.candidateExclusions?.map(({ symbol }) => symbol)).toEqual(['AAPL'])
+        if (receiptMode === 'manifest-excluded-candidate') {
+          const original = observation.manifest.candidateExclusions?.find(({ symbol }) => symbol === 'AAPL')
+          expect(original?.reason).toBe('freshness')
+          expect(observation.decision?.excludedCandidates?.find(({ symbol }) => symbol === 'AAPL')).toEqual(original)
+          expect(availabilityProof?.candidateExclusions?.find(({ symbol }) => symbol === 'AAPL')?.reason).toBe(
+            'not-ready',
+          )
+        }
+      }
+      expect(report.availability.status).toBe('OBSERVED_ROWS_ONLY')
+      const receiptHashes = new Set(report.availability.receipts.map((receipt) => receipt.receiptHash))
+      expect(receiptHashes.size).toBe(report.availability.receipts.length)
+      expect(receiptHashes.size).toBeGreaterThan(0)
+      for (const observation of report.sessions.flatMap((session) => session.observations)) {
+        if (observation.kind !== 'snapshot') continue
+        const proof = report.availability.snapshots.find(
+          ({ snapshotId }) => snapshotId === observation.manifest.snapshotId,
+        )
+        expect(proof?.observedAt).toBe(observation.manifest.observedAt)
+        expect(proof?.receiptHashes.every((receiptHash) => receiptHashes.has(receiptHash))).toBe(true)
+      }
+      const { reportHash, ...material } = report
+      expect(reportHash).toBe(canonicalHashV1(material))
+    })
+  }
+
+  test('does not trade source-received rows lacking a completed reader observation before replay time', async () => {
+    const archive = makeArchive({ snapshot: entryAndCloseSnapshot })
+    let availabilityReads = 0
+    const service = {
+      ...archive.service,
+      recordedAvailability: (snapshot: ArchiveVerifiedIntradayMarketSnapshot) => {
+        availabilityReads += 1
+        return Effect.fail(
+          operationalError({
+            component: 'market-data',
+            operation: 'load-intraday',
+            message: 'archive reader visibility is unproven at the replay observation',
+            cause: new IntradaySnapshotFailure({
+              reason: 'not-ready',
+              message: 'archive reader visibility is unproven at the replay observation',
+              facts: {
+                observedAt: snapshot.manifest.observedAt,
+                readerCompletedAt: new Date(Date.parse(snapshot.manifest.observedAt) + 5_000).toISOString(),
+              },
+            }),
+          }),
+        )
+      },
+    }
+    const input = replayInput([sessionDates[0]], { archiveAvailability: ArchiveAvailabilityPolicy.RecordedReader })
+    const report = await Effect.runPromise(runIntradayReplay(input, service, finalizedNow))
+    expect(report.sessions[0]?.status).toBe('INCOMPLETE')
+    expect(report.sessions[0]?.fills).toEqual([])
+    expect(report.sessions[0]?.orders).toEqual([])
+    expect(report.sessions[0]?.netRealizedPnlAfterCostsMicros).toBeNull()
+    expect(report.totals.netRealizedPnlAfterCostsMicros).toBeNull()
+    expect(availabilityReads).toBeGreaterThan(0)
+  })
+
   test('replays an eligible candidate through fills while another candidate lacks a trade', async () => {
     const archive = makeArchive({
       snapshot: (request, phase) => {
@@ -224,11 +493,17 @@ describe('intraday replay program', () => {
         ) as ArchiveVerifiedIntradayMarketSnapshot
       },
     })
-    const report = await run(replayInput([sessionDates[0]]), archive)
+    const report = await run(
+      replayInput([sessionDates[0]], { calendar: [{ date: sessionDates[0], open: '09:30', close: '10:06' }] }),
+      archive,
+    )
     const session = report.sessions[0]
     expect(session).toMatchObject({ status: 'INCOMPLETE', fills: [], orders: [], netRealizedPnlAfterCostsMicros: null })
     const observations = session?.observations.filter((observation) => observation.kind === 'snapshot') ?? []
-    expect(observations.length).toBeGreaterThan(1)
+    expect(observations.map(({ manifest }) => manifest.observedAt)).toEqual([
+      '2026-09-04T14:00:02.000Z',
+      '2026-09-04T14:00:32.000Z',
+    ])
     for (const observation of observations) {
       if (observation.kind !== 'snapshot') throw new Error('expected a retained snapshot')
       expect(observation.decision?.excludedCandidates?.map(({ symbol }) => symbol)).toEqual([
@@ -262,14 +537,14 @@ describe('intraday replay program', () => {
       reason: 'adverse-price-exceeds-limit',
       side: OrderSide.Buy,
       limitPriceMicros: '100010000',
-      submittedAt: '2026-09-04T14:30:02.000Z',
-      observedAt: '2026-09-04T14:30:03.000Z',
+      submittedAt: '2026-09-04T14:00:02.000Z',
+      observedAt: '2026-09-04T14:00:03.000Z',
     })
     expect(archive.requests).toHaveLength(3)
     expect(archive.requests.map(({ purpose, observedAt }) => [purpose, observedAt])).toEqual([
-      [undefined, '2026-09-04T14:30:02.000Z'],
-      [IntradaySnapshotPurpose.EntryPricing, '2026-09-04T14:30:02.000Z'],
-      [IntradaySnapshotPurpose.EntryPricing, '2026-09-04T14:30:03.000Z'],
+      [undefined, '2026-09-04T14:00:02.000Z'],
+      [IntradaySnapshotPurpose.EntryPricing, '2026-09-04T14:00:02.000Z'],
+      [IntradaySnapshotPurpose.EntryPricing, '2026-09-04T14:00:03.000Z'],
     ])
   })
 
@@ -608,7 +883,7 @@ describe('intraday replay program', () => {
       if (retryable) {
         expect(report.sessions[0]?.status).toBe('COMPLETE')
         expect(report.sessions[0]?.fills.length).toBeGreaterThan(0)
-        expect(archive.requests[0]?.observedAt).toBe('2026-09-04T14:30:32.000Z')
+        expect(archive.requests[0]?.observedAt).toBe('2026-09-04T14:00:32.000Z')
       } else {
         expect(report.sessions[0]).toMatchObject({ status: 'INCOMPLETE', fills: [] })
         expect(calls).toBe(1)
@@ -639,8 +914,8 @@ describe('intraday replay program', () => {
               persistIntradaySnapshotRows({
                 ...snapshot,
                 bars: snapshot.bars.map((bar) =>
-                  bar.symbol === 'AAPL' && bar.eventAt === '2026-09-04T14:00:00.000Z'
-                    ? { ...bar, ingestedAt: '2026-09-04T14:01:03.065Z' }
+                  bar.symbol === 'AAPL' && bar.eventAt === '2026-09-04T13:30:00.000Z'
+                    ? { ...bar, ingestedAt: '2026-09-04T13:31:03.065Z' }
                     : bar,
                 ),
               }),
@@ -679,13 +954,13 @@ describe('intraday replay program', () => {
       { kind: 'snapshot', decision: { excludedCandidates: [{ symbol: 'AAPL', reason: 'freshness' }] } },
     ])
     expect(captures.slice(0, 3).map(({ rangeStartAt }) => rangeStartAt)).toEqual([
-      '2026-09-04T14:00:00.000Z',
-      '2026-09-04T14:00:00.000Z',
-      '2026-09-04T14:01:00.000Z',
+      '2026-09-04T13:30:00.000Z',
+      '2026-09-04T13:30:00.000Z',
+      '2026-09-04T13:31:00.000Z',
     ])
     expect(verifiedWindows).toHaveLength(3)
-    expect(verifiedWindows[2]?.observedAt).toBe('2026-09-04T14:31:02.000Z')
-    expect(session?.orders[0]?.submittedAt).toBe('2026-09-04T14:31:02.000Z')
+    expect(verifiedWindows[2]?.observedAt).toBe('2026-09-04T14:01:02.000Z')
+    expect(session?.orders[0]?.submittedAt).toBe('2026-09-04T14:01:02.000Z')
     expect(session?.status).toBe('COMPLETE')
   })
 
@@ -707,7 +982,7 @@ describe('intraday replay program', () => {
     expect(report.sessions[0]).toMatchObject({ status: 'INCOMPLETE', fills: [], netRealizedPnlAfterCostsMicros: null })
     expect(report.sessions[0]?.observations.at(-1)).toMatchObject({
       kind: 'unavailable',
-      observedAt: '2026-09-04T18:59:32.000Z',
+      observedAt: '2026-09-04T19:54:32.000Z',
       retryable: true,
     })
   })

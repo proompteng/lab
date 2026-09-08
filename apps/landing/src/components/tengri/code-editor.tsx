@@ -6,8 +6,25 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { TengriFileEvent } from '@/lib/tengri/types'
 import { MAX_CODE_WATCH_DIRECTORIES } from '@/lib/tengri/limits'
 
-import { runTengriAction } from './client'
+import { runTengriAction, TengriRequestError } from './client'
 import { CodeWriteEchoTracker } from './code-write-echo'
+import {
+  createBrowserCodeDraftStore,
+  createCodeDraft,
+  forgetCodeDraft,
+  isCodeRevision,
+  markCodeDraftDurable,
+  markCodeDraftVolatile,
+  parseCodeRevision,
+  rememberCodeDraft,
+  rememberedCodeDraft,
+  mergeCodeDraftContent,
+  type CodeBaseRevision,
+  type CodeDraft,
+  type CodeDraftIdentity,
+  type CodeRevision,
+  type CodeDraftStore,
+} from './code-editor-draft-storage'
 import {
   canStartEditorSave,
   clearCodeWatchDirectoryLimitError,
@@ -41,6 +58,22 @@ type MonacoGlobal = typeof globalThis & {
     getWorker: (_workerModuleId: string, label: string) => Worker
   }
 }
+
+type CodeFileSnapshot = {
+  content: string
+  contentType: string
+  revision: CodeBaseRevision
+}
+
+type RevisionedCodeFileSnapshot = CodeFileSnapshot
+
+type DraftPrompt =
+  | { kind: 'recoverable'; path: string; draft: CodeDraft; server: RevisionedCodeFileSnapshot }
+  | { kind: 'conflict'; path: string; draft: CodeDraft; server: RevisionedCodeFileSnapshot }
+
+const LEGACY_REVISION_MESSAGE =
+  'This guest does not report file revisions. Code is read-only until the guest resumes with revision-aware filesystem state.'
+const CODE_CONTENT_TYPE_FALLBACK = 'text/plain'
 
 function configureMonacoWorkers() {
   const environment = globalThis as MonacoGlobal
@@ -81,11 +114,15 @@ function configureMonacoWorkers() {
 
 export function CodeEditor({
   agentId,
+  agentCreatedAt,
   onDirtyChange,
+  ownerId,
   request,
 }: {
   agentId: string
+  agentCreatedAt: string
   onDirtyChange?: (dirty: boolean) => void
+  ownerId: string
   request: CodeOpenRequest | null
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null)
@@ -99,10 +136,24 @@ export function CodeEditor({
   const pendingRequestsRef = useRef<CodeOpenRequest[]>([])
   const processedRequestsRef = useRef(new Set<string>())
   const agentIdRef = useRef(agentId)
+  const agentCreatedAtRef = useRef(agentCreatedAt)
+  const ownerIdRef = useRef(ownerId)
+  const conflictReadGenerationsRef = useRef(new Map<string, number>())
+  const reloadGenerationsRef = useRef(new Map<string, number>())
   const loadingPathsRef = useRef(new Set<string>())
   const saveTimersRef = useRef(new Map<string, number>())
   const saveQueuesRef = useRef(new Map<string, Promise<boolean>>())
   const lastSavedRef = useRef(new Map<string, string>())
+  const baseRevisionsRef = useRef(new Map<string, CodeBaseRevision>())
+  const contentTypesRef = useRef(new Map<string, string>())
+  const draftStoreRef = useRef<CodeDraftStore | null>(null)
+  const draftIdsRef = useRef(new Map<string, string>())
+  const sourceDraftIdsRef = useRef(new Map<string, string>())
+  const sourceDraftsRef = useRef(new Map<string, CodeDraft>())
+  const pendingDraftsRef = useRef(new Map<string, CodeDraft>())
+  const draftPromptsRef = useRef(new Map<string, DraftPrompt>())
+  const conflictSnapshotsRef = useRef(new Map<string, CodeFileSnapshot>())
+  const readOnlyPathsRef = useRef(new Set<string>())
   const writeEchoesRef = useRef(new CodeWriteEchoTracker())
   const conflictedPathsRef = useRef(new Set<string>())
   const unverifiedPathsRef = useRef(new Set<string>())
@@ -119,6 +170,9 @@ export function CodeEditor({
   const [cursor, setCursor] = useState({ line: 1, column: 1 })
   const [editorReady, setEditorReady] = useState(false)
   const [editorError, setEditorError] = useState('')
+  const [draftError, setDraftError] = useState('')
+  const [, setDraftPromptVersion] = useState(0)
+  const [readOnlyPaths, setReadOnlyPaths] = useState<Set<string>>(() => new Set())
   const [ownerWarning, setOwnerWarning] = useState('')
   const [watchState, setWatchState] = useState<'connected' | 'reconnecting'>('connected')
   const [pendingClose, setPendingClose] = useState<EditorTab | null>(null)
@@ -128,6 +182,8 @@ export function CodeEditor({
     () => [...new Set(tabs.map((tab) => codeParentDirectory(tab.path)))].sort().join('\0'),
     [tabs],
   )
+
+  if (!draftStoreRef.current) draftStoreRef.current = createBrowserCodeDraftStore()
 
   const updateTabs = useCallback((update: (current: EditorTab[]) => EditorTab[]) => {
     setTabs((current) => {
@@ -146,17 +202,140 @@ export function CodeEditor({
     [updateTabs],
   )
 
+  const draftIdentity = useCallback(
+    (targetPath: string): CodeDraftIdentity => ({
+      agentCreatedAt: agentCreatedAtRef.current,
+      agentId: agentIdRef.current,
+      ownerId: ownerIdRef.current,
+      path: targetPath,
+    }),
+    [],
+  )
+
+  const findAvailableDraft = useCallback(
+    (targetPath: string): CodeDraft | undefined => {
+      const storedDraft = draftStoreRef.current?.read(draftIdentity(targetPath))
+      if (storedDraft?.kind === 'unavailable') setDraftError(storedDraft.message)
+      const durableDraft = storedDraft?.kind === 'found' ? storedDraft.draft : undefined
+      const memoryDraft = rememberedCodeDraft(draftIdentity(targetPath))
+      return [durableDraft, memoryDraft]
+        .filter((draft): draft is CodeDraft => draft !== undefined)
+        .sort((left, right) => right.updatedAt - left.updatedAt)[0]
+    },
+    [draftIdentity],
+  )
+
+  const persistDraft = useCallback(
+    (targetPath: string, content: string, baseRevision = baseRevisionsRef.current.get(targetPath)) => {
+      if (baseRevision === undefined || readOnlyPathsRef.current.has(targetPath)) return false
+      const draftId = draftIdsRef.current.get(targetPath)
+      const draft = createCodeDraft(
+        draftIdentity(targetPath),
+        content,
+        baseRevision,
+        contentTypesRef.current.get(targetPath) ?? CODE_CONTENT_TYPE_FALLBACK,
+        Date.now(),
+        draftId,
+      )
+      draftIdsRef.current.set(targetPath, draft.draftId)
+      pendingDraftsRef.current.set(targetPath, draft)
+      const remembered = rememberCodeDraft(draft)
+      if (!remembered) {
+        setDraftError('Code kept this draft in the open editor but could not retain another in-memory recovery copy.')
+      }
+      const result = draftStoreRef.current?.write(draft)
+      if (result?.kind === 'stored') {
+        markCodeDraftDurable(draft)
+        setDraftError((current) => (current.startsWith('Browser storage is unavailable') ? '' : current))
+        return true
+      }
+      if (markCodeDraftVolatile(draft)) {
+        setDraftError(
+          result?.message ??
+            'Browser storage is unavailable, so Code could not save this draft for recovery. Keep this tab open while storage is unavailable.',
+        )
+      } else if (!remembered) {
+        setDraftError('Code could not retain another recovery copy. Download this draft before closing the editor.')
+      } else {
+        setDraftError(
+          result?.message ??
+            'Browser storage is unavailable, so Code could not save this draft for recovery. Keep this tab open while storage is unavailable.',
+        )
+      }
+      return false
+    },
+    [draftIdentity],
+  )
+
+  const removeDraft = useCallback(
+    (targetPath: string) => {
+      const draftId = draftIdsRef.current.get(targetPath)
+      if (!draftId) {
+        pendingDraftsRef.current.delete(targetPath)
+        return true
+      }
+      const result = draftStoreRef.current?.remove(draftIdentity(targetPath), draftId)
+      if (!result || result.kind === 'removed' || result.kind === 'missing') {
+        pendingDraftsRef.current.delete(targetPath)
+        forgetCodeDraft(draftIdentity(targetPath), draftId)
+        setDraftError((current) =>
+          current.startsWith('Browser storage is unavailable') ||
+          current.startsWith('Code recovery storage is full') ||
+          current.startsWith('The edited draft is too large')
+            ? ''
+            : current,
+        )
+        return true
+      }
+      setDraftError(result.message)
+      return false
+    },
+    [draftIdentity],
+  )
+
+  const removeDraftById = useCallback(
+    (targetPath: string, draftId: string) => {
+      const result = draftStoreRef.current?.remove(draftIdentity(targetPath), draftId)
+      if (!result || result.kind === 'removed' || result.kind === 'missing') {
+        if (draftIdsRef.current.get(targetPath) === draftId) pendingDraftsRef.current.delete(targetPath)
+        forgetCodeDraft(draftIdentity(targetPath), draftId)
+        return true
+      }
+      setDraftError(result.message)
+      return false
+    },
+    [draftIdentity],
+  )
+
+  const setReadOnlyPath = useCallback((targetPath: string, readOnly: boolean) => {
+    const current = readOnlyPathsRef.current.has(targetPath)
+    if (current === readOnly) return
+    if (readOnly) readOnlyPathsRef.current.add(targetPath)
+    else readOnlyPathsRef.current.delete(targetPath)
+    setReadOnlyPaths(new Set(readOnlyPathsRef.current))
+    if (activePathRef.current === targetPath) editorRef.current?.updateOptions({ readOnly })
+  }, [])
+
+  const setDraftPrompt = useCallback((prompt: DraftPrompt | null, targetPath: string) => {
+    if (prompt) draftPromptsRef.current.set(targetPath, prompt)
+    else draftPromptsRef.current.delete(targetPath)
+    setDraftPromptVersion((version) => version + 1)
+  }, [])
+
   const markConflict = useCallback(
     (targetPath: string, error: string) => {
       unverifiedPathsRef.current.delete(targetPath)
       conflictedPathsRef.current.add(targetPath)
+      const model = modelsRef.current.get(codeModelKey(ownerAgentId, targetPath))
+      if (model) persistDraft(targetPath, model.getValue())
       writeControllersRef.current.get(targetPath)?.abort()
       const timer = saveTimersRef.current.get(targetPath)
       if (timer) window.clearTimeout(timer)
       saveTimersRef.current.delete(targetPath)
       patchTab(targetPath, { dirty: true, state: 'error', error })
+      setDraftPromptVersion((version) => version + 1)
     },
-    [patchTab],
+    [ownerAgentId, patchTab, persistDraft],
   )
 
   const markUnverified = useCallback(
@@ -198,12 +377,65 @@ export function CodeEditor({
     [patchTab],
   )
 
+  const refreshConflictSnapshot = useCallback(
+    async (targetPath: string, localContent: string, baseRevision: CodeBaseRevision) => {
+      if (disposedRef.current) return
+      const generation = (conflictReadGenerationsRef.current.get(targetPath) ?? 0) + 1
+      conflictReadGenerationsRef.current.set(targetPath, generation)
+      const requestAgentId = ownerAgentId
+      const requestOwnerId = ownerIdRef.current
+      const requestAgentCreatedAt = agentCreatedAtRef.current
+      const isCurrent = () =>
+        !disposedRef.current &&
+        conflictReadGenerationsRef.current.get(targetPath) === generation &&
+        agentIdRef.current === requestAgentId &&
+        ownerIdRef.current === requestOwnerId &&
+        agentCreatedAtRef.current === requestAgentCreatedAt
+      try {
+        const raw = await runTengriAction<unknown>({ action: 'read-file', agentId: requestAgentId, path: targetPath })
+        if (!isCurrent()) return
+        const decoded = decodeCodeFileSnapshot(raw)
+        if (!decoded || decoded.kind === 'legacy') {
+          setReadOnlyPath(targetPath, true)
+          markConflict(targetPath, LEGACY_REVISION_MESSAGE)
+          return
+        }
+        const snapshot = decoded.snapshot
+        conflictSnapshotsRef.current.set(targetPath, snapshot)
+        contentTypesRef.current.set(targetPath, snapshot.contentType)
+        setDraftPrompt(null, targetPath)
+        const currentModel = modelsRef.current.get(codeModelKey(requestAgentId, targetPath))
+        persistDraft(targetPath, currentModel?.getValue() ?? localContent, baseRevision)
+        markConflict(targetPath, 'File changed on the guest before this save. Review it before retrying.')
+      } catch (cause) {
+        if (!isCurrent()) return
+        const currentModel = modelsRef.current.get(codeModelKey(requestAgentId, targetPath))
+        persistDraft(targetPath, currentModel?.getValue() ?? localContent, baseRevision)
+        markConflict(
+          targetPath,
+          cause instanceof Error
+            ? `The save found a newer guest file, but Code could not reload it: ${cause.message}`
+            : 'The save found a newer guest file, but Code could not reload it. Retry to review the conflict.',
+        )
+      }
+    },
+    [markConflict, ownerAgentId, persistDraft, setDraftPrompt, setReadOnlyPath],
+  )
+
   const savePath = useCallback(
     (targetPath: string, content: string, versionId: number) => {
+      const expectedRevision = baseRevisionsRef.current.get(targetPath)
+      if (expectedRevision === undefined || readOnlyPathsRef.current.has(targetPath)) {
+        patchTab(targetPath, { dirty: true, state: 'error', error: LEGACY_REVISION_MESSAGE })
+        setReadOnlyPath(targetPath, true)
+        return Promise.resolve(false)
+      }
+      persistDraft(targetPath, content, expectedRevision)
       writeEchoesRef.current.begin(targetPath, content)
       patchTab(targetPath, { dirty: true, state: 'saving', error: '' })
       const previous = saveQueuesRef.current.get(targetPath) ?? Promise.resolve(true)
       const operation = previous.then(async () => {
+        if (disposedRef.current) return false
         if (
           !canStartEditorSave(
             targetPath,
@@ -213,15 +445,43 @@ export function CodeEditor({
           )
         )
           return false
+        const currentExpectedRevision = baseRevisionsRef.current.get(targetPath)
+        if (currentExpectedRevision === undefined || readOnlyPathsRef.current.has(targetPath)) {
+          patchTab(targetPath, { dirty: true, state: 'error', error: LEGACY_REVISION_MESSAGE })
+          setReadOnlyPath(targetPath, true)
+          return false
+        }
         const controller = new AbortController()
         writeControllersRef.current.set(targetPath, controller)
         try {
-          await runTengriAction(
-            { action: 'write-file', agentId: ownerAgentId, path: targetPath, content },
+          const raw = await runTengriAction<unknown>(
+            {
+              action: 'write-file',
+              agentId: ownerAgentId,
+              path: targetPath,
+              content,
+              expectedRevision: currentExpectedRevision,
+            },
             controller.signal,
           )
+          const result = decodeCodeWriteResult(raw)
+          if (!result || result.path !== targetPath) throw new Error('Tengri returned an invalid save receipt.')
+          baseRevisionsRef.current.set(targetPath, result.revision)
           lastSavedRef.current.set(targetPath, content)
-          if (disposedRef.current) return true
+          const model = modelsRef.current.get(codeModelKey(ownerAgentId, targetPath))
+          const unchanged = model?.getVersionId() === versionId && model.getValue() === content
+          if (disposedRef.current) {
+            if (unchanged) {
+              removeDraft(targetPath)
+              const sourceDraftId = sourceDraftIdsRef.current.get(targetPath)
+              if (sourceDraftId && sourceDraftId !== draftIdsRef.current.get(targetPath)) {
+                removeDraftById(targetPath, sourceDraftId)
+              }
+              sourceDraftIdsRef.current.delete(targetPath)
+              sourceDraftsRef.current.delete(targetPath)
+            } else persistDraft(targetPath, model?.getValue() ?? content, result.revision)
+            return true
+          }
           const timers = recentWriteTimersRef.current.get(targetPath) ?? new Map<string, number>()
           for (const previousTimer of timers.values()) window.clearTimeout(previousTimer)
           timers.clear()
@@ -235,8 +495,15 @@ export function CodeEditor({
           }, 5_000)
           timers.set(content, timer)
           recentWriteTimersRef.current.set(targetPath, timers)
-          const model = modelsRef.current.get(codeModelKey(ownerAgentId, targetPath))
-          const unchanged = model?.getVersionId() === versionId && model.getValue() === content
+          if (unchanged) {
+            removeDraft(targetPath)
+            const sourceDraftId = sourceDraftIdsRef.current.get(targetPath)
+            if (sourceDraftId && sourceDraftId !== draftIdsRef.current.get(targetPath)) {
+              removeDraftById(targetPath, sourceDraftId)
+            }
+            sourceDraftIdsRef.current.delete(targetPath)
+            sourceDraftsRef.current.delete(targetPath)
+          } else persistDraft(targetPath, model?.getValue() ?? content, result.revision)
           patchTab(targetPath, {
             dirty: !unchanged,
             state: unchanged ? 'ready' : 'saving',
@@ -244,6 +511,13 @@ export function CodeEditor({
           })
           return true
         } catch (cause) {
+          if (cause instanceof TengriRequestError && cause.status === 409) {
+            if (!disposedRef.current) {
+              const currentModel = modelsRef.current.get(codeModelKey(ownerAgentId, targetPath))
+              await refreshConflictSnapshot(targetPath, currentModel?.getValue() ?? content, currentExpectedRevision)
+            }
+            return false
+          }
           if (
             !disposedRef.current &&
             !conflictedPathsRef.current.has(targetPath) &&
@@ -268,7 +542,7 @@ export function CodeEditor({
       saveQueuesRef.current.set(targetPath, tracked)
       return tracked
     },
-    [ownerAgentId, patchTab],
+    [ownerAgentId, patchTab, persistDraft, refreshConflictSnapshot, removeDraft, removeDraftById, setReadOnlyPath],
   )
 
   const scheduleSave = useCallback(
@@ -302,6 +576,7 @@ export function CodeEditor({
     async (targetPath: string) => {
       const model = modelsRef.current.get(codeModelKey(ownerAgentId, targetPath))
       if (!model) return false
+      if (readOnlyPathsRef.current.has(targetPath)) return false
       if (unverifiedPathsRef.current.has(targetPath)) {
         await reloadPathRef.current(targetPath)
         const refreshed = tabsRef.current.find((tab) => tab.path === targetPath)
@@ -313,6 +588,17 @@ export function CodeEditor({
         )
       }
       const resolvingConflict = conflictedPathsRef.current.has(targetPath)
+      if (resolvingConflict) {
+        const snapshot = conflictSnapshotsRef.current.get(targetPath)
+        if (!snapshot) return false
+        baseRevisionsRef.current.set(targetPath, snapshot.revision)
+        contentTypesRef.current.set(targetPath, snapshot.contentType)
+        conflictSnapshotsRef.current.delete(targetPath)
+        conflictedPathsRef.current.delete(targetPath)
+        setDraftPrompt(null, targetPath)
+        persistDraft(targetPath, model.getValue(), snapshot.revision)
+        return savePath(targetPath, model.getValue(), model.getVersionId())
+      }
       conflictedPathsRef.current.delete(targetPath)
       let timer = saveTimersRef.current.get(targetPath)
       if (timer) window.clearTimeout(timer)
@@ -329,7 +615,7 @@ export function CodeEditor({
       }
       return savePath(targetPath, model.getValue(), model.getVersionId())
     },
-    [ownerAgentId, patchTab, savePath],
+    [ownerAgentId, patchTab, persistDraft, savePath, setDraftPrompt],
   )
 
   const flushActive = useCallback(() => {
@@ -341,9 +627,15 @@ export function CodeEditor({
   const reloadPathRef = useRef<(targetPath: string) => Promise<void>>(async () => {})
   const patchTabRef = useRef(patchTab)
   const scheduleSaveRef = useRef(scheduleSave)
+  const persistDraftRef = useRef(persistDraft)
+  const removeDraftRef = useRef(removeDraft)
+  const setDraftPromptRef = useRef(setDraftPrompt)
   flushActiveRef.current = flushActive
   patchTabRef.current = patchTab
   scheduleSaveRef.current = scheduleSave
+  persistDraftRef.current = persistDraft
+  removeDraftRef.current = removeDraft
+  setDraftPromptRef.current = setDraftPrompt
 
   const showPath = useCallback(
     (targetPath: string, refresh = false) => {
@@ -360,6 +652,7 @@ export function CodeEditor({
       activePathRef.current = targetPath
       setActivePath(targetPath)
       editor.setModel(transition.model)
+      editor.updateOptions({ readOnly: readOnlyPathsRef.current.has(targetPath) })
       return transition.type === 'show'
     },
     [ownerAgentId],
@@ -371,7 +664,10 @@ export function CodeEditor({
       const editor = editorRef.current
       if (!monaco || !editor || !isCodePath(targetPath)) return
       if (showPath(targetPath, refresh)) {
-        patchTab(targetPath, { state: 'ready', error: '' })
+        patchTab(targetPath, {
+          state: 'ready',
+          error: readOnlyPathsRef.current.has(targetPath) ? LEGACY_REVISION_MESSAGE : '',
+        })
         return
       }
       if (refresh && tabsRef.current.find((tab) => tab.path === targetPath)?.dirty) {
@@ -387,20 +683,85 @@ export function CodeEditor({
       requestsRef.current.set(modelKey, controller)
       patchTab(targetPath, { state: 'loading', error: '' })
       try {
-        const result = await runTengriAction<{ content: string }>(
+        const raw = await runTengriAction<unknown>(
           { action: 'read-file', agentId: ownerAgentId, path: targetPath },
           controller.signal,
         )
-        if (disposedRef.current || controller.signal.aborted || agentIdRef.current !== ownerAgentId) return
+        const decoded = decodeCodeFileSnapshot(raw)
+        if (!decoded) throw new Error('Tengri returned an invalid file revision receipt.')
+        if (
+          disposedRef.current ||
+          controller.signal.aborted ||
+          agentIdRef.current !== ownerAgentId ||
+          ownerIdRef.current !== ownerId ||
+          agentCreatedAtRef.current !== agentCreatedAt
+        )
+          return
         const currentModel = modelsRef.current.get(modelKey)
         const currentTab = tabsRef.current.find((tab) => tab.path === targetPath)
         if (
           refresh &&
           (currentTab?.dirty || (initialVersionId !== undefined && currentModel?.getVersionId() !== initialVersionId))
         ) {
-          markConflict(targetPath, 'File changed outside Code while local edits were pending.')
+          if (decoded.kind === 'revisioned') conflictSnapshotsRef.current.set(targetPath, decoded.snapshot)
+          markConflict(
+            targetPath,
+            decoded.kind === 'legacy'
+              ? LEGACY_REVISION_MESSAGE
+              : 'File changed outside Code while local edits were pending.',
+          )
+          if (decoded.kind === 'legacy') setReadOnlyPath(targetPath, true)
           return
         }
+        if (decoded.kind === 'legacy') {
+          const uri = monaco.Uri.from({
+            scheme: 'tengri',
+            authority: 'code',
+            path: targetPath,
+            query: `agent=${encodeURIComponent(ownerAgentId)}&editor=${editorInstanceId}`,
+          })
+          let legacyModel = cachedModel
+          if (!legacyModel || legacyModel.isDisposed())
+            legacyModel = monaco.editor.createModel(decoded.snapshot.content, codeLanguage(targetPath), uri)
+          else if (legacyModel.getValue() !== decoded.snapshot.content) {
+            loadingPathsRef.current.add(modelKey)
+            try {
+              legacyModel.setValue(decoded.snapshot.content)
+            } finally {
+              loadingPathsRef.current.delete(modelKey)
+            }
+          }
+          modelsRef.current.set(modelKey, legacyModel)
+          baseRevisionsRef.current.delete(targetPath)
+          contentTypesRef.current.set(targetPath, decoded.snapshot.contentType)
+          lastSavedRef.current.set(targetPath, decoded.snapshot.content)
+          conflictedPathsRef.current.delete(targetPath)
+          unverifiedPathsRef.current.delete(targetPath)
+          conflictSnapshotsRef.current.delete(targetPath)
+          sourceDraftIdsRef.current.delete(targetPath)
+          sourceDraftsRef.current.delete(targetPath)
+          pendingDraftsRef.current.delete(targetPath)
+          const legacyDraft = findAvailableDraft(targetPath)
+          if (legacyDraft) {
+            sourceDraftIdsRef.current.set(targetPath, legacyDraft.draftId)
+            sourceDraftsRef.current.set(targetPath, legacyDraft)
+            pendingDraftsRef.current.set(targetPath, legacyDraft)
+            setDraftError(
+              (current) =>
+                current ||
+                'A local draft is preserved, but it cannot be safely recovered until the guest reports revisions. Download it before closing this tab.',
+            )
+          }
+          setDraftPrompt(null, targetPath)
+          setReadOnlyPath(targetPath, true)
+          patchTab(targetPath, { dirty: false, state: 'ready', error: LEGACY_REVISION_MESSAGE })
+          if (activePathRef.current === targetPath) {
+            editor.setModel(legacyModel)
+            editor.updateOptions({ readOnly: true })
+          }
+          return
+        }
+        const result = decoded.snapshot
         const uri = monaco.Uri.from({
           scheme: 'tengri',
           authority: 'code',
@@ -419,13 +780,64 @@ export function CodeEditor({
           }
         }
         modelsRef.current.set(modelKey, model)
+        baseRevisionsRef.current.set(targetPath, result.revision)
+        contentTypesRef.current.set(targetPath, result.contentType)
         lastSavedRef.current.set(targetPath, result.content)
         conflictedPathsRef.current.delete(targetPath)
         unverifiedPathsRef.current.delete(targetPath)
+        conflictSnapshotsRef.current.delete(targetPath)
+        setReadOnlyPath(targetPath, false)
+        sourceDraftIdsRef.current.delete(targetPath)
+        sourceDraftsRef.current.delete(targetPath)
+        pendingDraftsRef.current.delete(targetPath)
+        const availableDraft = findAvailableDraft(targetPath)
+        if (availableDraft) {
+          sourceDraftIdsRef.current.set(targetPath, availableDraft.draftId)
+          sourceDraftsRef.current.set(targetPath, availableDraft)
+          pendingDraftsRef.current.set(targetPath, availableDraft)
+          if (availableDraft.content === result.content && availableDraft.baseRevision === result.revision) {
+            removeDraftById(targetPath, availableDraft.draftId)
+            sourceDraftIdsRef.current.delete(targetPath)
+            sourceDraftsRef.current.delete(targetPath)
+            setDraftPrompt(null, targetPath)
+          } else {
+            setDraftPrompt(
+              {
+                kind: availableDraft.baseRevision === result.revision ? 'recoverable' : 'conflict',
+                path: targetPath,
+                draft: availableDraft,
+                server: { content: result.content, contentType: result.contentType, revision: result.revision },
+              },
+              targetPath,
+            )
+          }
+        } else {
+          setDraftPrompt(null, targetPath)
+        }
         patchTab(targetPath, { dirty: false, state: 'ready', error: '' })
-        if (activePathRef.current === targetPath) editor.setModel(model)
+        if (activePathRef.current === targetPath) {
+          editor.setModel(model)
+          editor.updateOptions({ readOnly: false })
+        }
       } catch (cause) {
-        if (controller.signal.aborted || agentIdRef.current !== ownerAgentId) return
+        if (
+          controller.signal.aborted ||
+          agentIdRef.current !== ownerAgentId ||
+          ownerIdRef.current !== ownerId ||
+          agentCreatedAtRef.current !== agentCreatedAt
+        )
+          return
+        if (cause instanceof TengriRequestError && cause.status === 404) {
+          const missingDraft = findAvailableDraft(targetPath)
+          if (missingDraft) {
+            sourceDraftIdsRef.current.set(targetPath, missingDraft.draftId)
+            sourceDraftsRef.current.set(targetPath, missingDraft)
+            pendingDraftsRef.current.set(targetPath, missingDraft)
+            setDraftError(
+              'The guest file no longer exists, but Code preserved your local draft. Download it before closing this tab.',
+            )
+          }
+        }
         patchTab(targetPath, {
           state: 'error',
           error: cause instanceof Error ? cause.message : 'File could not be opened',
@@ -434,9 +846,222 @@ export function CodeEditor({
         if (requestsRef.current.get(modelKey) === controller) requestsRef.current.delete(modelKey)
       }
     },
-    [editorInstanceId, markConflict, ownerAgentId, patchTab, showPath],
+    [
+      agentCreatedAt,
+      draftIdentity,
+      editorInstanceId,
+      findAvailableDraft,
+      markConflict,
+      ownerAgentId,
+      ownerId,
+      patchTab,
+      removeDraft,
+      removeDraftById,
+      setDraftPrompt,
+      setReadOnlyPath,
+      showPath,
+    ],
+  )
+
+  const applyDraftContent = useCallback(
+    (targetPath: string, content: string, baseRevision: CodeBaseRevision, saveAfter: boolean) => {
+      const model = modelsRef.current.get(codeModelKey(ownerAgentId, targetPath))
+      if (!model || model.isDisposed()) return false
+      loadingPathsRef.current.add(codeModelKey(ownerAgentId, targetPath))
+      try {
+        model.setValue(content)
+      } finally {
+        loadingPathsRef.current.delete(codeModelKey(ownerAgentId, targetPath))
+      }
+      baseRevisionsRef.current.set(targetPath, baseRevision)
+      contentTypesRef.current.set(targetPath, contentTypesRef.current.get(targetPath) ?? CODE_CONTENT_TYPE_FALLBACK)
+      setReadOnlyPath(targetPath, false)
+      persistDraft(targetPath, content, baseRevision)
+      patchTab(targetPath, {
+        dirty: true,
+        state: saveAfter ? 'saving' : 'error',
+        error: saveAfter ? '' : 'Local draft is based on an older guest file. Review it before saving.',
+      })
+      if (saveAfter) scheduleSaveRef.current(targetPath, model)
+      return true
+    },
+    [ownerAgentId, patchTab, persistDraft, setReadOnlyPath],
+  )
+
+  const recoverDraft = useCallback(
+    (targetPath: string) => {
+      const prompt = draftPromptsRef.current.get(targetPath)
+      if (!prompt) return
+      conflictSnapshotsRef.current.delete(targetPath)
+      conflictedPathsRef.current.delete(targetPath)
+      unverifiedPathsRef.current.delete(targetPath)
+      if (applyDraftContent(targetPath, prompt.draft.content, prompt.server.revision, true)) {
+        setDraftPrompt(null, targetPath)
+      }
+    },
+    [applyDraftContent, setDraftPrompt],
+  )
+
+  const keepConflictingDraft = useCallback(
+    (targetPath: string) => {
+      const prompt = draftPromptsRef.current.get(targetPath)
+      if (!prompt || prompt.kind !== 'conflict') return
+      conflictSnapshotsRef.current.set(targetPath, prompt.server)
+      conflictedPathsRef.current.add(targetPath)
+      if (applyDraftContent(targetPath, prompt.draft.content, prompt.server.revision, false)) {
+        setDraftPrompt(null, targetPath)
+      }
+    },
+    [applyDraftContent, setDraftPrompt],
+  )
+
+  const mergeConflictingDraft = useCallback(
+    (targetPath: string) => {
+      const prompt = draftPromptsRef.current.get(targetPath)
+      if (!prompt || prompt.kind !== 'conflict') return
+      conflictSnapshotsRef.current.delete(targetPath)
+      conflictedPathsRef.current.delete(targetPath)
+      const merged = mergeCodeDraftContent(prompt.server.content, prompt.draft.content)
+      if (applyDraftContent(targetPath, merged, prompt.server.revision, true)) {
+        setDraftPrompt(null, targetPath)
+      }
+    },
+    [applyDraftContent, setDraftPrompt],
+  )
+
+  const reloadDraftServer = useCallback(
+    async (targetPath: string) => {
+      const model = modelsRef.current.get(codeModelKey(ownerAgentId, targetPath))
+      if (!model || model.isDisposed()) return
+      const generation = (reloadGenerationsRef.current.get(targetPath) ?? 0) + 1
+      reloadGenerationsRef.current.set(targetPath, generation)
+      const requestAgentId = ownerAgentId
+      const requestOwnerId = ownerIdRef.current
+      const requestAgentCreatedAt = agentCreatedAtRef.current
+      const initialVersionId = model.getVersionId()
+      const isCurrent = () =>
+        !disposedRef.current &&
+        !model.isDisposed() &&
+        modelsRef.current.get(codeModelKey(requestAgentId, targetPath)) === model &&
+        reloadGenerationsRef.current.get(targetPath) === generation &&
+        agentIdRef.current === requestAgentId &&
+        ownerIdRef.current === requestOwnerId &&
+        agentCreatedAtRef.current === requestAgentCreatedAt
+      try {
+        const raw = await runTengriAction<unknown>({ action: 'read-file', agentId: requestAgentId, path: targetPath })
+        if (!isCurrent()) return
+        const decoded = decodeCodeFileSnapshot(raw)
+        if (!decoded) throw new Error('Tengri returned an invalid file revision receipt.')
+        if (model.getVersionId() !== initialVersionId) return
+        if (decoded.kind === 'legacy') {
+          setReadOnlyPath(targetPath, true)
+          patchTab(targetPath, { state: 'ready', error: LEGACY_REVISION_MESSAGE })
+          return
+        }
+        const snapshot = decoded.snapshot
+        const prompt = draftPromptsRef.current.get(targetPath)
+        const draftId = prompt?.draft.draftId ?? sourceDraftIdsRef.current.get(targetPath)
+        if (draftId) {
+          if (!removeDraftById(targetPath, draftId)) return
+          sourceDraftIdsRef.current.delete(targetPath)
+          sourceDraftsRef.current.delete(targetPath)
+        }
+        if (!removeDraft(targetPath)) return
+        loadingPathsRef.current.add(codeModelKey(requestAgentId, targetPath))
+        try {
+          model.setValue(snapshot.content)
+        } finally {
+          loadingPathsRef.current.delete(codeModelKey(requestAgentId, targetPath))
+        }
+        baseRevisionsRef.current.set(targetPath, snapshot.revision)
+        contentTypesRef.current.set(targetPath, snapshot.contentType)
+        lastSavedRef.current.set(targetPath, snapshot.content)
+        conflictedPathsRef.current.delete(targetPath)
+        unverifiedPathsRef.current.delete(targetPath)
+        conflictSnapshotsRef.current.delete(targetPath)
+        setDraftPrompt(null, targetPath)
+        patchTab(targetPath, { dirty: false, state: 'ready', error: '' })
+        setReadOnlyPath(targetPath, false)
+      } catch (cause) {
+        if (!isCurrent()) return
+        patchTab(targetPath, {
+          state: 'error',
+          error: cause instanceof Error ? cause.message : 'The guest file could not be reloaded.',
+        })
+      }
+    },
+    [ownerAgentId, patchTab, removeDraft, removeDraftById, setDraftPrompt, setReadOnlyPath],
+  )
+
+  const mergeCurrentConflict = useCallback(
+    (targetPath: string) => {
+      const snapshot = conflictSnapshotsRef.current.get(targetPath)
+      const model = modelsRef.current.get(codeModelKey(ownerAgentId, targetPath))
+      if (!snapshot || !model || model.isDisposed()) return
+      contentTypesRef.current.set(targetPath, snapshot.contentType)
+      conflictSnapshotsRef.current.delete(targetPath)
+      conflictedPathsRef.current.delete(targetPath)
+      const merged = mergeCodeDraftContent(snapshot.content, model.getValue())
+      if (applyDraftContent(targetPath, merged, snapshot.revision, true)) setDraftPrompt(null, targetPath)
+    },
+    [applyDraftContent, ownerAgentId, setDraftPrompt],
+  )
+
+  const downloadDraft = useCallback(
+    (targetPath: string) => {
+      const draft = pendingDraftsRef.current.get(targetPath) ?? rememberedCodeDraft(draftIdentity(targetPath))
+      if (!draft) return
+      const blob = new Blob([draft.content], { type: draft.contentType || CODE_CONTENT_TYPE_FALLBACK })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `${codeFileName(targetPath)}.tengri-draft`
+      link.click()
+      window.setTimeout(() => URL.revokeObjectURL(url), 0)
+    },
+    [draftIdentity],
+  )
+
+  const retryConflictSave = useCallback(
+    (targetPath: string) => {
+      const model = modelsRef.current.get(codeModelKey(ownerAgentId, targetPath))
+      const baseRevision = baseRevisionsRef.current.get(targetPath)
+      if (!model || baseRevision === undefined) return
+      if (!conflictSnapshotsRef.current.has(targetPath)) {
+        void refreshConflictSnapshot(targetPath, model.getValue(), baseRevision)
+        return
+      }
+      void flushPath(targetPath)
+    },
+    [flushPath, ownerAgentId, refreshConflictSnapshot],
   )
   reloadPathRef.current = (targetPath) => loadPath(targetPath, true)
+
+  const rehomeDraft = useCallback(
+    (targetPath: string, sourceDraft: CodeDraft): { draft: CodeDraft; durable: boolean } => {
+      const draft = createCodeDraft(
+        draftIdentity(targetPath),
+        sourceDraft.content,
+        sourceDraft.baseRevision,
+        sourceDraft.contentType,
+        sourceDraft.updatedAt,
+        sourceDraft.draftId,
+      )
+      rememberCodeDraft(draft)
+      const result = draftStoreRef.current?.write(draft)
+      if (result?.kind === 'stored') {
+        markCodeDraftDurable(draft)
+        return { draft, durable: true }
+      }
+      markCodeDraftVolatile(draft)
+      setDraftError(
+        result?.message ??
+          'Browser storage is unavailable, so Code could not move this draft with the renamed file. Download it before closing the editor.',
+      )
+      return { draft, durable: false }
+    },
+    [draftIdentity],
+  )
 
   useEffect(() => {
     disposedRef.current = false
@@ -480,6 +1105,7 @@ export function CodeEditor({
           if (!model || modelsRef.current.get(modelKey) !== model || loadingPathsRef.current.has(modelKey)) return
           if (unverifiedPathsRef.current.delete(targetPath)) {
             conflictedPathsRef.current.add(targetPath)
+            persistDraftRef.current(targetPath, model.getValue())
             patchTabRef.current(targetPath, {
               dirty: true,
               state: 'error',
@@ -488,6 +1114,7 @@ export function CodeEditor({
             return
           }
           if (conflictedPathsRef.current.has(targetPath)) {
+            persistDraftRef.current(targetPath, model.getValue())
             patchTabRef.current(targetPath, { dirty: true })
             return
           }
@@ -501,9 +1128,14 @@ export function CodeEditor({
             const timer = saveTimersRef.current.get(targetPath)
             if (timer) window.clearTimeout(timer)
             saveTimersRef.current.delete(targetPath)
+            removeDraftRef.current(targetPath)
+            setDraftPromptRef.current(null, targetPath)
             patchTabRef.current(targetPath, { dirty: false, state: 'ready', error: '' })
             return
           }
+          const prompt = draftPromptsRef.current.get(targetPath)
+          if (prompt && model.getValue() !== prompt.server.content) setDraftPromptRef.current(null, targetPath)
+          persistDraftRef.current(targetPath, model.getValue())
           scheduleSaveRef.current(targetPath, model)
         })
         editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => flushActiveRef.current())
@@ -516,9 +1148,16 @@ export function CodeEditor({
     void mountEditor()
     return () => {
       cancelled = true
+      for (const tab of tabsRef.current) {
+        if (!tab.dirty) continue
+        const model = modelsRef.current.get(codeModelKey(agentIdRef.current, tab.path))
+        if (model) persistDraftRef.current(tab.path, model.getValue())
+      }
       disposedRef.current = true
       for (const controller of requestsRef.current.values()) controller.abort()
       requestsRef.current.clear()
+      conflictReadGenerationsRef.current.clear()
+      reloadGenerationsRef.current.clear()
       for (const controller of writeControllersRef.current.values()) controller.abort()
       writeControllersRef.current.clear()
       for (const timer of saveTimersRef.current.values()) window.clearTimeout(timer)
@@ -533,6 +1172,13 @@ export function CodeEditor({
       conflictedPathsRef.current.clear()
       unverifiedPathsRef.current.clear()
       migratingPathsRef.current.clear()
+      baseRevisionsRef.current.clear()
+      contentTypesRef.current.clear()
+      conflictSnapshotsRef.current.clear()
+      draftPromptsRef.current.clear()
+      sourceDraftIdsRef.current.clear()
+      sourceDraftsRef.current.clear()
+      readOnlyPathsRef.current.clear()
       editor?.dispose()
       editorRef.current = null
       disposeCodeModels(modelsRef.current)
@@ -541,7 +1187,8 @@ export function CodeEditor({
   }, [])
 
   useEffect(() => {
-    if (ownerAgentId === agentId) return
+    if (ownerAgentId === agentId && ownerIdRef.current === ownerId && agentCreatedAtRef.current === agentCreatedAt)
+      return
     if (
       tabsRef.current.some((tab) => tab.dirty) ||
       saveTimersRef.current.size > 0 ||
@@ -553,14 +1200,29 @@ export function CodeEditor({
     }
     for (const controller of requestsRef.current.values()) controller.abort()
     requestsRef.current.clear()
+    conflictReadGenerationsRef.current.clear()
+    reloadGenerationsRef.current.clear()
     for (const controller of writeControllersRef.current.values()) controller.abort()
     writeControllersRef.current.clear()
+    for (const timer of saveTimersRef.current.values()) window.clearTimeout(timer)
+    saveTimersRef.current.clear()
     pendingRequestsRef.current = []
     processedRequestsRef.current.clear()
     watchCursorsRef.current.clear()
     for (const timer of pendingRenameTimersRef.current.values()) window.clearTimeout(timer)
     pendingRenameTimersRef.current.clear()
     lastSavedRef.current.clear()
+    baseRevisionsRef.current.clear()
+    contentTypesRef.current.clear()
+    conflictSnapshotsRef.current.clear()
+    draftPromptsRef.current.clear()
+    draftIdsRef.current.clear()
+    sourceDraftIdsRef.current.clear()
+    sourceDraftsRef.current.clear()
+    pendingDraftsRef.current.clear()
+    readOnlyPathsRef.current.clear()
+    setReadOnlyPaths(new Set())
+    setDraftPromptVersion((version) => version + 1)
     writeEchoesRef.current.clear()
     conflictedPathsRef.current.clear()
     unverifiedPathsRef.current.clear()
@@ -573,9 +1235,11 @@ export function CodeEditor({
     setActivePath('')
     setCursor({ line: 1, column: 1 })
     agentIdRef.current = agentId
+    agentCreatedAtRef.current = agentCreatedAt
+    ownerIdRef.current = ownerId
     setOwnerAgentId(agentId)
     setOwnerWarning('')
-  }, [agentId, ownerAgentId, tabs])
+  }, [agentCreatedAt, agentId, ownerId, ownerAgentId, tabs])
 
   const requestPath = request?.path ?? ''
   const requestId = request?.requestId ?? -1
@@ -641,6 +1305,7 @@ export function CodeEditor({
 
         const previousTab = tabsRef.current.find((tab) => tab.path === previousPath)
         const previousModel = modelsRef.current.get(previousModelKey)
+        const previousContent = previousModel?.getValue()
         const monaco = monacoRef.current
         let nextModel: TextModel | null = null
         if (previousModel && monaco) {
@@ -650,7 +1315,7 @@ export function CodeEditor({
             path,
             query: `agent=${encodeURIComponent(ownerAgentId)}&editor=${editorInstanceId}`,
           })
-          nextModel = monaco.editor.createModel(previousModel.getValue(), codeLanguage(path), uri)
+          nextModel = monaco.editor.createModel(previousContent ?? '', codeLanguage(path), uri)
           modelsRef.current.delete(previousModelKey)
           modelsRef.current.set(nextModelKey, nextModel)
           previousModel.dispose()
@@ -659,6 +1324,42 @@ export function CodeEditor({
         const lastSaved = lastSavedRef.current.get(previousPath)
         lastSavedRef.current.delete(previousPath)
         if (lastSaved !== undefined) lastSavedRef.current.set(path, lastSaved)
+        const baseRevision = baseRevisionsRef.current.get(previousPath)
+        baseRevisionsRef.current.delete(previousPath)
+        if (baseRevision !== undefined) baseRevisionsRef.current.set(path, baseRevision)
+        const contentType = contentTypesRef.current.get(previousPath)
+        contentTypesRef.current.delete(previousPath)
+        if (contentType !== undefined) contentTypesRef.current.set(path, contentType)
+        const previousDraftId = draftIdsRef.current.get(previousPath)
+        const previousDraft = pendingDraftsRef.current.get(previousPath)
+        const previousSourceDraftId = sourceDraftIdsRef.current.get(previousPath)
+        const previousSourceDraft = sourceDraftsRef.current.get(previousPath)
+        removeDraft(previousPath)
+        draftIdsRef.current.delete(previousPath)
+        pendingDraftsRef.current.delete(previousPath)
+        if (previousDraftId !== undefined) draftIdsRef.current.set(path, previousDraftId)
+        if (previousDraft && previousTab?.dirty)
+          persistDraft(path, previousContent ?? previousDraft.content, baseRevision)
+        if (previousSourceDraftId && previousSourceDraft) {
+          const moved = rehomeDraft(path, previousSourceDraft)
+          if (moved.durable) removeDraftById(previousPath, previousSourceDraftId)
+          sourceDraftIdsRef.current.delete(previousPath)
+          sourceDraftsRef.current.delete(previousPath)
+          sourceDraftIdsRef.current.set(path, moved.draft.draftId)
+          sourceDraftsRef.current.set(path, moved.draft)
+          const currentDraft = pendingDraftsRef.current.get(path)
+          if (!currentDraft || moved.draft.updatedAt >= currentDraft.updatedAt)
+            pendingDraftsRef.current.set(path, moved.draft)
+        }
+        const conflictSnapshot = conflictSnapshotsRef.current.get(previousPath)
+        conflictSnapshotsRef.current.delete(previousPath)
+        if (conflictSnapshot) conflictSnapshotsRef.current.set(path, conflictSnapshot)
+        const readOnly = readOnlyPathsRef.current.has(previousPath)
+        if (readOnly) {
+          readOnlyPathsRef.current.delete(previousPath)
+          readOnlyPathsRef.current.add(path)
+        }
+        setReadOnlyPaths(new Set(readOnlyPathsRef.current))
         if (previousTab?.dirty) conflictedPathsRef.current.add(path)
         conflictedPathsRef.current.delete(previousPath)
         const renamed = renameEditorTab(tabsRef.current, activePathRef.current, previousPath, path)
@@ -681,7 +1382,18 @@ export function CodeEditor({
         migratingPathsRef.current.delete(previousPath)
       }
     },
-    [clearPendingRename, editorInstanceId, loadPath, markConflict, ownerAgentId, updateTabs],
+    [
+      clearPendingRename,
+      editorInstanceId,
+      loadPath,
+      markConflict,
+      ownerAgentId,
+      persistDraft,
+      rehomeDraft,
+      removeDraft,
+      removeDraftById,
+      updateTabs,
+    ],
   )
 
   useEffect(() => {
@@ -693,20 +1405,50 @@ export function CodeEditor({
 
     setWatchState('reconnecting')
     const connected = new Set<string>()
+    const verifications = new Map<string, AbortController>()
+    let closed = false
+    const cancelVerification = (targetPath: string) => {
+      verifications.get(targetPath)?.abort()
+      verifications.delete(targetPath)
+    }
     const verifyChange = (targetPath: string) => {
-      void runTengriAction<{ content: string }>({
-        action: 'read-file',
-        agentId: ownerAgentId,
-        path: targetPath,
-      })
-        .then((result) => {
+      cancelVerification(targetPath)
+      const controller = new AbortController()
+      verifications.set(targetPath, controller)
+      const modelKey = codeModelKey(ownerAgentId, targetPath)
+      const model = modelsRef.current.get(modelKey)
+      const isCurrent = () =>
+        !closed &&
+        !disposedRef.current &&
+        verifications.get(targetPath) === controller &&
+        modelsRef.current.get(modelKey) === model
+      void runTengriAction<unknown>({ action: 'read-file', agentId: ownerAgentId, path: targetPath }, controller.signal)
+        .then((raw) => {
+          if (!isCurrent()) return
           const current = tabsRef.current.find((tab) => tab.path === targetPath)
           if (!current) return
-          if (writeEchoesRef.current.matches(targetPath, result.content)) return
-          if (current.dirty) markConflict(targetPath, 'File changed outside Code while local edits were pending.')
-          else void loadPath(targetPath, true)
+          const decoded = decodeCodeFileSnapshot(raw)
+          if (!decoded) {
+            markUnverified(targetPath, 'The guest returned an invalid file revision. Retry before editing.')
+            return
+          }
+          if (decoded.kind === 'legacy') {
+            setReadOnlyPath(targetPath, true)
+            if (current.dirty) markConflict(targetPath, LEGACY_REVISION_MESSAGE)
+            else patchTab(targetPath, { state: 'ready', error: LEGACY_REVISION_MESSAGE })
+            return
+          }
+          if (writeEchoesRef.current.matches(targetPath, decoded.snapshot.content)) {
+            baseRevisionsRef.current.set(targetPath, decoded.snapshot.revision)
+            return
+          }
+          if (current.dirty) {
+            conflictSnapshotsRef.current.set(targetPath, decoded.snapshot)
+            markConflict(targetPath, 'File changed outside Code while local edits were pending.')
+          } else void loadPath(targetPath, true)
         })
         .catch((cause: unknown) => {
+          if (!isCurrent() || controller.signal.aborted) return
           const error = cause instanceof Error ? cause.message : 'File change could not be verified'
           const failure = codeVerificationFailure(
             tabsRef.current.find((tab) => tab.path === targetPath),
@@ -716,8 +1458,12 @@ export function CodeEditor({
           if (failure.conflict) markConflict(targetPath, error)
           else markUnverified(targetPath, error)
         })
+        .finally(() => {
+          if (verifications.get(targetPath) === controller) verifications.delete(targetPath)
+        })
     }
     const handleMessage = (directory: string, message: MessageEvent<string>) => {
+      if (closed) return
       let event: TengriFileEvent
       try {
         event = JSON.parse(message.data) as TengriFileEvent
@@ -728,6 +1474,7 @@ export function CodeEditor({
 
       if (event.kind === 'reset') {
         for (const tab of tabsRef.current.filter((candidate) => codeParentDirectory(candidate.path) === directory)) {
+          cancelVerification(tab.path)
           if (tab.dirty) markConflict(tab.path, 'Filesystem state changed while local edits were pending.')
           else void loadPath(tab.path, true)
         }
@@ -738,6 +1485,7 @@ export function CodeEditor({
         (tab) => tab.path === event.path || (event.previousPath && tab.path === event.previousPath),
       )
       if (!affected) return
+      cancelVerification(affected.path)
       if (event.kind === 'renamed' && event.path && event.previousPath) {
         void migratePath(event.previousPath, event.path)
         return
@@ -759,10 +1507,12 @@ export function CodeEditor({
       if (after !== undefined) params.set('after', String(after))
       const source = new EventSource(`/api/tengri/files/events?${params}`)
       source.onopen = () => {
+        if (closed) return
         connected.add(directory)
         if (connected.size === directories.length) setWatchState('connected')
       }
       source.onerror = () => {
+        if (closed) return
         connected.delete(directory)
         setWatchState('reconnecting')
       }
@@ -770,9 +1520,22 @@ export function CodeEditor({
       return source
     })
     return () => {
+      closed = true
+      for (const controller of verifications.values()) controller.abort()
+      verifications.clear()
       for (const source of sources) source.close()
     }
-  }, [deferUnpairedRename, loadPath, markConflict, markUnverified, migratePath, ownerAgentId, watchDirectoryKey])
+  }, [
+    deferUnpairedRename,
+    loadPath,
+    markConflict,
+    markUnverified,
+    migratePath,
+    ownerAgentId,
+    patchTab,
+    setReadOnlyPath,
+    watchDirectoryKey,
+  ])
 
   const hasDirtyTabs = tabs.some((tab) => tab.dirty)
   useEffect(() => {
@@ -797,6 +1560,7 @@ export function CodeEditor({
   }
 
   function closeTabNow(targetPath: string) {
+    reloadGenerationsRef.current.set(targetPath, (reloadGenerationsRef.current.get(targetPath) ?? 0) + 1)
     const modelKey = codeModelKey(ownerAgentId, targetPath)
     requestsRef.current.get(modelKey)?.abort()
     requestsRef.current.delete(modelKey)
@@ -812,6 +1576,17 @@ export function CodeEditor({
     writeEchoesRef.current.clearPath(targetPath)
     conflictedPathsRef.current.delete(targetPath)
     unverifiedPathsRef.current.delete(targetPath)
+    baseRevisionsRef.current.delete(targetPath)
+    contentTypesRef.current.delete(targetPath)
+    conflictSnapshotsRef.current.delete(targetPath)
+    draftPromptsRef.current.delete(targetPath)
+    draftIdsRef.current.delete(targetPath)
+    sourceDraftIdsRef.current.delete(targetPath)
+    sourceDraftsRef.current.delete(targetPath)
+    pendingDraftsRef.current.delete(targetPath)
+    readOnlyPathsRef.current.delete(targetPath)
+    setReadOnlyPaths(new Set(readOnlyPathsRef.current))
+    setDraftPromptVersion((version) => version + 1)
     const model = modelsRef.current.get(modelKey)
     if (model) {
       modelsRef.current.delete(modelKey)
@@ -872,6 +1647,9 @@ export function CodeEditor({
   }
 
   const activeTab = tabs.find((tab) => tab.path === activePath)
+  const activeDraftPrompt = draftPromptsRef.current.get(activePath)
+  const activeConflictSnapshot = conflictSnapshotsRef.current.get(activePath)
+  const activeReadOnly = readOnlyPaths.has(activePath)
   const panelId = codePanelId(editorInstanceId)
   return (
     <div className="flex h-full min-h-0 flex-col bg-[#111318]" data-shortcuts="native">
@@ -949,6 +1727,104 @@ export function CodeEditor({
         className="relative min-h-0 flex-1"
       >
         <div ref={hostRef} className="absolute inset-0" />
+        <div className="pointer-events-none absolute inset-x-2 top-2 z-20 flex flex-col gap-2">
+          {draftError ? (
+            <div
+              role="alert"
+              className="pointer-events-auto flex items-center gap-3 rounded-lg border border-amber-200/20 bg-amber-950/90 px-3 py-2 text-xs text-amber-100 shadow-lg"
+            >
+              <span className="min-w-0 flex-1">{draftError}</span>
+              {activePath && pendingDraftsRef.current.has(activePath) ? (
+                <button type="button" className="shrink-0 text-[#9bc8ff]" onClick={() => downloadDraft(activePath)}>
+                  Download draft
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          {activeReadOnly ? (
+            <div
+              role="alert"
+              className="pointer-events-auto flex items-center gap-3 rounded-lg border border-amber-200/20 bg-amber-950/90 px-3 py-2 text-xs text-amber-100 shadow-lg"
+            >
+              <span className="min-w-0 flex-1">{LEGACY_REVISION_MESSAGE}</span>
+              <button type="button" className="shrink-0 text-[#9bc8ff]" onClick={() => void loadPath(activePath, true)}>
+                Retry after resume
+              </button>
+            </div>
+          ) : null}
+          {activeDraftPrompt?.kind === 'recoverable' ? (
+            <div
+              role="alert"
+              className="pointer-events-auto flex flex-wrap items-center gap-2 rounded-lg border border-sky-200/20 bg-sky-950/90 px-3 py-2 text-xs text-sky-100 shadow-lg"
+            >
+              <span className="mr-auto min-w-0">A recoverable draft is available for this file.</span>
+              <button type="button" className="text-[#b7d7ff]" onClick={() => recoverDraft(activeDraftPrompt.path)}>
+                Recover draft
+              </button>
+              <button type="button" className="text-white/70" onClick={() => downloadDraft(activeDraftPrompt.path)}>
+                Download draft
+              </button>
+              <button
+                type="button"
+                className="text-white/70"
+                onClick={() => {
+                  const prompt = activeDraftPrompt
+                  if (removeDraftById(prompt.path, prompt.draft.draftId)) {
+                    sourceDraftIdsRef.current.delete(prompt.path)
+                    sourceDraftsRef.current.delete(prompt.path)
+                    const nextDraft = findAvailableDraft(prompt.path)
+                    if (nextDraft) {
+                      sourceDraftIdsRef.current.set(prompt.path, nextDraft.draftId)
+                      sourceDraftsRef.current.set(prompt.path, nextDraft)
+                      pendingDraftsRef.current.set(prompt.path, nextDraft)
+                      setDraftPrompt(
+                        {
+                          kind: nextDraft.baseRevision === prompt.server.revision ? 'recoverable' : 'conflict',
+                          path: prompt.path,
+                          draft: nextDraft,
+                          server: prompt.server,
+                        },
+                        prompt.path,
+                      )
+                    } else setDraftPrompt(null, prompt.path)
+                  }
+                }}
+              >
+                Discard draft
+              </button>
+            </div>
+          ) : null}
+          {activeDraftPrompt?.kind === 'conflict' ? (
+            <div
+              role="alert"
+              className="pointer-events-auto flex flex-wrap items-center gap-2 rounded-lg border border-red-200/20 bg-red-950/90 px-3 py-2 text-xs text-red-100 shadow-lg"
+            >
+              <span className="mr-auto min-w-0">
+                This draft is based on an older guest file. Choose how to continue.
+              </span>
+              <button
+                type="button"
+                className="text-[#ffcfb7]"
+                onClick={() => keepConflictingDraft(activeDraftPrompt.path)}
+              >
+                Keep local draft
+              </button>
+              <button
+                type="button"
+                className="text-[#ffcfb7]"
+                onClick={() => mergeConflictingDraft(activeDraftPrompt.path)}
+              >
+                Merge draft
+              </button>
+              <button type="button" className="text-white/70" onClick={() => downloadDraft(activeDraftPrompt.path)}>
+                Download draft
+              </button>
+              <button type="button" className="text-white/70" onClick={() => reloadDraftServer(activeDraftPrompt.path)}>
+                Reload server
+              </button>
+            </div>
+          ) : null}
+        </div>
         {!editorReady && !editorError ? (
           <div role="status" className="absolute inset-0 grid place-items-center bg-[#111318] text-sm text-white/35">
             <span className="flex items-center gap-2">
@@ -973,7 +1849,7 @@ export function CodeEditor({
             </span>
           </div>
         ) : null}
-        {editorReady && activeTab?.state === 'error' ? (
+        {editorReady && activeTab?.state === 'error' && !activeTab.dirty ? (
           <div role="alert" className="absolute inset-0 grid place-items-center bg-[#111318] p-8 text-sm text-red-200">
             <div className="max-w-lg text-center">
               <p>{activeTab.error}</p>
@@ -1006,9 +1882,29 @@ export function CodeEditor({
             </button>
           ) : null}
           {activeTab?.state === 'error' && activeTab.dirty ? (
-            <button type="button" className="ml-1 text-[#79b8ff]" onClick={() => void flushPath(activeTab.path)}>
-              Save mine
-            </button>
+            <>
+              {activeConflictSnapshot ? (
+                <>
+                  <button
+                    type="button"
+                    className="ml-1 text-[#79b8ff]"
+                    onClick={() => reloadDraftServer(activeTab.path)}
+                  >
+                    Reload server
+                  </button>
+                  <button
+                    type="button"
+                    className="ml-1 text-[#79b8ff]"
+                    onClick={() => mergeCurrentConflict(activeTab.path)}
+                  >
+                    Merge
+                  </button>
+                </>
+              ) : null}
+              <button type="button" className="ml-1 text-[#79b8ff]" onClick={() => retryConflictSave(activeTab.path)}>
+                Save mine
+              </button>
+            </>
           ) : null}
         </span>
         <span className={`ml-4 ${watchState === 'connected' ? 'text-emerald-400' : 'text-amber-300'}`}>
@@ -1043,4 +1939,41 @@ function tabId(instanceId: string, path: string): string {
     hash = Math.imul(hash, 16_777_619)
   }
   return `tengri-code-tab-${instanceId}-${(hash >>> 0).toString(36)}`
+}
+
+function decodeCodeFileSnapshot(
+  value: unknown,
+):
+  | { kind: 'legacy'; snapshot: Omit<CodeFileSnapshot, 'revision'> }
+  | { kind: 'revisioned'; snapshot: CodeFileSnapshot }
+  | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
+  const path = Reflect.get(value, 'path')
+  const content = Reflect.get(value, 'content')
+  const contentType = Reflect.get(value, 'contentType')
+  if (typeof path !== 'string' || !isCodePath(path) || typeof content !== 'string' || typeof contentType !== 'string') {
+    return null
+  }
+  const revisionValue = Reflect.get(value, 'revision')
+  if (revisionValue === undefined || revisionValue === '') return { kind: 'legacy', snapshot: { content, contentType } }
+  const revision = parseCodeRevision(revisionValue)
+  return revision === null ? null : { kind: 'revisioned', snapshot: { content, contentType, revision } }
+}
+
+function decodeCodeWriteResult(value: unknown): { path: string; size: number; revision: CodeRevision } | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
+  const path = Reflect.get(value, 'path')
+  const size = Reflect.get(value, 'size')
+  const revision = Reflect.get(value, 'revision')
+  if (
+    typeof path !== 'string' ||
+    !isCodePath(path) ||
+    typeof size !== 'number' ||
+    !Number.isSafeInteger(size) ||
+    size < 0 ||
+    !isCodeRevision(revision)
+  ) {
+    return null
+  }
+  return { path, revision, size }
 }

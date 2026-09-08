@@ -244,8 +244,9 @@ func TestFileAPIWritesReadsAndListsWorkspaceFiles(t *testing.T) {
 	handler := server.authenticatedRoutes()
 
 	writeBody, err := json.Marshal(writeFileRequest{
-		Path:    "/src/main.rs",
-		Content: base64.StdEncoding.EncodeToString([]byte("fn main() {}\n")),
+		Path:             "/src/main.rs",
+		Content:          base64.StdEncoding.EncodeToString([]byte("fn main() {}\n")),
+		ExpectedRevision: missingFileRevision,
 	})
 	if err != nil {
 		t.Fatalf("json.Marshal() error = %v", err)
@@ -254,10 +255,21 @@ func TestFileAPIWritesReadsAndListsWorkspaceFiles(t *testing.T) {
 	if writeResponse.Code != http.StatusOK {
 		t.Fatalf("write status = %d body = %s", writeResponse.Code, writeResponse.Body.String())
 	}
+	var written writeFileResponse
+	if err := json.Unmarshal(writeResponse.Body.Bytes(), &written); err != nil {
+		t.Fatalf("decode write response: %v", err)
+	}
+	wantRevision := revisionForContent([]byte("fn main() {}\n"))
+	if written.Path != "/src/main.rs" || written.Size != int64(len("fn main() {}\n")) || written.Revision != wantRevision {
+		t.Fatalf("write response = %#v, want path/size/revision for saved content", written)
+	}
 
 	readResponse := performAuthorizedRequest(handler, http.MethodGet, "/v1/files/content?path=%2Fsrc%2Fmain.rs", nil)
 	if readResponse.Code != http.StatusOK || readResponse.Body.String() != "fn main() {}\n" {
 		t.Fatalf("read response = status %d body %q", readResponse.Code, readResponse.Body.String())
+	}
+	if got := readResponse.Header().Get("ETag"); got != `"`+wantRevision+`"` {
+		t.Fatalf("read ETag = %q, want strong content ETag", got)
 	}
 
 	listResponse := performAuthorizedRequest(handler, http.MethodGet, "/v1/files?path=%2Fsrc", nil)
@@ -273,6 +285,96 @@ func TestFileAPIWritesReadsAndListsWorkspaceFiles(t *testing.T) {
 	}
 }
 
+type blockingResponseWriter struct {
+	header       http.Header
+	body         bytes.Buffer
+	release      chan struct{}
+	writeStarted chan struct{}
+	status       int
+}
+
+func newBlockingResponseWriter() *blockingResponseWriter {
+	return &blockingResponseWriter{
+		header:       make(http.Header),
+		release:      make(chan struct{}),
+		writeStarted: make(chan struct{}),
+	}
+}
+
+func (writer *blockingResponseWriter) Header() http.Header {
+	return writer.header
+}
+
+func (writer *blockingResponseWriter) WriteHeader(status int) {
+	writer.status = status
+}
+
+func (writer *blockingResponseWriter) Write(content []byte) (int, error) {
+	close(writer.writeStarted)
+	<-writer.release
+	return writer.body.Write(content)
+}
+
+func TestFileAPIReadResponseDoesNotHoldMutationLockWhileWriting(t *testing.T) {
+	t.Parallel()
+	server := testAPIServer(t)
+	server.syncDirectories = func(_ workspace, _ ...string) error { return nil }
+	if err := os.WriteFile(filepath.Join(server.workspace.root, "read.txt"), []byte("read snapshot"), 0o640); err != nil {
+		t.Fatalf("write read fixture: %v", err)
+	}
+
+	blocked := newBlockingResponseWriter()
+	releaseRead := func() {
+		select {
+		case <-blocked.release:
+		default:
+			close(blocked.release)
+		}
+	}
+	defer releaseRead()
+	readDone := make(chan struct{})
+	go func() {
+		server.handleReadFile(blocked, httptest.NewRequest(http.MethodGet, "/v1/files/content?path=%2Fread.txt", nil))
+		close(readDone)
+	}()
+	select {
+	case <-blocked.writeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("read response did not reach the blocked writer")
+	}
+
+	body, err := json.Marshal(writeFileRequest{
+		Path:             "/write.txt",
+		Content:          base64.StdEncoding.EncodeToString([]byte("write completed")),
+		ExpectedRevision: missingFileRevision,
+	})
+	if err != nil {
+		t.Fatalf("marshal write request: %v", err)
+	}
+	writeDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		writeDone <- performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPut, "/v1/files/content", body)
+	}()
+	select {
+	case response := <-writeDone:
+		if response.Code != http.StatusOK {
+			t.Fatalf("write status = %d body = %s", response.Code, response.Body.String())
+		}
+		content, readErr := os.ReadFile(filepath.Join(server.workspace.root, "write.txt"))
+		if readErr != nil || string(content) != "write completed" {
+			t.Fatalf("write state = %q err=%v, want completed while read response is blocked", content, readErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("write remained blocked by stalled read response")
+	}
+	releaseRead()
+	select {
+	case <-readDone:
+	case <-time.After(time.Second):
+		t.Fatal("read handler did not finish after response release")
+	}
+}
+
 func TestFileAPIAtomicWriteDoesNotExposeTemporaryRenameEvents(t *testing.T) {
 	t.Parallel()
 	server := testAPIServer(t)
@@ -282,8 +384,9 @@ func TestFileAPIAtomicWriteDoesNotExposeTemporaryRenameEvents(t *testing.T) {
 	}
 	defer server.fileWatcher.unsubscribe(id)
 	body, err := json.Marshal(writeFileRequest{
-		Path:    "/document.txt",
-		Content: base64.StdEncoding.EncodeToString([]byte("saved")),
+		Path:             "/document.txt",
+		Content:          base64.StdEncoding.EncodeToString([]byte("saved")),
+		ExpectedRevision: missingFileRevision,
 	})
 	if err != nil {
 		t.Fatalf("marshal write request: %v", err)
@@ -325,8 +428,9 @@ func TestFileAPIAcceptsTheAdvertisedFourMiBPayload(t *testing.T) {
 	t.Parallel()
 	server := testAPIServer(t)
 	body, err := json.Marshal(writeFileRequest{
-		Path:    "/large.bin",
-		Content: base64.StdEncoding.EncodeToString(make([]byte, maxFileBytes)),
+		Path:             "/large.bin",
+		Content:          base64.StdEncoding.EncodeToString(make([]byte, maxFileBytes)),
+		ExpectedRevision: missingFileRevision,
 	})
 	if err != nil {
 		t.Fatalf("json.Marshal() error = %v", err)
@@ -338,6 +442,316 @@ func TestFileAPIAcceptsTheAdvertisedFourMiBPayload(t *testing.T) {
 	response := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPut, "/v1/files/content", body)
 	if response.Code != http.StatusOK {
 		t.Fatalf("write status = %d body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestFileAPIRequiresValidExpectedRevision(t *testing.T) {
+	tests := []struct {
+		name     string
+		revision string
+		omit     bool
+	}{
+		{name: "missing field", omit: true},
+		{name: "empty", revision: ""},
+		{name: "short hash", revision: "abc123"},
+		{name: "uppercase hash", revision: strings.Repeat("A", fileRevisionLength)},
+		{name: "non hexadecimal hash", revision: strings.Repeat("g", fileRevisionLength)},
+		{name: "quoted hash", revision: `"` + strings.Repeat("a", fileRevisionLength) + `"`},
+		{name: "invalid missing marker", revision: "MISSING"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			server := testAPIServer(t)
+			var body []byte
+			var err error
+			if test.omit {
+				body = []byte(`{"path":"/invalid-revision.txt","content":""}`)
+			} else {
+				body, err = json.Marshal(writeFileRequest{
+					Path:             "/invalid-revision.txt",
+					Content:          "",
+					ExpectedRevision: test.revision,
+				})
+				if err != nil {
+					t.Fatalf("marshal request: %v", err)
+				}
+			}
+			response := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPut, "/v1/files/content", body)
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("invalid revision status = %d body = %s", response.Code, response.Body.String())
+			}
+			if _, err := os.Stat(filepath.Join(server.workspace.root, "invalid-revision.txt")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("invalid revision created a file: %v", err)
+			}
+		})
+	}
+}
+
+func TestFileAPIRejectsStaleAndCreateOnlyRevisions(t *testing.T) {
+	t.Parallel()
+	server := testAPIServer(t)
+	target := filepath.Join(server.workspace.root, "document.txt")
+	if err := os.WriteFile(target, []byte("before"), 0o640); err != nil {
+		t.Fatalf("write initial document: %v", err)
+	}
+	if err := os.WriteFile(target, []byte("current"), 0o640); err != nil {
+		t.Fatalf("change document outside API: %v", err)
+	}
+
+	write := func(expectedRevision string, content string) *httptest.ResponseRecorder {
+		t.Helper()
+		body, err := json.Marshal(writeFileRequest{
+			Path:             "/document.txt",
+			Content:          base64.StdEncoding.EncodeToString([]byte(content)),
+			ExpectedRevision: expectedRevision,
+		})
+		if err != nil {
+			t.Fatalf("marshal write request: %v", err)
+		}
+		return performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPut, "/v1/files/content", body)
+	}
+
+	response := write(revisionForContent([]byte("before")), "replacement")
+	if response.Code != http.StatusConflict {
+		t.Fatalf("stale write status = %d body = %s", response.Code, response.Body.String())
+	}
+	var conflict revisionConflictResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &conflict); err != nil {
+		t.Fatalf("decode stale revision response: %v", err)
+	}
+	wantCurrent := revisionForContent([]byte("current"))
+	if conflict.CurrentRevision != wantCurrent || conflict.Error == "" {
+		t.Fatalf("stale revision response = %#v, want current revision %q", conflict, wantCurrent)
+	}
+	if content, err := os.ReadFile(target); err != nil || string(content) != "current" {
+		t.Fatalf("stale write changed document: content=%q err=%v", content, err)
+	}
+
+	response = write(missingFileRevision, "create-only")
+	if response.Code != http.StatusConflict {
+		t.Fatalf("create-only existing write status = %d body = %s", response.Code, response.Body.String())
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &conflict); err != nil {
+		t.Fatalf("decode create-only conflict: %v", err)
+	}
+	if conflict.CurrentRevision != wantCurrent {
+		t.Fatalf("create-only current revision = %q, want %q", conflict.CurrentRevision, wantCurrent)
+	}
+
+	missingTarget := filepath.Join(server.workspace.root, "new-document.txt")
+	body, err := json.Marshal(writeFileRequest{
+		Path:             "/new-document.txt",
+		Content:          base64.StdEncoding.EncodeToString([]byte("create")),
+		ExpectedRevision: wantCurrent,
+	})
+	if err != nil {
+		t.Fatalf("marshal missing-target request: %v", err)
+	}
+	response = performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPut, "/v1/files/content", body)
+	if response.Code != http.StatusConflict {
+		t.Fatalf("missing-target stale write status = %d body = %s", response.Code, response.Body.String())
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &conflict); err != nil {
+		t.Fatalf("decode missing-target conflict: %v", err)
+	}
+	if conflict.CurrentRevision != missingFileRevision {
+		t.Fatalf("missing-target current revision = %q, want %q", conflict.CurrentRevision, missingFileRevision)
+	}
+	if _, err := os.Stat(missingTarget); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale missing-target write created a file: %v", err)
+	}
+}
+
+func TestFileAPIConcurrentWritersUseOneMatchingRevision(t *testing.T) {
+	t.Parallel()
+	server := testAPIServer(t)
+	target := filepath.Join(server.workspace.root, "concurrent.txt")
+	if err := os.WriteFile(target, []byte("base"), 0o640); err != nil {
+		t.Fatalf("write initial file: %v", err)
+	}
+	wantInitial := revisionForContent([]byte("base"))
+	type result struct {
+		content  string
+		response *httptest.ResponseRecorder
+		revision string
+	}
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	for _, content := range []string{"first writer", "second writer"} {
+		content := content
+		go func() {
+			body, err := json.Marshal(writeFileRequest{
+				Path:             "/concurrent.txt",
+				Content:          base64.StdEncoding.EncodeToString([]byte(content)),
+				ExpectedRevision: wantInitial,
+			})
+			if err != nil {
+				results <- result{content: content, revision: "marshal error: " + err.Error()}
+				return
+			}
+			<-start
+			results <- result{content: content, response: performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPut, "/v1/files/content", body)}
+		}()
+	}
+	close(start)
+	var winner result
+	var loser result
+	for range 2 {
+		current := <-results
+		if current.response == nil {
+			t.Fatalf("concurrent writer %q failed before request: %s", current.content, current.revision)
+		}
+		switch current.response.Code {
+		case http.StatusOK:
+			if winner.response != nil {
+				t.Fatalf("both concurrent writes succeeded: %#v and %#v", winner.response, current.response)
+			}
+			winner = current
+		case http.StatusConflict:
+			if loser.response != nil {
+				t.Fatalf("both concurrent writes conflicted: %#v and %#v", loser.response, current.response)
+			}
+			loser = current
+		default:
+			t.Fatalf("concurrent writer %q status = %d body = %s", current.content, current.response.Code, current.response.Body.String())
+		}
+	}
+	if winner.response == nil || loser.response == nil {
+		t.Fatalf("concurrent results winner=%#v loser=%#v", winner, loser)
+	}
+	var stale revisionConflictResponse
+	if err := json.Unmarshal(loser.response.Body.Bytes(), &stale); err != nil {
+		t.Fatalf("decode concurrent stale response: %v", err)
+	}
+	wantWinner := revisionForContent([]byte(winner.content))
+	if stale.CurrentRevision != wantWinner {
+		t.Fatalf("concurrent stale revision = %q, want winner %q", stale.CurrentRevision, wantWinner)
+	}
+	var acknowledged writeFileResponse
+	if err := json.Unmarshal(winner.response.Body.Bytes(), &acknowledged); err != nil {
+		t.Fatalf("decode concurrent winner response: %v", err)
+	}
+	if acknowledged.Revision != wantWinner {
+		t.Fatalf("concurrent winner revision = %q, want %q", acknowledged.Revision, wantWinner)
+	}
+	content, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read concurrent result: %v", err)
+	}
+	if string(content) != winner.content {
+		t.Fatalf("concurrent final content = %q, want winner %q", content, winner.content)
+	}
+}
+
+func TestSyncWorkspaceDirectoriesPropagatesParentSyncFailure(t *testing.T) {
+	server := testAPIServer(t)
+	sentinel := errors.New("injected parent sync failure")
+	var synced []string
+	err := syncWorkspaceDirectoriesWith(server.workspace, func(_ workspace, relative string) error {
+		synced = append(synced, relative)
+		return sentinel
+	}, "nested/created")
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("sync directories error = %v, want injected error", err)
+	}
+	if len(synced) != 1 || synced[0] != "nested/created" {
+		t.Fatalf("sync directories attempted %v, want stop at first failed directory", synced)
+	}
+}
+
+func TestFileAPIMutationAcknowledgementFailureDoesNotHideVisibleState(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(*testing.T, *apiServer)
+	}{
+		{
+			name: "write",
+			run: func(t *testing.T, server *apiServer) {
+				t.Helper()
+				body, err := json.Marshal(writeFileRequest{
+					Path:             "/written.txt",
+					Content:          base64.StdEncoding.EncodeToString([]byte("visible")),
+					ExpectedRevision: missingFileRevision,
+				})
+				if err != nil {
+					t.Fatalf("marshal write request: %v", err)
+				}
+				response := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPut, "/v1/files/content", body)
+				if response.Code < http.StatusBadRequest {
+					t.Fatalf("write acknowledgement status = %d body = %s", response.Code, response.Body.String())
+				}
+				content, err := os.ReadFile(filepath.Join(server.workspace.root, "written.txt"))
+				if err != nil || string(content) != "visible" {
+					t.Fatalf("write state = %q err=%v, want visible content after failed acknowledgement", content, err)
+				}
+			},
+		},
+		{
+			name: "mkdir",
+			run: func(t *testing.T, server *apiServer) {
+				t.Helper()
+				body := []byte(`{"path":"/created/nested"}`)
+				response := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPost, "/v1/files/directory", body)
+				if response.Code < http.StatusBadRequest {
+					t.Fatalf("mkdir acknowledgement status = %d body = %s", response.Code, response.Body.String())
+				}
+				info, err := os.Stat(filepath.Join(server.workspace.root, "created", "nested"))
+				if err != nil || !info.IsDir() {
+					t.Fatalf("mkdir state = %#v err=%v, want visible directory after failed acknowledgement", info, err)
+				}
+			},
+		},
+		{
+			name: "move",
+			run: func(t *testing.T, server *apiServer) {
+				t.Helper()
+				source := filepath.Join(server.workspace.root, "source.txt")
+				if err := os.WriteFile(source, []byte("moved"), 0o640); err != nil {
+					t.Fatalf("write move source: %v", err)
+				}
+				body := []byte(`{"sourcePath":"/source.txt","destinationPath":"/moved.txt"}`)
+				response := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPost, "/v1/files/move", body)
+				if response.Code < http.StatusBadRequest {
+					t.Fatalf("move acknowledgement status = %d body = %s", response.Code, response.Body.String())
+				}
+				content, err := os.ReadFile(filepath.Join(server.workspace.root, "moved.txt"))
+				if err != nil || string(content) != "moved" {
+					t.Fatalf("move destination state = %q err=%v, want visible destination after failed acknowledgement", content, err)
+				}
+				if _, err := os.Lstat(source); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("move source state err=%v, want source removed", err)
+				}
+			},
+		},
+		{
+			name: "delete",
+			run: func(t *testing.T, server *apiServer) {
+				t.Helper()
+				target := filepath.Join(server.workspace.root, "deleted.txt")
+				if err := os.WriteFile(target, []byte("gone"), 0o640); err != nil {
+					t.Fatalf("write delete target: %v", err)
+				}
+				body := []byte(`{"path":"/deleted.txt","recursive":false}`)
+				response := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodDelete, "/v1/files", body)
+				if response.Code < http.StatusBadRequest {
+					t.Fatalf("delete acknowledgement status = %d body = %s", response.Code, response.Body.String())
+				}
+				if _, err := os.Lstat(target); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("delete target state err=%v, want target removed", err)
+				}
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := testAPIServer(t)
+			server.syncDirectories = func(_ workspace, _ ...string) error {
+				return errors.New("injected parent sync failure")
+			}
+			test.run(t, server)
+		})
 	}
 }
 
@@ -368,8 +782,9 @@ func TestFileAPIAtomicWritePreservesExecutableMode(t *testing.T) {
 		t.Fatalf("write executable fixture: %v", err)
 	}
 	body, err := json.Marshal(writeFileRequest{
-		Path:    "/script.sh",
-		Content: base64.StdEncoding.EncodeToString([]byte("#!/bin/sh\nexit 0\n")),
+		Path:             "/script.sh",
+		Content:          base64.StdEncoding.EncodeToString([]byte("#!/bin/sh\nexit 0\n")),
+		ExpectedRevision: revisionForContent([]byte("#!/bin/sh\nexit 1\n")),
 	})
 	if err != nil {
 		t.Fatalf("marshal write request: %v", err)
@@ -436,8 +851,9 @@ func TestFileAPIRejectsSymlinkIntoInternalMetadata(t *testing.T) {
 	}
 
 	writeBody, err := json.Marshal(writeFileRequest{
-		Path:    "/visible/injected.json",
-		Content: base64.StdEncoding.EncodeToString([]byte("blocked")),
+		Path:             "/visible/injected.json",
+		Content:          base64.StdEncoding.EncodeToString([]byte("blocked")),
+		ExpectedRevision: missingFileRevision,
 	})
 	if err != nil {
 		t.Fatalf("json.Marshal() error = %v", err)

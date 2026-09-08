@@ -14,6 +14,13 @@ id-less requests instead of generating a compatibility identity or negotiating w
 Pending Codex device logins are guest-owned. A reconnecting desktop reads the active attempt from Nanoagent and keeps
 the same verification code and original expiry instead of silently starting and invalidating another attempt.
 
+Workspace file reads are revision-aware when the guest supports the contract: Nanoagent returns the bounded file bytes
+with a strong quoted SHA-256 `ETag`, and Tengri forwards the unquoted revision alongside the content. A missing ETag
+keeps legacy reads usable with an empty revision so clients can present the file read-only; a malformed or mismatched
+ETag fails closed. File writes require `expectedRevision` to be a lowercase 64-character SHA-256 revision or `missing`,
+and Tengri rejects omitted or malformed preconditions before contacting the guest. Nanoagent rejects stale revisions
+with HTTP 409. Successful writes return the new path, size, and revision.
+
 Paginated Codex conversations resume with `excludeTurns: true`, then load `thread/items/list` and metadata-only
 `thread/turns/list` in ascending pages. Each item carries the event cursor captured with its page; the desktop uses
 that cursor to discard covered replay while retaining updates that arrive after an earlier page. The initial resume
@@ -69,10 +76,16 @@ becomes ready, so gRPC, event streams, PTY WebSockets, and preview proxy connect
 reconnect after the Service has a ready endpoint, while an operation submitted during the gap returns a truthful
 service-unavailable response and must be retried.
 
-The replacement controller hard-migrates every existing `MicroVM.spec.image` to the promoted digest. Sleeping agents
-keep their CR and PVC and use the new digest on resume. Running agents report `GuestImageUpdate`, revoke capabilities
-bound to the old guest, and replace only their owned Firecracker Pod. The CR, bootstrap Secret, and PVC remain in
-place. The migration never changes Kata, Talos, node scheduling, or any cluster node.
+The replacement controller keeps every MicroVM CR, bootstrap Secret, and PVC until the owner explicitly deletes the
+agent. The legacy four-hour `spec.expiresAt` field remains valid for old CRs but is ignored for lifecycle decisions;
+new agents leave it empty and the gRPC `Agent.expiresAt` field is empty for retained workspaces. Idle sleep still
+deletes only the guest Pod and preserves the workspace for resume.
+
+Release changes preserve a running guest's image and processes. When the configured Nanoagent digest differs, the
+controller reports it as `Agent.pendingImage` while the owned guest is running. It adopts the digest only after the
+guest has been safely slept or there is no running owned guest, then creates the next Pod from the configured image.
+Previously initiated image updates and agents with no Pod converge through the same safe boundary. The migration never
+changes Kata, Talos, node scheduling, or any cluster node.
 
 Before opening its public listeners, a replacement controller recovers durable provisional-terminal leases from
 Kubernetes. Transient transport failures, HTTP 408/429 responses, and API server 5xx responses use a bounded
@@ -94,8 +107,9 @@ request. The Argo Applications track the generated branch; no promotion PR or ma
    exact automatic `tengri` Stage. Verify that `kargo/tengri` contains the complete source commit, digests, and build
    provenance, and that the Argo Applications track it at `Synced`/`Healthy`.
 3. Confirm Argo starts one `tengri` Deployment replacement. Record every `MicroVM`, guest Pod, and PVC UID before the
-   rollout. Confirm each CR adopts the promoted Nanoagent digest, each running guest receives a new Pod UID, and every
-   PVC UID remains unchanged. Confirm no node is mutated.
+   rollout. Confirm running guests keep their Pod UID and report `pendingImage` when the promoted digest is newer;
+   after an owner-requested or idle sleep/resume, confirm the next Pod uses that digest. Confirm every PVC UID remains
+   unchanged and no node is mutated.
 4. From a configured `galactic-lan` client, verify the replacement and its control path:
 
    ```bash
@@ -127,8 +141,8 @@ request. The Argo Applications track the generated branch; no promotion PR or ma
 If the replacement cannot become ready, inspect the Kargo Stage, Freight, generated `kargo/tengri` branch, and Argo
 Applications and correct the source-owned failure. Re-promote a previously proven controller/guest Freight pair through
 Kargo; never use `kubectl rollout undo`, directly apply manifests, or create a digest promotion PR. Never revert to a controller predating
-`home-workspace-v2` while any v2 `MicroVM` exists: the predecessor cannot safely resume those guests. Let every v2 agent
-expire or delete it through Tengri, verify that no v2 CR remains, and only then re-promote the matching known-good pair.
+`home-workspace-v2` while any v2 `MicroVM` exists: the predecessor cannot safely resume those guests. Delete v2 agents
+through their owner-scoped lifecycle, verify that no v2 CR remains, and only then re-promote the matching known-good pair.
 Verify the restored Pod, Service endpoint, `/livez`, and `/readyz` with the commands above.
 
 Tengri supports one storage layout:
@@ -157,6 +171,7 @@ cargo test --manifest-path services/tengri/Cargo.toml --locked --all-targets
 cargo run --manifest-path services/tengri/Cargo.toml --locked --quiet --bin crdgen \
   > /tmp/tengri-crd.yaml
 diff -u /tmp/tengri-crd.yaml services/tengri/crd.yaml
+diff -u /tmp/tengri-crd.yaml argocd/applications/tengri/crd.yaml
 ```
 
 Runtime configuration is documented in [`../../docs/tengri/operations.md`](../../docs/tengri/operations.md). The

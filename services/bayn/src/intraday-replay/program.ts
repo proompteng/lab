@@ -22,7 +22,7 @@ import {
   verifyStrategyName,
   verifyStrategyProtocolHash,
 } from '../build'
-import { OperationalError } from '../errors'
+import { OperationalError, operationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
 import {
   IntradaySnapshotFailure,
@@ -61,6 +61,7 @@ import { desiredQuantityMicros, notionalMicros } from '../execution-model'
 import {
   decodeDefaultIntradayMomentumProtocol,
   hashIntradayMomentumProtocol,
+  intradayMomentumFirstDecisionPollMs,
   type IntradayMomentumProtocol,
 } from '../strategy/intraday-momentum/protocol'
 import type { IntradayMomentumTargetPortfolio } from '../strategy/intraday-momentum/model'
@@ -78,6 +79,14 @@ import { allocationForDecision } from './allocation'
 import { applyReplayIoc, createReplayLedger, type IntradayReplayLedger } from './ledger'
 import { simulateIntradayReplayIoc, type IntradayReplayIocFailure, type IntradayReplayIocOutcome } from './execution'
 import { markIntradayReplayEquity, type IntradayReplayEquityFailure, type IntradayReplayEquityMark } from './equity'
+import { decideIntradayMomentumCore } from '../strategy/intraday-momentum/decision-core'
+import type { IntradayCandidateExclusion } from '../market-data/intraday/model'
+import {
+  ArchiveAvailabilityPolicy,
+  type ArchiveAvailabilityReceipt,
+  type ArchiveSnapshotAvailability,
+  type ReplayMarketDataService,
+} from '../market-data/intraday/availability'
 
 const rollingBaselineMessage = 'intraday symbol lacks the complete rolling lookback baseline'
 const replayCycleSchemaVersion = 'bayn.autonomous-cycle.v3' as const
@@ -232,18 +241,44 @@ const evaluateDecision = (
   protocol: IntradayMomentumProtocol,
   snapshot: ArchiveVerifiedIntradayMarketSnapshot,
   context: ReplaySessionContext,
+  availabilityExclusions: readonly IntradayCandidateExclusion[],
 ): Result.Result<IntradayMomentumTargetPortfolio, IntradayMomentumFailure> =>
-  makeIntradayMomentumDefinition(protocol).decide({
-    market: {
-      snapshot,
-      session: {
-        sessionDate: context.calendar.executionSessionDate,
-        openAt: context.calendar.executionOpenAt,
-        closeAt: context.calendar.executionCloseAt,
-        calendarHash: context.calendar.executionCalendarHash,
+  makeIntradayMomentumDefinition(protocol)
+    .decide({
+      market: {
+        snapshot,
+        session: {
+          sessionDate: context.calendar.executionSessionDate,
+          openAt: context.calendar.executionOpenAt,
+          closeAt: context.calendar.executionCloseAt,
+          calendarHash: context.calendar.executionCalendarHash,
+        },
       },
-    },
-  })
+    })
+    .pipe(
+      Result.flatMap((decision) => {
+        if (availabilityExclusions.length === 0) return Result.succeed(decision)
+        // Keep canonical archive validation and identity intact. Only research inputs to the shared pure core gain
+        // receipt-derived exclusions; never rewrite the archive manifest or alter the production strategy contract.
+        const exclusions = new Map(
+          (snapshot.manifest.candidateExclusions ?? []).map((exclusion) => [exclusion.symbol, exclusion]),
+        )
+        for (const exclusion of availabilityExclusions) {
+          if (!exclusions.has(exclusion.symbol)) exclusions.set(exclusion.symbol, exclusion)
+        }
+        return decideIntradayMomentumCore({
+          protocol,
+          bars: snapshot.bars,
+          latestQuotes: snapshot.latestQuotes,
+          latestTrades: Object.fromEntries(snapshot.trades.map((trade) => [trade.symbol, trade])),
+          observedAt: snapshot.manifest.observedAt,
+          rangeStartAt: snapshot.manifest.rangeStartAt,
+          candidateExclusions: [...exclusions.values()].toSorted((left, right) =>
+            left.symbol < right.symbol ? -1 : left.symbol > right.symbol ? 1 : 0,
+          ),
+        }).pipe(Result.map((core) => Object.freeze({ ...decision, ...core })))
+      }),
+    )
 
 const emptySession = (
   date: string,
@@ -340,6 +375,7 @@ const replaySession = (
   context: ReplaySessionContext,
   openingCashMicros: string,
   equityState: ReplayEquityState,
+  availabilitySnapshots: ReadonlyMap<string, ArchiveSnapshotAvailability>,
 ): Effect.Effect<IntradayReplaySession, IntradayReplayFailure> =>
   Effect.gen(function* () {
     const ledgerResult = createReplayLedger(openingCashMicros)
@@ -396,7 +432,7 @@ const replaySession = (
       return mark
     }
 
-    const entryStartMs = Date.parse(context.window.submissionOpenAt) + input.assumptions.firstPollDelayMs
+    const entryStartMs = intradayMomentumFirstDecisionPollMs(protocol, context.window, input.assumptions)
     const entryCutoffMs = Date.parse(context.window.submissionCutoffAt)
     for (let observedMs = entryStartMs; observedMs < entryCutoffMs; observedMs += input.assumptions.pollIntervalMs) {
       const observedAt = utcInstantFromEpochMillis(observedMs)
@@ -426,7 +462,12 @@ const replaySession = (
       }
 
       const decisionSnapshot = loaded.snapshot
-      const decisionResult = evaluateDecision(protocol, decisionSnapshot, context)
+      const decisionResult = evaluateDecision(
+        protocol,
+        decisionSnapshot,
+        context,
+        availabilitySnapshots.get(decisionSnapshot.manifest.snapshotId)?.candidateExclusions ?? [],
+      )
       if (Result.isFailure(decisionResult)) {
         const cause = decisionResult.failure
         const retryable = cause.reason === 'snapshot-coverage' && cause.message === rollingBaselineMessage
@@ -937,7 +978,7 @@ const reportWithHash = (
 
 export const runIntradayReplay = (
   input: IntradayReplayInput,
-  marketData: IntradayMarketDataService,
+  marketData: ReplayMarketDataService,
   now: string,
 ): Effect.Effect<IntradayReplayReport, IntradayReplayFailure> =>
   Effect.gen(function* () {
@@ -946,6 +987,39 @@ export const runIntradayReplay = (
         (cause) => new IntradayReplayFailure({ operation: 'input', message: 'invalid replay input', cause }),
       ),
     )
+    const availabilityPolicy = decodedInput.archiveAvailability ?? ArchiveAvailabilityPolicy.RecordedReader
+    const availabilitySnapshots = new Map<string, ArchiveSnapshotAvailability>()
+    const availabilityReceipts = new Map<string, ArchiveAvailabilityReceipt>()
+    const verifyAvailability = marketData.recordedAvailability
+    const requireAvailability = (snapshot: ArchiveVerifiedIntradayMarketSnapshot) =>
+      Effect.gen(function* () {
+        if (availabilityPolicy === ArchiveAvailabilityPolicy.SourceReceiptAssumption) return snapshot
+        if (verifyAvailability === undefined) {
+          return yield* operationalError({
+            component: 'market-data',
+            operation: 'archive-availability',
+            message: 'recorded reader availability is required; source receipt time is not a substitute',
+            cause: new IntradaySnapshotFailure({
+              reason: 'not-ready',
+              message: 'no recorded archive availability reader was supplied',
+            }),
+          })
+        }
+        const proof = yield* verifyAvailability(snapshot)
+        availabilitySnapshots.set(proof.snapshotId, proof)
+        for (const receipt of proof.receipts) availabilityReceipts.set(receipt.receiptHash, receipt)
+        return snapshot
+      })
+    const replayMarket: IntradayMarketDataService =
+      availabilityPolicy === ArchiveAvailabilityPolicy.SourceReceiptAssumption
+        ? marketData
+        : {
+            check: marketData.check,
+            captureVersion: marketData.captureVersion,
+            loadSnapshot: (request) => marketData.loadSnapshot(request).pipe(Effect.flatMap(requireAvailability)),
+            verifyArchiveSnapshot: (snapshot) =>
+              marketData.verifyArchiveSnapshot(snapshot).pipe(Effect.flatMap(requireAvailability)),
+          }
     if (!isValidUtcInstant(now)) {
       return yield* new IntradayReplayFailure({
         operation: 'input',
@@ -1151,12 +1225,13 @@ export const runIntradayReplay = (
       }
       const session = yield* replaySession(
         decodedInput,
-        marketData,
+        replayMarket,
         protocol,
         riskPolicy,
         contextResult.success,
         nextCashMicros,
         equityState,
+        availabilitySnapshots,
       )
       sessions.push(session)
       nextCashMicros = session.cashMicros
@@ -1173,7 +1248,7 @@ export const runIntradayReplay = (
           .toString()
       : null
     const material: Omit<IntradayReplayReport, 'reportHash'> = {
-      schemaVersion: 'bayn.intraday-replay-report.v2',
+      schemaVersion: 'bayn.intraday-replay-report.v3',
       evidenceKind: 'COUNTERFACTUAL_RESEARCH',
       qualification: 'NOT_QUALIFIED',
       inputHash,
@@ -1183,6 +1258,17 @@ export const runIntradayReplay = (
       strategyProtocolHash,
       riskPolicyHash,
       calendarHash: normalizedCalendar.normalizedResponseHash,
+      availability: {
+        policy: availabilityPolicy,
+        status: availabilitySnapshots.size > 0 ? 'OBSERVED_ROWS_ONLY' : 'UNPROVEN',
+        snapshots: [...availabilitySnapshots.values()].map((proof) => ({
+          snapshotId: proof.snapshotId,
+          observedAt: proof.observedAt,
+          receiptHashes: proof.receipts.map((receipt) => receipt.receiptHash),
+          ...(proof.candidateExclusions === undefined ? {} : { candidateExclusions: proof.candidateExclusions }),
+        })),
+        receipts: [...availabilityReceipts.values()],
+      },
       sessions,
       totals: {
         completedSessionCount,
@@ -1200,6 +1286,10 @@ export const runIntradayReplay = (
         riskLimitBreached: equityState.riskLimitBreached,
       },
       limitations: [
+        availabilityPolicy === ArchiveAvailabilityPolicy.RecordedReader
+          ? 'every used row requires a retained production-reader receipt completed no later than replay time; unavailable decision candidates are explicitly excluded, while missing benchmark or execution-pricing evidence and all-candidate unavailability remain incomplete'
+          : 'source receipt time is an explicit unproven availability assumption; Kafka/Flink/ClickHouse visibility and production reader availability are not established',
+        'reader receipts are conservative observed upper bounds, not earliest archive visibility, simultaneous snapshot proof, reader uptime, or actual execution evidence',
         'counterfactual flat-start session lifecycle; only cash carries between sessions',
         'no broker, authority, PostgreSQL, TigerBeetle, or risk receipt is fabricated',
         'full broker and risk-controller gates are not modeled; replay applies sizing and declared exposure caps only',

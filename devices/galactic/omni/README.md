@@ -4,6 +4,19 @@
 `galactic` cluster. It preserves every imported machine patch, removes the stale imported `machine.install.image`
 overrides so Omni can derive installers from schematics, and references the Elauwit Image Factory registry patch.
 
+The template targets Talos 1.14.0 and Kubernetes 1.37.0 through Omni 1.11. Complete the Talos phase and its workload
+acceptance before syncing the Kubernetes change. The Talos-only template from the preceding release commit retains
+Kubernetes 1.36.4 for that phase. Each
+Machine's `install.diskSelector` selects its verified system-disk serial, replacing the imported `machine.install.disk`
+field while preserving the other install options. See the [release procedure](../releases/README.md) for artifact
+verification, rolling upgrades, acceptance, and recovery. Control-plane upgrades use `maxParallelism: 1`; individual
+control-plane locks are unsupported.
+
+For the Talos-only handoff, use the [pinned extraction and rendering commands](../releases/README.md) before the
+workflow below. They extract the Talos-phase template and its registry sidecar from the exact preceding commit and
+pass `--template` explicitly. The default renderer invocation below consumes the current Kubernetes 1.37 template;
+use it only after Talos acceptance and the atomic Talos target/lock update are complete.
+
 Do not sync the checked-in file directly. Its six placeholders must be rendered into a temporary mode-`0600` file.
 Either provide `GALACTIC_TAILSCALE_AUTH_KEY` and `GALACTIC_OMNI_JOIN_TOKEN`, or extract the existing values from a fresh
 mode-`0600` live export:
@@ -35,7 +48,8 @@ omnictl cluster template sync \
   --verbose
 ```
 
-The first sync applies only `image-factory-registry.yaml` and removes the three stale installer-image overrides. Wait
+During the original Image Factory handoff, the first sync applied only `image-factory-registry.yaml` and removed the
+three stale installer-image overrides. For a future staged extension change, wait
 for those configuration updates to finish before adding any `systemExtensions` list. Then add the custom extension to
 one `kind: Machine` document at a time. A new rollout uses Ryzen, Turin, Altra order; a resumed rollout finishes the
 already-started machine before changing another. Rerender, validate, dry-run, and sync each phase. The control-plane
@@ -44,14 +58,14 @@ already-started machine before changing another. Rerender, validate, dry-run, an
 `systemExtensions` is a customization request, not immutable artifact proof. Image Factory hashes the ordered request
 into a schematic ID, while the catalog can later resolve an extension name to a new digest. The same schematic ID and
 Talos version may therefore still address a cached installer built from an older catalog. Before each sync, use the
-artifact identity gate in `docs/runbooks/talos-latest-upgrade-plan.md` to tie the exact generated installer to the
+current [artifact identity gate](../releases/README.md#artifact-identity-gate) to tie the exact generated installer to the
 signed Kata digest. `MachineUpgradeStatus: machine is up to date`, a matching schematic ID, and extension version
 `4.1.0` prove convergence to that installer; they do not prove which extension digest built it.
 
 When a reviewed cache rebuild changes the installer manifest digest but leaves both the schematic ID and Talos version
 unchanged, Omni has no desired-state difference and correctly creates no new machine task. Do not mutate the template
 or fake a version change to force one. After proving there is no active Omni operation, use only the target-specific,
-already-drained same-schematic replacement procedure in `docs/runbooks/talos-latest-upgrade-plan.md`, then return to
+already-drained [same-schematic replacement procedure](../releases/README.md#same-schematic-artifact-replacement), then return to
 Omni ownership and the normal runtime-acceptance sequence.
 
 Omni's normal lifecycle cordons and drains before the installer reboot, then `FinalizeReboot` uncordons the Kubernetes
@@ -66,30 +80,36 @@ the cluster template first installs an explicit `RegistryMirrorConfig` whose `na
 reference host, including port. Talos honors that mirror for its own installer pull as well as containerd pulls. A
 direct pull of the same host without the mirror defaults to HTTPS and is not an equivalent test.
 
-Never commit the raw or rendered templates. Delete both temporary files after the operation. The full preflight,
-runtime proof, and rollback procedure is in `docs/runbooks/talos-latest-upgrade-plan.md`.
+Never commit the raw or rendered templates. Delete both temporary files after the operation. Follow the current
+[Talos 1.14 and Kubernetes 1.37 release procedure](../releases/README.md) for preflight, runtime proof, and recovery.
+`docs/runbooks/talos-latest-upgrade-plan.md` retains historical evidence and the referenced hardware-recovery procedures.
 
 ## PodCIDR maintenance checks
 
-The preparation template holds Turin and Altra at `maxPods: 250` and requests `/23` allocations for newly registered
-Nodes. Changing the allocation mask does not resize existing Nodes' immutable PodCIDRs. Before moving workloads onto
-Altra or draining either target, use the render, validate, dry-run, and Omni sync procedure above, then verify
-`kubectl --context galactic-lan -n default get node talos-192-168-1-85 -o jsonpath='{.status.capacity.pods}'` returns
-`250`. Keep that cap until Altra's new `/23` network passes acceptance. The gate intentionally fails on Altra's
-old `/24`/500 state; do not use `--migrated` to skip this preparation.
+Turin and Altra have re-registered with distinct `/23` PodCIDRs. The template sets both to `maxPods: 500` and requests
+`/23` allocations for newly registered Nodes. Apply each target's 500-pod cap through the render, validate, dry-run,
+and Omni sync procedure above after its network and storage acceptance. Changing the allocation mask does not resize
+existing Nodes' immutable PodCIDRs.
 
-Run the read-only address and storage gate immediately before each node's maintenance:
+Use the migrated gate after applying both caps:
 
 ```bash
-python3 devices/galactic/omni/podcidr_preflight.py --node turin
-python3 devices/galactic/omni/podcidr_preflight.py --node talos-192-168-1-85
+python3 devices/galactic/omni/podcidr_preflight.py --node turin --migrated
+python3 devices/galactic/omni/podcidr_preflight.py --node talos-192-168-1-85 --migrated
 ```
 
 The command uses only the `galactic-lan` Kubernetes context. It checks the reviewed three-node membership, readiness,
 distinct allocator `/23` blocks, current pod addresses, Ceph monitor/OSD/PG recovery, and active/standby CephFS MDS
-placement on separate hosts. It requires a 250-pod cap on the maintenance target. After migration, add `--migrated`
-to require both a `/23` PodCIDR and a 500-pod cap. Exit code 1 means a failed gate; exit code 2 means live evidence
-could not be established. A peer's existing address-capacity mismatch is reported separately as a warning.
+placement on separate hosts. `--migrated` requires both a `/23` PodCIDR and a 500-pod cap. Without that flag, the
+preparation gate requires a 250-pod cap; retain that cap during any future Node re-registration until network and
+storage acceptance. Exit code 1 means a failed gate; exit code 2 means live evidence could not be established.
+A peer's existing address-capacity mismatch is reported separately as a warning.
+
+For a future Node re-registration, first merge a template change lowering only the selected target from 500 to 250.
+Export fresh live credentials, render the changed template, validate it, inspect the Omni sync dry run, and sync it
+using the commands above. Verify the target's `.status.capacity.pods` is `250` before running the preparation gate or
+draining. After its replacement `/23` network and storage pass acceptance, merge the target's return to 500 and repeat
+the render, validate, dry-run, and sync sequence before running the migrated gate and capacity test.
 
 Passing these checks does not prove workload continuity, data backups, disk identity, GPU or Kata operation, or
 authorize a drain. Verify those conditions in the reviewed maintenance procedure. In particular, a Kubernetes etcd

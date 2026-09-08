@@ -141,7 +141,12 @@ async function decodeResponse<Result>(response: Response): Promise<Result> {
     const record = typeof payload === 'object' && payload !== null ? payload : {}
     const message = 'error' in record && typeof record.error === 'string' ? record.error : ''
     const code =
-      response.status === 404 && 'code' in record && record.code === 'conversation_not_found' ? record.code : undefined
+      'code' in record &&
+      ((response.status === 404 && record.code === 'conversation_not_found') ||
+        (response.status === 409 && record.code === 'file_conflict') ||
+        (response.status === 429 && record.code === 'capacity_full'))
+        ? record.code
+        : undefined
     throw new TengriRequestError(message || `Tengri request failed with ${response.status}`, response.status, code)
   }
   if (!payload) throw new Error('Tengri returned an empty response')

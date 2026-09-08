@@ -4,6 +4,7 @@ import type { MarketCalendarObservation, MarketCalendarSession } from '../broker
 import { canonicalHashV1Result } from '../hash'
 import {
   IsoDateSchema,
+  NonNegativeIntegerSchema,
   PositiveIntegerSchema,
   Sha256Schema,
   StrictNonEmptyStringSchema,
@@ -15,6 +16,9 @@ import { Pipeable } from '../pipeable'
 export const cycleTimeZone = 'America/New_York' as const
 export const maximumSubmissionDurationMs = 86_400_000
 export const SubmissionWindowMsSchema = PositiveIntegerSchema.check(
+  Schema.isLessThanOrEqualTo(maximumSubmissionDurationMs),
+)
+const SessionBoundaryOffsetMsSchema = NonNegativeIntegerSchema.check(
   Schema.isLessThanOrEqualTo(maximumSubmissionDurationMs),
 )
 
@@ -127,8 +131,8 @@ const CycleExecutionPolicyV2MaterialSchema = Schema.Struct({
 const CycleExecutionPolicyV3MaterialSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.autonomous-cycle-execution-policy.v3'),
   strategyExecutionModelHash: Sha256Schema,
-  warmupAfterOpenMs: SubmissionWindowMsSchema,
-  submissionCutoffBeforeCloseMs: SubmissionWindowMsSchema,
+  warmupAfterOpenMs: SessionBoundaryOffsetMsSchema,
+  submissionCutoffBeforeCloseMs: SessionBoundaryOffsetMsSchema,
 })
 
 export const CycleExecutionPolicyMaterialSchema = Schema.Union([
@@ -324,21 +328,23 @@ const cycleWindowIssues = (
   if (
     (window.schemaVersion === 'bayn.autonomous-cycle-window.v1' &&
       window.submissionCutoffAt >= window.executionOpenAt) ||
-    (window.schemaVersion !== 'bayn.autonomous-cycle-window.v1' && window.executionOpenAt >= window.submissionOpenAt)
+    (window.schemaVersion === 'bayn.autonomous-cycle-window.v2' && window.executionOpenAt >= window.submissionOpenAt) ||
+    (window.schemaVersion === 'bayn.autonomous-cycle-window.v3' && window.executionOpenAt > window.submissionOpenAt)
   ) {
     issues.push({
       path: ['executionOpenAt'],
       issue:
         window.schemaVersion === 'bayn.autonomous-cycle-window.v1'
           ? 'must follow the broker submission cutoff'
-          : 'must precede the intraday submission window',
+          : 'intraday submission must remain within the execution session',
     })
   }
   if (
-    window.schemaVersion !== 'bayn.autonomous-cycle-window.v1' &&
-    window.submissionCutoffAt >= window.executionCloseAt
+    (window.schemaVersion === 'bayn.autonomous-cycle-window.v2' &&
+      window.submissionCutoffAt >= window.executionCloseAt) ||
+    (window.schemaVersion === 'bayn.autonomous-cycle-window.v3' && window.submissionCutoffAt > window.executionCloseAt)
   ) {
-    issues.push({ path: ['submissionCutoffAt'], issue: 'must precede the execution-session close' })
+    issues.push({ path: ['submissionCutoffAt'], issue: 'intraday submission must remain within the execution session' })
   }
   if (window.executionOpenAt >= window.executionCloseAt) {
     issues.push({ path: ['executionCloseAt'], issue: 'must follow the execution session open' })
