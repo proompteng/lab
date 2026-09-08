@@ -673,6 +673,7 @@ export function ReadyDesktop({
       for (const guard of codeGuardsRef.current.values()) {
         if (!(await guard(false))) throw new Error('Save or close every edited Code tab before signing out.')
       }
+      await runTengriAction<null>({ action: 'revoke-editor-sessions' })
       const result = await tengriAuthClient.signOut()
       if (result.error) throw new Error(result.error.message || 'Tengri could not sign out')
       committed = true

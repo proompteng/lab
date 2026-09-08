@@ -34,12 +34,14 @@ const server = https.createServer({ cert: readFileSync(certificate), key: readFi
   request.pipe(upstream)
 })
 server.on('upgrade', (request, socket, head) => {
+  socket.on('error', () => socket.destroy())
   const port = targetPort(request.headers.host)
   if (!port) {
     socket.end('HTTP/1.1 404 Not Found\r\n\r\n')
     return
   }
   const upstream = http.request(options(request, port))
+  socket.on('close', () => upstream.destroy())
   upstream.on('upgrade', (response, remote, remoteHead) => {
     socket.write(`HTTP/1.1 ${response.statusCode} ${response.statusMessage}\r\n`)
     for (let index = 0; index < response.rawHeaders.length; index += 2) {
@@ -48,7 +50,6 @@ server.on('upgrade', (request, socket, head) => {
     socket.write('\r\n')
     if (remoteHead.length) socket.write(remoteHead)
     if (head.length) remote.write(head)
-    socket.on('error', () => remote.destroy())
     remote.on('error', () => socket.destroy())
     socket.on('close', () => remote.destroy())
     remote.on('close', () => socket.destroy())

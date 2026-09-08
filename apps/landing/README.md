@@ -131,6 +131,8 @@ VS Code's public API. The extension reports dirty tabs and uses native save/disc
 Lifecycle changes are blocked while a window has unsaved edits or its save state is unknown. Settings and installed
 extensions live in the persistent guest home; stable window origins preserve VS Code's workspace identity and native backups across reload.
 Recoverable drafts from the previous editor remain available as downloads and never overwrite workspace files.
+Sign-out first revokes the user's editor sessions, including those opened in other desktop tabs. If revocation fails,
+the desktop keeps the user signed in and shows the error so they can retry.
 
 Run the real integration test from the repository root:
 

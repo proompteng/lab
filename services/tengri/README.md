@@ -184,6 +184,9 @@ preview launch ticket for virtual port 13337. Its DNS-safe origin derives from o
 identity, so reload restores the native workspace and backups while another owner, incarnation, or window gets another
 origin. Session cookies expire after 24 hours. The one-use launch token is also the revocation generation: a delayed
 cleanup cannot revoke a replacement session on the same origin. Generic preview revocation retains its existing behavior.
+Before sign-out clears authentication, `RevokeEditorSessions` removes every pending and active editor lease for the
+authenticated owner. A revocation failure blocks sign-out so it can be retried. The gateway also closes established
+preview WebSockets within one second of session revocation or expiry.
 
 The gateway injects the desktop integration script only into the workbench document. Native Markdown and extension
 webviews retain their own HTML and CSP; editor frame ancestors allow both the issued origin and desktop origin.

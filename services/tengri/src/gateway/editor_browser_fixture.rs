@@ -97,10 +97,19 @@ async fn editor_browser_acceptance_fixture() {
             StatusCode::NO_CONTENT
         }
     });
+    let revoke_editors_state = state.clone();
+    let revoke_editors = post(move || {
+        let state = revoke_editors_state.clone();
+        async move {
+            state.tickets.revoke_editors(&"a".repeat(64)).unwrap();
+            StatusCode::NO_CONTENT
+        }
+    });
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let control = control_router(state.clone())
         .route("/_test/editor", issue)
         .route("/_test/revoke", revoke)
+        .route("/_test/revoke-editors", revoke_editors)
         .route(
             "/_test/shutdown",
             post(move || {

@@ -52,6 +52,14 @@ beforeAll(async () => {
         expiresAt: '2026-09-09T00:00:00Z',
       })
     },
+    revokeEditorSessions(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedMetadata = call.metadata
+      receivedRequest = call.request
+      callback(null, {})
+    },
     revokePreviewSession(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
@@ -308,6 +316,14 @@ afterAll(async () => {
 })
 
 describe('Tengri gRPC BFF transport', () => {
+  test('revokes editor sessions for the authenticated subject without a caller-selected owner', async () => {
+    const { revokeEditorSessions } = await import('./grpc')
+    await revokeEditorSessions('github:42')
+    expect(receivedRequest).toEqual({})
+    expect(metadataValue('x-tengri-subject')).toBe('github:42')
+    expect(metadataValue('x-tengri-signature')).not.toBe('')
+  })
+
   test('binds real editor sessions to the window and revokes only their issued lease', async () => {
     const { issueEditorSession, revokePreviewSession } = await import('./grpc')
     const session = await issueEditorSession('github:42', 'agent-test', 'desktop-stable-code-window')

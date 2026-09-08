@@ -169,6 +169,31 @@ impl TicketStore {
         Ok(issued)
     }
 
+    pub fn revoke_editors(&self, owner_hash: &str) -> Result<(), Status> {
+        let mut tickets = self
+            .tickets
+            .lock()
+            .map_err(|_| Status::internal("ticket state is unavailable"))?;
+        let mut previews = self
+            .previews
+            .lock()
+            .map_err(|_| Status::internal("preview state is unavailable"))?;
+        tickets.retain(|_, ticket| {
+            !(ticket.owner_hash == owner_hash
+                && matches!(
+                    ticket.scope,
+                    TicketScope::Preview {
+                        port: EDITOR_PORT,
+                        ..
+                    }
+                ))
+        });
+        previews.retain(|_, session| {
+            !(session.owner_hash == owner_hash && session.port == EDITOR_PORT)
+        });
+        Ok(())
+    }
+
     pub fn revoke_preview_lease(
         &self,
         owner_hash: &str,
@@ -512,6 +537,43 @@ mod tests {
             .revoke_preview_lease(&owner, "agent", &session.id, &replacement.token)
             .unwrap();
         assert!(store.preview_session(&session.id, &session.token).is_err());
+    }
+
+    #[test]
+    fn logout_revokes_all_owned_editor_leases_and_pending_launches() {
+        let store = TicketStore::new("https://tengri.example".to_owned(), "s".repeat(32)).unwrap();
+        let owner = "a".repeat(64);
+        let other_owner = "b".repeat(64);
+        let pending = store
+            .issue_editor(&owner, "agent", "uid", "pending")
+            .unwrap();
+        let other_pending = store
+            .issue_editor(&other_owner, "other", "uid", "pending")
+            .unwrap();
+        let sessions: Vec<_> = ["first", "second"]
+            .into_iter()
+            .map(|window| {
+                let ticket = store.issue_editor(&owner, "agent", "uid", window).unwrap();
+                store.consume_preview(&ticket.token).unwrap()
+            })
+            .collect();
+        let other = store
+            .issue_editor(&other_owner, "other", "uid", "first")
+            .unwrap();
+        let other = store.consume_preview(&other.token).unwrap();
+        let preview = store.issue_preview(&owner, "agent", 3000, "/", "").unwrap();
+        let preview = store.consume_preview(&preview.token).unwrap();
+
+        store.revoke_editors(&owner).unwrap();
+        store.revoke_editors(&owner).unwrap();
+
+        assert!(store.consume_preview(&pending.token).is_err());
+        for session in sessions {
+            assert!(store.preview_session(&session.id, &session.token).is_err());
+        }
+        assert!(store.consume_preview(&other_pending.token).is_ok());
+        assert!(store.preview_session(&other.id, &other.token).is_ok());
+        assert!(store.preview_session(&preview.id, &preview.token).is_ok());
     }
 
     #[test]

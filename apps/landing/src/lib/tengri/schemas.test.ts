@@ -7,6 +7,13 @@ import {
 } from './schemas'
 
 describe('Tengri BFF action schema', () => {
+  test('editor logout revocation cannot select another owner', () => {
+    expect(tengriActionSchema.safeParse({ action: 'revoke-editor-sessions' }).success).toBe(true)
+    expect(tengriActionSchema.safeParse({ action: 'revoke-editor-sessions', ownerId: 'someone-else' }).success).toBe(
+      false,
+    )
+  })
+
   test('validates editor window identity and rejects editor ports in ordinary previews', () => {
     const editor = { action: 'editor-session', agentId: 'agent-test', windowId: 'desktop-stable-code-window' }
     expect(tengriActionSchema.safeParse(editor).success).toBe(true)

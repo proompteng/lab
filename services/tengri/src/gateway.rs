@@ -764,7 +764,25 @@ async fn preview_host_proxy(
             websocket
         };
         return websocket
-            .on_upgrade(move |socket| bridge_open_websocket(socket, upstream, activity, agent_id))
+            .on_upgrade(move |socket| async move {
+                let revoked = async {
+                    let mut interval = tokio::time::interval(Duration::from_secs(1));
+                    loop {
+                        interval.tick().await;
+                        if state
+                            .tickets
+                            .preview_session(&session.id, &session.token)
+                            .is_err()
+                        {
+                            return;
+                        }
+                    }
+                };
+                tokio::select! {
+                    _ = bridge_open_websocket(socket, upstream, activity, agent_id) => {},
+                    _ = revoked => {},
+                }
+            })
             .into_response();
     }
     proxy_http(state, session, guest, target, request).await

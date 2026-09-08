@@ -397,6 +397,10 @@ export async function issueEditorSession(
   }
 }
 
+export async function revokeEditorSessions(subject: string) {
+  await unary('revokeEditorSessions', {}, subject)
+}
+
 export async function revokePreviewSession(
   subject: string,
   agentId: string,

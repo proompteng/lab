@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type WebSocket as PlaywrightWebSocket } from '@playwright/test'
 import { readFile, writeFile, rm, readdir } from 'node:fs/promises'
 
 test.use({ actionTimeout: 15_000 })
@@ -42,6 +42,20 @@ test('runs the upstream VS Code workbench against real guest files and terminals
     createdAt: '2026-09-08T00:00:00Z',
     conditions: [],
   }
+  let authenticated = true
+  let failRevocation = true
+  let editorOrigin = ''
+  const signOutActions: string[] = []
+  const editorSockets: PlaywrightWebSocket[] = []
+  page.on('websocket', (socket) => {
+    if (new URL(socket.url()).hostname.startsWith('tengri-')) editorSockets.push(socket)
+  })
+  await page.route('**/api/auth/sign-out', async (route) => {
+    signOutActions.push('sign-out')
+    await expect.poll(() => editorSockets.every((socket) => socket.isClosed())).toBe(true)
+    authenticated = false
+    await route.fulfill({ json: { success: true } })
+  })
   await page.route('**/api/tengri', async (route) => {
     if (route.request().method() === 'GET') {
       await route.fulfill({
@@ -52,11 +66,17 @@ test('runs the upstream VS Code workbench against real guest files and terminals
             process.env.TENGRI_EDITOR_TEST_HTTPS === '1'
               ? 'https://gateway.tengri.localhost:3443'
               : 'http://localhost:33082',
-          authenticated: true,
-          user: { id: 'editor-test-owner', name: 'Local editor test', email: 'editor@example.test', image: null },
-          agents: [agent],
+          authenticated,
+          user: authenticated
+            ? { id: 'editor-test-owner', name: 'Local editor test', email: 'editor@example.test', image: null }
+            : null,
+          agents: authenticated ? [agent] : [],
         },
       })
+      return
+    }
+    if (!authenticated) {
+      await route.fulfill({ status: 401, json: { error: 'Authentication is required' } })
       return
     }
     const action = route.request().postDataJSON()
@@ -68,6 +88,15 @@ test('runs the upstream VS Code workbench against real guest files and terminals
       )
       expect(response.ok()).toBeTruthy()
       result = await response.json()
+      editorOrigin = (result as { previewOrigin: string }).previewOrigin
+    } else if (action.action === 'revoke-editor-sessions') {
+      signOutActions.push('revoke-editors')
+      if (failRevocation) {
+        await route.fulfill({ status: 503, json: { error: 'Editor sessions could not be revoked' } })
+        return
+      }
+      const response = await request.post('http://127.0.0.1:33082/_test/revoke-editors')
+      expect(response.ok()).toBeTruthy()
     } else if (action.action === 'revoke-preview-session') {
       await request.post('http://127.0.0.1:33082/_test/revoke', { data: action })
     } else if (action.action === 'list-files') {
@@ -194,5 +223,21 @@ test('runs the upstream VS Code workbench against real guest files and terminals
   await workbench.getByRole('tab', { name: /^Extensions \(/ }).click()
   await expect(workbench.getByRole('listitem', { name: /^Tengri Desktop Integration,/ })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('real-vscode-extensions.png') })
+  const probeEditor = () => page.context().request.get(editorOrigin, { ignoreHTTPSErrors: true })
+  expect((await probeEditor()).ok()).toBe(true)
+  expect(editorSockets.some((socket) => !socket.isClosed())).toBe(true)
+  await page.getByRole('menuitem', { name: 'Tengri menu', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Sign Out', exact: true }).click()
+  await expect(page.getByRole('alert').filter({ hasText: 'Editor sessions could not be revoked' })).toBeVisible()
+  expect(signOutActions).toEqual(['revoke-editors'])
+  expect(authenticated).toBe(true)
+  expect((await probeEditor()).ok()).toBe(true)
+  failRevocation = false
+  await page.getByRole('menuitem', { name: 'Tengri menu', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Sign Out', exact: true }).click()
+  await expect(code).toHaveCount(0)
+  expect(signOutActions).toEqual(['revoke-editors', 'revoke-editors', 'sign-out'])
+  expect(authenticated).toBe(false)
+  expect((await probeEditor()).status()).toBe(401)
   expect(errors).toEqual([])
 })
