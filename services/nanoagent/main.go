@@ -96,13 +96,15 @@ func run(logger *slog.Logger) error {
 	}
 
 	api, err := newAPIServer(apiConfig{
-		bootstrapToken: bootstrapToken,
-		codexBinary:    codexBinary,
-		evidence:       current,
-		homeRoot:       homeRoot,
-		shell:          "/bin/bash",
-		startCodex:     true,
-		workspaceRoot:  workspaceRoot,
+		bootstrapToken:      bootstrapToken,
+		codeServerBinary:    os.Getenv("CODE_SERVER_BINARY"),
+		codeServerBootstrap: os.Getenv("CODE_SERVER_BOOTSTRAP_COMMAND"),
+		codexBinary:         codexBinary,
+		evidence:            current,
+		homeRoot:            homeRoot,
+		shell:               "/bin/bash",
+		startCodex:          true,
+		workspaceRoot:       workspaceRoot,
 	})
 	if err != nil {
 		return fmt.Errorf("configure Nanoagent API: %w", err)
@@ -156,6 +158,7 @@ func bootstrapPersistentInstall(
 	timeout time.Duration,
 	environmentKey string,
 	component string,
+	extraEnvironment ...string,
 ) error {
 	command = strings.TrimSpace(command)
 	if command == "" {
@@ -171,7 +174,10 @@ func bootstrapPersistentInstall(
 	bootstrapCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	process := exec.CommandContext(bootstrapCtx, command, "--install-only")
-	process.Env = childEnvironment()
+	process.Env = childEnvironment(extraEnvironment...)
+	process.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	process.Cancel = func() error { killProcessGroup(process); return nil }
+	process.WaitDelay = 5 * time.Second
 	output, err := process.CombinedOutput()
 	if err == nil {
 		return nil

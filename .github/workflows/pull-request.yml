@@ -116,6 +116,23 @@ jobs:
           extra-nix-config: |
             experimental-features = nix-command flakes
 
+      - name: Set up editor acceptance Go
+        if: ${{ matrix.target == 'landing' }}
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: services/nanoagent/go.mod
+          cache-dependency-path: services/nanoagent/go.sum
+
+      - name: Set up editor acceptance Rust
+        if: ${{ matrix.target == 'landing' }}
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.90.0
+
+      - name: Install editor acceptance protobuf compiler
+        if: ${{ matrix.target == 'landing' }}
+        run: sudo apt-get install --yes --no-install-recommends protobuf-compiler
+
       - name: Run landing validation
         if: ${{ matrix.target == 'landing' }}
         shell: bash
@@ -132,6 +149,7 @@ jobs:
           bun run --cwd apps/landing lint:oxlint
           bun run --cwd apps/landing lint:oxlint:type
           bun run --filter landing build
+          TENGRI_EDITOR_NEXT_MODE=start bash services/nanoagent/test-vscode-browser.sh
 
       - name: Upload landing browser artifacts
         if: ${{ always() && matrix.target == 'landing' }}
@@ -141,6 +159,11 @@ jobs:
           path: |
             apps/landing/playwright-report
             apps/landing/test-results
+            /tmp/tengri-vscode.*/guest.log
+            /tmp/tengri-vscode.*/gateway.log
+            /tmp/tengri-vscode.*/desktop.log
+            /tmp/tengri-vscode.*/proxy.log
+            /tmp/tengri-vscode.*/home/.tengri/vscode/server.log
           if-no-files-found: ignore
           retention-days: 7
 
@@ -225,6 +248,9 @@ jobs:
               bun test scripts/hermes/*.test.ts
               bun run scripts/kube-router/validate-production.ts
               bun test scripts/kube-router/*.test.ts
+              bunx oxlint --config .oxlintrc.json scripts/cluster-upgrades/*.test.ts
+              bunx oxfmt --check scripts/cluster-upgrades/*.test.ts
+              bun test scripts/cluster-upgrades/*.test.ts
               bunx oxlint --config .oxlintrc.json scripts/seal-tengri-runtime.ts scripts/seal-tengri-runtime.test.ts
               bunx oxfmt --check scripts/seal-tengri-runtime.ts scripts/seal-tengri-runtime.test.ts
               bun test scripts/seal-tengri-runtime.test.ts

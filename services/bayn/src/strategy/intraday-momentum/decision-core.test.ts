@@ -68,7 +68,13 @@ describe('intraday momentum decision core', () => {
       QQQ: 0,
       SMH: 0,
     })
-    expect(Object.keys(result)).toEqual(['benchmark', 'selectedSymbols', 'targetWeights', 'signals'])
+    expect(Object.keys(result)).toEqual([
+      'benchmark',
+      'selectedSymbols',
+      'excludedCandidates',
+      'targetWeights',
+      'signals',
+    ])
     expect(result.signals.find(({ symbol }) => symbol === 'AAPL')).toMatchObject({
       eligible: true,
       rank: 1,
@@ -91,16 +97,74 @@ describe('intraday momentum decision core', () => {
     })
     expect(result.signals.every(({ eligible, rank }) => !eligible && rank === null)).toBe(true)
     expect(result.signals.every(({ rejectionReasons }) => rejectionReasons.includes('breakout'))).toBe(true)
+    expect(result.excludedCandidates).toEqual([])
   })
 
-  test('fails closed when the caller does not provide a selected latest trade', () => {
+  test.each([
+    [
+      'quote',
+      (input: IntradayMomentumCoreInput) => {
+        const { AMZN: _ignored, ...latestQuotes } = input.latestQuotes
+        return { ...input, latestQuotes }
+      },
+    ],
+    [
+      'trade',
+      (input: IntradayMomentumCoreInput) => {
+        const { AMZN: _ignored, ...latestTrades } = input.latestTrades
+        return { ...input, latestTrades }
+      },
+    ],
+    [
+      'rolling bars',
+      (input: IntradayMomentumCoreInput) => ({
+        ...input,
+        bars: input.bars.filter(({ symbol }) => symbol !== 'AMZN'),
+      }),
+    ],
+  ] as const)('excludes a candidate with missing %s evidence while retaining a valid peer', (_, change) => {
     const input = makeInput(101)
-    const { AAPL: _ignored, ...latestTrades } = input.latestTrades
-    const result = decideIntradayMomentumCore({ ...input, latestTrades })
+    const result = success(decideIntradayMomentumCore(change(input)))
+
+    expect(result.selectedSymbols).toEqual(['AAPL'])
+    expect(result.signals.map(({ symbol }) => symbol)).toEqual(['AAPL', 'IWM', 'NVDA', 'QQQ', 'SMH'])
+    expect(result.excludedCandidates).toEqual([
+      {
+        symbol: 'AMZN',
+        reason: 'not-ready',
+        message: expect.any(String),
+      },
+    ])
+    expect(result.targetWeights).toMatchObject({ AAPL: 0.1, AMZN: 0 })
+  })
+
+  test('distinguishes all candidates unavailable from a valid threshold no-trade', () => {
+    const input = makeInput(101)
+    const unavailable = success(
+      decideIntradayMomentumCore({
+        ...input,
+        bars: input.bars.filter(({ symbol }) => symbol === input.protocol.benchmarkSymbol),
+        latestQuotes: { [input.protocol.benchmarkSymbol]: input.latestQuotes[input.protocol.benchmarkSymbol]! },
+        latestTrades: {},
+      }),
+    )
+    const noTrade = success(decideIntradayMomentumCore(makeInput(100.01)))
+
+    expect(unavailable.signals).toEqual([])
+    expect(unavailable.selectedSymbols).toEqual([])
+    expect(unavailable.excludedCandidates.map(({ symbol }) => symbol)).toEqual([...input.protocol.candidateSymbols])
+    expect(noTrade.signals).toHaveLength(input.protocol.candidateSymbols.length)
+    expect(noTrade.excludedCandidates).toEqual([])
+  })
+
+  test('keeps the benchmark mandatory when candidate evidence is unavailable', () => {
+    const input = makeInput(101)
+    const { SPY: _ignored, ...latestQuotes } = input.latestQuotes
+    const result = decideIntradayMomentumCore({ ...input, latestQuotes })
 
     expect(Result.isFailure(result) ? result.failure : undefined).toMatchObject({
       reason: 'snapshot-coverage',
-      symbol: 'AAPL',
+      symbol: 'SPY',
     })
   })
 })

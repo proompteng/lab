@@ -7,10 +7,12 @@ import {
   responseParseOptions,
 } from '../broker/alpaca/model'
 import type { EmbeddedBuildMetadata } from '../build'
-import type { IntradaySnapshotManifest } from '../market-data/intraday/model'
+import type { IntradaySnapshotManifest, IntradayCandidateExclusion } from '../market-data/intraday/model'
 import { PositiveMicrosSchema, strictParseOptions } from '../schemas'
 import type { IntradayMomentumTargetPortfolio } from '../strategy/intraday-momentum/model'
 import type { IntradayReplayIocOutcome } from './execution'
+import type { IntradayReplayEquityMark } from './equity'
+import { ArchiveAvailabilityPolicy, type ArchiveAvailabilityReceipt } from '../market-data/intraday/availability'
 
 export const IntradayReplayAssumptionsSchema = Schema.Struct({
   pollIntervalMs: Schema.Literal(30_000),
@@ -29,6 +31,8 @@ const ReplayInputBase = Schema.Struct({
   initialCapitalMicros: PositiveMicrosSchema,
   allocationCapitalMicros: PositiveMicrosSchema,
   assumptions: IntradayReplayAssumptionsSchema,
+  /** Omission fails closed to recorded reader evidence; the source-receipt counterfactual must be explicit. */
+  archiveAvailability: Schema.optionalKey(Schema.Enum(ArchiveAvailabilityPolicy)),
 })
 
 export const IntradayReplayInputSchema = ReplayInputBase.check(
@@ -57,6 +61,7 @@ export type IntradayReplayObservation =
       readonly purpose: 'decision' | 'planning' | 'arrival' | 'mark' | 'close'
       readonly manifest: IntradaySnapshotManifest
       readonly decision?: IntradayMomentumTargetPortfolio
+      readonly equity?: IntradayReplayEquityMark
     }
   | {
       readonly kind: 'unavailable'
@@ -97,10 +102,13 @@ export interface IntradayReplaySession {
   readonly executionFeesMicros: string
   readonly netRealizedPnlAfterCostsMicros: string | null
   readonly maximumObservedDrawdownMicros: string | null
+  readonly peakEquityMicros: string | null
+  /** True when this session's baseline or observed marks exceeded an active risk limit. */
+  readonly riskLimitBreached: boolean
 }
 
 export interface IntradayReplayReport {
-  readonly schemaVersion: 'bayn.intraday-replay-report.v1'
+  readonly schemaVersion: 'bayn.intraday-replay-report.v3'
   readonly evidenceKind: 'COUNTERFACTUAL_RESEARCH'
   readonly qualification: 'NOT_QUALIFIED'
   readonly inputHash: string
@@ -110,12 +118,27 @@ export interface IntradayReplayReport {
   readonly strategyProtocolHash: string
   readonly riskPolicyHash: string
   readonly calendarHash: string
+  readonly availability: {
+    readonly policy: ArchiveAvailabilityPolicy
+    readonly status: 'OBSERVED_ROWS_ONLY' | 'UNPROVEN'
+    readonly snapshots: readonly {
+      readonly snapshotId: string
+      readonly observedAt: string
+      readonly receiptHashes: readonly string[]
+      readonly candidateExclusions?: readonly IntradayCandidateExclusion[]
+    }[]
+    readonly receipts: readonly ArchiveAvailabilityReceipt[]
+  }
   readonly sessions: readonly IntradayReplaySession[]
   readonly totals: {
     readonly completedSessionCount: number
     readonly incompleteSessionCount: number
     readonly executionSessionCount: number
     readonly netRealizedPnlAfterCostsMicros: string | null
+    readonly maximumObservedDrawdownMicros: string | null
+    readonly peakEquityMicros: string | null
+    /** True when any evaluated session exceeded an active risk limit. */
+    readonly riskLimitBreached: boolean
   }
   readonly limitations: readonly string[]
   readonly reportHash: string

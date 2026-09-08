@@ -33,8 +33,7 @@ fn production_crd() -> anyhow::Result<CustomResourceDefinition> {
         json!([
             {"name": "Phase", "type": "string", "jsonPath": ".status.phase"},
             {"name": "Node", "type": "string", "jsonPath": ".status.nodeName"},
-            {"name": "Guest Ready", "type": "boolean", "jsonPath": ".status.guestReady"},
-            {"name": "Expires", "type": "string", "jsonPath": ".spec.expiresAt"}
+            {"name": "Guest Ready", "type": "boolean", "jsonPath": ".status.guestReady"}
         ]),
     )?;
     insert(
@@ -47,7 +46,7 @@ fn production_crd() -> anyhow::Result<CustomResourceDefinition> {
             {"rule": "self.spec.resources == oldSelf.spec.resources", "message": "the v1 resource profile is immutable"},
             {
                 "rule": "self.spec.createdAt == oldSelf.spec.createdAt && self.spec.expiresAt == oldSelf.spec.expiresAt",
-                "message": "creation and hard-expiry timestamps are immutable"
+                "message": "creation and legacy expiry fields are immutable"
             }
         ]),
     )?;
@@ -55,7 +54,6 @@ fn production_crd() -> anyhow::Result<CustomResourceDefinition> {
     for pointer in [
         "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/createdAt",
         "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/idleDeadline",
-        "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/expiresAt",
         "/spec/versions/0/schema/openAPIV3Schema/properties/status/properties/readyAt",
         "/spec/versions/0/schema/openAPIV3Schema/properties/status/properties/lastActivityAt",
         "/spec/versions/0/schema/openAPIV3Schema/properties/status/properties/podSandboxTransitionAt",
@@ -148,9 +146,21 @@ mod tests {
             Some(&json!(".status.guestReady"))
         );
         assert_eq!(
-            crd.pointer("/spec/versions/0/additionalPrinterColumns/3/type"),
-            Some(&json!("string")),
-            "future expiry timestamps must not use kubectl's age-oriented date renderer"
+            crd.pointer("/spec/versions/0/additionalPrinterColumns/3"),
+            None,
+            "retained agents do not expose a destructive expiry column"
+        );
+        assert_eq!(
+            crd.pointer(
+                "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/expiresAt/default"
+            ),
+            Some(&json!("")),
+            "legacy expiry defaults to an empty retained-workspace value"
+        );
+        assert!(
+            !crd.pointer("/spec/versions/0/schema/openAPIV3Schema/properties/spec/required")
+                .and_then(Value::as_array)
+                .is_some_and(|required| required.iter().any(|field| field == "expiresAt"))
         );
         let validations = crd
             .pointer("/spec/versions/0/schema/openAPIV3Schema/x-kubernetes-validations")
@@ -161,7 +171,7 @@ mod tests {
                 validation.get("rule").and_then(Value::as_str)
                     != Some("self.spec.image == oldSelf.spec.image")
             }),
-            "the controller must be able to hard-migrate existing agents to the configured digest"
+            "the controller must be able to adopt a configured digest at a safe boundary"
         );
         assert!(validations.iter().any(|validation| {
             validation.get("rule").and_then(Value::as_str)

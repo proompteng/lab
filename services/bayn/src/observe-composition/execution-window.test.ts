@@ -48,6 +48,30 @@ describe('execution-cycle close windows', () => {
     })
   })
 
+  test('keeps close submissions eligible until the closing bell without an idle pre-close gap', () => {
+    for (const closeAt of ['2026-08-19T20:00:00.000Z', '2026-11-27T18:00:00.000Z']) {
+      const window = Result.getOrThrow(
+        resolveExecutionCycleCloseWindow({
+          executionCloseAt: closeAt,
+          sessionCloseStartLeadMs: 5 * 60_000,
+          sessionCloseSubmitLeadMs: 0,
+        }),
+      )
+      expect(window.startAt).toBe(new Date(Date.parse(closeAt) - 5 * 60_000).toISOString())
+      expect(window.submitCutoffAt).toBe(closeAt)
+      expect(window.expiresAt).toBe(closeAt)
+    }
+    expect(
+      Result.isFailure(
+        resolveExecutionCycleCloseWindow({
+          executionCloseAt: '2026-08-19T20:00:00.000Z',
+          sessionCloseStartLeadMs: 5 * 60_000,
+          sessionCloseSubmitLeadMs: -1,
+        }),
+      ),
+    ).toBeTrue()
+  })
+
   test('rejects malformed close instants and invalid strategy leads', () => {
     expect(
       Result.isFailure(

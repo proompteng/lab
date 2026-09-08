@@ -26,11 +26,14 @@ use crate::{
     },
     auth::{Authenticator, Principal, deterministic_agent_id},
     crd::{
-        IDLE_MINUTES, LIFETIME_HOURS, MicroVM, MicroVMArchitecture, MicroVMDesiredState,
-        MicroVMPhase, MicroVMResources, MicroVMSpec,
+        IDLE_MINUTES, MicroVM, MicroVMArchitecture, MicroVMDesiredState, MicroVMPhase,
+        MicroVMResources, MicroVMSpec,
     },
     gateway::PreviewOrigin,
-    guest::{GuestClient, GuestError, TerminalCreation as GuestTerminalCreation},
+    guest::{
+        EDITOR_BRIDGE_PORT, EDITOR_PORT, GuestClient, GuestError,
+        TerminalCreation as GuestTerminalCreation,
+    },
     metrics,
     pod::{SINGLE_MOUNT_STORAGE_LAYOUT, STORAGE_LAYOUT_ANNOTATION},
     tickets::TicketStore,
@@ -46,10 +49,10 @@ use proto::{
     CreateCodexThreadRequest, CreateDirectoryRequest, CreateTerminalRequest, DeleteAgentRequest,
     DeleteFileRequest, Empty, FileEntry, FileEvent, FileEventKind, GetAgentRequest,
     GetCodexAccountRequest, GetCodexLoginRequest, InterruptCodexTurnRequest,
-    IssuePreviewSessionRequest, IssueTerminalTicketRequest, ListAgentsRequest, ListAgentsResponse,
-    ListFilesRequest, ListFilesResponse, ListTerminalsRequest, ListTerminalsResponse,
-    MoveFileRequest, PreviewSession, ReadFileRequest, ReadFileResponse,
-    ResolveCodexApprovalRequest, ResumeAgentRequest, ResumeCodexThreadRequest,
+    IssueEditorSessionRequest, IssuePreviewSessionRequest, IssueTerminalTicketRequest,
+    ListAgentsRequest, ListAgentsResponse, ListFilesRequest, ListFilesResponse,
+    ListTerminalsRequest, ListTerminalsResponse, MoveFileRequest, PreviewSession, ReadFileRequest,
+    ReadFileResponse, ResolveCodexApprovalRequest, ResumeAgentRequest, ResumeCodexThreadRequest,
     RevokePreviewSessionRequest, SearchFilesRequest, SearchFilesResponse, SendCodexTurnRequest,
     SleepAgentRequest, StartCodexLoginRequest, SteerCodexTurnRequest, TerminalSession,
     TerminalTicket, TerminateTerminalRequest, WatchAgentRequest, WatchCodexEventsRequest,
@@ -158,12 +161,6 @@ impl ControlPlane {
         for _ in 0..3 {
             let agent = self.owned_agent(principal, id).await?;
             let now = Utc::now();
-            if deadline_passed(&agent.spec.expires_at, now) {
-                return Err(Status::failed_precondition(
-                    "agent has reached its hard expiry",
-                ));
-            }
-
             let needs_wake_patch = agent.spec.desired_state != MicroVMDesiredState::Running
                 || idle_deadline_passed(&agent, now);
             if !needs_wake_patch {
@@ -311,7 +308,9 @@ impl MicroVmControlPlane for ControlPlane {
                 resources: MicroVMResources::default(),
                 created_at: now.to_rfc3339(),
                 idle_deadline: (now + chrono::Duration::minutes(IDLE_MINUTES)).to_rfc3339(),
-                expires_at: (now + chrono::Duration::hours(LIFETIME_HOURS)).to_rfc3339(),
+                // Retained agents have no lifecycle deadline. Keep the CR field for old
+                // resources and schema compatibility, but do not invent a future deadline.
+                expires_at: String::new(),
             },
         );
         apply_new_agent_metadata(
@@ -481,6 +480,7 @@ impl MicroVmControlPlane for ControlPlane {
             path: result.path,
             content: result.content,
             content_type: result.content_type,
+            revision: result.revision,
         }))
     }
 
@@ -490,15 +490,17 @@ impl MicroVmControlPlane for ControlPlane {
     ) -> Result<Response<WriteFileResponse>, Status> {
         let principal = self.authorize(&request, "WriteFile").await?;
         let request = request.into_inner();
+        validate_expected_revision(&request.expected_revision)?;
         let result = self
             .guest(&principal, &request.agent_id)
             .await?
-            .write_file(&request.path, &request.content)
+            .write_file(&request.path, &request.content, &request.expected_revision)
             .await
             .map_err(map_guest_error)?;
         Ok(Response::new(WriteFileResponse {
             path: result.path,
             size: result.size,
+            revision: result.revision,
         }))
     }
 
@@ -827,6 +829,7 @@ impl MicroVmControlPlane for ControlPlane {
             id: json_string(&value, &["/thread/id"]),
             raw_json: value.to_string(),
             event_sequence: snapshot.event_sequence,
+            item_event_sequences: Default::default(),
         }))
     }
 
@@ -840,16 +843,7 @@ impl MicroVmControlPlane for ControlPlane {
         let snapshot = self
             .guest(&principal, &request.agent_id)
             .await?
-            .codex_call_with_sequence(
-                "thread/resume",
-                json!({
-                    "threadId": request.thread_id,
-                    "cwd": "/workspace",
-                    "runtimeWorkspaceRoots": ["/workspace"],
-                    "approvalPolicy": "on-request",
-                    "sandbox": "danger-full-access",
-                }),
-            )
+            .resume_codex_thread(&request.thread_id)
             .await
             .map_err(map_guest_error)?;
         let value = snapshot.result;
@@ -857,6 +851,7 @@ impl MicroVmControlPlane for ControlPlane {
             id: json_string(&value, &["/thread/id"]),
             raw_json: value.to_string(),
             event_sequence: snapshot.event_sequence,
+            item_event_sequences: snapshot.item_event_sequences,
         }))
     }
 
@@ -991,6 +986,51 @@ impl MicroVmControlPlane for ControlPlane {
         Ok(Response::new(Box::pin(stream)))
     }
 
+    async fn issue_editor_session(
+        &self,
+        request: Request<IssueEditorSessionRequest>,
+    ) -> Result<Response<PreviewSession>, Status> {
+        let principal = self.authorize(&request, "IssueEditorSession").await?;
+        let request = request.into_inner();
+        if request.window_id.len() < 16
+            || request.window_id.len() > 128
+            || !request
+                .window_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+        {
+            return Err(Status::invalid_argument("invalid editor window identity"));
+        }
+        let agent = self.owned_agent(&principal, &request.agent_id).await?;
+        let incarnation = agent
+            .uid()
+            .ok_or_else(|| Status::unavailable("agent identity is unavailable"))?;
+        GuestClient::for_agent_incarnation(
+            self.client.clone(),
+            &self.namespace,
+            &request.agent_id,
+            Some(&incarnation),
+        )
+        .await
+        .map_err(map_guest_error)?
+        .open_editor()
+        .await
+        .map_err(map_guest_error)?;
+        let issued = self.tickets.issue_editor(
+            &principal.owner_hash,
+            &request.agent_id,
+            &incarnation,
+            &request.window_id,
+        )?;
+        let preview_origin = self.preview_origin.origin(&issued.id);
+        Ok(Response::new(PreviewSession {
+            id: issued.id,
+            launch_url: issued.url,
+            expires_at: issued.expires_at,
+            preview_origin,
+        }))
+    }
+
     async fn issue_preview_session(
         &self,
         request: Request<IssuePreviewSessionRequest>,
@@ -999,10 +1039,10 @@ impl MicroVmControlPlane for ControlPlane {
         let request = request.into_inner();
         let port = u16::try_from(request.port)
             .ok()
-            .filter(|port| *port >= 1024 && *port != 8080)
+            .filter(|port| *port >= 1024 && ![8080, EDITOR_PORT, EDITOR_BRIDGE_PORT].contains(port))
             .ok_or_else(|| {
                 Status::invalid_argument(
-                    "preview port must be between 1024 and 65535 and cannot be 8080",
+                    "preview port must be between 1024 and 65535 and cannot use a reserved guest port",
                 )
             })?;
         let path = validate_preview_path(&request.path)?;
@@ -1025,6 +1065,15 @@ impl MicroVmControlPlane for ControlPlane {
         }))
     }
 
+    async fn revoke_editor_sessions(
+        &self,
+        request: Request<Empty>,
+    ) -> Result<Response<Empty>, Status> {
+        let principal = self.authorize(&request, "RevokeEditorSessions").await?;
+        self.tickets.revoke_editors(&principal.owner_hash)?;
+        Ok(Response::new(Empty {}))
+    }
+
     async fn revoke_preview_session(
         &self,
         request: Request<RevokePreviewSessionRequest>,
@@ -1033,6 +1082,18 @@ impl MicroVmControlPlane for ControlPlane {
         let request = request.into_inner();
         validate_preview_session_id(&request.session_id)?;
         self.owned_agent(&principal, &request.agent_id).await?;
+        if request.revocation_token.len() > 256 {
+            return Err(Status::invalid_argument("invalid revocation token"));
+        }
+        if !request.revocation_token.is_empty() {
+            self.tickets.revoke_preview_lease(
+                &principal.owner_hash,
+                &request.agent_id,
+                &request.session_id,
+                &request.revocation_token,
+            )?;
+            return Ok(Response::new(Empty {}));
+        }
         self.tickets.revoke_preview(
             &principal.owner_hash,
             &request.agent_id,
@@ -1067,7 +1128,12 @@ fn agent_from_microvm(microvm: &MicroVM) -> Agent {
             .unwrap_or_else(|| microvm.spec.created_at.clone()),
         idle_deadline: effective_idle_deadline(microvm)
             .unwrap_or_else(|| microvm.spec.idle_deadline.clone()),
-        expires_at: microvm.spec.expires_at.clone(),
+        // This field is retained on the CR only for old-schema compatibility. A retained
+        // workspace has no destructive lifecycle deadline, so the public wire value is empty.
+        expires_at: String::new(),
+        pending_image: status
+            .and_then(|value| value.pending_image.clone())
+            .unwrap_or_default(),
         conditions: status
             .map(|value| {
                 value
@@ -2119,10 +2185,19 @@ fn json_string(value: &Value, pointers: &[&str]) -> String {
         .to_owned()
 }
 
-fn deadline_passed(value: &str, now: DateTime<Utc>) -> bool {
-    DateTime::parse_from_rfc3339(value)
-        .map(|value| value.with_timezone(&Utc) <= now)
-        .unwrap_or(false)
+fn validate_expected_revision(value: &str) -> Result<(), Status> {
+    if value == "missing"
+        || (value.len() == 64
+            && value
+                .bytes()
+                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')))
+    {
+        Ok(())
+    } else {
+        Err(Status::invalid_argument(
+            "expected_revision must be a lowercase 64-character SHA-256 revision or missing",
+        ))
+    }
 }
 
 fn map_kube_error(error: kube::Error) -> Status {
@@ -2191,6 +2266,17 @@ fn map_guest_error(error: GuestError) -> Status {
         GuestError::MissingCodexSnapshotCursor => Status::failed_precondition(
             "This agent cannot safely restore Codex threads; save the workspace, then delete and recreate the agent",
         ),
+        GuestError::MissingFileRevision
+        | GuestError::InvalidFileRevision
+        | GuestError::FileRevisionMismatch => Status::failed_precondition(
+            "This guest cannot safely confirm file revisions. Sleep and resume the agent, then reopen the file.",
+        ),
+        GuestError::CodexHistoryTimeout => {
+            Status::deadline_exceeded("Conversation history retrieval timed out")
+        }
+        GuestError::InvalidCodexHistory(message) => {
+            Status::failed_precondition(format!("Invalid conversation history: {message}"))
+        }
         other => Status::internal(other.to_string()),
     }
 }
@@ -2202,7 +2288,7 @@ mod tests {
 
     use crate::activity::LAST_ACTIVITY_ANNOTATION;
     use crate::auth::owner_hash;
-    use crate::crd::MicroVMStatus;
+    use crate::crd::{LIFETIME_HOURS, MicroVMStatus};
     use http::{Response as HttpResponse, StatusCode as HttpStatusCode};
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
     use kube::client::Body as KubeBody;
@@ -2215,6 +2301,28 @@ mod tests {
             status.message(),
             "This agent cannot safely restore Codex threads; save the workspace, then delete and recreate the agent"
         );
+    }
+
+    #[test]
+    fn file_write_revision_is_required_at_the_control_plane_boundary() {
+        assert!(validate_expected_revision("missing").is_ok());
+        assert!(validate_expected_revision(&"a".repeat(64)).is_ok());
+        let invalid = ["".to_owned(), "A".repeat(64), "a".repeat(63)];
+        for invalid in invalid {
+            assert_eq!(
+                validate_expected_revision(&invalid)
+                    .expect_err("invalid file revision must be rejected")
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+    }
+
+    #[test]
+    fn missing_guest_file_revision_requires_a_safe_resume() {
+        let status = map_guest_error(GuestError::MissingFileRevision);
+        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+        assert!(status.message().contains("Sleep and resume"));
     }
 
     #[test]
@@ -2441,6 +2549,30 @@ mod tests {
         assert_eq!(
             projected.idle_deadline,
             (activity_at + chrono::Duration::minutes(IDLE_MINUTES)).to_rfc3339(),
+        );
+    }
+
+    #[test]
+    fn agent_projection_hides_legacy_expiry_and_exposes_pending_image() {
+        let now = Utc::now();
+        let mut agent = provisional_terminal_test_agent(now);
+        agent.status = Some(MicroVMStatus {
+            pending_image: Some(format!(
+                "registry.example/nanoagent@sha256:{}",
+                "c".repeat(64)
+            )),
+            ..MicroVMStatus::default()
+        });
+
+        let projected = agent_from_microvm(&agent);
+        assert!(projected.expires_at.is_empty());
+        assert_eq!(
+            projected.pending_image,
+            agent
+                .status
+                .as_ref()
+                .and_then(|status| status.pending_image.clone())
+                .unwrap_or_default()
         );
     }
 
