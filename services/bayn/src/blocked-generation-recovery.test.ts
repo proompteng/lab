@@ -26,7 +26,6 @@ describe('terminal generation recovery', () => {
       ensureAuthorityGeneration: () => Effect.die('not used'),
     }
     const writerFence: WriterFenceService = {
-      backendPid: 1,
       check: Effect.void,
       transaction: (effect) => TestClock.setTime(afterFence).pipe(Effect.andThen(effect)),
     }

@@ -17,6 +17,9 @@ import {
 import { makeMutation } from '../broker/alpaca-mutations'
 import type { LoadedRuntimeConfig } from '../config'
 import { readFinalExecutionRiskContext } from '../db/reconciliation'
+import { makeArchiveAvailabilityRecorder } from '../db/archive-availability'
+import { sha256 } from '../hash'
+import { withRecordedArchiveReads } from '../market-data/intraday/availability'
 import { BrokerAccess } from '../execution/authority'
 import { Authority, KillState, type ResearchCapitalGrantGeneration } from '../execution/contracts'
 import {
@@ -170,7 +173,17 @@ export const makeAutonomousServiceRuntime = (
                   Effect.flatMap((runtimeContext) =>
                     autonomousRuntimeServices.pipe(
                       Effect.flatMap((runtimeServices) => {
-                        const cycleResources = makeAutonomousCycleResources(runtimeServices, dependencies.marketData)
+                        const recordedMarketData = withRecordedArchiveReads(
+                          dependencies.intradayMarketData,
+                          {
+                            endpointHash: sha256(plan.config.clickhouse.url),
+                            sourceRevision: plan.config.build.sourceRevision,
+                            imageDigest: plan.config.build.imageDigest,
+                            verification: plan.config.build.verification,
+                          },
+                          makeArchiveAvailabilityRecorder(runtimeServices.pgClient, runtimeServices.writerFence),
+                        )
+                        const cycleResources = makeAutonomousCycleResources(runtimeServices, recordedMarketData)
                         const readStartCycle = (startup: AutonomousCycleStartupInput) =>
                           Effect.gen(function* () {
                             if (runtimeServices.authorityGenerationStore.readAuthorityState === undefined) {
@@ -187,7 +200,7 @@ export const makeAutonomousServiceRuntime = (
                               observeCycleGenerationHash(authority),
                             ).pipe(Effect.mapError((message) => capitalActivationOperationalError(message)))
                             return yield* ownCycleDriverStartup(
-                              observeCycle(observePlan, authorityGenerationHash, dependencies.intradayMarketData),
+                              observeCycle(observePlan, authorityGenerationHash, recordedMarketData),
                               options.ownCycleDriver,
                             )(startup)
                           }).pipe(
@@ -385,7 +398,7 @@ export const makeAutonomousServiceRuntime = (
                                             executionProgram,
                                             runtimeServices.executionCycleClosureStore,
                                             runtimeServices.blockedCycleIntentStore,
-                                            dependencies.intradayMarketData,
+                                            recordedMarketData,
                                             restricted ? 'RecoveryOnly' : 'Mutation',
                                           ),
                                           owner,

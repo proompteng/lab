@@ -4,8 +4,8 @@ This directory is the repository source for the existing three-node Talos/Kubern
 
 - **Omni/Talos cluster name**: `galactic`
 - **kubectl context**: `galactic-lan`
-- **desired Talos**: `v1.13.9`
-- **desired Kubernetes**: `v1.36.4`
+- **desired Talos**: `v1.14.0`
+- **desired Kubernetes**: `v1.37.0`
 - **Kubernetes API endpoint**: NUC HAProxy on `https://nuc:6443`
 
 The Elauwit provider LAN uses the following Talos API addresses. These are local-network endpoints even though they
@@ -25,12 +25,13 @@ They are not current cluster instructions; follow `docs/repository-cleanup-todo.
 
 Runbooks:
 
+- `devices/galactic/releases/README.md` (Talos 1.14 and Kubernetes 1.37 rollout)
 - `devices/galactic/docs/add-control-plane-node.md`
 - `devices/galactic/docs/bootstrap-argocd.md`
 - `devices/galactic/docs/troubleshooting-networking.md`
 - `devices/galactic/omni/README.md`
 - `devices/galactic/docs/tailscale.md` (Omni-owned Tailscale validation)
-- `docs/runbooks/talos-latest-upgrade-plan.md`
+- `docs/runbooks/talos-latest-upgrade-plan.md` (historical Talos 1.13.9 / Kubernetes 1.36.4 release)
 - `devices/galactic/extensions/kata/README.md`
 
 Related:

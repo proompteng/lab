@@ -14,17 +14,14 @@ import {
 } from './chrome-model'
 
 describe('Tengri Chrome tabs', () => {
-  test('opens, activates, closes, and replaces tabs without losing a valid active tab', () => {
+  test('keeps a valid active tab until the owner closes the last-tab window', () => {
     let state = initialChromeState()
     state = chromeReducer(state, { type: 'new-tab' })
     expect(state.activeId).toBe('tab-2')
     state = chromeReducer(state, { type: 'activate', id: 'tab-1' })
     state = chromeReducer(state, { type: 'close', id: 'tab-1' })
     expect(state.activeId).toBe('tab-2')
-    state = chromeReducer(state, { type: 'close', id: 'tab-2' })
-    expect(state.tabs).toHaveLength(1)
-    expect(state.tabs[0]?.id).toBe(state.activeId)
-    expect(currentChromePage(state.tabs[0]!).kind).toBe('agent')
+    expect(chromeReducer(state, { type: 'close', id: 'tab-2' })).toBe(state)
   })
 
   test('caps tabs and per-tab history while dropping forward history after navigation', () => {

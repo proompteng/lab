@@ -2,9 +2,9 @@
 
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Bot, CircleAlert, CircleUserRound, Cloud, LoaderCircle, Moon, Play, RotateCw, Trash2 } from 'lucide-react'
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import { AnimatePresence, motion } from 'motion/react'
 import type { ReactNode } from 'react'
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 
 import { tengriAuthClient } from '@/lib/tengri/auth-client'
@@ -12,6 +12,7 @@ import { desktopRefreshDelay, resolveDesktopGate, type DesktopGateState } from '
 import type { TengriAgent, TengriDesktopSnapshot } from '@/lib/tengri/types'
 import { createAgentFormSchema, type CreateAgentFormValues } from '@/schemas/tengri-agent'
 import { getDesktopSnapshot, runTengriAction } from './client'
+import { CodeDraftRecoveryNotice } from './code-draft-recovery-notice'
 import { ConfirmationDialog } from './confirmation-dialog'
 import {
   clearDeletedDesktopState,
@@ -20,11 +21,16 @@ import {
 } from './desktop-session-storage'
 import { useModalFocus } from './modal-focus'
 import { ReadyDesktop } from './ready-desktop'
+import { TengriMark } from './tengri-mark'
+import { useDesktopReducedMotion } from './use-desktop-reduced-motion'
+
+const RecoveryOwnerContext = createContext<string | undefined>(undefined)
 
 export default function DesktopOnboarding() {
   const mounted = useRef(false)
   const requestSequence = useRef(0)
   const [snapshot, setSnapshot] = useState<TengriDesktopSnapshot | null>(null)
+  const [recoveryOwnerId, setRecoveryOwnerId] = useState<string | undefined>()
   const [snapshotError, setSnapshotError] = useState('')
   const [pendingDeletion, setPendingDeletion] = useState<{ agentId: string; createdAt: string } | null>(null)
 
@@ -34,6 +40,7 @@ export default function DesktopOnboarding() {
       const next = await getDesktopSnapshot()
       if (!mounted.current || sequence !== requestSequence.current) return
       setSnapshot(next)
+      if (next.authenticated && next.user) setRecoveryOwnerId(next.user.id)
       setPendingDeletion((pending) => {
         if (!pending) return null
         const observed = next.agents.find((agent) => agent.id === pending.agentId)
@@ -111,33 +118,38 @@ export default function DesktopOnboarding() {
 
   if (gate.kind === 'ready' && snapshot?.user) {
     return (
-      <ReadyDesktop
-        agent={gate.agent}
-        connectionWarning={snapshotError}
-        onChanged={refresh}
-        previewGatewayOrigin={snapshot.previewGatewayOrigin}
-        user={snapshot.user}
-      />
+      <>
+        <CodeDraftRecoveryNotice ownerId={snapshot.user.id} />
+        <ReadyDesktop
+          agent={gate.agent}
+          connectionWarning={snapshotError}
+          onChanged={refresh}
+          previewGatewayOrigin={snapshot.previewGatewayOrigin}
+          user={snapshot.user}
+        />
+      </>
     )
   }
 
   return (
-    <main className="font-system relative min-h-[100svh] overflow-hidden bg-[#080b13] text-white selection:bg-[#6da8ff]/35">
-      <div aria-hidden="true" className="absolute inset-0 bg-[url('/tengri-wallpaper.svg')] bg-cover bg-center" />
-      <div aria-hidden="true" className="absolute inset-0 bg-black/10" />
-      <header className="absolute inset-x-0 top-0 z-20 flex h-8 items-center justify-between border-b border-white/10 bg-white/[0.055] px-4 text-[12px] text-white/72 backdrop-blur-2xl">
-        <div className="flex items-center gap-2 font-semibold text-white/90">
-          <TengriMark />
-          Tengri
+    <RecoveryOwnerContext value={recoveryOwnerId}>
+      <main className="font-system relative min-h-[100svh] overflow-hidden bg-[#080b13] text-white selection:bg-[#6da8ff]/35">
+        <div aria-hidden="true" className="absolute inset-0 bg-[url('/tengri/wallpaper.webp')] bg-cover bg-center" />
+        <div aria-hidden="true" className="absolute inset-0 bg-black/10" />
+        <header className="absolute inset-x-0 top-0 z-20 flex h-8 items-center justify-between border-b border-white/10 bg-white/[0.055] px-4 text-[12px] text-white/72 backdrop-blur-2xl">
+          <div className="flex items-center gap-2 font-semibold text-white/90">
+            <TengriMark />
+            Tengri
+          </div>
+          <span>{snapshot?.authenticated ? snapshot.user?.name || 'GitHub user' : 'Private microVM workspace'}</span>
+        </header>
+        <div className="relative z-10 grid min-h-[100svh] place-items-center px-5 pt-12 pb-8">
+          <AnimatePresence mode="wait">
+            <DesktopGate key={gate.kind} gate={gate} onAgentDeleted={beginAgentDeletion} onRefresh={refresh} />
+          </AnimatePresence>
         </div>
-        <span>{snapshot?.authenticated ? snapshot.user?.name || 'GitHub user' : 'Private microVM workspace'}</span>
-      </header>
-      <div className="relative z-10 grid min-h-[100svh] place-items-center px-5 pt-12 pb-8">
-        <AnimatePresence mode="wait">
-          <DesktopGate key={gate.kind} gate={gate} onAgentDeleted={beginAgentDeletion} onRefresh={refresh} />
-        </AnimatePresence>
-      </div>
-    </main>
+      </main>
+    </RecoveryOwnerContext>
   )
 }
 
@@ -541,8 +553,9 @@ function LifecycleWindow({
   interactive?: boolean
   title: string
 }) {
+  const recoveryOwnerId = useContext(RecoveryOwnerContext)
   const modalFocus = useModalFocus<HTMLElement>(interactive)
-  const reducedMotion = useHydratedReducedMotion()
+  const reducedMotion = useDesktopReducedMotion()
   return (
     <motion.section
       ref={modalFocus.ref}
@@ -569,6 +582,7 @@ function LifecycleWindow({
         </span>
       </div>
       <div className="p-7">{children}</div>
+      <CodeDraftRecoveryNotice ownerId={recoveryOwnerId} placement="inline" />
     </motion.section>
   )
 }
@@ -606,7 +620,7 @@ function InlineError({ message }: { message: string }) {
 }
 
 function ProgressBar() {
-  const reducedMotion = useHydratedReducedMotion()
+  const reducedMotion = useDesktopReducedMotion()
   return (
     <div className="mt-6 h-1 overflow-hidden rounded-full bg-white/8">
       <motion.div
@@ -615,29 +629,6 @@ function ProgressBar() {
         transition={reducedMotion ? undefined : { repeat: Number.POSITIVE_INFINITY, duration: 1.2, ease: 'easeInOut' }}
       />
     </div>
-  )
-}
-
-function useHydratedReducedMotion() {
-  const reducedMotion = useReducedMotion()
-  const hydrated = useSyncExternalStore(
-    subscribeToHydration,
-    () => true,
-    () => false,
-  )
-  return hydrated && Boolean(reducedMotion)
-}
-
-function subscribeToHydration() {
-  return () => {}
-}
-
-function TengriMark() {
-  return (
-    <span aria-hidden="true" className="relative grid h-4 w-4 place-items-center rounded-full border border-white/60">
-      <span className="h-1.5 w-1.5 rounded-full bg-white/85" />
-      <span className="absolute -top-1 h-1.5 w-px bg-white/60" />
-    </span>
   )
 }
 

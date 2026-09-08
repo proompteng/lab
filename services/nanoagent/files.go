@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +15,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 )
 
 type fileEntry struct {
@@ -29,13 +32,20 @@ type fileList struct {
 }
 
 type writeFileRequest struct {
-	Content string `json:"content"`
-	Path    string `json:"path"`
+	Content          string `json:"content"`
+	ExpectedRevision string `json:"expectedRevision"`
+	Path             string `json:"path"`
 }
 
 type writeFileResponse struct {
-	Path string `json:"path"`
-	Size int64  `json:"size"`
+	Path     string `json:"path"`
+	Size     int64  `json:"size"`
+	Revision string `json:"revision"`
+}
+
+type revisionConflictResponse struct {
+	Error           string `json:"error"`
+	CurrentRevision string `json:"currentRevision,omitempty"`
 }
 
 type pathRequest struct {
@@ -57,9 +67,18 @@ type searchFilesResponse struct {
 	Truncated bool        `json:"truncated"`
 }
 
-var errTooManyDirectoryEntries = errors.New("directory exceeds the 10,000 entry Finder limit")
+var (
+	errTooManyDirectoryEntries = errors.New("directory exceeds the 10,000 entry Finder limit")
+	errFileTooLarge            = errors.New("file exceeds the 4 MiB editor limit")
+	errNotRegularFile          = errors.New("path is not a regular file")
+	errNotDirectory            = errors.New("path is not a directory")
+)
 
-const maxSearchVisitedEntries = 50_000
+const (
+	maxSearchVisitedEntries = 50_000
+	fileRevisionLength      = sha256.Size * 2
+	missingFileRevision     = "missing"
+)
 
 var workspaceSearchExcludedRootNames = map[string]struct{}{
 	".bun":   {},
@@ -125,58 +144,66 @@ func readDirectoryEntries(directory *os.File, limit int) ([]os.DirEntry, error) 
 	return entries, nil
 }
 
-func (server *apiServer) handleReadFile(writer http.ResponseWriter, request *http.Request) {
-	requested := request.URL.Query().Get("path")
+type fileReadSnapshot struct {
+	content     []byte
+	contentType string
+	revision    string
+}
+
+func (server *apiServer) readFileSnapshot(requested string) (fileReadSnapshot, error) {
+	server.fileMutationMu.RLock()
+	defer server.fileMutationMu.RUnlock()
+
 	if _, err := server.workspace.resolveExisting(requested); err != nil {
-		writeWorkspaceError(writer, err)
-		return
+		return fileReadSnapshot{}, err
 	}
 	relative, err := server.workspace.relative(requested)
 	if err != nil {
-		writeWorkspaceError(writer, err)
-		return
+		return fileReadSnapshot{}, err
 	}
-	file, err := server.workspace.safeRoot.Open(relative)
+	file, info, err := server.openRegularFile(relative)
 	if err != nil {
-		writeWorkspaceError(writer, err)
-		return
+		return fileReadSnapshot{}, err
 	}
 	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	if !info.Mode().IsRegular() {
-		writeAPIError(writer, http.StatusBadRequest, "path is not a regular file")
-		return
-	}
 	if info.Size() > maxFileBytes {
-		writeAPIError(writer, http.StatusRequestEntityTooLarge, "file exceeds the 4 MiB editor limit")
-		return
+		return fileReadSnapshot{}, errFileTooLarge
 	}
 	content, err := io.ReadAll(io.LimitReader(file, maxFileBytes+1))
 	if err != nil {
-		writeWorkspaceError(writer, err)
-		return
+		return fileReadSnapshot{}, err
 	}
 	if len(content) > maxFileBytes {
-		writeAPIError(writer, http.StatusRequestEntityTooLarge, "file exceeds the 4 MiB editor limit")
-		return
+		return fileReadSnapshot{}, errFileTooLarge
 	}
+	revision := revisionForContent(content)
 	contentType := mime.TypeByExtension(filepath.Ext(relative))
 	if contentType == "" {
 		contentType = http.DetectContentType(content)
 	}
-	writer.Header().Set("Content-Type", contentType)
+	return fileReadSnapshot{content: content, contentType: contentType, revision: revision}, nil
+}
+
+func (server *apiServer) handleReadFile(writer http.ResponseWriter, request *http.Request) {
+	snapshot, err := server.readFileSnapshot(request.URL.Query().Get("path"))
+	if err != nil {
+		writeWorkspaceError(writer, err)
+		return
+	}
+	writer.Header().Set("Content-Type", snapshot.contentType)
 	writer.Header().Set("Cache-Control", "no-store")
+	writer.Header().Set("ETag", `"`+snapshot.revision+`"`)
 	writer.WriteHeader(http.StatusOK)
-	_, _ = writer.Write(content)
+	_, _ = writer.Write(snapshot.content)
 }
 
 func (server *apiServer) handleWriteFile(writer http.ResponseWriter, request *http.Request) {
 	var input writeFileRequest
 	if !decodeJSON(writer, request, &input) {
+		return
+	}
+	if !isValidExpectedRevision(input.ExpectedRevision) {
+		writeAPIError(writer, http.StatusBadRequest, "expectedRevision must be a lowercase SHA256 or missing")
 		return
 	}
 	content, err := base64.StdEncoding.DecodeString(input.Content)
@@ -185,9 +212,16 @@ func (server *apiServer) handleWriteFile(writer http.ResponseWriter, request *ht
 		return
 	}
 	if len(content) > maxFileBytes {
-		writeAPIError(writer, http.StatusRequestEntityTooLarge, "file exceeds the 4 MiB editor limit")
+		writeAPIError(writer, http.StatusRequestEntityTooLarge, errFileTooLarge.Error())
 		return
 	}
+
+	server.fileMutationMu.Lock()
+	defer server.fileMutationMu.Unlock()
+	// This lock serializes Nanoagent API writers. Direct filesystem writers
+	// outside this process are not participants in the check-and-rename
+	// protocol, so expectedRevision remains a content snapshot for them.
+
 	target, err := server.workspace.resolveForWrite(input.Path)
 	if err != nil {
 		writeWorkspaceError(writer, err)
@@ -202,21 +236,23 @@ func (server *apiServer) handleWriteFile(writer http.ResponseWriter, request *ht
 		writeWorkspaceError(writer, err)
 		return
 	}
+	state, err := server.fileRevisionState(relative)
+	if err != nil {
+		writeWorkspaceError(writer, err)
+		return
+	}
+	if state.revision != input.ExpectedRevision {
+		writeRevisionConflict(writer, state.revision)
+		return
+	}
 	parent := filepath.Dir(relative)
 	if err := server.workspace.safeRoot.MkdirAll(parent, 0o750); err != nil {
 		writeWorkspaceError(writer, err)
 		return
 	}
 	mode := os.FileMode(0o640)
-	if existing, statErr := server.workspace.safeRoot.Stat(relative); statErr == nil {
-		if !existing.Mode().IsRegular() {
-			writeAPIError(writer, http.StatusBadRequest, "path is not a regular file")
-			return
-		}
-		mode = existing.Mode().Perm()
-	} else if !errors.Is(statErr, os.ErrNotExist) {
-		writeWorkspaceError(writer, statErr)
-		return
+	if state.exists {
+		mode = state.mode.Perm()
 	}
 	temporaryName, temporary, err := createWorkspaceTemporaryFile(server.workspace, parent, mode)
 	if err != nil {
@@ -247,8 +283,17 @@ func (server *apiServer) handleWriteFile(writer http.ResponseWriter, request *ht
 		writeWorkspaceError(writer, err)
 		return
 	}
-	syncWorkspaceDirectory(server.workspace, parent)
-	writeJSON(writer, http.StatusOK, writeFileResponse{Path: server.workspace.displayRelative(relative), Size: int64(len(content))})
+	if err := server.syncMutationDirectories(parent); err != nil {
+		// Rename has already made the new content visible. A failed parent sync
+		// makes durability unknown; do not remove or otherwise roll back it.
+		writeWorkspaceError(writer, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, writeFileResponse{
+		Path:     server.workspace.displayRelative(relative),
+		Size:     int64(len(content)),
+		Revision: revisionForContent(content),
+	})
 }
 
 func (server *apiServer) handleCreateDirectory(writer http.ResponseWriter, request *http.Request) {
@@ -256,6 +301,9 @@ func (server *apiServer) handleCreateDirectory(writer http.ResponseWriter, reque
 	if !decodeJSON(writer, request, &input) {
 		return
 	}
+	server.fileMutationMu.Lock()
+	defer server.fileMutationMu.Unlock()
+
 	target, err := server.workspace.resolveForWrite(input.Path)
 	if err != nil {
 		writeWorkspaceError(writer, err)
@@ -281,6 +329,12 @@ func (server *apiServer) handleCreateDirectory(writer http.ResponseWriter, reque
 		writeWorkspaceError(writer, err)
 		return
 	}
+	if err := server.syncMutationDirectories(relative); err != nil {
+		// The directory is already visible. A failed sync leaves its durable
+		// acknowledgement unknown, so leave the mutation in place.
+		writeWorkspaceError(writer, err)
+		return
+	}
 	entry, err := server.fileEntryRelative(relative)
 	if err != nil {
 		writeWorkspaceError(writer, err)
@@ -294,6 +348,9 @@ func (server *apiServer) handleMoveFile(writer http.ResponseWriter, request *htt
 	if !decodeJSON(writer, request, &input) {
 		return
 	}
+	server.fileMutationMu.Lock()
+	defer server.fileMutationMu.Unlock()
+
 	source, err := server.workspace.resolveExisting(input.SourcePath)
 	if err != nil {
 		writeWorkspaceError(writer, err)
@@ -382,11 +439,23 @@ func (server *apiServer) handleMoveFile(writer http.ResponseWriter, request *htt
 	if err != nil {
 		server.fileWatcher.publishPairedRename(logicalSource, renameGeneration, fileEvent{Path: destinationPath})
 		renamePublished = true
+	} else {
+		server.fileWatcher.publishPairedRename(logicalSource, renameGeneration, fileEvent{Path: entry.Path, Entry: &entry})
+		renamePublished = true
+	}
+	if syncErr := server.syncMutationDirectories(
+		filepath.Dir(sourceRelative),
+		filepath.Dir(destinationRelative),
+	); syncErr != nil {
+		// Rename and the watcher event have already completed. A failed parent
+		// sync makes durability unknown; never attempt a compensating rename.
+		writeWorkspaceError(writer, syncErr)
+		return
+	}
+	if err != nil {
 		writeWorkspaceError(writer, err)
 		return
 	}
-	server.fileWatcher.publishPairedRename(logicalSource, renameGeneration, fileEvent{Path: entry.Path, Entry: &entry})
-	renamePublished = true
 	writeJSON(writer, http.StatusOK, entry)
 }
 
@@ -395,6 +464,9 @@ func (server *apiServer) handleDeleteFile(writer http.ResponseWriter, request *h
 	if !decodeJSON(writer, request, &input) {
 		return
 	}
+	server.fileMutationMu.Lock()
+	defer server.fileMutationMu.Unlock()
+
 	target, err := server.workspace.resolveExisting(input.Path)
 	if err != nil {
 		writeWorkspaceError(writer, err)
@@ -424,6 +496,12 @@ func (server *apiServer) handleDeleteFile(writer http.ResponseWriter, request *h
 			writeAPIError(writer, http.StatusConflict, "directory is not empty; recursive deletion was not authorized")
 			return
 		}
+		writeWorkspaceError(writer, err)
+		return
+	}
+	if err := server.syncMutationDirectories(filepath.Dir(relative)); err != nil {
+		// Removal is already visible. A failed parent sync makes durability
+		// unknown; do not recreate the removed entry.
 		writeWorkspaceError(writer, err)
 		return
 	}
@@ -564,13 +642,144 @@ func createWorkspaceTemporaryFile(workspace workspace, parent string, mode os.Fi
 	return "", nil, errors.New("could not allocate a unique temporary file")
 }
 
-func syncWorkspaceDirectory(workspace workspace, relative string) {
-	directory, err := workspace.safeRoot.Open(relative)
-	if err != nil {
-		return
+type fileRevisionState struct {
+	mode     os.FileMode
+	revision string
+	exists   bool
+}
+
+func (server *apiServer) fileRevisionState(relative string) (fileRevisionState, error) {
+	file, info, err := server.openRegularFile(relative)
+	if errors.Is(err, os.ErrNotExist) {
+		return fileRevisionState{revision: missingFileRevision}, nil
 	}
-	defer directory.Close()
-	_ = directory.Sync()
+	if err != nil {
+		return fileRevisionState{}, err
+	}
+	defer file.Close()
+	content, err := io.ReadAll(io.LimitReader(file, maxFileBytes+1))
+	if err != nil {
+		return fileRevisionState{}, err
+	}
+	if len(content) > maxFileBytes {
+		return fileRevisionState{}, errFileTooLarge
+	}
+	return fileRevisionState{
+		mode:     info.Mode(),
+		revision: revisionForContent(content),
+		exists:   true,
+	}, nil
+}
+
+func (server *apiServer) openRegularFile(relative string) (*os.File, os.FileInfo, error) {
+	file, err := server.workspace.safeRoot.OpenFile(relative, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, nil, err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, nil, err
+	}
+	if !info.Mode().IsRegular() {
+		_ = file.Close()
+		return nil, nil, errNotRegularFile
+	}
+	return file, info, nil
+}
+
+func revisionForContent(content []byte) string {
+	digest := sha256.Sum256(content)
+	return hex.EncodeToString(digest[:])
+}
+
+func isValidExpectedRevision(revision string) bool {
+	if revision == missingFileRevision {
+		return true
+	}
+	if len(revision) != fileRevisionLength {
+		return false
+	}
+	for _, character := range []byte(revision) {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func writeRevisionConflict(writer http.ResponseWriter, currentRevision string) {
+	writeJSON(writer, http.StatusConflict, revisionConflictResponse{
+		Error:           "file revision does not match expectedRevision",
+		CurrentRevision: currentRevision,
+	})
+}
+
+func syncWorkspaceDirectories(workspace workspace, relatives ...string) error {
+	return syncWorkspaceDirectoriesWith(workspace, syncWorkspaceDirectory, relatives...)
+}
+
+func (server *apiServer) syncMutationDirectories(relatives ...string) error {
+	if server.syncDirectories == nil {
+		return syncWorkspaceDirectories(server.workspace, relatives...)
+	}
+	return server.syncDirectories(server.workspace, relatives...)
+}
+
+func syncWorkspaceDirectoriesWith(
+	workspace workspace,
+	syncDirectory func(workspace, string) error,
+	relatives ...string,
+) error {
+	synced := make(map[string]struct{}, len(relatives))
+	for _, relative := range relatives {
+		current := filepath.Clean(relative)
+		if current == "" {
+			current = "."
+		}
+		for {
+			if _, found := synced[current]; !found {
+				if err := syncDirectory(workspace, current); err != nil {
+					return fmt.Errorf("sync workspace directory %q: %w", current, err)
+				}
+				synced[current] = struct{}{}
+			}
+			if current == "." {
+				break
+			}
+			parent := filepath.Dir(current)
+			if parent == current {
+				current = "."
+				continue
+			}
+			current = parent
+		}
+	}
+	return nil
+}
+
+func syncWorkspaceDirectory(workspace workspace, relative string) error {
+	directory, err := workspace.safeRoot.OpenFile(relative, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return fmt.Errorf("open directory: %w", err)
+	}
+	info, err := directory.Stat()
+	if err != nil {
+		_ = directory.Close()
+		return fmt.Errorf("stat directory: %w", err)
+	}
+	if !info.IsDir() {
+		_ = directory.Close()
+		return errNotDirectory
+	}
+	if err := directory.Sync(); err != nil {
+		_ = directory.Close()
+		return fmt.Errorf("sync directory: %w", err)
+	}
+	if err := directory.Close(); err != nil {
+		return fmt.Errorf("close directory: %w", err)
+	}
+	return nil
 }
 
 func sortFileEntries(entries []fileEntry) {
@@ -592,6 +801,12 @@ func writeWorkspaceError(writer http.ResponseWriter, err error) {
 		writeAPIError(writer, http.StatusNotFound, "path does not exist")
 	case errors.Is(err, os.ErrPermission):
 		writeAPIError(writer, http.StatusForbidden, "path is not accessible")
+	case errors.Is(err, errFileTooLarge):
+		writeAPIError(writer, http.StatusRequestEntityTooLarge, errFileTooLarge.Error())
+	case errors.Is(err, errNotRegularFile):
+		writeAPIError(writer, http.StatusBadRequest, errNotRegularFile.Error())
+	case errors.Is(err, errNotDirectory):
+		writeAPIError(writer, http.StatusInternalServerError, errNotDirectory.Error())
 	default:
 		writeAPIError(writer, http.StatusInternalServerError, "filesystem operation failed")
 	}

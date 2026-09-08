@@ -25,9 +25,6 @@ spec:
     - jsonPath: .status.guestReady
       name: Guest Ready
       type: boolean
-    - jsonPath: .spec.expiresAt
-      name: Expires
-      type: string
     name: v1alpha1
     schema:
       openAPIV3Schema:
@@ -53,7 +50,10 @@ spec:
                 minLength: 1
                 type: string
               expiresAt:
-                format: date-time
+                default: ""
+                description: |-
+                  Legacy compatibility field. New retained agents leave this empty; it
+                  is never used to delete or block an agent.
                 type: string
               idleDeadline:
                 format: date-time
@@ -94,7 +94,6 @@ spec:
             - createdAt
             - desiredState
             - displayName
-            - expiresAt
             - idleDeadline
             - image
             - ownerHash
@@ -146,6 +145,10 @@ spec:
                 default: 0
                 format: int64
                 type: integer
+              pendingImage:
+                description: Configured Nanoagent image waiting for a safe replacement of a running guest.
+                nullable: true
+                type: string
               phase:
                 enum:
                 - Pending
@@ -189,7 +192,7 @@ spec:
           rule: self.spec.architecture == oldSelf.spec.architecture
         - message: the v1 resource profile is immutable
           rule: self.spec.resources == oldSelf.spec.resources
-        - message: creation and hard-expiry timestamps are immutable
+        - message: creation and legacy expiry fields are immutable
           rule: >-
             self.spec.createdAt == oldSelf.spec.createdAt && self.spec.expiresAt ==
             oldSelf.spec.expiresAt

@@ -8,7 +8,7 @@ describe('Signal publisher Nix image contract', () => {
   test('pins the dependency closures observed by both native builders', () => {
     const image = readFileSync(resolve(root, 'nix/images/signal-publisher.nix'), 'utf8')
 
-    expect(image).toContain('x86_64-linux = "sha256-MstP10hci2t9XaYG20VY77cmnOJOBRkRQIkh38KX60g="')
-    expect(image).toContain('aarch64-linux = "sha256-fygVR2CtG4heBV9O+XDBFYFHJ1+aKfJrh/ue2UgI4l8="')
+    expect(image).toContain('x86_64-linux = "sha256-bAyu051/ENh2rYwF9T3ssjrZotU7VmdfVjxx7gIVJmM="')
+    expect(image).toContain('aarch64-linux = "sha256-/ELWbRhtZNy0DEPJXmqfk9L6eI2uKfz0k0aqgfNcIM8="')
   })
 })

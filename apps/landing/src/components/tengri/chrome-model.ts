@@ -285,14 +285,7 @@ function closeTab(state: ChromeState, id: string): ChromeState {
   const index = state.tabs.findIndex((tab) => tab.id === id)
   if (index < 0) return state
   const tabs = state.tabs.filter((tab) => tab.id !== id)
-  if (tabs.length === 0) {
-    const replacementId = `tab-${state.nextTabNumber}`
-    return {
-      activeId: replacementId,
-      nextTabNumber: state.nextTabNumber + 1,
-      tabs: [newTab(replacementId)],
-    }
-  }
+  if (tabs.length === 0) return state
   if (id !== state.activeId) return { ...state, tabs }
   return {
     ...state,

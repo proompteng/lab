@@ -4,14 +4,19 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use futures::{Stream, StreamExt};
 use k8s_openapi::api::core::v1::Secret;
 use kube::{Api, Client, ResourceExt};
-use reqwest::{Method, StatusCode};
+use reqwest::{Method, StatusCode, header::HeaderValue};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::crd::{MicroVM, MicroVMPhase};
 
+mod codex_history;
+
 const GUEST_API_PORT: u16 = 8080;
+pub const EDITOR_PORT: u16 = 13337;
+pub const EDITOR_BRIDGE_PORT: u16 = 13338;
 const BOOTSTRAP_TOKEN_KEY: &str = "token";
 const MAX_GUEST_ERROR_BYTES: usize = 64 << 10;
 const MAX_GUEST_FILE_BYTES: usize = 4 << 20;
@@ -40,12 +45,22 @@ pub enum GuestError {
     InvalidJson(#[from] serde_json::Error),
     #[error("Nanoagent does not support atomic Codex snapshot cursors")]
     MissingCodexSnapshotCursor,
+    #[error("Nanoagent returned invalid Codex history: {0}")]
+    InvalidCodexHistory(&'static str),
+    #[error("Codex conversation history retrieval timed out")]
+    CodexHistoryTimeout,
     #[error("Nanoagent returned terminal creation identity {actual:?}; expected {expected:?}")]
     TerminalCreationIdentityMismatch {
         expected: String,
         actual: String,
         created_terminal_id: Option<String>,
     },
+    #[error("Nanoagent did not return a strong SHA-256 file revision")]
+    MissingFileRevision,
+    #[error("Nanoagent returned an invalid file revision")]
+    InvalidFileRevision,
+    #[error("Nanoagent file revision does not match the returned content")]
+    FileRevisionMismatch,
     #[error("Nanoagent response exceeded the {0}-byte limit")]
     ResponseTooLarge(usize),
 }
@@ -87,6 +102,7 @@ pub struct FileContent {
     pub path: String,
     pub content: Vec<u8>,
     pub content_type: String,
+    pub revision: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -94,6 +110,8 @@ pub struct FileContent {
 pub struct WriteResult {
     pub path: String,
     pub size: i64,
+    #[serde(default)]
+    pub revision: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -171,8 +189,23 @@ impl GuestClient {
         namespace: &str,
         agent_id: &str,
     ) -> Result<Self, GuestError> {
+        Self::for_agent_incarnation(client, namespace, agent_id, None).await
+    }
+
+    pub async fn for_agent_incarnation(
+        client: Client,
+        namespace: &str,
+        agent_id: &str,
+        incarnation: Option<&str>,
+    ) -> Result<Self, GuestError> {
         let microvms: Api<MicroVM> = Api::namespaced(client.clone(), namespace);
         let microvm = microvms.get(agent_id).await?;
+        if incarnation.is_some_and(|expected| microvm.metadata.uid.as_deref() != Some(expected)) {
+            return Err(GuestError::Api {
+                status: StatusCode::GONE,
+                message: "This editor session belongs to a previous agent. Reopen Code.".to_owned(),
+            });
+        }
         let status = microvm
             .status
             .as_ref()
@@ -214,6 +247,27 @@ impl GuestClient {
         &self.token
     }
 
+    pub async fn open_editor(&self) -> Result<(), GuestError> {
+        let response = self
+            .request(Method::POST, "/v1/editor")
+            .timeout(Duration::from_secs(300))
+            .send()
+            .await?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Err(GuestError::Api { status: StatusCode::SERVICE_UNAVAILABLE, message: "This guest predates VS Code. Sleep and resume the agent to use the current guest image.".to_owned() });
+        }
+        let response = checked_response(response).await?;
+        let body = bounded_response_body(response, 4096).await?;
+        let value: Value = serde_json::from_slice(&body)?;
+        if value.get("port").and_then(Value::as_u64) != Some(u64::from(EDITOR_PORT)) {
+            return Err(GuestError::Api {
+                status: StatusCode::BAD_GATEWAY,
+                message: "invalid VS Code endpoint".to_owned(),
+            });
+        }
+        Ok(())
+    }
+
     pub async fn list_files(&self, path: &str) -> Result<FileList, GuestError> {
         self.json(
             self.request(Method::GET, "/v1/files")
@@ -237,20 +291,48 @@ impl GuestClient {
             .and_then(|value| value.to_str().ok())
             .unwrap_or("application/octet-stream")
             .to_owned();
+        let revision = strong_file_revision(response.headers().get(reqwest::header::ETAG))?;
         let content = bounded_response_body(response, MAX_GUEST_FILE_BYTES).await?;
+        if let Some(revision) = &revision
+            && revision_for_content(&content) != *revision
+        {
+            return Err(GuestError::FileRevisionMismatch);
+        }
         Ok(FileContent {
             path: path.to_owned(),
             content,
             content_type,
+            revision: revision.unwrap_or_default(),
         })
     }
 
-    pub async fn write_file(&self, path: &str, content: &[u8]) -> Result<WriteResult, GuestError> {
-        self.json(
-            self.request(Method::PUT, "/v1/files/content")
-                .json(&serde_json::json!({"path": path, "content": BASE64.encode(content)})),
-        )
-        .await
+    pub async fn write_file(
+        &self,
+        path: &str,
+        content: &[u8],
+        expected_revision: &str,
+    ) -> Result<WriteResult, GuestError> {
+        validate_expected_revision(expected_revision)?;
+        let result: WriteResult = self
+            .json(
+                self.request(Method::PUT, "/v1/files/content")
+                    .json(&serde_json::json!({
+                        "path": path,
+                        "content": BASE64.encode(content),
+                        "expectedRevision": expected_revision,
+                    })),
+            )
+            .await?;
+        if result.revision.is_empty() {
+            return Err(GuestError::MissingFileRevision);
+        }
+        if !is_file_revision(&result.revision) {
+            return Err(GuestError::InvalidFileRevision);
+        }
+        if revision_for_content(content) != result.revision {
+            return Err(GuestError::FileRevisionMismatch);
+        }
+        Ok(result)
     }
 
     pub async fn create_directory(&self, path: &str) -> Result<FileEntry, GuestError> {
@@ -579,6 +661,43 @@ async fn bounded_response_body(
     Ok(body)
 }
 
+fn revision_for_content(content: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(content))
+}
+
+fn is_file_revision(value: &str) -> bool {
+    value.len() == Sha256::output_size() * 2
+        && value
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+fn validate_expected_revision(value: &str) -> Result<(), GuestError> {
+    if value != "missing" && !is_file_revision(value) {
+        return Err(GuestError::InvalidFileRevision);
+    }
+    Ok(())
+}
+
+fn strong_file_revision(value: Option<&HeaderValue>) -> Result<Option<String>, GuestError> {
+    let Some(value) = value else {
+        // Older Nanoagent guests do not emit ETags. Preserve their read path so callers can
+        // inspect the file, while the editor can keep it read-only until the guest is resumed.
+        return Ok(None);
+    };
+    let value = value
+        .to_str()
+        .map_err(|_| GuestError::InvalidFileRevision)?;
+    let revision = value
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .ok_or(GuestError::InvalidFileRevision)?;
+    if !is_file_revision(revision) {
+        return Err(GuestError::InvalidFileRevision);
+    }
+    Ok(Some(revision.to_owned()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -591,7 +710,7 @@ mod tests {
 
     use axum::{
         Json, Router,
-        routing::{get, post},
+        routing::{get, post, put},
     };
     fn terminal_json(creation_id: &str) -> Value {
         serde_json::json!({
@@ -602,6 +721,91 @@ mod tests {
             "lastActivityAt": "2026-08-28T00:00:00Z",
             "attached": false
         })
+    }
+
+    #[tokio::test]
+    async fn editor_start_authenticates_and_rejects_invalid_or_legacy_guests() {
+        for (status, body, expected) in [
+            (StatusCode::OK, r#"{"port":13337}"#, None),
+            (
+                StatusCode::OK,
+                r#"{"port":8080}"#,
+                Some(StatusCode::BAD_GATEWAY),
+            ),
+            (
+                StatusCode::NOT_FOUND,
+                "old guest",
+                Some(StatusCode::SERVICE_UNAVAILABLE),
+            ),
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "installer failed",
+                Some(StatusCode::SERVICE_UNAVAILABLE),
+            ),
+        ] {
+            let router = Router::new().route(
+                "/v1/editor",
+                post(move |headers: http::HeaderMap| async move {
+                    assert_eq!(
+                        headers[http::header::AUTHORIZATION],
+                        "Bearer editor-test-token"
+                    );
+                    (status, body)
+                }),
+            );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                axum::serve(listener, router).await.unwrap();
+            });
+            let guest = GuestClient {
+                http: reqwest::Client::new(),
+                base_url: format!("http://{address}"),
+                token: "editor-test-token".to_owned(),
+            };
+            let result = guest.open_editor().await;
+            match expected {
+                None => assert!(result.is_ok()),
+                Some(expected) => assert!(
+                    matches!(result, Err(GuestError::Api { status, .. }) if status == expected)
+                ),
+            }
+            server.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn an_editor_session_cannot_bind_to_a_recreated_microvm() {
+        let service = tower::service_fn(|request: http::Request<kube::client::Body>| async move {
+            assert!(
+                request.uri().path().ends_with("/microvms/editor-fixture"),
+                "stale session read a bootstrap secret"
+            );
+            let value = serde_json::json!({"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM","metadata":{"name":"editor-fixture","uid":"new-incarnation"},"spec":{
+                "displayName":"Editor fixture","ownerHash":"a".repeat(64),"desiredState":"Running","image":"test","architecture":"amd64",
+                "resources":{"cpuMillis":2000,"memoryMib":4096,"workspaceGib":16},"createdAt":"2026-09-08T00:00:00Z","idleDeadline":"2099-01-01T00:00:00Z"
+            }});
+            Ok::<_, std::io::Error>(
+                http::Response::builder()
+                    .header(http::header::CONTENT_TYPE, "application/json")
+                    .body(kube::client::Body::from(value.to_string().into_bytes()))
+                    .unwrap(),
+            )
+        });
+        let result = GuestClient::for_agent_incarnation(
+            Client::new(service, "tengri"),
+            "tengri",
+            "editor-fixture",
+            Some("old-incarnation"),
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(GuestError::Api {
+                status: StatusCode::GONE,
+                ..
+            })
+        ));
     }
 
     #[tokio::test]
@@ -624,6 +828,202 @@ mod tests {
             bounded_response_body(streamed, 4).await,
             Err(GuestError::ResponseTooLarge(4))
         ));
+    }
+
+    #[tokio::test]
+    async fn read_file_forwards_a_verified_strong_revision() {
+        let body = b"versioned content\n".to_vec();
+        let revision = revision_for_content(&body);
+        let fixture_revision = revision.clone();
+        let router = Router::new().route(
+            "/v1/files/content",
+            get(move || {
+                let body = body.clone();
+                let revision = fixture_revision.clone();
+                async move { ([(http::header::ETAG, format!("\"{revision}\""))], body) }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind Nanoagent read fixture");
+        let address = listener.local_addr().expect("Nanoagent read address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router)
+                .await
+                .expect("serve Nanoagent read fixture");
+        });
+        let client = GuestClient {
+            http: reqwest::Client::new(),
+            base_url: format!("http://{address}"),
+            token: "test-bootstrap-token".to_owned(),
+        };
+
+        let result = client
+            .read_file("/workspace/main.rs")
+            .await
+            .expect("revisioned file response");
+        assert_eq!(result.content, b"versioned content\n");
+        assert_eq!(result.revision, revision);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn read_file_keeps_legacy_content_usable_without_an_etag() {
+        let router = Router::new().route(
+            "/v1/files/content",
+            get(|| async { (StatusCode::OK, "legacy content") }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind legacy Nanoagent read fixture");
+        let address = listener
+            .local_addr()
+            .expect("legacy Nanoagent read address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router)
+                .await
+                .expect("serve legacy Nanoagent read fixture");
+        });
+        let client = GuestClient {
+            http: reqwest::Client::new(),
+            base_url: format!("http://{address}"),
+            token: "test-bootstrap-token".to_owned(),
+        };
+
+        let result = client
+            .read_file("/workspace/legacy.txt")
+            .await
+            .expect("legacy file response");
+        assert_eq!(result.content, b"legacy content");
+        assert!(result.revision.is_empty());
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn read_file_rejects_a_valid_but_mismatched_etag() {
+        let body = b"actual content\n".to_vec();
+        let revision = revision_for_content(b"different content\n");
+        let fixture_body = body.clone();
+        let fixture_revision = revision.clone();
+        let router = Router::new().route(
+            "/v1/files/content",
+            get(move || {
+                let body = fixture_body.clone();
+                let revision = fixture_revision.clone();
+                async move { ([(http::header::ETAG, format!("\"{revision}\""))], body) }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mismatched Nanoagent read fixture");
+        let address = listener
+            .local_addr()
+            .expect("mismatched Nanoagent read address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router)
+                .await
+                .expect("serve mismatched Nanoagent read fixture");
+        });
+        let client = GuestClient {
+            http: reqwest::Client::new(),
+            base_url: format!("http://{address}"),
+            token: "test-bootstrap-token".to_owned(),
+        };
+
+        assert!(matches!(
+            client.read_file("/workspace/mismatched.txt").await,
+            Err(GuestError::FileRevisionMismatch)
+        ));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn write_file_forwards_the_required_revision_and_verifies_the_receipt() {
+        let content = b"saved content\n".to_vec();
+        let revision = revision_for_content(&content);
+        let expected_revision = "a".repeat(64);
+        let fixture_content = content.clone();
+        let fixture_revision = revision.clone();
+        let fixture_expected_revision = expected_revision.clone();
+        let router = Router::new().route(
+            "/v1/files/content",
+            put(move |Json(body): Json<Value>| {
+                let content = fixture_content.clone();
+                let revision = fixture_revision.clone();
+                let expected_revision = fixture_expected_revision.clone();
+                async move {
+                    assert_eq!(body["path"], "/workspace/main.rs");
+                    assert_eq!(body["expectedRevision"], expected_revision);
+                    let decoded = BASE64
+                        .decode(body["content"].as_str().expect("encoded content"))
+                        .expect("base64 content");
+                    assert_eq!(decoded, content);
+                    (
+                        StatusCode::OK,
+                        Json(serde_json::json!({
+                            "path": "/workspace/main.rs",
+                            "size": 14,
+                            "revision": revision,
+                        })),
+                    )
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind Nanoagent write fixture");
+        let address = listener.local_addr().expect("Nanoagent write address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router)
+                .await
+                .expect("serve Nanoagent write fixture");
+        });
+        let client = GuestClient {
+            http: reqwest::Client::new(),
+            base_url: format!("http://{address}"),
+            token: "test-bootstrap-token".to_owned(),
+        };
+
+        let result = client
+            .write_file("/workspace/main.rs", &content, &expected_revision)
+            .await
+            .expect("revisioned write response");
+        assert_eq!(result.path, "/workspace/main.rs");
+        assert_eq!(result.size, content.len() as i64);
+        assert_eq!(result.revision, revision);
+        server.abort();
+    }
+
+    #[test]
+    fn file_revisions_require_lowercase_sha256_values() {
+        assert!(is_file_revision(&"a".repeat(64)));
+        assert!(!is_file_revision(&"A".repeat(64)));
+        assert!(!is_file_revision(&"a".repeat(63)));
+        assert!(validate_expected_revision("missing").is_ok());
+        assert!(validate_expected_revision("").is_err());
+    }
+
+    #[test]
+    fn strong_etag_validation_rejects_weak_or_unmatched_revisions() {
+        let valid = HeaderValue::from_static(
+            "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+        );
+        assert_eq!(
+            strong_file_revision(Some(&valid)).expect("valid strong ETag"),
+            Some("a".repeat(64))
+        );
+
+        for value in [
+            "W/\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"",
+        ] {
+            let header = HeaderValue::from_static(value);
+            assert!(matches!(
+                strong_file_revision(Some(&header)),
+                Err(GuestError::InvalidFileRevision)
+            ));
+        }
     }
 
     #[tokio::test]

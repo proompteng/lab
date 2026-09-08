@@ -11,6 +11,7 @@ import {
   interruptCodexTurn,
   isTengriControlPlaneConfigured,
   issuePreviewSession,
+  issueEditorSession,
   issueTerminalTicket,
   listAgents,
   listFiles,
@@ -18,6 +19,7 @@ import {
   moveFile,
   readFile,
   resolveCodexApproval,
+  revokeEditorSessions,
   revokePreviewSession,
   resumeAgent,
   resumeCodexThread,
@@ -74,7 +76,7 @@ export async function POST(request: Request) {
   try {
     requireSameOrigin(request)
     const identity = await requireTengriIdentity(request)
-    const parsed = tengriActionSchema.safeParse(await readTengriJsonBody(request))
+    const parsed = tengriActionSchema.safeParse(await readTengriJsonBody(request, { subject: identity.subject }))
     if (!parsed.success) {
       return Response.json(
         {
@@ -107,7 +109,14 @@ export async function POST(request: Request) {
         result = await readFile(identity.subject, action.agentId, action.path)
         break
       case 'write-file':
-        result = await writeFile(identity.subject, action.agentId, action.path, action.content)
+        result = await writeFile(
+          identity.subject,
+          action.agentId,
+          action.path,
+          action.content,
+          action.expectedRevision,
+          request.signal,
+        )
         break
       case 'create-directory':
         result = await createDirectory(identity.subject, action.agentId, action.path)
@@ -175,8 +184,15 @@ export async function POST(request: Request) {
       case 'preview-session':
         result = await issuePreviewSession(identity.subject, action.agentId, action.port, action.path, action.fragment)
         break
+      case 'editor-session':
+        result = await issueEditorSession(identity.subject, action.agentId, action.windowId)
+        break
+      case 'revoke-editor-sessions':
+        await revokeEditorSessions(identity.subject)
+        result = null
+        break
       case 'revoke-preview-session':
-        await revokePreviewSession(identity.subject, action.agentId, action.sessionId)
+        await revokePreviewSession(identity.subject, action.agentId, action.sessionId, action.revocationToken)
         result = null
         break
     }
