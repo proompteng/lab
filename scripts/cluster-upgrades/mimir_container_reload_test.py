@@ -617,6 +617,27 @@ class MimirReloadTests(unittest.TestCase):
         with self.assertRaisesRegex(mimir.ReloadError, "unfinished reload helper"):
             mimir.Workflow(self.make_config(), runner=fake).preflight()
 
+    def test_failed_peer_helper_blocks_next_ready_target(self) -> None:
+        for code in range(41, 47):
+            with self.subTest(exit_code=code):
+                fake = FakeCluster()
+                peer = fake.pods["observability-mimir-ingester-1"]
+                helper = "mimir-process-term-0-ingester"
+                peer["spec"]["ephemeralContainers"] = [{"name": helper}]
+                peer["status"]["ephemeralContainerStatuses"] = [
+                    {
+                        "name": helper,
+                        "state": {"terminated": {"exitCode": code}},
+                    }
+                ]
+                with self.assertRaisesRegex(mimir.ReloadError, "reload helper"):
+                    mimir.Workflow(self.make_config(), runner=fake).preflight()
+                self.assertFalse(fake.patched)
+                peer["status"]["ephemeralContainerStatuses"][0]["state"]["terminated"][
+                    "exitCode"
+                ] = 0
+                self.assertEqual(mimir.unfinished_reload_helpers(peer), ())
+
     def test_config_safety_rejects_flush_and_ring_unregister(self) -> None:
         with self.assertRaises(mimir.ReloadError):
             mimir.validate_mimir_config(

@@ -1147,7 +1147,7 @@ def ephemeral_status(pod: Mapping[str, Any], name: str) -> Mapping[str, Any] | N
 
 
 def unfinished_reload_helpers(pod: Mapping[str, Any]) -> tuple[str, ...]:
-    """Return Mimir reload helpers that have not reached a terminal exit."""
+    """Return Mimir reload helpers that have not completed successfully."""
 
     spec_helpers = pod.get("spec", {}).get("ephemeralContainers", [])
     if not isinstance(spec_helpers, list):
@@ -1167,7 +1167,11 @@ def unfinished_reload_helpers(pod: Mapping[str, Any]) -> tuple[str, ...]:
         exit_code = (
             terminated.get("exitCode") if isinstance(terminated, Mapping) else None
         )
-        if not isinstance(exit_code, int) or isinstance(exit_code, bool):
+        if (
+            not isinstance(exit_code, int)
+            or isinstance(exit_code, bool)
+            or exit_code != 0
+        ):
             pending.append(name)
     return tuple(pending)
 
@@ -1181,7 +1185,7 @@ def reject_unfinished_peer_helpers(
         pending = unfinished_reload_helpers(pod)
         if pending:
             raise ReloadError(
-                f"Mimir peer Pod {pod_name} has unfinished reload helper(s): "
+                f"Mimir peer Pod {pod_name} has failed or unfinished reload helper(s): "
                 + ", ".join(pending)
             )
 
