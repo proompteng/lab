@@ -252,7 +252,7 @@ describe('intraday replay program', () => {
             archiveAvailability: ArchiveAvailabilityPolicy.RecordedReader,
             assumptions: { ...defaultAssumptions, firstPollDelayMs: 3_000 },
             ...(receiptMode === 'all-candidates-unavailable' || receiptMode === 'missing-benchmark'
-              ? { calendar: [{ date: sessionDates[0], open: '09:30', close: '11:31' }] }
+              ? { calendar: [{ date: sessionDates[0], open: '09:30', close: '10:06' }] }
               : {}),
           }),
           {
@@ -328,6 +328,7 @@ describe('intraday replay program', () => {
         expect(report.sessions[0]?.fills).toEqual([])
         expect(report.totals.netRealizedPnlAfterCostsMicros).toBeNull()
         const observations = report.sessions[0]?.observations ?? []
+        expect(observations).toHaveLength(2)
         if (receiptMode === 'all-candidates-unavailable') {
           const decisions = observations.filter((item) => item.kind === 'snapshot' && item.purpose === 'decision')
           expect(decisions.length).toBeGreaterThan(0)
@@ -492,11 +493,17 @@ describe('intraday replay program', () => {
         ) as ArchiveVerifiedIntradayMarketSnapshot
       },
     })
-    const report = await run(replayInput([sessionDates[0]]), archive)
+    const report = await run(
+      replayInput([sessionDates[0]], { calendar: [{ date: sessionDates[0], open: '09:30', close: '10:06' }] }),
+      archive,
+    )
     const session = report.sessions[0]
     expect(session).toMatchObject({ status: 'INCOMPLETE', fills: [], orders: [], netRealizedPnlAfterCostsMicros: null })
     const observations = session?.observations.filter((observation) => observation.kind === 'snapshot') ?? []
-    expect(observations.length).toBeGreaterThan(1)
+    expect(observations.map(({ manifest }) => manifest.observedAt)).toEqual([
+      '2026-09-04T14:00:02.000Z',
+      '2026-09-04T14:00:32.000Z',
+    ])
     for (const observation of observations) {
       if (observation.kind !== 'snapshot') throw new Error('expected a retained snapshot')
       expect(observation.decision?.excludedCandidates?.map(({ symbol }) => symbol)).toEqual([
@@ -530,14 +537,14 @@ describe('intraday replay program', () => {
       reason: 'adverse-price-exceeds-limit',
       side: OrderSide.Buy,
       limitPriceMicros: '100010000',
-      submittedAt: '2026-09-04T14:30:02.000Z',
-      observedAt: '2026-09-04T14:30:03.000Z',
+      submittedAt: '2026-09-04T14:00:02.000Z',
+      observedAt: '2026-09-04T14:00:03.000Z',
     })
     expect(archive.requests).toHaveLength(3)
     expect(archive.requests.map(({ purpose, observedAt }) => [purpose, observedAt])).toEqual([
-      [undefined, '2026-09-04T14:30:02.000Z'],
-      [IntradaySnapshotPurpose.EntryPricing, '2026-09-04T14:30:02.000Z'],
-      [IntradaySnapshotPurpose.EntryPricing, '2026-09-04T14:30:03.000Z'],
+      [undefined, '2026-09-04T14:00:02.000Z'],
+      [IntradaySnapshotPurpose.EntryPricing, '2026-09-04T14:00:02.000Z'],
+      [IntradaySnapshotPurpose.EntryPricing, '2026-09-04T14:00:03.000Z'],
     ])
   })
 
@@ -876,7 +883,7 @@ describe('intraday replay program', () => {
       if (retryable) {
         expect(report.sessions[0]?.status).toBe('COMPLETE')
         expect(report.sessions[0]?.fills.length).toBeGreaterThan(0)
-        expect(archive.requests[0]?.observedAt).toBe('2026-09-04T14:30:32.000Z')
+        expect(archive.requests[0]?.observedAt).toBe('2026-09-04T14:00:32.000Z')
       } else {
         expect(report.sessions[0]).toMatchObject({ status: 'INCOMPLETE', fills: [] })
         expect(calls).toBe(1)
@@ -907,8 +914,8 @@ describe('intraday replay program', () => {
               persistIntradaySnapshotRows({
                 ...snapshot,
                 bars: snapshot.bars.map((bar) =>
-                  bar.symbol === 'AAPL' && bar.eventAt === '2026-09-04T14:00:00.000Z'
-                    ? { ...bar, ingestedAt: '2026-09-04T14:01:03.065Z' }
+                  bar.symbol === 'AAPL' && bar.eventAt === '2026-09-04T13:30:00.000Z'
+                    ? { ...bar, ingestedAt: '2026-09-04T13:31:03.065Z' }
                     : bar,
                 ),
               }),
@@ -947,13 +954,13 @@ describe('intraday replay program', () => {
       { kind: 'snapshot', decision: { excludedCandidates: [{ symbol: 'AAPL', reason: 'freshness' }] } },
     ])
     expect(captures.slice(0, 3).map(({ rangeStartAt }) => rangeStartAt)).toEqual([
-      '2026-09-04T14:00:00.000Z',
-      '2026-09-04T14:00:00.000Z',
-      '2026-09-04T14:01:00.000Z',
+      '2026-09-04T13:30:00.000Z',
+      '2026-09-04T13:30:00.000Z',
+      '2026-09-04T13:31:00.000Z',
     ])
     expect(verifiedWindows).toHaveLength(3)
-    expect(verifiedWindows[2]?.observedAt).toBe('2026-09-04T14:31:02.000Z')
-    expect(session?.orders[0]?.submittedAt).toBe('2026-09-04T14:31:02.000Z')
+    expect(verifiedWindows[2]?.observedAt).toBe('2026-09-04T14:01:02.000Z')
+    expect(session?.orders[0]?.submittedAt).toBe('2026-09-04T14:01:02.000Z')
     expect(session?.status).toBe('COMPLETE')
   })
 
@@ -975,7 +982,7 @@ describe('intraday replay program', () => {
     expect(report.sessions[0]).toMatchObject({ status: 'INCOMPLETE', fills: [], netRealizedPnlAfterCostsMicros: null })
     expect(report.sessions[0]?.observations.at(-1)).toMatchObject({
       kind: 'unavailable',
-      observedAt: '2026-09-04T18:59:32.000Z',
+      observedAt: '2026-09-04T19:54:32.000Z',
       retryable: true,
     })
   })

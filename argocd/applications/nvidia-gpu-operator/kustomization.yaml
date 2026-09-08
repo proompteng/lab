@@ -9,7 +9,7 @@ resources:
 helmCharts:
   - name: gpu-operator
     repo: https://nvidia.github.io/gpu-operator
-    version: v26.3.3
+    version: v26.7.0
     releaseName: gpu-operator
     namespace: gpu-operator
     includeCRDs: true
@@ -63,6 +63,25 @@ patches:
         namespace: gpu-operator
         annotations:
           argocd.argoproj.io/sync-options: Replace=true
+  - target:
+      kind: CustomResourceDefinition
+    patch: |-
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "-10"
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-options
+        value: ServerSideApply=true
+  - target:
+      kind: ClusterPolicy
+      name: cluster-policy
+    patch: |-
+      apiVersion: nvidia.com/v1
+      kind: ClusterPolicy
+      metadata:
+        name: cluster-policy
+        annotations:
+          argocd.argoproj.io/sync-wave: "10"
   - target:
       kind: Deployment
       name: gpu-operator

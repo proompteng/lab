@@ -31,6 +31,7 @@ import { activeStrategyBehaviorHash, activeStrategyName, makeIntradayMomentumDef
 import {
   decodeDefaultIntradayMomentumProtocol,
   hashIntradayMomentumProtocol,
+  intradayMomentumFirstDecisionPollMs,
   intradayMomentumSnapshotSymbols,
   type IntradayMomentumProtocol,
 } from '../../strategy/intraday-momentum/protocol'
@@ -539,7 +540,7 @@ const replaySession = (
     let decisionRangeEndAt: string | undefined
     let hadUnavailableDecision = false
     let structuralFailure: string | undefined
-    const entryStart = parseMillis(context.window.submissionOpenAt) + scenario.assumptions.firstPollDelayMs
+    const entryStart = intradayMomentumFirstDecisionPollMs(protocol, context.window, scenario.assumptions)
     const entryCutoff = parseMillis(context.window.submissionCutoffAt)
     for (let observedMs = entryStart; observedMs < entryCutoff; observedMs += scenario.assumptions.pollIntervalMs) {
       const observedAt = asOf(observedMs)
