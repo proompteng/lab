@@ -201,21 +201,28 @@ jobs:
             done
           done
 
-          TORGHUT_SCHEDULER_REPLICAS="$(
-            kubectl get deployment torghut-scheduler -n torghut -o jsonpath='{.spec.replicas}'
-          )"
-          case "${TORGHUT_SCHEDULER_REPLICAS}" in
-            0 | 1)
-              ;;
-            *)
-              echo "Torghut scheduler replicas must be exactly 0 or 1; got ${TORGHUT_SCHEDULER_REPLICAS:-unset}"
+          for removal_attempt in $(seq 1 18); do
+            SCHEDULER_RESOURCES="$(
+              kubectl get deployment/torghut-scheduler service/torghut-scheduler \
+                -n torghut --ignore-not-found -o name
+            )"
+            SCHEDULER_PODS="$(
+              kubectl get pods -n torghut \
+                -l app.kubernetes.io/name=torghut,app.kubernetes.io/component=trading-scheduler -o name
+            )"
+            if [ -z "${SCHEDULER_RESOURCES}" ] && [ -z "${SCHEDULER_PODS}" ]; then
+              break
+            fi
+            if [ "${removal_attempt}" -eq 18 ]; then
+              echo "Torghut scheduler removal is incomplete: ${SCHEDULER_RESOURCES} ${SCHEDULER_PODS}"
               exit 1
-              ;;
-          esac
-          echo "Torghut scheduler desired replicas: ${TORGHUT_SCHEDULER_REPLICAS}"
-          if [ "${TORGHUT_SCHEDULER_REPLICAS}" = '1' ]; then
-            kubectl rollout status deployment/torghut-scheduler -n torghut --timeout=10m
-          fi
+            fi
+            echo "Waiting for scheduler resources and pods to finish terminating"
+            sleep 10
+          done
+          # Zero writers selects the existing API containment evidence contract.
+          TORGHUT_SCHEDULER_REPLICAS='0'
+          echo "Torghut scheduler Deployment, Service, and pods are absent"
 
           if ! TORGHUT_SIM_TRADING_ENABLED="$(
             kubectl get ksvc torghut-sim -n torghut -o json |
@@ -325,7 +332,6 @@ jobs:
           HTTP_CONNECT_TIMEOUT_SECONDS=5
           HTTP_MAX_TIME_SECONDS=15
           JSON_EVIDENCE_ATTEMPTS=3
-          READYZ_EVIDENCE_ATTEMPTS=12
           EVIDENCE_RETRY_INTERVAL_SECONDS=2
           FULL_CONTRACT_ATTEMPTS=120
           FULL_CONTRACT_INTERVAL_SECONDS=10
@@ -360,72 +366,6 @@ jobs:
             done
           }
 
-          fetch_readyz_json() {
-            local url="$1"
-            local output_path="$2"
-            local label="$3"
-            local status
-            local decision
-
-            for attempt in $(seq 1 "${READYZ_EVIDENCE_ATTEMPTS}"); do
-              status="$(
-                curl -sS --connect-timeout "${HTTP_CONNECT_TIMEOUT_SECONDS}" --max-time "${HTTP_MAX_TIME_SECONDS}" \
-                  -o "${output_path}" -w '%{http_code}' "${url}" || true
-              )"
-              if [[ "${status}" =~ ^[0-9]{3}$ ]] &&
-                [ "${status}" != '000' ] &&
-                python3 -m json.tool "${output_path}" >/dev/null 2>&1; then
-                decision="$(
-                  bun run packages/scripts/src/torghut/readyz-contract.ts \
-                    --status "${status}" \
-                    --readyz-json "${output_path}"
-                )"
-                case "${decision}" in
-                  acceptable)
-                    printf '%s' "${status}"
-                    return 0
-                    ;;
-                  retryable_database_timeout)
-                    if [ "${attempt}" -eq "${READYZ_EVIDENCE_ATTEMPTS}" ]; then
-                      echo "${label} still reports a retryable database-readiness timeout after ${attempt} attempts" >&2
-                      printf '%s' "${status}"
-                      return 0
-                    fi
-                    echo "Attempt ${attempt}: ${label} database readiness timed out; retrying until readyz contract is acceptable" >&2
-                    sleep "${EVIDENCE_RETRY_INTERVAL_SECONDS}"
-                    continue
-                    ;;
-                  *)
-                    printf '%s' "${status}"
-                    return 0
-                    ;;
-                esac
-              fi
-
-              if [ "${attempt}" -eq "${READYZ_EVIDENCE_ATTEMPTS}" ]; then
-                if [[ "${status}" =~ ^[0-9]{3}$ ]] &&
-                  [ "${status}" != '000' ] &&
-                  python3 -m json.tool "${output_path}" >/dev/null 2>&1; then
-                  echo "${label} returned HTTP ${status} without an acceptable readyz contract" >&2
-                else
-                  echo "${label} did not return a parseable JSON HTTP response; status=${status:-empty}" >&2
-                fi
-                head -c 1000 "${output_path}" >&2 || true
-                echo >&2
-                return 1
-              fi
-
-              if [[ "${status}" =~ ^[0-9]{3}$ ]] &&
-                [ "${status}" != '000' ] &&
-                python3 -m json.tool "${output_path}" >/dev/null 2>&1; then
-                echo "Attempt ${attempt}: ${label} returned HTTP ${status} without an acceptable readyz contract; retrying" >&2
-              else
-                echo "Attempt ${attempt}: ${label} status=${status:-empty} not usable JSON yet; retrying" >&2
-              fi
-              sleep "${EVIDENCE_RETRY_INTERVAL_SECONDS}"
-            done
-          }
-
           append_contract_diagnostic() {
             local message="$1"
             if [ -n "${CONTRACT_DIAGNOSTICS}" ]; then
@@ -438,10 +378,8 @@ jobs:
           for contract_attempt in $(seq 1 "${FULL_CONTRACT_ATTEMPTS}"); do
             rm -f \
               "${EVIDENCE_DIR}/torghut-api-readyz.json" \
-              "${EVIDENCE_DIR}/torghut-scheduler-readyz.json" \
               "${EVIDENCE_DIR}/torghut-sim-status.json" \
               "${EVIDENCE_DIR}/torghut-status.json"
-            unset TORGHUT_SCHEDULER_READYZ_HTTP_STATUS TORGHUT_SCHEDULER_READYZ_PAYLOAD
             CONTRACT_CAPTURE_OK='true'
             CONTRACT_DIAGNOSTICS=''
 
@@ -458,26 +396,6 @@ jobs:
               [ "${TORGHUT_API_READYZ_HTTP_STATUS}" = '000' ]; then
               CONTRACT_CAPTURE_OK='false'
               append_contract_diagnostic "stable API readiness returned invalid HTTP status ${TORGHUT_API_READYZ_HTTP_STATUS:-unset}"
-            fi
-
-            if [ "${TORGHUT_SCHEDULER_REPLICAS}" = '1' ]; then
-              if ! TORGHUT_SCHEDULER_READYZ_HTTP_STATUS="$(
-                fetch_readyz_json \
-                  http://torghut-scheduler.torghut.svc.cluster.local:8183/readyz \
-                  "${EVIDENCE_DIR}/torghut-scheduler-readyz.json" \
-                  "Torghut scheduler /readyz" \
-                  2> "${EVIDENCE_DIR}/torghut-scheduler-readyz-fetch.err"
-              )"; then
-                CONTRACT_CAPTURE_OK='false'
-                append_contract_diagnostic 'scheduler readiness capture failed'
-              elif ! [[ "${TORGHUT_SCHEDULER_READYZ_HTTP_STATUS}" =~ ^[0-9]{3}$ ]] ||
-                [ "${TORGHUT_SCHEDULER_READYZ_HTTP_STATUS}" = '000' ]; then
-                CONTRACT_CAPTURE_OK='false'
-                append_contract_diagnostic "scheduler readiness returned invalid HTTP status ${TORGHUT_SCHEDULER_READYZ_HTTP_STATUS:-unset}"
-              else
-                export TORGHUT_SCHEDULER_READYZ_HTTP_STATUS
-                export TORGHUT_SCHEDULER_READYZ_PAYLOAD="${EVIDENCE_DIR}/torghut-scheduler-readyz.json"
-              fi
             fi
 
             if ! TORGHUT_STATUS_HTTP_STATUS="$(
