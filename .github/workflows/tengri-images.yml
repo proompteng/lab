@@ -86,7 +86,7 @@ jobs:
       - name: Install race detector build tools
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends build-essential
+          sudo apt-get install --yes --no-install-recommends build-essential e2fsprogs
 
       - name: Validate guest service
         working-directory: services/nanoagent
@@ -96,6 +96,8 @@ jobs:
           set -euo pipefail
           bash -n bootstrap-codex.sh
           bash -n bootstrap-toolchain.sh
+          bash -n validate-rootfs.sh validate-rootfs.test.sh
+          bash validate-rootfs.test.sh
           bash bootstrap-codex.sh --validate-manifest
           test -z "$(gofmt -l .)"
           GOWORK=off go test -race ./...
@@ -185,6 +187,7 @@ jobs:
         uses: sigstore/cosign-installer@v3.10.0
 
       - name: Publish, verify, and sign multi-architecture images
+        id: images
         shell: bash
         env:
           SIGNING_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/tengri-images.yml@refs/heads/main
@@ -198,6 +201,7 @@ jobs:
           tag="sha-${SOURCE_SHA}"
 
           publish_image() {
+            set -euo pipefail
             local image="$1"
             local service="${image##*/}"
             local index_path=".artifacts/tengri/${service}-index.json"
@@ -246,6 +250,45 @@ jobs:
               --certificate-oidc-issuer https://token.actions.githubusercontent.com \
               "${reference}" >/dev/null
 
+            printf '%s' "${digest}"
+          }
+
+          tengri_digest="$(publish_image "${TENGRI_IMAGE}")"
+          nanoagent_digest="$(publish_image "${NANOAGENT_IMAGE}")"
+          printf 'tengri_digest=%s\nnanoagent_digest=%s\n' \
+            "${tengri_digest}" "${nanoagent_digest}" >> "${GITHUB_OUTPUT}"
+          {
+            echo '### Tengri images'
+            echo
+            echo "- ${TENGRI_IMAGE}@${tengri_digest}"
+            echo "- ${NANOAGENT_IMAGE}@${nanoagent_digest}"
+            echo "- Source: ${SOURCE_SHA}"
+            echo '- Platforms: linux/amd64, linux/arm64'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Retain verified image indexes
+        uses: actions/upload-artifact@v4
+        with:
+          name: tengri-image-indexes-${{ github.sha }}
+          path: .artifacts/tengri/*-index.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Expose both verified images to Kargo
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+          TENGRI_DIGEST: ${{ steps.images.outputs.tengri_digest }}
+          NANOAGENT_DIGEST: ${{ steps.images.outputs.nanoagent_digest }}
+        run: |
+          set -euo pipefail
+          [[ "${SOURCE_SHA}" == "${GITHUB_SHA}" ]]
+          [[ "${TENGRI_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "${NANOAGENT_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          tag="sha-${SOURCE_SHA}"
+          publish_kargo_alias() {
+            local image="$1"
+            local digest="$2"
             local kargo_tag="kargo-sha-${SOURCE_SHA}"
             local kargo_reference="${image}:${kargo_tag}"
             local kargo_digest=''
@@ -271,16 +314,6 @@ jobs:
               [[ "${kargo_digest}" == "${digest}" ]]
             fi
             rm -f "${probe_error}"
-            printf '%s' "${digest}"
           }
-
-          tengri_digest="$(publish_image "${TENGRI_IMAGE}")"
-          nanoagent_digest="$(publish_image "${NANOAGENT_IMAGE}")"
-          {
-            echo '### Tengri images'
-            echo
-            echo "- ${TENGRI_IMAGE}@${tengri_digest}"
-            echo "- ${NANOAGENT_IMAGE}@${nanoagent_digest}"
-            echo "- Source: ${SOURCE_SHA}"
-            echo '- Platforms: linux/amd64, linux/arm64'
-          } >> "${GITHUB_STEP_SUMMARY}"
+          publish_kargo_alias "${TENGRI_IMAGE}" "${TENGRI_DIGEST}"
+          publish_kargo_alias "${NANOAGENT_IMAGE}" "${NANOAGENT_DIGEST}"
