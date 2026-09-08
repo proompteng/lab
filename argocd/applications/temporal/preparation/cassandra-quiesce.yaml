@@ -39,9 +39,14 @@ spec:
                   echo "Temporal ${component} must be stopped through GitOps before RF3 expansion." >&2
                   exit 1
                 }
-                kubectl -n temporal wait --for=delete pod \
+                remaining=$(kubectl -n temporal get pods \
                   -l "app.kubernetes.io/name=temporal,app.kubernetes.io/component=${component}" \
-                  --timeout=10m
+                  -o name)
+                if [[ -n "${remaining}" ]]; then
+                  kubectl -n temporal wait --for=delete pod \
+                    -l "app.kubernetes.io/name=temporal,app.kubernetes.io/component=${component}" \
+                    --timeout=10m
+                fi
                 remaining=$(kubectl -n temporal get pods \
                   -l "app.kubernetes.io/name=temporal,app.kubernetes.io/component=${component}" \
                   -o name)

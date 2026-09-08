@@ -330,7 +330,7 @@ spec:
               cassandra_pod=temporal-cassandra-0
 
               ring_state() {
-                local status schema_versions netstats
+                local status schema_versions netstats ordinal
                 status=$(kubectl -n "${namespace}" exec "${cassandra_pod}" -- nodetool status)
                 schema_versions=$(kubectl -n "${namespace}" exec "${cassandra_pod}" -- \
                   nodetool describecluster | awk '
@@ -338,12 +338,16 @@ spec:
                     in_schema && /^[[:space:]]*[0-9A-Fa-f-]+:/ { count++ }
                     END { print count + 0 }
                   ')
-                netstats=$(kubectl -n "${namespace}" exec "${cassandra_pod}" -- nodetool netstats)
                 [[ "$(printf '%s\n' "${status}" | awk '$1 == "UN" { count++ } END { print count + 0 }')" == 3 ]] || return 1
                 [[ "$(printf '%s\n' "${status}" | awk '$1 ~ /^[A-Z?][A-Z?]$/ { total++; if ($1 != "UN") bad++ } END { print total "," (bad + 0) }')" == 3,0 ]] || return 1
                 [[ "${schema_versions}" == 1 ]] || return 1
-                grep -q '^Mode: NORMAL' <<< "${netstats}" || return 1
-                ! grep -Eq '^(Receiving|Sending):' <<< "${netstats}"
+                for ordinal in 0 1 2; do
+                  netstats=$(kubectl -n "${namespace}" exec "temporal-cassandra-${ordinal}" -- nodetool netstats)
+                  grep -q '^Mode: NORMAL' <<< "${netstats}" || return 1
+                  if grep -Eq '^[[:space:]]*(Receiving|Sending)[[:space:]]+[0-9]+[[:space:]]+files' <<< "${netstats}"; then
+                    return 1
+                  fi
+                done
               }
 
               wait_for_ring() {

@@ -25,7 +25,9 @@ def emit(value):
     print(value, end="")
     raise SystemExit(0)
 if args[0] == "wait":
-    emit("")
+    if "volumesnapshot/" in text:
+        emit("")
+    raise SystemExit("no matching resources found")
 if args[0] == "get":
     resource = args[1]
     if resource.startswith("deployment/"):
@@ -64,6 +66,11 @@ if args[0] == "exec":
     if "nodetool describecluster" in text:
         emit("Schema versions:\n  11111111-1111-1111-1111-111111111111: [10.0.0.1, 10.0.0.2, 10.0.0.3]\n")
     if "nodetool netstats" in text:
+        stream = os.environ.get("FAKE_STREAM_ONCE")
+        observed = Path(os.environ["FAKE_STATE"] + ".stream-observed")
+        if stream and args[1] == "temporal-cassandra-1" and not observed.exists():
+            observed.write_text("yes")
+            emit("Mode: NORMAL\n    " + stream + " 2 files, 123 bytes total.\n")
         emit("Mode: NORMAL\nNot sending any streams.\nNot receiving any streams.\n")
     if "nodetool flush temporal" in text:
         emit("")
@@ -112,6 +119,9 @@ process.stdout.write(JSON.stringify(Object.fromEntries(jobs.map(job =>
             cli = work / "kubectl"
             cli.write_text(FIXTURE)
             cli.chmod(0o755)
+            sleep = work / "sleep"
+            sleep.write_text("#!/bin/sh\nexit 0\n")
+            sleep.chmod(0o755)
             date = work / "date"
             date.write_text(
                 "#!/usr/bin/env python3\nimport datetime,sys\n"
@@ -148,6 +158,28 @@ process.stdout.write(JSON.stringify(Object.fromEntries(jobs.map(job =>
         self.assertEqual(result.returncode, 0, result.stderr)
         flushes = [c[1] for c in commands if "nodetool flush temporal" in " ".join(c)]
         self.assertEqual(flushes, [f"temporal-cassandra-{n}" for n in range(3)])
+        self.assertFalse(any(c[0] == "wait" for c in commands))
+
+    def test_active_streams_on_another_node_delay_alter(self):
+        for direction in ("Receiving", "Sending"):
+            with self.subTest(direction=direction):
+                result, commands, _ = self.run_gate(FAKE_STREAM_ONCE=direction)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                before_alter = commands[
+                    : next(
+                        i
+                        for i, c in enumerate(commands)
+                        if "ALTER KEYSPACE" in " ".join(c)
+                    )
+                ]
+                self.assertGreaterEqual(
+                    sum(
+                        c[:2] == ["exec", "temporal-cassandra-1"]
+                        and "nodetool netstats" in " ".join(c)
+                        for c in before_alter
+                    ),
+                    2,
+                )
 
     def test_rf1_and_rf3_both_complete_full_repair(self):
         for factor in ("1", "3"):
