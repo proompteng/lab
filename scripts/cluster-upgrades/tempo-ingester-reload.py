@@ -65,6 +65,10 @@ MAX_RING_HEARTBEAT_AGE_SECONDS = 60
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 IMAGE_DIGEST_RE = re.compile(r"^[^\s@]+@sha256:[0-9a-f]{64}$")
 CONTAINER_ID_RE = re.compile(r"^[^\s]+://[^\s]+$")
+PROCESS_START_TICKS_RE = re.compile(r"^[0-9]+$")
+BOOT_ID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
 APPROVED_UTILITY_IMAGE = (
     "mirror.gcr.io/library/busybox:1.37.0@"
     "sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0"
@@ -79,6 +83,8 @@ class Config:
     expected_pod_uid: str | None = None
     expected_container_id: str | None = None
     expected_config_sha256: str | None = None
+    expected_process_start_ticks: str | None = None
+    expected_boot_id: str | None = None
     utility_image: str | None = None
     execute: bool = False
     statefulset: str = STATEFULSET
@@ -506,7 +512,7 @@ def pod_is_ready_ingester(pod: Mapping[str, Any]) -> bool:
 
 def ready_ingester_details(
     pods: Mapping[str, Any],
-) -> tuple[tuple[str, ...], dict[str, str]]:
+) -> tuple[tuple[str, ...], dict[str, str], dict[str, str]]:
     items = pods.get("items")
     if not isinstance(items, list) or len(items) != 3:
         observed = len(items) if isinstance(items, list) else 0
@@ -515,6 +521,7 @@ def ready_ingester_details(
         )
     names: list[str] = []
     pod_ips: dict[str, str] = {}
+    pod_nodes: dict[str, str] = {}
     for pod in items:
         if not isinstance(pod, Mapping) or not pod_is_ready_ingester(pod):
             name = (
@@ -529,17 +536,26 @@ def ready_ingester_details(
         pod_ip = pod.get("status", {}).get("podIP")
         if not isinstance(pod_ip, str) or not pod_ip:
             raise ReloadError(f"Ready Tempo ingester Pod {name} is missing podIP")
+        node_name = pod.get("spec", {}).get("nodeName")
+        if not isinstance(node_name, str) or not node_name:
+            raise ReloadError(f"Tempo ingester Pod {name} is missing nodeName")
         names.append(name)
         pod_ips[name] = pod_ip
+        pod_nodes[name] = node_name
     if len(set(names)) != 3:
         raise ReloadError("Tempo ingester Pod list contains duplicate names")
-    return tuple(sorted(names)), pod_ips
+    if len(set(pod_nodes.values())) != 3:
+        raise ReloadError(
+            "Tempo ingester Ready Pods must run on 3 unique nodes; "
+            f"observed {sorted(pod_nodes.values())!r}"
+        )
+    return tuple(sorted(names)), pod_ips, pod_nodes
 
 
 def ready_ingester_names(pods: Mapping[str, Any]) -> tuple[str, ...]:
     """Return names for callers that do not need the endpoint identity map."""
 
-    names, _pod_ips = ready_ingester_details(pods)
+    names, _pod_ips, _pod_nodes = ready_ingester_details(pods)
     return names
 
 
@@ -597,13 +613,58 @@ def validate_sha256(value: str, label: str) -> None:
         )
 
 
+def validate_process_start_ticks(
+    value: str, label: str = "expected process start ticks"
+) -> None:
+    if not PROCESS_START_TICKS_RE.fullmatch(value):
+        raise ReloadError(f"{label} must be a non-negative decimal tick count")
+
+
+def validate_boot_id(value: str, label: str = "expected boot ID") -> None:
+    if not BOOT_ID_RE.fullmatch(value):
+        raise ReloadError(f"{label} must be a lowercase UUID")
+
+
 def validate_utility_image(value: str) -> None:
     if not IMAGE_DIGEST_RE.fullmatch(value):
         raise ReloadError("utility image must be an explicit @sha256: digest pin")
 
 
-def helper_script(expected_sha256: str) -> str:
+def helper_script(
+    expected_sha256: str,
+    expected_process_start_ticks: str,
+    expected_boot_id: str,
+) -> str:
     validate_sha256(expected_sha256, "expected config SHA-256")
+    validate_process_start_ticks(expected_process_start_ticks)
+    validate_boot_id(expected_boot_id)
+    incarnation_checks = f'''boot_id="$(tr -d '\\n' </proc/sys/kernel/random/boot_id)"
+if [ "$boot_id" != "{expected_boot_id}" ]; then
+  printf '%s\\n' 'kernel boot ID changed since the process identity was captured' >&2
+  exit 43
+fi
+stat_line="$(tr -d '\\n' </proc/1/stat)"
+case "$stat_line" in
+  "1 ("*) ;;
+  *) printf '%s\\n' 'target PID 1 stat record is malformed' >&2; exit 44 ;;
+esac
+stat_fields="${{stat_line##*) }}"
+set -- $stat_fields
+field=3
+start_ticks=""
+while [ "$#" -gt 0 ]; do
+  if [ "$field" -eq 22 ]; then
+    start_ticks="$1"
+    break
+  fi
+  shift
+  field=$((field + 1))
+done
+if [ "$start_ticks" != "{expected_process_start_ticks}" ]; then
+  printf '%s\\n' 'target Tempo process start ticks changed' >&2
+  exit 45
+fi
+'''
     return f"""set -eu
 cmd=\"$(tr '\\000' ' ' </proc/1/cmdline)\"
 case \"$cmd\" in
@@ -616,17 +677,31 @@ if [ \"$digest\" != \"{expected_sha256}\" ]; then
   printf '%s\\n' 'projected Tempo configuration hash does not match the authoritative ConfigMap' >&2
   exit 42
 fi
-kill -0 1
+{incarnation_checks}kill -0 1
 kill -TERM 1
 """
 
 
-def helper_spec(name: str, image: str, expected_sha256: str) -> dict[str, Any]:
+def helper_spec(
+    name: str,
+    image: str,
+    expected_sha256: str,
+    expected_process_start_ticks: str,
+    expected_boot_id: str,
+) -> dict[str, Any]:
     validate_utility_image(image)
     return {
         "name": name,
         "image": image,
-        "command": ["/bin/sh", "-ceu", helper_script(expected_sha256)],
+        "command": [
+            "/bin/sh",
+            "-ceu",
+            helper_script(
+                expected_sha256,
+                expected_process_start_ticks,
+                expected_boot_id,
+            ),
+        ],
         "targetContainerName": TARGET_CONTAINER,
         "securityContext": {
             "runAsUser": TARGET_UID,
@@ -777,6 +852,15 @@ class Workflow:
             validate_sha256(
                 self.config.expected_config_sha256, "expected config SHA-256"
             )
+        if (self.config.expected_process_start_ticks is None) != (
+            self.config.expected_boot_id is None
+        ):
+            raise ReloadError(
+                "--expected-process-start-ticks and --expected-boot-id must be supplied together"
+            )
+        if self.config.expected_process_start_ticks is not None:
+            validate_process_start_ticks(self.config.expected_process_start_ticks)
+            validate_boot_id(self.config.expected_boot_id or "")
         if self.config.utility_image is not None:
             validate_utility_image(self.config.utility_image)
         if not self.config.execute:
@@ -791,6 +875,11 @@ class Workflow:
                 ("--expected-pod-uid", self.config.expected_pod_uid),
                 ("--expected-container-id", self.config.expected_container_id),
                 ("--expected-config-sha256", self.config.expected_config_sha256),
+                (
+                    "--expected-process-start-ticks",
+                    self.config.expected_process_start_ticks,
+                ),
+                ("--expected-boot-id", self.config.expected_boot_id),
                 ("--utility-image", self.config.utility_image),
             )
             if not value
@@ -833,7 +922,7 @@ class Workflow:
             ),
             self.runner,
         )
-        ready_names, ready_ips = ready_ingester_details(pods)
+        ready_names, ready_ips, ready_nodes = ready_ingester_details(pods)
         pdb = get_json(
             self.config,
             ("-n", self.config.namespace, "get", "pdb", self.config.pdb, "-o", "json"),
@@ -873,6 +962,7 @@ class Workflow:
             statefulSetReplicas=3,
             readyIngesterPods=list(ready_names),
             readyIngesterIPs=ready_ips,
+            readyIngesterNodes=ready_nodes,
             activeRingMembers=list(ring.active_ids),
             ring=ring_evidence(ring),
             pdbDisruptionsAllowed=1,
@@ -882,6 +972,8 @@ class Workflow:
             restartCount=restart_count,
             containerID=container_id,
             startedAt=started_at,
+            expectedProcessStartTicks=self.config.expected_process_start_ticks,
+            expectedBootID=self.config.expected_boot_id,
             existingEphemeralCount=len(ephemeral),
         )
         return {
@@ -894,6 +986,7 @@ class Workflow:
             "configSha256": authoritative_hash,
             "readyNames": ready_names,
             "readyIPs": ready_ips,
+            "readyNodes": ready_nodes,
             "ring": ring_evidence(ring),
             "ephemeral": ephemeral,
         }
@@ -1064,13 +1157,16 @@ class Workflow:
                         ),
                         self.runner,
                     )
-                    current_names, current_ips = ready_ingester_details(pods)
+                    current_names, current_ips, current_nodes = ready_ingester_details(
+                        pods
+                    )
                     if (
                         current_names != state["readyNames"]
                         or current_ips != state["readyIPs"]
+                        or current_nodes != state["readyNodes"]
                     ):
                         raise ReloadError(
-                            "Ready ingester membership or Pod IP changed during restart"
+                            "Ready ingester membership, Pod IP, or node changed during restart"
                         )
                     ring = self.ring_reader(self.config, self.runner)
                     validate_ring(ring, current_names, current_ips)
@@ -1119,15 +1215,26 @@ class Workflow:
         try:
             state = self.preflight()
             if not self.config.execute:
-                if self.config.utility_image is not None:
+                if (
+                    self.config.utility_image is not None
+                    and self.config.expected_process_start_ticks is not None
+                    and self.config.expected_boot_id is not None
+                ):
                     helper = helper_spec(
                         helper_name(state["uid"], state["restartCount"]),
                         self.config.utility_image,
                         state["configSha256"],
+                        self.config.expected_process_start_ticks,
+                        self.config.expected_boot_id,
                     )
                     target = state["target"]
                     self.audit["patchPreview"] = append_ephemeral_patch(target, helper)
                     self.event("plan-patch-ready", helperName=helper["name"])
+                elif self.config.utility_image is not None:
+                    self.event(
+                        "plan-patch-not-built",
+                        reason="process incarnation flags omitted; execute requires both",
+                    )
                 else:
                     self.event("plan-patch-not-built", reason="--utility-image omitted")
                 self.finish("plan")
@@ -1138,7 +1245,11 @@ class Workflow:
             if image is None or expected_hash is None:
                 raise ReloadError("execute configuration lost required helper inputs")
             helper = helper_spec(
-                helper_name(state["uid"], state["restartCount"]), image, expected_hash
+                helper_name(state["uid"], state["restartCount"]),
+                image,
+                expected_hash,
+                self.config.expected_process_start_ticks,
+                self.config.expected_boot_id,
             )
             self.patch_ephemeral(target, helper)
             result = self.wait_for_restart(helper, state)
@@ -1159,6 +1270,8 @@ def parser() -> argparse.ArgumentParser:
     argument_parser.add_argument("--expected-pod-uid")
     argument_parser.add_argument("--expected-container-id")
     argument_parser.add_argument("--expected-config-sha256")
+    argument_parser.add_argument("--expected-process-start-ticks")
+    argument_parser.add_argument("--expected-boot-id")
     argument_parser.add_argument("--utility-image")
     argument_parser.add_argument("--execute", action="store_true")
     argument_parser.add_argument(
@@ -1181,6 +1294,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         expected_pod_uid=args.expected_pod_uid,
         expected_container_id=args.expected_container_id,
         expected_config_sha256=args.expected_config_sha256,
+        expected_process_start_ticks=args.expected_process_start_ticks,
+        expected_boot_id=args.expected_boot_id,
         utility_image=args.utility_image,
         execute=args.execute,
         timeout=args.timeout,

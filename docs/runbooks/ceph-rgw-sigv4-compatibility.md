@@ -60,20 +60,24 @@ python3 scripts/cluster-upgrades/tempo-ingester-reload.py \
 
 Before execution, record the exact Pod UID, running ingester container ID, and SHA-256 of the desired
 `observability-tempo-config` ConfigMap's `tempo.yaml` data. Verify its projection inside the existing Pod and compare
-with the desired hash; never print expanded configuration or credential values. Supply those recorded values through
-`--expected-pod-uid`, `--expected-container-id`, and `--expected-config-sha256`, plus `--execute` and the approved
-multi-platform utility image:
+with the desired hash; never print expanded configuration or credential values. Resolve that exact container's host
+PID through the container runtime and record its `/proc/<pid>/stat` start-time ticks (field 22) and the node's
+`/proc/sys/kernel/random/boot_id`. Recheck the container identity after reading them. Supply these values through
+`--expected-pod-uid`, `--expected-container-id`, `--expected-config-sha256`, `--expected-process-start-ticks`, and
+`--expected-boot-id`, plus `--execute` and the approved multi-platform utility image:
 
 ```text
 mirror.gcr.io/library/busybox:1.37.0@sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0
 ```
 
-Pass that image as `--utility-image`. The helper requires `OnDelete`, three Ready ingesters, a matching three-member
-ACTIVE ring with fresh heartbeats, and one available PDB disruption. It fences the Pod UID/resourceVersion/container
-identity and appends one ephemeral container targeting the ingester's PID namespace. That container runs as Tempo's
-UID/GID 1000 with no elevated capabilities. It verifies PID 1's command and the projected configuration hash, then
-sends one SIGTERM. Kubernetes restarts the regular container under `restartPolicy: Always`; the Pod and its `emptyDir`
-persist. No Pod deletion or forced signal is part of this procedure.
+Pass that image as `--utility-image`. The helper requires `OnDelete`, three Ready ingesters on three distinct nodes,
+a matching three-member ACTIVE ring with fresh heartbeats, and one available PDB disruption. It checks the current
+container identity and fences the Pod UID/resourceVersion while appending one ephemeral container targeting the
+ingester's PID namespace. That container runs as Tempo's UID/GID 1000 with no elevated capabilities. It verifies
+PID 1's command, the projected configuration hash, boot ID, and process start-time ticks before sending one SIGTERM.
+A container that restarts before the helper attaches has different process identity and is rejected. Kubernetes
+restarts the regular container under `restartPolicy: Always`; the Pod and its `emptyDir` persist. No Pod deletion or
+forced signal is part of this procedure.
 
 Require the same Pod UID, one clean container restart, Ready state, and restored ring membership. Check new startup
 WAL replay and confirm that every recorded failed block reaches the same bucket before proceeding to the other
