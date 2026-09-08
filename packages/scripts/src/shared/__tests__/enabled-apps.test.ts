@@ -413,26 +413,26 @@ describe('enabled app inventory', () => {
 
   it('pins the enabled observability collector upgrade wave', () => {
     for (const deploymentPath of enabledAlloyDeploymentPaths) {
-      expect(readFileSync(deploymentPath, 'utf8')).toContain('grafana/alloy:v1.18.1')
+      expect(readFileSync(deploymentPath, 'utf8')).toContain('grafana/alloy:v1.19.2')
     }
     expect(readFileSync('argocd/applications/buzz/alloy-deployment.yaml', 'utf8')).toContain(
-      'sha256:0f4434c92b3e6cdac38bb129b344e1790c246f7b6e2eaffcc16a5fa363240e33',
+      'sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839',
     )
-    expect(natsKustomization).toContain('newTag: v1.18.1')
+    expect(natsKustomization).toContain('newTag: v1.19.2')
     expect(observabilityKustomization).toContain('version: 8.2.0')
   })
 
   it('pins the enabled service image upgrade wave', () => {
-    expect(featureFlagsKustomization).toContain('version: 2.11.0')
-    expect(featureFlagsKustomization).toContain('newTag: v2.11.0')
+    expect(featureFlagsKustomization).toContain('version: 2.12.1')
+    expect(featureFlagsKustomization).toContain('newTag: v2.12.0')
     expect(featureFlagsKustomization).toContain(
-      'digest: sha256:d20384874048ef6ac326f4937cee64f1db175a1878a87db32916cc8db46c740e',
+      'digest: sha256:92a091b047658b14f1e3214727c6e3001063226a33cb2fc824a1733a60401e05',
     )
     expect(cloudflaredDeployment).toContain(
-      'cloudflare/cloudflared:2026.7.3@sha256:e39ee8da81ad5e05d77f38d2f51c60ca51bf2a8450ac3abab50c17fdb91d91bf',
+      'cloudflare/cloudflared:2026.8.3@sha256:51c9cefcb4569df44e1ad403ab1d3d8065aa8e84339bcfc6aee75502e1140339',
     )
     expect(karapaceManifest).toContain(
-      'ghcr.io/aiven-open/karapace:6.2.2@sha256:3c202789067f1bc3aa68d9dbb22d6298d254380a9e69c2705120c7434277238c',
+      'ghcr.io/aiven-open/karapace:6.2.3@sha256:a67ecdcc7c0d0a9e965d7a0eebea91a46bf6797aad4f3b878a3f6924650f3012',
     )
     expect(karapaceManifest).toContain('app.proompteng.ai/schema-storage-generation: compact-v1')
   })
@@ -503,8 +503,8 @@ describe('enabled app inventory', () => {
       .map((container) => container.image)
 
     expect(ollamaImages).toEqual([
-      'ollama/ollama:0.32.6@sha256:b88c73ace3e115f8ec53dc8761ae1c0aabfa675406e3681786b98757ce050f42',
-      'ollama/ollama:0.32.6@sha256:b88c73ace3e115f8ec53dc8761ae1c0aabfa675406e3681786b98757ce050f42',
+      'ollama/ollama:0.33.3@sha256:32931b46719f673c05fdbaa81ccb26da18ea4a1c57590a754874ab28ba269eb2',
+      'ollama/ollama:0.33.3@sha256:32931b46719f673c05fdbaa81ccb26da18ea4a1c57590a754874ab28ba269eb2',
     ])
   })
 
@@ -512,7 +512,7 @@ describe('enabled app inventory', () => {
     const vllm = flamingoDeployment.spec?.template?.spec?.containers?.find((container) => container.name === 'vllm')
 
     expect(vllm?.image).toBe(
-      'vllm/vllm-openai:v0.26.0-x86_64-cu129@sha256:3c5c53248febaa72823a4b7e51aafa1cd2b65d860392e3930414da4d3864f541',
+      'vllm/vllm-openai:v0.28.0-x86_64-cu129@sha256:50509e700235cea487715cedeb501d20a1cd15fa6a54ce93688284bd0d96995d',
     )
   })
 

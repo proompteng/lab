@@ -53,7 +53,7 @@ test('Bayn owns a protected two-instance synchronous CNPG cluster', () => {
     },
   })
   expect(cluster.spec.imageName).toBe(
-    'ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie@sha256:9287ce030c6f3ce822e383b019ae4aaf1e8370bff3b39f9c51dc10d69dc97219',
+    'ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5a6a677d3fa2bc3fdc61874e0de8324b5a987eb676ddca133e71365a8467d6c1',
   )
 })
 
@@ -167,16 +167,16 @@ test('the CNPG platform installs the pinned Barman Cloud plugin', () => {
   const encodedSidecarImage = sidecarSecretPatch.patch.match(/path: \/data\/SIDECAR_IMAGE\n\s+value: (\S+)/)?.[1]
 
   expect(platform.resources).toContain(
-    'https://github.com/cloudnative-pg/plugin-barman-cloud/releases/download/v0.14.0/manifest.yaml',
+    'https://github.com/cloudnative-pg/plugin-barman-cloud/releases/download/v0.15.0/manifest.yaml',
   )
   expect(patches).toContain(
-    'ghcr.io/cloudnative-pg/plugin-barman-cloud:v0.14.0@sha256:823a8893690980ba5830bbbb11196a35f695b0488db7d846abc33baebf32417c',
+    'ghcr.io/cloudnative-pg/plugin-barman-cloud:v0.15.0@sha256:563c680fe7fda3466ca2b1f55a1397ed2ddc9e760360107dd7724f1959c1a536',
   )
   expect(encodedSidecarImage).toBeDefined()
   expect(Buffer.from(encodedSidecarImage ?? '', 'base64').toString('utf8')).toBe(
-    'ghcr.io/cloudnative-pg/plugin-barman-cloud-sidecar:v0.14.0@sha256:9880817c285c7afa4d195da2145064d21907405489ed6ec39abe59b1feb558a4',
+    'ghcr.io/cloudnative-pg/plugin-barman-cloud-sidecar:v0.15.0@sha256:06c78deca670525daa35fb1e5323159092785d11cf87b86217bdd5c679a41a84',
   )
-  expect(sidecarSecretPatch.target.name).toBe('plugin-barman-cloud-f998mh5292')
+  expect(sidecarSecretPatch.target.name).toBe('plugin-barman-cloud-2b4mtt7m69')
   expect(sidecarSecretPatch.patch).toContain('path: /metadata/name')
   expect(sidecarSecretPatch.patch).toContain('value: plugin-barman-cloud-m5m67kfh8f')
 })
