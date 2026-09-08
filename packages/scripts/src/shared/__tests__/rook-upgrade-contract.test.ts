@@ -173,7 +173,10 @@ test('preserves the Ceph data plane and live CSI behavior after the v1.20 migrat
   }>('argocd/applications/rook-ceph/csi-driver-values.yaml')
 
   expect(operatorValues.image).toMatchObject({ repository: 'docker.io/rook/ceph', tag: 'v1.20.7' })
-  expect(operatorValues.csi).toEqual({ installCsiOperator: true })
+  expect(operatorValues.csi).toMatchObject({
+    installCsiOperator: true,
+    snapshotter: { tag: 'v8.6.0' },
+  })
   expect(operatorValues.monitoring?.enabled ?? false).toBe(false)
   expect(operatorValues['ceph-csi-operator']).toBeUndefined()
   expect(clusterValues.cephImage).toMatchObject({

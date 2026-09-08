@@ -28,7 +28,7 @@ let
     owner = "kubernetes-sigs";
     repo = "headlamp";
     rev = headlampSha;
-    hash = "sha256-DPnA2pPeyzH+ryFEn+uGS5WVt7Y63/Gab43ot8JfRsg=";
+    hash = "sha256-Q/15vBSO3vjTrYQW6YZ9oMGVr2EjFor+hKGehFTaQNQ=";
   };
 
   patchedSrc = pkgs.stdenvNoCC.mkDerivation {
@@ -69,7 +69,7 @@ let
     inherit version;
     src = patchedSrc;
     modRoot = "backend";
-    vendorHash = "sha256-5nh4IxYr3wdXA8WLlK8LVCm4DqHFB4r+fA+Ix0e5EAc=";
+    vendorHash = "sha256-6hOxJpC9SlR6Oa0mKA8SziTdNS81l27eNYM1v0KOod0=";
     subPackages = [ "cmd" ];
     doCheck = false;
     env.CGO_ENABLED = 0;
@@ -92,10 +92,11 @@ let
     pname = "headlamp-frontend";
     inherit version;
     src = patchedSrc + "/frontend";
-    npmDepsHash = "sha256-VcwKNpHjQlpeDxqhDxNZnTt0BaUPHWZUivU4kqSi6yw=";
+    npmDepsHash = "sha256-khcVcOtzu9oGJigs6N+Za5z4Np3dkbHnylOoQiBa06g=";
     makeCacheWritable = false;
     env = {
       NODE_OPTIONS = "--max-old-space-size=8096";
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1";
       REACT_APP_ENABLE_WEBSOCKET_MULTIPLEXER = "true";
     };
     preBuild = ''
