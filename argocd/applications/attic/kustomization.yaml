@@ -2,6 +2,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: attic
 resources:
+- postgres-upgrade-backup.yaml
 - objectbucketclaim.yaml
 - postgres-cluster.yaml
 - externalsecret.yaml
@@ -12,4 +13,4 @@ resources:
 - gc-cronjob.yaml
 images:
 - name: registry.ide-newton.ts.net/lab/attic
-  digest: sha256:ee0bcdd9768989aaae4e47aa3b66665dfca50cd76fbc95fd6689e9e000164c4b
+  digest: sha256:45e591bf32738b2a4a696a540fd74941081445fcac68420b1e9f30b9fdceeb04
