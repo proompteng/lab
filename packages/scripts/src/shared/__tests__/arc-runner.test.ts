@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 
 import { describe, expect, it } from 'bun:test'
+import YAML from 'yaml'
 
 const repoRoot = new URL('../../../../../', import.meta.url)
 const readRepoFile = (path: string): string => readFileSync(new URL(path, repoRoot), 'utf8')
@@ -39,13 +40,11 @@ describe('ARC Nix runner toolchain', () => {
     expect(arcApplication).toContain('runnerScaleSetName: arc-amd64')
     expect(arcApplication).toContain('runnerScaleSetName: analysis-arm64')
     expect(arcApplication).toContain('image: docker:dind')
-    for (const scaleSet of ['arc-arm64', 'arc-amd64']) {
-      const block = runnerScaleSetBlock(scaleSet)
-      expect(block).toContain('emptyDir:')
-      expect(block).toContain('sizeLimit: 80Gi')
-      expect(block).not.toContain('storageClassName: "rook-ceph-block"')
-      expect(block).not.toContain('volumeClaimTemplate:')
-    }
+    const armBlock = runnerScaleSetBlock('arc-arm64')
+    expect(armBlock).toContain('emptyDir:')
+    expect(armBlock).toContain('sizeLimit: 80Gi')
+    expect(armBlock).not.toContain('volumeClaimTemplate:')
+    expect(arcApplication).not.toMatch(/storageClassName:\s*["']?rook-ceph/)
     const analysisBlock = runnerScaleSetBlock('analysis-arm64')
     expect(analysisBlock).toContain('emptyDir:')
     expect(analysisBlock).toContain('sizeLimit: 20Gi')
@@ -55,11 +54,63 @@ describe('ARC Nix runner toolchain', () => {
     expect(arcRunnerBuildWorkflow).toContain('latest: ${{')
   })
 
+  it('places AMD64 Nix, Docker, and workspace writes on one disposable local NVMe volume', () => {
+    const application = YAML.parseDocument(arcApplication)
+    const valuesPath = ['spec', 'sources', 2, 'helm', 'valuesObject']
+    expect(application.getIn([...valuesPath, 'runnerScaleSetName'])).toBe('arc-amd64')
+    const pod = application.getIn([...valuesPath, 'template', 'spec'])
+    if (!YAML.isMap(pod)) throw new Error('AMD64 runner Pod template is missing')
+
+    const workMount = { name: 'scratch', mountPath: '/home/runner/_work', subPath: 'work' }
+    expect(pod.toJSON()).toMatchObject({
+      nodeSelector: { 'kubernetes.io/arch': 'amd64', 'kubernetes.io/hostname': 'turin' },
+      initContainers: expect.arrayContaining([
+        expect.objectContaining({
+          volumeMounts: expect.arrayContaining([{ name: 'scratch', mountPath: '/scratch' }]),
+        }),
+      ]),
+      containers: expect.arrayContaining([
+        expect.objectContaining({
+          name: 'runner',
+          volumeMounts: expect.arrayContaining([
+            { name: 'scratch', mountPath: '/nix', subPath: 'nix' },
+            { name: 'scratch', mountPath: '/home/runner/.cache', subPath: 'cache' },
+            { name: 'scratch', mountPath: '/tmp', subPath: 'tmp' },
+            workMount,
+          ]),
+        }),
+        expect.objectContaining({
+          name: 'dind',
+          volumeMounts: expect.arrayContaining([
+            workMount,
+            { name: 'scratch', mountPath: '/var/lib/docker', subPath: 'docker' },
+            { name: 'scratch', mountPath: '/var/lib/containerd', subPath: 'containerd' },
+          ]),
+        }),
+      ]),
+      volumes: expect.arrayContaining([
+        {
+          name: 'scratch',
+          ephemeral: {
+            volumeClaimTemplate: expect.objectContaining({
+              spec: {
+                accessModes: ['ReadWriteOnce'],
+                storageClassName: 'local-path-turin-nvme-intel',
+                volumeMode: 'Filesystem',
+                resources: { requests: { storage: '80Gi' } },
+              },
+            }),
+          },
+        },
+      ]),
+    })
+  })
+
   it('keeps lab ARC runner concurrency capped', () => {
     expect(runnerScaleSetBlock('arc-arm64')).toContain('maxRunners: 5')
     expect(runnerScaleSetBlock('arc-arm64')).toContain('minRunners: 1')
-    expect(runnerScaleSetBlock('arc-amd64')).toContain('maxRunners: 5')
-    expect(runnerScaleSetBlock('arc-amd64')).toContain('minRunners: 1')
+    expect(runnerScaleSetBlock('arc-amd64')).toContain('maxRunners: 1')
+    expect(runnerScaleSetBlock('arc-amd64')).toContain('minRunners: 0')
     expect(runnerScaleSetBlock('analysis-arm64')).toContain('maxRunners: 1')
     expect(runnerScaleSetBlock('analysis-arm64')).toContain('minRunners: 1')
   })
@@ -77,10 +128,10 @@ describe('ARC Nix runner toolchain', () => {
       const block = runnerScaleSetBlock(scaleSet)
       expect(block).toContain('ephemeral-storage: "4Gi"')
       expect(block).toContain('ephemeral-storage: "6Gi"')
-      expect(block).toContain('sizeLimit: 80Gi')
       expect(block).not.toContain('storage: 20Gi')
     }
 
+    expect(runnerScaleSetBlock('arc-arm64')).toContain('sizeLimit: 80Gi')
     expect(runnerScaleSetBlock('analysis-arm64')).toContain('sizeLimit: 20Gi')
     expect(runnerScaleSetBlock('analysis-arm64')).not.toContain('volumeClaimTemplate:')
   })

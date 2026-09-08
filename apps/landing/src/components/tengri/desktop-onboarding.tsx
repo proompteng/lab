@@ -21,7 +21,9 @@ import {
 } from './desktop-session-storage'
 import { useModalFocus } from './modal-focus'
 import { ReadyDesktop } from './ready-desktop'
+import { TengriMark } from './tengri-mark'
 import { useDesktopReducedMotion } from './use-desktop-reduced-motion'
+import { WindowControls } from './window-controls'
 
 const RecoveryOwnerContext = createContext<string | undefined>(undefined)
 
@@ -570,12 +572,8 @@ function LifecycleWindow({
       transition={{ duration: reducedMotion ? 0 : 0.2, ease: [0.22, 1, 0.36, 1] }}
       onKeyDown={interactive ? modalFocus.onKeyDown : undefined}
     >
-      <div className="relative flex h-11 items-center border-b border-white/9 bg-white/[0.035] px-4">
-        <div aria-hidden="true" className="flex gap-2">
-          <span className="h-3 w-3 rounded-full bg-[#ff5f57]" />
-          <span className="h-3 w-3 rounded-full bg-[#febc2e]" />
-          <span className="h-3 w-3 rounded-full bg-[#28c840]" />
-        </div>
+      <div className="relative flex h-11 items-center border-b border-white/9 bg-white/[0.035] px-2.5">
+        <WindowControls active title={title} />
         <span className="pointer-events-none absolute inset-x-24 truncate text-center text-xs font-semibold text-white/54">
           {title}
         </span>
@@ -628,15 +626,6 @@ function ProgressBar() {
         transition={reducedMotion ? undefined : { repeat: Number.POSITIVE_INFINITY, duration: 1.2, ease: 'easeInOut' }}
       />
     </div>
-  )
-}
-
-function TengriMark() {
-  return (
-    <span aria-hidden="true" className="relative grid h-4 w-4 place-items-center rounded-full border border-white/60">
-      <span className="h-1.5 w-1.5 rounded-full bg-white/85" />
-      <span className="absolute -top-1 h-1.5 w-px bg-white/60" />
-    </span>
   )
 }
 

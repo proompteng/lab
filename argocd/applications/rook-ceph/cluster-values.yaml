@@ -38,13 +38,12 @@ cephClusterSpec:
         keyRotationPolicy: KeyGeneration
         keyGeneration: 2
       csi:
-        # Rotate the Ceph-CSI node/provisioner users while retaining one
-        # prior generation for already-mounted PVCs. Kernel 6.18 nodes
-        # require the AES key type; AES256K is deferred until kernel 7.0+.
+        # Talos 1.14 backports AES256K to its 6.18 kernel. Keep both AES
+        # generations until all existing mounts use generation 3.
         keyRotationPolicy: KeyGeneration
-        keyGeneration: 2
-        keepPriorKeyCountMax: 1
-        keyType: aes
+        keyGeneration: 3
+        keepPriorKeyCountMax: 2
+        keyType: aes256k
       rbdMirrorPeer:
         # No CephBlockPool mirror peer is configured in this cluster. Rotate
         # the unused bootstrap peer identity to AES256K so it does not remain
@@ -63,6 +62,10 @@ cephClusterSpec:
       # Prefer msgr2 CRC mode on the trusted in-cluster storage path. This avoids
       # secure-mode CPU cost while keeping msgr2 and wire CRCs.
       rbd_default_map_options: "ms_mode=prefer-crc"
+    mon:
+      # Generation 3 uses AES256K. Preserve old mounted clients while refusing
+      # creation of additional insecure keys during the remount migration.
+      mon_auth_allow_insecure_key: "false"
     rgw:
       # STS is unused by this single-site object store. Keep it explicitly off
       # so the pre-20.2.4 CBC token path cannot be re-enabled by default drift.
