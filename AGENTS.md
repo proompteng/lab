@@ -6,14 +6,18 @@ the task.
 
 ## Work to completion
 
-- Treat requests to build, change, fix, ship, or roll out as authorization to complete the in-scope work through
-  delivery. Honor explicit limits such as local-only, draft-only, or do-not-deploy. Requests to explain, investigate,
-  review, or plan call for findings unless the user also requests changes.
+- Treat requests to build, change, fix, or ship as authorization to complete the in-scope work through reviewed
+  merge. Extend the task through deployment or live verification only when the user explicitly requests that work.
+  Honor explicit limits such as local-only, draft-only, or do-not-deploy. Requests to explain, investigate, review,
+  or plan call for findings unless the user also requests changes.
 - Resolve routine choices from the code and conversation. Ask only when missing information materially changes the
   outcome or authority to act. Continue independent work while an answer is pending.
 - Authorization persists across turns. In-scope delivery includes local changes and validation, commits, pushes,
-  PR creation, CI and review fixes, merge after required gates pass, normal CI/CD and GitOps rollout, and live
-  acceptance. Do not request approval again merely because an authorized step writes to an external system.
+  PR creation, CI and review fixes, and merge after required gates pass. Do not request approval again merely
+  because an authorized step writes to an external system.
+- After a successful merge, confirm the merged state, report the result, and stop. Do not watch post-merge CI,
+  image builds, Kargo or Argo reconciliation, rollouts, or live checks unless the user explicitly requests that
+  follow-up. A routine fix, ship, or merge request does not authorize extending the task to monitor the deployment.
 - Ask before actions outside the authorized scope, unrequested destructive actions, purchases, or changes to
   credential identity, destinations, or permissions. An authorized rollout includes renewing an expired credential
   for the same verified account through its existing secret-sync path. Prepare changes and validation first so any
@@ -80,7 +84,8 @@ the task.
 - Once relevant checks pass, repeat or broaden them only after a change, failure, or unresolved concern justifies it.
 - Review actionable issues introduced by the change. Prioritize correctness, authorization, data loss, exposed
   secrets, and personal data in logs. Leave formatting enforcement to the configured tools.
-- For requested releases, verify the exact remote commit, required CI, deployed image/revision, and live behavior.
+- For explicitly requested deployment or production verification, verify the exact remote commit, required CI,
+  deployed image/revision, and live behavior.
   Argo `Synced`/`Healthy` and readiness endpoints establish infrastructure state; exercise the requested product or
   runtime behavior before calling the release complete.
 
