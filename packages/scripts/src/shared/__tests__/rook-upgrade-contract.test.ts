@@ -134,7 +134,10 @@ test('preserves the Ceph data plane and live CSI behavior after the v1.20 migrat
     cephImage: { repository: string; tag: string }
     monitoring: { enabled: boolean; createPrometheusRules: boolean }
     cephClusterSpec: {
-      cephConfig: { rgw: { rgw_s3_auth_use_sts: string } }
+      cephConfig: {
+        mon: { mon_auth_allow_insecure_key: string }
+        rgw: { rgw_s3_auth_use_sts: string }
+      }
       security: {
         cephx: {
           daemon: { keyRotationPolicy: string; keyGeneration: number }
@@ -184,6 +187,7 @@ test('preserves the Ceph data plane and live CSI behavior after the v1.20 migrat
     tag: 'v20.2.4-20260818',
   })
   expect(clusterValues.cephClusterSpec.cephConfig.rgw.rgw_s3_auth_use_sts).toBe('false')
+  expect(clusterValues.cephClusterSpec.cephConfig.mon.mon_auth_allow_insecure_key).toBe('false')
   expect(clusterValues.cephClusterSpec.security.cephx.daemon).toEqual({
     keyRotationPolicy: 'KeyGeneration',
     keyGeneration: 2,
