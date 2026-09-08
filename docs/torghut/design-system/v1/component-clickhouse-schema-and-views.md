@@ -6,11 +6,11 @@
 - Last updated: **2026-02-08**
 - Source of truth (config): `argocd/applications/torghut/**`
 
-## Source Implementation Audit (2026-07-04)
+## Historical Source Audit (2026-07-04)
 
 - Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
 - Implementation status: **Implemented and expanded.** The v1 `ta_microbars` / `ta_signals` tables exist in current schema, but the schema has grown to include options contract bars/features/surface features and explicit schema initialization from the Flink TA job.
-- Current source evidence:
+- Source evidence inspected:
   - `services/dorvud/technical-analysis-flink/src/main/resources/ta-schema.sql` creates `torghut.ta_microbars` and `torghut.ta_signals` with `ReplicatedReplacingMergeTree`, `ORDER BY (symbol, event_ts, seq)`, and 35-day TTLs.
   - The same schema file now also creates options tables such as `options_contract_bars_1s`, `options_contract_features`, and `options_surface_features` with shorter options TTLs.
   - `services/dorvud/technical-analysis-flink/src/main/kotlin/ai/proompteng/dorvud/ta/flink/FlinkTechnicalAnalysisJob.kt::ensureClickhouseSchema` loads and applies the SQL resource before enabling ClickHouse sinks when `TA_CLICKHOUSE_URL` is set.

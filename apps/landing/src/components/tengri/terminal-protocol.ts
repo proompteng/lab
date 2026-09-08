@@ -171,42 +171,6 @@ export function parseTerminalResumeState(
   }
 }
 
-export function parseLegacyTerminalResumeState(
-  value: string | null,
-  agentId: string,
-  desktopId: string,
-): TerminalResumeState | null {
-  if (!value) return null
-  let candidate: unknown
-  try {
-    candidate = JSON.parse(value)
-  } catch {
-    return null
-  }
-  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null
-  const state = candidate as Record<string, unknown>
-  if (
-    state.agentId !== agentId ||
-    'desktopId' in state ||
-    typeof state.sessionId !== 'string' ||
-    !SESSION_ID.test(state.sessionId)
-  ) {
-    return null
-  }
-  if (typeof state.reconnectToken !== 'string' || (state.reconnectToken && !isReconnectToken(state.reconnectToken))) {
-    return null
-  }
-  if (!isUint32(state.sequence)) return null
-  return {
-    agentId,
-    desktopId,
-    sessionId: state.sessionId,
-    reconnectToken: state.reconnectToken,
-    sequence: state.sequence,
-    cleanupPending: state.cleanupPending === true,
-  }
-}
-
 export function parseTerminalCleanupState(value: string | null, agentId: string): TerminalCleanupState | null {
   if (!value) return null
   let candidate: unknown
@@ -245,18 +209,10 @@ export function terminalResumeAttachment(state: TerminalResumeState, attached: b
 export function terminalReconciliationCandidate<Session extends ReconciliationSession>(
   sessions: readonly Session[],
   creationId: string,
-  creationScope: string,
   claimedSessionIds: ReadonlySet<string>,
 ): Session | null {
-  const exact = sessions.find(
-    (candidate) => candidate.creationId === creationId && !claimedSessionIds.has(candidate.id),
-  )
-  if (exact) return exact
   return (
-    sessions.find(
-      (candidate) =>
-        candidate.creationId.startsWith(creationScope) && !candidate.attached && !claimedSessionIds.has(candidate.id),
-    ) ?? null
+    sessions.find((candidate) => candidate.creationId === creationId && !claimedSessionIds.has(candidate.id)) ?? null
   )
 }
 
@@ -287,8 +243,16 @@ export function terminalPlainText(value: unknown): string {
 
 export function safelyDisposeTerminal(
   terminal: { dispose(): void } | null,
+  addons: readonly { dispose(): void }[] = [],
   logger: Pick<typeof console, 'warn'> = console,
 ): void {
+  for (let index = addons.length - 1; index >= 0; index -= 1) {
+    try {
+      addons[index]?.dispose()
+    } catch (cause) {
+      logger.warn('[tengri-terminal] terminal addon dispose failed', cause)
+    }
+  }
   if (!terminal) return
   try {
     terminal.dispose()

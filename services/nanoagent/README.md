@@ -19,6 +19,8 @@ unauthenticated.
 - `POST /v1/terminals`, `GET /v1/terminals`, and `DELETE /v1/terminals/{id}`: PTY lifecycle;
 - `GET /v1/terminals/{id}/ws`: interactive terminal attachment, resize, signals, replay, and reconnect;
 - `POST /v1/codex/call`: authenticated Codex account, login, thread, turn, steering, and interruption calls;
+- `GET /v1/codex/login`: the current device-login attempt, so a reconnecting desktop can resume it without
+  invalidating the displayed code;
 - `GET /v1/codex/events`: bounded, replayable Codex app-server events;
 - `POST /v1/codex/approvals/{id}`: resolve a pending Codex approval request;
 - `/v1/preview/{port}/{path...}`: HTTP and WebSocket proxying to an allowed loopback development port.
@@ -26,6 +28,17 @@ unauthenticated.
 Filesystem operations are confined with `os.Root`, reject symlink escapes, and hide `.codex` and `.tengri` internal
 state. Editable files are capped at 4 MiB, directory traversal and watcher subscriptions are bounded, and cancellation
 stops searches and event streams.
+
+File-content reads return a strong SHA-256 ETag. Writes require `expectedRevision`, either the exact lowercase
+64-hex revision from the read or `missing` for create-only writes. Successful writes return the new revision; stale
+writes return HTTP 409. A workspace lock serializes revision comparison and mutation for Nanoagent API writers.
+Direct filesystem writers, including shell commands and Codex, do not participate in that lock; their changes are
+reported through file events and require editor reconciliation. The API does not claim atomic conditional writes
+against arbitrary external processes.
+
+Mutation acknowledgement includes syncing affected directory metadata. A storage failure after a rename or deletion
+can leave the mutation visible despite an error response. Re-read the affected path before retrying; an error does
+not imply rollback. Retaining the PVC across sleep and releases does not replace an independent backup policy.
 
 Preview requests can reach only `127.0.0.1`, reject privileged and reserved ports, strip credentials and hop-by-hop or
 forwarding headers, and support WebSocket upgrades for development-server HMR. Nanoagent never proxies arbitrary
@@ -51,20 +64,21 @@ a shared `OPENAI_API_KEY`.
 
 Kata's Firecracker snapshotter extracts the guest OCI image into a 512 MiB blockfile. The Dockerfile therefore enforces
 a 480 MiB uncompressed-rootfs ceiling. The image contains a minimal Ubuntu 24.04 shell environment, Nanoagent, and a
-compressed multi-architecture bundle for the pinned Node 24.11.1, Bun 1.4.0, uv 0.11.14, Go 1.25.5, and Rust/Cargo
-1.90.0 guest toolchain. Ubuntu's system `bubblewrap` package satisfies Codex's Linux sandbox prerequisite instead of
-showing a bundled-helper fallback warning after device login.
+compressed multi-architecture bundle for the pinned Node 24.11.1, Bun 1.4.0, uv 0.11.14, Go 1.25.5, Rust/Cargo
+1.90.0, and native GCC 13.3.0 guest toolchain. Ubuntu's system `bubblewrap` package satisfies Codex's Linux sandbox
+prerequisite instead of showing a bundled-helper fallback warning after device login.
 
 After Nanoagent has moved its bootstrap credential through the one-use pipe and removed the transport variables from
 the process environment, `bootstrap-toolchain` atomically installs Node, npm, npx, Bun, Bunx, uv, Go, gofmt, rustc,
-Cargo, and rustdoc under the versioned per-architecture `~/.tengri/toolchains` directory. Stable links live in `~/.local/bin`,
-the relocatable Go root lives at `~/.local/go`, and subsequent boots validate and reuse the existing home-volume
-install. Nanoagent configures both npm and Bun to use `~/.local` as their persistent global prefix, so globally
-installed package executables are immediately available from the existing `~/.local/bin` PATH. Rust compilation and
-doctests use the bundled architecture-specific `rust-lld` and minimal startup objects through atomically generated
-wrappers, so pure Rust programs and library tests work without a mutable system compiler on the read-only guest rootfs.
+Cargo, rustdoc, GCC, and `cc` under the versioned per-architecture `~/.tengri/toolchains` directory. Stable links live
+in `~/.local/bin`, the relocatable Go root lives at `~/.local/go`, and subsequent boots validate and reuse the existing
+home-volume install. Nanoagent configures both npm and Bun to use `~/.local` as their persistent global prefix, so
+globally installed package executables are immediately available from the existing `~/.local/bin` PATH. Rust
+compilation and doctests use the bundled architecture-specific `rust-lld` and minimal startup objects through
+atomically generated wrappers. Go uses the bundled target-platform GCC and sysroot with CGO enabled by default. Rust,
+C, and CGO projects therefore build without `apt`, `sudo`, or any mutation of the read-only guest rootfs.
 
-On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.149.0 package from the npm registry,
+On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.153.4 package from the npm registry,
 verifies its pinned SHA-512 digest, and atomically installs the complete native package under the 16 GiB PVC-backed
 `~/.tengri/codex` directory. Subsequent boots reuse that verified install. Nanoagent does not become ready until the
 Codex app server is available, and the `MicroVM` startup probe allows fifteen minutes for the sequential toolchain and
@@ -104,4 +118,6 @@ go run .
 
 The Nanoagent workflow runs the focused Go validation. Tengri's image workflow then builds native `linux/amd64` and
 `linux/arm64` Nanoagent images alongside the controller, publishes and keylessly signs
-`registry.ide-newton.ts.net/lab/nanoagent` by immutable digest, and updates both GitOps digests atomically.
+`registry.ide-newton.ts.net/lab/nanoagent` by immutable digest. CI publishes matching `kargo-sha-<source>` tags for the
+controller and guest; the automatic Tengri Warehouse and Stage promote only the matched pair and pin both digests on
+`kargo/tengri` for Argo reconciliation.

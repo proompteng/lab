@@ -13,7 +13,9 @@ import {
 const inventory = loadEnabledAppInventory()
 const platformApplicationSet = readFileSync('argocd/applicationsets/platform.yaml', 'utf8')
 const bootstrapApplicationSet = readFileSync('argocd/applicationsets/bootstrap.yaml', 'utf8')
+const applicationSetsReadme = readFileSync('argocd/applicationsets/README.md', 'utf8')
 const argoCdKustomization = readFileSync('argocd/applications/argocd/kustomization.yaml', 'utf8')
+const argoCdReadme = readFileSync('argocd/applications/argocd/README.md', 'utf8')
 const argoCdApplicationSetCrdOverlay = readFileSync(
   'argocd/applications/argocd/overlays/argocd-applicationset-crd.yaml',
   'utf8',
@@ -285,7 +287,7 @@ describe('enabled app inventory', () => {
 
   it('pins the identity and metrics controller upgrade wave', () => {
     expect(certManagerKustomization).toContain('version: v1.21.1')
-    expect(externalSecretsKustomization).toContain('version: 2.8.0')
+    expect(externalSecretsKustomization).toContain('version: 2.10.0')
     expect(platformApplicationSet).toContain('targetRevision: v0.9.0')
   })
 
@@ -368,7 +370,15 @@ describe('enabled app inventory', () => {
   })
 
   it('pins the Argo control-plane upgrade wave and applies its large CRD server-side', () => {
-    expect(argoCdKustomization).toContain('argo-cd/v3.4.6/manifests/ha/install.yaml')
+    expect(argoCdKustomization).toContain('argo-cd/v3.5.2/manifests/ha/install.yaml')
+    expect(argoCdKustomization).not.toContain('argo-cd/v3.4.6/')
+    expect(applicationSetsReadme.split('argo-cd/v3.5.2/manifests/crds/applicationset-crd.yaml')).toHaveLength(3)
+    expect(applicationSetsReadme).not.toContain('argo-cd/v3.4.6/')
+    expect(argoCdReadme).toContain('## Argo CD v3.5.2 upgrade')
+    expect(argoCdReadme).toContain('argocd login argocd.proompteng.ai --username admin --grpc-web')
+    expect(argoCdReadme).not.toContain('argocd login argocd.proompteng.ai --sso')
+    expect(argoCdReadme).toContain('kargo login https://kargo.ide-newton.ts.net --sso')
+    expect(argoCdReadme).toContain('first normal Kargo promotion')
     expect(argoCdKustomization).not.toContain('argocd-image-updater')
     expect(argoCdLovelyPluginOverlay).toContain('ghcr.io/crumbhole/lovely:1.2.5')
     expect(argoCdApplicationSetCrdOverlay).toContain(
@@ -386,8 +396,8 @@ describe('enabled app inventory', () => {
 
     expect(kubeVirtKustomization).toContain('kubevirt/releases/download/v1.9.0/')
     expect(kubeVirtKustomization).not.toContain('MultiArchitecture')
-    expect(cdiKustomization).toContain('containerized-data-importer/releases/download/v1.66.0/')
-    expect(knativeKustomization).toContain('knative/operator/releases/download/knative-v1.23.0/operator.yaml')
+    expect(cdiKustomization).toContain('containerized-data-importer/releases/download/v1.66.1/')
+    expect(knativeKustomization).toContain('knative/operator/releases/download/knative-v1.23.1/operator.yaml')
     expect(knativeKustomization).toContain('$patch: delete')
     expect(knativeKustomization).not.toContain('argocd.argoproj.io/sync-options: Prune=false')
     expect(knativeServingManifest).toContain('version: 1.23.0')
@@ -403,26 +413,26 @@ describe('enabled app inventory', () => {
 
   it('pins the enabled observability collector upgrade wave', () => {
     for (const deploymentPath of enabledAlloyDeploymentPaths) {
-      expect(readFileSync(deploymentPath, 'utf8')).toContain('grafana/alloy:v1.18.1')
+      expect(readFileSync(deploymentPath, 'utf8')).toContain('grafana/alloy:v1.19.2')
     }
     expect(readFileSync('argocd/applications/buzz/alloy-deployment.yaml', 'utf8')).toContain(
-      'sha256:0f4434c92b3e6cdac38bb129b344e1790c246f7b6e2eaffcc16a5fa363240e33',
+      'sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839',
     )
-    expect(natsKustomization).toContain('newTag: v1.18.1')
+    expect(natsKustomization).toContain('newTag: v1.19.2')
     expect(observabilityKustomization).toContain('version: 8.2.0')
   })
 
   it('pins the enabled service image upgrade wave', () => {
-    expect(featureFlagsKustomization).toContain('version: 2.11.0')
-    expect(featureFlagsKustomization).toContain('newTag: v2.11.0')
+    expect(featureFlagsKustomization).toContain('version: 2.12.1')
+    expect(featureFlagsKustomization).toContain('newTag: v2.12.0')
     expect(featureFlagsKustomization).toContain(
-      'digest: sha256:d20384874048ef6ac326f4937cee64f1db175a1878a87db32916cc8db46c740e',
+      'digest: sha256:92a091b047658b14f1e3214727c6e3001063226a33cb2fc824a1733a60401e05',
     )
     expect(cloudflaredDeployment).toContain(
-      'cloudflare/cloudflared:2026.7.3@sha256:e39ee8da81ad5e05d77f38d2f51c60ca51bf2a8450ac3abab50c17fdb91d91bf',
+      'cloudflare/cloudflared:2026.8.3@sha256:51c9cefcb4569df44e1ad403ab1d3d8065aa8e84339bcfc6aee75502e1140339',
     )
     expect(karapaceManifest).toContain(
-      'ghcr.io/aiven-open/karapace:6.2.2@sha256:3c202789067f1bc3aa68d9dbb22d6298d254380a9e69c2705120c7434277238c',
+      'ghcr.io/aiven-open/karapace:6.2.3@sha256:a67ecdcc7c0d0a9e965d7a0eebea91a46bf6797aad4f3b878a3f6924650f3012',
     )
     expect(karapaceManifest).toContain('app.proompteng.ai/schema-storage-generation: compact-v1')
   })
@@ -493,8 +503,8 @@ describe('enabled app inventory', () => {
       .map((container) => container.image)
 
     expect(ollamaImages).toEqual([
-      'ollama/ollama:0.32.6@sha256:b88c73ace3e115f8ec53dc8761ae1c0aabfa675406e3681786b98757ce050f42',
-      'ollama/ollama:0.32.6@sha256:b88c73ace3e115f8ec53dc8761ae1c0aabfa675406e3681786b98757ce050f42',
+      'ollama/ollama:0.33.3@sha256:32931b46719f673c05fdbaa81ccb26da18ea4a1c57590a754874ab28ba269eb2',
+      'ollama/ollama:0.33.3@sha256:32931b46719f673c05fdbaa81ccb26da18ea4a1c57590a754874ab28ba269eb2',
     ])
   })
 
@@ -502,7 +512,7 @@ describe('enabled app inventory', () => {
     const vllm = flamingoDeployment.spec?.template?.spec?.containers?.find((container) => container.name === 'vllm')
 
     expect(vllm?.image).toBe(
-      'vllm/vllm-openai:v0.26.0-x86_64-cu129@sha256:3c5c53248febaa72823a4b7e51aafa1cd2b65d860392e3930414da4d3864f541',
+      'vllm/vllm-openai:v0.28.0-x86_64-cu129@sha256:50509e700235cea487715cedeb501d20a1cd15fa6a54ce93688284bd0d96995d',
     )
   })
 
@@ -600,12 +610,8 @@ describe('enabled app inventory', () => {
       'attic',
       'symphony',
       'symphony-jangar',
-      'symphony-torghut',
       'jangar',
       'torghut',
-      'torghut-hyperliquid-feed',
-      'torghut-hyperliquid-runtime',
-      'torghut-options',
     ]) {
       expect(entry(name).class).toBe('nix-image')
       expect(entry(name).repoImages.length).toBeGreaterThan(0)
@@ -625,12 +631,8 @@ describe('enabled app inventory', () => {
     expect(entry('arc').nixImageAttr).toBe('arc-runner-image')
     expect(entry('symphony').nixImageAttr).toBe('symphony-image')
     expect(entry('symphony-jangar').nixImageAttr).toBe('symphony-image')
-    expect(entry('symphony-torghut').nixImageAttr).toBe('symphony-image')
     expect(entry('jangar').nixImageAttr).toBe('jangar-image')
     expect(entry('torghut').nixImageAttr).toBe('torghut-image')
-    expect(entry('torghut-hyperliquid-feed').nixImageAttr).toBe('torghut-hyperliquid-feed-image')
-    expect(entry('torghut-hyperliquid-runtime').nixImageAttr).toBe('torghut-image')
-    expect(entry('torghut-options').nixImageAttr).toBe('torghut-image')
   })
 
   it('tracks the live Attic image through both GitHub Actions and manual deploy paths', () => {
@@ -673,47 +675,26 @@ describe('enabled app inventory', () => {
     expect(entry('jangar').workflowPaths).toContain('.github/workflows/jangar-build-push.yaml')
   })
 
-  it('tracks Symphony derivative apps through the shared Symphony Nix image path', () => {
-    for (const name of ['symphony-jangar', 'symphony-torghut']) {
-      expect(entry(name)).toMatchObject({
-        class: 'nix-image',
-        nixImageAttr: 'symphony-image',
-        buildScriptPath: 'packages/scripts/src/symphony/build-image.ts',
-        deployScriptPath: 'packages/scripts/src/symphony/deploy-service.ts',
-      })
-      expect(entry(name).workflowPaths).toContain('.github/workflows/symphony-build-push.yaml')
-      expect(entry(name).deferredReason).toBeUndefined()
-    }
+  it('tracks the Symphony Jangar derivative through the shared Symphony Nix image path', () => {
+    expect(entry('symphony-jangar')).toMatchObject({
+      class: 'nix-image',
+      nixImageAttr: 'symphony-image',
+      buildScriptPath: 'packages/scripts/src/symphony/build-image.ts',
+      deployScriptPath: 'packages/scripts/src/symphony/deploy-service.ts',
+    })
+    expect(entry('symphony-jangar').workflowPaths).toContain('.github/workflows/symphony-build-push.yaml')
+    expect(entry('symphony-jangar').deferredReason).toBeUndefined()
   })
 
-  it('tracks Torghut-family enabled apps through explicit Nix image ownership paths', () => {
-    expect(entry('torghut-hyperliquid-feed')).toMatchObject({
-      class: 'nix-image',
-      nixImageAttr: 'torghut-hyperliquid-feed-image',
-      buildScriptPath: 'packages/scripts/src/torghut/build-hyperliquid-feed-image.ts',
-      deployScriptPath: 'packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts',
-    })
-    expect(entry('torghut-hyperliquid-feed').workflowPaths).toContain(
-      '.github/workflows/torghut-hyperliquid-feed-build-push.yaml',
-    )
-
-    expect(entry('torghut-hyperliquid-runtime')).toMatchObject({
-      class: 'nix-image',
-      nixImageAttr: 'torghut-image',
-      buildScriptPath: 'packages/scripts/src/torghut/build-image.ts',
-      deployScriptPath: 'packages/scripts/src/torghut/update-manifests.ts',
-    })
-    expect(entry('torghut-hyperliquid-runtime').workflowPaths).toContain('.github/workflows/torghut-build-push.yaml')
-
-    expect(entry('torghut-options')).toMatchObject({
-      class: 'nix-image',
-      nixImageAttr: 'torghut-image',
-      buildScriptPath: 'packages/scripts/src/torghut/build-image.ts',
-      deployScriptPath: 'packages/scripts/src/torghut/update-manifests.ts',
-    })
-    expect(entry('torghut-options').workflowPaths).toContain('.github/workflows/torghut-build-push.yaml')
-    expect(entry('torghut-options').workflowPaths).toContain('.github/workflows/torghut-ws-build-push.yaml')
-    expect(entry('torghut-options').workflowPaths).toContain('.github/workflows/torghut-ta-build-push.yaml')
+  it('excludes retired Torghut applications from the enabled inventory', () => {
+    for (const name of [
+      'symphony-torghut',
+      'torghut-options',
+      'torghut-hyperliquid-feed',
+      'torghut-hyperliquid-runtime',
+    ]) {
+      expect(inventory.entries.some((candidate) => candidate.name === name)).toBe(false)
+    }
   })
 
   it('keeps repo-image apps without local build ownership out of Nix migration state', () => {
@@ -744,7 +725,7 @@ describe('enabled app inventory', () => {
       class: 'vendor-manifest',
       hasHelmChart: false,
       repoImages: [
-        'registry.ide-newton.ts.net/lab/hermes-agent@sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a',
+        'registry.ide-newton.ts.net/lab/hermes-agent@sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843',
       ],
     })
     expect(entry('hermes').deferredReason).toContain('NousResearch/hermes-agent')

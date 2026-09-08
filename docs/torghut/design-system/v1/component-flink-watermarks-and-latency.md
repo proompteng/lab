@@ -6,11 +6,11 @@
 - Last updated: **2026-02-08**
 - Source of truth (config): `argocd/applications/torghut/**`
 
-## Source Implementation Audit (2026-07-04)
+## Historical Source Audit (2026-07-04)
 
 - Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
 - Implementation status: **Implemented for event-time watermarks and latency/status signaling, with additional quote-freshness logic.** The current TA job assigns timestamps/watermarks from envelope event time, uses processing-time status heartbeats, and tracks quote staleness for signal quality.
-- Current source evidence:
+- Source evidence inspected:
   - `FlinkTechnicalAnalysisJob.kt` imports `WatermarkStrategy`, reads Kafka with `WatermarkStrategy.noWatermarks()` first, then applies `assignTimestampsAndWatermarks(watermarkStrategy(config))` to trades, quotes, and bars streams.
   - `watermarkStrategy(config)` uses `config.maxOutOfOrderMs`; GitOps sets `TA_MAX_OUT_OF_ORDER_MS=2000`.
   - `StatusHeartbeatProcessFunction` emits status payloads with current watermark, lag, and last-event context when `TA_STATUS_TOPIC` is configured.

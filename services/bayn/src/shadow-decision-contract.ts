@@ -52,10 +52,8 @@ import {
   type PlannedTargetQuantity,
   type TargetPlannerInput,
 } from './target-planner'
-import {
-  deriveIntradayMomentumSignalMetrics,
-  verifyIntradayMomentumDecisionEnvelope,
-} from './strategy/intraday-momentum/decision'
+import { verifyIntradayMomentumDecisionEnvelope } from './strategy/intraday-momentum/decision'
+import { deriveIntradayMomentumSignalMetrics } from './strategy/intraday-momentum/decision-core'
 import { PersistedStrategyDecisionSchema, RuntimeStrategyDecisionSchema } from './strategy/runtime-decision'
 import {
   intradayMomentumSignalRejectionReasons,
@@ -93,6 +91,12 @@ const ExecutionLineageSchema = Schema.Struct({
   recordCount: PositiveIntegerSchema,
 })
 
+const ExecutionCandidateExclusionSchema = Schema.Struct({
+  symbol: SymbolSchema,
+  reason: Schema.Literals(['not-ready', 'freshness']),
+  message: StrictNonEmptyStringSchema,
+})
+
 const ExecutionMarketDataBindingFields = {
   snapshotSchemaVersion: Schema.Literal('bayn.intraday-market-snapshot.v1'),
   sessionDate: IsoDateSchema,
@@ -103,6 +107,9 @@ const ExecutionMarketDataBindingFields = {
   universeId: StrictNonEmptyStringSchema,
   universeSymbolHash: Sha256Schema,
   symbols: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique()),
+  /** Independent entry evidence carries the complete candidate request and its availability result. */
+  candidateSymbols: Schema.optionalKey(Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique())),
+  candidateExclusions: Schema.optionalKey(Schema.Array(ExecutionCandidateExclusionSchema).check(Schema.isUnique())),
   purpose: Schema.optionalKey(Schema.Enum(IntradaySnapshotPurpose)),
   feed: Schema.Literals(['iex', 'sip', 'delayed_sip']),
   delayClass: Schema.Literals(['real_time_exchange_only', 'real_time_consolidated', 'delayed_15m_consolidated']),
@@ -191,6 +198,58 @@ const marketDataBindingIssues = (
   }
   if (binding.purpose !== undefined && universe === undefined) {
     issues.push({ path: ['universe'], issue: 'must bind the canonical source universe for quote-only evidence' })
+  }
+  const candidateSymbols = binding.candidateSymbols
+  const candidateExclusions = binding.candidateExclusions
+  if ((candidateSymbols === undefined) !== (candidateExclusions === undefined)) {
+    issues.push({
+      path: ['candidateSymbols'],
+      issue: 'independent candidate evidence must include candidate symbols and exclusions together',
+    })
+  }
+  if (candidateSymbols !== undefined || candidateExclusions !== undefined) {
+    if (binding.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
+      issues.push({
+        path: ['schemaVersion'],
+        issue: 'independent candidate evidence requires execution market-data binding v2',
+      })
+    }
+    if (binding.purpose !== undefined) {
+      issues.push({
+        path: ['purpose'],
+        issue: 'independent candidate evidence cannot be attached to quote-only market data',
+      })
+    }
+    if (candidateSymbols !== undefined) {
+      const orderedCandidates = candidateSymbols.toSorted(compareCanonicalText)
+      if (candidateSymbols.some((symbol, index) => symbol !== orderedCandidates[index])) {
+        issues.push({ path: ['candidateSymbols'], issue: 'must be canonically ordered' })
+      }
+      if (candidateSymbols.some((symbol) => !binding.symbols.includes(symbol))) {
+        issues.push({
+          path: ['candidateSymbols'],
+          issue: 'must be a subset of the bound decision snapshot symbols',
+        })
+      }
+    }
+    if (candidateExclusions !== undefined) {
+      const orderedExclusions = candidateExclusions.toSorted((left, right) =>
+        compareCanonicalText(left.symbol, right.symbol),
+      )
+      if (candidateExclusions.some((exclusion, index) => exclusion !== orderedExclusions[index])) {
+        issues.push({ path: ['candidateExclusions'], issue: 'must be canonically ordered by symbol' })
+      }
+      const exclusionSymbols = candidateExclusions.map(({ symbol }) => symbol)
+      if (
+        new Set(exclusionSymbols).size !== exclusionSymbols.length ||
+        (candidateSymbols !== undefined && exclusionSymbols.some((symbol) => !candidateSymbols.includes(symbol)))
+      ) {
+        issues.push({
+          path: ['candidateExclusions'],
+          issue: 'must contain unique symbols from the bound candidate universe',
+        })
+      }
+    }
   }
   const orderedUniverse = universe?.toSorted(compareCanonicalText)
   const orderedSymbols = binding.symbols.toSorted(compareCanonicalText)
@@ -530,21 +589,37 @@ const executionBindingMatchesIntradayMomentumProtocol = (
   binding.sourceTopics.bars === defaultIntradayMomentumProtocolDocument.sourceTopics.bars &&
   binding.sourceTopics.quotes === defaultIntradayMomentumProtocolDocument.sourceTopics.quotes &&
   binding.sourceTopics.trades === defaultIntradayMomentumProtocolDocument.sourceTopics.trades &&
-  binding.maximumQuoteAgeMs === defaultIntradayMomentumProtocolDocument.maximumQuoteAgeMs
+  binding.maximumQuoteAgeMs === defaultIntradayMomentumProtocolDocument.maximumQuoteAgeMs &&
+  (binding.candidateSymbols === undefined ||
+    sameStrings(binding.candidateSymbols, defaultIntradayMomentumProtocolDocument.candidateSymbols))
 
 const intradayMomentumAllocationIssues = (
   targetPlan: typeof TargetPlanResultSchema.Type,
   strategyDecision: Extract<
     typeof RuntimeStrategyDecisionSchema.Type,
-    { readonly schemaVersion: 'bayn.intraday-momentum.target.v2' }
+    { readonly schemaVersion: 'bayn.intraday-momentum.target.v3' }
   >,
 ): readonly Schema.FilterIssue[] => {
   const issues: Schema.FilterIssue[] = []
   const signalSymbols = strategyDecision.signals.map(({ symbol }) => symbol)
-  if (!sameStrings(signalSymbols, defaultIntradayMomentumProtocolDocument.candidateSymbols)) {
+  const excludedCandidateSymbols = strategyDecision.excludedCandidates.map(({ symbol }) => symbol)
+  const allCandidateSymbols = [...signalSymbols, ...excludedCandidateSymbols]
+  const expectedCandidateSymbols: readonly string[] = defaultIntradayMomentumProtocolDocument.candidateSymbols
+  if (
+    new Set(signalSymbols).size !== signalSymbols.length ||
+    signalSymbols.some((symbol) => !expectedCandidateSymbols.includes(symbol)) ||
+    signalSymbols.some((symbol, index) => {
+      const previous = index === 0 ? undefined : signalSymbols[index - 1]
+      return previous !== undefined && previous > symbol
+    }) ||
+    new Set(excludedCandidateSymbols).size !== excludedCandidateSymbols.length ||
+    excludedCandidateSymbols.some((symbol) => !expectedCandidateSymbols.includes(symbol)) ||
+    !sameStrings(allCandidateSymbols.toSorted(compareCanonicalText), expectedCandidateSymbols)
+  ) {
     issues.push({
       path: ['strategyDecision', 'signals'],
-      issue: 'intraday-momentum signals must cover the source-controlled candidate universe in order',
+      issue:
+        'intraday-momentum signals and exclusions must cover the source-controlled candidate universe exactly once',
     })
   }
   const benchmark = strategyDecision.benchmark
@@ -641,7 +716,9 @@ const intradayMomentumAllocationIssues = (
 
   if (targetPlan.status !== TargetPlanStatus.Blocked) {
     const targetSymbols = new Set(targetPlan.targets.map(({ symbol }) => symbol))
-    const decisionSymbols = Object.keys(strategyDecision.targetWeights)
+    const decisionSymbols = Object.entries(strategyDecision.targetWeights)
+      .filter(([, weight]) => weight > 0)
+      .map(([symbol]) => symbol)
     const missingDecisionTarget = decisionSymbols.some((symbol) => !targetSymbols.has(symbol))
     const invalidAdditionalTarget = targetPlan.targets.some(
       ({ symbol, targetWeight, currentQuantityMicros }) =>
@@ -650,7 +727,8 @@ const intradayMomentumAllocationIssues = (
     if (missingDecisionTarget || invalidAdditionalTarget) {
       issues.push({
         path: ['targetPlan', 'targets'],
-        issue: 'intraday-momentum entry targets must retain every strategy weight and only add held close targets',
+        issue:
+          'intraday-momentum entry targets must retain every positive strategy weight and only add held close targets',
       })
     }
   }
@@ -780,6 +858,7 @@ export const reconstructBoundIntradaySnapshot = (
       universeSymbolHash: binding.universeSymbolHash,
       universe: binding.universe,
       symbols: binding.symbols,
+      ...(binding.candidateSymbols === undefined ? {} : { candidateSymbols: binding.candidateSymbols }),
       ...(binding.purpose === undefined ? {} : { purpose: binding.purpose }),
       feed: binding.feed,
       delayClass: binding.delayClass,
@@ -1149,7 +1228,9 @@ const executionMaterialIssues = (
       issue: 'must match the exact market-data snapshot persisted by the target plan',
     })
   }
-  const isLegacyIntradayEntry = strategyDecision?.schemaVersion === 'bayn.intraday-momentum.target.v1'
+  const isLegacyIntradayEntry =
+    strategyDecision?.schemaVersion === 'bayn.intraday-momentum.target.v1' ||
+    strategyDecision?.schemaVersion === 'bayn.intraday-momentum.target.v2'
   if (document.bindings.strategyName === 'intraday-momentum' && !isClosePlan && !isLegacyIntradayEntry) {
     if (document.plannerInput === undefined) {
       issues.push({
@@ -1157,7 +1238,7 @@ const executionMaterialIssues = (
         issue: 'intraday-momentum entry requires persisted target-planner evidence',
       })
     }
-    if (strategyDecision?.schemaVersion !== 'bayn.intraday-momentum.target.v2') {
+    if (strategyDecision?.schemaVersion !== 'bayn.intraday-momentum.target.v3') {
       issues.push({
         path: ['strategyDecision'],
         issue: 'intraday-momentum entry requires its complete persisted selected-signal evidence',
@@ -1209,7 +1290,7 @@ const executionMaterialIssues = (
               ...selectedCalendarSession,
             })
       if (
-        strategyDecision?.schemaVersion === 'bayn.intraday-momentum.target.v2' &&
+        strategyDecision?.schemaVersion === 'bayn.intraday-momentum.target.v3' &&
         (strategyDecision.snapshotId !== decisionMarketData.snapshotId ||
           strategyDecision.sessionDate !== decisionMarketData.sessionDate ||
           strategyDecision.observedAt !== decisionMarketData.observedAt ||

@@ -1,5 +1,6 @@
 import 'server-only'
 
+import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import * as grpc from '@grpc/grpc-js'
@@ -15,6 +16,7 @@ import type {
   TengriCodexThread,
   TengriCodexTurn,
   TengriCondition,
+  TengriErrorCode,
   TengriFileEntry,
   TengriFileEvent,
   TengriFileEventKind,
@@ -29,6 +31,8 @@ import { readTengriBffSecret } from './runtime-secrets'
 const DEFAULT_GRPC_DEADLINE_MS = 15_000
 const MAX_GRPC_MESSAGE_BYTES = 16 * 1024 * 1024
 const PROTO_RELATIVE_PATH = 'proompteng/runtime/v1/microvm.proto'
+const NO_PRESERVED_SCALAR_DEFAULTS = new Set<string>()
+const WATCH_FILES_PRESERVED_SCALAR_DEFAULTS = new Set(['afterSequence'])
 
 type RawRecord = Record<string, unknown>
 type RawAgent = RawRecord & {
@@ -46,6 +50,7 @@ type RawAgent = RawRecord & {
   lastActivityAt?: string
   idleDeadline?: string
   expiresAt?: string
+  pendingImage?: string
   conditions?: RawRecord[]
 }
 
@@ -81,11 +86,13 @@ type RuntimeDescriptor = {
 
 export class TengriUnavailableError extends Error {
   readonly status: number
+  readonly code?: TengriErrorCode
 
-  constructor(message: string, status = 503) {
+  constructor(message: string, status = 503, code?: TengriErrorCode) {
     super(message)
     this.name = 'TengriUnavailableError'
     this.status = status
+    this.code = code
   }
 }
 
@@ -129,21 +136,48 @@ export async function listFiles(subject: string, agentId: string, filePath: stri
 }
 
 export async function readFile(subject: string, agentId: string, filePath: string) {
-  const response = await unary<{ path?: string; content?: Uint8Array; contentType?: string }>(
+  const response = await unary<{ path?: string; content?: Uint8Array; contentType?: string; revision?: string }>(
     'readFile',
     { agentId, path: filePath },
     subject,
     130_000,
   )
+  const content = response.content ?? new Uint8Array()
+  const revision = stringValue(response.revision)
+  if (revision && revision !== createHash('sha256').update(content).digest('hex')) {
+    throw new TengriUnavailableError('The file revision could not be verified. Reopen the file before editing.')
+  }
   return {
     path: stringValue(response.path, filePath),
-    content: decodeUtf8File(response.content ?? new Uint8Array()),
+    content: decodeUtf8File(content),
     contentType: stringValue(response.contentType, 'application/octet-stream'),
+    revision,
   }
 }
 
-export async function writeFile(subject: string, agentId: string, filePath: string, content: string) {
-  return unary('writeFile', { agentId, path: filePath, content: Buffer.from(content) }, subject, 130_000)
+export async function writeFile(
+  subject: string,
+  agentId: string,
+  filePath: string,
+  content: string,
+  expectedRevision: string,
+  signal?: AbortSignal,
+) {
+  if (!/^(?:[a-f0-9]{64}|missing)$/.test(expectedRevision)) {
+    throw new TengriUnavailableError('A base file revision is required before saving', 400)
+  }
+  const bytes = Buffer.from(content)
+  const response = await unary<{ path?: string; size?: number; revision?: string }>(
+    'writeFile',
+    { agentId, path: filePath, content: bytes, expectedRevision },
+    subject,
+    130_000,
+    signal,
+  )
+  if (response.revision !== createHash('sha256').update(bytes).digest('hex')) {
+    throw new TengriUnavailableError('The save could not be confirmed. Reopen the file to check its contents.')
+  }
+  return { path: stringValue(response.path, filePath), size: numberValue(response.size), revision: response.revision }
 }
 
 export async function createDirectory(subject: string, agentId: string, filePath: string) {
@@ -173,8 +207,10 @@ export async function searchFiles(subject: string, agentId: string, filePath: st
   } satisfies TengriFileSearchResult
 }
 
-export function watchFiles(subject: string, agentId: string, filePath: string, afterSequence: number) {
-  return stream('watchFiles', { agentId, path: filePath, afterSequence }, subject)
+export function watchFiles(subject: string, agentId: string, filePath: string, afterSequence?: number) {
+  const request: RawRecord = { agentId, path: filePath }
+  if (afterSequence !== undefined) request.afterSequence = afterSequence
+  return stream('watchFiles', request, subject, WATCH_FILES_PRESERVED_SCALAR_DEFAULTS)
 }
 
 export function normalizeFileEvent(event: RawRecord): TengriFileEvent {
@@ -237,8 +273,26 @@ export async function getCodexAccount(
   }
 }
 
+export async function getCodexLogin(
+  subject: string,
+  agentId: string,
+  signal?: AbortSignal,
+): Promise<TengriCodexLogin | null> {
+  try {
+    const response = await unary<RawRecord>('getCodexLogin', { agentId }, subject, 130_000, signal)
+    return normalizeCodexLogin(response)
+  } catch (error) {
+    if (error instanceof TengriUnavailableError && error.status === 404) return null
+    throw error
+  }
+}
+
 export async function startCodexLogin(subject: string, agentId: string): Promise<TengriCodexLogin> {
   const response = await unary<RawRecord>('startCodexLogin', { agentId }, subject, 130_000)
+  return normalizeCodexLogin(response)
+}
+
+function normalizeCodexLogin(response: RawRecord): TengriCodexLogin {
   return {
     loginId: stringValue(response.loginId),
     verificationUrl: stringValue(response.verificationUrl),
@@ -249,20 +303,35 @@ export async function startCodexLogin(subject: string, agentId: string): Promise
 
 export async function createCodexThread(subject: string, agentId: string): Promise<TengriCodexThread> {
   const response = await unary<RawRecord>('createCodexThread', { agentId }, subject, 130_000)
-  return {
-    id: stringValue(response.id),
-    rawJson: stringValue(response.rawJson),
-    eventSequence: sequenceValue(response.eventSequence),
-  }
+  return normalizeCodexThread(response)
 }
 
 export async function resumeCodexThread(subject: string, agentId: string, threadId: string) {
   const response = await unary<RawRecord>('resumeCodexThread', { agentId, threadId }, subject, 130_000)
+  return normalizeCodexThread(response)
+}
+
+function normalizeCodexThread(response: RawRecord): TengriCodexThread {
+  const eventSequence = sequenceValue(response.eventSequence)
+  const itemCursors: Array<[string, number]> = []
+  if (response.itemEventSequences !== undefined && response.itemEventSequences !== null) {
+    if (typeof response.itemEventSequences !== 'object' || Array.isArray(response.itemEventSequences)) {
+      throw new TengriUnavailableError('Tengri control plane returned invalid Codex item cursors')
+    }
+    for (const [id, value] of Object.entries(response.itemEventSequences)) {
+      const sequence = sequenceValue(value)
+      if (sequence < eventSequence) {
+        throw new TengriUnavailableError('Tengri control plane returned an outdated Codex item cursor')
+      }
+      itemCursors.push([id, sequence])
+    }
+  }
   return {
     id: stringValue(response.id),
     rawJson: stringValue(response.rawJson),
-    eventSequence: sequenceValue(response.eventSequence),
-  } satisfies TengriCodexThread
+    eventSequence,
+    itemEventSequences: Object.fromEntries(itemCursors),
+  }
 }
 
 export async function sendCodexTurn(subject: string, agentId: string, threadId: string, text: string) {
@@ -303,12 +372,14 @@ export async function issuePreviewSession(
   agentId: string,
   port: number,
   path: string,
+  fragment: string,
 ): Promise<TengriPreviewSession> {
-  const response = await unary<RawRecord>('issuePreviewSession', { agentId, port, path }, subject, 130_000)
+  const response = await unary<RawRecord>('issuePreviewSession', { agentId, port, path, fragment }, subject, 130_000)
   return {
     id: stringValue(response.id),
     launchUrl: stringValue(response.launchUrl),
     expiresAt: stringValue(response.expiresAt),
+    previewOrigin: stringValue(response.previewOrigin),
   }
 }
 
@@ -367,7 +438,7 @@ async function unary<Response = RawRecord>(
         if (settled) return
         settled = true
         signal?.removeEventListener('abort', onAbort)
-        if (error) reject(mapGrpcError(error))
+        if (error) reject(mapGrpcError(error, methodName))
         else resolve(response as Response)
       },
     )
@@ -382,16 +453,26 @@ function abortedRequestError() {
   return error
 }
 
-function stream(methodName: string, request: RawRecord, subject: string) {
+function stream(
+  methodName: string,
+  request: RawRecord,
+  subject: string,
+  preservedScalarDefaults: ReadonlySet<string> = NO_PRESERVED_SCALAR_DEFAULTS,
+) {
   const client = getClient()
   const method = client[methodName] as StreamMethod
   if (typeof method !== 'function') throw new TengriUnavailableError(`Tengri method ${methodName} is unavailable`)
-  const canonicalRequest = canonicalizeProto3Request(request)
+  const canonicalRequest = canonicalizeProto3Request(request, preservedScalarDefaults)
   return method.call(client, canonicalRequest, metadata(subject, methodName, canonicalRequest), callOptions(0))
 }
 
-function canonicalizeProto3Request(request: RawRecord) {
-  return Object.fromEntries(Object.entries(request).filter(([, value]) => !isProto3ScalarDefault(value)))
+function canonicalizeProto3Request(
+  request: RawRecord,
+  preservedScalarDefaults: ReadonlySet<string> = NO_PRESERVED_SCALAR_DEFAULTS,
+) {
+  return Object.fromEntries(
+    Object.entries(request).filter(([key, value]) => preservedScalarDefaults.has(key) || !isProto3ScalarDefault(value)),
+  )
 }
 
 function isProto3ScalarDefault(value: unknown) {
@@ -486,7 +567,7 @@ function callOptions(deadlineMs: number): grpc.CallOptions {
   return deadlineMs > 0 ? { deadline: Date.now() + deadlineMs } : {}
 }
 
-function mapGrpcError(error: grpc.ServiceError) {
+function mapGrpcError(error: grpc.ServiceError, methodName: string) {
   switch (error.code) {
     case grpc.status.INVALID_ARGUMENT:
       return new TengriUnavailableError('Tengri request is invalid', 400)
@@ -495,17 +576,54 @@ function mapGrpcError(error: grpc.ServiceError) {
     case grpc.status.PERMISSION_DENIED:
       return new TengriUnavailableError('Tengri request is not permitted', 403)
     case grpc.status.NOT_FOUND:
+      if (methodName === 'resumeCodexThread' && isMissingCodexConversation(error.details)) {
+        return new TengriUnavailableError('Codex conversation could not be found', 404, 'conversation_not_found')
+      }
       return new TengriUnavailableError('Tengri resource was not found', 404)
     case grpc.status.ALREADY_EXISTS:
+      if (methodName === 'writeFile') {
+        return new TengriUnavailableError(
+          'File changed since it was opened. Review the changes before saving.',
+          409,
+          'file_conflict',
+        )
+      }
       return new TengriUnavailableError('Tengri resource already exists', 409)
     case grpc.status.FAILED_PRECONDITION:
+      if (methodName === 'writeFile') {
+        return new TengriUnavailableError(
+          'This guest needs an update before saving. Sleep and resume the agent, then reopen the file.',
+          412,
+        )
+      }
       return new TengriUnavailableError('Tengri request cannot be completed in the current state', 412)
     case grpc.status.RESOURCE_EXHAUSTED:
+      if (methodName === 'createAgent') {
+        return new TengriUnavailableError(
+          'All six workspace slots are occupied. Existing workspaces are retained until their owners delete them. Try again when a slot becomes available.',
+          429,
+          'capacity_full',
+        )
+      }
       return new TengriUnavailableError('Tengri capacity is exhausted', 429)
     case grpc.status.DEADLINE_EXCEEDED:
       return new TengriUnavailableError('Tengri request timed out', 504)
     default:
       return new TengriUnavailableError('Tengri control plane is unavailable', 503)
+  }
+}
+
+function isMissingCodexConversation(details: string) {
+  try {
+    const payload: unknown = JSON.parse(details)
+    return (
+      typeof payload === 'object' &&
+      payload !== null &&
+      'error' in payload &&
+      payload.error === 'Codex conversation could not be found'
+    )
+  } catch {
+    return false
   }
 }
 
@@ -533,6 +651,7 @@ function normalizeAgent(agent: RawAgent): TengriAgent {
     lastActivityAt: stringValue(agent.lastActivityAt),
     idleDeadline: stringValue(agent.idleDeadline),
     expiresAt: stringValue(agent.expiresAt),
+    pendingImage: stringValue(agent.pendingImage),
     conditions: (agent.conditions ?? []).map(normalizeCondition),
   }
 }

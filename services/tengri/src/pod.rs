@@ -6,7 +6,8 @@ use k8s_openapi::{
         HTTPGetAction, PersistentVolumeClaim, PersistentVolumeClaimSpec,
         PersistentVolumeClaimVolumeSource, Pod, PodSecurityContext, PodSpec, Probe,
         ResourceRequirements, SeccompProfile, Secret, SecretKeySelector, SecurityContext,
-        Toleration, TopologySpreadConstraint, Volume, VolumeMount, VolumeResourceRequirements,
+        Toleration, TopologySpreadConstraint, Volume, VolumeDevice, VolumeMount,
+        VolumeResourceRequirements,
     },
     apimachinery::pkg::{api::resource::Quantity, apis::meta::v1::LabelSelector},
 };
@@ -15,6 +16,7 @@ use kube::{
     api::{ObjectMeta, Patch, PatchParams},
 };
 use rand::distr::{Alphanumeric, SampleString};
+use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use crate::crd::MicroVM;
@@ -25,11 +27,34 @@ pub const BOOTSTRAP_TOKEN_KEY: &str = "token";
 pub const STORAGE_CLASS: &str = "rook-ceph-block";
 pub const STORAGE_LAYOUT_ANNOTATION: &str = "runtime.proompteng.ai/storage-layout";
 pub const SINGLE_MOUNT_STORAGE_LAYOUT: &str = "home-workspace-v2";
+pub const PERSISTENT_BLOCK_CAPABILITY_LABEL: &str =
+    "runtime.proompteng.ai/kata-fc-persistent-block";
+pub const PERSISTENT_BLOCK_INITIALIZATION_ANNOTATION: &str =
+    "runtime.proompteng.ai/persistent-block-initialization";
+const HOME_BLOCK_DEVICE_PATH: &str = "/dev/tengri-home";
+const HOME_BLOCK_MOUNT_PATH: &str = "/home/nanoagent";
+const KATA_HOME_BLOCK_ANNOTATION_PREFIX: &str = "io.katacontainers.volume.tengri-home";
+pub const KATA_HOME_BLOCK_INITIALIZATION_TOKEN_ANNOTATION: &str =
+    "io.katacontainers.volume.tengri-home.initialization_token";
+const PERSISTENT_BLOCK_INITIALIZATION_PENDING: &str = "pending";
+const PERSISTENT_BLOCK_INITIALIZATION_COMPLETE: &str = "complete";
 const GUEST_UID: i64 = 1_000;
 const MAX_DNS_LABEL_LENGTH: usize = 63;
 const MAX_DNS_SUBDOMAIN_LENGTH: usize = 253;
 const MAX_LABEL_VALUE_LENGTH: usize = 63;
 const HASH_SUFFIX_LENGTH: usize = 16;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PersistentBlockInitialization {
+    Pending,
+    Complete,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersistentHomeClaim {
+    pub name: String,
+    pub initialization: PersistentBlockInitialization,
+}
 
 pub fn bootstrap_secret_name(microvm: &MicroVM) -> String {
     bounded_child_name(&microvm.name_any(), "bootstrap")
@@ -134,18 +159,35 @@ pub async fn ensure_pvc(
     client: Client,
     namespace: &str,
     microvm: &MicroVM,
-) -> Result<String, KubeError> {
+) -> Result<PersistentHomeClaim, KubeError> {
     let name = pvc_name(microvm);
     let claims: Api<PersistentVolumeClaim> = Api::namespaced(client, namespace);
+    if let Some(existing) = claims.get_opt(&name).await? {
+        let initialization = validate_persistent_home_claim(&existing, microvm, &name)?;
+        return Ok(PersistentHomeClaim {
+            name,
+            initialization,
+        });
+    }
+
     let claim = build_pvc(microvm, namespace);
     let params = PatchParams::apply(MANAGER_NAME).force();
     claims.patch(&name, &params, &Patch::Apply(&claim)).await?;
-    Ok(name)
+    Ok(PersistentHomeClaim {
+        name,
+        initialization: PersistentBlockInitialization::Pending,
+    })
 }
 
 pub fn build_pvc(microvm: &MicroVM, namespace: &str) -> PersistentVolumeClaim {
+    let mut metadata = managed_metadata(microvm, namespace, &pvc_name(microvm));
+    metadata.annotations = Some(BTreeMap::from([(
+        PERSISTENT_BLOCK_INITIALIZATION_ANNOTATION.to_owned(),
+        PERSISTENT_BLOCK_INITIALIZATION_PENDING.to_owned(),
+    )]));
+
     PersistentVolumeClaim {
-        metadata: managed_metadata(microvm, namespace, &pvc_name(microvm)),
+        metadata,
         spec: Some(PersistentVolumeClaimSpec {
             access_modes: Some(vec!["ReadWriteOnce".to_owned()]),
             resources: Some(VolumeResourceRequirements {
@@ -156,10 +198,93 @@ pub fn build_pvc(microvm: &MicroVM, namespace: &str) -> PersistentVolumeClaim {
                 ..VolumeResourceRequirements::default()
             }),
             storage_class_name: Some(STORAGE_CLASS.to_owned()),
+            volume_mode: Some("Block".to_owned()),
             ..PersistentVolumeClaimSpec::default()
         }),
         ..PersistentVolumeClaim::default()
     }
+}
+
+pub async fn mark_pvc_initialized(
+    client: Client,
+    namespace: &str,
+    microvm: &MicroVM,
+) -> Result<(), KubeError> {
+    let name = pvc_name(microvm);
+    let claims: Api<PersistentVolumeClaim> = Api::namespaced(client, namespace);
+    let existing = claims.get(&name).await?;
+    let initialization = validate_persistent_home_claim(&existing, microvm, &name)?;
+    if initialization == PersistentBlockInitialization::Complete {
+        return Ok(());
+    }
+
+    let mut patch = json!({
+        "metadata": {
+            "resourceVersion": existing.resource_version(),
+            "annotations": {},
+        }
+    });
+    patch["metadata"]["annotations"][PERSISTENT_BLOCK_INITIALIZATION_ANNOTATION] =
+        json!(PERSISTENT_BLOCK_INITIALIZATION_COMPLETE);
+    claims
+        .patch(&name, &PatchParams::default(), &Patch::Merge(&patch))
+        .await?;
+    Ok(())
+}
+
+fn validate_persistent_home_claim(
+    claim: &PersistentVolumeClaim,
+    microvm: &MicroVM,
+    name: &str,
+) -> Result<PersistentBlockInitialization, KubeError> {
+    if !is_controlled_by_microvm(claim, microvm) {
+        return Err(invalid_persistent_home_claim(format!(
+            "persistent home claim {name} already exists and is not controlled by MicroVM {}",
+            microvm.name_any()
+        )));
+    }
+
+    let volume_mode = claim
+        .spec
+        .as_ref()
+        .and_then(|spec| spec.volume_mode.as_deref())
+        .unwrap_or("Filesystem");
+    if volume_mode != "Block" {
+        return Err(invalid_persistent_home_claim(format!(
+            "persistent home claim {name} uses unsupported volume mode {volume_mode}; delete and recreate the agent"
+        )));
+    }
+
+    match claim
+        .metadata
+        .annotations
+        .as_ref()
+        .and_then(|annotations| annotations.get(PERSISTENT_BLOCK_INITIALIZATION_ANNOTATION))
+        .map(String::as_str)
+    {
+        Some(PERSISTENT_BLOCK_INITIALIZATION_PENDING) => Ok(PersistentBlockInitialization::Pending),
+        Some(PERSISTENT_BLOCK_INITIALIZATION_COMPLETE) => {
+            Ok(PersistentBlockInitialization::Complete)
+        }
+        Some(state) => Err(invalid_persistent_home_claim(format!(
+            "persistent home claim {name} has unsupported initialization state {state}; delete and recreate the agent"
+        ))),
+        None => Err(invalid_persistent_home_claim(format!(
+            "persistent home claim {name} has no initialization state; delete and recreate the agent"
+        ))),
+    }
+}
+
+fn invalid_persistent_home_claim(message: String) -> KubeError {
+    KubeError::Api(
+        kube::core::Status {
+            code: 422,
+            reason: "Invalid".to_owned(),
+            message,
+            ..kube::core::Status::default()
+        }
+        .boxed(),
+    )
 }
 
 pub fn build_pod(
@@ -167,17 +292,28 @@ pub fn build_pod(
     namespace: &str,
     bootstrap_secret: &str,
     home_claim: &str,
-) -> Pod {
+    initialization: PersistentBlockInitialization,
+) -> Result<Pod, KubeError> {
     let name = microvm.name_any();
+    let initialization_token = match initialization {
+        PersistentBlockInitialization::Pending => {
+            Some(persistent_block_initialization_token(microvm)?)
+        }
+        PersistentBlockInitialization::Complete => None,
+    };
     let mut node_selector = BTreeMap::from([(
         "runtime.proompteng.ai/kata-fc".to_owned(),
         "ready".to_owned(),
     )]);
     node_selector.insert(
+        PERSISTENT_BLOCK_CAPABILITY_LABEL.to_owned(),
+        "ready".to_owned(),
+    );
+    node_selector.insert(
         "kubernetes.io/arch".to_owned(),
         microvm.spec.architecture.kubernetes_label().to_owned(),
     );
-    let annotations = BTreeMap::from([
+    let mut annotations = BTreeMap::from([
         (
             "runtime.proompteng.ai/isolation".to_owned(),
             "firecracker".to_owned(),
@@ -186,9 +322,27 @@ pub fn build_pod(
             STORAGE_LAYOUT_ANNOTATION.to_owned(),
             SINGLE_MOUNT_STORAGE_LAYOUT.to_owned(),
         ),
+        (
+            format!("{KATA_HOME_BLOCK_ANNOTATION_PREFIX}.mount_path"),
+            HOME_BLOCK_MOUNT_PATH.to_owned(),
+        ),
+        (
+            format!("{KATA_HOME_BLOCK_ANNOTATION_PREFIX}.fs_type"),
+            "ext4".to_owned(),
+        ),
+        (
+            format!("{KATA_HOME_BLOCK_ANNOTATION_PREFIX}.fs_group"),
+            GUEST_UID.to_string(),
+        ),
     ]);
+    if let Some(initialization_token) = initialization_token {
+        annotations.insert(
+            KATA_HOME_BLOCK_INITIALIZATION_TOKEN_ANNOTATION.to_owned(),
+            initialization_token,
+        );
+    }
 
-    Pod {
+    Ok(Pod {
         metadata: ObjectMeta {
             annotations: Some(annotations),
             ..managed_metadata(microvm, namespace, &name)
@@ -231,7 +385,26 @@ pub fn build_pod(
             ..PodSpec::default()
         }),
         ..Pod::default()
-    }
+    })
+}
+
+fn persistent_block_initialization_token(microvm: &MicroVM) -> Result<String, KubeError> {
+    let uid = microvm.metadata.uid.as_deref().ok_or_else(|| {
+        KubeError::Api(
+            kube::core::Status {
+                code: 422,
+                reason: "Invalid".to_owned(),
+                message: format!(
+                    "MicroVM {} is missing the UID required to initialize persistent storage",
+                    microvm.name_any()
+                ),
+                ..kube::core::Status::default()
+            }
+            .boxed(),
+        )
+    })?;
+
+    Ok(format!("tengri-{}", stable_digest(uid)))
 }
 
 pub fn has_current_storage_layout(microvm: &MicroVM) -> bool {
@@ -368,18 +541,11 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
             ..EnvVar::default()
         },
     ]);
-    let volume_mounts = vec![
-        VolumeMount {
-            name: "home".to_owned(),
-            mount_path: "/home/nanoagent".to_owned(),
-            ..VolumeMount::default()
-        },
-        VolumeMount {
-            name: "tmp".to_owned(),
-            mount_path: "/tmp".to_owned(),
-            ..VolumeMount::default()
-        },
-    ];
+    let volume_mounts = vec![VolumeMount {
+        name: "tmp".to_owned(),
+        mount_path: "/tmp".to_owned(),
+        ..VolumeMount::default()
+    }];
 
     Container {
         name: "nanoagent".to_owned(),
@@ -418,6 +584,10 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
             ..SecurityContext::default()
         }),
         volume_mounts: Some(volume_mounts),
+        volume_devices: Some(vec![VolumeDevice {
+            name: "home".to_owned(),
+            device_path: HOME_BLOCK_DEVICE_PATH.to_owned(),
+        }]),
         working_dir: Some("/home/nanoagent".to_owned()),
         ..Container::default()
     }
@@ -475,6 +645,7 @@ mod tests {
     use super::*;
     use crate::crd::{MicroVMArchitecture, MicroVMDesiredState, MicroVMResources, MicroVMSpec};
     use http::{Request, Response, StatusCode};
+    use http_body_util::BodyExt;
     use kube::client::Body as KubeBody;
 
     fn test_microvm() -> MicroVM {
@@ -545,16 +716,257 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn rejects_a_legacy_filesystem_claim_instead_of_mutating_it() {
+        let microvm = test_microvm();
+        let (service, mut handle) =
+            tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
+        let client = Client::new(service, "tengri");
+        let ensure = tokio::spawn(async move { ensure_pvc(client, "tengri", &microvm).await });
+
+        let (request, response) = handle.next_request().await.expect("PVC lookup");
+        assert_eq!(request.method(), http::Method::GET);
+        assert_eq!(
+            request.uri().path(),
+            "/api/v1/namespaces/tengri/persistentvolumeclaims/agent-1234-home"
+        );
+        response.send_response(
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(KubeBody::from(
+                    br#"{"apiVersion":"v1","kind":"PersistentVolumeClaim","metadata":{"name":"agent-1234-home","namespace":"tengri","uid":"claim-uid","ownerReferences":[{"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM","name":"agent-1234","uid":"microvm-uid","controller":true}]},"spec":{"accessModes":["ReadWriteOnce"],"resources":{"requests":{"storage":"16Gi"}},"storageClassName":"rook-ceph-block","volumeMode":"Filesystem"}}"#
+                        .to_vec(),
+                ))
+                .expect("filesystem PVC response"),
+        );
+
+        let error = ensure
+            .await
+            .expect("PVC ensure task")
+            .expect_err("legacy filesystem PVC must be rejected");
+        match error {
+            KubeError::Api(response) => {
+                assert_eq!(response.code, 422);
+                assert!(
+                    response
+                        .message
+                        .contains("unsupported volume mode Filesystem")
+                );
+                assert!(response.message.contains("delete and recreate the agent"));
+            }
+            other => panic!("unexpected legacy PVC error: {other}"),
+        }
+        if let Ok(Some(_)) =
+            tokio::time::timeout(std::time::Duration::from_millis(25), handle.next_request()).await
+        {
+            panic!("legacy filesystem PVC must not be patched");
+        }
+    }
+
+    #[tokio::test]
+    async fn preserves_a_completed_block_claim_without_reapplying_pending_state() {
+        let microvm = test_microvm();
+        let (service, mut handle) =
+            tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
+        let client = Client::new(service, "tengri");
+        let ensure = tokio::spawn(async move { ensure_pvc(client, "tengri", &microvm).await });
+
+        let (request, response) = handle.next_request().await.expect("PVC lookup");
+        assert_eq!(request.method(), http::Method::GET);
+        response.send_response(
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(KubeBody::from(
+                    format!(
+                        r#"{{"apiVersion":"v1","kind":"PersistentVolumeClaim","metadata":{{"name":"agent-1234-home","namespace":"tengri","uid":"claim-uid","annotations":{{"{PERSISTENT_BLOCK_INITIALIZATION_ANNOTATION}":"{PERSISTENT_BLOCK_INITIALIZATION_COMPLETE}"}},"ownerReferences":[{{"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM","name":"agent-1234","uid":"microvm-uid","controller":true}}]}},"spec":{{"accessModes":["ReadWriteOnce"],"resources":{{"requests":{{"storage":"16Gi"}}}},"storageClassName":"rook-ceph-block","volumeMode":"Block"}}}}"#
+                    )
+                    .into_bytes(),
+                ))
+                .expect("completed block PVC response"),
+        );
+
+        let claim = ensure
+            .await
+            .expect("PVC ensure task")
+            .expect("completed block claim");
+        assert_eq!(claim.name, "agent-1234-home");
+        assert_eq!(
+            claim.initialization,
+            PersistentBlockInitialization::Complete
+        );
+        if let Ok(Some(_)) =
+            tokio::time::timeout(std::time::Duration::from_millis(25), handle.next_request()).await
+        {
+            panic!("completed block claim must not be reapplied as pending");
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_a_block_claim_without_persisted_initialization_state() {
+        let microvm = test_microvm();
+        let (service, mut handle) =
+            tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
+        let client = Client::new(service, "tengri");
+        let ensure = tokio::spawn(async move { ensure_pvc(client, "tengri", &microvm).await });
+
+        let (request, response) = handle.next_request().await.expect("PVC lookup");
+        assert_eq!(request.method(), http::Method::GET);
+        response.send_response(
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(KubeBody::from(
+                    br#"{"apiVersion":"v1","kind":"PersistentVolumeClaim","metadata":{"name":"agent-1234-home","namespace":"tengri","uid":"claim-uid","ownerReferences":[{"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM","name":"agent-1234","uid":"microvm-uid","controller":true}]},"spec":{"storageClassName":"rook-ceph-block","volumeMode":"Block"}}"#
+                        .to_vec(),
+                ))
+                .expect("untracked block PVC response"),
+        );
+
+        let error = ensure
+            .await
+            .expect("PVC ensure task")
+            .expect_err("untracked block claim must fail closed");
+        match error {
+            KubeError::Api(response) => {
+                assert_eq!(response.code, 422);
+                assert!(response.message.contains("has no initialization state"));
+                assert!(response.message.contains("delete and recreate the agent"));
+            }
+            other => panic!("unexpected untracked PVC error: {other}"),
+        }
+        if let Ok(Some(_)) =
+            tokio::time::timeout(std::time::Duration::from_millis(25), handle.next_request()).await
+        {
+            panic!("untracked block claim must not be patched into a trusted state");
+        }
+    }
+
+    #[tokio::test]
+    async fn marks_a_pending_block_claim_complete_after_container_creation() {
+        let microvm = test_microvm();
+        let (service, mut handle) =
+            tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
+        let client = Client::new(service, "tengri");
+        let mark =
+            tokio::spawn(async move { mark_pvc_initialized(client, "tengri", &microvm).await });
+
+        let (request, response) = handle.next_request().await.expect("PVC lookup");
+        assert_eq!(request.method(), http::Method::GET);
+        response.send_response(
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(KubeBody::from(
+                    format!(
+                        r#"{{"apiVersion":"v1","kind":"PersistentVolumeClaim","metadata":{{"name":"agent-1234-home","namespace":"tengri","uid":"claim-uid","resourceVersion":"7","annotations":{{"{PERSISTENT_BLOCK_INITIALIZATION_ANNOTATION}":"{PERSISTENT_BLOCK_INITIALIZATION_PENDING}"}},"ownerReferences":[{{"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM","name":"agent-1234","uid":"microvm-uid","controller":true}}]}},"spec":{{"storageClassName":"rook-ceph-block","volumeMode":"Block"}}}}"#
+                    )
+                    .into_bytes(),
+                ))
+                .expect("pending block PVC response"),
+        );
+
+        let (request, response) = handle.next_request().await.expect("PVC state patch");
+        assert_eq!(request.method(), http::Method::PATCH);
+        assert_eq!(
+            request.uri().path(),
+            "/api/v1/namespaces/tengri/persistentvolumeclaims/agent-1234-home"
+        );
+        let body: serde_json::Value = serde_json::from_slice(
+            &request
+                .into_body()
+                .collect()
+                .await
+                .expect("collect PVC patch")
+                .to_bytes(),
+        )
+        .expect("PVC patch JSON");
+        assert_eq!(body["metadata"]["resourceVersion"], "7");
+        assert_eq!(
+            body["metadata"]["annotations"][PERSISTENT_BLOCK_INITIALIZATION_ANNOTATION],
+            PERSISTENT_BLOCK_INITIALIZATION_COMPLETE
+        );
+        response.send_response(
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(KubeBody::from(
+                    br#"{"apiVersion":"v1","kind":"PersistentVolumeClaim","metadata":{"name":"agent-1234-home","namespace":"tengri"}}"#
+                        .to_vec(),
+                ))
+                .expect("PVC patch response"),
+        );
+
+        mark.await
+            .expect("mark initialized task")
+            .expect("mark initialized");
+    }
+
     #[test]
     fn pod_is_guaranteed_unprivileged_and_firecracker_backed() {
-        let pod = build_pod(&test_microvm(), "tengri", "agent-bootstrap", "agent-home");
+        let microvm = test_microvm();
+        let pod = build_pod(
+            &microvm,
+            "tengri",
+            "agent-bootstrap",
+            "agent-home",
+            PersistentBlockInitialization::Pending,
+        )
+        .expect("pod projection");
+        let annotations = pod.metadata.annotations.as_ref().expect("annotations");
         assert_eq!(
-            pod.metadata
-                .annotations
-                .as_ref()
-                .and_then(|annotations| annotations.get(STORAGE_LAYOUT_ANNOTATION))
+            annotations
+                .get(STORAGE_LAYOUT_ANNOTATION)
                 .map(String::as_str),
             Some(SINGLE_MOUNT_STORAGE_LAYOUT),
+        );
+        let resumed_pod = build_pod(
+            &microvm,
+            "tengri",
+            "agent-bootstrap",
+            "agent-home",
+            PersistentBlockInitialization::Complete,
+        )
+        .expect("resumed pod projection");
+        assert!(
+            resumed_pod
+                .metadata
+                .annotations
+                .as_ref()
+                .is_some_and(|annotations| !annotations.contains_key(&format!(
+                    "{KATA_HOME_BLOCK_ANNOTATION_PREFIX}.initialization_token"
+                )))
+        );
+        assert_eq!(
+            annotations
+                .get(&format!("{KATA_HOME_BLOCK_ANNOTATION_PREFIX}.mount_path"))
+                .map(String::as_str),
+            Some(HOME_BLOCK_MOUNT_PATH),
+        );
+        assert_eq!(
+            annotations
+                .get(&format!("{KATA_HOME_BLOCK_ANNOTATION_PREFIX}.fs_type"))
+                .map(String::as_str),
+            Some("ext4"),
+        );
+        assert_eq!(
+            annotations
+                .get(&format!("{KATA_HOME_BLOCK_ANNOTATION_PREFIX}.fs_group"))
+                .map(String::as_str),
+            Some("1000"),
+        );
+        assert_eq!(
+            annotations
+                .get(&format!(
+                    "{KATA_HOME_BLOCK_ANNOTATION_PREFIX}.initialization_token"
+                ))
+                .map(String::as_str),
+            Some(
+                persistent_block_initialization_token(&microvm)
+                    .unwrap()
+                    .as_str()
+            ),
         );
         let spec = pod.spec.expect("pod spec");
         assert_eq!(spec.runtime_class_name.as_deref(), Some("kata-fc"));
@@ -565,6 +977,13 @@ mod tests {
                 .and_then(|labels| labels.get("kubernetes.io/arch"))
                 .map(String::as_str),
             Some("arm64")
+        );
+        assert_eq!(
+            spec.node_selector
+                .as_ref()
+                .and_then(|labels| labels.get(PERSISTENT_BLOCK_CAPABILITY_LABEL))
+                .map(String::as_str),
+            Some("ready")
         );
         assert!(
             spec.volumes
@@ -606,15 +1025,32 @@ mod tests {
                     .any(|entry| { entry.name == name && entry.value.as_deref() == Some(value) })
             );
         }
-        let home_mounts = container
+        assert!(
+            container
+                .volume_mounts
+                .as_ref()
+                .expect("volume mounts")
+                .iter()
+                .all(|mount| mount.name != "home")
+        );
+        let home_devices = container
+            .volume_devices
+            .as_ref()
+            .expect("volume devices")
+            .iter()
+            .filter(|device| device.name == "home")
+            .collect::<Vec<_>>();
+        assert_eq!(home_devices.len(), 1);
+        assert_eq!(home_devices[0].device_path, HOME_BLOCK_DEVICE_PATH);
+        let tmp_mounts = container
             .volume_mounts
             .as_ref()
             .expect("volume mounts")
             .iter()
-            .filter(|mount| mount.name == "home")
+            .filter(|mount| mount.name == "tmp")
             .collect::<Vec<_>>();
-        assert_eq!(home_mounts.len(), 1);
-        assert_eq!(home_mounts[0].mount_path, "/home/nanoagent");
+        assert_eq!(tmp_mounts.len(), 1);
+        assert_eq!(tmp_mounts[0].mount_path, "/tmp");
         assert!(spec.init_containers.is_none());
         let volumes = spec.volumes.as_ref().expect("volumes");
         assert_eq!(volumes.len(), 2);
@@ -644,7 +1080,14 @@ mod tests {
                 .and_then(|request| request.path.as_deref())
         }
 
-        let pod = build_pod(&test_microvm(), "tengri", "agent-bootstrap", "agent-home");
+        let pod = build_pod(
+            &test_microvm(),
+            "tengri",
+            "agent-bootstrap",
+            "agent-home",
+            PersistentBlockInitialization::Pending,
+        )
+        .expect("pod projection");
         let container = &pod.spec.expect("pod spec").containers[0];
 
         assert_eq!(
@@ -671,14 +1114,48 @@ mod tests {
     #[test]
     fn pvc_uses_rook_ceph_block_and_fixed_capacity() {
         let claim = build_pvc(&test_microvm(), "tengri");
+        assert_eq!(
+            claim
+                .metadata
+                .annotations
+                .as_ref()
+                .and_then(|annotations| {
+                    annotations.get(PERSISTENT_BLOCK_INITIALIZATION_ANNOTATION)
+                })
+                .map(String::as_str),
+            Some(PERSISTENT_BLOCK_INITIALIZATION_PENDING)
+        );
         let spec = claim.spec.expect("pvc spec");
         assert_eq!(spec.storage_class_name.as_deref(), Some(STORAGE_CLASS));
+        assert_eq!(spec.volume_mode.as_deref(), Some("Block"));
         assert_eq!(
             spec.resources
                 .and_then(|value| value.requests)
                 .and_then(|values| values.get("storage").cloned()),
             Some(Quantity("16Gi".to_owned()))
         );
+    }
+
+    #[test]
+    fn pod_projection_rejects_a_microvm_without_a_uid() {
+        let mut microvm = test_microvm();
+        microvm.metadata.uid = None;
+
+        let error = build_pod(
+            &microvm,
+            "tengri",
+            "agent-bootstrap",
+            "agent-home",
+            PersistentBlockInitialization::Pending,
+        )
+        .expect_err("UID-less MicroVM must be rejected");
+        match error {
+            KubeError::Api(response) => {
+                assert_eq!(response.code, 422);
+                assert!(response.message.contains("missing the UID"));
+            }
+            other => panic!("unexpected missing UID error: {other}"),
+        }
     }
 
     #[test]

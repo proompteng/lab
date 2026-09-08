@@ -11,15 +11,14 @@ export async function GET(request: Request) {
     const url = new URL(request.url)
     const agentId = url.searchParams.get('agentId') || ''
     const path = url.searchParams.get('path') || '/'
-    const cursor = request.headers.get('last-event-id') || url.searchParams.get('after') || '0'
-    const after = Number(cursor)
+    const cursor = request.headers.get('last-event-id') ?? url.searchParams.get('after')
+    const after = cursor === null ? undefined : Number(cursor)
     if (
       !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(agentId) ||
       !path.startsWith('/') ||
       path.includes('\0') ||
       path.length > 4_096 ||
-      !Number.isSafeInteger(after) ||
-      after < 0
+      (after !== undefined && (!Number.isSafeInteger(after) || after < 0))
     ) {
       return Response.json({ error: 'Invalid file event stream request' }, { status: 400, headers: noStoreHeaders() })
     }

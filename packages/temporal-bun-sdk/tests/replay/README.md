@@ -39,12 +39,12 @@ Each fixture must include:
   (command intents, random/time streams, and optional metadata).
 
 The manifest entry must include `featureTags`, `commandKinds`,
-`historyEventTypes`, `historyEventCount`, `expectedCommandCount`, Bun version,
-SDK version, Temporal server/CLI version, and payload codec profile where
-applicable. It may also include `externalOperationKinds` for client-side
-operations such as signal, query, update, cancel, terminate, or operator setup.
-The verifier fails if `commandKinds` or declared `historyEventTypes` drift from
-the replayed determinism state and fixture history.
+`historyEventTypes`, `historyEventCount`, `expectedCommandCount`, SDK version,
+Temporal server/CLI version, and payload codec profile where applicable. It may
+also include `externalOperationKinds` for client-side operations such as signal,
+query, update, cancel, terminate, or operator setup. The verifier fails if
+`commandKinds` or declared `historyEventTypes` drift from the replayed
+determinism state and fixture history.
 
 ## Running the Harness
 

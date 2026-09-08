@@ -15,7 +15,6 @@ Companion doc:
 
 Extends:
 
-- `66-jangar-recovery-release-lanes-and-rollout-proof-fence-contract-2026-03-21.md`
 - `65-jangar-recovery-epoch-cutover-and-backlog-seat-enforcement-contract-2026-03-21.md`
 - `59-jangar-authority-session-bus-and-rollout-lease-contract-2026-03-20.md`
 

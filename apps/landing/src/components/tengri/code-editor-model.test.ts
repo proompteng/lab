@@ -10,6 +10,7 @@ import {
   codeModelTransition,
   codePanelId,
   codeParentDirectory,
+  codeVerificationFailure,
   codeWatchDirectoryLimitError,
   disposeCodeModels,
   enqueueCodeOpenRequest,
@@ -62,12 +63,28 @@ describe('Code editor model', () => {
 
   test('blocks queued writes after a conflict and clears only the recoverable directory-limit error', () => {
     const path = '/workspace/main.rs'
-    expect(canStartEditorSave(path, new Set([path]), new Set())).toBe(false)
-    expect(canStartEditorSave(path, new Set(), new Set([path]))).toBe(false)
-    expect(canStartEditorSave(path, new Set(), new Set())).toBe(true)
+    expect(canStartEditorSave(path, new Set([path]), new Set(), new Set())).toBe(false)
+    expect(canStartEditorSave(path, new Set(), new Set([path]), new Set())).toBe(false)
+    expect(canStartEditorSave(path, new Set(), new Set(), new Set([path]))).toBe(false)
+    expect(canStartEditorSave(path, new Set(), new Set(), new Set())).toBe(true)
 
     expect(clearCodeWatchDirectoryLimitError(codeWatchDirectoryLimitError())).toBe('')
     expect(clearCodeWatchDirectoryLimitError('Monaco failed to initialize')).toBe('Monaco failed to initialize')
+  })
+
+  test('keeps watcher verification failures retryable when a tab has no local edits', () => {
+    const clean = { path: '/workspace/main.rs', dirty: false, state: 'ready' as const, error: '' }
+    const dirty = { ...clean, dirty: true, state: 'saving' as const }
+
+    expect(codeVerificationFailure(clean, 'guest unavailable')).toEqual({
+      conflict: false,
+      patch: { dirty: false, state: 'error', error: 'guest unavailable' },
+    })
+    expect(codeVerificationFailure(dirty, 'guest unavailable')).toEqual({
+      conflict: true,
+      patch: { dirty: true, state: 'error', error: 'guest unavailable' },
+    })
+    expect(codeVerificationFailure(undefined, 'guest unavailable')).toBeNull()
   })
 
   test('preserves every open request received before Monaco is ready', () => {

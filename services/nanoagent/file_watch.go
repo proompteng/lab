@@ -602,6 +602,21 @@ func (files *fileWatcher) renameFenceTimeout() time.Duration {
 func (files *fileWatcher) subscribe(after uint64, prefix string, directory string) (uint64, <-chan fileEvent, error) {
 	files.mu.Lock()
 	defer files.mu.Unlock()
+	return files.subscribeLocked(after, prefix, directory, false)
+}
+
+func (files *fileWatcher) subscribeCurrent(prefix string, directory string) (uint64, <-chan fileEvent, error) {
+	files.mu.Lock()
+	defer files.mu.Unlock()
+	return files.subscribeLocked(files.sequence, prefix, directory, true)
+}
+
+func (files *fileWatcher) subscribeLocked(
+	after uint64,
+	prefix string,
+	directory string,
+	emitSnapshot bool,
+) (uint64, <-chan fileEvent, error) {
 	if files.closed {
 		return 0, nil, errors.New("filesystem event service is shutting down")
 	}
@@ -614,28 +629,31 @@ func (files *fileWatcher) subscribe(after uint64, prefix string, directory strin
 	files.nextSubscriber++
 	id := files.nextSubscriber
 	replay := make([]fileEvent, 0, len(files.buffer)+1)
-	bufferStart := uint64(0)
-	if len(files.buffer) > 0 {
-		bufferStart = files.buffer[0].Sequence
-	}
-	replayStart := sequenceBefore(bufferStart)
-	if after > files.sequence || (len(files.buffer) > 0 && after > 0 && after < replayStart) {
-		replay = append(replay, fileEvent{Sequence: replayStart, Kind: "reset", Path: prefix})
-		after = 0
+	if emitSnapshot {
+		replay = append(replay, fileEvent{Sequence: after, Kind: "reset", Path: prefix})
 	} else {
-		for _, event := range files.buffer {
-			if event.Sequence <= after {
-				continue
-			}
-			if !fileEventMatchesPrefix(event, prefix) {
-				continue
-			}
-			if event.Kind == "reset" {
-				event.Path = prefix
+		bufferStart := uint64(0)
+		if len(files.buffer) > 0 {
+			bufferStart = files.buffer[0].Sequence
+		}
+		replayStart := sequenceBefore(bufferStart)
+		if after > files.sequence || (len(files.buffer) > 0 && after > 0 && after < replayStart) {
+			replay = append(replay, fileEvent{Sequence: replayStart, Kind: "reset", Path: prefix})
+		} else {
+			for _, event := range files.buffer {
+				if event.Sequence <= after {
+					continue
+				}
+				if !fileEventMatchesPrefix(event, prefix) {
+					continue
+				}
+				if event.Kind == "reset" {
+					event.Path = prefix
+					replay = append(replay, event)
+					continue
+				}
 				replay = append(replay, event)
-				continue
 			}
-			replay = append(replay, event)
 		}
 	}
 	channel := make(chan fileEvent, len(replay)+128)
@@ -723,20 +741,26 @@ func (server *apiServer) handleWatchFiles(writer http.ResponseWriter, request *h
 		writeAPIError(writer, http.StatusBadRequest, "watch path must be a directory")
 		return
 	}
-	after := uint64(0)
-	if raw := request.URL.Query().Get("after"); raw != "" {
-		after, err = strconv.ParseUint(raw, 10, 64)
-		if err != nil {
-			writeAPIError(writer, http.StatusBadRequest, "after must be an unsigned sequence")
-			return
-		}
-	}
 	flusher, ok := writer.(http.Flusher)
 	if !ok {
 		writeAPIError(writer, http.StatusInternalServerError, "streaming is unavailable")
 		return
 	}
-	id, events, err := server.fileWatcher.subscribe(after, server.workspace.displayPath(target), target)
+	// An initial Tengri subscription omits the cursor and tails from the current
+	// sequence. Explicit cursors, including zero, retain replay semantics for
+	// reconnects and direct Nanoagent clients.
+	var id uint64
+	var events <-chan fileEvent
+	if request.URL.Query().Has("after") {
+		after, parseErr := strconv.ParseUint(request.URL.Query().Get("after"), 10, 64)
+		if parseErr != nil {
+			writeAPIError(writer, http.StatusBadRequest, "after must be an unsigned sequence")
+			return
+		}
+		id, events, err = server.fileWatcher.subscribe(after, server.workspace.displayPath(target), target)
+	} else {
+		id, events, err = server.fileWatcher.subscribeCurrent(server.workspace.displayPath(target), target)
+	}
 	if err != nil {
 		writeAPIError(writer, http.StatusTooManyRequests, err.Error())
 		return
