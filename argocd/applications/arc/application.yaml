@@ -213,13 +213,14 @@ spec:
                       # A terminated init can leave a partial staging tree on the same ephemeral volume.
                       # Remove old attempts before measuring/copying so retries cannot consume capacity.
                       find "$scratch" -mindepth 1 -maxdepth 1 -type d -name '.arc-bootstrap.*' -exec rm -rf -- {} +
-                      rm -rf "$scratch/nix" "$scratch/cache" "$scratch/tmp" "$scratch/work" "$scratch/.arc-bootstrap-complete"
+                      rm -rf "$scratch/nix" "$scratch/cache" "$scratch/tmp" "$scratch/work" "$scratch/docker" "$scratch/containerd" "$scratch/.arc-bootstrap-complete"
                       scratch_available_kib="$(df -P -k "$scratch" | awk 'NR == 2 {print $4}')"
                       [[ "$scratch_available_kib" =~ ^[0-9]+$ ]] ||
                         fail "scratch volume has no readable capacity"
 
                       # This local-path class has no project quota. Keep at least 80GiB free after
                       # the image/cache copy so a runner cannot start on a nearly full NVMe volume.
+                      mkdir -p /home/runner/.cache
                       reserve_bytes=$((80 * 1024 * 1024 * 1024))
                       nix_file_bytes="$(find /nix -xdev -type f -printf '%s\n' | awk '{sum += $1} END {printf "%.0f\n", sum}')"
                       nix_files="$(find /nix -xdev -type f -printf '1\n' | wc -l | tr -d ' ')"
@@ -234,7 +235,7 @@ spec:
 
                       stage="$scratch/.arc-bootstrap.$$"
                       trap 'rm -rf "$stage"' EXIT
-                      mkdir -p "$stage/nix" "$stage/cache" "$stage/tmp" "$stage/work"
+                      mkdir -p "$stage/nix" "$stage/cache" "$stage/tmp" "$stage/work" "$stage/docker" "$stage/containerd"
 
                       # Keep /nix visible from the image while copying. The main containers mount the
                       # completed subdirectory only after this init container exits successfully.
@@ -276,6 +277,8 @@ spec:
                       chmod 1777 "$stage/tmp"
                       chown 0:1001 "$stage/work"
                       chmod 2777 "$stage/work"
+                      chown 0:0 "$stage/docker" "$stage/containerd"
+                      chmod 711 "$stage/docker" "$stage/containerd"
 
                       # Keep the existing dind externals bootstrap, now on its declared shared volume.
                       test -d /home/runner/externals || fail "runner image is missing /home/runner/externals"
@@ -285,12 +288,14 @@ spec:
 
                       # Install only after all validation and copies have succeeded. A failed init leaves
                       # no runnable main container and the next retry rebuilds from the image again.
-                      rm -rf "$scratch/nix" "$scratch/cache" "$scratch/tmp" "$scratch/work"
+                      rm -rf "$scratch/nix" "$scratch/cache" "$scratch/tmp" "$scratch/work" "$scratch/docker" "$scratch/containerd"
                       mv "$stage/nix" "$scratch/nix"
                       mv "$stage/cache" "$scratch/cache"
                       mv "$stage/tmp" "$scratch/tmp"
                       mv "$stage/work" "$scratch/work"
-                      printf 'version=3\nnix_file_bytes=%s\nnix_files=%s\nnix_symlinks=%s\ncache_file_bytes=%s\ncache_files=%s\ncache_symlinks=%s\n' \
+                      mv "$stage/docker" "$scratch/docker"
+                      mv "$stage/containerd" "$scratch/containerd"
+                      printf 'version=4\nnix_file_bytes=%s\nnix_files=%s\nnix_symlinks=%s\ncache_file_bytes=%s\ncache_files=%s\ncache_symlinks=%s\n' \
                         "$nix_file_bytes" "$nix_files" "$nix_links" "$cache_file_bytes" "$cache_files" "$cache_links" > "$scratch/.arc-bootstrap-complete"
                       chown 1001:1001 "$scratch/.arc-bootstrap-complete"
                       rm -rf "$stage"
@@ -387,6 +392,12 @@ spec:
                     - name: scratch
                       mountPath: /home/runner/_work
                       subPath: work
+                    - name: scratch
+                      mountPath: /var/lib/docker
+                      subPath: docker
+                    - name: scratch
+                      mountPath: /var/lib/containerd
+                      subPath: containerd
                     - name: dind-sock
                       mountPath: /var/run
                     - name: dind-externals

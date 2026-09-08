@@ -9,7 +9,7 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
 - Keep the custom template (init container + privileged `docker:dind` sidecar with `DOCKER_HOST=unix:///var/run/docker.sock`) when reapplying so Docker builds continue to work under Kubernetes mode.
 - The runner container intentionally waits for `docker version` before starting `run.sh`; without this guard, ARC can register a runner before the dind socket is ready.
 - The `arc-amd64` runner uses one 80Gi generic ephemeral PVC on the existing Turin-only
-  `local-path-turin-nvme-intel` class. Its `/nix`, `/home/runner/.cache`, `/tmp`, and shared `/home/runner/_work`
+  `local-path-turin-nvme-intel` class. Its `/nix`, `/home/runner/.cache`, `/tmp`, shared `/home/runner/_work`, and Docker data
   subpaths live on the dedicated rebuildable Intel NVMe scratch volume rather than the Talos `/var` disk. The init
   container copies the image's `/nix` tree before the main containers mount the scratch subpath, verifies the mount,
   capacity, regular-file byte count, regular-file count, and symlink count, then fails closed on any mismatch. The PVC
@@ -21,6 +21,10 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
   backing partition and found no existing PVC consumers. That is current headroom evidence, not a hard capacity or
   durability guarantee. A failed scratch bootstrap is a runner admission failure; investigate it before changing the
   storage class or falling back to `/var`.
+- DinD mounts separate root-owned scratch subpaths at `/var/lib/docker` and `/var/lib/containerd`, covering both the
+  daemon data root and the containerd image store. The runner's Nix store and cache remain owned by UID 1001. Keep the
+  concurrency cap and validate `/var` I/O under the actual workload before resuming storage maintenance or increasing
+  build capacity.
 - Tailscale connectivity comes from the Omni-owned node configuration in
   `devices/galactic/omni/cluster-template.yaml`; no sidecar or additional secret is required in the runner pods. Follow
   `devices/galactic/omni/README.md` for changes. The retained Harvester/Ansible fleet configuration is not current Talos
@@ -33,8 +37,8 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
 The `arc-amd64` scale set is bounded to `minRunners: 0` and `maxRunners: 1` in `application.yaml`. During the original
 incident, build scratch, etcd data, and Ceph monitor data shared Turin's `/var` NVMe; five concurrent builds saturated
 that device and coincided with multi-second etcd fsyncs and read timeouts. Future AMD64 runner Pods move their Nix,
-cache, `/tmp`, and shared work paths to the Intel scratch PVC above, while control-plane data remains on `/var`. The cap
-limits new AMD64 build concurrency while keeping the normal ARC image/Kargo path available. Existing busy runners finish
+cache, `/tmp`, shared work, and Docker data paths to the Intel scratch PVC above, while control-plane data remains on
+`/var`. The cap limits new AMD64 build concurrency while keeping the normal ARC image/Kargo path available. Existing busy runners finish
 before the running count falls to one; the
 [ARC controller](https://github.com/actions/actions-runner-controller/blob/master/docs/gha-runner-scale-set-controller/README.md)
 checks with the Actions service before deleting a runner. Do not delete runner Pods manually.
