@@ -8,6 +8,7 @@ import {
   IntradaySnapshotFailure,
   type ArchiveVerifiedIntradayMarketSnapshot,
   type IntradayBar,
+  type IntradayCandidateExclusion,
   type IntradayMarketDataService,
   type IntradayMarketSnapshot,
   type IntradayQuote,
@@ -57,12 +58,15 @@ export type ArchiveAvailabilityReceipt = typeof ArchiveAvailabilityReceiptSchema
 export interface ArchiveRecordReference {
   readonly recordId: string
   readonly recordContentHash: string
+  readonly symbol: string
 }
 
 export interface ArchiveSnapshotAvailability {
   readonly snapshotId: string
   readonly observedAt: string
   readonly receipts: readonly ArchiveAvailabilityReceipt[]
+  /** Reader-availability exclusions are separate from the immutable archive manifest. */
+  readonly candidateExclusions?: readonly IntradayCandidateExclusion[]
 }
 
 export interface ReplayMarketDataService extends IntradayMarketDataService {
@@ -96,7 +100,7 @@ const recordReference = (kind: ArchiveRecordKind, record: ArchiveRecord) =>
   Result.all({
     recordId: recordIdentity(kind, record),
     recordContentHash: hash(record),
-  })
+  }).pipe(Result.map((reference) => ({ ...reference, symbol: record.symbol })))
 
 const ReceiptRecordIdentitySchema = Schema.Struct({
   provider: Schema.Literal('alpaca'),
@@ -156,7 +160,7 @@ export const makeArchiveAvailabilityReceipts = (
           if (intradayInstantNanos(record.ingestedAt) > intradayInstantNanos(availableAt)) {
             return yield* Result.fail(failure('clock', 'archive visibility cannot predate source receipt'))
           }
-          const reference = yield* recordReference(recordKind, record)
+          const { recordId, recordContentHash } = yield* recordReference(recordKind, record)
           const material = yield* Schema.decodeUnknownResult(
             ReceiptMaterialSchema,
             strictParseOptions,
@@ -168,7 +172,8 @@ export const makeArchiveAvailabilityReceipts = (
             snapshotId: snapshot.manifest.snapshotId,
             snapshotObservedAt: snapshot.manifest.observedAt,
             recordKind,
-            ...reference,
+            recordId,
+            recordContentHash,
             record,
           }).pipe(Result.mapError((cause) => failure('identity', 'archive reader receipt is invalid', cause)))
           return Object.freeze({ ...material, receiptHash: yield* hash(material) })
@@ -215,30 +220,49 @@ export const verifyRecordedArchiveAvailability = (
     const references = yield* archiveRecordReferences(snapshot)
     const receipts = yield* Result.all(candidates.map(verifyArchiveAvailabilityReceipt))
     const byId = new Map(receipts.map((receipt) => [receipt.recordId, receipt]))
-    if (byId.size !== receipts.length || references.length !== receipts.length) {
-      return yield* Result.fail(failure('missing', 'archive reader visibility is unproven for the complete snapshot'))
+    const expectedIds = new Set(references.map((reference) => reference.recordId))
+    if (byId.size !== receipts.length || receipts.some((receipt) => !expectedIds.has(receipt.recordId))) {
+      return yield* Result.fail(
+        failure('identity', 'archive availability contains duplicate or unrelated record receipts'),
+      )
     }
+    const independentCandidates = new Set(
+      snapshot.manifest.purpose === undefined ? snapshot.manifest.candidateSymbols : [],
+    )
+    const candidateExclusions = new Map<string, IntradayCandidateExclusion>()
     for (const reference of references) {
       const receipt = byId.get(reference.recordId)
-      if (receipt === undefined) {
-        return yield* Result.fail(failure('missing', 'archive reader visibility is unproven for a required record'))
-      }
       if (
-        receipt.reader.endpointHash !== endpointHash ||
-        receipt.reader.verification !== 'embedded' ||
-        receipt.recordContentHash !== reference.recordContentHash
+        receipt !== undefined &&
+        (receipt.reader.endpointHash !== endpointHash ||
+          receipt.reader.verification !== 'embedded' ||
+          receipt.recordContentHash !== reference.recordContentHash)
       ) {
         return yield* Result.fail(failure('identity', 'archive availability does not bind the exact production record'))
       }
-      if (receipt.availableAt > snapshot.manifest.observedAt) {
-        return yield* Result.fail(
-          failure('missing', 'archive record was not observed by the reader before replay time'),
-        )
+      if (receipt === undefined || receipt.availableAt > snapshot.manifest.observedAt) {
+        if (!independentCandidates.has(reference.symbol)) {
+          return yield* Result.fail(failure('missing', 'archive reader visibility is unproven for a required record'))
+        }
+        candidateExclusions.set(reference.symbol, {
+          symbol: reference.symbol,
+          reason: 'not-ready',
+          message: 'intraday candidate archive reader visibility is unproven at replay time',
+        })
       }
     }
     return Object.freeze({
       snapshotId: snapshot.manifest.snapshotId,
       observedAt: snapshot.manifest.observedAt,
+      ...(candidateExclusions.size === 0
+        ? {}
+        : {
+            candidateExclusions: Object.freeze(
+              [...candidateExclusions.values()].toSorted((left, right) =>
+                left.symbol < right.symbol ? -1 : left.symbol > right.symbol ? 1 : 0,
+              ),
+            ),
+          }),
       receipts: Object.freeze(
         receipts.toSorted((left, right) =>
           left.recordId < right.recordId ? -1 : left.recordId > right.recordId ? 1 : 0,
