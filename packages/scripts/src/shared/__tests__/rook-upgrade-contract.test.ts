@@ -134,7 +134,10 @@ test('preserves the Ceph data plane and live CSI behavior after the v1.20 migrat
     cephImage: { repository: string; tag: string }
     monitoring: { enabled: boolean; createPrometheusRules: boolean }
     cephClusterSpec: {
-      cephConfig: { rgw: { rgw_s3_auth_use_sts: string } }
+      cephConfig: {
+        mon: { mon_auth_allow_insecure_key: string }
+        rgw: { rgw_s3_auth_use_sts: string }
+      }
       security: {
         cephx: {
           daemon: { keyRotationPolicy: string; keyGeneration: number }
@@ -184,15 +187,16 @@ test('preserves the Ceph data plane and live CSI behavior after the v1.20 migrat
     tag: 'v20.2.4-20260818',
   })
   expect(clusterValues.cephClusterSpec.cephConfig.rgw.rgw_s3_auth_use_sts).toBe('false')
+  expect(clusterValues.cephClusterSpec.cephConfig.mon.mon_auth_allow_insecure_key).toBe('false')
   expect(clusterValues.cephClusterSpec.security.cephx.daemon).toEqual({
     keyRotationPolicy: 'KeyGeneration',
     keyGeneration: 2,
   })
   expect(clusterValues.cephClusterSpec.security.cephx.csi).toEqual({
     keyRotationPolicy: 'KeyGeneration',
-    keyGeneration: 2,
-    keepPriorKeyCountMax: 1,
-    keyType: 'aes',
+    keyGeneration: 3,
+    keepPriorKeyCountMax: 2,
+    keyType: 'aes256k',
   })
   expect(clusterValues.cephClusterSpec.security.cephx.rbdMirrorPeer).toEqual({
     keyRotationPolicy: 'KeyGeneration',
@@ -281,6 +285,7 @@ test('runs retained storage acceptance PVCs through ordered Argo PostSync hooks'
       accessModes?: string[]
       activeDeadlineSeconds?: number
       annotations?: Record<string, string>
+      template?: { spec: { nodeSelector?: Record<string, string> } }
     }
   }>
 
@@ -297,22 +302,20 @@ test('runs retained storage acceptance PVCs through ordered Argo PostSync hooks'
   }
 
   const jobs = resources.filter(({ kind }) => kind === 'Job')
-  expect(jobs).toHaveLength(5)
-  expect(jobs.map(({ metadata }) => metadata.annotations?.['argocd.argoproj.io/hook'])).toEqual([
-    'PostSync',
-    'PostSync',
-    'PostSync',
-    'PostSync',
-    'PostSync',
-  ])
-  expect(jobs.map(({ metadata }) => metadata.annotations?.['argocd.argoproj.io/sync-wave'])).toEqual([
-    '20',
-    '21',
-    '20',
-    '21',
-    '22',
-  ])
+  expect(jobs).toHaveLength(7)
+  for (const backend of ['rbd', 'cephfs']) {
+    for (const [suffix, wave, node] of [
+      ['write', '20', 'talos-192-168-1-194'],
+      ['readback', '21', 'talos-192-168-1-85'],
+      ['readback-turin', '22', 'turin'],
+    ]) {
+      const job = jobs.find(({ metadata }) => metadata.name === `storage-${backend}-canary-${suffix}`)
+      expect(job?.metadata.annotations?.['argocd.argoproj.io/sync-wave']).toBe(wave)
+      expect(job?.spec.template?.spec.nodeSelector?.['kubernetes.io/hostname']).toBe(node)
+    }
+  }
   for (const job of jobs) {
+    expect(job.metadata.annotations?.['argocd.argoproj.io/hook']).toBe('PostSync')
     expect(job.metadata.annotations?.['argocd.argoproj.io/hook-delete-policy']).toBe('BeforeHookCreation,HookSucceeded')
     expect(job.spec.activeDeadlineSeconds).toBe(300)
   }

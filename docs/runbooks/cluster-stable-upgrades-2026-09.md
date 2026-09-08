@@ -45,11 +45,24 @@ daemon/CSI images, key generation, attachments, and existing consumer mounts.
 Run the manual `storage-upgrade-acceptance` Application for remount and RGW
 conditional-write evidence after those prerequisites pass.
 
-Ceph 20.2.4 reports legacy cipher warnings while CSI clients require AES on
-Talos 1.14's Linux 6.18 kernel. Rook requires Linux 7.0 or newer for CSI AES256K.
-Keep these findings visible: generation-2 CSI rotation does not change that
-kernel limitation. Rotating service keys also need their normal expiry window.
-Do not restrict accepted ciphers before every client supports the new cipher.
+Talos 1.14 includes the [AES256K backport](https://github.com/siderolabs/pkgs/commit/84c1b8752ef16f78f5893fe3b0de7a9288c58d7d)
+in both architectures of its Linux 6.18 kernel. The upstream Linux 7.0 minimum
+does not apply to this patched kernel. Kernel key decoding was verified on all
+three live nodes before requesting CSI generation 3 with `keyType: aes256k`.
+Retain both previous AES generations while existing volumes remain mounted.
+Run RBD and CephFS write/remount acceptance on every node with the new keys;
+then move existing mounts to generation 3 and verify no kernel clients still
+use the old identities. Only then retire the prior keys and restrict
+`security.cephx.allowedCiphers` to `aes256k` in a separate reviewed change.
+Never remove old keys while mounted clients still depend on them. Rotation
+does not require changing PVC identities or data. Rotating service-key
+warnings persist until the old keys leave the retained-key window, including
+expired keys; verify that warning clears without muting it.
+
+If a generation-3 mount fails, stop the consumer migration and preserve both
+old generations. Do not lower the generation counter or restrict ciphers.
+Recover through a reviewed new generation with a supported key type and
+enough prior-key retention to preserve every mounted client's identity.
 
 For NVIDIA GPU Operator, reconcile the reviewed CRDs before the full Application
 when the installed schema cannot parse fields in the new ClusterPolicy. Preserve

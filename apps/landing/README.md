@@ -118,3 +118,34 @@ bun run lint:oxlint
 bun test src/lib/tengri
 bun run build
 ```
+
+## VS Code in the desktop
+
+Code runs the upstream VS Code workbench through [code-server 4.135.0](https://github.com/coder/code-server/releases/tag/v4.135.0)
+(Code 1.135.0) inside the user's Nanoagent guest. Explorer, tabs, search, Source Control, integrated terminals, language
+servers, and extensions are native workbench features. Extensions use Open VSX; Microsoft Marketplace-only extensions
+may not be available in this distribution. The old Monaco shell and its browser dependency have been removed.
+
+Finder's **Open in Code** sends a file-opening request through the owner-scoped gateway to a small guest extension using
+VS Code's public API. The extension reports dirty tabs and uses native save/discard/cancel dialogs when closing a window.
+Lifecycle changes are blocked while a window has unsaved edits or its save state is unknown. Settings and installed
+extensions live in the persistent guest home; stable window origins preserve VS Code's workspace identity and native backups across reload.
+Recoverable drafts from the previous editor remain available as downloads and never overwrite workspace files.
+Sign-out first revokes the user's editor sessions, including those opened in other desktop tabs. If revocation fails,
+the desktop keeps the user signed in and shows the error so they can retry.
+
+Run the real integration test from the repository root:
+
+```sh
+bunx playwright install chromium
+bash services/nanoagent/test-vscode-browser.sh
+```
+
+The runner requires Bun, Go, Rust, Node.js, OpenSSL, Python, and `protoc`. It downloads and verifies the pinned upstream release, starts
+real Nanoagent and Tengri gateway fixtures, and drives the actual workbench through Chromium. Provisioning and identity
+are local fixtures; editor files, terminals, WebSockets, cookie exchange, and CSP use their production implementations.
+Ports 8080, 13338, 3143, 33082, 33083, and 3443 must be free. Logs are retained under `/tmp/tengri-vscode.*`.
+The local TLS proxy and isolated test certificate exercise secure cookies, WebSockets, and the production CSP without
+weakening application policy. To test an existing production build, set `TENGRI_EDITOR_NEXT_MODE=start`.
+The verified release is cached under `node_modules/.cache/tengri-code-server`; `TENGRI_EDITOR_INSTALL_HOME` can select
+an existing installation cache without reusing a test workspace.

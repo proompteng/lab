@@ -186,7 +186,10 @@ fi
 run_psql() {
   local database="$1"
   local sql="$2"
-  "$KUBECTL_BIN" --context "$KUBE_CONTEXT" cnpg psql "$cluster" --namespace "$namespace" -- -d "$database" -At -c "$sql" < /dev/null 2>/dev/null
+  # kubectl plugins receive plugin arguments before their own flags. Keeping
+  # context and namespace after `cnpg psql` also makes the target explicit
+  # without relying on the caller's current context or namespace.
+  "$KUBECTL_BIN" cnpg psql "$cluster" --context "$KUBE_CONTEXT" --namespace "$namespace" -- -d "$database" -At -c "$sql" < /dev/null 2>/dev/null
 }
 
 if ! databases="$(run_psql postgres 'SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY 1;')"; then
