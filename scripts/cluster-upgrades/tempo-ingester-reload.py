@@ -28,7 +28,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
@@ -323,8 +323,15 @@ class PortForward:
 def read_ring(config: Config, _runner: Runner) -> RingSnapshot:
     """Fetch the distributor's read-only ingester ring page and close cleanly."""
 
-    with PortForward(config) as port_forward:
-        return parse_ring_page(port_forward.request("/ingester/ring"))
+    try:
+        with PortForward(config) as port_forward:
+            return parse_ring_page(port_forward.request("/ingester/ring"))
+    except ReloadError:
+        raise
+    except (HTTPError, URLError, TimeoutError, OSError) as exc:
+        raise ReloadError(
+            "Tempo ring request failed: " + redact_text(str(exc), limit=240)
+        ) from exc
 
 
 def ring_evidence(ring: RingSnapshot) -> dict[str, Any]:
@@ -923,6 +930,8 @@ class Workflow:
             self.runner,
         )
         ready_names, ready_ips, ready_nodes = ready_ingester_details(pods)
+        if self.config.pod not in ready_names:
+            raise ReloadError("selected Pod is outside the gated Tempo ingester set")
         pdb = get_json(
             self.config,
             ("-n", self.config.namespace, "get", "pdb", self.config.pdb, "-o", "json"),
@@ -992,6 +1001,37 @@ class Workflow:
         }
 
     def refresh_before_patch(self, state: Mapping[str, Any]) -> Mapping[str, Any]:
+        pods = get_json(
+            self.config,
+            (
+                "-n",
+                self.config.namespace,
+                "get",
+                "pods",
+                "-l",
+                INGESTER_SELECTOR,
+                "-o",
+                "json",
+            ),
+            self.runner,
+        )
+        ready_names, ready_ips, ready_nodes = ready_ingester_details(pods)
+        if (
+            ready_names != state["readyNames"]
+            or ready_ips != state["readyIPs"]
+            or ready_nodes != state["readyNodes"]
+        ):
+            raise ReloadError(
+                "Ready ingester membership, Pod IP, or node changed before patch"
+            )
+        pdb = get_json(
+            self.config,
+            ("-n", self.config.namespace, "get", "pdb", self.config.pdb, "-o", "json"),
+            self.runner,
+        )
+        validate_pdb(pdb)
+        ring = self.ring_reader(self.config, self.runner)
+        validate_ring(ring, ready_names, ready_ips)
         current_hash = read_configmap_hash(self.config, self.runner)
         if current_hash != state["configSha256"]:
             raise ReloadError(
@@ -1022,6 +1062,8 @@ class Workflow:
             podUID=uid,
             resourceVersion=resource_version,
             restartCount=restart_count,
+            readyIngesterNodes=ready_nodes,
+            activeRingMembers=list(ring.active_ids),
         )
         return target
 

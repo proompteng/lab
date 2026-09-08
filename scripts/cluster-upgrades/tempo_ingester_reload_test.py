@@ -123,8 +123,11 @@ def sts() -> dict[str, Any]:
     return {"spec": {"replicas": 3, "updateStrategy": {"type": "OnDelete"}}}
 
 
-def pdb() -> dict[str, Any]:
-    return {"spec": {"maxUnavailable": 1}, "status": {"disruptionsAllowed": 1}}
+def pdb(disruptions_allowed: int = 1) -> dict[str, Any]:
+    return {
+        "spec": {"maxUnavailable": 1},
+        "status": {"disruptionsAllowed": disruptions_allowed},
+    }
 
 
 def ring() -> MODULE.RingSnapshot:
@@ -166,6 +169,8 @@ class FakeKubectl:
         patch_code: int = 0,
         existing_ephemeral: list[dict[str, Any]] | None = None,
         transient_restart_state: bool = False,
+        refresh_peer_not_ready: bool = False,
+        refresh_pdb_allowed: int | None = None,
     ) -> None:
         self.calls: list[tuple[str, ...]] = []
         self.target_reads = 0
@@ -180,6 +185,10 @@ class FakeKubectl:
         self.helper_name: str | None = None
         self.transient_restart_state = transient_restart_state
         self.wait_reads = 0
+        self.pod_list_reads = 0
+        self.pdb_reads = 0
+        self.refresh_peer_not_ready = refresh_peer_not_ready
+        self.refresh_pdb_allowed = refresh_pdb_allowed
 
     def __call__(
         self, argv: Sequence[str], input_text: str | None, timeout: float
@@ -196,11 +205,17 @@ class FakeKubectl:
         ):
             return command_output(sts())
         if command[:2] == ("-n", "observability") and command[2:4] == ("get", "pods"):
-            return command_output(
-                {"items": [self.ready_pod(index) for index in range(3)]}
-            )
+            self.pod_list_reads += 1
+            items = [self.ready_pod(index) for index in range(3)]
+            if self.refresh_peer_not_ready and self.pod_list_reads > 1:
+                items[1] = self.ready_pod(1, ready=False)
+            return command_output({"items": items})
         if command[:2] == ("-n", "observability") and command[2:4] == ("get", "pdb"):
-            return command_output(pdb())
+            self.pdb_reads += 1
+            allowed = 1
+            if self.pdb_reads > 1 and self.refresh_pdb_allowed is not None:
+                allowed = self.refresh_pdb_allowed
+            return command_output(pdb(allowed))
         if command[:2] == ("-n", "observability") and command[2:4] == (
             "get",
             "configmap",
@@ -226,9 +241,13 @@ class FakeKubectl:
             )
         raise AssertionError(f"unexpected command: {args!r}")
 
-    def ready_pod(self, index: int) -> dict[str, Any]:
+    def ready_pod(self, index: int, *, ready: bool = True) -> dict[str, Any]:
         pod_name = f"observability-tempo-ingester-{index}"
-        return pod(name=pod_name, uid=f"{index:08d}-0000-0000-0000-000000000000")
+        return pod(
+            name=pod_name,
+            uid=f"{index:08d}-0000-0000-0000-000000000000",
+            ready=ready,
+        )
 
     def target_payload(self) -> dict[str, Any]:
         if self.patched:
@@ -438,9 +457,76 @@ class TempoReloadTests(unittest.TestCase):
             )
         )
 
+    def test_target_outside_gated_ingesters_aborts_without_ephemeral_mutation(
+        self,
+    ) -> None:
+        runner = FakeKubectl()
+        with self.assertRaisesRegex(MODULE.ReloadError, "outside the gated"):
+            self.workflow(runner, pod="observability-tempo-ingester-99").run()
+        self.assertFalse(
+            any("--subresource=ephemeralcontainers" in call for call in runner.calls)
+        )
+
+    def test_peer_not_ready_before_patch_aborts_without_ephemeral_mutation(
+        self,
+    ) -> None:
+        runner = FakeKubectl(refresh_peer_not_ready=True)
+        with self.assertRaisesRegex(MODULE.ReloadError, "not Ready"):
+            self.workflow(runner).run()
+        self.assertFalse(
+            any("--subresource=ephemeralcontainers" in call for call in runner.calls)
+        )
+
+    def test_pdb_budget_change_before_patch_aborts_without_ephemeral_mutation(
+        self,
+    ) -> None:
+        runner = FakeKubectl(refresh_pdb_allowed=0)
+        with self.assertRaisesRegex(MODULE.ReloadError, "disruptionsAllowed"):
+            self.workflow(runner).run()
+        self.assertFalse(
+            any("--subresource=ephemeralcontainers" in call for call in runner.calls)
+        )
+
+    def test_ring_membership_change_before_patch_aborts_without_ephemeral_mutation(
+        self,
+    ) -> None:
+        responses = iter(
+            [
+                ring(),
+                MODULE.RingSnapshot(
+                    (
+                        "observability-tempo-ingester-0",
+                        "observability-tempo-ingester-1",
+                        "unexpected-ingester",
+                    ),
+                    (
+                        "observability-tempo-ingester-0",
+                        "observability-tempo-ingester-1",
+                        "unexpected-ingester",
+                    ),
+                    (
+                        ("observability-tempo-ingester-0", "10.244.0.1:9095"),
+                        ("observability-tempo-ingester-1", "10.244.0.2:9095"),
+                        ("unexpected-ingester", "10.244.0.3:9095"),
+                    ),
+                ),
+            ]
+        )
+
+        def ring_reader(_config: MODULE.Config, _runner: Any) -> MODULE.RingSnapshot:
+            return next(responses)
+
+        runner = FakeKubectl()
+        with self.assertRaisesRegex(MODULE.ReloadError, "ACTIVE members"):
+            self.workflow(runner, ring_reader=ring_reader).run()
+        self.assertFalse(
+            any("--subresource=ephemeralcontainers" in call for call in runner.calls)
+        )
+
     def test_post_restart_ring_lag_is_retried_within_bound(self) -> None:
         responses = iter(
             [
+                ring(),
                 ring(),
                 MODULE.RingSnapshot(("observability-tempo-ingester-0",)),
                 ring(),
@@ -455,6 +541,29 @@ class TempoReloadTests(unittest.TestCase):
         self.assertEqual(result["outcome"], "complete")
         self.assertTrue(
             any(event["name"] == "ring-not-yet-ready" for event in result["events"])
+        )
+
+    def test_post_restart_ring_transport_failure_is_retried_and_audited(self) -> None:
+        calls = 0
+
+        def ring_reader(_config: MODULE.Config, _runner: Any) -> MODULE.RingSnapshot:
+            nonlocal calls
+            calls += 1
+            if calls == 3:
+                raise MODULE.ReloadError(
+                    "Tempo ring request failed: connection reset by peer"
+                )
+            return ring()
+
+        runner = FakeKubectl()
+        result = self.workflow(runner, ring_reader=ring_reader).run()
+        self.assertEqual(result["outcome"], "complete")
+        self.assertTrue(
+            any(
+                event["name"] == "ring-not-yet-ready"
+                and "connection reset" in event["reason"]
+                for event in result["events"]
+            )
         )
 
     def test_port_forward_failed_enter_sends_term_and_waits_for_cleanup(self) -> None:
@@ -484,6 +593,29 @@ class TempoReloadTests(unittest.TestCase):
                 port_forward.__enter__()
         self.assertEqual(process.signals, [signal.SIGTERM])
         self.assertTrue(process.waited)
+
+    def test_read_ring_wraps_transport_reset_as_redacted_reload_error(self) -> None:
+        class BrokenPortForward:
+            def __init__(self, _config: MODULE.Config) -> None:
+                pass
+
+            def __enter__(self) -> "BrokenPortForward":
+                return self
+
+            def __exit__(self, *_args: Any) -> None:
+                return None
+
+            def request(self, _path: str) -> str:
+                raise ConnectionResetError(
+                    "ring reset https://user:secret@example.invalid"
+                )
+
+        with mock.patch.object(MODULE, "PortForward", BrokenPortForward):
+            with self.assertRaisesRegex(
+                MODULE.ReloadError, "ring request failed"
+            ) as raised:
+                MODULE.read_ring(config(), lambda _argv, _input, _timeout: (0, "", ""))
+        self.assertNotIn("user:secret", str(raised.exception))
 
     def test_stale_uid_on_second_read_aborts_before_patch(self) -> None:
         runner = FakeKubectl(refresh_uid=OTHER_UID)
