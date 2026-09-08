@@ -196,14 +196,17 @@ class SingleWriterSchedulerManifestTests(TestCase):
             ports, [{"name": "metrics", "port": 8183, "targetPort": "metrics"}]
         )
 
-    def test_all_single_writer_resources_are_rendered(self) -> None:
+    def test_scheduler_resources_are_excluded_from_gitops(self) -> None:
         kustomization = _load("argocd/applications/torghut/kustomization.yaml")
         resources = set(cast(list[str], kustomization["resources"]))
         self.assertTrue(
             {
                 "scheduler-deployment.yaml",
                 "scheduler-service.yaml",
-            }.issubset(resources)
+            }.isdisjoint(resources)
+        )
+        self.assertTrue(
+            {"knative-service.yaml", "ta", "market-data-archive"}.issubset(resources)
         )
         self.assertFalse(
             any("revision-prune" in resource for resource in resources),

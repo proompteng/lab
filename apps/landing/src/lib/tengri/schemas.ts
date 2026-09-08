@@ -13,6 +13,7 @@ const filePath = z
 const fileContent = z
   .string()
   .refine((value) => Buffer.byteLength(value, 'utf8') <= MAX_EDITABLE_FILE_BYTES, 'File content exceeds 4 MiB')
+const fileRevision = z.string().regex(/^(?:[a-f0-9]{64}|missing)$/, 'A valid base file revision is required')
 const codexPrompt = z
   .string()
   .trim()
@@ -46,6 +47,20 @@ const previewPath = z
     (value) => !value.includes('\u0000') && !value.includes('\r') && !value.includes('\n') && !value.includes('#'),
     'Invalid preview path',
   )
+const previewFragment = z
+  .string()
+  .max(4096)
+  .refine((value) => Buffer.byteLength(value, 'utf8') <= 4096, 'Preview fragment exceeds 4096 bytes')
+  .refine(
+    (value) =>
+      value === '' ||
+      (value.startsWith('#') &&
+        !Array.from(value).some((character) => {
+          const codePoint = character.codePointAt(0) ?? 0
+          return codePoint <= 0x1f || codePoint === 0x7f
+        })),
+    'Invalid preview fragment',
+  )
 
 export const tengriActionSchema = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('create-agent'), displayName: z.string().trim().min(1).max(64) }),
@@ -54,7 +69,13 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('resume-agent'), agentId }),
   z.strictObject({ action: z.literal('list-files'), agentId, path: filePath }),
   z.strictObject({ action: z.literal('read-file'), agentId, path: filePath }),
-  z.strictObject({ action: z.literal('write-file'), agentId, path: filePath, content: fileContent }),
+  z.strictObject({
+    action: z.literal('write-file'),
+    agentId,
+    path: filePath,
+    content: fileContent,
+    expectedRevision: fileRevision,
+  }),
   z.strictObject({ action: z.literal('create-directory'), agentId, path: filePath }),
   z.strictObject({ action: z.literal('move-file'), agentId, sourcePath: filePath, destinationPath: filePath }),
   z.strictObject({ action: z.literal('delete-file'), agentId, path: filePath, recursive: z.boolean() }),
@@ -84,6 +105,7 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('terminate-terminal'), agentId, terminalId: codexId }),
   z.strictObject({ action: z.literal('terminal-ticket'), agentId, terminalId: codexId }),
   z.strictObject({ action: z.literal('codex-account'), agentId }),
+  z.strictObject({ action: z.literal('codex-login-status'), agentId }),
   z.strictObject({ action: z.literal('codex-login'), agentId }),
   z.strictObject({ action: z.literal('create-thread'), agentId }),
   z.strictObject({ action: z.literal('resume-thread'), agentId, threadId: codexId }),
@@ -118,6 +140,7 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
     agentId,
     port: previewPort,
     path: previewPath,
+    fragment: previewFragment,
   }),
   z.strictObject({ action: z.literal('revoke-preview-session'), agentId, sessionId: previewSessionId }),
 ])

@@ -8,19 +8,6 @@
 - Scope: torghut safety controls and emergency-stop signal handling
 - Evidence basis: cluster rollout events, scheduler safety state machine, and targeted regression tests
 
-## Source Implementation Audit (2026-07-04)
-
-- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
-- Implementation status: Partially implemented: metrics/renderers, structured logs and OpenTelemetry, guardrail exporters, and operational manifests exist; full SLO/on-call process is mostly doc/runbook-level.
-- Matched implementation area: Observability, metrics, traces, alerts, and operations.
-- Current source evidence:
-  - `services/torghut/app/metrics/core.py`
-  - `argocd/applications/torghut/llm-guardrails-exporter.yaml`
-  - `argocd/applications/torghut/clickhouse/clickhouse-guardrails-exporter.yaml`
-  - `docs/torghut/production-readiness-proof-runbook.md`
-- Design drift note: Operational docs need runtime status and alerting readback before being treated as complete.
-
-
 ## Objective
 
 Reduce operational noise and improve recovery determinism by making emergency-stop reason strings canonicalized, deduplicated, and order-stable without changing existing emergency stop semantics.

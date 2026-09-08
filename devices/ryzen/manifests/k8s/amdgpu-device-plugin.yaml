@@ -21,7 +21,7 @@ spec:
         - key: CriticalAddonsOnly
           operator: Exists
       containers:
-        - image: rocm/k8s-device-plugin@sha256:e42d51ddaf66af07a2d983eb10bbaf2a6068dbc4ddcf90ddbb1e91a396b0c447
+        - image: docker.io/rocm/k8s-device-plugin:1.31.0.10@sha256:0555caf9ccc1cf407b353d1aade87d4598059f87a784085aafe3ece19405b612
           name: amdgpu-dp-cntr
           securityContext:
             privileged: true

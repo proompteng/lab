@@ -198,7 +198,9 @@ const identityAndSessionMatch = (facts: TargetPlannerFacts): boolean => {
     input.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
     input.executionTerms.executionPurpose !== undefined
   return (
-    targetSymbols.length > 0 &&
+    (targetSymbols.length > 0 ||
+      (input.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
+        input.brokerState.positions.length === 0)) &&
     sameStrings(targetSymbols, priceSymbols) &&
     input.referencePrices.signalDate === input.signalDate &&
     input.signalDate <= input.referencePrices.observedAt.slice(0, 10) &&

@@ -19,6 +19,8 @@ The repository centers on:
 - `apps/app`: TanStack Start control-plane UI
 - `apps/cms`: Payload CMS for landing content
 - `apps/docs`: Fumadocs-based documentation app
+- `apps/orbit-salvage`: Godot space-salvage game with a native desktop and browser build
+- `apps/ricochet-rush`: Godot 3D survival shooter with native desktop and browser builds
 - `apps/froussard`: Bun webhook bridge service in `apps/`
 - `apps/reestr`, `apps/reviseur`, `apps/kabina`, `apps/nata`, `apps/kitty-krew`, `apps/alchimie`, `apps/discourse`:
   additional product and experiment surfaces
@@ -142,14 +144,17 @@ go build ./services/...
 
 ### Infrastructure
 
+The current `galactic` cluster is managed by Omni/Talos, while Argo CD owns Kubernetes application desired state. Start
+with `devices/galactic/README.md`; there are no generic root apply/install commands for legacy Harvester, Rancher, or K3s
+environments.
+
 ```bash
-bun run tf:plan
-bun run tf:apply
 bun run lint:argocd
-bun run ansible
 ```
 
-Service deploy/build/reseal workflows use the typed scripts under `packages/scripts/src/**`.
+Build, reseal, and validation helpers live under `packages/scripts/src/**`. Repository policy requires normal
+production releases to flow through committed CI, Kargo, and Argo CD. Retained direct-cluster helpers are legacy paths
+pending fail-closed removal in `docs/repository-cleanup-todo.md`; do not use them for production releases.
 
 ## Repository Layout
 
@@ -176,6 +181,7 @@ Service deploy/build/reseal workflows use the typed scripts under `packages/scri
 - Jangar service docs: `services/jangar/README.md`
 - Torghut docs index: `docs/torghut/README.md`
 - Deploy/build script catalog: `packages/scripts/README.md`
+- Repository cleanup backlog: `docs/repository-cleanup-todo.md`
 - Root tooling and workflows: `AGENTS.md`
 
 ## Notes

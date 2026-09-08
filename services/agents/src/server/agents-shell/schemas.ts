@@ -9,6 +9,7 @@ const OutputBytes = Schema.Number.pipe(Schema.int(), Schema.greaterThanOrEqualTo
 const TimeoutSeconds = Schema.Number.pipe(Schema.int(), Schema.greaterThanOrEqualTo(1)).annotations({
   description: 'Timeout in seconds. Default: 60. Server cap: 1800.',
 })
+const SessionId = NonEmptyString.annotations({ description: 'Repo session id returned by repo_session_open.' })
 
 export const EmptyInputSchema = Schema.Struct({}).annotations({
   jsonSchema: {
@@ -53,8 +54,11 @@ export const ShellInputSchema = Schema.Struct({
       'User-requested terminal command line executed inside the private agents-shell workspace container. The tool returns output only.',
   }),
   cwd: Schema.optional(
-    Schema.String.annotations({ description: 'Working directory under /workspace. Defaults to /workspace.' }),
+    Schema.String.annotations({
+      description: 'Working directory; relative to the repo session when sessionId is set.',
+    }),
   ),
+  sessionId: Schema.optional(SessionId),
   timeoutSeconds: Schema.optional(TimeoutSeconds),
   maxOutputBytes: Schema.optional(OutputBytes),
 })
@@ -62,6 +66,7 @@ export const ShellInputSchema = Schema.Struct({
 export const SearchInputSchema = Schema.Struct({
   query: NonEmptyString,
   path: Schema.optional(Schema.String),
+  sessionId: Schema.optional(SessionId),
   fixedStrings: Schema.optional(Schema.Boolean),
   caseSensitive: Schema.optional(Schema.Boolean),
   maxOutputBytes: Schema.optional(OutputBytes),
@@ -69,6 +74,7 @@ export const SearchInputSchema = Schema.Struct({
 
 export const ReadFileInputSchema = Schema.Struct({
   path: NonEmptyString,
+  sessionId: Schema.optional(SessionId),
   maxBytes: Schema.optional(PositiveNumber),
 })
 
@@ -84,6 +90,7 @@ export const ApplyPatchInputSchema = Schema.Struct({
   cwd: Schema.optional(
     Schema.String.annotations({ description: 'Working directory under /workspace. Defaults to /workspace/lab.' }),
   ),
+  sessionId: Schema.optional(SessionId),
   timeoutSeconds: Schema.optional(TimeoutSeconds),
   maxOutputBytes: Schema.optional(OutputBytes),
 })
@@ -125,9 +132,44 @@ export const CliInputSchema = Schema.Struct({
     description: 'Arguments passed to the executable, excluding the executable name.',
   }),
   cwd: Schema.optional(Schema.String),
+  sessionId: Schema.optional(SessionId),
   timeoutSeconds: Schema.optional(TimeoutSeconds),
   maxOutputBytes: Schema.optional(OutputBytes),
 })
+
+export const RepoSessionOpenInputSchema = Schema.Struct({
+  name: Schema.optional(
+    NonEmptyString.annotations({ description: 'Short name used in the generated branch and worktree.' }),
+  ),
+  baseBranch: Schema.optional(NonEmptyString.annotations({ description: 'Remote base branch. Defaults to main.' })),
+})
+
+export const RepoSessionInputSchema = Schema.Struct({
+  sessionId: SessionId,
+})
+
+export const RepoSessionCloseInputSchema = Schema.Struct({
+  sessionId: SessionId,
+  force: Schema.optional(Schema.Boolean),
+})
+
+export const RepoSessionStatusSchema = Schema.Struct({
+  sessionId: Schema.String,
+  branch: Schema.String,
+  baseBranch: Schema.String,
+  baseSha: Schema.String,
+  headSha: Schema.String,
+  worktree: Schema.String,
+  createdAt: Schema.String,
+  dirty: Schema.Boolean,
+  ahead: Schema.Number.pipe(Schema.int()),
+  behind: Schema.Number.pipe(Schema.int()),
+})
+
+export const RepoSessionCloseOutputSchema = Schema.extend(
+  RepoSessionStatusSchema,
+  Schema.Struct({ closedAt: Schema.String }),
+)
 
 export const AgentStartInputSchema = Schema.Struct({
   task: NonEmptyString.annotations({ description: 'Complete task prompt for the delegated coding agent.' }),
@@ -191,6 +233,9 @@ export type ShellReadInput = typeof ShellReadInputSchema.Type
 export type ShellKillInput = typeof ShellKillInputSchema.Type
 export type ShellStatusInput = typeof ShellStatusInputSchema.Type
 export type CliInput = typeof CliInputSchema.Type
+export type RepoSessionOpenInput = typeof RepoSessionOpenInputSchema.Type
+export type RepoSessionInput = typeof RepoSessionInputSchema.Type
+export type RepoSessionCloseInput = typeof RepoSessionCloseInputSchema.Type
 export type AgentStartInput = typeof AgentStartInputSchema.Type
 export type AgentNameInput = typeof AgentNameInputSchema.Type
 export type AgentReadInput = typeof AgentReadInputSchema.Type

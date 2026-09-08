@@ -1,20 +1,18 @@
-# Torghut Design-System Current Source-of-Truth and Priority Guide (updated 2026-05-13)
+# Torghut Design-System Historical Source-of-Truth and Priority Guide (snapshot updated 2026-05-13)
 
 ## Status
 
 - Date: `2026-05-13`
-- Purpose: distinguish live source-of-truth docs from historical milestone records and identify the current highest-priority work
+- Purpose: record how live source-of-truth docs were distinguished from historical milestone records at this snapshot
 - Scope: `docs/torghut/design-system/**`, `docs/torghut/**`, `argocd/applications/torghut/**`, `services/torghut/**`, `services/jangar/**`
 - Archive note: this file is a historical authority-map snapshot. For current operations, start with
   `docs/torghut/README.md`, live GitOps, service code, and runtime readback.
 
-
 Current authority note: this file is retained as a historical map. It must not be used as the current priority list
 without validating against `docs/torghut/README.md`, live GitOps, service code, runtime endpoints, and CI.
 
-2026-07-04 source-read audit note: each existing design document in this corpus now carries a
-`Source Implementation Audit (2026-07-04)` block. Use that block, plus current source/GitOps, before relying on any
-older priority ordering or handoff claim in this file.
+The generated 2026-07-04 source-read audit and status matrix were retired. The retained deep source audits are
+historical snapshots; use live source, GitOps, runtime readback, and maintained runbooks for current decisions.
 
 ## Why this document exists
 
@@ -149,11 +147,12 @@ These March 2026 options-lane files are retained for rationale and archaeology o
 authority for implementation, promotion, cluster health, or live trading decisions. Use live GitOps, service code,
 runtime status, and the current Torghut index before acting on any options-lane detail.
 
-## Current priority, not historical priority
+## Priority recorded at the historical snapshot
 
-The current highest-priority work is:
+The highest-priority work recorded at this snapshot was:
 
-The May 13 repair-outcome dividend ledger is the current top priority after freshness-carry and repair-bid settlement
+The May 13 repair-outcome dividend ledger was the top priority at this snapshot after freshness-carry and repair-bid
+settlement
 landed:
 
 - make Torghut publish `repair_outcome_dividend_ledger` from status, health, readyz, and consumer-evidence surfaces so
@@ -165,7 +164,7 @@ landed:
   repair reason codes against `zero_notional_or_stale_evidence_rate`, `routeable_candidate_count`,
   `fill_tca_or_slippage_quality`, and `capital_gate_safety`.
 
-The May 13 freshness-carry handoff remains an active supporting priority:
+The May 13 freshness-carry handoff was an active supporting priority at this snapshot:
 
 - make Torghut publish `freshness_carry_ledger` from status, health, readyz, and consumer-evidence surfaces so TA
   signal, TCA, empirical, market-context, quant-evidence, and source-serving freshness are priced as explicit repair
@@ -175,7 +174,7 @@ The May 13 freshness-carry handoff remains an active supporting priority:
   pressure-budget through
   `docs/agents/designs/188-jangar-evidence-pressure-ledger-and-watch-backoff-governor-2026-05-13.md`.
 
-The May 13 source-serving proof handoff remains an active supporting priority:
+The May 13 source-serving proof handoff was an active supporting priority at this snapshot:
 
 - make Torghut publish `source_serving_repair_receipt_ledger` from status and consumer-evidence surfaces so repair
   receipts cite source commit, serving build commit, serving image digest, manifest image digest, and required contract
@@ -207,7 +206,7 @@ The May 8 execution-trust handoff is
 zero-notional profit-repair settlement ledger. It follows
 `docs/torghut/design-system/v6/183-torghut-receipt-settled-capital-reentry-cohorts-2026-05-08.md`, the observe-mode
 capital reentry cohort ledger.
-The May 7 contract-graduation and executable-alpha contracts are the current implementation handoff:
+The May 7 contract-graduation and executable-alpha contracts were the implementation handoff at this snapshot:
 
 - make Jangar graduate accepted design contracts through live runtime receipts before they can widen material action in
   `docs/agents/designs/164-jangar-contract-graduation-brake-and-runtime-receipt-gates-2026-05-07.md`;
@@ -215,7 +214,7 @@ The May 7 contract-graduation and executable-alpha contracts are the current imp
   widen in
   `docs/torghut/design-system/v6/168-torghut-executable-alpha-receipts-and-capital-replay-board-2026-05-07.md`.
 
-The May 7 source-rollout and proof-floor settlement contracts are the current implementation handoff:
+The May 7 source-rollout and proof-floor settlement contracts were the implementation handoff at this snapshot:
 
 - settle Jangar source head, Argo revision, desired image, live image, controller heartbeat, route status, database
   projection, watch cache, and Torghut proof-floor evidence into one action-class receipt in
@@ -259,7 +258,7 @@ The earlier May 6 discover cutover contracts remain the preceding implementation
 - retire Torghut proof debt through compact receipts before shadow, paper, or live capital can advance in
   `docs/torghut/design-system/v6/101-torghut-proof-debt-retirement-and-shadow-capital-handoff-2026-05-06.md`.
 
-The May 5 cross-plane contracts are now the latest active architecture layer:
+The May 5 cross-plane contracts were the latest architecture layer at this snapshot:
 
 - adopt Jangar brownout decisions by action class, keep bounded repair work open under explicit budgets, and expose a
   Torghut quant capital posture only after dispatch and rollout enforcement are validated in
@@ -309,19 +308,20 @@ The May 5 cross-plane contracts are now the latest active architecture layer:
   Jangar authority, Torghut health, data freshness, artifact parity, and post-cost portfolio proof in
   `docs/torghut/design-system/v6/72-torghut-cross-plane-evidence-epochs-and-portfolio-proof-lanes-2026-05-05.md`.
 
-The March 27 profitability-proof contracts are also active operator work for the retained internal-history window:
+The March 27 profitability-proof contracts were also operator work for the retained internal-history window at this
+snapshot:
 
 - convert Kafka-retained recent history into immutable replay bundles and archive-backed profitability proof in
   `docs/torghut/design-system/v6/53-torghut-kafka-retention-bootstrap-and-archive-backed-profitability-proof-2026-03-27.md`;
 - turn the retained March 16 through March 27 internal window into a frozen selection/holdout sleeve-proof contract in
   `docs/torghut/design-system/v6/54-torghut-research-backed-sleeves-and-this-week-holdout-proof-2026-03-27.md`.
 
-The March 28 service-quality contract is also active engineering work for Torghut's trading core:
+The March 28 service-quality contract was also engineering work for Torghut's trading core at this snapshot:
 
 - move Torghut to Hypothesis-backed property/stateful testing, branch-coverage enforcement, and stricter lint gates in
   `docs/torghut/design-system/v6/66-torghut-property-based-testing-coverage-and-lint-hardening-2026-03-28.md`.
 
-The March 29 onboarding glossary is the current terminology companion for engineers entering this codebase:
+The March 29 onboarding glossary was the terminology companion for engineers entering this codebase at this snapshot:
 
 - use `docs/torghut/design-system/v6/67-torghut-trading-engine-glossary-and-mechanics-2026-03-29.md` when the problem
   is understanding Torghut vocabulary, runtime flow, replay flow, decision persistence, or why a sleeve is flat.
@@ -442,8 +442,6 @@ Those slices are already materially in the source tree.
 
 These docs are still valuable, but mainly as dated rationale, proof, or closeout records:
 
-- `docs/torghut/design-system/implementation-status-matrix-2026-02-21.md`
-- `docs/torghut/design-system/implementation-audit.md`
 - `docs/torghut/design-system/v6/13-production-gap-closure-master-plan-2026-03-03.md`
 - `docs/torghut/design-system/v6/15-live-execution-quality-and-profitability-recovery-plan-2026-03-04.md`
 - `docs/torghut/design-system/v6/16-dspy-llm-live-gate-root-cause-and-rollout-2026-03-04.md`
@@ -459,9 +457,9 @@ These docs are still valuable, but mainly as dated rationale, proof, or closeout
 They should inform decisions, but they should not be treated as the single current operator checklist without checking
 the current contract docs above.
 
-## Current design docs that remain active
+## Design contracts retained from the snapshot
 
-These are still active contract docs rather than historical snapshots:
+These were active contract docs at the snapshot; they are historical now and require revalidation:
 
 - `docs/agents/designs/64-jangar-recovery-epochs-and-backlog-seats-contract-2026-03-21.md`
 - `docs/agents/designs/64-jangar-recovery-warrants-and-rollout-cohorts-contract-2026-03-21.md`
@@ -527,7 +525,8 @@ These are still active contract docs rather than historical snapshots:
 When a document mixes design, proof, and closeout material:
 
 1. trust the exact date in the header;
-2. check whether it is describing a baseline snapshot, a landed implementation update, or a current recommendation;
-3. prefer current source files and current contract docs when there is any conflict;
+2. check whether it is describing a baseline snapshot, a landed implementation update, or a recommendation recorded at
+   that time;
+3. prefer current source files and maintained current docs when there is any conflict;
 4. treat milestone language like "completed" or "closeout" as scoped to that dated workstream, not as proof that no
    important work remains.

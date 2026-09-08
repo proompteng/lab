@@ -64,9 +64,26 @@ type codexPendingResult struct {
 	eventSequence uint64
 }
 
+type codexRPCError struct {
+	code    int
+	message string
+	raw     json.RawMessage
+}
+
+func (rpcError *codexRPCError) Error() string {
+	return fmt.Sprintf("Codex app-server request failed: %s", compactJSON(rpcError.raw))
+}
+
 type codexCallResult struct {
 	result        json.RawMessage
 	eventSequence uint64
+	generation    *codexProcessGeneration
+}
+
+type codexLoginSnapshot struct {
+	Active    bool            `json:"active"`
+	Result    json.RawMessage `json:"result,omitempty"`
+	StartedAt string          `json:"startedAt,omitempty"`
 }
 
 type codexSubscription struct {
@@ -96,19 +113,24 @@ type codexSupervisor struct {
 	loginMu         sync.Mutex
 	responseTimeout time.Duration
 
-	mu             sync.Mutex
-	command        *exec.Cmd
-	stdin          io.WriteCloser
-	generation     *codexProcessGeneration
-	pending        map[string]chan codexPendingResult
-	approvals      map[string]codexApproval
-	activeLoginID  string
-	sequence       uint64
-	buffer         []codexEvent
-	bufferBytes    int
-	subscriptions  map[uint64]codexSubscription
-	nextSubscriber uint64
-	shutdown       chan struct{}
+	mu              sync.Mutex
+	command         *exec.Cmd
+	stdin           io.WriteCloser
+	generation      *codexProcessGeneration
+	pending         map[string]chan codexPendingResult
+	approvals       map[string]codexApproval
+	activeLoginID   string
+	activeLogin     json.RawMessage
+	loginStartedAt  time.Time
+	loginGeneration *codexProcessGeneration
+	loginOperation  *codexProcessGeneration
+	loginCompleted  map[string]struct{}
+	sequence        uint64
+	buffer          []codexEvent
+	bufferBytes     int
+	subscriptions   map[uint64]codexSubscription
+	nextSubscriber  uint64
+	shutdown        chan struct{}
 }
 
 func newCodexSupervisor(binary, cwd string) *codexSupervisor {
@@ -296,8 +318,22 @@ func (supervisor *codexSupervisor) startLogin(ctx context.Context, params json.R
 	defer supervisor.loginMu.Unlock()
 
 	supervisor.mu.Lock()
+	if supervisor.loginGeneration != supervisor.generation {
+		supervisor.clearLoginLocked()
+	}
+	operationGeneration := supervisor.generation
+	supervisor.loginOperation = operationGeneration
+	supervisor.loginCompleted = make(map[string]struct{})
 	previousLoginID := supervisor.activeLoginID
 	supervisor.mu.Unlock()
+	defer func() {
+		supervisor.mu.Lock()
+		if supervisor.loginOperation == operationGeneration {
+			supervisor.loginOperation = nil
+			supervisor.loginCompleted = nil
+		}
+		supervisor.mu.Unlock()
+	}()
 	if previousLoginID != "" {
 		cancelParams, _ := json.Marshal(map[string]string{"loginId": previousLoginID})
 		cancelContext, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -308,7 +344,7 @@ func (supervisor *codexSupervisor) startLogin(ctx context.Context, params json.R
 		}
 		supervisor.mu.Lock()
 		if supervisor.activeLoginID == previousLoginID {
-			supervisor.activeLoginID = ""
+			supervisor.clearLoginLocked()
 		}
 		supervisor.mu.Unlock()
 	}
@@ -323,9 +359,39 @@ func (supervisor *codexSupervisor) startLogin(ctx context.Context, params json.R
 		return codexCallResult{}, errors.New("Codex app-server returned an invalid device login")
 	}
 	supervisor.mu.Lock()
-	supervisor.activeLoginID = login.LoginID
+	_, completed := supervisor.loginCompleted[login.LoginID]
+	if supervisor.loginOperation == result.generation && !completed {
+		supervisor.activeLoginID = login.LoginID
+		supervisor.activeLogin = append(json.RawMessage(nil), result.result...)
+		supervisor.loginStartedAt = time.Now().UTC()
+		supervisor.loginGeneration = result.generation
+	}
 	supervisor.mu.Unlock()
 	return result, nil
+}
+
+func (supervisor *codexSupervisor) loginSnapshot() codexLoginSnapshot {
+	supervisor.mu.Lock()
+	defer supervisor.mu.Unlock()
+	if supervisor.activeLoginID == "" ||
+		len(supervisor.activeLogin) == 0 ||
+		supervisor.loginStartedAt.IsZero() ||
+		supervisor.loginGeneration != supervisor.generation ||
+		supervisor.generation.failure != nil {
+		return codexLoginSnapshot{}
+	}
+	return codexLoginSnapshot{
+		Active:    true,
+		Result:    append(json.RawMessage(nil), supervisor.activeLogin...),
+		StartedAt: supervisor.loginStartedAt.Format(time.RFC3339Nano),
+	}
+}
+
+func (supervisor *codexSupervisor) clearLoginLocked() {
+	supervisor.activeLoginID = ""
+	supervisor.activeLogin = nil
+	supervisor.loginStartedAt = time.Time{}
+	supervisor.loginGeneration = nil
 }
 
 func (supervisor *codexSupervisor) request(
@@ -377,9 +443,13 @@ func (supervisor *codexSupervisor) request(
 		return codexCallResult{}, ctx.Err()
 	case result := <-response:
 		if len(result.err) > 0 && string(result.err) != "null" {
-			return codexCallResult{}, fmt.Errorf("Codex app-server request failed: %s", compactJSON(result.err))
+			return codexCallResult{}, codexRPCErrorFromRaw(result.err)
 		}
-		return codexCallResult{result: result.result, eventSequence: result.eventSequence}, nil
+		return codexCallResult{
+			result:        result.result,
+			eventSequence: result.eventSequence,
+			generation:    generation,
+		}, nil
 	}
 }
 
@@ -503,8 +573,14 @@ func (supervisor *codexSupervisor) handleServerMessage(
 		}
 		if json.Unmarshal(message.Params, &params) == nil {
 			supervisor.mu.Lock()
-			if supervisor.generation == generation && (params.LoginID == "" || supervisor.activeLoginID == params.LoginID) {
-				supervisor.activeLoginID = ""
+			if supervisor.generation == generation {
+				if params.LoginID != "" && supervisor.loginOperation == generation {
+					supervisor.loginCompleted[params.LoginID] = struct{}{}
+				}
+				if supervisor.loginGeneration == generation &&
+					(params.LoginID == "" || supervisor.activeLoginID == params.LoginID) {
+					supervisor.clearLoginLocked()
+				}
 			}
 			supervisor.mu.Unlock()
 		}
@@ -1007,7 +1083,9 @@ func (supervisor *codexSupervisor) failProcess(err error) {
 	pending := supervisor.pending
 	supervisor.pending = make(map[string]chan codexPendingResult)
 	supervisor.approvals = make(map[string]codexApproval)
-	supervisor.activeLoginID = ""
+	supervisor.clearLoginLocked()
+	supervisor.loginOperation = nil
+	supervisor.loginCompleted = nil
 	supervisor.mu.Unlock()
 	encoded, _ := json.Marshal(map[string]string{"message": err.Error()})
 	for _, channel := range pending {
@@ -1035,9 +1113,55 @@ func compactJSON(value json.RawMessage) string {
 	return "request failed"
 }
 
+func codexRPCErrorFromRaw(raw json.RawMessage) error {
+	var encoded struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(raw, &encoded); err != nil {
+		return fmt.Errorf("Codex app-server request failed: %s", compactJSON(raw))
+	}
+	return &codexRPCError{
+		code:    encoded.Code,
+		message: encoded.Message,
+		raw:     append(json.RawMessage(nil), raw...),
+	}
+}
+
+const (
+	codexConversationNotFoundMessage = "Codex conversation could not be found"
+	codexMissingRolloutMessagePrefix = "no rollout found for thread id "
+)
+
+func isMissingCodexConversation(method string, params json.RawMessage, err error) bool {
+	if method != "thread/resume" {
+		return false
+	}
+	var rpcError *codexRPCError
+	if !errors.As(err, &rpcError) || rpcError.code != -32600 {
+		return false
+	}
+	threadID, ok := codexResumeThreadID(params)
+	return ok && rpcError.message == codexMissingRolloutMessagePrefix+threadID
+}
+
+func codexResumeThreadID(params json.RawMessage) (string, bool) {
+	var input struct {
+		ThreadID string `json:"threadId"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(params))
+	if err := decoder.Decode(&input); err != nil {
+		return "", false
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return "", false
+	}
+	return input.ThreadID, input.ThreadID != ""
+}
+
 func allowedCodexMethod(method string) bool {
 	switch method {
-	case "account/read", "account/login/start", "thread/start", "thread/resume", "turn/start", "turn/steer", "turn/interrupt":
+	case "account/read", "account/login/start", "thread/start", "thread/resume", "thread/turns/list", "thread/items/list", "turn/start", "turn/steer", "turn/interrupt":
 		return true
 	default:
 		return false
@@ -1055,10 +1179,22 @@ func (server *apiServer) handleCodexCall(writer http.ResponseWriter, request *ht
 	}
 	result, err := server.codex.call(request.Context(), input.Method, input.Params)
 	if err != nil {
+		if isMissingCodexConversation(input.Method, input.Params, err) {
+			writeAPIError(writer, http.StatusNotFound, codexConversationNotFoundMessage)
+			return
+		}
 		writeAPIError(writer, http.StatusBadGateway, err.Error())
 		return
 	}
 	writeJSON(writer, http.StatusOK, codexCallResponse{Result: result.result, EventSequence: result.eventSequence})
+}
+
+func (server *apiServer) handleCodexLogin(writer http.ResponseWriter, _ *http.Request) {
+	if server.codex == nil {
+		writeAPIError(writer, http.StatusServiceUnavailable, "Codex app-server is disabled")
+		return
+	}
+	writeJSON(writer, http.StatusOK, server.codex.loginSnapshot())
 }
 
 func (server *apiServer) handleCodexApproval(writer http.ResponseWriter, request *http.Request) {

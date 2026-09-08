@@ -6,12 +6,12 @@
 - Last updated: **2026-02-08**
 - Source of truth (config): `argocd/applications/torghut/**`
 
-## Source Implementation Audit (2026-07-04)
+## Historical Source Audit (2026-07-04)
 
 - Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
 - Implementation status: **Partially implemented.** Runtime evaluation metrics exist from persisted `LLMDecisionReview` rows, and DSPy compile/evaluation tooling exists; promotion is still governed by guardrail evidence fields.
 - Matched implementation area: LLM evaluation workflow.
-- Current source evidence:
+- Source evidence inspected:
   - `services/torghut/app/trading/llm/evaluation.py::build_llm_evaluation_metrics`
   - `services/torghut/app/trading/llm/dspy_compile/evaluator.py`
   - `services/torghut/app/trading/llm/dspy_compile/dataset.py`

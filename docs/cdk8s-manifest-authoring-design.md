@@ -13,7 +13,8 @@
 - Cluster: `galactic-tailscale`, Kubernetes `v1.35.0`
 - Implementation: [PR #12214](https://github.com/proompteng/lab/pull/12214), merge
   `90cc200975cce30cfa233e63f3e23546a45d4653`
-- Acceptance evidence: [cdk8s adoption rollout proof](./cdk8s-adoption-rollout-proof-2026-07-09.md)
+- Acceptance evidence: [PR #12224](https://github.com/proompteng/lab/pull/12224), merged as
+  `0e901b02fac188bd5d37fa481636c4f892c7e83b`
 
 This document defines the established manifest-authoring model. For registered applications, TypeScript under
 `packages/k8s/src/apps/**` is the authoring source and committed per-resource YAML under

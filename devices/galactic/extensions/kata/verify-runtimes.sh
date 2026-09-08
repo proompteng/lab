@@ -4,6 +4,7 @@ set -euo pipefail
 
 readonly KUBE_CONTEXT='galactic-lan'
 readonly NAMESPACE='kata'
+readonly RETIRED_NAMESPACE='microvm-system'
 readonly NANOAGENT_IMAGE='ghcr.io/proompteng/nanoagent@sha256:78b7b6e52e9b3f6003d2663a5e85fbfb55eabba018a6ee61f6b39a722f71ad7c'
 
 usage() {
@@ -27,6 +28,27 @@ runtime_class_for_vmm() {
     dragonball) echo 'kata-dragonball' ;;
     *) return 1 ;;
   esac
+}
+
+canary_daemonsets() {
+  local namespace="$1"
+  local daemonsets=''
+  local matches=''
+  local status=0
+
+  daemonsets="$(kubectl --context "$KUBE_CONTEXT" -n "$namespace" get daemonsets -o name)" || {
+    status=$?
+    return "$status"
+  }
+  if matches="$(rg '/(microvm-agent|nanoagent)-(qemu|clh|fc|dragonball)$' <<<"$daemonsets")"; then
+    while IFS= read -r daemonset; do
+      [[ -n "$daemonset" ]] && printf '%s/%s\n' "$namespace" "$daemonset"
+    done <<<"$matches"
+    return 0
+  else
+    status=$?
+    [[ "$status" -eq 1 ]] || return "$status"
+  fi
 }
 
 if [[ $# -lt 1 || $# -gt 3 || "$1" != /* ]]; then
@@ -61,12 +83,18 @@ kubectl --context "$KUBE_CONTEXT" get runtimeclass -o yaml >"$evidence_dir/runti
 kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" get daemonset -o yaml \
   >"$evidence_dir/existing-daemonsets.yaml"
 
-permanent_canary_daemonsets="$(
-  kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" get daemonsets -o name \
-    | rg '/(microvm-agent|nanoagent)-(qemu|clh|fc|dragonball)$' || true
+permanent_canary_daemonsets="$(canary_daemonsets "$NAMESPACE")"
+retired_namespace="$(
+  kubectl --context "$KUBE_CONTEXT" get namespace "$RETIRED_NAMESPACE" --ignore-not-found -o name
 )"
+if [[ -n "$retired_namespace" ]]; then
+  kubectl --context "$KUBE_CONTEXT" -n "$RETIRED_NAMESPACE" get daemonset -o yaml \
+    >"$evidence_dir/retired-daemonsets.yaml"
+  retired_canary_daemonsets="$(canary_daemonsets "$RETIRED_NAMESPACE")"
+  permanent_canary_daemonsets="${permanent_canary_daemonsets}${permanent_canary_daemonsets:+$'\n'}${retired_canary_daemonsets}"
+fi
 if [[ -n "$permanent_canary_daemonsets" ]]; then
-  echo 'permanent Kata canary DaemonSets remain; sync kata with pruning enabled:' >&2
+  echo 'permanent Kata canary DaemonSets remain in an active or retired namespace; finish pruning:' >&2
   echo "$permanent_canary_daemonsets" >&2
   exit 1
 fi

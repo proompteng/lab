@@ -44,6 +44,9 @@ storage:
   sqlite:
     path: /var/lib/omni/sqlite/omni.db
 
+etcdBackup:
+  localPath: /var/lib/omni/cluster-etcd-backups
+
 features:
   enableBreakGlassConfigs: false
   enableConfigDataCompression: true

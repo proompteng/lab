@@ -7,6 +7,7 @@ metadata:
     argocd.argoproj.io/sync-wave: "-5"
 spec:
   instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.3-system-trixie
   primaryUpdateStrategy: unsupervised
   storage:
     storageClass: rook-ceph-block
@@ -17,6 +18,10 @@ spec:
       owner: attic
       encoding: "UTF8"
       dataChecksums: true
+  backup:
+    volumeSnapshot:
+      className: rook-ceph-block
+      snapshotOwnerReference: backup
   inheritedMetadata:
     annotations:
       reflector.v1.k8s.emberstack.com/reflection-allowed: "true"

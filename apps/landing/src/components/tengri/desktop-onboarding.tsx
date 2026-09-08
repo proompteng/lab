@@ -2,9 +2,9 @@
 
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Bot, CircleAlert, CircleUserRound, Cloud, LoaderCircle, Moon, Play, RotateCw, Trash2 } from 'lucide-react'
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import { AnimatePresence, motion } from 'motion/react'
 import type { ReactNode } from 'react'
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 
 import { tengriAuthClient } from '@/lib/tengri/auth-client'
@@ -12,6 +12,7 @@ import { desktopRefreshDelay, resolveDesktopGate, type DesktopGateState } from '
 import type { TengriAgent, TengriDesktopSnapshot } from '@/lib/tengri/types'
 import { createAgentFormSchema, type CreateAgentFormValues } from '@/schemas/tengri-agent'
 import { getDesktopSnapshot, runTengriAction } from './client'
+import { CodeDraftRecoveryNotice } from './code-draft-recovery-notice'
 import { ConfirmationDialog } from './confirmation-dialog'
 import {
   clearDeletedDesktopState,
@@ -20,11 +21,15 @@ import {
 } from './desktop-session-storage'
 import { useModalFocus } from './modal-focus'
 import { ReadyDesktop } from './ready-desktop'
+import { useDesktopReducedMotion } from './use-desktop-reduced-motion'
+
+const RecoveryOwnerContext = createContext<string | undefined>(undefined)
 
 export default function DesktopOnboarding() {
   const mounted = useRef(false)
   const requestSequence = useRef(0)
   const [snapshot, setSnapshot] = useState<TengriDesktopSnapshot | null>(null)
+  const [recoveryOwnerId, setRecoveryOwnerId] = useState<string | undefined>()
   const [snapshotError, setSnapshotError] = useState('')
   const [pendingDeletion, setPendingDeletion] = useState<{ agentId: string; createdAt: string } | null>(null)
 
@@ -34,6 +39,7 @@ export default function DesktopOnboarding() {
       const next = await getDesktopSnapshot()
       if (!mounted.current || sequence !== requestSequence.current) return
       setSnapshot(next)
+      if (next.authenticated && next.user) setRecoveryOwnerId(next.user.id)
       setPendingDeletion((pending) => {
         if (!pending) return null
         const observed = next.agents.find((agent) => agent.id === pending.agentId)
@@ -111,39 +117,38 @@ export default function DesktopOnboarding() {
 
   if (gate.kind === 'ready' && snapshot?.user) {
     return (
-      <ReadyDesktop
-        agent={gate.agent}
-        connectionWarning={snapshotError}
-        onChanged={refresh}
-        previewGatewayOrigin={snapshot.previewGatewayOrigin}
-        user={snapshot.user}
-      />
+      <>
+        <CodeDraftRecoveryNotice ownerId={snapshot.user.id} />
+        <ReadyDesktop
+          agent={gate.agent}
+          connectionWarning={snapshotError}
+          onChanged={refresh}
+          previewGatewayOrigin={snapshot.previewGatewayOrigin}
+          user={snapshot.user}
+        />
+      </>
     )
   }
 
   return (
-    <main className="relative min-h-[100svh] overflow-hidden bg-[#080b13] text-white selection:bg-[#6da8ff]/35">
-      <div
-        aria-hidden="true"
-        className="absolute inset-0 bg-[radial-gradient(circle_at_18%_12%,rgba(76,118,196,0.28),transparent_38%),radial-gradient(circle_at_82%_78%,rgba(104,72,178,0.24),transparent_42%),linear-gradient(145deg,#0a1222_0%,#15172c_52%,#0b0a18_100%)]"
-      />
-      <div
-        aria-hidden="true"
-        className="absolute inset-0 opacity-30 [background-size:48px_48px] [background-image:linear-gradient(rgba(255,255,255,.018)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.018)_1px,transparent_1px)]"
-      />
-      <header className="absolute inset-x-0 top-0 z-20 flex h-8 items-center justify-between border-b border-white/10 bg-white/[0.055] px-4 text-[12px] text-white/72 backdrop-blur-2xl">
-        <div className="flex items-center gap-2 font-semibold text-white/90">
-          <TengriMark />
-          Tengri
+    <RecoveryOwnerContext value={recoveryOwnerId}>
+      <main className="font-system relative min-h-[100svh] overflow-hidden bg-[#080b13] text-white selection:bg-[#6da8ff]/35">
+        <div aria-hidden="true" className="absolute inset-0 bg-[url('/tengri/wallpaper.webp')] bg-cover bg-center" />
+        <div aria-hidden="true" className="absolute inset-0 bg-black/10" />
+        <header className="absolute inset-x-0 top-0 z-20 flex h-8 items-center justify-between border-b border-white/10 bg-white/[0.055] px-4 text-[12px] text-white/72 backdrop-blur-2xl">
+          <div className="flex items-center gap-2 font-semibold text-white/90">
+            <TengriMark />
+            Tengri
+          </div>
+          <span>{snapshot?.authenticated ? snapshot.user?.name || 'GitHub user' : 'Private microVM workspace'}</span>
+        </header>
+        <div className="relative z-10 grid min-h-[100svh] place-items-center px-5 pt-12 pb-8">
+          <AnimatePresence mode="wait">
+            <DesktopGate key={gate.kind} gate={gate} onAgentDeleted={beginAgentDeletion} onRefresh={refresh} />
+          </AnimatePresence>
         </div>
-        <span>{snapshot?.authenticated ? snapshot.user?.name || 'GitHub user' : 'Private microVM workspace'}</span>
-      </header>
-      <div className="relative z-10 grid min-h-[100svh] place-items-center px-5 pt-12 pb-8">
-        <AnimatePresence mode="wait">
-          <DesktopGate key={gate.kind} gate={gate} onAgentDeleted={beginAgentDeletion} onRefresh={refresh} />
-        </AnimatePresence>
-      </div>
-    </main>
+      </main>
+    </RecoveryOwnerContext>
   )
 }
 
@@ -209,7 +214,9 @@ function DesktopGate({
     )
   }
   if (gate.kind === 'sleeping') return <SleepingAgentWindow agent={gate.agent} onChanged={onRefresh} />
-  if (gate.kind === 'failed') return <FailedAgentWindow agent={gate.agent} onDeleted={onAgentDeleted} />
+  if (gate.kind === 'failed') {
+    return <FailedAgentWindow agent={gate.agent} onChanged={onRefresh} onDeleted={onAgentDeleted} />
+  }
   if (gate.kind === 'unknown') {
     return (
       <ActionWindow
@@ -373,13 +380,53 @@ function SleepingAgentWindow({ agent, onChanged }: { agent: TengriAgent; onChang
   )
 }
 
-function FailedAgentWindow({ agent, onDeleted }: { agent: TengriAgent; onDeleted: (agent: TengriAgent) => void }) {
-  const [busy, setBusy] = useState(false)
+function FailedAgentWindow({
+  agent,
+  onChanged,
+  onDeleted,
+}: {
+  agent: TengriAgent
+  onChanged: () => Promise<void>
+  onDeleted: (agent: TengriAgent) => void
+}) {
+  const [deleteBusy, setDeleteBusy] = useState(false)
   const [error, setError] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [sleepBusy, setSleepBusy] = useState(false)
+  const [sleepCommitted, setSleepCommitted] = useState(false)
+
+  useEffect(() => {
+    if (!sleepCommitted) return
+    let cancelled = false
+    let timer: number | undefined
+
+    const refreshUntilSleeping = async () => {
+      await onChanged()
+      if (!cancelled) timer = window.setTimeout(() => void refreshUntilSleeping(), 2_000)
+    }
+    void refreshUntilSleeping()
+
+    return () => {
+      cancelled = true
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  }, [onChanged, sleepCommitted])
+
+  async function preserveWorkspace() {
+    setSleepBusy(true)
+    setError('')
+    try {
+      await runTengriAction<TengriAgent>({ action: 'sleep-agent', agentId: agent.id })
+      setSleepCommitted(true)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'The failed agent could not be stopped')
+    } finally {
+      setSleepBusy(false)
+    }
+  }
 
   async function deleteAgent() {
-    setBusy(true)
+    setDeleteBusy(true)
     setError('')
     try {
       await runTengriAction<null>({ action: 'delete-agent', agentId: agent.id })
@@ -389,8 +436,19 @@ function FailedAgentWindow({ agent, onDeleted }: { agent: TengriAgent; onDeleted
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'The failed agent could not be deleted')
     } finally {
-      setBusy(false)
+      setDeleteBusy(false)
     }
+  }
+
+  if (sleepCommitted) {
+    return (
+      <StatusWindow
+        icon={<LoaderCircle className="h-7 w-7 animate-spin text-[#8abfff]" />}
+        title="Putting agent to sleep"
+        detail="Stopping the failed Firecracker guest while keeping the persistent workspace."
+        progress
+      />
+    )
   }
 
   return (
@@ -401,15 +459,25 @@ function FailedAgentWindow({ agent, onDeleted }: { agent: TengriAgent; onDeleted
           title="Agent could not start"
           detail={agent.message || agent.conditions.at(-1)?.message || 'Tengri reported a guest startup failure.'}
           error={error}
-          actionIcon={<Trash2 aria-hidden="true" className="h-4 w-4" />}
-          actionBusy={busy}
-          actionLabel="Delete Failed Agent"
-          danger
-          onAction={() => setConfirmOpen(true)}
+          actionIcon={<Moon aria-hidden="true" className="h-4 w-4" />}
+          actionBusy={sleepBusy}
+          actionLabel="Sleep and Keep Workspace"
+          onAction={() => void preserveWorkspace()}
+          secondaryAction={
+            <button
+              type="button"
+              disabled={sleepBusy || deleteBusy}
+              onClick={() => setConfirmOpen(true)}
+              className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-4 py-2.5 text-sm font-semibold text-white outline-none transition hover:bg-red-600 focus-visible:ring-2 focus-visible:ring-red-200 disabled:opacity-40"
+            >
+              <Trash2 aria-hidden="true" className="h-4 w-4" />
+              Delete Failed Agent
+            </button>
+          }
         />
       </div>
       <ConfirmationDialog
-        busy={busy}
+        busy={deleteBusy}
         description="This removes the failed microVM and its persistent workspace so a clean agent can be created. This cannot be undone."
         error={error}
         onCancel={() => setConfirmOpen(false)}
@@ -439,6 +507,7 @@ function ActionWindow({
   error = '',
   icon,
   onAction,
+  secondaryAction,
   title,
 }: WindowMessageProps & {
   actionBusy?: boolean
@@ -447,25 +516,29 @@ function ActionWindow({
   danger?: boolean
   error?: string
   onAction: () => void
+  secondaryAction?: ReactNode
 }) {
   return (
     <LifecycleWindow title={title} interactive>
       <WindowHero icon={icon} title={title} detail={detail} />
       {error ? <InlineError message={error} /> : null}
-      <button
-        type="button"
-        aria-busy={actionBusy}
-        disabled={actionBusy}
-        onClick={onAction}
-        className={`mt-6 inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white outline-none transition focus-visible:ring-2 disabled:opacity-40 ${danger ? 'bg-red-700 hover:bg-red-600 focus-visible:ring-red-200' : 'bg-[#1769d2] hover:bg-[#1d6fd8] focus-visible:ring-[#9bc8ff]'}`}
-      >
-        {actionBusy ? (
-          <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" />
-        ) : (
-          actionIcon || <RotateCw aria-hidden="true" className="h-4 w-4" />
-        )}
-        {actionLabel}
-      </button>
+      <div className="mt-6 flex flex-wrap gap-3">
+        <button
+          type="button"
+          aria-busy={actionBusy}
+          disabled={actionBusy}
+          onClick={onAction}
+          className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white outline-none transition focus-visible:ring-2 disabled:opacity-40 ${danger ? 'bg-red-700 hover:bg-red-600 focus-visible:ring-red-200' : 'bg-[#1769d2] hover:bg-[#1d6fd8] focus-visible:ring-[#9bc8ff]'}`}
+        >
+          {actionBusy ? (
+            <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" />
+          ) : (
+            actionIcon || <RotateCw aria-hidden="true" className="h-4 w-4" />
+          )}
+          {actionLabel}
+        </button>
+        {secondaryAction}
+      </div>
     </LifecycleWindow>
   )
 }
@@ -479,8 +552,9 @@ function LifecycleWindow({
   interactive?: boolean
   title: string
 }) {
+  const recoveryOwnerId = useContext(RecoveryOwnerContext)
   const modalFocus = useModalFocus<HTMLElement>(interactive)
-  const reducedMotion = useHydratedReducedMotion()
+  const reducedMotion = useDesktopReducedMotion()
   return (
     <motion.section
       ref={modalFocus.ref}
@@ -489,7 +563,7 @@ function LifecycleWindow({
       data-tengri-modal={interactive ? 'true' : undefined}
       aria-label={title}
       tabIndex={interactive ? -1 : undefined}
-      className="w-full max-w-lg overflow-hidden rounded-[28px] border border-white/18 bg-[rgba(27,30,39,0.88)] text-white shadow-[0_48px_140px_rgba(0,0,0,0.58),inset_0_1px_0_rgba(255,255,255,0.17)] backdrop-blur-3xl"
+      className="w-full max-w-lg overflow-hidden rounded-2xl border border-white/18 bg-zinc-800/90 text-white shadow-[0_48px_140px_rgba(0,0,0,0.58),inset_0_1px_0_rgba(255,255,255,0.17)] backdrop-blur-3xl"
       initial={reducedMotion ? false : { opacity: 0, scale: 0.97, y: 14 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}
       exit={reducedMotion ? undefined : { opacity: 0, scale: 0.985, y: -6 }}
@@ -507,6 +581,7 @@ function LifecycleWindow({
         </span>
       </div>
       <div className="p-7">{children}</div>
+      <CodeDraftRecoveryNotice ownerId={recoveryOwnerId} placement="inline" />
     </motion.section>
   )
 }
@@ -544,7 +619,7 @@ function InlineError({ message }: { message: string }) {
 }
 
 function ProgressBar() {
-  const reducedMotion = useHydratedReducedMotion()
+  const reducedMotion = useDesktopReducedMotion()
   return (
     <div className="mt-6 h-1 overflow-hidden rounded-full bg-white/8">
       <motion.div
@@ -554,20 +629,6 @@ function ProgressBar() {
       />
     </div>
   )
-}
-
-function useHydratedReducedMotion() {
-  const reducedMotion = useReducedMotion()
-  const hydrated = useSyncExternalStore(
-    subscribeToHydration,
-    () => true,
-    () => false,
-  )
-  return hydrated && Boolean(reducedMotion)
-}
-
-function subscribeToHydration() {
-  return () => {}
 }
 
 function TengriMark() {

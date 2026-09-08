@@ -6,6 +6,10 @@ pub const CPU_MILLIS: u32 = 2_000;
 pub const MEMORY_MIB: u32 = 4_096;
 pub const WORKSPACE_GIB: u32 = 16;
 pub const IDLE_MINUTES: i64 = 60;
+// Retained for source compatibility with callers that still construct legacy
+// four-hour resources. The controller no longer treats this field as a
+// lifecycle deadline.
+#[allow(dead_code)]
 pub const LIFETIME_HOURS: i64 = 4;
 
 #[derive(CustomResource, Debug, Clone, Deserialize, Serialize, JsonSchema)]
@@ -29,6 +33,9 @@ pub struct MicroVMSpec {
     pub resources: MicroVMResources,
     pub created_at: String,
     pub idle_deadline: String,
+    /// Legacy compatibility field. New retained agents leave this empty; it
+    /// is never used to delete or block an agent.
+    #[serde(default)]
     pub expires_at: String,
 }
 
@@ -80,6 +87,8 @@ pub struct MicroVMStatus {
     #[serde(default)]
     pub pod_name: Option<String>,
     #[serde(default)]
+    pub pod_uid: Option<String>,
+    #[serde(default)]
     pub pvc_name: Option<String>,
     #[serde(default)]
     pub pod_ip: Option<String>,
@@ -96,9 +105,14 @@ pub struct MicroVMStatus {
     #[serde(default)]
     pub last_activity_at: Option<String>,
     #[serde(default)]
+    pub pod_sandbox_transition_at: Option<String>,
+    #[serde(default)]
     pub conditions: Vec<MicroVMCondition>,
     #[serde(default)]
     pub observed_generation: i64,
+    /// Configured Nanoagent image waiting for a safe replacement of a running guest.
+    #[serde(default)]
+    pub pending_image: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -140,6 +154,7 @@ mod tests {
 
         for field in [
             "podName",
+            "podUid",
             "pvcName",
             "podIp",
             "nodeName",
@@ -147,6 +162,7 @@ mod tests {
             "message",
             "readyAt",
             "lastActivityAt",
+            "podSandboxTransitionAt",
         ] {
             assert_eq!(
                 serialized.get(field),

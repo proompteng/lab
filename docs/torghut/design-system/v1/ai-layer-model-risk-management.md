@@ -6,12 +6,12 @@
 - Last updated: **2026-02-08**
 - Source of truth (config): `argocd/applications/torghut/**`
 
-## Source Implementation Audit (2026-07-04)
+## Historical Source Audit (2026-07-04)
 
 - Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
 - Implementation status: **Partially implemented as engineering guardrails and metrics, not as a complete formal MRM program.** Model inventory, evaluation report, effective challenge, shadow completion, model-version lock, adjustment approval, rollout stage, committee roles, and token budget are represented in settings/guardrails, but current GitOps disables the runtime.
 - Matched implementation area: LLM model risk guardrails.
-- Current source evidence:
+- Source evidence inspected:
   - `services/torghut/app/config/llm_fields.py`
   - `services/torghut/app/trading/llm/guardrails.py::evaluate_llm_guardrails`
   - `services/torghut/app/models/entities/runtime_cursors.py::LLMDecisionReview`

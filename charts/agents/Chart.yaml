@@ -6,7 +6,7 @@ sources:
   - https://github.com/proompteng/charts/tree/main/charts/agents
 type: application
 kubeVersion: '>=1.25.0-0'
-version: 0.9.29
+version: 0.9.30
 appVersion: '0.9.0'
 icon: https://avatars.githubusercontent.com/u/234536857
 keywords:
@@ -208,6 +208,8 @@ annotations:
           implement: {targetRef: {kind: OrchestrationRun, name: codex-orchestration-run}}
           verify: {targetRef: {kind: AgentRun, name: codex-run-sample}}
   artifacthub.io/changes: |
+    - kind: changed
+      description: "Use GPT-6 Astra in the Codex provider examples."
     - kind: changed
       description: "Rewrite chart README around a first-time-user quickstart and production-ready install guidance."
     - kind: fixed
