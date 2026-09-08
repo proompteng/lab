@@ -252,7 +252,7 @@ describe('intraday replay program', () => {
             archiveAvailability: ArchiveAvailabilityPolicy.RecordedReader,
             assumptions: { ...defaultAssumptions, firstPollDelayMs: 3_000 },
             ...(receiptMode === 'all-candidates-unavailable' || receiptMode === 'missing-benchmark'
-              ? { calendar: [{ date: sessionDates[0], open: '09:30', close: '11:31' }] }
+              ? { calendar: [{ date: sessionDates[0], open: '09:30', close: '10:06' }] }
               : {}),
           }),
           {
@@ -328,6 +328,7 @@ describe('intraday replay program', () => {
         expect(report.sessions[0]?.fills).toEqual([])
         expect(report.totals.netRealizedPnlAfterCostsMicros).toBeNull()
         const observations = report.sessions[0]?.observations ?? []
+        expect(observations).toHaveLength(2)
         if (receiptMode === 'all-candidates-unavailable') {
           const decisions = observations.filter((item) => item.kind === 'snapshot' && item.purpose === 'decision')
           expect(decisions.length).toBeGreaterThan(0)
@@ -389,7 +390,7 @@ describe('intraday replay program', () => {
       }
       const { reportHash, ...material } = report
       expect(reportHash).toBe(canonicalHashV1(material))
-    }, 15_000)
+    })
   }
 
   test('does not trade source-received rows lacking a completed reader observation before replay time', async () => {
@@ -492,11 +493,17 @@ describe('intraday replay program', () => {
         ) as ArchiveVerifiedIntradayMarketSnapshot
       },
     })
-    const report = await run(replayInput([sessionDates[0]]), archive)
+    const report = await run(
+      replayInput([sessionDates[0]], { calendar: [{ date: sessionDates[0], open: '09:30', close: '10:06' }] }),
+      archive,
+    )
     const session = report.sessions[0]
     expect(session).toMatchObject({ status: 'INCOMPLETE', fills: [], orders: [], netRealizedPnlAfterCostsMicros: null })
     const observations = session?.observations.filter((observation) => observation.kind === 'snapshot') ?? []
-    expect(observations.length).toBeGreaterThan(1)
+    expect(observations.map(({ manifest }) => manifest.observedAt)).toEqual([
+      '2026-09-04T14:00:02.000Z',
+      '2026-09-04T14:00:32.000Z',
+    ])
     for (const observation of observations) {
       if (observation.kind !== 'snapshot') throw new Error('expected a retained snapshot')
       expect(observation.decision?.excludedCandidates?.map(({ symbol }) => symbol)).toEqual([
@@ -504,7 +511,7 @@ describe('intraday replay program', () => {
       ])
       expect(observation.decision?.signals).toEqual([])
     }
-  }, 15_000)
+  })
 
   test('uses the planned entry limit and arrival quote without lookahead', async () => {
     const archive = makeArchive({
