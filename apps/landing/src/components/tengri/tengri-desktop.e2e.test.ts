@@ -1,7 +1,6 @@
 import AxeBuilder from '@axe-core/playwright'
 import { expect, test, type Locator, type Page, type WebSocketRoute } from '@playwright/test'
 import { createHash } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
 
 const user = {
   id: '424242',
@@ -579,6 +578,9 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         }
         break
       }
+      case 'editor-session':
+        await route.fulfill({ status: 503, json: { error: 'VS Code is unavailable in this guest.' } })
+        return
       case 'preview-session':
         previewSessionSequence += 1
         if (holdNextPreviewSession) {
@@ -838,29 +840,6 @@ function emitCodexEvent(page: Page, event: Record<string, unknown>) {
     if (!source?.onmessage) throw new Error('Codex event stream is unavailable')
     source.onmessage(new MessageEvent('message', { data: JSON.stringify(payload) }))
   }, event)
-}
-
-function emitFileEvent(page: Page, directory: string, event: Record<string, unknown>) {
-  return page.evaluate(
-    ({ directory, event }) => {
-      const sources = (
-        window as typeof window & {
-          __tengriEventSources?: Array<{
-            closed: boolean
-            onmessage: ((event: MessageEvent) => void) | null
-            url: string
-          }>
-        }
-      ).__tengriEventSources?.filter((candidate) => {
-        if (candidate.closed || !candidate.onmessage) return false
-        const url = new URL(candidate.url, window.location.href)
-        return url.pathname === '/api/tengri/files/events' && url.searchParams.get('path') === directory
-      })
-      if (!sources?.length) throw new Error(`File event stream for ${directory} is unavailable`)
-      for (const source of sources) source.onmessage?.(new MessageEvent('message', { data: JSON.stringify(event) }))
-    },
-    { directory, event },
-  )
 }
 
 async function resizeWindow(
@@ -1331,7 +1310,57 @@ test('closes the last embedded preview tab through its shortcut bridge and relea
     .toBe(true)
 })
 
-test('persists real Finder changes into Code and exposes a localhost preview from Chrome', async ({ page }) => {
+test('offers old-editor drafts for download without overwriting guest files or exposing another owner', async ({
+  page,
+}) => {
+  const mock = await mockTengri(page)
+  await page.goto('/')
+  await page.evaluate(
+    ({ ownerId, agentId, agentCreatedAt }) => {
+      for (const [owner, content] of [
+        [ownerId, 'Recovered local edits'],
+        ['another-owner', 'Private other-owner draft'],
+      ]) {
+        const path = '/README.md'
+        const draft = {
+          schemaVersion: 1,
+          draftId: 'legacy-draft',
+          ownerId: owner,
+          agentId,
+          agentCreatedAt,
+          path,
+          content,
+          contentType: 'text/markdown',
+          baseRevision: 'a'.repeat(64),
+          updatedAt: Date.now(),
+        }
+        localStorage.setItem(
+          'tengri:code-draft:v1:' +
+            [owner, agentId, agentCreatedAt, path, draft.draftId].map(encodeURIComponent).join(':'),
+          JSON.stringify(draft),
+        )
+      }
+    },
+    { ownerId: user.id, agentId: readyAgent.id, agentCreatedAt: readyAgent.createdAt },
+  )
+  await page.getByRole('button', { name: 'Open Code', exact: true }).click()
+  const code = page.getByRole('region', { name: 'Code window' })
+  await expect(code.getByRole('alert')).toContainText('VS Code is unavailable')
+  await expect(code.getByRole('button', { name: 'Download /README.md' })).toHaveCount(1)
+  const downloadPromise = page.waitForEvent('download')
+  await code.getByRole('button', { name: 'Download /README.md' }).click()
+  const download = await downloadPromise
+  const stream = await download.createReadStream()
+  if (!stream) throw new Error('Draft download is unavailable')
+  let content = ''
+  for await (const chunk of stream) content += String(chunk)
+  expect(content).toBe('Recovered local edits')
+  expect(mock.actions.some((action) => action.action === 'write-file')).toBe(false)
+  await code.getByRole('button', { name: 'Close Code', exact: true }).click()
+  await expect(code).toHaveCount(0)
+})
+
+test('persists Finder changes and exposes a localhost preview from Chrome', async ({ page }) => {
   const mock = await mockTengri(page)
   await page.goto('/')
 
@@ -1357,34 +1386,6 @@ test('persists real Finder changes into Code and exposes a localhost preview fro
   await finder.getByRole('textbox', { name: 'Search files' }).fill('workspace-notes')
   await expect(renamed).toBeVisible()
   await finder.getByRole('textbox', { name: 'Search files' }).fill('')
-
-  await finder.getByRole('button', { name: /README\.md/ }).click()
-  await finder.getByRole('button', { name: 'Finder actions' }).click()
-  await page.getByRole('menuitem', { name: 'Open in Code', exact: true }).click()
-  const code = page.getByRole('region', { name: 'Code window' })
-  await expect(code.getByRole('tab', { name: /README\.md/ })).toBeVisible()
-  await expect
-    .poll(() => mock.actions.some((action) => action.action === 'read-file' && action.path === '/README.md'))
-    .toBe(true)
-  const editor = code.locator('.monaco-editor')
-  await expect(editor).toHaveCount(1)
-  await editor.click()
-  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a')
-  await page.keyboard.type('# Edited in Tengri')
-  await expect
-    .poll(() =>
-      mock.actions.some(
-        (action) =>
-          action.action === 'write-file' && action.path === '/README.md' && action.content === '# Edited in Tengri',
-      ),
-    )
-    .toBe(true)
-
-  await dock.getByRole('button', { name: 'Open Finder' }).click()
-  await finder.getByRole('button', { name: /README\.md/ }).click()
-  await finder.getByRole('button', { name: 'Quick Look' }).click()
-  await expect(page.getByRole('dialog', { name: /README\.md/ })).toContainText('# Edited in Tengri')
-  await page.getByRole('button', { name: 'Close Quick Look' }).click()
 
   await renamed.click()
   await finder.getByRole('button', { name: 'Finder actions' }).click()
@@ -1492,312 +1493,6 @@ test('persists real Finder changes into Code and exposes a localhost preview fro
     .toBe(true)
 })
 
-test('preserves the latest dirty text across an external rename and recovers it at the new path', async ({ page }) => {
-  const mock = await mockTengri(page, { preserveDraftStorageOnReload: true })
-  await page.goto('/')
-
-  const dock = page.getByRole('navigation', { name: 'Dock' })
-  await dock.getByRole('button', { name: 'Open Finder' }).click()
-  const finder = page.getByRole('region', { name: 'Finder window' })
-  await finder.getByRole('button', { name: /README\.md/ }).click()
-  await finder.getByRole('button', { name: 'Finder actions' }).click()
-  await page.getByRole('menuitem', { name: 'Open in Code', exact: true }).click()
-
-  const code = page.getByRole('region', { name: 'Code window' })
-  const editor = code.locator('.monaco-editor')
-  const content = '# Latest text after an external rename'
-  await expect(editor).toHaveCount(1)
-  await editor.click()
-  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a')
-  await page.keyboard.insertText(content)
-  await expect(editor.locator('.view-line').first()).toContainText(content)
-
-  mock.renameFileContent('/README.md', '/README-renamed.md')
-  await emitFileEvent(page, '/', {
-    kind: 'renamed',
-    path: '/README-renamed.md',
-    previousPath: '/README.md',
-    sequence: 1,
-  })
-
-  await expect(code.getByRole('tab', { name: /README-renamed\.md/ })).toBeVisible()
-  await expect(editor.locator('.view-line').first()).toContainText(content)
-  expect(mock.actions.filter((action) => action.action === 'write-file')).toHaveLength(0)
-
-  await page.reload()
-  const reloadedDock = page.getByRole('navigation', { name: 'Dock' })
-  const reloadedCode = page.getByRole('region', { name: 'Code window' })
-  await reloadedDock.getByRole('button', { name: 'Open Finder' }).click()
-  const reloadedFinder = page.getByRole('region', { name: 'Finder window' })
-  await expect(reloadedFinder.getByRole('status', { name: 'Loading files' })).toHaveCount(0)
-  await reloadedFinder.getByRole('button', { name: /README-renamed\.md/ }).click()
-  await reloadedFinder.getByRole('button', { name: 'Finder actions' }).click()
-  await page.getByRole('menuitem', { name: 'Open in Code', exact: true }).click()
-  await expect(reloadedCode.getByRole('tab', { name: /README-renamed\.md/ })).toBeVisible()
-  await expect(reloadedCode.getByRole('alert').filter({ hasText: 'recoverable draft' })).toBeVisible()
-  await reloadedCode.getByRole('button', { name: 'Recover draft' }).click()
-  await expect
-    .poll(() =>
-      mock.actions.some(
-        (action) =>
-          action.action === 'write-file' && action.path === '/README-renamed.md' && action.content === content,
-      ),
-    )
-    .toBe(true)
-})
-
-test('recovers a dirty Code draft after a forced sleep unmount and browser reload', async ({ page }) => {
-  const mock = await mockTengri(page, {
-    preserveDraftStorageOnReload: true,
-  })
-  await page.goto('/')
-
-  const dock = page.getByRole('navigation', { name: 'Dock' })
-  await dock.getByRole('button', { name: 'Open Finder' }).click()
-  const finder = page.getByRole('region', { name: 'Finder window' })
-  await finder.getByRole('button', { name: /README\.md/ }).click()
-  await finder.getByRole('button', { name: 'Finder actions' }).click()
-  await page.getByRole('menuitem', { name: 'Open in Code', exact: true }).click()
-
-  const code = page.getByRole('region', { name: 'Code window' })
-  const editor = code.locator('.monaco-editor')
-  await expect(editor).toHaveCount(1)
-  await editor.click()
-  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a')
-  await page.keyboard.type('# Preserved through lifecycle')
-
-  mock.setAgent({ ...readyAgent, phase: 'sleeping' })
-  await expect.poll(() => mock.getAgent()?.phase).toBe('sleeping')
-  expect(mock.actions.filter((action) => action.action === 'write-file' && action.path === '/README.md')).toHaveLength(
-    0,
-  )
-  await page.reload()
-
-  const sleeping = page.getByRole('dialog', { name: 'Tengri is sleeping' })
-  await expect(sleeping).toBeVisible()
-  await sleeping.getByRole('button', { name: 'Resume Agent' }).click()
-  await expect(dock).toBeVisible()
-  await expect.poll(() => mock.getAgent()?.phase).toBe('ready')
-  await dock.getByRole('button', { name: 'Open Finder' }).click()
-  const resumedFinder = page.getByRole('region', { name: 'Finder window' })
-  await resumedFinder.getByRole('button', { name: /README\.md/ }).click()
-  await resumedFinder.getByRole('button', { name: 'Finder actions' }).click()
-  await page.getByRole('menuitem', { name: 'Open in Code', exact: true }).click()
-  await expect(code.getByRole('tab', { name: /README\.md/ })).toBeVisible()
-  await expect(code.getByRole('alert').filter({ hasText: 'recoverable draft' })).toBeVisible()
-
-  await page.reload()
-  await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
-  const reloadedCode = page.getByRole('region', { name: 'Code window' })
-  const reloadedFinder = page.getByRole('region', { name: 'Finder window' })
-  await page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Finder' }).click()
-  await expect(reloadedFinder.getByRole('status', { name: 'Loading files' })).toHaveCount(0)
-  await reloadedFinder.getByRole('button', { name: /README\.md/ }).click()
-  await reloadedFinder.getByRole('button', { name: 'Finder actions' }).click()
-  await page.getByRole('menuitem', { name: 'Open in Code', exact: true }).click()
-  await expect(reloadedCode.getByRole('tab', { name: /README\.md/ })).toBeVisible()
-  await expect(reloadedCode.getByRole('alert').filter({ hasText: 'recoverable draft' })).toBeVisible()
-  await reloadedCode.getByRole('button', { name: 'Recover draft' }).click()
-  await expect
-    .poll(() =>
-      mock.actions.some(
-        (action) =>
-          action.action === 'write-file' &&
-          action.path === '/README.md' &&
-          action.content === '# Preserved through lifecycle',
-      ),
-    )
-    .toBe(true)
-})
-
-test('preserves a stored draft for download when the guest returns a missing-file 404', async ({ page }) => {
-  const mock = await mockTengri(page, {
-    preserveDraftStorageOnReload: true,
-  })
-  await page.goto('/')
-
-  const dock = page.getByRole('navigation', { name: 'Dock' })
-  await dock.getByRole('button', { name: 'Open Finder' }).click()
-  const finder = page.getByRole('region', { name: 'Finder window' })
-  await finder.getByRole('button', { name: /README\.md/ }).click()
-  await finder.getByRole('button', { name: 'Finder actions' }).click()
-  await page.getByRole('menuitem', { name: 'Open in Code', exact: true }).click()
-
-  const code = page.getByRole('region', { name: 'Code window' })
-  const editor = code.locator('.monaco-editor')
-  const content = '# Keep this file after deletion'
-  await expect(editor).toHaveCount(1)
-  await editor.click()
-  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a')
-  await page.keyboard.type(content)
-  mock.deleteFileContent('/README.md')
-  await page.reload()
-
-  const reloadedCode = page.getByRole('region', { name: 'Code window' })
-  const reloadedFinder = page.getByRole('region', { name: 'Finder window' })
-  await page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Finder' }).click()
-  await expect(reloadedFinder.getByRole('status', { name: 'Loading files' })).toHaveCount(0)
-  await reloadedFinder.getByRole('button', { name: /README\.md/ }).click()
-  await reloadedFinder.getByRole('button', { name: 'Finder actions' }).click()
-  await page.getByRole('menuitem', { name: 'Open in Code', exact: true }).click()
-  await expect(reloadedCode.getByRole('tab', { name: /README\.md/ })).toBeVisible()
-  const recovery = reloadedCode.getByRole('alert').filter({ hasText: 'file no longer exists' })
-  await expect(recovery).toBeVisible()
-
-  const downloadPromise = page.waitForEvent('download')
-  await recovery.getByRole('button', { name: 'Download draft' }).click()
-  const download = await downloadPromise
-  const downloadPath = await download.path()
-  expect(downloadPath).not.toBeNull()
-  expect((await readFile(downloadPath!)).toString()).toBe(content)
-})
-
-test('keeps a revisionless guest file read-only without attempting a write', async ({ page }) => {
-  const mock = await mockTengri(page, { legacyFileRevision: true })
-  await page.goto('/')
-
-  const dock = page.getByRole('navigation', { name: 'Dock' })
-  await dock.getByRole('button', { name: 'Open Finder' }).click()
-  const finder = page.getByRole('region', { name: 'Finder window' })
-  await finder.getByRole('button', { name: /README\.md/ }).click()
-  await finder.getByRole('button', { name: 'Finder actions' }).click()
-  await page.getByRole('menuitem', { name: 'Open in Code', exact: true }).click()
-
-  const code = page.getByRole('region', { name: 'Code window' })
-  const editor = code.locator('.monaco-editor')
-  await expect(editor).toHaveCount(1)
-  await expect(code.getByRole('alert').filter({ hasText: 'does not report file revisions' })).toBeVisible()
-  await editor.click()
-  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a')
-  await page.keyboard.insertText('# This edit must remain read-only')
-  await page.waitForTimeout(800)
-  expect(mock.actions.filter((action) => action.action === 'write-file')).toHaveLength(0)
-  await expect(editor.locator('.view-line').first()).toContainText('# Tengri')
-})
-
-test('keeps a storage-blocked draft visible and downloadable after forced sleep unmount', async ({ page }) => {
-  const mock = await mockTengri(page, {
-    agent: { ...readyAgent, idleDeadline: new Date(Date.now() + 5_000).toISOString() },
-    blockDraftStorage: true,
-  })
-  await page.goto('/')
-
-  const dock = page.getByRole('navigation', { name: 'Dock' })
-  await dock.getByRole('button', { name: 'Open Finder' }).click()
-  const finder = page.getByRole('region', { name: 'Finder window' })
-  await finder.getByRole('button', { name: /README\.md/ }).click()
-  await finder.getByRole('button', { name: 'Finder actions' }).click()
-  await page.getByRole('menuitem', { name: 'Open in Code', exact: true }).click()
-
-  const code = page.getByRole('region', { name: 'Code window' })
-  const editor = code.locator('.monaco-editor')
-  const content = '# Keep this copy'
-  await expect(editor).toHaveCount(1)
-  await editor.click()
-  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a')
-  await page.keyboard.type(content)
-  const recovery = page.getByLabel('Unsaved draft recovery')
-  await expect(recovery).toBeVisible()
-
-  mock.setAgent({ ...readyAgent, phase: 'sleeping' })
-  await expect(page.getByRole('dialog', { name: 'Tengri is sleeping' })).toBeVisible({ timeout: 10_000 })
-  await expect(recovery).toBeVisible()
-  expect(mock.actions.filter((action) => action.action === 'write-file' && action.path === '/README.md')).toHaveLength(
-    0,
-  )
-
-  const downloadPromise = page.waitForEvent('download')
-  await recovery.getByRole('button', { name: 'Download draft for /README.md' }).click()
-  const download = await downloadPromise
-  const downloadPath = await download.path()
-  expect(downloadPath).not.toBeNull()
-  expect((await readFile(downloadPath!)).toString()).toBe(content)
-})
-
-test('keeps volatile recovery available for download after signing out', async ({ page }) => {
-  const mock = await mockTengri(page, {
-    agent: { ...readyAgent, idleDeadline: new Date(Date.now() + 5_000).toISOString() },
-    blockDraftStorage: true,
-  })
-  await page.goto('/')
-
-  const dock = page.getByRole('navigation', { name: 'Dock' })
-  await dock.getByRole('button', { name: 'Open Finder' }).click()
-  const finder = page.getByRole('region', { name: 'Finder window' })
-  await finder.getByRole('button', { name: /README\.md/ }).click()
-  await finder.getByRole('button', { name: 'Finder actions' }).click()
-  await page.getByRole('menuitem', { name: 'Open in Code', exact: true }).click()
-
-  const code = page.getByRole('region', { name: 'Code window' })
-  const editor = code.locator('.monaco-editor')
-  const content = '# Keep this draft after sign out'
-  await expect(editor).toHaveCount(1)
-  await editor.click()
-  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a')
-  await page.keyboard.insertText(content)
-  const recovery = page.getByLabel('Unsaved draft recovery')
-  await expect(recovery).toBeVisible()
-
-  mock.setAgent({ ...readyAgent, phase: 'sleeping' })
-  const sleeping = page.getByRole('dialog', { name: 'Tengri is sleeping' })
-  await expect(sleeping).toBeVisible({ timeout: 10_000 })
-  await sleeping.getByRole('button', { name: 'Resume Agent' }).click()
-  await expect(dock).toBeVisible()
-  await expect.poll(() => mock.getAgent()?.phase).toBe('ready')
-
-  await dock.getByRole('button', { name: 'Open Settings' }).click()
-  const settings = page.getByRole('region', { name: 'Settings window' })
-  await settings.getByRole('button', { name: 'Sign Out' }).click()
-  await expect(page.getByRole('dialog', { name: 'Sign in to Tengri' })).toBeVisible({ timeout: 10_000 })
-  await expect(recovery).toBeVisible()
-
-  const downloadPromise = page.waitForEvent('download')
-  await recovery.getByRole('button', { name: `Download draft for /README.md` }).click()
-  const download = await downloadPromise
-  const downloadPath = await download.path()
-  expect(downloadPath).not.toBeNull()
-  expect((await readFile(downloadPath!)).toString()).toBe(content)
-})
-
-test('preserves local text when a conditional save conflicts and supports merge retry', async ({ page }) => {
-  const mock = await mockTengri(page)
-  await page.goto('/')
-
-  const dock = page.getByRole('navigation', { name: 'Dock' })
-  await dock.getByRole('button', { name: 'Open Finder' }).click()
-  const finder = page.getByRole('region', { name: 'Finder window' })
-  await finder.getByRole('button', { name: /README\.md/ }).click()
-  await finder.getByRole('button', { name: 'Finder actions' }).click()
-  await page.getByRole('menuitem', { name: 'Open in Code', exact: true }).click()
-
-  const code = page.getByRole('region', { name: 'Code window' })
-  const editor = code.locator('.monaco-editor')
-  await expect(editor).toHaveCount(1)
-  await editor.click()
-  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a')
-  await page.keyboard.type('# Local change')
-  mock.setFileContent('/README.md', '# Server change')
-
-  await expect
-    .poll(() => mock.actions.filter((action) => action.action === 'write-file' && action.path === '/README.md').length)
-    .toBe(1)
-  await expect(code.getByRole('button', { name: 'Merge', exact: true })).toBeVisible()
-  await expect(editor.locator('.view-line').first()).toContainText('# Local change')
-
-  await code.getByRole('button', { name: 'Merge', exact: true }).click()
-  await expect
-    .poll(() =>
-      mock.actions.some(
-        (action) =>
-          action.action === 'write-file' &&
-          action.path === '/README.md' &&
-          String(action.content).includes('<<<<<<< server') &&
-          String(action.content).includes('# Local change'),
-      ),
-    )
-    .toBe(true)
-})
-
 test('tracks an external preview that finishes opening after virtual Chrome closes', async ({ page }) => {
   const mock = await mockTengri(page)
   await page.goto('/')
@@ -1831,84 +1526,6 @@ test('tracks an external preview that finishes opening after virtual Chrome clos
       ),
     )
     .toBe(true)
-})
-
-test('re-verifies a clean file instead of overwriting it after a watcher read failure', async ({ page }) => {
-  const mock = await mockTengri(page)
-  await page.goto('/')
-
-  const dock = page.getByRole('navigation', { name: 'Dock' })
-  await dock.getByRole('button', { name: 'Open Finder' }).click()
-  const finder = page.getByRole('region', { name: 'Finder window' })
-  await finder.getByRole('button', { name: /README\.md/ }).click()
-  await finder.getByRole('button', { name: 'Finder actions' }).click()
-  await page.getByRole('menuitem', { name: 'Open in Code', exact: true }).click()
-
-  const code = page.getByRole('region', { name: 'Code window' })
-  const editor = code.locator('.monaco-editor')
-  await expect(editor).toHaveCount(1)
-  await editor.click()
-  const initialReadCount = mock.actions.filter(
-    (action) => action.action === 'read-file' && action.path === '/README.md',
-  ).length
-  mock.failNextReads('/README.md')
-  await emitFileEvent(page, '/', { kind: 'changed', path: '/README.md', sequence: 99 })
-  await expect(code.getByRole('alert')).toContainText('Guest filesystem is temporarily unavailable')
-
-  const writeCount = mock.actions.filter(
-    (action) => action.action === 'write-file' && action.path === '/README.md',
-  ).length
-  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+s' : 'Control+s')
-
-  await expect
-    .poll(() => mock.actions.filter((action) => action.action === 'read-file' && action.path === '/README.md').length)
-    .toBe(initialReadCount + 2)
-  expect(mock.actions.filter((action) => action.action === 'write-file' && action.path === '/README.md')).toHaveLength(
-    writeCount,
-  )
-  await expect(code.getByRole('alert')).toHaveCount(0)
-})
-
-test('ignores a delayed watcher result after closing and reopening the same path', async ({ page }) => {
-  const mock = await mockTengri(page)
-  await page.goto('/')
-
-  const dock = page.getByRole('navigation', { name: 'Dock' })
-  await dock.getByRole('button', { name: 'Open Finder' }).click()
-  const finder = page.getByRole('region', { name: 'Finder window' })
-  await finder.getByRole('button', { name: /README\.md/ }).click()
-  await finder.getByRole('button', { name: 'Finder actions' }).click()
-  await page.getByRole('menuitem', { name: 'Open in Code', exact: true }).click()
-
-  const code = page.getByRole('region', { name: 'Code window' })
-  const editor = code.locator('.monaco-editor')
-  await expect(editor).toHaveCount(1)
-  await expect(editor.locator('.view-line').first()).toContainText('# Tengri')
-
-  mock.holdNextRead('/README.md')
-  await emitFileEvent(page, '/', { kind: 'changed', path: '/README.md', sequence: 100 })
-  await mock.waitForHeldRead('/README.md')
-
-  await code.getByRole('button', { name: 'Close README.md' }).click()
-  await expect(code.getByRole('tab', { name: /README\.md/ })).toHaveCount(0)
-  await dock.getByRole('button', { name: 'Open Finder' }).click()
-  const reopenedFinder = page.getByRole('region', { name: 'Finder window' })
-  await reopenedFinder.getByRole('button', { name: /README\.md/ }).click()
-  await reopenedFinder.getByRole('button', { name: 'Finder actions' }).click()
-  await page.getByRole('menuitem', { name: 'Open in Code', exact: true }).click()
-
-  const reopenedEditor = code.locator('.monaco-editor')
-  const content = '# New same-path draft'
-  await expect(reopenedEditor).toHaveCount(1)
-  await expect(reopenedEditor.locator('.view-line').first()).toContainText('# Tengri')
-  await reopenedEditor.click()
-  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a')
-  await page.keyboard.insertText(content)
-  await expect(reopenedEditor.locator('.view-line').first()).toContainText(content)
-
-  mock.releaseHeldRead('/README.md')
-  await expect(reopenedEditor.locator('.view-line').first()).toContainText(content)
-  await expect(code.getByRole('alert').filter({ hasText: 'File changed outside Code' })).toHaveCount(0)
 })
 
 test('keeps the application menu and status controls separate on narrow viewports', async ({ page }) => {
@@ -3162,7 +2779,11 @@ test('stops a failed agent without deleting its persistent workspace', async ({ 
 test('shows native-feeling unauthenticated and create-agent states', async ({ page }) => {
   await mockTengri(page, { authenticated: false })
   await page.goto('/')
-  await expect(page.getByRole('dialog', { name: 'Sign in to Tengri' })).toBeVisible()
+  const signIn = page.getByRole('dialog', { name: 'Sign in to Tengri' })
+  await expect(signIn).toBeVisible()
+  const signInControls = signIn.getByRole('group', { name: 'Window controls' }).getByRole('button')
+  await expect(signInControls).toHaveCount(3)
+  for (const button of await signInControls.all()) await expect(button).toBeDisabled()
   await expect(page.getByRole('button', { name: 'Continue with GitHub' })).toBeVisible()
 
   await page.unrouteAll({ behavior: 'wait' })
@@ -3170,6 +2791,9 @@ test('shows native-feeling unauthenticated and create-agent states', async ({ pa
   await page.reload()
   const create = page.getByRole('dialog', { name: 'Create your agent' })
   await expect(create).toBeVisible()
+  const createControls = create.getByRole('group', { name: 'Window controls' }).getByRole('button')
+  await expect(createControls).toHaveCount(3)
+  for (const button of await createControls.all()) await expect(button).toBeDisabled()
   await create.getByLabel('Agent name').fill('Ada')
   await create.getByRole('button', { name: 'Create Agent' }).click()
   await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
@@ -3327,6 +2951,95 @@ test('magnified Dock icons keep separate hit targets at desktop and narrow width
     await page.mouse.move(0, 0)
   }
 })
+
+test('uses functional close controls and disables unavailable actions in confirmation windows', async ({
+  page,
+}, testInfo) => {
+  const mock = await mockTengri(page, { holdLifecycleAction: 'delete-agent' })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+  const settings = page.getByRole('region', { name: 'Settings window' })
+  await settings.getByRole('button', { name: 'Delete Agent' }).click()
+  const dialog = page.getByRole('alertdialog', { name: /Delete “Tengri”/ })
+  const controls = dialog.getByRole('group', { name: 'Window controls' })
+  await expect(controls.getByRole('button', { name: 'Minimize Tengri' })).toBeDisabled()
+  await expect(controls.getByRole('button', { name: 'Maximize Tengri' })).toBeDisabled()
+  await dialog.screenshot({ path: testInfo.outputPath('confirmation-window.png') })
+  await controls.getByRole('button', { name: 'Close Tengri' }).click()
+  await expect(dialog).toHaveCount(0)
+  expect(mock.actions.some((action) => action.action === 'delete-agent')).toBe(false)
+  await expect(settings.getByRole('button', { name: 'Delete Agent' })).toBeFocused()
+
+  await settings.getByRole('button', { name: 'Delete Agent' }).click()
+  await dialog.getByRole('button', { name: 'Delete Agent' }).click()
+  await mock.waitForHeldLifecycleAction()
+  for (const button of await controls.getByRole('button').all()) await expect(button).toBeDisabled()
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeVisible()
+  mock.releaseHeldLifecycleAction()
+  await expect(page.getByRole('dialog', { name: 'Create your agent' })).toBeVisible()
+})
+
+for (const app of ['Finder', 'Chrome', 'Code', 'Terminal', 'Settings']) {
+  test(`keeps native window control states and actions correct in ${app}`, async ({ page }, testInfo) => {
+    await mockTengri(page)
+    await page.goto('/')
+    const dock = page.getByRole('navigation', { name: 'Dock' })
+    await dock.getByRole('button', { name: `Open ${app}`, exact: true }).click()
+    const frame = page.locator(`section[aria-label="${app} window"]`)
+    const controls = frame.locator('[aria-label="Window controls"]')
+    const buttons = controls.getByRole('button')
+    await expect(buttons).toHaveCount(3)
+    await page.mouse.move(0, 0)
+    await frame.focus()
+    await expect(frame).toHaveAttribute('data-active', 'true')
+    const bounds = await frame.boundingBox()
+    if (!bounds) throw new Error(`${app} window is missing`)
+    const colors = ['rgb(255, 95, 87)', 'rgb(254, 188, 46)', 'rgb(40, 200, 64)']
+    for (const [index, color] of colors.entries()) {
+      const button = buttons.nth(index)
+      const light = button.locator(':scope > span')
+      await expect(light).toHaveCSS('background-color', color)
+      await expect(light).toHaveCSS('width', '12px')
+      await expect(light).toHaveCSS('height', '12px')
+      await expect(light.locator(':scope > span')).toHaveCSS('opacity', '0')
+      const target = await button.boundingBox()
+      if (!target) throw new Error(`${app} window control is missing`)
+      expect(target.width).toBeGreaterThanOrEqual(24)
+      expect(target.height).toBeGreaterThanOrEqual(24)
+    }
+    await controls.screenshot({ path: testInfo.outputPath(`${app.toLowerCase()}-controls-idle.png`) })
+    await controls.getByRole('button', { name: `Minimize ${app}` }).hover()
+    for (const button of await buttons.all()) {
+      await expect(button.locator(':scope > span > span')).toHaveCSS('opacity', '1')
+    }
+    await controls.screenshot({ path: testInfo.outputPath(`${app.toLowerCase()}-controls-hover.png`) })
+    await controls.getByRole('button', { name: `Maximize ${app}` }).click()
+    const restore = controls.getByRole('button', { name: `Restore ${app}` })
+    await expect(restore).toBeVisible()
+    await expect.poll(async () => (await frame.boundingBox())?.width).toBeGreaterThan(bounds.width)
+    await restore.click()
+    await expect.poll(() => frame.boundingBox()).toEqual(bounds)
+
+    await controls.getByRole('button', { name: `Minimize ${app}` }).click()
+    await expect(frame).toHaveAttribute('aria-hidden', 'true')
+    await dock.getByRole('button', { name: `Open ${app}`, exact: true }).click()
+    await expect(frame).toHaveAttribute('aria-hidden', 'false')
+    await expect.poll(() => frame.boundingBox()).toEqual(bounds)
+
+    await dock.getByRole('button', { name: `Open ${app === 'Chrome' ? 'Finder' : 'Chrome'}`, exact: true }).click()
+    await page.mouse.move(0, 0)
+    await expect(frame).toHaveAttribute('data-active', 'false')
+    const inactiveColors = await buttons
+      .locator(':scope > span')
+      .evaluateAll((elements) => elements.map((light) => getComputedStyle(light).backgroundColor))
+    expect(new Set(inactiveColors).size).toBe(1)
+    expect(colors).not.toContain(inactiveColors[0])
+    await dock.getByRole('button', { name: `Open ${app}`, exact: true }).click()
+    await controls.getByRole('button', { name: `Close ${app}` }).press('Enter')
+    await expect(frame).toHaveCount(0)
+  })
+}
 
 test('aligns native window controls with app toolbars and keeps narrow layouts usable', async ({ page }) => {
   await mockTengri(page)

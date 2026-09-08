@@ -155,6 +155,9 @@ const expected = {
       'apps/app',
       'packages/design',
       'nix/images/app.nix',
+      'nix/check-bun-dependency-closure.sh',
+      '.github/workflows/nix-bun-dependency-closure.yml',
+      '.github/workflows/product-nix-images.yml',
       ...productImageCommonInputs,
       'argocd/applications/app',
     ],
@@ -191,6 +194,17 @@ const expected = {
       'services/bumba',
       'packages/temporal-bun-sdk',
       'nix/images/bumba.nix',
+      '.github/workflows/bumba-ci.yml',
+      '.github/workflows/nix-bun-dependency-closure.yml',
+      'nix/check-bun-dependency-closure.sh',
+      'nix/images/bun-workspace-service.nix',
+      'nix/images/bun-workspace-deps-source.nix',
+      'nix/images/bun-workspace-deps-source.test.sh',
+      'bun.lock',
+      'glob:**/package.json',
+      'bunfig.toml',
+      '.npmrc',
+      'patches',
       '.github/workflows/nix-oci-build-common.yml',
       'packages/scripts/src/shared/oci.ts',
       'nix/oci-push.sh',
@@ -205,6 +219,17 @@ const expected = {
       'services/oirat',
       'packages/discord',
       'nix/images/oirat.nix',
+      '.github/workflows/oirat-ci.yml',
+      '.github/workflows/nix-bun-dependency-closure.yml',
+      'nix/check-bun-dependency-closure.sh',
+      'nix/images/bun-workspace-service.nix',
+      'nix/images/bun-workspace-deps-source.nix',
+      'nix/images/bun-workspace-deps-source.test.sh',
+      'bun.lock',
+      'glob:**/package.json',
+      'bunfig.toml',
+      '.npmrc',
+      'patches',
       '.github/workflows/nix-oci-build-common.yml',
       'packages/scripts/src/shared/oci.ts',
       'nix/oci-push.sh',
@@ -222,6 +247,17 @@ const expected = {
       'packages/discord',
       'packages/otel',
       'nix/images/froussard.nix',
+      '.github/workflows/froussard-ci.yml',
+      '.github/workflows/nix-bun-dependency-closure.yml',
+      'nix/check-bun-dependency-closure.sh',
+      'nix/images/bun-workspace-service.nix',
+      'nix/images/bun-workspace-deps-source.nix',
+      'nix/images/bun-workspace-deps-source.test.sh',
+      'bun.lock',
+      'glob:**/package.json',
+      'bunfig.toml',
+      '.npmrc',
+      'patches',
       '.github/workflows/nix-oci-build-common.yml',
       'packages/scripts/src/shared/oci.ts',
       'nix/oci-push.sh',
@@ -309,6 +345,7 @@ const expected = {
       '.github/workflows/jangar-post-deploy-verify.yml',
       'nix/oci-push.sh',
       'argocd/applications/jangar',
+      'argocd/bootstrap/jangar',
     ],
   },
   symphony: {
@@ -358,10 +395,18 @@ const expected = {
       'nix/images/torghut-ws.nix',
       'nix/images/signal-publisher.nix',
       'nix/images/bun-workspace-service.nix',
+      'nix/images/bun-workspace-deps-source.nix',
+      'nix/images/bun-workspace-deps-source.test.sh',
+      'nix/check-bun-dependency-closure.sh',
+      '.github/workflows/nix-bun-dependency-closure.yml',
       'services/torghut/uv.lock',
       'flake.nix',
       'flake.lock',
       'bun.lock',
+      'glob:**/package.json',
+      'bunfig.toml',
+      '.npmrc',
+      'patches',
       'package.json',
       '.github/workflows/nix-oci-build-common.yml',
       'packages/scripts/src/shared/oci.ts',
@@ -450,7 +495,12 @@ const expected = {
     creationCriteria: 'single',
     images: [imageRepo('buzz')],
     apps: ['buzz'],
-    includePaths: ['third_party/buzz', '.github/workflows/buzz-relay-build-push.yml', 'argocd/applications/buzz'],
+    includePaths: [
+      'third_party/buzz',
+      '.github/workflows/buzz-relay-build-push.yml',
+      'argocd/applications/buzz',
+      'argocd/bootstrap/buzz',
+    ],
   },
 } as const
 
@@ -681,6 +731,22 @@ describe('Kargo direct-push GitOps contract', () => {
     expect(git?.excludePaths).toEqual(excludePaths)
   })
 
+  it('pairs promoted Redis bootstrap selection with the matching publisher and Warehouse', () => {
+    for (const [name, workflowPath] of [
+      ['buzz', '.github/workflows/buzz-relay-build-push.yml'],
+      ['jangar', '.github/workflows/jangar-build-push.yaml'],
+    ]) {
+      const workflow = YAML.parse(readFileSync(workflowPath, 'utf8'))
+      const paths = workflow.on.push.paths.map((path: string) => path.replace(/\/\*\*$/, ''))
+      const subscriptions = byName(warehouses).get(name)?.spec?.subscriptions as Array<Record<string, any>>
+      const sourcePaths = subscriptions.find((subscription) => subscription.git)?.git?.includePaths
+      expect(sourcePaths).toEqual(paths)
+      expect(sourcePaths).toContain(`argocd/bootstrap/${name}`)
+      expect(sourcePaths).toContain(`argocd/applications/${name}`)
+      expect(applicationSetElements.find((element) => element.name === name)?.path).toBe(`argocd/applications/${name}`)
+    }
+  })
+
   it('keeps every stage direct, automatic, branch-backed, and free of pull-request promotion', () => {
     const stageMap = byName(stages)
     expect([...stageMap.keys()].sort()).toEqual(expectedStageNames)
@@ -755,7 +821,7 @@ describe('Kargo direct-push GitOps contract', () => {
 
       const argocdUpdate = steps.at(-1)
       expect(argocdUpdate?.retry).toEqual({
-        timeout: stageName === 'torghut' ? '1h45m0s' : '20m0s',
+        timeout: stageName === 'torghut' ? '1h45m0s' : stageName === 'bilig' ? '1h15m0s' : '20m0s',
         errorThreshold: 3,
       })
       const apps = argocdUpdate?.config?.apps as Array<Record<string, any>>

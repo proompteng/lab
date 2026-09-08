@@ -183,6 +183,28 @@ export function createBrowserCodeDraftStore(): CodeDraftStore {
   return createCodeDraftStore(storage)
 }
 
+export function listRecoverableCodeDrafts(identity: Omit<CodeDraftIdentity, 'path'>): CodeDraft[] {
+  let persisted: CodeDraft[] = []
+  try {
+    const entries = collectEntries(globalThis.localStorage)
+    if (entries.kind === 'ok') persisted = entries.drafts
+  } catch {
+    /* Volatile drafts remain available when browser storage is blocked. */
+  }
+  return [
+    ...new Map(
+      [...persisted, ...inMemoryDrafts.values(), ...volatileCodeDrafts.values()]
+        .filter(
+          (draft) =>
+            draft.ownerId === identity.ownerId &&
+            draft.agentId === identity.agentId &&
+            draft.agentCreatedAt === identity.agentCreatedAt,
+        )
+        .map((draft) => [codeDraftStorageKeyForId(draft, draft.draftId), draft]),
+    ).values(),
+  ]
+}
+
 export function createCodeDraftStore(storage: Storage | null): CodeDraftStore {
   const read = (identity: CodeDraftIdentity): CodeDraftReadResult => {
     if (!isCodeDraftIdentity(identity)) return { kind: 'missing' }
