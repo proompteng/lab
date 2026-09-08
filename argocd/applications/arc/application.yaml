@@ -160,8 +160,10 @@ spec:
           runnerScaleSetName: arc-amd64
           scaleSetLabels:
             - arc-amd64
-          minRunners: 1
-          maxRunners: 5
+          # Maintenance throttle: keep no idle AMD64 runners and allow one active job so
+          # the normal ARC image/Kargo path remains recoverable during node-local I/O work.
+          minRunners: 0
+          maxRunners: 1
           listenerTemplate:
             spec:
               nodeSelector:
