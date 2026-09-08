@@ -204,6 +204,7 @@ describe('intraday replay program', () => {
     'complete',
     'missing-candidate',
     'late-candidate',
+    'manifest-excluded-candidate',
     'all-candidates-unavailable',
     'missing-benchmark',
   ] as const) {
@@ -211,7 +212,19 @@ describe('intraday replay program', () => {
       const archive = makeArchive({
         snapshot: (request, phase, occurrence) => {
           const snapshot = snapshotFor(request, phase === 'decision' ? { AAPL: 0.02, AMZN: 0.01 } : {})
-          const rows = Result.getOrThrow(persistIntradaySnapshotRows(snapshot))
+          const rows = Result.getOrThrow(
+            persistIntradaySnapshotRows({
+              ...snapshot,
+              bars: snapshot.bars.map((bar) =>
+                receiptMode === 'manifest-excluded-candidate' &&
+                phase === 'decision' &&
+                bar.symbol === 'AAPL' &&
+                bar.eventAt === request.rangeStartAt
+                  ? { ...bar, ingestedAt: new Date(Date.parse(bar.eventAt) + 65_000).toISOString() }
+                  : bar,
+              ),
+            }),
+          )
           const offsetBase =
             BigInt(Date.parse(request.observedAt)) * 1_000n + BigInt(phase === 'decision' ? 0 : occurrence + 20)
           const sequence = (records: readonly unknown[]) =>
@@ -289,7 +302,8 @@ describe('intraday replay program', () => {
                           if (receiptMode === 'missing-benchmark')
                             return receiptHasSymbol(receipt, 'SPY') ? [] : [receipt]
                           if (!receiptHasSymbol(receipt, 'AAPL')) return [receipt]
-                          if (receiptMode === 'missing-candidate') return []
+                          if (receiptMode === 'missing-candidate' || receiptMode === 'manifest-excluded-candidate')
+                            return []
                           const { receiptHash: _hash, ...material } = receipt
                           const delayed = {
                             ...material,
@@ -352,6 +366,14 @@ describe('intraday replay program', () => {
           ({ snapshotId }) => snapshotId === observation.manifest.snapshotId,
         )
         expect(availabilityProof?.candidateExclusions?.map(({ symbol }) => symbol)).toEqual(['AAPL'])
+        if (receiptMode === 'manifest-excluded-candidate') {
+          const original = observation.manifest.candidateExclusions?.find(({ symbol }) => symbol === 'AAPL')
+          expect(original?.reason).toBe('freshness')
+          expect(observation.decision?.excludedCandidates?.find(({ symbol }) => symbol === 'AAPL')).toEqual(original)
+          expect(availabilityProof?.candidateExclusions?.find(({ symbol }) => symbol === 'AAPL')?.reason).toBe(
+            'not-ready',
+          )
+        }
       }
       expect(report.availability.status).toBe('OBSERVED_ROWS_ONLY')
       const receiptHashes = new Set(report.availability.receipts.map((receipt) => receipt.receiptHash))

@@ -262,7 +262,9 @@ const evaluateDecision = (
         const exclusions = new Map(
           (snapshot.manifest.candidateExclusions ?? []).map((exclusion) => [exclusion.symbol, exclusion]),
         )
-        for (const exclusion of availabilityExclusions) exclusions.set(exclusion.symbol, exclusion)
+        for (const exclusion of availabilityExclusions) {
+          if (!exclusions.has(exclusion.symbol)) exclusions.set(exclusion.symbol, exclusion)
+        }
         return decideIntradayMomentumCore({
           protocol,
           bars: snapshot.bars,
