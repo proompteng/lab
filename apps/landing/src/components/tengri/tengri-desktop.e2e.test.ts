@@ -440,7 +440,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         })
         return
       }
-      const previewGatewayOrigin = 'http://localhost:8080'
+      const previewGatewayOrigin = 'https://tengri.proompteng.ai'
       await route.fulfill({
         contentType: 'application/json',
         body: JSON.stringify({
@@ -598,7 +598,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         })
         result = {
           id: previewSessionId,
-          launchUrl: `http://localhost:8080/v1/preview/open#${ticket}`,
+          launchUrl: `https://tengri.proompteng.ai/v1/preview/open#${ticket}`,
           expiresAt: new Date(Date.now() + 30_000).toISOString(),
           previewOrigin: `https://tengri-${previewSessionId}.proompteng.ai`,
         }
@@ -809,7 +809,8 @@ test('serializes slow Finder refreshes and reports bounded search results', asyn
 
   await page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Finder' }).click()
   const finder = page.getByRole('region', { name: 'Finder window' })
-  await finder.getByLabel('Search files').fill('missing')
+  await finder.getByRole('button', { name: 'Search files' }).click()
+  await finder.getByRole('textbox', { name: 'Search files' }).fill('missing')
 
   await expect(finder.getByText('Search limit reached · Narrow your search')).toBeVisible({ timeout: 5_000 })
   await expect
@@ -938,6 +939,7 @@ test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and win
   await spotlight.getByRole('combobox').fill('Settings')
   await page.keyboard.press('Enter')
   await expect(page.getByRole('region', { name: 'Settings window' })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Settings window' })).toBeFocused()
 
   const fileMenu = page.getByRole('menuitem', { name: 'File', exact: true })
   await fileMenu.focus()
@@ -1336,24 +1338,29 @@ test('persists real Finder changes into Code and exposes a localhost preview fro
   const dock = page.getByRole('navigation', { name: 'Dock' })
   await dock.getByRole('button', { name: 'Open Finder' }).click()
   const finder = page.getByRole('region', { name: 'Finder window' })
-  await finder.getByRole('button', { name: 'New folder' }).click()
+  await finder.getByRole('button', { name: 'Finder actions' }).click()
+  await page.getByRole('menuitem', { name: 'New Folder', exact: true }).click()
+  await expect(finder.getByLabel('New folder name')).toBeFocused()
   await finder.getByLabel('New folder name').fill('sandbox')
   await finder.getByLabel('New folder name').press('Enter')
   const sandbox = finder.getByRole('button', { name: /sandbox/ })
   await expect(sandbox).toBeVisible()
 
   await sandbox.click()
-  await finder.getByRole('button', { name: 'Rename selected item' }).click()
+  await finder.getByRole('button', { name: 'Finder actions' }).click()
+  await page.getByRole('menuitem', { name: 'Rename', exact: true }).click()
   await finder.getByLabel('Rename item').fill('workspace-notes')
   await finder.getByLabel('Rename item').press('Enter')
   const renamed = finder.getByRole('button', { name: /workspace-notes/ })
   await expect(renamed).toBeVisible()
-  await finder.getByLabel('Search files').fill('workspace-notes')
+  await finder.getByRole('button', { name: 'Search files' }).click()
+  await finder.getByRole('textbox', { name: 'Search files' }).fill('workspace-notes')
   await expect(renamed).toBeVisible()
-  await finder.getByLabel('Search files').fill('')
+  await finder.getByRole('textbox', { name: 'Search files' }).fill('')
 
   await finder.getByRole('button', { name: /README\.md/ }).click()
-  await finder.getByRole('button', { name: 'Open selected file in Code' }).click()
+  await finder.getByRole('button', { name: 'Finder actions' }).click()
+  await page.getByRole('menuitem', { name: 'Open in Code', exact: true }).click()
   const code = page.getByRole('region', { name: 'Code window' })
   await expect(code.getByRole('tab', { name: /README\.md/ })).toBeVisible()
   await expect
@@ -1380,7 +1387,8 @@ test('persists real Finder changes into Code and exposes a localhost preview fro
   await page.getByRole('button', { name: 'Close Quick Look' }).click()
 
   await renamed.click()
-  await finder.getByRole('button', { name: 'Delete selected item' }).click()
+  await finder.getByRole('button', { name: 'Finder actions' }).click()
+  await page.getByRole('menuitem', { name: 'Delete…', exact: true }).click()
   const deleteDialog = page.getByRole('alertdialog', { name: 'Delete this item?' })
   await expect(deleteDialog).toContainText('workspace-notes')
   await deleteDialog.getByRole('button', { name: 'Delete', exact: true }).click()
@@ -1492,7 +1500,8 @@ test('preserves the latest dirty text across an external rename and recovers it 
   await dock.getByRole('button', { name: 'Open Finder' }).click()
   const finder = page.getByRole('region', { name: 'Finder window' })
   await finder.getByRole('button', { name: /README\.md/ }).click()
-  await finder.getByRole('button', { name: 'Open selected file in Code' }).click()
+  await finder.getByRole('button', { name: 'Finder actions' }).click()
+  await page.getByRole('menuitem', { name: 'Open in Code', exact: true }).click()
 
   const code = page.getByRole('region', { name: 'Code window' })
   const editor = code.locator('.monaco-editor')
@@ -1520,9 +1529,10 @@ test('preserves the latest dirty text across an external rename and recovers it 
   const reloadedCode = page.getByRole('region', { name: 'Code window' })
   await reloadedDock.getByRole('button', { name: 'Open Finder' }).click()
   const reloadedFinder = page.getByRole('region', { name: 'Finder window' })
-  await expect(reloadedFinder.getByRole('status')).toHaveCount(0)
+  await expect(reloadedFinder.getByRole('status', { name: 'Loading files' })).toHaveCount(0)
   await reloadedFinder.getByRole('button', { name: /README-renamed\.md/ }).click()
-  await reloadedFinder.getByRole('button', { name: 'Open selected file in Code' }).click()
+  await reloadedFinder.getByRole('button', { name: 'Finder actions' }).click()
+  await page.getByRole('menuitem', { name: 'Open in Code', exact: true }).click()
   await expect(reloadedCode.getByRole('tab', { name: /README-renamed\.md/ })).toBeVisible()
   await expect(reloadedCode.getByRole('alert').filter({ hasText: 'recoverable draft' })).toBeVisible()
   await reloadedCode.getByRole('button', { name: 'Recover draft' }).click()
@@ -1546,7 +1556,8 @@ test('recovers a dirty Code draft after a forced sleep unmount and browser reloa
   await dock.getByRole('button', { name: 'Open Finder' }).click()
   const finder = page.getByRole('region', { name: 'Finder window' })
   await finder.getByRole('button', { name: /README\.md/ }).click()
-  await finder.getByRole('button', { name: 'Open selected file in Code' }).click()
+  await finder.getByRole('button', { name: 'Finder actions' }).click()
+  await page.getByRole('menuitem', { name: 'Open in Code', exact: true }).click()
 
   const code = page.getByRole('region', { name: 'Code window' })
   const editor = code.locator('.monaco-editor')
@@ -1570,7 +1581,8 @@ test('recovers a dirty Code draft after a forced sleep unmount and browser reloa
   await dock.getByRole('button', { name: 'Open Finder' }).click()
   const resumedFinder = page.getByRole('region', { name: 'Finder window' })
   await resumedFinder.getByRole('button', { name: /README\.md/ }).click()
-  await resumedFinder.getByRole('button', { name: 'Open selected file in Code' }).click()
+  await resumedFinder.getByRole('button', { name: 'Finder actions' }).click()
+  await page.getByRole('menuitem', { name: 'Open in Code', exact: true }).click()
   await expect(code.getByRole('tab', { name: /README\.md/ })).toBeVisible()
   await expect(code.getByRole('alert').filter({ hasText: 'recoverable draft' })).toBeVisible()
 
@@ -1579,9 +1591,10 @@ test('recovers a dirty Code draft after a forced sleep unmount and browser reloa
   const reloadedCode = page.getByRole('region', { name: 'Code window' })
   const reloadedFinder = page.getByRole('region', { name: 'Finder window' })
   await page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Finder' }).click()
-  await expect(reloadedFinder.getByRole('status')).toHaveCount(0)
+  await expect(reloadedFinder.getByRole('status', { name: 'Loading files' })).toHaveCount(0)
   await reloadedFinder.getByRole('button', { name: /README\.md/ }).click()
-  await reloadedFinder.getByRole('button', { name: 'Open selected file in Code' }).click()
+  await reloadedFinder.getByRole('button', { name: 'Finder actions' }).click()
+  await page.getByRole('menuitem', { name: 'Open in Code', exact: true }).click()
   await expect(reloadedCode.getByRole('tab', { name: /README\.md/ })).toBeVisible()
   await expect(reloadedCode.getByRole('alert').filter({ hasText: 'recoverable draft' })).toBeVisible()
   await reloadedCode.getByRole('button', { name: 'Recover draft' }).click()
@@ -1607,7 +1620,8 @@ test('preserves a stored draft for download when the guest returns a missing-fil
   await dock.getByRole('button', { name: 'Open Finder' }).click()
   const finder = page.getByRole('region', { name: 'Finder window' })
   await finder.getByRole('button', { name: /README\.md/ }).click()
-  await finder.getByRole('button', { name: 'Open selected file in Code' }).click()
+  await finder.getByRole('button', { name: 'Finder actions' }).click()
+  await page.getByRole('menuitem', { name: 'Open in Code', exact: true }).click()
 
   const code = page.getByRole('region', { name: 'Code window' })
   const editor = code.locator('.monaco-editor')
@@ -1622,9 +1636,10 @@ test('preserves a stored draft for download when the guest returns a missing-fil
   const reloadedCode = page.getByRole('region', { name: 'Code window' })
   const reloadedFinder = page.getByRole('region', { name: 'Finder window' })
   await page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Finder' }).click()
-  await expect(reloadedFinder.getByRole('status')).toHaveCount(0)
+  await expect(reloadedFinder.getByRole('status', { name: 'Loading files' })).toHaveCount(0)
   await reloadedFinder.getByRole('button', { name: /README\.md/ }).click()
-  await reloadedFinder.getByRole('button', { name: 'Open selected file in Code' }).click()
+  await reloadedFinder.getByRole('button', { name: 'Finder actions' }).click()
+  await page.getByRole('menuitem', { name: 'Open in Code', exact: true }).click()
   await expect(reloadedCode.getByRole('tab', { name: /README\.md/ })).toBeVisible()
   const recovery = reloadedCode.getByRole('alert').filter({ hasText: 'file no longer exists' })
   await expect(recovery).toBeVisible()
@@ -1645,7 +1660,8 @@ test('keeps a revisionless guest file read-only without attempting a write', asy
   await dock.getByRole('button', { name: 'Open Finder' }).click()
   const finder = page.getByRole('region', { name: 'Finder window' })
   await finder.getByRole('button', { name: /README\.md/ }).click()
-  await finder.getByRole('button', { name: 'Open selected file in Code' }).click()
+  await finder.getByRole('button', { name: 'Finder actions' }).click()
+  await page.getByRole('menuitem', { name: 'Open in Code', exact: true }).click()
 
   const code = page.getByRole('region', { name: 'Code window' })
   const editor = code.locator('.monaco-editor')
@@ -1670,7 +1686,8 @@ test('keeps a storage-blocked draft visible and downloadable after forced sleep 
   await dock.getByRole('button', { name: 'Open Finder' }).click()
   const finder = page.getByRole('region', { name: 'Finder window' })
   await finder.getByRole('button', { name: /README\.md/ }).click()
-  await finder.getByRole('button', { name: 'Open selected file in Code' }).click()
+  await finder.getByRole('button', { name: 'Finder actions' }).click()
+  await page.getByRole('menuitem', { name: 'Open in Code', exact: true }).click()
 
   const code = page.getByRole('region', { name: 'Code window' })
   const editor = code.locator('.monaco-editor')
@@ -1708,7 +1725,8 @@ test('keeps volatile recovery available for download after signing out', async (
   await dock.getByRole('button', { name: 'Open Finder' }).click()
   const finder = page.getByRole('region', { name: 'Finder window' })
   await finder.getByRole('button', { name: /README\.md/ }).click()
-  await finder.getByRole('button', { name: 'Open selected file in Code' }).click()
+  await finder.getByRole('button', { name: 'Finder actions' }).click()
+  await page.getByRole('menuitem', { name: 'Open in Code', exact: true }).click()
 
   const code = page.getByRole('region', { name: 'Code window' })
   const editor = code.locator('.monaco-editor')
@@ -1749,7 +1767,8 @@ test('preserves local text when a conditional save conflicts and supports merge 
   await dock.getByRole('button', { name: 'Open Finder' }).click()
   const finder = page.getByRole('region', { name: 'Finder window' })
   await finder.getByRole('button', { name: /README\.md/ }).click()
-  await finder.getByRole('button', { name: 'Open selected file in Code' }).click()
+  await finder.getByRole('button', { name: 'Finder actions' }).click()
+  await page.getByRole('menuitem', { name: 'Open in Code', exact: true }).click()
 
   const code = page.getByRole('region', { name: 'Code window' })
   const editor = code.locator('.monaco-editor')
@@ -1822,7 +1841,8 @@ test('re-verifies a clean file instead of overwriting it after a watcher read fa
   await dock.getByRole('button', { name: 'Open Finder' }).click()
   const finder = page.getByRole('region', { name: 'Finder window' })
   await finder.getByRole('button', { name: /README\.md/ }).click()
-  await finder.getByRole('button', { name: 'Open selected file in Code' }).click()
+  await finder.getByRole('button', { name: 'Finder actions' }).click()
+  await page.getByRole('menuitem', { name: 'Open in Code', exact: true }).click()
 
   const code = page.getByRole('region', { name: 'Code window' })
   const editor = code.locator('.monaco-editor')
@@ -1857,7 +1877,8 @@ test('ignores a delayed watcher result after closing and reopening the same path
   await dock.getByRole('button', { name: 'Open Finder' }).click()
   const finder = page.getByRole('region', { name: 'Finder window' })
   await finder.getByRole('button', { name: /README\.md/ }).click()
-  await finder.getByRole('button', { name: 'Open selected file in Code' }).click()
+  await finder.getByRole('button', { name: 'Finder actions' }).click()
+  await page.getByRole('menuitem', { name: 'Open in Code', exact: true }).click()
 
   const code = page.getByRole('region', { name: 'Code window' })
   const editor = code.locator('.monaco-editor')
@@ -1873,7 +1894,8 @@ test('ignores a delayed watcher result after closing and reopening the same path
   await dock.getByRole('button', { name: 'Open Finder' }).click()
   const reopenedFinder = page.getByRole('region', { name: 'Finder window' })
   await reopenedFinder.getByRole('button', { name: /README\.md/ }).click()
-  await reopenedFinder.getByRole('button', { name: 'Open selected file in Code' }).click()
+  await reopenedFinder.getByRole('button', { name: 'Finder actions' }).click()
+  await page.getByRole('menuitem', { name: 'Open in Code', exact: true }).click()
 
   const reopenedEditor = code.locator('.monaco-editor')
   const content = '# New same-path draft'
@@ -2804,6 +2826,77 @@ test('resizes across all visible corners while keeping window controls clickable
   await expect(frame).toHaveCount(0)
 })
 
+test('magnifies the Dock without relayout and minimizes with native transform animation', async ({
+  page,
+}, testInfo) => {
+  await mockTengri(page)
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.goto('/')
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  await expect(dock).toBeVisible()
+  await page.evaluate(() => document.fonts.ready.then(() => undefined))
+  await expect
+    .poll(() =>
+      dock
+        .locator('img')
+        .evaluateAll((images) =>
+          images.every((image) => image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0),
+        ),
+    )
+    .toBe(true)
+  const client = await page.context().newCDPSession(page)
+  await client.send('Performance.enable')
+  await client.send('Emulation.setCPUThrottlingRate', { rate: 4 })
+  const metrics = async () =>
+    new Map((await client.send('Performance.getMetrics')).metrics.map((entry) => [entry.name, entry.value]))
+  const bounds = await dock.boundingBox()
+  if (!bounds) throw new Error('Dock is unavailable')
+  const before = await metrics()
+  await page.mouse.move(bounds.x + 30, bounds.y + 35)
+  for (let sweep = 0; sweep < 4; sweep += 1) {
+    await page.mouse.move(bounds.x + bounds.width - 30, bounds.y + 35, { steps: 24 })
+    await page.mouse.move(bounds.x + 30, bounds.y + 35, { steps: 24 })
+  }
+  await page.mouse.move(40, 60)
+  const after = await metrics()
+  const delta = Object.fromEntries(
+    ['LayoutCount', 'LayoutDuration', 'RecalcStyleDuration', 'ScriptDuration', 'TaskDuration'].map((key) => {
+      const start = before.get(key)
+      const end = after.get(key)
+      if (start === undefined || end === undefined) throw new Error(`Chromium did not report ${key}`)
+      return [key, end - start]
+    }),
+  )
+  await testInfo.attach('dock-rendering-4x-cpu', {
+    body: JSON.stringify(delta, null, 2),
+    contentType: 'application/json',
+  })
+  expect(delta.LayoutCount).toBeLessThan(10)
+
+  const chrome = page.getByRole('region', { name: 'Chrome window', includeHidden: true })
+  const wrapper = chrome.locator('..')
+  const normalBounds = await chrome.boundingBox()
+  await chrome.getByRole('button', { name: 'Minimize Chrome', exact: true }).click()
+  const nativeTransform = await wrapper.evaluate((element) =>
+    element
+      .getAnimations()
+      .flatMap((animation) =>
+        animation.effect instanceof KeyframeEffect
+          ? animation.effect.getKeyframes().filter((frame) => 'transform' in frame)
+          : [],
+      ),
+  )
+  expect(nativeTransform.length).toBeGreaterThanOrEqual(2)
+  expect(nativeTransform[0]?.transform).toBe('translate(0px, 0px) scale(1)')
+  expect(nativeTransform.at(-1)?.transform).toMatch(/scale\(0\./)
+  await expect(wrapper).toHaveCSS('visibility', 'hidden')
+  await dock.getByRole('button', { name: 'Open Chrome' }).click()
+  await expect(wrapper).toHaveCSS('transform', 'matrix(1, 0, 0, 1, 0, 0)')
+  await expect.poll(() => chrome.boundingBox()).toEqual(normalBounds)
+  await expect(chrome.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+  await client.detach()
+})
+
 test('tracks the pointer during dragging without repeated desktop layout reads or release snapback', async ({
   page,
 }) => {
@@ -3494,6 +3587,71 @@ test('matches the macOS desktop at required production viewports', async ({ page
   })
 })
 
+test('navigates Finder with sortable columns, breadcrumbs, Go to Folder, and file artwork', async ({ page }) => {
+  await mockTengri(page)
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Finder', exact: true }).click()
+  const finder = page.getByRole('region', { name: 'Finder window' })
+  const files = finder.locator('[data-file-entry]')
+  const names = () => files.evaluateAll((elements) => elements.map((element) => element.getAttribute('aria-label')))
+  await expect(files).toHaveCount(3)
+  expect(await names()).toEqual(['package.json', 'README.md', 'src'])
+  await finder.getByRole('button', { name: 'Sort by Size', exact: true }).click()
+  expect(await names()).toEqual(['src', 'package.json', 'README.md'])
+  await finder.getByRole('button', { name: 'Sort by Size', exact: true }).click()
+  expect(await names()).toEqual(['README.md', 'package.json', 'src'])
+  await files.first().click()
+  await files.last().click({ modifiers: ['Shift'] })
+  await expect(finder.getByRole('status', { name: 'Folder status' })).toHaveText('3 of 3 selected')
+  await finder.getByRole('button', { name: 'src', exact: true }).dblclick()
+  await expect(finder.getByRole('button', { name: 'main.ts', exact: true })).toBeVisible()
+  const path = finder.getByRole('navigation', { name: 'Folder path' })
+  await expect(path.getByRole('button')).toHaveCount(2)
+  await path.getByRole('button', { name: 'Workspace', exact: true }).click()
+  await expect(files).toHaveCount(3)
+  await finder.getByRole('button', { name: 'Back', exact: true }).click()
+  await expect(finder.getByRole('button', { name: 'main.ts', exact: true })).toBeVisible()
+
+  await finder.getByRole('button', { name: 'Go to folder', exact: true }).click()
+  const location = page.getByRole('dialog', { name: 'Go to Folder', exact: true })
+  await location.getByRole('textbox', { name: 'Folder location' }).fill('/../../outside')
+  await location.getByRole('button', { name: 'Go', exact: true }).click()
+  await expect(location.getByRole('alert')).toHaveText('Enter an absolute path inside the workspace')
+  await location.getByRole('textbox', { name: 'Folder location' }).fill('/')
+  await location.getByRole('textbox', { name: 'Folder location' }).press('Enter')
+  await expect(location).toHaveCount(0)
+  await expect(files).toHaveCount(3)
+  await finder.getByRole('button', { name: 'Icon view' }).click()
+  const folder = finder.getByRole('button', { name: 'src', exact: true })
+  await expect(folder.locator('img')).toHaveAttribute('src', '/tengri/icons/folder.png')
+  await expect(finder.getByRole('button', { name: 'README.md', exact: true }).locator('img')).toHaveAttribute(
+    'src',
+    '/tengri/icons/document.png',
+  )
+  await expect
+    .poll(() =>
+      folder
+        .locator('img')
+        .evaluate((image) => image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0),
+    )
+    .toBe(true)
+  await page.mouse.move(0, 0)
+  await expect(finder).toHaveScreenshot('tengri-finder-icons.png')
+  await finder.getByRole('button', { name: 'Finder actions' }).click()
+  await page.getByRole('menuitem', { name: 'New Folder', exact: true }).click()
+  await finder.getByRole('textbox', { name: 'New folder name' }).fill('empty')
+  await finder.getByRole('textbox', { name: 'New folder name' }).press('Enter')
+  await finder.getByRole('button', { name: 'empty', exact: true }).dblclick()
+  await finder.getByRole('button', { name: 'List view' }).click()
+  await expect(finder.getByRole('button', { name: 'Sort by Name', exact: true })).toBeVisible()
+  await expect(finder.getByRole('status', { name: 'Folder status' })).toHaveText('0 items')
+  await expect(files).toHaveCount(0)
+  const accessibility = await new AxeBuilder({ page }).analyze()
+  expect(
+    accessibility.violations.filter((violation) => violation.impact === 'serious' || violation.impact === 'critical'),
+  ).toEqual([])
+})
+
 test('renders native Finder and Settings layouts with accessible navigation', async ({ page }) => {
   await page.clock.setFixedTime(new Date('2026-08-26T12:34:00.000Z'))
   await mockTengri(page)
@@ -3502,6 +3660,15 @@ test('renders native Finder and Settings layouts with accessible navigation', as
   await dock.getByRole('button', { name: 'Open Finder' }).click()
   const finder = page.getByRole('region', { name: 'Finder window' })
   await expect(finder.getByRole('button', { name: 'README.md' })).toBeVisible()
+  await expect
+    .poll(() =>
+      finder
+        .locator('img')
+        .evaluateAll((images) =>
+          images.every((image) => image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0),
+        ),
+    )
+    .toBe(true)
   await page.mouse.move(0, 0)
   await expect(finder).toHaveScreenshot('tengri-finder.png')
 
