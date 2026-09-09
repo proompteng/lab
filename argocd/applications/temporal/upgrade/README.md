@@ -172,3 +172,16 @@ Source: [Ceph mount options](https://docs.ceph.com/en/umbrella/man/8/mount.ceph/
 The failed first Job is retired through GitOps; its failure evidence is preserved
 in the upgrade record. Serving data claims, identities, authentication and the
 Elasticsearch image remain unchanged during the replacement repository mount.
+
+
+Generation `4112-v1` prepares the Cassandra 3.11.19 to 4.1.12 transition with a
+fresh native snapshot, retained CSI clones and isolated old/target engine checks.
+Its Jobs and script ConfigMap have separate identities, preserving the completed
+3.11.19 recovery and rollout records. Production stays on the accepted 3.11.19
+image until this generation passes and a separate activation is reviewed.
+
+Cassandra 4.1 and 5.0 disable native SSTable verification without an explicit
+`--force` opt-in. The rehearsal enables that verifier only on its disposable,
+isolated clone, with extended cell verification and without repair-status mutation
+or disk-failure-policy flags. This does not force-delete or verify serving Pods.
+The completed v6 rehearsal retains its exact original script ConfigMap.
