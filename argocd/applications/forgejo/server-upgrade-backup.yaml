@@ -1,0 +1,313 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: forgejo-server-16-0-3-quiesced
+  namespace: forgejo
+  annotations:
+    argocd.argoproj.io/sync-wave: '-25'
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: forgejo-server-16-0-3-quiesced
+  namespace: forgejo
+  annotations:
+    argocd.argoproj.io/sync-wave: '-25'
+rules:
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  resourceNames:
+  - forgejo
+  verbs:
+  - get
+- apiGroups:
+  - ''
+  resources:
+  - persistentvolumeclaims
+  resourceNames:
+  - gitea-shared-storage
+  - forgejo-db-1
+  verbs:
+  - get
+- apiGroups:
+  - ''
+  resources:
+  - pods
+  verbs:
+  - list
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: forgejo-server-16-0-3-quiesced
+  namespace: forgejo
+  annotations:
+    argocd.argoproj.io/sync-wave: '-25'
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: forgejo-server-16-0-3-quiesced
+subjects:
+- kind: ServiceAccount
+  name: forgejo-server-16-0-3-quiesced
+  namespace: forgejo
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: forgejo-server-16-0-3-quiesced
+  namespace: forgejo
+  annotations:
+    argocd.argoproj.io/sync-wave: '-15'
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 240
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: forgejo-server-16-0-3-quiesced
+    spec:
+      serviceAccountName: forgejo-server-16-0-3-quiesced
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: verify
+        image: docker.io/library/python:3.14.7-alpine@sha256:c6ead215bfd31f1e433d968853b7a769989117115b728874824e6c0a27cb96fc
+        command:
+        - python3
+        - -c
+        - "import json, os, ssl, time, urllib.request\nfrom pathlib import Path\n\
+          token = Path('/var/run/secrets/kubernetes.io/serviceaccount/token').read_text()\n\
+          tls = ssl.create_default_context(cafile='/var/run/secrets/kubernetes.io/serviceaccount/ca.crt')\n\
+          base = 'https://' + os.environ['KUBERNETES_SERVICE_HOST'] + ':' + os.environ['KUBERNETES_SERVICE_PORT']\n\
+          def get(path):\n    request = urllib.request.Request(base + path, headers={'Authorization':\
+          \ 'Bearer ' + token})\n    with urllib.request.urlopen(request, context=tls,\
+          \ timeout=15) as response:\n        return json.load(response)\ndeployment\
+          \ = get('/apis/apps/v1/namespaces/forgejo/deployments/forgejo')\nassert\
+          \ deployment['metadata']['uid'] == '559e3fef-818a-409e-8251-0a919a8756b3'\n\
+          assert deployment['spec']['replicas'] == 0\nfor claim, uid in [('gitea-shared-storage',\
+          \ '69b9fb12-8b79-4c3a-a0aa-2073b6d3905b'), ('forgejo-db-1', '145fb4c9-7528-4d84-a381-532cade46a68')]:\n\
+          \    pvc = get('/api/v1/namespaces/forgejo/persistentvolumeclaims/' + claim)\n\
+          \    assert pvc['metadata']['uid'] == uid and pvc['status']['phase'] ==\
+          \ 'Bound'\nfor attempt in range(90):\n    pods = get('/api/v1/namespaces/forgejo/pods?labelSelector=app.kubernetes.io%2Fname%3Dforgejo')['items']\n\
+          \    if not pods:\n        break\n    time.sleep(2)\nassert not pods, 'Forgejo\
+          \ Pods remain; snapshots must not start'\nprint('PASS: original Deployment\
+          \ stopped, every Forgejo Pod gone, both source PVC identities preserved.')\n"
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  name: forgejo-server-16-0-3-db
+  namespace: forgejo
+  annotations:
+    argocd.argoproj.io/sync-wave: '-10'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  cluster:
+    name: forgejo-db
+  method: volumeSnapshot
+  online: false
+  target: primary
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: forgejo-server-16-0-3-data
+  namespace: forgejo
+  annotations:
+    argocd.argoproj.io/sync-wave: '-10'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  volumeSnapshotClassName: rook-ceph-block
+  source:
+    persistentVolumeClaimName: gitea-shared-storage
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: forgejo-server-16-0-3-restore-db
+  namespace: forgejo
+  annotations:
+    argocd.argoproj.io/sync-wave: '-5'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: rook-ceph-block
+  resources:
+    requests:
+      storage: 10Gi
+  dataSource:
+    apiGroup: snapshot.storage.k8s.io
+    kind: VolumeSnapshot
+    name: forgejo-server-16-0-3-db
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: forgejo-server-16-0-3-restore-data
+  namespace: forgejo
+  annotations:
+    argocd.argoproj.io/sync-wave: '-5'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: rook-ceph-block
+  resources:
+    requests:
+      storage: 50Gi
+  dataSource:
+    apiGroup: snapshot.storage.k8s.io
+    kind: VolumeSnapshot
+    name: forgejo-server-16-0-3-data
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: forgejo-server-16-0-3-rehearsal
+  namespace: forgejo
+  annotations:
+    argocd.argoproj.io/sync-wave: '-25'
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: forgejo-server-16-0-3-rehearsal
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress: []
+  egress: []
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: forgejo-server-16-0-3-rehearsal
+  namespace: forgejo
+  annotations:
+    argocd.argoproj.io/sync-wave: '0'
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: forgejo-server-16-0-3-rehearsal
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 90
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 26
+        runAsGroup: 26
+        fsGroup: 26
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: postgres
+        image: ghcr.io/cloudnative-pg/postgresql:17.11@sha256:70664ebcfa1100361b5bdc28bbf06fdbe08db2dc4ad7bd14de33c5e05fe8ea8e
+        command:
+        - /bin/bash
+        - /scripts/upgrade-db-rehearsal.sh
+        env:
+        - name: EXPECTED_SYSTEM_IDENTIFIER
+          value: '7615849836285206557'
+        - name: EXPECTED_IDENTITY_COUNTS
+          value: 1|2|6|1|0|15
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: &id001
+            drop:
+            - ALL
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: '1'
+            memory: 1Gi
+        volumeMounts:
+        - &id002
+          name: scripts
+          mountPath: /scripts
+          readOnly: true
+        - &id003
+          name: proof
+          mountPath: /proof
+        - name: db-clone
+          mountPath: /var/lib/postgresql/data
+        - name: postgres-tmp
+          mountPath: /tmp
+        - name: shm
+          mountPath: /dev/shm
+      - name: forgejo
+        image: code.forgejo.org/forgejo/forgejo:16.0.3-rootless@sha256:214f4ae63ee78be1e445e58573c88dc7215e72091210852e0df94eaac1a25685
+        command:
+        - /bin/bash
+        - /scripts/upgrade-app-rehearsal.sh
+        env:
+        - name: EXPECTED_REFS_SHA256
+          value: 228266f817f2c813bef5c0d20e055d4d76f052ae2c508bac81e3c412c1f7d192
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: *id001
+          runAsUser: 1000
+          runAsGroup: 1000
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: '1'
+            memory: 1Gi
+        volumeMounts:
+        - *id002
+        - *id003
+        - name: data-clone
+          mountPath: /data
+        - name: forgejo-tmp
+          mountPath: /tmp
+      volumes:
+      - name: scripts
+        configMap:
+          name: forgejo-server-16-0-3-rehearsal
+      - name: db-clone
+        persistentVolumeClaim:
+          claimName: forgejo-server-16-0-3-restore-db
+      - name: data-clone
+        persistentVolumeClaim:
+          claimName: forgejo-server-16-0-3-restore-data
+      - name: proof
+        emptyDir: {}
+      - name: postgres-tmp
+        emptyDir: {}
+      - name: forgejo-tmp
+        emptyDir: {}
+      - name: shm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 128Mi
