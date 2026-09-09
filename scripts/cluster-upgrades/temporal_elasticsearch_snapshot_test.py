@@ -1,9 +1,11 @@
 import copy
 import hashlib
 import json
+import io
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 path = Path("argocd/applications/temporal/upgrade/elasticsearch-snapshot.py")
 spec = importlib.util.spec_from_file_location("snapshot", path)
@@ -108,6 +110,32 @@ class Fixture:
 
 
 class SnapshotTests(unittest.TestCase):
+    def test_requests_share_the_job_deadline_budget(self):
+        with (
+            patch.object(snapshot, "REQUEST_DEADLINE", 3600),
+            patch.object(snapshot.time, "monotonic", side_effect=[100, 2200]),
+            patch.object(
+                snapshot, "urlopen", side_effect=[io.BytesIO(b"{}"), io.BytesIO(b"{}")]
+            ) as opened,
+        ):
+            snapshot.request(
+                "PUT", "/_snapshot/repository/snapshot?wait_for_completion=true", {}
+            )
+            snapshot.request("GET", "/_snapshot/repository/snapshot")
+        self.assertEqual(
+            [call.kwargs["timeout"] for call in opened.call_args_list], [3500, 1400]
+        )
+
+    def test_expired_job_budget_prevents_another_request(self):
+        with (
+            patch.object(snapshot, "REQUEST_DEADLINE", 3600),
+            patch.object(snapshot.time, "monotonic", return_value=3601),
+            patch.object(snapshot, "urlopen") as opened,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "time budget exhausted"):
+                snapshot.request("PUT", "/_snapshot/repository/snapshot", {})
+        opened.assert_not_called()
+
     def test_native_snapshot_retains_hidden_indices_and_global_state(self):
         fixture = Fixture()
         proof = snapshot.capture(fixture.api)

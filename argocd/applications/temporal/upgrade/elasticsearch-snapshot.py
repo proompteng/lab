@@ -4,10 +4,12 @@ import datetime
 import hashlib
 import json
 import os
+import time
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+REQUEST_DEADLINE = time.monotonic() + 3500
 REPOSITORY = "temporal-cephfs-native"
 LOCATION = "/usr/share/elasticsearch/snapshots/temporal"
 GENERATION = "81921-v1"
@@ -27,6 +29,8 @@ def require(condition, message):
 
 
 def request(method, path, body=None, missing=False):
+    remaining = REQUEST_DEADLINE - time.monotonic()
+    require(remaining > 0, "native snapshot Job time budget exhausted")
     data = None if body is None else json.dumps(body).encode()
     req = Request(
         "http://elasticsearch-master.temporal.svc.cluster.local:9200" + path,
@@ -35,7 +39,7 @@ def request(method, path, body=None, missing=False):
         headers={"Content-Type": "application/json"},
     )
     try:
-        with urlopen(req, timeout=1900) as response:
+        with urlopen(req, timeout=remaining) as response:
             return json.load(response)
     except HTTPError as error:
         if missing and error.code == 404:
