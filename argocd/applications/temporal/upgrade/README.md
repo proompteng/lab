@@ -213,3 +213,16 @@ snapshot failure blocks activation and requires diagnosis, never a weaker gate.
 
 Sources: [Elastic 8.5 S3 repository](https://www.elastic.co/guide/en/elasticsearch/reference/8.5/repository-s3.html),
 [Rook bucket claims](https://rook.io/docs/rook/latest/Storage-Configuration/Object-Storage-RGW/ceph-object-bucket-claim/).
+
+
+The `4112-v1` backup completed, but its restore parser rejected Cassandra
+3.11.19's native manifest paths such as
+`.cm_lastheartbeat_idx/me-199-big-Data.db`. No engine was started. The maintained
+parser now selects the source-version manifest contract: the legacy 3.11.5
+index-manifest behavior remains separate, while 3.11.19 and later require an
+exact list of all base and relative index SSTables. Both paths still reject
+traversal, symlinks, orphan components, missing components and checksum failures
+before producing a receipt. Generation `4112-v2` takes fresh snapshots and uses
+new isolated restore volumes. The completed old Jobs retain their exact script
+ConfigMaps; the failed v1 rehearsal is retired through GitOps. No serving image
+changes in this preparation.
