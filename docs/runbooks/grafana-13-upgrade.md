@@ -10,6 +10,14 @@ startup: Traces Drilldown 2.2.0, Logs Drilldown 2.5.2, Metrics Drilldown 2.5.1,
 and Profiles Drilldown 2.3.0. Keep the existing `tempo`, `loki`, and `prom`
 datasource UIDs and endpoints.
 
+Grafana 13 can update bundled datasource plugins during startup. Keep the
+container filesystem read-only and use the chart's `shadowBundledPlugins`
+option, with every bundled plugin explicitly listed and version-pinned in
+`plugins`. This installs them on the existing writable plugin volume. Preserve
+all thirteen bundled datasource IDs, including the active Loki, Prometheus,
+and Tempo providers; shadowing without that complete inventory removes them.
+Pin the Advisor app as well to avoid untracked default plugin updates.
+
 ## Snapshot and restore rehearsal
 
 Merge the preparation resources while production still runs Grafana 12.3.1.
