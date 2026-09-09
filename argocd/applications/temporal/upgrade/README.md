@@ -185,3 +185,31 @@ Cassandra 4.1 and 5.0 disable native SSTable verification without an explicit
 isolated clone, with extended cell verification and without repair-status mutation
 or disk-failure-policy flags. This does not force-delete or verify serving Pods.
 The completed v6 rehearsal retains its exact original script ConfigMap.
+
+
+The synchronous CephFS repository also failed the native three-node analysis:
+a completed 1 MiB write was followed by a zero-byte ranged read on another node.
+Neither filesystem generation contains an accepted native snapshot. Generation
+`81921-v3` therefore uses a dedicated Rook ObjectBucketClaim on the existing
+retained `rook-ceph-bucket` class and the existing internal RGW endpoint. The
+operator creates credentials scoped to this new bucket; existing application
+accounts and secrets are unchanged. Helm maps the generated secret keys into the
+Elasticsearch keystore without placing their values in Git or Job logs.
+
+Rollout order is bucket provisioning, same-version serial Elasticsearch restart
+to load the S3 client, unchanged strict three-node repository verification and
+analysis, then a native all-index/global-state snapshot. The Job verifies the
+original cluster, node and index identities, requires every shard to succeed,
+and makes the completed repository read-only before issuing its receipt in the
+retained Job log. Its credentials are not mounted in the snapshot Job. The next
+acceptance step copies that frozen repository and restores it on isolated native
+8.5.1 and 8.19.21 engines before any production version change. Serving data
+claims, replica count and image version remain unchanged. Old filesystem claims
+are retained; their failed Jobs are retired through GitOps.
+
+Recovery before the version change is to revert this S3 client configuration;
+the original data and retained snapshot bucket are unaffected. An analysis or
+snapshot failure blocks activation and requires diagnosis, never a weaker gate.
+
+Sources: [Elastic 8.5 S3 repository](https://www.elastic.co/guide/en/elasticsearch/reference/8.5/repository-s3.html),
+[Rook bucket claims](https://rook.io/docs/rook/latest/Storage-Configuration/Object-Storage-RGW/ceph-object-bucket-claim/).
