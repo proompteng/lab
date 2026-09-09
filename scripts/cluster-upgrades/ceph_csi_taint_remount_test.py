@@ -26,6 +26,7 @@ class NodeAPI:
                 "annotations": {"other": "keep"},
             },
             "spec": {"taints": [{"key": "other", "effect": "NoSchedule"}]},
+            "status": {"conditions": [{"type": "Ready", "status": "True"}]},
         }
         self.old_present = True
         self.calls = []
@@ -202,6 +203,126 @@ class FenceTests(unittest.TestCase):
                 }
             )
         )
+
+    def test_not_ready_before_fence_refused(self):
+        w, api = self.make()
+        api.node["status"]["conditions"][0]["status"] = "False"
+        with self.assertRaisesRegex(module.core.RemountError, "not Ready"):
+            w.cordon()
+        self.assertFalse(any(args[0] == "patch" for args, _ in api.calls))
+
+    def test_not_ready_after_database_guard_refuses_eviction(self):
+        w, api = self.make()
+        w.cordon()
+
+        def fail_node():
+            api.node["status"]["conditions"][0]["status"] = "False"
+
+        w.database_guard.side_effect = fail_node
+        with self.assertRaisesRegex(module.core.RemountError, "not Ready"):
+            w.evict()
+        self.assertTrue(api.old_present)
+        self.assertFalse(any(args[0] == "create" for args, _ in api.calls))
+
+
+class RecoveryTests(unittest.TestCase):
+    make = FenceTests.make
+
+    def setup_recovery(self, execute=True):
+        original, api = self.make()
+        original.cordon()
+        api.old_present = False
+        receipt = copy.deepcopy(original.audit)
+        receipt["metadata"].update(
+            cnpgPrimaries=[{"name": "db", "uid": "db-uid", "primary": "db-1"}],
+            cnpgOperatorConfigurationHash="operator-hash",
+            recovery={
+                "nodeUid": "node-uid",
+                "controller": {
+                    "kind": "StatefulSet",
+                    "name": "restate",
+                    "uid": "controller-uid",
+                    "selector": "app=restate",
+                },
+                "controllerSpecHash": module.digest({"replicas": 3}),
+                "volumes": [
+                    module.asdict(
+                        module.core.Volume("data", "pvc-uid", "pv", "pv-uid", "image")
+                    )
+                ],
+            },
+        )
+        from dataclasses import replace
+
+        recovery = module.TaintWorkflow(
+            replace(original.c, execute=execute), runner=api
+        )
+        recovery.persist = Mock()
+        recovery.finish_audit = Mock()
+        recovery.database_guard = Mock()
+        recovery.ceph_posture = Mock()
+        recovery.functional_checks = Mock()
+        recovery.csi_ready = Mock(
+            return_value=module.core.CSIPlugin("csi", "csi-rbdplugin")
+        )
+        recovery.inventory = Mock(return_value=[])
+        recovery.rbd_volumes = Mock(
+            return_value=(
+                module.core.Volume("data", "pvc-uid", "pv", "pv-uid", "image"),
+            )
+        )
+        inherited = recovery.json
+        recovery.json = lambda args: (
+            {"metadata": {"uid": "controller-uid"}, "spec": {"replicas": 3}}
+            if args[1] == "statefulsets"
+            else inherited(args)
+        )
+        return recovery, api, receipt
+
+    def test_recovery_reuses_original_owner_and_never_evicts(self):
+        w, api, receipt = self.setup_recovery()
+        self.assertNotEqual(w.owner_token, receipt["metadata"]["nodeOwnershipToken"])
+        self.assertEqual(w.recover(receipt)["outcome"], "fence-released")
+        self.assertEqual(w.owner_token, receipt["metadata"]["nodeOwnershipToken"])
+        self.assertNotIn(
+            module.core.OWNER_ANNOTATION, api.node["metadata"]["annotations"]
+        )
+        self.assertFalse(any(args[0] == "create" for args, _ in api.calls))
+
+    def test_recovery_plan_leaves_fence(self):
+        w, api, receipt = self.setup_recovery(execute=False)
+        calls = len(api.calls)
+        self.assertEqual(w.recover(receipt)["outcome"], "planned")
+        self.assertTrue(w.fence_present(api.node))
+        self.assertFalse(
+            any(args[0] in {"patch", "create"} for args, _ in api.calls[calls:])
+        )
+
+    def test_recovery_wrong_target_or_owner_refused(self):
+        for change in ("context", "nodeOwnershipToken"):
+            w, api, receipt = self.setup_recovery()
+            receipt["metadata"][change] = "foreign"
+            calls = len(api.calls)
+            with self.assertRaises(module.core.RemountError):
+                w.recover(receipt)
+            self.assertFalse(
+                any(args[0] in {"patch", "create"} for args, _ in api.calls[calls:])
+            )
+
+    def test_recovery_stuck_mapping_or_old_uid_or_failed_csi_keeps_fence(self):
+        for problem in ("mapping", "uid", "csi", "volume"):
+            w, api, receipt = self.setup_recovery()
+            if problem == "mapping":
+                w.inventory.return_value = [("image", "client1", "csi-rbd-node")]
+            elif problem == "uid":
+                api.old_present = True
+            elif problem == "volume":
+                w.rbd_volumes.return_value = ()
+            else:
+                w.inventory.side_effect = module.core.RemountError("CSI unavailable")
+            with self.assertRaises(module.core.RemountError):
+                w.recover(receipt)
+            self.assertTrue(w.fence_present(api.node))
 
 
 class DatabaseGuardTests(unittest.TestCase):

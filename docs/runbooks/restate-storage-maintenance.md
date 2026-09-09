@@ -69,6 +69,13 @@ Do not start another disruption or clear a storage fence while the old mapping r
 after Restate has full quorum and partition recovery. Never substitute direct state edits, private-handler exposure,
 registration replacement, authority changes, or a singleton rollback for this procedure.
 
+For a retained node fence, rerun the same helper and all original target arguments with
+`--recover-from "$RESTATE_REMOUNT_RECEIPT" --audit-file "$RESTATE_RECOVERY_RECEIPT"`. This defaults to a read-only
+recovery check. Add `--execute` after it passes. Keep the original receipt unchanged. Recovery restores its ownership
+token and verifies the original node, controller, PVC/PV/RBD and CNPG identities, current Ceph/CSI health, and absence
+of both the old Pod UID and RBD mapping. It only removes that owned fence; it never evicts another Pod. Complete the
+replacement/native checks and restore the PDB and worker replicas through the enclosing procedure above.
+
 Restate contracts: [high availability](https://docs.restate.dev/server/deploy/ha),
 [snapshot recovery](https://docs.restate.dev/server/deploy/snapshots), and the deployed operator's
 [ReplicaSet propagation](https://github.com/restatedev/restate-operator/blob/v3.0.0/src/controllers/restatedeployment/controller.rs).

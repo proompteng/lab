@@ -13,6 +13,7 @@ import importlib.util
 import json
 import signal
 import sys
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -218,6 +219,23 @@ class TaintWorkflow(core.Workflow):
             "node maintenance already owned",
         )
         self.database_guard()
+        controller = self.json(
+            [
+                "get",
+                core.RESOURCES[self.controller.kind],
+                self.controller.name,
+                "-n",
+                self.c.namespace,
+                "-o",
+                "json",
+            ]
+        )
+        self.audit["metadata"]["recovery"] = {
+            "nodeUid": self.node_uid,
+            "controller": asdict(self.controller),
+            "controllerSpecHash": digest(controller["spec"]),
+            "volumes": [asdict(volume) for volume in self.volumes],
+        }
         self.record("taint-preflight", nodeUid=self.node_uid, cnpgClusters=12)
 
     def checked_node(self) -> Mapping[str, Any]:
@@ -251,6 +269,9 @@ class TaintWorkflow(core.Workflow):
                 {"op": "test", "path": "/spec", "value": spec},
             ]
             if acquire:
+                require(
+                    core.node_ready(node), "node is not Ready before acquiring fence"
+                )
                 require(
                     core.OWNER_ANNOTATION not in annotations
                     and not any(t.get("key") == TAINT_KEY for t in taints),
@@ -350,10 +371,10 @@ class TaintWorkflow(core.Workflow):
         self.record("taint-acquired", node=self.c.node)
 
     def evict(self) -> None:
-        require(
-            self.fence_present(self.checked_node()), "owned NoSchedule fence is missing"
-        )
         self.database_guard()
+        node = self.checked_node()
+        require(core.node_ready(node), "node is not Ready immediately before eviction")
+        require(self.fence_present(node), "owned NoSchedule fence is missing")
         self.eviction_attempted = True
         super().evict()
 
@@ -399,9 +420,140 @@ class TaintWorkflow(core.Workflow):
         self.database_guard()
         self.record("cnpg-identities-unchanged", clusters=12)
 
+    def recover(self, receipt: Mapping[str, Any]) -> dict[str, Any]:
+        """Release only the receipt's fence after fresh identity and unstage proof.
+
+        This never evicts a Pod or starts another remount. Workload acceptance and
+        the enclosing PDB/worker recovery remain the maintenance owner's task.
+        """
+        self.validate()
+        require(
+            self.complete_target(), "recovery requires every explicit target identity"
+        )
+        meta = receipt.get("metadata", {})
+        require(
+            meta.get("operation") == "ceph-csi-rbd-remount"
+            and meta.get("mode") == "execute"
+            and meta.get("schedulingFence") == "NoSchedule",
+            "receipt is not an executed NoSchedule remount",
+        )
+        for key in (
+            "context",
+            "namespace",
+            "pod",
+            "node",
+            "expectedPodUID",
+            "expectedRBDImages",
+            "expectedFSID",
+            "cephNamespace",
+        ):
+            require(
+                meta.get(key) == self.audit["metadata"][key],
+                "recovery receipt target mismatch: " + key,
+            )
+        saved = meta.get("recovery", {})
+        require(
+            all(
+                saved.get(key)
+                for key in ("nodeUid", "controller", "controllerSpecHash", "volumes")
+            )
+            and bool(meta.get("nodeOwnershipToken"))
+            and bool(meta.get("cnpgPrimaries"))
+            and bool(meta.get("cnpgOperatorConfigurationHash")),
+            "receipt lacks recovery identities",
+        )
+        self.owner_token = meta["nodeOwnershipToken"]
+        self.node_uid = saved["nodeUid"]
+        self.primary_identities = meta["cnpgPrimaries"]
+        self.operator_identity = meta["cnpgOperatorConfigurationHash"]
+        self.controller = core.Controller(**saved["controller"])
+        self.volumes = tuple(core.Volume(**volume) for volume in saved["volumes"])
+        self.claim_set = {volume.claim for volume in self.volumes}
+        self.audit["metadata"].update(
+            nodeOwnershipToken=self.owner_token,
+            recovery=saved,
+            cnpgPrimaries=self.primary_identities,
+            cnpgOperatorConfigurationHash=self.operator_identity,
+            recoveredReceiptHash=digest(receipt),
+        )
+        self.record("recovery-start")
+        require(
+            self.fence_present(self.checked_node()),
+            "receipt does not own the current fence",
+        )
+        controller = self.json(
+            [
+                "get",
+                core.RESOURCES[self.controller.kind],
+                self.controller.name,
+                "-n",
+                self.c.namespace,
+                "-o",
+                "json",
+            ]
+        )
+        require(
+            controller["metadata"]["uid"] == self.controller.uid
+            and not controller["metadata"].get("deletionTimestamp")
+            and digest(controller["spec"]) == saved["controllerSpecHash"],
+            "recovery controller identity or specification changed",
+        )
+        require(
+            self.rbd_volumes(self.claim_set) == self.volumes,
+            "recovery PVC/PV/RBD identity changed",
+        )
+        self.database_guard()
+        self.ceph_posture(self.c.fsid)
+        self.functional_checks("recovery")
+        self.plugin = self.csi_ready(self.c.node)
+        self.eviction_attempted = True
+        self.cordoned = True
+        # Reuse the same two absence checks for plans and actual cleanup. Do not
+        # mark storage_unstaged: uncordon must repeat them immediately before release.
+        old = core.optional_json(
+            self.c,
+            ["get", "pod", self.c.pod, "-n", self.c.namespace, "-o", "json"],
+            self.runner,
+        )
+        require(
+            old is None or old.get("metadata", {}).get("uid") != self.c.uid,
+            "old Pod UID remains; retaining owned fence",
+        )
+        require(
+            not any(
+                core.same_image(row[0], expected)
+                for row in self.inventory()
+                for expected in self.c.images
+            ),
+            "old RBD mapping remains; retaining owned fence",
+        )
+        self.record("recovery-unstage-proven")
+        if self.c.execute:
+            self.uncordon()
+            outcome = "fence-released"
+        else:
+            self.record("recovery-plan-ready", writes=[])
+            outcome = "planned"
+        self.finish_audit(outcome)
+        return self.summary(outcome)
+
 
 def main(argv: list[str] | None = None) -> int:
-    args = core.parser().parse_args(argv)
+    parser = core.parser()
+    parser.add_argument(
+        "--recover-from",
+        type=Path,
+        help="cleanup only the owned fence from this operation receipt",
+    )
+    args = parser.parse_args(argv)
+    if (
+        args.recover_from
+        and args.audit_path
+        and args.recover_from.resolve() == args.audit_path.resolve()
+    ):
+        parser.error(
+            "recovery requires a separate audit file; preserve the original receipt"
+        )
     config = core.Config(
         context=args.context,
         namespace=args.namespace,
@@ -425,7 +577,12 @@ def main(argv: list[str] | None = None) -> int:
 
     previous = signal.signal(signal.SIGTERM, interrupted)
     try:
-        print(json.dumps(workflow.run(), sort_keys=True))
+        result = (
+            workflow.recover(json.loads(args.recover_from.read_text()))
+            if args.recover_from
+            else workflow.run()
+        )
+        print(json.dumps(result, sort_keys=True))
         return 0
     except (core.RemountError, OSError) as exc:
         workflow.finish_audit("failed")
