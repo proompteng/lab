@@ -252,6 +252,7 @@ jobs:
               bunx oxfmt --check scripts/cluster-upgrades/*.test.ts
               bun test scripts/cluster-upgrades/*.test.ts
               python3 -m unittest discover -s scripts/cluster-upgrades -p 'ceph*_test.py'
+              python3 scripts/cluster-upgrades/temporal_cassandra_gate_test.py
               python3 -m unittest discover -s scripts/forgejo -p '*_test.py'
               bunx oxlint --config .oxlintrc.json scripts/seal-tengri-runtime.ts scripts/seal-tengri-runtime.test.ts
               bunx oxfmt --check scripts/seal-tengri-runtime.ts scripts/seal-tengri-runtime.test.ts

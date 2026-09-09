@@ -602,7 +602,7 @@ spec:
                 namespace: temporal
                 annotations:
                   argocd.argoproj.io/sync-wave: "4"
-                automation: manual
+                automation: auto
                 enabled: "true"
               - name: inngest
                 path: argocd/applications/inngest
