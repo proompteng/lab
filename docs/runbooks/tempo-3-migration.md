@@ -1,8 +1,10 @@
 # Tempo 3 migration
 
-Tempo 3 runs alongside Tempo 2 while both read the existing `tempo-traces`
-bucket. The old distributor and query endpoints remain authoritative until
-the new deployment passes ingestion and historical-query acceptance.
+Production runs Tempo 3 against the existing `tempo-traces` bucket. The
+`tempo-compatibility-services.yaml` Services preserve the original distributor,
+gateway, and query-frontend addresses while selecting Tempo 3 Pods. Tempo 2
+and the temporary migration Vulture are retired after the gates below pass.
+The existing 48-hour block retention remains unchanged.
 
 ## Admission and deployment
 
@@ -51,7 +53,14 @@ change. Verify writes reach Kafka, reads use Tempo 3, and the old distributor
 receives no new traffic. Preserve the old ingesters until all buffered traces
 are durably flushed: require zero live traces and flush queues, no new flush
 failures, and successful historical reads. Allow the configured maximum block
-duration plus complete-block timeout when observing the drain.
+duration plus complete-block timeout when observing the drain. Alternatively,
+after verifying that no writes reach the old ingesters, invoke each original
+Pod's native `POST /flush` handler. Tempo 2.9 cuts every remaining head block
+and schedules its durable upload without stopping the process. Fence each
+request by its original Pod UID, and require an increased successful-block
+counter, empty flush queue, no failures or retries, zero live traces, and an
+unchanged trace-created counter before retiring that Pod. Preserve the
+per-Pod receipt and repeat historical queries; an HTTP 204 alone is insufficient.
 
 Stop the old compactor before enabling Tempo 3 compaction. Verify the old
 process is gone before merging that change. After old ingestion is drained,
@@ -69,3 +78,5 @@ Never allow both compaction implementations to write to the bucket together.
 
 Upstream contracts: [Tempo 3 migration](https://grafana.com/docs/tempo/latest/set-up-for-tracing/setup-tempo/migrate-to-3/)
 and [Tempo Vulture](https://grafana.com/docs/tempo/latest/operations/tempo-vulture/).
+
+The forced-flush contract comes from the exact [Tempo 2.9 handler](https://github.com/grafana/tempo/blob/v2.9.0/modules/ingester/flush.go).

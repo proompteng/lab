@@ -16,6 +16,7 @@ generatorOptions:
   disableNameSuffixHash: true
 
 resources:
+  - tempo-compatibility-services.yaml
   - grafana-upgrade-backup.yaml
   - rook-ceph-rgw-loki-reflected-secret.yaml
   - tailscale-ingresses.yaml
@@ -34,7 +35,6 @@ resources:
   - cluster-metrics-alloy-deployment.yaml
   - mimir-config-check.yaml
   - tempo-v3-config-check.yaml
-  - tempo-v3-migration-vulture.yaml
 
 helmCharts:
   - name: kube-state-metrics
@@ -59,13 +59,6 @@ helmCharts:
     includeCRDs: true
     valuesFile: loki-values.yaml
   - name: tempo-distributed
-    repo: https://grafana.github.io/helm-charts
-    version: 1.61.3
-    releaseName: observability-tempo
-    namespace: observability
-    includeCRDs: true
-    valuesFile: tempo-values.yaml
-  - name: tempo-distributed
     repo: https://grafana-community.github.io/helm-charts
     version: 3.5.1
     releaseName: observability-tempo-v3
@@ -88,52 +81,6 @@ images:
     newTag: 1.6.39-alpine
 
 patches:
-  - target:
-      kind: Service
-      name: observability-tempo-distributor
-    patch: |-
-      - op: replace
-        path: /spec/selector
-        value:
-          app.kubernetes.io/component: distributor
-          app.kubernetes.io/instance: observability-tempo-v3
-          app.kubernetes.io/name: tempo
-  - target:
-      kind: Service
-      name: observability-tempo-gateway
-    patch: |-
-      - op: replace
-        path: /spec/selector
-        value:
-          app.kubernetes.io/component: gateway
-          app.kubernetes.io/instance: observability-tempo-v3
-          app.kubernetes.io/name: tempo
-      - op: add
-        path: /spec/ports/-
-        value:
-          name: otlp-http
-          port: 4318
-          protocol: TCP
-          targetPort: http-metrics
-  - target:
-      kind: Service
-      name: observability-tempo-query-frontend
-    patch: |-
-      - op: replace
-        path: /spec/selector
-        value:
-          app.kubernetes.io/component: query-frontend
-          app.kubernetes.io/instance: observability-tempo-v3
-          app.kubernetes.io/name: tempo
-  - target:
-      group: apps
-      version: v1
-      name: observability-tempo-(distributor|gateway|query-frontend|querier|compactor)
-    patch: |-
-      - op: add
-        path: /metadata/annotations
-        value:
-          argocd.argoproj.io/sync-wave: '1'
   - target:
       kind: ConfigMap
       name: observability-mimir-(config|runtime)
@@ -194,26 +141,6 @@ patches:
           argocd.argoproj.io/sync-options: Replace=true
   - target:
       kind: StatefulSet
-      name: observability-tempo-ingester
-    patch: |-
-      apiVersion: apps/v1
-      kind: StatefulSet
-      metadata:
-        name: observability-tempo-ingester
-        annotations:
-          argocd.argoproj.io/sync-options: Replace=true
-  - target:
-      kind: StatefulSet
-      name: observability-tempo-memcached
-    patch: |-
-      apiVersion: apps/v1
-      kind: StatefulSet
-      metadata:
-        name: observability-tempo-memcached
-        annotations:
-          argocd.argoproj.io/sync-options: Replace=true
-  - target:
-      kind: StatefulSet
       name: observability-loki-loki-distributed-ingester
     patch: |-
       apiVersion: apps/v1
@@ -258,12 +185,6 @@ patches:
           name: alertmanager-fallback-config
           secret:
             secretName: observability-alertmanager-email
-  - path: tempo-ingester-preserve-buffers.patch.yaml
-    target:
-      group: apps
-      version: v1
-      kind: StatefulSet
-      name: observability-tempo-ingester
   - path: mimir-kafka-preserve-buffer.patch.yaml
     target:
       group: apps
