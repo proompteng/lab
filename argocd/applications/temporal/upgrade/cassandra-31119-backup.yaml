@@ -1,12 +1,12 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: temporal-cassandra-31119-v5-gate
+  name: temporal-cassandra-31119-v6-gate
   namespace: temporal
   labels:
     app.kubernetes.io/name: temporal
     app.kubernetes.io/component: cassandra-upgrade
-    temporal.proompteng.ai/backup-generation: 31119-v5
+    temporal.proompteng.ai/backup-generation: 31119-v6
   annotations:
     argocd.argoproj.io/sync-wave: '-30'
 automountServiceAccountToken: false
@@ -14,12 +14,12 @@ automountServiceAccountToken: false
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: temporal-cassandra-31119-v5-gate
+  name: temporal-cassandra-31119-v6-gate
   namespace: temporal
   labels:
     app.kubernetes.io/name: temporal
     app.kubernetes.io/component: cassandra-upgrade
-    temporal.proompteng.ai/backup-generation: 31119-v5
+    temporal.proompteng.ai/backup-generation: 31119-v6
   annotations:
     argocd.argoproj.io/sync-wave: '-30'
 rules:
@@ -61,8 +61,8 @@ rules:
   resources:
   - jobs
   resourceNames:
-  - temporal-cassandra-31119-v5-snapshot
-  - temporal-cassandra-31119-v5-rehearsal
+  - temporal-cassandra-31119-v6-snapshot
+  - temporal-cassandra-31119-v6-rehearsal
   verbs:
   - get
 - apiGroups:
@@ -70,41 +70,41 @@ rules:
   resources:
   - volumesnapshots
   resourceNames:
-  - temporal-cassandra-31119-v5-0
-  - temporal-cassandra-31119-v5-1
-  - temporal-cassandra-31119-v5-2
+  - temporal-cassandra-31119-v6-0
+  - temporal-cassandra-31119-v6-1
+  - temporal-cassandra-31119-v6-2
   verbs:
   - get
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: temporal-cassandra-31119-v5-gate
+  name: temporal-cassandra-31119-v6-gate
   namespace: temporal
   labels:
     app.kubernetes.io/name: temporal
     app.kubernetes.io/component: cassandra-upgrade
-    temporal.proompteng.ai/backup-generation: 31119-v5
+    temporal.proompteng.ai/backup-generation: 31119-v6
   annotations:
     argocd.argoproj.io/sync-wave: '-30'
 subjects:
 - kind: ServiceAccount
-  name: temporal-cassandra-31119-v5-gate
+  name: temporal-cassandra-31119-v6-gate
   namespace: temporal
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: temporal-cassandra-31119-v5-gate
+  name: temporal-cassandra-31119-v6-gate
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: temporal-cassandra-31119-v5-snapshot
+  name: temporal-cassandra-31119-v6-snapshot
   namespace: temporal
   labels:
     app.kubernetes.io/name: temporal
     app.kubernetes.io/component: cassandra-upgrade
-    temporal.proompteng.ai/backup-generation: 31119-v5
+    temporal.proompteng.ai/backup-generation: 31119-v6
   annotations:
     argocd.argoproj.io/sync-wave: '-25'
 spec:
@@ -115,10 +115,10 @@ spec:
       labels:
         app.kubernetes.io/name: temporal
         app.kubernetes.io/component: cassandra-upgrade
-        temporal.proompteng.ai/backup-generation: 31119-v5
+        temporal.proompteng.ai/backup-generation: 31119-v6
     spec:
       restartPolicy: Never
-      serviceAccountName: temporal-cassandra-31119-v5-gate
+      serviceAccountName: temporal-cassandra-31119-v6-gate
       automountServiceAccountToken: true
       securityContext:
         runAsNonRoot: true
@@ -140,7 +140,7 @@ spec:
         - name: TARGET_IMAGE
           value: mirror.gcr.io/cassandra:3.11.19@sha256:9a14b18eb658851e8939cfdeca8fcbca389f5f0d00fca4a995d80b6accfcbd96
         - name: GENERATION
-          value: 31119-v5
+          value: 31119-v6
         resources:
           requests:
             cpu: 25m
@@ -170,12 +170,12 @@ spec:
 apiVersion: snapshot.storage.k8s.io/v1
 kind: VolumeSnapshot
 metadata:
-  name: temporal-cassandra-31119-v5-0
+  name: temporal-cassandra-31119-v6-0
   namespace: temporal
   labels:
     app.kubernetes.io/name: temporal
     app.kubernetes.io/component: cassandra-upgrade
-    temporal.proompteng.ai/backup-generation: 31119-v5
+    temporal.proompteng.ai/backup-generation: 31119-v6
   annotations:
     argocd.argoproj.io/sync-wave: '-20'
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
@@ -187,12 +187,12 @@ spec:
 apiVersion: snapshot.storage.k8s.io/v1
 kind: VolumeSnapshot
 metadata:
-  name: temporal-cassandra-31119-v5-1
+  name: temporal-cassandra-31119-v6-1
   namespace: temporal
   labels:
     app.kubernetes.io/name: temporal
     app.kubernetes.io/component: cassandra-upgrade
-    temporal.proompteng.ai/backup-generation: 31119-v5
+    temporal.proompteng.ai/backup-generation: 31119-v6
   annotations:
     argocd.argoproj.io/sync-wave: '-20'
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
@@ -204,12 +204,12 @@ spec:
 apiVersion: snapshot.storage.k8s.io/v1
 kind: VolumeSnapshot
 metadata:
-  name: temporal-cassandra-31119-v5-2
+  name: temporal-cassandra-31119-v6-2
   namespace: temporal
   labels:
     app.kubernetes.io/name: temporal
     app.kubernetes.io/component: cassandra-upgrade
-    temporal.proompteng.ai/backup-generation: 31119-v5
+    temporal.proompteng.ai/backup-generation: 31119-v6
   annotations:
     argocd.argoproj.io/sync-wave: '-20'
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
@@ -221,12 +221,12 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: temporal-cassandra-31119-v5-restore-0
+  name: temporal-cassandra-31119-v6-restore-0
   namespace: temporal
   labels:
     app.kubernetes.io/name: temporal
     app.kubernetes.io/component: cassandra-upgrade
-    temporal.proompteng.ai/backup-generation: 31119-v5
+    temporal.proompteng.ai/backup-generation: 31119-v6
   annotations:
     argocd.argoproj.io/sync-wave: '-15'
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
@@ -240,17 +240,17 @@ spec:
   dataSource:
     apiGroup: snapshot.storage.k8s.io
     kind: VolumeSnapshot
-    name: temporal-cassandra-31119-v5-0
+    name: temporal-cassandra-31119-v6-0
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: temporal-cassandra-31119-v5-data-0
+  name: temporal-cassandra-31119-v6-data-0
   namespace: temporal
   labels:
     app.kubernetes.io/name: temporal
     app.kubernetes.io/component: cassandra-upgrade
-    temporal.proompteng.ai/backup-generation: 31119-v5
+    temporal.proompteng.ai/backup-generation: 31119-v6
   annotations:
     argocd.argoproj.io/sync-wave: '-15'
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
@@ -265,18 +265,18 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: temporal-cassandra-31119-v5-rehearsal
+  name: temporal-cassandra-31119-v6-rehearsal
   namespace: temporal
   labels:
     app.kubernetes.io/name: temporal
     app.kubernetes.io/component: cassandra-upgrade
-    temporal.proompteng.ai/backup-generation: 31119-v5
+    temporal.proompteng.ai/backup-generation: 31119-v6
   annotations:
     argocd.argoproj.io/sync-wave: '-30'
 spec:
   podSelector:
     matchLabels:
-      temporal.proompteng.ai/isolated-rehearsal: 31119-v5
+      temporal.proompteng.ai/isolated-rehearsal: 31119-v6
   policyTypes:
   - Ingress
   - Egress
@@ -300,12 +300,12 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: temporal-cassandra-31119-v5-verify
+  name: temporal-cassandra-31119-v6-verify
   namespace: temporal
   labels:
     app.kubernetes.io/name: temporal
     app.kubernetes.io/component: cassandra-upgrade
-    temporal.proompteng.ai/backup-generation: 31119-v5
+    temporal.proompteng.ai/backup-generation: 31119-v6
   annotations:
     argocd.argoproj.io/sync-wave: '-16'
 spec:
@@ -316,10 +316,10 @@ spec:
       labels:
         app.kubernetes.io/name: temporal
         app.kubernetes.io/component: cassandra-upgrade
-        temporal.proompteng.ai/backup-generation: 31119-v5
+        temporal.proompteng.ai/backup-generation: 31119-v6
     spec:
       restartPolicy: Never
-      serviceAccountName: temporal-cassandra-31119-v5-gate
+      serviceAccountName: temporal-cassandra-31119-v6-gate
       automountServiceAccountToken: true
       securityContext:
         runAsNonRoot: true
@@ -341,7 +341,7 @@ spec:
         - name: TARGET_IMAGE
           value: mirror.gcr.io/cassandra:3.11.19@sha256:9a14b18eb658851e8939cfdeca8fcbca389f5f0d00fca4a995d80b6accfcbd96
         - name: GENERATION
-          value: 31119-v5
+          value: 31119-v6
         resources:
           requests:
             cpu: 25m
@@ -371,12 +371,12 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: temporal-cassandra-31119-v5-rehearsal
+  name: temporal-cassandra-31119-v6-rehearsal
   namespace: temporal
   labels:
     app.kubernetes.io/name: temporal
     app.kubernetes.io/component: cassandra-upgrade
-    temporal.proompteng.ai/backup-generation: 31119-v5
+    temporal.proompteng.ai/backup-generation: 31119-v6
   annotations:
     argocd.argoproj.io/sync-wave: '-10'
 spec:
@@ -387,8 +387,8 @@ spec:
       labels:
         app.kubernetes.io/name: temporal
         app.kubernetes.io/component: cassandra-upgrade
-        temporal.proompteng.ai/backup-generation: 31119-v5
-        temporal.proompteng.ai/isolated-rehearsal: 31119-v5
+        temporal.proompteng.ai/backup-generation: 31119-v6
+        temporal.proompteng.ai/isolated-rehearsal: 31119-v6
     spec:
       restartPolicy: Never
       automountServiceAccountToken: false
@@ -408,7 +408,7 @@ spec:
         - name: TARGET_IMAGE
           value: mirror.gcr.io/cassandra:3.11.19@sha256:9a14b18eb658851e8939cfdeca8fcbca389f5f0d00fca4a995d80b6accfcbd96
         - name: GENERATION
-          value: 31119-v5
+          value: 31119-v6
         - name: REHEARSAL_PROOF_DIRECTORY
           value: /proof
         resources:
@@ -453,7 +453,7 @@ spec:
         - name: HEAP_NEWSIZE
           value: 256M
         - name: GENERATION
-          value: 31119-v5
+          value: 31119-v6
         resources:
           requests:
             cpu: 250m
@@ -487,7 +487,7 @@ spec:
         - name: HEAP_NEWSIZE
           value: 256M
         - name: GENERATION
-          value: 31119-v5
+          value: 31119-v6
         resources:
           requests:
             cpu: 250m
@@ -520,7 +520,7 @@ spec:
         - name: HEAP_NEWSIZE
           value: 256M
         - name: GENERATION
-          value: 31119-v5
+          value: 31119-v6
         resources:
           requests:
             cpu: 250m
@@ -544,7 +544,7 @@ spec:
         emptyDir: {}
       - name: data
         persistentVolumeClaim:
-          claimName: temporal-cassandra-31119-v5-data-0
+          claimName: temporal-cassandra-31119-v6-data-0
       - name: api-token
         projected:
           defaultMode: 420
@@ -564,8 +564,8 @@ spec:
                   fieldPath: metadata.namespace
       - name: snapshot
         persistentVolumeClaim:
-          claimName: temporal-cassandra-31119-v5-restore-0
+          claimName: temporal-cassandra-31119-v6-restore-0
           readOnly: true
-      serviceAccountName: temporal-cassandra-31119-v5-gate
+      serviceAccountName: temporal-cassandra-31119-v6-gate
       securityContext:
         fsGroup: 1001
