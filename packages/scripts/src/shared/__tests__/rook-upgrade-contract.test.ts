@@ -140,6 +140,7 @@ test('preserves the Ceph data plane and live CSI behavior after the v1.20 migrat
       }
       security: {
         cephx: {
+          allowedCiphers: string[]
           daemon: { keyRotationPolicy: string; keyGeneration: number }
           csi: {
             keyRotationPolicy: string
@@ -176,6 +177,7 @@ test('preserves the Ceph data plane and live CSI behavior after the v1.20 migrat
   }>('argocd/applications/rook-ceph/csi-driver-values.yaml')
 
   expect(operatorValues.image).toMatchObject({ repository: 'docker.io/rook/ceph', tag: 'v1.20.7' })
+  expect(clusterValues.cephClusterSpec.security.cephx.allowedCiphers).toEqual(['aes256k'])
   expect(operatorValues.csi).toMatchObject({
     installCsiOperator: true,
     snapshotter: { tag: 'v8.6.0' },
@@ -266,6 +268,7 @@ test('runs retained storage acceptance PVCs through ordered Argo PostSync hooks'
     apiVersion: 'kustomize.config.k8s.io/v1beta1',
     kind: 'Kustomization',
     namespace: 'rook-ceph',
+    commonAnnotations: { 'storage.proompteng.ai/acceptance-generation': 'aes256k-only-v1' },
     resources: ['storage-canary.yaml'],
   })
   expect(existsSync(new URL('argocd/applications/rook-ceph/storage-canary.yaml', repoRoot))).toBe(false)

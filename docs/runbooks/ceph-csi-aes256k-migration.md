@@ -138,6 +138,6 @@ warning clears without muting it.
 
 Run the strict storage acceptance helper and the functional canaries again.
 Report any remaining health warning separately. In particular, the BlueStore
-slow-operation alert observed at 08:04 UTC can remain in Ceph's retained health
+slow-operation alert can remain in Ceph's retained health
 window after current I/O latency recovers; an auth migration does not clear that
 independent warning.
