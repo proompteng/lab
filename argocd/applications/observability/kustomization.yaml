@@ -25,6 +25,8 @@ resources:
   - bayn-cycle-operations-dashboard-configmap.yaml
   - cluster-metrics-alloy-rbac.yaml
   - cluster-metrics-alloy-deployment.yaml
+  - tempo-v3-config-check.yaml
+  - tempo-v3-migration-vulture.yaml
 
 helmCharts:
   - name: kube-state-metrics
@@ -55,6 +57,13 @@ helmCharts:
     namespace: observability
     includeCRDs: true
     valuesFile: tempo-values.yaml
+  - name: tempo-distributed
+    repo: https://grafana-community.github.io/helm-charts
+    version: 3.5.1
+    releaseName: observability-tempo-v3
+    namespace: observability
+    includeCRDs: true
+    valuesFile: tempo-v3-values.yaml
   - name: grafana
     repo: https://grafana.github.io/helm-charts
     version: 10.5.15
@@ -71,6 +80,14 @@ images:
     newTag: 1.6.39-alpine
 
 patches:
+  - target:
+      kind: ConfigMap
+      name: observability-tempo-v3-(config|runtime)
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "-2"
   - target:
       kind: StatefulSet
       name: observability-mimir-compactor
