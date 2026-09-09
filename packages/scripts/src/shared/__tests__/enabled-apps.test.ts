@@ -478,8 +478,8 @@ describe('enabled app inventory', () => {
       {
         name: 'mirror.gcr.io/temporalio/ui',
         newName: 'mirror.gcr.io/temporalio/ui',
-        newTag: '2.52.0',
-        digest: 'sha256:fc47cd8202c98ed868745fd9f2f011585232676d08da621b9a6d7bc4653c17aa',
+        newTag: '2.53.3',
+        digest: 'sha256:eef301146e60fad34b47adaecfae4149016e34b2d44ba94fca5fd8e5441f182a',
       },
     ])
   })

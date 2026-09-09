@@ -1,6 +1,7 @@
 # Cassandra upgrade gates
 
-Production remains on Cassandra 3.11.5 while the preparation runs. The existing
+The first production step selects Cassandra 3.11.19 only after generation
+`31119-v6` completes its native backup and clone rehearsal. The existing
 RF3 keyspace and repaired ring remain serving. The retained RF3 snapshots survive
 the removal of completed repair Jobs and RBAC.
 
