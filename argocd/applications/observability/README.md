@@ -13,8 +13,8 @@ Mimir 3.2 uses normal rolling updates for ingesters, store gateway, compactor, a
 and live acceptance. The bundled Kafka broker alone retains `OnDelete` pending its separate upgrade.
 The [Mimir recovery procedure](../../../docs/runbooks/mimir-rgw-tls-recovery.md) is historical guidance for
 Mimir 3.1.2/chart 6.1.0; its process-reload helper deliberately rejects newer images and rolling strategies. The
-[compatibility runbook](../../../docs/runbooks/ceph-rgw-sigv4-compatibility.md) documents the verified TLS path,
-preservation of existing Tempo buffers, and recovery procedure.
+[compatibility runbook](../../../docs/runbooks/ceph-rgw-sigv4-compatibility.md) documents the verified TLS path.
+Its Tempo 2 buffer-reload procedure is historical and does not apply to the production Tempo 3 deployment.
 
 Tempo 3 owns production ingestion, queries, and compaction. The compatibility Services preserve the original
 Tempo distributor, gateway, and query-frontend addresses; do not remove them while clients use those names.
