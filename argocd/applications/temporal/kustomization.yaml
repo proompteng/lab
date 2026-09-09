@@ -187,11 +187,17 @@ images:
 configMapGenerator:
   - name: temporal-cassandra-upgrade-scripts
     files:
-      - upgrade/cassandra-gate.sh
+      - cassandra-gate.sh=upgrade/retained-31119-v6-gate.sh
       - upgrade/cassandra-rehearsal.sh
       - upgrade/restore-native-snapshot.py
       - upgrade/canonicalize-cql.py
       - upgrade/verify-rehearsal-network.py
+    options:
+      annotations:
+        argocd.argoproj.io/sync-wave: "-30"
+  - name: temporal-cassandra-upgrade-scripts-rollout
+    files:
+      - upgrade/cassandra-gate.sh
     options:
       annotations:
         argocd.argoproj.io/sync-wave: "-30"

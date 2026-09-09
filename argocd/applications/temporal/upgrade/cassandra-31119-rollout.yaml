@@ -173,6 +173,6 @@ spec:
       volumes:
       - name: scripts
         configMap:
-          name: temporal-cassandra-upgrade-scripts
+          name: temporal-cassandra-upgrade-scripts-rollout
       - name: tmp
         emptyDir: {}
