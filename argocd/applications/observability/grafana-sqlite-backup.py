@@ -12,7 +12,13 @@ import time
 from urllib.request import urlopen
 
 
-CORE_TABLES = ("user", "org", "data_source", "dashboard")
+IDENTITY_COLUMNS = {
+    "user": ("id", "login", "email"),
+    "org": ("id", "name"),
+    "data_source": ("id", "uid"),
+    "dashboard": ("id", "uid"),
+}
+CORE_TABLES = tuple(IDENTITY_COLUMNS)
 
 
 def digest(path: Path) -> str:
@@ -26,12 +32,15 @@ def inventory(path: Path) -> dict[str, dict[str, int | str]]:
             raise RuntimeError("SQLite integrity check failed")
         identities = {}
         for table in CORE_TABLES:
-            rows = db.execute(f'SELECT id FROM "{table}" ORDER BY id').fetchall()
+            columns = ", ".join(f'"{column}"' for column in IDENTITY_COLUMNS[table])
+            rows = db.execute(f'SELECT {columns} FROM "{table}" ORDER BY id').fetchall()
             if not rows:
                 raise RuntimeError(f"Expected populated Grafana table: {table}")
             identities[table] = {
                 "count": len(rows),
-                "idsSha256": hashlib.sha256(json.dumps(rows).encode()).hexdigest(),
+                "identitiesSha256": hashlib.sha256(
+                    json.dumps(rows).encode()
+                ).hexdigest(),
             }
         return identities
 

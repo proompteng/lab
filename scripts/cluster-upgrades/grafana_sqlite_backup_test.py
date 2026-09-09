@@ -1,10 +1,12 @@
 import importlib.util
 from contextlib import closing
+import io
 import json
 from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 MODULE = (
@@ -22,10 +24,18 @@ class SnapshotBackupTests(unittest.TestCase):
         db.execute("PRAGMA journal_mode=WAL")
         db.execute("PRAGMA wal_autocheckpoint=0")
         for table in backup.CORE_TABLES:
-            db.execute(f'CREATE TABLE "{table}" (id INTEGER PRIMARY KEY, payload TEXT)')
+            columns = backup.IDENTITY_COLUMNS[table][1:]
+            fields = ", ".join(f'"{column}" TEXT' for column in columns)
             db.execute(
-                f'INSERT INTO "{table}" VALUES (1, ?)', ("retained dashboard Ω",)
+                f'CREATE TABLE "{table}" (id INTEGER PRIMARY KEY, {fields}, payload TEXT)'
             )
+            values = (
+                1,
+                *(f"original-{column}" for column in columns),
+                "retained dashboard Ω",
+            )
+            placeholders = ", ".join("?" for _ in values)
+            db.execute(f'INSERT INTO "{table}" VALUES ({placeholders})', values)
         db.commit()
         return db
 
@@ -33,7 +43,10 @@ class SnapshotBackupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             with closing(self.fixture(root / "source.db")) as db:
-                db.execute('INSERT INTO "dashboard" VALUES (2, ?)', ("WAL only",))
+                db.execute(
+                    'INSERT INTO "dashboard" VALUES (2, ?, ?)',
+                    ("wal-dashboard", "WAL only"),
+                )
                 db.commit()
                 backup.prepare(root / "source.db", root / "artifacts", root / "restore")
                 with closing(sqlite3.connect(root / "restore/grafana.db")) as restored:
@@ -83,6 +96,35 @@ class SnapshotBackupTests(unittest.TestCase):
             with self.assertRaises(sqlite3.DatabaseError):
                 backup.prepare(root / "source.db", root / "artifacts", root / "restore")
             self.assertFalse((root / "artifacts/backup.json").exists())
+
+    def test_changed_stable_identity_blocks_runtime_receipt_with_same_row_id(self):
+        for table, column in [
+            ("dashboard", "uid"),
+            ("data_source", "uid"),
+            ("user", "login"),
+            ("org", "name"),
+        ]:
+            with self.subTest(table=table), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                with closing(self.fixture(root / "source.db")):
+                    backup.prepare(
+                        root / "source.db", root / "artifacts", root / "restore"
+                    )
+                with closing(sqlite3.connect(root / "restore/grafana.db")) as db:
+                    db.execute(
+                        f'UPDATE "{table}" SET "{column}" = ? WHERE id = 1',
+                        ("changed",),
+                    )
+                    db.commit()
+                health = io.BytesIO(b'{"database":"ok","version":"12.3.1"}')
+                with patch.object(backup, "urlopen", return_value=health):
+                    with self.assertRaisesRegex(
+                        RuntimeError, "protected entity identities"
+                    ):
+                        backup.verify_runtime(
+                            root / "artifacts", root / "restore", "12.3.1"
+                        )
+                self.assertFalse((root / "artifacts/runtime-restore.json").exists())
 
 
 if __name__ == "__main__":
