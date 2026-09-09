@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+import shutil
 import zlib
 from unittest import mock
 
@@ -450,6 +451,117 @@ class CassandraGateTests(unittest.TestCase):
                     / copied.name
                 )
                 self.assertEqual(copied.read_bytes(), source_file.read_bytes())
+
+    def test_native_restore_preserves_legacy_case_sensitive_system_table(self):
+        with tempfile.TemporaryDirectory() as directory:
+            module, source, target, proof = self.native_snapshot_fixture(directory)
+            table = next((source / "data" / "system").glob("local-*"))
+            legacy = table.with_name("IndexInfo-9f5c6374d48532299a0a5094af9ad1e3")
+            shutil.copytree(table, legacy)
+            result = module.restore(
+                str(source),
+                str(target),
+                "31119-v5",
+                str(proof),
+                expected_temporal_tables=1,
+            )
+            self.assertEqual(result["tables"], 5)
+            self.assertEqual(result["components"], 25)
+            copied = target / "data" / "system" / legacy.name / "md-1-big-Data.db"
+            self.assertEqual(
+                copied.read_bytes(),
+                (
+                    legacy / "snapshots" / "temporal-before-31119-v5" / copied.name
+                ).read_bytes(),
+            )
+
+    def test_native_restore_preserves_base_and_indexes_when_manifest_names_index(self):
+        with tempfile.TemporaryDirectory() as directory:
+            module, source, target, proof = self.native_snapshot_fixture(directory)
+            table = next((source / "data" / "temporal").iterdir())
+            snapshot = table / "snapshots" / "temporal-before-31119-v5"
+            for index in (".cm_lastheartbeat_idx", ".cm_sessionstart_idx"):
+                folder = snapshot / index
+                folder.mkdir()
+                for component in snapshot.glob("md-1-big-*"):
+                    shutil.copyfile(
+                        component, folder / component.name.replace("md-1-", "md-2-")
+                    )
+                (folder / "md-2-big-TOC.txt").write_text(
+                    (snapshot / "md-1-big-TOC.txt").read_text()
+                )
+            (snapshot / "manifest.json").write_text(
+                json.dumps({"files": ["md-2-big-Data.db"]})
+            )
+            result = module.restore(
+                str(source),
+                str(target),
+                "31119-v5",
+                str(proof),
+                expected_temporal_tables=1,
+            )
+            self.assertEqual(result["secondaryIndexes"], 2)
+            self.assertEqual(result["components"], 30)
+            restored = target / "data" / "temporal" / table.name
+            self.assertTrue((restored / "md-1-big-Data.db").exists())
+            for index in (".cm_lastheartbeat_idx", ".cm_sessionstart_idx"):
+                self.assertEqual(
+                    (restored / index / "md-2-big-Data.db").read_bytes(),
+                    (snapshot / index / "md-2-big-Data.db").read_bytes(),
+                )
+
+    def test_native_restore_rejects_manifest_without_matching_native_group(self):
+        with tempfile.TemporaryDirectory() as directory:
+            module, source, target, proof = self.native_snapshot_fixture(directory)
+            next(source.rglob("manifest.json")).write_text(
+                json.dumps({"files": ["md-999-big-Data.db"]})
+            )
+            with self.assertRaisesRegex(ValueError, "manifest does not match"):
+                module.restore(
+                    str(source),
+                    str(target),
+                    "31119-v5",
+                    str(proof),
+                    expected_temporal_tables=1,
+                )
+            self.assertFalse((target / "data").exists())
+
+    def test_native_restore_rejects_unknown_or_nested_index_directories(self):
+        for directory_name in ("unexpected", ".valid/nested"):
+            with (
+                self.subTest(directory=directory_name),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                module, source, target, proof = self.native_snapshot_fixture(directory)
+                snapshot = next(source.rglob("manifest.json")).parent
+                (snapshot / directory_name).mkdir(parents=True)
+                with self.assertRaises(ValueError):
+                    module.restore(
+                        str(source),
+                        str(target),
+                        "31119-v5",
+                        str(proof),
+                        expected_temporal_tables=1,
+                    )
+                self.assertFalse((target / "data").exists())
+
+    def test_native_restore_rejects_unlisted_extra_snapshot_sstable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            module, source, target, proof = self.native_snapshot_fixture(directory)
+            snapshot = next(source.rglob("manifest.json")).parent
+            for component in snapshot.glob("md-1-big-*"):
+                shutil.copyfile(
+                    component, snapshot / component.name.replace("md-1-", "md-2-")
+                )
+            with self.assertRaisesRegex(ValueError, "manifest does not match"):
+                module.restore(
+                    str(source),
+                    str(target),
+                    "31119-v5",
+                    str(proof),
+                    expected_temporal_tables=1,
+                )
+            self.assertFalse((target / "data").exists())
 
     def test_native_restore_rejects_bad_snapshot_checksum(self):
         with tempfile.TemporaryDirectory() as directory:

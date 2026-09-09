@@ -13,7 +13,7 @@ created. A failed snapshot attempt requires a new reviewed generation; Argo must
 not replace active or failed one-shot Jobs.
 
 The restore rehearsal mounts the CSI clone read-only in a restore init container.
-It restores only the requested native snapshot's manifest-listed SSTables into a
+It restores only the requested native snapshot's base and index SSTables into a
 separate empty 20Gi data PVC. Every listed component must exist, each Data.db CRC32
 must match its native digest, copied files are flushed, and cluster identity/schema
 and all 18 Temporal tables must be present. Live table files and commit logs outside
@@ -93,3 +93,22 @@ passed CRC32 verification. The original RF3 ring and persistent Temporal workflo
 remained healthy. Generation `31119-v5` restores the actual native snapshot into a
 separate data volume and verifies its checksums before either engine starts.
 The failed v4 clone remains retained; its failure is not hidden or accepted.
+
+Generation `31119-v5` stopped before copying data or starting either engine because
+its identifier validator rejected the legacy `system.IndexInfo` table. Generation
+`31119-v6` preserves case-sensitive Cassandra table names while retaining the strict
+UUID suffix, path, manifest and component checks. A regression restores `IndexInfo`
+with its original capitalization. The v5 snapshots and unused data PVC remain retained.
+
+The real v5 snapshot also exposed Cassandra 3.11.5's secondary-index manifest
+behavior: `ColumnFamilyStore.snapshotWithoutFlush` writes each index's filenames
+to its parent table's `manifest.json`. The two `cluster_membership` index directories
+therefore have manifest filenames different from the base table. V6 restores all
+base and secondary-index SSTables inside the exact immutable snapshot directory.
+The manifest must match one complete base/index group; every SSTable still requires
+its full TOC, native checksum, regular components and safe paths. Unmatched manifests,
+orphaned components, nested directories and symlinks fail before copying begins.
+Files outside the native snapshot remain excluded. This preserves secondary indexes
+without inventing a manifest or silently discarding base-table data.
+
+Source: [Apache Cassandra 3.11.5 snapshot implementation](https://github.com/apache/cassandra/blob/cassandra-3.11.5/src/java/org/apache/cassandra/db/ColumnFamilyStore.java).
