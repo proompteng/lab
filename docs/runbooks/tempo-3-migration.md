@@ -18,7 +18,7 @@ the new deployment passes ingestion and historical-query acceptance.
   remain unchanged during the additive deployment. Keep the original bucket,
   credential references, retention, and Tempo 2 ingester `OnDelete` strategy.
 - Merge the parallel deployment through normal GitOps. Its configuration
-  ConfigMaps sync before the native Tempo `-config.verify` Job; the new
+  ConfigMaps sync before the native Tempo `-config.verify=true` Job; the new
   workloads start only after verification succeeds. Do not bypass a failure.
 - Keep compaction disabled in Tempo 3 defaults and every tenant override
   while the Tempo 2 compactor remains active. Match block-builder and
