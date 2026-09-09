@@ -111,7 +111,7 @@ helmCharts:
       extraVolumes:
         - name: elasticsearch-snapshot-repository
           persistentVolumeClaim:
-            claimName: temporal-elasticsearch-snapshot-repository
+            claimName: temporal-elasticsearch-snapshot-repository-v2
       extraVolumeMounts:
         - name: elasticsearch-snapshot-repository
           mountPath: /usr/share/elasticsearch/snapshots

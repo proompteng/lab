@@ -110,6 +110,20 @@ class Fixture:
 
 
 class SnapshotTests(unittest.TestCase):
+    def test_repository_mount_requires_synchronous_cephfs(self):
+        snapshot.require_repository_mount(
+            "ceph-device /repository ceph rw,wsync,noshare 0 0\n"
+        )
+        for mount in [
+            "ceph-device /repository ceph rw,nowsync 0 0\n",
+            "ceph-device /repository ceph ro,wsync 0 0\n",
+            "other /repository ext4 rw,wsync 0 0\n",
+            "ceph-device /different ceph rw,wsync 0 0\n",
+            "ceph-device /repository ceph rw,wsync 0 0\nceph-device /repository ceph rw,wsync 0 0\n",
+        ]:
+            with self.subTest(mount=mount), self.assertRaises(RuntimeError):
+                snapshot.require_repository_mount(mount)
+
     def test_requests_share_the_job_deadline_budget(self):
         with (
             patch.object(snapshot, "REQUEST_DEADLINE", 3600),
