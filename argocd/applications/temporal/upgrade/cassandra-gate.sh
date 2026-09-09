@@ -12,6 +12,35 @@ kube() { kubectl -n "$namespace" --cache-dir=/tmp/kubectl-cache --request-timeou
 field() { kube get "$1" -o "jsonpath=$2"; }
 node_exec() { kubectl -n "$namespace" --cache-dir=/tmp/kubectl-cache --request-timeout=0 exec "temporal-cassandra-$1" -c temporal-cassandra -- "${@:2}"; }
 
+in_cluster_config() {
+  local service_account=${SERVICE_ACCOUNT_DIRECTORY:-/var/run/secrets/kubernetes.io/serviceaccount}
+  : "${KUBERNETES_SERVICE_HOST:?required}" "${KUBERNETES_SERVICE_PORT:?required}"
+  [[ "$KUBERNETES_SERVICE_HOST" =~ ^[0-9.]+$ && "$KUBERNETES_SERVICE_PORT" =~ ^[0-9]+$ ]] || fail 'invalid in-cluster API endpoint'
+  [[ -r "$service_account/token" && -r "$service_account/ca.crt" && $(cat "$service_account/namespace") == "$namespace" ]] || fail 'expected Temporal service account projection is unavailable'
+  export KUBECONFIG="${TMPDIR:-/tmp}/temporal-cassandra-kubeconfig"
+  umask 077
+  cat >"$KUBECONFIG" <<CONFIG
+apiVersion: v1
+kind: Config
+clusters:
+- name: galactic
+  cluster:
+    server: "https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}"
+    certificate-authority: "$service_account/ca.crt"
+users:
+- name: projected-service-account
+  user:
+    tokenFile: "$service_account/token"
+contexts:
+- name: temporal-upgrade
+  context:
+    cluster: galactic
+    user: projected-service-account
+    namespace: temporal
+current-context: temporal-upgrade
+CONFIG
+}
+
 require_parameters() {
   : "${SOURCE_IMAGE:?required}" "${TARGET_IMAGE:?required}" "${GENERATION:?required}"
   [[ "$GENERATION" =~ ^[0-9]+-v[1-9][0-9]*$ ]] || fail 'invalid backup generation'
@@ -131,6 +160,28 @@ require_backups() {
   done
 }
 
+verify_rehearsal() {
+  local ordinal address result
+  require_backups
+  wait_ring
+  require_schema
+  : "${REHEARSAL_PROOF_DIRECTORY:?required}"
+  printf '%s\n' "$GENERATION" >"$REHEARSAL_PROOF_DIRECTORY/verified-generation"
+  : >"$REHEARSAL_PROOF_DIRECTORY/production-cassandra-addresses"
+  for ordinal in 0 1 2; do
+    require_node "$ordinal"
+    [[ "$node_image" == "$SOURCE_IMAGE" ]] || fail 'rehearsal requires the unchanged production source version'
+    address=$(field "pod/temporal-cassandra-$ordinal" '{.status.podIP}')
+    [[ "$address" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail 'source Pod address is unavailable'
+    # The positive control uses the actual production CQL endpoint immediately
+    # before the isolated engine tests denial of that same destination.
+    result=$(node_exec 0 cqlsh "$address" 9042 -e 'SELECT host_id FROM system.local;')
+    [[ "$result" == *"${host_ids[ordinal]}"* ]] || fail 'production CQL positive control did not return the expected host'
+    printf '%s\n' "$address" >>"$REHEARSAL_PROOF_DIRECTORY/production-cassandra-addresses"
+  done
+  printf 'PASS: fresh native backup and all three production CQL positive controls verified for %s.\n' "$GENERATION"
+}
+
 rollout() {
   local ordinal old_uid expected_template deadline replacement_uid
   require_backups
@@ -179,12 +230,14 @@ rollout() {
 }
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  in_cluster_config
   require_parameters
   required_template_image=$SOURCE_IMAGE
   case "${1:-}" in
     backup) backup ;;
     verify-backups) require_backups ;;
+    verify-rehearsal) verify_rehearsal ;;
     rollout) required_template_image=$TARGET_IMAGE; rollout ;;
-    *) fail 'mode must be backup, verify-backups or rollout' ;;
+    *) fail 'mode must be backup, verify-backups, verify-rehearsal or rollout' ;;
   esac
 fi
