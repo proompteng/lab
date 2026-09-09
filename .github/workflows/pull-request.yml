@@ -282,6 +282,11 @@ jobs:
               else
                 nix develop -c scripts/kubeconform.sh argocd
               fi
+              if jq -e 'any(.[]; startswith("argocd/applications/temporal/") or startswith("scripts/cluster-upgrades/temporal_"))' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
+                nix develop -c kustomize build --enable-helm argocd/applications/temporal >"${RUNNER_TEMP}/temporal-render.yaml"
+                nix develop -c yq eval-all -o=json -I=0 '[.]' "${RUNNER_TEMP}/temporal-render.yaml" |
+                  python3 scripts/cluster-upgrades/temporal_manifest_check.py
+              fi
               ;;
             cdk8s)
               bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/k8s
