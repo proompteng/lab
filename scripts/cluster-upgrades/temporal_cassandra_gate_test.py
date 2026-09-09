@@ -530,6 +530,89 @@ class CassandraGateTests(unittest.TestCase):
                     (snapshot / index / "md-2-big-Data.db").read_bytes(),
                 )
 
+    def relative_index_fixture(self, directory):
+        module, source, target, proof = self.native_snapshot_fixture(directory)
+        table = next((source / "data" / "temporal").iterdir())
+        snapshot = table / "snapshots" / "temporal-before-31119-v5"
+        files = ["md-1-big-Data.db"]
+        for index in (".cm_lastheartbeat_idx", ".cm_sessionstart_idx"):
+            folder = snapshot / index
+            folder.mkdir()
+            for component in snapshot.glob("md-1-big-*"):
+                shutil.copyfile(component, folder / component.name)
+            files.append(index + "/md-1-big-Data.db")
+        (snapshot / "manifest.json").write_text(json.dumps({"files": files}))
+        return module, source, target, proof, snapshot, files
+
+    def test_native_restore_supports_31119_relative_index_manifest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            module, source, target, proof, snapshot, files = (
+                self.relative_index_fixture(directory)
+            )
+            result = module.restore(
+                str(source),
+                str(target),
+                "31119-v5",
+                str(proof),
+                expected_temporal_tables=1,
+                source_version="3.11.19",
+            )
+            self.assertEqual(result["components"], 30)
+            self.assertEqual(result["secondaryIndexes"], 2)
+            self.assertEqual(result["sourceVersion"], "3.11.19")
+            table = snapshot.parents[1].name
+            for file in files:
+                self.assertEqual(
+                    (target / "data" / "temporal" / table / file).read_bytes(),
+                    (snapshot / file).read_bytes(),
+                )
+
+    def test_relative_manifest_rejects_missing_extra_duplicate_and_unsafe_paths(self):
+        for failure in (
+            "missing_index",
+            "unlisted_base",
+            "duplicate",
+            "traversal",
+            "absolute",
+            "nested",
+            "unknown_index",
+            "legacy_version",
+        ):
+            with (
+                self.subTest(failure=failure),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                module, source, target, proof, snapshot, files = (
+                    self.relative_index_fixture(directory)
+                )
+                if failure == "missing_index":
+                    files.pop()
+                elif failure == "unlisted_base":
+                    files.remove("md-1-big-Data.db")
+                elif failure == "duplicate":
+                    files.append(files[0])
+                elif failure == "traversal":
+                    files.append(".cm_sessionstart_idx/../md-1-big-Data.db")
+                elif failure == "absolute":
+                    files.append("/md-1-big-Data.db")
+                elif failure == "nested":
+                    files.append(".cm_sessionstart_idx/.nested/md-1-big-Data.db")
+                elif failure == "unknown_index":
+                    files.append(".other/md-1-big-Data.db")
+                (snapshot / "manifest.json").write_text(json.dumps({"files": files}))
+                with self.assertRaises(ValueError):
+                    module.restore(
+                        str(source),
+                        str(target),
+                        "31119-v5",
+                        str(proof),
+                        expected_temporal_tables=1,
+                        source_version="3.11.5"
+                        if failure == "legacy_version"
+                        else "3.11.19",
+                    )
+                self.assertFalse((target / "data").exists())
+
     def test_native_restore_rejects_manifest_without_matching_native_group(self):
         with tempfile.TemporaryDirectory() as directory:
             module, source, target, proof = self.native_snapshot_fixture(directory)
