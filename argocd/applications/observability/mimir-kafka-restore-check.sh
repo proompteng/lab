@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
+trap 'printf "Kafka restore check failed at line %s\n" "$LINENO" >&2' ERR
 
 # Run only against the isolated snapshot clone. Never format a missing log.
 data=/var/lib/kafka/data

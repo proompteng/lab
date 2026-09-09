@@ -48,7 +48,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: observability-mimir-kafka-restore-4-3-1
+  name: observability-mimir-kafka-restore-4-3-1-v2
   namespace: observability
   annotations:
     argocd.argoproj.io/sync-wave: "-3"
@@ -120,6 +120,10 @@ spec:
           volumeMounts:
             - name: snapshot
               mountPath: /var/lib/kafka
+            # Override the JVM image's nested VOLUME with the existing data.
+            - name: snapshot
+              mountPath: /var/lib/kafka/data
+              subPath: data
             - name: config
               mountPath: /opt/kafka/config
             - name: tmp
