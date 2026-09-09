@@ -183,6 +183,12 @@ def capture(api=request):
         and shards.get("total", 0) > 0,
         "snapshot has failed or missing shards",
     )
+    final_indices = api("GET", "/_cat/indices?format=json&expand_wildcards=all")
+    final_identities = {index["index"]: index["uuid"] for index in final_indices}
+    require(
+        final_identities == original,
+        "index identities changed while creating or verifying the native snapshot",
+    )
     require_source(api)
     return {
         "status": "NATIVE_SNAPSHOT_PASS_RESTORE_PENDING",

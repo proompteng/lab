@@ -45,6 +45,7 @@ class Fixture:
             ".hidden": "original-hidden",
         }
         self.snapshot = None
+        self.after_snapshot_indices = None
         self.result = {
             "snapshot": snapshot.SNAPSHOT,
             "uuid": "snapshot-uuid",
@@ -95,6 +96,8 @@ class Fixture:
         if route == repo + "/" + snapshot.SNAPSHOT:
             if method == "PUT":
                 self.snapshot = copy.deepcopy(self.result)
+                if self.after_snapshot_indices is not None:
+                    self.original = copy.deepcopy(self.after_snapshot_indices)
                 return {"snapshot": copy.deepcopy(self.result)}
             return (
                 None
@@ -118,6 +121,27 @@ class SnapshotTests(unittest.TestCase):
         self.assertTrue(create["include_global_state"])
         self.assertFalse(create["partial"])
         self.assertNotIn("indices", create)
+
+    def test_index_identity_changes_during_snapshot_cannot_produce_a_receipt(self):
+        for change in ("recreated", "removed", "added"):
+            with self.subTest(change=change):
+                fixture = Fixture()
+                final = copy.deepcopy(fixture.original)
+                if change == "recreated":
+                    final["temporal_visibility_v1_dev"] = "replacement-uuid"
+                elif change == "removed":
+                    del final[".hidden"]
+                else:
+                    final["new-index"] = "new-uuid"
+                fixture.after_snapshot_indices = final
+                with self.assertRaisesRegex(RuntimeError, "identities changed while"):
+                    snapshot.capture(fixture.api)
+                self.assertTrue(
+                    any(
+                        method == "PUT" and "wait_for_completion" in path
+                        for method, path, _ in fixture.calls
+                    )
+                )
 
     def test_source_identity_failures_prevent_all_mutations(self):
         for failure in [
