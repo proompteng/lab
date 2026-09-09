@@ -57,6 +57,15 @@ generation's endpoint and read it through that generation's query path.
 Flush the fixture's ingester, wait for index shipping, and then read it
 through the other generation's query path. The isolated rings cannot read
 each other's unflushed buffers; cross-generation object reads prove durability.
+The BoltDB writer hands over inactive 15-minute index shards with a one-minute
+safety buffer. Allow the shard boundary, upload loop, and reader resync before
+requiring a cross-ring object read; `/flush` closes chunks asynchronously and
+does not immediately publish the active index shard.
+Verify captured production entries using their exact labels, timestamps and
+line hashes; late arrivals can change a global latest-results query. For an
+object-only cross-ring check, use the old querier directly if its frontend
+cached an empty result before index publication. Keep the normal new gateway
+as the acceptance path for historical, fresh and captured production logs.
 
 Observe the native canary for at least fifteen minutes after startup, with
 increasing checked entries and no new missing, out-of-order, duplicate, or
@@ -66,8 +75,11 @@ query errors. Readiness and a successful push alone do not prove retention.
 
 Only after those gates pass, flush the old ingester and verify that current
 production logs are readable from the new query path. Route the original
-gateway address to the new deployment through reviewed GitOps, then flush
-the old ingester again once its accepted-write counter stops increasing.
+gateway address to the new deployment through reviewed GitOps. In the next
+sync wave, scale the old stateless gateway to zero so existing HTTP keep-alive
+connections close and clients reconnect through the new Service endpoints.
+Keep the old ingester running, then flush it again once its accepted-write
+counter stops increasing.
 Allow for index shipping when checking logs from the cutover interval.
 Keep the old ingester until its remaining
 chunks are durably flushed and the new query path reads them. Its `emptyDir`

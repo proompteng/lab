@@ -96,6 +96,17 @@ images:
     newTag: 1.6.39-alpine
 
 patches:
+  - path: loki-v3-gateway-cutover.patch.yaml
+    target:
+      version: v1
+      kind: Service
+      name: observability-loki-loki-distributed-gateway
+  - path: loki-v2-gateway-drain.patch.yaml
+    target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: observability-loki-loki-distributed-gateway
   - target:
       kind: DaemonSet
       name: observability-loki-v3-canary
