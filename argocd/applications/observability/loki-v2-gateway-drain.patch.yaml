@@ -1,0 +1,10 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: observability-loki-loki-distributed-gateway
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  # Close existing keep-alive connections after the Service selects Loki 3.
+  # Leave the original ingester alive until its final durable flush is proved.
+  replicas: 0
