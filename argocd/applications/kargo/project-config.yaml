@@ -64,3 +64,6 @@ spec:
     - stageSelector:
         name: buzz
       autoPromotionEnabled: true
+    - stageSelector:
+        name: forgejo
+      autoPromotionEnabled: true
