@@ -14,14 +14,3 @@ helmCharts:
     releaseName: forgejo
     namespace: forgejo
     valuesFile: values.yaml
-
-configMapGenerator:
-  - name: forgejo-server-16-0-3-rehearsal
-    files:
-      - upgrade-db-rehearsal.sh
-      - upgrade-app-rehearsal.sh
-    options:
-      annotations:
-        argocd.argoproj.io/sync-wave: "-25"
-generatorOptions:
-  disableNameSuffixHash: true

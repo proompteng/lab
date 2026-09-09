@@ -59,8 +59,10 @@ Snapshot readiness alone does not establish recovery or migration success.
 ## Production upgrade and acceptance
 
 After the rehearsal passes, merge the version change and remove the temporary
-quiesce patch through GitOps, then sync that exact merged revision. Preserve the completed backup and rehearsal
-resources. The normal Deployment remains a single replica with `Recreate`.
+quiesce patch through GitOps, then sync that exact merged revision. Retain both snapshots and every clone PVC. Retire the completed quiesce
+and rehearsal Jobs, their script ConfigMap, read-only RBAC, and isolation
+policy with the version change. The normal application must not recreate
+a gate that requires the original server UID or zero replicas. The normal Deployment remains a single replica with `Recreate`.
 
 Verify the exact image and Argo revision, the same live PVC UIDs, completed
 database migration, administrator and token identity, repository references,
