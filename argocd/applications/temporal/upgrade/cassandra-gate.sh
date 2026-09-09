@@ -109,12 +109,22 @@ backup() {
 }
 
 require_backups() {
-  local ordinal completed source ready generation created bound error snapshot_class
+  local ordinal completed source ready generation created bound error snapshot_class deadline snapshot_state
   completed=$(field "job/temporal-cassandra-$GENERATION-snapshot" '{.status.completionTime}')
   [[ -n "$completed" ]] || fail 'native snapshot Job did not complete'
   for ordinal in 0 1 2; do
     require_storage "$ordinal"
-    IFS='|' read -r source ready generation created bound error snapshot_class < <(field "volumesnapshot/temporal-cassandra-$GENERATION-$ordinal" '{.spec.source.persistentVolumeClaimName}{"|"}{.status.readyToUse}{"|"}{.metadata.labels.temporal\.proompteng\.ai/backup-generation}{"|"}{.metadata.creationTimestamp}{"|"}{.status.boundVolumeSnapshotContentName}{"|"}{.status.error.message}{"|"}{.spec.volumeSnapshotClassName}{"\n"}')
+    deadline=$((SECONDS+900))
+    while true; do
+      snapshot_state=$(field "volumesnapshot/temporal-cassandra-$GENERATION-$ordinal" '{.spec.source.persistentVolumeClaimName}{"|"}{.status.readyToUse}{"|"}{.metadata.labels.temporal\.proompteng\.ai/backup-generation}{"|"}{.metadata.creationTimestamp}{"|"}{.status.boundVolumeSnapshotContentName}{"|"}{.status.error.message}{"|"}{.spec.volumeSnapshotClassName}{"\n"}') || fail 'cannot read snapshot readiness'
+      IFS='|' read -r source ready generation created bound error snapshot_class <<<"$snapshot_state"
+      [[ "$source" == "data-temporal-cassandra-$ordinal" && "$generation" == "$GENERATION" && "$snapshot_class" == rook-ceph-block ]] || fail 'snapshot identity does not match this stage'
+      [[ -z "$error" ]] || fail "snapshot provisioning failed: $error"
+      if [[ "$ready" == true && -n "$bound" ]]; then break; fi
+      (( SECONDS < deadline )) || fail "ordinal $ordinal snapshot readiness timed out"
+      sleep 5
+    done
+    require_storage "$ordinal"
     [[ "$source" == "data-temporal-cassandra-$ordinal" && "$ready" == true && "$generation" == "$GENERATION" && -n "$bound" && -z "$error" && "$snapshot_class" == rook-ceph-block ]] || fail "ordinal $ordinal snapshot is not usable for this generation"
     [[ -n "$created" ]] || fail 'volume snapshot creation time missing'
     (( $(date -d "$created" +%s) >= $(date -d "$completed" +%s) )) || fail 'volume snapshot predates the native snapshot gate'

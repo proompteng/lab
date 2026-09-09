@@ -42,7 +42,9 @@ if args[0]=='get':
  if resource.startswith('job/'):
   done('' if mode=='no-rehearsal' and resource.endswith('rehearsal') else '2026-09-09T09:00:00Z')
  if resource.startswith('volumesnapshot/'):
-  n=int(resource[-1]);done('|'.join(['data-temporal-cassandra-'+str(n),'true','wrong-v1' if mode=='generation' else '31119-v1','2026-09-08T10:00:00Z' if mode=='stale' else '2026-09-09T09:01:00Z','content-'+str(n),'','wrong-class' if mode=='snapshot-class' else 'rook-ceph-block']))
+  n=int(resource[-1]);reads=s.setdefault('snapshot_reads',[0,0,0]);reads[n]+=1
+  pending=mode=='snapshot-pending' and reads[n]<3
+  done('|'.join(['data-temporal-cassandra-'+str(n),'false' if pending else 'true','wrong-v1' if mode=='generation' else '31119-v1','2026-09-08T10:00:00Z' if mode=='stale' else '2026-09-09T09:01:00Z','' if pending else 'content-'+str(n),'snapshot failed' if mode=='snapshot-error' else '','wrong-class' if mode=='snapshot-class' else 'rook-ceph-block']))
  raise SystemExit('Unexpected get '+repr(args))
 if args[0]=='exec':
  n=int(args[1][-1]); cmd=args[args.index('--')+1:]
@@ -86,7 +88,9 @@ class CassandraGateTests(unittest.TestCase):
             cli.chmod(0o755)
             # A real sleep in these converged fixtures is an unexpected wait.
             sleeper = tmp / "sleep"
-            sleeper.write_text("#!/bin/sh\nexit 99\n")
+            sleeper.write_text(
+                '#!/bin/sh\n[ "$FAILURE" = snapshot-pending ] || exit 99\n'
+            )
             sleeper.chmod(0o755)
             date = tmp / "date"
             date.write_text(
@@ -158,6 +162,7 @@ class CassandraGateTests(unittest.TestCase):
             "ring-api",
             "template",
             "snapshot-class",
+            "snapshot-error",
             "rf1",
         ]:
             with self.subTest(failure=failure):
@@ -192,6 +197,18 @@ class CassandraGateTests(unittest.TestCase):
         result, calls, _ = self.run_gate(mode="backup", failure="rf1")
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(any("snapshot" in c for c in calls))
+
+    def test_async_snapshots_are_awaited_before_rollout(self):
+        result, calls, state = self.run_gate(failure="snapshot-pending")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(state["snapshot_reads"], [3, 3, 3])
+        first_delete = next(i for i, call in enumerate(calls) if call[0] == "delete")
+        snapshot_reads = [
+            call
+            for call in calls[:first_delete]
+            if call[0] == "get" and call[1].startswith("volumesnapshot/")
+        ]
+        self.assertEqual(len(snapshot_reads), 9)
 
     def test_namespace_hash_ignores_query_formatting_and_row_order(self):
         script = ROOT / "argocd/applications/temporal/upgrade/canonicalize-cql.py"
