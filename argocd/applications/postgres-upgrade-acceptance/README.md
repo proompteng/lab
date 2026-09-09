@@ -82,3 +82,24 @@ applying any generated `update_extensions.sql`, then validate the extension
 updates and refresh optimizer statistics. Keep the original snapshots Retain.
 If the isolated upgrade fails, revert the clone image to 17.11 and inspect the
 native failure; never advance a serving image on an unproven rehearsal.
+
+
+## Recreating the rehearsal from retained snapshots
+
+Reconcile `argocd/applications/postgres-upgrade-acceptance/phases/recover-17`
+first. This is the complete declarative source-recovery application, including
+network restrictions, retained snapshot imports and four 17.11 Clusters. Select
+that path in the ApplicationSet through Git, then wait for native recovery and
+record the source comparison before selecting the root application path for 18.6.
+The retained `base` source continues to declare PostgreSQL 17.11.
+
+The root phase has a read-only PreSync gate. A missing Cluster stops reconciliation
+with an instruction to use `phases/recover-17`, before any 18.6 Cluster is applied.
+The gate requires all four healthy native 17.11 source images and original system
+identifiers, or healthy already-upgraded 18.6 instances on repeat reconciliation.
+An image request alone cannot pass while native PGDATA is still on another major.
+Its token can only get these four Clusters; it cannot modify them or read Secrets.
+
+Do not apply the 17 phase to an already-upgraded live clone as a downgrade. Use it
+only for fresh recovery or the documented native failed-upgrade rollback. Keep
+retained snapshots when retiring or rebuilding the isolated rehearsal.
