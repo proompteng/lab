@@ -76,7 +76,7 @@ def restore(source, target, generation, proof, expected_temporal_tables=18):
         relative = os.path.relpath(snapshot, os.path.join(source, "data")).split(os.sep)
         keyspace, table = relative[:2]
         if not re.match(r"^[a-z][a-z0-9_]*$", keyspace) or not re.match(
-            r"^[a-z][a-z0-9_]*-[0-9a-f]{32}$", table
+            r"^[A-Za-z][A-Za-z0-9_]*-[0-9a-f]{32}$", table
         ):
             raise ValueError("unexpected snapshot keyspace or table identity")
         identity = keyspace + "." + table.rsplit("-", 1)[0]
@@ -85,35 +85,70 @@ def restore(source, target, generation, proof, expected_temporal_tables=18):
         tables.add(identity)
         with open(regular_file(os.path.join(snapshot, "manifest.json"))) as manifest:
             files = json.load(manifest)["files"]
-        if not isinstance(files, list) or len(files) != len(set(files)):
+        if not isinstance(files, list) or any(
+            not isinstance(name, STRING_TYPES)
+            or not re.match(r"^[a-z]{2}-[0-9]+-big-Data\.db$", name)
+            for name in files
+        ):
+            raise ValueError("invalid SSTable filename in native snapshot manifest")
+        if len(files) != len(set(files)):
             raise ValueError("native snapshot manifest must contain unique files")
-        components = []
-        for name in files:
-            if not isinstance(name, STRING_TYPES):
-                raise ValueError("invalid SSTable filename")
-            if not re.match(r"^[a-z]{2}-[0-9]+-big-Data\.db$", name):
-                raise ValueError("invalid SSTable filename")
-            prefix = name[: -len("Data.db")]
-            with open(regular_file(os.path.join(snapshot, prefix + "TOC.txt"))) as toc:
-                suffixes = toc.read().splitlines()
-            if len(suffixes) != len(set(suffixes)) or not {
-                "Data.db",
-                "Digest.crc32",
-                "Statistics.db",
-                "Index.db",
-                "TOC.txt",
-            }.issubset(suffixes):
-                raise ValueError("native SSTable component list is incomplete")
-            for suffix in suffixes:
-                if not re.match(r"^[A-Za-z][A-Za-z0-9]*\.(db|txt|crc32)$", suffix):
-                    raise ValueError("invalid SSTable component filename")
-                regular_file(os.path.join(snapshot, prefix + suffix))
-            with open(os.path.join(snapshot, prefix + "Digest.crc32")) as digest:
-                expected = digest.read().strip()
-            if not re.match(r"^[0-9]+$", expected) or int(expected) > 0xFFFFFFFF:
-                raise ValueError("invalid native SSTable CRC32 digest")
-            components.append((prefix, suffixes, int(expected)))
-        plan.append((snapshot, keyspace, table, components))
+        groups = [("", snapshot)]
+        for name in sorted(os.listdir(snapshot)):
+            path = os.path.join(snapshot, name)
+            mode = os.lstat(path).st_mode
+            if stat.S_ISLNK(mode):
+                raise ValueError("snapshot entries must not be symlinks")
+            if stat.S_ISDIR(mode):
+                if not re.match(r"^\.[A-Za-z][A-Za-z0-9_]*$", name):
+                    raise ValueError("unexpected secondary index directory")
+                groups.append((name, path))
+        manifest_matched = False
+        for index, folder in groups:
+            names = set(os.listdir(folder))
+            data_files = sorted(name for name in names if name.endswith("-Data.db"))
+            # Cassandra 3.11.5 writes each index's manifest to its parent table.
+            # Validate that manifest against one complete native group, and retain
+            # every base/index SSTable in the immutable named snapshot directory.
+            if set(files) == set(data_files):
+                manifest_matched = True
+            allowed = set()
+            if not index:
+                allowed.update(["manifest.json", "schema.cql"])
+                allowed.update(name for name, _ in groups if name)
+            components = []
+            for name in data_files:
+                if not re.match(r"^[a-z]{2}-[0-9]+-big-Data\.db$", name):
+                    raise ValueError("invalid SSTable filename")
+                prefix = name[: -len("Data.db")]
+                with open(
+                    regular_file(os.path.join(folder, prefix + "TOC.txt"))
+                ) as toc:
+                    suffixes = toc.read().splitlines()
+                if len(suffixes) != len(set(suffixes)) or not {
+                    "Data.db",
+                    "Digest.crc32",
+                    "Statistics.db",
+                    "Index.db",
+                    "TOC.txt",
+                }.issubset(suffixes):
+                    raise ValueError("native SSTable component list is incomplete")
+                for suffix in suffixes:
+                    if not re.match(r"^[A-Za-z][A-Za-z0-9]*\.(db|txt|crc32)$", suffix):
+                        raise ValueError("invalid SSTable component filename")
+                    regular_file(os.path.join(folder, prefix + suffix))
+                    allowed.add(prefix + suffix)
+                with open(os.path.join(folder, prefix + "Digest.crc32")) as digest:
+                    expected = digest.read().strip()
+                if not re.match(r"^[0-9]+$", expected) or int(expected) > 0xFFFFFFFF:
+                    raise ValueError("invalid native SSTable CRC32 digest")
+                components.append((prefix, suffixes, int(expected)))
+            if names - allowed:
+                raise ValueError("unexpected or orphaned native snapshot component")
+            plan.append((folder, keyspace, table, index, components))
+        if not manifest_matched:
+            raise ValueError("manifest does not match a native table or index group")
+
     if (
         len([name for name in tables if name.startswith("temporal.")])
         != expected_temporal_tables
@@ -128,8 +163,8 @@ def restore(source, target, generation, proof, expected_temporal_tables=18):
     os.mkdir(destination)
     total_bytes = 0
     copied = []
-    for snapshot, keyspace, table, components in plan:
-        output = os.path.join(destination, keyspace, table)
+    for snapshot, keyspace, table, index, components in plan:
+        output = os.path.join(destination, keyspace, table, index)
         os.makedirs(output)
         for prefix, suffixes, expected in components:
             for suffix in suffixes:
@@ -140,9 +175,11 @@ def restore(source, target, generation, proof, expected_temporal_tables=18):
                 if suffix == "Data.db" and checksum != expected:
                     raise ValueError(
                         "native snapshot SSTable checksum mismatch: "
-                        + os.path.join(keyspace, table, name)
+                        + os.path.join(keyspace, table, index, name)
                     )
-                copied.append((keyspace + "/" + table + "/" + name, digest, size))
+                copied.append(
+                    (os.path.join(keyspace, table, index, name), digest, size)
+                )
                 total_bytes += size
         sync_directory(output)
         sync_directory(os.path.dirname(output))
@@ -151,6 +188,7 @@ def restore(source, target, generation, proof, expected_temporal_tables=18):
     result = {
         "generation": generation,
         "tables": len(tables),
+        "secondaryIndexes": sum(1 for item in plan if item[3]),
         "components": len(copied),
         "bytes": total_bytes,
         "componentsSHA256": hashlib.sha256(
