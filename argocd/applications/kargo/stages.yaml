@@ -1797,3 +1797,101 @@ spec:
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
                     desiredRevision: ${{ outputs.commit.commit }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: forgejo
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+  - name: gitRepo
+    value: git@github.com:proompteng/lab.git
+  - name: targetBranch
+    value: kargo/forgejo
+  - name: srcPath
+    value: ./src
+  - name: outPath
+    value: ./out
+  - name: imageRepo
+    value: registry.ide-newton.ts.net/lab/forgejo
+  requestedFreight:
+  - origin:
+      kind: Warehouse
+      name: forgejo
+    sources:
+      direct: true
+      autoPromotionOptions:
+        selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+      - uses: git-clone
+        config:
+          repoURL: ${{ vars.gitRepo }}
+          author:
+            name: Kargo
+            email: kargo@proompteng.ai
+          checkout:
+          - commit: ${{ commitFrom(vars.gitRepo).ID }}
+            path: ${{ vars.srcPath }}
+          - branch: ${{ vars.targetBranch }}
+            create: true
+            path: ${{ vars.outPath }}
+      - uses: git-clear
+        config:
+          path: ${{ vars.outPath }}
+      - uses: copy
+        config:
+          inPath: ${{ vars.srcPath }}
+          outPath: ${{ vars.outPath }}
+      - uses: kustomize-set-image
+        config:
+          path: ./out/argocd/applications/forgejo
+          images:
+          - image: code.forgejo.org/forgejo/forgejo
+            newName: ${{ vars.imageRepo }}
+            digest: ${{ imageFrom(vars.imageRepo).Digest }}
+      - uses: yaml-update
+        config:
+          path: ./out/argocd/applications/forgejo/values.yaml
+          updates:
+          - key: image.tag
+            value: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.version']
+              }}
+          - key: gitea.podAnnotations.delivery\.proompteng\.ai/source-revision
+            value: ${{ commitFrom(vars.gitRepo).ID }}
+          - key: gitea.podAnnotations.delivery\.proompteng\.ai/image-digest
+            value: ${{ imageFrom(vars.imageRepo).Digest }}
+          - key: gitea.podAnnotations.delivery\.proompteng\.ai/upstream-digest
+            value: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.base.digest']
+              }}
+          - key: gitea.podAnnotations.delivery\.proompteng\.ai/created
+            value: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.created']
+              }}
+      - uses: git-commit
+        as: commit
+        config:
+          path: ${{ vars.outPath }}
+          message: 'kargo(forgejo): promote ${{ ctx.targetFreight.name }}
+
+            '
+      - uses: git-push
+        as: push
+        config:
+          path: ${{ vars.outPath }}
+          targetBranch: ${{ vars.targetBranch }}
+      - uses: argocd-update
+        as: deploy
+        retry:
+          timeout: 45m0s
+          errorThreshold: 3
+        config:
+          apps:
+          - name: forgejo
+            namespace: argocd
+            sources:
+            - repoURL: https://github.com/proompteng/lab.git
+              desiredRevision: ${{ outputs.commit.commit }}
