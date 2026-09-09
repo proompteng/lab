@@ -1,10 +1,12 @@
 # Loki 3 migration
 
-Deploy Loki 3.7.7 with community chart 18.12.1 in a separate process ring
-alongside Loki 2.9.13. Do not enable `migrate.fromDistributed` or join the old
-memberlist Service: the releases are outside the adjacent-version rolling
-upgrade path. Only object storage is shared. Production clients continue to
-write to the original ingester until explicit endpoint cutover.
+Loki 3.7.7 with community chart 18.12.1 owns production ingestion and queries.
+The original gateway Service retains its address and selects the Loki 3 gateway.
+The Loki 2.9.13 workloads are retired after their final buffer drain passed.
+
+The migration used separate process rings: the releases are outside the
+adjacent-version rolling upgrade path. Only object storage was shared. Keep
+`migrate.fromDistributed` disabled and do not rejoin the retired memberlist.
 
 ## Storage and configuration
 
@@ -30,16 +32,14 @@ S3 transport preserves certificate verification for both reads and writes.
 Both new ingesters retain their WAL at `/var/loki/wal` on separate 20 GiB Ceph
 claims, with retained PVCs and normal rolling updates. Keep replication factor
 one without zone awareness during the version upgrade.
-The new compactor remains disabled until read/write acceptance passes. The
-original deployment has no running compactor; verify that again before
-enabling the new sole compactor. No ruler is added by this migration.
-Keep the chart's standard compactor address in `commonConfig` during this
-pause. Loki's query modules require a configured address even when no
-compactor is running and retention is disabled. `-verify-config` validates
-configuration syntax and values; live module startup remains an acceptance
-gate and must not be inferred from that check alone.
+A single Loki 3 compactor owns index compaction, with a retained 10 GiB Ceph
+working volume. No other compactor process was running before it was enabled.
+Retention remains disabled; this upgrade does not add a log deletion policy or
+a ruler. Keep the chart's standard compactor address in `commonConfig`.
+Native `-verify-config` checks syntax and values; live module startup and a
+successful compaction cycle remain separate acceptance gates.
 
-## Deployment and acceptance
+## Migration gates
 
 Capture original Pod UIDs, buffer/flush counters, and a historical log fixture
 before deployment. Render with Helm 3, check the complete capacity requirement,
@@ -87,7 +87,18 @@ must not be discarded to force a rollout. Preserve the original Pod UID while
 collecting the drain evidence and verify the exact deployed version's native
 flush/shutdown contract before retiring it.
 
-Enable the sole compactor after confirming no other compactor process exists.
+The final retirement gate passed on 2026-09-09: the original ingester Pod UID
+was unchanged, its accepted-write counters had stopped, its flush queue and
+flush failures were zero, and 2,253 chunks were stored against 2,239 created
+chunks (including recovered WAL data). All three captured final production
+entries were read through the normal Loki 3 gateway with exact timestamps,
+labels and line hashes. The pre-cutover canary window checked 3,201 additional
+entries over 1,067 seconds with no new missing, duplicate, ordering or query
+errors. Keep those startup-era lifetime counters intact when comparing deltas.
+
+Enable the sole compactor only after confirming no other compactor process
+exists. Wait for its native compaction interval and require an increasing
+successful cycle count with no errors; readiness does not prove compaction.
 Preserve compatibility Services and all object-store history when removing
 the old release. Recheck fresh logs, historical fixtures, and canary counters
 after final delivery. During recovery, retain both new WAL claims and every
