@@ -1,6 +1,5 @@
-# Tempo 3 migration deployment. This release is additive while the Tempo 2.x
-# release remains the ingestion endpoint. Keep the object store and vParquet4
-# block format shared so historical RF3 blocks remain queryable.
+# Production Tempo 3 deployment. Preserve the shared object store and vParquet4
+# block format so historical Tempo 2 RF3 blocks remain queryable.
 global:
   clusterDomain: cluster.local
 
@@ -157,13 +156,11 @@ storage:
       tls_server_name: ceph.k8s.proompteng.ai
       forcepathstyle: true
 
-# Only the old Tempo deployment may compact while both deployments share the
-# bucket. Remove this override after traffic is cut over and the old release
-# has drained and been decommissioned.
+# Tempo 2 compaction is retired; this scheduler is the sole compaction owner.
 overrides:
   defaults:
     compaction:
-      compaction_disabled: true
+      compaction_disabled: false
 
 gateway:
   enabled: true

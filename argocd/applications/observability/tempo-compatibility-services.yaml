@@ -1,0 +1,95 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: observability-tempo-distributor
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: tempo
+    app.kubernetes.io/instance: observability-tempo-v3
+    app.kubernetes.io/component: distributor
+spec:
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+  - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+  - name: http-metrics
+    port: 3200
+    targetPort: http-metrics
+  - name: grpc
+    port: 9095
+    protocol: TCP
+    targetPort: 9095
+  - name: distributor-otlp-http
+    port: 4318
+    protocol: TCP
+    targetPort: otlp-http
+  - name: grpc-distributor-otlp
+    port: 4317
+    protocol: TCP
+    targetPort: grpc-otlp
+  - name: distributor-otlp-legacy
+    port: 55680
+    protocol: TCP
+    targetPort: grpc-otlp
+  selector:
+    app.kubernetes.io/component: distributor
+    app.kubernetes.io/instance: observability-tempo-v3
+    app.kubernetes.io/name: tempo
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: observability-tempo-gateway
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: tempo
+    app.kubernetes.io/instance: observability-tempo-v3
+    app.kubernetes.io/component: gateway
+spec:
+  ports:
+  - name: http-metrics
+    port: 80
+    protocol: TCP
+    targetPort: http-metrics
+  - name: grpc-otlp
+    port: 4317
+    protocol: TCP
+    targetPort: grpc-otlp
+  - name: otlp-http
+    port: 4318
+    protocol: TCP
+    targetPort: http-metrics
+  selector:
+    app.kubernetes.io/component: gateway
+    app.kubernetes.io/instance: observability-tempo-v3
+    app.kubernetes.io/name: tempo
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: observability-tempo-query-frontend
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: tempo
+    app.kubernetes.io/instance: observability-tempo-v3
+    app.kubernetes.io/component: query-frontend
+spec:
+  ipFamilies:
+  - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+  - name: http-metrics
+    port: 3200
+    targetPort: http-metrics
+  - name: grpc
+    port: 9095
+    protocol: TCP
+    targetPort: grpc
+  selector:
+    app.kubernetes.io/component: query-frontend
+    app.kubernetes.io/instance: observability-tempo-v3
+    app.kubernetes.io/name: tempo
+  type: ClusterIP

@@ -13,8 +13,12 @@ Mimir 3.2 uses normal rolling updates for ingesters, store gateway, compactor, a
 and live acceptance. The bundled Kafka broker alone retains `OnDelete` pending its separate upgrade.
 The [Mimir recovery procedure](../../../docs/runbooks/mimir-rgw-tls-recovery.md) is historical guidance for
 Mimir 3.1.2/chart 6.1.0; its process-reload helper deliberately rejects newer images and rolling strategies. The
-[compatibility runbook](../../../docs/runbooks/ceph-rgw-sigv4-compatibility.md) documents the verified TLS path,
-preservation of existing Tempo buffers, and recovery procedure.
+[compatibility runbook](../../../docs/runbooks/ceph-rgw-sigv4-compatibility.md) documents the verified TLS path.
+Its Tempo 2 buffer-reload procedure is historical and does not apply to the production Tempo 3 deployment.
+
+Tempo 3 owns production ingestion, queries, and compaction. The compatibility Services preserve the original
+Tempo distributor, gateway, and query-frontend addresses; do not remove them while clients use those names.
+See the [Tempo migration runbook](../../../docs/runbooks/tempo-3-migration.md) for buffer-drain and recovery evidence.
 
 ## Sources of truth
 
@@ -23,7 +27,7 @@ preservation of existing Tempo buffers, and recovery procedure.
 3. `argocd/applications/observability/rook-ceph-rgw-loki-reflected-secret.yaml`
 4. `argocd/applications/observability/loki-values.yaml`
 5. `argocd/applications/observability/mimir-values.yaml`
-6. `argocd/applications/observability/tempo-values.yaml`
+6. `argocd/applications/observability/tempo-v3-values.yaml`
 
 ## Required buckets
 
@@ -74,7 +78,7 @@ Observability is exposed over Tailscale using `Ingress` resources (not `Service`
 
 ```bash
 kubectl -n observability rollout restart deploy observability-loki-loki-distributed-distributor
-kubectl -n observability rollout restart deploy observability-tempo-distributor
+kubectl -n observability rollout restart deploy observability-tempo-v3-distributor
 kubectl -n observability rollout restart deploy observability-mimir-distributor
 ```
 
