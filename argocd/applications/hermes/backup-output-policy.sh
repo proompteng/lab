@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# Hermes 0.20.6 creates a live Unix-domain socket at $HERMES_HOME/gateway.sock,
+# Hermes 0.21.1 creates a live Unix-domain socket at $HERMES_HOME/gateway.sock,
 # but its full-backup walker does not exclude that transient runtime file. The
 # backup remains complete when that exact socket is the only skipped path.
 # Everything else stays fail-closed.

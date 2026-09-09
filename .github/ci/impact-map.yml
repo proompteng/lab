@@ -64,6 +64,7 @@ targets:
     paths:
       - .github/ci/impact-map.yml
       - .github/workflows/pull-request.yml
+      - .github/workflows/hermes-agent-mirror.yml
       - argocd/applications/hermes/**
       - argocd/applications/kube-router/**
       - argocd/applications/tengri/network-policies.yaml
