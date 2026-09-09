@@ -240,3 +240,14 @@ keystore to its volume. Otherwise the native entrypoint tries to add the missing
 by replacing the mounted subPath file, which fails with `Device or resource busy`.
 This correction rolls the Pods on the same 8.5.1 image and original data claims.
 The S3 account, endpoint, bucket and application credential remain the same.
+
+
+Generation `81921-v5` waits up to five minutes for the original three-node source
+to become green and finish loading the reviewed S3 client configuration before
+any repository write. Argo's selective apply can skip an unchanged StatefulSet
+while its Pods are still rolling; sync completion alone is not this prerequisite.
+Version, cluster identity, node identity and a conflicting S3 endpoint still fail
+immediately. The final post-snapshot source check remains strict. The same Job
+request deadline, native repository analysis and frozen-snapshot checks apply.
+The failed v4 Job stopped at the initial two-node health check before registering
+the S3 repository or taking a snapshot; its failure was captured before retirement.
