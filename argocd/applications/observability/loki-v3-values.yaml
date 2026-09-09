@@ -30,9 +30,8 @@ loki:
   commonConfig:
     path_prefix: /var/loki
     replication_factor: 1
-    # Enable compaction only after the new read/write path passes acceptance.
-    # The existing Loki deployment has no running compactor.
-    compactor_grpc_address: ""
+    # Keep the chart's compactor address: query modules require it even while
+    # the compactor workload is paused and retention is disabled.
   ingester:
     chunk_encoding: snappy
     chunk_idle_period: 30m
@@ -84,6 +83,10 @@ loki:
     query_timeout: 300s
     volume_enabled: true
   storage_config:
+    # Loki 3.7's Thanos hedged GET transport discards the S3 TLS settings.
+    # Keep the verified S3 transport for reads as well as writes.
+    hedging:
+      at: 0s
     boltdb_shipper:
       active_index_directory: /var/loki/index
       cache_location: /var/loki/index
