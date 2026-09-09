@@ -12,7 +12,10 @@ endpoint. The bundled Kafka retains its existing image and maintenance hold
 until its separate broker upgrade is accepted.
 
 GitOps applies the configuration first. The native Mimir `-modules` Job loads
-and validates that exact configuration, then exits before starting services.
+and validates that exact configuration separately for each of the ten deployed
+roles, then exits before starting services. Its init containers stop at the
+first failure. Never use the default `all` target: it treats paths used by
+separate Pods as overlapping directories in one process.
 Use the normal whole-Application sync. Argo CD 3.5 retains hooks when
 `ApplyOutOfSyncOnly=true`; syncing an explicitly selected resource subset can
 skip hooks and must not be used for this upgrade. Verify the native Job's
