@@ -70,3 +70,11 @@ cp /tmp/broker.log "$receipt/broker.log"
 sync
 printf '%s\n' 'Kafka 4.3.1 restored the original cluster, two topics, 150 partitions and a retained metric record.' > "$receipt/accepted"
 cat "$receipt/accepted"
+# Completed Pods cannot be exec'd. Expose bounded metadata receipts through
+# Job logs so the operator can compare every partition with the live baseline.
+# These files contain identifiers and offsets, never metric record payloads.
+for name in meta.properties.before quorum.txt topics.txt end-offsets.txt features.txt record-offset.txt; do
+  printf '\nBEGIN_KAFKA_RESTORE_RECEIPT %s\n' "$name"
+  cat "$receipt/$name"
+  printf '\nEND_KAFKA_RESTORE_RECEIPT %s\n' "$name"
+done

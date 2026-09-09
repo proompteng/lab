@@ -21,6 +21,8 @@ metadata, lists both topics and all 150 partitions, reads one retained metric
 record without printing its payload, and shuts down normally. Receipts remain
 under `upgrade-proof-4.3.1` on the retained clone. Compare its topic IDs and
 end offsets with the live baseline before changing the production image.
+The completed Job also emits these bounded metadata receipts in its logs;
+read them there without mounting the clone or exposing metric payloads.
 
 ## Rollout and acceptance
 
