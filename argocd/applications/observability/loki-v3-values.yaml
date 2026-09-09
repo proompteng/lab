@@ -1,0 +1,305 @@
+# Loki 3 migration deployment. It joins the existing loki-distributed rings
+# while the old release remains the client endpoint. The old boltdb-shipper
+# period is immutable throughout this app-version migration.
+fullnameOverride: observability-loki-v3
+nameOverride: observability-loki-v3
+deploymentMode: Distributed
+
+defaults:
+  extraArgs:
+    - -config.expand-env=true
+  extraEnv:
+    - name: OBS_S3_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: rook-ceph-rgw-loki
+          key: AccessKey
+    - name: OBS_S3_SECRET_KEY
+      valueFrom:
+        secretKeyRef:
+          name: rook-ceph-rgw-loki
+          key: SecretKey
+
+loki:
+  auth_enabled: false
+  configStorageType: ConfigMap
+  configObjectName: observability-loki-v3
+  generatedConfigObjectName: observability-loki-v3
+  image:
+    repository: grafana/loki
+    tag: 3.7.7
+  commonConfig:
+    path_prefix: /var/loki
+    replication_factor: 1
+    # Enable compaction only after the new read/write path passes acceptance.
+    # The existing Loki deployment has no running compactor.
+    compactor_grpc_address: ""
+  ingester:
+    chunk_encoding: snappy
+    chunk_idle_period: 30m
+    chunk_retain_period: 1m
+    wal:
+      dir: /var/loki/wal
+  storage:
+    type: s3
+    # This supported client exposes TLS server-name verification for the same
+    # internal RGW endpoint used by Mimir and Tempo.
+    use_thanos_objstore: true
+    bucketNames:
+      chunks: loki-data
+      ruler: loki-data
+      admin: loki-data
+    object_store:
+      type: s3
+      s3:
+        endpoint: rook-ceph-rgw-tls.rook-ceph.svc:443
+        region: us-east-1
+        access_key_id: ${OBS_S3_ACCESS_KEY}
+        secret_access_key: ${OBS_S3_SECRET_KEY}
+        bucket_lookup_type: path
+        insecure: false
+        http:
+          tls_server_name: ceph.k8s.proompteng.ai
+  schemaConfig:
+    configs:
+      - from: "2024-01-01"
+        store: boltdb-shipper
+        object_store: s3
+        schema: v13
+        index:
+          prefix: loki_index_
+          period: 24h
+  # Structured metadata remains disabled while the existing boltdb-shipper
+  # period is the only deployed schema. A later TSDB migration can enable it
+  # after all writers and readers are explicitly verified.
+  limits_config:
+    allow_structured_metadata: false
+    # Preserve Loki 2 admission limits and labels during the version migration.
+    max_label_names_per_series: 30
+    max_line_size: 0
+    discover_service_name: []
+    reject_old_samples: true
+    reject_old_samples_max_age: 168h
+    max_cache_freshness_per_query: 10m
+    split_queries_by_interval: 15m
+    query_timeout: 300s
+    volume_enabled: true
+  storage_config:
+    boltdb_shipper:
+      active_index_directory: /var/loki/index
+      cache_location: /var/loki/index
+      cache_ttl: 168h
+  extraMemberlistConfig:
+    abort_if_cluster_join_fails: true
+    advertise_port: 7946
+    bind_port: 7946
+    max_join_backoff: 1m
+    max_join_retries: 10
+    min_join_backoff: 1s
+    rejoin_interval: 90s
+
+migrate:
+  fromDistributed:
+    enabled: true
+    memberlistService: observability-loki-loki-distributed-memberlist
+
+ingester:
+  enabled: true
+  kind: StatefulSet
+  replicas: 2
+  zoneAwareReplication:
+    enabled: false
+  extraArgs:
+    - -ingester.flush-on-shutdown=true
+  # Keep the ingester WAL on retained Ceph PVCs during and after cutover.
+  # Without this, the chart uses emptyDir and a restart loses the local WAL.
+  persistence:
+    enabled: true
+    inMemory: false
+    claims:
+      - name: data
+        accessModes:
+          - ReadWriteOnce
+        size: 20Gi
+        storageClass: rook-ceph-block
+    enableStatefulSetAutoDeletePVC: true
+    whenDeleted: Retain
+    whenScaled: Retain
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1
+      memory: 1Gi
+
+distributor:
+  enabled: true
+  replicas: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+querier:
+  enabled: true
+  replicas: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1
+      memory: 1Gi
+
+queryFrontend:
+  enabled: true
+  replicas: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+queryScheduler:
+  enabled: true
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+indexGateway:
+  enabled: true
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+compactor:
+  # Enable the sole compactor only after historical and fresh-log acceptance.
+  enabled: false
+  replicas: 0
+
+ruler:
+  enabled: false
+  replicas: 0
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+gateway:
+  enabled: true
+  replicas: 1
+  image:
+    registry: mirror.gcr.io
+    repository: nginxinc/nginx-unprivileged
+    tag: 1.31-alpine
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  metrics:
+    resources:
+      requests:
+        cpu: 10m
+        memory: 16Mi
+      limits:
+        cpu: 50m
+        memory: 64Mi
+
+# The community chart's default caches reserve most of the overlap memory
+# budget. Keep both caches away from the smaller node while the old and new
+# releases coexist; this uses the existing hostname label only.
+resultsCache:
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1229Mi
+    limits:
+      cpu: 500m
+      memory: 1229Mi
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: kubernetes.io/hostname
+                operator: NotIn
+                values:
+                  - talos-192-168-1-194
+
+chunksCache:
+  resources:
+    requests:
+      cpu: 500m
+      memory: 9830Mi
+    limits:
+      cpu: 500m
+      memory: 9830Mi
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: kubernetes.io/hostname
+                operator: NotIn
+                values:
+                  - talos-192-168-1-194
+
+read:
+  enabled: false
+  replicas: 0
+
+write:
+  enabled: false
+  replicas: 0
+
+backend:
+  enabled: false
+  replicas: 0
+
+singleBinary:
+  enabled: false
+
+lokiCanary:
+  enabled: true
+  push: true
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 50m
+      memory: 64Mi
+
+minio:
+  enabled: false
+
+memcachedExporter:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 16Mi
+    limits:
+      cpu: 50m
+      memory: 64Mi
