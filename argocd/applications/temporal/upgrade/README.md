@@ -12,13 +12,20 @@ verifies their generation, source claims and creation times before the clone is
 created. A failed snapshot attempt requires a new reviewed generation; Argo must
 not replace active or failed one-shot Jobs.
 
-The restore rehearsal mounts only a new 20Gi clone from ordinal zero. A default
-deny ingress/egress NetworkPolicy isolates it from production, and no service
-account token is mounted. The old engine opens the clone on loopback and hashes
-Temporal namespace and schema records. The target engine then reads those same
-records, rewrites SSTables and verifies every Temporal SSTable, including cell
-contents. Both engines drain and stop before the next phase. No original PVC,
-credential or cluster destination changes.
+The restore rehearsal mounts the CSI clone read-only in a restore init container.
+It restores only the requested native snapshot's manifest-listed SSTables into a
+separate empty 20Gi data PVC. Every listed component must exist, each Data.db CRC32
+must match its native digest, copied files are flushed, and cluster identity/schema
+and all 18 Temporal tables must be present. Live table files and commit logs outside
+that named snapshot are excluded. The snapshot Job also flushes the source filesystem
+before CSI snapshots are created.
+
+A default deny NetworkPolicy isolates the rehearsal from production. Neither engine
+mounts the source snapshot or a service account token. The old engine opens only the
+restored data on loopback and hashes Temporal namespace/schema records. The target
+engine then reads those same records, rewrites SSTables and verifies every Temporal
+SSTable, including cell contents. Both engines drain and stop before the next phase.
+No original PVC, credential or cluster destination changes.
 
 After the rehearsal passes, a separate reviewed activation selects the pinned
 3.11.19 image and adds a narrowly scoped rolling Job. It drains and replaces one
@@ -78,3 +85,11 @@ that bundled interpreter explicitly and reports a missing interpreter before
 starting an engine. Its fresh backup and isolated clone run the same native data,
 identity and network checks. The v3 snapshots and clone remain retained; the
 failed target run does not satisfy production rollout acceptance.
+
+Generation `31119-v4` exposed a restore error: the rehearsal booted the CSI clone's
+live directory, where a post-snapshot `tasks` SSTable failed its checksum. That file
+was absent from the native snapshot manifest, and its original production copy
+passed CRC32 verification. The original RF3 ring and persistent Temporal workflow
+remained healthy. Generation `31119-v5` restores the actual native snapshot into a
+separate data volume and verifies its checksums before either engine starts.
+The failed v4 clone remains retained; its failure is not hidden or accepted.

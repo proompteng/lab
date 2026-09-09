@@ -6,6 +6,7 @@ resources:
   - upgrade/retained-rf3-snapshots.yaml
   - upgrade/retained-31119-v2-snapshots.yaml
   - upgrade/retained-31119-v3-snapshots.yaml
+  - upgrade/retained-31119-v4-snapshots.yaml
   - upgrade/cassandra-31119-backup.yaml
   - load-balancer.yaml
   - load-balancer-frontend.yaml
@@ -179,6 +180,7 @@ configMapGenerator:
     files:
       - upgrade/cassandra-gate.sh
       - upgrade/cassandra-rehearsal.sh
+      - upgrade/restore-native-snapshot.py
       - upgrade/canonicalize-cql.py
       - upgrade/verify-rehearsal-network.py
     options:
