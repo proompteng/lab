@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: observability-tempo-v3-migration-vulture
+  namespace: observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tempo-migration-vulture
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tempo-migration-vulture
+        app.kubernetes.io/instance: observability-tempo-v3
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: vulture
+          image: docker.io/grafana/tempo-vulture:3.0.3@sha256:c80f272b5a842c4812ea1772faea3bba0af1f35fccd1ce6ac43b852c9c8fd1d0
+          args:
+            - --tempo-query-url=http://observability-tempo-v3-query-frontend:3200
+            - --tempo-push-url=http://observability-tempo-v3-distributor:4317
+            - --tempo-query-livestore=true
+            - --tempo-retention-duration=48h
+            - --prometheus-listen-address=:8080
+          ports:
+            - name: metrics
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
