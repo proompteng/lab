@@ -152,6 +152,29 @@ alertmanager:
     size: 1Gi
 
 kafka:
+  image:
+    repository: apache/kafka
+    tag: 4.3.1
+  clusterId: 5L6g3nShT-eMCtK--X86sw
+  # Override the JVM image's nested VOLUME with this PVC's existing log data.
+  extraVolumeMounts:
+    - name: kafka-data
+      mountPath: /var/lib/kafka/data
+      subPath: data
+  terminationGracePeriodSeconds: 120
+  resources:
+    requests:
+      cpu: "1"
+      memory: 2Gi
+    limits:
+      memory: 4Gi
+  env:
+    - name: CLUSTER_ID
+      value: 5L6g3nShT-eMCtK--X86sw
+    - name: KAFKA_HEAP_OPTS
+      value: -Xms1g -Xmx1g
+    - name: LOG_DIR
+      value: /tmp/kafka-logs
   persistence:
     enabled: true
     size: 20Gi
