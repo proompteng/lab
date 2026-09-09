@@ -1,3 +1,15 @@
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: temporal-elasticsearch-snapshots
+  namespace: temporal
+  annotations:
+    argocd.argoproj.io/sync-wave: '-35'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  generateBucketName: temporal-elasticsearch-snapshots
+  storageClassName: rook-ceph-bucket
+---
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
@@ -87,7 +99,7 @@ metadata:
   labels:
     app.kubernetes.io/component: elasticsearch-snapshot
     app.kubernetes.io/name: temporal
-    temporal.proompteng.ai/backup-generation: 81921-v2
+    temporal.proompteng.ai/backup-generation: 81921-v3
   name: temporal-elasticsearch-snapshot
   namespace: temporal
 spec:
@@ -113,7 +125,7 @@ spec:
     matchLabels:
       app.kubernetes.io/component: elasticsearch-snapshot
       app.kubernetes.io/name: temporal
-      temporal.proompteng.ai/backup-generation: 81921-v2
+      temporal.proompteng.ai/backup-generation: 81921-v3
   policyTypes:
   - Ingress
   - Egress
@@ -126,8 +138,8 @@ metadata:
   labels:
     app.kubernetes.io/component: elasticsearch-snapshot
     app.kubernetes.io/name: temporal
-    temporal.proompteng.ai/backup-generation: 81921-v2
-  name: temporal-elasticsearch-81921-v2-snapshot
+    temporal.proompteng.ai/backup-generation: 81921-v3
+  name: temporal-elasticsearch-81921-v3-snapshot
   namespace: temporal
 spec:
   activeDeadlineSeconds: 3600
@@ -137,7 +149,7 @@ spec:
       labels:
         app.kubernetes.io/component: elasticsearch-snapshot
         app.kubernetes.io/name: temporal
-        temporal.proompteng.ai/backup-generation: 81921-v2
+        temporal.proompteng.ai/backup-generation: 81921-v3
     spec:
       automountServiceAccountToken: false
       containers:
@@ -149,6 +161,21 @@ spec:
           value: '1'
         - name: PYTHONUNBUFFERED
           value: '1'
+        - name: BUCKET_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: temporal-elasticsearch-snapshots
+              key: BUCKET_NAME
+        - name: BUCKET_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: temporal-elasticsearch-snapshots
+              key: BUCKET_HOST
+        - name: BUCKET_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: temporal-elasticsearch-snapshots
+              key: BUCKET_PORT
         image: mirror.gcr.io/python:3.14-alpine@sha256:c6ead215bfd31f1e433d968853b7a769989117115b728874824e6c0a27cb96fc
         name: snapshot
         resources:
@@ -168,8 +195,6 @@ spec:
         - mountPath: /scripts
           name: scripts
           readOnly: true
-        - mountPath: /repository
-          name: repository
       nodeSelector:
         kubernetes.io/os: linux
       restartPolicy: Never
@@ -185,6 +210,3 @@ spec:
       - configMap:
           name: temporal-elasticsearch-upgrade-scripts
         name: scripts
-      - name: repository
-        persistentVolumeClaim:
-          claimName: temporal-elasticsearch-snapshot-repository-v2

@@ -35,7 +35,16 @@ class Fixture:
                     "name": name,
                     "version": "8.5.1",
                     "settings": {
-                        "path": {"repo": ["/usr/share/elasticsearch/snapshots"]}
+                        "s3": {
+                            "client": {
+                                snapshot.CLIENT: {
+                                    "endpoint": snapshot.ENDPOINT,
+                                    "protocol": "http",
+                                    "path_style_access": "true",
+                                    "region": "us-east-1",
+                                }
+                            }
+                        }
                     },
                 }
                 for key, name in snapshot.NODES.items()
@@ -56,6 +65,7 @@ class Fixture:
             "include_global_state": True,
             "metadata": {
                 "generation": snapshot.GENERATION,
+                "repository_analysis_issues": [],
                 "cluster_uuid": snapshot.CLUSTER_UUID,
                 "indices_sha256": hashlib.sha256(
                     json.dumps(
@@ -110,19 +120,84 @@ class Fixture:
 
 
 class SnapshotTests(unittest.TestCase):
-    def test_repository_mount_requires_synchronous_cephfs(self):
-        snapshot.require_repository_mount(
-            "ceph-device /repository ceph rw,wsync,noshare 0 0\n"
+    def test_bucket_claim_must_resolve_to_the_selected_store(self):
+        binding = {
+            "BUCKET_NAME": "temporal-elasticsearch-snapshots-test",
+            "BUCKET_HOST": snapshot.CLAIM_HOST,
+            "BUCKET_PORT": "80",
+        }
+        self.assertEqual(
+            snapshot.require_bucket_binding(binding), binding["BUCKET_NAME"]
         )
-        for mount in [
-            "ceph-device /repository ceph rw,nowsync 0 0\n",
-            "ceph-device /repository ceph ro,wsync 0 0\n",
-            "other /repository ext4 rw,wsync 0 0\n",
-            "ceph-device /different ceph rw,wsync 0 0\n",
-            "ceph-device /repository ceph rw,wsync 0 0\nceph-device /repository ceph rw,wsync 0 0\n",
-        ]:
-            with self.subTest(mount=mount), self.assertRaises(RuntimeError):
-                snapshot.require_repository_mount(mount)
+        for key in binding:
+            for value in ("", "foreign"):
+                with (
+                    self.subTest(key=key, value=value),
+                    self.assertRaises(RuntimeError),
+                ):
+                    snapshot.require_bucket_binding(dict(binding, **{key: value}))
+
+    def test_native_snapshot_freezes_repository_before_receipt(self):
+        fixture = Fixture()
+        proof = snapshot.capture(
+            fixture.api, bucket="temporal-elasticsearch-snapshots-test"
+        )
+        self.assertTrue(proof["repositoryReadOnly"])
+        self.assertTrue(fixture.repository[snapshot.REPOSITORY]["settings"]["readonly"])
+        self.assertEqual(
+            fixture.calls[-1][:2], ("GET", "/_snapshot/" + snapshot.REPOSITORY)
+        )
+
+    def test_failed_repository_freeze_cannot_produce_receipt(self):
+        fixture = Fixture()
+        original = fixture.api
+
+        def failed_freeze(method, path, body=None, missing=False):
+            if method == "PUT" and body and body.get("settings", {}).get("readonly"):
+                return {"acknowledged": False}
+            return original(method, path, body, missing)
+
+        with self.assertRaisesRegex(RuntimeError, "freeze was not acknowledged"):
+            snapshot.capture(
+                failed_freeze, bucket="temporal-elasticsearch-snapshots-test"
+            )
+
+    def test_readback_failure_after_freeze_recovers_without_writes(self):
+        fixture = Fixture()
+        original = fixture.api
+
+        def failed_readback(method, path, body=None, missing=False):
+            if (
+                method == "GET"
+                and path == "/_snapshot/" + snapshot.REPOSITORY
+                and fixture.repository
+                and fixture.repository[snapshot.REPOSITORY]["settings"].get("readonly")
+            ):
+                raise RuntimeError("lost freeze readback response")
+            return original(method, path, body, missing)
+
+        with self.assertRaisesRegex(RuntimeError, "lost freeze readback"):
+            snapshot.capture(
+                failed_readback, bucket="temporal-elasticsearch-snapshots-test"
+            )
+        self.assertTrue(fixture.repository[snapshot.REPOSITORY]["settings"]["readonly"])
+        fixture.calls.clear()
+        proof = snapshot.capture(
+            fixture.api, bucket="temporal-elasticsearch-snapshots-test"
+        )
+        self.assertTrue(proof["repositoryReadOnly"])
+        self.assertTrue(all(method == "GET" for method, _, _ in fixture.calls))
+
+    def test_frozen_snapshot_requires_recorded_native_analysis(self):
+        fixture = Fixture()
+        snapshot.capture(fixture.api, bucket="temporal-elasticsearch-snapshots-test")
+        del fixture.snapshot["metadata"]["repository_analysis_issues"]
+        fixture.calls.clear()
+        with self.assertRaisesRegex(RuntimeError, "native repository analysis record"):
+            snapshot.capture(
+                fixture.api, bucket="temporal-elasticsearch-snapshots-test"
+            )
+        self.assertTrue(all(method == "GET" for method, _, _ in fixture.calls))
 
     def test_requests_share_the_job_deadline_budget(self):
         with (
@@ -152,7 +227,9 @@ class SnapshotTests(unittest.TestCase):
 
     def test_native_snapshot_retains_hidden_indices_and_global_state(self):
         fixture = Fixture()
-        proof = snapshot.capture(fixture.api)
+        proof = snapshot.capture(
+            fixture.api, bucket="temporal-elasticsearch-snapshots-test"
+        )
         self.assertEqual(proof["status"], "NATIVE_SNAPSHOT_PASS_RESTORE_PENDING")
         self.assertEqual(proof["originalIndexUUIDs"], fixture.original)
         create = next(
@@ -177,7 +254,9 @@ class SnapshotTests(unittest.TestCase):
                     final["new-index"] = "new-uuid"
                 fixture.after_snapshot_indices = final
                 with self.assertRaisesRegex(RuntimeError, "identities changed while"):
-                    snapshot.capture(fixture.api)
+                    snapshot.capture(
+                        fixture.api, bucket="temporal-elasticsearch-snapshots-test"
+                    )
                 self.assertTrue(
                     any(
                         method == "PUT" and "wait_for_completion" in path
@@ -189,7 +268,9 @@ class SnapshotTests(unittest.TestCase):
         fixture = Fixture()
         fixture.result["indices"].append("temporary-unrecorded-index")
         with self.assertRaisesRegex(RuntimeError, "snapshot index set differs"):
-            snapshot.capture(fixture.api)
+            snapshot.capture(
+                fixture.api, bucket="temporal-elasticsearch-snapshots-test"
+            )
         self.assertEqual(
             fixture.original,
             {
@@ -211,7 +292,7 @@ class SnapshotTests(unittest.TestCase):
             "missing_node",
             "node_identity",
             "node_version",
-            "repository_path",
+            "s3_endpoint",
             "red",
             "relocating",
         ]:
@@ -228,14 +309,18 @@ class SnapshotTests(unittest.TestCase):
                     first["name"] = "foreign"
                 if failure == "node_version":
                     first["version"] = "8.19.21"
-                if failure == "repository_path":
-                    first["settings"]["path"]["repo"] = []
+                if failure == "s3_endpoint":
+                    first["settings"]["s3"]["client"][snapshot.CLIENT]["endpoint"] = (
+                        "foreign"
+                    )
                 if failure == "red":
                     fixture.health["status"] = "red"
                 if failure == "relocating":
                     fixture.health["relocating_shards"] = 1
                 with self.assertRaises(RuntimeError):
-                    snapshot.capture(fixture.api)
+                    snapshot.capture(
+                        fixture.api, bucket="temporal-elasticsearch-snapshots-test"
+                    )
                 self.assertFalse(any(method != "GET" for method, _, _ in fixture.calls))
 
     def test_never_overwrites_foreign_repository(self):
@@ -243,8 +328,10 @@ class SnapshotTests(unittest.TestCase):
         fixture.repository = {
             snapshot.REPOSITORY: {"type": "fs", "settings": {"location": "/foreign"}}
         }
-        with self.assertRaisesRegex(RuntimeError, "different type or location"):
-            snapshot.capture(fixture.api)
+        with self.assertRaisesRegex(RuntimeError, "different type or destination"):
+            snapshot.capture(
+                fixture.api, bucket="temporal-elasticsearch-snapshots-test"
+            )
         self.assertFalse(any(method == "PUT" for method, _, _ in fixture.calls))
 
     def test_requires_shared_access_and_clean_analysis(self):
@@ -256,7 +343,9 @@ class SnapshotTests(unittest.TestCase):
                 else:
                     fixture.issues = ["incorrect read"]
                 with self.assertRaises(RuntimeError):
-                    snapshot.capture(fixture.api)
+                    snapshot.capture(
+                        fixture.api, bucket="temporal-elasticsearch-snapshots-test"
+                    )
                 self.assertFalse(
                     any(
                         method == "PUT" and "wait_for_completion" in path
@@ -267,7 +356,7 @@ class SnapshotTests(unittest.TestCase):
     def test_existing_native_backup_is_idempotent(self):
         fixture = Fixture()
         fixture.snapshot = copy.deepcopy(fixture.result)
-        snapshot.capture(fixture.api)
+        snapshot.capture(fixture.api, bucket="temporal-elasticsearch-snapshots-test")
         self.assertFalse(
             any(
                 method == "PUT" and "wait_for_completion" in path
@@ -306,7 +395,9 @@ class SnapshotTests(unittest.TestCase):
                 if failure == "no_global_state":
                     existing["include_global_state"] = False
                 with self.assertRaises(RuntimeError):
-                    snapshot.capture(fixture.api)
+                    snapshot.capture(
+                        fixture.api, bucket="temporal-elasticsearch-snapshots-test"
+                    )
                 self.assertFalse(
                     any(
                         method == "PUT" and "wait_for_completion" in path
