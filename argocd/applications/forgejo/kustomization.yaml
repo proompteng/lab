@@ -15,22 +15,3 @@ helmCharts:
     releaseName: forgejo
     namespace: forgejo
     valuesFile: values.yaml
-
-configMapGenerator:
-  - name: forgejo-kargo-16-0-3-rehearsal
-    files:
-      - upgrade-db-rehearsal.sh
-      - upgrade-app-rehearsal.sh
-      - upgrade-repository-refs.sh
-    options:
-      annotations:
-        argocd.argoproj.io/sync-wave: "-25"
-generatorOptions:
-  disableNameSuffixHash: true
-patches:
-  - path: kargo-upgrade-quiesce.patch.yaml
-    target:
-      group: apps
-      version: v1
-      kind: Deployment
-      name: forgejo

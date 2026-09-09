@@ -304,7 +304,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "2"
                   kargo.akuity.io/authorized-stage: lab-delivery:hermes-toolchain
-                automation: manual
+                automation: auto
                 enabled: "true"
                 ignoreDifferences:
                   - group: apps
