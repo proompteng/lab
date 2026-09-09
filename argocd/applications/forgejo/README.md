@@ -35,8 +35,8 @@ published image. The Stage updates both Helm-rendered containers and the
 isolated rehearsal through a Kustomize image transformation, writes source
 metadata, and syncs the exact generated commit.
 
-This preparation stops the existing Deployment and takes a new pair of
-snapshots after the earlier restoration. It migrates only fresh clones using
-the selected Kargo image. Require that rehearsal to complete before removing
-the temporary quiesce patch and Jobs in the final release. Retain both recovery
-sets and all claims. Follow the [upgrade runbook](../../../docs/runbooks/forgejo-16-upgrade.md).
+The selected-image rehearsal passed against new snapshots and isolated clones.
+The final promotion restores one production replica and retires the maintenance
+Jobs, ConfigMap, read-only RBAC and isolation policy. Both recovery sets and all
+claims remain retained. Follow the [upgrade runbook](../../../docs/runbooks/forgejo-16-upgrade.md)
+for migration acceptance and coordinated recovery.

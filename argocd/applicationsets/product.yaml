@@ -129,7 +129,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
                   kargo.akuity.io/authorized-stage: lab-delivery:forgejo
-                automation: manual
+                automation: auto
                 enabled: "true"
               - name: kitty-krew
                 path: argocd/applications/kitty-krew

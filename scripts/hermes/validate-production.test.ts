@@ -848,12 +848,25 @@ test('rejects syncing Hermes before network-policy enforcement proof', async () 
   )
 })
 
-test('rejects automatic Argo reconciliation during the staged migration', async () => {
+test('allows manual Hermes reconciliation for a reviewed maintenance phase', async () => {
   const files = await loadProductionFiles()
-  files.platform = files.platform.replace(/(\n\s+- name: hermes\n[\s\S]*?automation:) manual/, '$1 auto')
+  files.platform = files.platform.replace(/(\n\s+- name: hermes\n[\s\S]*?automation:) auto/, '$1 manual')
+  expect(validateProductionContent(files)).toEqual([])
+})
 
+test('rejects automatic Hermes reconciliation from an unpromoted source', async () => {
+  const files = await loadProductionFiles()
+  files.platform = files.platform.replace('targetRevision: kargo/hermes-toolchain', 'targetRevision: main')
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.platform}: missing production invariant "automation: manual"`,
+    `${productionPaths.platform}: missing production invariant "targetRevision: kargo/hermes-toolchain"`,
+  )
+})
+
+test('rejects automatic Hermes reconciliation without the authorized Stage', async () => {
+  const files = await loadProductionFiles()
+  files.platform = files.platform.replace('kargo.akuity.io/authorized-stage: lab-delivery:hermes-toolchain', '')
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.platform}: missing production invariant "kargo.akuity.io/authorized-stage: lab-delivery:hermes-toolchain"`,
   )
 })
 

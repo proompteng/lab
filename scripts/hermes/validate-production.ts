@@ -1158,7 +1158,6 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   requireTerms(failures, productionPaths.platform, hermesApplication, [
     'path: argocd/applications/hermes',
     'namespace: hermes',
-    'automation: manual',
     'group: apps',
     'kind: StatefulSet',
     'name: hermes',
@@ -1171,6 +1170,14 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'pod-security.kubernetes.io/enforce: restricted',
     'argocd.argoproj.io/sync-options: Prune=false',
   ])
+  if (hermesApplication.includes('automation: auto')) {
+    requireTerms(failures, productionPaths.platform, hermesApplication, [
+      'targetRevision: kargo/hermes-toolchain',
+      'kargo.akuity.io/authorized-stage: lab-delivery:hermes-toolchain',
+    ])
+  } else {
+    requireTerms(failures, productionPaths.platform, hermesApplication, ['automation: manual'])
+  }
   forbidTerms(failures, productionPaths.platform, hermesApplication, [
     'group: coordination.k8s.io',
     'kind: Lease',

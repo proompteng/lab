@@ -32,9 +32,13 @@ kubectl --context galactic-lan -n forgejo exec deployment/forgejo -c forgejo -- 
 
 ## Consistent backup and migration rehearsal
 
-Forgejo keeps Argo automatic sync disabled. Its authorized Kargo Stage invokes
-Argo with the exact generated promotion commit. Preserve that ApplicationSet
-policy and do not manually sync an image or maintenance revision from main.
+During the snapshot rehearsal, Forgejo keeps Argo automatic sync disabled.
+The authorized Kargo Stage invokes Argo with the exact promotion commit.
+After the rehearsal succeeds, the activation change enables automatic
+reconciliation on `kargo/forgejo` so Argo removes retired maintenance resources
+after the production server is healthy. Kargo 1.11.4 does not request pruning
+itself. Retained snapshots and claims keep `Prune=false,Delete=false`.
+Do not manually sync an image or maintenance revision from main.
 
 The maintenance commit sets only the existing Deployment's replica count to
 zero in sync wave -20. The following read-only gate verifies its UID, both
@@ -97,3 +101,11 @@ quiesce patch with the old image to restore service while investigating.
 Do not force-delete Pods or claims. After production migration, do not run the
 old binary against the migrated database: coordinated recovery requires both
 retained snapshots and accounting for any writes accepted after the upgrade.
+
+## Steady state after activation
+
+The maintenance resources are retired after the selected-image rehearsal.
+Both original recovery sets and their clone PVCs remain retained. Every new
+release still requires a matching published image and source commit, and
+Kargo updates the full digest and provenance before invoking Argo. Normal
+reconciliation must not recreate a one-time gate requiring zero replicas.
