@@ -1,6 +1,5 @@
-# Loki 3 migration deployment. It joins the existing loki-distributed rings
-# while the old release remains the client endpoint. The old boltdb-shipper
-# period is immutable throughout this app-version migration.
+# Loki 3 uses its own process ring while the old release remains the client
+# endpoint. Share only the existing object-store schema, never the 2.9 RPC ring.
 fullnameOverride: observability-loki-v3
 nameOverride: observability-loki-v3
 deploymentMode: Distributed
@@ -100,8 +99,7 @@ loki:
 
 migrate:
   fromDistributed:
-    enabled: true
-    memberlistService: observability-loki-loki-distributed-memberlist
+    enabled: false
 
 ingester:
   enabled: true
