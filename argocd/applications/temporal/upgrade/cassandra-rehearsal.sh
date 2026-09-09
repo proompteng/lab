@@ -4,23 +4,12 @@ set -Eeuo pipefail
 [[ "$REHEARSAL_PHASE" == source || "$REHEARSAL_PHASE" == target ]] || exit 1
 [[ "$EXPECTED_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
 python_command=$(command -v python3 || command -v python)
-# Confirm the default-deny policy before opening data with either engine. The
-# separate API verification Job has already proved this endpoint is serving.
-"$python_command" - <<'NETWORK'
-from __future__ import print_function
-import errno, os, socket
-try:
-    connection = socket.create_connection((os.environ['KUBERNETES_SERVICE_HOST'], int(os.environ['KUBERNETES_SERVICE_PORT'])), 5)
-except socket.timeout:
-    print('PASS: rehearsal API egress is denied')
-except socket.error as error:
-    if error.errno not in (errno.EHOSTUNREACH, errno.ENETUNREACH, errno.EACCES, errno.EPERM):
-        raise
-    print('PASS: rehearsal API egress is denied')
-else:
-    connection.close()
-    raise SystemExit('Rehearsal unexpectedly reaches Kubernetes; refusing to start Cassandra')
-NETWORK
+# The token-bearing init container verifies fresh native backups and probes
+# production CQL successfully. Engine containers never mount that token. Policy
+# allows only API metadata access, and the actual production data paths must be
+# denied before either engine opens its clone.
+: "${GENERATION:?required}"
+"$python_command" /scripts/verify-rehearsal-network.py
 engine_pid=
 stop_engine() {
   if [[ -n "$engine_pid" ]] && kill -0 "$engine_pid" 2>/dev/null; then

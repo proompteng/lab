@@ -52,3 +52,20 @@ those references. CI renders this application and checks every Cassandra Job's
 ConfigMap reference against its rendered namespace and name. Preparation `31119-v1`
 never started because its script ConfigMap reference did not resolve; generation
 `31119-v2` replaces that unused Job and performs the complete backup sequence.
+
+Generation `31119-v2` stopped before either database engine opened the clone:
+kubectl selected its image default endpoint, and the API endpoint was an invalid
+network isolation probe because Kubernetes permits local-node traffic. Its CSI
+snapshots and clone remain explicitly retained but are not accepted native backups.
+
+Generation `31119-v3` configures kubectl explicitly from its projected service
+account token file and CA. The rehearsal has its own verification init container,
+so a selective Argo retry cannot skip the backup gate. Only that init container
+mounts the token; neither Cassandra engine does. Its NetworkPolicy permits only
+the existing Kubernetes API addresses and ports for metadata verification. The
+init container also proves all three production CQL endpoints respond with their
+original host IDs. Before opening data, each engine waits for policy convergence
+and requires three consecutive denied probes to those actual data endpoints.
+An unexpected reachable endpoint, stale snapshot, failed native backup or changed
+identity prevents the engine from starting. The API is not used as an isolation
+proxy. Production listeners remain separate from the loopback-only clone engine.
