@@ -50,17 +50,7 @@ def copy_component(source, destination):
     return checksum & 0xFFFFFFFF, digest.hexdigest(), before.st_size
 
 
-def restore(
-    source,
-    target,
-    generation,
-    proof,
-    expected_temporal_tables=18,
-    source_version="3.11.5",
-):
-    if source_version not in ("3.11.5", "3.11.19", "4.1.12", "5.0.9"):
-        raise ValueError("unsupported native snapshot source version")
-    relative_manifest = source_version != "3.11.5"
+def restore(source, target, generation, proof, expected_temporal_tables=18):
     if not re.match(r"^[0-9]+-v[1-9][0-9]*$", generation):
         raise ValueError("invalid native snapshot generation")
     source = os.path.realpath(source)
@@ -95,13 +85,9 @@ def restore(
         tables.add(identity)
         with open(regular_file(os.path.join(snapshot, "manifest.json"))) as manifest:
             files = json.load(manifest)["files"]
-        filename_pattern = r"^[a-z]{2}-[0-9]+-big-Data\.db$"
-        if relative_manifest:
-            filename_pattern = (
-                r"^(\.[A-Za-z][A-Za-z0-9_]*/)?[a-z]{2}-[0-9]+-big-Data\.db$"
-            )
         if not isinstance(files, list) or any(
-            not isinstance(name, STRING_TYPES) or not re.match(filename_pattern, name)
+            not isinstance(name, STRING_TYPES)
+            or not re.match(r"^[a-z]{2}-[0-9]+-big-Data\.db$", name)
             for name in files
         ):
             raise ValueError("invalid SSTable filename in native snapshot manifest")
@@ -118,13 +104,9 @@ def restore(
                     raise ValueError("unexpected secondary index directory")
                 groups.append((name, path))
         manifest_matched = False
-        relative_data_files = set()
         for index, folder in groups:
             names = set(os.listdir(folder))
             data_files = sorted(name for name in names if name.endswith("-Data.db"))
-            relative_data_files.update(
-                (index + "/" if index else "") + name for name in data_files
-            )
             # Cassandra 3.11.5 writes each index's manifest to its parent table.
             # Validate that manifest against one complete native group, and retain
             # every base/index SSTable in the immutable named snapshot directory.
@@ -164,12 +146,7 @@ def restore(
             if names - allowed:
                 raise ValueError("unexpected or orphaned native snapshot component")
             plan.append((folder, keyspace, table, index, components))
-        if relative_manifest:
-            if set(files) != relative_data_files:
-                raise ValueError(
-                    "relative manifest does not match all native base and index SSTables"
-                )
-        elif not manifest_matched:
+        if not manifest_matched:
             raise ValueError("manifest does not match a native table or index group")
 
     if (
@@ -210,7 +187,6 @@ def restore(
     sync_directory(target)
     result = {
         "generation": generation,
-        "sourceVersion": source_version,
         "tables": len(tables),
         "secondaryIndexes": sum(1 for item in plan if item[3]),
         "components": len(copied),
@@ -231,10 +207,4 @@ def restore(
 
 
 if __name__ == "__main__":
-    restore(
-        "/snapshot",
-        "/var/lib/cassandra",
-        os.environ["GENERATION"],
-        "/proof",
-        source_version=os.environ["EXPECTED_VERSION"],
-    )
+    restore("/snapshot", "/var/lib/cassandra", os.environ["GENERATION"], "/proof")

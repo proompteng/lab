@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: temporal
 
 resources:
+  - upgrade/cassandra-4112-v2-backup.yaml
   - upgrade/cassandra-4112-backup.yaml
   - upgrade/elasticsearch-preparation.yaml
   - upgrade/retained-rf3-snapshots.yaml
@@ -211,7 +212,7 @@ configMapGenerator:
     files:
       - cassandra-gate.sh=upgrade/retained-31119-v6-gate.sh
       - cassandra-rehearsal.sh=upgrade/retained-31119-v6-rehearsal.sh
-      - upgrade/restore-native-snapshot.py
+      - restore-native-snapshot.py=upgrade/retained-31119-v6-native-restore.py
       - upgrade/canonicalize-cql.py
       - upgrade/verify-rehearsal-network.py
     options:
@@ -230,6 +231,17 @@ configMapGenerator:
       annotations:
         argocd.argoproj.io/sync-wave: "-30"
   - name: temporal-cassandra-upgrade-scripts-4112-v1
+    files:
+      - upgrade/cassandra-gate.sh
+      - upgrade/cassandra-rehearsal.sh
+      - restore-native-snapshot.py=upgrade/retained-31119-v6-native-restore.py
+      - upgrade/canonicalize-cql.py
+      - upgrade/verify-rehearsal-network.py
+      - upgrade/verify-cassandra-sstables.sh
+    options:
+      annotations:
+        argocd.argoproj.io/sync-wave: "-30"
+  - name: temporal-cassandra-upgrade-scripts-4112-v2
     files:
       - upgrade/cassandra-gate.sh
       - upgrade/cassandra-rehearsal.sh
