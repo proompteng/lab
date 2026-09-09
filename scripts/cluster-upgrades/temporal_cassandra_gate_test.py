@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+import zlib
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -52,6 +53,7 @@ if args[0]=='get':
  raise SystemExit('Unexpected get '+repr(args))
 if args[0]=='exec':
  n=int(args[1][-1]); cmd=args[args.index('--')+1:]
+ if cmd==['sync','-f','/var/lib/cassandra']: done()
  if cmd[:2]==['nodetool','status']:
   if mode=='ring-api': raise SystemExit('Forbidden exec')
   if mode=='host-id': hosts[-1]='00000000-0000-0000-0000-000000000000'
@@ -257,6 +259,9 @@ class CassandraGateTests(unittest.TestCase):
         result, calls, state = self.run_gate(mode="backup")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(state["snapshots"], [["temporal-before-31119-v1"]] * 3)
+        self.assertEqual(
+            sum(c[-3:] == ["sync", "-f", "/var/lib/cassandra"] for c in calls), 3
+        )
         self.assertFalse(any(c[0] == "delete" or "drain" in c for c in calls))
 
     def test_rehearsal_verification_requires_native_backup_and_live_cql_controls(self):
@@ -331,7 +336,7 @@ class CassandraGateTests(unittest.TestCase):
                 env={
                     "PATH": directory,
                     "EXPECTED_VERSION": "3.11.19",
-                    "REHEARSAL_PHASE": "target",
+                    "REHEARSAL_PHASE": "restore",
                     "GENERATION": "31119-v4",
                 },
                 text=True,
@@ -359,6 +364,192 @@ class CassandraGateTests(unittest.TestCase):
             )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("requires a bundled Python interpreter", result.stderr)
+
+    def native_snapshot_fixture(self, directory):
+        script = (
+            ROOT / "argocd/applications/temporal/upgrade/restore-native-snapshot.py"
+        )
+        spec = importlib.util.spec_from_file_location("restore_snapshot", script)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        root = Path(directory)
+        source, target, proof = (root / name for name in ("source", "target", "proof"))
+        for path in (source, target, proof):
+            path.mkdir()
+        for number, (keyspace, table) in enumerate(
+            [
+                ("system", "local"),
+                ("system_schema", "keyspaces"),
+                ("system_schema", "tables"),
+                ("temporal", "tasks"),
+            ]
+        ):
+            snapshot = (
+                source
+                / "data"
+                / keyspace
+                / f"{table}-{number:032x}"
+                / "snapshots"
+                / "temporal-before-31119-v5"
+            )
+            snapshot.mkdir(parents=True)
+            data = ("immutable snapshot fixture " + table).encode()
+            (snapshot / "md-1-big-Data.db").write_bytes(data)
+            (snapshot / "md-1-big-Digest.crc32").write_text(
+                str(zlib.crc32(data) & 0xFFFFFFFF)
+            )
+            (snapshot / "md-1-big-Statistics.db").write_bytes(b"metadata fixture")
+            (snapshot / "md-1-big-Index.db").write_bytes(b"index fixture")
+            (snapshot / "md-1-big-TOC.txt").write_text(
+                "Data.db\nDigest.crc32\nStatistics.db\nIndex.db\nTOC.txt\n"
+            )
+            (snapshot / "manifest.json").write_text(
+                json.dumps({"files": ["md-1-big-Data.db"]})
+            )
+            (snapshot.parents[1] / "md-2-big-Data.db").write_bytes(
+                b"later live file must never be restored"
+            )
+        return module, source, target, proof
+
+    def test_native_restore_excludes_live_files_and_preserves_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            module, source, target, proof = self.native_snapshot_fixture(directory)
+            original = {
+                str(p.relative_to(source)): p.read_bytes()
+                for p in source.rglob("*")
+                if p.is_file()
+            }
+            result = module.restore(
+                str(source),
+                str(target),
+                "31119-v5",
+                str(proof),
+                expected_temporal_tables=1,
+            )
+            self.assertEqual(result["tables"], 4)
+            self.assertEqual(result["components"], 20)
+            self.assertEqual(
+                (proof / "native-snapshot-generation").read_text().strip(), "31119-v5"
+            )
+            self.assertFalse(list(target.rglob("md-2-big-Data.db")))
+            self.assertFalse(list(target.rglob("commitlog*")))
+            self.assertEqual(
+                original,
+                {
+                    str(p.relative_to(source)): p.read_bytes()
+                    for p in source.rglob("*")
+                    if p.is_file()
+                },
+            )
+            for copied in (target / "data").rglob("md-1-big-Data.db"):
+                source_file = (
+                    source
+                    / copied.relative_to(target).parent
+                    / "snapshots"
+                    / "temporal-before-31119-v5"
+                    / copied.name
+                )
+                self.assertEqual(copied.read_bytes(), source_file.read_bytes())
+
+    def test_native_restore_rejects_bad_snapshot_checksum(self):
+        with tempfile.TemporaryDirectory() as directory:
+            module, source, target, proof = self.native_snapshot_fixture(directory)
+            next(source.rglob("snapshots/*/md-1-big-Data.db")).write_bytes(
+                b"corrupted snapshot fixture"
+            )
+            with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+                module.restore(
+                    str(source),
+                    str(target),
+                    "31119-v5",
+                    str(proof),
+                    expected_temporal_tables=1,
+                )
+            self.assertFalse((proof / "native-snapshot-generation").exists())
+
+    def test_native_restore_rejects_missing_components_before_writing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            module, source, target, proof = self.native_snapshot_fixture(directory)
+            next(source.rglob("snapshots/*/md-1-big-Index.db")).unlink()
+            with self.assertRaises(OSError):
+                module.restore(
+                    str(source),
+                    str(target),
+                    "31119-v5",
+                    str(proof),
+                    expected_temporal_tables=1,
+                )
+            self.assertFalse((target / "data").exists())
+
+    def test_native_restore_rejects_manifest_traversal_and_symlinks(self):
+        for failure in ("manifest", "component", "symlink"):
+            with (
+                self.subTest(failure=failure),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                module, source, target, proof = self.native_snapshot_fixture(directory)
+                manifest = next(source.rglob("manifest.json"))
+                if failure == "manifest":
+                    manifest.write_text(json.dumps({"files": ["../md-1-big-Data.db"]}))
+                elif failure == "component":
+                    (manifest.parent / "md-1-big-TOC.txt").write_text(
+                        "Data.db\nDigest.crc32\nStatistics.db\nIndex.db\nTOC.txt\n../escape.db\n"
+                    )
+                else:
+                    data = manifest.parent / "md-1-big-Data.db"
+                    data.unlink()
+                    data.symlink_to(source / "outside")
+                    (source / "outside").write_bytes(b"must not follow")
+                with self.assertRaises(ValueError):
+                    module.restore(
+                        str(source),
+                        str(target),
+                        "31119-v5",
+                        str(proof),
+                        expected_temporal_tables=1,
+                    )
+                self.assertFalse((target / "data").exists())
+
+    def test_native_restore_refuses_existing_or_overlapping_data(self):
+        with tempfile.TemporaryDirectory() as directory:
+            module, source, target, proof = self.native_snapshot_fixture(directory)
+            with self.assertRaisesRegex(ValueError, "separate"):
+                module.restore(
+                    str(source),
+                    str(source),
+                    "31119-v5",
+                    str(proof),
+                    expected_temporal_tables=1,
+                )
+            (target / "data").mkdir()
+            sentinel = target / "data" / "preserve"
+            sentinel.write_text("existing data")
+            with self.assertRaisesRegex(ValueError, "empty destination"):
+                module.restore(
+                    str(source),
+                    str(target),
+                    "31119-v5",
+                    str(proof),
+                    expected_temporal_tables=1,
+                )
+            self.assertEqual(sentinel.read_text(), "existing data")
+
+    def test_native_restore_requires_expected_schema_and_table_set(self):
+        with tempfile.TemporaryDirectory() as directory:
+            module, source, target, proof = self.native_snapshot_fixture(directory)
+            with self.assertRaisesRegex(ValueError, "expected Temporal tables"):
+                module.restore(str(source), str(target), "31119-v5", str(proof))
+            schema = next((source / "data" / "system_schema").glob("tables-*"))
+            schema.rename(schema.with_name("different-" + "a" * 32))
+            with self.assertRaisesRegex(ValueError, "cluster identity or schema"):
+                module.restore(
+                    str(source),
+                    str(target),
+                    "31119-v5",
+                    str(proof),
+                    expected_temporal_tables=1,
+                )
+            self.assertFalse((target / "data").exists())
 
     def test_namespace_hash_ignores_query_formatting_and_row_order(self):
         script = ROOT / "argocd/applications/temporal/upgrade/canonicalize-cql.py"

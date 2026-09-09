@@ -125,6 +125,7 @@ backup() {
   done
   for ordinal in 0 1 2; do
     node_exec "$ordinal" nodetool snapshot --tag "temporal-before-$GENERATION"
+    node_exec "$ordinal" sync -f /var/lib/cassandra
     snapshots=$(node_exec "$ordinal" nodetool listsnapshots)
     [[ "$snapshots" == *"temporal-before-$GENERATION"* ]] || fail 'native snapshot was not recorded'
   done

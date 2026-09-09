@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 : "${EXPECTED_VERSION:?required}" "${REHEARSAL_PHASE:?required}"
-[[ "$REHEARSAL_PHASE" == source || "$REHEARSAL_PHASE" == target ]] || exit 1
+[[ "$REHEARSAL_PHASE" == restore || "$REHEARSAL_PHASE" == source || "$REHEARSAL_PHASE" == target ]] || exit 1
 [[ "$EXPECTED_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
 python_command=$(command -v python3 || command -v python2 || command -v python) || {
   printf 'Cassandra rehearsal requires a bundled Python interpreter.\n' >&2
@@ -13,6 +13,14 @@ python_command=$(command -v python3 || command -v python2 || command -v python) 
 # denied before either engine opens its clone.
 : "${GENERATION:?required}"
 "$python_command" /scripts/verify-rehearsal-network.py
+if [[ "$REHEARSAL_PHASE" == restore ]]; then
+  "$python_command" /scripts/restore-native-snapshot.py
+  exit 0
+fi
+[[ $(cat /proof/native-snapshot-generation) == "$GENERATION" ]] || {
+  printf 'Cassandra engine requires a completed native snapshot restore.\n' >&2
+  exit 1
+}
 engine_pid=
 stop_engine() {
   if [[ -n "$engine_pid" ]] && kill -0 "$engine_pid" 2>/dev/null; then
@@ -34,7 +42,7 @@ on_exit() {
 trap on_exit EXIT
 trap 'exit 143' TERM INT
 
-# The only data mount is the retained clone. The official entrypoint supplies
+# The only data mount contains the verified native snapshot restore. The official entrypoint supplies
 # version-specific defaults while all listeners/seeds remain on loopback.
 export CASSANDRA_LISTEN_ADDRESS=127.0.0.1 CASSANDRA_BROADCAST_ADDRESS=127.0.0.1
 export CASSANDRA_RPC_ADDRESS=127.0.0.1 CASSANDRA_BROADCAST_RPC_ADDRESS=127.0.0.1
