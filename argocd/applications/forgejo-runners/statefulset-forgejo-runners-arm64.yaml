@@ -2,6 +2,8 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: forgejo-runners-arm64
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
   labels:
     app.kubernetes.io/name: forgejo-runners
     app.kubernetes.io/component: runner
@@ -25,7 +27,7 @@ spec:
     spec:
       serviceAccountName: forgejo-runners
       automountServiceAccountToken: false
-      terminationGracePeriodSeconds: 360
+      terminationGracePeriodSeconds: 11400
       nodeSelector:
         kubernetes.io/arch: arm64
       affinity:
@@ -39,7 +41,7 @@ spec:
                 topologyKey: kubernetes.io/hostname
       initContainers:
         - name: register-runner
-          image: data.forgejo.org/forgejo/runner:11
+          image: data.forgejo.org/forgejo/runner:13.1.0@sha256:c4af85fd9f0dd03788676a534781a87c71aa2c6a37737143e017eb94d4312952
           imagePullPolicy: IfNotPresent
           securityContext:
             runAsUser: 0
@@ -86,9 +88,49 @@ spec:
               mountPath: /data
             - name: dind-sock
               mountPath: /var/run
+        - name: dind
+          restartPolicy: Always
+          image: docker:29.8.0-dind@sha256:5efed980cba3fc126cf54e21a5a6ff8849d05b6e0623d6e7612f48e9cd6cd17e
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+          env:
+            - name: DOCKER_TLS_CERTDIR
+              value: ''
+          args:
+            - dockerd
+            - --host=unix:///var/run/docker.sock
+            - --storage-driver=overlay2
+            - --feature=containerd-snapshotter=false
+          startupProbe:
+            exec:
+              command: [docker, info]
+            periodSeconds: 2
+            timeoutSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            exec:
+              command: [docker, info]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+              ephemeral-storage: 8Gi
+            limits:
+              cpu: '3'
+              memory: 6Gi
+              ephemeral-storage: 20Gi
+          volumeMounts:
+            - name: dind-sock
+              mountPath: /var/run
+            - name: docker-graph
+              mountPath: /var/lib/docker
       containers:
         - name: runner
-          image: data.forgejo.org/forgejo/runner:11
+          image: data.forgejo.org/forgejo/runner:13.1.0@sha256:c4af85fd9f0dd03788676a534781a87c71aa2c6a37737143e017eb94d4312952
           imagePullPolicy: IfNotPresent
           securityContext:
             runAsUser: 0
@@ -117,32 +159,6 @@ spec:
               mountPath: /data
             - name: dind-sock
               mountPath: /var/run
-        - name: dind
-          image: docker:27.5.1-dind
-          imagePullPolicy: IfNotPresent
-          securityContext:
-            privileged: true
-          env:
-            - name: DOCKER_TLS_CERTDIR
-              value: ''
-          args:
-            - dockerd
-            - --host=unix:///var/run/docker.sock
-            - --storage-driver=overlay2
-          resources:
-            requests:
-              cpu: 500m
-              memory: 1Gi
-              ephemeral-storage: 8Gi
-            limits:
-              cpu: '3'
-              memory: 6Gi
-              ephemeral-storage: 20Gi
-          volumeMounts:
-            - name: dind-sock
-              mountPath: /var/run
-            - name: docker-graph
-              mountPath: /var/lib/docker
       volumes:
         - name: config
           configMap:
