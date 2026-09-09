@@ -25,6 +25,7 @@ resources:
   - bayn-cycle-operations-dashboard-configmap.yaml
   - cluster-metrics-alloy-rbac.yaml
   - cluster-metrics-alloy-deployment.yaml
+  - mimir-config-check.yaml
   - tempo-v3-config-check.yaml
   - tempo-v3-migration-vulture.yaml
 
@@ -38,7 +39,7 @@ helmCharts:
     valuesFile: kube-state-metrics-values.yaml
   - name: mimir-distributed
     repo: https://grafana.github.io/helm-charts
-    version: 6.1.0
+    version: 6.2.0
     releaseName: observability-mimir
     namespace: observability
     includeCRDs: true
@@ -82,6 +83,14 @@ images:
 patches:
   - target:
       kind: ConfigMap
+      name: observability-mimir-(config|runtime)
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "-2"
+  - target:
+      kind: ConfigMap
       name: observability-tempo-v3-(config|runtime)
     patch: |-
       - op: add
@@ -98,6 +107,7 @@ patches:
         name: observability-mimir-compactor
         annotations:
           argocd.argoproj.io/sync-options: Replace=true
+          argocd.argoproj.io/sync-wave: "2"
   - target:
       kind: StatefulSet
       name: observability-mimir-ingester
@@ -118,6 +128,7 @@ patches:
         name: observability-mimir-store-gateway
         annotations:
           argocd.argoproj.io/sync-options: Replace=true
+          argocd.argoproj.io/sync-wave: "1"
   - target:
       kind: StatefulSet
       name: observability-mimir-kafka
@@ -181,6 +192,10 @@ patches:
       kind: StatefulSet
       name: observability-mimir-alertmanager
     patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "3"
       - op: add
         path: /spec/template/metadata/annotations/observability.proompteng.ai~1alertmanager-fallback-config-revision
         value: "2026-06-20-1"
