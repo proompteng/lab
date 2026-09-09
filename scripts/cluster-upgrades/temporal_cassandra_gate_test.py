@@ -319,6 +319,47 @@ class CassandraGateTests(unittest.TestCase):
         ]
         self.assertEqual(len(snapshot_reads), 9)
 
+    def test_rehearsal_uses_python2_when_it_is_the_only_bundled_interpreter(self):
+        script = ROOT / "argocd/applications/temporal/upgrade/cassandra-rehearsal.sh"
+        prefix = script.read_text().split("engine_pid=", 1)[0]
+        with tempfile.TemporaryDirectory() as directory:
+            python = Path(directory) / "python2"
+            python.write_text('#!/bin/sh\nprintf "selected python2: %s\\n" "$1"\n')
+            python.chmod(0o755)
+            result = subprocess.run(
+                ["/bin/bash", "-c", prefix],
+                env={
+                    "PATH": directory,
+                    "EXPECTED_VERSION": "3.11.19",
+                    "REHEARSAL_PHASE": "target",
+                    "GENERATION": "31119-v4",
+                },
+                text=True,
+                capture_output=True,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            "selected python2: /scripts/verify-rehearsal-network.py", result.stdout
+        )
+
+    def test_rehearsal_reports_missing_interpreter_before_engine_start(self):
+        script = ROOT / "argocd/applications/temporal/upgrade/cassandra-rehearsal.sh"
+        prefix = script.read_text().split("engine_pid=", 1)[0]
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run(
+                ["/bin/bash", "-c", prefix],
+                env={
+                    "PATH": directory,
+                    "EXPECTED_VERSION": "3.11.19",
+                    "REHEARSAL_PHASE": "target",
+                    "GENERATION": "31119-v4",
+                },
+                text=True,
+                capture_output=True,
+            )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("requires a bundled Python interpreter", result.stderr)
+
     def test_namespace_hash_ignores_query_formatting_and_row_order(self):
         script = ROOT / "argocd/applications/temporal/upgrade/canonicalize-cql.py"
 
