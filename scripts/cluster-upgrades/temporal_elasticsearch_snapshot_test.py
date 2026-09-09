@@ -120,6 +120,30 @@ class Fixture:
 
 
 class SnapshotTests(unittest.TestCase):
+    def test_known_node_departure_between_health_and_settings_is_retried(self):
+        fixture = Fixture()
+        node_id = next(iter(fixture.nodes["nodes"]))
+        missing = fixture.nodes["nodes"].pop(node_id)
+        sleeps = []
+
+        def node_returns(seconds):
+            sleeps.append(seconds)
+            fixture.nodes["nodes"][node_id] = missing
+
+        snapshot.wait_for_source(fixture.api, sleep=node_returns, clock=lambda: 0)
+        self.assertEqual(sleeps, [5])
+        self.assertIsNone(fixture.repository)
+        self.assertTrue(all(method == "GET" for method, _, _ in fixture.calls))
+
+    def test_a_foreign_node_id_is_rejected_without_waiting(self):
+        fixture = Fixture()
+        fixture.nodes["nodes"]["foreign"] = {}
+        sleeps = []
+        with self.assertRaisesRegex(RuntimeError, "node identities changed"):
+            snapshot.wait_for_source(fixture.api, sleep=sleeps.append)
+        self.assertEqual(sleeps, [])
+        self.assertIsNone(fixture.repository)
+
     def test_rollout_waits_for_three_stable_nodes_without_repository_writes(self):
         fixture = Fixture()
         fixture.health["number_of_nodes"] = 2

@@ -75,12 +75,17 @@ def require_source(api):
     ):
         raise SourceNotReady("original three-node cluster is not stable and green")
     nodes = api("GET", "/_nodes/settings")
-    require(nodes.get("_nodes", {}).get("failed") == 0, "node settings request failed")
     actual = nodes.get("nodes", {})
     require(
-        {key: value.get("name") for key, value in actual.items()} == NODES,
+        all(
+            key in NODES and value.get("name") == NODES[key]
+            for key, value in actual.items()
+        ),
         "original node identities changed",
     )
+    if set(actual) != set(NODES):
+        raise SourceNotReady("some original nodes are unavailable between probes")
+    require(nodes.get("_nodes", {}).get("failed") == 0, "node settings request failed")
     for node in actual.values():
         require(node.get("version") == SOURCE_VERSION, "mixed Elasticsearch versions")
         client = (
