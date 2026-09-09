@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: torghut-alloy
+  namespace: torghut
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: torghut-alloy
+  namespace: torghut
+rules:
+  - apiGroups: ['']
+    resources: ['pods', 'pods/log', 'endpoints', 'services']
+    verbs: ['get', 'list', 'watch']
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: torghut-alloy
+  namespace: torghut
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: torghut-alloy
+subjects:
+  - kind: ServiceAccount
+    name: torghut-alloy
+    namespace: torghut

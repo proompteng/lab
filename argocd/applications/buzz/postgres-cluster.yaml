@@ -1,0 +1,58 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: buzz-db
+  labels:
+    app.kubernetes.io/name: buzz-db
+    app.kubernetes.io/part-of: buzz
+  annotations:
+    argocd.argoproj.io/sync-wave: "-7"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  description: Buzz relay state
+  inheritedMetadata:
+    annotations:
+      argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  instances: 3
+  # Preparation wave: patch PostgreSQL 17 on Debian trixie before the gated major cutover.
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.11-system-trixie@sha256:362b039f643f1c09a34edd63d9a78903e5f1f4f43c24236cc8459621eb676d12
+  imagePullPolicy: IfNotPresent
+  enablePDB: true
+  enableSuperuserAccess: false
+  minSyncReplicas: 1
+  maxSyncReplicas: 1
+  primaryUpdateStrategy: unsupervised
+  primaryUpdateMethod: switchover
+  affinity:
+    podAntiAffinityType: required
+    topologyKey: kubernetes.io/hostname
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  storage:
+    storageClass: rook-ceph-block
+    size: 20Gi
+    resizeInUseVolumes: true
+  bootstrap:
+    initdb:
+      database: buzz
+      owner: buzz
+      encoding: UTF8
+      dataChecksums: true
+  postgresql:
+    parameters:
+      password_encryption: scram-sha-256
+      ssl_min_protocol_version: TLSv1.3
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      # CNPG defaults this field to true. Keep it explicit so Argo's
+      # client-side and server-side comparison paths produce the same object.
+      enabled: true
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: buzz-db
+        serverName: buzz-db-live

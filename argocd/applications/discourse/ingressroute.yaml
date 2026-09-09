@@ -1,0 +1,16 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: discourse
+spec:
+  entryPoints:
+    - web
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`forum.proompteng.ai`)
+      middlewares:
+        - name: discourse-forwarded-proto
+      services:
+        - name: discourse
+          port: 80

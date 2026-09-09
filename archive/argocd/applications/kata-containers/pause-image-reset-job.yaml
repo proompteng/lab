@@ -1,0 +1,57 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pause-image-reset
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: OnFailure
+      hostNetwork: true
+      hostPID: true
+      nodeSelector:
+        kubernetes.io/hostname: ryzen
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: ctr
+          image: debian:bookworm
+          securityContext:
+            privileged: true
+          command:
+            - bash
+            - -euxo
+            - pipefail
+            - -c
+            - |
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y --no-install-recommends ca-certificates containerd
+
+              CTR="ctr -a /host/run/containerd/containerd.sock -n k8s.io"
+
+              $CTR images rm registry.k8s.io/pause:3.10 || true
+              $CTR images rm registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a || true
+              $CTR content rm sha256:61d9e957431bdf7a34f31cbcb23fe7966ab9da5c1df35138b1e752af15b69669 || true
+
+              $CTR images rm docker.io/library/ubuntu:24.04 || true
+              $CTR content rm sha256:a3629ac5b9f4680dc2032439ff2354e73b06aecc2e68f0035a2d7c001c8b4114 || true
+
+              $CTR images pull registry.k8s.io/pause:3.10
+              $CTR images pull docker.io/library/ubuntu:24.04
+              $CTR images ls | grep pause || true
+              $CTR images ls | grep ubuntu || true
+          volumeMounts:
+            - name: host-run
+              mountPath: /host/run
+      volumes:
+        - name: host-run
+          hostPath:
+            path: /run
+            type: Directory

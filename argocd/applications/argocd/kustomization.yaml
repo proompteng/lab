@@ -1,0 +1,79 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: argocd
+resources:
+  - https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.2/manifests/ha/install.yaml
+  - base/ingressroute.yaml
+  - base/ingressroute-private.yaml
+  - base/kargo-dex-cors-middleware.yaml
+  - base/secrets.yaml
+  - base/argo-workflows-sso-sealedsecret.yaml
+  - alloy-rbac.yaml
+  - alloy-configmap.yaml
+  - alloy-deployment.yaml
+images:
+  - name: public.ecr.aws/docker/library/redis
+    newTag: 8.10.1-alpine
+    digest: sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
+  - name: public.ecr.aws/docker/library/haproxy
+    newTag: 3.4.4-alpine
+    digest: sha256:c0afc4864dca9c68694cd1290433f0ee79b5c55be80f6745a165ffe373b9a564
+patches:
+  - target:
+      kind: StatefulSet
+      name: argocd-redis-ha-server
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: argocd-redis-ha-server
+      spec:
+        updateStrategy:
+          type: RollingUpdate
+          rollingUpdate:
+            maxUnavailable: 1
+            partition: 0
+  - path: overlays/argocd-cm.yaml
+  - path: overlays/argocd-cmd-params-cm.yaml
+  - path: overlays/argocd-lovely-plugin.yaml
+    target:
+      kind: Deployment
+      name: argocd-repo-server
+  - path: overlays/argocd-server-deployment.yaml
+    target:
+      kind: Deployment
+      name: argocd-server
+  - path: overlays/argocd-repo-server-deployment.yaml
+    target:
+      kind: Deployment
+      name: argocd-repo-server
+  - path: overlays/argocd-repo-server-two-node-affinity.yaml
+    target:
+      kind: Deployment
+      name: argocd-repo-server
+  - path: overlays/argocd-redis-ha-haproxy-deployment.yaml
+    target:
+      kind: Deployment
+      name: argocd-redis-ha-haproxy
+  - path: overlays/argocd-redis-ha-haproxy-two-node-affinity.yaml
+    target:
+      kind: Deployment
+      name: argocd-redis-ha-haproxy
+  - path: overlays/argocd-application-controller-statefulset.yaml
+    target:
+      kind: StatefulSet
+      name: argocd-application-controller
+  - path: overlays/argocd-applicationset-controller-deployment.yaml
+    target:
+      kind: Deployment
+      name: argocd-applicationset-controller
+  - path: overlays/argocd-dex-server-deployment.yaml
+    target:
+      kind: Deployment
+      name: argocd-dex-server
+  - path: overlays/argocd-dex-network-policy.yaml
+    target:
+      kind: NetworkPolicy
+      name: argocd-dex-server-network-policy
+  - path: overlays/argocd-applicationset-crd.yaml

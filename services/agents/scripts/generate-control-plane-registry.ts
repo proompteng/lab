@@ -1,0 +1,189 @@
+import { access, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
+import { basename, dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import YAML from 'yaml'
+
+type JsonObject = Record<string, unknown>
+
+export type GeneratedPrimitiveRegistryEntry = {
+  kind: string
+  group: string
+  version: string
+  plural: string
+  scope: 'Namespaced' | 'Cluster'
+  apiVersion: string
+  schema: JsonObject
+  display: {
+    label: string
+    description: string
+    category: string
+    pathSegment: string
+  }
+  sourceFile: string
+}
+
+const scriptDirectory = dirname(fileURLToPath(import.meta.url))
+const repositoryRoot = resolve(scriptDirectory, '../../..')
+const crdDirectory = resolve(repositoryRoot, 'charts/agents/crds')
+const outputPath = resolve(scriptDirectory, '../src/control-plane/primitive-registry.generated.ts')
+
+const asRecord = (value: unknown): JsonObject | null =>
+  value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonObject) : null
+
+const asString = (value: unknown): string | null => (typeof value === 'string' && value.trim() ? value.trim() : null)
+
+const titleCaseWords = (value: string) =>
+  value
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[-_.]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+const toPathSegment = (kind: string) =>
+  kind
+    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+    .replace(/[^a-zA-Z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .toLowerCase()
+
+const displayCategory = (group: string) => {
+  const first = group.split('.')[0] ?? group
+  return titleCaseWords(first)
+}
+
+const servedVersion = (versions: unknown[]): JsonObject => {
+  const served = versions.map(asRecord).find((version) => version?.served !== false)
+  const first = versions.map(asRecord).find((version): version is JsonObject => version !== null)
+  const version = served ?? first
+  if (!version) {
+    throw new Error('CRD does not define a usable version')
+  }
+  return version
+}
+
+export const extractPrimitiveRegistryEntry = (
+  sourceFile: string,
+  rawDocument: unknown,
+): GeneratedPrimitiveRegistryEntry => {
+  const document = asRecord(rawDocument)
+  if (!document) {
+    throw new Error(`${sourceFile}: CRD document must be an object`)
+  }
+
+  const spec = asRecord(document.spec)
+  const names = asRecord(spec?.names)
+  const versions = Array.isArray(spec?.versions) ? spec.versions : []
+  const version = servedVersion(versions)
+  const schema = asRecord(asRecord(version.schema)?.openAPIV3Schema)
+  const group = asString(spec?.group)
+  const kind = asString(names?.kind)
+  const plural = asString(names?.plural)
+  const versionName = asString(version.name)
+  const scope = asString(spec?.scope)
+
+  if (!group || !kind || !plural || !versionName || !scope || !schema) {
+    throw new Error(`${sourceFile}: CRD is missing group, kind, plural, version, scope, or openAPIV3Schema`)
+  }
+  if (scope !== 'Namespaced' && scope !== 'Cluster') {
+    throw new Error(`${sourceFile}: unsupported CRD scope ${scope}`)
+  }
+
+  const pathSegment = toPathSegment(kind)
+  return {
+    kind,
+    group,
+    version: versionName,
+    plural,
+    scope,
+    apiVersion: `${group}/${versionName}`,
+    schema,
+    display: {
+      label: titleCaseWords(kind),
+      description: `${titleCaseWords(kind)} resources from ${group}/${versionName}.`,
+      category: displayCategory(group),
+      pathSegment,
+    },
+    sourceFile,
+  }
+}
+
+export const loadPrimitiveRegistryEntries = async (directory = crdDirectory) => {
+  const files = (await readdir(directory)).filter((file) => file.endsWith('.yaml')).sort()
+  const entries: GeneratedPrimitiveRegistryEntry[] = []
+
+  for (const file of files) {
+    const contents = await readFile(resolve(directory, file), 'utf8')
+    const documents = YAML.parseAllDocuments(contents)
+    for (const document of documents) {
+      if (document.errors.length > 0) {
+        throw new Error(`${file}: ${document.errors.map((error) => error.message).join('; ')}`)
+      }
+      const raw = document.toJSON()
+      const record = asRecord(raw)
+      if (!record || record.kind !== 'CustomResourceDefinition') continue
+      entries.push(extractPrimitiveRegistryEntry(file, record))
+    }
+  }
+
+  return entries.sort((left, right) => left.kind.localeCompare(right.kind))
+}
+
+const pathExists = async (path: string) => {
+  try {
+    await access(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
+export const resolvePrimitiveRegistryEntries = async (directory = crdDirectory, generatedFile = outputPath) => {
+  if (!(await pathExists(directory))) {
+    if (await pathExists(generatedFile)) {
+      return null
+    }
+    throw new Error(`${directory}: CRD directory is missing and ${generatedFile} does not exist`)
+  }
+
+  return loadPrimitiveRegistryEntries(directory)
+}
+
+export const renderPrimitiveRegistryModule = (
+  entries: GeneratedPrimitiveRegistryEntry[],
+) => `// Generated by ${basename(fileURLToPath(import.meta.url))}. Do not edit by hand.
+
+export type ControlPlanePrimitiveSchema = Record<string, unknown>
+
+export type ControlPlanePrimitiveRegistryEntry = {
+  readonly kind: string
+  readonly group: string
+  readonly version: string
+  readonly plural: string
+  readonly scope: 'Namespaced' | 'Cluster'
+  readonly apiVersion: string
+  readonly schema: ControlPlanePrimitiveSchema
+  readonly display: {
+    readonly label: string
+    readonly description: string
+    readonly category: string
+    readonly pathSegment: string
+  }
+  readonly sourceFile: string
+}
+
+export const controlPlanePrimitiveRegistry = ${JSON.stringify(entries, null, 2)} as const satisfies readonly ControlPlanePrimitiveRegistryEntry[]
+
+export const controlPlanePrimitiveKinds = controlPlanePrimitiveRegistry.map((entry) => entry.kind)
+`
+
+export const writePrimitiveRegistry = async (entries?: GeneratedPrimitiveRegistryEntry[]) => {
+  const resolvedEntries = entries ?? (await resolvePrimitiveRegistryEntries())
+  if (!resolvedEntries) return
+  await mkdir(dirname(outputPath), { recursive: true })
+  await writeFile(outputPath, renderPrimitiveRegistryModule(resolvedEntries))
+}
+
+if (import.meta.main) {
+  await writePrimitiveRegistry()
+}

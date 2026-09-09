@@ -1,0 +1,18 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: sag
+  namespace: sag
+  labels:
+    app.kubernetes.io/name: sag
+    app.kubernetes.io/part-of: lab
+spec:
+  entryPoints:
+    - web
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`sag.proompteng.ai`)
+      services:
+        - name: sag
+          port: 80

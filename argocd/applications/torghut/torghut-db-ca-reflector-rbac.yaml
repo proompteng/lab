@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: torghut-db-ca-reflector
+  namespace: torghut
+  annotations:
+    argocd.argoproj.io/sync-wave: "-20"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: torghut-db-ca-reflector
+  namespace: torghut
+  annotations:
+    argocd.argoproj.io/sync-wave: "-20"
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["torghut-db-ca"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: torghut-db-ca-reflector
+  namespace: torghut
+  annotations:
+    argocd.argoproj.io/sync-wave: "-20"
+subjects:
+  - kind: ServiceAccount
+    name: torghut-db-ca-reflector
+    namespace: torghut
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: torghut-db-ca-reflector

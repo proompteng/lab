@@ -1,0 +1,193 @@
+{{- if and .Values.agentsShell.enabled .Values.agentsShell.rbac.create -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "agents.agentsShellServiceAccountName" . }}
+  namespace: {{ .Values.namespaceOverride | default .Release.Namespace }}
+  labels:
+    {{- include "agents.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agents-shell
+rules:
+  - apiGroups:
+      - ''
+    resources:
+      - pods
+      - services
+      - endpoints
+      - events
+      - configmaps
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ''
+    resources:
+      - pods/log
+    verbs:
+      - get
+      - list
+  - apiGroups:
+      - apps
+    resources:
+      - deployments
+      - daemonsets
+      - statefulsets
+      - replicasets
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - batch
+    resources:
+      - jobs
+      - cronjobs
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - networking.k8s.io
+    resources:
+      - ingresses
+      - networkpolicies
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - traefik.io
+    resources:
+      - ingressroutes
+      - middlewares
+    verbs:
+      - get
+      - list
+      - watch
+  {{- with .Values.agentsShell.rbac.extraRules }}
+  {{- toYaml . | nindent 2 }}
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "agents.agentsShellServiceAccountName" . }}
+  namespace: {{ .Values.namespaceOverride | default .Release.Namespace }}
+  labels:
+    {{- include "agents.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agents-shell
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "agents.agentsShellServiceAccountName" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "agents.agentsShellServiceAccountName" . }}
+    namespace: {{ .Values.namespaceOverride | default .Release.Namespace }}
+{{- if .Values.agentsShell.rbac.clusterAdmin }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "agents.agentsShellServiceAccountName" . }}-cluster-admin
+  labels:
+    {{- include "agents.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agents-shell
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "agents.agentsShellServiceAccountName" . }}
+    namespace: {{ .Values.namespaceOverride | default .Release.Namespace }}
+{{- end }}
+{{- if .Values.agentsShell.rbac.extraReadNamespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "agents.agentsShellServiceAccountName" . }}-read
+  labels:
+    {{- include "agents.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agents-shell
+rules:
+  - apiGroups:
+      - ''
+    resources:
+      - pods
+      - services
+      - endpoints
+      - events
+      - configmaps
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ''
+    resources:
+      - pods/log
+    verbs:
+      - get
+      - list
+  - apiGroups:
+      - apps
+    resources:
+      - deployments
+      - daemonsets
+      - statefulsets
+      - replicasets
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - batch
+    resources:
+      - jobs
+      - cronjobs
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - networking.k8s.io
+    resources:
+      - ingresses
+      - networkpolicies
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - traefik.io
+    resources:
+      - ingressroutes
+      - middlewares
+    verbs:
+      - get
+      - list
+      - watch
+{{- range $namespace := .Values.agentsShell.rbac.extraReadNamespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "agents.agentsShellServiceAccountName" $ }}-read
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "agents.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: agents-shell
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "agents.agentsShellServiceAccountName" $ }}-read
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "agents.agentsShellServiceAccountName" $ }}
+    namespace: {{ $.Values.namespaceOverride | default $.Release.Namespace }}
+{{- end }}
+{{- end }}
+{{- end }}

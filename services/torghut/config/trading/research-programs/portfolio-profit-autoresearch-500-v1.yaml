@@ -1,0 +1,1638 @@
+schema_version: torghut.strategy-autoresearch.v1
+program_id: portfolio_profit_autoresearch_500_v1
+description: >
+  Portfolio outer loop for a $500/day post-cost net profit target. This profile keeps
+  the objective explicitly daily, not cumulative, allows ordinary down days, and uses
+  worst-day, drawdown, cash, exposure, replay, and runtime-closure gates before any
+  promotion beyond research-candidate artifacts.
+snapshot_policy:
+  bar_interval: PT1S
+  feature_set_id: torghut.mlx-autoresearch.v1
+  quote_quality_policy_id: scheduler_v3_default
+  symbol_policy: args_or_sweep
+  allow_prior_day_features: true
+  allow_cross_sectional_features: true
+forbidden_mutations:
+  - runtime_code_path
+  - evaluator_logic
+  - live_strategy_config
+proposal_model_policy:
+  enabled: true
+  mode: ranking_only
+  backend_preference: mlx
+  top_k: 4
+  exploration_slots: 2
+  minimum_history_rows: 2
+replay_budget:
+  max_candidates_per_round: 8
+  exploration_slots: 2
+  max_candidates_per_frontier_run: 96
+  staged_train_screen_multiplier: 3
+runtime_closure_policy:
+  enabled: true
+  execute_parity_replay: true
+  execute_approval_replay: true
+  parity_window: full_window
+  approval_window: holdout
+  shadow_validation_mode: require_live_evidence
+  promotion_target: shadow
+parity_requirements:
+  - checked_in_runtime_family
+  - scheduler_v3_parity_replay
+  - scheduler_v3_approval_replay
+  - live_shadow_validation
+promotion_policy: research_only
+ledger_policy:
+  append_only: true
+objective:
+  target_net_pnl_per_day: '500'
+  min_daily_net_pnl: '-999999999'
+  min_active_day_ratio: '0.90'
+  min_positive_day_ratio: '0.60'
+  min_profit_factor: '1.50'
+  min_daily_notional: '300000'
+  min_observed_trading_days: 20
+  max_best_day_share: '0.25'
+  max_worst_day_loss: '999999999'
+  max_drawdown: '999999999'
+  default_start_equity: '31590.02'
+  max_worst_day_loss_pct_equity: '0.05'
+  max_drawdown_pct_equity: '0.08'
+  extended_max_worst_day_loss_pct_equity: '0.08'
+  extended_max_drawdown_pct_equity: '0.12'
+  min_total_net_pnl_to_drawdown_ratio: '3.00'
+  require_every_day_active: false
+  min_regime_slice_pass_rate: '0.45'
+  max_gross_exposure_pct_equity: '1.0'
+  min_cash: '0'
+  require_double_oos: true
+  min_double_oos_independent_window_count: 2
+  min_double_oos_pass_rate: '1.00'
+  require_double_oos_cost_shock_above_target: true
+  stop_when_objective_met: true
+research_sources:
+  - source_id: tradefm_market_microstructure_2026
+    title: 'TradeFM: A Generative Foundation Model for Trade-flow and Market Microstructure'
+    url: https://arxiv.org/abs/2602.23784
+    published_at: '2026-02-27'
+    claims:
+      - claim_id: scale_invariant_trade_flow
+        summary: Scale-invariant trade-flow representations can transfer across equities.
+        implication: Prefer normalization sweeps that avoid asset-specific calibration.
+      - claim_id: synthetic_rollout_stress
+        summary: Generated trade-flow rollouts are useful for stress testing.
+        implication: Treat model-generated signals as research evidence only until replay and shadow gates pass.
+  - source_id: regime_weighted_conformal_var_2026
+    title: 'Taming Tail Risk in Financial Markets: Conformal Risk Control for Nonstationary Portfolio VaR'
+    url: https://arxiv.org/abs/2602.03903
+    published_at: '2026-02-03'
+    claims:
+      - claim_id: regime_weighted_conformal_var_buffer
+        claim_type: feature_recipe
+        summary: Regime-weighted conformal risk control calibrates a VaR safety buffer from recent forecast errors and regime-similarity weights.
+        implication: Rank candidates by post-cost edge after a regime-tail exceedance buffer instead of raw average replay PnL.
+        data_requirements:
+          - regime_state
+          - regime_similarity_weights
+          - conformal_tail_risk
+          - regime_tail_exceedance
+          - var_forecast_error
+        asset_scope: us_equities_portfolio
+        horizon_scope: portfolio_risk_control
+        expected_direction: neutral
+      - claim_id: breakeven_cost_buffer_validation
+        claim_type: validation_requirement
+        summary: A candidate should clear the $500 target after conformal tail-risk and breakeven transaction-cost buffers.
+        implication: Keep conformal VaR evidence as replay-ranking and proof-capture input, not final promotion authority.
+        data_requirements:
+          - breakeven_transaction_cost_buffer
+          - transaction_cost_buffer
+          - transaction_cost_stress
+          - post_cost_net_pnl
+          - seed_robustness
+          - model_family_robustness
+        asset_scope: us_equities_portfolio
+        horizon_scope: portfolio_risk_control
+        expected_direction: neutral
+  - source_id: ofi_response_ratio_2025
+    title: 'Stochastic Price Dynamics in Response to Order Flow Imbalance: Evidence from CSI 300 Index Futures'
+    url: https://arxiv.org/abs/2505.17388
+    published_at: '2025-05-23'
+    claims:
+      - claim_id: ofi_memory_response
+        summary: Order-flow imbalance can behave like a persistent shock with horizon-dependent response.
+        implication: Test order-flow continuation and mean-reversion sleeves separately by replay horizon.
+      - claim_id: regime_dependent_ofi_power
+        summary: Forecasting power depends on market regime.
+        implication: Keep regime-slice pass rate as a hard promotion criterion.
+  - source_id: intraday_ofi_news_dynamics_2025
+    title: 'Returns and Order Flow Imbalances: Intraday Dynamics and Macroeconomic News Effects'
+    url: https://arxiv.org/abs/2508.06788
+    published_at: '2025-10-08'
+    claims:
+      - claim_id: one_second_price_flow_decay
+        claim_type: signal_mechanism
+        summary: One-second price-flow shocks dissipate quickly and vary by interval.
+        implication: Prefer bounded intraday windows and reject candidates that depend on one broad aggregate effect.
+        data_requirements:
+          - order_flow_imbalance
+          - price_flow_impact
+          - flow_impact_decay
+          - forecast_horizon
+        asset_scope: us_equities_intraday
+        horizon_scope: subminute_microstructure
+        expected_direction: positive
+      - claim_id: news_liquidity_regime
+        claim_type: market_regime
+        summary: Macroeconomic announcements reshape price impact, order flow impact, and volatility.
+        implication: Require held-out replay and live shadow evidence before promotion.
+        data_requirements:
+          - macro_announcement_window
+          - realized_volatility
+          - spread_bps
+          - route_tca
+        asset_scope: us_equities_intraday
+        horizon_scope: macro_event_intraday
+        expected_direction: neutral
+  - source_id: intraday_order_transition_2025
+    title: 'Intraday order transition dynamics in high, medium, and low market cap stocks: A Markov chain approach'
+    url: https://arxiv.org/abs/2502.07625
+    published_at: '2025-02-11'
+    claims:
+      - claim_id: opening_order_inertia
+        summary: Limit-order inertia is stronger in the opening hour and order transitions vary intraday.
+        implication: Separate opening-drive and mid-session sleeves instead of pooling all minutes.
+      - claim_id: market_cap_order_transition
+        summary: Intraday order transitions differ across stock market-cap buckets.
+        implication: Keep symbol-universe and concentration constraints visible in candidate evidence.
+  - source_id: order_flow_filtration_2025
+    title: 'Order-Flow Filtration and Directional Association with Short-Horizon Returns'
+    url: https://arxiv.org/abs/2507.22712
+    published_at: '2025-12-08'
+    claims:
+      - claim_id: executed_trade_obi
+        claim_type: feature_recipe
+        summary: OBI built from executed-trade parent orders has stronger directional association than broad unfiltered order flow.
+        implication: Prefer recent executed-flow and quote-quality confirmation over raw aggregate imbalance.
+        data_requirements:
+          - parent_order_trade_linkage
+          - filtered_orderbook_imbalance
+          - order_lifetime_filter
+          - order_modification_count
+        asset_scope: limit_order_book_intraday
+        horizon_scope: short_horizon_returns
+        expected_direction: positive
+      - claim_id: causal_filtration_ladder
+        claim_type: validation_requirement
+        summary: Filtration can improve correlation without improving causal coherence.
+        implication: Keep regime-sliced replay, excitation-like stress windows, and shadow validation as gates.
+        data_requirements:
+          - event_time_excitation
+          - route_tca
+          - walk_forward_replay
+          - live_paper_parity
+        asset_scope: limit_order_book_intraday
+        horizon_scope: short_horizon_returns
+        expected_direction: neutral
+  - source_id: optimal_signal_extraction_order_flow_2026
+    title: 'Optimal Signal Extraction from Order Flow'
+    url: https://arxiv.org/abs/2512.18648
+    published_at: '2026-02-20'
+    claims:
+      - claim_id: matched_filter_normalization
+        claim_type: feature_recipe
+        summary: Order-flow normalization should match the scaling behavior of the signal-generating process.
+        implication: Prefer bounded mutation neighborhoods that explicitly compare market-cap, volume, and notional scaling.
+        data_requirements:
+          - order_flow_intensity
+          - market_cap
+          - turnover
+          - short_horizon_returns
+        asset_scope: us_equities_intraday
+        horizon_scope: intraday_microstructure
+        expected_direction: positive
+      - claim_id: informed_executor_scaling
+        claim_type: signal_mechanism
+        summary: Different participant types can encode information through different order-flow scaling conventions.
+        implication: Keep normalization choice visible in candidate evidence and replay survivors instead of pooling all flow transforms.
+        data_requirements:
+          - participant_flow_proxy
+          - order_flow_intensity
+          - volume_profile
+          - market_cap
+        asset_scope: us_equities_intraday
+        horizon_scope: intraday_microstructure
+        expected_direction: positive
+  - source_id: volume_imbalance_secret_2026
+    title: 'Understanding the worst-kept secret of high-frequency trading'
+    url: https://link.springer.com/article/10.1007/s00780-026-00585-9
+    published_at: '2026-01-13'
+    claims:
+      - claim_id: predictive_volume_imbalance
+        summary: LOB volume imbalance is predictive of future mid-price moves through efficient-price and microprice interpretation.
+        implication: Test weighted microprice and imbalance-confirmed continuation, but keep inventory and tick-size risk controls.
+      - claim_id: market_maker_response
+        summary: Predictive imbalance is endogenous to market-maker inventory and quote response.
+        implication: Reject candidates that pass only by stale imbalance without spread, quote-quality, and cost controls.
+  - source_id: weighted_microprice_momentum_2026
+    title: 'A Novel Weighted Microprice Momentum for High-Frequency Trading: Integrating Order Book Dynamics with Execution Flow'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=5806502
+    published_at: '2026-01-05'
+    claims:
+      - claim_id: weighted_microprice_momentum
+        summary: Multi-level order book state, execution volume, and decay weighting can improve short-term direction prediction.
+        implication: Include microprice-confirmed continuation profiles and require multi-window confirmation.
+      - claim_id: high_frequency_noise_filter
+        summary: Multiple rolling windows are needed to filter noisy high-frequency microprice signals.
+        implication: Penalize one-tick-only entries and favor persistent late-session continuation.
+  - source_id: optimized_intraday_momentum_exits_2025
+    title: 'Improvements to Intraday Momentum Strategies Using Parameter Optimization and Different Exit Strategies'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=5095349
+    published_at: '2025-01-27'
+    claims:
+      - claim_id: vwap_ladder_exits
+        summary: VWAP and ladder-style exits improved noise-boundary intraday momentum results in the paper.
+        implication: Sweep VWAP-close, trailing-stop, and close-flatten exits rather than only fixed time exits.
+  - source_id: macro_announcement_intraday_momentum_2025
+    title: "Stock's Macro Announcement Incremental Information and Intraday Momentum"
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=5413265
+    published_at: '2025-08-28'
+    claims:
+      - claim_id: macro_information_momentum
+        summary: Intraday momentum is stronger around macro-announcement information windows.
+        implication: Treat late-day continuation as regime conditional and require non-announcement held-out validation.
+  - source_id: opening_range_breakout_stocks_in_play_2024
+    title: 'A Profitable Day Trading Strategy For The U.S. Equity Market'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4729284
+    published_at: '2024-02-19'
+    claims:
+      - claim_id: stocks_in_play_opening_range_breakout
+        summary: A 5-minute opening range breakout applied to stocks with unusually high daily volume can produce systematic intraday momentum candidates.
+        implication: Reaudit opening-drive and breakout-reclaim sleeves with relative-volume, VWAP, and no-overnight-hold controls.
+      - claim_id: orb_risk_controls_required
+        summary: Opening range breakout profits depend on strict intraday risk management rather than raw breakout direction alone.
+        implication: Keep stop-loss, close-flatten, drawdown, concentration, and post-cost replay gates as blockers before promotion.
+  - source_id: intraday_residual_reversal_2024
+    title: 'Intraday Residual Reversal in the U.S. Stock Market'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4731947
+    published_at: '2024-02-19'
+    claims:
+      - claim_id: residual_noise_reversal
+        summary: Factor-unexplained intraday price moves can reverse as transitory liquidity pressure unwinds.
+        implication: Add residual-style cross-sectional reversal sleeves that fade short-horizon losers/winners after costs.
+      - claim_id: liquidity_provision_profit_source
+        summary: The claimed return source is liquidity provision to transitory stock-return components.
+        implication: Keep cost, notional, spread, active-day, and best-day concentration gates intact before promotion.
+  - source_id: intraday_return_autocorrelation_term_structure_2025
+    title: 'The Term Structure of Intraday Return Autocorrelations'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=5227714
+    published_at: '2025-04-23'
+    claims:
+      - claim_id: horizon_specific_reversal
+        summary: Intraday autocorrelation direction depends on horizon, with reversals stronger around 15-minute horizons.
+        implication: Sweep short, horizon-specific reversal entries instead of pooling open, mid-day, and close effects.
+      - claim_id: subminute_large_stock_continuation
+        summary: Sub-minute continuations can appear in larger stocks, market stress, and the first half-hour.
+        implication: Keep continuation and reversal sleeves separated by horizon and require holdout proof for each sleeve.
+  - source_id: intraday_time_series_reversal_2025
+    title: 'Intraday Time Series Reversal'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=5807282
+    published_at: '2025-12-13'
+    claims:
+      - claim_id: volatility_conditioned_intraday_reversal
+        summary: Intraday reversal effects can strengthen during high-volatility regimes.
+        implication: Reaudit short-horizon reversal sleeves with explicit volatility and drawdown gates instead of broad all-day pooling.
+      - claim_id: time_series_not_only_cross_section
+        summary: Reversal can be framed as a time-series effect, not only a cross-sectional loser/winner sort.
+        implication: Include recent-window reversal profiles that can trade serially while respecting simultaneous exposure caps.
+  - source_id: end_of_day_reversal_2024
+    title: 'End-of-Day Reversal'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=5039009
+    published_at: '2024-11-29'
+    claims:
+      - claim_id: final_half_hour_loser_reversal
+        summary: Individual-stock intraday losers can reverse in the final 30 minutes of the trading day.
+        implication: Reaudit end-of-day reversal sleeves on late-session losers, but cap best-day and symbol concentration.
+      - claim_id: closing_pressure_unwind
+        summary: The pattern is linked to intraday price pressure unwinding near the close.
+        implication: Keep closing-window entry, short hold, cost, and no-overnight exposure controls explicit.
+  - source_id: overnight_jump_intraday_reversal_2026
+    title: 'Dark Side of the Day: Overnight Price Jumps and Short-Term Return Predictability'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4335622
+    published_at: '2026-04-27'
+    claims:
+      - claim_id: overnight_jump_reversal
+        summary: Overnight price jumps can negatively predict short-term returns as overreaction unwinds.
+        implication: Reaudit overnight-gap and opening-window reversal sleeves using prior-close features and strict cost controls.
+      - claim_id: transient_active_trading_window
+        summary: The reversal pattern is transient and tied to active trading conditions.
+        implication: Prefer opening-window exits and reject candidates that need stale or late-day-only evidence.
+  - source_id: intraday_cross_section_patterns_2010
+    title: 'Intraday Patterns in the Cross-section of Stock Returns'
+    url: https://arxiv.org/abs/1005.3535
+    published_at: '2010-05-19'
+    claims:
+      - claim_id: same_interval_daily_periodicity
+        summary: Cross-sectional returns can continue at half-hour intervals matching prior trading-day timing.
+        implication: Test interval-specific cross-sectional sleeves with timing controls instead of broad all-day ranks.
+      - claim_id: subhour_liquidity_reversal
+        summary: Short-term reversals can be driven by temporary liquidity imbalances lasting less than an hour.
+        implication: Add sub-hour reversal sleeves with strict turnover, cost, and drawdown evidence.
+  - source_id: attention_factors_stat_arb_2025
+    title: 'Attention Factors for Statistical Arbitrage'
+    url: https://arxiv.org/abs/2510.11616
+    published_at: '2025-10-13'
+    claims:
+      - claim_id: attention_factor_residual_statarb
+        claim_type: signal_mechanism
+        summary: Conditional latent attention factors can identify similar-asset residual portfolios and mispricing signals for statistical arbitrage after trading costs.
+        implication: Route H-PAIRS and cross-sectional pairs candidates through factor-neutral residual and attention-weighted similarity features instead of static pair-spread z-scores alone.
+        data_requirements:
+          - firm_characteristic_embeddings
+          - attention_factor_exposures
+          - cross_sectional_similarity_graph
+          - residual_portfolio_returns
+          - transaction_cost_model
+        asset_scope: us_equities_cross_section
+        horizon_scope: statistical_arbitrage
+        expected_direction: positive
+      - claim_id: residual_sequence_policy_features
+        claim_type: feature_recipe
+        summary: Residual-portfolio return sequences should feed candidate ranking and policy selection.
+        implication: Add residual sequence, pair-relative return, and factor-neutral residual checks to the candidate compiler before promotion review.
+        data_requirements:
+          - residual_return_sequence
+          - pair_relative_return
+          - factor_neutral_residual
+          - residual_spread_zscore
+          - turnover
+        asset_scope: us_equities_cross_section
+        horizon_scope: statistical_arbitrage
+        expected_direction: positive
+      - claim_id: attention_factor_post_cost_validation
+        claim_type: validation_requirement
+        summary: Attention-factor statistical-arbitrage candidates remain research candidates until walk-forward replay, cost stress, and runtime-ledger or live-paper proof validate closed-position post-cost PnL.
+        implication: Keep attention-factor outputs as search guidance only; promotion still requires real runtime-ledger proof with filled notional, costs, and closed round trips.
+        data_requirements:
+          - walk_forward_replay
+          - transaction_cost_stress
+          - runtime_ledger_profit_proof
+          - post_cost_net_pnl
+          - closed_round_trips
+        asset_scope: us_equities_cross_section
+        horizon_scope: statistical_arbitrage_validation
+        expected_direction: neutral
+  - source_id: alphacrafter_factor_execution_loop_2026
+    title: 'AlphaCrafter: A Full-Stack Multi-Agent Framework for Cross-Sectional Quantitative Trading'
+    url: https://arxiv.org/abs/2605.05580
+    published_at: '2026-05-07'
+    claims:
+      - claim_id: adaptive_factor_to_execution_loop
+        summary: A profitable cross-sectional trading system should continuously couple factor discovery, regime-conditioned selection, and risk-constrained execution.
+        implication: 'Treat Torghut research candidates as a factor-to-execution loop: mine variants, screen by current regime, then route only bounded paper/live-paper probes with ledger proof.'
+      - claim_id: role_noise_less_useful_than_rational_pipeline
+        summary: The useful multi-agent split is systematic miner/screener/trader specialization, not noisy role-play committees.
+        implication: Keep AgentRuns focused on factor discovery, proof audit, and execution-readiness lanes with explicit artifacts rather than unbounded discussion swarms.
+  - source_id: financial_multi_agent_cost_awareness_2026
+    title: 'Toward Reliable Evaluation of LLM-Based Financial Multi-Agent Systems: Taxonomy, Coordination Primacy, and Cost Awareness'
+    url: https://arxiv.org/abs/2603.27539
+    published_at: '2026-03-29'
+    claims:
+      - claim_id: coordination_breakeven_spread
+        summary: Multi-agent coordination only adds value if it clears its own transaction-cost and coordination-overhead breakeven spread.
+        implication: Rank agent-discovered candidates by post-cost runtime-ledger edge after explicit route/TCA and coordination overhead, not by raw replay alpha.
+      - claim_id: evaluation_failures_reverse_returns
+        summary: Look-ahead bias, survivorship bias, overfitting, transaction-cost neglect, and regime-shift blindness can reverse apparent trading returns.
+        implication: Keep promotion blocked unless source data, replay split, transaction costs, regime stress, and runtime-ledger lineage are all present.
+  - source_id: live_market_agent_arena_2025
+    title: 'When Agents Trade: Live Multi-Market Trading Benchmark for LLM Agents'
+    url: https://arxiv.org/abs/2510.11695
+    published_at: '2025-10-13'
+    claims:
+      - claim_id: live_verified_agent_evaluation
+        summary: Live agent behavior differs materially across frameworks, and verified real-time data is needed to judge trading performance.
+        implication: Prefer live-paper route probes and runtime-ledger proof over static benchmark scores when deciding whether a candidate can advance.
+      - claim_id: framework_risk_style_matters
+        summary: Agent framework risk style can matter more than the model backbone for live trading behavior.
+        implication: Treat Torghut sleeves as risk-policy variants with separate drawdown, concentration, and order-lifecycle evidence rather than one generic model output.
+  - source_id: tradetrap_system_stress_2025
+    title: 'TradeTrap: Are LLM-based Trading Agents Truly Reliable and Faithful?'
+    url: https://arxiv.org/abs/2512.02261
+    published_at: '2025-12-01'
+    claims:
+      - claim_id: component_perturbations_cause_drawdown
+        summary: Small perturbations in market intelligence, strategy formulation, portfolio/ledger handling, or execution can cause concentration and runaway drawdowns.
+        implication: Keep source-activity, ledger, and execution-lifecycle blockers visible per target so a single weak component cannot pass as portfolio readiness.
+      - claim_id: ledger_handling_is_attack_surface
+        summary: Portfolio and ledger handling are first-class reliability surfaces for autonomous trading agents.
+        implication: Runtime-ledger materialization and post-cost proof must remain the promotion authority even for close paper-probation candidates.
+  - source_id: agentic_trading_evidence_ledger_2026
+    title: 'Agentic Trading: When LLM Agents Meet Financial Markets'
+    url: https://arxiv.org/abs/2605.19337
+    published_at: '2026-05-19'
+    claims:
+      - claim_id: evidence_ledger_required_for_reproducibility
+        summary: Current agentic-trading papers have weak reproducibility, sparse cost modeling, and inconsistent execution semantics.
+        implication: Require Torghut proof packets to preserve per-target source activity, runtime-ledger lineage, costs, and execution semantics before any promotion claim.
+      - claim_id: closed_loop_action_output_boundary
+        summary: Closed-loop action outputs and execution semantics are the minimum boundary for empirical trading-agent evidence.
+        implication: Research claims should become bounded executable sleeves and live-paper decisions before they can influence allocation.
+  - source_id: asymmetric_ofi_hmm_regime_2025
+    title: 'Asymmetric Hidden Markov Modeling of Order Flow Imbalances for Microstructure-Aware Market Regime Detection'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=5315733
+    published_at: '2025-06-23'
+    claims:
+      - claim_id: ofi_latent_regime_breakout
+        summary: Hidden Markov regimes from order-flow imbalance can identify breakout and liquidity-dislocation states.
+        implication: Route OFI regime claims into microstructure continuation and opening-drive sleeves with quote-quality gates.
+      - claim_id: asymmetric_liquidity_transition
+        summary: Directional asymmetry and regime persistence matter for intraday liquidity state transitions.
+        implication: Keep continuation and reversal candidates separated by regime and require held-out shadow parity before promotion.
+  - source_id: realistic_market_impact_rl_envs_2026
+    title: 'Realistic Market Impact Modeling for Reinforcement Learning Trading Environments'
+    url: https://arxiv.org/abs/2603.29086
+    published_at: '2026-03-30'
+    claims:
+      - claim_id: nonlinear_market_impact_changes_strategy_ranking
+        claim_type: feature_recipe
+        summary: Nonlinear market-impact models materially change trading behavior and strategy ranking versus fixed-cost assumptions.
+        implication: Rank candidate sleeves on realized route/TCA and stressed impact curves, not only fixed-bps replay costs.
+        data_requirements:
+          - route_tca
+          - turnover
+          - nonlinear_impact_curve
+          - market_impact_stress
+        asset_scope: us_equities_intraday
+        horizon_scope: intraday_execution
+        expected_direction: neutral
+      - claim_id: turnover_penalty_prevents_pathological_trading
+        claim_type: risk_constraint
+        summary: Cost-model-aware optimization sharply reduces pathological turnover and total daily costs.
+        implication: Add turnover and impact stress as first-class promotion blockers for high-activity candidates.
+        data_requirements:
+          - route_tca
+          - turnover
+          - realized_slippage_bps
+          - market_impact_stress
+        asset_scope: us_equities_intraday
+        horizon_scope: intraday_execution
+        expected_direction: neutral
+  - source_id: overreaction_intraday_momentum_aapl_2026
+    title: 'Overreaction as an Indicator for Momentum in Algorithmic Trading: A Case of AAPL Stocks'
+    url: https://arxiv.org/abs/2602.18912
+    published_at: '2026-02-21'
+    claims:
+      - claim_id: volatility_cost_normalized_overreaction
+        summary: Intraday overreactions can be defined relative to contemporaneous volatility and transaction costs before modeling momentum.
+        implication: Prefer volatility-and-cost-normalized overreaction features over raw return thresholds.
+      - claim_id: sentiment_conditioned_momentum_requires_live_validation
+        summary: Sentiment/emotion features may improve intraday momentum classification but are source- and symbol-dependent.
+        implication: Treat sentiment-conditioned momentum as a research sleeve requiring strict out-of-sample and live-paper validation.
+  - source_id: vwap_regime_classification_intraday_2026
+    title: 'VWAP-Based Regime Classification Model for Intraday Price Dynamics'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6438039
+    published_at: '2026-04-20'
+    claims:
+      - claim_id: volatility_adjusted_vwap_regime
+        summary: Volatility-adjusted VWAP deviation can separate trend-dominated and mean-reverting intraday regimes.
+        implication: Gate continuation versus reversal sleeves with VWAP-regime state instead of pooling all intraday minutes.
+      - claim_id: vwap_distance_controls_execution_timing
+        summary: VWAP distance provides a mathematically grounded proxy for directional bias and market structure.
+        implication: Add VWAP-distance thresholds to candidate sweeps and validate them after route/TCA costs.
+  - source_id: intramonth_momentum_cycle_2026
+    title: 'The Intramonth Momentum Cycle'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6426026
+    published_at: '2026-03-23'
+    claims:
+      - claim_id: calendar_window_momentum_concentration
+        summary: Equity momentum returns may concentrate in a small pre-turn-of-month window tied to settlement and cash demand.
+        implication: Add calendar-window slicing to portfolio evidence so monthly concentration cannot masquerade as all-regime robustness.
+      - claim_id: loser_side_asymmetric_pre_tom_pressure
+        summary: The documented momentum cycle is asymmetric and concentrated in loser underperformance.
+        implication: Test long and short legs separately and reject candidates whose profit is a one-sided calendar artifact.
+  - source_id: structural_limits_ohlcv_intraday_2026
+    title: 'Structural Limits of OHLCV-Based Intraday Signals in MNQ Futures: A Systematic Falsification Study'
+    url: https://arxiv.org/abs/2605.04004
+    published_at: '2026-05-05'
+    claims:
+      - claim_id: ohlcv_only_intraday_falsification
+        claim_type: validation_requirement
+        summary: OHLCV-only intraday momentum signals can fail under realistic execution constraints despite attractive naive backtests.
+        implication: Require executable quote, route/TCA, and walk-forward evidence before any OHLCV-derived sleeve enters promotion review.
+        data_requirements:
+          - executable_quote_evidence
+          - route_tca
+          - walk_forward_replay
+          - live_paper_parity
+        asset_scope: futures_intraday
+        horizon_scope: intraday_ohlcv_falsification
+        expected_direction: neutral
+      - claim_id: walk_forward_cost_constraints_required
+        claim_type: validation_requirement
+        summary: Walk-forward validation and market-microstructure cost constraints are necessary to falsify overfit intraday signals.
+        implication: Keep the no-cheating promotion path anchored to held-out replay, live-paper, and post-cost ledger proof.
+        data_requirements:
+          - held_out_replay
+          - post_cost_ledger
+          - market_microstructure_costs
+          - live_paper_parity
+        asset_scope: futures_intraday
+        horizon_scope: intraday_ohlcv_falsification
+        expected_direction: neutral
+  - source_id: latent_microstructure_regime_detection_2026
+    title: 'Early Detection of Latent Microstructure Regimes in Limit Order Books'
+    url: https://arxiv.org/abs/2604.20949
+    published_at: '2026-04-22'
+    claims:
+      - claim_id: latent_build_up_early_warning
+        summary: Latent limit-order-book build-up states can appear before reactive OFI or volatility signals fire.
+        implication: Add early-warning regime channels as feature inputs around continuation entries, not as standalone promotion evidence.
+      - claim_id: low_snr_regime_detector_failure
+        summary: Early-detection performance degrades in low signal-to-noise and short build-up regimes.
+        implication: Require regime-count coverage, stress-window replay, and live quote-quality validation before using latent-regime gates.
+  - source_id: explainable_crypto_microstructure_patterns_2026
+    title: 'Explainable Patterns in Cryptocurrency Microstructure'
+    url: https://arxiv.org/abs/2602.00776
+    published_at: '2026-01-31'
+    claims:
+      - claim_id: portable_lob_feature_library
+        summary: Engineered order-book and trade features can show stable predictive importance across assets with different liquidity and volatility.
+        implication: Reuse portable LOB feature recipes only after equity-specific replay confirms spread, adverse-selection, and liquidity behavior.
+      - claim_id: maker_taker_adverse_selection_stress
+        summary: Divergent taker and maker performance during flash-crash stress highlights adverse-selection risk.
+        implication: Split maker-style and taker-style route/TCA evidence and reject candidates that win only under one optimistic fill assumption.
+  - source_id: unified_order_flow_impact_volatility_2026
+    title: 'A unified theory of order flow, market impact, and volatility'
+    url: https://arxiv.org/abs/2601.23172
+    published_at: '2026-02-02'
+    claims:
+      - claim_id: persistent_core_flow_impact_scaling
+        summary: Persistent core order flow can jointly explain rough volume, rough volatility, and power-law market impact.
+        implication: Treat persistent-flow continuation as a cost-and-volatility-coupled hypothesis rather than a raw imbalance threshold.
+      - claim_id: square_root_impact_cost_stress
+        summary: Estimated order-flow persistence is consistent with square-root-like market-impact scaling.
+        implication: Stress high-turnover candidates with nonlinear impact curves before portfolio ranking or shadow promotion.
+  - source_id: closing_auction_market_making_2026
+    title: 'Learning Market Making with Closing Auctions'
+    url: https://arxiv.org/abs/2601.17247
+    published_at: '2026-01-24'
+    claims:
+      - claim_id: closing_auction_inventory_path
+        summary: Closing auctions create material end-of-session liquidity events that can change optimal inventory management.
+        implication: Keep close-flatten and late-day sleeve exits separate from generic terminal inventory penalties.
+      - claim_id: generative_market_making_benchmark
+        summary: Generative market-making benchmarks are useful for stress design but require historical-data comparison.
+        implication: Treat synthetic close-auction stress as validation input only; promotion still requires historical replay and live-paper proof.
+  - source_id: mixed_market_limit_execution_2026
+    title: 'Reinforcement Learning for Trade Execution with Market and Limit Orders'
+    url: https://arxiv.org/abs/2507.06345
+    published_at: '2026-01-26'
+    claims:
+      - claim_id: mixed_market_limit_order_policy
+        summary: Dynamic market-versus-limit order allocation can improve expected execution revenue over fixed order-type benchmarks.
+        implication: Sweep order-type mix, fill probability, route TCA, and shortfall jointly before promoting high-turnover sleeves.
+      - claim_id: logistic_normal_execution_allocation
+        summary: Logistic-normal allocation gives a trainable representation for mixed market/limit execution decisions.
+        implication: Treat market/limit mix as an execution-policy feature, not as alpha, and require latency/fill stress before capital.
+  - source_id: retail_limit_orders_2025
+    title: 'Retail Limit Orders'
+    url: https://doi.org/10.1093/rof/rfaf049
+    published_at: '2025-10-07'
+    claims:
+      - claim_id: market_limit_order_type_ablation
+        claim_type: feature_recipe
+        claim_text: Market-versus-limit execution policies need replayed order-type ablations against matched route TCA, fill probability, and shortfall evidence.
+        data_requirements:
+          - order_type_ablation
+          - market_limit_order_mix
+          - limit_fill_probability
+          - route_tca
+          - execution_shortfall
+        asset_scope: us_equities_execution
+        horizon_scope: intraday_execution
+        expected_direction: neutral
+        summary: Market-versus-limit execution policies need replayed order-type ablations against matched route TCA, fill probability, and shortfall evidence.
+        implication: Block promotion for mixed market/limit candidates until order-type ablation artifacts prove the chosen order type beats the alternative after costs.
+      - claim_id: patient_limit_order_opportunity_cost
+        claim_type: risk_constraint
+        claim_text: Passive limit execution can improve price only when non-fill and adverse-selection opportunity costs stay inside the strategy edge budget.
+        data_requirements:
+          - opportunity_cost
+          - price_improvement
+          - fill_outcomes
+          - post_cost_net_pnl
+        asset_scope: us_equities_execution
+        horizon_scope: intraday_execution
+        expected_direction: neutral
+        summary: Passive limit execution can improve price only when non-fill and adverse-selection opportunity costs stay inside the strategy edge budget.
+        implication: Require opportunity-cost and price-improvement evidence before using patient limit-order behavior as promotion proof.
+  - source_id: retail_order_flow_segmentation_2026
+    title: 'Retail Order Flow Segmentation, Price Improvements, and Market Quality'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6414558
+    published_at: '2026-05-18'
+    claims:
+      - claim_id: retail_flow_segmentation_route_quality
+        claim_type: validation_requirement
+        claim_text: Broker and flow-segment execution quality can vary enough that route-level evidence must be separated from headline backtest results.
+        data_requirements:
+          - broker_route
+          - route_tca
+          - price_improvement
+          - execution_shortfall
+        asset_scope: us_equities_execution
+        horizon_scope: intraday_execution
+        expected_direction: neutral
+        summary: Broker and flow-segment execution quality can vary enough that route-level evidence must be separated from headline backtest results.
+        implication: Treat route price improvement and broker-route TCA as mandatory validation evidence for mixed market/limit execution sleeves.
+      - claim_id: broker_route_price_improvement_dispersion
+        claim_type: risk_constraint
+        claim_text: Price-improvement observations must be tied to the actual route and order type before counting toward promotion.
+        data_requirements:
+          - price_improvement
+          - route_tca
+          - market_limit_order_mix
+          - fill_outcomes
+        asset_scope: us_equities_execution
+        horizon_scope: intraday_execution
+        expected_direction: neutral
+        summary: Price-improvement observations must be tied to the actual route and order type before counting toward promotion.
+        implication: Fail closed when route TCA, price improvement, or fill-outcome artifacts are missing.
+  - source_id: lobdiff_event_stream_prediction_2026
+    title: 'Limit Order Book Event Stream Prediction with Diffusion Model'
+    url: https://link.springer.com/article/10.1007/s41019-025-00328-4
+    published_at: '2026-02-04'
+    claims:
+      - claim_id: diffusion_time_event_lob_state
+        summary: Diffusion event-stream modeling can learn joint time-event distributions in limit order books beyond simple point-process assumptions.
+        implication: Add LOB event-stream state as a research feature only when inference latency and event-stream parity are measured.
+      - claim_id: skip_step_realtime_lob_sampling
+        summary: Skip-step sampling is presented as the practical path for faster LOB event inference.
+        implication: Penalize event-stream features that cannot meet real-time latency and walk-forward replay constraints.
+  - source_id: neural_hawkes_lob_simulation_2025
+    title: 'Event-Based Limit Order Book Simulation under a Neural Hawkes Process: Application in Market-Making'
+    url: https://arxiv.org/abs/2502.17417
+    published_at: '2025-02-24'
+    claims:
+      - claim_id: neural_hawkes_event_fill_model
+        summary: Neural Hawkes LOB simulation can model long- and short-term event interactions and produce fill distributions closer to real data.
+        implication: Use neural-Hawkes scenarios to stress add/cancel/trade interactions and fill uncertainty before paper widening.
+      - claim_id: simulation_not_promotion_proof
+        summary: Simulated market-making fills can align with real-data fill distributions but still remain simulation evidence.
+        implication: Keep simulation outputs validation-only until route TCA, historical replay, and live-paper parity agree.
+  - source_id: algorithmic_retail_options_intraday_2026
+    title: 'The Rise of Algorithmic Retail Option Traders'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6480379
+    published_at: '2026-04-17'
+    claims:
+      - claim_id: options_hour_half_hour_flow_spikes
+        summary: SPX 0DTE option volume can spike sharply at hour and half-hour marks and dissipate within seconds.
+        implication: Add clock-time option-flow controls so equity momentum sleeves do not confuse mechanical option-flow bursts with persistent alpha.
+      - claim_id: complex_leg_intraday_microstructure
+        summary: Intraday retail option automation is concentrated in complex multi-leg trades.
+        implication: Require option-flow-aware stress slices before using index or megacap continuation candidates around clock-time bursts.
+  - source_id: learning_from_book_short_run_efficiency_2026
+    title: 'Learning from the Book: AI Evidence on Short-Run Market Efficiency'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6608199
+    published_at: '2026-05-01'
+    claims:
+      - claim_id: orderbook_imbalance_slope_predictability
+        summary: Full-depth order-book imbalance and slope features can contain short-horizon predictive information.
+        implication: Add order-book imbalance and slope inputs where quote depth and route data are available.
+      - claim_id: algorithmic_activity_decay_stress
+        summary: Higher algorithmic activity, tighter spreads, and heavier trading can reduce short-horizon predictability.
+        implication: Stress microstructure candidates by algo-intensity, tight-spread, and high-volume regimes before portfolio ranking.
+  - source_id: tkan_lob_alpha_decay_2026
+    title: 'Temporal Kolmogorov-Arnold Networks (T-KAN) for High-Frequency Limit Order Book Forecasting: Efficiency, Interpretability, and Alpha Decay'
+    url: https://arxiv.org/abs/2601.02310
+    published_at: '2026-01-05'
+    claims:
+      - claim_id: lob_alpha_decay_horizon_stress
+        claim_type: validation_requirement
+        claim_text: Limit-order-book alpha decays as the forecast horizon lengthens; single-horizon backtests are not enough to prove executable edge.
+        summary: LOB forecasting edge must survive horizon-decay checks instead of being accepted from one favorable horizon.
+        implication: Require horizon-decay curves, walk-forward replay, and post-cost route/TCA before any LOB model output supports promotion.
+        data_requirements:
+          - horizon_decay_curve
+          - forecast_horizon
+          - walk_forward_replay
+          - route_tca
+          - post_cost_net_pnl
+        asset_scope: limit_order_book_intraday
+        horizon_scope: short_horizon_returns
+        expected_direction: neutral
+      - claim_id: spread_adjusted_lob_label_cost_stress
+        claim_type: risk_constraint
+        claim_text: LOB trend labels and model latency must be evaluated after spread adjustment and under tight-spread, high-volume, algorithmic-activity regimes.
+        summary: Classification gains are not promotion evidence unless they survive spread-adjusted labels, latency budgets, and regime slices.
+        implication: Route T-KAN/TLOB-style proposals through predictability-decay stress before ranking them for paper probation.
+        data_requirements:
+          - spread_adjusted_labels
+          - inference_latency
+          - tight_spread_regime_slices
+          - high_volume_regime_slices
+          - algorithmic_activity_regime
+        asset_scope: limit_order_book_intraday
+        horizon_scope: intraday_microstructure
+        expected_direction: neutral
+  - source_id: idiosyncratic_trade_imbalance_2026
+    title: 'Decomposing High-Frequency Order Flow: Commonality and Idiosyncratic Trade Imbalance'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6535019
+    published_at: '2026-04-20'
+    claims:
+      - claim_id: idiosyncratic_trade_imbalance_filter
+        summary: Common market-wide trade imbalance can obscure asset-specific directional pressure in high-frequency order flow.
+        implication: Add common-factor-adjusted imbalance features so candidates do not confuse market-wide flow with symbol alpha.
+      - claim_id: common_factor_neutral_ofi_validation
+        summary: Order-flow imbalance evidence needs commonality and idiosyncratic components separated before inference.
+        implication: Require market-factor-neutral OFI validation slices for continuation and reversal sleeves.
+  - source_id: intraday_price_asymmetry_sp500_2026
+    title: 'Intraday Price Asymmetry and Next-Day Intraday Returns in the S&P 500'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6074846
+    published_at: '2026-02-02'
+    claims:
+      - claim_id: range_based_intraday_asymmetry_reversal
+        summary: Open-high-low range asymmetry can capture temporary intraday price pressure linked to next-day intraday reversal.
+        implication: Add price-path asymmetry as a reversal-risk feature around continuation candidates rather than as standalone alpha.
+      - claim_id: volatility_stress_short_leg_asymmetry
+        summary: Conditional short-side effects can concentrate during elevated volatility and market stress.
+        implication: Split long and short evidence under volatility stress before promoting any asymmetry-derived sleeve.
+  - source_id: market_depth_execution_delays_2026
+    title: 'Market Depth and Execution Delays'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6440898
+    published_at: '2026-05-15'
+    claims:
+      - claim_id: execution_delay_depth_state
+        claim_type: feature_recipe
+        summary: Market-depth state and execution delay jointly determine whether apparent liquidity is practically fillable.
+        implication: Add delay-adjusted depth and route latency stress to fillability scoring instead of using spread alone.
+        horizon_scope: intraday_execution
+        data_requirements:
+          - market_depth
+          - execution_delay
+          - latency_stress
+          - limit_fill_probability
+          - route_tca
+      - claim_id: delay_adjusted_liquidity_cost
+        claim_type: validation_requirement
+        summary: Apparent liquidity can decay before an order reaches the venue.
+        implication: Reject candidates whose live-paper fills depend on optimistic no-delay execution assumptions.
+        horizon_scope: intraday_execution
+        data_requirements:
+          - depth_proxy
+          - execution_delay
+          - fill_model
+          - route_tca
+          - live_paper_parity
+  - source_id: orderbook_hawkes_random_environment_2026
+    title: 'Assessing the Impact of the Order Book with a Hawkes Process in a Random Environment'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=5170318
+    published_at: '2026-05-12'
+    claims:
+      - claim_id: orderbook_hawkes_impact
+        claim_type: feature_recipe
+        summary: Order-book variables can enter Hawkes trade-arrival intensity through exogenous and endogenous components.
+        implication: Add order-arrival clustering and depth-state features to execution-aware entry timing.
+        data_requirements:
+          - order_arrival_intensity
+          - depth_state
+          - clustered_order_events
+          - spread_bps
+        asset_scope: us_equities_intraday
+        horizon_scope: intraday_microstructure
+        expected_direction: neutral
+      - claim_id: session_specific_endogenous_intensity
+        claim_type: validation_requirement
+        summary: Opening, main-session, and closing-period order-book impact should be estimated separately.
+        implication: Keep session-segment validation mandatory before promoting continuation or reversal candidates.
+        data_requirements:
+          - session_segment
+          - order_arrival_intensity
+          - walk_forward_replay
+        asset_scope: us_equities_intraday
+        horizon_scope: intraday_microstructure
+        expected_direction: neutral
+  - source_id: payment_for_order_flow_execution_quality_2026
+    title: 'Payment for Order Flow, Demystified: How Your Free Trade Actually Works'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6704839
+    published_at: '2026-05-04'
+    claims:
+      - claim_id: broker_routing_quality_feature
+        summary: Broker routing, internalization, and payment-for-order-flow incentives can affect retail execution quality.
+        implication: Add broker-route quality, price improvement, and shortfall features to route/TCA evidence before live promotion.
+      - claim_id: pfof_routing_conflict_risk
+        summary: Free-trade routing economics create adverse-selection and execution-quality risk.
+        implication: Treat route economics as a validation blocker, not a source of alpha.
+  - source_id: additive_multiplicative_ofi_2026
+    title: 'Modelling Crypto Asset Order-Flow Imbalance as an Additive and Multiplicative Process'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6688399
+    published_at: '2026-05-01'
+    claims:
+      - claim_id: additive_multiplicative_ofi_decomposition
+        summary: OFI can be decomposed into additive and multiplicative channels for state-dependent pressure modeling.
+        implication: Route concentrated OFI pressure into regime features instead of raw imbalance thresholds.
+      - claim_id: self_amplifying_ofi_regime_risk
+        summary: Leveraged and trend-following flow can create self-amplifying pressure states.
+        implication: Tighten exposure caps and drawdown validation when OFI regimes show concentrated pressure.
+  - source_id: rejected_trading_events_outcomes_2026
+    title: 'RED-2400: A Public Benchmark of Algorithmically-Rejected Trading Events with Outcome Labels'
+    url: https://arxiv.org/abs/2605.12151
+    published_at: '2026-05-12'
+    claims:
+      - claim_id: rejection_event_outcome_labels
+        claim_type: signal_mechanism
+        claim_text: Algorithmically rejected trading events with realized outcome labels can turn skipped signal logs into counterfactual false-negative rescue examples for executable veto calibration.
+        asset_scope: us_equities_intraday
+        horizon_scope: rejected_event_learning
+        expected_direction: positive
+        data_requirements:
+          - rejected_signal_log
+          - outcome_labels
+          - executable_quote
+        summary: Algorithmically rejected trading events with realized outcome labels can turn skipped signals into counterfactual learning examples.
+        implication: Mine skipped-signal logs for outcome labels so vetoes can be calibrated against post-cost opportunity loss, not just pass/fail counts.
+      - claim_id: counterfactual_reject_outcome_learning
+        claim_type: validation_requirement
+        claim_text: Rejected-event benchmarks should measure whether current vetoes discard profitable executable opportunities or correctly block bad fills.
+        asset_scope: us_equities_intraday
+        horizon_scope: rejected_event_learning
+        expected_direction: neutral
+        data_requirements:
+          - rejected_signal_log
+          - counterfactual_return
+          - route_tca
+          - post_cost_net_pnl
+        summary: Rejected-event benchmarks measure whether vetoes discard profitable executable opportunities or correctly block bad fills.
+        implication: Use rejected-event outcome slices to repair missing executable quote and routeability blockers before widening paper capital.
+  - source_id: noisy_orderflow_privacy_kyle_lambda_2026
+    title: "The Privacy Subsidy: Kyle's Lambda under Noise-Perturbed Order-Flow Observation"
+    url: https://arxiv.org/abs/2605.15746
+    published_at: '2026-05-15'
+    claims:
+      - claim_id: orderflow_observation_noise_model
+        summary: Order-flow observation noise changes inferred adverse-selection and impact estimates.
+        implication: Add source-quality and attribution-noise state to OFI features before treating flow as symbol-specific executable alpha.
+      - claim_id: noise_perturbed_orderflow_adverse_selection
+        summary: Noisy or partially private order-flow observations can understate Kyle-lambda style impact.
+        implication: Stress route/TCA and impact estimates by attribution quality so paper fills cannot rely on clean-flow assumptions.
+  - source_id: state_dependent_lob_hawkes_2026
+    title: 'Extended State-dependent Hawkes Process for Limit Order Books: Mathematical Foundation and the Reproduction of Volatility Signature Plots'
+    url: https://arxiv.org/abs/2604.23961
+    published_at: '2026-04-27'
+    claims:
+      - claim_id: state_dependent_lob_hawkes_intensity
+        claim_type: feature_recipe
+        summary: State-dependent Hawkes intensities for LOB events can encode volatility-signature dynamics missed by fixed-window OFI.
+        implication: Add state-dependent order-arrival clustering as a validation feature for execution-aware entry timing.
+        data_requirements:
+          - lob_event_stream
+          - state_dependent_hawkes_intensity
+          - volatility_signature
+          - clustered_order_events
+        asset_scope: us_equities_intraday
+        horizon_scope: intraday_microstructure
+        expected_direction: neutral
+      - claim_id: volatility_signature_hawkes_calibration
+        claim_type: validation_requirement
+        summary: State-dependent Hawkes features require replay calibration against volatility-signature behavior.
+        implication: Keep Hawkes-derived entry timing in research until quote quality, volatility signature, and walk-forward replay agree.
+        data_requirements:
+          - quote_quality
+          - volatility_signature
+          - walk_forward_replay
+          - live_paper_parity
+        asset_scope: us_equities_intraday
+        horizon_scope: intraday_microstructure
+        expected_direction: neutral
+  - source_id: mpc_trade_execution_2026
+    title: 'Model Predictive Control For Trade Execution'
+    url: https://arxiv.org/abs/2603.28898
+    published_at: '2026-03-30'
+    claims:
+      - claim_id: dynamic_execution_schedule_control
+        summary: Model-predictive execution control can adapt participation and urgency to evolving liquidity, inventory, and cost forecasts.
+        implication: Add dynamic schedule controls as execution validation inputs after static route/TCA passes.
+      - claim_id: mpc_execution_stress_required
+        summary: Dynamic schedules need replay evidence under latency, spread, and impact stress before capital gates can use them.
+        implication: Reject execution improvements that only reduce simulated shortfall under no-delay or no-impact assumptions.
+  - source_id: lob_simulation_reality_gap_2026
+    title: 'Bridging the Reality Gap in Limit Order Book Simulation'
+    url: https://arxiv.org/abs/2603.24137
+    published_at: '2026-03-25'
+    claims:
+      - claim_id: lob_simulation_benchmark_parity
+        summary: LOB simulation needs calibration against real event streams and fill outcomes before simulated fillability can be trusted.
+        implication: Treat simulated LOB fills as hypothesis evidence only until live-paper and event-stream parity metrics pass.
+      - claim_id: sim_to_live_reality_gap_validation
+        summary: LOB simulation reality gaps require explicit parity metrics before adverse-selection estimates can affect capital gates.
+        implication: Keep synthetic replay out of promotion proof unless it is bound to live-paper parity and route/TCA receipts.
+  - source_id: implementation_risk_backtesting_2026
+    title: 'Implementation Risk in Portfolio Backtesting: A Previously Unquantified Source of Error'
+    url: https://arxiv.org/abs/2603.20319
+    published_at: '2026-03-24'
+    claims:
+      - claim_id: multi_engine_implementation_risk_replay
+        summary: The same logical strategy can produce divergent post-cost portfolio metrics across backtest implementations.
+        implication: Require multi-engine or multi-implementation replay before accepting post-cost PnL as promotion evidence.
+      - claim_id: transaction_cost_implementation_divergence
+        summary: Transaction-cost handling is the dominant implementation-divergence driver in the paper's benchmark.
+        implication: Promotion proof needs engine-sensitivity and implementation-uncertainty diagnostics under nonzero costs.
+      - claim_id: conclusion_stability_capital_gate
+        summary: A result is capital-gate quality only when the implementation-uncertainty lower bound and conclusion-stability check survive replay differences.
+        implication: Reject single-engine backtest proof and require lower-bound net PnL above the target across replay implementations.
+  - source_id: finrl_x_deployment_consistency_2026
+    title: 'FinRL-X: An AI-Native Modular Infrastructure for Quantitative Trading'
+    url: https://arxiv.org/abs/2603.21330
+    published_at: '2026-03-22'
+    claims:
+      - claim_id: weight_centric_unified_execution_protocol
+        summary: Data processing, strategy construction, backtesting, and broker execution should share one deployment-consistent protocol.
+        implication: Compile candidates with explicit signal-payload, order-sizing, and broker-execution semantic parity requirements.
+      - claim_id: replay_paper_live_semantic_parity_required
+        summary: Backtest-to-paper and paper-to-live gaps come from semantics that differ across the research and broker paths.
+        implication: Reject promotion when replay, paper, and live paths do not emit identical signal payloads, sizing decisions, and route constraints.
+      - claim_id: broker_execution_risk_overlay_parity
+        summary: Portfolio risk overlays and broker execution semantics must remain invariant across adapters.
+        implication: Adapter-only behavior drift blocks capital gates even if offline post-cost PnL is positive.
+families:
+  - family_template_id: microstructure_continuation_matched_filter_v1
+    seed_sweep_config: ../profitability-frontier-strict-daily-microstructure.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: false
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 4
+    loss_repair_iterations: 1
+    loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
+    parameter_mutations:
+      max_entries_per_session:
+        mode: numeric_step
+        deltas: ['-1', '0', '1']
+        minimum: '1'
+        maximum: '4'
+      entry_cooldown_seconds:
+        mode: numeric_step
+        deltas: ['-300', '0', '300']
+        minimum: '300'
+        maximum: '1500'
+      max_gross_exposure_pct_equity:
+        mode: explicit_values
+        values: ['0.50', '0.75', '1.0']
+    strategy_override_mutations:
+      normalization_regime:
+        mode: allowed_normalizations
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['7500', '15000', '22500', '30000']
+  - family_template_id: microbar_cross_sectional_pairs_v1
+    seed_sweep_config: ../profitability-frontier-consistent-microbar-cross-sectional-pairs.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: false
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 4
+    loss_repair_iterations: 1
+    loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
+    parameter_mutations:
+      rank_feature:
+        mode: explicit_values
+        values:
+          - 'cross_section_clusterlob_directional_ofi_rank'
+          - 'cross_section_pair_relative_return_rank'
+          - 'cross_section_vwap_w5m_rank'
+      gate_feature:
+        mode: explicit_values
+        values: ['', 'clusterlob_event_cluster_stability_score']
+      gate_min:
+        mode: explicit_values
+        values: ['0', '0.60']
+      min_cross_section_continuation_rank:
+        mode: numeric_step
+        deltas: ['-0.05', '0', '0.05']
+        minimum: '0.45'
+        maximum: '0.75'
+      max_entries_per_session:
+        mode: numeric_step
+        deltas: ['-1', '0', '1', '3', '5']
+        minimum: '1'
+        maximum: '8'
+      max_gross_exposure_pct_equity:
+        mode: explicit_values
+        values: ['0.50', '0.75', '1.0']
+    strategy_override_mutations:
+      normalization_regime:
+        mode: allowed_normalizations
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['7500', '15000', '22500', '30000']
+  - family_template_id: microbar_cross_sectional_pairs_v1
+    seed_sweep_config: ../profitability-frontier-strict-daily-microbar-eod-loser-reversal.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: false
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 5
+    loss_repair_iterations: 1
+    loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
+    parameter_mutations:
+      entry_minute_after_open:
+        mode: numeric_step
+        deltas: ['-15', '0', '15']
+        minimum: '330'
+        maximum: '390'
+      exit_minute_after_open:
+        mode: numeric_step
+        deltas: ['-15', '0', '15']
+        minimum: '360'
+        maximum: '390'
+      top_n:
+        mode: explicit_values
+        values: ['1', '2', '3']
+      max_entries_per_session:
+        mode: explicit_values
+        values: ['1', '3', '6', '8']
+      entry_cooldown_seconds:
+        mode: explicit_values
+        values: ['60', '180', '300']
+    strategy_override_mutations:
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['7500', '15000', '22500', '30000']
+      max_position_pct_equity:
+        mode: explicit_values
+        values: ['0.25', '0.50', '0.75', '1.0']
+  - family_template_id: microbar_cross_sectional_pairs_v1
+    seed_sweep_config: ../profitability-frontier-strict-daily-microbar-vwap-reversal.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: false
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 5
+    loss_repair_iterations: 1
+    loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
+    parameter_mutations:
+      entry_minute_after_open:
+        mode: numeric_step
+        deltas: ['-30', '0', '30']
+        minimum: '120'
+        maximum: '240'
+      exit_minute_after_open:
+        mode: numeric_step
+        deltas: ['-30', '0', '30']
+        minimum: '150'
+        maximum: '300'
+      top_n:
+        mode: explicit_values
+        values: ['1', '2', '3']
+      max_entries_per_session:
+        mode: explicit_values
+        values: ['1', '3', '6', '8']
+      entry_cooldown_seconds:
+        mode: explicit_values
+        values: ['60', '180', '300']
+    strategy_override_mutations:
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['7500', '15000', '22500', '30000']
+      max_position_pct_equity:
+        mode: explicit_values
+        values: ['0.25', '0.50', '0.75', '1.0']
+  - family_template_id: microbar_cross_sectional_pairs_v1
+    seed_sweep_config: ../profitability-frontier-strict-daily-microbar-prev-day-open60-short-top1.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: false
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 5
+    loss_repair_iterations: 1
+    loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
+    parameter_mutations:
+      entry_minute_after_open:
+        mode: numeric_step
+        deltas: ['0', '15', '30']
+        minimum: '0'
+        maximum: '60'
+      exit_minute_after_open:
+        mode: numeric_step
+        deltas: ['-15', '0', '15']
+        minimum: '30'
+        maximum: '90'
+      top_n:
+        mode: explicit_values
+        values: ['1', '2']
+      max_entries_per_session:
+        mode: explicit_values
+        values: ['1', '3', '6', '8']
+      entry_cooldown_seconds:
+        mode: explicit_values
+        values: ['60', '180', '300']
+    strategy_override_mutations:
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['7500', '15000', '22500', '30000']
+      max_position_pct_equity:
+        mode: explicit_values
+        values: ['0.25', '0.50', '0.75', '1.0']
+  - family_template_id: microbar_cross_sectional_pairs_v1
+    seed_sweep_config: ../profitability-frontier-strict-daily-microbar-recent15-reversal-short.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: false
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 5
+    loss_repair_iterations: 1
+    loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
+    parameter_mutations:
+      entry_minute_after_open:
+        mode: numeric_step
+        deltas: ['-15', '0', '15']
+        minimum: '45'
+        maximum: '180'
+      exit_minute_after_open:
+        mode: numeric_step
+        deltas: ['-15', '0', '15']
+        minimum: '75'
+        maximum: '240'
+      top_n:
+        mode: explicit_values
+        values: ['1', '2', '3']
+      max_entries_per_session:
+        mode: explicit_values
+        values: ['1', '3', '6', '8']
+      entry_cooldown_seconds:
+        mode: explicit_values
+        values: ['60', '180', '300']
+    strategy_override_mutations:
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['7500', '15000', '22500', '30000']
+      max_position_pct_equity:
+        mode: explicit_values
+        values: ['0.25', '0.50', '0.75', '1.0']
+  - family_template_id: microbar_cross_sectional_pairs_v1
+    seed_sweep_config: ../profitability-frontier-strict-daily-microbar-vwap-stretch-reversal-long-top4.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: false
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 5
+    loss_repair_iterations: 1
+    loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
+    parameter_mutations:
+      entry_minute_after_open:
+        mode: numeric_step
+        deltas: ['-30', '0', '30']
+        minimum: '90'
+        maximum: '270'
+      exit_minute_after_open:
+        mode: numeric_step
+        deltas: ['-30', '0', '30']
+        minimum: '150'
+        maximum: '360'
+      top_n:
+        mode: explicit_values
+        values: ['1', '2', '4']
+      max_entries_per_session:
+        mode: explicit_values
+        values: ['1', '3', '6', '8']
+      entry_cooldown_seconds:
+        mode: explicit_values
+        values: ['60', '180', '300']
+    strategy_override_mutations:
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['7500', '15000', '22500', '30000']
+      max_position_pct_equity:
+        mode: explicit_values
+        values: ['0.25', '0.50', '0.75', '1.0']
+  - family_template_id: microbar_cross_sectional_pairs_v1
+    seed_sweep_config: ../profitability-frontier-portfolio-coverage-microbar-overnight-gap-reversal.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: false
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 5
+    loss_repair_iterations: 1
+    loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
+    parameter_mutations:
+      entry_minute_after_open:
+        mode: numeric_step
+        deltas: ['-10', '0', '10']
+        minimum: '0'
+        maximum: '60'
+      entry_window_minutes:
+        mode: explicit_values
+        values: ['15', '25', '45']
+      exit_minute_after_open:
+        mode: numeric_step
+        deltas: ['-30', '0', '30']
+        minimum: '60'
+        maximum: '210'
+      top_n:
+        mode: explicit_values
+        values: ['1', '2', '3']
+      gate_min:
+        mode: explicit_values
+        values: ['0.15', '0.20', '0.30']
+      gate_max:
+        mode: explicit_values
+        values: ['0.70', '0.80', '0.90']
+      max_entries_per_session:
+        mode: explicit_values
+        values: ['1', '2', '3', '4']
+      entry_cooldown_seconds:
+        mode: explicit_values
+        values: ['300', '600', '900']
+    strategy_override_mutations:
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['7500', '15000', '22500', '30000']
+      max_position_pct_equity:
+        mode: explicit_values
+        values: ['0.25', '0.50', '0.75', '1.0']
+  - family_template_id: microbar_cross_sectional_pairs_v1
+    seed_sweep_config: ../profitability-frontier-portfolio-coverage-microbar-opening-prev-close-reversal.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: false
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 5
+    loss_repair_iterations: 1
+    loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
+    parameter_mutations:
+      entry_minute_after_open:
+        mode: numeric_step
+        deltas: ['-15', '0', '15']
+        minimum: '15'
+        maximum: '90'
+      entry_window_minutes:
+        mode: explicit_values
+        values: ['15', '25', '45']
+      exit_minute_after_open:
+        mode: numeric_step
+        deltas: ['-30', '0', '30']
+        minimum: '90'
+        maximum: '240'
+      top_n:
+        mode: explicit_values
+        values: ['1', '2', '3']
+      gate_min:
+        mode: explicit_values
+        values: ['0.15', '0.20', '0.30']
+      gate_max:
+        mode: explicit_values
+        values: ['0.75', '0.85', '0.90']
+      max_entries_per_session:
+        mode: explicit_values
+        values: ['1', '2', '3', '4']
+      entry_cooldown_seconds:
+        mode: explicit_values
+        values: ['300', '600', '900']
+    strategy_override_mutations:
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['7500', '15000', '22500', '30000']
+      max_position_pct_equity:
+        mode: explicit_values
+        values: ['0.25', '0.50', '0.75', '1.0']
+  - family_template_id: microbar_cross_sectional_pairs_v1
+    seed_sweep_config: ../profitability-frontier-portfolio-coverage-microbar-tug-of-war-reversal.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: false
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 5
+    loss_repair_iterations: 1
+    loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
+    parameter_mutations:
+      entry_minute_after_open:
+        mode: numeric_step
+        deltas: ['-30', '0', '30']
+        minimum: '90'
+        maximum: '240'
+      entry_window_minutes:
+        mode: explicit_values
+        values: ['15', '30', '45']
+      exit_minute_after_open:
+        mode: explicit_values
+        values: ['240', '300', 'close']
+      top_n:
+        mode: explicit_values
+        values: ['1', '2', '3']
+      gate_min:
+        mode: explicit_values
+        values: ['0.10', '0.15', '0.25']
+      gate_max:
+        mode: explicit_values
+        values: ['0.75', '0.85', '0.90']
+      max_entries_per_session:
+        mode: explicit_values
+        values: ['1', '2', '3', '4']
+      entry_cooldown_seconds:
+        mode: explicit_values
+        values: ['600', '1200', '1800']
+    strategy_override_mutations:
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['7500', '15000', '22500', '30000']
+      max_position_pct_equity:
+        mode: explicit_values
+        values: ['0.25', '0.50', '0.75', '1.0']
+  - family_template_id: intraday_tsmom_v2
+    seed_sweep_config: ../profitability-frontier-strict-daily-tsmom.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: false
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 3
+    loss_repair_iterations: 1
+    loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
+    parameter_mutations:
+      long_stop_loss_bps:
+        mode: numeric_step
+        deltas: ['-2', '0', '2']
+        minimum: '8'
+        maximum: '20'
+      min_cross_section_continuation_rank:
+        mode: numeric_step
+        deltas: ['-0.05', '0', '0.05']
+        minimum: '0.45'
+        maximum: '0.75'
+      max_gross_exposure_pct_equity:
+        mode: explicit_values
+        values: ['0.50', '0.75', '1.0']
+    strategy_override_mutations:
+      normalization_regime:
+        mode: allowed_normalizations
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['7500', '15000', '22500', '30000']
+  - family_template_id: momentum_pullback_v1
+    seed_sweep_config: ../profitability-frontier-strict-daily-momentum-pullback.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: false
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 5
+    loss_repair_iterations: 1
+    loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
+    parameter_mutations:
+      exit_macd_hist_max:
+        mode: numeric_step
+        deltas: ['-0.002', '0', '0.002']
+        minimum: '-0.010'
+        maximum: '-0.001'
+      max_hold_seconds:
+        mode: numeric_step
+        deltas: ['-120', '0', '120']
+        minimum: '300'
+        maximum: '1200'
+      max_gross_exposure_pct_equity:
+        mode: explicit_values
+        values: ['0.50', '0.75', '1.0']
+    strategy_override_mutations:
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['7500', '15000', '22500', '30000']
+      max_position_pct_equity:
+        mode: explicit_values
+        values: ['0.25', '0.50', '0.75', '1.0']
+  - family_template_id: late_day_continuation_v1
+    seed_sweep_config: ../profitability-frontier-strict-daily-late-day-continuation.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: false
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 5
+    loss_repair_iterations: 1
+    loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
+    parameter_mutations:
+      min_cross_section_continuation_rank:
+        mode: numeric_step
+        deltas: ['-0.05', '0', '0.05']
+        minimum: '0.55'
+        maximum: '0.80'
+      min_cross_section_continuation_breadth:
+        mode: numeric_step
+        deltas: ['-0.05', '0', '0.05']
+        minimum: '0.30'
+        maximum: '0.50'
+      long_trailing_stop_activation_profit_bps:
+        mode: numeric_step
+        deltas: ['-3', '0', '3']
+        minimum: '8'
+        maximum: '18'
+      max_gross_exposure_pct_equity:
+        mode: explicit_values
+        values: ['0.50', '0.75', '1.0']
+    strategy_override_mutations:
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['7500', '15000', '22500', '30000']
+      max_position_pct_equity:
+        mode: explicit_values
+        values: ['0.25', '0.50', '0.75', '1.0']
+  - family_template_id: end_of_day_reversal_v1
+    seed_sweep_config: ../profitability-frontier-strict-daily-end-of-day-reversal.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: false
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 5
+    loss_repair_iterations: 1
+    loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
+    parameter_mutations:
+      min_cross_section_reversal_rank:
+        mode: numeric_step
+        deltas: ['-0.05', '0', '0.05']
+        minimum: '0.65'
+        maximum: '0.85'
+      entry_start_minute_utc:
+        mode: numeric_step
+        deltas: ['-10', '0', '10']
+        minimum: '1130'
+        maximum: '1170'
+      max_price_vs_session_open_bps:
+        mode: numeric_step
+        deltas: ['-10', '0', '10']
+        minimum: '-60'
+        maximum: '-20'
+      max_gross_exposure_pct_equity:
+        mode: explicit_values
+        values: ['0.50', '0.75', '1.0']
+    strategy_override_mutations:
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['7500', '15000', '22500', '30000']
+      max_position_pct_equity:
+        mode: explicit_values
+        values: ['0.25', '0.50', '0.75', '1.0']
+  - family_template_id: breakout_reclaim_v2
+    seed_sweep_config: ../profitability-frontier-strict-daily-breakout-reclaim.yaml
+    max_iterations: 2
+    keep_top_candidates: 1
+    frontier_top_n: 4
+    force_keep_top_candidate_if_all_vetoed: false
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 1
+    symbol_prune_min_universe_size: 5
+    loss_repair_iterations: 1
+    loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
+    parameter_mutations:
+      max_entries_per_session:
+        mode: numeric_step
+        deltas: ['-1', '0', '1']
+        minimum: '1'
+        maximum: '4'
+      long_stop_loss_bps:
+        mode: numeric_step
+        deltas: ['-2', '0', '2']
+        minimum: '8'
+        maximum: '16'
+      max_gross_exposure_pct_equity:
+        mode: explicit_values
+        values: ['0.50', '0.75', '1.0']
+    strategy_override_mutations:
+      normalization_regime:
+        mode: allowed_normalizations
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['7500', '15000', '22500', '30000']
+      max_position_pct_equity:
+        mode: explicit_values
+        values: ['0.25', '0.50', '0.75', '1.0']
+  - family_template_id: mean_reversion_rebound_v1
+    seed_sweep_config: ../profitability-frontier-strict-daily-mean-reversion.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: false
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 5
+    loss_repair_iterations: 1
+    loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
+    parameter_mutations:
+      min_bull_rsi:
+        mode: numeric_step
+        deltas: ['-2', '0', '2']
+        minimum: '34'
+        maximum: '48'
+      min_cross_section_reversal_rank:
+        mode: numeric_step
+        deltas: ['-0.05', '0', '0.05']
+        minimum: '0.60'
+        maximum: '0.90'
+      max_gross_exposure_pct_equity:
+        mode: explicit_values
+        values: ['0.50', '0.75', '1.0']
+    strategy_override_mutations:
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['7500', '15000', '22500', '30000']
+      max_position_pct_equity:
+        mode: explicit_values
+        values: ['0.25', '0.50', '0.75', '1.0']
+  - family_template_id: mean_reversion_exhaustion_short_v1
+    seed_sweep_config: ../profitability-frontier-strict-daily-exhaustion-short.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: false
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 3
+    loss_repair_iterations: 1
+    loss_repair_candidates: 1
+    consistency_repair_iterations: 1
+    consistency_repair_candidates: 2
+    parameter_mutations:
+      min_price_vs_session_open_bps:
+        mode: numeric_step
+        deltas: ['-5', '0', '5']
+        minimum: '10'
+        maximum: '35'
+      min_session_range_position:
+        mode: numeric_step
+        deltas: ['-0.04', '0', '0.04']
+        minimum: '0.60'
+        maximum: '0.80'
+      max_cross_section_continuation_rank:
+        mode: numeric_step
+        deltas: ['-0.05', '0', '0.05']
+        minimum: '0.35'
+        maximum: '0.60'
+      min_cross_section_reversal_rank:
+        mode: numeric_step
+        deltas: ['-0.05', '0', '0.05']
+        minimum: '0.55'
+        maximum: '0.75'
+      max_gross_exposure_pct_equity:
+        mode: explicit_values
+        values: ['0.50', '0.75', '1.0']
+    strategy_override_mutations:
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['7500', '15000', '22500', '30000']
+      max_position_pct_equity:
+        mode: explicit_values
+        values: ['0.25', '0.50', '0.75', '1.0']

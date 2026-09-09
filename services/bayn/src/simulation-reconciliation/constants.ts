@@ -1,0 +1,1 @@
+export const MARKED_EQUITY_TOLERANCE_MICROS = 0n

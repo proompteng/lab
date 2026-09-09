@@ -1,0 +1,8 @@
+apiVersion: devices.harvesterhci.io/v1beta1
+kind: PCIDeviceClaim
+metadata:
+  name: altra-000c01000
+spec:
+  address: 000c:01:00.0
+  nodeName: altra
+  userName: admin

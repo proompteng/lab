@@ -1,0 +1,32 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: bayn
+resources:
+  - serviceaccount.yaml
+  - clickhouse-secret.yaml
+  - alpaca-sealedsecret.yaml
+  - objectbucketclaim.yaml
+  - postgres-objectstore.yaml
+  - postgres-cluster.yaml
+  - postgres-scheduled-backup.yaml
+  - tigerbeetle-cluster.yaml
+  - tigerbeetle-networkpolicy.yaml
+  - egress-proxy.yaml
+  - deployment.yaml
+  - execution-bootstrap-sealedsecret.yaml
+  - execution-controller.yaml
+  - execution-controller-pdb.yaml
+  - execution-controller-networkpolicy.yaml
+  - execution-activation.yaml
+  - service.yaml
+  - status-pdb.yaml
+  - networkpolicy.yaml
+configMapGenerator:
+  - name: bayn-egress-proxy
+    files:
+      - squid.conf
+images:
+  - name: bayn-main
+    newName: registry.ide-newton.ts.net/lab/bayn
+    newTag: "sha-ee60493eb5a9b5f8572e868b6ff31c17675501a3"
+    digest: sha256:47143f3136a8ef2bd00910ff970c75db98c2e1229f2a7c028019bd82833c5ba7

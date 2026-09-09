@@ -1,0 +1,152 @@
+import type {
+  SourceRolloutTruthExchange,
+  StageClearancePacket,
+  TorghutConsumerEvidenceStatus,
+} from '~/server/control-plane-status-types'
+import {
+  fetchAgentRunProjectionAuthorityFromAgentsService,
+  type AgentsAgentRunProjectionAuthorityClaim,
+} from '@proompteng/agent-contracts'
+import { getDb } from '~/server/db'
+
+export type JsonRecord = Record<string, unknown>
+
+export type ProjectionForeclosureAgentRunProjection = AgentsAgentRunProjectionAuthorityClaim
+
+export type ProjectionForeclosureMarketContextProjection = {
+  request_id: string
+  symbol: string
+  domain: string
+  run_name: string | null
+  status: string
+  started_at: string | null
+  last_heartbeat_at: string | null
+  finished_at: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+export type ProjectionForeclosureEvidence = {
+  agentRunProjections: ProjectionForeclosureAgentRunProjection[]
+  marketContextProjections: ProjectionForeclosureMarketContextProjection[]
+  collectionErrors: string[]
+}
+
+export type ProjectionForeclosureNotaryInput = ProjectionForeclosureEvidence & {
+  now: Date
+  namespace: string
+  sourceHeadSha: string | null
+  gitopsRevision: string | null
+  sourceRolloutTruthExchange: SourceRolloutTruthExchange
+  stageClearancePackets: StageClearancePacket[]
+  torghutConsumerEvidence: TorghutConsumerEvidenceStatus
+}
+
+export const MARKET_CONTEXT_ACTIVE_PROJECTION_STATUSES = new Set([
+  'pending',
+  'queued',
+  'started',
+  'submitted',
+  'running',
+  'in_progress',
+  'progress',
+  'progressing',
+])
+
+const MARKET_CONTEXT_ACTIVE_PROJECTION_STATUS_QUERY_VALUES = [
+  ...MARKET_CONTEXT_ACTIVE_PROJECTION_STATUSES,
+  ...[...MARKET_CONTEXT_ACTIVE_PROJECTION_STATUSES].map((status) =>
+    status.replace(/(^|_)([a-z])/g, (_, prefix, char: string) => `${prefix}${char.toUpperCase()}`),
+  ),
+  ...[...MARKET_CONTEXT_ACTIVE_PROJECTION_STATUSES].map((status) => status.toUpperCase()),
+]
+
+export const emptyProjectionForeclosureEvidence = (): ProjectionForeclosureEvidence => ({
+  agentRunProjections: [],
+  marketContextProjections: [],
+  collectionErrors: [],
+})
+
+export const isProjectionForeclosureNotaryEnabled = (env: NodeJS.ProcessEnv = process.env) => {
+  const normalized = env.JANGAR_PROJECTION_FORECLOSURE_NOTARY_ENABLED?.trim().toLowerCase()
+  return !(normalized === '0' || normalized === 'false' || normalized === 'off' || normalized === 'no')
+}
+
+export const isProjectionForeclosureConsumptionEnabled = (env: NodeJS.ProcessEnv = process.env) => {
+  const normalized = env.JANGAR_PROJECTION_FORECLOSURE_CONSUME?.trim().toLowerCase()
+  return normalized === '1' || normalized === 'true' || normalized === 'on' || normalized === 'yes'
+}
+
+export const collectProjectionForeclosureEvidence = async (): Promise<ProjectionForeclosureEvidence> => {
+  const evidence = emptyProjectionForeclosureEvidence()
+  const db = getDb()
+
+  const agentRunResult = await fetchAgentRunProjectionAuthorityFromAgentsService({
+    limit: 100,
+    includeTerminalAudit: true,
+  })
+  if (agentRunResult.ok) {
+    evidence.agentRunProjections = agentRunResult.body.claims
+  } else {
+    evidence.collectionErrors.push(
+      `Agents service agent_run projection authority collection failed: ${agentRunResult.error ?? `HTTP ${agentRunResult.status}`}`,
+    )
+  }
+
+  if (db) {
+    try {
+      const rows = await db
+        .selectFrom('torghut_market_context_runs')
+        .select([
+          'request_id',
+          'symbol',
+          'domain',
+          'run_name',
+          'status',
+          'started_at',
+          'last_heartbeat_at',
+          'finished_at',
+          'created_at',
+          'updated_at',
+        ])
+        .where('status', 'in', MARKET_CONTEXT_ACTIVE_PROJECTION_STATUS_QUERY_VALUES)
+        .orderBy('updated_at', 'desc')
+        .limit(100)
+        .execute()
+      evidence.marketContextProjections = rows
+        .filter((row) => MARKET_CONTEXT_ACTIVE_PROJECTION_STATUSES.has(normalizeStatus(row.status)))
+        .map((row) => ({
+          request_id: row.request_id,
+          symbol: row.symbol,
+          domain: row.domain,
+          run_name: row.run_name,
+          status: row.status,
+          started_at: toIso(row.started_at),
+          last_heartbeat_at: toIso(row.last_heartbeat_at),
+          finished_at: toIso(row.finished_at),
+          created_at: toIso(row.created_at),
+          updated_at: toIso(row.updated_at),
+        }))
+    } catch (error) {
+      evidence.collectionErrors.push(
+        `torghut_market_context_runs projection collection failed: ${normalizeMessage(error)}`,
+      )
+    }
+  }
+
+  return evidence
+}
+
+const normalizeMessage = (value: unknown) => (value instanceof Error ? value.message : String(value))
+
+const normalizeStatus = (value: string | null | undefined) =>
+  (value ?? 'unknown')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_.:-]+/g, '_')
+
+const toIso = (value: unknown): string | null => {
+  if (!value) return null
+  const date = value instanceof Date ? value : new Date(String(value))
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null
+}

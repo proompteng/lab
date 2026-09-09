@@ -1,0 +1,223 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from scripts import verify_trading_loop_status as verifier
+from scripts.verify_trading_loop_status import evaluate_loop_status
+
+
+def _restored_payload() -> dict[str, object]:
+    return {
+        "restored": True,
+        "blocker_reasons": [],
+        "runtime": {"status": "ok"},
+        "market_data": {"fresh": True},
+        "alpha_model": {
+            "present": True,
+            "factor_snapshot_present": True,
+            "forecast_present": True,
+            "expected_edge_above_cost": True,
+        },
+        "risk_forecast": {"present": True},
+        "portfolio_target": {
+            "present": True,
+            "target_notional_positive": True,
+        },
+        "execution_intent": {"present": True},
+        "submitted_order": {"present": True},
+        "exchange_order_state": {"ack_seen": True},
+        "fills": {"recent_count": 3},
+        "position": {"account_snapshot_fresh": True, "reconciled": True},
+        "stale_open_orders": {"count": 0},
+        "alpaca_guard": {"unexpected_live_order_count_24h": 0},
+    }
+
+
+def test_verifier_accepts_hard_proof_payload() -> None:
+    assert evaluate_loop_status(_restored_payload()) == []
+
+
+def test_verifier_rejects_zero_target_without_submission_authority() -> None:
+    payload = _restored_payload()
+    payload["alpha_model"] = {
+        "present": True,
+        "factor_snapshot_present": True,
+        "forecast_present": True,
+        "expected_edge_above_cost": False,
+    }
+    payload["portfolio_target"] = {
+        "present": True,
+        "target_notional_positive": False,
+        "clip_reason": "liquidity_capacity_below_min_order",
+    }
+
+    failures = evaluate_loop_status(payload)
+
+    assert "multifactor_target_notional_not_positive" in failures
+
+
+def test_verifier_rejects_green_runtime_without_fills() -> None:
+    payload = _restored_payload()
+    payload["restored"] = False
+    payload["fills"] = {"recent_count": 0}
+
+    failures = evaluate_loop_status(payload)
+
+    assert "loop_status_not_restored" in failures
+    assert "recent_fills_below_floor" in failures
+
+
+def test_verifier_rejects_missing_multifactor_proof() -> None:
+    payload = _restored_payload()
+    payload["alpha_model"] = {"present": False}
+    payload["portfolio_target"] = {"present": True, "target_notional_positive": False}
+
+    failures = evaluate_loop_status(payload)
+
+    assert "multifactor_alpha_model_missing" in failures
+    assert "multifactor_target_notional_not_positive" not in failures
+
+
+def test_verifier_main_reads_status_file_and_reports_json(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    status_file = tmp_path / "status.json"
+    status_file.write_text(json.dumps(_restored_payload()), encoding="utf-8")
+
+    assert verifier.main(["--status-file", str(status_file)]) == 0
+
+    report = json.loads(capsys.readouterr().out)
+    assert report["schema_version"] == "torghut.trading-loop-status-verifier.v1"
+    assert report["ok"] is True
+    assert report["attempts"] == 1
+    assert report["consecutive_passes"] == 1
+
+
+def test_verifier_requires_consecutive_passing_samples(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    failing_payload = _restored_payload()
+    failing_payload["restored"] = False
+    failing_payload["blocker_reasons"] = ["hyperliquid_market_data_not_fresh"]
+    failing_payload["market_data"] = {"fresh": False, "selected_symbol": "ZRO"}
+    samples = [failing_payload, _restored_payload(), _restored_payload()]
+
+    def fake_load_payload(*_args: object, **_kwargs: object) -> dict[str, object]:
+        return samples.pop(0)
+
+    monkeypatch.setattr(verifier, "_load_payload", fake_load_payload)
+
+    assert (
+        verifier.main(
+            [
+                "--required-passes",
+                "2",
+                "--max-attempts",
+                "3",
+                "--interval-seconds",
+                "0",
+            ]
+        )
+        == 0
+    )
+
+    report = json.loads(capsys.readouterr().out)
+    assert report["ok"] is True
+    assert report["attempts"] == 3
+    assert report["consecutive_passes"] == 2
+    assert report["last_failure"]["failures"] == [
+        "loop_status_not_restored",
+        "market_data_not_fresh",
+        "status_blocker_reasons_present",
+    ]
+    assert report["last_failure"]["status"]["market_data"]["selected_symbol"] == "ZRO"
+
+
+def test_verifier_failure_report_includes_last_failing_status_summary(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    failing_payload = _restored_payload()
+    failing_payload["restored"] = False
+    failing_payload["generated_at"] = "2026-06-25T12:00:00+00:00"
+    failing_payload["blocker_reasons"] = ["stale_open_orders_present"]
+    failing_payload["stale_open_orders"] = {"count": 2}
+    failing_payload["algorithm"] = {
+        "name": "generic_multifactor_apm_v1",
+        "run_id": "run-1",
+    }
+
+    def fake_load_payload(*_args: object, **_kwargs: object) -> dict[str, object]:
+        return failing_payload
+
+    monkeypatch.setattr(verifier, "_load_payload", fake_load_payload)
+
+    assert (
+        verifier.main(
+            [
+                "--required-passes",
+                "2",
+                "--max-attempts",
+                "2",
+                "--interval-seconds",
+                "0",
+            ]
+        )
+        == 1
+    )
+
+    report = json.loads(capsys.readouterr().out)
+    assert report["ok"] is False
+    assert report["attempts"] == 2
+    assert report["consecutive_passes"] == 0
+    assert report["last_failure"]["status"]["generated_at"] == (
+        "2026-06-25T12:00:00+00:00"
+    )
+    assert report["last_failure"]["status"]["algorithm"]["run_id"] == "run-1"
+    assert report["last_failure"]["status"]["stale_open_orders"]["count"] == 2
+
+
+def test_verifier_loads_url_payload_and_rejects_non_object(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class _Response:
+        def __enter__(self) -> "_Response":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps(_restored_payload()).encode("utf-8")
+
+    def fake_urlopen(request: Any, *, timeout: float) -> _Response:
+        captured["request"] = request
+        captured["timeout"] = timeout
+        return _Response()
+
+    monkeypatch.setattr(verifier, "urlopen", fake_urlopen)
+
+    payload = verifier._load_payload(None, "http://example.test/status", 2.5)
+
+    assert payload["restored"] is True
+    assert captured["timeout"] == 2.5
+
+    bad_file = tmp_path / "bad.json"
+    bad_file.write_text("[]", encoding="utf-8")
+    with pytest.raises(SystemExit, match="status payload must be a JSON object"):
+        verifier._load_payload(bad_file, "http://unused", 1.0)
+
+
+def test_verifier_int_parser_handles_unusable_values() -> None:
+    assert verifier._int(True) == 0
+    assert verifier._int(None) == 0
+    assert verifier._int("bad") == 0

@@ -1,0 +1,4 @@
+routerServiceType: ClusterIP
+defaultNamespace: fission
+kafka:
+  enabled: true

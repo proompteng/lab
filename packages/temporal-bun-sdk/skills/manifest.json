@@ -1,0 +1,10 @@
+{
+  "skills": [
+    {
+      "name": "temporal",
+      "description": "Operate Temporal workflows from CLI: inspect history, diagnose nondeterminism, reset, cancel, terminate, and validate task queues.",
+      "path": "temporal",
+      "entry": "SKILL.md"
+    }
+  ]
+}

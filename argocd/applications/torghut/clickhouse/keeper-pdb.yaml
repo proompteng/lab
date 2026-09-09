@@ -1,0 +1,16 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: torghut-keeper
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut-keeper
+    app.kubernetes.io/part-of: torghut
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  maxUnavailable: 0
+  selector:
+    matchLabels:
+      clickhouse.altinity.com/chk: torghut-keeper
+

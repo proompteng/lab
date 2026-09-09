@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: torghut
+resources:
+  - clickhouse-keeper.yaml
+  - keeper-pdb.yaml
+  - sealed-secret.yaml
+  - bayn-sealed-secret.yaml
+  - signal-publisher-sealed-secret.yaml
+  - clickhouse-guardrails-exporter-configmap.yaml
+  - clickhouse-guardrails-exporter.yaml
+  - clickhouse-cluster.yaml
+  - clickhouse-service.yaml
+  - ta-replicated-table-migration-job.yaml
+  - signal-schema-job.yaml
+  - intraday-bars-schema-job.yaml
+  - bayn-universe-v2-configmap.yaml
+  - signal-publisher-cronjob.yaml
+images:
+  - name: registry.ide-newton.ts.net/lab/signal-publisher
+    newName: registry.ide-newton.ts.net/lab/signal-publisher
+    newTag: "sha-f34b6492c746608bcaa6e068328c60da4d39754a"
+    digest: sha256:1c89ed7305214f9896ebcf59c6f6b1e289fdbdfdf1fb7f41e6c7f699386e9ffa

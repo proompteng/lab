@@ -1,0 +1,3 @@
+machine:
+  nodeLabels:
+    platform.proompteng.ai/altra-gpu-container-ready: 'true'

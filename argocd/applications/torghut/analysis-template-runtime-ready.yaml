@@ -1,0 +1,57 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: torghut-simulation-runtime-ready
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+spec:
+  args:
+    - name: runId
+    - name: datasetId
+    - name: namespace
+    - name: torghutService
+    - name: taDeployment
+    - name: windowStart
+    - name: windowEnd
+    - name: signalTable
+    - name: priceTable
+    - name: runtimeVerifyTimeoutSeconds
+    - name: runtimeVerifyPollSeconds
+  metrics:
+    - name: runtime-ready
+      provider:
+        job:
+          spec:
+            backoffLimit: 0
+            ttlSecondsAfterFinished: 300
+            template:
+              spec:
+                serviceAccountName: torghut-runtime
+                restartPolicy: Never
+                nodeSelector:
+                  kubernetes.io/arch: arm64
+                containers:
+                  - name: analysis
+                    image: registry.ide-newton.ts.net/lab/torghut@sha256:b359cd2368e89b492f7ff6925f975b72bb2ca3aa0261478552fc6094688e3bb4
+                    imagePullPolicy: IfNotPresent
+                    command:
+                      - /bin/bash
+                      - -lc
+                    args:
+                      - >-
+                        set -euo pipefail &&
+                        cd /app &&
+                        python scripts/run_simulation_analysis.py runtime-ready
+                        --run-id "{{args.runId}}"
+                        --dataset-id "{{args.datasetId}}"
+                        --namespace "{{args.namespace}}"
+                        --torghut-service "{{args.torghutService}}"
+                        --ta-deployment "{{args.taDeployment}}"
+                        --window-start "{{args.windowStart}}"
+                        --window-end "{{args.windowEnd}}"
+                        --signal-table "{{args.signalTable}}"
+                        --price-table "{{args.priceTable}}"
+                        --runtime-timeout-seconds "{{args.runtimeVerifyTimeoutSeconds}}"
+                        --runtime-poll-seconds "{{args.runtimeVerifyPollSeconds}}"
+                        --json

@@ -1,0 +1,30 @@
+{
+  "name": "cloutt",
+  "version": "1.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "main": "main.ts",
+  "scripts": {
+    "import": "cdk8s import",
+    "synth": "cdk8s synth",
+    "build": "bun main.ts",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json ."
+  },
+  "dependencies": {
+    "cdk8s": "^2.70.61",
+    "cdk8s-plus-31": "^2.6.43",
+    "constructs": "^10.6.0",
+    "js-yaml": "^4.1.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/jest": "^30",
+    "@types/node": "^25",
+    "cdk8s-cli": "^2.206.10",
+    "jest": "^30",
+    "ts-jest": "^29.4.9",
+    "ts-node": "^10",
+    "typescript": "^7.0.2"
+  }
+}

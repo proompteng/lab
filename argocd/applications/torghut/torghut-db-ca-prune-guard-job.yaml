@@ -1,0 +1,60 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: torghut-db-ca-prune-guard
+  namespace: torghut
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "-10"
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 120
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: torghut-db-ca-prune-guard
+        app.kubernetes.io/part-of: torghut
+    spec:
+      restartPolicy: Never
+      serviceAccountName: torghut-db-ca-reflector
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: protect
+          image: bitnami/kubectl@sha256:a67b11e95e953f550f020a41970185ccc5f83d78b86b8c575d02c904aa0f9cd7
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            runAsUser: 1001
+            runAsGroup: 1001
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              if ! kubectl -n torghut get secret torghut-db-ca >/dev/null 2>&1; then
+                echo "CNPG CA secret is absent; nothing to protect from Argo prune"
+                exit 0
+              fi
+
+              if ! kubectl -n torghut get secret torghut-db-ca \
+                -o jsonpath='{.data.ca\.crt}{" "}{.data.ca\.key}' | grep -Eq '^[^[:space:]]+ [^[:space:]]+$'; then
+                echo "existing torghut-db-ca lacks CNPG CA data; leaving it pruneable for CNPG recovery"
+                exit 0
+              fi
+
+              kubectl -n torghut annotate secret torghut-db-ca \
+                argocd.argoproj.io/sync-options=Prune=false \
+                --overwrite
+              kubectl -n torghut annotate secret torghut-db-ca \
+                argocd.argoproj.io/tracking-id- || true
+              echo "protected existing CNPG-managed torghut-db-ca from Argo prune"

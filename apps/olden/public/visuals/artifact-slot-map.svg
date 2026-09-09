@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 520" role="img" aria-labelledby="title desc">
+  <title id="title">Artifact slot map</title>
+  <desc id="desc">Original diagram showing how artifact slots should be assigned by hero job.</desc>
+  <rect width="1200" height="520" rx="28" fill="#111111"/>
+  <rect x="46" y="46" width="1108" height="428" rx="18" fill="#1f1f1f" stroke="#3f3f46"/>
+  <text x="86" y="98" fill="#f4f4f5" font-family="Arial, sans-serif" font-size="30" font-weight="700">Artifact assignment map</text>
+  <text x="86" y="132" fill="#a1a1aa" font-family="Arial, sans-serif" font-size="18">Move artifacts to the hero who converts the slot into immediate value.</text>
+
+  <g font-family="Arial, sans-serif">
+    <circle cx="270" cy="300" r="96" fill="#27272a" stroke="#71717a" stroke-width="3"/>
+    <circle cx="270" cy="202" r="36" fill="#3f3f46" stroke="#a1a1aa"/>
+    <rect x="222" y="260" width="96" height="126" rx="38" fill="#3f3f46" stroke="#a1a1aa"/>
+    <text x="215" y="424" fill="#fafafa" font-size="19" font-weight="700">Main hero</text>
+
+    <rect x="480" y="176" width="240" height="72" rx="12" fill="#27272a" stroke="#52525b"/>
+    <text x="510" y="206" fill="#fafafa" font-size="18" font-weight="700">Combat slots</text>
+    <text x="510" y="230" fill="#d4d4d8" font-size="15">Attack, defense, damage</text>
+
+    <rect x="480" y="274" width="240" height="72" rx="12" fill="#27272a" stroke="#52525b"/>
+    <text x="510" y="304" fill="#fafafa" font-size="18" font-weight="700">Caster slots</text>
+    <text x="510" y="328" fill="#d4d4d8" font-size="15">Mana, knowledge, spell power</text>
+
+    <rect x="784" y="176" width="260" height="72" rx="12" fill="#27272a" stroke="#52525b"/>
+    <text x="814" y="206" fill="#fafafa" font-size="18" font-weight="700">Route slots</text>
+    <text x="814" y="230" fill="#d4d4d8" font-size="15">Movement, speed, scouting</text>
+
+    <rect x="784" y="274" width="260" height="72" rx="12" fill="#27272a" stroke="#52525b"/>
+    <text x="814" y="304" fill="#fafafa" font-size="18" font-weight="700">Support slots</text>
+    <text x="814" y="328" fill="#d4d4d8" font-size="15">Economy, diplomacy, set pieces</text>
+  </g>
+
+  <path d="M370 286 C418 220 438 212 480 212" fill="none" stroke="#eab308" stroke-width="4" stroke-linecap="round"/>
+  <path d="M370 314 C420 312 436 310 480 310" fill="none" stroke="#eab308" stroke-width="4" stroke-linecap="round"/>
+  <path d="M720 212 H784" fill="none" stroke="#eab308" stroke-width="4" stroke-linecap="round"/>
+  <path d="M720 310 H784" fill="none" stroke="#eab308" stroke-width="4" stroke-linecap="round"/>
+</svg>

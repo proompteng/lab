@@ -1,0 +1,92 @@
+fullnameOverride: open-webui
+
+ollama:
+  enabled: false
+
+pipelines:
+  enabled: false
+
+tika:
+  enabled: false
+
+websocket:
+  enabled: true
+  manager: redis
+  url: redis://jangar-openwebui-redis:6379/0
+  redis:
+    enabled: false
+
+image:
+  tag: v0.11.0
+
+openaiApiKey: ""
+
+serviceAccount:
+  enable: true
+  create: true
+  name: open-webui
+
+openaiBaseApiUrl: http://flamingo.flamingo.svc.cluster.local/v1
+
+databaseUrl: ""
+
+extraEnvVars:
+  - name: DATABASE_URL
+    valueFrom:
+      secretKeyRef:
+        name: jangar-db-app
+        key: uri
+  - name: DATABASE_TYPE
+    value: postgresql
+  - name: PGSSLROOTCERT
+    value: /etc/ssl/certs/jangar-db/ca.crt
+  - name: PGSSLMODE
+    value: require
+  # Disable TLS when calling the HTTP-only Jangar OpenAI gateway
+  - name: AIOHTTP_CLIENT_SESSION_SSL
+    value: "false"
+  # Keep Flamingo first so new chats default to the Blackwell vLLM endpoint.
+  # Keep the Jangar gateway second as the separate hosted-model path.
+  - name: OPENAI_API_BASE_URLS
+    value: "http://flamingo.flamingo.svc.cluster.local/v1;http://jangar.jangar.svc.cluster.local/openai/v1"
+  - name: OPENAI_API_KEYS
+    value: ";"
+  - name: DEFAULT_MODELS
+    value: qwen36-flamingo
+  - name: WEBUI_AUTH
+    value: "false"
+  - name: ENABLE_SIGNUP
+    value: "false"
+  # Forward chat/user identifiers to the upstream OpenAI-compatible backend
+  - name: ENABLE_FORWARD_USER_INFO_HEADERS
+    value: "true"
+
+volumes:
+  - name: jangar-db-ca
+    secret:
+      secretName: jangar-db-ca
+
+volumeMounts:
+  container:
+    - name: jangar-db-ca
+      mountPath: /etc/ssl/certs/jangar-db
+      readOnly: true
+
+resources:
+  requests:
+    cpu: "4"
+    memory: 8Gi
+  limits:
+    cpu: "4"
+    memory: 8Gi
+
+# Increase OpenWebUI verbosity for debugging streaming issues
+logging:
+  level: debug
+  components:
+    openai: debug
+    main: debug
+
+persistence:
+  storageClass: rook-ceph-block
+  size: 5Gi

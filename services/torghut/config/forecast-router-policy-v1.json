@@ -1,0 +1,36 @@
+{
+  "policy_version": "forecast_router_policy_v1",
+  "routes": [
+    {
+      "symbol_glob": "A*",
+      "horizon": "1m",
+      "regime": "trend",
+      "preferred_model_family": "financial_tsfm",
+      "candidate_fallbacks": ["chronos", "moment"],
+      "min_calibration_score": "0.88",
+      "max_inference_latency_ms": 120,
+      "disable_refinement": false
+    },
+    {
+      "symbol_glob": "*",
+      "horizon": "*",
+      "regime": "*",
+      "preferred_model_family": "chronos",
+      "candidate_fallbacks": ["moment", "financial_tsfm"],
+      "min_calibration_score": "0.85",
+      "max_inference_latency_ms": 200,
+      "disable_refinement": false
+    }
+  ],
+  "default_calibration_score_by_model_family": {
+    "chronos": "0.93",
+    "moment": "0.90",
+    "financial_tsfm": "0.91",
+    "baseline": "0.99"
+  },
+  "route_calibration_scores": {
+    "AAPL|1m|trend": {
+      "financial_tsfm": "0.94"
+    }
+  }
+}

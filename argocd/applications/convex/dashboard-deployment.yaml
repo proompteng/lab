@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: convex-dashboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: convex-dashboard
+  template:
+    metadata:
+      labels:
+        app: convex-dashboard
+    spec:
+      containers:
+        - name: dashboard
+          image: ghcr.io/get-convex/convex-dashboard:latest
+          ports:
+            - containerPort: 6791
+              name: http
+          env:
+            - name: NEXT_PUBLIC_DEPLOYMENT_URL
+              value: https://convex.proompteng.ai
+            - name: CONVEX_SITE_ORIGIN
+              valueFrom:
+                configMapKeyRef:
+                  name: convex-backend-config
+                  key: CONVEX_SITE_ORIGIN
+            - name: CONVEX_CLOUD_ORIGIN
+              valueFrom:
+                configMapKeyRef:
+                  name: convex-backend-config
+                  key: CONVEX_CLOUD_ORIGIN
+            - name: ADMIN_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: convex-backend-secrets
+                  key: ADMIN_KEY

@@ -1,0 +1,55 @@
+replicaCount: 1
+
+image:
+  # Local dev image loaded into kind via AGENTS_KIND_LOAD_IMAGE.
+  repository: agents-control-plane
+  tag: ha-test
+  pullPolicy: IfNotPresent
+
+controllers:
+  image:
+    repository: agents-controller
+
+grpc:
+  enabled: false
+
+readinessProbe:
+  # This branch adds /ready (leader-election aware).
+  path: /ready
+
+env:
+  vars:
+    # CI runs with a fresh Postgres, so we must run migrations to create schema
+    # (otherwise controllers will fail to reconcile AgentRuns).
+    AGENTS_MIGRATIONS: 'auto'
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+
+controllers:
+  enabled: true
+  replicaCount: 2
+  env:
+    vars:
+      AGENTS_MIGRATIONS: 'auto'
+
+controller:
+  leaderElection:
+    enabled: true
+  namespaces:
+    - agents-ci
+  vcsProviders:
+    enabled: false
+
+orchestrationController:
+  namespaces:
+    - agents-ci
+
+supportingController:
+  namespaces:
+    - agents-ci
+
+agentComms:
+  enabled: false

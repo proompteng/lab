@@ -1,0 +1,30 @@
+{{- if and .Values.agentsShell.enabled .Values.agentsShell.ingressRoute.enabled -}}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: {{ .Values.agentsShell.ingressRoute.name | default (include "agents.agentsShellName" .) }}
+  namespace: {{ .Values.namespaceOverride | default .Release.Namespace }}
+  labels:
+    {{- include "agents.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agents-shell
+spec:
+  entryPoints:
+    {{- range .Values.agentsShell.ingressRoute.entryPoints }}
+    - {{ . }}
+    {{- end }}
+  routes:
+    - kind: Rule
+      match: Host(`{{ .Values.agentsShell.ingressRoute.host }}`)
+      priority: {{ .Values.agentsShell.ingressRoute.priority }}
+      {{- with .Values.agentsShell.ingressRoute.middlewares }}
+      middlewares:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      services:
+        - name: {{ include "agents.agentsShellName" . }}
+          port: {{ .Values.agentsShell.service.port }}
+  {{- with .Values.agentsShell.ingressRoute.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

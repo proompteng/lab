@@ -1,0 +1,316 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: headlamp-auth-bridge
+  namespace: headlamp
+data:
+  auth.html: |
+    <!doctype html>
+    <html lang="en">
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta http-equiv="Cache-Control" content="no-store" />
+        <title>Completing Headlamp Sign-In</title>
+        <style>
+          :root {
+            color-scheme: dark;
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+          }
+
+          body {
+            margin: 0;
+            min-height: 100vh;
+            display: grid;
+            place-items: center;
+            background: #1f1f1f;
+            color: #f5f5f5;
+          }
+
+          main {
+            width: min(28rem, calc(100vw - 2rem));
+            padding: 2rem;
+            border: 1px solid #3f3f46;
+            border-radius: 1rem;
+            background: #27272a;
+            box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+          }
+
+          h1 {
+            margin: 0 0 0.75rem;
+            font-size: 1.5rem;
+          }
+
+          p {
+            margin: 0.75rem 0 0;
+            line-height: 1.5;
+            color: #d4d4d8;
+          }
+
+          a {
+            color: #fde047;
+          }
+        </style>
+      </head>
+      <body>
+        <main>
+          <h1>Completing sign-in…</h1>
+          <p id="status">Redirecting back to Headlamp.</p>
+          <p>
+            If nothing happens,
+            <a id="continue-link" href="/">continue to Headlamp</a>.
+          </p>
+        </main>
+        <script>
+          (() => {
+            const params = new URLSearchParams(window.location.search);
+            const cluster = params.get('cluster');
+            const status = document.getElementById('status');
+            const continueLink = document.getElementById('continue-link');
+
+            if (!cluster) {
+              status.textContent = 'Cluster information is missing. Continue to the Headlamp login page.';
+              continueLink.href = '/';
+              return;
+            }
+
+            const target = `/c/${encodeURIComponent(cluster)}`;
+            continueLink.href = target;
+
+            const markAuthSuccess = storage => {
+              storage.removeItem('auth_status');
+              storage.setItem('auth_status', 'success');
+            };
+
+            try {
+              markAuthSuccess(window.localStorage);
+            } catch (error) {
+              console.error('Failed to update local auth state', error);
+            }
+
+            let openerRedirected = false;
+
+            try {
+              if (window.opener && !window.opener.closed) {
+                markAuthSuccess(window.opener.localStorage);
+                window.opener.location.replace(target);
+                window.opener.focus();
+                openerRedirected = true;
+              }
+            } catch (error) {
+              console.error('Failed to redirect Headlamp opener', error);
+            }
+
+            status.textContent = openerRedirected
+              ? 'Sign-in complete. Returning to Headlamp.'
+              : 'Sign-in complete. Opening Headlamp.';
+
+            window.setTimeout(() => {
+              if (openerRedirected) {
+                window.close();
+              }
+
+              window.location.replace(target);
+            }, 150);
+          })();
+        </script>
+      </body>
+    </html>
+  server.py: |
+    import http.client
+    import os
+    import socket
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from pathlib import Path
+    from urllib.parse import urlparse
+
+    AUTH_HTML = Path('/app/auth.html').read_bytes()
+    HEADLAMP_UPSTREAM_HOST = os.environ.get('HEADLAMP_UPSTREAM_HOST', 'headlamp')
+    HEADLAMP_UPSTREAM_PORT = int(os.environ.get('HEADLAMP_UPSTREAM_PORT', '80'))
+    HEADLAMP_PROXY_TIMEOUT_SECONDS = float(os.environ.get('HEADLAMP_PROXY_TIMEOUT_SECONDS', '30'))
+    HOP_BY_HOP_HEADERS = {
+      'connection',
+      'keep-alive',
+      'proxy-authenticate',
+      'proxy-authorization',
+      'te',
+      'trailer',
+      'transfer-encoding',
+      'upgrade',
+    }
+
+
+    def build_body(status, text):
+      return text.encode('utf-8')
+
+
+    def send_bytes(handler, status, body, content_type='text/plain; charset=utf-8', include_body=True):
+      handler.send_response(status)
+      handler.send_header('Content-Type', content_type)
+      handler.send_header('Cache-Control', 'no-store')
+      handler.send_header('Content-Length', str(len(body)))
+      handler.end_headers()
+      if include_body and body:
+        handler.wfile.write(body)
+
+
+    def is_websocket_upgrade(headers):
+      connection = headers.get('Connection', '')
+      upgrade = headers.get('Upgrade', '')
+      return 'upgrade' in connection.lower() and upgrade.lower() == 'websocket'
+
+
+    def read_request_body(handler):
+      length = int(handler.headers.get('Content-Length', '0') or '0')
+      if length <= 0:
+        return None
+      return handler.rfile.read(length)
+
+
+    def upstream_headers(handler):
+      headers = {}
+      for name, value in handler.headers.items():
+        if name.lower() in HOP_BY_HOP_HEADERS:
+          continue
+        headers[name] = value
+      return headers
+
+
+    def proxy_http_request(handler, include_body):
+      connection = http.client.HTTPConnection(
+        HEADLAMP_UPSTREAM_HOST,
+        HEADLAMP_UPSTREAM_PORT,
+        timeout=HEADLAMP_PROXY_TIMEOUT_SECONDS,
+      )
+
+      body = read_request_body(handler)
+      headers = upstream_headers(handler)
+      headers['Host'] = f'{HEADLAMP_UPSTREAM_HOST}:{HEADLAMP_UPSTREAM_PORT}'
+
+      connection.request(handler.command, handler.path, body=body, headers=headers)
+      response = connection.getresponse()
+
+      response_body = b''
+      if include_body and handler.command != 'HEAD':
+        response_body = response.read()
+
+      handler.send_response(response.status, response.reason)
+      for name, value in response.getheaders():
+        lower_name = name.lower()
+        if lower_name in HOP_BY_HOP_HEADERS or lower_name == 'content-length':
+          continue
+        handler.send_header(name, value)
+      handler.send_header('Content-Length', str(len(response_body)))
+      handler.end_headers()
+      if include_body and response_body:
+        handler.wfile.write(response_body)
+
+      connection.close()
+
+
+    def copy_bytes(source, destination):
+      try:
+        while True:
+          chunk = source.recv(65536)
+          if not chunk:
+            break
+          destination.sendall(chunk)
+      except OSError:
+        pass
+      finally:
+        try:
+          destination.shutdown(socket.SHUT_WR)
+        except OSError:
+          pass
+
+
+    def tunnel_websocket_request(handler):
+      body = read_request_body(handler)
+      upstream = socket.create_connection(
+        (HEADLAMP_UPSTREAM_HOST, HEADLAMP_UPSTREAM_PORT),
+        timeout=HEADLAMP_PROXY_TIMEOUT_SECONDS,
+      )
+
+      request_lines = [f'{handler.command} {handler.path} {handler.request_version}']
+      for name, value in handler.headers.items():
+        if name.lower() == 'host':
+          value = f'{HEADLAMP_UPSTREAM_HOST}:{HEADLAMP_UPSTREAM_PORT}'
+        request_lines.append(f'{name}: {value}')
+
+      upstream.sendall(('\r\n'.join(request_lines) + '\r\n\r\n').encode('utf-8'))
+      if body:
+        upstream.sendall(body)
+
+      handler.close_connection = True
+
+      client_to_upstream = threading.Thread(
+        target=copy_bytes,
+        args=(handler.connection, upstream),
+        daemon=True,
+      )
+      upstream_to_client = threading.Thread(
+        target=copy_bytes,
+        args=(upstream, handler.connection),
+        daemon=True,
+      )
+      client_to_upstream.start()
+      upstream_to_client.start()
+      client_to_upstream.join()
+      upstream_to_client.join()
+      upstream.close()
+
+
+    class Handler(BaseHTTPRequestHandler):
+      protocol_version = 'HTTP/1.1'
+
+      def _handle(self, include_body):
+        parsed = urlparse(self.path)
+        path = parsed.path
+
+        if path == '/healthz':
+          body = b'ok'
+          send_bytes(self, 200, body, include_body=include_body)
+          return
+
+        if path.startswith('/auth'):
+          send_bytes(self, 200, AUTH_HTML, 'text/html; charset=utf-8', include_body)
+          return
+
+        if path.startswith('/clusters/'):
+          if is_websocket_upgrade(self.headers):
+            tunnel_websocket_request(self)
+            return
+
+          proxy_http_request(self, include_body)
+          return
+
+        body = b'not found'
+        send_bytes(self, 404, body, include_body=include_body)
+
+      def do_GET(self):
+        self._handle(True)
+
+      def do_HEAD(self):
+        self._handle(False)
+
+      def do_POST(self):
+        self._handle(True)
+
+      def do_PUT(self):
+        self._handle(True)
+
+      def do_PATCH(self):
+        self._handle(True)
+
+      def do_DELETE(self):
+        self._handle(True)
+
+      def do_OPTIONS(self):
+        self._handle(False)
+
+      def log_message(self, format, *args):
+        return
+
+
+    ThreadingHTTPServer(('0.0.0.0', 8080), Handler).serve_forever()

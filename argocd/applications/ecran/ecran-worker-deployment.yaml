@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/name: ecran-worker
+  name: ecran-worker
+  namespace: ecran
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ecran-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ecran-worker
+    spec:
+      initContainers:
+        - name: run-migrations
+          image: registry.ide-newton.ts.net/lab/ecran-migrator:latest
+          imagePullPolicy: Always
+          env:
+            - name: DB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: ecran-vector-cluster-app
+                  key: uri
+      containers:
+        - name: ecran-worker
+          image: registry.ide-newton.ts.net/lab/ecran-worker
+          imagePullPolicy: Always
+          env:
+            - name: RESEND_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: resend-api-key
+                  key: data
+            - name: DB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: ecran-vector-cluster-app
+                  key: uri
+            - name: TEMPORAL_ADDRESS
+              value: "temporal-frontend.temporal.svc.cluster.local:7233"
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: anthropic-api-key
+                  key: data
+          resources:
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+            requests:
+              cpu: "100m"
+              memory: "100Mi"

@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: torghut-scheduler
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+    app.kubernetes.io/component: trading-scheduler
+    app.kubernetes.io/part-of: lab
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  selector:
+    app.kubernetes.io/name: torghut
+    app.kubernetes.io/component: trading-scheduler
+  ports:
+    - name: metrics
+      port: 8183
+      targetPort: metrics

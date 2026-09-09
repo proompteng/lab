@@ -1,0 +1,151 @@
+type EnvSource = Record<string, string | undefined>
+
+const DEFAULT_MARKET_CONTEXT_ENABLED_FLAG_KEY = 'jangar.market_context.enabled'
+const DEFAULT_ALLOWED_SERVICE_ACCOUNT_PREFIX = 'system:serviceaccount:torghut:'
+const DEFAULT_ON_DEMAND_DISPATCH_REPOSITORY = 'proompteng/lab'
+const DEFAULT_ON_DEMAND_DISPATCH_BASE_BRANCH = 'main'
+const DEFAULT_ON_DEMAND_DISPATCH_HEAD_BRANCH = 'main'
+const DEFAULT_ON_DEMAND_DISPATCH_VCS_REF = 'github'
+
+const normalizeNonEmpty = (value: string | undefined | null) => {
+  const normalized = value?.trim()
+  return normalized && normalized.length > 0 ? normalized : null
+}
+
+const parseBoolean = (value: string | undefined, fallback: boolean) => {
+  const normalized = normalizeNonEmpty(value)?.toLowerCase()
+  if (!normalized) return fallback
+  if (['1', 'true', 'yes', 'on', 'enabled'].includes(normalized)) return true
+  if (['0', 'false', 'no', 'off', 'disabled'].includes(normalized)) return false
+  return fallback
+}
+
+const parsePositiveInt = (value: string | undefined, fallback: number) => {
+  const normalized = normalizeNonEmpty(value)
+  if (!normalized) return fallback
+  const parsed = Number.parseInt(normalized, 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback
+  return Math.floor(parsed)
+}
+
+const parseStringList = (value: string | undefined, fallback: string[]) => {
+  const parsed = (value ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+  return parsed.length > 0 ? parsed : [...fallback]
+}
+
+export type MarketContextRuntimeConfig = {
+  requireTechnicalsSourceHealth: boolean
+  enabledFallback: boolean
+  enabledFlagKey: string
+  cacheSeconds: number
+  maxStalenessSeconds: number
+  technicalsMaxFreshnessSeconds: number
+  newsMaxFreshnessSeconds: number
+  regimeMaxFreshnessSeconds: number
+  batchRequireOpenSession: boolean
+  batchTradingStatusUrl: string
+  batchTradingStatusTimeoutMs: number
+  providerChain: string[]
+  providerFailureThreshold: number
+  providerCooldownSeconds: number
+  onDemandDispatchEnabled: boolean
+  onDemandDispatchCooldownSeconds: number
+  onDemandDispatchActiveRunSeconds: number
+  onDemandDispatchNamespace: string
+  onDemandDispatchServiceAccountName: string
+  onDemandDispatchPriorityClassName: string
+  onDemandDispatchCallbackUrl: string
+  onDemandDispatchTtlSeconds: number
+  onDemandDispatchRepository: string
+  onDemandDispatchBaseBranch: string
+  onDemandDispatchHeadBranch: string
+  onDemandDispatchVcsRefName: string
+}
+
+export type MarketContextIngestAuthConfig = {
+  sharedIngestToken: string | null
+  allowServiceAccountToken: boolean
+  allowedServiceAccountPrefixes: string[]
+  kubernetesServiceHost: string | null
+  kubernetesServicePort: string
+}
+
+export const resolveMarketContextRuntimeConfig = (env: EnvSource = process.env): MarketContextRuntimeConfig => {
+  const maxStalenessSeconds = parsePositiveInt(env.JANGAR_MARKET_CONTEXT_MAX_STALENESS_SECONDS, 300)
+
+  return {
+    requireTechnicalsSourceHealth: parseBoolean(env.JANGAR_MARKET_CONTEXT_REQUIRE_TECHNICALS_SOURCE_HEALTH, true),
+    enabledFallback: parseBoolean(env.JANGAR_MARKET_CONTEXT_ENABLED, true),
+    enabledFlagKey:
+      normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_ENABLED_FLAG_KEY) ?? DEFAULT_MARKET_CONTEXT_ENABLED_FLAG_KEY,
+    cacheSeconds: parsePositiveInt(env.JANGAR_MARKET_CONTEXT_CACHE_SECONDS, 60),
+    maxStalenessSeconds,
+    technicalsMaxFreshnessSeconds: parsePositiveInt(
+      env.JANGAR_MARKET_CONTEXT_TECHNICALS_MAX_FRESHNESS_SECONDS,
+      maxStalenessSeconds,
+    ),
+    newsMaxFreshnessSeconds: parsePositiveInt(env.JANGAR_MARKET_CONTEXT_NEWS_MAX_FRESHNESS_SECONDS, 300),
+    regimeMaxFreshnessSeconds: parsePositiveInt(
+      env.JANGAR_MARKET_CONTEXT_REGIME_MAX_FRESHNESS_SECONDS,
+      maxStalenessSeconds,
+    ),
+    batchRequireOpenSession: parseBoolean(env.JANGAR_MARKET_CONTEXT_BATCH_REQUIRE_OPEN_SESSION, true),
+    batchTradingStatusUrl:
+      normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_BATCH_TRADING_STATUS_URL) ??
+      'http://torghut.torghut.svc.cluster.local/trading/status',
+    batchTradingStatusTimeoutMs: parsePositiveInt(env.JANGAR_MARKET_CONTEXT_BATCH_TRADING_STATUS_TIMEOUT_MS, 2_000),
+    providerChain: parseStringList(env.JANGAR_MARKET_CONTEXT_PROVIDER_CHAIN, ['codex-spark', 'codex']),
+    providerFailureThreshold: parsePositiveInt(env.JANGAR_MARKET_CONTEXT_PROVIDER_FAILURE_THRESHOLD, 3),
+    providerCooldownSeconds: parsePositiveInt(env.JANGAR_MARKET_CONTEXT_PROVIDER_COOLDOWN_SECONDS, 900),
+    onDemandDispatchEnabled: parseBoolean(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_ENABLED, false),
+    onDemandDispatchCooldownSeconds: parsePositiveInt(
+      env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_COOLDOWN_SECONDS,
+      900,
+    ),
+    onDemandDispatchActiveRunSeconds: parsePositiveInt(
+      env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_ACTIVE_RUN_SECONDS,
+      3600,
+    ),
+    onDemandDispatchNamespace: normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_NAMESPACE) ?? 'agents',
+    onDemandDispatchServiceAccountName:
+      normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_SERVICE_ACCOUNT_NAME) ?? 'agents-sa',
+    onDemandDispatchPriorityClassName:
+      normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_PRIORITY_CLASS_NAME) ?? '',
+    onDemandDispatchCallbackUrl:
+      normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_CALLBACK_URL) ??
+      'http://jangar.jangar.svc.cluster.local/api/torghut/market-context',
+    onDemandDispatchTtlSeconds: parsePositiveInt(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_TTL_SECONDS, 7200),
+    onDemandDispatchRepository:
+      normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_REPOSITORY) ??
+      DEFAULT_ON_DEMAND_DISPATCH_REPOSITORY,
+    onDemandDispatchBaseBranch:
+      normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_BASE_BRANCH) ??
+      DEFAULT_ON_DEMAND_DISPATCH_BASE_BRANCH,
+    onDemandDispatchHeadBranch:
+      normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_HEAD_BRANCH) ??
+      DEFAULT_ON_DEMAND_DISPATCH_HEAD_BRANCH,
+    onDemandDispatchVcsRefName:
+      normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_VCS_REF_NAME) ??
+      DEFAULT_ON_DEMAND_DISPATCH_VCS_REF,
+  }
+}
+
+export const resolveMarketContextIngestAuthConfig = (env: EnvSource = process.env): MarketContextIngestAuthConfig => ({
+  sharedIngestToken: normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_INGEST_TOKEN),
+  allowServiceAccountToken: parseBoolean(env.JANGAR_MARKET_CONTEXT_INGEST_ALLOW_SERVICE_ACCOUNT_TOKEN, true),
+  allowedServiceAccountPrefixes: parseStringList(env.JANGAR_MARKET_CONTEXT_INGEST_ALLOWED_SERVICE_ACCOUNT_PREFIXES, [
+    DEFAULT_ALLOWED_SERVICE_ACCOUNT_PREFIX,
+  ]),
+  kubernetesServiceHost: normalizeNonEmpty(env.KUBERNETES_SERVICE_HOST),
+  kubernetesServicePort: normalizeNonEmpty(env.KUBERNETES_SERVICE_PORT) ?? '443',
+})
+
+export const validateMarketContextConfig = (env: EnvSource = process.env) => {
+  const runtime = resolveMarketContextRuntimeConfig(env)
+  new URL(runtime.batchTradingStatusUrl)
+  new URL(runtime.onDemandDispatchCallbackUrl)
+  resolveMarketContextIngestAuthConfig(env)
+}
