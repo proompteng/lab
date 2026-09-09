@@ -199,10 +199,50 @@ spec:
   ingress: []
   egress: []
 ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: forgejo-server-16-0-3-restore-db-v2
+  namespace: forgejo
+  annotations:
+    argocd.argoproj.io/sync-wave: '-5'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: rook-ceph-block
+  resources:
+    requests:
+      storage: 10Gi
+  dataSource:
+    apiGroup: snapshot.storage.k8s.io
+    kind: VolumeSnapshot
+    name: forgejo-server-16-0-3-db
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: forgejo-server-16-0-3-restore-data-v2
+  namespace: forgejo
+  annotations:
+    argocd.argoproj.io/sync-wave: '-5'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: rook-ceph-block
+  resources:
+    requests:
+      storage: 50Gi
+  dataSource:
+    apiGroup: snapshot.storage.k8s.io
+    kind: VolumeSnapshot
+    name: forgejo-server-16-0-3-data
+---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: forgejo-server-16-0-3-rehearsal
+  name: forgejo-server-16-0-3-rehearsal-v2
   namespace: forgejo
   annotations:
     argocd.argoproj.io/sync-wave: '0'
@@ -236,6 +276,10 @@ spec:
           value: '7615849836285206557'
         - name: EXPECTED_IDENTITY_COUNTS
           value: 1|2|6|1|0|15
+        - name: EXPECTED_SOURCE_MIGRATIONS_SHA256
+          value: a2771d90f35a2caaaf06ce7953b97c0375a7c58f10dc76764d9da36e935774d5
+        - name: EXPECTED_TARGET_MIGRATIONS_SHA256
+          value: ef66dfdc40811825db4f13ec5f61b507381bb64a26ce46ac78f6b7a7958a41e5
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
@@ -297,10 +341,10 @@ spec:
           name: forgejo-server-16-0-3-rehearsal
       - name: db-clone
         persistentVolumeClaim:
-          claimName: forgejo-server-16-0-3-restore-db
+          claimName: forgejo-server-16-0-3-restore-db-v2
       - name: data-clone
         persistentVolumeClaim:
-          claimName: forgejo-server-16-0-3-restore-data
+          claimName: forgejo-server-16-0-3-restore-data-v2
       - name: proof
         emptyDir: {}
       - name: postgres-tmp
