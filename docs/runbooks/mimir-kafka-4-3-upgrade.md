@@ -45,10 +45,14 @@ remote-write collectors running so their queues and WALs can retry. Verify
 the same PVC UID, cluster/disk identity, topic IDs, 150 healthy partition
 leaders/replicas/ISR, nonregressing offsets and increasing new offsets.
 Require fresh Mimir samples, historical queries, healthy ingest rings and
-collector queues draining without discarded samples. Then advance Kafka
-features to release 4.3 using the native CLI and repeat metadata and query
-checks. Feature advancement prevents a binary downgrade to 4.1; keep the
-snapshot and restore receipts.
+collector queues draining without discarded samples. Then advance only `metadata.version` to `4.3-IV0` (feature value 30) with
+the native CLI, first using `upgrade --feature metadata.version=30 --dry-run`
+and then `upgrade --feature metadata.version=30`. Repeat metadata and query
+checks. Do not use `--release-version 4.3`: it also advances optional features,
+including `kraft.version`, which would change the static-quorum contract.
+Preserve the existing `kraft.version=0`, `share.version=0`, `streams.version=0`
+and other feature levels. Metadata advancement prevents a binary downgrade
+to 4.1; keep the snapshot and restore receipts.
 
 If startup fails before feature advancement, restore the previous image on
 the same PVC through GitOps. Do not substitute the snapshot for the live PVC
