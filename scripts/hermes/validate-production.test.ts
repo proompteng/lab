@@ -315,12 +315,12 @@ test('rejects a mutable Hermes runtime image', async () => {
 test('rejects release evidence that does not enforce the mirrored digest', async () => {
   const files = await loadProductionFiles()
   files.runbook = files.runbook.replace(
-    'test "$mirror_digest" = sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843',
+    'test "$mirror_digest" = sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b',
     'printf \'%s\\n\' "$mirror_digest"',
   )
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.runbook}: missing production invariant "test \\"$mirror_digest\\" = sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843"`,
+    `${productionPaths.runbook}: missing production invariant "test \\"$mirror_digest\\" = sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b"`,
   )
 })
 

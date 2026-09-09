@@ -36,7 +36,7 @@ if ! hermes_backup_output_is_safe "$backup_output" "${HERMES_HOME:-/opt/data}"; 
 fi
 case "$backup_output" in
   *"Warnings (1 files skipped):"*)
-    echo 'Accepted the single transient gateway.sock omission from the Hermes 0.20.6 backup'
+    echo 'Accepted the single transient gateway.sock omission from the Hermes 0.21.1 backup'
     ;;
 esac
 unset backup_output backup_status

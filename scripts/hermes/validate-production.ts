@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 
-const hermesRelease = 'v2026.8.27'
-const hermesVersion = '0.20.6'
-const hermesSourceRevision = '5fc308a70719a83cccdbba4c0e39c23f5a8239d5'
-const hermesUpstreamIndexDigest = 'sha256:e0df6adebddf29b91112aefc999d4aaf6846c9eb544faca5672a16a13590ff79'
-const hermesUpstreamAmd64Digest = 'sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843'
-const hermesAttestationManifestDigest = 'sha256:450e5016e0a278396f097abbb8a2f54418e0980dd09e60dbf5f48eab96e06a9c'
+const hermesRelease = 'v2026.9.7'
+const hermesVersion = '0.21.1'
+const hermesSourceRevision = '2237be355906fbe6065ce1815711eee52b2d646e'
+const hermesUpstreamIndexDigest = 'sha256:63bfb6d732f49a55d453e801057273785cc61e0f6ee43db3fa2f2a79846301b7'
+const hermesUpstreamAmd64Digest = 'sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b'
+const hermesAttestationManifestDigest = 'sha256:5fc02b8e0b89c3436a203c3261dd7d9e52e339461edb4d2afaaa87dd3f8d66db'
 const hermesImage = `registry.ide-newton.ts.net/lab/hermes-agent@${hermesUpstreamAmd64Digest}`
 const squidImage = 'docker.io/ubuntu/squid@sha256:8a3baed477e2c282ab8aa5edad442f69873246964f225c5c2ae8364b6610963c'
 const kubectlImage = 'registry.k8s.io/kubectl@sha256:0bb95b2a450875fc8ceaea2f9987a99fe27c228846e2e00b93b65ebb0d59034e'
@@ -66,6 +66,7 @@ export const productionPaths = {
   pullRequestWorkflow: '.github/workflows/pull-request.yml',
   toolchainImage: 'nix/images/hermes-toolchain.nix',
   toolchainBuildWorkflow: '.github/workflows/hermes-toolchain-build-push.yml',
+  mirrorWorkflow: '.github/workflows/hermes-agent-mirror.yml',
 } as const
 
 export type ProductionPath = keyof typeof productionPaths
@@ -1294,8 +1295,19 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     `test "$upstream_digest" = ${hermesUpstreamIndexDigest}`,
     `test "$upstream_amd64_digest" = ${hermesUpstreamAmd64Digest}`,
     `test "$upstream_attestation_digest" = ${hermesAttestationManifestDigest}`,
+    'provenance_manifest=$(crane manifest "docker.io/nousresearch/hermes-agent@$upstream_attestation_digest")',
+    'provenance_layer_digest=$(printf \'%s\' "$provenance_manifest" | jq -er',
+    'crane blob "docker.io/nousresearch/hermes-agent@$provenance_layer_digest" > "$provenance_path"',
+    'test "$(jq -er \'.predicateType\' "$provenance_path")" = \'https://slsa.dev/provenance/v1\'',
+    'case "$provenance_subject" in',
+    'sha256:*) ;;',
+    '*) provenance_subject="sha256:$provenance_subject" ;;',
+    'upstream_revision=$(jq -er \'.predicate.buildDefinition.externalParameters.request.args["build-arg:HERMES_GIT_SHA"]\' "$provenance_path")',
     'test "$provenance_subject" = "$upstream_amd64_digest"',
     `test "$upstream_revision" = ${hermesSourceRevision}`,
+    'mirror_index_digest=$(crane digest "$mirror_ref")',
+    'mirror_manifest=$(crane manifest "$mirror_ref")',
+    'test "$mirror_index_digest" = "$upstream_digest"',
     `test "$mirror_digest" = ${hermesUpstreamAmd64Digest}`,
     'test "$mirror_revision" = "$upstream_revision"',
     'toolchain_ref=$(git show "origin/kargo/hermes-toolchain:argocd/applications/hermes/statefulset.yaml" |',
@@ -1307,6 +1319,45 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'argocd app get hermes --refresh >/dev/null',
     "hermes_revision=$(kubectl -n argocd get application hermes -o jsonpath='{.status.sync.revision}')",
     'test "$hermes_revision" = "$kargo_revision"',
+  ])
+  requireTerms(failures, productionPaths.mirrorWorkflow, files.mirrorWorkflow, [
+    'workflow_dispatch: {}',
+    'SOURCE_REF: docker.io/nousresearch/hermes-agent@sha256:63bfb6d732f49a55d453e801057273785cc61e0f6ee43db3fa2f2a79846301b7',
+    'SOURCE_AMD64_DIGEST: sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b',
+    'SOURCE_ATTESTATION_DIGEST: sha256:5fc02b8e0b89c3436a203c3261dd7d9e52e339461edb4d2afaaa87dd3f8d66db',
+    'SOURCE_PROVENANCE_LAYER_DIGEST: sha256:ae6c21ad6159175419b5c83d866c96f94e79f0726c0cf32df0c5918664ead91e',
+    'EXPECTED_SOURCE_REVISION: 2237be355906fbe6065ce1815711eee52b2d646e',
+    'push:',
+    'branches:',
+    '- main',
+    'paths:',
+    '.github/workflows/hermes-agent-mirror.yml',
+    "if: github.ref == 'refs/heads/main'",
+    'uses: imjasonh/setup-crane@v0.4',
+    'docker buildx imagetools inspect --raw "$SOURCE_REF"',
+    'skopeo --version',
+    'skopeo --policy "$hermes_copy_policy" copy',
+    '--all --preserve-digests --image-parallel-copies 1',
+    '--src-tls-verify=true --dest-tls-verify=false',
+    '"docker://$SOURCE_REF" "docker://$TARGET_REF"',
+    'docker.io/nousresearch/hermes-agent@$SOURCE_ATTESTATION_DIGEST',
+    'provenance_subject="$(jq -er \'.subject.digest\' attestation.json)"',
+    'sha256:$provenance_subject',
+    'test "$provenance_subject" = "$SOURCE_AMD64_DIGEST"',
+    "test \"$(jq -er '.predicateType' provenance.json)\" = 'https://slsa.dev/provenance/v1'",
+    'crane blob "docker.io/nousresearch/hermes-agent@$SOURCE_PROVENANCE_LAYER_DIGEST" > provenance.json',
+    'test "$(jq -er \'.subject | map(select(("sha256:" + .digest.sha256) == $digest)) | length\' --arg digest "$SOURCE_AMD64_DIGEST" provenance.json)" = 1',
+    'provenance_revision="$(jq -er \'.predicate.buildDefinition.externalParameters.request.args["build-arg:HERMES_GIT_SHA"]\' provenance.json)"',
+    'test "$provenance_revision" = "$EXPECTED_SOURCE_REVISION"',
+    'set +e',
+    'docker buildx imagetools inspect --raw "$TARGET_REF" > existing-target.json 2>existing-target.error',
+    'inspect_status=$?',
+    'set -e',
+    'if ((inspect_status == 0)); then',
+    'test "sha256:$(sha256sum existing-target.json | cut -d \' \' -f1)" = "$SOURCE_INDEX_DIGEST"',
+    "elif grep -Eiq 'manifest unknown|name unknown|status code: 404|404 Not Found|(^|:)[[:space:]]*not found[[:space:]]*$' existing-target.error; then",
+    'exit "$inspect_status"',
+    'test "sha256:$(sha256sum mirrored-index.json | cut -d \' \' -f1)" = "$SOURCE_INDEX_DIGEST"',
   ])
   const phaseZeroSection = files.runbook.match(/## Phase 0:[\s\S]*?## Phase 1:/)?.[0] ?? ''
   requireTerms(failures, productionPaths.runbook, phaseZeroSection, [
