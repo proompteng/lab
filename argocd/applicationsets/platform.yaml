@@ -693,7 +693,7 @@ spec:
                       - '.spec.template.metadata.annotations["kubectl.kubernetes.io/restartedAt"]'
                       - .spec.template.spec.containers[].terminationMessagePath
                       - .spec.template.spec.containers[].terminationMessagePolicy
-                      - .spec.template.spec.initContainers[].resources
+                      - .spec.template.spec.initContainers[] | select(.name == "register-runner") | .resources
                       - .spec.template.spec.initContainers[].terminationMessagePath
                       - .spec.template.spec.initContainers[].terminationMessagePolicy
                       - .spec.template.spec.dnsPolicy
@@ -717,7 +717,7 @@ spec:
                       - '.spec.template.metadata.annotations["kubectl.kubernetes.io/restartedAt"]'
                       - .spec.template.spec.containers[].terminationMessagePath
                       - .spec.template.spec.containers[].terminationMessagePolicy
-                      - .spec.template.spec.initContainers[].resources
+                      - .spec.template.spec.initContainers[] | select(.name == "register-runner") | .resources
                       - .spec.template.spec.initContainers[].terminationMessagePath
                       - .spec.template.spec.initContainers[].terminationMessagePolicy
                       - .spec.template.spec.dnsPolicy
