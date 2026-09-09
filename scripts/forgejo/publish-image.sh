@@ -39,7 +39,7 @@ assert_absent_or_matching() {
 
 if [[ "$mode" == prepare ]]; then
   crane manifest "$source_ref" > "$evidence/upstream-index.json"
-  [[ "sha256:$(sha256sum "$evidence/upstream-index.json" | cut -d ' ' -f1)" == "$source_digest" ]] || exit 1
+  [[ "$(crane digest "$source_ref")" == "$source_digest" ]] || exit 1
   for architecture in amd64 arm64; do
     platform_digest=$(jq -er --arg arch "$architecture" '.platforms[$arch]' "$release")
     [[ "$platform_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
@@ -104,7 +104,7 @@ if [[ "$mode" == prepare ]]; then
   ' "$evidence/release-index.json" >/dev/null
   digest=$(crane digest --insecure "$preparation_ref")
   [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
-  [[ "sha256:$(sha256sum "$evidence/release-index.json" | cut -d ' ' -f1)" == "$digest" ]] || exit 1
+  [[ "$(crane digest --insecure "$image_repo@$digest")" == "$digest" ]] || exit 1
   assert_absent_or_matching "$publication_ref" "$digest"
   jq -n --arg revision "$source_sha" --arg digest "$digest" --arg upstream "$source_ref" \
     --arg image "$public_repo@$digest" '{revision:$revision,digest:$digest,upstream:$upstream,image:$image}' > "$evidence/receipt.json"
