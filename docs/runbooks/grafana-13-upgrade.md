@@ -4,6 +4,12 @@ Grafana 13 migrates dashboards and folders to unified storage. Downgrading the
 binary after that migration does not restore the old database state. Require
 a verified backup and restore rehearsal before changing the production image.
 
+The production target is Grafana 13.2.1 with community chart 13.2.2. Pin the
+image digest and install these compatible plugin versions synchronously before
+startup: Traces Drilldown 2.2.0, Logs Drilldown 2.5.2, Metrics Drilldown 2.5.1,
+and Profiles Drilldown 2.3.0. Keep the existing `tempo`, `loki`, and `prom`
+datasource UIDs and endpoints.
+
 ## Snapshot and restore rehearsal
 
 Merge the preparation resources while production still runs Grafana 12.3.1.
