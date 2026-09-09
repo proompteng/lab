@@ -24,6 +24,13 @@ end offsets with the live baseline before changing the production image.
 The completed Job also emits these bounded metadata receipts in its logs;
 read them there without mounting the clone or exposing metric payloads.
 
+The JVM image declares a volume at `/var/lib/kafka/data`. Explicitly mount
+the existing PVC `data` subdirectory at that exact path in both the rehearsal
+and production Pod; mounting only `/var/lib/kafka` lets the image volume hide
+the existing logs. The initial rehearsal stopped at the missing-identity
+check before launching Kafka. Read-only inspection at a different mount path
+confirmed the clone retains the original disk identity and all 150 partitions.
+
 ## Rollout and acceptance
 
 After recovery passes, upgrade the existing broker to `apache/kafka:4.3.1`,
