@@ -32,9 +32,12 @@ cephClusterSpec:
   upgradeOSDRequiresHealthyPGs: true
   security:
     cephx:
+      # All daemon and client identities use AES256K after CSI key retirement.
+      allowedCiphers:
+        - aes256k
       daemon:
         # Rook rotates core daemon and child gateway keys during the patched
-        # Ceph rollout. Current generation is 1; generation 2 is one-shot.
+        # Ceph rollout. Keep the completed generation stable during hardening.
         keyRotationPolicy: KeyGeneration
         keyGeneration: 2
       csi:
@@ -63,8 +66,7 @@ cephClusterSpec:
       # secure-mode CPU cost while keeping msgr2 and wire CRCs.
       rbd_default_map_options: "ms_mode=prefer-crc"
     mon:
-      # Generation 3 uses AES256K. Preserve old mounted clients while refusing
-      # creation of additional insecure keys during the remount migration.
+      # Refuse creation of insecure keys after the completed AES256K migration.
       mon_auth_allow_insecure_key: "false"
     rgw:
       # STS is unused by this single-site object store. Keep it explicitly off
