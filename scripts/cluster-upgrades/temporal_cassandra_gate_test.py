@@ -1,5 +1,6 @@
 """Exercise native upgrade ordering and API deletion preconditions with a stateful CLI."""
 
+import copy
 import json
 import os
 from pathlib import Path
@@ -101,9 +102,10 @@ class CassandraGateTests(unittest.TestCase):
                     "spec": {
                         "volumes": [
                             {
+                                "name": "scripts",
                                 "configMap": {
                                     "name": "temporal-cassandra-upgrade-scripts"
-                                }
+                                },
                             }
                         ]
                     }
@@ -116,6 +118,16 @@ class CassandraGateTests(unittest.TestCase):
             "metadata"
         ]["name"]
         self.assertEqual(validate([config, job]), 1)
+        malformed = copy.deepcopy(job)
+        malformed["metadata"]["name"] = "temporal-cassandra-test-rehearsal"
+        malformed["spec"]["template"]["spec"]["volumes"][0]["configMap"]["name"] = (
+            "misspelled-scripts"
+        )
+        with self.assertRaisesRegex(ValueError, "missing rendered ConfigMap"):
+            validate([config, job, malformed])
+        malformed["spec"]["template"]["spec"]["volumes"] = []
+        with self.assertRaisesRegex(ValueError, "expected one scripts"):
+            validate([config, job, malformed])
         config["metadata"]["namespace"] = "elsewhere"
         with self.assertRaisesRegex(ValueError, "missing rendered ConfigMap"):
             validate([config, job])

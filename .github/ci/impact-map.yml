@@ -120,6 +120,7 @@ targets:
   kubeconform:
     kind: validation
     paths:
+      - scripts/cluster-upgrades/temporal_*.py
       - argocd/**/*.yaml
       - argocd/**/*.yml
       - argocd/**/*.river

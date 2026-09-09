@@ -18,16 +18,19 @@ def validate(documents):
         if not metadata["name"].startswith("temporal-cassandra-"):
             continue
         spec = doc["spec"]["template"]["spec"]
-        for volume in spec.get("volumes", []):
-            name = volume.get("configMap", {}).get("name", "")
-            if not name.startswith("temporal-cassandra-"):
-                continue
-            key = (metadata.get("namespace", ""), name)
-            if key not in maps:
-                raise ValueError(
-                    f"{metadata['name']}: missing rendered ConfigMap {key}"
-                )
-            checked += 1
+        volumes = [v for v in spec.get("volumes", []) if v.get("name") == "scripts"]
+        if len(volumes) != 1:
+            raise ValueError(
+                f"{metadata['name']}: expected one scripts ConfigMap volume"
+            )
+        name = volumes[0].get("configMap", {}).get("name", "")
+        key = (metadata.get("namespace", ""), name)
+        if (
+            not name.startswith("temporal-cassandra-upgrade-scripts-")
+            or key not in maps
+        ):
+            raise ValueError(f"{metadata['name']}: missing rendered ConfigMap {key}")
+        checked += 1
     if not checked:
         raise ValueError("No Cassandra Job ConfigMap references were validated")
     return checked
