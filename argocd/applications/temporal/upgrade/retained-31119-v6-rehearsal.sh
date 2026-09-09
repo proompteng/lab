@@ -68,6 +68,6 @@ for table in namespaces namespaces_by_id schema_version; do
   fi
 done
 if [[ "$REHEARSAL_PHASE" == target ]]; then nodetool upgradesstables --jobs 1; fi
-/bin/bash /scripts/verify-cassandra-sstables.sh "$EXPECTED_VERSION"
+nodetool verify --extended-verify temporal
 stop_engine
 printf 'PASS: %s Cassandra %s recovered the original host and Temporal namespace/schema records; native SSTable verification passed and engine stopped cleanly.\n' "$REHEARSAL_PHASE" "$EXPECTED_VERSION"
