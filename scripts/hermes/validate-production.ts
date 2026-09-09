@@ -1170,13 +1170,14 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'pod-security.kubernetes.io/enforce: restricted',
     'argocd.argoproj.io/sync-options: Prune=false',
   ])
-  if (hermesApplication.includes('automation: auto')) {
+  const hermesAutomation = hermesApplication.match(/^\s+automation: ([^\r\n]+)$/m)?.[1]?.trim()
+  if (hermesAutomation === 'auto') {
     requireTerms(failures, productionPaths.platform, hermesApplication, [
       'targetRevision: kargo/hermes-toolchain',
       'kargo.akuity.io/authorized-stage: lab-delivery:hermes-toolchain',
     ])
-  } else {
-    requireTerms(failures, productionPaths.platform, hermesApplication, ['automation: manual'])
+  } else if (hermesAutomation !== 'manual') {
+    failures.push(`${productionPaths.platform}: Hermes automation must be exactly auto or manual`)
   }
   forbidTerms(failures, productionPaths.platform, hermesApplication, [
     'group: coordination.k8s.io',

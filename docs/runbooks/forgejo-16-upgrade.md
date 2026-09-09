@@ -13,6 +13,30 @@ This instance does not use reverse-proxy authentication or repository mirrors,
 so the corresponding v16 security changes require no compatibility override.
 Do not restore wildcard proxy trust or weaken mirroring restrictions.
 
+Before repeating maintenance from steady state, merge a reviewed change setting
+only Forgejo's ApplicationSet entry to `automation: manual`; preserve
+`targetRevision: kargo/forgejo` and its authorized Stage annotation. Reconcile
+the root Application at that exact merged revision and wait for the generated
+Forgejo Application to reflect the manual policy. Verify the hold before
+flushing queues or changing replicas:
+
+```sh
+kubectl --context galactic-lan -n argocd get application forgejo -o json |
+  jq -e '.spec.source.targetRevision == "kargo/forgejo" and
+    .metadata.annotations["kargo.akuity.io/authorized-stage"] == "lab-delivery:forgejo" and
+    (.spec.syncPolicy.automated == null or .spec.syncPolicy.automated.enabled == false) and
+    .operation == null and .status.operationState.phase != "Running" and
+    .status.operationState.phase != "Terminating"'
+kubectl --context galactic-lan -n lab-delivery get promotions -o json |
+  jq -e '[.items[] | select(.spec.stage == "forgejo") |
+    select(.status.phase != "Succeeded" and .status.phase != "Failed" and
+      .status.phase != "Errored" and .status.phase != "Aborted")] | length == 0'
+```
+
+Do not race another image promotion with the maintenance window. Keep manual
+reconciliation until the fresh snapshot rehearsal passes. The reviewed final
+activation restores automatic reconciliation on the Kargo branch.
+
 Capture the source PVC and Deployment UIDs, PostgreSQL system identifier and
 schema version, user/repository/runner/key/token counts, and every repository
 reference. Run Git `fsck` and Forgejo's diagnostic checks. The v15 baseline

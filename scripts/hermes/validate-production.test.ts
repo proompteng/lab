@@ -870,6 +870,17 @@ test('rejects automatic Hermes reconciliation without the authorized Stage', asy
   )
 })
 
+test.each(['automatic', 'automatically', 'manual-only', 'false', ''])(
+  'rejects invalid Hermes automation mode %s',
+  async (mode) => {
+    const files = await loadProductionFiles()
+    files.platform = files.platform.replace(/(\n\s+- name: hermes\n[\s\S]*?automation:) auto/, `$1 ${mode}`)
+    expect(validateProductionContent(files)).toContain(
+      `${productionPaths.platform}: Hermes automation must be exactly auto or manual`,
+    )
+  },
+)
+
 test('rejects automatic OpenClaw reconciliation during credential transfer', async () => {
   const files = await loadProductionFiles()
   files.platform = files.platform.replace(/(\n\s+- name: openclaw\n[\s\S]*?automation:) manual/, '$1 auto')
