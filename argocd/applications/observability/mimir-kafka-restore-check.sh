@@ -53,8 +53,19 @@ test -s "$receipt/record-offset.txt"
 grep -q 'Processed a total of 1 messages' "$receipt/consumer-status.txt"
 cmp "$receipt/meta.properties.before" "$data/meta.properties"
 kill -TERM "$broker_pid"
-wait "$broker_pid"
+broker_status=0
+wait "$broker_pid" || broker_status=$?
 broker_pid=
+if [[ "$broker_status" != 0 && "$broker_status" != 143 ]]; then
+  printf 'Kafka exited unexpectedly during shutdown: %s\n' "$broker_status" >&2
+  exit 1
+fi
+# A JVM shutdown hook can finish normally and still return 128 + SIGTERM.
+# Require Kafka's completed shutdown marker as well as the expected status.
+grep -q 'BrokerServer.*shut down completed' /tmp/broker.log
+if grep -Eq 'Fatal error during (broker|controller) shutdown' /tmp/broker.log; then
+  exit 1
+fi
 cp /tmp/broker.log "$receipt/broker.log"
 sync
 printf '%s\n' 'Kafka 4.3.1 restored the original cluster, two topics, 150 partitions and a retained metric record.' > "$receipt/accepted"
