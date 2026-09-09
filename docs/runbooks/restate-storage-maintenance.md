@@ -63,6 +63,13 @@ RestateDeployment UID with the unchanged template and registration. Require the 
 the same durable execution authority/kill state and binding, continuing controller progress, EXACT reconciliation,
 zero unresolved mutations, and no new broker orders. Remove only the owned Argo holds and verify fresh reconciliation.
 
+Record the existing invocation IDs before and after the worker pause. A tick can exhaust its connection retries
+while workers are stopped and enter `paused`. After all workers and native Restate checks recover, resume only that
+captured maintenance-affected invocation through the native admin resume API, preserving its deployment binding.
+Do not restart it as a new invocation or resume unrelated/pre-existing paused work. Require a controller completion
+timestamp after the resume, with the original epoch and plan hash. This preserves durable execution progress without
+changing the controller's stored active state, authority, or kill switch.
+
 If a gate fails after mutation, retain the exact operation receipt. Restore only fields whose original identity and
 ownership are still proven. Keep the PDB at two only while recovering the single interrupted Pod, then restore three.
 Do not start another disruption or clear a storage fence while the old mapping remains. Restore worker replicas only

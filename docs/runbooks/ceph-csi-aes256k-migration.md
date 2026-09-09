@@ -116,6 +116,23 @@ storage acceptance pass. Any unrecognized warning remains a blocker.
 
 ## Retire old credentials after migration
 
+The September 9, 2026 01:00 UTC inventory confirmed all 85 active RBD mappings
+and all ten CephFS mount entries use generation 3. All four CSI Secrets referenced
+the `.3` principals and matched their Ceph auth keys; all 124 Ceph PVs and the
+CSI StorageClasses referenced those current Secrets. The three Restate remounts
+retained every PVC/PV identity, restored three-node quorum and all 24 replicated
+partitions, restored `minAvailable: 3`, and resumed the same execution worker
+registration with unchanged Bayn authority, kill state, and broker order counts.
+All twelve CNPG primary identities remained unchanged.
+
+Desired CSI retention is now zero. Rook removes the unused base and `.2` auth
+entities while preserving generation 3. This step does not restart workloads or
+change PVCs. Require reconciled `priorKeyCount: 0`, absent old identities, and
+fresh functional acceptance before the separate allowed-cipher restriction.
+If retirement fails, stop and inspect Rook reconciliation; do not recreate an
+AES identity or delete active `.3` credentials. Restoring the retention count
+cannot recover deleted keys, so keep the verified generation-3 consumers running.
+
 Keep `keepPriorKeyCountMax: 2` throughout maintenance. Prove that no node has
 an unsuffixed or `.2` RBD/CephFS kernel client and that CSI userland operations
 use the current Secrets before reducing retention to zero through GitOps.
