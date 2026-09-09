@@ -69,3 +69,12 @@ and requires three consecutive denied probes to those actual data endpoints.
 An unexpected reachable endpoint, stale snapshot, failed native backup or changed
 identity prevents the engine from starting. The API is not used as an isolation
 proxy. Production listeners remain separate from the loopback-only clone engine.
+
+Generation `31119-v3` completed native snapshots and verified the restored data
+with Cassandra 3.11.5, including extended SSTable verification and a clean drain.
+The 3.11.19 container stopped before opening the database because this official
+image provides `python2` without a `python` alias. Generation `31119-v4` selects
+that bundled interpreter explicitly and reports a missing interpreter before
+starting an engine. Its fresh backup and isolated clone run the same native data,
+identity and network checks. The v3 snapshots and clone remain retained; the
+failed target run does not satisfy production rollout acceptance.
