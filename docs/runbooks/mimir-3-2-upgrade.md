@@ -13,7 +13,11 @@ until its separate broker upgrade is accepted.
 
 GitOps applies the configuration first. The native Mimir `-modules` Job loads
 and validates that exact configuration, then exits before starting services.
-Do not proceed past a failed check. Roll the ingesters through the normal
+Use the normal whole-Application sync. Argo CD 3.5 retains hooks when
+`ApplyOutOfSyncOnly=true`; syncing an explicitly selected resource subset can
+skip hooks and must not be used for this upgrade. Verify the native Job's
+successful result in the actual sync operation. Do not proceed past a failed
+check. Roll the ingesters through the normal
 StatefulSet controller, one ordinal at a time. Store gateway, compactor, and
 Alertmanager follow in separate sync waves after earlier workloads are Ready.
 Their temporary `OnDelete` holds are removed by this change.
