@@ -6,6 +6,21 @@ test('accepts the committed Hermes production surfaces', async () => {
   expect(validateProductionContent(await loadProductionFiles())).toEqual([])
 })
 
+test.each([
+  'TARGET_REF: registry.registry.svc.cluster.local/lab/hermes-agent:v2026.9.7-amd64',
+  'PUBLIC_TARGET_REF: registry.ide-newton.ts.net/lab/hermes-agent:v2026.9.7-amd64',
+])('rejects redirecting the Hermes mirror destination %s', async (reference) => {
+  const files = await loadProductionFiles()
+  files.mirrorWorkflow = files.mirrorWorkflow.replace(
+    reference,
+    reference.replace('lab/hermes-agent', 'lab/wrong-agent'),
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.mirrorWorkflow}: missing production invariant ${JSON.stringify(reference)}`,
+  )
+})
+
 test('rejects Kubernetes write verbs in the Hermes ClusterRole', async () => {
   const files = await loadProductionFiles()
   files.rbac = files.rbac.replace('verbs: [get, list, watch]', 'verbs: [get, list, watch, create]')

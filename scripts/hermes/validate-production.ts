@@ -1327,6 +1327,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'SOURCE_ATTESTATION_DIGEST: sha256:5fc02b8e0b89c3436a203c3261dd7d9e52e339461edb4d2afaaa87dd3f8d66db',
     'SOURCE_PROVENANCE_LAYER_DIGEST: sha256:ae6c21ad6159175419b5c83d866c96f94e79f0726c0cf32df0c5918664ead91e',
     'EXPECTED_SOURCE_REVISION: 2237be355906fbe6065ce1815711eee52b2d646e',
+    `TARGET_REF: registry.registry.svc.cluster.local/lab/hermes-agent:${hermesRelease}-amd64`,
+    `PUBLIC_TARGET_REF: registry.ide-newton.ts.net/lab/hermes-agent:${hermesRelease}-amd64`,
     'push:',
     'branches:',
     '- main',
