@@ -4,6 +4,8 @@ umask 007
 
 : "${EXPECTED_SYSTEM_IDENTIFIER:?required}"
 : "${EXPECTED_IDENTITY_COUNTS:?required}"
+: "${EXPECTED_SOURCE_MIGRATIONS_SHA256:?required}"
+: "${EXPECTED_TARGET_MIGRATIONS_SHA256:?required}"
 data=/var/lib/postgresql/data/pgdata
 proof=/proof
 postgres_pid=
@@ -58,7 +60,8 @@ sql() { psql -X -v ON_ERROR_STOP=1 -h /tmp -p 55432 -U postgres -d forgejo -Atc 
 counts_sql='SELECT (SELECT count(*) FROM "user"), (SELECT count(*) FROM repository), (SELECT count(*) FROM action_runner), (SELECT count(*) FROM public_key), (SELECT count(*) FROM deploy_key), (SELECT count(*) FROM access_token)'
 [[ $(sql "$counts_sql") == "$EXPECTED_IDENTITY_COUNTS" ]]
 [[ $(sql 'SELECT version FROM version') == 305 ]]
-printf 'Restored original PostgreSQL identity and Forgejo schema 305; identity counts match.\n'
+[[ $(sql 'SELECT id FROM forgejo_migration ORDER BY id' | sha256sum | cut -d ' ' -f 1) == "$EXPECTED_SOURCE_MIGRATIONS_SHA256" ]]
+printf 'Restored original PostgreSQL identity, base schema 305 and original Forgejo migration ledger; identity counts match.\n'
 touch "$proof/database-ready"
 
 for _ in $(seq 1 480); do
@@ -72,10 +75,11 @@ done
 [[ -e "$proof/migration-complete" ]]
 [[ $(sql "$counts_sql") == "$EXPECTED_IDENTITY_COUNTS" ]]
 version=$(sql 'SELECT version FROM version')
-[[ "$version" =~ ^[0-9]+$ && "$version" -gt 305 ]]
+[[ "$version" == 305 ]]
+[[ $(sql 'SELECT id FROM forgejo_migration ORDER BY id' | sha256sum | cut -d ' ' -f 1) == "$EXPECTED_TARGET_MIGRATIONS_SHA256" ]]
 sql 'SELECT pg_database_size(current_database())' >/dev/null
 stop_database
 postgres_pid=
 [[ $(pg_controldata "$data" | awk -F ': *' '/Database cluster state:/ {print $2}') == 'shut down' ]]
 touch "$proof/database-accepted"
-printf 'PASS: Forgejo schema %s migrated on the retained clone; identity counts preserved; PostgreSQL shut down cleanly.\n' "$version"
+printf 'PASS: all 39 Forgejo release migrations applied; base schema %s and identity counts preserved; PostgreSQL shut down cleanly.\n' "$version"

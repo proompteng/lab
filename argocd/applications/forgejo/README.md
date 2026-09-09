@@ -26,3 +26,11 @@ References:
 
 - https://forgejo.org/docs/latest/
 - https://artifacthub.io/packages/helm/forgejo-helm/forgejo
+
+## Version 16 rollout
+
+The [upgrade runbook](../../../docs/runbooks/forgejo-16-upgrade.md) records
+the successful snapshot-clone migration to 16.0.3. Production remains on
+15.0.6 while the Kargo image delivery path is prepared. The completed
+maintenance Jobs are retired and the existing Deployment returns to one
+replica with its original PVCs, credentials and HTTP/SSH addresses.

@@ -32,6 +32,9 @@ kubectl --context galactic-lan -n forgejo exec deployment/forgejo -c forgejo -- 
 
 ## Consistent backup and migration rehearsal
 
+Forgejo is a manual GitOps application. Sync the exact merged maintenance
+revision through Argo, preserving the ApplicationSet automation policy.
+
 The maintenance commit sets only the existing Deployment's replica count to
 zero in sync wave -20. The following read-only gate verifies its UID, both
 source PVC UIDs and the absence of every Forgejo Pod before snapshots start.
@@ -39,7 +42,11 @@ The PostgreSQL backup is offline; the repository/data snapshot is taken while
 Forgejo is stopped. Both snapshots and their clones are retained.
 
 The rehearsal mounts only the two clones. PostgreSQL 17.11 starts with the
-original system identifier and schema 305, using a loopback-only listener.
+original system identifier and legacy base schema 305, using a loopback-only listener.
+Forgejo tracks current migrations in `forgejo_migration`; the legacy `version`
+value remains 305. Require the exact sorted migration ledger to move from the
+27 original entries to all 39 IDs registered by the pinned 16.0.3 source.
+The v2 rehearsal uses new clones of the retained pre-upgrade snapshots.
 Forgejo 16.0.3 retains the cloned configuration and credentials while changing
 only its database host to that listener. The Pod has no service-account token
 and denies network ingress and egress. It never starts a Forgejo web server.
@@ -51,9 +58,18 @@ Snapshot readiness alone does not establish recovery or migration success.
 
 ## Production upgrade and acceptance
 
-After the rehearsal passes, merge the version change and remove the temporary
-quiesce patch through GitOps. Preserve the completed backup and rehearsal
-resources. The normal Deployment remains a single replica with `Recreate`.
+After the rehearsal passes, retire the completed quiesce and rehearsal
+Jobs, their script ConfigMap, read-only RBAC, and isolation policy. Retain
+both snapshots and every clone PVC. Restore the existing version with one
+replica through a merged maintenance revision. The normal application must
+not recreate a gate that requires the original server UID or zero replicas.
+
+Image delivery must use a main-only publisher, a Kargo Warehouse, Freight,
+and an automatic Stage promotion. Enroll the Application on its authorized
+Kargo branch before releasing version 16. Kargo must write the selected
+immutable image to the chart values and sync that exact generated revision.
+Do not manually sync an image upgrade from main. The Deployment remains a
+single replica with `Recreate`.
 
 Verify the exact image and Argo revision, the same live PVC UIDs, completed
 database migration, administrator and token identity, repository references,
