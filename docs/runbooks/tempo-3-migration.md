@@ -30,9 +30,15 @@ Require all new components Ready, active live stores, healthy Kafka ISR,
 successful object-store reads, and increasing block-builder progress. Initial
 live-store readiness can take up to 30 minutes while Kafka watermarks advance.
 The migration Vulture sends synthetic traces and exercises trace-by-ID,
-TraceQL search, and metrics queries. Its own Ready condition only proves its
+TraceQL search, and metrics queries. Its later sync wave and readiness init
+container prevent synthetic writes before the distributor and query frontend
+are ready. Recreate the single fixture writer when its template changes to
+avoid overlapping test processes. Preserve failed-window evidence and begin
+a fresh observation window after correcting any startup failure.
+Its own Ready condition only proves its
 metrics endpoint is available: require at least 15 minutes of increasing
 `tempo_vulture_trace_total` with no increase in `tempo_vulture_trace_error_total`
+or `tempo_vulture_error_total`
 after the Tempo deployment becomes Ready.
 
 Query the captured historical Tempo 2 trace through the Tempo 3 query frontend
