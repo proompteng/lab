@@ -11,6 +11,8 @@ the new deployment passes ingestion and historical-query acceptance.
   counters, and a successful real trace ID before changing routing.
 - Require the Kafka-owned `observability.tempo.traces.v1` topic Ready with
   three partitions, replication factor three, and minimum ISR two. Check
+  the listener contract: this deployment uses the internal `plain2` listener
+  on port 9093 without SASL; port 9092 requires SCRAM credentials. Check
   cluster capacity for the complete overlapping deployments and rolling surges.
 - Render the observability application with Helm 3. Existing resources must
   remain unchanged during the additive deployment. Keep the original bucket,

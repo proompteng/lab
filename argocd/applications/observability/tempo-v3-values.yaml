@@ -67,7 +67,8 @@ backendWorker:
 
 ingest:
   kafka:
-    address: kafka-kafka-bootstrap.kafka.svc.cluster.local:9092
+    # plain2 is the existing internal listener without SASL. Port 9092 is SCRAM.
+    address: kafka-kafka-bootstrap.kafka.svc.cluster.local:9093
     topic: observability.tempo.traces.v1
     # The KafkaTopic is owned by the Kafka application. This keeps first boot
     # deterministic while retaining the chart's safe retry behavior if the
