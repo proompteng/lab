@@ -21,6 +21,7 @@ configMapGenerator:
     files:
       - upgrade-db-rehearsal.sh
       - upgrade-app-rehearsal.sh
+      - upgrade-repository-refs.sh
     options:
       annotations:
         argocd.argoproj.io/sync-wave: "-25"

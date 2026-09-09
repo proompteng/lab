@@ -234,8 +234,6 @@ spec:
         env:
         - name: EXPECTED_SYSTEM_IDENTIFIER
           value: '7615849836285206557'
-        - name: EXPECTED_IDENTITY_COUNTS
-          value: 1|2|6|1|0|15
         - name: EXPECTED_SOURCE_MIGRATIONS_SHA256
           value: a2771d90f35a2caaaf06ce7953b97c0375a7c58f10dc76764d9da36e935774d5
         - name: EXPECTED_TARGET_MIGRATIONS_SHA256
@@ -272,9 +270,6 @@ spec:
         command:
         - /bin/bash
         - /scripts/upgrade-app-rehearsal.sh
-        env:
-        - name: EXPECTED_REFS_SHA256
-          value: 228266f817f2c813bef5c0d20e055d4d76f052ae2c508bac81e3c412c1f7d192
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true

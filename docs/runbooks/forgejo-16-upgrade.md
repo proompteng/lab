@@ -52,9 +52,13 @@ Forgejo 16.0.3 retains the cloned configuration and credentials while changing
 only its database host to that listener. The Pod has no service-account token
 and denies network ingress and egress. It never starts a Forgejo web server.
 
-Require the native migration, database consistency checks, original identity
-counts, repository reference hashes, Git integrity checks and clean PostgreSQL
-shutdown to pass. Read both containers' logs and verify the Job succeeded.
+Capture identity counts and every repository reference from the fresh clones
+before migration starts. Compare them exactly afterward; do not compare a new
+snapshot against counts or references from an earlier maintenance window.
+The read-only reference capture supports new and empty repositories and rejects
+corrupt Git references. Require the native migration, database consistency,
+current snapshot identity counts, reference comparison, Git integrity checks
+and clean PostgreSQL shutdown to pass. Read both containers' logs and verify the Job succeeded.
 Snapshot readiness alone does not establish recovery or migration success.
 
 ## Production upgrade and acceptance
