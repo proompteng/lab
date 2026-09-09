@@ -14,7 +14,10 @@ existing BoltDB Shipper schema. Their process rings remain separate until the ol
 Follow the [Loki 3 migration](../../../docs/runbooks/loki-3-migration.md) for object-read, flush and cutover gates.
 Mimir 3.2 uses normal rolling updates for ingesters, store gateway, compactor, and Alertmanager. Follow the
 [Mimir 3.2 rollout](../../../docs/runbooks/mimir-3-2-upgrade.md) for the native configuration gate, ordered sync waves,
-and live acceptance. The bundled Kafka broker alone retains `OnDelete` pending its separate upgrade.
+and live acceptance. The bundled Kafka broker uses Apache's JVM 4.3.1 image with normal StatefulSet rolling updates.
+Its existing log subdirectory is explicitly mounted at the image's declared data volume. Follow the
+[Kafka 4.3 upgrade](../../../docs/runbooks/mimir-kafka-4-3-upgrade.md) for clone recovery, buffer preservation,
+and metadata-feature acceptance.
 The [Mimir recovery procedure](../../../docs/runbooks/mimir-rgw-tls-recovery.md) is historical guidance for
 Mimir 3.1.2/chart 6.1.0; its process-reload helper deliberately rejects newer images and rolling strategies. The
 [compatibility runbook](../../../docs/runbooks/ceph-rgw-sigv4-compatibility.md) documents the verified TLS path.
