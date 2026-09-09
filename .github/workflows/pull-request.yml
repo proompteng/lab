@@ -251,6 +251,9 @@ jobs:
               bunx oxlint --config .oxlintrc.json scripts/cluster-upgrades/*.test.ts
               bunx oxfmt --check scripts/cluster-upgrades/*.test.ts
               bun test scripts/cluster-upgrades/*.test.ts
+              python3 -m unittest discover -s scripts/cluster-upgrades -p 'ceph*_test.py'
+              python3 scripts/cluster-upgrades/temporal_cassandra_gate_test.py
+              python3 -m unittest discover -s scripts/forgejo -p '*_test.py'
               bunx oxlint --config .oxlintrc.json scripts/seal-tengri-runtime.ts scripts/seal-tengri-runtime.test.ts
               bunx oxfmt --check scripts/seal-tengri-runtime.ts scripts/seal-tengri-runtime.test.ts
               bun test scripts/seal-tengri-runtime.test.ts
@@ -278,6 +281,11 @@ jobs:
                 nix develop -c scripts/kubeconform.sh "${changed_manifests[@]}"
               else
                 nix develop -c scripts/kubeconform.sh argocd
+              fi
+              if jq -e 'any(.[]; startswith("argocd/applications/temporal/") or startswith("scripts/cluster-upgrades/temporal_"))' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
+                nix develop -c kustomize build --enable-helm argocd/applications/temporal >"${RUNNER_TEMP}/temporal-render.yaml"
+                nix develop -c yq eval-all -o=json -I=0 '[.]' "${RUNNER_TEMP}/temporal-render.yaml" |
+                  python3 scripts/cluster-upgrades/temporal_manifest_check.py
               fi
               ;;
             cdk8s)

@@ -419,7 +419,7 @@ describe('enabled app inventory', () => {
       'sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839',
     )
     expect(natsKustomization).toContain('newTag: v1.19.2')
-    expect(observabilityKustomization).toContain('version: 8.2.0')
+    expect(observabilityKustomization).toContain('version: 8.4.2')
   })
 
   it('pins the enabled service image upgrade wave', () => {
@@ -725,7 +725,7 @@ describe('enabled app inventory', () => {
       class: 'vendor-manifest',
       hasHelmChart: false,
       repoImages: [
-        'registry.ide-newton.ts.net/lab/hermes-agent@sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843',
+        'registry.ide-newton.ts.net/lab/hermes-agent@sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b',
       ],
     })
     expect(entry('hermes').deferredReason).toContain('NousResearch/hermes-agent')
