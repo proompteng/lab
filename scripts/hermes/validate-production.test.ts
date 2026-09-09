@@ -6,6 +6,31 @@ test('accepts the committed Hermes production surfaces', async () => {
   expect(validateProductionContent(await loadProductionFiles())).toEqual([])
 })
 
+test.each([
+  'TARGET_REF: registry.registry.svc.cluster.local/lab/hermes-agent:v2026.9.7-amd64',
+  'PUBLIC_TARGET_REF: registry.ide-newton.ts.net/lab/hermes-agent:v2026.9.7-amd64',
+])('rejects redirecting the Hermes mirror destination %s', async (reference) => {
+  const files = await loadProductionFiles()
+  files.mirrorWorkflow = files.mirrorWorkflow.replace(
+    reference,
+    reference.replace('lab/hermes-agent', 'lab/wrong-agent'),
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.mirrorWorkflow}: missing production invariant ${JSON.stringify(reference)}`,
+  )
+})
+
+test('rejects a source-index digest that disagrees with the reviewed Hermes release', async () => {
+  const files = await loadProductionFiles()
+  const assignment = 'SOURCE_INDEX_DIGEST: sha256:63bfb6d732f49a55d453e801057273785cc61e0f6ee43db3fa2f2a79846301b7'
+  files.mirrorWorkflow = files.mirrorWorkflow.replace(assignment, `SOURCE_INDEX_DIGEST: sha256:${'0'.repeat(64)}`)
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.mirrorWorkflow}: missing production invariant ${JSON.stringify(assignment)}`,
+  )
+})
+
 test('rejects Kubernetes write verbs in the Hermes ClusterRole', async () => {
   const files = await loadProductionFiles()
   files.rbac = files.rbac.replace('verbs: [get, list, watch]', 'verbs: [get, list, watch, create]')
@@ -315,12 +340,12 @@ test('rejects a mutable Hermes runtime image', async () => {
 test('rejects release evidence that does not enforce the mirrored digest', async () => {
   const files = await loadProductionFiles()
   files.runbook = files.runbook.replace(
-    'test "$mirror_digest" = sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843',
+    'test "$mirror_digest" = sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b',
     'printf \'%s\\n\' "$mirror_digest"',
   )
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.runbook}: missing production invariant "test \\"$mirror_digest\\" = sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843"`,
+    `${productionPaths.runbook}: missing production invariant "test \\"$mirror_digest\\" = sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b"`,
   )
 })
 
