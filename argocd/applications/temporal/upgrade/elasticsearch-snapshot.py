@@ -12,7 +12,7 @@ from urllib.request import Request, urlopen
 REQUEST_DEADLINE = time.monotonic() + 3500
 REPOSITORY = "temporal-cephfs-native"
 LOCATION = "/usr/share/elasticsearch/snapshots/temporal"
-GENERATION = "81921-v1"
+GENERATION = "81921-v2"
 SNAPSHOT = "before-" + GENERATION
 CLUSTER_UUID = "xMDCf7u4RrG55SlLBDgTsg"
 SOURCE_VERSION = "8.5.1"
@@ -211,7 +211,22 @@ def capture(api=request):
     }
 
 
+def require_repository_mount(mounts):
+    entries = [line.split() for line in mounts.splitlines()]
+    matches = [
+        entry for entry in entries if len(entry) >= 4 and entry[1] == "/repository"
+    ]
+    require(len(matches) == 1, "snapshot repository mount is missing or ambiguous")
+    mount = matches[0]
+    options = set(mount[3].split(","))
+    require(
+        mount[2] == "ceph" and {"rw", "wsync"} <= options and "nowsync" not in options,
+        "snapshot repository requires a writable synchronous CephFS mount",
+    )
+
+
 def main():
+    require_repository_mount(Path("/proc/mounts").read_text())
     proof = capture()
     directory = Path("/repository/receipts")
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
