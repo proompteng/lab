@@ -3,7 +3,10 @@ set -Eeuo pipefail
 : "${EXPECTED_VERSION:?required}" "${REHEARSAL_PHASE:?required}"
 [[ "$REHEARSAL_PHASE" == source || "$REHEARSAL_PHASE" == target ]] || exit 1
 [[ "$EXPECTED_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
-python_command=$(command -v python3 || command -v python)
+python_command=$(command -v python3 || command -v python2 || command -v python) || {
+  printf 'Cassandra rehearsal requires a bundled Python interpreter.\n' >&2
+  exit 1
+}
 # The token-bearing init container verifies fresh native backups and probes
 # production CQL successfully. Engine containers never mount that token. Policy
 # allows only API metadata access, and the actual production data paths must be
