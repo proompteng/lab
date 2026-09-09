@@ -312,9 +312,10 @@ digest and platform labels from that reference.
    Job must complete and its log, archived SQLite integrity checks, and checksum verification must succeed. The data mount
    is write-capable only because SQLite read-only WAL connections require shared-memory sidecar access; the pinned backup
    process still opens each source database in read-only mode and fails closed on any safe-copy fallback.
-   Hermes 0.21.1 may report its live root `gateway.sock` as the only skipped file. The production wrapper accepts that exact
-   warning only when the path is a Unix socket, rejects every other skipped file or incomplete database copy, and verifies
-   that the transient socket is absent from the published archive.
+   Hermes 0.21.1 runs as PID 1 and may omit the live `gateway.sock` and `state/gateway.loop-tick.1.sock` runtime sockets.
+   The production wrapper requires every warning to match one of those exact paths and proves each is a Unix socket,
+   not a regular file or symlink. It rejects every other skipped file or incomplete database copy and verifies that
+   neither transient socket is present in the published archive.
    A standalone Job does not update the CronJob's status; `HermesBackupStale` grants a new CronJob 26 hours for its first scheduled success,
    then monitors its last successful completion. A missing CronJob still alerts, and backup failure never changes the
    gateway Pod's readiness.
