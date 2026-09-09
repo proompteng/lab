@@ -251,3 +251,17 @@ immediately. The final post-snapshot source check remains strict. The same Job
 request deadline, native repository analysis and frozen-snapshot checks apply.
 The failed v4 Job stopped at the initial two-node health check before registering
 the S3 repository or taking a snapshot; its failure was captured before retirement.
+
+
+Generation `4112-v2` passed the native 3.11.19 source recovery and extended
+SSTable verification, then its 4.1.12 engine exited during startup. A separate
+native 3.11.19 to 4.1.12 fixture reproduced `Cannot change the number of tokens
+from 256 to 16`; setting `CASSANDRA_NUM_TOKENS=256` preserved the complete token
+set and host identity. The maintained rehearsal now pins that existing vnode
+count, checks all 256 tokens before and after the upgrade, and emits the full
+engine log on failure. Its proof directory uses a retained 1 GiB PVC so native
+receipts survive Pod cleanup. Generation `4112-v3` uses fresh snapshots and new
+data/proof volumes; the partially converted v2 volume is never opened by an
+older engine. Existing completed Jobs retain their original script ConfigMaps.
+The serving Cassandra image and template remain unchanged in this preparation;
+the later production activation must also preserve `CASSANDRA_NUM_TOKENS=256`.
