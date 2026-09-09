@@ -1,6 +1,7 @@
 # Cassandra upgrade gates
 
-Production remains on Cassandra 3.11.5 while the preparation runs. The existing
+The first production step selects Cassandra 3.11.19 only after generation
+`31119-v6` completes its native backup and clone rehearsal. The existing
 RF3 keyspace and repaired ring remain serving. The retained RF3 snapshots survive
 the removal of completed repair Jobs and RBAC.
 
@@ -31,7 +32,16 @@ After the rehearsal passes, a separate reviewed activation selects the pinned
 3.11.19 image and adds a narrowly scoped rolling Job. It drains and replaces one
 ordinal at a time using Kubernetes UID and resourceVersion deletion preconditions,
 waits for the original three UN host IDs, and verifies the original PVC bindings.
+The Job sends `DeleteOptions` as a JSON request body with the pinned image's
+curl client, the projected service account token and the cluster CA. Any API
+conflict stops the rollout before another ordinal is drained. A real TLS request
+test checks the body and a native pinned-image fixture verifies client behavior.
 A rerun skips already upgraded, healthy nodes. No force deletion is permitted.
+
+The completed v6 preparation Jobs keep their original, hashed script ConfigMap.
+`retained-31119-v6-gate.sh` preserves that exact historical input; only the new
+rollout Job consumes the maintained `cassandra-gate.sh`. Changing rollout code
+must not mutate or recreate the completed backup and recovery Jobs.
 Schema agreement is checked after all nodes reach the target: Cassandra 5 adds
 schema properties and legitimately advertises different hashes during a rolling
 upgrade. SSTable conversion completes before the next major release is selected.
