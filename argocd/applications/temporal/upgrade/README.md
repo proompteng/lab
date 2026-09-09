@@ -156,3 +156,19 @@ current version authority.
 Sources: [Elastic shared filesystem repositories](https://www.elastic.co/guide/en/elasticsearch/reference/8.5/snapshots-filesystem-repository.html),
 [repository analysis](https://www.elastic.co/guide/en/elasticsearch/reference/8.5/repo-analysis-api.html),
 [Temporal Visibility compatibility](https://docs.temporal.io/self-hosted-guide/visibility).
+
+
+The first Elasticsearch repository analysis failed before snapshot creation:
+a node read zero bytes immediately after another node completed a blob write.
+Generation `81921-v2` uses a dedicated retained CephFS claim with `wsync` and
+`noshare`. Ceph documents `wsync` as waiting for MDS replies before completing
+namespace operations; `noshare` gives this mount its own client instance. This
+isolates the repository setting from every existing filesystem consumer. The
+original empty repository claim remains retained. The Job verifies its actual
+mount options before running the unchanged strict three-node analysis. The
+mount configuration is accepted only when that analysis and native restore pass.
+
+Source: [Ceph mount options](https://docs.ceph.com/en/umbrella/man/8/mount.ceph/).
+The failed first Job is retired through GitOps; its failure evidence is preserved
+in the upgrade record. Serving data claims, identities, authentication and the
+Elasticsearch image remain unchanged during the replacement repository mount.
