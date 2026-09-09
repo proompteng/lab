@@ -1,3 +1,5 @@
+# Validate each deployed role separately; their data directories are in
+# different Pods. Native -modules validates configuration without starting services.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -5,7 +7,7 @@ metadata:
   namespace: observability
   annotations:
     argocd.argoproj.io/hook: Sync
-    argocd.argoproj.io/sync-wave: "-1"
+    argocd.argoproj.io/sync-wave: '-1'
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
 spec:
   backoffLimit: 0
@@ -20,34 +22,116 @@ spec:
         runAsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
-      containers:
-        - name: verify
-          image: docker.io/grafana/mimir:3.2.0
-          # Mimir validates the loaded configuration before listing modules
-          # and exiting. No services start and no credentials are expanded.
-          args:
-            - -config.file=/conf/mimir.yaml
-            - -modules
-          resources:
-            requests:
-              cpu: 100m
-              memory: 128Mi
-            limits:
-              cpu: "1"
-              memory: 512Mi
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities:
-              drop: [ALL]
-          volumeMounts:
-            - name: config
-              mountPath: /conf
-              readOnly: true
-      volumes:
+      initContainers:
+      - name: verify-alertmanager
+        image: docker.io/grafana/mimir:3.2.0
+        args:
+        - -config.file=/conf/mimir.yaml
+        - -target=alertmanager
+        - -modules
+        resources: &id001
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: '1'
+            memory: 512Mi
+        securityContext: &id002
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts: &id003
         - name: config
-          configMap:
-            name: observability-mimir-config
-            items:
-              - key: mimir.yaml
-                path: mimir.yaml
+          mountPath: /conf
+          readOnly: true
+      - name: verify-compactor
+        image: docker.io/grafana/mimir:3.2.0
+        args:
+        - -config.file=/conf/mimir.yaml
+        - -target=compactor
+        - -modules
+        resources: *id001
+        securityContext: *id002
+        volumeMounts: *id003
+      - name: verify-distributor
+        image: docker.io/grafana/mimir:3.2.0
+        args:
+        - -config.file=/conf/mimir.yaml
+        - -target=distributor
+        - -modules
+        resources: *id001
+        securityContext: *id002
+        volumeMounts: *id003
+      - name: verify-ingester
+        image: docker.io/grafana/mimir:3.2.0
+        args:
+        - -config.file=/conf/mimir.yaml
+        - -target=ingester
+        - -modules
+        resources: *id001
+        securityContext: *id002
+        volumeMounts: *id003
+      - name: verify-overrides-exporter
+        image: docker.io/grafana/mimir:3.2.0
+        args:
+        - -config.file=/conf/mimir.yaml
+        - -target=overrides-exporter
+        - -modules
+        resources: *id001
+        securityContext: *id002
+        volumeMounts: *id003
+      - name: verify-querier
+        image: docker.io/grafana/mimir:3.2.0
+        args:
+        - -config.file=/conf/mimir.yaml
+        - -target=querier
+        - -modules
+        resources: *id001
+        securityContext: *id002
+        volumeMounts: *id003
+      - name: verify-query-frontend
+        image: docker.io/grafana/mimir:3.2.0
+        args:
+        - -config.file=/conf/mimir.yaml
+        - -target=query-frontend
+        - -modules
+        resources: *id001
+        securityContext: *id002
+        volumeMounts: *id003
+      - name: verify-query-scheduler
+        image: docker.io/grafana/mimir:3.2.0
+        args:
+        - -config.file=/conf/mimir.yaml
+        - -target=query-scheduler
+        - -modules
+        resources: *id001
+        securityContext: *id002
+        volumeMounts: *id003
+      - name: verify-ruler
+        image: docker.io/grafana/mimir:3.2.0
+        args:
+        - -config.file=/conf/mimir.yaml
+        - -target=ruler
+        - -modules
+        resources: *id001
+        securityContext: *id002
+        volumeMounts: *id003
+      containers:
+      - name: verify-store-gateway
+        image: docker.io/grafana/mimir:3.2.0
+        args:
+        - -config.file=/conf/mimir.yaml
+        - -target=store-gateway
+        - -modules
+        resources: *id001
+        securityContext: *id002
+        volumeMounts: *id003
+      volumes:
+      - name: config
+        configMap:
+          name: observability-mimir-config
+          items:
+          - key: mimir.yaml
+            path: mimir.yaml
