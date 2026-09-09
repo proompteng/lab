@@ -74,6 +74,9 @@ spec:
           - apps/app
           - packages/design
           - nix/images/app.nix
+          - nix/check-bun-dependency-closure.sh
+          - .github/workflows/nix-bun-dependency-closure.yml
+          - .github/workflows/product-nix-images.yml
           - nix/images/bun-workspace-service.nix
           - nix/packages.nix
           - nix/cache-push.sh
@@ -218,6 +221,17 @@ spec:
           - services/bumba
           - packages/temporal-bun-sdk
           - nix/images/bumba.nix
+          - .github/workflows/bumba-ci.yml
+          - .github/workflows/nix-bun-dependency-closure.yml
+          - nix/check-bun-dependency-closure.sh
+          - nix/images/bun-workspace-service.nix
+          - nix/images/bun-workspace-deps-source.nix
+          - nix/images/bun-workspace-deps-source.test.sh
+          - bun.lock
+          - glob:**/package.json
+          - bunfig.toml
+          - .npmrc
+          - patches
           - .github/workflows/nix-oci-build-common.yml
           - packages/scripts/src/shared/oci.ts
           - nix/oci-push.sh
@@ -257,6 +271,17 @@ spec:
           - services/oirat
           - packages/discord
           - nix/images/oirat.nix
+          - .github/workflows/oirat-ci.yml
+          - .github/workflows/nix-bun-dependency-closure.yml
+          - nix/check-bun-dependency-closure.sh
+          - nix/images/bun-workspace-service.nix
+          - nix/images/bun-workspace-deps-source.nix
+          - nix/images/bun-workspace-deps-source.test.sh
+          - bun.lock
+          - glob:**/package.json
+          - bunfig.toml
+          - .npmrc
+          - patches
           - .github/workflows/nix-oci-build-common.yml
           - packages/scripts/src/shared/oci.ts
           - nix/oci-push.sh
@@ -299,6 +324,17 @@ spec:
           - packages/discord
           - packages/otel
           - nix/images/froussard.nix
+          - .github/workflows/froussard-ci.yml
+          - .github/workflows/nix-bun-dependency-closure.yml
+          - nix/check-bun-dependency-closure.sh
+          - nix/images/bun-workspace-service.nix
+          - nix/images/bun-workspace-deps-source.nix
+          - nix/images/bun-workspace-deps-source.test.sh
+          - bun.lock
+          - glob:**/package.json
+          - bunfig.toml
+          - .npmrc
+          - patches
           - .github/workflows/nix-oci-build-common.yml
           - packages/scripts/src/shared/oci.ts
           - nix/oci-push.sh
@@ -507,11 +543,13 @@ spec:
           - services/jangar
           - services/bumba
           - nix/images/jangar.nix
+          - nix/images/openai-codex-cli.nix
           - .github/workflows/nix-oci-build-common.yml
           - packages/scripts/src/shared/oci.ts
           - .github/workflows/jangar-post-deploy-verify.yml
           - nix/oci-push.sh
           - argocd/applications/jangar
+          - argocd/bootstrap/jangar
     - image:
         repoURL: registry.ide-newton.ts.net/lab/jangar
         imageSelectionStrategy: NewestBuild
@@ -546,6 +584,7 @@ spec:
         includePaths:
           - services/symphony
           - nix/images/symphony.nix
+          - nix/images/openai-codex-cli.nix
           - .github/workflows/nix-oci-build-common.yml
           - packages/scripts/src/shared/oci.ts
           - .github/workflows/symphony-post-deploy-verify.yml
@@ -612,10 +651,18 @@ spec:
           - nix/images/torghut-ws.nix
           - nix/images/signal-publisher.nix
           - nix/images/bun-workspace-service.nix
+          - nix/images/bun-workspace-deps-source.nix
+          - nix/images/bun-workspace-deps-source.test.sh
+          - nix/check-bun-dependency-closure.sh
+          - .github/workflows/nix-bun-dependency-closure.yml
           - services/torghut/uv.lock
           - flake.nix
           - flake.lock
           - bun.lock
+          - glob:**/package.json
+          - bunfig.toml
+          - .npmrc
+          - patches
           - package.json
           - .github/workflows/nix-oci-build-common.yml
           - packages/scripts/src/shared/oci.ts
@@ -697,7 +744,7 @@ spec:
         strictSemvers: true
         allowTagsRegexes:
           - '^[0-9a-f]{40}$'
-        platform: linux/arm64
+        platform: linux/arm64/v8
         cacheByTag: true
 ---
 apiVersion: kargo.akuity.io/v1alpha1
@@ -909,6 +956,7 @@ spec:
           - third_party/buzz
           - .github/workflows/buzz-relay-build-push.yml
           - argocd/applications/buzz
+          - argocd/bootstrap/buzz
     - image:
         repoURL: registry.ide-newton.ts.net/lab/buzz
         imageSelectionStrategy: NewestBuild

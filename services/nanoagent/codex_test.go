@@ -30,6 +30,124 @@ func (writer *recordingWriteCloser) Len() int {
 	return len(writer.content)
 }
 
+type codexWireWriter struct {
+	messages chan []byte
+}
+
+func (writer *codexWireWriter) Write(content []byte) (int, error) {
+	writer.messages <- append([]byte(nil), content...)
+	return len(content), nil
+}
+
+func (writer *codexWireWriter) Close() error {
+	return nil
+}
+
+func readyCodexSupervisor(t *testing.T) (*codexSupervisor, *codexWireWriter) {
+	t.Helper()
+	supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
+	writer := &codexWireWriter{messages: make(chan []byte, 1)}
+	supervisor.mu.Lock()
+	generation := supervisor.generation
+	supervisor.stdin = writer
+	supervisor.mu.Unlock()
+	closeSignal(generation.ready)
+	t.Cleanup(supervisor.close)
+	return supervisor, writer
+}
+
+func readCodexWireRequest(t *testing.T, writer *codexWireWriter) codexRPCMessage {
+	t.Helper()
+	select {
+	case content := <-writer.messages:
+		var message codexRPCMessage
+		if err := json.Unmarshal(content, &message); err != nil {
+			t.Fatalf("decode Codex wire request: %v", err)
+		}
+		return message
+	case <-time.After(time.Second):
+		t.Fatal("Codex supervisor did not write the request")
+		return codexRPCMessage{}
+	}
+}
+
+func respondToCodexWireRequest(t *testing.T, supervisor *codexSupervisor, request codexRPCMessage, rpcError json.RawMessage) {
+	t.Helper()
+	message, err := json.Marshal(codexRPCMessage{ID: request.ID, Error: rpcError})
+	if err != nil {
+		t.Fatalf("encode Codex wire response: %v", err)
+	}
+	supervisor.mu.Lock()
+	generation := supervisor.generation
+	supervisor.mu.Unlock()
+	supervisor.readMessagesWithLimit(nil, generation, strings.NewReader(string(message)+"\n"), codexProtocolLineMaxBytes)
+}
+
+func TestCodexSupervisorPreservesTypedRPCError(t *testing.T) {
+	t.Parallel()
+	supervisor, writer := readyCodexSupervisor(t)
+	threadID := "00000000-0000-4000-8000-000000000000"
+	params := json.RawMessage(`{"threadId":"00000000-0000-4000-8000-000000000000"}`)
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := supervisor.call(context.Background(), "thread/resume", params)
+		errCh <- err
+	}()
+
+	request := readCodexWireRequest(t, writer)
+	if request.Method != "thread/resume" || string(request.Params) != string(params) {
+		t.Fatalf("Codex wire request = method %q params %s", request.Method, request.Params)
+	}
+	respondToCodexWireRequest(t, supervisor, request, json.RawMessage(`{"code":-32600,"message":"no rollout found for thread id 00000000-0000-4000-8000-000000000000"}`))
+
+	select {
+	case err := <-errCh:
+		var rpcError *codexRPCError
+		if !errors.As(err, &rpcError) {
+			t.Fatalf("Codex RPC error type = %T, want *codexRPCError", err)
+		}
+		if rpcError.code != -32600 || rpcError.message != "no rollout found for thread id "+threadID {
+			t.Fatalf("Codex RPC error = code %d message %q", rpcError.code, rpcError.message)
+		}
+		want := `Codex app-server request failed: {"code":-32600,"message":"no rollout found for thread id 00000000-0000-4000-8000-000000000000"}`
+		if err.Error() != want {
+			t.Fatalf("Codex RPC error message = %q, want %q", err, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Codex supervisor did not resolve the RPC error")
+	}
+}
+
+func TestMissingCodexConversationClassificationRejectsUnrelatedErrors(t *testing.T) {
+	t.Parallel()
+	params := json.RawMessage(`{"threadId":"thread-1"}`)
+	validError := &codexRPCError{
+		code:    -32600,
+		message: "no rollout found for thread id thread-1",
+	}
+	for _, test := range []struct {
+		name   string
+		method string
+		params json.RawMessage
+		err    error
+	}{
+		{name: "transport", method: "thread/resume", params: params, err: errors.New("connection reset")},
+		{name: "wrong method", method: "thread/start", params: params, err: validError},
+		{name: "wrong code", method: "thread/resume", params: params, err: &codexRPCError{code: -32602, message: validError.message}},
+		{name: "different thread", method: "thread/resume", params: params, err: &codexRPCError{code: -32600, message: "no rollout found for thread id thread-2"}},
+		{name: "missing thread ID", method: "thread/resume", params: json.RawMessage(`{}`), err: validError},
+		{name: "non-string thread ID", method: "thread/resume", params: json.RawMessage(`{"threadId":123}`), err: validError},
+		{name: "malformed params", method: "thread/resume", params: json.RawMessage(`{"threadId":`), err: validError},
+		{name: "non-object params", method: "thread/resume", params: json.RawMessage(`[]`), err: validError},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if isMissingCodexConversation(test.method, test.params, test.err) {
+				t.Fatal("unrelated error was classified as a missing Codex conversation")
+			}
+		})
+	}
+}
+
 func TestCodexRPCAllowlistExposesOnlyDesktopOperations(t *testing.T) {
 	t.Parallel()
 	allowed := []string{
@@ -37,6 +155,8 @@ func TestCodexRPCAllowlistExposesOnlyDesktopOperations(t *testing.T) {
 		"account/login/start",
 		"thread/start",
 		"thread/resume",
+		"thread/turns/list",
+		"thread/items/list",
 		"turn/start",
 		"turn/steer",
 		"turn/interrupt",
@@ -383,6 +503,7 @@ printf '{"id":%%s,"result":{"type":"chatgptDeviceCode","loginId":"login-one","ve
 IFS= read -r cancel_login
 printf '%%s' "$cancel_login" > %q
 id=$(printf '%%s\n' "$cancel_login" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+printf '{"method":"account/login/completed","params":{"loginId":"login-one"}}\n'
 printf '{"id":%%s,"result":{}}\n' "$id"
 IFS= read -r second_login
 id=$(printf '%%s\n' "$second_login" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
@@ -416,6 +537,10 @@ sleep 30
 	}
 	if !strings.Contains(string(result.result), `"loginId":"login-two"`) {
 		t.Fatalf("restarted login result = %s", result.result)
+	}
+	snapshot := supervisor.loginSnapshot()
+	if !snapshot.Active || !strings.Contains(string(snapshot.Result), `"loginId":"login-two"`) || snapshot.StartedAt == "" {
+		t.Fatalf("active login snapshot = %#v", snapshot)
 	}
 	cancelRequest, err := os.ReadFile(marker)
 	if err != nil {
@@ -483,6 +608,26 @@ sleep 30
 	supervisor.mu.Unlock()
 	if activeLoginID != "login-one" {
 		t.Fatalf("active login ID = %q, want login-one", activeLoginID)
+	}
+	if snapshot := supervisor.loginSnapshot(); !snapshot.Active ||
+		!strings.Contains(string(snapshot.Result), `"loginId":"login-one"`) {
+		t.Fatalf("retained login snapshot = %#v", snapshot)
+	}
+}
+
+func TestCodexLoginSnapshotRejectsAnotherAppServerGeneration(t *testing.T) {
+	t.Parallel()
+	supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
+	supervisor.mu.Lock()
+	supervisor.activeLoginID = "login-one"
+	supervisor.activeLogin = json.RawMessage(`{"loginId":"login-one"}`)
+	supervisor.loginStartedAt = time.Now().UTC()
+	supervisor.loginGeneration = supervisor.generation
+	supervisor.generation = newCodexProcessGeneration()
+	supervisor.mu.Unlock()
+
+	if snapshot := supervisor.loginSnapshot(); snapshot.Active {
+		t.Fatalf("stale login snapshot = %#v", snapshot)
 	}
 }
 

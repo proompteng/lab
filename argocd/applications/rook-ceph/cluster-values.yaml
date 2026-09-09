@@ -12,9 +12,9 @@ monitoring:
 cephImage:
   repository: quay.io/ceph/ceph
   # Restate snapshots require RGW ETag conditional PUT support. Pin the full
-  # Tentacle build that also carries the updated ARM64 unwinder required by
-  # the cluster's Ampere monitor host.
-  tag: v20.2.3-20260804
+  # Tentacle build that carries the four-CVE security fixes and the updated
+  # ARM64 unwinder required by the cluster's Ampere monitor host.
+  tag: v20.2.4-20260818
   allowUnsupported: false
 
 toolbox:
@@ -30,6 +30,31 @@ toolbox:
 cephClusterSpec:
   # Stop the major-version OSD rollout before it starts if any PG is not clean.
   upgradeOSDRequiresHealthyPGs: true
+  security:
+    cephx:
+      # All daemon and client identities use AES256K after CSI key retirement.
+      allowedCiphers:
+        - aes256k
+      daemon:
+        # Rook rotates core daemon and child gateway keys during the patched
+        # Ceph rollout. Keep the completed generation stable during hardening.
+        keyRotationPolicy: KeyGeneration
+        keyGeneration: 2
+      csi:
+        # All RBD/CephFS consumers and CSI Secret references now use generation 3.
+        # Retire both prior AES generations without rotating the active key.
+        keyRotationPolicy: KeyGeneration
+        keyGeneration: 3
+        keepPriorKeyCountMax: 0
+        keyType: aes256k
+      rbdMirrorPeer:
+        # No CephBlockPool mirror peer is configured in this cluster. Rotate
+        # the unused bootstrap peer identity to AES256K so it does not remain
+        # an insecure client principal. If a legacy peer is added later, set
+        # this explicitly to aes before creating that peer.
+        keyRotationPolicy: KeyGeneration
+        keyGeneration: 2
+        keyType: aes256k
   cephConfig:
     global:
       # This cluster currently runs OSDs on 2 hosts, so the default replicated pool size must be 2.
@@ -40,6 +65,13 @@ cephClusterSpec:
       # Prefer msgr2 CRC mode on the trusted in-cluster storage path. This avoids
       # secure-mode CPU cost while keeping msgr2 and wire CRCs.
       rbd_default_map_options: "ms_mode=prefer-crc"
+    mon:
+      # Refuse creation of insecure keys after the completed AES256K migration.
+      mon_auth_allow_insecure_key: "false"
+    rgw:
+      # STS is unused by this single-site object store. Keep it explicitly off
+      # so the pre-20.2.4 CBC token path cannot be re-enabled by default drift.
+      rgw_s3_auth_use_sts: "false"
     osd:
       bluestore_cache_autotune: "true"
       # Steady-state client-ops posture. Temporary recovery-surge overrides belong

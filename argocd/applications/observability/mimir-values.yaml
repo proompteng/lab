@@ -13,6 +13,10 @@ global:
     - name: OBS_S3_REGION
       value: us-east-1
 
+image:
+  repository: docker.io/grafana/mimir
+  tag: 3.2.0
+
 mimir:
   structuredConfig:
     alertmanager:
@@ -25,32 +29,38 @@ mimir:
       bucket_store:
         sync_dir: /data/tsdb-sync
       s3:
-        endpoint: rook-ceph-rgw-objectstore.rook-ceph.svc:80
+        endpoint: rook-ceph-rgw-tls.rook-ceph.svc:443
         bucket_name: mimir-blocks
         access_key_id: ${OBS_S3_ACCESS_KEY}
         secret_access_key: ${OBS_S3_SECRET_KEY}
         region: ${OBS_S3_REGION}
-        insecure: true
+        insecure: false
+        http:
+          tls_server_name: ceph.k8s.proompteng.ai
         bucket_lookup_type: path
     alertmanager_storage:
       backend: s3
       s3:
-        endpoint: rook-ceph-rgw-objectstore.rook-ceph.svc:80
+        endpoint: rook-ceph-rgw-tls.rook-ceph.svc:443
         bucket_name: mimir-alertmanager
         access_key_id: ${OBS_S3_ACCESS_KEY}
         secret_access_key: ${OBS_S3_SECRET_KEY}
         region: ${OBS_S3_REGION}
-        insecure: true
+        insecure: false
+        http:
+          tls_server_name: ceph.k8s.proompteng.ai
         bucket_lookup_type: path
     ruler_storage:
       backend: s3
       s3:
-        endpoint: rook-ceph-rgw-objectstore.rook-ceph.svc:80
+        endpoint: rook-ceph-rgw-tls.rook-ceph.svc:443
         bucket_name: mimir-ruler
         access_key_id: ${OBS_S3_ACCESS_KEY}
         secret_access_key: ${OBS_S3_SECRET_KEY}
         region: ${OBS_S3_REGION}
-        insecure: true
+        insecure: false
+        http:
+          tls_server_name: ceph.k8s.proompteng.ai
         bucket_lookup_type: path
     ruler:
       # /data/ruler is the writable working directory used by the ruler.
@@ -80,6 +90,8 @@ distributor:
 
 ingester:
   replicas: 3
+  statefulStrategy:
+    type: RollingUpdate
   zoneAwareReplication:
     enabled: false
   persistentVolume:
@@ -101,6 +113,8 @@ ruler:
 
 store_gateway:
   replicas: 1
+  strategy:
+    type: RollingUpdate
   zoneAwareReplication:
     enabled: false
   persistentVolume:
@@ -110,6 +124,8 @@ store_gateway:
 
 compactor:
   replicas: 1
+  strategy:
+    type: RollingUpdate
   persistentVolume:
     enabled: true
     size: 20Gi
@@ -117,6 +133,8 @@ compactor:
 
 alertmanager:
   replicas: 1
+  statefulStrategy:
+    type: RollingUpdate
   zoneAwareReplication:
     enabled: false
   fallbackConfig: |
@@ -126,12 +144,37 @@ alertmanager:
       receiver: default-receiver
     receivers:
       - name: default-receiver
-  persistence:
+  persistentVolume:
     enabled: true
-    storageClass: rook-ceph-block
-    size: 5Gi
+    # Preserve the existing immutable 1Gi claim template, which omits a class.
+    # Its bound PVC already uses the default rook-ceph-block StorageClass.
+    storageClass: null
+    size: 1Gi
 
 kafka:
+  image:
+    repository: apache/kafka
+    tag: 4.3.1
+  clusterId: 5L6g3nShT-eMCtK--X86sw
+  # Override the JVM image's nested VOLUME with this PVC's existing log data.
+  extraVolumeMounts:
+    - name: kafka-data
+      mountPath: /var/lib/kafka/data
+      subPath: data
+  terminationGracePeriodSeconds: 120
+  resources:
+    requests:
+      cpu: "1"
+      memory: 2Gi
+    limits:
+      memory: 4Gi
+  env:
+    - name: CLUSTER_ID
+      value: 5L6g3nShT-eMCtK--X86sw
+    - name: KAFKA_HEAP_OPTS
+      value: -Xms1g -Xmx1g
+    - name: LOG_DIR
+      value: /tmp/kafka-logs
   persistence:
     enabled: true
     size: 20Gi

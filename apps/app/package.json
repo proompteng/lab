@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev --host --port 3000",
-    "build": "vite build",
+    "build": "vite build && node scripts/verify-build.mjs",
     "start": "bun .output/server/index.mjs",
     "test": "vitest run",
     "lint": "bunx oxfmt --check",
@@ -25,7 +25,7 @@
     "better-auth": "^1.6.9",
     "jose": "^6.2.3",
     "lucide-react": "^1.14.0",
-    "nitro": "npm:nitro-nightly@latest",
+    "nitro": "^3.0.260429-beta",
     "pg": "^8.20.0",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",

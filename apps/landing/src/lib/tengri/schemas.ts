@@ -13,6 +13,7 @@ const filePath = z
 const fileContent = z
   .string()
   .refine((value) => Buffer.byteLength(value, 'utf8') <= MAX_EDITABLE_FILE_BYTES, 'File content exceeds 4 MiB')
+const fileRevision = z.string().regex(/^(?:[a-f0-9]{64}|missing)$/, 'A valid base file revision is required')
 const codexPrompt = z
   .string()
   .trim()
@@ -35,7 +36,7 @@ const previewPort = z
   .int()
   .min(1024)
   .max(65535)
-  .refine((value) => value !== 8080, 'Port 8080 is reserved for Nanoagent')
+  .refine((value) => value !== 8080 && value !== 13337 && value !== 13338, 'This port is reserved for Nanoagent')
 const previewSessionId = z.string().regex(/^[a-z0-9]{24}$/)
 const previewPath = z
   .string()
@@ -68,7 +69,13 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('resume-agent'), agentId }),
   z.strictObject({ action: z.literal('list-files'), agentId, path: filePath }),
   z.strictObject({ action: z.literal('read-file'), agentId, path: filePath }),
-  z.strictObject({ action: z.literal('write-file'), agentId, path: filePath, content: fileContent }),
+  z.strictObject({
+    action: z.literal('write-file'),
+    agentId,
+    path: filePath,
+    content: fileContent,
+    expectedRevision: fileRevision,
+  }),
   z.strictObject({ action: z.literal('create-directory'), agentId, path: filePath }),
   z.strictObject({ action: z.literal('move-file'), agentId, sourcePath: filePath, destinationPath: filePath }),
   z.strictObject({ action: z.literal('delete-file'), agentId, path: filePath, recursive: z.boolean() }),
@@ -98,6 +105,7 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('terminate-terminal'), agentId, terminalId: codexId }),
   z.strictObject({ action: z.literal('terminal-ticket'), agentId, terminalId: codexId }),
   z.strictObject({ action: z.literal('codex-account'), agentId }),
+  z.strictObject({ action: z.literal('codex-login-status'), agentId }),
   z.strictObject({ action: z.literal('codex-login'), agentId }),
   z.strictObject({ action: z.literal('create-thread'), agentId }),
   z.strictObject({ action: z.literal('resume-thread'), agentId, threadId: codexId }),
@@ -134,5 +142,16 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
     path: previewPath,
     fragment: previewFragment,
   }),
-  z.strictObject({ action: z.literal('revoke-preview-session'), agentId, sessionId: previewSessionId }),
+  z.strictObject({
+    action: z.literal('editor-session'),
+    agentId,
+    windowId: z.string().regex(/^[a-zA-Z0-9_-]{16,128}$/),
+  }),
+  z.strictObject({ action: z.literal('revoke-editor-sessions') }),
+  z.strictObject({
+    action: z.literal('revoke-preview-session'),
+    agentId,
+    sessionId: previewSessionId,
+    revocationToken: z.string().max(256).optional(),
+  }),
 ])

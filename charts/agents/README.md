@@ -12,7 +12,7 @@ The chart is published on Artifact Hub:
 
 - Artifact Hub: <https://artifacthub.io/packages/helm/agents/agents>
 - OCI chart: `oci://ghcr.io/proompteng/charts/agents`
-- Current chart version: `0.9.15`
+- Current chart version: `0.9.30`
 
 ## Start Here
 
@@ -136,7 +136,7 @@ Install:
 
 ```bash
 helm upgrade --install agents oci://ghcr.io/proompteng/charts/agents \
-  --version 0.9.13 \
+  --version 0.9.30 \
   --namespace agents \
   --values agents-values.yaml \
   --wait
@@ -160,7 +160,7 @@ same HTTP port.
 Run the chart smoke examples from the published package:
 
 ```bash
-helm pull oci://ghcr.io/proompteng/charts/agents --version 0.9.13 --untar
+helm pull oci://ghcr.io/proompteng/charts/agents --version 0.9.30 --untar
 
 kubectl -n agents apply -f agents/examples/agentprovider-smoke.yaml
 kubectl -n agents apply -f agents/examples/agent-smoke.yaml
@@ -214,7 +214,7 @@ That is deliberate. The chart should be safe to install into a namespace and the
 
 ```bash
 helm template agents oci://ghcr.io/proompteng/charts/agents \
-  --version 0.9.13 \
+  --version 0.9.30 \
   --namespace agents \
   --values agents-values.yaml
 ```
@@ -225,7 +225,7 @@ The chart includes an opt-in test Pod that curls the in-cluster health endpoint 
 
 ```bash
 helm upgrade --install agents oci://ghcr.io/proompteng/charts/agents \
-  --version 0.9.13 \
+  --version 0.9.30 \
   --namespace agents \
   --values agents-values.yaml \
   --set tests.enabled=true \

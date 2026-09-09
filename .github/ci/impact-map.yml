@@ -20,6 +20,9 @@ targets:
       - apps/landing/**
       - packages/backend/**
       - packages/design/**
+      - services/nanoagent/**
+      - services/tengri/**
+      - .github/workflows/tengri.yaml
 
   app:
     kind: validation
@@ -61,6 +64,7 @@ targets:
     paths:
       - .github/ci/impact-map.yml
       - .github/workflows/pull-request.yml
+      - .github/workflows/hermes-agent-mirror.yml
       - argocd/applications/hermes/**
       - argocd/applications/kube-router/**
       - argocd/applications/tengri/network-policies.yaml
@@ -249,6 +253,22 @@ targets:
     workflow: froussard-ci
     paths:
       - apps/froussard/**
+
+  orbit-salvage:
+    kind: delegated
+    workflow: orbit-salvage-ci
+    paths:
+      - apps/orbit-salvage/**
+      - .github/workflows/orbit-salvage-ci.yml
+      - .github/ci/impact-map.yml
+
+  ricochet-rush:
+    kind: delegated
+    workflow: ricochet-rush-ci
+    paths:
+      - apps/ricochet-rush/**
+      - .github/workflows/ricochet-rush-ci.yml
+      - .github/ci/impact-map.yml
 
   golink:
     kind: delegated

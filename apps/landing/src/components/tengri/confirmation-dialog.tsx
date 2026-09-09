@@ -12,6 +12,7 @@ import {
   AlertDialogMedia,
   AlertDialogTitle,
 } from '@proompteng/design/ui'
+import { WindowControls } from './window-controls'
 
 export function ConfirmationDialog({
   busy,
@@ -45,9 +46,14 @@ export function ConfirmationDialog({
         data-tengri-modal="true"
         aria-busy={busy}
         overlayClassName="z-[4000] bg-black/45 backdrop-blur-md"
-        className="font-inter z-[4001] w-[calc(100%-2.5rem)] max-w-md gap-0 overflow-hidden rounded-[24px] border border-white/18 bg-[rgba(29,31,39,0.94)] p-0 text-white shadow-[0_42px_120px_rgba(0,0,0,0.62),inset_0_1px_0_rgba(255,255,255,0.16)] ring-0 backdrop-blur-3xl sm:max-w-md"
+        className="font-system z-[4001] w-[calc(100%-2.5rem)] max-w-md gap-0 overflow-hidden rounded-2xl border border-white/18 bg-zinc-800/95 p-0 text-white shadow-[0_42px_120px_rgba(0,0,0,0.62),inset_0_1px_0_rgba(255,255,255,0.16)] ring-0 backdrop-blur-3xl sm:max-w-md"
       >
-        <WindowTitleBar title="Tengri" />
+        <div className="relative flex h-11 items-center border-b border-white/9 bg-white/[0.035] px-2.5">
+          <WindowControls active onClose={busy ? undefined : onCancel} title="Tengri" />
+          <span className="pointer-events-none absolute inset-x-24 truncate text-center text-xs font-semibold text-white/54">
+            Tengri
+          </span>
+        </div>
         <div className="p-6">
           <AlertDialogHeader className="block text-left">
             <AlertDialogMedia
@@ -100,20 +106,5 @@ export function ConfirmationDialog({
         </div>
       </AlertDialogContent>
     </AlertDialog>
-  )
-}
-
-function WindowTitleBar({ title }: { title: string }) {
-  return (
-    <div className="relative flex h-11 items-center border-b border-white/9 bg-white/[0.035] px-4">
-      <div aria-hidden="true" className="flex gap-2">
-        <span className="h-3 w-3 rounded-full bg-[#ff5f57]" />
-        <span className="h-3 w-3 rounded-full bg-[#febc2e]" />
-        <span className="h-3 w-3 rounded-full bg-[#28c840]" />
-      </div>
-      <span className="pointer-events-none absolute inset-x-24 truncate text-center text-xs font-semibold text-white/54">
-        {title}
-      </span>
-    </div>
   )
 }

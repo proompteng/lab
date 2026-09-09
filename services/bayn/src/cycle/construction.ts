@@ -293,7 +293,7 @@ const validateCycleWindowDurations = (
 ): Result.Result<void, CycleConstructionFailure> => {
   if ('warmupAfterOpenMs' in policy) {
     const invalid = [policy.warmupAfterOpenMs, policy.submissionCutoffBeforeCloseMs].find(
-      (offset) => !Number.isSafeInteger(offset) || offset <= 0 || offset > maximumSubmissionDurationMs,
+      (offset) => !Number.isSafeInteger(offset) || offset < 0 || offset > maximumSubmissionDurationMs,
     )
     return invalid === undefined
       ? Result.succeed(undefined)

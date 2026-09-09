@@ -51,6 +51,7 @@ const ExecutionSessionSchema = Schema.Struct({
 
 const SubmissionCutoffLeadMinutesSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 120 }))
 const IntradayOrderOffsetMsSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 86_400_000 }))
+const SessionBoundaryOffsetMsSchema = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 86_400_000 }))
 
 const ExecutionSessionBindingV1Base = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.execution-session-binding.v1'),
@@ -84,7 +85,7 @@ const ExecutionSessionBindingV3Base = Schema.Struct({
   executionSession: ExecutionSessionSchema,
   submissionOpenAt: UtcInstantSchema,
   submissionCutoffAt: UtcInstantSchema,
-  decisionAfterOpenMs: IntradayOrderOffsetMsSchema,
+  decisionAfterOpenMs: SessionBoundaryOffsetMsSchema,
   submissionCutoffAfterOpenMs: IntradayOrderOffsetMsSchema,
   bindingHash: Sha256Schema,
 })
@@ -400,6 +401,7 @@ const deriveIntradaySubmissionWindow = (
   planningBrokerState: PlanningBrokerStateBinding,
   decisionAfterOpenMs: number,
   submissionCutoffAfterOpenMs: number,
+  boundaries: 'interior' | 'regular-session' = 'interior',
 ): Result.Result<Omit<ExecutionSessionWindow, 'executionSession'>, ExecutionSessionBindingFailure> => {
   const configuredOpenMs = Date.parse(executionSession.openAt) + decisionAfterOpenMs
   const submissionOpenAt = utcInstantFromEpochMillis(
@@ -408,11 +410,15 @@ const deriveIntradaySubmissionWindow = (
   const submissionCutoffAt = utcInstantFromEpochMillis(
     Date.parse(executionSession.openAt) + submissionCutoffAfterOpenMs,
   )
-  if (submissionOpenAt >= submissionCutoffAt || submissionCutoffAt >= executionSession.closeAt) {
+  const outsideSession =
+    boundaries === 'regular-session'
+      ? submissionOpenAt < executionSession.openAt || submissionCutoffAt > executionSession.closeAt
+      : submissionOpenAt <= executionSession.openAt || submissionCutoffAt >= executionSession.closeAt
+  if (submissionOpenAt >= submissionCutoffAt || outsideSession) {
     return Result.fail(
       deriveWindowFailure(
         'submission-window',
-        'intraday execution-session binding must produce open < submissionOpenAt < submissionCutoffAt < close',
+        'intraday execution-session binding must produce open <= submissionOpenAt < submissionCutoffAt <= close',
         {
           executionOpenAt: executionSession.openAt,
           executionCloseAt: executionSession.closeAt,
@@ -438,6 +444,7 @@ const deriveIntradayExecutionSessionWindow = (
               input.planningBrokerState,
               input.decisionAfterOpenMs,
               input.submissionCutoffAfterOpenMs,
+              'regular-session',
             ),
             (submissionWindow) => ({ executionSession, ...submissionWindow }),
           ),
@@ -463,6 +470,7 @@ const deriveRollingIntradayExecutionSessionWindow = (
               input.planningBrokerState,
               input.warmupAfterOpenMs,
               submissionCutoffAfterOpenMs,
+              'regular-session',
             ),
             (submissionWindow) => ({ executionSession, ...submissionWindow }),
           )

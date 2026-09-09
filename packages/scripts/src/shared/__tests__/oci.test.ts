@@ -939,7 +939,9 @@ describe('native OCI build workflows', () => {
       sagBuildWorkflow,
     ]) {
       expect(workflow).not.toContain("- 'flake.lock'")
-      expect(workflow).not.toContain("- 'nix/images/bun-workspace-service.nix'")
+      if (![oiratWorkflow, bumbaWorkflow, froussardWorkflow].includes(workflow)) {
+        expect(workflow).not.toContain("- 'nix/images/bun-workspace-service.nix'")
+      }
     }
     expect(atticWorkflow).not.toContain("- 'flake.lock'")
     expect(atticWorkflow).toContain("- 'nix/images/attic.nix'")
@@ -947,6 +949,24 @@ describe('native OCI build workflows', () => {
     expect(productNixWorkflow).toContain("- 'flake.lock'")
     expect(productNixWorkflow).toContain("- 'nix/images/bun-workspace-service.nix'")
     expect(headlampWorkflow).not.toContain("- 'flake.nix'")
+  })
+
+  it('checks default Bun dependency closures when their dependency inputs change', () => {
+    for (const workflow of [oiratWorkflow, bumbaWorkflow, froussardWorkflow, signalPublisherBuildWorkflow]) {
+      const triggers = workflow.slice(0, workflow.indexOf('concurrency:'))
+      expect(triggers.match(/- 'bun\.lock'/g)).toHaveLength(2)
+      for (const input of [
+        'nix/images/bun-workspace-service.nix',
+        'nix/images/bun-workspace-deps-source.nix',
+        'nix/images/bun-workspace-deps-source.test.sh',
+        'nix/check-bun-dependency-closure.sh',
+        '.github/workflows/nix-bun-dependency-closure.yml',
+      ]) {
+        expect(triggers.split(`- '${input}'`)).toHaveLength(3)
+      }
+      expect(workflow).toContain('uses: ./.github/workflows/nix-bun-dependency-closure.yml')
+      expect(workflow).toContain('needs: dependency-closure')
+    }
   })
 
   it('validates Bumba pull requests when the Temporal SDK changes', () => {
@@ -1095,8 +1115,8 @@ describe('native OCI build workflows', () => {
     expect(headlampImageModule).toContain('pkgs.fetchFromGitHub')
     expect(headlampImageModule).toContain('rev = headlampSha')
     expect(headlampImageModule).toContain('builtins.fetchTarball')
-    expect(headlampImageModule).toContain('104240a772428cc2e20d8fd86c9ddbb886bbaff2')
-    expect(headlampImageModule).toContain('expected Headlamp Go 1.26.5')
+    expect(headlampImageModule).toContain('dc5d91f840324650bac8c379428c7037a416959a')
+    expect(headlampImageModule).toContain('expected Headlamp Go 1.26.7')
     expect(headlampImageModule).toContain('headlampPkgs.buildGoModule.override')
     expect(headlampImageModule).toContain('headlampBuildGoModule')
     expect(headlampImageModule).toContain('buildNpmPackage')
@@ -1151,6 +1171,7 @@ describe('native OCI build workflows', () => {
     expect(symphonyBuildWorkflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
     expect(symphonyBuildWorkflow).toContain('image_name: symphony')
     expect(symphonyBuildWorkflow).toContain('package_attr: symphony-image')
+    expect(symphonyBuildWorkflow).toContain("- 'nix/images/openai-codex-cli.nix'")
     expect(symphonyBuildWorkflow).toContain('publish_kargo_tag: true')
     expect(symphonyBuildWorkflow).not.toContain('release_artifact_name:')
     expect(symphonyBuildWorkflow).toContain('tag: sha-${{ github.sha }}')
@@ -1191,6 +1212,7 @@ describe('native OCI build workflows', () => {
     expect(sagBuildWorkflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
     expect(sagBuildWorkflow).toContain('image_name: sag')
     expect(sagBuildWorkflow).toContain('package_attr: sag-image')
+    expect(sagBuildWorkflow).toContain("- 'nix/images/openai-codex-cli.nix'")
     expect(sagBuildWorkflow).toContain('publish_kargo_tag: false')
     expect(sagBuildWorkflow).not.toContain('release_artifact_name:')
     expect(sagBuildWorkflow).toContain('tag: sha-${{ github.sha }}')
@@ -1240,6 +1262,7 @@ describe('native OCI build workflows', () => {
     expect(jangarBuildWorkflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
     expect(jangarBuildWorkflow).toContain('image_name: jangar')
     expect(jangarBuildWorkflow).toContain('package_attr: jangar-image')
+    expect(jangarBuildWorkflow).toContain("- 'nix/images/openai-codex-cli.nix'")
     expect(jangarBuildWorkflow).toContain('publish_kargo_tag: true')
     expect(jangarBuildWorkflow).toContain('kargo_tag_include_run_id: true')
     expect(jangarBuildWorkflow).not.toContain('release_artifact_name:')

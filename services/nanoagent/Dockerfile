@@ -21,6 +21,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY *.go ./
+COPY vscode-extension ./vscode-extension
 RUN go test ./... && \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
       go build -trimpath -ldflags='-s -w' -o /out/nanoagent .
@@ -59,6 +60,8 @@ FROM ${UV_BASE_IMAGE}:${UV_VERSION} AS uv-runtime
 FROM ${UBUNTU_BASE_IMAGE}:24.04 AS runtime
 
 ENV CARGO_HOME=/home/nanoagent/.cargo \
+    CODE_SERVER_BINARY=/home/nanoagent/.local/bin/code-server \
+    CODE_SERVER_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-code-server \
     CODEX_BINARY=/home/nanoagent/.local/bin/codex \
     CODEX_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-codex \
     CODEX_HOME=/home/nanoagent/.codex \
@@ -96,7 +99,10 @@ RUN set -eux; \
       tini \
       xz-utils; \
     apt-get clean; \
-    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* \
+      /usr/share/man/* /usr/share/info/* /usr/share/locale/*; \
+    find /usr/share/doc -type f ! -name copyright -delete; \
+    find /usr/lib -type d -name __pycache__ -prune -exec rm -rf {} +; \
     runtime_group="$(getent group 1000 | cut -d: -f1 || true)"; \
     if [ -n "$runtime_group" ]; then \
       groupmod --new-name nanoagent "$runtime_group"; \
@@ -116,6 +122,7 @@ RUN set -eux; \
 
 COPY --from=build /out/nanoagent /usr/local/bin/nanoagent
 COPY --chmod=0555 bootstrap-codex.sh /usr/local/bin/bootstrap-codex
+COPY --chmod=0555 bootstrap-code-server.sh /usr/local/bin/bootstrap-code-server
 RUN test -x /usr/local/bin/bootstrap-codex && test -x /usr/local/bin/nanoagent
 
 FROM runtime AS c-toolchain-runtime
@@ -290,6 +297,7 @@ ENV BUN_INSTALL=/home/nanoagent/.toolchain-smoke/.local \
 USER 1000:1000
 RUN mkdir -p "$HOME" && \
     bootstrap-toolchain --install-only && \
+    python3 -B -c 'import json, sqlite3, ssl, venv; assert sqlite3.connect(":memory:").execute("SELECT 42").fetchone() == (42,); assert ssl.create_default_context(); assert json.loads("42") == 42' && \
     test "$(command -v bwrap)" = '/usr/bin/bwrap' && \
     test "$(node --version)" = 'v24.11.1' && \
     test "$(npm --version | cut -d. -f1)" -ge 10 && \
@@ -345,18 +353,31 @@ RUN mkdir -p "$HOME" "$CODEX_HOME" && \
     bootstrap-codex --install-only && \
     "$CODEX_BINARY" --version > /tmp/codex-version
 
-FROM runtime-with-toolchain
+FROM runtime AS code-server-smoke
 
-# Firecracker's Kata snapshotter extracts an OCI image into a 512 MiB blockfile.
-# Keep 32 MiB of explicit headroom for filesystem metadata and extraction overhead.
-ARG FIRECRACKER_ROOTFS_LIMIT_BYTES=503316480
+ENV HOME=/home/nanoagent/.vscode-smoke
+USER 1000:1000
+RUN mkdir -p "$HOME" && bootstrap-code-server --install-only && \
+    "$HOME/.local/bin/code-server" --config "$HOME/config.yaml" --version > /tmp/code-server-version
+
+FROM runtime-with-toolchain AS guest-rootfs
+
+COPY --from=code-server-smoke /tmp/code-server-version /usr/share/nanoagent/code-server-version
 COPY --from=codex-smoke /tmp/codex-version /usr/share/nanoagent/codex-version
 COPY --from=toolchain-smoke /tmp/toolchain-version /usr/share/nanoagent/toolchain-version
-RUN set -eux; \
-    rootfs_bytes="$(du -sx -B1 / 2>/dev/null | cut -f1)"; \
-    test "$rootfs_bytes" -le "$FIRECRACKER_ROOTFS_LIMIT_BYTES"; \
-    printf '%s\n' "$rootfs_bytes" > /usr/share/nanoagent/rootfs-size-bytes
 
+FROM --platform=$BUILDPLATFORM ${UBUNTU_BASE_IMAGE}:24.04 AS rootfs-check
+
+RUN apt-get update -o Acquire::Retries=3 && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends e2fsprogs && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+COPY --from=guest-rootfs / /rootfs/
+COPY --chmod=0555 validate-rootfs.sh /usr/local/bin/validate-rootfs
+RUN validate-rootfs /rootfs /rootfs-validation.txt
+
+FROM guest-rootfs
+
+COPY --from=rootfs-check /rootfs-validation.txt /usr/share/nanoagent/rootfs-validation.txt
 USER 1000:1000
 WORKDIR /home/nanoagent
 EXPOSE 8080
