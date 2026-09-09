@@ -156,3 +156,16 @@ current version authority.
 Sources: [Elastic shared filesystem repositories](https://www.elastic.co/guide/en/elasticsearch/reference/8.5/snapshots-filesystem-repository.html),
 [repository analysis](https://www.elastic.co/guide/en/elasticsearch/reference/8.5/repo-analysis-api.html),
 [Temporal Visibility compatibility](https://docs.temporal.io/self-hosted-guide/visibility).
+
+
+Generation `4112-v1` prepares the Cassandra 3.11.19 to 4.1.12 transition with a
+fresh native snapshot, retained CSI clones and isolated old/target engine checks.
+Its Jobs and script ConfigMap have separate identities, preserving the completed
+3.11.19 recovery and rollout records. Production stays on the accepted 3.11.19
+image until this generation passes and a separate activation is reviewed.
+
+Cassandra 4.1 and 5.0 disable native SSTable verification without an explicit
+`--force` opt-in. The rehearsal enables that verifier only on its disposable,
+isolated clone, with extended cell verification and without repair-status mutation
+or disk-failure-policy flags. This does not force-delete or verify serving Pods.
+The completed v6 rehearsal retains its exact original script ConfigMap.
