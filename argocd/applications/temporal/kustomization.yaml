@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: temporal
 
 resources:
+  - upgrade/elasticsearch-preparation.yaml
   - upgrade/retained-rf3-snapshots.yaml
   - upgrade/retained-31119-v2-snapshots.yaml
   - upgrade/retained-31119-v3-snapshots.yaml
@@ -104,6 +105,15 @@ helmCharts:
           xpack.security.enabled: false
           xpack.security.http.ssl.enabled: false
           xpack.security.transport.ssl.enabled: false
+          path.repo:
+            - /usr/share/elasticsearch/snapshots
+      extraVolumes:
+        - name: elasticsearch-snapshot-repository
+          persistentVolumeClaim:
+            claimName: temporal-elasticsearch-snapshot-repository
+      extraVolumeMounts:
+        - name: elasticsearch-snapshot-repository
+          mountPath: /usr/share/elasticsearch/snapshots
       clusterHealthCheckParams: "wait_for_status=green&timeout=1s"
       persistence:
         enabled: true
@@ -198,6 +208,12 @@ configMapGenerator:
   - name: temporal-cassandra-upgrade-scripts-rollout
     files:
       - upgrade/cassandra-gate.sh
+    options:
+      annotations:
+        argocd.argoproj.io/sync-wave: "-30"
+  - name: temporal-elasticsearch-upgrade-scripts
+    files:
+      - upgrade/elasticsearch-snapshot.py
     options:
       annotations:
         argocd.argoproj.io/sync-wave: "-30"

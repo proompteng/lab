@@ -122,3 +122,37 @@ Files outside the native snapshot remain excluded. This preserves secondary inde
 without inventing a manifest or silently discarding base-table data.
 
 Source: [Apache Cassandra 3.11.5 snapshot implementation](https://github.com/apache/cassandra/blob/cassandra-3.11.5/src/java/org/apache/cassandra/db/ColumnFamilyStore.java).
+
+## Elasticsearch native backup and recovery
+
+Elasticsearch's shared filesystem repository uses a retained CephFS PVC mounted at
+`/usr/share/elasticsearch/snapshots` on every master/data node. Adding `path.repo`
+requires a rolling restart of the existing version before repository registration.
+Preserve the existing StatefulSet, node identities, data PVCs, service addresses,
+credentials and readiness gates. Finish Cassandra rollout acceptance before starting
+this independent restart.
+
+The versioned snapshot Job checks the original cluster UUID, three node IDs, source
+version and green shard state. It verifies access from all nodes, performs a bounded
+native repository analysis, and creates a snapshot with global state and all indices.
+It refuses foreign repositories, incomplete snapshots, changed index identities or
+failed shards. Receipt files live beside the repository, outside Elasticsearch's
+managed repository directory. Failed one-shot Jobs require a reviewed new generation;
+never force-replace them or overwrite an existing snapshot.
+
+Before selecting the next Elasticsearch image, restore the native snapshot into an
+isolated cluster with the repository mounted and registered read-only. Verify the
+source engine, then the target engine, including index mappings, document contents,
+feature state and persistent Temporal workflow visibility. A CSI volume snapshot is
+not a substitute for Elasticsearch's native distributed snapshot. A successful snapshot
+Job is preparation only; it does not establish restore or upgrade acceptance.
+
+Only the production cluster may write to the native repository. Retain it through
+later upgrades and recovery. Never start an older Elasticsearch binary on a data
+volume already upgraded by a newer version. Keep release-specific version selections,
+backup identifiers and acceptance receipts in the PR record; GitOps remains the
+current version authority.
+
+Sources: [Elastic shared filesystem repositories](https://www.elastic.co/guide/en/elasticsearch/reference/8.5/snapshots-filesystem-repository.html),
+[repository analysis](https://www.elastic.co/guide/en/elasticsearch/reference/8.5/repo-analysis-api.html),
+[Temporal Visibility compatibility](https://docs.temporal.io/self-hosted-guide/visibility).
