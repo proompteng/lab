@@ -65,6 +65,8 @@ targets:
       - .github/ci/impact-map.yml
       - .github/workflows/pull-request.yml
       - .github/workflows/hermes-agent-mirror.yml
+      - .github/workflows/forgejo-image-publish.yml
+      - argocd/applications/forgejo/upstream-image.json
       - argocd/applications/hermes/**
       - argocd/applications/kube-router/**
       - argocd/applications/tengri/network-policies.yaml
