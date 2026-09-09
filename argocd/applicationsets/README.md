@@ -109,3 +109,14 @@ fails, retain the ownership receipt and recover the same operation before cleari
 
 Argo documents [skip reconciliation](https://argo-cd.readthedocs.io/en/stable/user-guide/skip_reconcile/) and
 [ApplicationSet annotation preservation](https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/Controlling-Resource-Modification/).
+
+## Pruning after Kargo maintenance
+
+Hermes and Forgejo use automatic Argo reconciliation in steady state on their
+Kargo-owned branches. The verified image and source still enter those branches
+only through their authorized Stages. This lets Argo prune obsolete generated
+ConfigMaps and completed maintenance resources: Kargo 1.11.4's `argocd-update`
+operation does not enable pruning itself. `PruneLast=true` keeps cleanup after
+workload health, and resource retention annotations protect recovery data.
+Their staged maintenance runbooks require a reviewed manual-policy change
+before quiescence and restore automatic reconciliation after acceptance.
