@@ -45,3 +45,10 @@ preparation; no direct production image apply is used.
 Sources: [Apache 4.1 release notes](https://github.com/apache/cassandra/blob/cassandra-4.1.12/NEWS.txt),
 [Apache 5.0 release notes](https://github.com/apache/cassandra/blob/cassandra-5.0.9/NEWS.txt),
 [Kubernetes conditional deletion](https://kubernetes.io/docs/reference/using-api/api-concepts/#resource-deletion).
+
+Kustomize must set `namespace: temporal` before resolving generated ConfigMap
+names. Argo destination namespace injection happens afterward and cannot repair
+those references. CI renders this application and checks every Cassandra Job's
+ConfigMap reference against its rendered namespace and name. Preparation `31119-v1`
+never started because its script ConfigMap reference did not resolve; generation
+`31119-v2` replaces that unused Job and performs the complete backup sequence.

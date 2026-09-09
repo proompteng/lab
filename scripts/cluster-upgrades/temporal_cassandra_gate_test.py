@@ -1,5 +1,6 @@
 """Exercise native upgrade ordering and API deletion preconditions with a stateful CLI."""
 
+import copy
 import json
 import os
 from pathlib import Path
@@ -80,6 +81,57 @@ raise SystemExit('Unexpected command '+repr(args))
 
 
 class CassandraGateTests(unittest.TestCase):
+    def test_rendered_configmap_reference_requires_matching_namespace_and_hash(self):
+        from temporal_manifest_check import validate
+
+        config = {
+            "kind": "ConfigMap",
+            "metadata": {
+                "name": "temporal-cassandra-upgrade-scripts-hash",
+                "namespace": "temporal",
+            },
+        }
+        job = {
+            "kind": "Job",
+            "metadata": {
+                "name": "temporal-cassandra-test-snapshot",
+                "namespace": "temporal",
+            },
+            "spec": {
+                "template": {
+                    "spec": {
+                        "volumes": [
+                            {
+                                "name": "scripts",
+                                "configMap": {
+                                    "name": "temporal-cassandra-upgrade-scripts"
+                                },
+                            }
+                        ]
+                    }
+                }
+            },
+        }
+        with self.assertRaisesRegex(ValueError, "missing rendered ConfigMap"):
+            validate([config, job])
+        job["spec"]["template"]["spec"]["volumes"][0]["configMap"]["name"] = config[
+            "metadata"
+        ]["name"]
+        self.assertEqual(validate([config, job]), 1)
+        malformed = copy.deepcopy(job)
+        malformed["metadata"]["name"] = "temporal-cassandra-test-rehearsal"
+        malformed["spec"]["template"]["spec"]["volumes"][0]["configMap"]["name"] = (
+            "misspelled-scripts"
+        )
+        with self.assertRaisesRegex(ValueError, "missing rendered ConfigMap"):
+            validate([config, job, malformed])
+        malformed["spec"]["template"]["spec"]["volumes"] = []
+        with self.assertRaisesRegex(ValueError, "expected one scripts"):
+            validate([config, job, malformed])
+        config["metadata"]["namespace"] = "elsewhere"
+        with self.assertRaisesRegex(ValueError, "missing rendered ConfigMap"):
+            validate([config, job])
+
     def run_gate(self, mode="rollout", failure="", upgraded=()):
         with tempfile.TemporaryDirectory() as directory:
             tmp = Path(directory)
