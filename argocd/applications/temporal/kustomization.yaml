@@ -20,6 +20,26 @@ resources:
 patches:
   - target:
       kind: StatefulSet
+      name: elasticsearch-master
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: elasticsearch-master
+      spec:
+        template:
+          spec:
+            initContainers:
+              - name: configure-sysctl
+              - name: keystore
+                env:
+                  - name: ELASTIC_PASSWORD
+                    valueFrom:
+                      secretKeyRef:
+                        name: elasticsearch-master-credentials
+                        key: password
+  - target:
+      kind: StatefulSet
       name: temporal-cassandra
     patch: |-
       - op: replace

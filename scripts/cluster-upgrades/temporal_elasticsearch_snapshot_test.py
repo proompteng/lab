@@ -122,7 +122,7 @@ class Fixture:
 class SnapshotTests(unittest.TestCase):
     def test_bucket_claim_must_resolve_to_the_selected_store(self):
         binding = {
-            "BUCKET_NAME": "temporal-elasticsearch-snapshots-test",
+            "BUCKET_NAME": snapshot.EXPECTED_BUCKET,
             "BUCKET_HOST": snapshot.CLAIM_HOST,
             "BUCKET_PORT": "80",
         }
@@ -139,9 +139,7 @@ class SnapshotTests(unittest.TestCase):
 
     def test_native_snapshot_freezes_repository_before_receipt(self):
         fixture = Fixture()
-        proof = snapshot.capture(
-            fixture.api, bucket="temporal-elasticsearch-snapshots-test"
-        )
+        proof = snapshot.capture(fixture.api, bucket=snapshot.EXPECTED_BUCKET)
         self.assertTrue(proof["repositoryReadOnly"])
         self.assertTrue(fixture.repository[snapshot.REPOSITORY]["settings"]["readonly"])
         self.assertEqual(
@@ -158,9 +156,7 @@ class SnapshotTests(unittest.TestCase):
             return original(method, path, body, missing)
 
         with self.assertRaisesRegex(RuntimeError, "freeze was not acknowledged"):
-            snapshot.capture(
-                failed_freeze, bucket="temporal-elasticsearch-snapshots-test"
-            )
+            snapshot.capture(failed_freeze, bucket=snapshot.EXPECTED_BUCKET)
 
     def test_readback_failure_after_freeze_recovers_without_writes(self):
         fixture = Fixture()
@@ -177,27 +173,27 @@ class SnapshotTests(unittest.TestCase):
             return original(method, path, body, missing)
 
         with self.assertRaisesRegex(RuntimeError, "lost freeze readback"):
-            snapshot.capture(
-                failed_readback, bucket="temporal-elasticsearch-snapshots-test"
-            )
+            snapshot.capture(failed_readback, bucket=snapshot.EXPECTED_BUCKET)
         self.assertTrue(fixture.repository[snapshot.REPOSITORY]["settings"]["readonly"])
         fixture.calls.clear()
-        proof = snapshot.capture(
-            fixture.api, bucket="temporal-elasticsearch-snapshots-test"
-        )
+        proof = snapshot.capture(fixture.api, bucket=snapshot.EXPECTED_BUCKET)
         self.assertTrue(proof["repositoryReadOnly"])
         self.assertTrue(all(method == "GET" for method, _, _ in fixture.calls))
 
     def test_frozen_snapshot_requires_recorded_native_analysis(self):
         fixture = Fixture()
-        snapshot.capture(fixture.api, bucket="temporal-elasticsearch-snapshots-test")
+        snapshot.capture(fixture.api, bucket=snapshot.EXPECTED_BUCKET)
         del fixture.snapshot["metadata"]["repository_analysis_issues"]
         fixture.calls.clear()
         with self.assertRaisesRegex(RuntimeError, "native repository analysis record"):
-            snapshot.capture(
-                fixture.api, bucket="temporal-elasticsearch-snapshots-test"
-            )
+            snapshot.capture(fixture.api, bucket=snapshot.EXPECTED_BUCKET)
         self.assertTrue(all(method == "GET" for method, _, _ in fixture.calls))
+
+    def test_unexpected_bucket_stops_before_any_elasticsearch_request(self):
+        fixture = Fixture()
+        with self.assertRaisesRegex(RuntimeError, "unexpected snapshot bucket"):
+            snapshot.capture(fixture.api, bucket="temporal-elasticsearch-sna-foreign")
+        self.assertEqual(fixture.calls, [])
 
     def test_requests_share_the_job_deadline_budget(self):
         with (
@@ -227,9 +223,7 @@ class SnapshotTests(unittest.TestCase):
 
     def test_native_snapshot_retains_hidden_indices_and_global_state(self):
         fixture = Fixture()
-        proof = snapshot.capture(
-            fixture.api, bucket="temporal-elasticsearch-snapshots-test"
-        )
+        proof = snapshot.capture(fixture.api, bucket=snapshot.EXPECTED_BUCKET)
         self.assertEqual(proof["status"], "NATIVE_SNAPSHOT_PASS_RESTORE_PENDING")
         self.assertEqual(proof["originalIndexUUIDs"], fixture.original)
         create = next(
@@ -254,9 +248,7 @@ class SnapshotTests(unittest.TestCase):
                     final["new-index"] = "new-uuid"
                 fixture.after_snapshot_indices = final
                 with self.assertRaisesRegex(RuntimeError, "identities changed while"):
-                    snapshot.capture(
-                        fixture.api, bucket="temporal-elasticsearch-snapshots-test"
-                    )
+                    snapshot.capture(fixture.api, bucket=snapshot.EXPECTED_BUCKET)
                 self.assertTrue(
                     any(
                         method == "PUT" and "wait_for_completion" in path
@@ -268,9 +260,7 @@ class SnapshotTests(unittest.TestCase):
         fixture = Fixture()
         fixture.result["indices"].append("temporary-unrecorded-index")
         with self.assertRaisesRegex(RuntimeError, "snapshot index set differs"):
-            snapshot.capture(
-                fixture.api, bucket="temporal-elasticsearch-snapshots-test"
-            )
+            snapshot.capture(fixture.api, bucket=snapshot.EXPECTED_BUCKET)
         self.assertEqual(
             fixture.original,
             {
@@ -318,9 +308,7 @@ class SnapshotTests(unittest.TestCase):
                 if failure == "relocating":
                     fixture.health["relocating_shards"] = 1
                 with self.assertRaises(RuntimeError):
-                    snapshot.capture(
-                        fixture.api, bucket="temporal-elasticsearch-snapshots-test"
-                    )
+                    snapshot.capture(fixture.api, bucket=snapshot.EXPECTED_BUCKET)
                 self.assertFalse(any(method != "GET" for method, _, _ in fixture.calls))
 
     def test_never_overwrites_foreign_repository(self):
@@ -329,9 +317,7 @@ class SnapshotTests(unittest.TestCase):
             snapshot.REPOSITORY: {"type": "fs", "settings": {"location": "/foreign"}}
         }
         with self.assertRaisesRegex(RuntimeError, "different type or destination"):
-            snapshot.capture(
-                fixture.api, bucket="temporal-elasticsearch-snapshots-test"
-            )
+            snapshot.capture(fixture.api, bucket=snapshot.EXPECTED_BUCKET)
         self.assertFalse(any(method == "PUT" for method, _, _ in fixture.calls))
 
     def test_requires_shared_access_and_clean_analysis(self):
@@ -343,9 +329,7 @@ class SnapshotTests(unittest.TestCase):
                 else:
                     fixture.issues = ["incorrect read"]
                 with self.assertRaises(RuntimeError):
-                    snapshot.capture(
-                        fixture.api, bucket="temporal-elasticsearch-snapshots-test"
-                    )
+                    snapshot.capture(fixture.api, bucket=snapshot.EXPECTED_BUCKET)
                 self.assertFalse(
                     any(
                         method == "PUT" and "wait_for_completion" in path
@@ -356,7 +340,7 @@ class SnapshotTests(unittest.TestCase):
     def test_existing_native_backup_is_idempotent(self):
         fixture = Fixture()
         fixture.snapshot = copy.deepcopy(fixture.result)
-        snapshot.capture(fixture.api, bucket="temporal-elasticsearch-snapshots-test")
+        snapshot.capture(fixture.api, bucket=snapshot.EXPECTED_BUCKET)
         self.assertFalse(
             any(
                 method == "PUT" and "wait_for_completion" in path
@@ -395,9 +379,7 @@ class SnapshotTests(unittest.TestCase):
                 if failure == "no_global_state":
                     existing["include_global_state"] = False
                 with self.assertRaises(RuntimeError):
-                    snapshot.capture(
-                        fixture.api, bucket="temporal-elasticsearch-snapshots-test"
-                    )
+                    snapshot.capture(fixture.api, bucket=snapshot.EXPECTED_BUCKET)
                 self.assertFalse(
                     any(
                         method == "PUT" and "wait_for_completion" in path
