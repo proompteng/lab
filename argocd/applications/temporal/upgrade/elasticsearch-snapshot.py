@@ -15,7 +15,7 @@ CLAIM_HOST = "rook-ceph-rgw-objectstore.rook-ceph.svc"
 ENDPOINT = "rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80"
 BASE_PATH = "temporal"
 EXPECTED_BUCKET = "temporal-elasticsearch-sna-e20960d4-5f87-4682-98f4-254ab958b39e"
-GENERATION = "81921-v4"
+GENERATION = "81921-v5"
 SNAPSHOT = "before-" + GENERATION
 CLUSTER_UUID = "xMDCf7u4RrG55SlLBDgTsg"
 SOURCE_VERSION = "8.5.1"
@@ -24,6 +24,10 @@ NODES = {
     "lY2q4gzsQZG8uN5DKXpnnQ": "elasticsearch-master-1",
     "e7J1PAZyTAaIk_SjgLtA7w": "elasticsearch-master-2",
 }
+
+
+class SourceNotReady(RuntimeError):
+    pass
 
 
 def require(condition, message):
@@ -60,28 +64,35 @@ def require_source(api):
         "source version changed",
     )
     health = api("GET", "/_cluster/health?wait_for_status=green&timeout=30s")
-    require(
+    if not (
         health.get("status") == "green"
         and health.get("timed_out") is False
         and health.get("number_of_nodes") == 3
         and all(
             health.get(key) == 0
             for key in ("unassigned_shards", "initializing_shards", "relocating_shards")
-        ),
-        "original three-node cluster is not stable and green",
-    )
+        )
+    ):
+        raise SourceNotReady("original three-node cluster is not stable and green")
     nodes = api("GET", "/_nodes/settings")
-    require(nodes.get("_nodes", {}).get("failed") == 0, "node settings request failed")
     actual = nodes.get("nodes", {})
     require(
-        {key: value.get("name") for key, value in actual.items()} == NODES,
+        all(
+            key in NODES and value.get("name") == NODES[key]
+            for key, value in actual.items()
+        ),
         "original node identities changed",
     )
+    if set(actual) != set(NODES):
+        raise SourceNotReady("some original nodes are unavailable between probes")
+    require(nodes.get("_nodes", {}).get("failed") == 0, "node settings request failed")
     for node in actual.values():
         require(node.get("version") == SOURCE_VERSION, "mixed Elasticsearch versions")
         client = (
             node.get("settings", {}).get("s3", {}).get("client", {}).get(CLIENT, {})
         )
+        if not client:
+            raise SourceNotReady("a node has not loaded the S3 client configuration")
         require(
             client.get("endpoint") == ENDPOINT
             and client.get("protocol") == "http"
@@ -91,12 +102,25 @@ def require_source(api):
         )
 
 
-def capture(api=request, *, bucket):
+def wait_for_source(api, *, timeout=300, sleep=time.sleep, clock=time.monotonic):
+    deadline = clock() + timeout
+    while True:
+        try:
+            require_source(api)
+            return
+        except SourceNotReady:
+            remaining = deadline - clock()
+            if remaining <= 0:
+                raise
+            sleep(min(5, remaining))
+
+
+def capture(api=request, *, bucket, ready_timeout=300):
     require(
         bool(bucket) and bucket == EXPECTED_BUCKET,
         "unexpected snapshot bucket",
     )
-    require_source(api)
+    wait_for_source(api, timeout=ready_timeout)
     indices = api("GET", "/_cat/indices?format=json&expand_wildcards=all")
     original = {index["index"]: index["uuid"] for index in indices}
     require(

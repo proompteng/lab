@@ -120,6 +120,73 @@ class Fixture:
 
 
 class SnapshotTests(unittest.TestCase):
+    def test_known_node_departure_between_health_and_settings_is_retried(self):
+        fixture = Fixture()
+        node_id = next(iter(fixture.nodes["nodes"]))
+        missing = fixture.nodes["nodes"].pop(node_id)
+        sleeps = []
+
+        def node_returns(seconds):
+            sleeps.append(seconds)
+            fixture.nodes["nodes"][node_id] = missing
+
+        snapshot.wait_for_source(fixture.api, sleep=node_returns, clock=lambda: 0)
+        self.assertEqual(sleeps, [5])
+        self.assertIsNone(fixture.repository)
+        self.assertTrue(all(method == "GET" for method, _, _ in fixture.calls))
+
+    def test_a_foreign_node_id_is_rejected_without_waiting(self):
+        fixture = Fixture()
+        fixture.nodes["nodes"]["foreign"] = {}
+        sleeps = []
+        with self.assertRaisesRegex(RuntimeError, "node identities changed"):
+            snapshot.wait_for_source(fixture.api, sleep=sleeps.append)
+        self.assertEqual(sleeps, [])
+        self.assertIsNone(fixture.repository)
+
+    def test_rollout_waits_for_three_stable_nodes_without_repository_writes(self):
+        fixture = Fixture()
+        fixture.health["number_of_nodes"] = 2
+        sleeps = []
+
+        def finish_rollout(seconds):
+            sleeps.append(seconds)
+            fixture.health["number_of_nodes"] = 3
+
+        snapshot.wait_for_source(fixture.api, sleep=finish_rollout, clock=lambda: 0)
+        self.assertEqual(sleeps, [5])
+        self.assertTrue(all(method == "GET" for method, _, _ in fixture.calls))
+        self.assertIsNone(fixture.repository)
+
+    def test_waits_for_old_nodes_to_load_the_s3_configuration(self):
+        fixture = Fixture()
+        first = next(iter(fixture.nodes["nodes"].values()))
+        settings = first.pop("settings")
+        snapshot.wait_for_source(
+            fixture.api,
+            sleep=lambda _: first.update(settings=settings),
+            clock=lambda: 0,
+        )
+        self.assertIsNone(fixture.repository)
+
+    def test_permanent_unreadiness_exhausts_the_wait_without_writes(self):
+        fixture = Fixture()
+        fixture.health["number_of_nodes"] = 2
+        with self.assertRaises(snapshot.SourceNotReady):
+            snapshot.capture(
+                fixture.api, bucket=snapshot.EXPECTED_BUCKET, ready_timeout=0
+            )
+        self.assertTrue(all(method == "GET" for method, _, _ in fixture.calls))
+
+    def test_foreign_identity_is_not_treated_as_a_rollout_delay(self):
+        fixture = Fixture()
+        fixture.root["cluster_uuid"] = "foreign"
+        sleeps = []
+        with self.assertRaisesRegex(RuntimeError, "identity changed"):
+            snapshot.wait_for_source(fixture.api, sleep=sleeps.append)
+        self.assertEqual(sleeps, [])
+        self.assertIsNone(fixture.repository)
+
     def test_bucket_claim_must_resolve_to_the_selected_store(self):
         binding = {
             "BUCKET_NAME": snapshot.EXPECTED_BUCKET,
@@ -308,7 +375,9 @@ class SnapshotTests(unittest.TestCase):
                 if failure == "relocating":
                     fixture.health["relocating_shards"] = 1
                 with self.assertRaises(RuntimeError):
-                    snapshot.capture(fixture.api, bucket=snapshot.EXPECTED_BUCKET)
+                    snapshot.capture(
+                        fixture.api, bucket=snapshot.EXPECTED_BUCKET, ready_timeout=0
+                    )
                 self.assertFalse(any(method != "GET" for method, _, _ in fixture.calls))
 
     def test_never_overwrites_foreign_repository(self):
