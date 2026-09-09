@@ -58,11 +58,18 @@ Snapshot readiness alone does not establish recovery or migration success.
 
 ## Production upgrade and acceptance
 
-After the rehearsal passes, merge the version change and remove the temporary
-quiesce patch through GitOps, then sync that exact merged revision. Retain both snapshots and every clone PVC. Retire the completed quiesce
-and rehearsal Jobs, their script ConfigMap, read-only RBAC, and isolation
-policy with the version change. The normal application must not recreate
-a gate that requires the original server UID or zero replicas. The normal Deployment remains a single replica with `Recreate`.
+After the rehearsal passes, retire the completed quiesce and rehearsal
+Jobs, their script ConfigMap, read-only RBAC, and isolation policy. Retain
+both snapshots and every clone PVC. Restore the existing version with one
+replica through a merged maintenance revision. The normal application must
+not recreate a gate that requires the original server UID or zero replicas.
+
+Image delivery must use a main-only publisher, a Kargo Warehouse, Freight,
+and an automatic Stage promotion. Enroll the Application on its authorized
+Kargo branch before releasing version 16. Kargo must write the selected
+immutable image to the chart values and sync that exact generated revision.
+Do not manually sync an image upgrade from main. The Deployment remains a
+single replica with `Recreate`.
 
 Verify the exact image and Argo revision, the same live PVC UIDs, completed
 database migration, administrator and token identity, repository references,

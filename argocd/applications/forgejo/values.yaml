@@ -2,14 +2,6 @@
 # For medium/large instances, add external Redis/Valkey for session/cache/queue.
 replicaCount: 1
 
-# Chart 17.1.5 defaults to Forgejo 15 LTS; select the verified stable release.
-image:
-  registry: code.forgejo.org
-  repository: forgejo/forgejo
-  tag: "16.0.3"
-  digest: "sha256:214f4ae63ee78be1e445e58573c88dc7215e72091210852e0df94eaac1a25685"
-  rootless: true
-
 podSecurityContext:
   fsGroup: 1000
   fsGroupChangePolicy: OnRootMismatch

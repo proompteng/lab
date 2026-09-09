@@ -3,8 +3,8 @@
 This app deploys [Forgejo](https://forgejo.org/) using the official OCI Helm chart:
 
 - Chart: `oci://code.forgejo.org/forgejo-helm/forgejo`
-- Chart version: `17.1.5`
-- App version: `16.0.3`
+- Chart version: `17.1.4`
+- App version: `15.0.6`
 
 ## Current profile
 
@@ -29,9 +29,8 @@ References:
 
 ## Version 16 rollout
 
-The image is explicitly pinned because chart 17.1.5 defaults to the 15.x LTS
-release. The [upgrade runbook](../../../docs/runbooks/forgejo-16-upgrade.md)
-records the consistent backup, isolated native migration and production
-acceptance gates. Both original PVCs, the administrator identity and existing
-HTTP/SSH addresses remain in use. The temporary zero-replica patch is removed
-only after the snapshot-clone rehearsal succeeds.
+The [upgrade runbook](../../../docs/runbooks/forgejo-16-upgrade.md) records
+the successful snapshot-clone migration to 16.0.3. Production remains on
+15.0.6 while the Kargo image delivery path is prepared. The completed
+maintenance Jobs are retired and the existing Deployment returns to one
+replica with its original PVCs, credentials and HTTP/SSH addresses.
