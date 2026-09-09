@@ -2,8 +2,8 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
-  - preparation/cassandra-quiesce.yaml
-  - preparation/cassandra-rf3.yaml
+  - upgrade/retained-rf3-snapshots.yaml
+  - upgrade/cassandra-31119-backup.yaml
   - load-balancer.yaml
   - load-balancer-frontend.yaml
   - ingressroute-temporal-k8s-private.yaml
@@ -170,3 +170,13 @@ images:
     newName: mirror.gcr.io/temporalio/ui
     newTag: 2.52.0
     digest: sha256:fc47cd8202c98ed868745fd9f2f011585232676d08da621b9a6d7bc4653c17aa
+
+configMapGenerator:
+  - name: temporal-cassandra-upgrade-scripts
+    files:
+      - upgrade/cassandra-gate.sh
+      - upgrade/cassandra-rehearsal.sh
+      - upgrade/canonicalize-cql.py
+    options:
+      annotations:
+        argocd.argoproj.io/sync-wave: "-30"

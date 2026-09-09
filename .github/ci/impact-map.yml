@@ -69,6 +69,7 @@ targets:
       - argocd/applications/forgejo/upstream-image.json
       - argocd/applications/hermes/**
       - argocd/applications/kube-router/**
+      - argocd/applications/temporal/upgrade/**
       - argocd/applications/tengri/network-policies.yaml
       - argocd/applications/observability/cluster-metrics-alloy-config.river
       - argocd/applications/observability/cluster-metrics-alloy-deployment.yaml
