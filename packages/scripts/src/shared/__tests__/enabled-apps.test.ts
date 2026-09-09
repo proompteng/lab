@@ -486,14 +486,14 @@ describe('enabled app inventory', () => {
 
   it('pins the Open WebUI migration wave to its immutable image', () => {
     expect(jangarKustomization.helmCharts?.find((chart) => chart.name === 'open-webui')).toMatchObject({
-      version: '16.0.0',
+      version: '16.5.0',
     })
     expect(jangarKustomization.images?.find((image) => image.name === 'ghcr.io/open-webui/open-webui')).toEqual({
       name: 'ghcr.io/open-webui/open-webui',
-      newTag: 'v0.11.0',
-      digest: 'sha256:72c0ba641ba75e7aa52655cb242570906ececd09b1140fb736483038a22b3228',
+      newTag: 'v0.11.3',
+      digest: 'sha256:41daa0cf2561a5d4c8d1ff31ee2a98d93ab4d3ac2605cac69366ff6a3374a933',
     })
-    expect(openWebUIValues.image?.tag).toBe('v0.11.0')
+    expect(openWebUIValues.image?.tag).toBe('v0.11.3')
   })
 
   it('pins both Saigak Ollama containers to the immutable multi-architecture image', () => {
