@@ -172,8 +172,8 @@ def capture(api=request):
         "snapshot index identities changed",
     )
     require(
-        set(original) <= set(snapshot.get("indices", [])),
-        "snapshot omitted original indices",
+        set(original) == set(snapshot.get("indices", [])),
+        "snapshot index set differs from the captured index set",
     )
     shards = snapshot.get("shards", {})
     require(

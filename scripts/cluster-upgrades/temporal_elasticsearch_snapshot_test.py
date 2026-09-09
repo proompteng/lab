@@ -143,6 +143,25 @@ class SnapshotTests(unittest.TestCase):
                     )
                 )
 
+    def test_transient_extra_snapshot_index_is_rejected_even_if_live_map_recovers(self):
+        fixture = Fixture()
+        fixture.result["indices"].append("temporary-unrecorded-index")
+        with self.assertRaisesRegex(RuntimeError, "snapshot index set differs"):
+            snapshot.capture(fixture.api)
+        self.assertEqual(
+            fixture.original,
+            {
+                "temporal_visibility_v1_dev": "original-visibility",
+                ".hidden": "original-hidden",
+            },
+        )
+        self.assertTrue(
+            any(
+                method == "PUT" and "wait_for_completion" in path
+                for method, path, _ in fixture.calls
+            )
+        )
+
     def test_source_identity_failures_prevent_all_mutations(self):
         for failure in [
             "uuid",
