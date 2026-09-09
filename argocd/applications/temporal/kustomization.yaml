@@ -4,6 +4,7 @@ namespace: temporal
 
 resources:
   - upgrade/retained-rf3-snapshots.yaml
+  - upgrade/retained-31119-v2-snapshots.yaml
   - upgrade/cassandra-31119-backup.yaml
   - load-balancer.yaml
   - load-balancer-frontend.yaml
@@ -178,6 +179,7 @@ configMapGenerator:
       - upgrade/cassandra-gate.sh
       - upgrade/cassandra-rehearsal.sh
       - upgrade/canonicalize-cql.py
+      - upgrade/verify-rehearsal-network.py
     options:
       annotations:
         argocd.argoproj.io/sync-wave: "-30"

@@ -1,12 +1,14 @@
 """Exercise native upgrade ordering and API deletion preconditions with a stateful CLI."""
 
 import copy
+import importlib.util
 import json
 import os
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "argocd/applications/temporal/upgrade/cassandra-gate.sh"
@@ -39,6 +41,7 @@ if args[0]=='get':
   done(owner+'|OnDelete|3|'+('unexpected-image' if mode=='template' else os.environ['TEMPLATE_IMAGE']))
  if resource.startswith('pod/'):
   n=int(resource[-1]); pod=s['pods'][n]
+  if args[-1]=='jsonpath={.status.podIP}': done('10.0.0.'+str(n+1))
   done('|'.join([pod['uid'],str(pod['rv']),('changed' if mode=='owner' else owner),pod['image'],'True','','data-temporal-cassandra-'+str(n)]))
  if resource.startswith('job/'):
   done('' if mode=='no-rehearsal' and resource.endswith('rehearsal') else '2026-09-09T09:00:00Z')
@@ -57,6 +60,7 @@ if args[0]=='exec':
  if cmd==['nodetool','describecluster']:
   mixed=len({p['image'] for p in s['pods']})>1
   done('Schema versions:\n  aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa: [10.0.0.1]\n'+('  bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb: [10.0.0.2]\n' if mixed else ''))
+ if cmd[0]=='cqlsh' and cmd[-1]=='SELECT host_id FROM system.local;': done(hosts[int(cmd[1][-1])-1])
  if cmd[0]=='cqlsh': done("{'class': 'org.apache.cassandra.locator.SimpleStrategy', 'replication_factor': '%s'}" % ('1' if mode=='rf1' else '3'))
  if cmd[:2]==['nodetool','listsnapshots']: done(' '.join(s['snapshots'][n]))
  if cmd[:2]==['nodetool','snapshot']:
@@ -135,6 +139,11 @@ class CassandraGateTests(unittest.TestCase):
     def run_gate(self, mode="rollout", failure="", upgraded=()):
         with tempfile.TemporaryDirectory() as directory:
             tmp = Path(directory)
+            account = tmp / "serviceaccount"
+            account.mkdir()
+            (account / "token").write_text("fixture-token")
+            (account / "ca.crt").write_text("fixture-ca")
+            (account / "namespace").write_text("temporal")
             cli = tmp / "kubectl"
             cli.write_text(FIXTURE)
             cli.chmod(0o755)
@@ -168,6 +177,10 @@ class CassandraGateTests(unittest.TestCase):
             calls = tmp / "calls.jsonl"
             env = {
                 **os.environ,
+                "KUBERNETES_SERVICE_HOST": "10.96.0.1",
+                "KUBERNETES_SERVICE_PORT": "443",
+                "SERVICE_ACCOUNT_DIRECTORY": str(account),
+                "TMPDIR": str(tmp),
                 "PATH": str(tmp) + os.pathsep + os.environ["PATH"],
                 "STATE": str(state),
                 "CALLS": str(calls),
@@ -175,6 +188,7 @@ class CassandraGateTests(unittest.TestCase):
                 "TARGET_IMAGE": TARGET,
                 "GENERATION": "31119-v1",
                 "FAILURE": failure,
+                "REHEARSAL_PROOF_DIRECTORY": str(tmp),
                 "TEMPLATE_IMAGE": TARGET if mode == "rollout" else SOURCE,
             }
             result = subprocess.run(
@@ -244,6 +258,49 @@ class CassandraGateTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(state["snapshots"], [["temporal-before-31119-v1"]] * 3)
         self.assertFalse(any(c[0] == "delete" or "drain" in c for c in calls))
+
+    def test_rehearsal_verification_requires_native_backup_and_live_cql_controls(self):
+        result, calls, _ = self.run_gate(mode="verify-rehearsal")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        controls = [
+            c
+            for c in calls
+            if c[0] == "exec" and c[-1] == "SELECT host_id FROM system.local;"
+        ]
+        self.assertEqual(len(controls), 3)
+        self.assertFalse(any(c[0] == "delete" for c in calls))
+
+    def test_network_guard_waits_for_enforcement_and_rejects_reachable_sources(self):
+        script = (
+            ROOT / "argocd/applications/temporal/upgrade/verify-rehearsal-network.py"
+        )
+        spec = importlib.util.spec_from_file_location("rehearsal_network", script)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as directory:
+            tmp = Path(directory)
+            (tmp / "verified-generation").write_text("31119-v3")
+            (tmp / "production-cassandra-addresses").write_text(
+                "10.0.0.1\n10.0.0.2\n10.0.0.3\n"
+            )
+            with self.assertRaisesRegex(ValueError, "generation"):
+                module.verify(directory, "wrong-v1")
+            with mock.patch.object(
+                module, "blocked", side_effect=[False] * 3 + [True] * 9
+            ) as probe:
+                with mock.patch.object(module.time, "sleep"):
+                    module.verify(directory, "31119-v3")
+                self.assertEqual(probe.call_count, 12)
+            ticks = iter([0, 0, 1, 3])
+            with mock.patch.object(module, "blocked", return_value=False):
+                with mock.patch.object(
+                    module.time, "time", side_effect=lambda: next(ticks)
+                ):
+                    with mock.patch.object(module.time, "sleep"):
+                        with self.assertRaisesRegex(
+                            RuntimeError, "can reach production"
+                        ):
+                            module.verify(directory, "31119-v3", timeout=2)
 
     def test_rf1_backup_is_rejected(self):
         result, calls, _ = self.run_gate(mode="backup", failure="rf1")
