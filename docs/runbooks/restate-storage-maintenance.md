@@ -31,13 +31,30 @@ bootstrap change, a StatefulSet downscale, a replication change, or permission t
 2. Immediately recheck Restate quorum, partition/log replication, archived snapshots, Ceph health and current OSD
    latency. Patch only the captured PDB from three to two, with an owned annotation and UID/resourceVersion plus
    original-value preconditions. Server-side dry-run the exact patch first. Keep both surviving Pods Ready.
-3. Replace exactly one selected Pod through the Kubernetes Eviction API with its UID precondition. Use the existing
-   CNPG-safe owned NoSchedule fence to keep its replacement off the old mount until the old Pod UID and RBD kernel
-   mapping are both gone. Do not cordon a database host, force-delete a Pod, delete a VolumeAttachment, or modify a
+3. Replace exactly one selected Pod through the Kubernetes Eviction API with its UID precondition. Use the checked-in
+   [CNPG-safe NoSchedule helper](../../scripts/cluster-upgrades/ceph-csi-taint-remount.py) to keep its replacement off the
+   old mount until the old Pod UID and RBD kernel mapping are both gone. Do not cordon a database host, force-delete a Pod, delete a VolumeAttachment, or modify a
    PVC/PV. Keep the fence if detachment fails and recover that same operation.
 4. Require the same StatefulSet, PVC/PV and RBD identities, a Ready replacement using `csi-rbd-node.3`, and full native
    three-node/24-partition recovery. Restore the PDB to its captured value of three and remove only its owned
    annotation. Repeat admission and the single-Pod procedure for the next mount; never overlap replacements.
+
+Run the helper first without `--execute`, then with it only after the worker and PDB admission steps above. Pass
+captured identities explicitly; do not generate replacement identities after a failed operation:
+
+```sh
+python3 scripts/cluster-upgrades/ceph-csi-taint-remount.py \
+  --context galactic-lan --namespace restate \
+  --pod "$RESTATE_POD" --node "$RESTATE_NODE" \
+  --expected-pod-uid "$RESTATE_POD_UID" --expected-rbd-image "$RESTATE_RBD_IMAGE" \
+  --expected-fsid 5ade350d-92fe-49df-829e-37c1fbaf6c50 \
+  --audit-file "$RESTATE_REMOUNT_RECEIPT"
+```
+
+The helper preserves unrelated taints and annotations, refuses an unverified CNPG operator/drain configuration, and
+checks all twelve database primary identities. Its timeout, interrupted eviction and failed CSI-read paths retain the
+owned fence unless both the old Pod UID and old RBD mapping are proven absent. The generic cordon-based
+`ceph-csi-remount.py` entrypoint is not the command for this procedure.
 
 ## Resume and recovery
 
@@ -55,3 +72,5 @@ registration replacement, authority changes, or a singleton rollback for this pr
 Restate contracts: [high availability](https://docs.restate.dev/server/deploy/ha),
 [snapshot recovery](https://docs.restate.dev/server/deploy/snapshots), and the deployed operator's
 [ReplicaSet propagation](https://github.com/restatedev/restate-operator/blob/v3.0.0/src/controllers/restatedeployment/controller.rs).
+
+The verified CNPG 1.30 [default drain taints](https://github.com/cloudnative-pg/cloudnative-pg/blob/v1.30.0/internal/configuration/configuration.go) exclude the owned storage taint. The helper refuses overrides and version changes.
