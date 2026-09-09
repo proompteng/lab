@@ -725,7 +725,7 @@ describe('enabled app inventory', () => {
       class: 'vendor-manifest',
       hasHelmChart: false,
       repoImages: [
-        'registry.ide-newton.ts.net/lab/hermes-agent@sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843',
+        'registry.ide-newton.ts.net/lab/hermes-agent@sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b',
       ],
     })
     expect(entry('hermes').deferredReason).toContain('NousResearch/hermes-agent')
