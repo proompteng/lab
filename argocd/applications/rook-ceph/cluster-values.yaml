@@ -38,11 +38,11 @@ cephClusterSpec:
         keyRotationPolicy: KeyGeneration
         keyGeneration: 2
       csi:
-        # Talos 1.14 backports AES256K to its 6.18 kernel. Keep both AES
-        # generations until all existing mounts use generation 3.
+        # All RBD/CephFS consumers and CSI Secret references now use generation 3.
+        # Retire both prior AES generations without rotating the active key.
         keyRotationPolicy: KeyGeneration
         keyGeneration: 3
-        keepPriorKeyCountMax: 2
+        keepPriorKeyCountMax: 0
         keyType: aes256k
       rbdMirrorPeer:
         # No CephBlockPool mirror peer is configured in this cluster. Rotate

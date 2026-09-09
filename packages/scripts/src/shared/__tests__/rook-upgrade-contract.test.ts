@@ -195,7 +195,7 @@ test('preserves the Ceph data plane and live CSI behavior after the v1.20 migrat
   expect(clusterValues.cephClusterSpec.security.cephx.csi).toEqual({
     keyRotationPolicy: 'KeyGeneration',
     keyGeneration: 3,
-    keepPriorKeyCountMax: 2,
+    keepPriorKeyCountMax: 0,
     keyType: 'aes256k',
   })
   expect(clusterValues.cephClusterSpec.security.cephx.rbdMirrorPeer).toEqual({
