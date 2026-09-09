@@ -226,3 +226,17 @@ before producing a receipt. Generation `4112-v2` takes fresh snapshots and uses
 new isolated restore volumes. The completed old Jobs retain their exact script
 ConfigMaps; the failed v1 rehearsal is retired through GitOps. No serving image
 changes in this preparation.
+
+
+Rook shortens long generated bucket prefixes to leave room for its UUID suffix.
+The bound claim is `08964464-26f3-4faa-a512-25b5571cb38e`; generation `81921-v4`
+checks its exact observed bucket name `temporal-elasticsearch-sna-e20960d4-5f87-4682-98f4-254ab958b39e`
+instead of assuming the requested prefix survives unchanged. A changed or recreated
+bucket fails closed and requires an updated reviewed binding.
+
+The chart keystore initializer receives the same existing bootstrap password Secret
+reference as Elasticsearch. It adds `bootstrap.password` before copying the complete
+keystore to its volume. Otherwise the native entrypoint tries to add the missing key
+by replacing the mounted subPath file, which fails with `Device or resource busy`.
+This correction rolls the Pods on the same 8.5.1 image and original data claims.
+The S3 account, endpoint, bucket and application credential remain the same.

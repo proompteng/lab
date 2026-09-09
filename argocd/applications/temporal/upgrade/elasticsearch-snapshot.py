@@ -14,7 +14,8 @@ CLIENT = "temporal_snapshot"
 CLAIM_HOST = "rook-ceph-rgw-objectstore.rook-ceph.svc"
 ENDPOINT = "rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80"
 BASE_PATH = "temporal"
-GENERATION = "81921-v3"
+EXPECTED_BUCKET = "temporal-elasticsearch-sna-e20960d4-5f87-4682-98f4-254ab958b39e"
+GENERATION = "81921-v4"
 SNAPSHOT = "before-" + GENERATION
 CLUSTER_UUID = "xMDCf7u4RrG55SlLBDgTsg"
 SOURCE_VERSION = "8.5.1"
@@ -92,7 +93,7 @@ def require_source(api):
 
 def capture(api=request, *, bucket):
     require(
-        bool(bucket) and bucket.startswith("temporal-elasticsearch-snapshots-"),
+        bool(bucket) and bucket == EXPECTED_BUCKET,
         "unexpected snapshot bucket",
     )
     require_source(api)
@@ -271,7 +272,7 @@ def require_bucket_binding(environ):
     )
     bucket = environ.get("BUCKET_NAME", "")
     require(
-        bucket.startswith("temporal-elasticsearch-snapshots-"),
+        bucket == EXPECTED_BUCKET,
         "unexpected snapshot bucket",
     )
     return bucket
