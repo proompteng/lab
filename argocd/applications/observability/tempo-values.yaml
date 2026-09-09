@@ -1,5 +1,6 @@
 gateway:
   enabled: true
+  replicas: 0
 
 global:
   extraEnv:
@@ -22,7 +23,7 @@ traces:
       enabled: true
 
 distributor:
-  replicas: 1
+  replicas: 0
   extraArgs:
     - -config.expand-env=true
 
@@ -46,7 +47,7 @@ ingester:
     - -config.expand-env=true
 
 compactor:
-  replicas: 1
+  replicas: 0
   persistence:
     enabled: true
     size: 20Gi
@@ -55,12 +56,12 @@ compactor:
     - -config.expand-env=true
 
 querier:
-  replicas: 1
+  replicas: 0
   extraArgs:
     - -config.expand-env=true
 
 queryFrontend:
-  replicas: 1
+  replicas: 0
   extraArgs:
     - -config.expand-env=true
 

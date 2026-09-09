@@ -82,6 +82,52 @@ images:
 
 patches:
   - target:
+      kind: Service
+      name: observability-tempo-distributor
+    patch: |-
+      - op: replace
+        path: /spec/selector
+        value:
+          app.kubernetes.io/component: distributor
+          app.kubernetes.io/instance: observability-tempo-v3
+          app.kubernetes.io/name: tempo
+  - target:
+      kind: Service
+      name: observability-tempo-gateway
+    patch: |-
+      - op: replace
+        path: /spec/selector
+        value:
+          app.kubernetes.io/component: gateway
+          app.kubernetes.io/instance: observability-tempo-v3
+          app.kubernetes.io/name: tempo
+      - op: add
+        path: /spec/ports/-
+        value:
+          name: otlp-http
+          port: 4318
+          protocol: TCP
+          targetPort: http-metrics
+  - target:
+      kind: Service
+      name: observability-tempo-query-frontend
+    patch: |-
+      - op: replace
+        path: /spec/selector
+        value:
+          app.kubernetes.io/component: query-frontend
+          app.kubernetes.io/instance: observability-tempo-v3
+          app.kubernetes.io/name: tempo
+  - target:
+      group: apps
+      version: v1
+      name: observability-tempo-(distributor|gateway|query-frontend|querier|compactor)
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: '1'
+  - target:
       kind: ConfigMap
       name: observability-mimir-(config|runtime)
     patch: |-
