@@ -126,8 +126,14 @@ def _secret_ref(container: YamlObject, env_name: str) -> YamlObject:
 def _validate_hub_and_proxy(documents: list[YamlObject]) -> None:
     hub = _container(_find(documents, "Deployment", "torghut-notebooks-hub"), "hub")
     proxy = _container(_find(documents, "Deployment", "torghut-notebooks-proxy"), "chp")
-    assert hub["image"] == "quay.io/jupyterhub/k8s-hub:4.4.0"
-    assert proxy["image"] == "quay.io/jupyterhub/configurable-http-proxy:5.2.0"
+    assert (
+        hub["image"]
+        == "quay.io/jupyterhub/k8s-hub@sha256:108fbb01c3fe23e4a81efc8899aa73b4c15413615c73dfcdc44248eb63096e41"
+    )
+    assert (
+        proxy["image"]
+        == "quay.io/jupyterhub/configurable-http-proxy@sha256:69a7170eeedadb139dda5aef038d0a45378295c0d24cb0dc9da58641ef698ebe"
+    )
     assert hub["resources"] == {
         "requests": {"cpu": "250m", "memory": "512Mi"},
         "limits": {"cpu": "1", "memory": "2Gi"},

@@ -329,6 +329,12 @@ const expected = {
       'argocd/applications/hermes',
     ],
   },
+  forgejo: {
+    creationCriteria: 'single',
+    images: [imageRepo('forgejo')],
+    apps: ['forgejo'],
+    includePaths: ['.github/workflows/forgejo-image-publish.yml', 'scripts/forgejo', 'argocd/applications/forgejo'],
+  },
   jangar: {
     creationCriteria: 'single',
     requiresBuildReceipt: true,
@@ -821,7 +827,14 @@ describe('Kargo direct-push GitOps contract', () => {
 
       const argocdUpdate = steps.at(-1)
       expect(argocdUpdate?.retry).toEqual({
-        timeout: stageName === 'torghut' ? '1h45m0s' : '20m0s',
+        timeout:
+          stageName === 'torghut'
+            ? '1h45m0s'
+            : stageName === 'bilig'
+              ? '1h15m0s'
+              : stageName === 'forgejo'
+                ? '45m0s'
+                : '20m0s',
         errorThreshold: 3,
       })
       const apps = argocdUpdate?.config?.apps as Array<Record<string, any>>

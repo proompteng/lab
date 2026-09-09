@@ -486,14 +486,14 @@ describe('enabled app inventory', () => {
 
   it('pins the Open WebUI migration wave to its immutable image', () => {
     expect(jangarKustomization.helmCharts?.find((chart) => chart.name === 'open-webui')).toMatchObject({
-      version: '16.0.0',
+      version: '16.5.0',
     })
     expect(jangarKustomization.images?.find((image) => image.name === 'ghcr.io/open-webui/open-webui')).toEqual({
       name: 'ghcr.io/open-webui/open-webui',
-      newTag: 'v0.11.0',
-      digest: 'sha256:72c0ba641ba75e7aa52655cb242570906ececd09b1140fb736483038a22b3228',
+      newTag: 'v0.11.3',
+      digest: 'sha256:41daa0cf2561a5d4c8d1ff31ee2a98d93ab4d3ac2605cac69366ff6a3374a933',
     })
-    expect(openWebUIValues.image?.tag).toBe('v0.11.0')
+    expect(openWebUIValues.image?.tag).toBe('v0.11.3')
   })
 
   it('pins both Saigak Ollama containers to the immutable multi-architecture image', () => {
@@ -725,7 +725,7 @@ describe('enabled app inventory', () => {
       class: 'vendor-manifest',
       hasHelmChart: false,
       repoImages: [
-        'registry.ide-newton.ts.net/lab/hermes-agent@sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843',
+        'registry.ide-newton.ts.net/lab/hermes-agent@sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b',
       ],
     })
     expect(entry('hermes').deferredReason).toContain('NousResearch/hermes-agent')

@@ -4,6 +4,10 @@ metadata:
   name: platform
   namespace: argocd
 spec:
+  preservedFields:
+    annotations:
+      - argocd.argoproj.io/skip-reconcile
+      - storage.proompteng.ai/ceph-remount-owner
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
   generators:
@@ -300,7 +304,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "2"
                   kargo.akuity.io/authorized-stage: lab-delivery:hermes-toolchain
-                automation: manual
+                automation: auto
                 enabled: "true"
                 ignoreDifferences:
                   - group: apps
@@ -598,7 +602,7 @@ spec:
                 namespace: temporal
                 annotations:
                   argocd.argoproj.io/sync-wave: "4"
-                automation: manual
+                automation: auto
                 enabled: "true"
               - name: inngest
                 path: argocd/applications/inngest
@@ -689,7 +693,7 @@ spec:
                       - '.spec.template.metadata.annotations["kubectl.kubernetes.io/restartedAt"]'
                       - .spec.template.spec.containers[].terminationMessagePath
                       - .spec.template.spec.containers[].terminationMessagePolicy
-                      - .spec.template.spec.initContainers[].resources
+                      - .spec.template.spec.initContainers[] | select(.name == "register-runner") | .resources
                       - .spec.template.spec.initContainers[].terminationMessagePath
                       - .spec.template.spec.initContainers[].terminationMessagePolicy
                       - .spec.template.spec.dnsPolicy
@@ -713,7 +717,7 @@ spec:
                       - '.spec.template.metadata.annotations["kubectl.kubernetes.io/restartedAt"]'
                       - .spec.template.spec.containers[].terminationMessagePath
                       - .spec.template.spec.containers[].terminationMessagePolicy
-                      - .spec.template.spec.initContainers[].resources
+                      - .spec.template.spec.initContainers[] | select(.name == "register-runner") | .resources
                       - .spec.template.spec.initContainers[].terminationMessagePath
                       - .spec.template.spec.initContainers[].terminationMessagePolicy
                       - .spec.template.spec.dnsPolicy
@@ -722,7 +726,7 @@ spec:
                       - .spec.template.spec.securityContext
                       - .spec.template.spec.serviceAccount
                       - .spec.template.spec.volumes[].configMap.defaultMode
-                automation: manual
+                automation: auto
                 enabled: "true"
               - name: backstage
                 path: argocd/applications/backstage
