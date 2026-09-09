@@ -42,6 +42,12 @@ def fixture(name):
 
 
 class RecoveryGateTest(unittest.TestCase):
+    def test_native_pgdata_image_is_authoritative_without_legacy_image_field(self):
+        name = next(iter(gate.SOURCES))
+        cluster = fixture(name)
+        del cluster["status"]["image"]
+        self.assertTrue(gate.ready(name, cluster))
+
     def test_fresh_recovery_is_refused_before_target_application(self):
         with self.assertRaisesRegex(RuntimeError, "recover-17 first"):
             gate.wait_for_sources(lambda name: None)

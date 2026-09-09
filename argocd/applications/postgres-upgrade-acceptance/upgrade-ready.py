@@ -55,11 +55,7 @@ def ready(name, cluster):
         return False
     major = 17 if image == SOURCE_IMAGE else 18
     data = status.get("pgDataImageInfo", {})
-    if (
-        status.get("image") != image
-        or data.get("image") != image
-        or data.get("majorVersion") != major
-    ):
+    if data.get("image") != image or data.get("majorVersion") != major:
         return False
     require(
         bool(status.get("systemID")), name + ": native system identifier is missing"
