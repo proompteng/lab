@@ -22,6 +22,10 @@ The new deployment uses Loki's supported Thanos object-store client against
 the existing internal TLS proxy. It avoids the MinIO HTTP signing issue
 described in the [RGW compatibility runbook](ceph-rgw-sigv4-compatibility.md).
 Do not weaken certificate or SigV4 verification.
+Disable storage request hedging (`storage_config.hedging.at: 0s`). In Loki
+3.7.7, the Thanos adapter constructs its hedged GET transport from the Go
+default transport, discarding the configured S3 TLS server name. The normal
+S3 transport preserves certificate verification for both reads and writes.
 
 Both new ingesters retain their WAL at `/var/loki/wal` on separate 20 GiB Ceph
 claims, with retained PVCs and normal rolling updates. Keep replication factor
