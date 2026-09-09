@@ -1323,6 +1323,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   requireTerms(failures, productionPaths.mirrorWorkflow, files.mirrorWorkflow, [
     'workflow_dispatch: {}',
     'SOURCE_REF: docker.io/nousresearch/hermes-agent@sha256:63bfb6d732f49a55d453e801057273785cc61e0f6ee43db3fa2f2a79846301b7',
+    `SOURCE_INDEX_DIGEST: ${hermesUpstreamIndexDigest}`,
     'SOURCE_AMD64_DIGEST: sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b',
     'SOURCE_ATTESTATION_DIGEST: sha256:5fc02b8e0b89c3436a203c3261dd7d9e52e339461edb4d2afaaa87dd3f8d66db',
     'SOURCE_PROVENANCE_LAYER_DIGEST: sha256:ae6c21ad6159175419b5c83d866c96f94e79f0726c0cf32df0c5918664ead91e',

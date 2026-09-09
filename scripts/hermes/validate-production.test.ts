@@ -21,6 +21,16 @@ test.each([
   )
 })
 
+test('rejects a source-index digest that disagrees with the reviewed Hermes release', async () => {
+  const files = await loadProductionFiles()
+  const assignment = 'SOURCE_INDEX_DIGEST: sha256:63bfb6d732f49a55d453e801057273785cc61e0f6ee43db3fa2f2a79846301b7'
+  files.mirrorWorkflow = files.mirrorWorkflow.replace(assignment, `SOURCE_INDEX_DIGEST: sha256:${'0'.repeat(64)}`)
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.mirrorWorkflow}: missing production invariant ${JSON.stringify(assignment)}`,
+  )
+})
+
 test('rejects Kubernetes write verbs in the Hermes ClusterRole', async () => {
   const files = await loadProductionFiles()
   files.rbac = files.rbac.replace('verbs: [get, list, watch]', 'verbs: [get, list, watch, create]')
