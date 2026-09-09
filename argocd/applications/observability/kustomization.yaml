@@ -2,6 +2,12 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 configMapGenerator:
+  - name: observability-grafana-sqlite-backup
+    files:
+      - grafana-sqlite-backup.py
+    options:
+      annotations:
+        argocd.argoproj.io/sync-wave: "-6"
   - name: observability-cluster-metrics-alloy
     files:
       - config.river=cluster-metrics-alloy-config.river
@@ -10,6 +16,7 @@ generatorOptions:
   disableNameSuffixHash: true
 
 resources:
+  - grafana-upgrade-backup.yaml
   - rook-ceph-rgw-loki-reflected-secret.yaml
   - tailscale-ingresses.yaml
   - ingressroute-grafana-k8s-private.yaml
