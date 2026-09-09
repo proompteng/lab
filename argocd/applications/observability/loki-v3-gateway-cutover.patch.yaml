@@ -1,6 +1,0 @@
-- op: replace
-  path: /spec/selector
-  value:
-    app.kubernetes.io/component: gateway
-    app.kubernetes.io/instance: observability-loki-v3
-    app.kubernetes.io/name: observability-loki-v3

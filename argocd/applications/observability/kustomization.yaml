@@ -22,6 +22,7 @@ generatorOptions:
   disableNameSuffixHash: true
 
 resources:
+  - loki-compatibility-service.yaml
   - loki-v3-config-check.yaml
   - tempo-compatibility-services.yaml
   - grafana-upgrade-backup.yaml
@@ -66,13 +67,6 @@ helmCharts:
     namespace: observability
     includeCRDs: true
     valuesFile: mimir-values.yaml
-  - name: loki-distributed
-    repo: https://grafana.github.io/helm-charts
-    version: 0.80.6
-    releaseName: observability-loki
-    namespace: observability
-    includeCRDs: true
-    valuesFile: loki-values.yaml
   - name: tempo-distributed
     repo: https://grafana-community.github.io/helm-charts
     version: 3.5.1
@@ -96,17 +90,6 @@ images:
     newTag: 1.6.39-alpine
 
 patches:
-  - path: loki-v3-gateway-cutover.patch.yaml
-    target:
-      version: v1
-      kind: Service
-      name: observability-loki-loki-distributed-gateway
-  - path: loki-v2-gateway-drain.patch.yaml
-    target:
-      group: apps
-      version: v1
-      kind: Deployment
-      name: observability-loki-loki-distributed-gateway
   - target:
       kind: DaemonSet
       name: observability-loki-v3-canary
@@ -179,26 +162,6 @@ patches:
       kind: StatefulSet
       metadata:
         name: observability-mimir-kafka
-        annotations:
-          argocd.argoproj.io/sync-options: Replace=true
-  - target:
-      kind: StatefulSet
-      name: observability-loki-loki-distributed-ingester
-    patch: |-
-      apiVersion: apps/v1
-      kind: StatefulSet
-      metadata:
-        name: observability-loki-loki-distributed-ingester
-        annotations:
-          argocd.argoproj.io/sync-options: Replace=true
-  - target:
-      kind: StatefulSet
-      name: observability-loki-loki-distributed-querier
-    patch: |-
-      apiVersion: apps/v1
-      kind: StatefulSet
-      metadata:
-        name: observability-loki-loki-distributed-querier
         annotations:
           argocd.argoproj.io/sync-options: Replace=true
   - target:

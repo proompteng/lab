@@ -1,5 +1,5 @@
-# Loki 3 uses its own process ring while the old release remains the client
-# endpoint. Share only the existing object-store schema, never the 2.9 RPC ring.
+# Loki 3 owns production ingestion and queries through the retained gateway
+# Service. Preserve the existing object-store schema and separate process ring.
 fullnameOverride: observability-loki-v3
 nameOverride: observability-loki-v3
 deploymentMode: Distributed
@@ -30,8 +30,6 @@ loki:
   commonConfig:
     path_prefix: /var/loki
     replication_factor: 1
-    # Keep the chart's compactor address: query modules require it even while
-    # the compactor workload is paused and retention is disabled.
   ingester:
     chunk_encoding: snappy
     chunk_idle_period: 30m
@@ -190,9 +188,25 @@ indexGateway:
       memory: 512Mi
 
 compactor:
-  # Enable the sole compactor only after historical and fresh-log acceptance.
-  enabled: false
-  replicas: 0
+  enabled: true
+  replicas: 1
+  persistence:
+    enabled: true
+    type: pvc
+    # Suppress the legacy default claim so these storage settings take effect.
+    claims: []
+    storageClass: rook-ceph-block
+    size: 10Gi
+    enableStatefulSetAutoDeletePVC: true
+    whenDeleted: Retain
+    whenScaled: Retain
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1
+      memory: 2Gi
 
 ruler:
   enabled: false
@@ -228,9 +242,8 @@ gateway:
         cpu: 50m
         memory: 64Mi
 
-# The community chart's default caches reserve most of the overlap memory
-# budget. Keep both caches away from the smaller node while the old and new
-# releases coexist; this uses the existing hostname label only.
+# Keep the larger caches away from the smaller node using its existing
+# hostname label. Their memory requests cover the configured cache sizes.
 resultsCache:
   resources:
     requests:
