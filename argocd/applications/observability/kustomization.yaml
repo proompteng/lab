@@ -73,8 +73,8 @@ helmCharts:
     includeCRDs: true
     valuesFile: tempo-v3-values.yaml
   - name: grafana
-    repo: https://grafana.github.io/helm-charts
-    version: 10.5.15
+    repo: https://grafana-community.github.io/helm-charts
+    version: 13.2.2
     releaseName: observability-grafana
     namespace: observability
     valuesFile: grafana-values.yaml

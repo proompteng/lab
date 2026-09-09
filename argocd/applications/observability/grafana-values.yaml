@@ -1,6 +1,14 @@
 adminUser: admin
 adminPassword: changeme
 replicas: 1
+image:
+  tag: 13.2.1
+  sha: f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283
+plugins:
+  - grafana-exploretraces-app@2.2.0
+  - grafana-lokiexplore-app@2.5.2
+  - grafana-metricsdrilldown-app@2.5.1
+  - grafana-pyroscope-app@2.3.0
 deploymentStrategy:
   type: RollingUpdate
   rollingUpdate:
@@ -9,6 +17,8 @@ deploymentStrategy:
 service:
   type: ClusterIP
 persistence:
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
   enabled: true
   storageClassName: rook-ceph-block
   size: 10Gi
