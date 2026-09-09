@@ -133,29 +133,34 @@ def capture(api=request, *, bucket):
         and settings.get("settings", {}).get("base_path") == BASE_PATH,
         "existing repository has a different type or destination",
     )
+    read_only = settings["settings"].get("readonly", "false")
     require(
-        settings["settings"].get("readonly", "false") in (False, "false"),
-        "production repository is read-only",
+        read_only in (False, True, "false", "true"),
+        "invalid repository readonly setting",
     )
-    verified = api("POST", repository_path + "/_verify")
-    require(
-        {key: value.get("name") for key, value in verified.get("nodes", {}).items()}
-        == NODES,
-        "repository verification did not cover the original three nodes",
-    )
-    analysis = api(
-        "POST",
-        repository_path
-        + "/_analyze?blob_count=32&max_blob_size=4mb&max_total_data_size=64mb&timeout=10m",
-    )
-    require(
-        analysis.get("repository") == REPOSITORY
-        and analysis.get("issues_detected") == [],
-        "repository analysis failed",
-    )
+    read_only = read_only in (True, "true")
+    analysis = None
+    if not read_only:
+        verified = api("POST", repository_path + "/_verify")
+        require(
+            {key: value.get("name") for key, value in verified.get("nodes", {}).items()}
+            == NODES,
+            "repository verification did not cover the original three nodes",
+        )
+        analysis = api(
+            "POST",
+            repository_path
+            + "/_analyze?blob_count=32&max_blob_size=4mb&max_total_data_size=64mb&timeout=10m",
+        )
+        require(
+            analysis.get("repository") == REPOSITORY
+            and analysis.get("issues_detected") == [],
+            "repository analysis failed",
+        )
     snapshot_path = repository_path + "/" + SNAPSHOT
     snapshot = api("GET", snapshot_path, missing=True)
     if snapshot is None:
+        require(not read_only, "frozen repository has no validated native snapshot")
         response = api(
             "PUT",
             snapshot_path + "?wait_for_completion=true",
@@ -166,6 +171,7 @@ def capture(api=request, *, bucket):
                     "generation": GENERATION,
                     "cluster_uuid": CLUSTER_UUID,
                     "indices_sha256": original_hash,
+                    "repository_analysis_issues": analysis["issues_detected"],
                 },
             },
         )
@@ -178,6 +184,10 @@ def capture(api=request, *, bucket):
     require(len(snapshots) == 1, "snapshot response is ambiguous")
     snapshot = snapshots[0]
     metadata = snapshot.get("metadata", {})
+    require(
+        metadata.get("repository_analysis_issues") == [],
+        "snapshot lacks a successful native repository analysis record",
+    )
     require(
         snapshot.get("snapshot") == SNAPSHOT and snapshot.get("state") == "SUCCESS",
         "existing snapshot is incomplete or failed; use a new reviewed generation",
@@ -216,10 +226,13 @@ def capture(api=request, *, bucket):
     )
     require_source(api)
     frozen_settings = dict(settings["settings"], readonly=True)
-    frozen = api("PUT", repository_path, {"type": "s3", "settings": frozen_settings})
-    require(
-        frozen.get("acknowledged") is True, "repository freeze was not acknowledged"
-    )
+    if not read_only:
+        frozen = api(
+            "PUT", repository_path, {"type": "s3", "settings": frozen_settings}
+        )
+        require(
+            frozen.get("acknowledged") is True, "repository freeze was not acknowledged"
+        )
     final_repository = api("GET", repository_path).get(REPOSITORY, {})
     require(
         final_repository.get("type") == "s3"
@@ -247,7 +260,7 @@ def capture(api=request, *, bucket):
         "indices": snapshot["indices"],
         "originalIndexUUIDs": original,
         "shards": shards,
-        "repositoryAnalysisIssues": analysis["issues_detected"],
+        "repositoryAnalysisIssues": metadata["repository_analysis_issues"],
     }
 
 

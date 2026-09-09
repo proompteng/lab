@@ -65,6 +65,7 @@ class Fixture:
             "include_global_state": True,
             "metadata": {
                 "generation": snapshot.GENERATION,
+                "repository_analysis_issues": [],
                 "cluster_uuid": snapshot.CLUSTER_UUID,
                 "indices_sha256": hashlib.sha256(
                     json.dumps(
@@ -160,6 +161,43 @@ class SnapshotTests(unittest.TestCase):
             snapshot.capture(
                 failed_freeze, bucket="temporal-elasticsearch-snapshots-test"
             )
+
+    def test_readback_failure_after_freeze_recovers_without_writes(self):
+        fixture = Fixture()
+        original = fixture.api
+
+        def failed_readback(method, path, body=None, missing=False):
+            if (
+                method == "GET"
+                and path == "/_snapshot/" + snapshot.REPOSITORY
+                and fixture.repository
+                and fixture.repository[snapshot.REPOSITORY]["settings"].get("readonly")
+            ):
+                raise RuntimeError("lost freeze readback response")
+            return original(method, path, body, missing)
+
+        with self.assertRaisesRegex(RuntimeError, "lost freeze readback"):
+            snapshot.capture(
+                failed_readback, bucket="temporal-elasticsearch-snapshots-test"
+            )
+        self.assertTrue(fixture.repository[snapshot.REPOSITORY]["settings"]["readonly"])
+        fixture.calls.clear()
+        proof = snapshot.capture(
+            fixture.api, bucket="temporal-elasticsearch-snapshots-test"
+        )
+        self.assertTrue(proof["repositoryReadOnly"])
+        self.assertTrue(all(method == "GET" for method, _, _ in fixture.calls))
+
+    def test_frozen_snapshot_requires_recorded_native_analysis(self):
+        fixture = Fixture()
+        snapshot.capture(fixture.api, bucket="temporal-elasticsearch-snapshots-test")
+        del fixture.snapshot["metadata"]["repository_analysis_issues"]
+        fixture.calls.clear()
+        with self.assertRaisesRegex(RuntimeError, "native repository analysis record"):
+            snapshot.capture(
+                fixture.api, bucket="temporal-elasticsearch-snapshots-test"
+            )
+        self.assertTrue(all(method == "GET" for method, _, _ in fixture.calls))
 
     def test_requests_share_the_job_deadline_budget(self):
         with (
