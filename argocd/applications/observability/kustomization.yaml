@@ -16,6 +16,7 @@ generatorOptions:
   disableNameSuffixHash: true
 
 resources:
+  - loki-v3-config-check.yaml
   - tempo-compatibility-services.yaml
   - grafana-upgrade-backup.yaml
   - rook-ceph-rgw-loki-reflected-secret.yaml
@@ -37,6 +38,13 @@ resources:
   - tempo-v3-config-check.yaml
 
 helmCharts:
+  - name: loki
+    repo: https://grafana-community.github.io/helm-charts
+    version: 18.12.1
+    releaseName: observability-loki-v3
+    namespace: observability
+    includeCRDs: true
+    valuesFile: loki-v3-values.yaml
   - name: kube-state-metrics
     repo: https://prometheus-community.github.io/helm-charts
     version: 8.4.2
@@ -81,6 +89,22 @@ images:
     newTag: 1.6.39-alpine
 
 patches:
+  - target:
+      kind: DaemonSet
+      name: observability-loki-v3-canary
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "1"
+  - target:
+      kind: ConfigMap
+      name: observability-loki-v3(-runtime)?
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "-2"
   - target:
       kind: ConfigMap
       name: observability-mimir-(config|runtime)
