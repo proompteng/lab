@@ -99,7 +99,7 @@ metadata:
   labels:
     app.kubernetes.io/component: elasticsearch-snapshot
     app.kubernetes.io/name: temporal
-    temporal.proompteng.ai/backup-generation: 81921-v5
+    temporal.proompteng.ai/backup-generation: 81921-v6
   name: temporal-elasticsearch-snapshot
   namespace: temporal
 spec:
@@ -125,7 +125,7 @@ spec:
     matchLabels:
       app.kubernetes.io/component: elasticsearch-snapshot
       app.kubernetes.io/name: temporal
-      temporal.proompteng.ai/backup-generation: 81921-v5
+      temporal.proompteng.ai/backup-generation: 81921-v6
   policyTypes:
   - Ingress
   - Egress
@@ -134,12 +134,12 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   annotations:
-    argocd.argoproj.io/sync-wave: '1'
+    argocd.argoproj.io/sync-wave: '-5'
   labels:
     app.kubernetes.io/component: elasticsearch-snapshot
     app.kubernetes.io/name: temporal
-    temporal.proompteng.ai/backup-generation: 81921-v5
-  name: temporal-elasticsearch-81921-v5-snapshot
+    temporal.proompteng.ai/backup-generation: 81921-v6
+  name: temporal-elasticsearch-81921-v6-snapshot
   namespace: temporal
 spec:
   activeDeadlineSeconds: 3600
@@ -149,7 +149,7 @@ spec:
       labels:
         app.kubernetes.io/component: elasticsearch-snapshot
         app.kubernetes.io/name: temporal
-        temporal.proompteng.ai/backup-generation: 81921-v5
+        temporal.proompteng.ai/backup-generation: 81921-v6
     spec:
       automountServiceAccountToken: false
       containers:
