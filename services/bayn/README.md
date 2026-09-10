@@ -58,6 +58,12 @@ embeds and verifies the source revision and the behavior, parameter, protocol, a
 - PostgreSQL and TigerBeetle must reconcile exactly. Any identity drift, unresolved mutation, stale data, duplicate
   controller, or accounting discrepancy blocks new orders.
 
+Broker reconciliation recaptures changing history or lagging fill activities at most twice, 500 milliseconds apart,
+before persisting a snapshot. A broker terminal fill may precede local acknowledged-intent recovery; recorded terminal
+outcomes and aggregate fills still must agree. Equity marks from separate account and position observations remain
+visible as valuation differences, while cash, inventory, cost basis, fees, and ledger reconciliation remain exact.
+Flat accounts and marks observed at the same instant also require exact equity agreement.
+
 ## Runtime architecture
 
 - `BaynExecutionController` is the only scheduler. Restate serializes handlers by canonical account-binding hash,
