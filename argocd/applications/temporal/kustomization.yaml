@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: temporal
 
 resources:
+  - upgrade/cassandra-509-rollout.yaml
   - upgrade/cassandra-509-backup.yaml
   - upgrade/cassandra-4112-rollout.yaml
   - upgrade/cassandra-4112-v3-backup.yaml
@@ -47,7 +48,7 @@ patches:
     patch: |-
       - op: replace
         path: /spec/template/spec/containers/0/image
-        value: mirror.gcr.io/cassandra:4.1.12@sha256:3edbfb2be84f00f3467e206d7d785ddd4dbcf7042e6a126180e1d9faa5514474
+        value: mirror.gcr.io/cassandra:5.0.9@sha256:d35e159439b302146f964919904f84fd3c2cebf347272b8cb8c4368c1cf200e5
       - op: add
         path: /spec/template/spec/containers/0/env/-
         value:
