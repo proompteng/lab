@@ -220,7 +220,12 @@ describe('intraday replay program', () => {
                 phase === 'decision' &&
                 bar.symbol === 'AAPL' &&
                 bar.eventAt === request.rangeStartAt
-                  ? { ...bar, ingestedAt: new Date(Date.parse(bar.eventAt) + 65_000).toISOString() }
+                  ? {
+                      ...bar,
+                      ingestedAt: new Date(
+                        Date.parse(bar.eventAt) + 60_000 + request.maximumQuoteAgeMs + 1,
+                      ).toISOString(),
+                    }
                   : bar,
               ),
             }),
@@ -731,7 +736,7 @@ describe('intraday replay program', () => {
             latestQuotes: {
               AAPL: {
                 ...quote,
-                eventAt: new Date(Date.parse(request.observedAt) - 3_000).toISOString(),
+                eventAt: new Date(Date.parse(request.observedAt) - request.maximumQuoteAgeMs - 1).toISOString(),
               },
             },
           }
@@ -915,7 +920,12 @@ describe('intraday replay program', () => {
                 ...snapshot,
                 bars: snapshot.bars.map((bar) =>
                   bar.symbol === 'AAPL' && bar.eventAt === '2026-09-04T13:30:00.000Z'
-                    ? { ...bar, ingestedAt: '2026-09-04T13:31:03.065Z' }
+                    ? {
+                        ...bar,
+                        ingestedAt: new Date(
+                          Date.parse(bar.eventAt) + 60_000 + request.maximumQuoteAgeMs + 1,
+                        ).toISOString(),
+                      }
                     : bar,
                 ),
               }),

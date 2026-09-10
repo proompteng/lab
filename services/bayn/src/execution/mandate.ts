@@ -196,12 +196,15 @@ export const legacyExecutionMandateFailureRestrictionPrefix =
 export const legacyExecutionMandateFailureRestrictionPattern =
   '^bound PAPER cycle [0-9a-f]{64} restricted effective authority: intent [0-9a-f]{64} (submit settled (denied|rejected)|ended (BLOCKED|CANCELED|EXPIRED|REJECTED|without outcome))$'
 const legacyExecutionMandateFailureRestriction = new RegExp(legacyExecutionMandateFailureRestrictionPattern)
+export const reconciliationDiscrepancyRestrictionPattern = '^reconciliation discrepancy [0-9a-f]{64}$'
+const reconciliationDiscrepancyRestriction = new RegExp(reconciliationDiscrepancyRestrictionPattern)
 
 /** Accepts only system-authored failure restrictions; operator kills and malformed legacy reasons stay fail-closed. */
 export const isExecutionMandateFailureRestriction = (reason: string | undefined): boolean =>
   reason?.startsWith(executionMandateFailureRestrictionPrefix) === true ||
   reason?.startsWith(legacyExecutionMandateFailureRestrictionPrefix) === true ||
-  (reason !== undefined && legacyExecutionMandateFailureRestriction.test(reason))
+  (reason !== undefined &&
+    (legacyExecutionMandateFailureRestriction.test(reason) || reconciliationDiscrepancyRestriction.test(reason)))
 
 const unfinishedCycleReadFailure = 'oldest unfinished mutation cycle read failed'
 
