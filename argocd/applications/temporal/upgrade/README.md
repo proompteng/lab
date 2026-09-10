@@ -300,3 +300,30 @@ Keep all retained native snapshots. Elasticsearch data files are not safely
 downgraded after new-version writes; recovery uses a validated retained native
 snapshot in a separate compatible cluster before a reviewed cutover, accounting
 for writes after the recorded snapshot checkpoint.
+
+
+## Cassandra 4.1.12 activation
+
+Generation `4112-v3` completed its isolated native 3.11.19 restore and 4.1.12
+in-place rehearsal on 2026-09-10. Both engines verified the original host and
+all 256 token values, matching Temporal namespace and schema record hashes,
+extended SSTable verification, and clean shutdown. Production CQL probes were
+denied after positive controls from the backup verifier. Receipts remain on
+`temporal-cassandra-4112-v3-proof`.
+
+The activation preserves the existing `OnDelete` StatefulSet, all three original
+PVCs and host IDs, RF3, seeds, listener settings and resource configuration. It
+pins Cassandra 4.1.12 and explicitly preserves `CASSANDRA_NUM_TOKENS=256`.
+The wave-1 rollout Job reads the retained receipts without write access and
+requires their generation, target version and matching ring/record hashes.
+It then uses the maintained gate to drain and replace nodes 2, 1 and 0 one at
+a time, with graceful UID/resourceVersion-conditional deletion and all three
+original nodes healthy before advancing. Final schema agreement and serial
+`nodetool upgradesstables --jobs 1` complete this stage.
+
+Require live original ring/PVC/token identities and a successful Temporal
+workflow history/query before preparing the separate 5.0.9 stage. Do not place
+3.11 over upgraded 4.1 data files. Recovery uses retained native/CSI snapshots
+in a separate compatible cluster and a reviewed cutover, accounting for writes
+after the snapshot checkpoint. A failed rollout gate must be diagnosed before
+any subsequent node replacement; never force-delete storage or Pods.
