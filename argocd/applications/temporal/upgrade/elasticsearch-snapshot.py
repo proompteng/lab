@@ -9,13 +9,13 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 REQUEST_DEADLINE = time.monotonic() + 3500
-REPOSITORY = "temporal-s3-native"
+REPOSITORY = "temporal-s3-native-81921-v6"
 CLIENT = "temporal_snapshot"
 CLAIM_HOST = "rook-ceph-rgw-objectstore.rook-ceph.svc"
 ENDPOINT = "rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80"
-BASE_PATH = "temporal"
+BASE_PATH = "temporal-81921-v6"
 EXPECTED_BUCKET = "temporal-elasticsearch-sna-e20960d4-5f87-4682-98f4-254ab958b39e"
-GENERATION = "81921-v5"
+GENERATION = "81921-v6"
 SNAPSHOT = "before-" + GENERATION
 CLUSTER_UUID = "xMDCf7u4RrG55SlLBDgTsg"
 SOURCE_VERSION = "8.5.1"
