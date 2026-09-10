@@ -26,3 +26,25 @@ Production remains Altinity Stable 25.3.6.10034 during preparation. The intended
 sequence is 25.8.28.10001, then 26.3.16.10001, preserving synchronous inserts,
 JSON integer formatting and documented downgrade compatibility settings. Any
 recovery after activation must account for writes after the backup checkpoint.
+
+
+The persistent rehearsal imports both completed CSI handles with Retain and
+mounts each 50 GiB source clone read-only. Each replica has a separate 100 GiB
+fixture claim and 1 GiB evidence claim. The three native versions restore the
+same completed backup independently into distinct directories, with a private
+loopback Keeper. This proves native backup recovery across the upgrade path;
+it is not an in-place upgrade of a shared fixture directory.
+
+Each engine restores structure first, pauses merges and TTL processing before
+restoring data, checks every MergeTree table and fingerprints every row using
+SHA256 of JSON tuples, count and four UInt64 sum/XOR lanes. Evidence includes
+table/column catalogs, view queries, native CHECK TABLE results and graceful
+server/Keeper exit codes. The operator must compare the three versions for each
+replica and validate the retained source identities before activation.
+
+The namespace denies all ingress and egress. The reviewed endpoint inventory
+has positive TCP controls from production; each engine must observe timeouts
+to those exact ClickHouse and Keeper endpoints before it starts. Containers use
+UID 101, read-only roots, no capabilities and no service-account tokens. A failed
+attempt does not retry or overwrite partial evidence. Diagnose it and review a
+new generation. No CI runner or serving PVC is used as writable scratch space.
