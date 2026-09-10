@@ -178,3 +178,20 @@ the existing dedicated rehearsal claims. Keep the runtime isolation controller
 active using `clickhouse-replica0-retry-profile.json`; all five live production
 endpoints must have current positive controls and fail the isolated native
 connection probes before the restore starts.
+
+## Bound concurrent restores to the private Keeper
+
+The v5 retry identified a repeatable session-expiry startup loop. Native thread
+stacks remained in `StorageReplicatedMergeTree::startBeingLeader` via
+`ZooKeeperRetriesControl`, and four tables retained expired sessions while the
+private Keeper remained healthy. This was observed during structure restore,
+before data was copied. Increasing the client receive timeout alone did not
+resolve it.
+
+The v6 Job uses one restore thread and the serving Keeper's 60-second operation
+and 300-second session timeouts. This prevents the isolated fixture's concurrent
+table creation from overwhelming its private Keeper. It retains the strict
+native row, schema, isolation, replica-health and clean-exit checks, and compares
+against the original completed v4 25.3/25.8 proof. The immutable v4 ConfigMap is
+retained unchanged. New fixtures and receipts use `/fixture/v6` and `/proof/v6`.
+Run the isolation controller with `clickhouse-replica0-serial-profile.json`.
