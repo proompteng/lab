@@ -77,3 +77,19 @@ and does not claim to have requested a new native snapshot. Source 25.12.5.44
 recovery and target 26.8.2.7 recovery must both pass before serving activation.
 The Keeper image, server ID, peer configuration and production PVC are unchanged
 during this stage. After activation, recovery must account for subsequent writes.
+
+
+Generation v1 stopped before starting either database because its network gate
+accepted only a timeout. Galactic's network policy also returns an immediate
+ECONNREFUSED rejection. Generation v2 accepts only timeout status 124 or status 1
+with the native Connection refused error for that exact endpoint. Other command
+errors remain failures. All five endpoints still require matching Pod UIDs and
+successful production controls before and after the denied attempts.
+
+Generation v2 uses new Job and ConfigMap names and fresh `/fixture/v2` and
+`/proof/v2` directories on the same retained claims. The v1 directories and
+source snapshots remain intact. `failed-generation-v1.json` preserves the
+failed Job/Pod identities and logs. Retire only the two recorded failed v1 Jobs
+after this change removes them from desired state; preserve all claims and
+snapshots. They are rehearsal Jobs, not CI runner Jobs or serving workloads.
+Restart the runtime controller with the v2 code before releasing this generation.

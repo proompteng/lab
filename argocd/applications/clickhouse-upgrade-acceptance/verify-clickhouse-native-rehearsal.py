@@ -66,6 +66,21 @@ def verify(proof, expected_tables):
             isolated == [[endpoint, "DENIED"] for endpoint in endpoints],
             f"Isolation failed: {phase}",
         )
+        probes = read_rows(root / "isolation-probes.jsonl")
+        require(
+            [probe["endpoint"] for probe in probes] == endpoints,
+            f"Missing native isolation probe: {phase}",
+        )
+        for probe in probes:
+            host, port = probe["endpoint"].split(":")
+            error = (root / f"probe-{host}-{port}.stderr").read_text()
+            timed_out = probe["exitCode"] == 124 and probe["outcome"] == "TIMED_OUT"
+            rejected = (
+                probe["exitCode"] == 1
+                and probe["outcome"] == "REJECTED"
+                and f"/dev/tcp/{host}/{port}: Connection refused" in error
+            )
+            require(timed_out or rejected, f"Unclassified isolation failure: {phase}")
         for name in ["structure-restore.jsonl", "data-restore.jsonl"]:
             restored = read_rows(root / name)
             require(
@@ -142,6 +157,7 @@ def verify(proof, expected_tables):
             "nativeCheck": "PASS",
             "isolation": "PASS",
             "isolationControls": {"before": before, "after": after},
+            "isolationProbes": probes,
             "nativeExit": "PASS",
         }
     baseline = results["v25_3"]
@@ -181,7 +197,7 @@ def verify(proof, expected_tables):
 
 
 def main():
-    proof = Path("/proof")
+    proof = Path("/proof/v2")
     result = verify(proof, Path("/scripts/expected-tables.tsv").read_text())
     result["replica"] = os.environ["REPLICA"]
     result["backupManifestSHA256"] = os.environ["BACKUP_MANIFEST_SHA256"]

@@ -9,7 +9,7 @@ import time
 
 
 NAMESPACE = "clickhouse-upgrade-acceptance"
-JOBS = ["clickhouse-native-20260910-0", "clickhouse-native-20260910-1"]
+JOBS = ["clickhouse-native-20260910-v2-0", "clickhouse-native-20260910-v2-1"]
 SOURCES = {
     "chi-torghut-clickhouse-default-0-0-0": [9000, 8123],
     "chi-torghut-clickhouse-default-0-1-0": [9000, 8123],
@@ -219,7 +219,7 @@ def main():
             container = running[0]["name"]
             if container not in ["v25-3", "v25-8", "v26-3"]:
                 raise RuntimeError("Unexpected native engine container")
-            directory = "/proof/" + container.replace("-", "_")
+            directory = "/proof/v2/" + container.replace("-", "_")
             ready = kubectl(
                 NAMESPACE,
                 "exec",
