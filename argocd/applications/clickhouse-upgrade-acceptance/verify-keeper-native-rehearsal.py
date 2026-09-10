@@ -157,7 +157,7 @@ def verify(root, canary):
 
 
 if __name__ == "__main__":
-    root = Path("/proof/keeper-v1")
+    root = Path("/proof/keeper-v2")
     receipt = verify(root, os.environ["CANARY_VALUE"])
     receipt["nativeSnapshotSHA256"] = os.environ["NATIVE_SNAPSHOT_SHA256"]
     output = json.dumps(receipt, sort_keys=True)

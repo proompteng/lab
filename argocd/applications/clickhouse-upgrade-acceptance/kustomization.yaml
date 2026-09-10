@@ -5,12 +5,12 @@ resources:
 - rehearsal.yaml
 - keeper-rehearsal.yaml
 configMapGenerator:
-- name: clickhouse-native-rehearsal-20260910-v2
+- name: clickhouse-native-rehearsal-20260910-v3
   files:
   - native-rehearsal.sh
   - expected-tables.tsv
   - verify-clickhouse-native-rehearsal.py
-- name: keeper-native-20260910-v1
+- name: keeper-native-20260910-v2
   files:
   - keeper-native-rehearsal.sh
   - verify-keeper-native-rehearsal.py

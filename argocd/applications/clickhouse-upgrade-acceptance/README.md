@@ -124,3 +124,21 @@ A separate read-only Job prints the retained native server and private Keeper
 logs from ClickHouse generation v2. Both v2 databases stopped on a readonly
 replica during data restoration. This readout allows diagnosis without reopening
 either database or modifying the failed fixture and evidence claims.
+
+
+Generation v3 fixes the confirmed v2 restore failure: each private ClickHouse
+server now advertises its required replication HTTP port on loopback and waits
+for all eleven replicas to leave readonly/session-expired state before restoring
+data. Native failures print bounded engine logs as well as retaining the complete
+logs on the evidence claim. The v3 Jobs use fresh fixture/proof directories;
+failed v2 Jobs and all snapshot/PVC data remain retained until their recorded
+failed Job objects are retired separately.
+
+Keeper generation v2 reruns the same retained recovery checkpoint in fresh
+fixture/proof directories. Generation v1 completed native 25.12 recovery, then
+its 26.8 phase timed out waiting for the workstation controller. The controller
+now tolerates a successfully completed init container during a control read by
+rechecking the same Pod UID and native exit code; other failures still stop it.
+Keep both controllers alive through their final receipts and store workstation
+evidence on persistent storage. This change does not modify serving workloads,
+source snapshots, source credentials, network policy or retained claims.

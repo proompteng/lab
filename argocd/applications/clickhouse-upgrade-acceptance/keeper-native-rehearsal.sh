@@ -4,10 +4,10 @@ umask 027
 export LC_ALL=C
 : "${REHEARSAL_VERSION:?}" "${EXPECTED_VERSION:?}" "${NATIVE_SNAPSHOT_FILE:?}" "${NATIVE_SNAPSHOT_SHA256:?}" "${CANARY_VALUE:?}"
 [[ "$REHEARSAL_VERSION" == v25_12 || "$REHEARSAL_VERSION" == v26_8 ]]
-base=/fixture/keeper-v1
+base=/fixture/keeper-v2
 data="$base/native"
-proof="/proof/keeper-v1/$REHEARSAL_VERSION"
-mkdir -p /proof/keeper-v1
+proof="/proof/keeper-v2/$REHEARSAL_VERSION"
+mkdir -p /proof/keeper-v2
 mkdir "$proof"
 wait_for_control() {
   local path=$1
@@ -56,7 +56,7 @@ if [[ "$REHEARSAL_VERSION" == v25_12 ]]; then
   (cd "$data" && find coordination -type f -exec sha256sum {} +; sha256sum uuid state) | sort > "$proof/copied-files.sha256"
   cmp "$proof/source-files.sha256" "$proof/copied-files.sha256"
 else
-  [[ -d "$data/coordination" && "$(cat /proof/keeper-v1/v25_12/process-exit)" == 0 ]]
+  [[ -d "$data/coordination" && "$(cat /proof/keeper-v2/v25_12/process-exit)" == 0 ]]
 fi
 cat > "$base/config.xml" <<EOF
 <clickhouse>
