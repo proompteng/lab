@@ -10,6 +10,38 @@ const stage = stages.find((document) => document.getIn(['metadata', 'name']) ===
 const steps = stage.spec.promotionTemplate.spec.steps
 const build = read('.github/workflows/bayn-build-push.yml')
 
+test('keeps the reviewed GitOps identity consistent with the image build', () => {
+  // Each architecture's Nix build verifies these constants against its compiled executable.
+  // Check the matching GitOps inputs in PR CI instead of introducing a promotion hold.
+  const nix = readFileSync(new URL('nix/images/bayn.nix', root), 'utf8')
+  const identities = [
+    ['BAYN_STRATEGY_BEHAVIOR_HASH', 'strategyBehaviorHash'],
+    ['BAYN_STRATEGY_PARAMETER_HASH', 'strategyParameterHash'],
+    ['BAYN_STRATEGY_NAME', 'strategyName'],
+    ['BAYN_STRATEGY_PROTOCOL_HASH', 'strategyProtocolHash'],
+    ['BAYN_EXECUTION_RISK_POLICY_HASH', 'executionRiskPolicyHash'],
+  ] as const
+  const imageIdentity = new Map(
+    identities.map(([environmentName, constant]) => {
+      const matches = [...nix.matchAll(new RegExp(`^  ${constant} = "([^"]+)";`, 'gm'))]
+      expect(matches).toHaveLength(1)
+      return [environmentName, matches[0]?.[1]]
+    }),
+  )
+  for (const file of ['deployment', 'execution-controller', 'execution-activation']) {
+    const environment = new Map<string, string>(
+      read(`argocd/applications/bayn/${file}.yaml`).spec.template.spec.containers[0].env.map(
+        (entry: { name: string; value?: string }) => [entry.name, entry.value],
+      ),
+    )
+    for (const [name, expected] of imageIdentity) {
+      if (file === 'deployment' || name === 'BAYN_STRATEGY_BEHAVIOR_HASH' || name === 'BAYN_STRATEGY_PARAMETER_HASH') {
+        expect(environment.get(name)).toBe(expected)
+      }
+    }
+  }
+})
+
 test('correlates automatic Bayn Freight with the exact immutable build inputs', () => {
   const warehouses = YAML.parseAllDocuments(
     readFileSync(new URL('argocd/applications/kargo/warehouses.yaml', root), 'utf8'),
