@@ -93,3 +93,34 @@ failed Job/Pod identities and logs. Retire only the two recorded failed v1 Jobs
 after this change removes them from desired state; preserve all claims and
 snapshots. They are rehearsal Jobs, not CI runner Jobs or serving workloads.
 Restart the runtime controller with the v2 code before releasing this generation.
+
+
+Keeper's native rehearsal recovers the retained snapshot and Raft logs with
+25.12.5.44, then starts 26.8.2.7 on those same isolated files. It preserves server
+ID 0, the original peer hostname and native UUID. A Pod host alias maps that
+hostname to loopback; all native listeners and peers remain local. The existing
+namespace default deny applies, with separate current positive/negative/positive
+checks for both serving ClickHouse replicas and Keeper client/Raft ports.
+
+Run the controller before merging the Keeper generation:
+
+```sh
+python3 argocd/applications/clickhouse-upgrade-acceptance/control-runtime-isolation.py /path/to/keeper-evidence argocd/applications/clickhouse-upgrade-acceptance/keeper-runtime-profile.json
+```
+
+The source volume is read-only. Native snapshots, logs and identity files must
+match their copied checksums. After original ephemeral sessions expire, a
+persistent native canary is created only in the isolated Keeper. The target must
+recover the same canary value, stat and ACL, original UUID, root metadata and
+recursive child counts, with healthy native quorum and clean process exits.
+These checks verify native recovery and the in-place version transition; they
+do not claim a fingerprint of every individual znode value. Final serving
+acceptance also requires both ClickHouse clients and replicated tables healthy.
+The source image, production PVC, credentials and Raft membership are unchanged
+during this stage. Preserve the retained recovery checkpoint and account for
+subsequent acknowledged writes before any recovery cutover.
+
+A separate read-only Job prints the retained native server and private Keeper
+logs from ClickHouse generation v2. Both v2 databases stopped on a readonly
+replica during data restoration. This readout allows diagnosis without reopening
+either database or modifying the failed fixture and evidence claims.

@@ -130,6 +130,17 @@ def write_control(pod, container, directory, side, receipt):
 
 
 def main():
+    global JOBS, SOURCES
+    phases = {name: name.replace("-", "_") for name in ["v25-3", "v25-8", "v26-3"]}
+    proof_prefix = "/proof/v2/"
+    if len(sys.argv) == 3:
+        profile = json.loads(Path(sys.argv[2]).read_text())
+        JOBS, SOURCES = profile["jobs"], profile["sources"]
+        phases, proof_prefix = profile["phases"], profile["proofPrefix"]
+        if not JOBS or len(set(JOBS)) != len(JOBS) or not phases or not SOURCES:
+            raise ValueError("Incomplete runtime isolation profile")
+        if not proof_prefix.startswith("/proof/") or not proof_prefix.endswith("/"):
+            raise ValueError("Proof prefix must remain under /proof/")
     output = Path(sys.argv[1])
     output.mkdir(parents=True, exist_ok=True)
     positive_controls()
@@ -204,7 +215,15 @@ def main():
                 completed.add(name)
                 print(
                     json.dumps(
-                        {"job": name, "status": "PASS", "rows": receipt["rows"]}
+                        {
+                            "job": name,
+                            "status": "PASS",
+                            **{
+                                key: receipt[key]
+                                for key in ["rows", "znodes"]
+                                if key in receipt
+                            },
+                        }
                     ),
                     flush=True,
                 )
@@ -217,9 +236,9 @@ def main():
             if not running:
                 continue
             container = running[0]["name"]
-            if container not in ["v25-3", "v25-8", "v26-3"]:
+            if container not in phases:
                 raise RuntimeError("Unexpected native engine container")
-            directory = "/proof/v2/" + container.replace("-", "_")
+            directory = proof_prefix + phases[container]
             ready = kubectl(
                 NAMESPACE,
                 "exec",
