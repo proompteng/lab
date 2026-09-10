@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/name: torghut-clickhouse
     app.kubernetes.io/part-of: torghut
   annotations:
-    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/sync-wave: '1'
 spec:
   configuration:
     files:
@@ -75,6 +75,9 @@ spec:
         <yandex>
           <profiles>
             <default>
+              <compatibility>25.3</compatibility>
+              <async_insert>0</async_insert>
+              <output_format_json_quote_64bit_integers>1</output_format_json_quote_64bit_integers>
               <!-- Disable sampling profiler logs to keep system tables small. -->
               <query_profiler_real_time_period_ns>0</query_profiler_real_time_period_ns>
               <query_profiler_cpu_time_period_ns>0</query_profiler_cpu_time_period_ns>
@@ -83,6 +86,9 @@ spec:
           </profiles>
         </yandex>
     profiles:
+      bayn/compatibility: '25.3'
+      bayn/async_insert: 0
+      bayn/output_format_json_quote_64bit_integers: 1
       bayn/readonly: 1
       bayn/max_execution_time: 60
       bayn/max_result_rows: 1000000
@@ -92,6 +98,9 @@ spec:
       # Watermark capture and paged snapshot reads may hit different replicas.
       # Refuse a stale replica instead of returning a partial quorum-confirmed prefix.
       bayn/select_sequential_consistency: 1
+      signal_publisher/compatibility: '25.3'
+      signal_publisher/async_insert: 0
+      signal_publisher/output_format_json_quote_64bit_integers: 1
       signal_publisher/max_execution_time: 120
       signal_publisher/max_result_rows: 1000000
       signal_publisher/result_overflow_mode: throw
@@ -102,6 +111,9 @@ spec:
       signal_publisher/insert_quorum_timeout: 60000
       signal_publisher/select_sequential_consistency: 1
       notebook/readonly: 1
+      notebook/compatibility: '25.3'
+      notebook/async_insert: 0
+      notebook/output_format_json_quote_64bit_integers: 1
       notebook/max_execution_time: 30
       notebook/max_result_rows: 100000
       notebook/result_overflow_mode: throw
@@ -208,7 +220,7 @@ spec:
                   topologyKey: kubernetes.io/hostname
           containers:
             - name: clickhouse
-              image: altinity/clickhouse-server:25.3.6.10034.altinitystable
+              image: altinity/clickhouse-server:25.8.28.10001.altinitystable@sha256:5ad76ea89ca881043b76ddcf2bcf3813663060a03a04b39f5c8ad2ef1dea4b07
               resources:
                 requests:
                   cpu: 1
