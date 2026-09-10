@@ -535,4 +535,138 @@ describePostgres('PostgreSQL intraday cycle store', () => {
       forgedReconciliationCutoff: false,
     })
   })
+
+  test('bounds completion reads over a large history without admitting stale or incomplete IOC evidence', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            // Isolate the read predicate from write-admission triggers. Both completion and
+            // unresolved-mutation functions are the real functions installed by migrations.
+            yield* sql`CREATE TEMP TABLE autonomous_cycles (
+              cycle_id text, decision_hash text, account_id text, updated_at timestamptz
+            ) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE autonomous_cycle_shadow_decisions (
+              cycle_id text, decision_hash text, document jsonb
+            ) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE intents (
+              intent_id text, account_id text, cycle_id text, strategy_name text, decision_hash text,
+              policy_hash text, authority_generation_hash text, risk_decision_id text, state text,
+              terminal_outcome text, order_type text, time_in_force text, client_order_id text,
+              symbol text, side text, quantity_micros numeric, updated_at timestamptz
+            ) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE mutation_events (
+              intent_id text, operation text, event_type text, sequence bigint,
+              broker_order_id text, occurred_at timestamptz
+            ) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE orders (
+              event_id text, account_id text, broker_order_id text, client_order_id text,
+              intent_id text, symbol text, side text, order_type text, time_in_force text,
+              quantity_micros numeric, filled_quantity_micros numeric, status text
+            ) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE broker_events (
+              event_id text, source_sequence bigint, observed_at timestamptz
+            ) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE fills (
+              account_id text, broker_order_id text
+            ) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE reconciliations (
+              account_id text, status text, expected_hash text, observed_hash text,
+              discrepancies jsonb, reconciled_at timestamptz
+            ) ON COMMIT DROP`
+
+            yield* sql`INSERT INTO autonomous_cycles VALUES (
+              'cycle', 'document', 'account', '2026-09-08T17:00:00Z'
+            )`
+            yield* sql`INSERT INTO autonomous_cycle_shadow_decisions VALUES (
+              'cycle', 'document', ${sql.json({
+                schemaVersion: 'bayn.paper-cycle-decision.v1',
+                mode: 'PAPER',
+                createdAt: '2026-09-08T17:00:00.000Z',
+                dispatchable: true,
+                targetPlan: { status: 'PLANNED' },
+                orderedIntentIds: ['intent'],
+                bindings: {
+                  strategyName: 'intraday-momentum',
+                  strategyDecisionHash: 'strategy',
+                  policyHash: 'policy',
+                  authorityGenerationHash: 'generation',
+                },
+                deltaRisk: [
+                  {
+                    evaluation: {
+                      input: { intentId: 'intent' },
+                      decision: { outcome: 'APPROVED', decisionId: 'risk' },
+                    },
+                  },
+                ],
+                retainedEvidence: Array.from({ length: 2_000 }, (_, index) => canonicalHashV1({ index })),
+              })}
+            )`
+            yield* sql`INSERT INTO intents VALUES (
+              'intent', 'account', 'cycle', 'intraday-momentum', 'strategy', 'policy', 'generation', 'risk',
+              'TERMINAL', 'CANCELED', 'LIMIT', 'IOC', 'client', 'AMZN', 'BUY', 38000000,
+              '2026-09-08T17:01:00Z'
+            )`
+            yield* sql`INSERT INTO mutation_events
+              SELECT 'intent', 'SUBMIT', 'RECOVERY_FOUND', sequence, 'broker-order',
+                '2026-09-08T17:01:00Z'::timestamptz
+              FROM generate_series(1, 350) AS sequence`
+            yield* sql`INSERT INTO orders VALUES (
+              'event', 'account', 'broker-order', 'client', 'intent', 'AMZN', 'BUY',
+              'LIMIT', 'IOC', 38000000, 0, 'CANCELED'
+            )`
+            yield* sql`INSERT INTO broker_events VALUES ('event', 1, '2026-09-08T17:02:00Z')`
+            yield* sql`INSERT INTO reconciliations
+              SELECT 'account', 'EXACT', 'state', 'state', '[]'::jsonb,
+                '2026-09-08T17:00:00Z'::timestamptz - sequence * interval '1 second'
+              FROM generate_series(1, 100000) AS sequence`
+            yield* sql`ANALYZE reconciliations`
+            yield* sql`ANALYZE mutation_events`
+            yield* sql`SET LOCAL statement_timeout = '2s'`
+
+            const completionMatches = (observedAt = '2026-09-08T17:04:00.000Z') =>
+              sql`SELECT paper_cycle_completion_evidence_matches(
+                'cycle', 'document', ${observedAt}::timestamptz
+              ) AS matches`.pipe(
+                Effect.flatMap(Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ matches: Schema.Boolean })]))),
+                Effect.map(([row]) => row.matches),
+              )
+
+            expect(yield* completionMatches()).toBe(false)
+            yield* sql`INSERT INTO reconciliations VALUES (
+              'account', 'EXACT', 'state', 'state', '[]'::jsonb, '2026-09-08T17:03:00Z'
+            )`
+            expect(yield* completionMatches()).toBe(true)
+            expect(yield* completionMatches('2026-09-08T17:02:00.000Z')).toBe(false)
+
+            yield* sql`UPDATE intents SET updated_at = '2026-09-08T17:03:00Z'`
+            expect(yield* completionMatches()).toBe(false)
+            yield* sql`UPDATE intents SET updated_at = '2026-09-08T17:01:00Z'`
+            yield* sql`UPDATE mutation_events SET occurred_at = '2026-09-08T17:03:00Z' WHERE sequence = 350`
+            expect(yield* completionMatches()).toBe(false)
+            yield* sql`UPDATE mutation_events SET occurred_at = '2026-09-08T17:01:00Z' WHERE sequence = 350`
+            yield* sql`UPDATE broker_events SET observed_at = '2026-09-08T17:03:00Z'`
+            expect(yield* completionMatches()).toBe(false)
+            yield* sql`UPDATE broker_events SET observed_at = '2026-09-08T17:02:00Z'`
+
+            yield* sql`UPDATE orders SET filled_quantity_micros = 1000000`
+            expect(yield* completionMatches()).toBe(false)
+            yield* sql`UPDATE orders SET filled_quantity_micros = 0`
+            yield* sql`INSERT INTO fills VALUES ('account', 'broker-order')`
+            expect(yield* completionMatches()).toBe(false)
+            yield* sql`DELETE FROM fills`
+            yield* sql`UPDATE orders SET client_order_id = 'wrong-client'`
+            expect(yield* completionMatches()).toBe(false)
+            yield* sql`UPDATE orders SET client_order_id = 'client'`
+            yield* sql`UPDATE mutation_events SET event_type = 'SUBMIT_STARTED' WHERE sequence = 350`
+            expect(yield* completionMatches()).toBe(false)
+            yield* sql`UPDATE mutation_events SET event_type = 'RECOVERY_FOUND' WHERE sequence = 350`
+            expect(yield* completionMatches()).toBe(true)
+          }),
+        )
+      }),
+    )
+  }, 15_000)
 })
