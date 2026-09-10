@@ -9,12 +9,18 @@ plugins {
 
 description = "Flink job for torghut technical analysis"
 
-val flinkVersion = "2.0.1"
-val kafkaConnectorVersion = "4.0.1-2.0"
-val jdbcConnectorVersion = "4.0.0-2.0"
+val flinkVersion = "2.2.1"
+val kafkaConnectorVersion = "5.0.0-2.2"
+val jdbcConnectorVersion = "4.1.0-2.2"
 val serializationVersion = "1.7.3"
 val logbackVersion = "1.5.12"
 val clickhouseJdbcVersion = "0.9.5"
+
+configurations.configureEach {
+  resolutionStrategy.capabilitiesResolution.withCapability("org.lz4:lz4-java") {
+    selectHighestVersion()
+  }
+}
 
 dependencies {
   implementation(project(":platform"))
@@ -28,6 +34,10 @@ dependencies {
   implementation("org.apache.flink:flink-connector-kafka:$kafkaConnectorVersion")
   implementation("org.apache.flink:flink-connector-jdbc-core:$jdbcConnectorVersion")
   implementation("org.apache.flink:flink-metrics-prometheus:$flinkVersion")
+  implementation("org.apache.kafka:kafka-clients:4.2.0") {
+    version { strictly("4.2.0") }
+    because("Use the connector's client API instead of the legacy Confluent 7.5.4-ccs artifact.")
+  }
 
   implementation("org.ta4j:ta4j-core:0.16")
   implementation("com.clickhouse:clickhouse-jdbc:$clickhouseJdbcVersion")

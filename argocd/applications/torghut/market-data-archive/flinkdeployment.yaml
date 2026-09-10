@@ -14,9 +14,10 @@ spec:
   # Cut over from the skewed v2 quote consumer to the repartitioned v3 consumer.
   # Existing ClickHouse history stays intact; the new group begins at each topic's live head.
   restartNonce: 14
-  flinkVersion: v2_0
+  flinkVersion: v2_2
   serviceAccount: torghut-runtime
   flinkConfiguration:
+    kubernetes.operator.job.upgrade.last-state-fallback.enabled: "false"
     state.checkpoints.dir: s3a://flink-checkpoints/torghut/market-data-archive/checkpoints
     state.savepoints.dir: s3a://flink-checkpoints/torghut/market-data-archive/savepoints
     execution.checkpointing.mode: EXACTLY_ONCE
@@ -87,5 +88,5 @@ spec:
     entryClass: ai.proompteng.dorvud.ta.flink.MarketDataArchiveJobKt
     jarURI: local:///opt/flink/usrlib/app.jar
     parallelism: 16
-    upgradeMode: stateless
+    upgradeMode: savepoint
     state: running
