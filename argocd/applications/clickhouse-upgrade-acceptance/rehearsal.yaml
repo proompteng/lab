@@ -338,7 +338,7 @@ spec:
           readOnly: false
       - name: scripts
         configMap:
-          name: clickhouse-native-rehearsal-20260910-v3
+          name: clickhouse-native-rehearsal-20260910-v4
       - name: tmp
         emptyDir:
           sizeLimit: 256Mi

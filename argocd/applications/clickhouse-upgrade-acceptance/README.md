@@ -150,13 +150,14 @@ remain available until a separately recorded retirement.
 
 Replica 0 generation v3 stopped before structure recovery because the private
 Keeper had not yet accepted sessions. The readiness loop now requires a native
-`system.zookeeper` query as well as the server version before RESTORE. Only failed
-replica 0 gets a new v4 Job and fresh directories. Replica 1 continues in v3;
-its current engine retains its open script file, and later init containers read
-the updated ConfigMap after Kubernetes publishes it atomically. Data validation,
-private endpoints and all native isolation checks remain unchanged.
+`system.zookeeper` query as well as the server version before RESTORE. Failed
+replica 0 gets a new v4 Job, fresh directories and an immutable v4 ConfigMap.
+The retained v3 ConfigMap preserves its exact original payload and is made
+immutable. The existing replica 1 Job therefore uses only its original script;
+no phase depends on an in-place ConfigMap refresh. A v3 startup failure must
+fail the Job and requires a separately declared v4 retry before acceptance.
 
-Start the default controller for v4 replica 0. Keep a second controller running
-for the existing replica 1 Job with `clickhouse-replica1-runtime-profile.json`.
+Start the default controller for v4 replica 0. Keep the replica 1 controller
+running with `clickhouse-replica1-runtime-profile.json` through its final receipt.
 Neither controller restarts or overwrites a completed phase. Compare all three
 native versions independently for each replica before serving activation.
