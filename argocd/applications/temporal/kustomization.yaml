@@ -3,15 +3,57 @@ kind: Kustomization
 namespace: temporal
 
 resources:
+  - upgrade/cassandra-509-rollout.yaml
+  - upgrade/cassandra-509-backup.yaml
+  - upgrade/cassandra-4112-rollout.yaml
+  - upgrade/cassandra-4112-v3-backup.yaml
+  - upgrade/cassandra-4112-v2-backup.yaml
+  - upgrade/cassandra-4112-backup.yaml
+  - upgrade/elasticsearch-preparation.yaml
   - upgrade/retained-rf3-snapshots.yaml
   - upgrade/retained-31119-v2-snapshots.yaml
   - upgrade/retained-31119-v3-snapshots.yaml
+  - upgrade/retained-31119-v4-snapshots.yaml
+  - upgrade/retained-31119-v5-snapshots.yaml
   - upgrade/cassandra-31119-backup.yaml
+  - upgrade/cassandra-31119-rollout.yaml
   - load-balancer.yaml
   - load-balancer-frontend.yaml
   - ingressroute-temporal-k8s-private.yaml
 
 patches:
+  - target:
+      kind: StatefulSet
+      name: elasticsearch-master
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: elasticsearch-master
+      spec:
+        template:
+          spec:
+            initContainers:
+              - name: configure-sysctl
+              - name: keystore
+                env:
+                  - name: ELASTIC_PASSWORD
+                    valueFrom:
+                      secretKeyRef:
+                        name: elasticsearch-master-credentials
+                        key: password
+  - target:
+      kind: StatefulSet
+      name: temporal-cassandra
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/image
+        value: mirror.gcr.io/cassandra:5.0.9@sha256:d35e159439b302146f964919904f84fd3c2cebf347272b8cb8c4368c1cf200e5
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: CASSANDRA_NUM_TOKENS
+          value: "256"
   - target:
       kind: Secret
       name: temporal-default-store
@@ -94,6 +136,26 @@ helmCharts:
           xpack.security.enabled: false
           xpack.security.http.ssl.enabled: false
           xpack.security.transport.ssl.enabled: false
+          path.repo:
+            - /usr/share/elasticsearch/snapshots
+          s3.client.temporal_snapshot.endpoint: rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80
+          s3.client.temporal_snapshot.protocol: http
+          s3.client.temporal_snapshot.path_style_access: true
+          s3.client.temporal_snapshot.region: us-east-1
+      keystore:
+        - secretName: temporal-elasticsearch-snapshots
+          items:
+            - key: AWS_ACCESS_KEY_ID
+              path: s3.client.temporal_snapshot.access_key
+            - key: AWS_SECRET_ACCESS_KEY
+              path: s3.client.temporal_snapshot.secret_key
+      extraVolumes:
+        - name: elasticsearch-snapshot-repository
+          persistentVolumeClaim:
+            claimName: temporal-elasticsearch-snapshot-repository-v2
+      extraVolumeMounts:
+        - name: elasticsearch-snapshot-repository
+          mountPath: /usr/share/elasticsearch/snapshots
       clusterHealthCheckParams: "wait_for_status=green&timeout=1s"
       persistence:
         enabled: true
@@ -161,6 +223,9 @@ helmCharts:
         elasticsearchTool: false
 
 images:
+  - name: docker.elastic.co/elasticsearch/elasticsearch
+    newTag: 8.19.21
+    digest: sha256:cbf5cd6cfe5532a9c02d510c66d238bf329cd51fe3d57170a2a880aca7d47419
   - name: mirror.gcr.io/temporalio/server
     newName: mirror.gcr.io/temporalio/server
     newTag: 1.31.2
@@ -171,16 +236,75 @@ images:
     digest: sha256:dbc5fcd6ee8f0f4d808bf765af9a87dea9d8a283abfdcfbd2fc148496ba66107
   - name: mirror.gcr.io/temporalio/ui
     newName: mirror.gcr.io/temporalio/ui
-    newTag: 2.52.0
-    digest: sha256:fc47cd8202c98ed868745fd9f2f011585232676d08da621b9a6d7bc4653c17aa
+    newTag: 2.53.3
+    digest: sha256:eef301146e60fad34b47adaecfae4149016e34b2d44ba94fca5fd8e5441f182a
 
 configMapGenerator:
   - name: temporal-cassandra-upgrade-scripts
     files:
-      - upgrade/cassandra-gate.sh
-      - upgrade/cassandra-rehearsal.sh
+      - cassandra-gate.sh=upgrade/retained-31119-v6-gate.sh
+      - cassandra-rehearsal.sh=upgrade/retained-31119-v6-rehearsal.sh
+      - restore-native-snapshot.py=upgrade/retained-31119-v6-native-restore.py
       - upgrade/canonicalize-cql.py
       - upgrade/verify-rehearsal-network.py
+    options:
+      annotations:
+        argocd.argoproj.io/sync-wave: "-30"
+  - name: temporal-cassandra-upgrade-scripts-rollout
+    files:
+      - upgrade/cassandra-gate.sh
+    options:
+      annotations:
+        argocd.argoproj.io/sync-wave: "-30"
+  - name: temporal-elasticsearch-upgrade-scripts
+    files:
+      - upgrade/elasticsearch-snapshot.py
+    options:
+      annotations:
+        argocd.argoproj.io/sync-wave: "-30"
+  - name: temporal-cassandra-upgrade-scripts-4112-v1
+    files:
+      - upgrade/cassandra-gate.sh
+      - cassandra-rehearsal.sh=upgrade/retained-4112-v2-rehearsal.sh
+      - restore-native-snapshot.py=upgrade/retained-31119-v6-native-restore.py
+      - upgrade/canonicalize-cql.py
+      - upgrade/verify-rehearsal-network.py
+      - upgrade/verify-cassandra-sstables.sh
+    options:
+      annotations:
+        argocd.argoproj.io/sync-wave: "-30"
+  - name: temporal-cassandra-upgrade-scripts-4112-v2
+    files:
+      - upgrade/cassandra-gate.sh
+      - cassandra-rehearsal.sh=upgrade/retained-4112-v2-rehearsal.sh
+      - upgrade/restore-native-snapshot.py
+      - upgrade/canonicalize-cql.py
+      - upgrade/verify-rehearsal-network.py
+      - upgrade/verify-cassandra-sstables.sh
+    options:
+      annotations:
+        argocd.argoproj.io/sync-wave: "-30"
+  - name: temporal-cassandra-upgrade-scripts-4112-v3
+    files:
+      - upgrade/cassandra-gate.sh
+      - upgrade/cassandra-rehearsal.sh
+      - upgrade/restore-native-snapshot.py
+      - upgrade/canonicalize-cql.py
+      - upgrade/verify-rehearsal-network.py
+      - upgrade/verify-cassandra-sstables.sh
+      - upgrade/verify-cassandra-ring.py
+    options:
+      annotations:
+        argocd.argoproj.io/sync-wave: "-30"
+  - name: temporal-cassandra-upgrade-scripts-509-v1
+    files:
+      - upgrade/cassandra-gate.sh
+      - upgrade/cassandra-rehearsal.sh
+      - upgrade/restore-native-snapshot.py
+      - upgrade/canonicalize-cql.py
+      - upgrade/verify-rehearsal-network.py
+      - upgrade/verify-cassandra-sstables.sh
+      - upgrade/verify-cassandra-ring.py
     options:
       annotations:
         argocd.argoproj.io/sync-wave: "-30"

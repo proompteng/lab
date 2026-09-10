@@ -125,6 +125,7 @@ backup() {
   done
   for ordinal in 0 1 2; do
     node_exec "$ordinal" nodetool snapshot --tag "temporal-before-$GENERATION"
+    node_exec "$ordinal" sync -f /var/lib/cassandra
     snapshots=$(node_exec "$ordinal" nodetool listsnapshots)
     [[ "$snapshots" == *"temporal-before-$GENERATION"* ]] || fail 'native snapshot was not recorded'
   done
@@ -182,6 +183,21 @@ verify_rehearsal() {
   printf 'PASS: fresh native backup and all three production CQL positive controls verified for %s.\n' "$GENERATION"
 }
 
+delete_node() {
+  local ordinal=$1 uid=$2 revision=$3 authorization
+  local service_account=${SERVICE_ACCOUNT_DIRECTORY:-/var/run/secrets/kubernetes.io/serviceaccount}
+  [[ "$ordinal" =~ ^[012]$ && "$uid" =~ ^[0-9a-f-]{36}$ && "$revision" =~ ^[0-9]+$ ]] || fail 'invalid conditional Pod deletion identity'
+  authorization=$(cat "$service_account/token") || fail 'projected service account token is unavailable'
+  [[ -n "$authorization" ]] || fail 'projected service account token is empty'
+  printf '{"apiVersion":"v1","kind":"DeleteOptions","gracePeriodSeconds":300,"preconditions":{"uid":"%s","resourceVersion":"%s"}}' "$uid" "$revision" |
+    curl --fail --silent --show-error --connect-timeout 10 --max-time 30 \
+      --proto '=https' --noproxy '*' --cacert "$service_account/ca.crt" \
+      --header 'Content-Type: application/json' \
+      --header @<(printf 'Authorization: Bearer %s\n' "$authorization") \
+      --request DELETE --data-binary @- \
+      "https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}/api/v1/namespaces/$namespace/pods/temporal-cassandra-$ordinal" >/dev/null
+}
+
 rollout() {
   local ordinal old_uid expected_template deadline replacement_uid
   require_backups
@@ -201,8 +217,7 @@ rollout() {
     require_storage "$ordinal"
     read_node "$ordinal"
     [[ "$node_uid" == "$old_uid" && "$node_owner" == "$owner_uid" && "$node_claim" == "data-temporal-cassandra-$ordinal" && "$node_image" == "$SOURCE_IMAGE" && -z "$node_deleting" && "$node_rv" =~ ^[0-9]+$ ]] || fail 'Pod changed while draining; refusing deletion'
-    printf '{"apiVersion":"v1","kind":"DeleteOptions","gracePeriodSeconds":300,"preconditions":{"uid":"%s","resourceVersion":"%s"}}' "$old_uid" "$node_rv" |
-      kube delete --raw "/api/v1/namespaces/$namespace/pods/temporal-cassandra-$ordinal" -f - >/dev/null
+    delete_node "$ordinal" "$old_uid" "$node_rv"
     deadline=$((SECONDS+1200))
     while true; do
       read_node "$ordinal"

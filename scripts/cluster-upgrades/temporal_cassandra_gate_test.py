@@ -8,6 +8,12 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+import shutil
+import zlib
+import http.server
+import ssl
+import threading
+from contextlib import contextmanager
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -17,9 +23,22 @@ TARGET = "mirror.gcr.io/cassandra:3.11.19@sha256:" + "a" * 64
 FIXTURE = r"""#!/usr/bin/env python3
 import json, os, sys
 from pathlib import Path
+from urllib.parse import urlparse
 args=sys.argv[1:]
-assert args[:3]==['-n','temporal','--cache-dir=/tmp/kubectl-cache'] and args[3].startswith('--request-timeout='), args
-args=args[4:]
+is_curl=Path(sys.argv[0]).name=="curl"
+if is_curl:
+ assert args[args.index("--request")+1]=="DELETE"
+ assert args[args.index("--data-binary")+1]=="@-"
+ assert args[args.index("--proto")+1]=="=https"
+ assert args[args.index("--noproxy")+1]=="*"
+ assert "--fail" in args and "--insecure" not in args
+ auth=[args[i+1] for i,x in enumerate(args) if x=="--header" and args[i+1].startswith("@")][0]
+ assert Path(auth[1:]).read_text()=="Authorization: Bearer fixture-token\n"
+ assert "fixture-token" not in " ".join(args)
+ args=["delete","--raw",urlparse(args[-1]).path]
+else:
+ assert args[:3]==['-n','temporal','--cache-dir=/tmp/kubectl-cache'] and args[3].startswith('--request-timeout='), args
+ args=args[4:]
 path=Path(os.environ['STATE'])
 s=json.loads(path.read_text())
 mode=os.environ.get('FAILURE','')
@@ -52,6 +71,7 @@ if args[0]=='get':
  raise SystemExit('Unexpected get '+repr(args))
 if args[0]=='exec':
  n=int(args[1][-1]); cmd=args[args.index('--')+1:]
+ if cmd==['sync','-f','/var/lib/cassandra']: done()
  if cmd[:2]==['nodetool','status']:
   if mode=='ring-api': raise SystemExit('Forbidden exec')
   if mode=='host-id': hosts[-1]='00000000-0000-0000-0000-000000000000'
@@ -72,7 +92,7 @@ if args[0]=='exec':
  if cmd[:2]==['nodetool','upgradesstables']: done()
  raise SystemExit('Unexpected exec '+repr(args))
 if args[0]=='delete':
- assert args[1]=='--raw' and args[-2:]==['-f','-'],args
+ assert is_curl and args[1]=='--raw',args
  n=int(args[2][-1]); payload=json.loads(sys.stdin.read());pod=s['pods'][n]
  assert payload=={'apiVersion':'v1','kind':'DeleteOptions','gracePeriodSeconds':300,'preconditions':{'uid':pod['uid'],'resourceVersion':str(pod['rv'])}},payload
  if mode=='delete-conflict': raise SystemExit('Conflict: resourceVersion precondition failed')
@@ -147,6 +167,9 @@ class CassandraGateTests(unittest.TestCase):
             cli = tmp / "kubectl"
             cli.write_text(FIXTURE)
             cli.chmod(0o755)
+            curl = tmp / "curl"
+            curl.write_text(FIXTURE)
+            curl.chmod(0o755)
             # A real sleep in these converged fixtures is an unexpected wait.
             sleeper = tmp / "sleep"
             sleeper.write_text(
@@ -257,6 +280,9 @@ class CassandraGateTests(unittest.TestCase):
         result, calls, state = self.run_gate(mode="backup")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(state["snapshots"], [["temporal-before-31119-v1"]] * 3)
+        self.assertEqual(
+            sum(c[-3:] == ["sync", "-f", "/var/lib/cassandra"] for c in calls), 3
+        )
         self.assertFalse(any(c[0] == "delete" or "drain" in c for c in calls))
 
     def test_rehearsal_verification_requires_native_backup_and_live_cql_controls(self):
@@ -331,7 +357,7 @@ class CassandraGateTests(unittest.TestCase):
                 env={
                     "PATH": directory,
                     "EXPECTED_VERSION": "3.11.19",
-                    "REHEARSAL_PHASE": "target",
+                    "REHEARSAL_PHASE": "restore",
                     "GENERATION": "31119-v4",
                 },
                 text=True,
@@ -360,6 +386,426 @@ class CassandraGateTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("requires a bundled Python interpreter", result.stderr)
 
+    def native_snapshot_fixture(self, directory):
+        script = (
+            ROOT / "argocd/applications/temporal/upgrade/restore-native-snapshot.py"
+        )
+        spec = importlib.util.spec_from_file_location("restore_snapshot", script)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        root = Path(directory)
+        source, target, proof = (root / name for name in ("source", "target", "proof"))
+        for path in (source, target, proof):
+            path.mkdir()
+        for number, (keyspace, table) in enumerate(
+            [
+                ("system", "local"),
+                ("system_schema", "keyspaces"),
+                ("system_schema", "tables"),
+                ("temporal", "tasks"),
+            ]
+        ):
+            snapshot = (
+                source
+                / "data"
+                / keyspace
+                / f"{table}-{number:032x}"
+                / "snapshots"
+                / "temporal-before-31119-v5"
+            )
+            snapshot.mkdir(parents=True)
+            data = ("immutable snapshot fixture " + table).encode()
+            (snapshot / "md-1-big-Data.db").write_bytes(data)
+            (snapshot / "md-1-big-Digest.crc32").write_text(
+                str(zlib.crc32(data) & 0xFFFFFFFF)
+            )
+            (snapshot / "md-1-big-Statistics.db").write_bytes(b"metadata fixture")
+            (snapshot / "md-1-big-Index.db").write_bytes(b"index fixture")
+            (snapshot / "md-1-big-TOC.txt").write_text(
+                "Data.db\nDigest.crc32\nStatistics.db\nIndex.db\nTOC.txt\n"
+            )
+            (snapshot / "manifest.json").write_text(
+                json.dumps({"files": ["md-1-big-Data.db"]})
+            )
+            (snapshot.parents[1] / "md-2-big-Data.db").write_bytes(
+                b"later live file must never be restored"
+            )
+        return module, source, target, proof
+
+    def test_native_restore_excludes_live_files_and_preserves_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            module, source, target, proof = self.native_snapshot_fixture(directory)
+            original = {
+                str(p.relative_to(source)): p.read_bytes()
+                for p in source.rglob("*")
+                if p.is_file()
+            }
+            result = module.restore(
+                str(source),
+                str(target),
+                "31119-v5",
+                str(proof),
+                expected_temporal_tables=1,
+            )
+            self.assertEqual(result["tables"], 4)
+            self.assertEqual(result["components"], 20)
+            self.assertEqual(
+                (proof / "native-snapshot-generation").read_text().strip(), "31119-v5"
+            )
+            self.assertFalse(list(target.rglob("md-2-big-Data.db")))
+            self.assertFalse(list(target.rglob("commitlog*")))
+            self.assertEqual(
+                original,
+                {
+                    str(p.relative_to(source)): p.read_bytes()
+                    for p in source.rglob("*")
+                    if p.is_file()
+                },
+            )
+            for copied in (target / "data").rglob("md-1-big-Data.db"):
+                source_file = (
+                    source
+                    / copied.relative_to(target).parent
+                    / "snapshots"
+                    / "temporal-before-31119-v5"
+                    / copied.name
+                )
+                self.assertEqual(copied.read_bytes(), source_file.read_bytes())
+
+    def test_native_restore_preserves_legacy_case_sensitive_system_table(self):
+        with tempfile.TemporaryDirectory() as directory:
+            module, source, target, proof = self.native_snapshot_fixture(directory)
+            table = next((source / "data" / "system").glob("local-*"))
+            legacy = table.with_name("IndexInfo-9f5c6374d48532299a0a5094af9ad1e3")
+            shutil.copytree(table, legacy)
+            result = module.restore(
+                str(source),
+                str(target),
+                "31119-v5",
+                str(proof),
+                expected_temporal_tables=1,
+            )
+            self.assertEqual(result["tables"], 5)
+            self.assertEqual(result["components"], 25)
+            copied = target / "data" / "system" / legacy.name / "md-1-big-Data.db"
+            self.assertEqual(
+                copied.read_bytes(),
+                (
+                    legacy / "snapshots" / "temporal-before-31119-v5" / copied.name
+                ).read_bytes(),
+            )
+
+    def test_native_restore_preserves_base_and_indexes_when_manifest_names_index(self):
+        with tempfile.TemporaryDirectory() as directory:
+            module, source, target, proof = self.native_snapshot_fixture(directory)
+            table = next((source / "data" / "temporal").iterdir())
+            snapshot = table / "snapshots" / "temporal-before-31119-v5"
+            for index in (".cm_lastheartbeat_idx", ".cm_sessionstart_idx"):
+                folder = snapshot / index
+                folder.mkdir()
+                for component in snapshot.glob("md-1-big-*"):
+                    shutil.copyfile(
+                        component, folder / component.name.replace("md-1-", "md-2-")
+                    )
+                (folder / "md-2-big-TOC.txt").write_text(
+                    (snapshot / "md-1-big-TOC.txt").read_text()
+                )
+            (snapshot / "manifest.json").write_text(
+                json.dumps({"files": ["md-2-big-Data.db"]})
+            )
+            result = module.restore(
+                str(source),
+                str(target),
+                "31119-v5",
+                str(proof),
+                expected_temporal_tables=1,
+            )
+            self.assertEqual(result["secondaryIndexes"], 2)
+            self.assertEqual(result["components"], 30)
+            restored = target / "data" / "temporal" / table.name
+            self.assertTrue((restored / "md-1-big-Data.db").exists())
+            for index in (".cm_lastheartbeat_idx", ".cm_sessionstart_idx"):
+                self.assertEqual(
+                    (restored / index / "md-2-big-Data.db").read_bytes(),
+                    (snapshot / index / "md-2-big-Data.db").read_bytes(),
+                )
+
+    def native_ring_module(self):
+        spec = importlib.util.spec_from_file_location(
+            "native_ring",
+            ROOT / "argocd/applications/temporal/upgrade/verify-cassandra-ring.py",
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_native_ring_digest_preserves_token_identity_across_ordering(self):
+        module = self.native_ring_module()
+        row = {
+            "host_id": "49cbb919-5b4c-4489-bab3-ec01a67297fa",
+            "tokens": [str(x) for x in range(-128, 128)],
+        }
+        expected = module.ring_digest([json.dumps(row)])
+        row["tokens"].reverse()
+        self.assertEqual(module.ring_digest([json.dumps(row)]), expected)
+        row["tokens"][0] = "1000"
+        self.assertNotEqual(module.ring_digest([json.dumps(row)]), expected)
+
+    def test_native_ring_rejects_changed_host_count_and_duplicate_tokens(self):
+        module = self.native_ring_module()
+        for failure in ("host", "count", "duplicate", "overflow", "empty"):
+            with self.subTest(failure=failure):
+                row = {
+                    "host_id": "49cbb919-5b4c-4489-bab3-ec01a67297fa",
+                    "tokens": [str(x) for x in range(256)],
+                }
+                if failure == "host":
+                    row["host_id"] = "another-host"
+                elif failure == "count":
+                    row["tokens"] = row["tokens"][:16]
+                elif failure == "duplicate":
+                    row["tokens"][0] = row["tokens"][1]
+                elif failure == "overflow":
+                    row["tokens"][0] = str(2**63)
+                with self.assertRaises(ValueError):
+                    module.ring_digest([] if failure == "empty" else [json.dumps(row)])
+
+    def relative_index_fixture(self, directory):
+        module, source, target, proof = self.native_snapshot_fixture(directory)
+        table = next((source / "data" / "temporal").iterdir())
+        snapshot = table / "snapshots" / "temporal-before-31119-v5"
+        files = ["md-1-big-Data.db"]
+        for index in (".cm_lastheartbeat_idx", ".cm_sessionstart_idx"):
+            folder = snapshot / index
+            folder.mkdir()
+            for component in snapshot.glob("md-1-big-*"):
+                shutil.copyfile(component, folder / component.name)
+            files.append(index + "/md-1-big-Data.db")
+        (snapshot / "manifest.json").write_text(json.dumps({"files": files}))
+        return module, source, target, proof, snapshot, files
+
+    def test_native_restore_supports_31119_relative_index_manifest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            module, source, target, proof, snapshot, files = (
+                self.relative_index_fixture(directory)
+            )
+            result = module.restore(
+                str(source),
+                str(target),
+                "31119-v5",
+                str(proof),
+                expected_temporal_tables=1,
+                source_version="3.11.19",
+            )
+            self.assertEqual(result["components"], 30)
+            self.assertEqual(result["secondaryIndexes"], 2)
+            self.assertEqual(result["sourceVersion"], "3.11.19")
+            table = snapshot.parents[1].name
+            for file in files:
+                self.assertEqual(
+                    (target / "data" / "temporal" / table / file).read_bytes(),
+                    (snapshot / file).read_bytes(),
+                )
+
+    def test_relative_manifest_rejects_missing_extra_duplicate_and_unsafe_paths(self):
+        for failure in (
+            "missing_index",
+            "unlisted_base",
+            "duplicate",
+            "traversal",
+            "absolute",
+            "nested",
+            "unknown_index",
+            "legacy_version",
+        ):
+            with (
+                self.subTest(failure=failure),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                module, source, target, proof, snapshot, files = (
+                    self.relative_index_fixture(directory)
+                )
+                if failure == "missing_index":
+                    files.pop()
+                elif failure == "unlisted_base":
+                    files.remove("md-1-big-Data.db")
+                elif failure == "duplicate":
+                    files.append(files[0])
+                elif failure == "traversal":
+                    files.append(".cm_sessionstart_idx/../md-1-big-Data.db")
+                elif failure == "absolute":
+                    files.append("/md-1-big-Data.db")
+                elif failure == "nested":
+                    files.append(".cm_sessionstart_idx/.nested/md-1-big-Data.db")
+                elif failure == "unknown_index":
+                    files.append(".other/md-1-big-Data.db")
+                (snapshot / "manifest.json").write_text(json.dumps({"files": files}))
+                with self.assertRaises(ValueError):
+                    module.restore(
+                        str(source),
+                        str(target),
+                        "31119-v5",
+                        str(proof),
+                        expected_temporal_tables=1,
+                        source_version="3.11.5"
+                        if failure == "legacy_version"
+                        else "3.11.19",
+                    )
+                self.assertFalse((target / "data").exists())
+
+    def test_native_restore_rejects_manifest_without_matching_native_group(self):
+        with tempfile.TemporaryDirectory() as directory:
+            module, source, target, proof = self.native_snapshot_fixture(directory)
+            next(source.rglob("manifest.json")).write_text(
+                json.dumps({"files": ["md-999-big-Data.db"]})
+            )
+            with self.assertRaisesRegex(ValueError, "manifest does not match"):
+                module.restore(
+                    str(source),
+                    str(target),
+                    "31119-v5",
+                    str(proof),
+                    expected_temporal_tables=1,
+                )
+            self.assertFalse((target / "data").exists())
+
+    def test_native_restore_rejects_unknown_or_nested_index_directories(self):
+        for directory_name in ("unexpected", ".valid/nested"):
+            with (
+                self.subTest(directory=directory_name),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                module, source, target, proof = self.native_snapshot_fixture(directory)
+                snapshot = next(source.rglob("manifest.json")).parent
+                (snapshot / directory_name).mkdir(parents=True)
+                with self.assertRaises(ValueError):
+                    module.restore(
+                        str(source),
+                        str(target),
+                        "31119-v5",
+                        str(proof),
+                        expected_temporal_tables=1,
+                    )
+                self.assertFalse((target / "data").exists())
+
+    def test_native_restore_rejects_unlisted_extra_snapshot_sstable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            module, source, target, proof = self.native_snapshot_fixture(directory)
+            snapshot = next(source.rglob("manifest.json")).parent
+            for component in snapshot.glob("md-1-big-*"):
+                shutil.copyfile(
+                    component, snapshot / component.name.replace("md-1-", "md-2-")
+                )
+            with self.assertRaisesRegex(ValueError, "manifest does not match"):
+                module.restore(
+                    str(source),
+                    str(target),
+                    "31119-v5",
+                    str(proof),
+                    expected_temporal_tables=1,
+                )
+            self.assertFalse((target / "data").exists())
+
+    def test_native_restore_rejects_bad_snapshot_checksum(self):
+        with tempfile.TemporaryDirectory() as directory:
+            module, source, target, proof = self.native_snapshot_fixture(directory)
+            next(source.rglob("snapshots/*/md-1-big-Data.db")).write_bytes(
+                b"corrupted snapshot fixture"
+            )
+            with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+                module.restore(
+                    str(source),
+                    str(target),
+                    "31119-v5",
+                    str(proof),
+                    expected_temporal_tables=1,
+                )
+            self.assertFalse((proof / "native-snapshot-generation").exists())
+
+    def test_native_restore_rejects_missing_components_before_writing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            module, source, target, proof = self.native_snapshot_fixture(directory)
+            next(source.rglob("snapshots/*/md-1-big-Index.db")).unlink()
+            with self.assertRaises(OSError):
+                module.restore(
+                    str(source),
+                    str(target),
+                    "31119-v5",
+                    str(proof),
+                    expected_temporal_tables=1,
+                )
+            self.assertFalse((target / "data").exists())
+
+    def test_native_restore_rejects_manifest_traversal_and_symlinks(self):
+        for failure in ("manifest", "component", "symlink"):
+            with (
+                self.subTest(failure=failure),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                module, source, target, proof = self.native_snapshot_fixture(directory)
+                manifest = next(source.rglob("manifest.json"))
+                if failure == "manifest":
+                    manifest.write_text(json.dumps({"files": ["../md-1-big-Data.db"]}))
+                elif failure == "component":
+                    (manifest.parent / "md-1-big-TOC.txt").write_text(
+                        "Data.db\nDigest.crc32\nStatistics.db\nIndex.db\nTOC.txt\n../escape.db\n"
+                    )
+                else:
+                    data = manifest.parent / "md-1-big-Data.db"
+                    data.unlink()
+                    data.symlink_to(source / "outside")
+                    (source / "outside").write_bytes(b"must not follow")
+                with self.assertRaises(ValueError):
+                    module.restore(
+                        str(source),
+                        str(target),
+                        "31119-v5",
+                        str(proof),
+                        expected_temporal_tables=1,
+                    )
+                self.assertFalse((target / "data").exists())
+
+    def test_native_restore_refuses_existing_or_overlapping_data(self):
+        with tempfile.TemporaryDirectory() as directory:
+            module, source, target, proof = self.native_snapshot_fixture(directory)
+            with self.assertRaisesRegex(ValueError, "separate"):
+                module.restore(
+                    str(source),
+                    str(source),
+                    "31119-v5",
+                    str(proof),
+                    expected_temporal_tables=1,
+                )
+            (target / "data").mkdir()
+            sentinel = target / "data" / "preserve"
+            sentinel.write_text("existing data")
+            with self.assertRaisesRegex(ValueError, "empty destination"):
+                module.restore(
+                    str(source),
+                    str(target),
+                    "31119-v5",
+                    str(proof),
+                    expected_temporal_tables=1,
+                )
+            self.assertEqual(sentinel.read_text(), "existing data")
+
+    def test_native_restore_requires_expected_schema_and_table_set(self):
+        with tempfile.TemporaryDirectory() as directory:
+            module, source, target, proof = self.native_snapshot_fixture(directory)
+            with self.assertRaisesRegex(ValueError, "expected Temporal tables"):
+                module.restore(str(source), str(target), "31119-v5", str(proof))
+            schema = next((source / "data" / "system_schema").glob("tables-*"))
+            schema.rename(schema.with_name("different-" + "a" * 32))
+            with self.assertRaisesRegex(ValueError, "cluster identity or schema"):
+                module.restore(
+                    str(source),
+                    str(target),
+                    "31119-v5",
+                    str(proof),
+                    expected_temporal_tables=1,
+                )
+            self.assertFalse((target / "data").exists())
+
     def test_namespace_hash_ignores_query_formatting_and_row_order(self):
         script = ROOT / "argocd/applications/temporal/upgrade/canonicalize-cql.py"
 
@@ -376,6 +822,142 @@ class CassandraGateTests(unittest.TestCase):
         self.assertEqual(first.stdout, second.stdout)
         self.assertNotEqual(hash_rows("(0 rows)\n").returncode, 0)
         self.assertNotEqual(hash_rows("{malformed}\n").returncode, 0)
+
+
+class CassandraDeleteWireTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.directory = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.directory.cleanup)
+        cls.account = Path(cls.directory.name)
+        cls.cert = cls.account / "ca.crt"
+        cls.key = cls.account / "server.key"
+        (cls.account / "token").write_text("fixture-token")
+        subprocess.run(
+            [
+                "openssl",
+                "req",
+                "-x509",
+                "-newkey",
+                "rsa:2048",
+                "-nodes",
+                "-keyout",
+                str(cls.key),
+                "-out",
+                str(cls.cert),
+                "-days",
+                "1",
+                "-subj",
+                "/CN=127.0.0.1",
+                "-addext",
+                "subjectAltName=IP:127.0.0.1",
+            ],
+            check=True,
+            capture_output=True,
+        )
+
+    @contextmanager
+    def server(self, status):
+        requests = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_DELETE(self):
+                length = int(self.headers.get("Content-Length", "0"))
+                requests.append(
+                    {
+                        "path": self.path,
+                        "authorization": self.headers.get("Authorization"),
+                        "contentType": self.headers.get("Content-Type"),
+                        "body": json.loads(self.rfile.read(length)),
+                    }
+                )
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"kind":"Status","message":"fixture"}')
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(self.cert, self.key)
+        server.socket = context.wrap_socket(server.socket, server_side=True)
+        thread = threading.Thread(
+            target=server.serve_forever, kwargs={"poll_interval": 0.05}
+        )
+        thread.start()
+        try:
+            yield server.server_port, requests
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+
+    def request(self, port, ca_directory=None):
+        return subprocess.run(
+            [
+                "/bin/bash",
+                "-c",
+                'source "$1"; delete_node 2 "$2" 101',
+                "wire-test",
+                str(SCRIPT),
+                "cccccccc-cccc-cccc-cccc-000000000002",
+            ],
+            env={
+                **os.environ,
+                "KUBERNETES_SERVICE_HOST": "127.0.0.1",
+                "KUBERNETES_SERVICE_PORT": str(port),
+                "SERVICE_ACCOUNT_DIRECTORY": str(ca_directory or self.account),
+            },
+            text=True,
+            capture_output=True,
+            timeout=35,
+        )
+
+    def test_actual_curl_sends_conditional_body_and_projected_auth_over_verified_tls(
+        self,
+    ):
+        with self.server(200) as (port, requests):
+            result = self.request(port)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            requests,
+            [
+                {
+                    "path": "/api/v1/namespaces/temporal/pods/temporal-cassandra-2",
+                    "authorization": "Bearer fixture-token",
+                    "contentType": "application/json",
+                    "body": {
+                        "apiVersion": "v1",
+                        "kind": "DeleteOptions",
+                        "gracePeriodSeconds": 300,
+                        "preconditions": {
+                            "uid": "cccccccc-cccc-cccc-cccc-000000000002",
+                            "resourceVersion": "101",
+                        },
+                    },
+                }
+            ],
+        )
+        self.assertNotIn("fixture-token", result.stdout + result.stderr)
+
+    def test_actual_curl_conflict_fails_without_retrying_delete(self):
+        with self.server(409) as (port, requests):
+            result = self.request(port)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("409", result.stderr)
+        self.assertEqual(len(requests), 1)
+
+    def test_actual_curl_rejects_invalid_ca_before_sending_request(self):
+        with tempfile.TemporaryDirectory() as directory:
+            account = Path(directory)
+            (account / "token").write_text("fixture-token")
+            (account / "ca.crt").write_text("invalid certificate")
+            with self.server(200) as (port, requests):
+                result = self.request(port, account)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(requests, [])
 
 
 if __name__ == "__main__":
