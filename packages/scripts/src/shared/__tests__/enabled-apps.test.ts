@@ -458,11 +458,16 @@ describe('enabled app inventory', () => {
     })
   })
 
-  it('pins the Temporal patch wave to immutable multi-architecture images', () => {
+  it('pins the Temporal upgrade wave to immutable multi-architecture images', () => {
     expect(temporalKustomization.helmCharts?.find((chart) => chart.name === 'temporal')).toMatchObject({
       version: '1.6.0',
     })
     expect(temporalKustomization.images).toEqual([
+      {
+        name: 'docker.elastic.co/elasticsearch/elasticsearch',
+        newTag: '8.19.21',
+        digest: 'sha256:cbf5cd6cfe5532a9c02d510c66d238bf329cd51fe3d57170a2a880aca7d47419',
+      },
       {
         name: 'mirror.gcr.io/temporalio/server',
         newName: 'mirror.gcr.io/temporalio/server',
@@ -478,8 +483,8 @@ describe('enabled app inventory', () => {
       {
         name: 'mirror.gcr.io/temporalio/ui',
         newName: 'mirror.gcr.io/temporalio/ui',
-        newTag: '2.52.0',
-        digest: 'sha256:fc47cd8202c98ed868745fd9f2f011585232676d08da621b9a6d7bc4653c17aa',
+        newTag: '2.53.3',
+        digest: 'sha256:eef301146e60fad34b47adaecfae4149016e34b2d44ba94fca5fd8e5441f182a',
       },
     ])
   })

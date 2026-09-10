@@ -101,9 +101,9 @@ spec:
             - name: UI_PORT
               value: "8080"
             - name: JANGAR_SOURCE_HEAD_SHA
-              value: 744cbcd1f94faf27ccf9b1638bca1ccb8a61019d
+              value: d316ac9f8e72d377f379584a7d5fa03586c4dc8d
             - name: JANGAR_GITOPS_REVISION
-              value: 744cbcd1f94faf27ccf9b1638bca1ccb8a61019d
+              value: d316ac9f8e72d377f379584a7d5fa03586c4dc8d
             - name: JANGAR_HTTP_IDLE_TIMEOUT_SECONDS
               value: "120"
             - name: JANGAR_CONTROL_PLANE_STATUS_CACHE_TTL_MS
@@ -403,15 +403,15 @@ spec:
             - name: ATLAS_CODE_SEARCH_STATEMENT_TIMEOUT_MS
               value: "5000"
             - name: JANGAR_SOURCE_CI_RUN_ID
-              value: "34351219568"
+              value: "34432575634"
             - name: JANGAR_SOURCE_CI_CONCLUSION
               value: success
             - name: JANGAR_MANIFEST_IMAGE_DIGEST
-              value: sha256:ebcd989e8d519fe0ba6e5ac89e0dd6ead0f5c0fc8cc4245893fcbcbde735e3f0
+              value: sha256:c8d663e94d351874142cd06fa6b51a52ad3709aacdfb772285d1166cb45d61e0
             - name: JANGAR_SERVING_BUILD_COMMIT
-              value: 744cbcd1f94faf27ccf9b1638bca1ccb8a61019d
+              value: d316ac9f8e72d377f379584a7d5fa03586c4dc8d
             - name: JANGAR_SERVING_IMAGE_DIGEST
-              value: sha256:ebcd989e8d519fe0ba6e5ac89e0dd6ead0f5c0fc8cc4245893fcbcbde735e3f0
+              value: sha256:c8d663e94d351874142cd06fa6b51a52ad3709aacdfb772285d1166cb45d61e0
           ports:
             - name: http
               containerPort: 8080
