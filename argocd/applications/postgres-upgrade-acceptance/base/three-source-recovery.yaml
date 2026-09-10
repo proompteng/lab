@@ -92,6 +92,7 @@ spec:
   volumeSnapshotRef:
     name: buzz-pg18-source-snapshot
     namespace: postgres-upgrade-acceptance
+    uid: 08f4a8f3-7705-4ac1-a113-1d8abf73513d
   volumeSnapshotClassName: rook-ceph-block
 ---
 apiVersion: snapshot.storage.k8s.io/v1
@@ -372,6 +373,7 @@ spec:
   volumeSnapshotRef:
     name: jangar-pg18-source-snapshot
     namespace: postgres-upgrade-acceptance
+    uid: 735e63ea-d8a1-4f98-a5e9-b114e1d999c2
   volumeSnapshotClassName: rook-ceph-block
 ---
 apiVersion: snapshot.storage.k8s.io/v1
@@ -661,6 +663,7 @@ spec:
   volumeSnapshotRef:
     name: torghut-pg18-source-snapshot
     namespace: postgres-upgrade-acceptance
+    uid: c81798ae-dd6f-440e-9466-d12ffc221163
   volumeSnapshotClassName: rook-ceph-block
 ---
 apiVersion: snapshot.storage.k8s.io/v1
