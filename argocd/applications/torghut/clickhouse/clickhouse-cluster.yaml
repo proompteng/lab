@@ -11,6 +11,16 @@ metadata:
 spec:
   configuration:
     files:
+      config.d/99-upgrade-compatibility.xml: |-
+        <yandex>
+          <merge_tree>
+            <serialization_info_version>basic</serialization_info_version>
+            <string_serialization_version>single_stream</string_serialization_version>
+            <propagate_types_serialization_versions_to_nested_types>false</propagate_types_serialization_versions_to_nested_types>
+            <object_serialization_version>v2</object_serialization_version>
+            <dynamic_serialization_version>v2</dynamic_serialization_version>
+          </merge_tree>
+        </yandex>
       config.d/99-prometheus.xml: |-
         <yandex>
           <prometheus>
@@ -75,7 +85,7 @@ spec:
         <yandex>
           <profiles>
             <default>
-              <compatibility>25.3</compatibility>
+              <compatibility>25.8</compatibility>
               <async_insert>0</async_insert>
               <output_format_json_quote_64bit_integers>1</output_format_json_quote_64bit_integers>
               <!-- Disable sampling profiler logs to keep system tables small. -->
@@ -86,7 +96,7 @@ spec:
           </profiles>
         </yandex>
     profiles:
-      bayn/compatibility: '25.3'
+      bayn/compatibility: '25.8'
       bayn/async_insert: 0
       bayn/output_format_json_quote_64bit_integers: 1
       bayn/readonly: 1
@@ -98,7 +108,7 @@ spec:
       # Watermark capture and paged snapshot reads may hit different replicas.
       # Refuse a stale replica instead of returning a partial quorum-confirmed prefix.
       bayn/select_sequential_consistency: 1
-      signal_publisher/compatibility: '25.3'
+      signal_publisher/compatibility: '25.8'
       signal_publisher/async_insert: 0
       signal_publisher/output_format_json_quote_64bit_integers: 1
       signal_publisher/max_execution_time: 120
@@ -111,7 +121,7 @@ spec:
       signal_publisher/insert_quorum_timeout: 60000
       signal_publisher/select_sequential_consistency: 1
       notebook/readonly: 1
-      notebook/compatibility: '25.3'
+      notebook/compatibility: '25.8'
       notebook/async_insert: 0
       notebook/output_format_json_quote_64bit_integers: 1
       notebook/max_execution_time: 30
@@ -220,7 +230,7 @@ spec:
                   topologyKey: kubernetes.io/hostname
           containers:
             - name: clickhouse
-              image: altinity/clickhouse-server:25.8.28.10001.altinitystable@sha256:5ad76ea89ca881043b76ddcf2bcf3813663060a03a04b39f5c8ad2ef1dea4b07
+              image: altinity/clickhouse-server:26.3.16.10001.altinitystable@sha256:8526a7742e6ef707dee68107876b18d45570b0448f284d3c785eb2d2e4417a5e
               resources:
                 requests:
                   cpu: 1
