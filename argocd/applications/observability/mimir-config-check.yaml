@@ -24,7 +24,7 @@ spec:
           type: RuntimeDefault
       initContainers:
       - name: verify-alertmanager
-        image: docker.io/grafana/mimir:3.2.0
+        image: docker.io/grafana/mimir:3.2.1
         args:
         - -config.file=/conf/mimir.yaml
         - -target=alertmanager
@@ -47,7 +47,7 @@ spec:
           mountPath: /conf
           readOnly: true
       - name: verify-compactor
-        image: docker.io/grafana/mimir:3.2.0
+        image: docker.io/grafana/mimir:3.2.1
         args:
         - -config.file=/conf/mimir.yaml
         - -target=compactor
@@ -56,7 +56,7 @@ spec:
         securityContext: *id002
         volumeMounts: *id003
       - name: verify-distributor
-        image: docker.io/grafana/mimir:3.2.0
+        image: docker.io/grafana/mimir:3.2.1
         args:
         - -config.file=/conf/mimir.yaml
         - -target=distributor
@@ -65,7 +65,7 @@ spec:
         securityContext: *id002
         volumeMounts: *id003
       - name: verify-ingester
-        image: docker.io/grafana/mimir:3.2.0
+        image: docker.io/grafana/mimir:3.2.1
         args:
         - -config.file=/conf/mimir.yaml
         - -target=ingester
@@ -74,7 +74,7 @@ spec:
         securityContext: *id002
         volumeMounts: *id003
       - name: verify-overrides-exporter
-        image: docker.io/grafana/mimir:3.2.0
+        image: docker.io/grafana/mimir:3.2.1
         args:
         - -config.file=/conf/mimir.yaml
         - -target=overrides-exporter
@@ -83,7 +83,7 @@ spec:
         securityContext: *id002
         volumeMounts: *id003
       - name: verify-querier
-        image: docker.io/grafana/mimir:3.2.0
+        image: docker.io/grafana/mimir:3.2.1
         args:
         - -config.file=/conf/mimir.yaml
         - -target=querier
@@ -92,7 +92,7 @@ spec:
         securityContext: *id002
         volumeMounts: *id003
       - name: verify-query-frontend
-        image: docker.io/grafana/mimir:3.2.0
+        image: docker.io/grafana/mimir:3.2.1
         args:
         - -config.file=/conf/mimir.yaml
         - -target=query-frontend
@@ -101,7 +101,7 @@ spec:
         securityContext: *id002
         volumeMounts: *id003
       - name: verify-query-scheduler
-        image: docker.io/grafana/mimir:3.2.0
+        image: docker.io/grafana/mimir:3.2.1
         args:
         - -config.file=/conf/mimir.yaml
         - -target=query-scheduler
@@ -110,7 +110,7 @@ spec:
         securityContext: *id002
         volumeMounts: *id003
       - name: verify-ruler
-        image: docker.io/grafana/mimir:3.2.0
+        image: docker.io/grafana/mimir:3.2.1
         args:
         - -config.file=/conf/mimir.yaml
         - -target=ruler
@@ -120,7 +120,7 @@ spec:
         volumeMounts: *id003
       containers:
       - name: verify-store-gateway
-        image: docker.io/grafana/mimir:3.2.0
+        image: docker.io/grafana/mimir:3.2.1
         args:
         - -config.file=/conf/mimir.yaml
         - -target=store-gateway
