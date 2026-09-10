@@ -1969,11 +1969,11 @@ spec:
               - key: spec.template.spec.containers.0.env.5.value
                 value: ${{ imageFrom(vars.imageRepo).Digest }}
               - key: spec.template.spec.containers.0.env.13.value
-                value: "${{ quote(toJSON({schemaVersion: outputs.bayn.lineage.schemaVersion, requestHash:
+                value: "${{ asJSON({schemaVersion: outputs.bayn.lineage.schemaVersion, requestHash:
                   outputs.bayn.lineage.requestHash, authoredActivation:
                   outputs.bayn.lineage.authoredActivation, activation: {sourceRevision:
                   commitFrom(vars.gitRepo).ID, imageRepository: vars.imageRepo, imageDigest:
-                  imageFrom(vars.imageRepo).Digest } })) }}"
+                  imageFrom(vars.imageRepo).Digest } }) }}"
         - uses: yaml-update
           config:
             path: ./out/argocd/applications/bayn/execution-controller.yaml
@@ -1983,11 +1983,11 @@ spec:
               - key: spec.template.spec.containers.0.env.2.value
                 value: ${{ imageFrom(vars.imageRepo).Digest }}
               - key: spec.template.spec.containers.0.env.9.value
-                value: "${{ quote(toJSON({schemaVersion: outputs.bayn.lineage.schemaVersion, requestHash:
+                value: "${{ asJSON({schemaVersion: outputs.bayn.lineage.schemaVersion, requestHash:
                   outputs.bayn.lineage.requestHash, authoredActivation:
                   outputs.bayn.lineage.authoredActivation, activation: {sourceRevision:
                   commitFrom(vars.gitRepo).ID, imageRepository: vars.imageRepo, imageDigest:
-                  imageFrom(vars.imageRepo).Digest } })) }}"
+                  imageFrom(vars.imageRepo).Digest } }) }}"
               - key: spec.template.spec.containers.0.image
                 value: ${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}
         - uses: yaml-update
@@ -1999,11 +1999,11 @@ spec:
               - key: spec.template.spec.containers.0.env.3.value
                 value: ${{ imageFrom(vars.imageRepo).Digest }}
               - key: spec.template.spec.containers.0.env.10.value
-                value: "${{ quote(toJSON({schemaVersion: outputs.bayn.lineage.schemaVersion, requestHash:
+                value: "${{ asJSON({schemaVersion: outputs.bayn.lineage.schemaVersion, requestHash:
                   outputs.bayn.lineage.requestHash, authoredActivation:
                   outputs.bayn.lineage.authoredActivation, activation: {sourceRevision:
                   commitFrom(vars.gitRepo).ID, imageRepository: vars.imageRepo, imageDigest:
-                  imageFrom(vars.imageRepo).Digest } })) }}"
+                  imageFrom(vars.imageRepo).Digest } }) }}"
               - key: spec.template.spec.containers.0.env.0.value
                 value: ${{ trimPrefix(imageFrom(vars.imageRepo).Digest, 'sha256:') }}
               - key: spec.template.spec.containers.0.image
