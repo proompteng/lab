@@ -54,13 +54,27 @@ test('allows the exact built source and later unrelated main commits', () => {
 })
 
 test.each([
+  '.github/PULL_REQUEST_TEMPLATE.md',
+  '.github/workflows/keeper-ci.yml',
+  'nix/images/keeper.nix',
+  'packages/scripts/src/keeper/build.ts',
+  'argocd/applications/torghut/service.yaml',
+])('allows an unrelated change to %s', (path) => {
+  commit(path)
+  expect(verify(source, source).status).toBe(0)
+})
+
+test.each([
   'services/bayn/runtime.ts',
   'packages/scripts/src/bayn/update-manifests.ts',
   'argocd/applications/bayn/deployment.yaml',
-  'argocd/applications/torghut/configmap.yaml',
+  'argocd/applications/torghut/clickhouse/clickhouse-cluster.yaml',
   'argocd/applicationsets/product.yaml',
   'nix/images/bayn.nix',
   '.github/workflows/bayn-release.yml',
+  '.github/actions/setup-nix-toolchain/action.yml',
+  '.github/workflows/nix-oci-build-common.yml',
+  'nix/images/bun-workspace-service.nix',
   'bun.lock',
   'services/keeper/package.json',
 ])('rejects a later change to %s', (path) => {

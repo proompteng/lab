@@ -14,11 +14,30 @@ git merge-base --is-ancestor "$source_sha" "$main_sha"
 # Bayn, its desired state, or shared build inputs still requires a new image.
 if ! git diff --quiet "$source_sha" "$main_sha" -- \
   services/bayn \
-  packages/scripts \
+  packages/scripts/src/bayn \
+  packages/scripts/src/shared/__tests__/bayn-cnpg-contract.test.ts \
   argocd/applications/bayn \
-  argocd/applications/torghut \
+  argocd/applications/torghut/clickhouse \
   argocd/applicationsets/product.yaml \
-  nix .github patches \
+  nix/images/bayn.nix \
+  nix/images/bayn-runtime-root.nix \
+  nix/images/bun-workspace-service.nix \
+  nix/images/bun-workspace-deps-source.nix \
+  nix/images/bun-workspace-deps-source.test.sh \
+  nix/packages.nix \
+  nix/cache-push.sh \
+  nix/ci-nix-oci-summary.sh \
+  nix/ci-run-timed.sh \
+  nix/oci-inspect-archive.sh \
+  nix/oci-push.sh \
+  nix/oci-release-contract.sh \
+  nix/verify-bayn-image-command.sh \
+  nix/verify-bayn-image-command.test.sh \
+  .github/actions/setup-nix-toolchain \
+  ':(glob).github/workflows/bayn-*.yml' \
+  .github/workflows/common-monorepo.yml \
+  .github/workflows/nix-oci-build-common.yml \
+  patches \
   flake.nix flake.lock bun.lock package.json ':(glob)**/package.json' \
   .npmrc bunfig.toml tsconfig.base.json; then
   echo 'Bayn source, configuration, or build inputs changed after this image was built' >&2
