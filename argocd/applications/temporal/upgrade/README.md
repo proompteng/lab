@@ -265,3 +265,65 @@ data/proof volumes; the partially converted v2 volume is never opened by an
 older engine. Existing completed Jobs retain their original script ConfigMaps.
 The serving Cassandra image and template remain unchanged in this preparation;
 the later production activation must also preserve `CASSANDRA_NUM_TOKENS=256`.
+
+
+## Elasticsearch 8.19.21 activation
+
+The exact 8.5.1 native S3 snapshot `before-81921-v5` restored successfully with
+all eight indices/global state in an isolated 8.5.1 engine, then upgraded in
+place to the pinned 8.19.21 image. All 832 accessible original documents,
+including 759 Temporal visibility documents, retained their source hashes.
+Every restored index retained its identity and field definitions. The reserved
+GeoIP index retained every immutable Lucene file checksum; its mapping metadata
+advanced to the exact upstream 8.19.21 descriptor (`version=8.12.0`, managed
+mapping version 1). Native deprecation logging added compatible ECS fields and
+one diagnostic document. Both engines reached green and stopped cleanly. The
+fixture had no network access or production credentials and used a read-only,
+checksum-verified copy of the frozen S3 repository.
+
+Activation takes a fresh `before-81921-v6` native snapshot before applying the
+new image. Its separate repository `temporal-s3-native-81921-v6` uses the sibling
+prefix `temporal-81921-v6` in the same verified bucket/client. The previously
+rehearsed `temporal-s3-native` repository remains frozen and untouched. The new
+snapshot Job runs at sync wave -5, before the StatefulSet at wave 0; any missing
+source node, wrong identity, native analysis issue or incomplete snapshot blocks
+the image rollout. It freezes the new repository after all-index/global-state
+snapshot acceptance. The serving StatefulSet retains its rolling-update policy,
+all three original PVCs, existing credentials and S3 configuration; the same
+pinned target image is used by its keystore init and serving container.
+
+After normal GitOps rollout, require all three original node IDs and PVC UIDs,
+the original cluster UUID, version 8.19.21 on every node, green health with no
+unassigned or moving shards, preserved Temporal visibility index identity and
+documents, and native Temporal history/query plus a completed fresh workflow.
+Keep all retained native snapshots. Elasticsearch data files are not safely
+downgraded after new-version writes; recovery uses a validated retained native
+snapshot in a separate compatible cluster before a reviewed cutover, accounting
+for writes after the recorded snapshot checkpoint.
+
+
+## Cassandra 4.1.12 activation
+
+Generation `4112-v3` completed its isolated native 3.11.19 restore and 4.1.12
+in-place rehearsal on 2026-09-10. Both engines verified the original host and
+all 256 token values, matching Temporal namespace and schema record hashes,
+extended SSTable verification, and clean shutdown. Production CQL probes were
+denied after positive controls from the backup verifier. Receipts remain on
+`temporal-cassandra-4112-v3-proof`.
+
+The activation preserves the existing `OnDelete` StatefulSet, all three original
+PVCs and host IDs, RF3, seeds, listener settings and resource configuration. It
+pins Cassandra 4.1.12 and explicitly preserves `CASSANDRA_NUM_TOKENS=256`.
+The wave-1 rollout Job reads the retained receipts without write access and
+requires their generation, target version and matching ring/record hashes.
+It then uses the maintained gate to drain and replace nodes 2, 1 and 0 one at
+a time, with graceful UID/resourceVersion-conditional deletion and all three
+original nodes healthy before advancing. Final schema agreement and serial
+`nodetool upgradesstables --jobs 1` complete this stage.
+
+Require live original ring/PVC/token identities and a successful Temporal
+workflow history/query before preparing the separate 5.0.9 stage. Do not place
+3.11 over upgraded 4.1 data files. Recovery uses retained native/CSI snapshots
+in a separate compatible cluster and a reviewed cutover, accounting for writes
+after the snapshot checkpoint. A failed rollout gate must be diagnosed before
+any subsequent node replacement; never force-delete storage or Pods.
