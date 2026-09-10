@@ -8,10 +8,10 @@ export LC_ALL=C
 [[ "$REHEARSAL_VERSION" =~ ^v[0-9]+_[0-9]+$ ]]
 [[ "$REPLICA" =~ ^[01]$ ]]
 [[ "$BACKUP_DIRECTORY" =~ ^upgrade-20260910-v1-replica-[01]$ ]]
-fixture="/fixture/v2/$REHEARSAL_VERSION"
-proof="/proof/v2/$REHEARSAL_VERSION"
+fixture="/fixture/v3/$REHEARSAL_VERSION"
+proof="/proof/v3/$REHEARSAL_VERSION"
 backup="/source/backups/$BACKUP_DIRECTORY"
-mkdir -p /fixture/v2 /proof/v2
+mkdir -p /fixture/v3 /proof/v3
 mkdir "$proof"
 mkdir "$fixture"
 mkdir -p "$fixture"/{data,tmp,user_files,access,keeper/log,keeper/snapshots}
@@ -63,6 +63,9 @@ keeper_pid=''
 cleanup() {
   result=$?
   trap - EXIT
+  if [[ "$result" != 0 ]]; then
+    tail -c 12000 "$proof/server.log" "$proof/keeper.log" >&2 || true
+  fi
   for child in "$server_pid" "$keeper_pid"; do
     if [[ -n "$child" ]] && kill -0 "$child" 2>/dev/null; then
       kill -TERM "$child"
@@ -81,6 +84,8 @@ cat > "$fixture/config.xml" <<EOF
   <path>$fixture/data/</path><tmp_path>$fixture/tmp/</tmp_path>
   <user_files_path>$fixture/user_files/</user_files_path><access_control_path>$fixture/access/</access_control_path>
   <listen_host>127.0.0.1</listen_host><tcp_port>9000</tcp_port><http_port>8123</http_port>
+  <interserver_http_host>127.0.0.1</interserver_http_host><interserver_http_port>9009</interserver_http_port>
+  <interserver_listen_host>127.0.0.1</interserver_listen_host>
   <max_server_memory_usage>4294967296</max_server_memory_usage>
   <background_pool_size>4</background_pool_size><background_schedule_pool_size>16</background_schedule_pool_size>
   <merge_tree><number_of_free_entries_in_pool_to_execute_mutation>2</number_of_free_entries_in_pool_to_execute_mutation>
@@ -132,6 +137,17 @@ while IFS=$'\t' read -r database table engine; do
     sql "SYSTEM STOP TTL MERGES \`$database\`.\`$table\`"
   fi
 done < "$proof/tables.tsv"
+replicas_ready=false
+for ((attempt=0; attempt<90; attempt++)); do
+  kill -0 "$server_pid"
+  kill -0 "$keeper_pid"
+  if [[ "$(sql "SELECT count()=11 AND countIf(is_readonly OR is_session_expired)=0 FROM system.replicas" TSVRaw)" == 1 ]]; then
+    replicas_ready=true
+    break
+  fi
+  sleep 2
+done
+[[ "$replicas_ready" == true ]]
 sql "$restore" > "$proof/data-restore.jsonl"
 sql "SELECT database,name,engine,engine_full,uuid FROM system.tables WHERE database IN ('default','signal','torghut') ORDER BY database,name" > "$proof/tables.jsonl"
 sql "SELECT database,table,name,type,default_kind,default_expression,compression_codec FROM system.columns WHERE database IN ('default','signal','torghut') ORDER BY database,table,position" > "$proof/columns.jsonl"

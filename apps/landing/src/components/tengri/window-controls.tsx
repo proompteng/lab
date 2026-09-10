@@ -22,13 +22,13 @@ export function WindowControls({
     <div
       role="group"
       aria-label="Window controls"
-      className="group/controls pointer-events-auto relative z-30 flex items-center"
+      className="group/controls pointer-events-auto relative z-30 flex translate-x-px items-center"
     >
       <WindowControlButton active={active} kind="close" label={`Close ${title}`} onClick={onClose}>
-        <span className="relative size-2 opacity-0 before:absolute before:inset-x-0 before:top-1/2 before:h-px before:-translate-y-1/2 before:rotate-45 before:bg-current after:absolute after:inset-x-0 after:top-1/2 after:h-px after:-translate-y-1/2 after:-rotate-45 after:bg-current group-hover/controls:opacity-100 group-focus-visible:opacity-100" />
+        <span className="relative size-2 opacity-0 before:absolute before:inset-x-0 before:top-1/2 before:h-0.5 before:-translate-y-1/2 before:rotate-45 before:rounded-full before:bg-current after:absolute after:inset-x-0 after:top-1/2 after:h-0.5 after:-translate-y-1/2 after:-rotate-45 after:rounded-full after:bg-current group-hover/controls:opacity-100 group-focus-visible:opacity-100" />
       </WindowControlButton>
       <WindowControlButton active={active} kind="minimize" label={`Minimize ${title}`} onClick={onMinimize}>
-        <span className="h-px w-2 bg-current opacity-0 group-hover/controls:opacity-100 group-focus-visible:opacity-100" />
+        <span className="h-0.5 w-2 rounded-full bg-current opacity-0 group-hover/controls:opacity-100 group-focus-visible:opacity-100" />
       </WindowControlButton>
       <WindowControlButton
         active={active}
@@ -38,10 +38,10 @@ export function WindowControls({
       >
         <span
           className={cn(
-            'relative size-[7px] opacity-0 before:absolute before:size-[3px] before:bg-current before:[clip-path:polygon(0_0,100%_0,0_100%)] after:absolute after:size-[3px] after:bg-current after:[clip-path:polygon(100%_0,100%_100%,0_100%)] group-hover/controls:opacity-100 group-focus-visible:opacity-100',
+            'relative opacity-0 before:absolute before:bg-current before:[clip-path:polygon(0_0,100%_0,0_100%)] after:absolute after:bg-current after:[clip-path:polygon(100%_0,100%_100%,0_100%)] group-hover/controls:opacity-100 group-focus-visible:opacity-100',
             maximized
-              ? 'before:right-0 before:bottom-0 after:top-0 after:left-0'
-              : 'before:top-0 before:left-0 after:right-0 after:bottom-0',
+              ? 'size-[7px] before:right-0 before:bottom-0 before:size-[3px] after:top-0 after:left-0 after:size-[3px]'
+              : 'size-1.5 before:top-0 before:left-0 before:size-[5px] before:rounded-tl-[0.75px] after:right-0 after:bottom-0 after:size-[5px] after:rounded-br-[0.75px]',
           )}
         />
       </WindowControlButton>
@@ -49,10 +49,22 @@ export function WindowControls({
   )
 }
 
-const controlColors = {
-  close: { active: 'bg-[#ff5f57]', inactive: 'bg-zinc-500/65 group-hover/controls:bg-[#ff5f57]' },
-  minimize: { active: 'bg-[#febc2e]', inactive: 'bg-zinc-500/65 group-hover/controls:bg-[#febc2e]' },
-  maximize: { active: 'bg-[#28c840]', inactive: 'bg-zinc-500/65 group-hover/controls:bg-[#28c840]' },
+const controlAppearance = {
+  close: {
+    active: 'bg-[#ff5c60]',
+    inactive: 'bg-zinc-500/65 group-hover/controls:bg-[#ff5c60]',
+    position: 'translate-x-0.5',
+  },
+  minimize: {
+    active: 'bg-[#fac800]',
+    inactive: 'bg-zinc-500/65 group-hover/controls:bg-[#fac800]',
+    position: 'translate-x-px',
+  },
+  maximize: {
+    active: 'bg-[#35c759]',
+    inactive: 'bg-zinc-500/65 group-hover/controls:bg-[#35c759]',
+    position: '',
+  },
 }
 
 function WindowControlButton({
@@ -64,12 +76,12 @@ function WindowControlButton({
 }: {
   active: boolean
   children: ReactNode
-  kind: keyof typeof controlColors
+  kind: keyof typeof controlAppearance
   label: string
   onClick: (() => void) | undefined
 }) {
   const disabled = !onClick
-  const colors = controlColors[kind]
+  const appearance = controlAppearance[kind]
   return (
     <button
       type="button"
@@ -82,8 +94,9 @@ function WindowControlButton({
       <span
         aria-hidden="true"
         className={cn(
-          'grid size-3 place-items-center rounded-full border border-black/15 text-black/60',
-          disabled ? 'bg-white/16' : [active ? colors.active : colors.inactive, 'group-active:brightness-90'],
+          'grid size-3.5 place-items-center rounded-full text-black/40',
+          appearance.position,
+          disabled ? 'bg-white/16' : [active ? appearance.active : appearance.inactive, 'group-active:brightness-90'],
         )}
       >
         {disabled ? null : children}
