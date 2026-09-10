@@ -127,6 +127,13 @@ and any future cycle with durable execution work still prevent a sufficient rece
 
 ## Historical intraday replay
 
+The intraday protocol admits quote and trade evidence up to 10 seconds old at the observation time. The previous
+2-second budget was shorter than the existing Kafka/Flink/ClickHouse delivery path: September 10 live samples showed
+SPY quote ages of 1.3–4.6 seconds despite roughly 40 milliseconds from provider event to websocket receipt. The
+10-second bound gives the archive time to publish usable evidence for the 30-minute signal. Future timestamps,
+evidence beyond the bound, missing bars, spread and signal requirements, and quote-bound IOC prices still block
+execution. Changing this bound changes strategy identity and requires normal activation; it is not profitability proof.
+
 `bayn-intraday-replay --input <path>` evaluates finalized sessions from an exported Alpaca calendar against the retained
 intraday archive. It reads ClickHouse using `BAYN_CLICKHOUSE_URL`, `BAYN_CLICKHOUSE_USERNAME`, and
 `BAYN_CLICKHOUSE_PASSWORD`. By default, `archiveAvailability: "recorded-reader"` also requires the configured PostgreSQL
