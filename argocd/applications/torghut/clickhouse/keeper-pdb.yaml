@@ -12,5 +12,5 @@ spec:
   maxUnavailable: 0
   selector:
     matchLabels:
-      clickhouse.altinity.com/chk: torghut-keeper
+      clickhouse-keeper.altinity.com/chk: torghut-keeper
 

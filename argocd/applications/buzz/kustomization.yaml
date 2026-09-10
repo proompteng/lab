@@ -8,6 +8,7 @@ resources:
   - secret-store.yaml
   - redis-auth-externalsecret.yaml
   - postgres-objectstore.yaml
+  - postgres-upgrade-final-backup.yaml
   - postgres-cluster.yaml
   - postgres-scheduled-backup.yaml
   - redis-config.yaml
@@ -32,8 +33,8 @@ helmCharts:
 images:
   - name: ghcr.io/block/buzz
     newName: registry.ide-newton.ts.net/lab/buzz
-    newTag: kargo-sha-d316ac9f8e72d377f379584a7d5fa03586c4dc8d
-    digest: sha256:46085e111bad779f5f2af9762af592a2abb5221eff2b239e466004e0b61dc3f9
+    newTag: kargo-sha-3ac124556625b26bc4a200f8b6062656a19265ce
+    digest: sha256:c63c9284e317b0033cb5a63a4434277c0864dcdec0cdaa579909351e615d7625
 
 patches:
   - target:
