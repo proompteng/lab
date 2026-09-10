@@ -58,3 +58,24 @@ Jobs, native logs, snapshot handles and all original claims. Do not force-delete
 Pods, PVCs, PVs or VolumeAttachments. Restore from the retained native backup into
 separate recovery storage when necessary, and account for writes after the
 checkpoint. Never independently rewind Keeper behind the serving ClickHouse data.
+
+## 26.3 serialization gate
+
+The final image retains `compatibility=25.8` in every application profile and
+explicitly sets the MergeTree defaults `serialization_info_version=basic`,
+`string_serialization_version=single_stream`,
+`propagate_types_serialization_versions_to_nested_types=false`,
+`object_serialization_version=v2`, and `dynamic_serialization_version=v2`.
+These match the exact Altinity 26.3 source's reversed compatibility history for
+25.8. They preserve the older part representation during the mixed-version
+rollout; keep them in place after acceptance. No existing column uses deprecated
+Object types or removed codecs, and no existing table uses LIVE VIEW.
+
+Before the final activation, both serving replicas passed 25.8 native checks,
+original CHI/PVC/table identities, application logins and historical reads under
+all five users, effective compatibility settings, and a quorum-two replicated
+write/read canary. The committed 26.3 checkpoint file adopts a fresh native
+backup and ready CSI snapshot for each original 25.8 claim. Retain these and the
+25.3 checkpoints. Verify the five effective MergeTree settings, both native
+versions, the same data identities and grants, and application/replication
+behavior again at 26.3 before completing the upgrade.
