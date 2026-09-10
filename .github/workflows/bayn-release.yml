@@ -19,7 +19,7 @@ concurrency:
       'current' ||
       github.event.workflow_run.id
     }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   promote:
@@ -37,10 +37,10 @@ jobs:
       actions: read
       contents: write
     steps:
-      - name: Checkout main
+      - name: Checkout the completed build source
         uses: actions/checkout@v5
         with:
-          ref: main
+          ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
 
       - name: Download release contract
@@ -125,10 +125,10 @@ jobs:
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git fetch origin "+refs/heads/main:refs/remotes/origin/main"
-          test "$(git rev-parse refs/remotes/origin/main)" = "$SOURCE_SHA"
           deployed_manifest=.artifacts/bayn/deployed-deployment.yaml
           if git fetch origin "+refs/heads/${DEPLOYMENT_BRANCH}:refs/remotes/origin/${DEPLOYMENT_BRANCH}"; then
             git show "refs/remotes/origin/${DEPLOYMENT_BRANCH}:argocd/applications/bayn/deployment.yaml" > "$deployed_manifest"
+            bash packages/scripts/src/bayn/verify-release-source.sh "$SOURCE_SHA" "$deployed_manifest"
             git switch --force-create bayn-release-generated "refs/remotes/origin/${DEPLOYMENT_BRANCH}"
             # Main is the reviewed configuration authority. The deployment branch only carries
             # renderer-generated pins, whose prior values were captured above for comparison.
@@ -140,6 +140,7 @@ jobs:
               argocd/applications/bayn \
               argocd/applicationsets/product.yaml
           else
+            bash packages/scripts/src/bayn/verify-release-source.sh "$SOURCE_SHA"
             git show "$SOURCE_SHA:argocd/applications/bayn/deployment.yaml" > "$deployed_manifest"
             git switch --force-create bayn-release-generated "$SOURCE_SHA"
           fi
@@ -312,6 +313,8 @@ jobs:
           if ! git diff --cached --quiet; then
             git commit -m "chore(bayn): promote image ${PROMOTED_IMAGE_TAG}"
           fi
+          git fetch origin "+refs/heads/main:refs/remotes/origin/main"
+          bash packages/scripts/src/bayn/verify-release-source.sh "$SOURCE_SHA" .artifacts/bayn/deployed-deployment.yaml
           git push origin "HEAD:refs/heads/${DEPLOYMENT_BRANCH}"
           {
             echo '## Bayn immutable release promoted'

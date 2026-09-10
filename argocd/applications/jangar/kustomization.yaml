@@ -15,6 +15,7 @@ resources:
   - tailscale-service.yaml
   - ingressroute-jangar-k8s-private.yaml
   - ingressroute-openwebui-k8s-private.yaml
+  - postgres-upgrade-final-backup.yaml
   - postgres-cluster.yaml
   - postgres-scheduled-backup.yaml
   - openwebui-redis.yaml
@@ -41,5 +42,5 @@ images:
     newTag: v0.11.3
     digest: sha256:41daa0cf2561a5d4c8d1ff31ee2a98d93ab4d3ac2605cac69366ff6a3374a933
   - name: registry.ide-newton.ts.net/lab/jangar
-    newTag: kargo-sha-d316ac9f8e72d377f379584a7d5fa03586c4dc8d-run-34432575634
-    digest: sha256:c8d663e94d351874142cd06fa6b51a52ad3709aacdfb772285d1166cb45d61e0
+    newTag: kargo-sha-3ac124556625b26bc4a200f8b6062656a19265ce-run-34461087022
+    digest: sha256:e71bb511a47b20e8c0672c9bc22cd608009eec1a9e4a61b330066cf923cf9abe
