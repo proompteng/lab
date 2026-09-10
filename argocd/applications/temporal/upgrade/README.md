@@ -327,3 +327,17 @@ workflow history/query before preparing the separate 5.0.9 stage. Do not place
 in a separate compatible cluster and a reviewed cutover, accounting for writes
 after the snapshot checkpoint. A failed rollout gate must be diagnosed before
 any subsequent node replacement; never force-delete storage or Pods.
+
+
+## Cassandra 5.0.9 rehearsal
+
+The production 4.1.12 gate completed with all three original hosts/PVCs, 256
+tokens per node, serial native SSTable conversion and a successful Temporal
+workflow replay. Generation `509-v1` takes fresh native snapshots followed by
+CSI snapshots of that accepted ring. It creates separate restore, data and
+retained proof PVCs and reuses the qualified isolation and restore scripts.
+The first native engine is 4.1.12; only its isolated clone advances to immutable
+5.0.9. Both engines must preserve host/token identity and Temporal namespace and
+schema hashes, verify all Temporal SSTables and shut down cleanly. The serving
+StatefulSet remains on 4.1.12 throughout this preparation. A separate reviewed
+activation follows only after the native 5.0.9 rehearsal passes.
