@@ -61,6 +61,7 @@ import archiveReaderAvailability from '../../migrations/0058_archive_reader_avai
 import regularSessionBoundaries from '../../migrations/0059_regular_session_boundaries'
 import materializedCompletionCutoff from '../../migrations/0060_materialized_completion_cutoff'
 import latestRearmPosition from '../../migrations/0061_latest_rearm_position'
+import discrepancyMandateRotation from '../../migrations/0062_discrepancy_mandate_rotation'
 
 export const migrationLoader = PgMigrator.fromRecord({
   '1_initial_schema': initialSchema,
@@ -124,4 +125,5 @@ export const migrationLoader = PgMigrator.fromRecord({
   '59_regular_session_boundaries': regularSessionBoundaries,
   '60_materialized_completion_cutoff': materializedCompletionCutoff,
   '61_latest_rearm_position': latestRearmPosition,
+  '62_discrepancy_mandate_rotation': discrepancyMandateRotation,
 })
