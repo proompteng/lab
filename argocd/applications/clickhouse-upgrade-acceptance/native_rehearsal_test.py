@@ -41,6 +41,21 @@ class NativeRehearsalVerificationTests(unittest.TestCase):
             (root / "isolation.tsv").write_text(
                 "".join(e + "\tDENIED\n" for e in self.endpoints)
             )
+            targets = [
+                {
+                    "pod": f"source-{i}",
+                    "podUID": f"uid-{i}",
+                    "endpoint": endpoint,
+                    "positiveControl": "PASS",
+                }
+                for i, endpoint in enumerate(self.endpoints)
+            ]
+            (root / "runtime-before.json").write_text(
+                json.dumps({"epoch": 1000, "targets": targets})
+            )
+            (root / "runtime-after.json").write_text(
+                json.dumps({"epoch": 1035, "targets": targets})
+            )
             self.write(phase, "structure-restore.jsonl", [{"status": "RESTORED"}])
             self.write(phase, "data-restore.jsonl", [{"status": "RESTORED"}])
             self.write(
@@ -99,7 +114,7 @@ class NativeRehearsalVerificationTests(unittest.TestCase):
         )
 
     def verify(self):
-        return VERIFIER.verify(self.root, self.expected, self.endpoints)
+        return VERIFIER.verify(self.root, self.expected)
 
     def test_accepts_complete_matching_native_results_with_distinct_restore_uuids(self):
         self.assertEqual(VERIFIER.VERSIONS["v25_3"], "25.3.6.10034")
@@ -158,6 +173,22 @@ class NativeRehearsalVerificationTests(unittest.TestCase):
     def test_rejects_native_restore_failure(self):
         self.write("v25_3", "data-restore.jsonl", [{"status": "RESTORE_FAILED"}])
         with self.assertRaisesRegex(RuntimeError, "Restore failed"):
+            self.verify()
+
+    def test_rejects_replaced_production_endpoint(self):
+        path = self.root / "v25_3/runtime-after.json"
+        control = json.loads(path.read_text())
+        control["targets"][0]["podUID"] = "replacement-uid"
+        path.write_text(json.dumps(control))
+        with self.assertRaisesRegex(RuntimeError, "Production target identity changed"):
+            self.verify()
+
+    def test_rejects_stale_positive_controls(self):
+        path = self.root / "v25_3/runtime-after.json"
+        control = json.loads(path.read_text())
+        control["epoch"] = 1200
+        path.write_text(json.dumps(control))
+        with self.assertRaisesRegex(RuntimeError, "Stale runtime isolation controls"):
             self.verify()
 
 

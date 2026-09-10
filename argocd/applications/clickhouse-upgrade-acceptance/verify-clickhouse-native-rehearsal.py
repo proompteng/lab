@@ -22,12 +22,9 @@ def read_rows(path):
     return rows
 
 
-def verify(proof, expected_tables, endpoints):
+def verify(proof, expected_tables):
     expected = [tuple(line.split("\t")) for line in expected_tables.splitlines()]
     require(len(expected) == 26, "Expected source table inventory is incomplete")
-    require(
-        len(endpoints) == 5 and len(set(endpoints)) == 5, "Invalid isolation inventory"
-    )
     results = {}
     for phase, version in VERSIONS.items():
         root = proof / phase
@@ -40,6 +37,26 @@ def verify(proof, expected_tables, endpoints):
             require(
                 (root / name).read_text().strip() == "0",
                 f"Unclean native exit: {phase}/{name}",
+            )
+        before = json.loads((root / "runtime-before.json").read_text())
+        after = json.loads((root / "runtime-after.json").read_text())
+        endpoints = [item["endpoint"] for item in before["targets"]]
+        require(
+            len(endpoints) == 5 and len(set(endpoints)) == 5,
+            "Invalid isolation inventory",
+        )
+        require(
+            before["targets"] == after["targets"],
+            f"Production target identity changed: {phase}",
+        )
+        require(
+            0 <= after["epoch"] - before["epoch"] <= 90,
+            f"Stale runtime isolation controls: {phase}",
+        )
+        for target in before["targets"]:
+            require(
+                target["positiveControl"] == "PASS" and bool(target["podUID"]),
+                f"Missing positive control: {phase}",
             )
         isolated = [
             line.split("\t")
@@ -124,6 +141,7 @@ def verify(proof, expected_tables, endpoints):
             "replicas": replicas,
             "nativeCheck": "PASS",
             "isolation": "PASS",
+            "isolationControls": {"before": before, "after": after},
             "nativeExit": "PASS",
         }
     baseline = results["v25_3"]
@@ -164,11 +182,7 @@ def verify(proof, expected_tables, endpoints):
 
 def main():
     proof = Path("/proof")
-    result = verify(
-        proof,
-        Path("/scripts/expected-tables.tsv").read_text(),
-        os.environ["PRODUCTION_TARGETS"].split(),
-    )
+    result = verify(proof, Path("/scripts/expected-tables.tsv").read_text())
     result["replica"] = os.environ["REPLICA"]
     result["backupManifestSHA256"] = os.environ["BACKUP_MANIFEST_SHA256"]
     output = json.dumps(result, sort_keys=True)

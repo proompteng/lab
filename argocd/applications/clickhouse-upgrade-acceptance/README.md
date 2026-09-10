@@ -45,9 +45,20 @@ cannot succeed without matching data and catalogs, successful native checks,
 endpoint denials and zero native exit codes. Validate the receipt and retained
 source identities before activation.
 
-The namespace denies all ingress and egress. The reviewed endpoint inventory
-has positive TCP controls from production; each engine must observe timeouts
-to those exact ClickHouse and Keeper endpoints before it starts. Containers use
+The namespace denies all ingress and egress. Run the checked-in controller from
+an authorized workstation after sync:
+
+```sh
+python3 argocd/applications/clickhouse-upgrade-acceptance/control-runtime-isolation.py /path/to/evidence
+```
+
+Before every native engine starts, the controller resolves the current production
+Pods and proves TCP reachability. It then releases that engine's denied probes,
+rechecks the exact Pod UIDs and addresses, and proves TCP reachability again.
+The complete before/probe/after window must be at most 90 seconds. Native Jobs
+wait for these runtime controls and cannot accept captured pre-merge IPs. The
+controller collects completed native receipts and exits after both Jobs pass.
+It never applies manifests or changes serving workloads. Containers use
 UID 101, read-only roots, no capabilities and no service-account tokens. A failed
 attempt does not retry or overwrite partial evidence. Diagnose it and review a
 new generation. No CI runner or serving PVC is used as writable scratch space.

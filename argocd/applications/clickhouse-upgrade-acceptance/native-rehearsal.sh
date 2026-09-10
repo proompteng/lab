@@ -4,7 +4,6 @@ umask 027
 
 : "${REHEARSAL_VERSION:?}" "${EXPECTED_VERSION:?}" "${REPLICA:?}"
 : "${BACKUP_DIRECTORY:?}" "${BACKUP_MANIFEST_SHA256:?}" "${COMPATIBILITY:?}"
-: "${PRODUCTION_TARGETS:?}"
 [[ "$REHEARSAL_VERSION" =~ ^v[0-9]+_[0-9]+$ ]]
 [[ "$REPLICA" =~ ^[01]$ ]]
 [[ "$BACKUP_DIRECTORY" =~ ^upgrade-20260910-v1-replica-[01]$ ]]
@@ -14,7 +13,22 @@ backup="/source/backups/$BACKUP_DIRECTORY"
 mkdir "$proof"
 mkdir "$fixture"
 mkdir -p "$fixture"/{data,tmp,user_files,access,keeper/log,keeper/snapshots}
-for endpoint in $PRODUCTION_TARGETS; do
+wait_for_control() {
+  local file=$1
+  for ((attempt=0; attempt<1800; attempt++)); do
+    if [[ -f "$file" ]]; then return 0; fi
+    sleep 2
+  done
+  printf 'Runtime isolation control did not arrive: %s\n' "$file" >&2
+  return 1
+}
+printf 'waiting for live endpoint controls: %s replica %s\n' "$REHEARSAL_VERSION" "$REPLICA"
+wait_for_control "$proof/runtime-before.epoch"
+control_epoch=$(cat "$proof/runtime-before.epoch")
+[[ "$control_epoch" =~ ^[0-9]+$ && $(( $(date +%s) - control_epoch )) -ge 0 && $(( $(date +%s) - control_epoch )) -le 30 ]]
+mapfile -t production_targets < "$proof/runtime-targets.txt"
+[[ "${#production_targets[@]}" == 5 ]]
+for endpoint in "${production_targets[@]}"; do
   host=${endpoint%:*}
   port=${endpoint##*:}
   [[ "$host" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ && "$port" =~ ^[0-9]+$ ]]
@@ -27,6 +41,9 @@ for endpoint in $PRODUCTION_TARGETS; do
   fi
   printf '%s\tDENIED\n' "$endpoint" >> "$proof/isolation.tsv"
 done
+wait_for_control "$proof/runtime-after.epoch"
+after_epoch=$(cat "$proof/runtime-after.epoch")
+[[ "$after_epoch" =~ ^[0-9]+$ && $(( after_epoch - control_epoch )) -ge 0 && $(( after_epoch - control_epoch )) -le 90 ]]
 printf '%s  %s\n' "$BACKUP_MANIFEST_SHA256" "$backup/.backup" | sha256sum --check --strict
 [[ "$(df --output=avail -B1 /fixture | tail -1 | tr -d ' ')" -ge 21474836480 ]]
 server_pid=''

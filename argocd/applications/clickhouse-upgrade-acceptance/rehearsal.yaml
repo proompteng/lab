@@ -167,9 +167,6 @@ spec:
           value: '25.3'
         - name: HOME
           value: /fixture
-        - name: PRODUCTION_TARGETS
-          value: 10.244.1.215:9000 10.244.1.215:8123 10.244.3.104:9000 10.244.3.104:8123
-            10.244.5.187:2181
         resources:
           requests:
             cpu: '1'
@@ -216,9 +213,6 @@ spec:
           value: '25.3'
         - name: HOME
           value: /fixture
-        - name: PRODUCTION_TARGETS
-          value: 10.244.1.215:9000 10.244.1.215:8123 10.244.3.104:9000 10.244.3.104:8123
-            10.244.5.187:2181
         resources:
           requests:
             cpu: '1'
@@ -267,10 +261,6 @@ spec:
           value: '25.8'
         - name: HOME
           value: /fixture
-        - &id003
-          name: PRODUCTION_TARGETS
-          value: 10.244.1.215:9000 10.244.1.215:8123 10.244.3.104:9000 10.244.3.104:8123
-            10.244.5.187:2181
         resources:
           requests:
             cpu: '1'
@@ -306,7 +296,6 @@ spec:
         env:
         - *id001
         - *id002
-        - *id003
         resources:
           requests:
             cpu: 100m
@@ -515,9 +504,6 @@ spec:
           value: '25.3'
         - name: HOME
           value: /fixture
-        - name: PRODUCTION_TARGETS
-          value: 10.244.1.215:9000 10.244.1.215:8123 10.244.3.104:9000 10.244.3.104:8123
-            10.244.5.187:2181
         resources:
           requests:
             cpu: '1'
@@ -564,9 +550,6 @@ spec:
           value: '25.3'
         - name: HOME
           value: /fixture
-        - name: PRODUCTION_TARGETS
-          value: 10.244.1.215:9000 10.244.1.215:8123 10.244.3.104:9000 10.244.3.104:8123
-            10.244.5.187:2181
         resources:
           requests:
             cpu: '1'
@@ -615,10 +598,6 @@ spec:
           value: '25.8'
         - name: HOME
           value: /fixture
-        - &id003
-          name: PRODUCTION_TARGETS
-          value: 10.244.1.215:9000 10.244.1.215:8123 10.244.3.104:9000 10.244.3.104:8123
-            10.244.5.187:2181
         resources:
           requests:
             cpu: '1'
@@ -654,7 +633,6 @@ spec:
         env:
         - *id001
         - *id002
-        - *id003
         resources:
           requests:
             cpu: 100m
