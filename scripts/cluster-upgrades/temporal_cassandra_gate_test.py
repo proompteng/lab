@@ -530,6 +530,46 @@ class CassandraGateTests(unittest.TestCase):
                     (snapshot / index / "md-2-big-Data.db").read_bytes(),
                 )
 
+    def native_ring_module(self):
+        spec = importlib.util.spec_from_file_location(
+            "native_ring",
+            ROOT / "argocd/applications/temporal/upgrade/verify-cassandra-ring.py",
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_native_ring_digest_preserves_token_identity_across_ordering(self):
+        module = self.native_ring_module()
+        row = {
+            "host_id": "49cbb919-5b4c-4489-bab3-ec01a67297fa",
+            "tokens": [str(x) for x in range(-128, 128)],
+        }
+        expected = module.ring_digest([json.dumps(row)])
+        row["tokens"].reverse()
+        self.assertEqual(module.ring_digest([json.dumps(row)]), expected)
+        row["tokens"][0] = "1000"
+        self.assertNotEqual(module.ring_digest([json.dumps(row)]), expected)
+
+    def test_native_ring_rejects_changed_host_count_and_duplicate_tokens(self):
+        module = self.native_ring_module()
+        for failure in ("host", "count", "duplicate", "overflow", "empty"):
+            with self.subTest(failure=failure):
+                row = {
+                    "host_id": "49cbb919-5b4c-4489-bab3-ec01a67297fa",
+                    "tokens": [str(x) for x in range(256)],
+                }
+                if failure == "host":
+                    row["host_id"] = "another-host"
+                elif failure == "count":
+                    row["tokens"] = row["tokens"][:16]
+                elif failure == "duplicate":
+                    row["tokens"][0] = row["tokens"][1]
+                elif failure == "overflow":
+                    row["tokens"][0] = str(2**63)
+                with self.assertRaises(ValueError):
+                    module.ring_digest([] if failure == "empty" else [json.dumps(row)])
+
     def relative_index_fixture(self, directory):
         module, source, target, proof = self.native_snapshot_fixture(directory)
         table = next((source / "data" / "temporal").iterdir())
