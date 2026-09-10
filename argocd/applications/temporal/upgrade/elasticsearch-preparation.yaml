@@ -1,0 +1,212 @@
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: temporal-elasticsearch-snapshots
+  namespace: temporal
+  annotations:
+    argocd.argoproj.io/sync-wave: '-35'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  generateBucketName: temporal-elasticsearch-snapshots
+  storageClassName: rook-ceph-bucket
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: temporal-elasticsearch-snapshot-wsync
+  annotations:
+    argocd.argoproj.io/sync-wave: '-35'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+provisioner: rook-ceph.cephfs.csi.ceph.com
+parameters:
+  clusterID: rook-ceph
+  fsName: cephfs
+  csi.storage.k8s.io/controller-expand-secret-name: rook-csi-cephfs-provisioner
+  csi.storage.k8s.io/controller-expand-secret-namespace: rook-ceph
+  csi.storage.k8s.io/node-stage-secret-name: rook-csi-cephfs-node
+  csi.storage.k8s.io/node-stage-secret-namespace: rook-ceph
+  csi.storage.k8s.io/provisioner-secret-name: rook-csi-cephfs-provisioner
+  csi.storage.k8s.io/provisioner-secret-namespace: rook-ceph
+mountOptions:
+- noatime
+- ms_mode=crc
+- wsync
+- noshare
+reclaimPolicy: Retain
+volumeBindingMode: Immediate
+allowVolumeExpansion: true
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: temporal-elasticsearch-snapshot-repository
+  namespace: temporal
+  labels:
+    app.kubernetes.io/name: temporal
+    app.kubernetes.io/component: elasticsearch-snapshot
+    temporal.proompteng.ai/backup-generation: 81921-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-30'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes:
+  - ReadWriteMany
+  storageClassName: rook-cephfs
+  volumeMode: Filesystem
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    argocd.argoproj.io/sync-wave: '-30'
+  labels:
+    app.kubernetes.io/component: elasticsearch-snapshot
+    app.kubernetes.io/name: temporal
+    temporal.proompteng.ai/backup-generation: 81921-v2
+  name: temporal-elasticsearch-snapshot-repository-v2
+  namespace: temporal
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 20Gi
+  storageClassName: temporal-elasticsearch-snapshot-wsync
+  volumeMode: Filesystem
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: temporal-elasticsearch-snapshot
+  namespace: temporal
+  labels:
+    app.kubernetes.io/name: temporal
+    app.kubernetes.io/component: elasticsearch-snapshot
+    temporal.proompteng.ai/backup-generation: 81921-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-30'
+automountServiceAccountToken: false
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: '-30'
+  labels:
+    app.kubernetes.io/component: elasticsearch-snapshot
+    app.kubernetes.io/name: temporal
+    temporal.proompteng.ai/backup-generation: 81921-v6
+  name: temporal-elasticsearch-snapshot
+  namespace: temporal
+spec:
+  egress:
+  - ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+    to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+  - ports:
+    - port: 9200
+      protocol: TCP
+    to:
+    - podSelector:
+        matchLabels:
+          app: elasticsearch-master
+  ingress: []
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: elasticsearch-snapshot
+      app.kubernetes.io/name: temporal
+      temporal.proompteng.ai/backup-generation: 81921-v6
+  policyTypes:
+  - Ingress
+  - Egress
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: '-5'
+  labels:
+    app.kubernetes.io/component: elasticsearch-snapshot
+    app.kubernetes.io/name: temporal
+    temporal.proompteng.ai/backup-generation: 81921-v6
+  name: temporal-elasticsearch-81921-v6-snapshot
+  namespace: temporal
+spec:
+  activeDeadlineSeconds: 3600
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: elasticsearch-snapshot
+        app.kubernetes.io/name: temporal
+        temporal.proompteng.ai/backup-generation: 81921-v6
+    spec:
+      automountServiceAccountToken: false
+      containers:
+      - command:
+        - python3
+        - /scripts/elasticsearch-snapshot.py
+        env:
+        - name: PYTHONDONTWRITEBYTECODE
+          value: '1'
+        - name: PYTHONUNBUFFERED
+          value: '1'
+        - name: BUCKET_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: temporal-elasticsearch-snapshots
+              key: BUCKET_NAME
+        - name: BUCKET_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: temporal-elasticsearch-snapshots
+              key: BUCKET_HOST
+        - name: BUCKET_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: temporal-elasticsearch-snapshots
+              key: BUCKET_PORT
+        image: mirror.gcr.io/python:3.14-alpine@sha256:c6ead215bfd31f1e433d968853b7a769989117115b728874824e6c0a27cb96fc
+        name: snapshot
+        resources:
+          limits:
+            cpu: 250m
+            memory: 128Mi
+          requests:
+            cpu: 25m
+            memory: 64Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+        volumeMounts:
+        - mountPath: /scripts
+          name: scripts
+          readOnly: true
+      nodeSelector:
+        kubernetes.io/os: linux
+      restartPolicy: Never
+      securityContext:
+        fsGroup: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: temporal-elasticsearch-snapshot
+      volumes:
+      - configMap:
+          name: temporal-elasticsearch-upgrade-scripts
+        name: scripts

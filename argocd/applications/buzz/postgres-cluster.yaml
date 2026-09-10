@@ -56,3 +56,8 @@ spec:
       parameters:
         barmanObjectName: buzz-db
         serverName: buzz-db-live
+
+  backup:
+    volumeSnapshot:
+      className: rook-ceph-block
+      snapshotOwnerReference: backup

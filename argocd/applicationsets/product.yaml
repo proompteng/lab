@@ -4,6 +4,10 @@ metadata:
   name: product
   namespace: argocd
 spec:
+  preservedFields:
+    annotations:
+      - argocd.argoproj.io/skip-reconcile
+      - storage.proompteng.ai/ceph-remount-owner
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
   syncPolicy:
@@ -121,9 +125,11 @@ spec:
               - name: forgejo
                 path: argocd/applications/forgejo
                 namespace: forgejo
+                targetRevision: kargo/forgejo
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
-                automation: manual
+                  kargo.akuity.io/authorized-stage: lab-delivery:forgejo
+                automation: auto
                 enabled: "true"
               - name: kitty-krew
                 path: argocd/applications/kitty-krew
