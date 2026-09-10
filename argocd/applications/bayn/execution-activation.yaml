@@ -64,7 +64,7 @@ spec:
             - name: BAYN_CAPITAL_ACTIVATION_KIND
               value: ResearchCapitalActivationRequest
             - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: {\n  \"activation\": {\n    \"imageDigest\": \"sha256:31e80d2a3de1e98326fc01801f6c422fd6a4611a5bce83e5ac8aef596cc30417\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"7b3aa6a2d7423a333dffa6445a62e426998017c0\"\n  },\n  \"authoredActivation\": {\n    \"imageDigest\": \"sha256:47143f3136a8ef2bd00910ff970c75db98c2e1229f2a7c028019bd82833c5ba7\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"ee60493eb5a9b5f8572e868b6ff31c17675501a3\"\n  },\n  \"requestHash\": \"423c6c805917f05d5dcf80da7e439cf8c6a373762298148b15306ed8acfe2625\",\n  \"schemaVersion\": \"bayn.research-capital-build-lineage.v1\"\n}
+              value: "{\n  \"activation\": {\n    \"imageDigest\": \"sha256:31e80d2a3de1e98326fc01801f6c422fd6a4611a5bce83e5ac8aef596cc30417\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"7b3aa6a2d7423a333dffa6445a62e426998017c0\"\n  },\n  \"authoredActivation\": {\n    \"imageDigest\": \"sha256:47143f3136a8ef2bd00910ff970c75db98c2e1229f2a7c028019bd82833c5ba7\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"ee60493eb5a9b5f8572e868b6ff31c17675501a3\"\n  },\n  \"requestHash\": \"423c6c805917f05d5dcf80da7e439cf8c6a373762298148b15306ed8acfe2625\",\n  \"schemaVersion\": \"bayn.research-capital-build-lineage.v1\"\n}\n"
             - name: BAYN_BROKER_ACCESS
               value: read-only
             - name: BAYN_CAPITAL_AUTHORITY
