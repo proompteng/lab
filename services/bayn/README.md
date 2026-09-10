@@ -58,6 +58,12 @@ embeds and verifies the source revision and the behavior, parameter, protocol, a
 - PostgreSQL and TigerBeetle must reconcile exactly. Any identity drift, unresolved mutation, stale data, duplicate
   controller, or accounting discrepancy blocks new orders.
 
+Broker reconciliation recaptures changing history or lagging fill activities at most twice, 500 milliseconds apart,
+before persisting a snapshot. A broker terminal fill may precede local acknowledged-intent recovery; recorded terminal
+outcomes and aggregate fills still must agree. Equity marks from separate account and position observations remain
+visible as valuation differences, while cash, inventory, cost basis, fees, and ledger reconciliation remain exact.
+Flat accounts and marks observed at the same instant also require exact equity agreement.
+
 ## Runtime architecture
 
 - `BaynExecutionController` is the only scheduler. Restate serializes handlers by canonical account-binding hash,
@@ -126,6 +132,13 @@ submission window is still in the future and it has no durable decision or inten
 and any future cycle with durable execution work still prevent a sufficient receipt.
 
 ## Historical intraday replay
+
+The intraday protocol admits quote and trade evidence up to 10 seconds old at the observation time. The previous
+2-second budget was shorter than the existing Kafka/Flink/ClickHouse delivery path: September 10 live samples showed
+SPY quote ages of 1.3–4.6 seconds despite roughly 40 milliseconds from provider event to websocket receipt. The
+10-second bound gives the archive time to publish usable evidence for the 30-minute signal. Future timestamps,
+evidence beyond the bound, missing bars, spread and signal requirements, and quote-bound IOC prices still block
+execution. Changing this bound changes strategy identity and requires normal activation; it is not profitability proof.
 
 `bayn-intraday-replay --input <path>` evaluates finalized sessions from an exported Alpaca calendar against the retained
 intraday archive. It reads ClickHouse using `BAYN_CLICKHOUSE_URL`, `BAYN_CLICKHOUSE_USERNAME`, and

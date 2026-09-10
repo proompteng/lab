@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: torghut
 resources:
   - clickhouse-upgrade-25-8-checkpoints.yaml
+  - clickhouse-upgrade-26-3-checkpoints.yaml
   - keeper-upgrade-snapshot.yaml
   - clickhouse-keeper.yaml
   - keeper-pdb.yaml

@@ -764,6 +764,8 @@ describePostgres('PostgreSQL intraday cycle store', () => {
               Effect.map(([row]) => row.eligible),
             )
             expect(yield* rearmEligible).toBe(true)
+            yield* sql`UPDATE authority_state SET reason = ${'reconciliation discrepancy ' + 'a'.repeat(64)}`
+            expect(yield* rearmEligible).toBe(true)
             yield* sql`UPDATE position_snapshots SET position_count = 1 WHERE snapshot_id = 'current'`
             expect(yield* rearmEligible).toBe(false)
             yield* sql`UPDATE position_snapshots SET position_count = 0,

@@ -4,10 +4,8 @@ resources:
   - retained-clickhouse-v4-configmap.yaml
   - retry-replica0-serial-26-3.yaml
   - retained-clickhouse-v3-configmap.yaml
-  - retained-keeper-v1-job.yaml
   - preparation.yaml
   - rehearsal.yaml
-  - retry-replica0-26-3.yaml
   - keeper-rehearsal.yaml
 configMapGenerator:
   - name: clickhouse-native-rehearsal-20260910-v6
@@ -25,3 +23,16 @@ generatorOptions:
   disableNameSuffixHash: true
   annotations:
     argocd.argoproj.io/sync-wave: '-30'
+patches:
+  - target:
+      group: batch
+      version: v1
+      kind: Job
+      name: clickhouse-native-20260910-v4-0
+    patch: |-
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: clickhouse-native-20260910-v4-0
+        namespace: clickhouse-upgrade-acceptance
+      $patch: delete

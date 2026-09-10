@@ -11,7 +11,7 @@ spec:
   image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:c4fe8147a4579e7ab4907ff73e03955c83a0498982034ae8c0eed6888c0552cb
   imagePullPolicy: IfNotPresent
   restartNonce: 38
-  flinkVersion: v2_0
+  flinkVersion: v2_2
   serviceAccount: torghut-runtime
   logConfiguration:
     log4j-console.properties: |-
@@ -85,6 +85,7 @@ spec:
       # Flink Deployment Logging Overrides
       # rootLogger.level = DEBUG
   flinkConfiguration:
+    kubernetes.operator.job.upgrade.last-state-fallback.enabled: "false"
     state.checkpoints.dir: s3a://flink-checkpoints/torghut/technical-analysis/checkpoints
     state.savepoints.dir: s3a://flink-checkpoints/torghut/technical-analysis/savepoints
     execution.checkpointing.mode: EXACTLY_ONCE
@@ -185,5 +186,5 @@ spec:
     entryClass: ai.proompteng.dorvud.ta.flink.FlinkTechnicalAnalysisJobKt
     jarURI: local:///opt/flink/usrlib/app.jar
     parallelism: 8
-    upgradeMode: last-state
+    upgradeMode: savepoint
     state: running

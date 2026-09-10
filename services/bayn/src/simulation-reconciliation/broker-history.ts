@@ -1,4 +1,4 @@
-import { Chunk, Effect, HashSet, Result, pipe } from 'effect'
+import { Chunk, Effect, HashSet, Result, Schedule, pipe } from 'effect'
 
 import {
   OrderCollection,
@@ -22,7 +22,7 @@ import {
   type HistoryHashFailure,
   type Observed,
   type OrderRead,
-  type ReconciliationError,
+  ReconciliationError,
   type StableBrokerSnapshot,
 } from './broker-reconciler-model'
 import { Pipeable } from '../pipeable'
@@ -295,9 +295,23 @@ const decideStableHistoryDataFirst = (
       historyHashResult(after),
       Result.mapError((error) => historyHashFailure('after', error)),
     )
-    return beforeHash === afterHash
-      ? after
-      : yield* Result.fail(snapshotFailure('HistoryChanged', 'broker history changed during reconciliation'))
+    if (beforeHash !== afterHash) {
+      return yield* Result.fail(snapshotFailure('HistoryChanged', 'broker history changed during reconciliation'))
+    }
+    const filledByOrder = new Map<string, bigint>()
+    for (const { value: fill } of after.fills) {
+      filledByOrder.set(fill.brokerOrderId, (filledByOrder.get(fill.brokerOrderId) ?? 0n) + BigInt(fill.quantityMicros))
+    }
+    if (
+      after.orders.rows.some(
+        ({ value: order }) => BigInt(order.filledQuantityMicros) !== (filledByOrder.get(order.brokerOrderId) ?? 0n),
+      )
+    ) {
+      return yield* Result.fail(
+        snapshotFailure('FillActivitiesPending', 'broker order quantities and fill activities have not converged'),
+      )
+    }
+    return after
   })
 
 export const decideStableHistory = Pipeable.dual(2, decideStableHistoryDataFirst)
@@ -314,6 +328,15 @@ const readStableBrokerSnapshotDataFirst = (
     const after = yield* readHistory(read, afterUntil)
     const history = yield* Effect.fromResult(decideStableHistory(before, after))
     return { account, positions, history }
-  })
+  }).pipe(
+    Effect.retry({
+      times: 2,
+      schedule: Schedule.spaced(500),
+      while: (cause) =>
+        cause instanceof ReconciliationError &&
+        cause.failure?._tag === 'Snapshot' &&
+        (cause.failure.reason === 'HistoryChanged' || cause.failure.reason === 'FillActivitiesPending'),
+    }),
+  )
 
 export const readStableBrokerSnapshot = Pipeable.dual(2, readStableBrokerSnapshotDataFirst)
