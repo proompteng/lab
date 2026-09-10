@@ -113,3 +113,18 @@ merging this stage, require each live source Cluster to expose the reviewed
 Backup health blocks subsequent waves until snapshot completion. The next
 reviewed change imports the retained CSI snapshots and creates isolated 17.11
 clones; it must not downgrade the four already-qualified 18.6 clones.
+
+
+The `18-6-v2` restore stage imports the completed cold primary snapshots from
+Buzz, Jangar and Torghut into three separate PostgreSQL 17.11 clones. Original
+and imported CSI snapshot contents use Retain. Source Cluster, volume, snapshot
+and database-system identities are checked before generating the manifests.
+Cold-backup evidence comes from the Backup specification and snapshot's native
+pg_control metadata: clean shutdown, no required end-of-backup record and the
+same start/end WAL. CNPG 1.30's Backup status.online field is not that evidence.
+
+The three clones retain their source OS/image and storage size. They have no
+production archive configuration and can reach only DNS and the Kubernetes API;
+operator ingress is restricted to port 8000. The existing four 18.6 clones are
+unchanged. Require native 17.11 recovery, positive isolation controls and full
+data/catalog inventories before the separate reviewed 18.6 rehearsal stage.
