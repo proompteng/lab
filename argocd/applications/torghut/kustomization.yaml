@@ -4,6 +4,7 @@ configurations:
   - kustomizeconfig.yaml
 resources:
   - codex-auth-externalsecret.yaml
+  - postgres-upgrade-final-backup.yaml
   - postgres-cluster.yaml
   - torghut-db-ca-prune-tombstone.yaml
   - torghut-db-ca-reflector-rbac.yaml
