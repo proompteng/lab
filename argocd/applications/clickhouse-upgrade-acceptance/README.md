@@ -45,12 +45,17 @@ cannot succeed without matching data and catalogs, successful native checks,
 endpoint denials and zero native exit codes. Validate the receipt and retained
 source identities before activation.
 
-The namespace denies all ingress and egress. Run the checked-in controller from
-an authorized workstation after sync:
+The namespace denies all ingress and egress. Start the checked-in controller on
+an authorized workstation before merging this generation or requesting its sync:
 
 ```sh
 python3 argocd/applications/clickhouse-upgrade-acceptance/control-runtime-isolation.py /path/to/evidence
 ```
+
+Wait for its ACTIVE startup result and verify its fresh controller-ready.json
+heartbeat before releasing the GitOps change. The controller performs live
+positive controls and verifies namespace access before advertising readiness;
+it can wait safely while no Jobs exist. Keep it running until both Jobs finish.
 
 Before every native engine starts, the controller resolves the current production
 Pods and proves TCP reachability. It then releases that engine's denied probes,

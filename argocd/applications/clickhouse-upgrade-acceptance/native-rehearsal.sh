@@ -126,7 +126,7 @@ sql "SELECT database,table,name,type,default_kind,default_expression,compression
 while IFS=$'\t' read -r database table engine; do
   relation="\`$database\`.\`$table\`"
   if [[ "$engine" == *MergeTree ]]; then
-    sql "CHECK TABLE $relation" > "$proof/check-$database-$table.jsonl"
+    sql "CHECK TABLE $relation SETTINGS check_query_single_value_result=1" > "$proof/check-$database-$table.jsonl"
     lanes=''
     for ((lane=0; lane<4; lane++)); do
       expression="reinterpretAsUInt64(substring(h,$((lane*8+1)),8))"

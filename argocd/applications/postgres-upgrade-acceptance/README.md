@@ -103,3 +103,13 @@ Its token can only get these four Clusters; it cannot modify them or read Secret
 Do not apply the 17 phase to an already-upgraded live clone as a downgrade. Use it
 only for fresh recovery or the documented native failed-upgrade rollback. Keep
 retained snapshots when retiring or rebuilding the isolated rehearsal.
+
+
+The second source-backup generation creates cold primary snapshots for Buzz,
+Jangar and Torghut as `*-db-pg18-20260910`, sequentially at waves -16 through
+-14. Their PostgreSQL 17.11 images and Barman archives remain unchanged. Before
+merging this stage, require each live source Cluster to expose the reviewed
+`rook-ceph-block` snapshot configuration and to be healthy on 17.11. Native
+Backup health blocks subsequent waves until snapshot completion. The next
+reviewed change imports the retained CSI snapshots and creates isolated 17.11
+clones; it must not downgrade the four already-qualified 18.6 clones.

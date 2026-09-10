@@ -1,5 +1,6 @@
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -131,11 +132,22 @@ def write_control(pod, container, directory, side, receipt):
 def main():
     output = Path(sys.argv[1])
     output.mkdir(parents=True, exist_ok=True)
+    positive_controls()
+    kubectl(NAMESPACE, "get", "jobs", "-o", "name")
+    print(json.dumps({"controller": "ACTIVE", "pid": os.getpid()}), flush=True)
     completed = set()
     deadline = time.monotonic() + 43200
     while len(completed) != len(JOBS):
         if time.monotonic() >= deadline:
             raise RuntimeError("Native rehearsal exceeded its deadline")
+        heartbeat = output / "controller-ready.tmp"
+        heartbeat.write_text(
+            json.dumps(
+                {"status": "ACTIVE", "pid": os.getpid(), "epoch": int(time.time())}
+            )
+            + "\n"
+        )
+        heartbeat.replace(output / "controller-ready.json")
         for name in JOBS:
             if name in completed:
                 continue
