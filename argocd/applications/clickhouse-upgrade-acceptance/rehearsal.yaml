@@ -462,9 +462,9 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: clickhouse-native-20260910-v3-1
+  name: clickhouse-native-20260910-v4-1
   labels:
-    clickhouse.proompteng.ai/rehearsal: 20260910-v3
+    clickhouse.proompteng.ai/rehearsal: 20260910-v4
   annotations:
     argocd.argoproj.io/sync-wave: '0'
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
@@ -475,7 +475,7 @@ spec:
   template:
     metadata:
       labels:
-        clickhouse.proompteng.ai/rehearsal: 20260910-v3
+        clickhouse.proompteng.ai/rehearsal: 20260910-v4
     spec:
       restartPolicy: Never
       automountServiceAccountToken: false
@@ -512,6 +512,8 @@ spec:
           value: '25.3'
         - name: HOME
           value: /fixture
+        - name: REHEARSAL_GENERATION
+          value: v4
         resources:
           requests:
             cpu: '1'
@@ -558,6 +560,8 @@ spec:
           value: '25.3'
         - name: HOME
           value: /fixture
+        - name: REHEARSAL_GENERATION
+          value: v4
         resources:
           requests:
             cpu: '1'
@@ -606,6 +610,8 @@ spec:
           value: '25.8'
         - name: HOME
           value: /fixture
+        - name: REHEARSAL_GENERATION
+          value: v4
         resources:
           requests:
             cpu: '1'
@@ -641,6 +647,8 @@ spec:
         env:
         - *id001
         - *id002
+        - name: REHEARSAL_GENERATION
+          value: v4
         resources:
           requests:
             cpu: 100m
@@ -675,7 +683,7 @@ spec:
           readOnly: false
       - name: scripts
         configMap:
-          name: clickhouse-native-rehearsal-20260910-v3
+          name: clickhouse-native-rehearsal-20260910-v4
       - name: tmp
         emptyDir:
           sizeLimit: 256Mi

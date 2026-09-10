@@ -149,15 +149,19 @@ remain available until a separately recorded retirement.
 
 
 Replica 0 generation v3 stopped before structure recovery because the private
-Keeper had not yet accepted sessions. The readiness loop now requires a native
-`system.zookeeper` query as well as the server version before RESTORE. Failed
-replica 0 gets a new v4 Job, fresh directories and an immutable v4 ConfigMap.
-The retained v3 ConfigMap preserves its exact original payload and is made
-immutable. The existing replica 1 Job therefore uses only its original script;
-no phase depends on an in-place ConfigMap refresh. A v3 startup failure must
-fail the Job and requires a separately declared v4 retry before acceptance.
+Keeper had not yet accepted sessions. Replica 1 completed the native restores and
+fingerprints on all three versions but failed its final health check because
+ordinary merges remained stopped and replication queues contained pending work.
+Generation v4 waits for a native `system.zookeeper` query before RESTORE. After
+capturing the full backup fingerprints, it resumes ordinary merges while keeping
+TTL merges stopped, then requires all eleven replication queues to drain with
+no readonly, expired-session or lost-part state before a clean shutdown.
 
-Start the default controller for v4 replica 0. Keep the replica 1 controller
-running with `clickhouse-replica1-runtime-profile.json` through its final receipt.
-Neither controller restarts or overwrites a completed phase. Compare all three
-native versions independently for each replica before serving activation.
+Both replicas get v4 Jobs, fresh directories and an immutable v4 ConfigMap.
+The retained v3 ConfigMap keeps its exact original payload and becomes immutable.
+No phase depends on an in-place ConfigMap refresh. Failed v3 Jobs and all source,
+fixture and proof claims remain retained.
+
+Start the default controller for both v4 Jobs before merging. It never restarts
+or overwrites a completed phase. Compare all three native versions independently
+for each replica before serving activation.

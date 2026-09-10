@@ -172,6 +172,29 @@ while IFS=$'\t' read -r database table engine; do
     sql "SELECT count() AS rows FROM $relation" > "$proof/view-$database-$table.jsonl"
   fi
 done < "$proof/tables.tsv"
+# Resume ordinary merges after the immutable backup fingerprint is captured.
+# TTL merges remain stopped so historical rows survive the recovery comparison.
+while IFS=$'\t' read -r database table engine; do
+  if [[ "$engine" == *MergeTree ]]; then
+    sql "SYSTEM START MERGES \`$database\`.\`$table\`"
+    sql "SYSTEM STOP TTL MERGES \`$database\`.\`$table\`"
+  fi
+done < "$proof/tables.tsv"
+replicas_drained=false
+for ((attempt=0; attempt<300; attempt++)); do
+  kill -0 "$server_pid"
+  kill -0 "$keeper_pid"
+  if [[ "$(sql "SELECT count()=11 AND countIf(is_readonly OR is_session_expired OR queue_size OR lost_part_count)=0 FROM system.replicas" TSVRaw)" == 1 ]]; then
+    replicas_drained=true
+    break
+  fi
+  sleep 2
+done
+if [[ "$replicas_drained" != true ]]; then
+  sql "SELECT database,table,type,last_exception,postpone_reason FROM system.replication_queue ORDER BY database,table" > "$proof/undrained-replication-queue.jsonl"
+  cat "$proof/undrained-replication-queue.jsonl" >&2
+  exit 1
+fi
 sql "SELECT database,table,is_readonly,is_session_expired,queue_size,lost_part_count FROM system.replicas ORDER BY database,table" > "$proof/replicas.jsonl"
 kill -TERM "$server_pid"
 wait "$server_pid"

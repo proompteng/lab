@@ -9,7 +9,7 @@ import time
 
 
 NAMESPACE = "clickhouse-upgrade-acceptance"
-JOBS = ["clickhouse-native-20260910-v4-0"]
+JOBS = ["clickhouse-native-20260910-v4-0", "clickhouse-native-20260910-v4-1"]
 SOURCES = {
     "chi-torghut-clickhouse-default-0-0-0": [9000, 8123],
     "chi-torghut-clickhouse-default-0-1-0": [9000, 8123],
