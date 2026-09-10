@@ -48,3 +48,21 @@ spec:
   volumeSnapshotClassName: rook-ceph-block
   source:
     persistentVolumeClaimName: chi-data-chi-torghut-clickhouse-default-0-1-0
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: keeper-upgrade-20260910-v1
+  namespace: torghut
+  labels:
+    app.kubernetes.io/part-of: clickhouse-upgrade-acceptance
+  annotations:
+    argocd.argoproj.io/sync-wave: '-20'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    keeper.proompteng.ai/source-pvc-uid: f9f4873a-c20c-4e4e-af28-4ff44f3d0df7
+    keeper.proompteng.ai/native-snapshot-file: snapshot_92537674.bin.zstd
+    keeper.proompteng.ai/native-snapshot-sha256: 97a2ca37c571b1584af15f0928b571ca0c33e872e47f2284f9b9322eaec0fd30
+spec:
+  volumeSnapshotClassName: rook-ceph-block
+  source:
+    persistentVolumeClaimName: chk-data-chk-torghut-keeper-default-0-0-0

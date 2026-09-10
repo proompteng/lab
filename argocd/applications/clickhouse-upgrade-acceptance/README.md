@@ -67,3 +67,13 @@ It never applies manifests or changes serving workloads. Containers use
 UID 101, read-only roots, no capabilities and no service-account tokens. A failed
 attempt does not retry or overwrite partial evidence. Diagnose it and review a
 new generation. No CI runner or serving PVC is used as writable scratch space.
+
+
+Keeper preparation retains a CSI snapshot of the original 1 GiB Keeper claim,
+including its native snapshot and Raft logs. The recorded native snapshot SHA256
+and original PVC identity must match the isolated recovery copy. The serving
+Keeper whitelist does not enable `csnp`; preparation preserves that whitelist
+and does not claim to have requested a new native snapshot. Source 25.12.5.44
+recovery and target 26.8.2.7 recovery must both pass before serving activation.
+The Keeper image, server ID, peer configuration and production PVC are unchanged
+during this stage. After activation, recovery must account for subsequent writes.
