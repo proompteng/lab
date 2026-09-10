@@ -265,3 +265,38 @@ data/proof volumes; the partially converted v2 volume is never opened by an
 older engine. Existing completed Jobs retain their original script ConfigMaps.
 The serving Cassandra image and template remain unchanged in this preparation;
 the later production activation must also preserve `CASSANDRA_NUM_TOKENS=256`.
+
+
+## Elasticsearch 8.19.21 activation
+
+The exact 8.5.1 native S3 snapshot `before-81921-v5` restored successfully with
+all eight indices/global state in an isolated 8.5.1 engine, then upgraded in
+place to the pinned 8.19.21 image. All 832 accessible original documents,
+including 759 Temporal visibility documents, retained their source hashes.
+Every restored index retained its identity and field definitions. The reserved
+GeoIP index retained every immutable Lucene file checksum; its mapping metadata
+advanced to the exact upstream 8.19.21 descriptor (`version=8.12.0`, managed
+mapping version 1). Native deprecation logging added compatible ECS fields and
+one diagnostic document. Both engines reached green and stopped cleanly. The
+fixture had no network access or production credentials and used a read-only,
+checksum-verified copy of the frozen S3 repository.
+
+Activation takes a fresh `before-81921-v6` native snapshot before applying the
+new image. Its separate repository `temporal-s3-native-81921-v6` uses the sibling
+prefix `temporal-81921-v6` in the same verified bucket/client. The previously
+rehearsed `temporal-s3-native` repository remains frozen and untouched. The new
+snapshot Job runs at sync wave -5, before the StatefulSet at wave 0; any missing
+source node, wrong identity, native analysis issue or incomplete snapshot blocks
+the image rollout. It freezes the new repository after all-index/global-state
+snapshot acceptance. The serving StatefulSet retains its rolling-update policy,
+all three original PVCs, existing credentials and S3 configuration; the same
+pinned target image is used by its keystore init and serving container.
+
+After normal GitOps rollout, require all three original node IDs and PVC UIDs,
+the original cluster UUID, version 8.19.21 on every node, green health with no
+unassigned or moving shards, preserved Temporal visibility index identity and
+documents, and native Temporal history/query plus a completed fresh workflow.
+Keep all retained native snapshots. Elasticsearch data files are not safely
+downgraded after new-version writes; recovery uses a validated retained native
+snapshot in a separate compatible cluster before a reviewed cutover, accounting
+for writes after the recorded snapshot checkpoint.
