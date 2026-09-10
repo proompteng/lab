@@ -265,7 +265,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'kubectl -n kube-system get namespace tengri',
     "jq -e '.items | length > 0'",
     "printf '%s\\n' tengri",
-    'kubectl get networkpolicies.networking.k8s.io --all-namespaces -o json',
+    'kubectl -n kube-system get networkpolicies.networking.k8s.io --all-namespaces -o json',
     'if [[ "$actual_namespaces" != "$expected_namespaces" ]]',
     'kubectl -n "$namespace" get networkpolicy kube-router-rollout-allow-all -o json',
     'case "$namespace" in',
@@ -389,7 +389,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'kubectl -n kube-system get namespace tengri',
     "jq -e '.items | length > 0'",
     "printf '%s\\n' tengri",
-    'kubectl get networkpolicies.networking.k8s.io --all-namespaces -o json',
+    'kubectl -n kube-system get networkpolicies.networking.k8s.io --all-namespaces -o json',
     'if [[ "$actual_namespaces" != "$desired_namespaces" ]]',
   ])
   requireTerms(failures, productionPaths.allNodeProbe, files.allNodeProbe, [
