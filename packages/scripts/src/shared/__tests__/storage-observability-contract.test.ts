@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 
 import { expect, test } from 'bun:test'
+import YAML from 'yaml'
 
 const repoRoot = new URL('../../../../../', import.meta.url)
 const readRepoFile = (path: string): string => readFileSync(new URL(path, repoRoot), 'utf8')
@@ -10,7 +11,7 @@ test('cluster Alloy collects bounded CloudNativePG and Ceph storage metrics', ()
   const config = readRepoFile('argocd/applications/observability/cluster-metrics-alloy-config.river')
   const deployment = readRepoFile('argocd/applications/observability/cluster-metrics-alloy-deployment.yaml')
   const kustomization = readRepoFile('argocd/applications/observability/kustomization.yaml')
-  const mimirValues = readRepoFile('argocd/applications/observability/mimir-values.yaml')
+  const mimirValues: unknown = YAML.parse(readRepoFile('argocd/applications/observability/mimir-values.yaml'))
 
   expect(config).toContain('discovery.kubernetes "cnpg_pods"')
   expect(config).toContain('label = "cnpg.io/cluster"')
@@ -28,9 +29,15 @@ test('cluster Alloy collects bounded CloudNativePG and Ceph storage metrics', ()
   expect(config).toContain('prometheus.relabel "rbd_client_metrics"')
   expect(config).toContain('container_fs_(reads|writes)(_bytes)?_total;/dev/rbd[0-9]+;;.+')
   expect(config).toContain('prometheus.relabel.rbd_client_metrics.receiver')
-  expect(mimirValues).toContain(
-    'kafka:\n  persistence:\n    enabled: true\n    size: 20Gi\n    storageClassName: rook-ceph-block',
-  )
+  expect(mimirValues).toMatchObject({
+    kafka: {
+      persistence: {
+        enabled: true,
+        size: '20Gi',
+        storageClassName: 'rook-ceph-block',
+      },
+    },
+  })
   expect(kustomization).toContain(
     'name: observability-mimir-kafka\n    patch: |-\n      apiVersion: apps/v1\n      kind: StatefulSet',
   )

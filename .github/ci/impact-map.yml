@@ -64,8 +64,12 @@ targets:
     paths:
       - .github/ci/impact-map.yml
       - .github/workflows/pull-request.yml
+      - .github/workflows/hermes-agent-mirror.yml
+      - .github/workflows/forgejo-image-publish.yml
+      - argocd/applications/forgejo/upstream-image.json
       - argocd/applications/hermes/**
       - argocd/applications/kube-router/**
+      - argocd/applications/temporal/upgrade/**
       - argocd/applications/tengri/network-policies.yaml
       - argocd/applications/observability/cluster-metrics-alloy-config.river
       - argocd/applications/observability/cluster-metrics-alloy-deployment.yaml
@@ -116,6 +120,7 @@ targets:
   kubeconform:
     kind: validation
     paths:
+      - scripts/cluster-upgrades/temporal_*.py
       - argocd/**/*.yaml
       - argocd/**/*.yml
       - argocd/**/*.river

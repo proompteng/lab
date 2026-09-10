@@ -1,0 +1,21 @@
+# Retain this Service name and ClusterIP for existing ingestion and query clients.
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/name: observability-loki-v3
+    app.kubernetes.io/instance: observability-loki-v3
+    app.kubernetes.io/component: gateway
+  name: observability-loki-loki-distributed-gateway
+  namespace: observability
+spec:
+  ports:
+  - name: http
+    port: 80
+    protocol: TCP
+    targetPort: http
+  selector:
+    app.kubernetes.io/component: gateway
+    app.kubernetes.io/instance: observability-loki-v3
+    app.kubernetes.io/name: observability-loki-v3
+  type: ClusterIP

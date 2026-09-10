@@ -549,6 +549,7 @@ spec:
           - .github/workflows/jangar-post-deploy-verify.yml
           - nix/oci-push.sh
           - argocd/applications/jangar
+          - argocd/bootstrap/jangar
     - image:
         repoURL: registry.ide-newton.ts.net/lab/jangar
         imageSelectionStrategy: NewestBuild
@@ -955,6 +956,7 @@ spec:
           - third_party/buzz
           - .github/workflows/buzz-relay-build-push.yml
           - argocd/applications/buzz
+          - argocd/bootstrap/buzz
     - image:
         repoURL: registry.ide-newton.ts.net/lab/buzz
         imageSelectionStrategy: NewestBuild
@@ -964,3 +966,37 @@ spec:
           - '^kargo-sha-[0-9a-f]{40}$'
         platform: linux/amd64
         cacheByTag: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Warehouse
+metadata:
+  name: forgejo
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  interval: 1m0s
+  freightCreationPolicy: Automatic
+  freightCreationCriteria:
+    expression: imageFrom('registry.ide-newton.ts.net/lab/forgejo').Tag == 'kargo-sha-'
+      + commitFrom('git@github.com:proompteng/lab.git').ID
+  subscriptions:
+  - git:
+      repoURL: git@github.com:proompteng/lab.git
+      branch: main
+      commitSelectionStrategy: NewestFromBranch
+      discoveryLimit: 20
+      strictSemvers: true
+      includePaths:
+      - .github/workflows/forgejo-image-publish.yml
+      - scripts/forgejo
+      - argocd/applications/forgejo
+  - image:
+      repoURL: registry.ide-newton.ts.net/lab/forgejo
+      imageSelectionStrategy: NewestBuild
+      discoveryLimit: 20
+      strictSemvers: true
+      allowTagsRegexes:
+      - ^kargo-sha-[0-9a-f]{40}$
+      platform: linux/amd64
+      cacheByTag: true

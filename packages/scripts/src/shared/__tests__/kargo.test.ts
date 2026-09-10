@@ -329,6 +329,12 @@ const expected = {
       'argocd/applications/hermes',
     ],
   },
+  forgejo: {
+    creationCriteria: 'single',
+    images: [imageRepo('forgejo')],
+    apps: ['forgejo'],
+    includePaths: ['.github/workflows/forgejo-image-publish.yml', 'scripts/forgejo', 'argocd/applications/forgejo'],
+  },
   jangar: {
     creationCriteria: 'single',
     requiresBuildReceipt: true,
@@ -345,6 +351,7 @@ const expected = {
       '.github/workflows/jangar-post-deploy-verify.yml',
       'nix/oci-push.sh',
       'argocd/applications/jangar',
+      'argocd/bootstrap/jangar',
     ],
   },
   symphony: {
@@ -494,7 +501,12 @@ const expected = {
     creationCriteria: 'single',
     images: [imageRepo('buzz')],
     apps: ['buzz'],
-    includePaths: ['third_party/buzz', '.github/workflows/buzz-relay-build-push.yml', 'argocd/applications/buzz'],
+    includePaths: [
+      'third_party/buzz',
+      '.github/workflows/buzz-relay-build-push.yml',
+      'argocd/applications/buzz',
+      'argocd/bootstrap/buzz',
+    ],
   },
 } as const
 
@@ -725,6 +737,22 @@ describe('Kargo direct-push GitOps contract', () => {
     expect(git?.excludePaths).toEqual(excludePaths)
   })
 
+  it('pairs promoted Redis bootstrap selection with the matching publisher and Warehouse', () => {
+    for (const [name, workflowPath] of [
+      ['buzz', '.github/workflows/buzz-relay-build-push.yml'],
+      ['jangar', '.github/workflows/jangar-build-push.yaml'],
+    ]) {
+      const workflow = YAML.parse(readFileSync(workflowPath, 'utf8'))
+      const paths = workflow.on.push.paths.map((path: string) => path.replace(/\/\*\*$/, ''))
+      const subscriptions = byName(warehouses).get(name)?.spec?.subscriptions as Array<Record<string, any>>
+      const sourcePaths = subscriptions.find((subscription) => subscription.git)?.git?.includePaths
+      expect(sourcePaths).toEqual(paths)
+      expect(sourcePaths).toContain(`argocd/bootstrap/${name}`)
+      expect(sourcePaths).toContain(`argocd/applications/${name}`)
+      expect(applicationSetElements.find((element) => element.name === name)?.path).toBe(`argocd/applications/${name}`)
+    }
+  })
+
   it('keeps every stage direct, automatic, branch-backed, and free of pull-request promotion', () => {
     const stageMap = byName(stages)
     expect([...stageMap.keys()].sort()).toEqual(expectedStageNames)
@@ -799,7 +827,14 @@ describe('Kargo direct-push GitOps contract', () => {
 
       const argocdUpdate = steps.at(-1)
       expect(argocdUpdate?.retry).toEqual({
-        timeout: stageName === 'torghut' ? '1h45m0s' : '20m0s',
+        timeout:
+          stageName === 'torghut'
+            ? '1h45m0s'
+            : stageName === 'bilig'
+              ? '1h15m0s'
+              : stageName === 'forgejo'
+                ? '45m0s'
+                : '20m0s',
         errorThreshold: 3,
       })
       const apps = argocdUpdate?.config?.apps as Array<Record<string, any>>
