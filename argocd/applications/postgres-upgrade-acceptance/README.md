@@ -128,3 +128,19 @@ production archive configuration and can reach only DNS and the Kubernetes API;
 operator ingress is restricted to port 8000. The existing four 18.6 clones are
 unchanged. Require native 17.11 recovery, positive isolation controls and full
 data/catalog inventories before the separate reviewed 18.6 rehearsal stage.
+
+
+The second major-version rehearsal advances only Buzz, Jangar and Torghut's
+isolated clones from their recovered 17.11 images to 18.6 on the same OS family.
+The separate PreSync guard requires the recorded Cluster UID, snapshot bootstrap
+reference, original 17 system identifier and healthy native operand image before
+activation. It also accepts the same healthy clone after the 18 transition.
+Its service account can read only those three Clusters. All original production
+Clusters and the first four qualified clones remain unchanged.
+
+Source recovery and full streamed SHA256 row inventories passed before this
+stage. After native pg_upgrade, compare data, sequences, large objects, roles,
+catalogs and logical slots before updating extensions in the clones. Verify
+native extension operations and analyze the migrated databases before preparing
+production activation with fresh cold backups and separate PostgreSQL 18 archive
+prefixes. Never run a 17 image over a converted clone volume.
