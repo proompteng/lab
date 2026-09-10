@@ -2,6 +2,18 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 configMapGenerator:
+  - name: observability-mimir-kafka-restore-check
+    files:
+      - mimir-kafka-restore-check.sh
+    options:
+      annotations:
+        argocd.argoproj.io/sync-wave: "-6"
+  - name: observability-grafana-sqlite-backup
+    files:
+      - grafana-sqlite-backup.py
+    options:
+      annotations:
+        argocd.argoproj.io/sync-wave: "-6"
   - name: observability-cluster-metrics-alloy
     files:
       - config.river=cluster-metrics-alloy-config.river
@@ -10,6 +22,11 @@ generatorOptions:
   disableNameSuffixHash: true
 
 resources:
+  - loki-compatibility-service.yaml
+  - loki-v3-config-check.yaml
+  - tempo-compatibility-services.yaml
+  - grafana-upgrade-backup.yaml
+  - mimir-kafka-upgrade-backup.yaml
   - rook-ceph-rgw-loki-reflected-secret.yaml
   - tailscale-ingresses.yaml
   - ingressroute-grafana-k8s-private.yaml
@@ -25,39 +42,41 @@ resources:
   - bayn-cycle-operations-dashboard-configmap.yaml
   - cluster-metrics-alloy-rbac.yaml
   - cluster-metrics-alloy-deployment.yaml
+  - mimir-config-check.yaml
+  - tempo-v3-config-check.yaml
 
 helmCharts:
+  - name: loki
+    repo: https://grafana-community.github.io/helm-charts
+    version: 18.12.1
+    releaseName: observability-loki-v3
+    namespace: observability
+    includeCRDs: true
+    valuesFile: loki-v3-values.yaml
   - name: kube-state-metrics
     repo: https://prometheus-community.github.io/helm-charts
-    version: 8.2.0
+    version: 8.4.2
     releaseName: observability-kube-state-metrics
     namespace: observability
     includeCRDs: true
     valuesFile: kube-state-metrics-values.yaml
   - name: mimir-distributed
     repo: https://grafana.github.io/helm-charts
-    version: 6.1.0
+    version: 6.2.0
     releaseName: observability-mimir
     namespace: observability
     includeCRDs: true
     valuesFile: mimir-values.yaml
-  - name: loki-distributed
-    repo: https://grafana.github.io/helm-charts
-    version: 0.80.6
-    releaseName: observability-loki
-    namespace: observability
-    includeCRDs: true
-    valuesFile: loki-values.yaml
   - name: tempo-distributed
-    repo: https://grafana.github.io/helm-charts
-    version: 1.61.3
-    releaseName: observability-tempo
+    repo: https://grafana-community.github.io/helm-charts
+    version: 3.5.1
+    releaseName: observability-tempo-v3
     namespace: observability
     includeCRDs: true
-    valuesFile: tempo-values.yaml
+    valuesFile: tempo-v3-values.yaml
   - name: grafana
-    repo: https://grafana.github.io/helm-charts
-    version: 10.5.15
+    repo: https://grafana-community.github.io/helm-charts
+    version: 13.2.2
     releaseName: observability-grafana
     namespace: observability
     valuesFile: grafana-values.yaml
@@ -72,6 +91,38 @@ images:
 
 patches:
   - target:
+      kind: DaemonSet
+      name: observability-loki-v3-canary
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "1"
+  - target:
+      kind: ConfigMap
+      name: observability-loki-v3(-runtime)?
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "-2"
+  - target:
+      kind: ConfigMap
+      name: observability-mimir-(config|runtime)
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "-2"
+  - target:
+      kind: ConfigMap
+      name: observability-tempo-v3-(config|runtime)
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "-2"
+  - target:
       kind: StatefulSet
       name: observability-mimir-compactor
     patch: |-
@@ -81,6 +132,7 @@ patches:
         name: observability-mimir-compactor
         annotations:
           argocd.argoproj.io/sync-options: Replace=true
+          argocd.argoproj.io/sync-wave: "2"
   - target:
       kind: StatefulSet
       name: observability-mimir-ingester
@@ -101,6 +153,7 @@ patches:
         name: observability-mimir-store-gateway
         annotations:
           argocd.argoproj.io/sync-options: Replace=true
+          argocd.argoproj.io/sync-wave: "1"
   - target:
       kind: StatefulSet
       name: observability-mimir-kafka
@@ -109,46 +162,6 @@ patches:
       kind: StatefulSet
       metadata:
         name: observability-mimir-kafka
-        annotations:
-          argocd.argoproj.io/sync-options: Replace=true
-  - target:
-      kind: StatefulSet
-      name: observability-tempo-ingester
-    patch: |-
-      apiVersion: apps/v1
-      kind: StatefulSet
-      metadata:
-        name: observability-tempo-ingester
-        annotations:
-          argocd.argoproj.io/sync-options: Replace=true
-  - target:
-      kind: StatefulSet
-      name: observability-tempo-memcached
-    patch: |-
-      apiVersion: apps/v1
-      kind: StatefulSet
-      metadata:
-        name: observability-tempo-memcached
-        annotations:
-          argocd.argoproj.io/sync-options: Replace=true
-  - target:
-      kind: StatefulSet
-      name: observability-loki-loki-distributed-ingester
-    patch: |-
-      apiVersion: apps/v1
-      kind: StatefulSet
-      metadata:
-        name: observability-loki-loki-distributed-ingester
-        annotations:
-          argocd.argoproj.io/sync-options: Replace=true
-  - target:
-      kind: StatefulSet
-      name: observability-loki-loki-distributed-querier
-    patch: |-
-      apiVersion: apps/v1
-      kind: StatefulSet
-      metadata:
-        name: observability-loki-loki-distributed-querier
         annotations:
           argocd.argoproj.io/sync-options: Replace=true
   - target:
@@ -165,6 +178,10 @@ patches:
       name: observability-mimir-alertmanager
     patch: |-
       - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "3"
+      - op: add
         path: /spec/template/metadata/annotations/observability.proompteng.ai~1alertmanager-fallback-config-revision
         value: "2026-06-20-1"
       - op: replace
@@ -173,15 +190,3 @@ patches:
           name: alertmanager-fallback-config
           secret:
             secretName: observability-alertmanager-email
-  - path: tempo-ingester-preserve-buffers.patch.yaml
-    target:
-      group: apps
-      version: v1
-      kind: StatefulSet
-      name: observability-tempo-ingester
-  - path: mimir-kafka-preserve-buffer.patch.yaml
-    target:
-      group: apps
-      version: v1
-      kind: StatefulSet
-      name: observability-mimir-kafka

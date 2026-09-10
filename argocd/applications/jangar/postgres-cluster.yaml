@@ -21,6 +21,9 @@ spec:
         - CREATE EXTENSION IF NOT EXISTS pg_trgm;
         - CREATE EXTENSION IF NOT EXISTS vector;
   backup:
+    volumeSnapshot:
+      className: rook-ceph-block
+      snapshotOwnerReference: backup
     target: prefer-standby
     barmanObjectStore:
       destinationPath: s3://cnpg

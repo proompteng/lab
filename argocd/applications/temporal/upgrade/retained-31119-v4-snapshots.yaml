@@ -1,0 +1,77 @@
+# Retained native backups and CSI clone from generation 31119-v4.
+# The old rehearsal booted the live clone directory and failed on a later SSTable
+# outside the native snapshot. These artifacts do not satisfy upgrade acceptance.
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: temporal-cassandra-31119-v4-0
+  namespace: temporal
+  labels:
+    app.kubernetes.io/name: temporal
+    app.kubernetes.io/component: cassandra-upgrade
+    temporal.proompteng.ai/backup-generation: 31119-v4
+  annotations:
+    argocd.argoproj.io/sync-wave: '-20'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  volumeSnapshotClassName: rook-ceph-block
+  source:
+    persistentVolumeClaimName: data-temporal-cassandra-0
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: temporal-cassandra-31119-v4-1
+  namespace: temporal
+  labels:
+    app.kubernetes.io/name: temporal
+    app.kubernetes.io/component: cassandra-upgrade
+    temporal.proompteng.ai/backup-generation: 31119-v4
+  annotations:
+    argocd.argoproj.io/sync-wave: '-20'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  volumeSnapshotClassName: rook-ceph-block
+  source:
+    persistentVolumeClaimName: data-temporal-cassandra-1
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: temporal-cassandra-31119-v4-2
+  namespace: temporal
+  labels:
+    app.kubernetes.io/name: temporal
+    app.kubernetes.io/component: cassandra-upgrade
+    temporal.proompteng.ai/backup-generation: 31119-v4
+  annotations:
+    argocd.argoproj.io/sync-wave: '-20'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  volumeSnapshotClassName: rook-ceph-block
+  source:
+    persistentVolumeClaimName: data-temporal-cassandra-2
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: temporal-cassandra-31119-v4-restore-0
+  namespace: temporal
+  labels:
+    app.kubernetes.io/name: temporal
+    app.kubernetes.io/component: cassandra-upgrade
+    temporal.proompteng.ai/backup-generation: 31119-v4
+  annotations:
+    argocd.argoproj.io/sync-wave: '-15'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: rook-ceph-block
+  resources:
+    requests:
+      storage: 20Gi
+  dataSource:
+    apiGroup: snapshot.storage.k8s.io
+    kind: VolumeSnapshot
+    name: temporal-cassandra-31119-v4-0

@@ -91,6 +91,7 @@ const torghutCoBuildPaths = [
   'patches/**',
   'package.json',
   '.github/workflows/nix-oci-build-common.yml',
+  '.github/workflows/torghut-ta-build-push.yaml',
   '.github/workflows/torghut-post-deploy-verify.yml',
   'nix/oci-push.sh',
   'argocd/applications/torghut/**',
