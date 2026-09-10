@@ -128,7 +128,9 @@ existing runtime idempotency key also binds source revision, account controller 
 
 For the first cutover, merge the Warehouse, automatic Stage, immutable publisher, and ApplicationSet branch change
 together. Argo may briefly report a missing `kargo/bayn` branch until the first build creates Freight and Kargo pushes
-it; existing workloads remain running. Verify the selected Freight digest, successful promotion, exact generated
+it; existing workloads remain running. If the root Application uses manual sync, sync only the reviewed `product`
+ApplicationSet from the merged source to install Bayn's branch target and authorized-stage annotation. Workload
+promotion and sync remain owned by Kargo. Verify the selected Freight digest, successful promotion, exact generated
 commit, both workers and status replicas, natural controller progress, and fresh exact reconciliation. Recover a
 failed promotion through Kargo; do not resume the retired workflow or introduce another deployment writer.
 
