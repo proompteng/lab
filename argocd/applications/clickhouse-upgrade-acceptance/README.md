@@ -146,3 +146,22 @@ source snapshots, source credentials, network policy or retained claims.
 The completed/failed Keeper v1 Job remains explicitly declared with Prune=false
 and Delete=false while v2 runs. Its original Pod identity, statuses and logs
 remain available until a separately recorded retirement.
+
+
+Replica 0 generation v3 stopped before structure recovery because the private
+Keeper had not yet accepted sessions. Replica 1 completed the native restores and
+fingerprints on all three versions but failed its final health check because
+ordinary merges remained stopped and replication queues contained pending work.
+Generation v4 waits for a native `system.zookeeper` query before RESTORE. After
+capturing the full backup fingerprints, it resumes ordinary merges while keeping
+TTL merges stopped, then requires all eleven replication queues to drain with
+no readonly, expired-session or lost-part state before a clean shutdown.
+
+Both replicas get v4 Jobs, fresh directories and an immutable v4 ConfigMap.
+The retained v3 ConfigMap keeps its exact original payload and becomes immutable.
+No phase depends on an in-place ConfigMap refresh. Failed v3 Jobs and all source,
+fixture and proof claims remain retained.
+
+Start the default controller for both v4 Jobs before merging. It never restarts
+or overwrites a completed phase. Compare all three native versions independently
+for each replica before serving activation.

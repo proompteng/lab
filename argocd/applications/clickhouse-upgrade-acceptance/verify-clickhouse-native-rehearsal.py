@@ -197,7 +197,7 @@ def verify(proof, expected_tables):
 
 
 def main():
-    proof = Path("/proof/v3")
+    proof = Path("/proof") / os.environ.get("REHEARSAL_GENERATION", "v3")
     result = verify(proof, Path("/scripts/expected-tables.tsv").read_text())
     result["replica"] = os.environ["REPLICA"]
     result["backupManifestSHA256"] = os.environ["BACKUP_MANIFEST_SHA256"]

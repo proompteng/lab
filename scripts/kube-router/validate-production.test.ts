@@ -3,6 +3,7 @@ import { expect, test } from 'bun:test'
 import {
   loadProductionFiles,
   productionPaths,
+  reviewedPolicySources,
   validateProductionContent,
   type ProductionFiles,
 } from './validate-production'
@@ -312,4 +313,52 @@ test('rejects a policy metrics probe that can fail from SIGPIPE under pipefail',
   expect(validateProductionContent(files)).toContain(
     `${productionPaths.runbook}: missing production invariant "metrics=$(kubectl -n kube-system exec \\\"$pod\\\" -c kube-router -- wget -qO- http://127.0.0.1:20241/metrics)"`,
   )
+})
+
+for (const [namespace, sources] of Object.entries(reviewedPolicySources)) {
+  test(`rejects ${namespace} source drift without a new reviewed contract`, async () => {
+    const files = copy(await loadProductionFiles())
+    files[sources[0]] +=
+      `\n---\napiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: unreviewed\nspec:\n  podSelector: {}\n  policyTypes: [Ingress]\n  ingress: []\n`
+    expect(validateProductionContent(files)).toContainEqual(
+      expect.stringContaining(`${namespace}) expected_reviewed_policy_hash=`),
+    )
+  })
+  test(`rejects a corrupted ${namespace} fingerprint`, async () => {
+    const files = copy(await loadProductionFiles())
+    files.preflightHook = files.preflightHook.replace(
+      new RegExp(`(${namespace}\\) expected_reviewed_policy_hash=)[a-f0-9]{64}`),
+      `$1${'0'.repeat(64)}`,
+    )
+    expect(validateProductionContent(files)).toContainEqual(
+      expect.stringContaining(`${namespace}) expected_reviewed_policy_hash=`),
+    )
+  })
+  test(`rejects missing CI routing for every ${namespace} source`, async () => {
+    const baseline = await loadProductionFiles()
+    for (const key of sources) {
+      const files = copy(baseline)
+      files.impactMap = files.impactMap.replace(`      - ${productionPaths[key]}\n`, '')
+      expect(validateProductionContent(files)).toContain(
+        `${productionPaths.impactMap}: root-scripts must cover ${productionPaths[key]}`,
+      )
+    }
+  })
+  test(`rejects missing ${namespace} namespace coverage`, async () => {
+    for (const key of ['preflightHook', 'coverageProbe'] as const) {
+      const files = copy(await loadProductionFiles())
+      files[key] = files[key].replace(new RegExp(` ${namespace}(?= |\\n)`), '')
+      expect(validateProductionContent(files)).toContainEqual(
+        expect.stringContaining(`${productionPaths[key]}: missing production invariant`),
+      )
+    }
+  })
+}
+
+test('normalizes API-omitted empty policy rules and ignores other manifest kinds', async () => {
+  const files = copy(await loadProductionFiles())
+  files.clickhouseRehearsalPolicies = files.clickhouseRehearsalPolicies.replace(/^  (ingress|egress): \[\]\n/gm, '')
+  files.clickhouseRehearsalPolicies +=
+    '\n---\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: unrelated\ndata: {}\n'
+  expect(validateProductionContent(files)).toEqual([])
 })
