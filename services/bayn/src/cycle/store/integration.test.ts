@@ -538,7 +538,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     })
   })
 
-  test('bounds completion reads over a large history without admitting stale or incomplete IOC evidence', async () => {
+  test('bounds terminal recovery reads over a large history without admitting stale or incomplete evidence', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -729,6 +729,63 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
             const authority = yield* sql`SELECT effective, kill_state FROM authority_state`
             expect(authority).toEqual([{ effective: 'OBSERVE', kill_state: 'ACTIVE' }])
+
+            yield* sql`ALTER TABLE authority_generations
+              ADD previous_generation_hash text,
+              ADD proof_plan_hash text,
+              ADD authority_version bigint,
+              ADD activated_at timestamptz,
+              ADD broker_identity_schema_version text DEFAULT 'bayn.broker-identity.v2',
+              ADD broker_identity_hash text DEFAULT 'identity',
+              ADD broker_provider text DEFAULT 'alpaca',
+              ADD broker_environment text DEFAULT 'sandbox'`
+            yield* sql`UPDATE authority_generations SET proof_plan_hash = ${researchPlanHash}`
+            yield* sql`INSERT INTO authority_generations (
+              generation_hash, previous_generation_hash, maximum, authority_version, activated_at, account_id
+            ) VALUES ('successor', ${generationHash}, 'OBSERVE', 4, '2026-09-08T17:05:00Z', 'account')`
+            yield* sql`UPDATE authority_state SET reason = ${restriction}`
+            yield* sql`ALTER TABLE reconciliations ADD reconciliation_id text DEFAULT 'reconciliation'`
+            yield* sql`CREATE TEMP TABLE position_snapshots (
+              snapshot_id text, account_id text, position_count integer, observed_at timestamptz
+            ) ON COMMIT DROP`
+            yield* sql`CREATE INDEX ON position_snapshots (account_id, observed_at DESC)`
+            yield* sql`INSERT INTO position_snapshots
+              SELECT sequence::text, 'account', 0,
+                '2026-09-08T17:00:00Z'::timestamptz - sequence * interval '1 second'
+              FROM generate_series(1, 100000) AS sequence`
+            yield* sql`INSERT INTO position_snapshots VALUES (
+              'current', 'account', 0, '2026-09-08T17:02:00Z'
+            )`
+            yield* sql`ANALYZE position_snapshots`
+            const rearmEligible = sql`SELECT research_paper_rearm_eligible(
+              'successor', 4, '2026-09-08T17:05:00Z'::timestamptz
+            ) AS eligible`.pipe(
+              Effect.flatMap(Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ eligible: Schema.Boolean })]))),
+              Effect.map(([row]) => row.eligible),
+            )
+            expect(yield* rearmEligible).toBe(true)
+            yield* sql`UPDATE position_snapshots SET position_count = 1 WHERE snapshot_id = 'current'`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE position_snapshots SET position_count = 0,
+              observed_at = '2026-09-08T17:04:00Z' WHERE snapshot_id = 'current'`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE position_snapshots SET observed_at = '2026-09-08T17:02:00Z'
+              WHERE snapshot_id = 'current'`
+            yield* sql`INSERT INTO position_snapshots VALUES (
+              'z-tied', 'account', 1, '2026-09-08T17:02:00Z'
+            )`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE position_snapshots SET position_count = 0 WHERE snapshot_id = 'z-tied'`
+            expect(yield* rearmEligible).toBe(true)
+            yield* sql`INSERT INTO position_snapshots VALUES (
+              'foreign', 'other-account', 1, '2026-09-08T17:04:00Z'
+            )`
+            expect(yield* rearmEligible).toBe(true)
+            yield* sql`UPDATE mutation_events SET event_type = 'SUBMIT_STARTED' WHERE sequence = 350`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE mutation_events SET event_type = 'RECOVERY_FOUND' WHERE sequence = 350`
+            yield* sql`UPDATE authority_state SET reason = 'operator kill switch'`
+            expect(yield* rearmEligible).toBe(false)
           }),
         )
       }).pipe(Effect.provide(BlockedCycleIntentStoreLive)),
