@@ -5,9 +5,9 @@ from pathlib import Path
 
 
 VERSIONS = {
-    "v25_3": "25.3.6.10034.altinitystable",
-    "v25_8": "25.8.28.10001.altinitystable",
-    "v26_3": "26.3.16.10001.altinitystable",
+    "v25_3": "25.3.6.10034",
+    "v25_8": "25.8.28.10001",
+    "v26_3": "26.3.16.10001",
 }
 
 
@@ -31,8 +31,10 @@ def verify(proof, expected_tables, endpoints):
     results = {}
     for phase, version in VERSIONS.items():
         root = proof / phase
+        reported_version = (root / "version").read_text().strip()
         require(
-            (root / "version").read_text().strip() == version, f"Wrong engine: {phase}"
+            reported_version.removesuffix(".altinitystable") == version,
+            f"Wrong engine: {phase}",
         )
         for name in ["process-exit", "server-exit", "keeper-exit"]:
             require(
@@ -114,6 +116,7 @@ def verify(proof, expected_tables, endpoints):
             )
         results[phase] = {
             "version": version,
+            "reportedVersion": reported_version,
             "tables": tables,
             "columns": columns,
             "data": data,

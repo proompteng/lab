@@ -90,7 +90,8 @@ for ((attempt=0; attempt<90; attempt++)); do
   if sql 'SELECT version()' TSVRaw > "$proof/version" 2>/dev/null; then ready=true; break; fi
   sleep 2
 done
-[[ "$ready" == true && "$(cat "$proof/version")" == "$EXPECTED_VERSION" ]]
+reported_version=$(cat "$proof/version")
+[[ "$ready" == true && "${reported_version%.altinitystable}" == "$EXPECTED_VERSION" ]]
 restore="RESTORE DATABASE default, DATABASE signal, DATABASE torghut FROM File('$backup')"
 sql "$restore SETTINGS structure_only=1" > "$proof/structure-restore.jsonl"
 sql "SELECT database,name,engine FROM system.tables WHERE database IN ('default','signal','torghut') ORDER BY database,name" TSVRaw > "$proof/tables.tsv"

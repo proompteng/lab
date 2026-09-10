@@ -102,6 +102,7 @@ class NativeRehearsalVerificationTests(unittest.TestCase):
         return VERIFIER.verify(self.root, self.expected, self.endpoints)
 
     def test_accepts_complete_matching_native_results_with_distinct_restore_uuids(self):
+        self.assertEqual(VERIFIER.VERSIONS["v25_3"], "25.3.6.10034")
         result = self.verify()
         self.assertEqual(result["status"], "PASS")
         self.assertEqual(result["rows"], 52)
@@ -109,6 +110,15 @@ class NativeRehearsalVerificationTests(unittest.TestCase):
     def test_rejects_missing_or_nonzero_native_exit(self):
         (self.root / "v26_3/server-exit").write_text("137")
         with self.assertRaisesRegex(RuntimeError, "Unclean native exit"):
+            self.verify()
+
+    def test_accepts_the_observed_altinity_package_suffix(self):
+        (self.root / "v25_3/version").write_text("25.3.6.10034.altinitystable")
+        self.assertEqual(self.verify()["status"], "PASS")
+
+    def test_rejects_a_different_engine_version(self):
+        (self.root / "v26_3/version").write_text("25.3.6.10034.altinitystable")
+        with self.assertRaisesRegex(RuntimeError, "Wrong engine"):
             self.verify()
 
     def test_rejects_native_table_check_failure(self):
