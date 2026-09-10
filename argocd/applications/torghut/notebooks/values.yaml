@@ -3,7 +3,7 @@ fullnameOverride: torghut-notebooks
 hub:
   image:
     name: quay.io/jupyterhub/k8s-hub
-    tag: '4.4.0'
+    tag: '4.4.2'
     pullPolicy: IfNotPresent
   resources:
     requests:
@@ -92,7 +92,7 @@ proxy:
   chp:
     image:
       name: quay.io/jupyterhub/configurable-http-proxy
-      tag: '5.2.0'
+      tag: '5.3.0'
       pullPolicy: IfNotPresent
     resources:
       requests:

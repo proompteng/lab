@@ -1,7 +1,7 @@
 apiVersion: postgresql.cnpg.io/v1
 kind: Backup
 metadata:
-  name: coder-cluster-major-upgrade
+  name: coder-cluster-pg18-final-20260909
   namespace: coder
   labels:
     app.kubernetes.io/name: coder-cluster

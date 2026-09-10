@@ -41,6 +41,21 @@ spec:
                   argocd.argoproj.io/sync-wave: "-1"
                 automation: manual
                 enabled: "true"
+              - name: postgres-upgrade-acceptance
+                path: argocd/applications/postgres-upgrade-acceptance
+                namespace: postgres-upgrade-acceptance
+                renderWithLovely: false
+                annotations:
+                  argocd.argoproj.io/sync-wave: "0"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false
+                automation: auto
+                enabled: "true"
               - name: clickhouse-operator
                 path: argocd/applications/clickhouse-operator
                 namespace: clickhouse-operator
@@ -602,7 +617,7 @@ spec:
                 namespace: temporal
                 annotations:
                   argocd.argoproj.io/sync-wave: "4"
-                automation: manual
+                automation: auto
                 enabled: "true"
               - name: inngest
                 path: argocd/applications/inngest
@@ -693,7 +708,7 @@ spec:
                       - '.spec.template.metadata.annotations["kubectl.kubernetes.io/restartedAt"]'
                       - .spec.template.spec.containers[].terminationMessagePath
                       - .spec.template.spec.containers[].terminationMessagePolicy
-                      - .spec.template.spec.initContainers[].resources
+                      - .spec.template.spec.initContainers[] | select(.name == "register-runner") | .resources
                       - .spec.template.spec.initContainers[].terminationMessagePath
                       - .spec.template.spec.initContainers[].terminationMessagePolicy
                       - .spec.template.spec.dnsPolicy
@@ -717,7 +732,7 @@ spec:
                       - '.spec.template.metadata.annotations["kubectl.kubernetes.io/restartedAt"]'
                       - .spec.template.spec.containers[].terminationMessagePath
                       - .spec.template.spec.containers[].terminationMessagePolicy
-                      - .spec.template.spec.initContainers[].resources
+                      - .spec.template.spec.initContainers[] | select(.name == "register-runner") | .resources
                       - .spec.template.spec.initContainers[].terminationMessagePath
                       - .spec.template.spec.initContainers[].terminationMessagePolicy
                       - .spec.template.spec.dnsPolicy
@@ -726,7 +741,7 @@ spec:
                       - .spec.template.spec.securityContext
                       - .spec.template.spec.serviceAccount
                       - .spec.template.spec.volumes[].configMap.defaultMode
-                automation: manual
+                automation: auto
                 enabled: "true"
               - name: backstage
                 path: argocd/applications/backstage

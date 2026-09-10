@@ -18,4 +18,4 @@ helmCharts:
 images:
 - name: code.forgejo.org/forgejo/forgejo
   newName: registry.ide-newton.ts.net/lab/forgejo
-  digest: sha256:61767bf67e527bf48979d9892caeeea8cec544d0108aa2731ff1e4a17cb6b3be
+  digest: sha256:c8fb414db317b0e521443a244f1809bc3bf2b80641eb355c1a66167c426b2b87
