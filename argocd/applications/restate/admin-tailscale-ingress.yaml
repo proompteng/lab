@@ -1,0 +1,26 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: restate-admin-tailscale
+  labels:
+    app: restate
+    app.kubernetes.io/name: restate
+    app.kubernetes.io/component: admin-ui
+  annotations:
+    tailscale.com/tags: tag:k8s
+spec:
+  ingressClassName: tailscale
+  tls:
+    - hosts:
+        - restate.ide-newton.ts.net
+  rules:
+    - host: restate.ide-newton.ts.net
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: restate
+                port:
+                  name: admin

@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: sag
+  namespace: sag
+  labels:
+    app.kubernetes.io/name: sag
+    app.kubernetes.io/part-of: lab
+spec:
+  selector:
+    app.kubernetes.io/name: sag
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

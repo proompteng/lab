@@ -1,0 +1,56 @@
+name: buf
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'proto/**'
+      - 'buf.work.yaml'
+      - 'buf.gen.yaml'
+      - 'scripts/generate-proto.sh'
+      - '.github/workflows/buf-ci.yml'
+  pull_request:
+    paths:
+      - 'proto/**'
+      - 'buf.work.yaml'
+      - 'buf.gen.yaml'
+      - 'scripts/generate-proto.sh'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Buf
+        uses: bufbuild/buf-setup-action@v1
+        with:
+          version: 1.50.0
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Buf format check
+        run: buf format --diff
+
+      - name: Buf lint
+        run: buf lint
+
+      - name: Determine if breaking change check is available
+        id: breaking
+        run: |
+          if git show origin/main:proto/buf.yaml >/dev/null 2>&1; then
+            echo "has_config=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_config=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Buf breaking
+        if: steps.breaking.outputs.has_config == 'true'
+        run: buf breaking --against '.git#branch=origin/main'

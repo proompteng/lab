@@ -1,0 +1,192 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+configMapGenerator:
+  - name: observability-mimir-kafka-restore-check
+    files:
+      - mimir-kafka-restore-check.sh
+    options:
+      annotations:
+        argocd.argoproj.io/sync-wave: "-6"
+  - name: observability-grafana-sqlite-backup
+    files:
+      - grafana-sqlite-backup.py
+    options:
+      annotations:
+        argocd.argoproj.io/sync-wave: "-6"
+  - name: observability-cluster-metrics-alloy
+    files:
+      - config.river=cluster-metrics-alloy-config.river
+
+generatorOptions:
+  disableNameSuffixHash: true
+
+resources:
+  - loki-compatibility-service.yaml
+  - loki-v3-config-check.yaml
+  - tempo-compatibility-services.yaml
+  - grafana-upgrade-backup.yaml
+  - mimir-kafka-upgrade-backup.yaml
+  - rook-ceph-rgw-loki-reflected-secret.yaml
+  - tailscale-ingresses.yaml
+  - ingressroute-grafana-k8s-private.yaml
+  - graf-mimir-rules.yaml
+  - observability-alertmanager-email-externalsecret.yaml
+  - observability-mimir-rule-loader.yaml
+  - graf-graf-dashboard-configmap.yaml
+  - graf-bumba-dashboard-configmap.yaml
+  - symphony-fleet-dashboard-configmap.yaml
+  - codex-pipeline-dashboard-configmap.yaml
+  - torghut-execution-recovery-dashboard-configmap.yaml
+  - arc-runner-capacity-dashboard-configmap.yaml
+  - bayn-cycle-operations-dashboard-configmap.yaml
+  - cluster-metrics-alloy-rbac.yaml
+  - cluster-metrics-alloy-deployment.yaml
+  - mimir-config-check.yaml
+  - tempo-v3-config-check.yaml
+
+helmCharts:
+  - name: loki
+    repo: https://grafana-community.github.io/helm-charts
+    version: 18.12.1
+    releaseName: observability-loki-v3
+    namespace: observability
+    includeCRDs: true
+    valuesFile: loki-v3-values.yaml
+  - name: kube-state-metrics
+    repo: https://prometheus-community.github.io/helm-charts
+    version: 8.4.2
+    releaseName: observability-kube-state-metrics
+    namespace: observability
+    includeCRDs: true
+    valuesFile: kube-state-metrics-values.yaml
+  - name: mimir-distributed
+    repo: https://grafana.github.io/helm-charts
+    version: 6.2.0
+    releaseName: observability-mimir
+    namespace: observability
+    includeCRDs: true
+    valuesFile: mimir-values.yaml
+  - name: tempo-distributed
+    repo: https://grafana-community.github.io/helm-charts
+    version: 3.5.1
+    releaseName: observability-tempo-v3
+    namespace: observability
+    includeCRDs: true
+    valuesFile: tempo-v3-values.yaml
+  - name: grafana
+    repo: https://grafana-community.github.io/helm-charts
+    version: 13.2.2
+    releaseName: observability-grafana
+    namespace: observability
+    valuesFile: grafana-values.yaml
+
+images:
+  - name: docker.io/nginxinc/nginx-unprivileged
+    newName: mirror.gcr.io/nginxinc/nginx-unprivileged
+    newTag: 1.29-alpine
+  - name: docker.io/memcached
+    newName: mirror.gcr.io/library/memcached
+    newTag: 1.6.39-alpine
+
+patches:
+  - target:
+      kind: DaemonSet
+      name: observability-loki-v3-canary
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "1"
+  - target:
+      kind: ConfigMap
+      name: observability-loki-v3(-runtime)?
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "-2"
+  - target:
+      kind: ConfigMap
+      name: observability-mimir-(config|runtime)
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "-2"
+  - target:
+      kind: ConfigMap
+      name: observability-tempo-v3-(config|runtime)
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "-2"
+  - target:
+      kind: StatefulSet
+      name: observability-mimir-compactor
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: observability-mimir-compactor
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
+          argocd.argoproj.io/sync-wave: "2"
+  - target:
+      kind: StatefulSet
+      name: observability-mimir-ingester
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: observability-mimir-ingester
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
+  - target:
+      kind: StatefulSet
+      name: observability-mimir-store-gateway
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: observability-mimir-store-gateway
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
+          argocd.argoproj.io/sync-wave: "1"
+  - target:
+      kind: StatefulSet
+      name: observability-mimir-kafka
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: observability-mimir-kafka
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
+  - target:
+      kind: Job
+      name: observability-mimir-smoke-test
+    patch: |-
+      $patch: delete
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: observability-mimir-smoke-test
+  - target:
+      kind: StatefulSet
+      name: observability-mimir-alertmanager
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "3"
+      - op: add
+        path: /spec/template/metadata/annotations/observability.proompteng.ai~1alertmanager-fallback-config-revision
+        value: "2026-06-20-1"
+      - op: replace
+        path: /spec/template/spec/volumes/4
+        value:
+          name: alertmanager-fallback-config
+          secret:
+            secretName: observability-alertmanager-email

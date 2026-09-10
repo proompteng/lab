@@ -1,0 +1,37 @@
+# Kind/minikube friendly defaults
+replicaCount: 1
+
+image:
+  repository: ghcr.io/proompteng/agents-control-plane
+  tag: latest
+  pullPolicy: IfNotPresent
+
+controllers:
+  image:
+    repository: ghcr.io/proompteng/agents-controller
+
+runner:
+  image:
+    repository: ghcr.io/proompteng/agents-codex-runner
+    tag: latest
+
+namespaceOverride: agents
+
+service:
+  type: ClusterIP
+  port: 80
+
+database:
+  url: postgresql://agents:devpassword@host.minikube.internal:5432/agents?sslmode=disable
+
+resources:
+  requests:
+    cpu: 150m
+    memory: 512Mi
+
+controller:
+  namespaces:
+    - agents
+
+agentComms:
+  enabled: false

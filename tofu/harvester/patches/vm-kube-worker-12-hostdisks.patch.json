@@ -1,0 +1,49 @@
+{
+  "spec": {
+    "template": {
+      "spec": {
+        "nodeSelector": {
+          "kubernetes.io/hostname": "altra"
+        },
+        "domain": {
+          "devices": {
+            "disks": [
+              {
+                "name": "root",
+                "disk": { "bus": "virtio" }
+              },
+              {
+                "name": "osd-a",
+                "disk": { "bus": "virtio" }
+              },
+              {
+                "name": "osd-b",
+                "disk": { "bus": "virtio" }
+              }
+            ]
+          }
+        },
+        "volumes": [
+          {
+            "name": "root",
+            "persistentVolumeClaim": {
+              "claimName": "kube-worker-12-root-mtjx7"
+            }
+          },
+          {
+            "name": "osd-a",
+            "persistentVolumeClaim": {
+              "claimName": "pvc-osd-12-a"
+            }
+          },
+          {
+            "name": "osd-b",
+            "persistentVolumeClaim": {
+              "claimName": "pvc-osd-12-b"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

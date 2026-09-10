@@ -1,0 +1,21 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: convex-backend
+  namespace: convex
+spec:
+  entryPoints:
+    - web
+    - websecure
+  routes:
+    - match: Host(`convex.proompteng.ai`) && PathPrefix(`/http`)
+      kind: Rule
+      priority: 10
+      services:
+        - name: convex-backend
+          port: 3211
+    - match: Host(`convex.proompteng.ai`)
+      kind: Rule
+      services:
+        - name: convex-backend
+          port: 3210

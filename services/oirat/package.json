@@ -1,0 +1,25 @@
+{
+  "name": "@proompteng/oirat",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot src/index.ts",
+    "start": "bun src/index.ts",
+    "lint": "bunx oxfmt --check src",
+    "tsc": "bunx tsc --noEmit",
+    "test": "bun test",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.oxlint.json ."
+  },
+  "dependencies": {
+    "@proompteng/discord": "workspace:*",
+    "discord.js": "^14.26.4"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "bun-types": "1.4.0",
+    "typescript": "^7.0.2"
+  },
+  "packageManager": "bun@1.4.0"
+}

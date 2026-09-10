@@ -1,0 +1,60 @@
+name: bayn-build-push
+
+permissions:
+  actions: read
+  contents: read
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'services/bayn/**'
+      - 'packages/scripts/src/bayn/**'
+      - 'nix/images/bayn.nix'
+      - 'nix/images/bayn-runtime-root.nix'
+      - 'nix/images/bun-workspace-service.nix'
+      - 'nix/images/bun-workspace-deps-source.nix'
+      - 'nix/images/bun-workspace-deps-source.test.sh'
+      - 'nix/packages.nix'
+      - 'nix/cache-push.sh'
+      - 'nix/ci-nix-oci-summary.sh'
+      - 'nix/ci-run-timed.sh'
+      - 'nix/oci-inspect-archive.sh'
+      - 'nix/oci-push.sh'
+      - 'nix/verify-bayn-image-command.sh'
+      - 'nix/verify-bayn-image-command.test.sh'
+      - 'packages/scripts/src/shared/oci.ts'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'bun.lock'
+      - '**/package.json'
+      - '.npmrc'
+      - 'bunfig.toml'
+      - 'patches/**'
+      - 'tsconfig.base.json'
+      - '.github/actions/setup-nix-toolchain/**'
+      - '.github/workflows/bayn-*.yml'
+      - '.github/workflows/common-monorepo.yml'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - 'argocd/applications/bayn/**'
+      - 'argocd/applications/kargo/**'
+      - 'argocd/applicationsets/product.yaml'
+
+concurrency:
+  group: ${{ github.workflow }}-main
+  cancel-in-progress: false
+
+jobs:
+  image:
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: bayn
+      package_attr: bayn-image
+      tag: sha-${{ github.sha }}
+      publish_kargo_tag: true
+      source_revision: ${{ github.sha }}
+      pr_number: ''
+      latest: true
+      publish_on_dispatch: false
+    secrets: inherit

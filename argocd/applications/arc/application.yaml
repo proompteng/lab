@@ -1,0 +1,571 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: arc-controller
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: ghcr.io
+      chart: actions/actions-runner-controller-charts/gha-runner-scale-set-controller
+      targetRevision: 0.14.2
+      helm:
+        releaseName: arc-controller
+        skipCrds: false
+        valuesObject:
+          nodeSelector:
+            kubernetes.io/arch: amd64
+    - repoURL: ghcr.io
+      chart: actions/actions-runner-controller-charts/gha-runner-scale-set
+      targetRevision: 0.14.2
+      helm:
+        releaseName: arc-runner-set
+        skipCrds: false
+        valuesObject:
+          controllerServiceAccount:
+            name: arc-controller-gha-rs-controller
+            namespace: arc
+          githubConfigUrl: https://github.com/proompteng/lab
+          githubConfigSecret: github-token
+          runnerScaleSetName: arc-arm64
+          scaleSetLabels:
+            - arc-arm64
+          minRunners: 1
+          maxRunners: 5
+          listenerTemplate:
+            spec:
+              nodeSelector:
+                kubernetes.io/arch: amd64
+              dnsConfig:
+                searches:
+                  - ide-newton.ts.net
+              containers:
+                - name: listener
+          template:
+            spec:
+              serviceAccountName: arc-arm64-gha-rs-kube-mode
+              nodeSelector:
+                kubernetes.io/arch: arm64
+              dnsConfig:
+                searches:
+                  - ide-newton.ts.net
+              securityContext:
+                runAsNonRoot: false
+                # ARC runners need a writable tool cache under /home/runner/_work/_tool.
+                # Keep lab runners on node-local work dirs so high-concurrency Nix image builds do not
+                # block on dynamic PVC provisioning before the runner can accept a job.
+                fsGroup: 1001
+                fsGroupChangePolicy: OnRootMismatch
+              initContainers:
+                - name: init-dind-externals
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:a8c4b666048512444f9304166a049fd18dff51367af568e1248f59ec5bb59ea0
+                  command: ["cp", "-r", "-v", "/home/runner/externals/.", "/home/runner/tmpDir/"]
+                  resources:
+                    requests:
+                      cpu: "100m"
+                      memory: "128Mi"
+                    limits:
+                      cpu: "200m"
+                      memory: "256Mi"
+              containers:
+                - name: runner
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:a8c4b666048512444f9304166a049fd18dff51367af568e1248f59ec5bb59ea0
+                  command: ["/bin/bash", "-lc"]
+                  args:
+                    - |
+                      set -euo pipefail
+                      for attempt in $(seq 1 60); do
+                        if docker version >/dev/null 2>&1; then
+                          exec /home/runner/run.sh
+                        fi
+                        sleep 2
+                      done
+                      docker version
+                  resources:
+                    requests:
+                      cpu: "2"
+                      memory: "8Gi"
+                      ephemeral-storage: "4Gi"
+                    limits:
+                      cpu: "8"
+                      memory: "16Gi"
+                      ephemeral-storage: "80Gi"
+                  env:
+                    - name: ACTIONS_RUNNER_CONTAINER_HOOKS
+                      value: /home/runner/k8s/index.js
+                    - name: ACTIONS_RUNNER_POD_NAME
+                      valueFrom:
+                        fieldRef:
+                          fieldPath: metadata.name
+                    - name: DOCKER_HOST
+                      value: unix:///var/run/docker.sock
+                    - name: ACTIONS_RUNNER_REQUIRE_JOB_CONTAINER
+                      value: "false"
+                  volumeMounts:
+                    - name: work
+                      mountPath: /home/runner/_work
+                    - name: dind-sock
+                      mountPath: /var/run
+                - name: dind
+                  image: docker:dind
+                  # The private registry is a single filesystem writer on shared Ceph RBD.
+                  # Serialize daemon-driven uploads so direct Docker pushes cannot burst
+                  # fsync traffic into Kafka's pool.
+                  args:
+                    - dockerd
+                    - --host=unix:///var/run/docker.sock
+                    - --group=$(DOCKER_GROUP_GID)
+                    - --max-concurrent-uploads=1
+                  resources:
+                    requests:
+                      cpu: "2"
+                      memory: "8Gi"
+                      ephemeral-storage: "6Gi"
+                    limits:
+                      cpu: "12"
+                      memory: "16Gi"
+                      ephemeral-storage: "50Gi"
+                  env:
+                    - name: DOCKER_GROUP_GID
+                      value: "123"
+                  securityContext:
+                    privileged: true
+                  volumeMounts:
+                    - name: work
+                      mountPath: /home/runner/_work
+                    - name: dind-sock
+                      mountPath: /var/run
+                    - name: dind-externals
+                      mountPath: /home/runner/externals
+              volumes:
+                - name: work
+                  emptyDir:
+                    sizeLimit: 80Gi
+                - name: dind-sock
+                  emptyDir: {}
+                - name: dind-externals
+                  emptyDir: {}
+    - repoURL: ghcr.io
+      chart: actions/actions-runner-controller-charts/gha-runner-scale-set
+      targetRevision: 0.14.2
+      helm:
+        releaseName: arc-runner-set-amd64
+        skipCrds: false
+        valuesObject:
+          controllerServiceAccount:
+            name: arc-controller-gha-rs-controller
+            namespace: arc
+          githubConfigUrl: https://github.com/proompteng/lab
+          githubConfigSecret: github-token
+          runnerScaleSetName: arc-amd64
+          scaleSetLabels:
+            - arc-amd64
+          # Maintenance throttle: keep no idle AMD64 runners and allow one active job so
+          # the normal ARC image/Kargo path remains recoverable during node-local I/O work.
+          minRunners: 0
+          maxRunners: 1
+          listenerTemplate:
+            spec:
+              nodeSelector:
+                kubernetes.io/arch: amd64
+              dnsConfig:
+                searches:
+                  - ide-newton.ts.net
+              containers:
+                - name: listener
+          template:
+            spec:
+              nodeSelector:
+                kubernetes.io/arch: amd64
+                kubernetes.io/hostname: turin
+              dnsConfig:
+                searches:
+                  - ide-newton.ts.net
+              securityContext:
+                runAsNonRoot: false
+                fsGroup: 1001
+                fsGroupChangePolicy: OnRootMismatch
+              initContainers:
+                - name: init-dind-externals
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:a8c4b666048512444f9304166a049fd18dff51367af568e1248f59ec5bb59ea0
+                  command: ["/bin/bash", "-lc"]
+                  args:
+                    - |
+                      set -Eeuo pipefail
+
+                      fail() {
+                        echo "arc scratch bootstrap: $*" >&2
+                        exit 1
+                      }
+
+                      scratch=/scratch
+                      root_device="$(df -P -T / | awk 'NR == 2 {print $1}')"
+                      scratch_device="$(df -P -T "$scratch" | awk 'NR == 2 {print $1}')"
+                      scratch_fstype="$(df -P -T "$scratch" | awk 'NR == 2 {print $2}')"
+
+                      [[ "$scratch_device" && "$scratch_fstype" ]] ||
+                        fail "scratch volume is not mounted"
+                      [[ "$scratch_fstype" == xfs ]] ||
+                        fail "expected the Turin local scratch XFS volume, got filesystem $scratch_fstype"
+                      [[ "$scratch_device" != overlay && "$scratch_device" != "$root_device" ]] ||
+                        fail "scratch path resolves to the runner root filesystem ($scratch_device)"
+
+                      # A terminated init can leave a partial staging tree on the same ephemeral volume.
+                      # Remove old attempts before measuring/copying so retries cannot consume capacity.
+                      find "$scratch" -mindepth 1 -maxdepth 1 -type d -name '.arc-bootstrap.*' -exec rm -rf -- {} +
+                      rm -rf "$scratch/nix" "$scratch/cache" "$scratch/tmp" "$scratch/work" "$scratch/docker" "$scratch/containerd" "$scratch/.arc-bootstrap-complete"
+                      scratch_available_kib="$(df -P -k "$scratch" | awk 'NR == 2 {print $4}')"
+                      [[ "$scratch_available_kib" =~ ^[0-9]+$ ]] ||
+                        fail "scratch volume has no readable capacity"
+
+                      # This local-path class has no project quota. Keep at least 80GiB free after
+                      # the image/cache copy so a runner cannot start on a nearly full NVMe volume.
+                      mkdir -p /home/runner/.cache
+                      reserve_bytes=$((80 * 1024 * 1024 * 1024))
+                      nix_file_bytes="$(find /nix -xdev -type f -printf '%s\n' | awk '{sum += $1} END {printf "%.0f\n", sum}')"
+                      nix_files="$(find /nix -xdev -type f -printf '1\n' | wc -l | tr -d ' ')"
+                      nix_links="$(find /nix -xdev -type l -printf '1\n' | wc -l | tr -d ' ')"
+                      cache_file_bytes="$(find /home/runner/.cache -xdev -type f -printf '%s\n' | awk '{sum += $1} END {printf "%.0f\n", sum}')"
+                      cache_files="$(find /home/runner/.cache -xdev -type f -printf '1\n' | wc -l | tr -d ' ')"
+                      cache_links="$(find /home/runner/.cache -xdev -type l -printf '1\n' | wc -l | tr -d ' ')"
+                      required_bytes=$((nix_file_bytes + cache_file_bytes + reserve_bytes))
+                      available_bytes=$((scratch_available_kib * 1024))
+                      (( available_bytes >= required_bytes )) ||
+                        fail "scratch free space ${available_bytes} is below required ${required_bytes}"
+
+                      stage="$scratch/.arc-bootstrap.$$"
+                      trap 'rm -rf "$stage"' EXIT
+                      mkdir -p "$stage/nix" "$stage/cache" "$stage/tmp" "$stage/work" "$stage/docker" "$stage/containerd"
+
+                      # Keep /nix visible from the image while copying. The main containers mount the
+                      # completed subdirectory only after this init container exits successfully.
+                      cp -a /nix/. "$stage/nix/"
+                      cp -a /home/runner/.cache/. "$stage/cache/"
+
+                      post_copy_available_kib="$(df -P -k "$scratch" | awk 'NR == 2 {print $4}')"
+                      [[ "$post_copy_available_kib" =~ ^[0-9]+$ ]] ||
+                        fail "scratch volume capacity cannot be read after copy"
+                      post_copy_available_bytes=$((post_copy_available_kib * 1024))
+                      (( post_copy_available_bytes >= reserve_bytes )) ||
+                        fail "scratch free space ${post_copy_available_bytes} is below 80GiB after copy"
+
+                      staged_nix_file_bytes="$(find "$stage/nix" -xdev -type f -printf '%s\n' | awk '{sum += $1} END {printf "%.0f\n", sum}')"
+                      staged_nix_files="$(find "$stage/nix" -xdev -type f -printf '1\n' | wc -l | tr -d ' ')"
+                      staged_nix_links="$(find "$stage/nix" -xdev -type l -printf '1\n' | wc -l | tr -d ' ')"
+                      staged_cache_file_bytes="$(find "$stage/cache" -xdev -type f -printf '%s\n' | awk '{sum += $1} END {printf "%.0f\n", sum}')"
+                      staged_cache_files="$(find "$stage/cache" -xdev -type f -printf '1\n' | wc -l | tr -d ' ')"
+                      staged_cache_links="$(find "$stage/cache" -xdev -type l -printf '1\n' | wc -l | tr -d ' ')"
+                      [[ "$staged_nix_file_bytes" == "$nix_file_bytes" ]] ||
+                        fail "partial /nix copy: $staged_nix_file_bytes file bytes copied, expected $nix_file_bytes"
+                      [[ "$staged_nix_files" == "$nix_files" ]] ||
+                        fail "partial /nix copy: $staged_nix_files files copied, expected $nix_files"
+                      [[ "$staged_nix_links" == "$nix_links" ]] ||
+                        fail "partial /nix copy: $staged_nix_links symlinks copied, expected $nix_links"
+                      [[ "$staged_cache_file_bytes" == "$cache_file_bytes" ]] ||
+                        fail "partial cache copy: $staged_cache_file_bytes file bytes copied, expected $cache_file_bytes"
+                      [[ "$staged_cache_files" == "$cache_files" ]] ||
+                        fail "partial cache copy: $staged_cache_files files copied, expected $cache_files"
+                      [[ "$staged_cache_links" == "$cache_links" ]] ||
+                        fail "partial cache copy: $staged_cache_links symlinks copied, expected $cache_links"
+                      [[ -d "$stage/nix/store" && -d "$stage/nix/var" ]] ||
+                        fail "partial /nix copy: store or var is missing"
+
+                      # The runner remains a single-user UID 1001 process after the mount. Preserve all
+                      # copied modes and links while making writable Nix state owned by that user.
+                      chown -R 1001:1001 "$stage/nix" "$stage/cache"
+                      chmod 755 "$stage/nix" "$stage/nix/store" "$stage/nix/var" "$stage/cache"
+                      chmod 1777 "$stage/tmp"
+                      chown 0:1001 "$stage/work"
+                      chmod 2777 "$stage/work"
+                      chown 0:0 "$stage/docker" "$stage/containerd"
+                      chmod 711 "$stage/docker" "$stage/containerd"
+
+                      # Keep the existing dind externals bootstrap, now on its declared shared volume.
+                      test -d /home/runner/externals || fail "runner image is missing /home/runner/externals"
+                      mkdir -p /home/runner/tmpDir
+                      find /home/runner/tmpDir -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+                      cp -a /home/runner/externals/. /home/runner/tmpDir/
+
+                      # Install only after all validation and copies have succeeded. A failed init leaves
+                      # no runnable main container and the next retry rebuilds from the image again.
+                      rm -rf "$scratch/nix" "$scratch/cache" "$scratch/tmp" "$scratch/work" "$scratch/docker" "$scratch/containerd"
+                      mv "$stage/nix" "$scratch/nix"
+                      mv "$stage/cache" "$scratch/cache"
+                      mv "$stage/tmp" "$scratch/tmp"
+                      mv "$stage/work" "$scratch/work"
+                      mv "$stage/docker" "$scratch/docker"
+                      mv "$stage/containerd" "$scratch/containerd"
+                      printf 'version=4\nnix_file_bytes=%s\nnix_files=%s\nnix_symlinks=%s\ncache_file_bytes=%s\ncache_files=%s\ncache_symlinks=%s\n' \
+                        "$nix_file_bytes" "$nix_files" "$nix_links" "$cache_file_bytes" "$cache_files" "$cache_links" > "$scratch/.arc-bootstrap-complete"
+                      chown 1001:1001 "$scratch/.arc-bootstrap-complete"
+                      rm -rf "$stage"
+                      trap - EXIT
+                  securityContext:
+                    runAsUser: 0
+                    runAsGroup: 0
+                  volumeMounts:
+                    - name: scratch
+                      mountPath: /scratch
+                    - name: dind-externals
+                      mountPath: /home/runner/tmpDir
+                  resources:
+                    requests:
+                      cpu: "1"
+                      memory: "2Gi"
+                    limits:
+                      cpu: "2"
+                      memory: "8Gi"
+              containers:
+                - name: runner
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:a8c4b666048512444f9304166a049fd18dff51367af568e1248f59ec5bb59ea0
+                  command: ["/bin/bash", "-lc"]
+                  args:
+                    - |
+                      set -euo pipefail
+                      for attempt in $(seq 1 60); do
+                        if docker version >/dev/null 2>&1; then
+                          exec /home/runner/run.sh
+                        fi
+                        sleep 2
+                      done
+                      docker version
+                  resources:
+                    requests:
+                      cpu: "2"
+                      memory: "8Gi"
+                      ephemeral-storage: "4Gi"
+                    limits:
+                      cpu: "8"
+                      memory: "16Gi"
+                      ephemeral-storage: "80Gi"
+                  env:
+                    - name: ACTIONS_RUNNER_CONTAINER_HOOKS
+                      value: /home/runner/k8s/index.js
+                    - name: ACTIONS_RUNNER_POD_NAME
+                      valueFrom:
+                        fieldRef:
+                          fieldPath: metadata.name
+                    - name: DOCKER_HOST
+                      value: unix:///var/run/docker.sock
+                    - name: ACTIONS_RUNNER_REQUIRE_JOB_CONTAINER
+                      value: "false"
+                  volumeMounts:
+                    - name: scratch
+                      mountPath: /nix
+                      subPath: nix
+                    - name: scratch
+                      mountPath: /home/runner/.cache
+                      subPath: cache
+                    - name: scratch
+                      mountPath: /tmp
+                      subPath: tmp
+                    - name: scratch
+                      mountPath: /home/runner/_work
+                      subPath: work
+                    - name: dind-sock
+                      mountPath: /var/run
+                - name: dind
+                  image: docker:dind
+                  # The private registry is a single filesystem writer on shared Ceph RBD.
+                  # Serialize daemon-driven uploads so direct Docker pushes cannot burst
+                  # fsync traffic into Kafka's pool.
+                  args:
+                    - dockerd
+                    - --host=unix:///var/run/docker.sock
+                    - --group=$(DOCKER_GROUP_GID)
+                    - --max-concurrent-uploads=1
+                  resources:
+                    requests:
+                      cpu: "2"
+                      memory: "8Gi"
+                      ephemeral-storage: "6Gi"
+                    limits:
+                      cpu: "12"
+                      memory: "16Gi"
+                      ephemeral-storage: "50Gi"
+                  env:
+                    - name: DOCKER_GROUP_GID
+                      value: "123"
+                  securityContext:
+                    privileged: true
+                  volumeMounts:
+                    - name: scratch
+                      mountPath: /home/runner/_work
+                      subPath: work
+                    - name: scratch
+                      mountPath: /var/lib/docker
+                      subPath: docker
+                    - name: scratch
+                      mountPath: /var/lib/containerd
+                      subPath: containerd
+                    - name: dind-sock
+                      mountPath: /var/run
+                    - name: dind-externals
+                      mountPath: /home/runner/externals
+              volumes:
+                - name: scratch
+                  ephemeral:
+                    volumeClaimTemplate:
+                      metadata:
+                        labels:
+                          actions.github.com/scale-set-name: arc-amd64
+                          storage.proompteng.ai/durability: rebuildable
+                      spec:
+                        accessModes:
+                          - ReadWriteOnce
+                        storageClassName: local-path-turin-nvme-intel
+                        volumeMode: Filesystem
+                        resources:
+                          requests:
+                            storage: 80Gi
+                - name: dind-sock
+                  emptyDir: {}
+                - name: dind-externals
+                  emptyDir: {}
+    - repoURL: ghcr.io
+      chart: actions/actions-runner-controller-charts/gha-runner-scale-set
+      targetRevision: 0.14.2
+      helm:
+        releaseName: arc-runner-set-analysis
+        skipCrds: false
+        valuesObject:
+          controllerServiceAccount:
+            name: arc-controller-gha-rs-controller
+            namespace: arc
+          githubConfigUrl: https://github.com/gregkonush/analysis
+          githubConfigSecret: github-token
+          runnerScaleSetName: analysis-arm64
+          scaleSetLabels:
+            - arc-arm64
+          minRunners: 1
+          # The Altra node currently has about 94Gi of kubelet-local free space. Keep one hard-capped analysis
+          # workspace until additional local capacity is provisioned instead of letting concurrent jobs evict pods.
+          maxRunners: 1
+          listenerTemplate:
+            spec:
+              nodeSelector:
+                kubernetes.io/arch: amd64
+              dnsConfig:
+                searches:
+                  - ide-newton.ts.net
+              containers:
+                - name: listener
+          template:
+            spec:
+              nodeSelector:
+                kubernetes.io/arch: arm64
+              dnsConfig:
+                searches:
+                  - ide-newton.ts.net
+              securityContext:
+                runAsNonRoot: false
+                # ARC runners need a writable tool cache under /home/runner/_work/_tool.
+                # The analysis work directory is a disposable node-local emptyDir; set an fsGroup so the
+                # non-root runner user can create directories before any workflow steps run.
+                fsGroup: 1001
+                fsGroupChangePolicy: OnRootMismatch
+              initContainers:
+                - name: init-dind-externals
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:a8c4b666048512444f9304166a049fd18dff51367af568e1248f59ec5bb59ea0
+                  command: ["cp", "-r", "-v", "/home/runner/externals/.", "/home/runner/tmpDir/"]
+                  resources:
+                    requests:
+                      cpu: "100m"
+                      memory: "128Mi"
+                    limits:
+                      cpu: "200m"
+                      memory: "256Mi"
+              containers:
+                - name: runner
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:a8c4b666048512444f9304166a049fd18dff51367af568e1248f59ec5bb59ea0
+                  command: ["/bin/bash", "-lc"]
+                  args:
+                    - |
+                      set -euo pipefail
+                      for attempt in $(seq 1 60); do
+                        if docker version >/dev/null 2>&1; then
+                          exec /home/runner/run.sh
+                        fi
+                        sleep 2
+                      done
+                      docker version
+                  resources:
+                    requests:
+                      cpu: "1"
+                      memory: "2Gi"
+                      ephemeral-storage: "8Gi"
+                    limits:
+                      cpu: "4"
+                      memory: "8Gi"
+                      ephemeral-storage: "32Gi"
+                  env:
+                    - name: ACTIONS_RUNNER_CONTAINER_HOOKS
+                      value: /home/runner/k8s/index.js
+                    - name: ACTIONS_RUNNER_POD_NAME
+                      valueFrom:
+                        fieldRef:
+                          fieldPath: metadata.name
+                    - name: DOCKER_HOST
+                      value: unix:///var/run/docker.sock
+                    - name: ACTIONS_RUNNER_REQUIRE_JOB_CONTAINER
+                      value: "false"
+                  volumeMounts:
+                    - name: work
+                      mountPath: /home/runner/_work
+                    - name: dind-sock
+                      mountPath: /var/run
+                - name: dind
+                  image: docker:dind
+                  # The private registry is a single filesystem writer on shared Ceph RBD.
+                  # Serialize daemon-driven uploads so direct Docker pushes cannot burst
+                  # fsync traffic into Kafka's pool.
+                  args:
+                    - dockerd
+                    - --host=unix:///var/run/docker.sock
+                    - --group=$(DOCKER_GROUP_GID)
+                    - --max-concurrent-uploads=1
+                  resources:
+                    requests:
+                      cpu: "1"
+                      memory: "2Gi"
+                      ephemeral-storage: "12Gi"
+                    limits:
+                      cpu: "6"
+                      memory: "10Gi"
+                      ephemeral-storage: "40Gi"
+                  env:
+                    - name: DOCKER_GROUP_GID
+                      value: "123"
+                  securityContext:
+                    privileged: true
+                  volumeMounts:
+                    - name: work
+                      mountPath: /home/runner/_work
+                    - name: dind-sock
+                      mountPath: /var/run
+                    - name: dind-externals
+                      mountPath: /home/runner/externals
+              volumes:
+                - name: work
+                  emptyDir:
+                    sizeLimit: 20Gi
+                - name: dind-sock
+                  emptyDir: {}
+                - name: dind-externals
+                  emptyDir: {}
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: arc
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /spec/preserveUnknownFields

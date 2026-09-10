@@ -1,0 +1,91 @@
+name: jangar-guardrails
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/jangar-build-push.yaml'
+      - '.github/workflows/jangar-post-deploy-verify.yml'
+      - '.github/workflows/jangar-guardrails.yml'
+      - 'argocd/applicationsets/product.yaml'
+      - 'packages/scripts/src/jangar/check-automation-policy.ts'
+  pull_request:
+    paths:
+      - '.github/workflows/jangar-build-push.yaml'
+      - '.github/workflows/jangar-post-deploy-verify.yml'
+      - '.github/workflows/jangar-guardrails.yml'
+      - 'argocd/applicationsets/product.yaml'
+      - 'packages/scripts/src/jangar/check-automation-policy.ts'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  workflow-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install ShellCheck
+        run: |
+          set -euo pipefail
+          if command -v shellcheck >/dev/null 2>&1; then
+            shellcheck --version
+            exit 0
+          fi
+
+          version=0.10.0
+          arch="$(uname -m)"
+          case "${arch}" in
+            x86_64)
+              release_arch=x86_64
+              ;;
+            aarch64 | arm64)
+              release_arch=aarch64
+              ;;
+            *)
+              echo "Unsupported ShellCheck architecture: ${arch}" >&2
+              exit 1
+              ;;
+          esac
+
+          temp_dir="$(mktemp -d)"
+          trap 'rm -rf "${temp_dir}"' EXIT
+          curl -sSfL \
+            "https://github.com/koalaman/shellcheck/releases/download/v${version}/shellcheck-v${version}.linux.${release_arch}.tar.xz" \
+            -o "${temp_dir}/shellcheck.tar.xz"
+          tar -xJf "${temp_dir}/shellcheck.tar.xz" -C "${temp_dir}"
+          sudo install -m 0755 "${temp_dir}/shellcheck-v${version}/shellcheck" /usr/local/bin/shellcheck
+          shellcheck --version
+
+      - name: Install actionlint
+        run: |
+          set -euo pipefail
+          curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash | bash -s -- latest
+
+      - name: Run actionlint
+        run: |
+          ./actionlint -color -ignore 'label "arc-arm64" is unknown' \
+            .github/workflows/jangar-build-push.yaml \
+            .github/workflows/jangar-post-deploy-verify.yml \
+            .github/workflows/jangar-guardrails.yml
+
+  automation-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
+      - name: Enforce Jangar automation mode
+        run: bun run packages/scripts/src/jangar/check-automation-policy.ts --require jangar=auto

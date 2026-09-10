@@ -1,0 +1,31 @@
+{{- if and .Values.controllers.enabled .Values.controllers.service.enabled -}}
+{{- $namespace := .Values.namespaceOverride | default .Release.Namespace -}}
+{{- $controllersEnvVars := .Values.controllers.env.vars | default dict -}}
+{{- $controllerGrpcPort := .Values.grpc.port | default 50051 -}}
+{{- if hasKey $controllersEnvVars "AGENTS_GRPC_PORT" -}}
+{{- $controllerGrpcPort = index $controllersEnvVars "AGENTS_GRPC_PORT" -}}
+{{- end -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agents.fullname" . }}-controllers-grpc
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "agents.labels" . | nindent 4 }}
+    {{- with .Values.controllers.service.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.controllers.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.controllers.service.type | default "ClusterIP" }}
+  ports:
+    - port: {{ .Values.controllers.service.port | default .Values.grpc.servicePort | default .Values.grpc.port | default 50051 }}
+      targetPort: {{ $controllerGrpcPort }}
+      protocol: TCP
+      name: grpc
+  selector:
+    {{- include "agents.controllersSelectorLabels" . | nindent 4 }}
+{{- end }}

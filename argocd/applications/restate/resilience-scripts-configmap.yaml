@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: restate-resilience-scripts
+data:
+  snapshot-restore.sh: |
+    #!/bin/bash
+    set -euo pipefail
+
+    while [ "$SECONDS" -lt 1680 ]; do
+      rm -rf /tmp/restate-snapshot-restore
+      if output="$({
+        restate-doctor snapshot s3://restate-snapshots/partitions \
+          --aws-region "$AWS_REGION" \
+          --aws-endpoint-url http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local \
+          --aws-allow-http \
+          --cache-dir /tmp/restate-snapshot-restore \
+          --rocksdb-memory-budget 536870912 \
+          --query "SELECT COUNT(*) AS invocation_rows FROM sys_invocation_status"
+      } 2>&1)"; then
+        doctor_status=0
+      else
+        doctor_status=$?
+      fi
+      printf '%s\n' "$output"
+      if [ "$doctor_status" -eq 0 ] && \
+        printf '%s\n' "$output" | grep -Fq 'Found 24 partition(s):' && \
+        printf '%s\n' "$output" | grep -Fqi 'invocation_rows'; then
+        echo "All 24 latest Restate partition snapshots opened in an isolated read-only store"
+        exit 0
+      fi
+      echo "Snapshot repository is not complete yet; retrying isolated restore proof" >&2
+      sleep 15
+    done
+    echo "Snapshot restore proof did not open all 24 partitions before the Job deadline" >&2
+    exit 1

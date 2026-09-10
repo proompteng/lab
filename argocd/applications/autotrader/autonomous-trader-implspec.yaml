@@ -1,0 +1,42 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: autonomous-trader-v1
+  namespace: synthesis
+  annotations:
+    autonomous-trader.proompteng.ai/deployment-color: blue
+    autonomous-trader.proompteng.ai/deployment-role: active
+  labels:
+    app.kubernetes.io/part-of: autotrader
+    app.kubernetes.io/component: autonomous-trader
+    autonomous-trader.proompteng.ai/deployment-color: blue
+    autonomous-trader.proompteng.ai/deployment-role: active
+spec:
+  summary: Autonomous paper-trader agent for market-open Alpaca MCP execution
+  source:
+    provider: custom
+    externalId: autonomous-trader-v1
+  labels:
+    - synthesis
+    - autonomous-trader
+    - alpaca
+    - paper-trading
+  acceptanceCriteria:
+    - Trade only the dedicated Alpaca paper account and record trader state in Synthesis autotrader tables.
+    - Bootstrap the analysis repo, read scorecards before grading, and use the live scan-cycle helper for candidate ranking.
+    - Submit strategy broker mutations only after Synthesis risk/order records, runner strategy guard approval, and deterministic client order ids.
+    - Keep market-open runs cycling until market close, 500000 USD equity, or hard unrecoverable broker/order/visibility state.
+    - Complete each market-open AgentRun after market-close session finalization; do not keep post-close heartbeats waiting for the next scheduled open.
+    - Finalize sessions with realized scorecard observations and write `report.md` as the only operator-facing artifact.
+  text: |-
+    Run the Synthesis autonomous paper-trader using the Agent default system prompt as the durable operating policy.
+
+    Variable task context:
+    - mode: read `AUTONOMOUS_TRADER_MODE`
+    - session mode: read `AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE`
+    - target equity: read `AUTONOMOUS_TRADER_TARGET_EQUITY_USD`
+    - account type: read `AUTONOMOUS_TRADER_ACCOUNT_TYPE`; it must be paper
+    - analysis repo: bootstrap `/workspace/analysis` and require commit `56be940b69bf1a56578040eda9bf2e3699c5220e` or newer
+    - operator report: `/workspace/.agentrun/autonomous-trader/report.md`
+
+    Start with bootstrap, then run the mode-specific runner loop. Keep all live decisions, risk checks, broker actions, reconciliation results, and scorecard observations in Synthesis autotrader tables.

@@ -1,0 +1,16 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: forgejo-private
+  namespace: forgejo
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`forgejo.k8s.proompteng.ai`)
+      services:
+        - name: forgejo-http
+          port: 3000
+  tls:
+    secretName: wildcard-k8s-proompteng-ai-tls

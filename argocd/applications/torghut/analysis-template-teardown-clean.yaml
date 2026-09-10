@@ -1,0 +1,60 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: torghut-simulation-teardown-clean
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+spec:
+  args:
+    - name: runId
+    - name: datasetId
+    - name: namespace
+    - name: taConfigmap
+    - name: taDeployment
+    - name: torghutService
+    - name: signalTable
+    - name: priceTable
+    - name: postgresDatabase
+  metrics:
+    - name: teardown-clean
+      provider:
+        job:
+          spec:
+            backoffLimit: 0
+            ttlSecondsAfterFinished: 300
+            template:
+              spec:
+                serviceAccountName: torghut-runtime
+                restartPolicy: Never
+                nodeSelector:
+                  kubernetes.io/arch: arm64
+                containers:
+                  - name: analysis
+                    image: registry.ide-newton.ts.net/lab/torghut@sha256:b359cd2368e89b492f7ff6925f975b72bb2ca3aa0261478552fc6094688e3bb4
+                    imagePullPolicy: IfNotPresent
+                    env:
+                      - name: DB_DSN
+                        valueFrom:
+                          secretKeyRef:
+                            name: torghut-db-app
+                            key: uri
+                    command:
+                      - /bin/bash
+                      - -lc
+                    args:
+                      - >-
+                        set -euo pipefail &&
+                        cd /app &&
+                        python scripts/run_simulation_analysis.py teardown-clean
+                        --run-id "{{args.runId}}"
+                        --dataset-id "{{args.datasetId}}"
+                        --namespace "{{args.namespace}}"
+                        --ta-configmap "{{args.taConfigmap}}"
+                        --ta-deployment "{{args.taDeployment}}"
+                        --torghut-service "{{args.torghutService}}"
+                        --signal-table "{{args.signalTable}}"
+                        --price-table "{{args.priceTable}}"
+                        --postgres-base-dsn-env DB_DSN
+                        --postgres-database "{{args.postgresDatabase}}"
+                        --json

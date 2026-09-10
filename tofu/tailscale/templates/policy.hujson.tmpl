@@ -1,0 +1,106 @@
+// Derived from the Tailscale admin console on 2025-09-19.
+{
+  // Declare static groups of users. Use autogroups for all users or users with a specific role.
+  // "groups": {
+  //   "group:example": ["alice@example.com", "bob@example.com"],
+  // },
+
+  // Define the tags which can be applied to devices and by which users.
+  "tagOwners": {
+    "tag:k8s-operator": ["autogroup:admin"],
+    "tag:k8s": ["tag:k8s-operator"],
+    "tag:k8s-subnet-router": ["tag:k8s-operator"],
+    "tag:kube-node": ["tag:k8s-operator"],
+    "tag:omni-idp": ["autogroup:admin"]
+  },
+
+  // Define access control lists for users, groups, autogroups, tags,
+  // Tailscale IP addresses, and subnet ranges.
+  "acls": [
+    // Preserve the tailnet's existing broad connectivity for member-owned
+    // devices and existing infrastructure tags.
+    {
+      "action": "accept",
+      "src": ["*"],
+      "dst": [
+        "autogroup:member:*",
+        "tag:k8s-operator:*",
+        "tag:k8s:*",
+        "tag:k8s-subnet-router:*",
+        "tag:kube-node:*",
+        "tag:omni-idp:*"
+      ]
+    },
+    // Direct access to cluster Pod and Service networks is reserved for the
+    // tailnet owner and infrastructure identities. Standard tagged ingresses
+    // remain reachable through the existing Kubernetes-service ACL above.
+    {
+      "action": "accept",
+      "src": [
+        "autogroup:owner",
+        "tag:k8s-operator",
+        "tag:k8s",
+        "tag:k8s-subnet-router",
+        "tag:kube-node"
+      ],
+      "dst": [
+        "10.244.0.0/16:*",
+        "10.96.0.0/12:*"
+      ]
+    }
+  ],
+
+  // Allow tailnet members to authenticate through the dedicated tsidp node.
+  // The capability is limited to tag:omni-idp rather than every tailnet node.
+  "grants": [
+    {
+      "src": ["autogroup:member"],
+      "dst": ["tag:omni-idp"],
+      "app": {
+        "tailscale.com/cap/tsidp": [
+          {
+            "users": ["*"],
+            "resources": ["*"],
+            "allow_admin_ui": true,
+            "allow_dcr": true,
+            "extraClaims": {
+              "email_verified": true
+            },
+            "includeInUserInfo": true
+          }
+        ]
+      }
+    }
+  ],
+
+  // Define device posture rules requiring devices to meet
+  // certain criteria to access parts of your system.
+  // "postures": {
+  //   "posture:autoUpdateMac": [
+  //     "node:os == 'macos'",
+  //     "node:tsReleaseTrack == 'stable'",
+  //     "node:tsAutoUpdate"
+  //   ]
+  // },
+
+  // Define users and devices that can use Tailscale SSH.
+  "ssh": [
+    // Allow all users to SSH into their own devices in check mode.
+    // Comment this section out if you want to define specific restrictions.
+    {
+      "action": "check",
+      "src": ["autogroup:member"],
+      "dst": ["autogroup:self"],
+      "users": ["autogroup:nonroot", "root"]
+    }
+  ],
+
+  // Auto-approve subnet routes for the dedicated Kubernetes subnet router
+  // devices managed through the Tailscale Kubernetes operator.
+  "autoApprovers": {
+    "routes": {
+      "10.244.0.0/16": ["tag:k8s-subnet-router"],
+      "10.96.0.0/12": ["tag:k8s-subnet-router"]
+    }
+  }
+}

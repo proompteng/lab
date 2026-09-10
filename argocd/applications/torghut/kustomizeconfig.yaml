@@ -1,0 +1,23 @@
+images:
+  # Kustomize knows standard PodSpec image locations, but these CRDs embed
+  # their containers outside a PodSpec. Kargo's argocd-update step relies on
+  # this configuration when it applies a digest override to the root app.
+  - path: spec/templates[]/container/image
+    group: argoproj.io
+    version: v1alpha1
+    kind: WorkflowTemplate
+  - path: spec/metrics[]/provider/job/spec/template/spec/containers[]/image
+    group: argoproj.io
+    version: v1alpha1
+    kind: AnalysisTemplate
+  - path: spec/image
+    group: flink.apache.org
+    version: v1beta1
+    kind: FlinkDeployment
+  # The notebook image is intentionally carried as a full reference in the
+  # Hub Deployment env. This keeps the spawned KubeSpawner image on the same
+  # Kargo-managed image contract as ordinary containers.
+  - path: spec/template/spec/containers[]/env[]/value
+    group: apps
+    version: v1
+    kind: Deployment

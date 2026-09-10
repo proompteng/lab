@@ -1,0 +1,86 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: restate-example-register-v2
+  labels:
+    app.kubernetes.io/name: restate-example-register
+    app.kubernetes.io/part-of: restate-example
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/sync-options: Force=true,Replace=true
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: restate-example-register
+        app.kubernetes.io/part-of: restate-example
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: register
+          image: curlimages/curl:8.17.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -ec
+          args:
+            - |
+              for i in $(seq 1 120); do
+                if curl -sSf \
+                  --connect-timeout 2 \
+                  --max-time 15 \
+                  --request POST \
+                  --url http://restate.restate.svc.cluster.local:9070/deployments \
+                  --header 'content-type: application/json' \
+                  --data '{"uri":"http://restate-example.restate-example.svc.cluster.local:9080","force":true,"metadata":{"managed_by":"argocd","app":"restate-example"}}'; then
+                  exit 0
+                fi
+                sleep 2
+              done
+              exit 1
+          volumeMounts:
+            - name: bundle-00
+              mountPath: /bundle/part-00.b64
+              subPath: part-00.b64
+              readOnly: true
+            - name: bundle-01
+              mountPath: /bundle/part-01.b64
+              subPath: part-01.b64
+              readOnly: true
+            - name: bundle-02
+              mountPath: /bundle/part-02.b64
+              subPath: part-02.b64
+              readOnly: true
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+      volumes:
+        - name: bundle-00
+          configMap:
+            name: restate-example-bundle-00
+        - name: bundle-01
+          configMap:
+            name: restate-example-bundle-01
+        - name: bundle-02
+          configMap:
+            name: restate-example-bundle-02

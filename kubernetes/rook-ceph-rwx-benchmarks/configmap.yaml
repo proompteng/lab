@@ -1,0 +1,118 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rook-ceph-rwx-benchmark-scripts
+  namespace: rook-ceph-benchmarks
+data:
+  run-benchmark-suite.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    mount_dir="${1:?mount dir required}"
+    result_dir="${2:?result dir required}"
+    class_name="${3:?storage class required}"
+
+    mkdir -p "${mount_dir}" "${result_dir}"
+
+    echo "storageClass=${class_name}" | tee "${result_dir}/suite.info"
+    date -u +"startedAt=%Y-%m-%dT%H:%M:%SZ" | tee -a "${result_dir}/suite.info"
+
+    fio \
+      --name=seq-write-read \
+      --directory="${mount_dir}" \
+      --rw=write \
+      --bs=1m \
+      --size=1g \
+      --numjobs=1 \
+      --iodepth=8 \
+      --direct=1 \
+      --runtime=0 \
+      --group_reporting=1 \
+      --output-format=json \
+      --output="${result_dir}/fio-sequential-write.json"
+
+    fio \
+      --name=seq-read \
+      --directory="${mount_dir}" \
+      --rw=read \
+      --bs=1m \
+      --size=1g \
+      --numjobs=1 \
+      --iodepth=8 \
+      --direct=1 \
+      --runtime=0 \
+      --group_reporting=1 \
+      --output-format=json \
+      --output="${result_dir}/fio-sequential-read.json"
+
+    fio \
+      --name=randrw-mixed \
+      --directory="${mount_dir}" \
+      --rw=randrw \
+      --rwmixread=70 \
+      --bs=4k \
+      --size=512m \
+      --numjobs=2 \
+      --iodepth=16 \
+      --direct=1 \
+      --runtime=60 \
+      --time_based=1 \
+      --group_reporting=1 \
+      --output-format=json \
+      --output="${result_dir}/fio-randrw.json"
+
+    python3 /scripts/run-metadata-benchmark.py "${mount_dir}/metadata" "${result_dir}/metadata.json"
+
+    date -u +"finishedAt=%Y-%m-%dT%H:%M:%SZ" | tee -a "${result_dir}/suite.info"
+    ls -lah "${result_dir}"
+    for result in \
+      "${result_dir}/fio-sequential-write.json" \
+      "${result_dir}/fio-sequential-read.json" \
+      "${result_dir}/fio-randrw.json" \
+      "${result_dir}/metadata.json"; do
+      echo "==== ${result##*/} ===="
+      cat "${result}"
+    done
+  run-metadata-benchmark.py: |
+    import json
+    import os
+    import shutil
+    import sys
+    import time
+    from pathlib import Path
+
+    root = Path(sys.argv[1])
+    output = Path(sys.argv[2])
+    file_count = 1000
+    root.mkdir(parents=True, exist_ok=True)
+
+    def elapsed(fn):
+      started = time.perf_counter()
+      fn()
+      return time.perf_counter() - started
+
+    def create_files():
+      payload = b"x" * 4096
+      for index in range(file_count):
+        (root / f"file-{index:05d}.dat").write_bytes(payload)
+
+    def stat_files():
+      for index in range(file_count):
+        os.stat(root / f"file-{index:05d}.dat")
+
+    def delete_files():
+      for index in range(file_count):
+        (root / f"file-{index:05d}.dat").unlink()
+
+    results = {
+      "fileCount": file_count,
+      "createSeconds": elapsed(create_files),
+      "statSeconds": elapsed(stat_files),
+      "deleteSeconds": elapsed(delete_files),
+    }
+    results["createOpsPerSecond"] = file_count / results["createSeconds"]
+    results["statOpsPerSecond"] = file_count / results["statSeconds"]
+    results["deleteOpsPerSecond"] = file_count / results["deleteSeconds"]
+
+    output.write_text(json.dumps(results, indent=2) + "\n", encoding="ascii")
+    shutil.rmtree(root, ignore_errors=True)
