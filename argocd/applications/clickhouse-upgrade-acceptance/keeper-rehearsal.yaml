@@ -117,7 +117,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: keeper-native-20260910-v1
+  name: keeper-native-20260910-v2
   labels:
     keeper.proompteng.ai/rehearsal: 20260910-v1
   annotations:
@@ -264,7 +264,7 @@ spec:
           readOnly: false
       - name: scripts
         configMap:
-          name: keeper-native-20260910-v1
+          name: keeper-native-20260910-v2
       - name: tmp
         emptyDir:
           sizeLimit: 32Mi
