@@ -142,3 +142,7 @@ rechecking the same Pod UID and native exit code; other failures still stop it.
 Keep both controllers alive through their final receipts and store workstation
 evidence on persistent storage. This change does not modify serving workloads,
 source snapshots, source credentials, network policy or retained claims.
+
+The completed/failed Keeper v1 Job remains explicitly declared with Prune=false
+and Delete=false while v2 runs. Its original Pod identity, statuses and logs
+remain available until a separately recorded retirement.
