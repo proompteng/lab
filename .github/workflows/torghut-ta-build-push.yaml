@@ -43,6 +43,7 @@ on:
       - 'patches/**'
       - 'package.json'
       - '.github/workflows/nix-oci-build-common.yml'
+      - '.github/workflows/torghut-ta-build-push.yaml'
       - 'packages/scripts/src/shared/oci.ts'
       - '.github/workflows/torghut-post-deploy-verify.yml'
       - 'nix/oci-push.sh'
@@ -62,6 +63,7 @@ jobs:
     with:
       image_name: torghut-ta
       package_attr: torghut-ta-image
+      image_build_timeout: 20m
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
       pr_number: ${{ github.event.pull_request.number || '' }}
