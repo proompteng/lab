@@ -39,8 +39,11 @@ Each engine restores structure first, pauses merges and TTL processing before
 restoring data, checks every MergeTree table and fingerprints every row using
 SHA256 of JSON tuples, count and four UInt64 sum/XOR lanes. Evidence includes
 table/column catalogs, view queries, native CHECK TABLE results and graceful
-server/Keeper exit codes. The operator must compare the three versions for each
-replica and validate the retained source identities before activation.
+server/Keeper exit codes. A final verifier compares all versions for each replica
+and writes a JSON receipt to the evidence claim and its container log. The Job
+cannot succeed without matching data and catalogs, successful native checks,
+endpoint denials and zero native exit codes. Validate the receipt and retained
+source identities before activation.
 
 The namespace denies all ingress and egress. The reviewed endpoint inventory
 has positive TCP controls from production; each engine must observe timeouts

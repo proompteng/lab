@@ -8,6 +8,7 @@ configMapGenerator:
   files:
   - native-rehearsal.sh
   - expected-tables.tsv
+  - verify-clickhouse-native-rehearsal.py
 generatorOptions:
   disableNameSuffixHash: true
   annotations:
