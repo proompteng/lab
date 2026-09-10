@@ -4,6 +4,7 @@ configurations:
 - kustomizeconfig.yaml
 resources:
 - codex-auth-externalsecret.yaml
+- postgres-upgrade-final-backup.yaml
 - postgres-cluster.yaml
 - torghut-db-ca-prune-tombstone.yaml
 - torghut-db-ca-reflector-rbac.yaml
@@ -55,10 +56,10 @@ resources:
 - notebooks
 images:
 - name: registry.ide-newton.ts.net/lab/signal-publisher
-  digest: sha256:e10c74aabb255a8499b483d10540518fac87a7cd7c6431f641350b5293095889
+  digest: sha256:7de24bcdc20579173aab1ff20094430dbdeebe4889e07dd6f4b2dee798110582
 - name: registry.ide-newton.ts.net/lab/torghut
-  digest: sha256:d58e4c60938750336541d6cefb27b1e0e43ebbb9c8c85b821c5360491139f176
+  digest: sha256:da7b54a57eddc8ab211f67a48c41dd339e9fd9436c2502cbba3525b70e93109a
 - name: registry.ide-newton.ts.net/lab/torghut-ta
-  digest: sha256:a5616ec2093d34745363f7122fc6152739b2f7dd8f9ecb706be5f006a9e08c68
+  digest: sha256:8eadb70c4ec3799f0fb3df5c4bc8e0b326a2443a4e5e8c7f6fecc02df385d031
 - name: registry.ide-newton.ts.net/lab/torghut-ws
-  digest: sha256:cdb5ec04efc53d18d2256144d4adee2c605086c1057f459c2a5ba930265a88cc
+  digest: sha256:9f3fff4c7f090228a9e6d149882d572dcf5eba49fdc00f0304c60f6029ede245

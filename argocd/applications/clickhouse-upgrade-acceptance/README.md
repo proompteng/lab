@@ -27,7 +27,6 @@ sequence is 25.8.28.10001, then 26.3.16.10001, preserving synchronous inserts,
 JSON integer formatting and documented downgrade compatibility settings. Any
 recovery after activation must account for writes after the backup checkpoint.
 
-
 The persistent rehearsal imports both completed CSI handles with Retain and
 mounts each 50 GiB source clone read-only. Each replica has a separate 100 GiB
 fixture claim and 1 GiB evidence claim. The three native versions restore the
@@ -68,7 +67,6 @@ UID 101, read-only roots, no capabilities and no service-account tokens. A faile
 attempt does not retry or overwrite partial evidence. Diagnose it and review a
 new generation. No CI runner or serving PVC is used as writable scratch space.
 
-
 Keeper preparation retains a CSI snapshot of the original 1 GiB Keeper claim,
 including its native snapshot and Raft logs. The recorded native snapshot SHA256
 and original PVC identity must match the isolated recovery copy. The serving
@@ -77,7 +75,6 @@ and does not claim to have requested a new native snapshot. Source 25.12.5.44
 recovery and target 26.8.2.7 recovery must both pass before serving activation.
 The Keeper image, server ID, peer configuration and production PVC are unchanged
 during this stage. After activation, recovery must account for subsequent writes.
-
 
 Generation v1 stopped before starting either database because its network gate
 accepted only a timeout. Galactic's network policy also returns an immediate
@@ -93,7 +90,6 @@ failed Job/Pod identities and logs. Retire only the two recorded failed v1 Jobs
 after this change removes them from desired state; preserve all claims and
 snapshots. They are rehearsal Jobs, not CI runner Jobs or serving workloads.
 Restart the runtime controller with the v2 code before releasing this generation.
-
 
 Keeper's native rehearsal recovers the retained snapshot and Raft logs with
 25.12.5.44, then starts 26.8.2.7 on those same isolated files. It preserves server
@@ -125,7 +121,6 @@ logs from ClickHouse generation v2. Both v2 databases stopped on a readonly
 replica during data restoration. This readout allows diagnosis without reopening
 either database or modifying the failed fixture and evidence claims.
 
-
 Generation v3 fixes the confirmed v2 restore failure: each private ClickHouse
 server now advertises its required replication HTTP port on loopback and waits
 for all eleven replicas to leave readonly/session-expired state before restoring
@@ -147,7 +142,6 @@ The completed/failed Keeper v1 Job remains explicitly declared with Prune=false
 and Delete=false while v2 runs. Its original Pod identity, statuses and logs
 remain available until a separately recorded retirement.
 
-
 Replica 0 generation v3 stopped before structure recovery because the private
 Keeper had not yet accepted sessions. Replica 1 completed the native restores and
 fingerprints on all three versions but failed its final health check because
@@ -165,3 +159,22 @@ fixture and proof claims remain retained.
 Start the default controller for both v4 Jobs before merging. It never restarts
 or overwrites a completed phase. Compare all three native versions independently
 for each replica before serving activation.
+
+## Replica 0 final-version retry
+
+The v4 replica 0 ClickHouse phases 25.3 and 25.8 exited
+cleanly. Its 26.3 native restore exceeded the client's default 300-second receive
+timeout; the private Keeper stayed running. Replica 1 passed all three versions.
+The v5 replica 0 Job repeats only the 26.3 restore with a bounded 1800-second
+receive timeout and four CPUs shared by its private server and Keeper. The
+retained immutable v4 ConfigMap supplies the same native script and strict
+verifier; no health or data comparison is relaxed.
+
+The verifier reads the completed v4 25.3/25.8 proof through links, records the
+original Job UID and SHA256 of every retained proof file, then compares the new
+26.3 proof with both retained phases. It never modifies the retained phase files
+or the failed v4 26.3 data. The v5 fixture and proof use separate directories on
+the existing dedicated rehearsal claims. Keep the runtime isolation controller
+active using `clickhouse-replica0-retry-profile.json`; all five live production
+endpoints must have current positive controls and fail the isolated native
+connection probes before the restore starts.
