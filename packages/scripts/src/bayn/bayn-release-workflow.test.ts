@@ -47,7 +47,10 @@ test('keeps the existing Bayn PR gate aggregation', () => {
 
 test('promotes verified main ancestry to an immutable GitOps branch', () => {
   expect(releaseWorkflow).toContain('test "$(git rev-parse HEAD)" = "$source_sha"')
-  expect(releaseWorkflow).toContain('test "$(git rev-parse refs/remotes/origin/main)" = "$SOURCE_SHA"')
+  expect(releaseWorkflow).toContain('ref: ${{ github.event.workflow_run.head_sha }}')
+  expect(releaseWorkflow).toContain('bash packages/scripts/src/bayn/verify-release-source.sh "$SOURCE_SHA"')
+  expect(buildPushWorkflow).toContain('cancel-in-progress: false')
+  expect(releaseWorkflow).toContain('cancel-in-progress: false')
   expect(releaseWorkflow).toContain('DEPLOYMENT_BRANCH: codex/bayn-deploy')
   expect(releaseWorkflow).toContain(
     'git show "refs/remotes/origin/${DEPLOYMENT_BRANCH}:argocd/applications/bayn/deployment.yaml" > "$deployed_manifest"',
