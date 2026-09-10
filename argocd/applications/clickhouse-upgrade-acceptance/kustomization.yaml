@@ -4,7 +4,7 @@ resources:
 - preparation.yaml
 - rehearsal.yaml
 configMapGenerator:
-- name: clickhouse-native-rehearsal-20260910-v1
+- name: clickhouse-native-rehearsal-20260910-v2
   files:
   - native-rehearsal.sh
   - expected-tables.tsv

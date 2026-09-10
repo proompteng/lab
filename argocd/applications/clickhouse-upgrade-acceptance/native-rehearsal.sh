@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 umask 027
+export LC_ALL=C
 
 : "${REHEARSAL_VERSION:?}" "${EXPECTED_VERSION:?}" "${REPLICA:?}"
 : "${BACKUP_DIRECTORY:?}" "${BACKUP_MANIFEST_SHA256:?}" "${COMPATIBILITY:?}"
 [[ "$REHEARSAL_VERSION" =~ ^v[0-9]+_[0-9]+$ ]]
 [[ "$REPLICA" =~ ^[01]$ ]]
 [[ "$BACKUP_DIRECTORY" =~ ^upgrade-20260910-v1-replica-[01]$ ]]
-fixture="/fixture/$REHEARSAL_VERSION"
-proof="/proof/$REHEARSAL_VERSION"
+fixture="/fixture/v2/$REHEARSAL_VERSION"
+proof="/proof/v2/$REHEARSAL_VERSION"
 backup="/source/backups/$BACKUP_DIRECTORY"
+mkdir -p /fixture/v2 /proof/v2
 mkdir "$proof"
 mkdir "$fixture"
 mkdir -p "$fixture"/{data,tmp,user_files,access,keeper/log,keeper/snapshots}
@@ -32,13 +34,23 @@ for endpoint in "${production_targets[@]}"; do
   host=${endpoint%:*}
   port=${endpoint##*:}
   [[ "$host" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ && "$port" =~ ^[0-9]+$ ]]
-  if timeout 5 bash -c "exec 3<>/dev/tcp/$host/$port" 2>/dev/null; then
+  error="$proof/probe-$host-$port.stderr"
+  if timeout 5 bash -c "exec 3<>/dev/tcp/$host/$port" 2>"$error"; then
     printf 'Production endpoint is reachable: %s\n' "$endpoint" >&2
     exit 1
   else
     result=$?
-    [[ "$result" == 124 ]] || { printf 'Isolation probe did not time out: %s status %s\n' "$endpoint" "$result" >&2; exit 1; }
+    if [[ "$result" == 124 ]]; then
+      outcome=TIMED_OUT
+    elif [[ "$result" == 1 ]] && grep -Fq "/dev/tcp/$host/$port: Connection refused" "$error"; then
+      outcome=REJECTED
+    else
+      printf 'Unclassified isolation failure: %s status %s\n' "$endpoint" "$result" >&2
+      cat "$error" >&2
+      exit 1
+    fi
   fi
+  printf '{"endpoint":"%s","exitCode":%s,"outcome":"%s"}\n' "$endpoint" "$result" "$outcome" >> "$proof/isolation-probes.jsonl"
   printf '%s\tDENIED\n' "$endpoint" >> "$proof/isolation.tsv"
 done
 wait_for_control "$proof/runtime-after.epoch"

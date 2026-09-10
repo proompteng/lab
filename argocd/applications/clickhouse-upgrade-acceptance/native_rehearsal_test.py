@@ -41,6 +41,17 @@ class NativeRehearsalVerificationTests(unittest.TestCase):
             (root / "isolation.tsv").write_text(
                 "".join(e + "\tDENIED\n" for e in self.endpoints)
             )
+            self.write(
+                phase,
+                "isolation-probes.jsonl",
+                [
+                    {"endpoint": endpoint, "exitCode": 124, "outcome": "TIMED_OUT"}
+                    for endpoint in self.endpoints
+                ],
+            )
+            for endpoint in self.endpoints:
+                host, port = endpoint.split(":")
+                (root / f"probe-{host}-{port}.stderr").write_text("")
             targets = [
                 {
                     "pod": f"source-{i}",
@@ -168,6 +179,46 @@ class NativeRehearsalVerificationTests(unittest.TestCase):
     def test_rejects_missing_endpoint_denial(self):
         (self.root / "v25_3/isolation.tsv").write_text("")
         with self.assertRaisesRegex(RuntimeError, "Isolation failed"):
+            self.verify()
+
+    def test_accepts_native_connection_refused_with_paired_positive_controls(self):
+        self.write(
+            "v25_3",
+            "isolation-probes.jsonl",
+            [
+                {"endpoint": endpoint, "exitCode": 1, "outcome": "REJECTED"}
+                for endpoint in self.endpoints
+            ],
+        )
+        for endpoint in self.endpoints:
+            host, port = endpoint.split(":")
+            (self.root / "v25_3" / f"probe-{host}-{port}.stderr").write_text(
+                f"bash: connect: Connection refused\nbash: line 1: /dev/tcp/{host}/{port}: Connection refused\n"
+            )
+        self.assertEqual(self.verify()["status"], "PASS")
+
+    def test_rejects_an_arbitrary_nonzero_probe_exit(self):
+        self.write(
+            "v25_3",
+            "isolation-probes.jsonl",
+            [
+                {"endpoint": endpoint, "exitCode": 126, "outcome": "REJECTED"}
+                for endpoint in self.endpoints
+            ],
+        )
+        with self.assertRaisesRegex(RuntimeError, "Unclassified isolation failure"):
+            self.verify()
+
+    def test_rejects_probe_failure_without_native_network_error(self):
+        self.write(
+            "v25_3",
+            "isolation-probes.jsonl",
+            [
+                {"endpoint": endpoint, "exitCode": 1, "outcome": "REJECTED"}
+                for endpoint in self.endpoints
+            ],
+        )
+        with self.assertRaisesRegex(RuntimeError, "Unclassified isolation failure"):
             self.verify()
 
     def test_rejects_native_restore_failure(self):
