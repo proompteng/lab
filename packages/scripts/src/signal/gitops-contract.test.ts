@@ -254,7 +254,7 @@ describe('Signal publisher GitOps authority contract', () => {
         entryClass: 'ai.proompteng.dorvud.ta.flink.MarketDataArchiveJobKt',
         parallelism: 16,
         state: 'running',
-        upgradeMode: 'stateless',
+        upgradeMode: 'savepoint',
       },
       taskManager: {
         replicas: 8,

@@ -9,14 +9,15 @@ metadata:
     argocd.argoproj.io/sync-wave: "4"
 spec:
   # The TA release workflow pins the same immutable image used by the live and simulation TA jobs.
-  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:c007ffc088bda3a214eac04ff341c4c5ebf4a6e036f4bc366d68d97e0057f83a
+  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:f15bc6e036c36f1e0f2f88fc6cfd14c7505e75e836b0f1ad00113682c326f748
   imagePullPolicy: IfNotPresent
   # Cut over from the skewed v2 quote consumer to the repartitioned v3 consumer.
   # Existing ClickHouse history stays intact; the new group begins at each topic's live head.
   restartNonce: 14
-  flinkVersion: v2_0
+  flinkVersion: v2_2
   serviceAccount: torghut-runtime
   flinkConfiguration:
+    kubernetes.operator.job.upgrade.last-state-fallback.enabled: "false"
     state.checkpoints.dir: s3a://flink-checkpoints/torghut/market-data-archive/checkpoints
     state.savepoints.dir: s3a://flink-checkpoints/torghut/market-data-archive/savepoints
     execution.checkpointing.mode: EXACTLY_ONCE
@@ -57,9 +58,9 @@ spec:
                   name: signal-publisher-clickhouse-auth
                   key: password
             - name: TORGHUT_TA_VERSION
-              value: kargo-sha-61a65d3d3473c8e7d2cbbb9767e9197cbcd09608
+              value: kargo-sha-b34a5f417601297555b2fbb29a27cb81b20c06e9
             - name: TORGHUT_TA_COMMIT
-              value: 61a65d3d3473c8e7d2cbbb9767e9197cbcd09608
+              value: b34a5f417601297555b2fbb29a27cb81b20c06e9
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:
@@ -87,5 +88,5 @@ spec:
     entryClass: ai.proompteng.dorvud.ta.flink.MarketDataArchiveJobKt
     jarURI: local:///opt/flink/usrlib/app.jar
     parallelism: 16
-    upgradeMode: stateless
+    upgradeMode: savepoint
     state: running

@@ -6,10 +6,10 @@ metadata:
   labels:
     app: torghut-ta-sim
 spec:
-  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:c007ffc088bda3a214eac04ff341c4c5ebf4a6e036f4bc366d68d97e0057f83a
+  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:f15bc6e036c36f1e0f2f88fc6cfd14c7505e75e836b0f1ad00113682c326f748
   imagePullPolicy: IfNotPresent
   restartNonce: 40
-  flinkVersion: v2_0
+  flinkVersion: v2_2
   serviceAccount: torghut-runtime
   logConfiguration:
     log4j-console.properties: |-
@@ -83,6 +83,7 @@ spec:
       # Flink Deployment Logging Overrides
       # rootLogger.level = DEBUG
   flinkConfiguration:
+    kubernetes.operator.job.upgrade.last-state-fallback.enabled: "false"
     state.checkpoints.dir: s3a://flink-checkpoints/torghut/technical-analysis-sim/checkpoints
     state.savepoints.dir: s3a://flink-checkpoints/torghut/technical-analysis-sim/savepoints
     execution.checkpointing.mode: EXACTLY_ONCE
@@ -157,9 +158,9 @@ spec:
                   name: flink-checkpoints
                   key: AWS_SECRET_ACCESS_KEY
             - name: TORGHUT_TA_VERSION
-              value: kargo-sha-61a65d3d3473c8e7d2cbbb9767e9197cbcd09608
+              value: kargo-sha-b34a5f417601297555b2fbb29a27cb81b20c06e9
             - name: TORGHUT_TA_COMMIT
-              value: 61a65d3d3473c8e7d2cbbb9767e9197cbcd09608
+              value: b34a5f417601297555b2fbb29a27cb81b20c06e9
           ports:
             - containerPort: 9249
               name: metrics
@@ -185,5 +186,5 @@ spec:
     entryClass: ai.proompteng.dorvud.ta.flink.FlinkTechnicalAnalysisJobKt
     jarURI: local:///opt/flink/usrlib/app.jar
     parallelism: 8
-    upgradeMode: stateless
+    upgradeMode: savepoint
     state: running

@@ -195,3 +195,30 @@ native row, schema, isolation, replica-health and clean-exit checks, and compare
 against the original completed v4 25.3/25.8 proof. The immutable v4 ConfigMap is
 retained unchanged. New fixtures and receipts use `/fixture/v6` and `/proof/v6`.
 Run the isolation controller with `clickhouse-replica0-serial-profile.json`.
+
+## Closeout and retained failures
+
+Once the final serving 26.3 deployment passes native acceptance, the active
+application retains the successful v6 replica-0, v4 replica-1, and v2 Keeper
+Jobs. Their strict verification remains unchanged. Together they qualified
+438,765,097 restored rows across the original replica copies and all three
+ClickHouse versions, plus the Keeper data and client protocol transition.
+
+Retire only the superseded failed Job controllers after preserving each exact
+Job/Pod UID, terminal status, and every container log. The v4 replica-0 25.3 and
+25.8 receipts remain the input to its v6 result and must remain intact. Remove
+failed Job references from the active render first. Then use an orphan delete
+with UID and resourceVersion preconditions for these seven terminal Jobs:
+
+- `clickhouse-native-20260910-v2-0` and `clickhouse-native-20260910-v2-1`
+- `clickhouse-native-20260910-v3-0` and `clickhouse-native-20260910-v3-1`
+- `clickhouse-native-20260910-v4-0` and `clickhouse-native-20260910-v5-0`
+- `keeper-native-20260910-v1`
+
+Keep the orphaned terminal Pods, all native result files, ConfigMaps, backups,
+source/data/proof PVCs, VolumeSnapshots and VolumeSnapshotContents. Never
+force-delete or recreate a failed Job to make its status green. This retirement
+removes completed failed attempts from the active application's ownership; the
+successful replacement Jobs and native receipts remain the acceptance evidence.
+Reintroducing an old Job manifest could rerun it, so use a new reviewed rehearsal
+generation for future investigations rather than reverting this closeout.
