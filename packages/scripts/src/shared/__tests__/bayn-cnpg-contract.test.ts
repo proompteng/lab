@@ -325,7 +325,7 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
     readRepoFile('argocd/applications/bayn/execution-activation.yaml'),
   ).map((document) => document.toJSON())
   const activation = activationDocuments.find((manifest) => manifest.kind === 'Job')
-  const activationPolicy = activationDocuments.find((manifest) => manifest.kind === 'NetworkPolicy')
+  const activationPolicy = readManifest('argocd/applications/bayn/execution-activation-networkpolicy.yaml')
   const kustomization = readManifest('argocd/applications/bayn/kustomization.yaml')
   const environment = (manifest: Record<string, any>): Map<string, Record<string, any>> =>
     new Map(manifest.spec.template.spec.containers[0].env.map((entry: Record<string, any>) => [entry.name, entry]))

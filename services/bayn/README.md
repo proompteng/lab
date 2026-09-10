@@ -86,20 +86,20 @@ limits. Bayn owns no ClickHouse DDL or backfill path.
 
 ## Operations
 
-Normal delivery is immutable and automatic:
+Normal delivery uses the shared Kargo path:
 
 1. merge reviewed source to `main`;
-2. build and publish the exact multi-architecture image;
-3. advance the generated `codex/bayn-deploy` pins when activation identity is valid; and
-4. let Argo reconcile the status service, execution worker, and source-versioned activation hook.
+2. build the exact multi-architecture image and publish its immutable `kargo-sha-<source>` alias;
+3. let the `bayn` Warehouse and automatic Stage copy that source into `kargo/bayn`, update all three runtime image
+   bindings and the existing research build lineage, and push the generated GitOps commit; and
+4. let Argo reconcile the execution worker, activation hook, and status service in their existing sync order.
 
-Builds and releases finish without cancellation when later commits arrive. A completed image may release after
-unrelated monorepo changes, provided its source remains on `main`, Bayn's source, configuration, and shared build
-inputs still match `main`, and its source does not precede or diverge from the deployed source. The release checks
-these conditions again before pushing GitOps; a later Bayn change requires the next image.
+Builds are scoped to Bayn inputs and finish when later commits arrive. There is no separate release workflow or
+promotion-eligibility script. Kargo controls delivery; the native activation hook and runtime enforce the configured
+account, strategy, capital grant, reconciliation, and order-risk contracts.
 
-Do not deploy directly or submit a broker order manually. A strategy-identity change requires a new reviewed durable
-activation; an ordinary code-only release preserves the existing exact grant lineage.
+Do not deploy directly or submit a broker order manually. A code release does not change the sealed research request
+or grant live capital authority.
 
 ## Endpoints
 

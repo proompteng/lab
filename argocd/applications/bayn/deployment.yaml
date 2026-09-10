@@ -66,11 +66,8 @@ spec:
                 fieldRef:
                   apiVersion: v1
                   fieldPath: metadata.namespace
-            # Main carries the reviewed candidate identity, while Argo reads the generated
-            # codex/bayn-deploy branch. An identity-changing build is published but promotion
-            # intentionally holds until a follow-up rotates the sealed activation request to
-            # the exact merged source and image digest; the renderer then updates this service,
-            # the execution worker, and its activation Job atomically.
+            # Kargo copies the reviewed source into kargo/bayn and updates this service,
+            # the execution worker, and the activation Job to the same immutable image.
             - name: BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH
               value: "a4894282066826ab3516bda712267f285e7b6b107f7b8946436eecbcb49de761"
             - name: BAYN_IMAGE_REPOSITORY
@@ -81,8 +78,7 @@ spec:
               value: "1d3b93a585e9b37836507880323f57ba7f7db385241dccf09234c43125ee5285"
             - name: BAYN_STRATEGY_PARAMETER_HASH
               value: "104bb22429eb54e025a092a8434be2b8390059c24515512de8cbb99c66cbb797"
-            # Reviewed activation identity pins used by the release verifier. Runtime derives the same
-            # identity from its compiled strategy contract before serving.
+            # Runtime verifies the reviewed activation identity against its compiled strategy contract.
             - name: BAYN_STRATEGY_NAME
               value: intraday-momentum
             - name: BAYN_STRATEGY_PROTOCOL_HASH

@@ -65,7 +65,6 @@ jobs:
             esac
             case "${path}" in
               services/bayn/* | \
-              packages/scripts/src/bayn/update-manifests.ts | \
               nix/images/bayn.nix | \
               nix/images/bayn-runtime-root.nix | \
               nix/images/bun-workspace-service.nix | \
