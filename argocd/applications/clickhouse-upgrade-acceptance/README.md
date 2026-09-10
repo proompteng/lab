@@ -146,3 +146,17 @@ source snapshots, source credentials, network policy or retained claims.
 The completed/failed Keeper v1 Job remains explicitly declared with Prune=false
 and Delete=false while v2 runs. Its original Pod identity, statuses and logs
 remain available until a separately recorded retirement.
+
+
+Replica 0 generation v3 stopped before structure recovery because the private
+Keeper had not yet accepted sessions. The readiness loop now requires a native
+`system.zookeeper` query as well as the server version before RESTORE. Only failed
+replica 0 gets a new v4 Job and fresh directories. Replica 1 continues in v3;
+its current engine retains its open script file, and later init containers read
+the updated ConfigMap after Kubernetes publishes it atomically. Data validation,
+private endpoints and all native isolation checks remain unchanged.
+
+Start the default controller for v4 replica 0. Keep a second controller running
+for the existing replica 1 Job with `clickhouse-replica1-runtime-profile.json`.
+Neither controller restarts or overwrites a completed phase. Compare all three
+native versions independently for each replica before serving activation.

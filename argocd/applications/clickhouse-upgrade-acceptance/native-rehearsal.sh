@@ -8,10 +8,12 @@ export LC_ALL=C
 [[ "$REHEARSAL_VERSION" =~ ^v[0-9]+_[0-9]+$ ]]
 [[ "$REPLICA" =~ ^[01]$ ]]
 [[ "$BACKUP_DIRECTORY" =~ ^upgrade-20260910-v1-replica-[01]$ ]]
-fixture="/fixture/v3/$REHEARSAL_VERSION"
-proof="/proof/v3/$REHEARSAL_VERSION"
+generation=${REHEARSAL_GENERATION:-v3}
+[[ "$generation" =~ ^v[0-9]+$ ]]
+fixture="/fixture/$generation/$REHEARSAL_VERSION"
+proof="/proof/$generation/$REHEARSAL_VERSION"
 backup="/source/backups/$BACKUP_DIRECTORY"
-mkdir -p /fixture/v3 /proof/v3
+mkdir -p "/fixture/$generation" "/proof/$generation"
 mkdir "$proof"
 mkdir "$fixture"
 mkdir -p "$fixture"/{data,tmp,user_files,access,keeper/log,keeper/snapshots}
@@ -121,7 +123,11 @@ ready=false
 for ((attempt=0; attempt<90; attempt++)); do
   kill -0 "$server_pid"
   kill -0 "$keeper_pid"
-  if sql 'SELECT version()' TSVRaw > "$proof/version" 2>/dev/null; then ready=true; break; fi
+  if sql 'SELECT version()' TSVRaw > "$proof/version" 2>/dev/null &&
+    sql "SELECT count() FROM system.zookeeper WHERE path='/'" TSVRaw > "$proof/keeper-ready.tsv" 2>"$proof/keeper-ready.stderr"; then
+    ready=true
+    break
+  fi
   sleep 2
 done
 reported_version=$(cat "$proof/version")

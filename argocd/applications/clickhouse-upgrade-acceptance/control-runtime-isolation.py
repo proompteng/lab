@@ -9,7 +9,7 @@ import time
 
 
 NAMESPACE = "clickhouse-upgrade-acceptance"
-JOBS = ["clickhouse-native-20260910-v3-0", "clickhouse-native-20260910-v3-1"]
+JOBS = ["clickhouse-native-20260910-v4-0"]
 SOURCES = {
     "chi-torghut-clickhouse-default-0-0-0": [9000, 8123],
     "chi-torghut-clickhouse-default-0-1-0": [9000, 8123],
@@ -132,7 +132,7 @@ def write_control(pod, container, directory, side, receipt):
 def main():
     global JOBS, SOURCES
     phases = {name: name.replace("-", "_") for name in ["v25-3", "v25-8", "v26-3"]}
-    proof_prefix = "/proof/v3/"
+    proof_prefix = "/proof/v4/"
     if len(sys.argv) == 3:
         profile = json.loads(Path(sys.argv[2]).read_text())
         JOBS, SOURCES = profile["jobs"], profile["sources"]

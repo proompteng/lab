@@ -117,9 +117,9 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: clickhouse-native-20260910-v3-0
+  name: clickhouse-native-20260910-v4-0
   labels:
-    clickhouse.proompteng.ai/rehearsal: 20260910-v3
+    clickhouse.proompteng.ai/rehearsal: 20260910-v4
   annotations:
     argocd.argoproj.io/sync-wave: '0'
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
@@ -130,7 +130,7 @@ spec:
   template:
     metadata:
       labels:
-        clickhouse.proompteng.ai/rehearsal: 20260910-v3
+        clickhouse.proompteng.ai/rehearsal: 20260910-v4
     spec:
       restartPolicy: Never
       automountServiceAccountToken: false
@@ -153,6 +153,8 @@ spec:
         - /bin/bash
         - /scripts/native-rehearsal.sh
         env:
+        - name: REHEARSAL_GENERATION
+          value: v4
         - name: REHEARSAL_VERSION
           value: v25_3
         - name: EXPECTED_VERSION
@@ -199,6 +201,8 @@ spec:
         - /bin/bash
         - /scripts/native-rehearsal.sh
         env:
+        - name: REHEARSAL_GENERATION
+          value: v4
         - name: REHEARSAL_VERSION
           value: v25_8
         - name: EXPECTED_VERSION
@@ -245,6 +249,8 @@ spec:
         - /bin/bash
         - /scripts/native-rehearsal.sh
         env:
+        - name: REHEARSAL_GENERATION
+          value: v4
         - name: REHEARSAL_VERSION
           value: v26_3
         - name: EXPECTED_VERSION
@@ -294,6 +300,8 @@ spec:
         - python3
         - /scripts/verify-clickhouse-native-rehearsal.py
         env:
+        - name: REHEARSAL_GENERATION
+          value: v4
         - *id001
         - *id002
         resources:
