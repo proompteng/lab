@@ -101,7 +101,9 @@ cat > "$fixture/config.xml" <<EOF
     <profile>default</profile><quota>default</quota></default></users><quotas><default/></quotas>
   <backups><allowed_path>/source/backups</allowed_path></backups>
   <macros><cluster>torghut-clickhouse</cluster><shard>0</shard><replica>restore-$REPLICA</replica></macros>
-  <zookeeper><node><host>127.0.0.1</host><port>2181</port></node></zookeeper>
+  <zookeeper><node><host>127.0.0.1</host><port>2181</port></node>
+    <operation_timeout_ms>60000</operation_timeout_ms><session_timeout_ms>300000</session_timeout_ms>
+  </zookeeper>
 </clickhouse>
 EOF
 cat > "$fixture/keeper.xml" <<EOF
