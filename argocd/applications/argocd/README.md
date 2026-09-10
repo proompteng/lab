@@ -103,3 +103,24 @@ kubectl -n bayn get restatedeployment bayn-execution-controller \
 
 Rollback by reverting this customization through a reviewed PR. Existing Restate deployments, registrations, and
 invocations are not deleted by either the rollout or rollback; only Argo's health classification changes.
+
+## CloudNativePG major-upgrade health
+
+The Cluster health customization preserves the Argo CD v3.5.2 phase classifications except that
+`Upgrading Postgres major version` is `Progressing`. CNPG uses this phase during a normal native major upgrade;
+classifying it as `Degraded` causes Argo to fail the sync and Kargo to exhaust deployment retries while the database
+is still upgrading. Later waves remain held until CNPG reports `Cluster in healthy state`. Delayed upgrades,
+required user action, suspension, and hibernation retain their upstream classifications.
+
+Reconcile the merged `argocd` Application before starting a PostgreSQL major upgrade. This only changes health
+evaluation; it does not restart Argo or mutate databases. If an earlier promotion already failed during this phase,
+retry its existing Freight through Kargo after the database is healthy. Verify the resulting promotion, exact Argo
+revision, and native database acceptance. Roll back the health change by reverting this ConfigMap through Git;
+retained database checkpoints and volumes are unaffected.
+
+Regression coverage executes the ConfigMap's actual Lua with upgrade, healthy, failure, suspension, hibernation,
+and missing-status fixtures:
+
+```bash
+bun test packages/scripts/src/argocd/__tests__/cnpg-cluster-health.test.ts
+```

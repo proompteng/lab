@@ -416,12 +416,11 @@ spec:
                 enabled: "true"
               - name: bayn
                 path: argocd/applications/bayn
-                # Bayn's reviewed main build writes immutable release pins here.
-                # The branch is generated deployment state, not a second review boundary.
-                targetRevision: codex/bayn-deploy
+                targetRevision: kargo/bayn
                 namespace: bayn
                 renderWithLovely: false
                 annotations:
+                  kargo.akuity.io/authorized-stage: lab-delivery:bayn
                   argocd.argoproj.io/sync-wave: "7"
                   argocd.argoproj.io/compare-options: ServerSideDiff=true,IncludeMutationWebhook=true
                 managedNamespaceMetadata:

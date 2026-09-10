@@ -2,6 +2,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: torghut
 resources:
+  - clickhouse-upgrade-25-8-checkpoints.yaml
   - keeper-upgrade-snapshot.yaml
   - clickhouse-keeper.yaml
   - keeper-pdb.yaml
@@ -20,5 +21,5 @@ resources:
 images:
   - name: registry.ide-newton.ts.net/lab/signal-publisher
     newName: registry.ide-newton.ts.net/lab/signal-publisher
-    newTag: kargo-sha-3ac124556625b26bc4a200f8b6062656a19265ce
-    digest: sha256:7de24bcdc20579173aab1ff20094430dbdeebe4889e07dd6f4b2dee798110582
+    newTag: kargo-sha-6c4b1b65fdea90f009a5d89ad2644eea555c09cd
+    digest: sha256:48e9e9de95d88a75dc4efe78adff573ec474bdcc93ceb02f05a795d7c2b04dfc

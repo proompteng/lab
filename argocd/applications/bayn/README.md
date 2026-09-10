@@ -11,7 +11,7 @@ The active day-trading policy admits entries until five minutes before the actua
 flattening at that same boundary. Close submissions remain eligible until the closing bell. Verify both regular and
 early-close windows; unresolved exits must stay visible and cannot complete the cycle as flat.
 
-This strategy change requires a reviewed research mandate rotation through `bayn-release`. Verify the exact image,
+This strategy change requires a reviewed research mandate rotation delivered through Kargo. Verify the exact image,
 activation identity, stored cycle boundaries, natural controller progress, and unchanged broker/accounting state.
 After zero-offset cycles exist, rollback must retain a runtime that can decode them. Do not restore the old positive-only
 constraints or delete cycles to make an incompatible binary start.
@@ -116,12 +116,23 @@ If activation has succeeded, first deactivate the native controller through revi
 exact reconciliation, and no broker-ledger advance before replacing the mandate. Never roll back only the Secret or
 invoke the activation handler manually.
 
-The reviewed `main` build publishes an immutable image, then the release workflow atomically advances the status,
-controller, and activation pins on `codex/bayn-deploy`. Argo watches that generated branch directly, so a second
-promotion pull request is neither required nor permitted. A release is held without advancing the branch when strategy
-or runtime identity changes require new trading evidence. The durable controller plan identifies the orchestration
-protocol rather than a particular worker build; every successful tick records the exact worker source revision, while
-strategy, account, market-data, risk, and authority bindings remain validated by the execution pass.
+The reviewed `main` build publishes the multi-architecture image and immutable `kargo-sha-<source>` alias. The
+`lab-delivery/bayn` Warehouse correlates that tag with its exact main commit; the automatic Stage copies that source,
+updates the status, worker, and activation bindings, and pushes `kargo/bayn`. Argo tracks that branch. The Stage also
+updates the activation endpoint of the existing research build lineage while preserving its authored request and
+build. The native hook still verifies the exact controller binding before the status service rolls out.
+
+The `bayn-release` workflow, manifest-promotion command, and source-eligibility script are removed. Kargo is the only
+writer of the generated deployment branch. Its bootstrap generation uses the immutable image digest hash; the
+existing runtime idempotency key also binds source revision, account controller key, plan, and previous binding.
+
+For the first cutover, merge the Warehouse, automatic Stage, immutable publisher, and ApplicationSet branch change
+together. Argo may briefly report a missing `kargo/bayn` branch until the first build creates Freight and Kargo pushes
+it; existing workloads remain running. If the root Application uses manual sync, sync only the reviewed `product`
+ApplicationSet from the merged source to install Bayn's branch target and authorized-stage annotation. Workload
+promotion and sync remain owned by Kargo. Verify the selected Freight digest, successful promotion, exact generated
+commit, both workers and status replicas, natural controller progress, and fresh exact reconciliation. Recover a
+failed promotion through Kargo; do not resume the retired workflow or introduce another deployment writer.
 
 Rollback is another serialized native ownership transfer, not pruning an active worker. Through a reviewed GitOps
 change, move the account-keyed binding to a compatible native replacement, or deactivate the native controller so Bayn

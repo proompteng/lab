@@ -161,8 +161,8 @@ validate manifests before an authorized apply.
   Promotion must update the configured renderer's source inputs, with rendered output verified against the digest.
   Retained post-deploy workflows follow the exact Kargo branch and Stage-written paths; manual dispatch is diagnostic.
   Use `lab-delivery` for promotion evidence and `argocd` for Application evidence.
-- Bayn is outside Kargo. It has no Warehouse, Freight, or Stage. `bayn-release` activation and lineage remain the
-  authority for strategy activation.
+- Bayn uses the same Kargo image-delivery path. Its native activation hook and trading runtime retain account,
+  strategy, grant, reconciliation, and order-risk enforcement; image promotion does not grant live capital authority.
 - Confirm the Kubernetes context and pass an explicit namespace to `kubectl`. On authorization failures, verify
   identity and follow the [access runbook](docs/runbooks/galactic-kubernetes-access.md) without silently changing
   credentials or targets. If Coder has no context, configure `in-cluster` from its mounted service account files at

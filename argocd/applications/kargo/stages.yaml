@@ -1895,3 +1895,147 @@ spec:
             sources:
             - repoURL: https://github.com/proompteng/lab.git
               desiredRevision: ${{ outputs.commit.commit }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: bayn
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/bayn
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/bayn
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: bayn
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: yaml-parse
+          as: bayn
+          config:
+            path: ./src/argocd/applications/bayn/deployment.yaml
+            outputs:
+              - name: lineage
+                fromExpression: fromJSON(find(spec.template.spec.containers[0].env, .name ==
+                  'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE').value)
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/bayn
+            images:
+              - image: bayn-main
+                newName: ${{ vars.imageRepo }}
+                digest: ${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/bayn/deployment.yaml
+            updates:
+              - key: spec.template.spec.containers.0.env.0.value
+                value: ${{ commitFrom(vars.gitRepo).ID }}
+              - key: spec.template.spec.containers.0.env.5.value
+                value: ${{ imageFrom(vars.imageRepo).Digest }}
+              - key: spec.template.spec.containers.0.env.13.value
+                value: "${{ quote(toJSON({schemaVersion: outputs.bayn.lineage.schemaVersion, requestHash:
+                  outputs.bayn.lineage.requestHash, authoredActivation:
+                  outputs.bayn.lineage.authoredActivation, activation: {sourceRevision:
+                  commitFrom(vars.gitRepo).ID, imageRepository: vars.imageRepo, imageDigest:
+                  imageFrom(vars.imageRepo).Digest } })) }}"
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/bayn/execution-controller.yaml
+            updates:
+              - key: spec.template.spec.containers.0.env.0.value
+                value: ${{ commitFrom(vars.gitRepo).ID }}
+              - key: spec.template.spec.containers.0.env.2.value
+                value: ${{ imageFrom(vars.imageRepo).Digest }}
+              - key: spec.template.spec.containers.0.env.9.value
+                value: "${{ quote(toJSON({schemaVersion: outputs.bayn.lineage.schemaVersion, requestHash:
+                  outputs.bayn.lineage.requestHash, authoredActivation:
+                  outputs.bayn.lineage.authoredActivation, activation: {sourceRevision:
+                  commitFrom(vars.gitRepo).ID, imageRepository: vars.imageRepo, imageDigest:
+                  imageFrom(vars.imageRepo).Digest } })) }}"
+              - key: spec.template.spec.containers.0.image
+                value: ${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/bayn/execution-activation.yaml
+            updates:
+              - key: spec.template.spec.containers.0.env.1.value
+                value: ${{ commitFrom(vars.gitRepo).ID }}
+              - key: spec.template.spec.containers.0.env.3.value
+                value: ${{ imageFrom(vars.imageRepo).Digest }}
+              - key: spec.template.spec.containers.0.env.10.value
+                value: "${{ quote(toJSON({schemaVersion: outputs.bayn.lineage.schemaVersion, requestHash:
+                  outputs.bayn.lineage.requestHash, authoredActivation:
+                  outputs.bayn.lineage.authoredActivation, activation: {sourceRevision:
+                  commitFrom(vars.gitRepo).ID, imageRepository: vars.imageRepo, imageDigest:
+                  imageFrom(vars.imageRepo).Digest } })) }}"
+              - key: spec.template.spec.containers.0.env.0.value
+                value: ${{ trimPrefix(imageFrom(vars.imageRepo).Digest, 'sha256:') }}
+              - key: spec.template.spec.containers.0.image
+                value: ${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}
+              - key: metadata.name
+                value: bayn-execution-activate-${{ commitFrom(vars.gitRepo).ID[0:12] }}
+              - key: metadata.labels.app\.kubernetes\.io/version
+                value: ${{ commitFrom(vars.gitRepo).ID[0:12] }}
+              - key: spec.template.metadata.labels.app\.kubernetes\.io/version
+                value: ${{ commitFrom(vars.gitRepo).ID[0:12] }}
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(bayn): promote ${{ ctx.targetFreight.name }}
+
+              Source commit: ${{ commitFrom(vars.gitRepo).ID }}
+        - uses: git-push
+          as: push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          as: deploy
+          retry:
+            timeout: 20m0s
+            errorThreshold: 3
+          config:
+            apps:
+              - name: bayn
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
