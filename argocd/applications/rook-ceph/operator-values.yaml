@@ -36,6 +36,12 @@ cephCommandsTimeoutSeconds: "120"
 
 csi:
   installCsiOperator: true
+  # Kubernetes 1.37 supports the provisioner's GA VolumeAttributesClass API.
+  # Keep the driver, attacher and registrar on their published stable images.
+  provisioner:
+    tag: v6.3.0@sha256:a4b0b1a37605b7b04a293e136edf7006ec1786a8eb3f4e5a945f81d667dcc371
+  resizer:
+    tag: v2.2.1@sha256:ea1d25e23479000c7e8eeb92d827df66258df4e482ca054c5e7ce3fc0f5c41a5
   # Rook v1.20.7 defaults to v8.5.0. The cluster is Kubernetes v1.37 with
   # VolumeGroupSnapshot v1 and v1beta2 APIs served; keep the generated image
   # set on the latest stable external-snapshotter release.
