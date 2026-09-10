@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/name: torghut-clickhouse
     app.kubernetes.io/part-of: torghut
   annotations:
-    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/sync-wave: '1'
 spec:
   configuration:
     files:
@@ -75,6 +75,9 @@ spec:
         <yandex>
           <profiles>
             <default>
+              <compatibility>25.3</compatibility>
+              <async_insert>0</async_insert>
+              <output_format_json_quote_64bit_integers>1</output_format_json_quote_64bit_integers>
               <!-- Disable sampling profiler logs to keep system tables small. -->
               <query_profiler_real_time_period_ns>0</query_profiler_real_time_period_ns>
               <query_profiler_cpu_time_period_ns>0</query_profiler_cpu_time_period_ns>
@@ -208,7 +211,7 @@ spec:
                   topologyKey: kubernetes.io/hostname
           containers:
             - name: clickhouse
-              image: altinity/clickhouse-server:25.3.6.10034.altinitystable
+              image: altinity/clickhouse-server:25.8.28.10001.altinitystable@sha256:5ad76ea89ca881043b76ddcf2bcf3813663060a03a04b39f5c8ad2ef1dea4b07
               resources:
                 requests:
                   cpu: 1
