@@ -2,6 +2,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: torghut
 resources:
+  - keeper-upgrade-snapshot.yaml
   - clickhouse-keeper.yaml
   - keeper-pdb.yaml
   - sealed-secret.yaml
@@ -19,5 +20,5 @@ resources:
 images:
   - name: registry.ide-newton.ts.net/lab/signal-publisher
     newName: registry.ide-newton.ts.net/lab/signal-publisher
-    newTag: kargo-sha-6f0e11bc99303a4c8fc3b2dcba2aef4dad91cc99
-    digest: sha256:8162d463952b6da01889b992d14051a7078f06ada6ca94946172ea6e6f2b8613
+    newTag: kargo-sha-9cb93a0d6932b2accd43bccebf8908b5be96d365
+    digest: sha256:e10c74aabb255a8499b483d10540518fac87a7cd7c6431f641350b5293095889

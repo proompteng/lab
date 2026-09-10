@@ -12,9 +12,14 @@ The image is pinned to the multi-architecture index
 
 ## Activation safety
 
-The application is manual. Sync wave `-3` installs temporary allow-all policies in every namespace that already has a
-NetworkPolicy. A bounded wave `-2` hook compares that declared namespace set to the live cluster and validates every
-safety policy. Any mismatch stops the sync before the DaemonSet is applied at wave `0`.
+The application is manual. Sync wave `-3` retains allow-all policies in agents, argocd, bilig, kafka, media,
+pgadmin, synthesis and torghut. Bayn retains an inert policy whose selector must match no Pods.
+Hermes, optional Tengri, and the eight policy sets listed in the rollout runbook keep their restrictive
+policies enforced. Those namespaces receive no allow-all policy during activation.
+
+The bounded wave `-2` hook validates the complete live namespace set, each retained safety policy and the
+exact source-derived fingerprints of all enforced policy sets. Any mismatch stops the sync before the
+DaemonSet is applied at wave `0`. CI validates the same fingerprints whenever their source files change.
 
 The safety policies use `Prune=false`. Do not remove them as part of controller activation or rollback. Replace them only
 through namespace-specific policy tests that prove all required ingress and egress before enforcement.
