@@ -96,7 +96,7 @@ cat > "$fixture/config.xml" <<EOF
   </merge_tree>
   <profiles><default><max_threads>2</max_threads><max_memory_usage>3221225472</max_memory_usage>
     <compatibility>$COMPATIBILITY</compatibility><output_format_json_quote_64bit_integers>1</output_format_json_quote_64bit_integers>
-    <async_insert>0</async_insert></default></profiles>
+    <async_insert>0</async_insert><restore_threads>1</restore_threads></default></profiles>
   <users><default><password></password><networks><ip>127.0.0.1</ip><ip>::1</ip></networks>
     <profile>default</profile><quota>default</quota></default></users><quotas><default/></quotas>
   <backups><allowed_path>/source/backups</allowed_path></backups>
@@ -109,7 +109,7 @@ cat > "$fixture/keeper.xml" <<EOF
   <logger><level>warning</level><console>1</console></logger><listen_host>127.0.0.1</listen_host>
   <keeper_server><tcp_port>2181</tcp_port><server_id>1</server_id>
     <log_storage_path>$fixture/keeper/log</log_storage_path><snapshot_storage_path>$fixture/keeper/snapshots</snapshot_storage_path>
-    <coordination_settings><operation_timeout_ms>10000</operation_timeout_ms><session_timeout_ms>30000</session_timeout_ms></coordination_settings>
+    <coordination_settings><operation_timeout_ms>60000</operation_timeout_ms><session_timeout_ms>300000</session_timeout_ms></coordination_settings>
     <raft_configuration><server><id>1</id><hostname>127.0.0.1</hostname><port>9234</port></server></raft_configuration>
   </keeper_server>
 </clickhouse>
