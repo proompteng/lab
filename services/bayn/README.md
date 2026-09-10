@@ -90,6 +90,11 @@ Normal delivery is immutable and automatic:
 3. advance the generated `codex/bayn-deploy` pins when activation identity is valid; and
 4. let Argo reconcile the status service, execution worker, and source-versioned activation hook.
 
+Builds and releases finish without cancellation when later commits arrive. A completed image may release after
+unrelated monorepo changes, provided its source remains on `main`, Bayn's source, configuration, and shared build
+inputs still match `main`, and its source does not precede or diverge from the deployed source. The release checks
+these conditions again before pushing GitOps; a later Bayn change requires the next image.
+
 Do not deploy directly or submit a broker order manually. A strategy-identity change requires a new reviewed durable
 activation; an ordinary code-only release preserves the existing exact grant lineage.
 
