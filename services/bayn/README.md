@@ -68,6 +68,9 @@ embeds and verifies the source revision and the behavior, parameter, protocol, a
 - Each writer transaction reserves its own PostgreSQL connection and holds the advisory fence through commit or
   rollback. A disconnected transaction fails without replaying its writes; the next pass obtains a usable connection
   and reconciles durable state. Nested fence calls stay in their owning transaction.
+- Recovery recognizes a cycle that completes with verified zero fills after a system failure restricts authority.
+  It still requires fresh exact, flat reconciliation and the normal OBSERVE successor before reactivation. An operator
+  kill remains restricted.
 - TigerBeetle is the authoritative fee, cost-basis, cash, and realized-P&L ledger.
 - The public Bayn deployment serves read-only status and health. It does not schedule execution or hold mutation
   authority.
@@ -89,6 +92,11 @@ Normal delivery is immutable and automatic:
 2. build and publish the exact multi-architecture image;
 3. advance the generated `codex/bayn-deploy` pins when activation identity is valid; and
 4. let Argo reconcile the status service, execution worker, and source-versioned activation hook.
+
+Builds and releases finish without cancellation when later commits arrive. A completed image may release after
+unrelated monorepo changes, provided its source remains on `main`, Bayn's source, configuration, and shared build
+inputs still match `main`, and its source does not precede or diverge from the deployed source. The release checks
+these conditions again before pushing GitOps; a later Bayn change requires the next image.
 
 Do not deploy directly or submit a broker order manually. A strategy-identity change requires a new reviewed durable
 activation; an ordinary code-only release preserves the existing exact grant lineage.

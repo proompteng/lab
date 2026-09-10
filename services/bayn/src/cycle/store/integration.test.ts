@@ -18,6 +18,8 @@ import {
 import { PostgresClientLive } from '../../db/postgres-client'
 import { postgresMigrations } from '../../db/postgres-migrations'
 import { Authority, KillState } from '../../execution/contracts'
+import { BlockedCycleIntentStore } from '../../execution/intents/blocked-cycle'
+import { BlockedCycleIntentStoreLive } from '../../execution/intents/blocked-cycle-postgres'
 import { canonicalHashV1 } from '../../hash'
 import type { ExecutionDecisionDocument } from '../../shadow-decision-contract'
 import { intradayMomentumExecutionModel } from '../../strategy/intraday-momentum/protocol'
@@ -544,6 +546,8 @@ describePostgres('PostgreSQL intraday cycle store', () => {
           Effect.gen(function* () {
             // Isolate the read predicate from write-admission triggers. Both completion and
             // unresolved-mutation functions are the real functions installed by migrations.
+            const generationHash = '1'.repeat(64)
+            const researchPlanHash = '2'.repeat(64)
             yield* sql`CREATE TEMP TABLE autonomous_cycles (
               cycle_id text, decision_hash text, account_id text, updated_at timestamptz
             ) ON COMMIT DROP`
@@ -569,7 +573,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
               event_id text, source_sequence bigint, observed_at timestamptz
             ) ON COMMIT DROP`
             yield* sql`CREATE TEMP TABLE fills (
-              account_id text, broker_order_id text
+              account_id text, broker_order_id text, intent_id text
             ) ON COMMIT DROP`
             yield* sql`CREATE TEMP TABLE reconciliations (
               account_id text, status text, expected_hash text, observed_hash text,
@@ -591,7 +595,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
                   strategyName: 'intraday-momentum',
                   strategyDecisionHash: 'strategy',
                   policyHash: 'policy',
-                  authorityGenerationHash: 'generation',
+                  authorityGenerationHash: generationHash,
                 },
                 deltaRisk: [
                   {
@@ -605,7 +609,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
               })}
             )`
             yield* sql`INSERT INTO intents VALUES (
-              'intent', 'account', 'cycle', 'intraday-momentum', 'strategy', 'policy', 'generation', 'risk',
+              'intent', 'account', 'cycle', 'intraday-momentum', 'strategy', 'policy', ${generationHash}, 'risk',
               'TERMINAL', 'CANCELED', 'LIMIT', 'IOC', 'client', 'AMZN', 'BUY', 38000000,
               '2026-09-08T17:01:00Z'
             )`
@@ -654,7 +658,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             yield* sql`UPDATE orders SET filled_quantity_micros = 1000000`
             expect(yield* completionMatches()).toBe(false)
             yield* sql`UPDATE orders SET filled_quantity_micros = 0`
-            yield* sql`INSERT INTO fills VALUES ('account', 'broker-order')`
+            yield* sql`INSERT INTO fills VALUES ('account', 'broker-order', 'intent')`
             expect(yield* completionMatches()).toBe(false)
             yield* sql`DELETE FROM fills`
             yield* sql`UPDATE orders SET client_order_id = 'wrong-client'`
@@ -664,9 +668,70 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             expect(yield* completionMatches()).toBe(false)
             yield* sql`UPDATE mutation_events SET event_type = 'RECOVERY_FOUND' WHERE sequence = 350`
             expect(yield* completionMatches()).toBe(true)
+
+            yield* sql`ALTER TABLE autonomous_cycles
+              ADD state text DEFAULT 'COMPLETED',
+              ADD terminal_at timestamptz DEFAULT '2026-09-08T17:03:30Z',
+              ADD submission_cutoff_at timestamptz,
+              ADD submission_open_at timestamptz,
+              ADD qualification_run_id text,
+              ADD strategy_protocol_hash text,
+              ADD schema_version text,
+              ADD identity_schema_version text,
+              ADD snapshot_id text`
+            yield* sql`ALTER TABLE intents ADD state_version integer DEFAULT 1`
+            yield* sql`CREATE TEMP TABLE authority_generations (
+              generation_hash text, account_id text, maximum text, activation_schema_version text,
+              qualification_run_id text, research_plan_hash text, strategy_protocol_hash text
+            ) ON COMMIT DROP`
+            yield* sql`INSERT INTO authority_generations VALUES (
+              ${generationHash}, 'account', 'PAPER', 'bayn.paper-authority-generation.v3',
+              NULL, ${researchPlanHash}, 'protocol'
+            )`
+            yield* sql`CREATE TEMP TABLE authority_state (
+              singleton boolean, generation_hash text, maximum text, effective text, kill_state text,
+              reason text, version integer, updated_at timestamptz
+            ) ON COMMIT DROP`
+            const restriction = 'execution cycle loop restricted effective authority: run-cycle-pass: timeout'
+            yield* sql`INSERT INTO authority_state VALUES (
+              true, ${generationHash}, 'PAPER', 'OBSERVE', 'ACTIVE', ${restriction}, 3,
+              '2026-09-08T17:01:30Z'
+            )`
+            const store = yield* BlockedCycleIntentStore
+            const settle = store.settleCurrentTerminalGeneration({
+              accountId: 'account',
+              observedAt: '2026-09-08T17:04:00.000Z',
+            })
+            expect(yield* settle).toMatchObject({
+              _tag: 'TerminalGenerationSettled',
+              authorityGenerationHash: generationHash,
+              blockedCycleCount: 0,
+              terminalIntentCount: 1,
+            })
+            yield* sql`INSERT INTO fills VALUES ('account', 'broker-order', 'intent')`
+            expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
+            yield* sql`DELETE FROM fills`
+            yield* sql`UPDATE orders SET filled_quantity_micros = 1000000`
+            expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
+            yield* sql`UPDATE orders SET filled_quantity_micros = 0`
+            yield* sql`UPDATE broker_events SET observed_at = '2026-09-08T17:03:00Z'`
+            expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
+            yield* sql`UPDATE broker_events SET observed_at = '2026-09-08T17:02:00Z'`
+            yield* sql`UPDATE autonomous_cycles SET terminal_at = '2026-09-08T17:01:00Z'`
+            expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
+            yield* sql`UPDATE autonomous_cycles SET terminal_at = '2026-09-08T17:05:00Z'`
+            expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
+            yield* sql`UPDATE autonomous_cycles SET terminal_at = '2026-09-08T17:03:30Z'`
+            yield* sql`UPDATE intents SET terminal_outcome = 'FILLED'`
+            expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
+            yield* sql`UPDATE intents SET terminal_outcome = 'CANCELED'`
+            yield* sql`UPDATE authority_state SET reason = 'operator kill switch'`
+            expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
+            const authority = yield* sql`SELECT effective, kill_state FROM authority_state`
+            expect(authority).toEqual([{ effective: 'OBSERVE', kill_state: 'ACTIVE' }])
           }),
         )
-      }),
+      }).pipe(Effect.provide(BlockedCycleIntentStoreLive)),
     )
   }, 15_000)
 })
