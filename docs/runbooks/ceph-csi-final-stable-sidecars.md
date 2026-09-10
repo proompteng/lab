@@ -6,9 +6,10 @@ digest in `argocd/applications/rook-ceph/operator-values.yaml`. Kubernetes 1.37
 satisfies the provisioner's Kubernetes 1.34 minimum for the GA
 VolumeAttributesClass API. No feature gates change.
 
-The rendered change is limited to two entries in
-`rook-csi-operator-image-set-configmap`. The CSI operator reconciles the RBD and
-CephFS controller Deployments. Ceph 20.2.4, Rook 1.20.7, Ceph CSI 3.17.1, node
+The image values change two entries in
+`rook-csi-operator-image-set-configmap`. Kustomize also copies those exact values
+to annotations on the two Driver resources. Updating these watched resources
+causes the CSI operator to reconcile the RBD and CephFS controller Deployments. Ceph 20.2.4, Rook 1.20.7, Ceph CSI 3.17.1, node
 plugins, key generation, storage classes, RBAC, topology, and existing volumes
 retain their configuration.
 
@@ -63,3 +64,23 @@ official images are published. Do not replace them with staging images.
 - [Resizer 2.2.1 release](https://github.com/kubernetes-csi/external-resizer/releases/tag/v2.2.1)
 - [Attacher 4.13.0 release](https://github.com/kubernetes-csi/external-attacher/releases/tag/v4.13.0)
 - [Registrar 2.18.0 release](https://github.com/kubernetes-csi/node-driver-registrar/releases/tag/v2.18.0)
+
+## Image configuration reload
+
+The first image-only sync applied successfully, but the controller Deployments
+kept their old images. This was reproduced with the live v1.0.4 operator: the
+image ConfigMap had the new digests while neither Driver was reconciled.
+
+The [v1.0.4 controller source](https://github.com/ceph/ceph-csi-operator/blob/v1.0.4/internal/controller/driver_controller.go)
+watches all Driver updates. It does not watch updates to the referenced image
+ConfigMap. Its ConfigMap ownership watch only handles deletion of the separate
+CSI configuration map. A Ready Argo ConfigMap therefore does not establish that
+new controller images are running.
+
+The Rook Kustomization now copies `data.provisioner` and `data.resizer` from the
+rendered image ConfigMap into Driver annotations. This keeps the Helm values as
+the only image authority and makes subsequent changes to either sidecar enqueue
+normal reconciliation. The annotations are on Driver metadata; they do not
+change node Pod templates or require an operator restart. Before accepting this
+fix, require both actual controller sidecar versions, unchanged CSI node Pod UIDs,
+and the fresh provisioning/expansion canaries described above.

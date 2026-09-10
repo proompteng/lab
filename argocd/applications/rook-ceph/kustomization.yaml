@@ -127,3 +127,34 @@ patches:
       version: v1
       kind: CephCluster
       name: rook-ceph
+
+# ceph-csi-operator v1.0.4 watches Driver updates but does not watch image-set
+# ConfigMap changes. Mirror controller image inputs onto each Driver so GitOps
+# image changes enqueue reconciliation without restarting node plugins.
+replacements:
+  - source:
+      kind: ConfigMap
+      name: rook-csi-operator-image-set-configmap
+      fieldPath: data.provisioner
+    targets:
+      - select:
+          group: csi.ceph.io
+          version: v1
+          kind: Driver
+        fieldPaths:
+          - metadata.annotations.[storage.proompteng.ai/csi-provisioner-image]
+        options:
+          create: true
+  - source:
+      kind: ConfigMap
+      name: rook-csi-operator-image-set-configmap
+      fieldPath: data.resizer
+    targets:
+      - select:
+          group: csi.ceph.io
+          version: v1
+          kind: Driver
+        fieldPaths:
+          - metadata.annotations.[storage.proompteng.ai/csi-resizer-image]
+        options:
+          create: true
