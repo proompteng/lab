@@ -26,3 +26,44 @@ Production remains Altinity Stable 25.3.6.10034 during preparation. The intended
 sequence is 25.8.28.10001, then 26.3.16.10001, preserving synchronous inserts,
 JSON integer formatting and documented downgrade compatibility settings. Any
 recovery after activation must account for writes after the backup checkpoint.
+
+
+The persistent rehearsal imports both completed CSI handles with Retain and
+mounts each 50 GiB source clone read-only. Each replica has a separate 100 GiB
+fixture claim and 1 GiB evidence claim. The three native versions restore the
+same completed backup independently into distinct directories, with a private
+loopback Keeper. This proves native backup recovery across the upgrade path;
+it is not an in-place upgrade of a shared fixture directory.
+
+Each engine restores structure first, pauses merges and TTL processing before
+restoring data, checks every MergeTree table and fingerprints every row using
+SHA256 of JSON tuples, count and four UInt64 sum/XOR lanes. Evidence includes
+table/column catalogs, view queries, native CHECK TABLE results and graceful
+server/Keeper exit codes. A final verifier compares all versions for each replica
+and writes a JSON receipt to the evidence claim and its container log. The Job
+cannot succeed without matching data and catalogs, successful native checks,
+endpoint denials and zero native exit codes. Validate the receipt and retained
+source identities before activation.
+
+The namespace denies all ingress and egress. Start the checked-in controller on
+an authorized workstation before merging this generation or requesting its sync:
+
+```sh
+python3 argocd/applications/clickhouse-upgrade-acceptance/control-runtime-isolation.py /path/to/evidence
+```
+
+Wait for its ACTIVE startup result and verify its fresh controller-ready.json
+heartbeat before releasing the GitOps change. The controller performs live
+positive controls and verifies namespace access before advertising readiness;
+it can wait safely while no Jobs exist. Keep it running until both Jobs finish.
+
+Before every native engine starts, the controller resolves the current production
+Pods and proves TCP reachability. It then releases that engine's denied probes,
+rechecks the exact Pod UIDs and addresses, and proves TCP reachability again.
+The complete before/probe/after window must be at most 90 seconds. Native Jobs
+wait for these runtime controls and cannot accept captured pre-merge IPs. The
+controller collects completed native receipts and exits after both Jobs pass.
+It never applies manifests or changes serving workloads. Containers use
+UID 101, read-only roots, no capabilities and no service-account tokens. A failed
+attempt does not retry or overwrite partial evidence. Diagnose it and review a
+new generation. No CI runner or serving PVC is used as writable scratch space.

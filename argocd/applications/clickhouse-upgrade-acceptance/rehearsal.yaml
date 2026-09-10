@@ -1,0 +1,673 @@
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotContent
+metadata:
+  name: snapcontent-28da48fe-9b2f-4f1f-9562-bf58b6496ac2
+  labels:
+    clickhouse.proompteng.ai/rehearsal: 20260910-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-25'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false,ServerSideApply=false
+spec:
+  deletionPolicy: Retain
+  driver: rook-ceph.rbd.csi.ceph.com
+  source:
+    volumeHandle: 0001-0009-rook-ceph-0000000000000001-eb6e703f-2cc9-43c5-a6b7-7dc9751f8ff9
+  sourceVolumeMode: Filesystem
+  volumeSnapshotClassName: rook-ceph-block
+  volumeSnapshotRef:
+    apiVersion: snapshot.storage.k8s.io/v1
+    kind: VolumeSnapshot
+    name: clickhouse-upgrade-20260910-replica-0
+    namespace: torghut
+    resourceVersion: '603219411'
+    uid: 28da48fe-9b2f-4f1f-9562-bf58b6496ac2
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotContent
+metadata:
+  name: clickhouse-native-20260910-0-content
+  labels:
+    clickhouse.proompteng.ai/rehearsal: 20260910-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-20'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  deletionPolicy: Retain
+  driver: rook-ceph.rbd.csi.ceph.com
+  source:
+    snapshotHandle: 0001-0009-rook-ceph-0000000000000001-2e327b7f-1b43-4be9-8218-ec6395f5beda
+  volumeSnapshotRef:
+    name: clickhouse-native-20260910-0-snapshot
+    namespace: clickhouse-upgrade-acceptance
+  volumeSnapshotClassName: rook-ceph-block
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: clickhouse-native-20260910-0-snapshot
+  labels:
+    clickhouse.proompteng.ai/rehearsal: 20260910-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-20'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  namespace: clickhouse-upgrade-acceptance
+spec:
+  volumeSnapshotClassName: rook-ceph-block
+  source:
+    volumeSnapshotContentName: clickhouse-native-20260910-0-content
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: clickhouse-native-20260910-0-source
+  labels:
+    clickhouse.proompteng.ai/rehearsal: 20260910-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-15'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  namespace: clickhouse-upgrade-acceptance
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: rook-ceph-block
+  resources:
+    requests:
+      storage: 50Gi
+  dataSource:
+    apiGroup: snapshot.storage.k8s.io
+    kind: VolumeSnapshot
+    name: clickhouse-native-20260910-0-snapshot
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: clickhouse-native-20260910-0-data
+  labels:
+    clickhouse.proompteng.ai/rehearsal: 20260910-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-15'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  namespace: clickhouse-upgrade-acceptance
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: rook-ceph-block
+  resources:
+    requests:
+      storage: 100Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: clickhouse-native-20260910-0-proof
+  labels:
+    clickhouse.proompteng.ai/rehearsal: 20260910-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-15'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  namespace: clickhouse-upgrade-acceptance
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: rook-ceph-block
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: clickhouse-native-20260910-0
+  labels:
+    clickhouse.proompteng.ai/rehearsal: 20260910-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '0'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  namespace: clickhouse-upgrade-acceptance
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 43200
+  template:
+    metadata:
+      labels:
+        clickhouse.proompteng.ai/rehearsal: 20260910-v1
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      terminationGracePeriodSeconds: 120
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+      - name: v25-3
+        image: altinity/clickhouse-server:25.3.6.10034.altinitystable@sha256:3396b15c51a2c13c0aead9532bd022e478a8f575fe325deacb7d0efeae594174
+        command:
+        - /bin/bash
+        - /scripts/native-rehearsal.sh
+        env:
+        - name: REHEARSAL_VERSION
+          value: v25_3
+        - name: EXPECTED_VERSION
+          value: 25.3.6.10034
+        - name: REPLICA
+          value: '0'
+        - name: BACKUP_DIRECTORY
+          value: upgrade-20260910-v1-replica-0
+        - name: BACKUP_MANIFEST_SHA256
+          value: e2111b73fcc4fdb344c00f95ebf0dbcefc720e932e0020a114d76be0229d9b42
+        - name: COMPATIBILITY
+          value: '25.3'
+        - name: HOME
+          value: /fixture
+        resources:
+          requests:
+            cpu: '1'
+            memory: 2Gi
+          limits:
+            cpu: '2'
+            memory: 6Gi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: source
+          mountPath: /source
+          readOnly: true
+        - name: data
+          mountPath: /fixture
+        - name: proof
+          mountPath: /proof
+        - name: scripts
+          mountPath: /scripts
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+      - name: v25-8
+        image: altinity/clickhouse-server:25.8.28.10001.altinitystable@sha256:5ad76ea89ca881043b76ddcf2bcf3813663060a03a04b39f5c8ad2ef1dea4b07
+        command:
+        - /bin/bash
+        - /scripts/native-rehearsal.sh
+        env:
+        - name: REHEARSAL_VERSION
+          value: v25_8
+        - name: EXPECTED_VERSION
+          value: 25.8.28.10001
+        - name: REPLICA
+          value: '0'
+        - name: BACKUP_DIRECTORY
+          value: upgrade-20260910-v1-replica-0
+        - name: BACKUP_MANIFEST_SHA256
+          value: e2111b73fcc4fdb344c00f95ebf0dbcefc720e932e0020a114d76be0229d9b42
+        - name: COMPATIBILITY
+          value: '25.3'
+        - name: HOME
+          value: /fixture
+        resources:
+          requests:
+            cpu: '1'
+            memory: 2Gi
+          limits:
+            cpu: '2'
+            memory: 6Gi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: source
+          mountPath: /source
+          readOnly: true
+        - name: data
+          mountPath: /fixture
+        - name: proof
+          mountPath: /proof
+        - name: scripts
+          mountPath: /scripts
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+      - name: v26-3
+        image: altinity/clickhouse-server:26.3.16.10001.altinitystable@sha256:8526a7742e6ef707dee68107876b18d45570b0448f284d3c785eb2d2e4417a5e
+        command:
+        - /bin/bash
+        - /scripts/native-rehearsal.sh
+        env:
+        - name: REHEARSAL_VERSION
+          value: v26_3
+        - name: EXPECTED_VERSION
+          value: 26.3.16.10001
+        - &id001
+          name: REPLICA
+          value: '0'
+        - name: BACKUP_DIRECTORY
+          value: upgrade-20260910-v1-replica-0
+        - &id002
+          name: BACKUP_MANIFEST_SHA256
+          value: e2111b73fcc4fdb344c00f95ebf0dbcefc720e932e0020a114d76be0229d9b42
+        - name: COMPATIBILITY
+          value: '25.8'
+        - name: HOME
+          value: /fixture
+        resources:
+          requests:
+            cpu: '1'
+            memory: 2Gi
+          limits:
+            cpu: '2'
+            memory: 6Gi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: source
+          mountPath: /source
+          readOnly: true
+        - name: data
+          mountPath: /fixture
+        - name: proof
+          mountPath: /proof
+        - name: scripts
+          mountPath: /scripts
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+      containers:
+      - name: verify
+        image: mirror.gcr.io/python:3.14-bookworm@sha256:ecac9e212daacda8a702eae372fceebc0ee36f5805abe087880367e8d061fa5b
+        command:
+        - python3
+        - /scripts/verify-clickhouse-native-rehearsal.py
+        env:
+        - *id001
+        - *id002
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: '1'
+            memory: 512Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: proof
+          mountPath: /proof
+        - name: scripts
+          mountPath: /scripts
+          readOnly: true
+      volumes:
+      - name: source
+        persistentVolumeClaim:
+          claimName: clickhouse-native-20260910-0-source
+          readOnly: true
+      - name: data
+        persistentVolumeClaim:
+          claimName: clickhouse-native-20260910-0-data
+          readOnly: false
+      - name: proof
+        persistentVolumeClaim:
+          claimName: clickhouse-native-20260910-0-proof
+          readOnly: false
+      - name: scripts
+        configMap:
+          name: clickhouse-native-rehearsal-20260910-v1
+      - name: tmp
+        emptyDir:
+          sizeLimit: 256Mi
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotContent
+metadata:
+  name: snapcontent-3b044157-dfcd-4319-89eb-5bce7309e052
+  labels:
+    clickhouse.proompteng.ai/rehearsal: 20260910-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-25'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false,ServerSideApply=false
+spec:
+  deletionPolicy: Retain
+  driver: rook-ceph.rbd.csi.ceph.com
+  source:
+    volumeHandle: 0001-0009-rook-ceph-0000000000000001-81f33098-beb1-42c4-917b-055298e91fe7
+  sourceVolumeMode: Filesystem
+  volumeSnapshotClassName: rook-ceph-block
+  volumeSnapshotRef:
+    apiVersion: snapshot.storage.k8s.io/v1
+    kind: VolumeSnapshot
+    name: clickhouse-upgrade-20260910-replica-1
+    namespace: torghut
+    resourceVersion: '603219412'
+    uid: 3b044157-dfcd-4319-89eb-5bce7309e052
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotContent
+metadata:
+  name: clickhouse-native-20260910-1-content
+  labels:
+    clickhouse.proompteng.ai/rehearsal: 20260910-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-20'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  deletionPolicy: Retain
+  driver: rook-ceph.rbd.csi.ceph.com
+  source:
+    snapshotHandle: 0001-0009-rook-ceph-0000000000000001-2eb9d1d9-1469-4dfe-aa3b-7ee677ce8f07
+  volumeSnapshotRef:
+    name: clickhouse-native-20260910-1-snapshot
+    namespace: clickhouse-upgrade-acceptance
+  volumeSnapshotClassName: rook-ceph-block
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: clickhouse-native-20260910-1-snapshot
+  labels:
+    clickhouse.proompteng.ai/rehearsal: 20260910-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-20'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  namespace: clickhouse-upgrade-acceptance
+spec:
+  volumeSnapshotClassName: rook-ceph-block
+  source:
+    volumeSnapshotContentName: clickhouse-native-20260910-1-content
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: clickhouse-native-20260910-1-source
+  labels:
+    clickhouse.proompteng.ai/rehearsal: 20260910-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-15'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  namespace: clickhouse-upgrade-acceptance
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: rook-ceph-block
+  resources:
+    requests:
+      storage: 50Gi
+  dataSource:
+    apiGroup: snapshot.storage.k8s.io
+    kind: VolumeSnapshot
+    name: clickhouse-native-20260910-1-snapshot
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: clickhouse-native-20260910-1-data
+  labels:
+    clickhouse.proompteng.ai/rehearsal: 20260910-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-15'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  namespace: clickhouse-upgrade-acceptance
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: rook-ceph-block
+  resources:
+    requests:
+      storage: 100Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: clickhouse-native-20260910-1-proof
+  labels:
+    clickhouse.proompteng.ai/rehearsal: 20260910-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-15'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  namespace: clickhouse-upgrade-acceptance
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: rook-ceph-block
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: clickhouse-native-20260910-1
+  labels:
+    clickhouse.proompteng.ai/rehearsal: 20260910-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '0'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  namespace: clickhouse-upgrade-acceptance
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 43200
+  template:
+    metadata:
+      labels:
+        clickhouse.proompteng.ai/rehearsal: 20260910-v1
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      terminationGracePeriodSeconds: 120
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+      - name: v25-3
+        image: altinity/clickhouse-server:25.3.6.10034.altinitystable@sha256:3396b15c51a2c13c0aead9532bd022e478a8f575fe325deacb7d0efeae594174
+        command:
+        - /bin/bash
+        - /scripts/native-rehearsal.sh
+        env:
+        - name: REHEARSAL_VERSION
+          value: v25_3
+        - name: EXPECTED_VERSION
+          value: 25.3.6.10034
+        - name: REPLICA
+          value: '1'
+        - name: BACKUP_DIRECTORY
+          value: upgrade-20260910-v1-replica-1
+        - name: BACKUP_MANIFEST_SHA256
+          value: 70afd1e05537b68866040377008ec66d7e5df5023fff2264e22eb2b188baabca
+        - name: COMPATIBILITY
+          value: '25.3'
+        - name: HOME
+          value: /fixture
+        resources:
+          requests:
+            cpu: '1'
+            memory: 2Gi
+          limits:
+            cpu: '2'
+            memory: 6Gi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: source
+          mountPath: /source
+          readOnly: true
+        - name: data
+          mountPath: /fixture
+        - name: proof
+          mountPath: /proof
+        - name: scripts
+          mountPath: /scripts
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+      - name: v25-8
+        image: altinity/clickhouse-server:25.8.28.10001.altinitystable@sha256:5ad76ea89ca881043b76ddcf2bcf3813663060a03a04b39f5c8ad2ef1dea4b07
+        command:
+        - /bin/bash
+        - /scripts/native-rehearsal.sh
+        env:
+        - name: REHEARSAL_VERSION
+          value: v25_8
+        - name: EXPECTED_VERSION
+          value: 25.8.28.10001
+        - name: REPLICA
+          value: '1'
+        - name: BACKUP_DIRECTORY
+          value: upgrade-20260910-v1-replica-1
+        - name: BACKUP_MANIFEST_SHA256
+          value: 70afd1e05537b68866040377008ec66d7e5df5023fff2264e22eb2b188baabca
+        - name: COMPATIBILITY
+          value: '25.3'
+        - name: HOME
+          value: /fixture
+        resources:
+          requests:
+            cpu: '1'
+            memory: 2Gi
+          limits:
+            cpu: '2'
+            memory: 6Gi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: source
+          mountPath: /source
+          readOnly: true
+        - name: data
+          mountPath: /fixture
+        - name: proof
+          mountPath: /proof
+        - name: scripts
+          mountPath: /scripts
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+      - name: v26-3
+        image: altinity/clickhouse-server:26.3.16.10001.altinitystable@sha256:8526a7742e6ef707dee68107876b18d45570b0448f284d3c785eb2d2e4417a5e
+        command:
+        - /bin/bash
+        - /scripts/native-rehearsal.sh
+        env:
+        - name: REHEARSAL_VERSION
+          value: v26_3
+        - name: EXPECTED_VERSION
+          value: 26.3.16.10001
+        - &id001
+          name: REPLICA
+          value: '1'
+        - name: BACKUP_DIRECTORY
+          value: upgrade-20260910-v1-replica-1
+        - &id002
+          name: BACKUP_MANIFEST_SHA256
+          value: 70afd1e05537b68866040377008ec66d7e5df5023fff2264e22eb2b188baabca
+        - name: COMPATIBILITY
+          value: '25.8'
+        - name: HOME
+          value: /fixture
+        resources:
+          requests:
+            cpu: '1'
+            memory: 2Gi
+          limits:
+            cpu: '2'
+            memory: 6Gi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: source
+          mountPath: /source
+          readOnly: true
+        - name: data
+          mountPath: /fixture
+        - name: proof
+          mountPath: /proof
+        - name: scripts
+          mountPath: /scripts
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+      containers:
+      - name: verify
+        image: mirror.gcr.io/python:3.14-bookworm@sha256:ecac9e212daacda8a702eae372fceebc0ee36f5805abe087880367e8d061fa5b
+        command:
+        - python3
+        - /scripts/verify-clickhouse-native-rehearsal.py
+        env:
+        - *id001
+        - *id002
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: '1'
+            memory: 512Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: proof
+          mountPath: /proof
+        - name: scripts
+          mountPath: /scripts
+          readOnly: true
+      volumes:
+      - name: source
+        persistentVolumeClaim:
+          claimName: clickhouse-native-20260910-1-source
+          readOnly: true
+      - name: data
+        persistentVolumeClaim:
+          claimName: clickhouse-native-20260910-1-data
+          readOnly: false
+      - name: proof
+        persistentVolumeClaim:
+          claimName: clickhouse-native-20260910-1-proof
+          readOnly: false
+      - name: scripts
+        configMap:
+          name: clickhouse-native-rehearsal-20260910-v1
+      - name: tmp
+        emptyDir:
+          sizeLimit: 256Mi
