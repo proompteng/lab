@@ -32,6 +32,7 @@ import type {
   ForwardPerformanceReceipt,
 } from './model'
 import { Pipeable } from '../pipeable'
+import { verifyBrokerFeeRecord, type BrokerFeeEvidenceError } from '../accounting/broker-fees'
 
 export type ForwardPerformanceProgramCause =
   | CanonicalJsonFailure
@@ -40,6 +41,7 @@ export type ForwardPerformanceProgramCause =
   | ForwardPerformanceMarketVolumeError
   | ForwardPerformancePostgresError
   | ReconciliationAlgebraFailure
+  | BrokerFeeEvidenceError
 
 export class ForwardPerformanceProgramError extends Data.TaggedError('ForwardPerformanceProgramError')<{
   readonly operation: 'account-binding' | 'construct-receipt' | 'ledger-read' | 'market-volume-read' | 'postgres-read'
@@ -542,12 +544,27 @@ const runForwardPerformanceDataFirst = (
     )
 
     const accountingVerification = verifyAccountingReceipts(postgres.transactions, postgres.receipts, config)
-    const generationPlans = Result.isSuccess(accountingVerification) ? accountingVerification.success.plans : []
+    const feeRecords = postgres.brokerFeeRecords ?? []
+    const feePlans = yield* Effect.forEach(feeRecords, (record) =>
+      Effect.fromResult(verifyBrokerFeeRecord(record, identity.accountId, config.tigerBeetle)).pipe(
+        Effect.mapError((cause) => programError('ledger-read', cause.message, cause)),
+      ),
+    )
+    const generationFeeIds = new Set(postgres.generationBrokerFeeIds ?? [])
+    const generationPlans = [
+      ...(Result.isSuccess(accountingVerification) ? accountingVerification.success.plans : []),
+      ...feePlans.filter((_, index) => generationFeeIds.has(feeRecords[index]?.data.activityId ?? '')),
+    ]
     const ledgerVerification = verifyAccountingReceipts(postgres.ledgerTransactions, postgres.ledgerReceipts, config)
-    const accountPlans = Result.isSuccess(ledgerVerification) ? ledgerVerification.success.plans : []
+    const accountPlans = [
+      ...(Result.isSuccess(ledgerVerification) ? ledgerVerification.success.plans : []),
+      ...feePlans,
+    ]
     const accountingReceiptsExact =
       Result.isSuccess(accountingVerification) &&
       postgres.unaccountedFillCount === 0 &&
+      (postgres.ambiguousBrokerFeeCount ?? 0) === 0 &&
+      feeRecords.every((record) => record.posted) &&
       accountingVerification.success.exactReceipts.size === postgres.transactions.length &&
       [...accountingVerification.success.exactReceipts.values()].every(Boolean)
 
@@ -586,6 +603,9 @@ const runForwardPerformanceDataFirst = (
           ? {}
           : { startingCapitalMicros: postgres.startingCapitalMicros }),
         transactions: postgres.transactionEvidence,
+        brokerFees: feeRecords
+          .filter((record) => generationFeeIds.has(record.data.activityId))
+          .map((record) => record.data),
         executionEvidence,
         marketVolumeEvidence,
         ledgerTotals: ledger.totals,

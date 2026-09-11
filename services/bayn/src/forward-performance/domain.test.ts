@@ -1057,6 +1057,35 @@ describe('forward performance domain', () => {
     expect(receipt.totals.netRealizedPnlAfterCostsMicros).toBe('-60')
   })
 
+  test('deducts delayed broker fees and refunds without fabricating fills', () => {
+    const receipt = success(
+      makeForwardPerformanceReceipt(
+        input({
+          transactions: exactTransactions(),
+          executionEvidence: exactExecutionEvidence(),
+          marketVolumeEvidence: exactMarketVolumeEvidence(),
+          brokerFees: [
+            { accountId: 'paper-account-1', activityId: 'fee', date: '2026-07-20', netAmountMicros: '-150' },
+            { accountId: 'paper-account-1', activityId: 'refund', date: '2026-07-20', netAmountMicros: '10' },
+          ],
+          ledgerTotals: {
+            realizedGainMicros: '100',
+            realizedLossMicros: '0',
+            brokerExecutionFeesMicros: '160',
+            otherChargedCostsMicros: '0',
+            cashYieldMicros: '0',
+          },
+        }),
+      ),
+    )
+    expect(receipt.totals.netRealizedPnlAfterCostsMicros).toBe('-60')
+    expect(receipt.evidence.reasonCodes).not.toContain('LEDGER_MISMATCH')
+    expect(receipt.executionQuality.reasonCodes).not.toContain('EXPLICIT_COST_EVIDENCE_GAP')
+    expect(receipt.executionQuality.status).toBe('MEASURED')
+    expect(receipt.executionQuality.implementationShortfall?.totalImplementationShortfallMicros).toBe('1600160')
+    expect(receipt.observedCapacity.status).toBe('MEASURED')
+  })
+
   test('fees can flip gross profit into a net realized loss', () => {
     const receipt = success(
       makeForwardPerformanceReceipt(
