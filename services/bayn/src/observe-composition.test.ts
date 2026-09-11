@@ -3317,7 +3317,7 @@ describe('OBSERVE runtime composition', () => {
         yield* TestClock.setTime(startedAt)
         const reading = yield* Deferred.make<void>()
         const reconcile = Effect.gen(function* () {
-          yield* Effect.sleep(Duration.seconds(6))
+          yield* Effect.sleep(Duration.seconds(8))
           reconciliations += 1
           const observedAt = utcInstantFromEpochMillis(yield* Clock.currentTimeMillis)
           return reconciliationResultAt(observedAt, 0, 0, [
@@ -3335,6 +3335,7 @@ describe('OBSERVE runtime composition', () => {
           ])
         })
         const closing = yield* Effect.gen(function* () {
+          yield* Effect.sleep(Duration.seconds(2))
           const initialReconciliation = yield* reconcile
           return yield* buildClosingExecutionCycleDecision({
             input: {
@@ -3384,7 +3385,7 @@ describe('OBSERVE runtime composition', () => {
     expect(reads).toBe(1)
     expect(finalized).toBe(1)
     expect(reconciliations).toBe(2)
-    expect(close.createdAt).toBe(utcInstantFromEpochMillis(startedAt + 27_000))
+    expect(close.createdAt).toBe(utcInstantFromEpochMillis(startedAt + 28_000))
     expect(close.dispatchable).toBeTrue()
     expect(close.bindings.executionMarketData).toMatchObject({
       schemaVersion: 'bayn.reconciled-position-liquidation-binding.v1',

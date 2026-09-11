@@ -29,7 +29,7 @@ unfilled exits or unresolved reconciliation remain incomplete and visible.
 During that close window, missing or over-late archive evidence, a retryable archive outage, or an archive read
 timeout triggers a fresh broker reconciliation and the existing market/DAY close path. The close binds the exact
 reconciled holdings and cannot exceed their remaining quantity. The archive read receives at most half the smaller
-of the execution-pass budget and remaining close window, leaving time for reconciliation and close planning.
+of the remaining execution-pass budget and remaining close window, leaving time for reconciliation and close planning.
 Malformed archive identities, hashes, ordering and lineage still fail. Unknown mutations, unresolved orders,
 inexact reconciliation, stale broker state and expired close authority still prevent submission. This exit policy
 is part of behavior v13; entry decisions retain their existing evidence and LIMIT/IOC requirements.

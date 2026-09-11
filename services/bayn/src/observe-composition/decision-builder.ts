@@ -1,4 +1,4 @@
-import { Data, Duration, Effect, Result, Schema } from 'effect'
+import { Clock, Context, Data, Duration, Effect, Result, Schema } from 'effect'
 import type { AutonomousCycleStartup } from '../app'
 import {
   BrokerRead,
@@ -187,16 +187,25 @@ export const mutationCyclePassTimeoutError = (timeoutMs: number): CycleRunnerErr
     message: `mutation autonomous cycle pass did not complete or reconcile within ${timeoutMs.toString()}ms`,
   })
 
+const mutationPassDeadline = Context.Reference<number | undefined>('bayn/MutationPassDeadline', {
+  defaultValue: () => undefined,
+})
+
 export const runMutationPassWithinTimeout = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
   timeoutMs: number,
 ): Effect.Effect<A, E | CycleRunnerError, R> =>
-  effect.pipe(
-    Effect.timeoutOrElse({
-      duration: Duration.millis(timeoutMs),
-      orElse: () => Effect.fail(mutationCyclePassTimeoutError(timeoutMs)),
-    }),
-  )
+  Effect.gen(function* () {
+    const startedAt = yield* Clock.currentTimeMillis
+    const parentDeadline = yield* mutationPassDeadline
+    return yield* effect.pipe(
+      Effect.provideService(mutationPassDeadline, Math.min(parentDeadline ?? Infinity, startedAt + timeoutMs)),
+      Effect.timeoutOrElse({
+        duration: Duration.millis(timeoutMs),
+        orElse: () => Effect.fail(mutationCyclePassTimeoutError(timeoutMs)),
+      }),
+    )
+  })
 
 export type ObserveDecisionInput<R = never> = {
   readonly authorityGenerationHash: string
@@ -1446,6 +1455,8 @@ const buildClosingExecutionCycleDecisionWithSource = (
             : mutationRunnerError({ message: cause.message, cause, failure: 'contract' }),
         ),
       )
+      const archiveStartedAt = yield* Clock.currentTimeMillis
+      const passDeadline = yield* mutationPassDeadline
       const snapshot = yield* loadIntradaySnapshot(input.intradayMarketData, query).pipe(
         Effect.timeoutOrElse({
           duration: Duration.millis(
@@ -1455,7 +1466,8 @@ const buildClosingExecutionCycleDecisionWithSource = (
                 Math.min(
                   input.reconciliationPassTimeoutMs,
                   input.reconciliationIntervalMs,
-                  Date.parse(closeExpiresAt) - Date.parse(evaluatedAt),
+                  Date.parse(closeExpiresAt) - archiveStartedAt,
+                  (passDeadline ?? Infinity) - archiveStartedAt,
                 ) / 2,
               ),
             ),
