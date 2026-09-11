@@ -1057,6 +1057,28 @@ describe('forward performance domain', () => {
     expect(receipt.totals.netRealizedPnlAfterCostsMicros).toBe('-60')
   })
 
+  test('deducts delayed broker fees and refunds without fabricating fills', () => {
+    const receipt = success(
+      makeForwardPerformanceReceipt(
+        input({
+          brokerFees: [
+            { accountId: 'paper-account-1', activityId: 'fee', date: '2026-07-20', netAmountMicros: '-150' },
+            { accountId: 'paper-account-1', activityId: 'refund', date: '2026-07-20', netAmountMicros: '10' },
+          ],
+          ledgerTotals: {
+            realizedGainMicros: '100',
+            realizedLossMicros: '0',
+            brokerExecutionFeesMicros: '160',
+            otherChargedCostsMicros: '0',
+            cashYieldMicros: '0',
+          },
+        }),
+      ),
+    )
+    expect(receipt.totals.netRealizedPnlAfterCostsMicros).toBe('-60')
+    expect(receipt.evidence.reasonCodes).not.toContain('LEDGER_MISMATCH')
+  })
+
   test('fees can flip gross profit into a net realized loss', () => {
     const receipt = success(
       makeForwardPerformanceReceipt(

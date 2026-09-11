@@ -250,6 +250,27 @@ const emptyRiskRow = (): RiskContextRow => ({
 })
 
 describe('PostgreSQL reconciliation algebra', () => {
+  test('includes separate broker fee activities in exact cash and the accounting identity', () => {
+    const input = comparisonInput()
+    const cash = (BigInt(input.snapshot.account.cashMicros) - 230000n).toString()
+    const snapshot = {
+      ...input.snapshot,
+      account: { ...input.snapshot.account, cashMicros: cash },
+      valuation: { ...input.snapshot.valuation, cashMicros: cash },
+    }
+    const fees = ['-210000', '-10000', '-10000'].map((netAmountMicros, index) => ({
+      accountId,
+      activityId: `fee-${index}`,
+      date: '2026-07-22',
+      netAmountMicros,
+    }))
+    const missing = successOf(compareOpeningCash({ ...input, snapshot }))
+    const exact = successOf(compareOpeningCash({ ...input, snapshot, fees }))
+    expect(missing.comparison.discrepancies.some((item) => item.kind === 'CASH')).toBe(true)
+    expect(exact.comparison.discrepancies).toEqual([])
+    expect(exact.accountingHash).not.toBe(missing.accountingHash)
+  })
+
   test('projects intent uncertainty without Effects', () => {
     const projection = successOf(
       projectIntentExpectations([

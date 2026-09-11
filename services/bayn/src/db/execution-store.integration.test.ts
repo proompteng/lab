@@ -42,6 +42,8 @@ import {
 } from './execution-store'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
+import { accountBrokerFees } from './broker-fees'
+import { readForwardPerformancePostgres } from '../forward-performance/postgres/read'
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
@@ -390,6 +392,50 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(journalControl.postCount).toBe(3)
   })
 
+  test('recovers delayed broker fee posting and rejects changed or missing activity identities', async () => {
+    const fees = ['-210000', '-10000', '-10000'].map((netAmountMicros, index) => ({
+      value: { accountId, activityId: `fee-${index}`, date: '2026-08-28', netAmountMicros },
+      evidence: { requestId: 'fee-request', status: 200, contentHash: hash('fee-response'), observedAt },
+    }))
+    const post = (items: typeof fees) =>
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        return yield* sql.withTransaction(
+          accountBrokerFees(sql, journal(journalControl), accountId, items, config.tigerBeetle),
+        )
+      })
+    journalControl.failPosts = true
+    const failed = await runtime.runPromise(post(fees).pipe(Effect.flip))
+    expect(failed).toMatchObject({ failure: 'ledger' })
+    journalControl.failPosts = false
+    const recovered = await runtime.runPromise(post(fees))
+    const replay = await runtime.runPromise(post(fees))
+    expect(replay).toEqual(recovered)
+    expect(recovered.fees.reduce((sum, fee) => sum + BigInt(fee.netAmountMicros), 0n)).toBe(-230000n)
+    expect(journalControl.postCount).toBe(4)
+    const changed = fees.map((item, index) =>
+      index === 0 ? { ...item, value: { ...item.value, netAmountMicros: '-220000' } } : item,
+    )
+    expect(await runtime.runPromise(post(changed).pipe(Effect.flip))).toMatchObject({ failure: 'invariant' })
+    expect(await runtime.runPromise(post([]).pipe(Effect.flip))).toMatchObject({ failure: 'invariant' })
+    const rows = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        return yield* sql`SELECT count(*)::integer AS count, sum(net_amount_micros)::text AS net FROM broker_fee_accounting WHERE posted_at IS NOT NULL`
+      }),
+    )
+    expect(rows).toEqual([{ count: 3, net: '-230000' }])
+    const forward = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        return yield* readForwardPerformancePostgres(sql, accountId)
+      }),
+    )
+    expect(forward.brokerFeeRecords).toHaveLength(3)
+    expect(forward.generationBrokerFeeIds).toEqual(['fee-0', 'fee-1', 'fee-2'])
+    expect(forward.ambiguousBrokerFeeCount).toBe(0)
+  })
+
   test('persists exact and discrepant reconciliation history and never clears a safety restriction implicitly', async () => {
     const generationHash = hash('reconciliation-observe-generation')
     const account = flatAccountEvent()
@@ -417,6 +463,7 @@ describePostgres('PostgreSQL execution persistence', () => {
           orders: [],
           ordersObservedAt: observedAt,
           fills: [],
+          fees: [],
           valuation,
           reconciledAt: '2026-08-28T14:32:00.000Z',
         } as const

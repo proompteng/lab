@@ -440,6 +440,7 @@ export const compareOpeningCash = (input: {
   readonly accountId: string
   readonly openingCash: OpeningCashRow
   readonly transactions: readonly AccountingTransaction[]
+  readonly fees?: readonly import('../broker/alpaca').FeeActivity[]
   readonly receipts: readonly AccountingReceipt[]
   readonly ledgerExact: boolean
   readonly snapshot: ReconciliationSnapshotMaterial
@@ -465,12 +466,16 @@ export const compareOpeningCash = (input: {
         transaction.transactionId,
       )
     }
+    for (const fee of input.fees ?? []) {
+      expectedCash += yield* parseAccountingAmount('transaction-cash-delta', fee.netAmountMicros, fee.activityId)
+    }
     const expectedCashMicros = expectedCash.toString()
     const accountingHashValue = yield* accountingHash({
       schemaVersion: legacyAccountingStateSchemaVersion,
       accountId: input.accountId,
       openingCash: input.openingCash,
       transactions: input.transactions,
+      ...(input.fees === undefined || input.fees.length === 0 ? {} : { brokerFees: input.fees }),
       receipts: input.receipts,
       ledgerExact: input.ledgerExact,
     })

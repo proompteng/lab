@@ -126,6 +126,7 @@ const verifiedSession = (
     orders: () => unexpectedRead('orders read'),
     orderById: () => unexpectedRead('order-by-id read'),
     orderByClientId: () => unexpectedRead('order-by-client-id read'),
+    feeActivities: () => unexpectedRead('fee activities read'),
     fillActivities: () => unexpectedRead('fill activities read'),
     marketCalendar: unusedMarketCalendar,
     ...options.read,

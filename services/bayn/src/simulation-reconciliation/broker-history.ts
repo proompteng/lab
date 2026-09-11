@@ -6,6 +6,7 @@ import {
   type BrokerReadError,
   type BrokerReadShape,
   type FillActivity,
+  type FeeActivity,
   type Order as BrokerOrder,
   type ReadResult,
 } from '../broker/alpaca'
@@ -245,6 +246,37 @@ const readFillPages = (
   )
 }
 
+const readFeePages = (
+  read: BrokerReadShape,
+  until: string,
+): Effect.Effect<readonly Observed<FeeActivity>[], BrokerReadError | ReconciliationError> =>
+  Effect.gen(function* () {
+    const rows: Observed<FeeActivity>[] = []
+    const ids = new Set<string>()
+    let cursor: string | undefined
+    while (true) {
+      const page = yield* read.feeActivities({
+        until,
+        direction: SortDirection.Ascending,
+        pageSize: fillsPageSize,
+        ...(cursor === undefined ? {} : { pageToken: cursor }),
+      })
+      if (page.value.items.length > fillsPageSize || rows.length + page.value.items.length > maximumRows)
+        return yield* paginationFailure('InvalidFeeHistory', 'fee history exceeded its bounded row budget')
+      for (const fee of page.value.items) {
+        if (ids.has(fee.activityId))
+          return yield* paginationFailure('InvalidFeeHistory', 'fee history repeated an activity identity')
+        ids.add(fee.activityId)
+        rows.push({ value: fee, evidence: page.evidence })
+      }
+      const next = page.value.nextPageToken
+      if (next === undefined) return rows
+      if (next === cursor || next !== page.value.items.at(-1)?.activityId)
+        return yield* paginationFailure('InvalidFeeHistory', 'fee history cursor did not advance')
+      cursor = next
+    }
+  })
+
 const readHistory = (
   read: BrokerReadShape,
   until: string,
@@ -253,6 +285,7 @@ const readHistory = (
     {
       orders: readOrderPages(read, until, initialOrderPaginationState()),
       fills: readFillPages(read, until, initialFillPaginationState()),
+      fees: readFeePages(read, until),
     },
     { concurrency: 2 },
   )
@@ -261,7 +294,10 @@ const historyHashResult = (history: BrokerHistory): Result.Result<string, Histor
   pipe(
     Result.try({
       try: () => ({
-        schemaVersion: 'bayn.paper-broker-history.v1',
+        schemaVersion: 'bayn.paper-broker-history.v2',
+        fees: history.fees
+          .map(({ value }) => value)
+          .sort((left, right) => left.activityId.localeCompare(right.activityId)),
         orders: history.orders.rows
           .map(({ value }) => {
             const { observedAt: _observedAt, ...material } = value

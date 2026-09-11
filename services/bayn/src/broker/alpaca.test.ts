@@ -238,6 +238,7 @@ describe('Alpaca paper reads', () => {
       'account',
       'accountConfiguration',
       'assetBySymbol',
+      'feeActivities',
       'fillActivities',
       'marketCalendar',
       'orderByClientId',
@@ -1167,6 +1168,43 @@ describe('Alpaca paper reads', () => {
       retryable: false,
     })
     expect(calls).toBe(callsBeforeInvalidLookup)
+  })
+
+  test('reads exact signed non-trade fees without retaining account descriptions', async () => {
+    let requestedUrl: URL | undefined
+    const raw = {
+      activity_type: 'FEE',
+      id: `20260910000000000::${orderId}`,
+      date: '2026-09-10',
+      net_amount: '-0.21',
+      description: 'private account detail',
+    }
+    const client = HttpClient.make((request, url) => {
+      requestedUrl = url
+      return Effect.succeed(jsonResponse(request, [raw]))
+    })
+    const result = await Effect.runPromise(
+      withClient(client, (read) => read.feeActivities({ pageSize: 1, direction: SortDirection.Ascending })),
+    )
+    expect(requestedUrl?.pathname).toBe('/v2/account/activities/FEE')
+    expect(result.value).toEqual({
+      items: [{ accountId, activityId: raw.id, date: raw.date, netAmountMicros: '-210000' }],
+      nextPageToken: raw.id,
+    })
+    expect(JSON.stringify(result.value)).not.toContain('private account detail')
+    for (const invalid of [
+      { ...raw, account_id: assetId },
+      { ...raw, net_amount: '-0.0000001' },
+      { ...raw, activity_type: 'DIV' },
+      { ...raw, date: '2026-02-30' },
+    ]) {
+      const bad = HttpClient.make((request) => Effect.succeed(jsonResponse(request, [invalid])))
+      const exit = await Effect.runPromiseExit(withClient(bad, (read) => read.feeActivities()))
+      expect(Exit.isFailure(exit)).toBe(true)
+    }
+    expect(Result.getOrThrow(decimalToMicrosResult('-0.01', true, 'fee'))).toBe('-10000')
+    expect(Result.isFailure(decimalToMicrosResult('-0.01', false, 'quantity'))).toBe(true)
+    expect(Result.getOrThrow(decimalToMicrosResult('0.01', true, 'fee refund'))).toBe('10000')
   })
 
   test('reads a bounded fill page and derives the documented page token', async () => {
