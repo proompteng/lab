@@ -13,7 +13,6 @@ import { Pipeable } from '../../pipeable'
 
 export const defaultFillActivitiesPageSize = 100
 const maxMarketCalendarRangeDays = 31
-export const marketCalendarPreflightRangeDays = 14
 const millisecondsPerDay = 86_400_000
 export const accountConfigurationObservationSchemaVersion = 'bayn.alpaca-account-configuration-observation.v1' as const
 export const accountConfigurationObservationSource = 'alpaca-v2-account-configurations' as const
@@ -422,8 +421,6 @@ export interface ReadPreflight {
   readonly ordersHash: string
   readonly fillCount: number
   readonly fillsHash: string
-  readonly marketCalendarSessionCount: number
-  readonly marketCalendarHash: string
   readonly orderById: 'MATCHED' | 'NOT_FOUND'
   readonly orderByClientId: 'MATCHED' | 'NOT_FOUND'
 }
