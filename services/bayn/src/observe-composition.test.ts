@@ -3322,6 +3322,9 @@ describe('OBSERVE runtime composition', () => {
       let reads = 0
       let reconciliations = 0
       let finalized = 0
+      let committedIntents = 0
+      const committedRecords = new Map<string, StoredIntent>()
+      const terminalIntentIds = new Set(fixture.document.orderedIntentIds)
       const close = await Effect.runPromise(
         Effect.gen(function* () {
           yield* TestClock.setTime(startedAt)
@@ -3358,6 +3361,7 @@ describe('OBSERVE runtime composition', () => {
                   closeExpiresAt: fixture.boundCycle.window.executionCloseAt,
                   reconcile: Effect.succeed(reconciliationAt(utcInstantFromEpochMillis(startedAt))),
                 })
+          for (const id of previousDocument?.orderedIntentIds ?? []) terminalIntentIds.add(id)
           const previousClosure =
             previousDocument === undefined
               ? undefined
@@ -3411,6 +3415,20 @@ describe('OBSERVE runtime composition', () => {
               reconcile,
             )
             if (result._tag !== 'Close') throw new Error('expected a created close')
+            const admission = yield* prepareNextMutationIntent({
+              input: {
+                ...fixture.input,
+                mutationPhase: 'CLOSE',
+                executionCycleCloseSubmitCutoffAt: fixture.boundCycle.window.executionCloseAt,
+                executionCycleCloseExpiresAt: fixture.boundCycle.window.executionCloseAt,
+              },
+              preparation: fixture.preparation,
+              policy: fixture.policy,
+              cycle: fixture.boundCycle,
+              document: result.document,
+              reconcile: result.reconciliation === undefined ? reconcile : Effect.succeed(result.reconciliation),
+            })
+            if (admission._tag !== 'Execute') throw new Error('expected the closing intent to be admitted')
             return result.document
           }).pipe((operation) => runMutationPassWithinTimeout(operation, 30_000), Effect.forkChild)
           yield* TestClock.adjust(Duration.seconds(20))
@@ -3423,18 +3441,27 @@ describe('OBSERVE runtime composition', () => {
           Effect.provideService(IntentStore, {
             read: (intentId) =>
               Effect.succeed(
-                Option.some(
-                  storedIntent(
-                    { ...fixture.intent, intentId },
-                    IntentState.Terminal,
-                    utcInstantFromEpochMillis(startedAt),
-                  ),
-                ),
+                terminalIntentIds.has(intentId)
+                  ? Option.some(
+                      storedIntent(
+                        { ...fixture.intent, intentId },
+                        IntentState.Terminal,
+                        utcInstantFromEpochMillis(startedAt),
+                      ),
+                    )
+                  : Option.fromUndefinedOr(committedRecords.get(intentId)),
               ),
-            commit: () => Effect.die('close construction cannot submit intents'),
-            commitClosing: () => Effect.die('close construction cannot submit intents'),
+            commit: () => Effect.die('close admission must use commitClosing'),
+            commitClosing: (intent) =>
+              Effect.gen(function* () {
+                committedIntents += 1
+                const observedAt = utcInstantFromEpochMillis(yield* Clock.currentTimeMillis)
+                const record = storedIntent(intent, IntentState.Planned, observedAt)
+                committedRecords.set(intent.intentId, record)
+                return { record, deduplicated: false }
+              }),
           }),
-          Effect.provideService(MutationStore, {} as MutationStoreShape),
+          Effect.provideService(MutationStore, { latest: () => Effect.void } as unknown as MutationStoreShape),
           Effect.provideService(BrokerEventStore, {} as BrokerEventStoreShape),
           Effect.provideService(FillAccountingStore, {} as FillAccountingStoreShape),
           Effect.provideService(ValuationStore, {} as ValuationStoreShape),
@@ -3448,6 +3475,7 @@ describe('OBSERVE runtime composition', () => {
       expect(reads).toBe(1)
       expect(finalized).toBe(1)
       expect(reconciliations).toBe(2)
+      expect(committedIntents).toBe(1)
       expect(close.createdAt).toBe(utcInstantFromEpochMillis(startedAt + expectedCloseMs))
       expect(close.dispatchable).toBeTrue()
       expect(close.bindings.executionMarketData).toMatchObject({

@@ -1335,7 +1335,7 @@ const buildClosingExecutionCycleDecisionWithSource = (
   request: BuildClosingExecutionCycleDecisionInput,
   source: 'archive' | 'reconciled-position',
 ): Effect.Effect<
-  ExecutionDecisionDocument,
+  { readonly document: ExecutionDecisionDocument; readonly reconciliation: ReconciliationPassResult },
   CycleRunnerError | ExecutionCloseAwaitingMarketData,
   ObserveDecisionRuntime
 > => {
@@ -1597,7 +1597,7 @@ const buildClosingExecutionCycleDecisionWithSource = (
         closeOnlyExpiresAt: closeExpiresAt,
       }),
     ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
-    return yield* buildExecutionDecision({
+    const document = yield* buildExecutionDecision({
       cycle,
       snapshot: {
         snapshotId: entryDocument.bindings.snapshotId,
@@ -1627,10 +1627,11 @@ const buildClosingExecutionCycleDecisionWithSource = (
         })
       }),
     )
+    return { document, reconciliation }
   })
 }
 
-export const buildClosingExecutionCycleDecision = (request: BuildClosingExecutionCycleDecisionInput) =>
+export const prepareClosingExecutionCycleDecision = (request: BuildClosingExecutionCycleDecisionInput) =>
   buildClosingExecutionCycleDecisionWithSource(request, 'archive').pipe(
     Effect.catchTag('ExecutionCloseAwaitingMarketData', (failure) =>
       buildClosingExecutionCycleDecisionWithSource(request, 'reconciled-position').pipe(
@@ -1642,6 +1643,9 @@ export const buildClosingExecutionCycleDecision = (request: BuildClosingExecutio
       ),
     ),
   )
+
+export const buildClosingExecutionCycleDecision = (request: BuildClosingExecutionCycleDecisionInput) =>
+  prepareClosingExecutionCycleDecision(request).pipe(Effect.map(({ document }) => document))
 
 export const observePass = (
   recordPass: Parameters<AutonomousCycleStartup>[0]['recordPass'],

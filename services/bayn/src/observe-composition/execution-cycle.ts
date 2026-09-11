@@ -63,7 +63,7 @@ import type {
 } from './model'
 import { executionDecisionFinalizationHeadroomMs } from './model'
 import {
-  buildClosingExecutionCycleDecision,
+  prepareClosingExecutionCycleDecision,
   decisionBuildError,
   prepareObserveDecisionReads,
   readObserveDecisionFacts,
@@ -377,7 +377,11 @@ const entryExecutionCycleIntentEvidence = (
   })
 
 type ExecutionCycleClosureResult =
-  | { readonly _tag: 'Close'; readonly document: ExecutionDecisionDocument }
+  | {
+      readonly _tag: 'Close'
+      readonly document: ExecutionDecisionDocument
+      readonly reconciliation?: ReconciliationPassResult
+    }
   | Extract<PreparedMutationCycleStep, { readonly _tag: 'Block' | 'Complete' | 'Wait' }>
 
 export const ensureExecutionCycleClosure = (
@@ -417,7 +421,7 @@ export const ensureExecutionCycleClosure = (
         if (terminalization !== undefined) return terminalization
       }
       const reconciledAt = closeReconciliation.report.reconciliation.reconciledAt
-      const document = yield* buildClosingExecutionCycleDecision({
+      const prepared = yield* prepareClosingExecutionCycleDecision({
         input,
         preparation,
         policy,
@@ -427,6 +431,7 @@ export const ensureExecutionCycleClosure = (
         initialReconciliation: closeReconciliation,
         closeExpiresAt: closeWindow.expiresAt,
       })
+      const document = prepared.document
       const decision = decideExecutionCycleCloseDocument(document)
       if (decision._tag === 'Complete') return { _tag: 'Complete', observedAt: reconciledAt } as const
       if (decision._tag === 'Block') {
@@ -453,7 +458,7 @@ export const ensureExecutionCycleClosure = (
             mutationRunnerError({ message: 'execution close plan durable bind failed', cause, failure: 'store' }),
           ),
         )
-      return { _tag: 'Close', document: stored.document } as const
+      return { _tag: 'Close', document: stored.document, reconciliation: prepared.reconciliation } as const
     }
 
     const latestReplan = yield* readLatestExecutionCycleCloseReplan(cycle.identity.cycleId, store)
@@ -463,7 +468,7 @@ export const ensureExecutionCycleClosure = (
       return { _tag: 'Close', document: active.document } as const
     }
 
-    const document = yield* buildClosingExecutionCycleDecision({
+    const prepared = yield* prepareClosingExecutionCycleDecision({
       input,
       preparation,
       policy,
@@ -474,6 +479,7 @@ export const ensureExecutionCycleClosure = (
       closeExpiresAt: closeWindow.expiresAt,
       replanGenerationHash: active.contentHash,
     })
+    const document = prepared.document
     const decision = decideExecutionCycleCloseDocument(document)
     if (decision._tag !== 'Bind') {
       return { _tag: 'Block', reason: CycleTerminalReason.Risk, observedAt } as const
@@ -505,7 +511,7 @@ export const ensureExecutionCycleClosure = (
         }),
       ),
     )
-    return { _tag: 'Close', document: stored.document } as const
+    return { _tag: 'Close', document: stored.document, reconciliation: prepared.reconciliation } as const
   }).pipe(
     Effect.catchTag('ExecutionCloseAwaitingMarketData', ({ observedAt }) =>
       Effect.succeed<ExecutionCycleClosureResult>({ _tag: 'Wait', observedAt }),
@@ -733,6 +739,7 @@ const executeBoundExecutionCycle = (
 
     if (step === undefined) {
       let closeDocument: ExecutionDecisionDocument | undefined
+      let closeReconciliation: ReconciliationPassResult | undefined
       if (closeDue) {
         const closure = yield* ensureExecutionCycleClosure(
           input,
@@ -745,6 +752,7 @@ const executeBoundExecutionCycle = (
         )
         if (closure._tag !== 'Close') return closure
         closeDocument = closure.document
+        closeReconciliation = closure.reconciliation
       }
       closeOnly = closeDocument !== undefined
       phaseInput = closeOnly
@@ -761,7 +769,7 @@ const executeBoundExecutionCycle = (
         policy,
         cycle,
         document: closeDocument ?? document,
-        reconcile,
+        reconcile: closeReconciliation === undefined ? reconcile : Effect.succeed(closeReconciliation),
         allowSubmit: executionMutationSubmissionAllowed({
           capability: capability._tag,
           submissionCutoffAt: closeOnly ? closeWindow.submitCutoffAt : entrySubmissionCutoffAt,
