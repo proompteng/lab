@@ -757,9 +757,26 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             yield* sql`UPDATE autonomous_cycles SET terminal_at = '2026-09-08T17:05:00Z'`
             expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
             yield* sql`UPDATE autonomous_cycles SET terminal_at = '2026-09-08T17:03:30Z'`
-            yield* sql`UPDATE intents SET terminal_outcome = 'FILLED'`
+            yield* sql`UPDATE intents SET terminal_outcome = 'REJECTED'`
             expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
             yield* sql`UPDATE intents SET terminal_outcome = 'CANCELED'`
+            yield* sql`UPDATE orders SET filled_quantity_micros = 1000000`
+            yield* sql`INSERT INTO fills(account_id,broker_order_id,intent_id)
+              VALUES ('account', 'broker-order', 'intent')`
+            yield* sql`INSERT INTO position_snapshots(snapshot_id,account_id,position_count,observed_at)
+              VALUES ('closed-partial-entry', 'account', 0, '2026-09-08T17:02:30Z')`
+            expect(yield* settle).toMatchObject({
+              _tag: 'TerminalGenerationSettled',
+              authorityGenerationHash: generationHash,
+              blockedCycleCount: 0,
+              terminalIntentCount: 1,
+            })
+            yield* sql`UPDATE position_snapshots SET position_count = 1`
+            expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
+            yield* sql`UPDATE position_snapshots SET position_count = 0`
+            yield* sql`UPDATE fills SET quantity_micros = 500000`
+            expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
+            yield* sql`UPDATE fills SET quantity_micros = 1000000`
             yield* sql`UPDATE authority_state SET reason = 'operator kill switch'`
             expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
             const authority = yield* sql`SELECT effective, kill_state FROM authority_state`
