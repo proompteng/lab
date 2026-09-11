@@ -85,6 +85,9 @@ checks still apply. Operator restrictions do not enter this recovery path.
 Mutation preparation uses its verified durable decision and session binding plus fresh broker reconciliation. It does
 not reread the market calendar after the decision is bound, so an unrelated calendar outage cannot prevent accepted
 order recovery or the scheduled close. New decision construction still reads and verifies the broker calendar.
+Broker-session startup verifies account identity and permissions, account configuration, positions, orders, fills,
+and order lookup access. It does not require the calendar endpoint, so an outage cannot prevent a replacement worker
+from starting recovery of a bound decision.
 
 Broker reconciliation recaptures changing history or lagging fill activities at most twice, 500 milliseconds apart,
 before persisting a snapshot. A broker terminal fill may precede local acknowledged-intent recovery; recorded terminal
