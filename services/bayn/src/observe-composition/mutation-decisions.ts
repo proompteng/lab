@@ -48,7 +48,7 @@ export const executionCycleHasFilledIntent = (input: ExecutionCycleFillInput): b
   )
 }
 
-export type ExecutionIntentTerminalDisposition = 'FILLED' | 'BENIGN_ZERO_FILL_IOC' | 'UNSUCCESSFUL'
+export type ExecutionIntentTerminalDisposition = 'FILLED' | 'BENIGN_ZERO_FILL_IOC' | 'PARTIAL_FILL_IOC' | 'UNSUCCESSFUL'
 
 export interface ExecutionIntentTerminalDispositionInput {
   readonly phase: 'ENTRY' | 'CLOSE'
@@ -109,8 +109,11 @@ export const decideExecutionIntentTerminalDisposition = (
       order.quantityMicros === input.intent.quantityMicros,
   )
   const order = matchingOrders.length === 1 ? matchingOrders[0] : undefined
-  return order?.status === OrderStatus.Canceled && order.filledQuantityMicros === '0'
-    ? 'BENIGN_ZERO_FILL_IOC'
+  if (order?.status !== OrderStatus.Canceled) return 'UNSUCCESSFUL'
+  const filledQuantity = BigInt(order.filledQuantityMicros)
+  if (filledQuantity === 0n) return 'BENIGN_ZERO_FILL_IOC'
+  return filledQuantity > 0n && filledQuantity < BigInt(input.intent.quantityMicros)
+    ? 'PARTIAL_FILL_IOC'
     : 'UNSUCCESSFUL'
 }
 
