@@ -9,6 +9,7 @@ import type { JournalService } from '../ledger'
 import type { LedgerPlan } from '../ledger-plan'
 import { strictParseOptions } from '../schemas'
 import {
+  brokerFeePredatesOpeningCash,
   BrokerFeeSchema,
   FeeReadEvidenceSchema,
   StoredFeeSchema,
@@ -41,6 +42,27 @@ export const accountBrokerFees = (
   identity: { readonly clusterId: bigint; readonly ledger: number },
 ): Effect.Effect<BrokerFeeAccounting, ReconciliationStoreError> =>
   Effect.gen(function* () {
+    const openingRows =
+      observed.length === 0
+        ? []
+        : yield* sql<Record<string, unknown>>`
+      SELECT to_char(event.observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS observed_at
+      FROM account_snapshots AS snapshot JOIN broker_events AS event ON event.event_id = snapshot.event_id
+      WHERE snapshot.account_id = ${accountId} ORDER BY event.source_sequence LIMIT 1
+    `
+    const openings = yield* fromResult(
+      Schema.decodeUnknownResult(
+        Schema.Array(Schema.Struct({ observed_at: FeeReadEvidenceSchema.fields.observedAt })),
+        strictParseOptions,
+      )(openingRows),
+    )
+    const opening = openings[0]
+    if (observed.length > 0 && opening === undefined)
+      return yield* invariant('broker fee accounting requires an opening cash baseline')
+    if (opening !== undefined && observed.some(({ value }) => brokerFeePredatesOpeningCash(value, opening.observed_at)))
+      return yield* invariant(
+        'broker fee history predates the opening cash baseline; earlier baseline evidence is required',
+      )
     const rows = yield* sql<Record<string, unknown>>`
     SELECT data, read_evidence, content_hash, ledger_plan_hash, tigerbeetle_cluster_id::text AS tigerbeetle_cluster_id,
       tigerbeetle_ledger::integer AS tigerbeetle_ledger, posted_at IS NOT NULL AS posted

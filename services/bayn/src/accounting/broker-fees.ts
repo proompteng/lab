@@ -61,3 +61,14 @@ export const verifyBrokerFeeRecord = (
       )
     return plan
   })
+
+const feeDateFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/New_York',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+})
+
+/** Alpaca supplies a trading date, not a fee settlement timestamp. */
+export const brokerFeePredatesOpeningCash = (fee: { readonly date: string }, openingObservedAt: string): boolean =>
+  fee.date < feeDateFormatter.format(new Date(openingObservedAt))

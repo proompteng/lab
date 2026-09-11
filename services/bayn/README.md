@@ -92,7 +92,8 @@ Flat accounts and marks observed at the same instant also require exact equity a
 - Reconciliation reads Alpaca `FEE` activities alongside fills and orders. Each fee or refund has an immutable
   account/activity identity and a deterministic cash/fee-expense ledger transfer. Delayed fees update exact cash
   reconciliation without changing the opening balance or inventing fills; changed or missing activity history fails
-  closed. Descriptions are not retained because they may contain account details.
+  closed. Fees dated before the opening cash baseline require earlier baseline evidence and are rejected before any
+  ledger post; their date alone cannot prove when they settled. Descriptions are not retained because they may contain account details.
 - Forward performance deducts delayed fees by their trading date when that date belongs to one authority generation.
   Fees on dates shared by generations leave the receipt insufficient until allocation is supported. Account-wide
   ledger verification includes all fees; cash-yield calculations account for their actual observation window.

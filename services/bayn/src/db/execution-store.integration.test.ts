@@ -393,6 +393,7 @@ describePostgres('PostgreSQL execution persistence', () => {
   })
 
   test('recovers delayed broker fee posting and rejects changed or missing activity identities', async () => {
+    await runtime.runPromise(Effect.flatMap(BrokerEventStore, (events) => events.ingest(flatAccountEvent())))
     const fees = ['-210000', '-10000', '-10000'].map((netAmountMicros, index) => ({
       value: { accountId, activityId: `fee-${index}`, date: '2026-08-28', netAmountMicros },
       evidence: { requestId: 'fee-request', status: 200, contentHash: hash('fee-response'), observedAt },
@@ -404,6 +405,9 @@ describePostgres('PostgreSQL execution persistence', () => {
           accountBrokerFees(sql, journal(journalControl), accountId, items, config.tigerBeetle),
         )
       })
+    const prebaseline = fees.map((item) => ({ ...item, value: { ...item.value, date: '2026-08-27' } }))
+    expect(await runtime.runPromise(post(prebaseline).pipe(Effect.flip))).toMatchObject({ failure: 'invariant' })
+    expect(journalControl.postCount).toBe(0)
     journalControl.failPosts = true
     const failed = await runtime.runPromise(post(fees).pipe(Effect.flip))
     expect(failed).toMatchObject({ failure: 'ledger' })

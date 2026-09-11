@@ -1,5 +1,6 @@
 import { Result, Schema } from 'effect'
 
+import { brokerFeePredatesOpeningCash } from '../accounting/broker-fees'
 import { rebuildAccountingLedger } from '../accounting/domain'
 import type { AccountingFailure } from '../accounting/failure'
 import type { AccountingTransaction } from '../accounting/schema'
@@ -147,6 +148,12 @@ export type ReconciliationAlgebraFailure =
       readonly _tag: 'ReceiptVerificationFailed'
       readonly brokerEventId: string
       readonly cause: CanonicalHashFailure
+    }
+  | {
+      readonly _tag: 'BrokerFeePredatesOpeningCash'
+      readonly activityId: string
+      readonly feeDate: string
+      readonly openingObservedAt: string
     }
   | {
       readonly _tag: 'AccountingPredatesOpeningCash'
@@ -467,6 +474,13 @@ export const compareOpeningCash = (input: {
       )
     }
     for (const fee of input.fees ?? []) {
+      if (brokerFeePredatesOpeningCash(fee, input.openingCash.observed_at))
+        return yield* fail({
+          _tag: 'BrokerFeePredatesOpeningCash',
+          activityId: fee.activityId,
+          feeDate: fee.date,
+          openingObservedAt: input.openingCash.observed_at,
+        })
       expectedCash += yield* parseAccountingAmount('transaction-cash-delta', fee.netAmountMicros, fee.activityId)
     }
     const expectedCashMicros = expectedCash.toString()
@@ -761,6 +775,12 @@ export const reconciliationAlgebraFailureDetails = (
         failure: 'invariant',
         message: `accounting receipt verification failed for broker event ${failure.brokerEventId}`,
         cause: failure.cause,
+      }
+    case 'BrokerFeePredatesOpeningCash':
+      return {
+        failure: 'invariant',
+        message: `broker fee ${failure.activityId} predates the opening cash baseline and requires earlier baseline evidence`,
+        cause: failure,
       }
     case 'AccountingPredatesOpeningCash':
       return {

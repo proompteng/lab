@@ -271,6 +271,17 @@ describe('PostgreSQL reconciliation algebra', () => {
     expect(exact.accountingHash).not.toBe(missing.accountingHash)
   })
 
+  test('rejects fee history that predates the opening cash baseline', () => {
+    const input = comparisonInput()
+    const result = compareOpeningCash({
+      ...input,
+      fees: [{ accountId, activityId: 'old-fee', date: '2026-07-01', netAmountMicros: '-230000' }],
+    })
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result))
+      expect(result.failure).toMatchObject({ _tag: 'BrokerFeePredatesOpeningCash', activityId: 'old-fee' })
+  })
+
   test('projects intent uncertainty without Effects', () => {
     const projection = successOf(
       projectIntentExpectations([

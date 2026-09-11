@@ -3,7 +3,7 @@ import { Result } from 'effect'
 import { canonicalHashV1 } from '../hash'
 import { hashLedgerPlanResult } from '../ledger-plan'
 import { brokerFeeLedgerPlan } from './domain'
-import { verifyBrokerFeeRecord, type StoredBrokerFee } from './broker-fees'
+import { brokerFeePredatesOpeningCash, verifyBrokerFeeRecord, type StoredBrokerFee } from './broker-fees'
 
 const identity = { clusterId: 2001n, ledger: 7001 }
 const data: StoredBrokerFee['data'] = {
@@ -31,6 +31,11 @@ const record: StoredBrokerFee = {
 }
 
 describe('broker fee evidence verification', () => {
+  test('compares fee trading dates with the opening baseline in New York', () => {
+    expect(brokerFeePredatesOpeningCash(data, '2026-09-11T00:01:00.000Z')).toBe(false)
+    expect(brokerFeePredatesOpeningCash(data, '2026-09-11T04:01:00.000Z')).toBe(true)
+  })
+
   test('reconstructs the exact authoritative fee plan', () => {
     const verified = verifyBrokerFeeRecord(record, data.accountId, identity)
     expect(Result.isSuccess(verified)).toBe(true)
