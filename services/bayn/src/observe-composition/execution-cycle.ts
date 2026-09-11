@@ -234,10 +234,10 @@ const readLatestExecutionCycleCloseReplan = (
     Effect.map(Option.getOrUndefined),
   )
 
-const closePlanNeedsResidualReplan = (
+const readResidualCloseReconciliation = (
   document: ExecutionDecisionDocument,
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
-): Effect.Effect<boolean, CycleRunnerError, ObserveDecisionRuntime | IntentStore> =>
+): Effect.Effect<ReconciliationPassResult | undefined, CycleRunnerError, ObserveDecisionRuntime | IntentStore> =>
   Effect.gen(function* () {
     const intentStore = yield* IntentStore
     const records = yield* Effect.forEach(
@@ -257,7 +257,7 @@ const closePlanNeedsResidualReplan = (
       records.some(Option.isNone) ||
       records.some((record) => Option.isSome(record) && record.value.intent.state !== IntentState.Terminal)
     ) {
-      return false
+      return undefined
     }
     const facts = yield* reconcile.pipe(
       Effect.mapError((cause) => reconciliationRunnerError(cause, 'execution residual close reconciliation failed')),
@@ -268,6 +268,8 @@ const closePlanNeedsResidualReplan = (
         .filter((intent): intent is NonNullable<typeof intent> => intent !== undefined),
       countOpenPositions(facts.brokerState.positions),
     )
+      ? facts
+      : undefined
   })
 
 export type ExecutionCycleCloseDocumentDecision =
@@ -378,7 +380,7 @@ type ExecutionCycleClosureResult =
   | { readonly _tag: 'Close'; readonly document: ExecutionDecisionDocument }
   | Extract<PreparedMutationCycleStep, { readonly _tag: 'Block' | 'Complete' | 'Wait' }>
 
-const ensureExecutionCycleClosure = (
+export const ensureExecutionCycleClosure = (
   input: ObserveAutonomousCycleInput,
   preparation: ObserveStartupPreparation,
   policy: Policy,
@@ -386,7 +388,7 @@ const ensureExecutionCycleClosure = (
   entryDocument: ExecutionDecisionDocument,
   closeWindow: ExecutionCycleCloseWindow,
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
-): Effect.Effect<ExecutionCycleClosureResult, CycleRunnerError, RecoveryFirstRuntime> =>
+): Effect.Effect<ExecutionCycleClosureResult, CycleRunnerError, ObserveDecisionRuntime | IntentStore | MutationStore> =>
   Effect.gen(function* () {
     const store = input.executionCycleClosureStore
     const observedAt = yield* currentUtcInstant
@@ -456,7 +458,8 @@ const ensureExecutionCycleClosure = (
 
     const latestReplan = yield* readLatestExecutionCycleCloseReplan(cycle.identity.cycleId, store)
     const active = latestReplan ?? existing
-    if (!(yield* closePlanNeedsResidualReplan(active.document, reconcile))) {
+    const residualReconciliation = yield* readResidualCloseReconciliation(active.document, reconcile)
+    if (residualReconciliation === undefined) {
       return { _tag: 'Close', document: active.document } as const
     }
 
@@ -467,6 +470,7 @@ const ensureExecutionCycleClosure = (
       cycle,
       entryDocument,
       reconcile,
+      initialReconciliation: residualReconciliation,
       closeExpiresAt: closeWindow.expiresAt,
       replanGenerationHash: active.contentHash,
     })
