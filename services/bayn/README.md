@@ -69,6 +69,19 @@ embeds and verifies the source revision and the behavior, parameter, protocol, a
   duplicate controllers and accounting discrepancies block new orders. Unavailable archive evidence blocks entry;
   the bounded close-only path can instead bind freshly reconciled broker positions.
 
+An accepted LIMIT/IOC entry may finish canceled after filling only part of its requested quantity. Bayn verifies the
+exact broker order and intent identity and treats a positive fill smaller than the requested quantity as settled
+entry exposure, without restricting authority or submitting the unfilled remainder. The cycle remains open for its
+scheduled close. Rejected, mismatched, overfilled, and non-IOC canceled orders retain their failure handling.
+Durable completion additionally requires the recorded partial fills to match the accepted order, a later trusted flat
+position snapshot, exact reconciliation covering the account's latest broker events, and no open broker orders.
+
+When a worker resumes an existing PAPER grant under a recognized system failure restriction, it runs close-only
+recovery. It cannot discover new cycles or submit entries. During the existing close window it can cancel outstanding
+orders belonging to the bound cycle and submit the existing position-reducing close after fresh exact reconciliation.
+The persisted kill state remains active, and broker identity, unknown-order, quantity, accounting, and close-deadline
+checks still apply. Operator restrictions do not enter this recovery path.
+
 Broker reconciliation recaptures changing history or lagging fill activities at most twice, 500 milliseconds apart,
 before persisting a snapshot. A broker terminal fill may precede local acknowledged-intent recovery; recorded terminal
 outcomes and aggregate fills still must agree. Equity marks from separate account and position observations remain

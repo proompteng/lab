@@ -197,6 +197,7 @@ test('execution submissions use the cycle entry cutoff and the final close-sessi
   expect(
     executionMutationSubmissionAllowed({
       capability: 'Mutation',
+      phase: 'ENTRY',
       submissionCutoffAt: '2020-05-01T13:00:00.000Z',
       observedAt: '2020-05-01T12:59:59.000Z',
     }),
@@ -204,6 +205,7 @@ test('execution submissions use the cycle entry cutoff and the final close-sessi
   expect(
     executionMutationSubmissionAllowed({
       capability: 'Mutation',
+      phase: 'ENTRY',
       submissionCutoffAt: '2020-05-01T13:00:00.000Z',
       observedAt: '2020-05-01T13:00:00.000Z',
     }),
@@ -211,6 +213,7 @@ test('execution submissions use the cycle entry cutoff and the final close-sessi
   expect(
     executionMutationSubmissionAllowed({
       capability: 'Mutation',
+      phase: 'CLOSE',
       submissionCutoffAt: '2020-05-03T20:00:00.000Z',
       observedAt: '2020-05-01T13:05:00.000Z',
     }),
@@ -218,8 +221,24 @@ test('execution submissions use the cycle entry cutoff and the final close-sessi
   expect(
     executionMutationSubmissionAllowed({
       capability: 'Mutation',
+      phase: 'CLOSE',
       submissionCutoffAt: '2020-05-03T20:00:00.000Z',
       observedAt: '2020-05-03T20:00:00.000Z',
+    }),
+  ).toBe(false)
+})
+
+test('close-only recovery allows only close submissions strictly before the deadline', () => {
+  const boundary = { submissionCutoffAt: '2026-09-11T20:00:00.000Z', observedAt: '2026-09-11T19:55:00.000Z' }
+  expect(executionMutationSubmissionAllowed({ ...boundary, capability: 'CloseOnly', phase: 'ENTRY' })).toBe(false)
+  expect(executionMutationSubmissionAllowed({ ...boundary, capability: 'CloseOnly', phase: 'CLOSE' })).toBe(true)
+  expect(executionMutationSubmissionAllowed({ ...boundary, capability: 'RecoveryOnly', phase: 'CLOSE' })).toBe(false)
+  expect(
+    executionMutationSubmissionAllowed({
+      ...boundary,
+      capability: 'CloseOnly',
+      phase: 'CLOSE',
+      observedAt: boundary.submissionCutoffAt,
     }),
   ).toBe(false)
 })
@@ -248,90 +267,93 @@ test('preserves a restricted unbound cycle until its submission window opens', (
   ).toBeUndefined()
 })
 
-test('restricted mutation startup terminalizes its unbound cycle without discovering a replacement', async () => {
-  const observedAt = utcInstantFromEpochMillis(Date.parse(cycle.window.submissionOpenAt) + 1_000)
-  const terminalCycle = Effect.runSync(
-    decodeAutonomousCycle({
-      ...cycle,
-      state: CycleState.Blocked,
-      terminalReason: CycleTerminalReason.Authority,
-      stateVersion: cycle.stateVersion + 1,
-      updatedAt: observedAt,
-      terminalAt: observedAt,
-    }),
-  )
-  let blockCount = 0
-  const forbidden = (capability: string) => Effect.die(new Error(`restricted cycle must not use ${capability}`))
-  const cycleStore: CycleStoreShape = {
-    acquire: () => forbidden('cycle acquisition'),
-    read: () => forbidden('cycle read by ID'),
-    readAuthoritySlot: () => forbidden('authority-slot read'),
-    readOldestUnfinished: () => Effect.succeed(blockCount === 0 ? Option.some(cycle) : Option.none()),
-    readDecisionDocument: () => forbidden('decision document read'),
-    bindSnapshot: () => forbidden('snapshot binding'),
-    activate: () => forbidden('cycle activation'),
-    bindDecision: () => forbidden('decision binding'),
-    finish: () => forbidden('cycle finishing'),
-    block: (cycleId, reason, blockedAt) =>
-      Effect.sync(() => {
-        blockCount += 1
-        expect({ cycleId, reason, blockedAt }).toEqual({
-          cycleId: cycle.identity.cycleId,
-          reason: CycleTerminalReason.Authority,
-          blockedAt: observedAt,
-        })
-        return { cycle: terminalCycle, changed: true }
+test.each(['RecoveryOnly', 'CloseOnly'] as const)(
+  '%s startup terminalizes its unbound cycle without discovering a replacement',
+  async (executionMode) => {
+    const observedAt = utcInstantFromEpochMillis(Date.parse(cycle.window.submissionOpenAt) + 1_000)
+    const terminalCycle = Effect.runSync(
+      decodeAutonomousCycle({
+        ...cycle,
+        state: CycleState.Blocked,
+        terminalReason: CycleTerminalReason.Authority,
+        stateVersion: cycle.stateVersion + 1,
+        updatedAt: observedAt,
+        terminalAt: observedAt,
       }),
-  }
-  const reconciliationServices = makeExactReconciliationServices()
-  const executionStore = reconciliationServices.executionStore
+    )
+    let blockCount = 0
+    const forbidden = (capability: string) => Effect.die(new Error(`restricted cycle must not use ${capability}`))
+    const cycleStore: CycleStoreShape = {
+      acquire: () => forbidden('cycle acquisition'),
+      read: () => forbidden('cycle read by ID'),
+      readAuthoritySlot: () => forbidden('authority-slot read'),
+      readOldestUnfinished: () => Effect.succeed(blockCount === 0 ? Option.some(cycle) : Option.none()),
+      readDecisionDocument: () => forbidden('decision document read'),
+      bindSnapshot: () => forbidden('snapshot binding'),
+      activate: () => forbidden('cycle activation'),
+      bindDecision: () => forbidden('decision binding'),
+      finish: () => forbidden('cycle finishing'),
+      block: (cycleId, reason, blockedAt) =>
+        Effect.sync(() => {
+          blockCount += 1
+          expect({ cycleId, reason, blockedAt }).toEqual({
+            cycleId: cycle.identity.cycleId,
+            reason: CycleTerminalReason.Authority,
+            blockedAt: observedAt,
+          })
+          return { cycle: terminalCycle, changed: true }
+        }),
+    }
+    const reconciliationServices = makeExactReconciliationServices()
+    const executionStore = reconciliationServices.executionStore
 
-  const advances = await Effect.runPromise(
-    Effect.gen(function* () {
-      yield* TestClock.setTime(Date.parse(observedAt))
-      const driverEffect = yield* makeMutationAutonomousCycleStartupProduction(
-        {
-          accountId,
-          authorityGenerationHash: generationHash,
-          pollIntervalMs: 30_000,
-          reconciliationIntervalMs: 30_000,
-          reconciliationPassTimeoutMs: 30_000,
-          strategy: currentIntradayRuntime,
-          executionProgram: sandboxExecutionProgram(),
-        },
-        'RecoveryOnly',
-      )({
-        cycleBindingId: cycle.identity.qualificationRunId,
-        recordPass: () => Effect.void,
-      })
-      const driver = yield* driverEffect
-      const blocked = yield* driver.advance
-      const waiting = yield* driver.advance
-      return { blocked, waiting }
-    }).pipe(
-      Effect.provideService(BrokerRead, reconciliationServices.brokerRead),
-      Effect.provideService(CycleStore, cycleStore),
-      Effect.provideService(BrokerEventStore, executionStore),
-      Effect.provideService(FillAccountingStore, executionStore),
-      Effect.provideService(ValuationStore, executionStore),
-      Effect.provideService(ReconciliationStore, executionStore),
-      Effect.provideService(AuthorityGenerationStore, executionStore),
-      Effect.provideService(AuthorityRestrictionStore, executionStore),
-      Effect.provideService(IntentStore, {} as IntentStoreService),
-      Effect.provideService(MutationStore, {} as MutationStoreShape),
-      Effect.provideService(WriterFence, reconciliationServices.writerFence),
-      Effect.provide(TestClock.layer()),
-    ),
-  )
+    const advances = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(observedAt))
+        const driverEffect = yield* makeMutationAutonomousCycleStartupProduction(
+          {
+            accountId,
+            authorityGenerationHash: generationHash,
+            pollIntervalMs: 30_000,
+            reconciliationIntervalMs: 30_000,
+            reconciliationPassTimeoutMs: 30_000,
+            strategy: currentIntradayRuntime,
+            executionProgram: sandboxExecutionProgram(),
+          },
+          executionMode,
+        )({
+          cycleBindingId: cycle.identity.qualificationRunId,
+          recordPass: () => Effect.void,
+        })
+        const driver = yield* driverEffect
+        const blocked = yield* driver.advance
+        const waiting = yield* driver.advance
+        return { blocked, waiting }
+      }).pipe(
+        Effect.provideService(BrokerRead, reconciliationServices.brokerRead),
+        Effect.provideService(CycleStore, cycleStore),
+        Effect.provideService(BrokerEventStore, executionStore),
+        Effect.provideService(FillAccountingStore, executionStore),
+        Effect.provideService(ValuationStore, executionStore),
+        Effect.provideService(ReconciliationStore, executionStore),
+        Effect.provideService(AuthorityGenerationStore, executionStore),
+        Effect.provideService(AuthorityRestrictionStore, executionStore),
+        Effect.provideService(IntentStore, {} as IntentStoreService),
+        Effect.provideService(MutationStore, {} as MutationStoreShape),
+        Effect.provideService(WriterFence, reconciliationServices.writerFence),
+        Effect.provide(TestClock.layer()),
+      ),
+    )
 
-  expect(advances.blocked.result).toMatchObject({
-    outcome: 'RECOVERED',
-    action: 'BLOCKED',
-    cycle: { state: CycleState.Blocked, terminalReason: CycleTerminalReason.Authority },
-  })
-  expect(advances.waiting.result).toEqual({ outcome: 'WINDOW_CLOSED', observedAt })
-  expect(blockCount).toBe(1)
-})
+    expect(advances.blocked.result).toMatchObject({
+      outcome: 'RECOVERED',
+      action: 'BLOCKED',
+      cycle: { state: CycleState.Blocked, terminalReason: CycleTerminalReason.Authority },
+    })
+    expect(advances.waiting.result).toEqual({ outcome: 'WINDOW_CLOSED', observedAt })
+    expect(blockCount).toBe(1)
+  },
+)
 
 test('preserves execution authority after a transient reconciliation read inside a bound cycle', async () => {
   const fixture = await executionLifecycleFixture()
@@ -1925,8 +1947,32 @@ describe('OBSERVE runtime composition', () => {
         phase: 'ENTRY',
         orders: [{ ...order, filledQuantityMicros: '1' }],
       }),
-    ).toBe('UNSUCCESSFUL')
+    ).toBe('PARTIAL_FILL_IOC')
     expect(decideExecutionIntentTerminalDisposition({ ...dispositionInput, phase: 'CLOSE' })).toBe('UNSUCCESSFUL')
+    for (const filledQuantityMicros of ['-1', intent.quantityMicros, '4000000']) {
+      expect(
+        decideExecutionIntentTerminalDisposition({
+          ...dispositionInput,
+          phase: 'ENTRY',
+          orders: [{ ...order, filledQuantityMicros }],
+        }),
+      ).toBe('UNSUCCESSFUL')
+    }
+    for (const divergent of [
+      { ...order, filledQuantityMicros: '1000000', brokerOrderId: 'other-order' },
+      { ...order, filledQuantityMicros: '1000000', intentId: '8'.repeat(64) },
+      { ...order, filledQuantityMicros: '1000000', accountId: 'other-account' },
+      { ...order, filledQuantityMicros: '1000000', status: OrderStatus.PartiallyFilled },
+    ]) {
+      expect(
+        decideExecutionIntentTerminalDisposition({ ...dispositionInput, phase: 'ENTRY', orders: [divergent] }),
+      ).toBe('UNSUCCESSFUL')
+    }
+    expect(
+      decideExecutionIntentTerminalDisposition({ ...dispositionInput, phase: 'ENTRY', orders: [order, order] }),
+    ).toBe('UNSUCCESSFUL')
+    expect(decideExecutionIntentTerminalDisposition({ intent, phase: 'ENTRY', orders: [order] })).toBe('UNSUCCESSFUL')
+
     expect(
       decideExecutionCycleCompletion(
         evaluatedAt,
@@ -3820,7 +3866,7 @@ describe('OBSERVE runtime composition', () => {
     expect(restrictions[0]).toContain(`intent ${rejectedIntent.intentId} ended REJECTED`)
   })
 
-  test('keeps a single canceled partial-fill PAPER intent recoverable before cutoff', async () => {
+  test('retains a canceled partial-fill PAPER entry without restricting authority', async () => {
     const fixture = await executionLifecycleFixture()
     const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.createdAt) + 1_000)
     const record = storedIntent(fixture.intent, IntentState.Terminal, observedAt, TerminalOutcome.Canceled)
@@ -3872,8 +3918,7 @@ describe('OBSERVE runtime composition', () => {
     )
 
     expect(step).toEqual({ _tag: 'Wait', observedAt })
-    expect(restrictions).toHaveLength(1)
-    expect(restrictions[0]).toContain(`intent ${fixture.intent.intentId} ended CANCELED`)
+    expect(restrictions).toHaveLength(0)
     expect(executionCycleHasFilledIntent({ intents: [record.intent], orders: [partialOrder] })).toBe(true)
 
     const closeExpiresAt = utcInstantFromEpochMillis(Date.parse(observedAt) + 120_000)

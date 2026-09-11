@@ -132,9 +132,12 @@ export const isPostMutationReconciliation = (
 
 export const executionMutationSubmissionAllowed = (input: {
   readonly capability: ExecutionCapability['_tag']
+  readonly phase: 'ENTRY' | 'CLOSE'
   readonly submissionCutoffAt: string
   readonly observedAt: string
-}): boolean => input.capability === 'Mutation' && input.observedAt < input.submissionCutoffAt
+}): boolean =>
+  (input.capability === 'Mutation' || (input.capability === 'CloseOnly' && input.phase === 'CLOSE')) &&
+  input.observedAt < input.submissionCutoffAt
 
 export const blockedEntryRequiresCloseOnlyContainment = (
   targetPlan: Pick<ExecutionDecisionDocument['targetPlan'], 'status' | 'reason'>,
@@ -728,7 +731,7 @@ const executeBoundExecutionCycle = (
         document,
         reconcile,
         allowSubmit: false,
-        drainOpenOrders: capability._tag === 'Mutation',
+        drainOpenOrders: capability._tag !== 'RecoveryOnly',
       })
       if (entryDrain._tag === 'Execute') {
         step = entryDrain
@@ -772,6 +775,7 @@ const executeBoundExecutionCycle = (
         reconcile: closeReconciliation === undefined ? reconcile : Effect.succeed(closeReconciliation),
         allowSubmit: executionMutationSubmissionAllowed({
           capability: capability._tag,
+          phase: closeOnly ? 'CLOSE' : 'ENTRY',
           submissionCutoffAt: closeOnly ? closeWindow.submitCutoffAt : entrySubmissionCutoffAt,
           observedAt,
         }),
@@ -813,9 +817,15 @@ const executeBoundExecutionCycle = (
       mutationAction: step.action,
       mutationPhase: closeOnly ? 'CLOSE' : 'ENTRY',
     }
+    if (capability._tag === 'CloseOnly' && step.action === 'SUBMIT' && !closeOnly) {
+      return yield* mutationRunnerError({
+        message: 'close-only recovery cannot submit an entry',
+        failure: 'contract',
+      })
+    }
     yield* Effect.logInfo('Execution mutation selected').pipe(Effect.annotateLogs(logContext))
     const execute =
-      capability._tag === 'Mutation'
+      capability._tag !== 'RecoveryOnly'
         ? executeMutationIntent(
             capability.executionProgram,
             step.intentId,
@@ -896,7 +906,7 @@ export const decideUnboundExecutionCycleTerminalization = (input: {
   readonly observedAt: string
   readonly submissionOpenAt: string
 }): CycleTerminalReason.Authority | undefined =>
-  input.capability === 'RecoveryOnly' && input.observedAt >= input.submissionOpenAt
+  input.capability !== 'Mutation' && input.observedAt >= input.submissionOpenAt
     ? CycleTerminalReason.Authority
     : undefined
 
@@ -1105,7 +1115,7 @@ export const runRecoveryFirstCyclePass = (
               return terminalizeUnboundMutationCycle(unfinished, terminalReason, observedAt)
             }
           }
-          if (capability._tag === 'RecoveryOnly') {
+          if (capability._tag !== 'Mutation') {
             return Effect.succeed({ outcome: 'WINDOW_CLOSED' as const, observedAt })
           }
           return runAutonomousCyclePass(context).pipe(

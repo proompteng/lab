@@ -195,7 +195,7 @@ const makeRecoveryFirstCycleDriverEffect = (
       Effect.tap(() => markMutationReconciliationCompleted(cadence)),
     )
     const observeCycleFailure = (error: CycleRunnerError) =>
-      (capability._tag === 'Mutation' && shouldRestrictMutationLoopFailure(error)
+      (capability._tag !== 'RecoveryOnly' && shouldRestrictMutationLoopFailure(error)
         ? restrictMutationLoopFailure(error)
         : Effect.void
       ).pipe(
