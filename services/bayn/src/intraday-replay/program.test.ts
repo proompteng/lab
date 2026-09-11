@@ -143,7 +143,15 @@ const replayInput = (dates: readonly string[], overrides: Partial<IntradayReplay
   const start = dates[0] ?? '2026-09-04'
   const end = dates.at(-1) ?? start
   return {
-    schemaVersion: 'bayn.intraday-replay-input.v1',
+    schemaVersion: 'bayn.intraday-replay-input.v2',
+    operationalTiming: {
+      decisionReadMs: 0,
+      decisionComputeMs: 0,
+      planningReadMs: 0,
+      planningComputeMs: 0,
+      commitMs: 0,
+      submissionMs: 0,
+    },
     range: { start, end },
     calendar: dates.map((date) => ({ date, open: '09:30', close: '16:00' })),
     initialCapitalMicros,
@@ -167,6 +175,199 @@ const entryAndCloseSnapshot: SnapshotFactory = (request, phase, occurrence) => {
 }
 
 describe('intraday replay program', () => {
+  test('schedules another decision after the previous computation completes and the poll interval elapses', async () => {
+    const archive = makeArchive({
+      snapshot: (request, phase, occurrence) =>
+        phase === 'decision'
+          ? snapshotFor(request, occurrence === 0 ? {} : { AAPL: 0.01 })
+          : entryAndCloseSnapshot(request, phase, occurrence),
+    })
+    await run(
+      replayInput([sessionDates[0]], {
+        operationalTiming: {
+          decisionReadMs: 2_000,
+          decisionComputeMs: 500,
+          planningReadMs: 0,
+          planningComputeMs: 0,
+          commitMs: 0,
+          submissionMs: 0,
+        },
+      }),
+      archive,
+    )
+    const decisions = archive.requests.filter(({ purpose }) => purpose === undefined)
+    expect(decisions).toHaveLength(2)
+    expect(Date.parse(decisions[1]?.observedAt ?? '') - Date.parse(decisions[0]?.observedAt ?? '')).toBe(32_500)
+  })
+
+  test('retains an incomplete open position when closing would require the broker market fallback', async () => {
+    const archive = makeArchive({ snapshot: entryAndCloseSnapshot })
+    const report = await Effect.runPromise(
+      runIntradayReplay(
+        replayInput([sessionDates[0]], {
+          calendar: [{ date: sessionDates[0], open: '09:30', close: '10:10' }],
+        }),
+        {
+          ...archive.service,
+          loadSnapshot: (request) =>
+            request.purpose === IntradaySnapshotPurpose.Liquidation
+              ? Effect.fail(
+                  retryableOperationalError({ component: 'market-data', operation: 'load', message: 'archive outage' }),
+                )
+              : archive.service.loadSnapshot(request),
+        },
+        finalizedNow,
+      ),
+    )
+    expect(report.sessions[0]?.status).toBe('INCOMPLETE')
+    expect(report.sessions[0]?.reason).toContain('market/DAY fallback')
+    expect(report.sessions[0]?.positions.length).toBeGreaterThan(0)
+    expect(report.sessions[0]?.orders.every(({ side }) => side === OrderSide.Buy)).toBe(true)
+    expect(report.totals.netRealizedPnlAfterCostsMicros).toBeNull()
+  })
+
+  test('does not submit when construction finishes after the entry cutoff', async () => {
+    const archive = makeArchive({ snapshot: entryAndCloseSnapshot })
+    const report = await run(
+      replayInput([sessionDates[0]], {
+        calendar: [{ date: sessionDates[0], open: '09:30', close: '10:10' }],
+        operationalTiming: {
+          decisionReadMs: 60_000,
+          decisionComputeMs: 60_000,
+          planningReadMs: 60_000,
+          planningComputeMs: 60_000,
+          commitMs: 60_000,
+          submissionMs: 60_000,
+        },
+      }),
+      archive,
+    )
+    expect(report.sessions[0]?.reason).toContain('submission cutoff')
+    expect(report.sessions[0]?.orders).toEqual([])
+    expect(report.sessions[0]?.fills).toEqual([])
+  })
+
+  test('retains source cutoffs while advancing decision, planning, commit, submission and arrival clocks', async () => {
+    const archive = makeArchive({ snapshot: entryAndCloseSnapshot })
+    const report = await run(
+      replayInput([sessionDates[0]], {
+        operationalTiming: {
+          decisionReadMs: 2_000,
+          decisionComputeMs: 500,
+          planningReadMs: 1_500,
+          planningComputeMs: 745,
+          commitMs: 2_000,
+          submissionMs: 2_000,
+        },
+        assumptions: { ...defaultAssumptions, orderLatencyMs: 2_000 },
+      }),
+      archive,
+    )
+    const observations = report.sessions[0]?.observations ?? []
+    const decision = observations.find((item) => item.kind === 'snapshot' && item.purpose === 'decision')
+    const planning = observations.find((item) => item.kind === 'snapshot' && item.purpose === 'planning')
+    const clock = observations.find((item) => item.kind === 'timing' && item.purpose === 'planning')
+    if (decision?.kind !== 'snapshot' || planning?.kind !== 'snapshot' || clock?.kind !== 'timing')
+      throw new Error('missing entry evidence')
+    const source = Date.parse(decision.manifest.observedAt)
+    const instant = (offset: number) => new Date(source + offset).toISOString()
+    expect(planning.manifest.observedAt).toBe(decision.manifest.observedAt)
+    expect(decision.availableBy).toBe(instant(2_000))
+    expect(planning.availableBy).toBe(instant(4_000))
+    expect(clock.timeline).toEqual({
+      sourceCutoffAt: instant(0),
+      decisionReadCompletedAt: instant(2_000),
+      decisionCompletedAt: instant(2_500),
+      planningReadCompletedAt: instant(4_000),
+      planCompletedAt: instant(4_745),
+      committedAt: instant(6_745),
+      submittedAt: instant(8_745),
+      arrivedAt: instant(10_745),
+    })
+    expect(report.sessions[0]?.orders[0]).toMatchObject({ submittedAt: instant(8_745), observedAt: instant(10_745) })
+    const close = observations.find((item) => item.kind === 'timing' && item.purpose === 'close')
+    if (close?.kind !== 'timing') throw new Error('missing close clock')
+    expect(close.timeline.decisionReadCompletedAt).toBeNull()
+    expect(Date.parse(close.timeline.submittedAt) - Date.parse(close.timeline.sourceCutoffAt)).toBe(6_245)
+  })
+
+  test('consumes exact retained records only once their reader completion bound is reached', async () => {
+    const evaluate = (decisionReadMs: number) => {
+      const archive = makeArchive({ snapshot: entryAndCloseSnapshot })
+      return Effect.runPromise(
+        runIntradayReplay(
+          replayInput([sessionDates[0]], {
+            archiveAvailability: ArchiveAvailabilityPolicy.RecordedReader,
+            calendar: [{ date: sessionDates[0], open: '09:30', close: '10:10' }],
+            operationalTiming: {
+              decisionReadMs,
+              decisionComputeMs: 100,
+              planningReadMs: 500,
+              planningComputeMs: 100,
+              commitMs: 100,
+              submissionMs: 100,
+            },
+          }),
+          {
+            ...archive.service,
+            recordedAvailability: (snapshot, availableBy) =>
+              Effect.fromResult(
+                Result.gen(function* () {
+                  const cutoff = snapshot.manifest.observedAt
+                  const requiredDelay = snapshot.manifest.purpose === undefined ? 500 : 0
+                  const receipts = yield* makeArchiveAvailabilityReceipts(
+                    snapshot,
+                    availabilityReader,
+                    cutoff,
+                    new Date(Date.parse(cutoff) + requiredDelay).toISOString(),
+                  )
+                  return yield* verifyRecordedArchiveAvailability(
+                    snapshot,
+                    availabilityReader.endpointHash,
+                    receipts,
+                    availableBy,
+                  )
+                }),
+              ).pipe(Effect.mapError(archiveAvailabilityOperationalError)),
+          },
+          finalizedNow,
+        ),
+      )
+    }
+    const available = await evaluate(500)
+    expect(available.sessions[0]?.orders.length).toBeGreaterThan(0)
+    expect(available.availability.snapshots.some((proof) => proof.availableBy > proof.observedAt)).toBe(true)
+    const tooEarly = await evaluate(499)
+    expect(tooEarly.sessions[0]?.status).toBe('INCOMPLETE')
+    expect(tooEarly.sessions[0]?.orders).toEqual([])
+    expect(tooEarly.totals.netRealizedPnlAfterCostsMicros).toBeNull()
+  })
+
+  test('keeps the original IOC limit when operational delay moves the arrival quote', async () => {
+    const archive = makeArchive({
+      snapshot: (request, phase, occurrence) => {
+        if (phase === 'decision') return snapshotFor(request, { AAPL: 0.01 })
+        return snapshotFor(request, {}, {}, phase === 'entry-pricing' && occurrence > 0 ? 101 : 100)
+      },
+    })
+    const report = await run(
+      replayInput([sessionDates[0]], {
+        operationalTiming: {
+          decisionReadMs: 2_000,
+          decisionComputeMs: 500,
+          planningReadMs: 1_500,
+          planningComputeMs: 745,
+          commitMs: 2_000,
+          submissionMs: 2_000,
+        },
+      }),
+      archive,
+    )
+    expect(report.sessions[0]?.orders[0]).toMatchObject({ status: 'canceled', reason: 'adverse-price-exceeds-limit' })
+    expect(report.sessions[0]?.fills).toEqual([])
+    expect(report.sessions[0]?.cashMicros).toBe(initialCapitalMicros)
+  })
+
   test('omitted availability policy fails closed rather than opting into a source-time assumption', async () => {
     const { archiveAvailability: _policy, ...input } = replayInput([sessionDates[0]])
     const archive = makeArchive({ snapshot: entryAndCloseSnapshot })

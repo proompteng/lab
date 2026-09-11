@@ -39,6 +39,42 @@ const market = (read = Effect.succeed(availabilitySnapshot)): IntradayMarketData
 })
 
 describe('recorded archive reader availability', () => {
+  test('checks reader completion separately without moving the snapshot source cutoff', () => {
+    const evidence = receipts()
+    const originalHash = canonicalHashV1(availabilitySnapshot)
+    const proof = verifyRecordedArchiveAvailability(
+      availabilitySnapshot,
+      availabilityReader.endpointHash,
+      evidence,
+      completedAt,
+    )
+    expect(Result.isSuccess(proof)).toBe(true)
+    expect(Result.getOrThrow(proof).availableBy).toBe(completedAt)
+    expect(canonicalHashV1(availabilitySnapshot)).toBe(originalHash)
+    expect(
+      Result.isFailure(
+        verifyRecordedArchiveAvailability(
+          availabilitySnapshot,
+          availabilityReader.endpointHash,
+          evidence,
+          '2026-09-04T14:30:02.499Z',
+        ),
+      ),
+    ).toBe(true)
+    for (const invalidClock of ['2026-09-04T14:30:01.999Z', 'invalid', '2026-09-04T14:30:02.500+00:00']) {
+      expect(
+        Result.isFailure(
+          verifyRecordedArchiveAvailability(
+            availabilitySnapshot,
+            availabilityReader.endpointHash,
+            evidence,
+            invalidClock,
+          ),
+        ),
+      ).toBe(true)
+    }
+  })
+
   test('missing candidate receipts are local and do not rewrite the immutable snapshot', () => {
     const { snapshot, receipts } = makeAvailabilityDecisionFixture()
     const snapshotHash = canonicalHashV1(snapshot)
