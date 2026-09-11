@@ -73,6 +73,8 @@ An accepted LIMIT/IOC entry may finish canceled after filling only part of its r
 exact broker order and intent identity and treats a positive fill smaller than the requested quantity as settled
 entry exposure, without restricting authority or submitting the unfilled remainder. The cycle remains open for its
 scheduled close. Rejected, mismatched, overfilled, and non-IOC canceled orders retain their failure handling.
+Durable completion additionally requires the recorded partial fills to match the accepted order, a later trusted flat
+position snapshot, exact reconciliation covering the account's latest broker events, and no open broker orders.
 
 When a worker resumes an existing PAPER grant under a recognized system failure restriction, it runs close-only
 recovery. It cannot discover new cycles or submit entries. During the existing close window it can cancel outstanding
