@@ -175,6 +175,71 @@ const entryAndCloseSnapshot: SnapshotFactory = (request, phase, occurrence) => {
 }
 
 describe('intraday replay program', () => {
+  test('retains an incomplete close when the submitted IOC arrival evidence is missing', async () => {
+    const archive = makeArchive()
+    let liquidations = 0
+    const service = {
+      ...archive.service,
+      loadSnapshot: (request: IntradaySnapshotRequest) => {
+        if (request.purpose === IntradaySnapshotPurpose.Liquidation && ++liquidations === 2)
+          return Effect.fail(
+            retryableOperationalError({
+              component: 'market-data',
+              operation: 'load-intraday',
+              message: 'arrival archive unavailable',
+            }),
+          )
+        return archive.service.loadSnapshot(request)
+      },
+    }
+    const report = await Effect.runPromise(
+      runIntradayReplay(
+        replayInput([sessionDates[0]], { calendar: [{ date: sessionDates[0], open: '09:30', close: '10:10' }] }),
+        service,
+        finalizedNow,
+      ),
+    )
+    expect(report.sessions[0]?.status).toBe('INCOMPLETE')
+    expect(report.sessions[0]?.netRealizedPnlAfterCostsMicros).toBeNull()
+    expect(report.sessions[0]?.fills.map((fill) => fill.side)).toEqual(['buy'])
+    expect(liquidations).toBe(2)
+  })
+
+  test('retries capacity-limited closes after completed planning without charging unexecuted order stages', async () => {
+    const archive = makeArchive({
+      snapshot: (request, phase, occurrence) =>
+        snapshotFor(
+          request,
+          phase === 'decision' ? { AAPL: 0.01 } : {},
+          phase === 'liquidation' && occurrence === 0 ? { AAPL: 0 } : {},
+        ),
+    })
+    const report = await run(
+      replayInput([sessionDates[0]], {
+        calendar: [{ date: sessionDates[0], open: '09:30', close: '10:10' }],
+        operationalTiming: {
+          decisionReadMs: 0,
+          decisionComputeMs: 0,
+          planningReadMs: 2000,
+          planningComputeMs: 3000,
+          commitMs: 120000,
+          submissionMs: 120000,
+        },
+      }),
+      archive,
+    )
+    const session = report.sessions[0]
+    const closes = session?.observations.filter((item) => item.kind === 'snapshot' && item.purpose === 'close') ?? []
+    expect(closes).toHaveLength(2)
+    const first = closes[0]
+    const second = closes[1]
+    if (first?.kind !== 'snapshot' || second?.kind !== 'snapshot') throw new Error('missing close attempts')
+    expect(Date.parse(second.manifest.observedAt) - Date.parse(first.manifest.observedAt)).toBe(35000)
+    expect(session?.status).toBe('COMPLETE')
+    expect(session?.positions).toEqual([])
+    expect(session?.fills.map((fill) => fill.side)).toEqual(['buy', 'sell'])
+  })
+
   test('schedules another decision after the previous computation completes and the poll interval elapses', async () => {
     const archive = makeArchive({
       snapshot: (request, phase, occurrence) =>

@@ -772,17 +772,13 @@ const replaySession = (
       input.assumptions.firstPollDelayMs
     const hardFlatMs = Date.parse(context.calendar.executionCloseAt) - protocol.hardFlatBeforeCloseMinutes * 60_000
     let nextMarkMs = Date.parse(arrivalAt)
+    let nextClosePollMs = closeStartMs
     for (
-      let observedMs = closeStartMs;
+      let observedMs = nextClosePollMs;
       observedMs < hardFlatMs && ledger.positions.length > 0;
-      observedMs +=
-        input.assumptions.pollIntervalMs +
-        input.operationalTiming.planningReadMs +
-        input.operationalTiming.planningComputeMs +
-        input.operationalTiming.commitMs +
-        input.operationalTiming.submissionMs +
-        input.assumptions.orderLatencyMs
+      observedMs = nextClosePollMs
     ) {
+      nextClosePollMs = observedMs + input.assumptions.pollIntervalMs
       while (nextMarkMs <= observedMs && nextMarkMs <= hardFlatMs && ledger.positions.length > 0) {
         const markObservedAt = utcInstantFromEpochMillis(nextMarkMs)
         const heldSymbols = ledger.positions.map(({ symbol: positionSymbol }) => positionSymbol)
@@ -880,6 +876,7 @@ const replaySession = (
           : failureDescription(closeLoaded.error).message
         break
       }
+      nextClosePollMs = Date.parse(closeTimeline.planCompletedAt) + input.assumptions.pollIntervalMs
       const closeSnapshot = closeLoaded.snapshot
       observations.push({
         kind: 'snapshot',
@@ -921,6 +918,7 @@ const replaySession = (
       }
 
       const arrivalAt = closeTimeline.arrivedAt
+      nextClosePollMs = Date.parse(arrivalAt) + input.assumptions.pollIntervalMs
       if (Date.parse(arrivalAt) >= hardFlatMs) {
         pushUnavailable(
           observations,
@@ -943,11 +941,8 @@ const replaySession = (
       if (Result.isFailure(arrivalQueryResult)) {
         const retryable = arrivalQueryResult.failure instanceof IntradayMomentumCloseAwaitingSnapshot
         pushUnavailable(observations, 'arrival', arrivalAt, arrivalQueryResult.failure, retryable)
-        if (!retryable) {
-          closeFailure = failureDescription(arrivalQueryResult.failure).message
-          break
-        }
-        continue
+        closeFailure = `submitted closing IOC arrival cannot be established: ${failureDescription(arrivalQueryResult.failure).message}`
+        break
       }
       const arrivalLoaded = yield* readSnapshot(marketData, {
         ...arrivalQueryResult.success,
@@ -956,11 +951,8 @@ const replaySession = (
       if (arrivalLoaded._tag === 'Failure') {
         const retryable = isRetryableArchiveFailure(arrivalLoaded.error)
         pushUnavailable(observations, 'arrival', arrivalAt, arrivalLoaded.error, retryable)
-        if (!retryable) {
-          closeFailure = failureDescription(arrivalLoaded.error).message
-          break
-        }
-        continue
+        closeFailure = `submitted closing IOC arrival cannot be established: ${failureDescription(arrivalLoaded.error).message}`
+        break
       }
       const arrivalSnapshot = arrivalLoaded.snapshot
       observations.push({
