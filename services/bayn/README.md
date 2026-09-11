@@ -168,12 +168,20 @@ the exact calendar response for this date range:
 
 ```json
 {
-  "schemaVersion": "bayn.intraday-replay-input.v1",
+  "schemaVersion": "bayn.intraday-replay-input.v2",
   "range": { "start": "2026-09-04", "end": "2026-09-04" },
   "calendar": [{ "date": "2026-09-04", "open": "09:30", "close": "16:00" }],
   "initialCapitalMicros": "100000000000",
   "allocationCapitalMicros": "100000000000",
   "archiveAvailability": "recorded-reader",
+  "operationalTiming": {
+    "decisionReadMs": 2000,
+    "decisionComputeMs": 1000,
+    "planningReadMs": 2000,
+    "planningComputeMs": 1000,
+    "commitMs": 1000,
+    "submissionMs": 2000
+  },
   "assumptions": {
     "pollIntervalMs": 30000,
     "firstPollDelayMs": 2000,
@@ -184,6 +192,14 @@ the exact calendar response for this date range:
   }
 }
 ```
+
+All six operational durations are required, including an explicit zero for an intentionally omitted stage. The
+example durations are experiment assumptions, not calibrated latency estimates. Source cutoff and reader completion
+are separate: decision and planning retain the same cutoff as the live path, while computation, planning, commit,
+submission and venue arrival advance in order. `orderLatencyMs` covers submission-to-arrival only and admits 1–60,000
+milliseconds. Stage durations admit 0–300,000 milliseconds. A late submission creates no order; a close arriving beyond
+the hard-flat deadline remains incomplete. The next attempt waits the declared poll interval after the modeled work completes, matching the controller's
+completion-based scheduling. Snapshot `availableBy` fields state consumption bounds, not invented reader receipts.
 
 The range is bounded to 31 calendar days. Preserve the complete calendar response; archive date presence cannot
 establish that a session was open or that its data is complete. Each scheduled observation reconstructs archive
@@ -198,18 +214,20 @@ completion time is rounded up to the next millisecond, never backdated to the so
 stored observation; changed content under the same source identity fails closed. The public status service and replay
 commands cannot mint these receipts. Recording failure prevents release of that read to the execution caller.
 
-Default replay requires a matching production-reader receipt for every used row, completed no later than the simulated
-observation. Missing or late receipts for an independent decision candidate exclude that candidate with zero weight;
+Default replay requires a matching production-reader receipt for every used row, completed no later than the declared
+reader-completion clock for a decision or close-pricing read. Arrival and equity-mark evidence retain their own
+source-time bound. Missing or late receipts for an independent decision candidate exclude that candidate with zero weight;
 the shared strategy core ranks the remaining candidates. These reader-derived exclusions are bound separately in
 `availability.snapshots[].candidateExclusions`, without rewriting the immutable archive manifest or discarding raw
-excluded rows. Valid late receipts are retained as exclusion evidence, never as proof of availability at the cutoff.
+excluded rows. Valid late receipts are retained as exclusion evidence, never as proof of availability at the declared consumption clock.
 Missing benchmark or execution-pricing evidence still rejects the whole observation. Corrupt, duplicate, unrelated,
 development-only, or conflicting receipts remain global failures, including receipts belonging to excluded candidates.
 An entry window with all candidates unavailable remains incomplete, not a clean `NO_TRADE`, and prevents aggregate P&L.
 Receipts cover rows actually
 observed by the worker, not the entire feed. They are conservative availability upper bounds, not earliest visibility,
 simultaneous snapshot proof, reader uptime, or actual execution evidence. In particular, a read completing after its
-query cutoff cannot certify replay at that cutoff. Strict-mode coverage can remain sparse; this does not reconstruct
+query cutoff becomes consumable only when its declared completion clock reaches that receipt; its source cutoff
+and snapshot identity remain unchanged. Strict-mode coverage can remain sparse; this does not reconstruct
 missing historical delivery times or establish a complete live-equivalent backtest.
 
 Existing source-time experiments may explicitly freeze `archiveAvailability: "source-receipt-assumption"` in their input.
@@ -218,14 +236,22 @@ That mode remains ClickHouse-only and retains the original economic counterfactu
 recorded receipts, not this assumption. There is no automatic fallback or historical receipt backfill.
 
 The report retains decision, planning, arrival and mark manifests, receipt bindings and deduplicated raw receipts,
-data failures, canceled IOC quantities, fees, cash, and unclosed positions. Retain the report alongside the frozen input.
+stage timelines, data failures, canceled IOC quantities, fees, cash, and unclosed positions. Retain the report alongside the frozen input.
 
 The fill model uses whole shares, the opposite arrival quote, a declared share of displayed liquidity, and adverse
 slippage. A modeled price beyond the submitted limit cancels the order. Zero added slippage still includes crossing
 the quoted spread and the protocol's fees. `feeMultiplierPpm` scales the fees before their normal rounding. Execution
-assumptions describe a counterfactual; they do not measure queue position or actual broker fills.
+assumptions describe a counterfactual; they do not measure queue position or actual broker fills. An archive outage
+that requires the broker market/DAY close fallback is incomplete because this harness has no verified fill model for
+that recovery. It never substitutes a later IOC or an invented market fill.
 
-The `bayn.intraday-replay-report.v3` report includes explicit availability policy/evidence and holding-period equity marks from adverse verified archive bids,
+The retained September 10 conformance fixture reproduces the IWM decision, candidate exclusions, 34-share target and
+287.93 limit under its original v11 identity and 2-second quote-age protocol. All 223 row receipts match the original
+snapshot. Its cutoff was 19:50:27.072Z, reader completion 19:50:29.128Z, planning reader completion 19:50:32.224Z and
+submission start 19:50:35.817Z. No venue-arrival timestamp was retained. This fixture proves historical conformance;
+it is not economic evidence for the current strategy.
+
+The `bayn.intraday-replay-report.v4` report includes explicit availability policy/evidence and holding-period equity marks from adverse verified archive bids,
 observed drawdown, carried peak equity, and diagnostic daily-loss/drawdown-limit breaches. Marks use the declared
 30-second poll interval, so excursions between observations can be missed. Missing required mark evidence makes the
 session incomplete while preserving attempted closes, fees, fills, and remaining positions. These diagnostics do not
@@ -246,8 +272,8 @@ to carry cash and stop after incomplete sessions.
 
 The study input has `schemaVersion: "bayn.archive-replay-study-input.v1"`, `sessionMode: "independent-flat-start"`,
 `experimentPlanHash`, the frozen `strategyProtocolHash` and `riskPolicyHash`, and `scenarios: [{ name, input }]`.
-Each scenario's `input` is the complete `bayn.intraday-replay-input.v1` object above. Scenarios must have unique names
-and identical calendars, date ranges, and starting/allocation capital and availability policy. Only execution assumptions may differ. Freeze
+Each scenario's `input` is the complete `bayn.intraday-replay-input.v2` object above. Scenarios must have unique names
+and identical calendars, date ranges, and starting/allocation capital and availability policy. Only execution assumptions and operational timing may differ. Freeze
 the plan and all scenarios before examining their evaluation returns; a supplied plan hash records identity, not proof
 of preregistration. The command rejects strategy/risk identity drift before archive reads.
 

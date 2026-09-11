@@ -1,5 +1,7 @@
 import { Effect, Result, Schema } from 'effect'
 
+import { intradayReplayTimeline } from './timing'
+
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
 import {
   makeCycleExecutionPolicyFromModel,
@@ -24,12 +26,7 @@ import {
 } from '../build'
 import { OperationalError, operationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
-import {
-  IntradaySnapshotFailure,
-  IntradaySnapshotPurpose,
-  type IntradayMarketDataService,
-  type IntradaySnapshotQuery,
-} from '../market-data'
+import { IntradaySnapshotFailure, IntradaySnapshotPurpose, type IntradaySnapshotQuery } from '../market-data'
 import type { ArchiveVerifiedIntradayMarketSnapshot } from '../market-data/intraday/model'
 import { isIntradaySnapshotPending } from '../market-data/intraday/pending'
 import {
@@ -175,10 +172,12 @@ const pushUnavailable = (
 }
 
 const readSnapshot = (
-  marketData: IntradayMarketDataService,
+  marketData: ReplayMarketDataService,
   query: IntradaySnapshotQuery,
+  availableBy: string = query.observedAt,
 ): Effect.Effect<SnapshotRead> =>
   loadIntradaySnapshot(marketData, query).pipe(
+    Effect.tap((snapshot) => marketData.recordedAvailability?.(snapshot, availableBy) ?? Effect.void),
     Effect.map((snapshot) => ({ _tag: 'Success' as const, snapshot })),
     Effect.catch((error) => Effect.succeed({ _tag: 'Failure' as const, error })),
   )
@@ -369,7 +368,7 @@ const completeSession = (
 
 const replaySession = (
   input: IntradayReplayInput,
-  marketData: IntradayMarketDataService,
+  marketData: ReplayMarketDataService,
   protocol: IntradayMomentumProtocol,
   policy: Policy,
   context: ReplaySessionContext,
@@ -434,7 +433,9 @@ const replaySession = (
 
     const entryStartMs = intradayMomentumFirstDecisionPollMs(protocol, context.window, input.assumptions)
     const entryCutoffMs = Date.parse(context.window.submissionCutoffAt)
-    for (let observedMs = entryStartMs; observedMs < entryCutoffMs; observedMs += input.assumptions.pollIntervalMs) {
+    let nextEntryPollMs = entryStartMs
+    for (let observedMs = nextEntryPollMs; observedMs < entryCutoffMs; observedMs = nextEntryPollMs) {
+      nextEntryPollMs = observedMs + input.assumptions.pollIntervalMs
       const observedAt = utcInstantFromEpochMillis(observedMs)
       const queryResult = intradayMomentumEntryQuery(context.queryContext, protocol, context.marketCalendar, observedAt)
       if (Result.isFailure(queryResult)) {
@@ -449,7 +450,9 @@ const replaySession = (
         continue
       }
 
-      const loaded = yield* readSnapshot(marketData, queryResult.success)
+      const readCompletedAt = utcInstantFromEpochMillis(observedMs + input.operationalTiming.decisionReadMs)
+      const loaded = yield* readSnapshot(marketData, queryResult.success, readCompletedAt)
+      nextEntryPollMs = Date.parse(readCompletedAt) + input.assumptions.pollIntervalMs
       if (loaded._tag === 'Failure') {
         const retryable = isRetryableArchiveFailure(loaded.error)
         retryableEntryFailure ||= retryable
@@ -461,6 +464,7 @@ const replaySession = (
         continue
       }
 
+      nextEntryPollMs += input.operationalTiming.decisionComputeMs
       const decisionSnapshot = loaded.snapshot
       const decisionResult = evaluateDecision(
         protocol,
@@ -481,7 +485,13 @@ const replaySession = (
       }
 
       const decision = decisionResult.success
-      observations.push({ kind: 'snapshot', purpose: 'decision', manifest: decisionSnapshot.manifest, decision })
+      observations.push({
+        kind: 'snapshot',
+        purpose: 'decision',
+        manifest: decisionSnapshot.manifest,
+        availableBy: readCompletedAt,
+        decision,
+      })
       if (decision.selectedSymbols.length === 0) {
         retryableEntryFailure ||= decision.excludedCandidates?.length === protocol.candidateSymbols.length
         continue
@@ -549,6 +559,13 @@ const replaySession = (
       incompleteSession(context, ledger, observations, orders, reason, equityDiagnostics())
     const decisionRangeEndAt = selectedDecisionSnapshot.manifest.rangeEndAt
     const decisionObservedAt = selectedDecisionSnapshot.manifest.observedAt
+    const entryTimeline = intradayReplayTimeline(
+      decisionObservedAt,
+      'entry',
+      input.operationalTiming,
+      input.assumptions.orderLatencyMs,
+    )
+    observations.push({ kind: 'timing', purpose: 'planning', timeline: entryTimeline })
     const planningQueryResult = intradayMomentumPricingQuery(
       context.queryContext,
       protocol,
@@ -563,7 +580,11 @@ const replaySession = (
         `entry planning query failed: ${failureDescription(planningQueryResult.failure).message}`,
       )
     }
-    const planningLoaded = yield* readSnapshot(marketData, planningQueryResult.success)
+    const planningLoaded = yield* readSnapshot(
+      marketData,
+      planningQueryResult.success,
+      entryTimeline.planningReadCompletedAt,
+    )
     if (planningLoaded._tag === 'Failure') {
       const retryable = isRetryableArchiveFailure(planningLoaded.error)
       pushUnavailable(observations, 'planning', decisionObservedAt, planningLoaded.error, retryable)
@@ -572,7 +593,12 @@ const replaySession = (
       )
     }
     const planningSnapshot = planningLoaded.snapshot
-    observations.push({ kind: 'snapshot', purpose: 'planning', manifest: planningSnapshot.manifest })
+    observations.push({
+      kind: 'snapshot',
+      purpose: 'planning',
+      manifest: planningSnapshot.manifest,
+      availableBy: entryTimeline.planningReadCompletedAt,
+    })
 
     const planningPrices = adverseQuotePrices(planningSnapshot, [symbol])
     if (Result.isFailure(planningPrices)) {
@@ -655,7 +681,17 @@ const replaySession = (
       )
     }
 
-    const arrivalAt = utcInstantFromEpochMillis(Date.parse(decisionObservedAt) + input.assumptions.orderLatencyMs)
+    if (Date.parse(entryTimeline.submittedAt) >= entryCutoffMs) {
+      return completeSession(
+        context,
+        ledger,
+        observations,
+        orders,
+        'entry construction exceeded the submission cutoff; no order submitted',
+        equityDiagnostics(),
+      )
+    }
+    const arrivalAt = entryTimeline.arrivedAt
     const arrivalQueryResult = intradayMomentumPricingQuery(
       context.queryContext,
       protocol,
@@ -679,14 +715,19 @@ const replaySession = (
       )
     }
     const arrivalSnapshot = arrivalLoaded.snapshot
-    observations.push({ kind: 'snapshot', purpose: 'arrival', manifest: arrivalSnapshot.manifest })
+    observations.push({
+      kind: 'snapshot',
+      purpose: 'arrival',
+      manifest: arrivalSnapshot.manifest,
+      availableBy: arrivalAt,
+    })
 
     const entryOrder = {
       symbol,
       side: OrderSide.Buy,
       quantityMicros: requestedQuantity.toString(),
       limitPriceMicros: askPriceMicros.toString(),
-      submittedAt: decisionObservedAt,
+      submittedAt: entryTimeline.submittedAt,
     }
     const entryOutcome = simulateIntradayReplayIoc({
       order: entryOrder,
@@ -728,69 +769,76 @@ const replaySession = (
       input.assumptions.firstPollDelayMs
     const hardFlatMs = Date.parse(context.calendar.executionCloseAt) - protocol.hardFlatBeforeCloseMinutes * 60_000
     let nextMarkMs = Date.parse(arrivalAt)
-    for (
-      let observedMs = closeStartMs;
-      observedMs < hardFlatMs && ledger.positions.length > 0;
-      observedMs += input.assumptions.pollIntervalMs
-    ) {
-      while (nextMarkMs <= observedMs && nextMarkMs <= hardFlatMs && ledger.positions.length > 0) {
-        const markObservedAt = utcInstantFromEpochMillis(nextMarkMs)
-        const heldSymbols = ledger.positions.map(({ symbol: positionSymbol }) => positionSymbol)
-        const markRangeEndMs =
-          nextMarkMs % minuteMs === 0 ? nextMarkMs - minuteMs : Math.floor(nextMarkMs / minuteMs) * minuteMs
-        const markRangeEndAt = utcInstantFromEpochMillis(markRangeEndMs)
-        const markQueryResult = intradayMomentumPricingQuery(
-          context.queryContext,
-          protocol,
-          context.marketCalendar,
-          markObservedAt,
-          markRangeEndAt,
-          heldSymbols,
-        )
-        if (Result.isFailure(markQueryResult)) {
-          const retryable = markQueryResult.failure instanceof IntradayMomentumCloseAwaitingSnapshot
-          pushUnavailable(observations, 'mark', markObservedAt, markQueryResult.failure, retryable)
-          markEvidenceFailure ??= `mark query failed: ${failureDescription(markQueryResult.failure).message}`
-          nextMarkMs += input.assumptions.pollIntervalMs
-          continue
-        }
-        const markLoaded = yield* readSnapshot(marketData, markQueryResult.success)
-        if (markLoaded._tag === 'Failure') {
-          const retryable = isRetryableArchiveFailure(markLoaded.error)
-          pushUnavailable(observations, 'mark', markObservedAt, markLoaded.error, retryable)
-          markEvidenceFailure ??= `mark evidence unavailable: ${failureDescription(markLoaded.error).message}`
-          nextMarkMs += input.assumptions.pollIntervalMs
-          continue
-        }
-        const markSnapshot = markLoaded.snapshot
-        const markPrices = adverseClosingQuotePrices(markSnapshot, heldSymbols)
-        if (Result.isFailure(markPrices)) {
-          pushUnavailable(observations, 'mark', markObservedAt, markPrices.failure, false)
-          markEvidenceFailure ??= `mark quote construction failed: ${failureDescription(markPrices.failure).message}`
-          nextMarkMs += input.assumptions.pollIntervalMs
-          continue
-        }
-        const mark = markEquity(markPrices.success.bidPriceMicros)
-        if (Result.isFailure(mark)) {
-          pushUnavailable(
-            observations,
-            'mark',
+    const markThrough = (throughMs: number) =>
+      Effect.gen(function* () {
+        while (nextMarkMs <= throughMs && nextMarkMs <= hardFlatMs && ledger.positions.length > 0) {
+          const markObservedAt = utcInstantFromEpochMillis(nextMarkMs)
+          const heldSymbols = ledger.positions.map(({ symbol: positionSymbol }) => positionSymbol)
+          const markRangeEndMs =
+            nextMarkMs % minuteMs === 0 ? nextMarkMs - minuteMs : Math.floor(nextMarkMs / minuteMs) * minuteMs
+          const markRangeEndAt = utcInstantFromEpochMillis(markRangeEndMs)
+          const markQueryResult = intradayMomentumPricingQuery(
+            context.queryContext,
+            protocol,
+            context.marketCalendar,
             markObservedAt,
-            new Error(`${mark.failure.field}: ${mark.failure.reason}`),
-            false,
+            markRangeEndAt,
+            heldSymbols,
           )
-          markEvidenceFailure ??= `mark-to-market accounting failed: ${mark.failure.field}`
+          if (Result.isFailure(markQueryResult)) {
+            const retryable = markQueryResult.failure instanceof IntradayMomentumCloseAwaitingSnapshot
+            pushUnavailable(observations, 'mark', markObservedAt, markQueryResult.failure, retryable)
+            markEvidenceFailure ??= `mark query failed: ${failureDescription(markQueryResult.failure).message}`
+            nextMarkMs += input.assumptions.pollIntervalMs
+            continue
+          }
+          const markLoaded = yield* readSnapshot(marketData, markQueryResult.success)
+          if (markLoaded._tag === 'Failure') {
+            const retryable = isRetryableArchiveFailure(markLoaded.error)
+            pushUnavailable(observations, 'mark', markObservedAt, markLoaded.error, retryable)
+            markEvidenceFailure ??= `mark evidence unavailable: ${failureDescription(markLoaded.error).message}`
+            nextMarkMs += input.assumptions.pollIntervalMs
+            continue
+          }
+          const markSnapshot = markLoaded.snapshot
+          const markPrices = adverseClosingQuotePrices(markSnapshot, heldSymbols)
+          if (Result.isFailure(markPrices)) {
+            pushUnavailable(observations, 'mark', markObservedAt, markPrices.failure, false)
+            markEvidenceFailure ??= `mark quote construction failed: ${failureDescription(markPrices.failure).message}`
+            nextMarkMs += input.assumptions.pollIntervalMs
+            continue
+          }
+          const mark = markEquity(markPrices.success.bidPriceMicros)
+          if (Result.isFailure(mark)) {
+            pushUnavailable(
+              observations,
+              'mark',
+              markObservedAt,
+              new Error(`${mark.failure.field}: ${mark.failure.reason}`),
+              false,
+            )
+            markEvidenceFailure ??= `mark-to-market accounting failed: ${mark.failure.field}`
+            nextMarkMs += input.assumptions.pollIntervalMs
+            continue
+          }
+          observations.push({
+            kind: 'snapshot',
+            purpose: 'mark',
+            manifest: markSnapshot.manifest,
+            availableBy: markObservedAt,
+            equity: mark.success,
+          })
           nextMarkMs += input.assumptions.pollIntervalMs
-          continue
         }
-        observations.push({
-          kind: 'snapshot',
-          purpose: 'mark',
-          manifest: markSnapshot.manifest,
-          equity: mark.success,
-        })
-        nextMarkMs += input.assumptions.pollIntervalMs
-      }
+      })
+    let nextClosePollMs = closeStartMs
+    for (
+      let observedMs = nextClosePollMs;
+      observedMs < hardFlatMs && ledger.positions.length > 0;
+      observedMs = nextClosePollMs
+    ) {
+      nextClosePollMs = observedMs + input.assumptions.pollIntervalMs
+      yield* markThrough(observedMs)
       const observedAt = utcInstantFromEpochMillis(observedMs)
       const positions = ledger.positions
       const closeQueryResult = intradayMomentumCloseQuery(
@@ -809,25 +857,42 @@ const replaySession = (
         }
         continue
       }
-      const closeLoaded = yield* readSnapshot(marketData, closeQueryResult.success)
+      const closeTimeline = intradayReplayTimeline(
+        observedAt,
+        'close',
+        input.operationalTiming,
+        input.assumptions.orderLatencyMs,
+      )
+      observations.push({ kind: 'timing', purpose: 'close', timeline: closeTimeline })
+      const closeLoaded = yield* readSnapshot(
+        marketData,
+        closeQueryResult.success,
+        closeTimeline.planningReadCompletedAt,
+      )
       if (closeLoaded._tag === 'Failure') {
         const retryable = isRetryableArchiveFailure(closeLoaded.error)
         pushUnavailable(observations, 'close', observedAt, closeLoaded.error, retryable)
-        if (!retryable) {
-          closeFailure = failureDescription(closeLoaded.error).message
-          break
-        }
-        continue
+        closeFailure = retryable
+          ? 'close requires broker market/DAY fallback; its execution evidence is unavailable'
+          : failureDescription(closeLoaded.error).message
+        break
       }
+      nextClosePollMs = Date.parse(closeTimeline.planCompletedAt) + input.assumptions.pollIntervalMs
       const closeSnapshot = closeLoaded.snapshot
-      observations.push({ kind: 'snapshot', purpose: 'close', manifest: closeSnapshot.manifest })
+      observations.push({
+        kind: 'snapshot',
+        purpose: 'close',
+        manifest: closeSnapshot.manifest,
+        availableBy: closeTimeline.planningReadCompletedAt,
+      })
       const closePrices = adverseClosingQuotePrices(
         closeSnapshot,
         positions.map(({ symbol: positionSymbol }) => positionSymbol),
       )
       if (Result.isFailure(closePrices)) {
         pushUnavailable(observations, 'close', observedAt, closePrices.failure, true)
-        continue
+        closeFailure = 'close requires broker market/DAY fallback; its execution evidence is unavailable'
+        break
       }
       const closeCaps = maximumSellQuantities(
         closeSnapshot,
@@ -853,7 +918,8 @@ const replaySession = (
         continue
       }
 
-      const arrivalAt = utcInstantFromEpochMillis(Date.parse(observedAt) + input.assumptions.orderLatencyMs)
+      const arrivalAt = closeTimeline.arrivedAt
+      nextClosePollMs = Date.parse(arrivalAt) + input.assumptions.pollIntervalMs
       if (Date.parse(arrivalAt) >= hardFlatMs) {
         pushUnavailable(
           observations,
@@ -876,11 +942,8 @@ const replaySession = (
       if (Result.isFailure(arrivalQueryResult)) {
         const retryable = arrivalQueryResult.failure instanceof IntradayMomentumCloseAwaitingSnapshot
         pushUnavailable(observations, 'arrival', arrivalAt, arrivalQueryResult.failure, retryable)
-        if (!retryable) {
-          closeFailure = failureDescription(arrivalQueryResult.failure).message
-          break
-        }
-        continue
+        closeFailure = `submitted closing IOC arrival cannot be established: ${failureDescription(arrivalQueryResult.failure).message}`
+        break
       }
       const arrivalLoaded = yield* readSnapshot(marketData, {
         ...arrivalQueryResult.success,
@@ -889,14 +952,17 @@ const replaySession = (
       if (arrivalLoaded._tag === 'Failure') {
         const retryable = isRetryableArchiveFailure(arrivalLoaded.error)
         pushUnavailable(observations, 'arrival', arrivalAt, arrivalLoaded.error, retryable)
-        if (!retryable) {
-          closeFailure = failureDescription(arrivalLoaded.error).message
-          break
-        }
-        continue
+        closeFailure = `submitted closing IOC arrival cannot be established: ${failureDescription(arrivalLoaded.error).message}`
+        break
       }
       const arrivalSnapshot = arrivalLoaded.snapshot
-      observations.push({ kind: 'snapshot', purpose: 'arrival', manifest: arrivalSnapshot.manifest })
+      observations.push({
+        kind: 'snapshot',
+        purpose: 'arrival',
+        manifest: arrivalSnapshot.manifest,
+        availableBy: arrivalAt,
+      })
+      yield* markThrough(Date.parse(arrivalAt))
       for (const position of positions) {
         const limitPriceMicros = closePrices.success.bidPriceMicros[position.symbol]
         if (limitPriceMicros === undefined) {
@@ -909,7 +975,7 @@ const replaySession = (
             side: OrderSide.Sell,
             quantityMicros: position.quantityMicros,
             limitPriceMicros,
-            submittedAt: observedAt,
+            submittedAt: closeTimeline.submittedAt,
           },
           arrivalSnapshot,
           executionModel: protocol.executionModel,
@@ -991,9 +1057,8 @@ export const runIntradayReplay = (
     const availabilitySnapshots = new Map<string, ArchiveSnapshotAvailability>()
     const availabilityReceipts = new Map<string, ArchiveAvailabilityReceipt>()
     const verifyAvailability = marketData.recordedAvailability
-    const requireAvailability = (snapshot: ArchiveVerifiedIntradayMarketSnapshot) =>
+    const requireAvailability = (snapshot: ArchiveVerifiedIntradayMarketSnapshot, availableBy: string) =>
       Effect.gen(function* () {
-        if (availabilityPolicy === ArchiveAvailabilityPolicy.SourceReceiptAssumption) return snapshot
         if (verifyAvailability === undefined) {
           return yield* operationalError({
             component: 'market-data',
@@ -1005,20 +1070,25 @@ export const runIntradayReplay = (
             }),
           })
         }
-        const proof = yield* verifyAvailability(snapshot)
+        const proof = yield* verifyAvailability(snapshot, availableBy)
         availabilitySnapshots.set(proof.snapshotId, proof)
         for (const receipt of proof.receipts) availabilityReceipts.set(receipt.receiptHash, receipt)
-        return snapshot
+        return proof
       })
-    const replayMarket: IntradayMarketDataService =
+    const replayMarket: ReplayMarketDataService =
       availabilityPolicy === ArchiveAvailabilityPolicy.SourceReceiptAssumption
-        ? marketData
+        ? {
+            check: marketData.check,
+            captureVersion: marketData.captureVersion,
+            loadSnapshot: marketData.loadSnapshot,
+            verifyArchiveSnapshot: marketData.verifyArchiveSnapshot,
+          }
         : {
             check: marketData.check,
             captureVersion: marketData.captureVersion,
-            loadSnapshot: (request) => marketData.loadSnapshot(request).pipe(Effect.flatMap(requireAvailability)),
-            verifyArchiveSnapshot: (snapshot) =>
-              marketData.verifyArchiveSnapshot(snapshot).pipe(Effect.flatMap(requireAvailability)),
+            loadSnapshot: marketData.loadSnapshot,
+            verifyArchiveSnapshot: marketData.verifyArchiveSnapshot,
+            recordedAvailability: requireAvailability,
           }
     if (!isValidUtcInstant(now)) {
       return yield* new IntradayReplayFailure({
@@ -1248,7 +1318,7 @@ export const runIntradayReplay = (
           .toString()
       : null
     const material: Omit<IntradayReplayReport, 'reportHash'> = {
-      schemaVersion: 'bayn.intraday-replay-report.v3',
+      schemaVersion: 'bayn.intraday-replay-report.v4',
       evidenceKind: 'COUNTERFACTUAL_RESEARCH',
       qualification: 'NOT_QUALIFIED',
       inputHash,
@@ -1264,6 +1334,7 @@ export const runIntradayReplay = (
         snapshots: [...availabilitySnapshots.values()].map((proof) => ({
           snapshotId: proof.snapshotId,
           observedAt: proof.observedAt,
+          availableBy: proof.availableBy,
           receiptHashes: proof.receipts.map((receipt) => receipt.receiptHash),
           ...(proof.candidateExclusions === undefined ? {} : { candidateExclusions: proof.candidateExclusions }),
         })),
@@ -1287,8 +1358,11 @@ export const runIntradayReplay = (
       },
       limitations: [
         availabilityPolicy === ArchiveAvailabilityPolicy.RecordedReader
-          ? 'every used row requires a retained production-reader receipt completed no later than replay time; unavailable decision candidates are explicitly excluded, while missing benchmark or execution-pricing evidence and all-candidate unavailability remain incomplete'
+          ? 'every used row requires a retained production-reader receipt completed no later than the declared consumption clock; unavailable decision candidates are explicitly excluded, while missing benchmark or execution-pricing evidence and all-candidate unavailability remain incomplete'
           : 'source receipt time is an explicit unproven availability assumption; Kafka/Flink/ClickHouse visibility and production reader availability are not established',
+        'source cutoffs remain fixed through decision and planning; declared operational stages advance consumption, commit, submission and arrival clocks without rewriting historical receipts',
+        'arrival and equity-mark evidence retain their own source-time availability bound; delayed decision reads do not relax execution evidence',
+        'broker market/DAY archive-outage recovery is not assigned an IEX IOC fill; a required recovery leaves the session incomplete',
         'reader receipts are conservative observed upper bounds, not earliest archive visibility, simultaneous snapshot proof, reader uptime, or actual execution evidence',
         'counterfactual flat-start session lifecycle; only cash carries between sessions',
         'no broker, authority, PostgreSQL, TigerBeetle, or risk receipt is fabricated',
