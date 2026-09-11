@@ -187,9 +187,10 @@ export const mutationCyclePassTimeoutError = (timeoutMs: number): CycleRunnerErr
     message: `mutation autonomous cycle pass did not complete or reconcile within ${timeoutMs.toString()}ms`,
   })
 
-const mutationPassDeadline = Context.Reference<number | undefined>('bayn/MutationPassDeadline', {
-  defaultValue: () => undefined,
-})
+const mutationPassBudget = Context.Reference<{ readonly startedAt: number; readonly deadlineAt: number } | undefined>(
+  'bayn/MutationPassBudget',
+  { defaultValue: () => undefined },
+)
 
 export const runMutationPassWithinTimeout = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
@@ -197,9 +198,12 @@ export const runMutationPassWithinTimeout = <A, E, R>(
 ): Effect.Effect<A, E | CycleRunnerError, R> =>
   Effect.gen(function* () {
     const startedAt = yield* Clock.currentTimeMillis
-    const parentDeadline = yield* mutationPassDeadline
+    const parentBudget = yield* mutationPassBudget
     return yield* effect.pipe(
-      Effect.provideService(mutationPassDeadline, Math.min(parentDeadline ?? Infinity, startedAt + timeoutMs)),
+      Effect.provideService(mutationPassBudget, {
+        startedAt: parentBudget?.startedAt ?? startedAt,
+        deadlineAt: Math.min(parentBudget?.deadlineAt ?? Infinity, startedAt + timeoutMs),
+      }),
       Effect.timeoutOrElse({
         duration: Duration.millis(timeoutMs),
         orElse: () => Effect.fail(mutationCyclePassTimeoutError(timeoutMs)),
@@ -1456,21 +1460,20 @@ const buildClosingExecutionCycleDecisionWithSource = (
         ),
       )
       const archiveStartedAt = yield* Clock.currentTimeMillis
-      const passDeadline = yield* mutationPassDeadline
+      const passBudget = yield* mutationPassBudget
+      const remainingMs = Math.min(
+        input.reconciliationPassTimeoutMs,
+        input.reconciliationIntervalMs,
+        Date.parse(closeExpiresAt) - archiveStartedAt,
+        (passBudget?.deadlineAt ?? Infinity) - archiveStartedAt,
+      )
+      // Reserve twice the observed preparatory work for a fresh reconciliation and close construction.
+      const fallbackReserveMs =
+        passBudget === undefined ? remainingMs / 2 : 2 * (archiveStartedAt - passBudget.startedAt)
       const snapshot = yield* loadIntradaySnapshot(input.intradayMarketData, query).pipe(
         Effect.timeoutOrElse({
           duration: Duration.millis(
-            Math.max(
-              1,
-              Math.floor(
-                Math.min(
-                  input.reconciliationPassTimeoutMs,
-                  input.reconciliationIntervalMs,
-                  Date.parse(closeExpiresAt) - archiveStartedAt,
-                  (passDeadline ?? Infinity) - archiveStartedAt,
-                ) / 2,
-              ),
-            ),
+            Math.max(1, Math.floor(Math.min(remainingMs / 2, remainingMs - fallbackReserveMs))),
           ),
           orElse: () =>
             Effect.fail(

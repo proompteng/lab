@@ -3307,9 +3307,16 @@ describe('OBSERVE runtime composition', () => {
     expect(afterClose).toMatchObject({ _tag: 'CycleRunnerError' })
   })
 
-  test.each(['initial', 'residual'] as const)(
-    'cancels a stuck close archive read during %s closure within the remaining pass budget',
-    async (phase) => {
+  test.each([
+    ['initial', 1_000, 17_500],
+    ['residual', 1_000, 17_500],
+    ['initial', 8_000, 18_001],
+    ['residual', 8_000, 18_001],
+    ['initial', 11_000, 24_001],
+    ['residual', 11_000, 24_001],
+  ] as const)(
+    'cancels a stuck close archive read during %s closure with %i ms reconciliation within the pass budget',
+    async (phase, reconciliationMs, expectedCloseMs) => {
       const fixture = await executionLifecycleFixture()
       const startedAt = Date.parse(fixture.boundCycle.window.executionCloseAt) - 239_000
       let reads = 0
@@ -3334,7 +3341,7 @@ describe('OBSERVE runtime composition', () => {
               },
             ])
           const reconcile = Effect.gen(function* () {
-            yield* Effect.sleep(Duration.seconds(8))
+            yield* Effect.sleep(Duration.millis(reconciliationMs))
             reconciliations += 1
             const observedAt = utcInstantFromEpochMillis(yield* Clock.currentTimeMillis)
             return reconciliationAt(observedAt)
@@ -3441,7 +3448,7 @@ describe('OBSERVE runtime composition', () => {
       expect(reads).toBe(1)
       expect(finalized).toBe(1)
       expect(reconciliations).toBe(2)
-      expect(close.createdAt).toBe(utcInstantFromEpochMillis(startedAt + 28_000))
+      expect(close.createdAt).toBe(utcInstantFromEpochMillis(startedAt + expectedCloseMs))
       expect(close.dispatchable).toBeTrue()
       expect(close.bindings.executionMarketData).toMatchObject({
         schemaVersion: 'bayn.reconciled-position-liquidation-binding.v1',
