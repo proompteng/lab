@@ -64,9 +64,6 @@ import type {
 import { executionDecisionFinalizationHeadroomMs } from './model'
 import {
   prepareClosingExecutionCycleDecision,
-  decisionBuildError,
-  prepareObserveDecisionReads,
-  readObserveDecisionFacts,
   reconciliationRunnerError,
   requireMutationAuthorityGeneration,
   type ObserveDecisionInput,
@@ -547,56 +544,7 @@ const readMutationPreparationFacts = (
   >,
 ): Effect.Effect<MutationPreparationFacts, CycleRunnerError, ObserveDecisionRuntime> =>
   Effect.gen(function* () {
-    const decisionInput = mutationDecisionInput(
-      request.input,
-      request.preparation,
-      request.policy,
-      request.cycle,
-      request.reconcile,
-    )
-    const reads = yield* Effect.fromResult(prepareObserveDecisionReads(decisionInput)).pipe(
-      Effect.mapError((cause) =>
-        mutationRunnerError({ message: 'mutation cycle decision reads are invalid', cause, failure: 'contract' }),
-      ),
-    )
-    const facts = yield* readObserveDecisionFacts(decisionInput, reads).pipe(
-      Effect.mapError((cause) => {
-        const converted = decisionBuildError(cause)
-        return mutationRunnerError({
-          message: converted.message,
-          cause,
-          failure: converted.failure === 'not-ready' ? 'contract' : converted.failure,
-        })
-      }),
-    )
-    const authority = yield* Effect.fromResult(
-      requireMutationAuthorityGeneration(facts.reconciliation, request.policy, request.input.authorityGenerationHash),
-    ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
-    const snapshot = {
-      snapshotId: request.document.bindings.snapshotId,
-      contentHash: request.document.bindings.snapshotContentHash,
-      finalizedAt: request.document.bindings.snapshotFinalizedAt,
-    }
-    return {
-      snapshot,
-      reconciliation: facts.reconciliation,
-      authority: authority.authority,
-      evaluatedAt: facts.evaluatedAt,
-    }
-  })
-
-const readCloseMutationPreparationFacts = (
-  request: MutationPreparationFactsRequest<
-    ObserveDecisionRuntime,
-    ReconciliationPassError,
-    ObserveAutonomousCycleInput,
-    ObserveStartupPreparation
-  >,
-): Effect.Effect<MutationPreparationFacts, CycleRunnerError, ObserveDecisionRuntime> =>
-  Effect.gen(function* () {
-    const reconciliation = yield* request.reconcile.pipe(
-      Effect.mapError((cause) => reconciliationRunnerError(cause, 'execution close reconciliation failed')),
-    )
+    const reconciliation = yield* request.reconcile.pipe(Effect.mapError(reconciliationRunnerError))
     const evaluatedAt = yield* currentUtcInstant
     const authority = yield* Effect.fromResult(
       requireMutationAuthorityGeneration(reconciliation, request.policy, request.input.authorityGenerationHash),
@@ -637,8 +585,7 @@ export const prepareNextMutationIntent = (
     request.drainOpenOrders ?? false,
     {
       now: currentUtcInstant,
-      readFacts:
-        request.input.mutationPhase === 'CLOSE' ? readCloseMutationPreparationFacts : readMutationPreparationFacts,
+      readFacts: readMutationPreparationFacts,
       restrictAuthority: restrictMutationAuthority,
     },
   )

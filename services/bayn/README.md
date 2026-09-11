@@ -82,6 +82,10 @@ orders belonging to the bound cycle and submit the existing position-reducing cl
 The persisted kill state remains active, and broker identity, unknown-order, quantity, accounting, and close-deadline
 checks still apply. Operator restrictions do not enter this recovery path.
 
+Mutation preparation uses its verified durable decision and session binding plus fresh broker reconciliation. It does
+not reread the market calendar after the decision is bound, so an unrelated calendar outage cannot prevent accepted
+order recovery or the scheduled close. New decision construction still reads and verifies the broker calendar.
+
 Broker reconciliation recaptures changing history or lagging fill activities at most twice, 500 milliseconds apart,
 before persisting a snapshot. A broker terminal fill may precede local acknowledged-intent recovery; recorded terminal
 outcomes and aggregate fills still must agree. Equity marks from separate account and position observations remain
