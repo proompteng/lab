@@ -421,7 +421,7 @@ const ensureExecutionCycleClosure = (
         policy,
         cycle,
         entryDocument,
-        reconcile: Effect.succeed(closeReconciliation),
+        reconcile,
         closeExpiresAt: closeWindow.expiresAt,
       })
       const decision = decideExecutionCycleCloseDocument(document)

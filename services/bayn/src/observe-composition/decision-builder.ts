@@ -29,6 +29,7 @@ import {
   type PersistedIntradaySnapshotRows,
 } from '../market-data'
 import { isIntradaySnapshotPending } from '../market-data/intraday/pending'
+import { IntradaySnapshotFailure } from '../market-data/intraday/model'
 import {
   constrainExecutionTargetAllocationCapitalMicros,
   executionMandateAllocationCapitalMicros,
@@ -1316,8 +1317,9 @@ export interface BuildClosingExecutionCycleDecisionInput {
   readonly replanGenerationHash?: string
 }
 
-export const buildClosingExecutionCycleDecision = (
+const buildClosingExecutionCycleDecisionWithSource = (
   request: BuildClosingExecutionCycleDecisionInput,
+  source: 'archive' | 'reconciled-position',
 ): Effect.Effect<
   ExecutionDecisionDocument,
   CycleRunnerError | ExecutionCloseAwaitingMarketData,
@@ -1357,6 +1359,20 @@ export const buildClosingExecutionCycleDecision = (
       Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
       Effect.map((definition) => definition.parameters),
     )
+    if (source === 'reconciled-position') {
+      const closeAt = Date.parse(cycle.window.executionCloseAt)
+      const observed = Date.parse(evaluatedAt)
+      if (
+        observed < closeAt - intradayParameters.flattenBeforeCloseMinutes * 60_000 ||
+        observed >= closeAt - intradayParameters.hardFlatBeforeCloseMinutes * 60_000 ||
+        evaluatedAt >= closeExpiresAt
+      ) {
+        return yield* new ExecutionCloseAwaitingMarketData({
+          message: 'reconciled-position fallback is outside the authorized close window',
+          observedAt: evaluatedAt,
+        })
+      }
+    }
     const entryMarketData = entryDocument.bindings.executionMarketData
     const persistedUniverse =
       entryMarketData?.schemaVersion === 'bayn.execution-market-data-binding.v2' ? entryMarketData.universe : undefined
@@ -1392,7 +1408,7 @@ export const buildClosingExecutionCycleDecision = (
         }),
     )
     const closeExecutionMarketData = yield* Effect.gen(function* () {
-      if (closingPass.kind === 'broker-position') {
+      if (closingPass.kind === 'broker-position' || source === 'reconciled-position') {
         const binding = yield* Effect.fromResult(
           reconciledPositionLiquidationBinding(cycle, executionSession.calendar, reconciliation.brokerState, symbols),
         ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
@@ -1428,10 +1444,36 @@ export const buildClosingExecutionCycleDecision = (
         ),
       )
       const snapshot = yield* loadIntradaySnapshot(input.intradayMarketData, query).pipe(
+        Effect.timeoutOrElse({
+          duration: Duration.millis(
+            Math.max(
+              1,
+              Math.floor(
+                Math.min(
+                  input.reconciliationPassTimeoutMs,
+                  input.reconciliationIntervalMs,
+                  Date.parse(closeExpiresAt) - Date.parse(evaluatedAt),
+                ) / 2,
+              ),
+            ),
+          ),
+          orElse: () =>
+            Effect.fail(
+              new ExecutionCloseAwaitingMarketData({
+                message: 'closing archive read exhausted its share of the remaining execution pass',
+                observedAt: evaluatedAt,
+              }),
+            ),
+        }),
         Effect.mapError((cause) =>
-          isIntradaySnapshotPending(cause.cause)
-            ? new ExecutionCloseAwaitingMarketData({ message: cause.message, observedAt: evaluatedAt })
-            : mutationRunnerError({ message: 'execution close market-data read failed', cause }),
+          cause instanceof ExecutionCloseAwaitingMarketData
+            ? cause
+            : isIntradaySnapshotPending(cause.cause) ||
+                (cause.component === 'market-data' &&
+                  cause.retryable &&
+                  !(cause.cause instanceof IntradaySnapshotFailure))
+              ? new ExecutionCloseAwaitingMarketData({ message: cause.message, observedAt: evaluatedAt })
+              : mutationRunnerError({ message: 'execution close market-data read failed', cause }),
         ),
       )
       const quotePrices = yield* Effect.fromResult(adverseClosingQuotePrices(snapshot, symbols)).pipe(
@@ -1569,6 +1611,19 @@ export const buildClosingExecutionCycleDecision = (
     )
   })
 }
+
+export const buildClosingExecutionCycleDecision = (request: BuildClosingExecutionCycleDecisionInput) =>
+  buildClosingExecutionCycleDecisionWithSource(request, 'archive').pipe(
+    Effect.catchTag('ExecutionCloseAwaitingMarketData', (failure) =>
+      buildClosingExecutionCycleDecisionWithSource(request, 'reconciled-position').pipe(
+        Effect.tap(() =>
+          Effect.logWarning('Execution close used reconciled positions after archive evidence was unavailable').pipe(
+            Effect.annotateLogs({ cycleId: request.cycle.identity.cycleId, reason: failure.message }),
+          ),
+        ),
+      ),
+    ),
+  )
 
 export const observePass = (
   recordPass: Parameters<AutonomousCycleStartup>[0]['recordPass'],
