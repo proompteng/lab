@@ -1129,7 +1129,20 @@ const prepareStoredExecutionStep = async (
         drainOpenOrders,
       })
     }).pipe(
-      Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
+      Effect.provideService(
+        BrokerRead,
+        decisionBrokerRead(() =>
+          Effect.fail(
+            new BrokerReadError({
+              operation: 'market-calendar',
+              kind: BrokerReadErrorKind.InvalidResponse,
+              message: 'Alpaca market-calendar error response is invalid',
+              status: 500,
+              retryable: false,
+            }),
+          ),
+        ),
+      ),
       Effect.provideService(MarketData, marketData([])),
       Effect.provideService(IntentStore, intentStore),
       Effect.provideService(MutationStore, mutationStore),
@@ -3866,7 +3879,7 @@ describe('OBSERVE runtime composition', () => {
     expect(restrictions[0]).toContain(`intent ${rejectedIntent.intentId} ended REJECTED`)
   })
 
-  test('retains a canceled partial-fill PAPER entry without restricting authority', async () => {
+  test('retains a canceled partial-fill PAPER entry during a calendar outage without restricting authority', async () => {
     const fixture = await executionLifecycleFixture()
     const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.createdAt) + 1_000)
     const record = storedIntent(fixture.intent, IntentState.Terminal, observedAt, TerminalOutcome.Canceled)
