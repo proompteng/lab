@@ -81,6 +81,9 @@ recovery. It cannot discover new cycles or submit entries. During the existing c
 orders belonging to the bound cycle and submit the existing position-reducing close after fresh exact reconciliation.
 The persisted kill state remains active, and broker identity, unknown-order, quantity, accounting, and close-deadline
 checks still apply. Operator restrictions do not enter this recovery path.
+Once durable completion evidence is verified, the cycle may settle its restricted generation even when it had fills.
+Native authority rollover still requires all intents to be terminal, fresh exact reconciliation, a flat account and
+no unresolved mutations or open orders before creating a clear OBSERVE successor.
 
 Mutation preparation uses its verified durable decision and session binding plus fresh broker reconciliation. It does
 not reread the market calendar after the decision is bound, so an unrelated calendar outage cannot prevent accepted
