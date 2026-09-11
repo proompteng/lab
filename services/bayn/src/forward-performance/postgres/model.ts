@@ -208,6 +208,9 @@ export interface ForwardPerformancePostgresEvidence {
   readonly transactions: readonly AccountingTransaction[]
   /** All account transactions through the selected reconciliation, for stable-account ledger replay. */
   readonly ledgerTransactions: readonly AccountingTransaction[]
+  readonly brokerFeeRecords?: readonly import('../../accounting/broker-fees').StoredBrokerFee[]
+  readonly generationBrokerFeeIds?: readonly string[]
+  readonly ambiguousBrokerFeeCount?: number
   readonly transactionEvidence: readonly ForwardPerformanceTransactionEvidence[]
   readonly executionEvidence: readonly ForwardPerformanceExecutionEvidence[]
   readonly marketVolumeRequests: readonly ForwardPerformanceMarketVolumeRequest[]

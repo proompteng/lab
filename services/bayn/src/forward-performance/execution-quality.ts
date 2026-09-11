@@ -109,6 +109,9 @@ const sourceEvidenceHash = (
     ledgerExact: input.ledgerExact,
     missingLedgerAccountCount: input.missingLedgerAccountCount,
     ledgerTotals: input.ledgerTotals ?? null,
+    ...((input.brokerFees?.length ?? 0) === 0
+      ? {}
+      : { brokerFees: [...(input.brokerFees ?? [])].sort((a, b) => compareStrings(a.activityId, b.activityId)) }),
     executions: executionEvidence.map((evidence) => ({
       ...evidence,
       fills: [...evidence.fills].sort((left, right) => compareStrings(fillSortKey(left), fillSortKey(right))),
@@ -599,6 +602,24 @@ const measureExecutionQuality = (
           ? terminalObservedAt
           : lastTerminalOrderObservedAt
     }
+  }
+
+  const seenFees = new Set<string>()
+  for (const fee of input.brokerFees ?? []) {
+    if (
+      !/^(?:0|-?[1-9][0-9]*)$/.test(fee.netAmountMicros) ||
+      fee.accountId !== input.account.accountId ||
+      seenFees.has(fee.activityId) ||
+      !validIsoDate(fee.date)
+    ) {
+      reasons.add('EXPLICIT_COST_EVIDENCE_GAP')
+      continue
+    }
+    seenFees.add(fee.activityId)
+    const net = BigInt(fee.netAmountMicros)
+    const next = inSignedRange(net) ? checkedAdd(observedFillFees, -net) : undefined
+    if (next === undefined) reasons.add('INVALID_EXECUTION_MICROS')
+    else observedFillFees = next
   }
 
   if (seenFillEvents.size !== transactions.length) reasons.add('ACCOUNTING_FILL_BINDING_GAP')

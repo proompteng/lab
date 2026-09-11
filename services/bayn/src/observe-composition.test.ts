@@ -717,6 +717,7 @@ const decisionBrokerRead = (marketCalendar: BrokerReadShape['marketCalendar']): 
     orders: () => unused,
     orderById: () => unused,
     orderByClientId: () => unused,
+    feeActivities: () => unused,
     fillActivities: () => unused,
     marketCalendar,
   }
@@ -764,6 +765,7 @@ const makeExactReconciliationServices = () => {
     orders: () => Effect.succeed({ value: [], evidence: evidence('orders') }),
     orderById: () => unusedRead,
     orderByClientId: () => unusedRead,
+    feeActivities: () => Effect.succeed({ value: { items: [] }, evidence: evidence('fees') }),
     fillActivities: () => Effect.succeed({ value: { items: [] }, evidence: evidence('fills') }),
     marketCalendar: () => unusedRead,
   }
@@ -4498,6 +4500,7 @@ describe('OBSERVE runtime composition', () => {
       orders: () => unused,
       orderById: () => unused,
       orderByClientId: () => unused,
+      feeActivities: () => unused,
       fillActivities: () => unused,
       marketCalendar: () => unused,
     }
@@ -4624,6 +4627,7 @@ describe('OBSERVE runtime composition', () => {
       orders: () => Effect.succeed({ value: [], evidence: readEvidence('orders') }),
       orderById: () => Effect.die(new Error('bounded reconciliation used order lookup')),
       orderByClientId: () => Effect.die(new Error('bounded reconciliation used client-order lookup')),
+      feeActivities: () => Effect.succeed({ value: { items: [] }, evidence: readEvidence('fees') }),
       fillActivities: () => Effect.succeed({ value: { items: [] }, evidence: readEvidence('fills') }),
       marketCalendar: (query) => {
         expect(query).toEqual(calendarMaterial.requestedRange)

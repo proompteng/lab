@@ -296,6 +296,7 @@ export interface ForwardPerformanceEvidenceInput {
   }
   readonly startingCapitalMicros?: string
   readonly transactions: readonly ForwardPerformanceTransactionEvidence[]
+  readonly brokerFees?: readonly import('../broker/alpaca').FeeActivity[]
   readonly executionEvidence?: readonly ForwardPerformanceExecutionEvidence[]
   readonly marketVolumeEvidence?: readonly ForwardPerformanceMarketVolumeEvidence[]
   readonly ledgerTotals?: ForwardPerformanceLedgerTotals

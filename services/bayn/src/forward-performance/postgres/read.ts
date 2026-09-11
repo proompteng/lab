@@ -1,5 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect } from 'effect'
+import { Effect, Schema } from 'effect'
+import { StoredFeeSchema } from '../../accounting/broker-fees'
 import { decodeAccountingReceipt } from '../../execution/contracts'
 import { accountingReceiptFromRow, accountingTransactionFromRow } from '../../db/accounting-rows'
 import type {
@@ -269,7 +270,13 @@ export const readForwardPerformancePostgresDataFirst = (
             ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
             LIMIT 1
           ), accounted_cash AS (
-            SELECT COALESCE(sum(transaction.cash_delta_micros), 0) AS cash_delta_micros
+            SELECT COALESCE(sum(transaction.cash_delta_micros), 0) + COALESCE((
+              SELECT sum(fee.net_amount_micros) FROM broker_fee_accounting AS fee
+              CROSS JOIN closing_snapshot
+              WHERE fee.account_id = ${accountId} AND fee.posted_at IS NOT NULL
+                AND fee.first_observed_at >= (SELECT observed_at FROM opening_snapshot)
+                AND fee.first_observed_at <= closing_snapshot.observed_at
+            ), 0) AS cash_delta_micros
             FROM accounting_transactions AS transaction
             CROSS JOIN latest_reconciliation
             CROSS JOIN opening_snapshot
@@ -313,6 +320,37 @@ export const readForwardPerformancePostgresDataFirst = (
 
         const transactionRows = yield* transactionQuery(sql, accountId, authorityGenerationHash).pipe(
           Effect.flatMap(decodeTransactions),
+        )
+        const brokerFeeRows = yield* sql<Record<string, unknown>>`
+          SELECT fee.data, fee.read_evidence, fee.content_hash, fee.ledger_plan_hash,
+            fee.tigerbeetle_cluster_id::text AS tigerbeetle_cluster_id,
+            fee.tigerbeetle_ledger::integer AS tigerbeetle_ledger, fee.posted_at IS NOT NULL AS posted,
+            (${authorityGenerationHash === undefined} OR EXISTS (
+              SELECT 1 FROM accounting_transactions AS transaction
+              WHERE transaction.account_id = fee.account_id
+                AND (transaction.occurred_at AT TIME ZONE 'America/New_York')::date = fee.fee_date
+                AND ${generationScope(sql, accountId, authorityGenerationHash, 'transaction')}
+            )) AS includes_generation,
+            EXISTS (
+              SELECT 1 FROM accounting_transactions AS transaction
+              WHERE transaction.account_id = fee.account_id
+                AND (transaction.occurred_at AT TIME ZONE 'America/New_York')::date = fee.fee_date
+                AND NOT (${generationScope(sql, accountId, authorityGenerationHash, 'transaction')})
+            ) AS includes_other_generation
+          FROM broker_fee_accounting AS fee WHERE fee.account_id = ${accountId}
+          ORDER BY fee.activity_id COLLATE "C"
+        `.pipe(
+          Effect.flatMap(
+            Schema.decodeUnknownEffect(
+              Schema.Array(
+                Schema.Struct({
+                  ...StoredFeeSchema.fields,
+                  includes_generation: Schema.Boolean,
+                  includes_other_generation: Schema.Boolean,
+                }),
+              ),
+            ),
+          ),
         )
         const ledgerTransactionRows = yield* ledgerTransactionQuery(sql, accountId, authorityGenerationHash).pipe(
           Effect.flatMap(decodeTransactions),
@@ -814,6 +852,19 @@ export const readForwardPerformancePostgresDataFirst = (
           ...(cashYieldEvidence === undefined ? {} : { cashYieldEvidence }),
           transactions,
           ledgerTransactions,
+          brokerFeeRecords: brokerFeeRows.map(
+            ({ includes_generation: _owned, includes_other_generation: _other, ...record }) => record,
+          ),
+          generationBrokerFeeIds: brokerFeeRows
+            .filter((row) => row.includes_generation && !row.includes_other_generation)
+            .map((row) => row.data.activityId),
+          ambiguousBrokerFeeCount: brokerFeeRows.filter(
+            (row) =>
+              (row.includes_generation && row.includes_other_generation) ||
+              (!row.includes_generation &&
+                !row.includes_other_generation &&
+                cycles.some((cycle) => cycle.submissionOpenAt.slice(0, 10) === row.data.date)),
+          ).length,
           transactionEvidence,
           executionEvidence,
           marketVolumeRequests,

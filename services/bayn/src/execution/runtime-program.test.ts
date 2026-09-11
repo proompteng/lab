@@ -149,6 +149,7 @@ const stableBrokerRead = (positions: readonly Position[] = [], account: Account 
     orders: () => Effect.succeed(readResult([])),
     orderById: () => unusedRead,
     orderByClientId: () => unusedRead,
+    feeActivities: () => unusedRead,
     fillActivities: () => unusedRead,
     marketCalendar: () => unusedRead,
   }
@@ -1151,6 +1152,7 @@ describe('same-code execution program composition', () => {
         }),
       orderById: () => unusedRead,
       orderByClientId: () => unusedRead,
+      feeActivities: () => unusedRead,
       fillActivities: () => unusedRead,
       marketCalendar: () => unusedRead,
     }
@@ -1213,6 +1215,7 @@ describe('same-code execution program composition', () => {
         }),
       orderById: () => unusedRead,
       orderByClientId: () => unusedRead,
+      feeActivities: () => unusedRead,
       fillActivities: () => unusedRead,
       marketCalendar: () => unusedRead,
     }
