@@ -175,6 +175,60 @@ const entryAndCloseSnapshot: SnapshotFactory = (request, phase, occurrence) => {
 }
 
 describe('intraday replay program', () => {
+  test('charges only the attempted read before retrying an unavailable decision', async () => {
+    const archive = makeArchive({ failure: 'late-entry-once' })
+    await run(
+      replayInput([sessionDates[0]], {
+        calendar: [{ date: sessionDates[0], open: '09:30', close: '10:10' }],
+        operationalTiming: {
+          decisionReadMs: 2000,
+          decisionComputeMs: 300000,
+          planningReadMs: 0,
+          planningComputeMs: 0,
+          commitMs: 0,
+          submissionMs: 0,
+        },
+      }),
+      archive,
+    )
+    const requests = archive.requests.filter((request) => request.purpose === undefined)
+    expect(requests.length).toBeGreaterThanOrEqual(2)
+    expect(Date.parse(requests[1]?.observedAt ?? '') - Date.parse(requests[0]?.observedAt ?? '')).toBe(32000)
+  })
+
+  test('records adverse holding marks during delayed close construction before applying the exit fill', async () => {
+    const archive = makeArchive({
+      snapshot: (request, phase) => {
+        const hiddenExcursion =
+          phase === 'entry-pricing' &&
+          request.observedAt >= '2026-09-04T14:05:00.000Z' &&
+          request.observedAt < '2026-09-04T14:06:00.000Z'
+        return snapshotFor(request, phase === 'decision' ? { AAPL: 0.01 } : {}, {}, hiddenExcursion ? 1 : 100)
+      },
+    })
+    const report = await run(
+      replayInput([sessionDates[0]], {
+        calendar: [{ date: sessionDates[0], open: '09:30', close: '10:10' }],
+        initialCapitalMicros: '100000000000',
+        allocationCapitalMicros: '100000000000',
+        operationalTiming: {
+          decisionReadMs: 0,
+          decisionComputeMs: 0,
+          planningReadMs: 0,
+          planningComputeMs: 0,
+          commitMs: 120000,
+          submissionMs: 0,
+        },
+      }),
+      archive,
+    )
+    const session = report.sessions[0]
+    expect(session?.positions).toEqual([])
+    expect(session?.fills.map((fill) => fill.side)).toEqual(['buy', 'sell'])
+    expect(BigInt(session?.maximumObservedDrawdownMicros ?? '0')).toBeGreaterThan(5000000000n)
+    expect(session?.riskLimitBreached).toBe(true)
+  })
+
   test('retains an incomplete close when the submitted IOC arrival evidence is missing', async () => {
     const archive = makeArchive()
     let liquidations = 0

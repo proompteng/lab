@@ -433,14 +433,9 @@ const replaySession = (
 
     const entryStartMs = intradayMomentumFirstDecisionPollMs(protocol, context.window, input.assumptions)
     const entryCutoffMs = Date.parse(context.window.submissionCutoffAt)
-    for (
-      let observedMs = entryStartMs;
-      observedMs < entryCutoffMs;
-      observedMs +=
-        input.assumptions.pollIntervalMs +
-        input.operationalTiming.decisionReadMs +
-        input.operationalTiming.decisionComputeMs
-    ) {
+    let nextEntryPollMs = entryStartMs
+    for (let observedMs = nextEntryPollMs; observedMs < entryCutoffMs; observedMs = nextEntryPollMs) {
+      nextEntryPollMs = observedMs + input.assumptions.pollIntervalMs
       const observedAt = utcInstantFromEpochMillis(observedMs)
       const queryResult = intradayMomentumEntryQuery(context.queryContext, protocol, context.marketCalendar, observedAt)
       if (Result.isFailure(queryResult)) {
@@ -457,6 +452,7 @@ const replaySession = (
 
       const readCompletedAt = utcInstantFromEpochMillis(observedMs + input.operationalTiming.decisionReadMs)
       const loaded = yield* readSnapshot(marketData, queryResult.success, readCompletedAt)
+      nextEntryPollMs = Date.parse(readCompletedAt) + input.assumptions.pollIntervalMs
       if (loaded._tag === 'Failure') {
         const retryable = isRetryableArchiveFailure(loaded.error)
         retryableEntryFailure ||= retryable
@@ -468,6 +464,7 @@ const replaySession = (
         continue
       }
 
+      nextEntryPollMs += input.operationalTiming.decisionComputeMs
       const decisionSnapshot = loaded.snapshot
       const decisionResult = evaluateDecision(
         protocol,
@@ -772,6 +769,68 @@ const replaySession = (
       input.assumptions.firstPollDelayMs
     const hardFlatMs = Date.parse(context.calendar.executionCloseAt) - protocol.hardFlatBeforeCloseMinutes * 60_000
     let nextMarkMs = Date.parse(arrivalAt)
+    const markThrough = (throughMs: number) =>
+      Effect.gen(function* () {
+        while (nextMarkMs <= throughMs && nextMarkMs <= hardFlatMs && ledger.positions.length > 0) {
+          const markObservedAt = utcInstantFromEpochMillis(nextMarkMs)
+          const heldSymbols = ledger.positions.map(({ symbol: positionSymbol }) => positionSymbol)
+          const markRangeEndMs =
+            nextMarkMs % minuteMs === 0 ? nextMarkMs - minuteMs : Math.floor(nextMarkMs / minuteMs) * minuteMs
+          const markRangeEndAt = utcInstantFromEpochMillis(markRangeEndMs)
+          const markQueryResult = intradayMomentumPricingQuery(
+            context.queryContext,
+            protocol,
+            context.marketCalendar,
+            markObservedAt,
+            markRangeEndAt,
+            heldSymbols,
+          )
+          if (Result.isFailure(markQueryResult)) {
+            const retryable = markQueryResult.failure instanceof IntradayMomentumCloseAwaitingSnapshot
+            pushUnavailable(observations, 'mark', markObservedAt, markQueryResult.failure, retryable)
+            markEvidenceFailure ??= `mark query failed: ${failureDescription(markQueryResult.failure).message}`
+            nextMarkMs += input.assumptions.pollIntervalMs
+            continue
+          }
+          const markLoaded = yield* readSnapshot(marketData, markQueryResult.success)
+          if (markLoaded._tag === 'Failure') {
+            const retryable = isRetryableArchiveFailure(markLoaded.error)
+            pushUnavailable(observations, 'mark', markObservedAt, markLoaded.error, retryable)
+            markEvidenceFailure ??= `mark evidence unavailable: ${failureDescription(markLoaded.error).message}`
+            nextMarkMs += input.assumptions.pollIntervalMs
+            continue
+          }
+          const markSnapshot = markLoaded.snapshot
+          const markPrices = adverseClosingQuotePrices(markSnapshot, heldSymbols)
+          if (Result.isFailure(markPrices)) {
+            pushUnavailable(observations, 'mark', markObservedAt, markPrices.failure, false)
+            markEvidenceFailure ??= `mark quote construction failed: ${failureDescription(markPrices.failure).message}`
+            nextMarkMs += input.assumptions.pollIntervalMs
+            continue
+          }
+          const mark = markEquity(markPrices.success.bidPriceMicros)
+          if (Result.isFailure(mark)) {
+            pushUnavailable(
+              observations,
+              'mark',
+              markObservedAt,
+              new Error(`${mark.failure.field}: ${mark.failure.reason}`),
+              false,
+            )
+            markEvidenceFailure ??= `mark-to-market accounting failed: ${mark.failure.field}`
+            nextMarkMs += input.assumptions.pollIntervalMs
+            continue
+          }
+          observations.push({
+            kind: 'snapshot',
+            purpose: 'mark',
+            manifest: markSnapshot.manifest,
+            availableBy: markObservedAt,
+            equity: mark.success,
+          })
+          nextMarkMs += input.assumptions.pollIntervalMs
+        }
+      })
     let nextClosePollMs = closeStartMs
     for (
       let observedMs = nextClosePollMs;
@@ -779,65 +838,7 @@ const replaySession = (
       observedMs = nextClosePollMs
     ) {
       nextClosePollMs = observedMs + input.assumptions.pollIntervalMs
-      while (nextMarkMs <= observedMs && nextMarkMs <= hardFlatMs && ledger.positions.length > 0) {
-        const markObservedAt = utcInstantFromEpochMillis(nextMarkMs)
-        const heldSymbols = ledger.positions.map(({ symbol: positionSymbol }) => positionSymbol)
-        const markRangeEndMs =
-          nextMarkMs % minuteMs === 0 ? nextMarkMs - minuteMs : Math.floor(nextMarkMs / minuteMs) * minuteMs
-        const markRangeEndAt = utcInstantFromEpochMillis(markRangeEndMs)
-        const markQueryResult = intradayMomentumPricingQuery(
-          context.queryContext,
-          protocol,
-          context.marketCalendar,
-          markObservedAt,
-          markRangeEndAt,
-          heldSymbols,
-        )
-        if (Result.isFailure(markQueryResult)) {
-          const retryable = markQueryResult.failure instanceof IntradayMomentumCloseAwaitingSnapshot
-          pushUnavailable(observations, 'mark', markObservedAt, markQueryResult.failure, retryable)
-          markEvidenceFailure ??= `mark query failed: ${failureDescription(markQueryResult.failure).message}`
-          nextMarkMs += input.assumptions.pollIntervalMs
-          continue
-        }
-        const markLoaded = yield* readSnapshot(marketData, markQueryResult.success)
-        if (markLoaded._tag === 'Failure') {
-          const retryable = isRetryableArchiveFailure(markLoaded.error)
-          pushUnavailable(observations, 'mark', markObservedAt, markLoaded.error, retryable)
-          markEvidenceFailure ??= `mark evidence unavailable: ${failureDescription(markLoaded.error).message}`
-          nextMarkMs += input.assumptions.pollIntervalMs
-          continue
-        }
-        const markSnapshot = markLoaded.snapshot
-        const markPrices = adverseClosingQuotePrices(markSnapshot, heldSymbols)
-        if (Result.isFailure(markPrices)) {
-          pushUnavailable(observations, 'mark', markObservedAt, markPrices.failure, false)
-          markEvidenceFailure ??= `mark quote construction failed: ${failureDescription(markPrices.failure).message}`
-          nextMarkMs += input.assumptions.pollIntervalMs
-          continue
-        }
-        const mark = markEquity(markPrices.success.bidPriceMicros)
-        if (Result.isFailure(mark)) {
-          pushUnavailable(
-            observations,
-            'mark',
-            markObservedAt,
-            new Error(`${mark.failure.field}: ${mark.failure.reason}`),
-            false,
-          )
-          markEvidenceFailure ??= `mark-to-market accounting failed: ${mark.failure.field}`
-          nextMarkMs += input.assumptions.pollIntervalMs
-          continue
-        }
-        observations.push({
-          kind: 'snapshot',
-          purpose: 'mark',
-          manifest: markSnapshot.manifest,
-          availableBy: markObservedAt,
-          equity: mark.success,
-        })
-        nextMarkMs += input.assumptions.pollIntervalMs
-      }
+      yield* markThrough(observedMs)
       const observedAt = utcInstantFromEpochMillis(observedMs)
       const positions = ledger.positions
       const closeQueryResult = intradayMomentumCloseQuery(
@@ -961,6 +962,7 @@ const replaySession = (
         manifest: arrivalSnapshot.manifest,
         availableBy: arrivalAt,
       })
+      yield* markThrough(Date.parse(arrivalAt))
       for (const position of positions) {
         const limitPriceMicros = closePrices.success.bidPriceMicros[position.symbol]
         if (limitPriceMicros === undefined) {
