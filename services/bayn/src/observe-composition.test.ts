@@ -120,7 +120,7 @@ import {
   type RecoveryFirstCycleDriver,
   type RecoveryFirstCycleDriverOwner,
 } from './observe-composition'
-import { selectClosingSymbolPass } from './observe-composition/decision-builder'
+import { runMutationPassWithinTimeout, selectClosingSymbolPass } from './observe-composition/decision-builder'
 import { recoverBoundExecutionContext } from './observe-composition/execution-cycle'
 import {
   compileIntradayMomentumDecision,
@@ -3316,50 +3316,57 @@ describe('OBSERVE runtime composition', () => {
       Effect.gen(function* () {
         yield* TestClock.setTime(startedAt)
         const reading = yield* Deferred.make<void>()
-        const closing = yield* buildClosingExecutionCycleDecision({
-          input: {
-            ...fixture.input,
-            intradayMarketData: {
-              ...fixture.input.intradayMarketData,
-              loadSnapshot: () =>
-                Effect.gen(function* () {
-                  reads += 1
-                  yield* Deferred.succeed(reading, undefined)
-                  return yield* Effect.never
-                }).pipe(
-                  Effect.ensuring(
-                    Effect.sync(() => {
-                      finalized += 1
-                    }),
-                  ),
-                ),
+        const reconcile = Effect.gen(function* () {
+          yield* Effect.sleep(Duration.seconds(6))
+          reconciliations += 1
+          const observedAt = utcInstantFromEpochMillis(yield* Clock.currentTimeMillis)
+          return reconciliationResultAt(observedAt, 0, 0, [
+            {
+              schemaVersion: 'bayn.paper-position.v1',
+              accountId,
+              symbol: 'IWM',
+              quantityMicros: '1000000',
+              averageEntryPriceMicros: '100000000',
+              marketPriceMicros: '100000000',
+              marketValueMicros: '100000000',
+              unrealizedPnlMicros: '0',
+              observedAt,
             },
-          },
-          preparation: fixture.preparation,
-          policy: fixture.policy,
-          cycle: fixture.boundCycle,
-          entryDocument: fixture.document,
-          closeExpiresAt: fixture.boundCycle.window.executionCloseAt,
-          reconcile: Effect.gen(function* () {
-            reconciliations += 1
-            const observedAt = utcInstantFromEpochMillis(yield* Clock.currentTimeMillis)
-            return reconciliationResultAt(observedAt, 0, 0, [
-              {
-                schemaVersion: 'bayn.paper-position.v1',
-                accountId,
-                symbol: 'IWM',
-                quantityMicros: '1000000',
-                averageEntryPriceMicros: '100000000',
-                marketPriceMicros: '100000000',
-                marketValueMicros: '100000000',
-                unrealizedPnlMicros: '0',
-                observedAt,
+          ])
+        })
+        const closing = yield* Effect.gen(function* () {
+          const initialReconciliation = yield* reconcile
+          return yield* buildClosingExecutionCycleDecision({
+            input: {
+              ...fixture.input,
+              intradayMarketData: {
+                ...fixture.input.intradayMarketData,
+                loadSnapshot: () =>
+                  Effect.gen(function* () {
+                    reads += 1
+                    yield* Deferred.succeed(reading, undefined)
+                    return yield* Effect.never
+                  }).pipe(
+                    Effect.ensuring(
+                      Effect.sync(() => {
+                        finalized += 1
+                      }),
+                    ),
+                  ),
               },
-            ])
-          }),
-        }).pipe(Effect.forkChild)
+            },
+            preparation: fixture.preparation,
+            policy: fixture.policy,
+            cycle: fixture.boundCycle,
+            entryDocument: fixture.document,
+            closeExpiresAt: fixture.boundCycle.window.executionCloseAt,
+            reconcile,
+            initialReconciliation,
+          })
+        }).pipe((operation) => runMutationPassWithinTimeout(operation, 30_000), Effect.forkChild)
+        yield* TestClock.adjust(Duration.seconds(12))
         yield* Deferred.await(reading)
-        yield* TestClock.adjust(Duration.millis(15_000))
+        yield* TestClock.adjust(Duration.seconds(24))
         return yield* Fiber.join(closing)
       }).pipe(
         Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
@@ -3377,7 +3384,7 @@ describe('OBSERVE runtime composition', () => {
     expect(reads).toBe(1)
     expect(finalized).toBe(1)
     expect(reconciliations).toBe(2)
-    expect(close.createdAt).toBe(utcInstantFromEpochMillis(startedAt + 15_000))
+    expect(close.createdAt).toBe(utcInstantFromEpochMillis(startedAt + 27_000))
     expect(close.dispatchable).toBeTrue()
     expect(close.bindings.executionMarketData).toMatchObject({
       schemaVersion: 'bayn.reconciled-position-liquidation-binding.v1',

@@ -1313,6 +1313,7 @@ export interface BuildClosingExecutionCycleDecisionInput {
   readonly cycle: AutonomousCycle
   readonly entryDocument: ExecutionDecisionDocument
   readonly reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>
+  readonly initialReconciliation?: ReconciliationPassResult
   readonly closeExpiresAt: string
   readonly replanGenerationHash?: string
 }
@@ -1334,9 +1335,11 @@ const buildClosingExecutionCycleDecisionWithSource = (
         failure: 'contract',
       })
     }
-    const reconciliation = yield* reconcile.pipe(
-      Effect.mapError((cause) => reconciliationRunnerError(cause, 'execution close reconciliation failed')),
-    )
+    const reconciliation = yield* (
+      source === 'archive' && request.initialReconciliation !== undefined
+        ? Effect.succeed(request.initialReconciliation)
+        : reconcile
+    ).pipe(Effect.mapError((cause) => reconciliationRunnerError(cause, 'execution close reconciliation failed')))
     const evaluatedAt = yield* currentUtcInstant
     const executionAuthority = yield* Effect.fromResult(
       requireMutationAuthorityGeneration(reconciliation, policy, input.authorityGenerationHash),

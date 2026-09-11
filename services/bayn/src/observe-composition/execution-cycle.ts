@@ -422,6 +422,7 @@ const ensureExecutionCycleClosure = (
         cycle,
         entryDocument,
         reconcile,
+        initialReconciliation: closeReconciliation,
         closeExpiresAt: closeWindow.expiresAt,
       })
       const decision = decideExecutionCycleCloseDocument(document)

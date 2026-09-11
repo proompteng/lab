@@ -82,7 +82,7 @@ spec:
             - name: BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION
               value: 8f4602324111bbb3dd5d8695aabf199f4a5328fa
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "b7ffffff5533e20af9eda1be22361499a2b8417c95e2a1e150cb3818a998afcc"
+              value: "49b8a34ecc19e6e23c58a17cbee05869e1e9deac688baf6b93050bb5a53ce30a"
             - name: BAYN_STRATEGY_PARAMETER_HASH
               value: "5da6b30f1961de364c796302bd5d1be3f009dd97b9d8225e9201e782b8149f4c"
             - name: BAYN_CAPITAL_ACTIVATION_REQUEST
@@ -93,7 +93,7 @@ spec:
             - name: BAYN_CAPITAL_ACTIVATION_KIND
               value: ResearchCapitalActivationRequest
             - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: "{\"schemaVersion\":\"bayn.research-capital-build-lineage.v1\",\"requestHash\":\"97dd02eb32a881aad232966dce4c41b7ab9b320a90cff0ea550a79e6dd92c7c8\",\"authoredActivation\":{\"sourceRevision\":\"03798257c48facb7797341fc5ff07fc641fd4929\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:9bf791395a29ee8bf77324e30abe59c1d6ef83d5cc7b116c4737afecbb28dc43\"},\"activation\":{\"sourceRevision\":\"03798257c48facb7797341fc5ff07fc641fd4929\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:9bf791395a29ee8bf77324e30abe59c1d6ef83d5cc7b116c4737afecbb28dc43\"}}"
+              value: "{\"schemaVersion\":\"bayn.research-capital-build-lineage.v1\",\"requestHash\":\"b24ea18ea2228f298dbc3e23e8a608afb37ace19cf3b3f6241e3a1f1c591de83\",\"authoredActivation\":{\"sourceRevision\":\"03798257c48facb7797341fc5ff07fc641fd4929\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:9bf791395a29ee8bf77324e30abe59c1d6ef83d5cc7b116c4737afecbb28dc43\"},\"activation\":{\"sourceRevision\":\"03798257c48facb7797341fc5ff07fc641fd4929\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:9bf791395a29ee8bf77324e30abe59c1d6ef83d5cc7b116c4737afecbb28dc43\"}}"
             - name: BAYN_BROKER_ACCESS
               value: read-only
             - name: BAYN_CAPITAL_AUTHORITY
