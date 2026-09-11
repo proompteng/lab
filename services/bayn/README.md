@@ -26,6 +26,16 @@ requires a flat account at the closing bell. Entries stop when flattening starts
 until the actual close, including early-close sessions. The five-minute exit budget is an operational policy;
 unfilled exits or unresolved reconciliation remain incomplete and visible.
 
+During that close window, missing or over-late archive evidence, a retryable archive outage, or an archive read
+timeout triggers a fresh broker reconciliation and the existing market/DAY close path. The close binds the exact
+reconciled holdings and cannot exceed their remaining quantity. The archive read receives at most half the smaller
+of the remaining execution-pass budget and remaining close window. It additionally reserves twice the already
+elapsed preparatory work for a fresh reconciliation and close planning; a slow initial reconciliation therefore
+leaves less time for archive reads. The overall pass and close deadlines still apply.
+Malformed archive identities, hashes, ordering and lineage still fail. Unknown mutations, unresolved orders,
+inexact reconciliation, stale broker state and expired close authority still prevent submission. This exit policy
+is part of behavior v13; entry decisions retain their existing evidence and LIMIT/IOC requirements.
+
 Entry observations evaluate candidate availability independently. Missing or late candidate bars, quotes, or trades
 exclude that candidate with an explicit reason while other candidates remain eligible for evaluation. SPY is the
 mandatory benchmark. Source identity, canonical ordering, watermarks, finality, and premature data still fail the
@@ -55,8 +65,9 @@ embeds and verifies the source revision and the behavior, parameter, protocol, a
   outcomes block new exposure until deterministic lookup and reconciliation resolve them.
 - Execution is long-only. Sells cannot exceed reconciled inventory. Entry, gross exposure, turnover, loss, drawdown,
   cutoff, and stale-data limits fail closed.
-- PostgreSQL and TigerBeetle must reconcile exactly. Any identity drift, unresolved mutation, stale data, duplicate
-  controller, or accounting discrepancy blocks new orders.
+- PostgreSQL and TigerBeetle must reconcile exactly. Identity drift, unresolved mutations, stale broker evidence,
+  duplicate controllers and accounting discrepancies block new orders. Unavailable archive evidence blocks entry;
+  the bounded close-only path can instead bind freshly reconciled broker positions.
 
 Broker reconciliation recaptures changing history or lagging fill activities at most twice, 500 milliseconds apart,
 before persisting a snapshot. A broker terminal fill may precede local acknowledged-intent recovery; recorded terminal
