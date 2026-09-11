@@ -226,7 +226,7 @@ export const makeMutationAutonomousCycleStartup =
           policy,
           executionMode === 'RecoveryOnly'
             ? { _tag: 'RecoveryOnly' }
-            : { _tag: 'Mutation', executionProgram: input.executionProgram },
+            : { _tag: executionMode, executionProgram: input.executionProgram },
           mutationDecisionBuilder(input, preparation, policy),
           'mutation autonomous cycle loop',
         ),
