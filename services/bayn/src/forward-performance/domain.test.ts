@@ -273,6 +273,29 @@ const success = (value: Result.Result<ForwardPerformanceReceipt, unknown>): Forw
   return value.success
 }
 
+test('keeps accounting totals while any unverified decision withholds execution measurements', () => {
+  const baseline = success(makeForwardPerformanceReceipt(input({ executionEvidence: exactExecutionEvidence() })))
+  for (const executionEvidence of [[], exactExecutionEvidence()]) {
+    const receipt = success(
+      makeForwardPerformanceReceipt(
+        input({
+          executionEvidence,
+          unverifiedDecisionHashes: [hash('9')],
+        }),
+      ),
+    )
+    expect(receipt.totals).toEqual(baseline.totals)
+    expect(receipt.executionQuality).toEqual({
+      status: 'UNDETERMINED',
+      reasonCodes: ['PLANNED_DECISION_EVIDENCE_GAP'],
+      unverifiedDecisionHashes: [hash('9')],
+      evidenceHash: canonicalHashV1({ unverifiedDecisionHashes: [hash('9')] }),
+      implementationShortfall: null,
+    })
+    expect(receipt.observedCapacity.status).toBe('UNDETERMINED')
+  }
+})
+
 describe('forward performance domain', () => {
   test('reports positive net realized returns after charged costs', () => {
     const receipt = success(makeForwardPerformanceReceipt(input()))

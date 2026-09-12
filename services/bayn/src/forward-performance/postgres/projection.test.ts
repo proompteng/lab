@@ -2,8 +2,21 @@ import { expect, test } from 'bun:test'
 import { Schema } from 'effect'
 
 import { completedIntradayCycles } from '../intraday-cycle.test-support'
-import { MarketVolumeBindingRow } from './model'
-import { marketVolumeRequestsFromRows } from './projection'
+import { CycleDecisionRow, MarketVolumeBindingRow } from './model'
+import { marketVolumeRequestsFromRows, verifyPerformanceDecisions } from './projection'
+
+test('retains unverified historical decision identities without aborting accounting reads', () => {
+  const row = Schema.decodeUnknownSync(CycleDecisionRow)({
+    cycle_id: 'a'.repeat(64),
+    decision_hash: 'b'.repeat(64),
+    document: { schemaVersion: 'unsupported-historical-decision' },
+    created_at: new Date('2026-09-10T19:50:00.000Z'),
+  })
+  expect(verifyPerformanceDecisions([row, row])).toEqual({
+    verifiedRows: [],
+    unverifiedDecisionHashes: ['b'.repeat(64)],
+  })
+})
 
 test('binds the completed IWM and NVDA cycles to their native intraday evidence', () => {
   for (const cycle of completedIntradayCycles) {
@@ -20,14 +33,7 @@ test('binds the completed IWM and NVDA cycles to their native intraday evidence'
       [
         {
           cycleId: cycle.cycleId,
-          decisionDocumentHash: 'a'.repeat(64),
-          decisionHash: 'b'.repeat(64),
-          decisionCreatedAt: cycle.manifest.observedAt,
-          intentId: 'c'.repeat(64),
-          accountId: 'test-account',
           symbol,
-          side: 'BUY',
-          fills: [],
         },
       ],
       [binding],

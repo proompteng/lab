@@ -31,7 +31,7 @@ import {
 } from './model'
 import { closingSnapshotBoundary, generationScope, openingSnapshotBoundary, reconciliationExactness } from './scope'
 import { ledgerReceiptQuery, ledgerTransactionQuery, receiptQuery, transactionQuery } from './queries'
-import { executionEvidenceFromRows, marketVolumeRequestsFromRows } from './projection'
+import { executionEvidenceFromRows, marketVolumeRequestsFromRows, verifyPerformanceDecisions } from './projection'
 
 export const readForwardPerformanceUnclosedCycleCountDataFirst = (
   sql: PgClient.PgClient,
@@ -845,14 +845,15 @@ export const readForwardPerformancePostgresDataFirst = (
             occurredAt: row.occurred_at.toISOString(),
           }),
         )
+        const { verifiedRows, unverifiedDecisionHashes } = verifyPerformanceDecisions(cycleDecisionRows)
         const executionEvidence = executionEvidenceFromRows(
-          cycleDecisionRows,
+          verifiedRows,
           executionIntentRows,
           executionOrderRows,
           executionFillRows,
         )
         const marketVolumeRequests = marketVolumeRequestsFromRows(
-          executionEvidence,
+          [...executionEvidence, ...executionIntentRows.map((row) => ({ cycleId: row.cycle_id, symbol: row.symbol }))],
           marketVolumeBindingRows,
           reconciliation?.reconciledAt,
         )
@@ -882,6 +883,7 @@ export const readForwardPerformancePostgresDataFirst = (
           ).length,
           transactionEvidence,
           executionEvidence,
+          ...(unverifiedDecisionHashes.length === 0 ? {} : { unverifiedDecisionHashes }),
           marketVolumeRequests,
           receipts,
           ledgerReceipts,

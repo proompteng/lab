@@ -323,6 +323,17 @@ const measureExecutionQuality = (
   const executions = [...(input.executionEvidence ?? [])].sort((left, right) =>
     compareStrings(executionSortKey(left), executionSortKey(right)),
   )
+  if ((input.unverifiedDecisionHashes?.length ?? 0) > 0) {
+    const unverifiedDecisionHashes = [...new Set(input.unverifiedDecisionHashes)].sort()
+    return Result.map(canonicalHashV1Result({ unverifiedDecisionHashes }), (evidenceHash) => ({
+      executionQuality: {
+        ...emptyExecutionQuality('UNDETERMINED', ['PLANNED_DECISION_EVIDENCE_GAP']),
+        evidenceHash,
+        unverifiedDecisionHashes,
+      },
+      contributions: [],
+    }))
+  }
   if (executions.length === 0) {
     return Result.succeed({
       executionQuality:

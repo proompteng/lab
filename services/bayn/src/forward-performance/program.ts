@@ -644,6 +644,9 @@ const runForwardPerformanceDataFirst = (
           .filter((record) => generationFeeIds.has(record.data.activityId))
           .map((record) => record.data),
         executionEvidence,
+        ...(postgres.unverifiedDecisionHashes === undefined
+          ? {}
+          : { unverifiedDecisionHashes: postgres.unverifiedDecisionHashes }),
         marketVolumeEvidence,
         ledgerTotals: ledger.totals,
         cashYieldEvidenceRequired: ledger.cashYieldEvidenceRequired,
