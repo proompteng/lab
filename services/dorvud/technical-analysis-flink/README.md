@@ -100,6 +100,55 @@ and output hashes, counts, skipped nonregular/nonfinal bars, and actual computat
 receipt is incomplete. Combine these feature arrivals with the unchanged raw stream and freeze a new Bayn manifest;
 retain the original replay separately. This command regenerates the existing rolling family only.
 
+## Versioned technical features
+
+Set `TA_TECHNICAL_FEATURES_TOPIC=torghut.technical-features.v1` alongside the rolling feature topic to enable
+`dorvud.technical-indicators-1m.v1`. This uses a separate retained-bar cursor inside the existing TA job and the same raw decoder. It does
+not create another Flink job. A new technical source starts at the retained beginning so its full-session seed does
+not depend on the older rolling source's saved head offset. Subsequent checkpoints restore both source and keyed
+state normally. Bootstrap output retains actual computation time and never claims historical delivery. The archive enables the matching topic with `ARCHIVE_TECHNICAL_FEATURES_TOPIC` and
+retains its exact payload and transport coordinates in `signal.intraday_features_v1`; readers select the source topic
+and definition explicitly. These settings are optional and do not change the rolling-price contract or strategy.
+
+Each technical message uses `dorvud.technical-feature.v1`, with the same identity, canonical JSON hash, actual
+computation time, and raw-content digest conventions as rolling features. Its input list retains every canonical
+minute observed in the current New York regular session, bounded to 390 bars. `windowStartMs` is 09:30 New York;
+`windowEndMs` is the end of the latest canonical minute. The source session classification bounds these features;
+Bayn still verifies the broker calendar, including early closes.
+
+Values are signed decimal integer strings rounded to millionths, with a safe-integer bound. Each field carries
+`READY`, `WARMING`, `GAP`, `SOURCE_MISSING`, or `ZERO_VOLUME`; unavailable values are null. A missing value cannot
+be confused with numerical zero. The definition hash binds these calculations and units:
+
+| Fields | Calculation and readiness |
+| --- | --- |
+| EMA12, EMA26 | Close-price EMA, first close seed, alpha 2/(period+1), ready after 12/26 bars |
+| MACD, signal, histogram | EMA12 minus EMA26; signal EMA9 seeded at zero; ready after 34 bars |
+| RSI14 | Wilder gain/loss recurrence with alpha 1/14 and zero seeds; 15 closes; a flat series is zero, matching pinned TA4J 0.16 |
+| Bollinger middle/upper/lower | 20 closes, population standard deviation, two standard deviations |
+| Weighted close, 5-minute/session | Sum(close times volume) divided by volume |
+| Source VWAP, 5-minute/session | Sum(source-bar VWAP times volume) divided by volume; unavailable if a positive-volume bar lacks VWAP |
+| Realized volatility | Population standard deviation of 60 log returns from 61 minute closes; ratio times one million, not annualized |
+
+Price fields use price millionths. RSI uses percentage-point millionths. Recursive and session calculations require
+complete history from the session open. Rolling calculations can recover on a complete contiguous tail after an older
+gap. Zero aggregate volume makes weighted prices unavailable. Canonical corrections recompute from the retained
+session seed using the same indicator functions as TA; an older session cannot alter the current one. No bars are
+synthesized. Invalid inputs preserve state and increment rejection diagnostics.
+
+The archive checks the definition and content hash, session bounds, ordered unique input references, availability,
+value domains, and readiness against input coverage. Dedicated operator/state IDs keep technical feature state
+separate. The executable graph preserves both legacy TA and rolling-feature restoration IDs. A shared producer
+fixture at `services/bayn/src/market-data/features/fixtures/technical-indicators-v1.json` provides the Kotlin wire format
+for consumer contract validation. Publishing these data points alone does not establish strategy use or profitability.
+
+GitOps enables both topic settings and declares the technical KafkaTopic with three partitions, three replicas, and
+35-day delete retention. The existing authenticated Kafka identities and archive INSERT grant cover this path; no
+credential or authorization change is introduced. Topic reconciliation precedes the image-driven Kargo rollout in
+the delivery proof. Verify both Flink jobs, new checkpoints, technical-topic publication, and archival rows before
+enabling the Bayn optional consumer. A recovery retains topic and checkpoint data and reverts the optional settings
+through reviewed GitOps. Image delivery alone is not source-to-consumer acceptance.
+
 ## Validation
 
 Run from `services/dorvud`:
@@ -113,7 +162,8 @@ fixture lives in `services/bayn/src/market-data/features/fixtures/rolling-price-
 with the producing test, then verify the TypeScript decoder and inspect the resulting changes:
 
 ```sh
-./gradlew :technical-analysis-flink:test --tests '*RollingMarketFeaturesTest' -PwriteMarketFeatureFixture=true
+./gradlew :technical-analysis-flink:test --tests '*RollingMarketFeaturesTest' --tests '*TechnicalMarketFeaturesTest' -PwriteMarketFeatureFixture=true
+bunx oxfmt ../bayn/src/market-data/features/fixtures/*.json
 ```
 
 The definition binds a 5,000 ms cross-host clock allowance. Producer, input-ingestion, and archive clocks may differ within
