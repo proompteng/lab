@@ -128,6 +128,26 @@ describePostgres('PostgreSQL streaming decision source evidence', () => {
     )
   })
 
+  test('fresh replay preserves routines and domains in an otherwise table-free schema', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+        yield* sql`CREATE FUNCTION public.replay_guard_existing_function() RETURNS integer LANGUAGE sql AS 'SELECT 73'`
+        yield* sql`CREATE DOMAIN public.replay_guard_existing_domain AS integer CHECK (VALUE > 0)`
+        const outcome = yield* Effect.exit(prepareFreshReplayDatabase)
+        expect(Exit.isFailure(outcome)).toBe(true)
+        expect(JSON.stringify(outcome)).toContain('empty public schema')
+        expect(yield* sql`SELECT public.replay_guard_existing_function() AS result`).toEqual([{ result: 73 }])
+        expect(
+          yield* sql`SELECT typname FROM pg_catalog.pg_type WHERE typnamespace = 'public'::regnamespace AND typtype = 'd'`,
+        ).toEqual([{ typname: 'replay_guard_existing_domain' }])
+        expect(yield* sql`SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = 'public'`).toEqual([])
+      }),
+    )
+  })
+
   test('fresh replay migrates only an empty public schema', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {

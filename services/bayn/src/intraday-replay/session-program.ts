@@ -141,7 +141,7 @@ export const prepareReplaySession = (input: unknown) =>
     const assets = yield* Result.all(
       decoded.assets.map((asset) => normalizeAssetResult(asset, asset.symbol, decoded.assetObservationAt)),
     )
-    const runId = yield* canonicalHashV1Result(decoded)
+    const runId = yield* canonicalHashV1Result({ ...decoded, assets })
     const identity = yield* makeBrokerIdentity({
       schemaVersion: 'bayn.broker-identity.v2',
       provider: BrokerProvider.Alpaca,
@@ -193,8 +193,9 @@ export const prepareFreshReplayDatabase = Effect.gen(function* () {
   if (schema[0]?.['valid'] !== true)
     return yield* new ReplayBrokerFailure({ message: 'Fresh replay requires public as the only effective schema' })
   const existing = yield* sql<Record<string, unknown>>`SELECT EXISTS (
-    SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-    WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')
+    SELECT 1 FROM pg_catalog.pg_depend d
+    WHERE d.refclassid = 'pg_catalog.pg_namespace'::regclass
+      AND d.refobjid = 'public'::regnamespace
   ) AS present`
   if (existing[0]?.['present'] !== false)
     return yield* new ReplayBrokerFailure({

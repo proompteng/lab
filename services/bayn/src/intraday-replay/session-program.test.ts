@@ -106,3 +106,24 @@ test('prior calendar sessions fail preparation before a fresh database can be oc
       message: 'A fresh single-session replay cannot include prior calendar sessions',
     })
 })
+
+test('normalized asset attributes determine identity independent of response representation', () => {
+  const input = fixture()
+  const base = Result.getOrThrow(prepareReplaySession(input))
+  for (const attributes of [undefined, null, []]) {
+    const prepared = Result.getOrThrow(
+      prepareReplaySession({
+        ...input,
+        assets: input.assets.map((asset) => ({ ...asset, ...(attributes === undefined ? {} : { attributes }) })),
+      }),
+    )
+    expect(prepared.runId).toBe(base.runId)
+    expect(prepared.assets).toEqual(base.assets)
+  }
+  const prepare = (attributes: string[]) =>
+    Result.getOrThrow(
+      prepareReplaySession({ ...input, assets: input.assets.map((asset) => ({ ...asset, attributes })) }),
+    )
+  expect(prepare(['ipo', 'ptp_no_exception', 'ipo']).runId).toBe(prepare(['ptp_no_exception', 'ipo']).runId)
+  expect(prepare(['ipo']).runId).not.toBe(base.runId)
+})
