@@ -68,13 +68,10 @@ class SchedulerObservabilityManifestTests(TestCase):
         rules = cast(list[Mapping[str, object]], trading_group["rules"])
         by_alert = {str(rule["alert"]): rule for rule in rules}
 
-        api_missing = str(by_alert["TorghutApiServiceMissing"]["expr"])
+        self.assertNotIn("TorghutApiServiceMissing", by_alert)
         api_down = str(by_alert["TorghutActiveApiRevisionMetricsDown"]["expr"])
-        self.assertIn("kube_service_info", api_missing)
-        self.assertIn('service="torghut"', api_missing)
         self.assertIn('service="torghut"', api_down)
         self.assertNotIn("-private", api_down)
-        self.assertNotIn('service="torghut-scheduler"', api_missing)
         self.assertNotIn('service="torghut-scheduler"', api_down)
 
         for alert in ("TorghutSchedulerMetricsMissing", "TorghutSchedulerMetricsDown"):
