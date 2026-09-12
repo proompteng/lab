@@ -25,6 +25,9 @@ import {
 } from './tigerbeetle'
 import type { LedgerPlan } from '../ledger-plan'
 import type {
+  ForwardPerformanceIntradayMarketVolumeRequest,
+  ForwardPerformanceDailyMarketVolumeEvidence,
+  ForwardPerformanceDailyMarketVolumeRequest,
   ForwardPerformanceCashYieldEvidence,
   ForwardPerformanceExecutionEvidence,
   ForwardPerformanceMarketVolumeEvidence,
@@ -32,6 +35,15 @@ import type {
   ForwardPerformanceReceipt,
 } from './model'
 import { Pipeable } from '../pipeable'
+import {
+  intradayPerformanceDecisionRequest,
+  intradayPerformanceSessionQuery,
+  makeIntradayPerformanceVolumeEvidence,
+} from './intraday-volume'
+import { loadIntradayArchivePages } from '../market-data/intraday/program'
+import { makeIntradayMarketDataQueries } from '../market-data/intraday/queries'
+import { decodeIntradayBarRows } from '../market-data/intraday/rows'
+import { verifyIntradayArchiveWatermarks } from '../market-data/intraday/verification'
 import { verifyBrokerFeeRecord, type BrokerFeeEvidenceError } from '../accounting/broker-fees'
 
 export type ForwardPerformanceProgramCause =
@@ -121,7 +133,7 @@ interface VerifiedForwardPerformanceMarketSnapshot {
 }
 
 const snapshotRequest = (
-  request: ForwardPerformanceMarketVolumeRequest,
+  request: ForwardPerformanceDailyMarketVolumeRequest,
   rows: SnapshotRows,
   evaluationStart: IsoDate,
 ): SnapshotRequest | undefined => {
@@ -160,7 +172,7 @@ const snapshotRequest = (
 }
 
 const verifyForwardPerformanceMarketSnapshot = (
-  request: ForwardPerformanceMarketVolumeRequest,
+  request: ForwardPerformanceDailyMarketVolumeRequest,
   rawRows: ForwardPerformanceMarketSnapshotRows,
   evaluationStart: IsoDate,
 ): VerifiedForwardPerformanceMarketSnapshot | undefined => {
@@ -188,10 +200,10 @@ const verifyForwardPerformanceMarketSnapshot = (
 }
 
 const projectForwardPerformanceMarketVolumeEvidence = (
-  request: ForwardPerformanceMarketVolumeRequest,
+  request: ForwardPerformanceDailyMarketVolumeRequest,
   verified: VerifiedForwardPerformanceMarketSnapshot,
   evaluationStart: IsoDate,
-): Result.Result<ForwardPerformanceMarketVolumeEvidence | undefined, ForwardPerformanceMarketVolumeError> => {
+): Result.Result<ForwardPerformanceDailyMarketVolumeEvidence | undefined, ForwardPerformanceMarketVolumeError> => {
   const matchingBars = verified.rows.bars.filter(
     (bar) => bar.symbol === request.symbol && bar.session_date === request.executionSessionDate,
   )
@@ -233,10 +245,10 @@ const projectForwardPerformanceMarketVolumeEvidence = (
 }
 
 const makeForwardPerformanceMarketVolumeEvidenceDataFirst = (
-  request: ForwardPerformanceMarketVolumeRequest,
+  request: ForwardPerformanceDailyMarketVolumeRequest,
   rows: ForwardPerformanceMarketSnapshotRows,
   evaluationStart: IsoDate,
-): Result.Result<ForwardPerformanceMarketVolumeEvidence | undefined, ForwardPerformanceMarketVolumeError> => {
+): Result.Result<ForwardPerformanceDailyMarketVolumeEvidence | undefined, ForwardPerformanceMarketVolumeError> => {
   const verified = verifyForwardPerformanceMarketSnapshot(request, rows, evaluationStart)
   return verified === undefined
     ? Result.succeed(undefined)
@@ -248,7 +260,7 @@ export const makeForwardPerformanceMarketVolumeEvidence = Pipeable.dual(
   makeForwardPerformanceMarketVolumeEvidenceDataFirst,
 )
 
-const requestGroupKey = (request: ForwardPerformanceMarketVolumeRequest): string =>
+const requestGroupKey = (request: ForwardPerformanceDailyMarketVolumeRequest): string =>
   JSON.stringify([
     request.decisionSnapshotId,
     request.decisionSnapshotAsOfSession,
@@ -265,9 +277,9 @@ const requestGroupKey = (request: ForwardPerformanceMarketVolumeRequest): string
   ])
 
 const groupMarketVolumeRequests = (
-  requests: readonly ForwardPerformanceMarketVolumeRequest[],
-): readonly (readonly ForwardPerformanceMarketVolumeRequest[])[] => {
-  const groups = new Map<string, ForwardPerformanceMarketVolumeRequest[]>()
+  requests: readonly ForwardPerformanceDailyMarketVolumeRequest[],
+): readonly (readonly ForwardPerformanceDailyMarketVolumeRequest[])[] => {
+  const groups = new Map<string, ForwardPerformanceDailyMarketVolumeRequest[]>()
   for (const request of requests) {
     const key = requestGroupKey(request)
     const group = groups.get(key)
@@ -278,6 +290,22 @@ const groupMarketVolumeRequests = (
     .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
     .map(([, group]) => group)
 }
+
+const readIntradayPerformanceVolume = (request: ForwardPerformanceIntradayMarketVolumeRequest) =>
+  Effect.gen(function* () {
+    const original = yield* Effect.fromResult(intradayPerformanceDecisionRequest(request))
+    const queries = makeIntradayMarketDataQueries(yield* ClickhouseClient.ClickhouseClient)
+    const query = intradayPerformanceSessionQuery(request, original)
+    const rawWatermarks = yield* queries.captureIntradayArchiveWatermarks(query)
+    const archiveWatermarks = yield* Effect.fromResult(verifyIntradayArchiveWatermarks(original, rawWatermarks))
+    const archiveRequest = { ...query, archiveWatermarks }
+    const rawBars = yield* loadIntradayArchivePages(
+      (after) => queries.loadIntradayBars(archiveRequest, after),
+      decodeIntradayBarRows,
+      (Date.parse(request.windowClosedAt) - Date.parse(request.windowOpenedAt)) / 60_000,
+    )
+    return yield* Effect.fromResult(makeIntradayPerformanceVolumeEvidence(request, archiveRequest, rawBars))
+  })
 
 const readForwardPerformanceMarketVolumeWithClientDataFirst = (
   config: Pick<LoadedRuntimeConfig, 'clickhouse' | 'operationTimeoutMs'>,
@@ -291,7 +319,7 @@ const readForwardPerformanceMarketVolumeWithClientDataFirst = (
   return Effect.gen(function* () {
     const sql = yield* ClickhouseClient.ClickhouseClient
     const groups = yield* Effect.forEach(
-      groupMarketVolumeRequests(requests),
+      groupMarketVolumeRequests(requests.filter((request) => request.sourceFeed === 'sip')),
       (group) =>
         Effect.gen(function* () {
           const request = group[0]
@@ -385,7 +413,7 @@ const readForwardPerformanceMarketVolumeWithClientDataFirst = (
               projectForwardPerformanceMarketVolumeEvidence(item, verified, config.clickhouse.bounds.evaluationStart),
             ),
           )
-          return projected.filter((item): item is ForwardPerformanceMarketVolumeEvidence => item !== undefined)
+          return projected.filter((item): item is ForwardPerformanceDailyMarketVolumeEvidence => item !== undefined)
         }).pipe(
           Effect.mapError((cause) =>
             cause instanceof ForwardPerformanceMarketVolumeError ? cause : marketVolumeError(cause),
@@ -393,7 +421,16 @@ const readForwardPerformanceMarketVolumeWithClientDataFirst = (
         ),
       { concurrency: 2 },
     )
-    return groups.flat().sort((left, right) => {
+    const intraday = yield* Effect.forEach(
+      requests.filter((request) => request.sourceFeed === 'iex'),
+      readIntradayPerformanceVolume,
+      { concurrency: 2 },
+    )
+    const evidence: ForwardPerformanceMarketVolumeEvidence[] = [
+      ...groups.flat(),
+      ...intraday.filter((item) => item !== undefined),
+    ]
+    return evidence.sort((left, right) => {
       const leftKey = JSON.stringify([left.executionSessionDate, left.cycleId, left.symbol])
       const rightKey = JSON.stringify([right.executionSessionDate, right.cycleId, right.symbol])
       return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0
