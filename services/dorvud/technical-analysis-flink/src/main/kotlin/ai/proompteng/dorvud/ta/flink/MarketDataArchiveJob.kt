@@ -277,7 +277,6 @@ internal fun configureMarketDataArchiveJob(
 ) {
   environment.setParallelism(config.parallelism)
   environment.enableCheckpointing(config.checkpointIntervalMs)
-  config.featuresTopic?.let { configureMarketFeatureArchive(environment, config, it) }
 
   val source =
     environment
@@ -306,6 +305,9 @@ internal fun configureMarketDataArchiveJob(
     .sinkTo(archiveTradeClickhouseSink(config))
     .name("signal-intraday-trades-archive")
     .uid("signal-intraday-trades-archive-v1")
+
+  // Keep generated IDs of the existing raw topology stable for savepoint restoration.
+  config.featuresTopic?.let { configureMarketFeatureArchive(environment, config, it) }
 }
 
 internal class ArchiveKafkaRecordDeserializer : KafkaRecordDeserializationSchema<ArchiveKafkaRecord> {

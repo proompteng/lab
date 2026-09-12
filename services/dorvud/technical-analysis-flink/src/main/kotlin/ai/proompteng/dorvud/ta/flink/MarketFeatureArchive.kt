@@ -1,5 +1,6 @@
 package ai.proompteng.dorvud.ta.flink
 
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import org.apache.flink.api.common.eventtime.WatermarkStrategy
@@ -15,6 +16,7 @@ import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsIni
 import org.apache.flink.metrics.Counter
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment
 import org.apache.flink.util.Collector
+import org.slf4j.LoggerFactory
 import java.io.Serializable
 import java.sql.Timestamp
 import java.time.Instant
@@ -243,8 +245,27 @@ internal class ParseMarketFeatureArchive(
   ) {
     try {
       out.collect(decodeArchivedMarketFeature(value, routes, System.currentTimeMillis()))
-    } catch (_: IllegalArgumentException) {
+    } catch (cause: IllegalArgumentException) {
       rejected.inc()
+      val reason =
+        if (cause is SerializationException) {
+          "invalid feature schema"
+        } else {
+          cause.message
+            .orEmpty()
+            .replace(
+              Regex("[\\r\\n]"),
+              " ",
+            ).take(240)
+        }
+      LoggerFactory.getLogger("market-feature-archive").warn(
+        "Rejected feature topic={} partition={} offset={} error={} reason={}",
+        value.topic,
+        value.partition,
+        value.offset,
+        cause.javaClass.simpleName,
+        reason,
+      )
     }
   }
 }
