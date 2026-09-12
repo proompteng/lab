@@ -185,7 +185,13 @@ The `bayn.retained-replay-source.v1` manifest binds the SHA-256 of the complete 
 coverage interval, first/last arrival, partition bounds, universe, origin, and delivery policy. Each line uses
 `HistoricalMarketArrivalSchema`. The reader verifies the entire file before execution, then reads bounded chunks
 while retaining the production projection. It rejects duplicate/reversed Kafka coordinates, reversed availability,
-records outside the frozen cuts, and changed bytes/counts. It rehashes the consumed stream before a final report.
+records outside the frozen cuts, and changed bytes/counts. The current Torghut capture profile independently requires
+three bar partitions, thirteen quote partitions, three trade partitions, and three retained feature partitions.
+The offline regenerated feature stream has its own single partition. Every partition needs a cut, including empty
+cuts with equal start/end offsets. Record-derived partition inventories cannot establish source completeness.
+The verified first and last arrivals must also span the exchange session; declared coverage alone is insufficient.
+It rehashes the consumed stream before a final report. Initial and final reconciliation use the configured live
+reconciliation deadline while market time remains simulated.
 There is no 500,000-record or single-observation limit on this path.
 
 The timeline advances available source records, the account-specific PostgreSQL clock, and the Effect clock together.

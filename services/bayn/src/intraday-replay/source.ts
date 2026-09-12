@@ -59,21 +59,50 @@ export class ReplaySourceFailure extends Data.TaggedError('ReplaySourceFailure')
 const fail = (message: string, cause?: unknown) => new ReplaySourceFailure({ message, cause })
 const partitionKey = (topic: string, partition: number) => `${topic}:${partition}`
 
+/** The current Torghut capture profile matches the committed KafkaTopic topology, not observed records. */
+export const retainedReplaySourcePartitions = (manifest: RetainedReplaySourceManifest) =>
+  Object.values(manifest.universe.topics)
+    .flatMap((topic) =>
+      Array.from(
+        {
+          length:
+            topic === manifest.universe.topics.quotes
+              ? 13
+              : topic === manifest.universe.topics.features && manifest.regeneratedFeaturesRecordedAtMs !== undefined
+                ? 1
+                : 3,
+        },
+        (_, partition) => ({ topic, partition }),
+      ),
+    )
+    .sort((a, b) => a.topic.localeCompare(b.topic) || a.partition - b.partition)
+
 export const validateRetainedReplaySourceManifest = (input: unknown) =>
   Result.gen(function* () {
     const manifest = yield* Schema.decodeUnknownResult(RetainedReplaySourceManifestSchema, strictParseOptions)(input)
+    const expected = retainedReplaySourcePartitions(manifest)
+    if (
+      manifest.positions.length !== expected.length ||
+      expected.some((partition, index) => {
+        const supplied = manifest.positions[index]
+        return supplied?.topic !== partition.topic || supplied.partition !== partition.partition
+      })
+    )
+      return yield* Result.fail(fail('Source cuts must include every partition in the Torghut capture topology'))
     if (
       manifest.positions.some((position, index) => {
         const previous = manifest.positions[index - 1]
         return (
-          BigInt(position.startOffset) >= BigInt(position.endOffsetExclusive) ||
+          BigInt(position.startOffset) > BigInt(position.endOffsetExclusive) ||
           (previous !== undefined &&
             (previous.topic > position.topic ||
               (previous.topic === position.topic && previous.partition >= position.partition)))
         )
       })
     )
-      return yield* Result.fail(fail('Source partition cuts must be nonempty and ordered by topic then partition'))
+      return yield* Result.fail(
+        fail('Source partition cuts must be ordered by topic then partition with nonnegative spans'),
+      )
     return manifest
   })
 
@@ -167,9 +196,10 @@ export const openRetainedReplaySource = (path: string, input: unknown, runId: st
         count !== manifest.recordCount ||
         firstMs !== manifest.firstAvailableAtMs ||
         last?.availableAtMs !== manifest.lastAvailableAtMs ||
-        manifest.positions.some(
-          (bound) =>
-            offsets.get(partitionKey(bound.topic, bound.partition)) !== String(BigInt(bound.endOffsetExclusive) - 1n),
+        manifest.positions.some((bound) =>
+          bound.startOffset === bound.endOffsetExclusive
+            ? offsets.has(partitionKey(bound.topic, bound.partition))
+            : offsets.get(partitionKey(bound.topic, bound.partition)) !== String(BigInt(bound.endOffsetExclusive) - 1n),
         ) ||
         digest.digest('hex') !== manifest.dataSha256
           ? Effect.fail(fail('Source bytes, record count, or availability bounds differ from the frozen manifest'))

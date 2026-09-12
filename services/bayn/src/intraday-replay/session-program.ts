@@ -126,9 +126,14 @@ export const prepareReplaySession = (input: unknown) =>
       return yield* Result.fail(
         new ReplayBrokerFailure({ message: 'Retained asset observation was not available at market open' }),
       )
-    if (decoded.source.coverageStartMs > openMs || decoded.source.coverageEndMs < closeMs)
+    if (
+      decoded.source.coverageStartMs > openMs ||
+      decoded.source.coverageEndMs < closeMs ||
+      decoded.source.firstAvailableAtMs > openMs ||
+      decoded.source.lastAvailableAtMs < closeMs
+    )
       return yield* Result.fail(
-        new ReplayBrokerFailure({ message: 'Frozen source does not span market open through close' }),
+        new ReplayBrokerFailure({ message: 'Frozen source arrivals do not span market open through close' }),
       )
     const assetSymbols = decoded.assets.map((asset) => asset.symbol)
     if (

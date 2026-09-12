@@ -1,13 +1,17 @@
 import { sha256 } from '../hash'
 import { simulationFixture } from './simulated-streaming-fixture'
 import { arrivalPosition, compareArrivalPositions } from '../market-data/streaming/historical'
-import type { RetainedReplaySourceManifest } from '../intraday-replay/source'
+import { retainedReplaySourcePartitions, type RetainedReplaySourceManifest } from '../intraday-replay/source'
 
 export const retainedReplayFixture = () => {
   const input = simulationFixture()
-  const events = input.input.arrivals.events.toSorted((a, b) =>
-    compareArrivalPositions(arrivalPosition(a), arrivalPosition(b)),
-  )
+  const events = input.input.arrivals.events
+    .map((event) =>
+      event.record.topic === input.cursor.universe.topics.features
+        ? { ...event, record: { ...event.record, partition: 0 } }
+        : event,
+    )
+    .toSorted((a, b) => compareArrivalPositions(arrivalPosition(a), arrivalPosition(b)))
   const body = events.map((event) => JSON.stringify(event)).join('\n') + '\n'
   const positions = new Map<
     string,
@@ -38,5 +42,12 @@ export const retainedReplayFixture = () => {
     universe: input.cursor.universe,
     deliveryModel: input.source.deliveryModel,
   }
-  return { body, manifest, events, input }
+  const complete = {
+    ...manifest,
+    positions: retainedReplaySourcePartitions(manifest).map(
+      ({ topic, partition }) =>
+        positions.get(`${topic}:${partition}`) ?? { topic, partition, startOffset: '0', endOffsetExclusive: '0' },
+    ),
+  }
+  return { body, manifest: complete, events, input }
 }

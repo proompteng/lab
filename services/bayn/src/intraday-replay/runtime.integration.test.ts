@@ -6,6 +6,7 @@ import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Clock, Effect, Layer, Redacted, Ref, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
+import { OperationDeadlineClock } from '../operation-timeout'
 
 import { AssetClass, AssetExchange, AssetStatus, MarketCalendarResponseSchema } from '../broker/alpaca/model'
 import { normalizeAssetResult } from '../broker/alpaca/normalizers'
@@ -136,10 +137,22 @@ durableTest(
             ),
         })
         const passes = yield* Ref.make<unknown[]>([])
+        const stallReconciliation = yield* Ref.make(false)
+        const interrupted = yield* Ref.make(false)
         const runtimeInput = {
           config,
           strategy: fixtureRuntime,
-          broker,
+          broker: {
+            ...broker,
+            read: {
+              ...broker.read,
+              account: Ref.get(stallReconciliation).pipe(
+                Effect.flatMap((stall) =>
+                  stall ? Effect.never.pipe(Effect.onInterrupt(() => Ref.set(interrupted, true))) : broker.read.account,
+                ),
+              ),
+            },
+          },
           source: { ...fixture.source, runId },
           cursor: Effect.succeed(cursor),
           clock,
@@ -166,6 +179,16 @@ durableTest(
         const reconciliation = yield* runtime.reconcile
         const recreated = yield* makeReplayExecutionRuntime(runtimeInput)
         expect(recreated.authorityGenerationHash).toBe(runtime.authorityGenerationHash)
+        const frozenAt = yield* Clock.currentTimeMillis
+        const liveClock = yield* TestClock.withLive(Clock.clockWith(Effect.succeed))
+        yield* Ref.set(stallReconciliation, true)
+        const stalledFinal = yield* Effect.exit(
+          runtime.reconcile.pipe(Effect.provideService(OperationDeadlineClock, liveClock)),
+        )
+        expect(stalledFinal._tag).toBe('Failure')
+        expect(JSON.stringify(stalledFinal)).toContain('Replay reconciliation exceeded 1000ms')
+        expect(yield* Ref.get(interrupted)).toBe(true)
+        expect(yield* Clock.currentTimeMillis).toBe(frozenAt)
         const rows = yield* sql<Record<string, unknown>>`SELECT
       (SELECT count(*)::int FROM intents WHERE account_id = ${accountId}) AS intents,
       (SELECT count(*)::int FROM fills WHERE account_id = ${accountId}) AS fills,

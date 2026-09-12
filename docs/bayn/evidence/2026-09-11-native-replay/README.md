@@ -7,11 +7,11 @@ The unchanged intraday-momentum baseline completed the September 11, 2026 regula
 scenario ran the native activation, cycle, decision, planner, risk, coordinator, and reconciliation paths against an
 isolated simulated broker, real PostgreSQL, and TigerBeetle. No Alpaca order was submitted.
 
-| Scenario | Arrival latency | Adverse slippage | Displayed liquidity | Fee multiplier | Polls / failed | Intents / fills | Net P&L |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Baseline | 100 ms | 1 bp | 100% | 1× | 782 / 0 | 1 / 0 | $0 |
-| Cost stress | 500 ms | 2 bp | 50% | 2× | 782 / 0 | 1 / 0 | $0 |
-| Severe cost stress | 1,000 ms | 5 bp | 25% | 3× | 782 / 0 | 1 / 0 | $0 |
+| Scenario           | Arrival latency | Adverse slippage | Displayed liquidity | Fee multiplier | Polls / failed | Intents / fills | Net P&L |
+| ------------------ | --------------: | ---------------: | ------------------: | -------------: | -------------: | --------------: | ------: |
+| Baseline           |          100 ms |             1 bp |                100% |             1× |        782 / 0 |           1 / 0 |      $0 |
+| Cost stress        |          500 ms |             2 bp |                 50% |             2× |        782 / 0 |           1 / 0 |      $0 |
+| Severe cost stress |        1,000 ms |             5 bp |                 25% |             3× |        782 / 0 |           1 / 0 |      $0 |
 
 Each run began and ended with $100,000 cash and no position. At 14:01:30 UTC the strategy selected a buy of 45 NVDA
 shares with a $221.73 IOC limit. All three orders canceled without fills. There were no fees or accounting transfers
@@ -61,3 +61,9 @@ image digest is explicitly unverified input and is not evidence of a deployed-im
 
 Separate native integration and process-kill acceptance exercise positive fills and idempotent accounting. Those tests
 establish implementation behavior; they do not substitute for absent trade returns in this retained-session study.
+
+The original study manifest listed only partitions containing exported records. It did not retain empty cuts for
+quote partitions 0, 2, 5, 7, 10 and 11. The subsequent admission fix binds replay to the committed 13-partition quote
+topology and rejects that incomplete inventory. The archived runs and hashes remain unchanged; their source-completeness
+claim is limited to their declared cuts. A new accepted study requires independently captured cuts for every partition,
+including evidence for empty cuts, and a newly frozen input. These reports do not establish profitable trading.
