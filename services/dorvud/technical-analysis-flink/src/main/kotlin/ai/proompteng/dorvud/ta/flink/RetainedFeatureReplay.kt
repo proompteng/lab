@@ -133,6 +133,15 @@ internal fun replayRetainedFeatures(
     require(bar.ingestionTime <= java.time.Instant.ofEpochMilli(Math.addExact(arrival.availableAtMs, FEATURE_MAX_CLOCK_SKEW_MS))) {
       "raw arrival precedes producer ingestion"
     }
+    record.timestampMs?.let { timestamp ->
+      val ingestion = bar.ingestionTime.toEpochMilli()
+      require(
+        timestamp >= Math.subtractExact(ingestion, FEATURE_MAX_CLOCK_SKEW_MS) &&
+          timestamp <= Math.addExact(ingestion, FEATURE_MAX_CLOCK_SKEW_MS),
+      ) {
+        "Kafka timestamp violates the producer clock contract"
+      }
+    }
     if (!bar.final || bar.marketSession != "regular") {
       skipped++
       continue

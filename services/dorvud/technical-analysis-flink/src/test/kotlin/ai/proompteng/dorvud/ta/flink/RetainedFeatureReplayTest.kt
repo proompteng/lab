@@ -208,6 +208,18 @@ class RetainedFeatureReplayTest {
     }
   }
 
+  @Test fun `Kafka timestamps must stay within the two-sided producer clock bound`() {
+    for (difference in listOf(-5000L, 5000L, -5001L, 5001L)) {
+      val arrivals = input().map { it.copy(record = it.record.copy(timestampMs = it.availableAtMs + difference)) }
+      val source = bytes(arrivals)
+      if (difference in -5000L..5000L) {
+        assertEquals(4, captureReplay(source, config(source, arrivals.size), clock).arrivals.size)
+      } else {
+        assertFailsWith<IllegalArgumentException> { captureReplay(source, config(source, arrivals.size), clock) }
+      }
+    }
+  }
+
   @Test fun `retained replay honors the shared producer and Kafka clock-skew allowance`() {
     val sourceArrivals =
       input().map {
