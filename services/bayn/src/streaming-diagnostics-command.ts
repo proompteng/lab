@@ -6,6 +6,7 @@ import { kafkaMarketConfig } from './config/source'
 import { canonicalJsonV1Result } from './hash'
 import { featureMatchesBars } from './market-data/features/contract'
 import { makeKafkaMarketProjection } from './market-data/streaming/kafka'
+import { kafkaBootstrapDeadlineMs } from './market-data/streaming/bootstrap'
 import {
   defaultIntradayMomentumProtocolDocument,
   intradayMomentumFeatureTopic,
@@ -106,7 +107,9 @@ const main = Effect.scoped(
       undefined,
       args.sinceMs,
     )
-    const cut = yield* market.read.pipe(Effect.retry({ schedule: Schedule.spaced('1 second'), times: 150 }))
+    const cut = yield* market.read.pipe(
+      Effect.retry({ schedule: Schedule.spaced('1 second'), times: kafkaBootstrapDeadlineMs / 1000 + 30 }),
+    )
     const symbols = protocol.universe.map((symbol) => summarizeStreamingSymbol(cut.projection, symbol))
     yield* print(
       yield* Effect.fromResult(
@@ -123,7 +126,7 @@ const main = Effect.scoped(
       ),
     )
   }),
-).pipe(Effect.timeout('180 seconds'))
+).pipe(Effect.timeout(kafkaBootstrapDeadlineMs + 60_000))
 if (import.meta.main)
   NodeRuntime.runMain(
     main.pipe(
