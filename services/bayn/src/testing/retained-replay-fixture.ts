@@ -32,7 +32,9 @@ export const retainedReplayFixture = () => {
     coverageStartMs: events[0]?.availableAtMs ?? 0,
     coverageEndMs: events.at(-1)?.availableAtMs ?? 0,
     origin: 'deterministic unit fixture',
-    positions: [...positions.values()],
+    positions: [...positions.values()].sort((a, b) =>
+      a.topic < b.topic ? -1 : a.topic > b.topic ? 1 : a.partition - b.partition,
+    ),
     universe: input.cursor.universe,
     deliveryModel: input.source.deliveryModel,
   }

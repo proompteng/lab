@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { Cause, Data, Effect, FileSystem, Option, Pull, Schema, Semaphore, Stream } from 'effect'
+import { Cause, Data, Effect, FileSystem, Option, Pull, Result, Schema, Semaphore, Stream } from 'effect'
 import { canonicalHashV1Result } from '../hash'
 import {
   HistoricalMarketArrivalSchema,
@@ -59,10 +59,28 @@ export class ReplaySourceFailure extends Data.TaggedError('ReplaySourceFailure')
 const fail = (message: string, cause?: unknown) => new ReplaySourceFailure({ message, cause })
 const partitionKey = (topic: string, partition: number) => `${topic}:${partition}`
 
+export const validateRetainedReplaySourceManifest = (input: unknown) =>
+  Result.gen(function* () {
+    const manifest = yield* Schema.decodeUnknownResult(RetainedReplaySourceManifestSchema, strictParseOptions)(input)
+    if (
+      manifest.positions.some((position, index) => {
+        const previous = manifest.positions[index - 1]
+        return (
+          BigInt(position.startOffset) >= BigInt(position.endOffsetExclusive) ||
+          (previous !== undefined &&
+            (previous.topic > position.topic ||
+              (previous.topic === position.topic && previous.partition >= position.partition)))
+        )
+      })
+    )
+      return yield* Result.fail(fail('Source partition cuts must be nonempty and ordered by topic then partition'))
+    return manifest
+  })
+
 /** Validate the complete file before execution; replay it with one chunk and the bounded live projection retained. */
 export const openRetainedReplaySource = (path: string, input: unknown, runId: string) =>
   Effect.gen(function* () {
-    const manifest = yield* Schema.decodeUnknownEffect(RetainedReplaySourceManifestSchema, strictParseOptions)(input)
+    const manifest = yield* Effect.fromResult(validateRetainedReplaySourceManifest(input))
     const sourceManifestHash = yield* Effect.fromResult(canonicalHashV1Result(manifest))
     if (
       manifest.firstAvailableAtMs > manifest.lastAvailableAtMs ||
@@ -73,11 +91,6 @@ export const openRetainedReplaySource = (path: string, input: unknown, runId: st
     const bounds = new Map(
       manifest.positions.map((position) => [partitionKey(position.topic, position.partition), position]),
     )
-    if (
-      bounds.size !== manifest.positions.length ||
-      manifest.positions.some((p) => BigInt(p.startOffset) >= BigInt(p.endOffsetExclusive))
-    )
-      return yield* fail('Source partition bounds are duplicated or empty')
     const fs = yield* FileSystem.FileSystem
     // Keep a private, unlinked snapshot open through preflight and execution. Replacing or
     // changing the caller's path cannot substitute bytes after validation.
@@ -133,6 +146,8 @@ export const openRetainedReplaySource = (path: string, input: unknown, runId: st
             const previous = offsets.get(key)
             if (bound === undefined || offset < BigInt(bound.startOffset) || offset >= BigInt(bound.endOffsetExclusive))
               return yield* fail('Arrival is outside frozen source partition bounds')
+            if (previous === undefined && offset !== BigInt(bound.startOffset))
+              return yield* fail('Source omits the first data record of a declared partition cut')
             if (
               (last !== undefined && compareArrivalPositions(arrivalPosition(last), arrivalPosition(event)) > 0) ||
               (previous !== undefined && offset <= BigInt(previous))
@@ -150,6 +165,10 @@ export const openRetainedReplaySource = (path: string, input: unknown, runId: st
         count !== manifest.recordCount ||
         firstMs !== manifest.firstAvailableAtMs ||
         last?.availableAtMs !== manifest.lastAvailableAtMs ||
+        manifest.positions.some(
+          (bound) =>
+            offsets.get(partitionKey(bound.topic, bound.partition)) !== String(BigInt(bound.endOffsetExclusive) - 1n),
+        ) ||
         digest.digest('hex') !== manifest.dataSha256
           ? Effect.fail(fail('Source bytes, record count, or availability bounds differ from the frozen manifest'))
           : Effect.void,

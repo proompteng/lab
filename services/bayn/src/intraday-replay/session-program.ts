@@ -24,7 +24,11 @@ import {
   loadActiveStrategyProtocol,
   makeActiveStrategyRuntime,
 } from '../strategy'
-import { RetainedReplaySourceManifestSchema, openRetainedReplaySource } from './source'
+import {
+  RetainedReplaySourceManifestSchema,
+  openRetainedReplaySource,
+  validateRetainedReplaySourceManifest,
+} from './source'
 import { makeSimulatedExecutionClock } from './clock'
 import { makeReplayBroker, ReplayBrokerFailure } from './broker'
 import { makeReplayExecutionRuntime } from './runtime'
@@ -62,6 +66,7 @@ export const ReplaySessionInputSchema = Schema.Struct({
 export const prepareReplaySession = (input: unknown) =>
   Result.gen(function* () {
     const decoded = yield* Schema.decodeUnknownResult(ReplaySessionInputSchema, strictParseOptions)(input)
+    yield* validateRetainedReplaySourceManifest(decoded.source)
     const protocol = yield* loadActiveStrategyProtocol()
     const parameterHash = yield* canonicalHashV1Result(protocol)
     if (protocol.streamingInput === undefined)

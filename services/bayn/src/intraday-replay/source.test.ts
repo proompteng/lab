@@ -42,6 +42,7 @@ test('retained source rejects changed bytes, count, bounds, ordering and duplica
         { body: data.body + ' ', manifest: data.manifest },
         { body: data.body, manifest: { ...data.manifest, recordCount: data.manifest.recordCount + 1 } },
         { body: data.body, manifest: { ...data.manifest, positions: [] } },
+        { body: data.body, manifest: { ...data.manifest, positions: [...data.manifest.positions].reverse() } },
         { body: reversed, manifest: { ...data.manifest, dataSha256: sha256(reversed) } },
         {
           body: duplicate,
@@ -53,6 +54,36 @@ test('retained source rejects changed bytes, count, bounds, ordering and duplica
         expect(
           (yield* Effect.exit(Effect.scoped(openRetainedReplaySource(path, input.manifest, data.input.source.runId))))
             ._tag,
+        ).toBe('Failure')
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
+})
+
+test('preflight rejects omitted partition endpoints even when the file hash and count match', async () => {
+  const data = fixture()
+  const partition = data.manifest.positions[0]
+  if (partition === undefined) throw new Error('Fixture requires partition cuts')
+  const matching = data.events.filter(
+    ({ record }) => record.topic === partition.topic && record.partition === partition.partition,
+  )
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const path = yield* fs.makeTempFileScoped()
+      for (const omitted of [matching[0], matching.at(-1)]) {
+        const events = data.events.filter((event) => event !== omitted)
+        const body = events.map((event) => JSON.stringify(event)).join('\n') + '\n'
+        yield* fs.writeFileString(path, body)
+        const manifest = {
+          ...data.manifest,
+          dataSha256: sha256(body),
+          recordCount: events.length,
+          firstAvailableAtMs: events[0]?.availableAtMs,
+          lastAvailableAtMs: events.at(-1)?.availableAtMs,
+        }
+        expect(
+          (yield* Effect.exit(Effect.scoped(openRetainedReplaySource(path, manifest, data.input.source.runId))))._tag,
         ).toBe('Failure')
       }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

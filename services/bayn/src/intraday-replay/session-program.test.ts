@@ -51,6 +51,7 @@ test('session preparation freezes the unchanged strategy and complete calendar i
 test('session preparation rejects changed strategy, partial hours, unknown calendar and future as-of metadata', () => {
   const input = fixture()
   for (const invalid of [
+    { ...input, source: { ...input.source, positions: [...input.source.positions].reverse() } },
     { ...input, build: { ...input.build, strategyBehaviorHash: '0'.repeat(64) } },
     { ...input, source: { ...input.source, coverageStartMs: Date.parse('2026-09-04T14:30:00Z') } },
     { ...input, source: { ...input.source, coverageEndMs: Date.parse('2026-09-04T19:00:00Z') } },
