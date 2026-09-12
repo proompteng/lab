@@ -159,6 +159,20 @@ test('regenerated research retains real computation time and requires a declared
   expect(receipt.features.every((entry) => entry.simulatedAvailableAtMs === input.arrivals.observedAtMs)).toBe(true)
 })
 
+test('a delivery model reversing Kafka offsets fails globally instead of excluding a candidate', () => {
+  const { input } = experiment()
+  const candidates = input.arrivals.events
+    .filter((event) => {
+      const value = JSON.parse(event.record.value)
+      return value.symbol === 'AAPL' && value.channel === 'bars'
+    })
+    .toSorted((a, b) => Number(BigInt(a.record.offset) - BigInt(b.record.offset)))
+  const second = candidates[1]
+  if (second === undefined) throw new Error('missing fixture bars')
+  second.availableAtMs -= 1
+  expect(Result.isFailure(replayHistoricalStreamingStrategy(input))).toBe(true)
+})
+
 test('invalid protocol, session, raw input and stale benchmark cannot become successful research decisions', () => {
   const { input } = experiment()
   expect(Result.isFailure(replayHistoricalStreamingStrategy({ ...input, protocolHash: '0'.repeat(64) }))).toBe(true)

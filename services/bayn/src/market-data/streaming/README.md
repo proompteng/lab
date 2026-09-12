@@ -68,7 +68,8 @@ database, Kafka, or broker connection. Keep the source export with the receipt t
 
 `replayHistoricalMarketArrivals` uses the same reducer with an immutable run ID, supplied arrival times and the
 declared `availability-topic-partition-offset` tie-break. It consumes original raw envelopes and feature payloads
-exported with their Kafka coordinates. Its output explicitly identifies simulated consumer availability. Feature
+exported with their Kafka coordinates. A delivery model that reverses offsets within one Kafka partition is rejected
+before projection, including reversals later in the supplied experiment. Its output explicitly identifies simulated consumer availability. Feature
 computation timestamps are never backdated. A `regeneratedFeatures` declaration binds the generation run ID and
 actual recording time when an experiment assigns earlier simulated arrivals. Every historical projection is marked
 as simulated and is rejected by the live snapshot boundary. A regenerated feature therefore cannot be represented as an original

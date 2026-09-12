@@ -1,4 +1,4 @@
-import { Result, Schema } from 'effect'
+import { Data, Result, Schema } from 'effect'
 import { canonicalHashV1Result } from '../../hash'
 import {
   NonNegativeIntegerSchema,
@@ -7,7 +7,7 @@ import {
   UnsignedMicrosSchema,
   strictParseOptions,
 } from '../../schemas'
-import { emptyStreamingProjection, incorporateSimulatedMarketRecord } from './projection'
+import { emptyStreamingProjection, incorporateSimulatedMarketRecord, topicPartitionKey } from './projection'
 import type { StreamingUniverse } from './raw-events'
 
 /** Explicit counterfactual delivery; computedAt and the published payload are never rewritten. */
@@ -40,6 +40,13 @@ export const HistoricalStreamingInputSchema = Schema.Struct({
   ).check(Schema.isMaxLength(500_000)),
 })
 
+class HistoricalMarketArrivalFailure extends Data.TaggedError('HistoricalMarketArrivalFailure')<{
+  readonly message: string
+  readonly topic: string
+  readonly partition: number
+  readonly offset: string
+}> {}
+
 export const replayHistoricalMarketArrivals = (input: unknown, universe: StreamingUniverse) =>
   Result.gen(function* () {
     const decoded = yield* Schema.decodeUnknownResult(HistoricalStreamingInputSchema, strictParseOptions)(input)
@@ -55,6 +62,22 @@ export const replayHistoricalMarketArrivals = (input: unknown, universe: Streami
             ? 1
             : 0),
     )
+    const offsets = new Map<string, bigint>()
+    for (const { record } of events) {
+      const key = topicPartitionKey(record.topic, record.partition)
+      const offset = BigInt(record.offset)
+      const previous = offsets.get(key)
+      if (previous !== undefined && offset < previous)
+        return yield* Result.fail(
+          new HistoricalMarketArrivalFailure({
+            message: 'Simulated availability reverses Kafka partition offsets',
+            topic: record.topic,
+            partition: record.partition,
+            offset: record.offset,
+          }),
+        )
+      offsets.set(key, offset)
+    }
     let projection: ReturnType<typeof emptyStreamingProjection> = {
       ...emptyStreamingProjection(`historical-${decoded.runId}`),
       availabilityMode: 'simulated',
