@@ -1,3 +1,4 @@
+import { validateRetainedReplayCapture } from './intraday-replay/source'
 import { OperationDeadlineClock } from './operation-timeout'
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { Clock, Config, Data, Effect, FileSystem, Layer, Logger, Path, Redacted, Schema, Stdio, Stream } from 'effect'
@@ -18,7 +19,7 @@ import {
 } from './intraday-replay/session-program'
 
 const usage =
-  'Usage: bayn-session-replay --input <session.json> --arrivals <source.ndjson> --output <new-directory> | --help'
+  'Usage: bayn-session-replay --input <session.json> --arrivals <source.ndjson> --capture <capture.json> --capture-sha256 <trusted-hash> --output <new-directory> | --help'
 class SessionReplayCommandFailure extends Data.TaggedError('SessionReplayCommandFailure')<{
   readonly message: string
   readonly cause?: unknown
@@ -26,16 +27,28 @@ class SessionReplayCommandFailure extends Data.TaggedError('SessionReplayCommand
 export const parseSessionReplayArgs = (args: readonly string[]) => {
   if (args.length === 1 && args[0] === '--help') return { _tag: 'Help' } as const
   if (
-    args.length === 6 &&
+    args.length === 10 &&
     args[0] === '--input' &&
     args[2] === '--arrivals' &&
-    args[4] === '--output' &&
+    args[4] === '--capture' &&
+    args[6] === '--capture-sha256' &&
+    args[8] === '--output' &&
     args[1] !== undefined &&
     args[3] !== undefined &&
     args[5] !== undefined &&
-    [args[1], args[3], args[5]].every((value) => value.trim().length > 0 && !value.startsWith('--'))
+    args[7] !== undefined &&
+    /^[a-f0-9]{64}$/.test(args[7]) &&
+    args[9] !== undefined &&
+    [args[1], args[3], args[5], args[9]].every((value) => value.trim().length > 0 && !value.startsWith('--'))
   )
-    return { _tag: 'Run', inputPath: args[1], arrivalsPath: args[3], outputPath: args[5] } as const
+    return {
+      _tag: 'Run',
+      inputPath: args[1],
+      arrivalsPath: args[3],
+      capturePath: args[5],
+      captureHash: args[7],
+      outputPath: args[9],
+    } as const
   return { _tag: 'Invalid' } as const
 }
 export const validateReplayDatabaseTargets = (config: ReplayDatabaseConfig) =>
@@ -73,7 +86,9 @@ const main = Effect.scoped(
     const path = yield* Path.Path
     const raw = yield* fs.readFileString(args.inputPath)
     const parsed = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(raw)
-    const prepared = yield* Effect.fromResult(prepareReplaySession(parsed))
+    const captureText = yield* fs.readFileString(args.capturePath)
+    const capture = yield* Effect.fromResult(validateRetainedReplayCapture(captureText, args.captureHash))
+    const prepared = yield* Effect.fromResult(prepareReplaySession(parsed, capture))
     const databaseInput = yield* Config.all({
       postgresUrl: Config.redacted('BAYN_REPLAY_POSTGRES_URL'),
       tigerBeetleAddress: Config.string('BAYN_REPLAY_TIGERBEETLE_ADDRESS'),
@@ -95,6 +110,7 @@ const main = Effect.scoped(
     yield* validateReplayDatabaseTargets(databases)
     yield* fs.makeDirectory(args.outputPath, { mode: 0o700 })
     yield* fs.writeFileString(path.join(args.outputPath, 'input.json'), raw, { flag: 'wx' })
+    yield* fs.writeFileString(path.join(args.outputPath, 'capture.json'), captureText, { flag: 'wx' })
     const passesPath = path.join(args.outputPath, 'passes.ndjson')
     const base = Layer.mergeAll(WriterFenceLive, JournalLive(databases)).pipe(
       Layer.provideMerge(PostgresClientLive(databases)),

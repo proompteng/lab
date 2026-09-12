@@ -29,6 +29,8 @@ import {
   RetainedReplaySourceManifestSchema,
   openRetainedReplaySource,
   validateRetainedReplaySourceManifest,
+  validateCapturedReplayCuts,
+  type RetainedReplayCapture,
 } from './source'
 import { makeSimulatedExecutionClock } from './clock'
 import { makeReplayBroker, ReplayBrokerFailure } from './broker'
@@ -64,7 +66,7 @@ export const ReplaySessionInputSchema = Schema.Struct({
     reconciliationStaleThresholdMs: PositiveIntegerSchema,
   }),
 })
-export const prepareReplaySession = (input: unknown) =>
+export const prepareReplaySession = (input: unknown, capture: RetainedReplayCapture) =>
   Result.gen(function* () {
     const supplied = yield* Schema.decodeUnknownResult(ReplaySessionInputSchema, strictParseOptions)(input)
     const decoded = {
@@ -73,6 +75,7 @@ export const prepareReplaySession = (input: unknown) =>
       calendar: [...supplied.calendar].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)),
     }
     yield* validateRetainedReplaySourceManifest(decoded.source)
+    yield* validateCapturedReplayCuts(decoded.source, capture)
     const protocol = yield* loadActiveStrategyProtocol()
     const parameterHash = yield* canonicalHashV1Result(protocol)
     if (protocol.streamingInput === undefined)
@@ -147,7 +150,7 @@ export const prepareReplaySession = (input: unknown) =>
     const assets = yield* Result.all(
       decoded.assets.map((asset) => normalizeAssetResult(asset, asset.symbol, decoded.assetObservationAt)),
     )
-    const runId = yield* canonicalHashV1Result({ ...decoded, assets })
+    const runId = yield* canonicalHashV1Result({ ...decoded, assets, captureHash: capture.contentHash })
     const identity = yield* makeBrokerIdentity({
       schemaVersion: 'bayn.broker-identity.v2',
       provider: BrokerProvider.Alpaca,
@@ -166,6 +169,7 @@ export const prepareReplaySession = (input: unknown) =>
     })
     return {
       input: decoded,
+      capture,
       runId,
       protocol,
       assets,
@@ -225,7 +229,12 @@ export const runRetainedExecutionSession = (
   recordPass: (pass: Parameters<RecordAutonomousCyclePass>[0]) => Effect.Effect<void, OperationalError>,
 ) =>
   Effect.gen(function* () {
-    const source = yield* openRetainedReplaySource(arrivalsPath, prepared.input.source, prepared.runId)
+    const source = yield* openRetainedReplaySource(
+      arrivalsPath,
+      prepared.input.source,
+      prepared.runId,
+      prepared.capture,
+    )
     const sql = yield* PgClient.PgClient
     yield* prepareFreshReplayDatabase(databases.operationTimeoutMs)
     yield* TestClock.setTime(prepared.openMs - 1)
@@ -286,6 +295,7 @@ export const runRetainedExecutionSession = (
       runId: prepared.runId,
       source: source.source,
       sessionDate: prepared.input.sessionDate,
+      captureHash: prepared.capture.contentHash,
       build: prepared.buildEvidence,
       assumptions: prepared.input.assumptions,
       schedule,

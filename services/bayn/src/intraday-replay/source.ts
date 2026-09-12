@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { Cause, Data, Effect, FileSystem, Option, Pull, Result, Schema, Semaphore, Stream } from 'effect'
-import { canonicalHashV1Result } from '../hash'
+import { canonicalHashV1Result, sha256 } from '../hash'
 import {
   HistoricalMarketArrivalSchema,
   advanceHistoricalMarketCursor,
@@ -18,6 +18,7 @@ import {
   StrictNonEmptyStringSchema,
   SymbolSchema,
   UnsignedMicrosSchema,
+  UtcInstantSchema,
   strictParseOptions,
 } from '../schemas'
 
@@ -58,6 +59,46 @@ export class ReplaySourceFailure extends Data.TaggedError('ReplaySourceFailure')
 }> {}
 const fail = (message: string, cause?: unknown) => new ReplaySourceFailure({ message, cause })
 const partitionKey = (topic: string, partition: number) => `${topic}:${partition}`
+
+export const RetainedReplayCaptureSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.replay-source-capture.v1'),
+  capturedAt: UtcInstantSchema,
+  origin: StrictNonEmptyStringSchema,
+  coverageStartMs: NonNegativeIntegerSchema,
+  coverageEndMs: NonNegativeIntegerSchema,
+  universe: RetainedReplaySourceManifestSchema.fields.universe,
+  positions: RetainedReplaySourceManifestSchema.fields.positions,
+})
+
+/** The expected hash is supplied by the capture authority, independently of the editable session manifest. */
+export const validateRetainedReplayCapture = (text: string, expectedHash: string) =>
+  Result.gen(function* () {
+    yield* Schema.decodeUnknownResult(Sha256Schema)(expectedHash)
+    if (sha256(text) !== expectedHash)
+      return yield* Result.fail(fail('Source capture bytes differ from the independently pinned capture hash'))
+    const value = yield* Schema.decodeUnknownResult(
+      Schema.fromJsonString(RetainedReplayCaptureSchema),
+      strictParseOptions,
+    )(text)
+    if (value.coverageStartMs > value.coverageEndMs || Date.parse(value.capturedAt) < value.coverageEndMs)
+      return yield* Result.fail(fail('Source capture must observe the complete export interval'))
+    return { value, contentHash: expectedHash }
+  })
+export type RetainedReplayCapture = Result.Result.Success<ReturnType<typeof validateRetainedReplayCapture>>
+
+export const validateCapturedReplayCuts = (manifest: RetainedReplaySourceManifest, capture: RetainedReplayCapture) =>
+  Result.gen(function* () {
+    const cuts = (
+      value: Pick<RetainedReplaySourceManifest, 'coverageStartMs' | 'coverageEndMs' | 'universe' | 'positions'>,
+    ) => ({
+      coverageStartMs: value.coverageStartMs,
+      coverageEndMs: value.coverageEndMs,
+      universe: value.universe,
+      positions: value.positions,
+    })
+    if ((yield* canonicalHashV1Result(cuts(manifest))) !== (yield* canonicalHashV1Result(cuts(capture.value))))
+      return yield* Result.fail(fail('Source partition cuts differ from the independently captured session offsets'))
+  })
 
 /** The current Torghut capture profile matches the committed KafkaTopic topology, not observed records. */
 export const retainedReplaySourcePartitions = (manifest: RetainedReplaySourceManifest) =>
@@ -107,9 +148,10 @@ export const validateRetainedReplaySourceManifest = (input: unknown) =>
   })
 
 /** Validate the complete file before execution; replay it with one chunk and the bounded live projection retained. */
-export const openRetainedReplaySource = (path: string, input: unknown, runId: string) =>
+export const openRetainedReplaySource = (path: string, input: unknown, runId: string, capture: RetainedReplayCapture) =>
   Effect.gen(function* () {
     const manifest = yield* Effect.fromResult(validateRetainedReplaySourceManifest(input))
+    yield* Effect.fromResult(validateCapturedReplayCuts(manifest, capture))
     const sourceManifestHash = yield* Effect.fromResult(canonicalHashV1Result(manifest))
     if (
       manifest.firstAvailableAtMs > manifest.lastAvailableAtMs ||

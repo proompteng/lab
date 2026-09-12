@@ -1,7 +1,25 @@
+import { Result } from 'effect'
 import { sha256 } from '../hash'
 import { simulationFixture } from './simulated-streaming-fixture'
 import { arrivalPosition, compareArrivalPositions } from '../market-data/streaming/historical'
-import { retainedReplaySourcePartitions, type RetainedReplaySourceManifest } from '../intraday-replay/source'
+import {
+  retainedReplaySourcePartitions,
+  validateRetainedReplayCapture,
+  type RetainedReplaySourceManifest,
+} from '../intraday-replay/source'
+
+export const retainedReplayCaptureFixture = (manifest: RetainedReplaySourceManifest) => {
+  const text = JSON.stringify({
+    schemaVersion: 'bayn.replay-source-capture.v1',
+    capturedAt: new Date(manifest.coverageEndMs + 1).toISOString(),
+    origin: 'Independently frozen deterministic capture fixture',
+    coverageStartMs: manifest.coverageStartMs,
+    coverageEndMs: manifest.coverageEndMs,
+    universe: manifest.universe,
+    positions: manifest.positions,
+  })
+  return validateRetainedReplayCapture(text, sha256(text)).pipe(Result.getOrThrow)
+}
 
 export const retainedReplayFixture = () => {
   const input = simulationFixture()
@@ -49,5 +67,5 @@ export const retainedReplayFixture = () => {
         positions.get(`${topic}:${partition}`) ?? { topic, partition, startOffset: '0', endOffsetExclusive: '0' },
     ),
   }
-  return { body, manifest: complete, events, input }
+  return { body, manifest: complete, capture: retainedReplayCaptureFixture(complete), events, input }
 }

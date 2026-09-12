@@ -3,7 +3,8 @@ import { NodeServices } from '@effect/platform-node'
 import { Effect, FileSystem } from 'effect'
 import { canonicalHashV1, sha256 } from '../hash'
 import { retainedReplayFixture as fixture } from '../testing/retained-replay-fixture'
-import { openRetainedReplaySource } from './source'
+import { openRetainedReplaySource, validateRetainedReplayCapture } from './source'
+import { Result } from 'effect'
 
 test('retained source preflights its bytes and advances only available records across the whole file', async () => {
   const data = fixture()
@@ -12,7 +13,7 @@ test('retained source preflights its bytes and advances only available records a
       const fs = yield* FileSystem.FileSystem
       const path = yield* fs.makeTempFileScoped()
       yield* fs.writeFileString(path, data.body)
-      const source = yield* openRetainedReplaySource(path, data.manifest, data.input.source.runId)
+      const source = yield* openRetainedReplaySource(path, data.manifest, data.input.source.runId, data.capture)
       expect(source.source.sourceManifestHash).toBe(canonicalHashV1(data.manifest))
       yield* source.advanceTo(data.manifest.firstAvailableAtMs - 1)
       expect((yield* source.cursor).processedRecords).toBe(0)
@@ -54,8 +55,9 @@ test('retained source rejects changed bytes, count, bounds, ordering and duplica
       for (const input of cases) {
         yield* fs.writeFileString(path, input.body)
         expect(
-          (yield* Effect.exit(Effect.scoped(openRetainedReplaySource(path, input.manifest, data.input.source.runId))))
-            ._tag,
+          (yield* Effect.exit(
+            Effect.scoped(openRetainedReplaySource(path, input.manifest, data.input.source.runId, data.capture)),
+          ))._tag,
         ).toBe('Failure')
       }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -85,7 +87,9 @@ test('preflight rejects omitted partition endpoints and interior records even wh
           lastAvailableAtMs: events.at(-1)?.availableAtMs,
         }
         expect(
-          (yield* Effect.exit(Effect.scoped(openRetainedReplaySource(path, manifest, data.input.source.runId))))._tag,
+          (yield* Effect.exit(
+            Effect.scoped(openRetainedReplaySource(path, manifest, data.input.source.runId, data.capture)),
+          ))._tag,
         ).toBe('Failure')
       }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -99,7 +103,7 @@ test('execution consumes the validated snapshot after the original file is chang
       const fs = yield* FileSystem.FileSystem
       const path = yield* fs.makeTempFileScoped()
       yield* fs.writeFileString(path, data.body)
-      const source = yield* openRetainedReplaySource(path, data.manifest, data.input.source.runId)
+      const source = yield* openRetainedReplaySource(path, data.manifest, data.input.source.runId, data.capture)
       yield* fs.writeFileString(path, 'changed in place\n')
       yield* fs.remove(path)
       yield* fs.writeFileString(path, 'replacement file\n')
@@ -133,7 +137,9 @@ test('an entire omitted partition cannot redefine completeness by changing the f
       const fs = yield* FileSystem.FileSystem
       const path = yield* fs.makeTempFileScoped()
       yield* fs.writeFileString(path, body)
-      const outcome = yield* Effect.exit(openRetainedReplaySource(path, manifest, data.input.source.runId))
+      const outcome = yield* Effect.exit(
+        openRetainedReplaySource(path, manifest, data.input.source.runId, data.capture),
+      )
       expect(outcome._tag).toBe('Failure')
       expect(JSON.stringify(outcome)).toContain('every partition in the Torghut capture topology')
       expect(
@@ -144,4 +150,60 @@ test('an entire omitted partition cannot redefine completeness by changing the f
       )
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
+})
+
+test('one partition cannot redefine its captured prefix or suffix while other arrivals preserve global coverage', async () => {
+  const data = fixture()
+  const bound = data.manifest.positions.find(
+    (position) => BigInt(position.endOffsetExclusive) - BigInt(position.startOffset) > 2n,
+  )
+  if (bound === undefined) throw new Error('fixture requires a populated source cut')
+  const matching = data.events.filter(
+    ({ record }) => record.topic === bound.topic && record.partition === bound.partition,
+  )
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const path = yield* fs.makeTempFileScoped()
+      for (const side of ['prefix', 'suffix'] as const) {
+        const omitted = side === 'prefix' ? matching[0] : matching.at(-1)
+        const events = data.events.filter((event) => event !== omitted)
+        const body = events.map((event) => JSON.stringify(event)).join('\n') + '\n'
+        const manifest = {
+          ...data.manifest,
+          dataSha256: sha256(body),
+          recordCount: events.length,
+          firstAvailableAtMs: events[0]?.availableAtMs,
+          lastAvailableAtMs: events.at(-1)?.availableAtMs,
+          positions: data.manifest.positions.map((position) =>
+            position !== bound
+              ? position
+              : {
+                  ...position,
+                  ...(side === 'prefix'
+                    ? { startOffset: String(BigInt(position.startOffset) + 1n) }
+                    : { endOffsetExclusive: String(BigInt(position.endOffsetExclusive) - 1n) }),
+                },
+          ),
+        }
+        yield* fs.writeFileString(path, body)
+        const outcome = yield* Effect.exit(
+          openRetainedReplaySource(path, manifest, data.input.source.runId, data.capture),
+        )
+        expect(outcome._tag).toBe('Failure')
+        expect(JSON.stringify(outcome)).toContain('independently captured session offsets')
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
+})
+
+test('capture receipt replacement fails against the separately pinned hash', () => {
+  const data = fixture()
+  const original = JSON.stringify(data.capture.value)
+  const pinnedHash = sha256(original)
+  expect(Result.isSuccess(validateRetainedReplayCapture(original, pinnedHash))).toBe(true)
+  const changed = JSON.stringify({ ...data.capture.value, positions: data.capture.value.positions.slice(1) })
+  const result = validateRetainedReplayCapture(changed, pinnedHash)
+  expect(Result.isFailure(result)).toBe(true)
+  if (Result.isFailure(result)) expect(String(result.failure)).toContain('independently pinned capture hash')
 })

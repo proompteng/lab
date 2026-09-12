@@ -166,7 +166,8 @@ closed-window economic reports.
 BAYN_REPLAY_POSTGRES_URL=postgresql://bayn:bayn@127.0.0.1:55432/bayn_replay \
 BAYN_REPLAY_TIGERBEETLE_ADDRESS=127.0.0.1:53000 \
 BAYN_REPLAY_TIGERBEETLE_CLUSTER_ID=20912 BAYN_REPLAY_TIGERBEETLE_LEDGER=70912 \
-node dist/session-replay-command.js --input session.json --arrivals source.ndjson --output new-run-directory
+node dist/session-replay-command.js --input session.json --arrivals source.ndjson \
+  --capture capture.json --capture-sha256 "$CAPTURE_SHA256" --output new-run-directory
 ```
 
 Run this command against separately provisioned local stores. It accepts only local PostgreSQL databases whose names
@@ -190,6 +191,8 @@ three bar partitions, thirteen quote partitions, three trade partitions, and thr
 The offline regenerated feature stream has its own single partition. Every partition needs a cut, including empty
 cuts with equal start/end offsets. Record-derived partition inventories cannot establish source completeness.
 The verified first and last arrivals must also span the exchange session; declared coverage alone is insufficient.
+Every partition cut must also equal the independently captured offset receipt. Its separately supplied SHA-256 is
+trusted configuration, outside the editable session input; replacing the receipt without that authority is rejected.
 It rehashes the consumed stream before a final report. Initial and final reconciliation use the configured live
 reconciliation deadline while market time remains simulated.
 There is no 500,000-record or single-observation limit on this path.
@@ -209,3 +212,13 @@ mismatches is not acceptance. The command reports profitability as `UNPROVEN`: s
 assumptions, independent sessions, and cost sensitivity still require evaluation. The existing durable integration
 test proves a native intent/fill/accounting path; it does not substitute for a retained full-session result or a
 full-process crash/restart test.
+
+The required capture receipt uses `bayn.replay-source-capture.v1` with `capturedAt`, `origin`, `coverageStartMs`,
+`coverageEndMs`, `universe`, and complete `positions` (`topic`, `partition`, `startOffset`, `endOffsetExclusive`).
+Capture the raw cuts with Kafka ListOffsets at both requested boundaries, resolving a missing timestamp match to the
+captured high-water mark. Obtain regenerated-feature extents from the independently retained producer receipt.
+Freeze the receipt and its byte SHA-256 at capture time; do not derive them from whichever records the replay export
+happens to contain. Supply that trusted hash through `--capture-sha256`. The command checks both receipt bytes and
+every manifest cut before touching a database, copies the receipt to its output, and binds its hash into the run ID
+and final report. This establishes completeness relative to the pinned capture authority; it does not authenticate
+market prices or calibrate the data feed.

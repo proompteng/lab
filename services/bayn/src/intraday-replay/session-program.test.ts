@@ -1,8 +1,10 @@
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
-import { retainedReplayFixture } from '../testing/retained-replay-fixture'
+import { retainedReplayFixture, retainedReplayCaptureFixture } from '../testing/retained-replay-fixture'
 import { config } from '../testing/runtime-fixtures'
-import { prepareReplaySession } from './session-program'
+import { prepareReplaySession as prepareWithCapture } from './session-program'
+import { validateRetainedReplayCapture } from './source'
+import { sha256 } from '../hash'
 const fixture = () => {
   const source = retainedReplayFixture()
   const { verification: _verification, ...build } = config.build
@@ -130,4 +132,17 @@ test('normalized asset attributes determine identity independent of response rep
     )
   expect(prepare(['ipo', 'ptp_no_exception', 'ipo']).runId).toBe(prepare(['ptp_no_exception', 'ipo']).runId)
   expect(prepare(['ipo']).runId).not.toBe(base.runId)
+})
+
+const prepareReplaySession = (input: unknown) =>
+  prepareWithCapture(input, retainedReplayCaptureFixture(fixture().source))
+
+test('run identity binds the independent capture receipt as well as the session input', () => {
+  const input = fixture()
+  const original = retainedReplayCaptureFixture(input.source)
+  const text = JSON.stringify({ ...original.value, origin: 'a separately captured observation' })
+  const other = Result.getOrThrow(validateRetainedReplayCapture(text, sha256(text)))
+  expect(Result.getOrThrow(prepareWithCapture(input, other)).runId).not.toBe(
+    Result.getOrThrow(prepareWithCapture(input, original)).runId,
+  )
 })

@@ -9,9 +9,23 @@ const config = {
 test('session command requires source, input and a separate output directory', () => {
   expect(parseSessionReplayArgs(['--help'])._tag).toBe('Help')
   expect(
-    parseSessionReplayArgs(['--input', 'input.json', '--arrivals', 'raw.ndjson', '--output', 'result']),
+    parseSessionReplayArgs([
+      '--input',
+      'input.json',
+      '--arrivals',
+      'raw.ndjson',
+      '--capture',
+      'capture.json',
+      '--capture-sha256',
+      'a'.repeat(64),
+      '--output',
+      'result',
+    ]),
   ).toMatchObject({ _tag: 'Run' })
   expect(parseSessionReplayArgs(['--input', 'input.json'])._tag).toBe('Invalid')
+  expect(parseSessionReplayArgs(['--input', 'input.json', '--arrivals', 'raw.ndjson', '--output', 'result'])._tag).toBe(
+    'Invalid',
+  )
 })
 test('session command cannot target live database hosts or unspecified database names', async () => {
   expect((await Effect.runPromiseExit(validateReplayDatabaseTargets(config)))._tag).toBe('Success')
