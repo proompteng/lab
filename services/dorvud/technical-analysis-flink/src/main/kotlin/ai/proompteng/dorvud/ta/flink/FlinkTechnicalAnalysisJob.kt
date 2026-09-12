@@ -51,17 +51,6 @@ import org.apache.kafka.clients.consumer.OffsetResetStrategy
 import org.apache.kafka.clients.producer.ProducerRecord
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import org.ta4j.core.BaseBar
-import org.ta4j.core.BaseBarSeries
-import org.ta4j.core.indicators.EMAIndicator
-import org.ta4j.core.indicators.MACDIndicator
-import org.ta4j.core.indicators.RSIIndicator
-import org.ta4j.core.indicators.SMAIndicator
-import org.ta4j.core.indicators.bollinger.BollingerBandsLowerIndicator
-import org.ta4j.core.indicators.bollinger.BollingerBandsMiddleIndicator
-import org.ta4j.core.indicators.bollinger.BollingerBandsUpperIndicator
-import org.ta4j.core.indicators.helpers.ClosePriceIndicator
-import org.ta4j.core.indicators.statistics.StandardDeviationIndicator
 import java.io.Serializable
 import java.net.URI
 import java.nio.charset.StandardCharsets
@@ -76,8 +65,6 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
 import java.time.ZoneOffset
-import java.time.ZonedDateTime
-import java.time.temporal.ChronoUnit
 import java.util.Properties
 
 fun main() {
@@ -98,22 +85,20 @@ internal fun configureTechnicalAnalysisJob(
   features: RollingMarketFeatureConfig? = null,
 ): StreamGraph {
   val serde = AvroSerde()
-  val parsedTrades =
+  val trades =
     env
       .fromSource(
-        kafkaSource(config, config.tradesTopic),
+        kafkaSource(config, config.tradesTopic, ArchiveKafkaRecordDeserializer()),
         WatermarkStrategy.noWatermarks(),
         "ta-trades-source",
-      ).flatMap(
-        ParseEnvelopeFlatMap(
-          serializerFactory = SerializerFactory { TradePayload.serializer() },
-          failureMetricName = "trades_parse_failures",
-        ),
+      ).flatMap(ParseRecordedTrade())
+      .returns(TypeInformation.of(RecordedTrade::class.java))
+      .assignTimestampsAndWatermarks(
+        WatermarkStrategy
+          .forBoundedOutOfOrderness<RecordedTrade>(Duration.ofMillis(config.maxOutOfOrderMs))
+          .withIdleness(Duration.ofMillis(config.watermarkIdleTimeoutMs))
+          .withTimestampAssigner(SerializableTimestampAssigner<RecordedTrade> { event, _ -> event.envelope.eventTs.toEpochMilli() }),
       )
-  val trades =
-    parsedTrades
-      .returns(object : TypeHint<Envelope<TradePayload>>() {})
-      .assignTimestampsAndWatermarks(watermarkStrategy(config))
 
   val quotesStream =
     if (config.quotesTopic != null) {
@@ -152,7 +137,7 @@ internal fun configureTechnicalAnalysisJob(
 
   val microBars =
     trades
-      .keyBy { it.symbol }
+      .keyBy { it.envelope.symbol }
       .process(MicrobarProcessFunction())
       .name("ta-microbars")
       .uid("ta-microbars")
@@ -539,7 +524,13 @@ internal fun emptyBars1mStream(env: StreamExecutionEnvironment) =
 private fun kafkaSource(
   config: FlinkTaConfig,
   topic: String,
-): KafkaSource<String> {
+): KafkaSource<String> = kafkaSource(config, topic, KafkaRecordDeserializationSchema.valueOnly(SimpleStringSchema()))
+
+private fun <T> kafkaSource(
+  config: FlinkTaConfig,
+  topic: String,
+  deserializer: KafkaRecordDeserializationSchema<T>,
+): KafkaSource<T> {
   val offsetResetStrategy =
     when (config.autoOffsetReset.trim().lowercase()) {
       "earliest" -> OffsetResetStrategy.EARLIEST
@@ -550,12 +541,12 @@ private fun kafkaSource(
 
   val builder =
     KafkaSource
-      .builder<String>()
+      .builder<T>()
       .setBootstrapServers(config.bootstrapServers)
       .setTopics(topic)
       .setClientIdPrefix(config.clientId)
       .setGroupId(config.groupId)
-      .setValueOnlyDeserializer(SimpleStringSchema())
+      .setDeserializer(deserializer)
       .setStartingOffsets(OffsetsInitializer.committedOffsets(offsetResetStrategy))
 
   builder.setProperty("auto.offset.reset", config.autoOffsetReset)
@@ -1053,86 +1044,87 @@ private fun kafkaJaas(config: FlinkTaConfig): String {
   }
 }
 
-private typealias TradeEnvelope = Envelope<TradePayload>
 private typealias MicroBarEnvelope = Envelope<MicroBarPayload>
 
-private class MicrobarProcessFunction : KeyedProcessFunction<String, TradeEnvelope, MicroBarEnvelope>() {
-  private lateinit var bucketState: ValueState<BucketState>
+internal class MicrobarProcessFunction : KeyedProcessFunction<String, RecordedTrade, MicroBarEnvelope>() {
+  private lateinit var legacyBucket: ValueState<BucketState>
+  private lateinit var buckets: MapState<Long, EventTimeTradeBucket>
   private lateinit var seqState: ValueState<Long>
+  private lateinit var late: Counter
+  private lateinit var discardedLegacy: Counter
 
   override fun open(openContext: OpenContext) {
-    bucketState = runtimeContext.getState(ValueStateDescriptor("bucket", BucketState::class.java))
+    legacyBucket = runtimeContext.getState(ValueStateDescriptor("bucket", BucketState::class.java))
+    buckets = runtimeContext.getMapState(MapStateDescriptor("event-time-buckets-v2", Long::class.java, EventTimeTradeBucket::class.java))
     seqState = runtimeContext.getState(ValueStateDescriptor("seq", Long::class.java))
+    late = runtimeContext.metricGroup.counter("microbar_late_trades_total")
+    discardedLegacy = runtimeContext.metricGroup.counter("microbar_legacy_buckets_discarded_total")
+  }
+
+  private fun retireLegacyBucket() {
+    // The old aggregate cannot recover event-time ordering or source identities.
+    if (legacyBucket.value() != null) {
+      discardedLegacy.inc()
+      legacyBucket.clear()
+    }
   }
 
   override fun processElement(
-    value: Envelope<TradePayload>,
+    value: RecordedTrade,
     ctx: Context,
-    out: Collector<Envelope<MicroBarPayload>>,
+    out: Collector<MicroBarEnvelope>,
   ) {
-    val windowStart = value.payload.t.truncatedTo(ChronoUnit.SECONDS)
-    val windowStartMillis = windowStart.toEpochMilli()
-    val windowEndMillis = windowStartMillis + 1_000
-
-    val existing = bucketState.value()
-    if (existing == null) {
-      bucketState.update(BucketState.fromTrade(windowStartMillis, windowEndMillis, value.payload))
-      ctx.timerService().registerEventTimeTimer(windowEndMillis)
+    retireLegacyBucket()
+    val windowEnd = Math.multiplyExact(Math.addExact(value.envelope.payload.t.epochSecond, 1), 1_000L)
+    if (windowEnd <= ctx.timerService().currentWatermark()) {
+      late.inc()
+      ctx.output(lateTradeOutput, value)
+      LoggerFactory.getLogger("microbars").warn(
+        "Quarantined late trade topic={} partition={} offset={} windowEnd={} watermark={}",
+        value.topic,
+        value.partition,
+        value.offset,
+        windowEnd,
+        ctx.timerService().currentWatermark(),
+      )
       return
     }
-
-    if (existing.windowStartMillis == windowStartMillis) {
-      existing.update(value.payload)
-      bucketState.update(existing)
-    } else {
-      emit(existing, value.symbol, out)
-      bucketState.update(BucketState.fromTrade(windowStartMillis, windowEndMillis, value.payload))
-      ctx.timerService().registerEventTimeTimer(windowEndMillis)
-    }
+    buckets.put(windowEnd, (buckets.get(windowEnd) ?: EventTimeTradeBucket()).add(value))
+    ctx.timerService().registerEventTimeTimer(windowEnd)
   }
 
   override fun onTimer(
     timestamp: Long,
     ctx: OnTimerContext,
-    out: Collector<Envelope<MicroBarPayload>>,
+    out: Collector<MicroBarEnvelope>,
   ) {
-    val bucket = bucketState.value() ?: return
-    if (bucket.windowEndMillis <= timestamp) {
-      emit(bucket, ctx.currentKey, out)
-      bucketState.clear()
-    }
-  }
-
-  private fun emit(
-    bucket: BucketState,
-    symbol: String,
-    out: Collector<Envelope<MicroBarPayload>>,
-  ) {
+    retireLegacyBucket()
+    val bucket = buckets.get(timestamp) ?: return
+    val payload = bucket.payload()
+    val input = bucket.trades.first().envelope
     val seq = (seqState.value() ?: 0L) + 1
     seqState.update(seq)
-    val end = Instant.ofEpochMilli(bucket.windowEndMillis)
-    val payload = bucket.toPayload()
-    val envelope =
-      Envelope(
-        ingestTs = Instant.now(),
-        eventTs = end,
-        feed = "alpaca",
-        channel = "trades",
-        symbol = symbol,
-        seq = seq,
-        payload = payload,
-        isFinal = true,
-        source = "ta",
-        window =
-          Window(
-            size = "PT1S",
-            step = "PT1S",
-            start = Instant.ofEpochMilli(bucket.windowStartMillis).toString(),
-            end = end.toString(),
-          ),
-        version = 1,
-      )
-    out.collect(envelope)
+    out.collect(
+      input
+        .withPayload(
+          payload,
+          window = Window("PT1S", "PT1S", payload.t.minusSeconds(1).toString(), payload.t.toString()),
+          seqOverride = seq,
+        ).copy(
+          ingestTs = Instant.ofEpochMilli(ctx.timerService().currentProcessingTime()),
+          eventTs = payload.t,
+          source = "ta",
+          isFinal = true,
+          version = 2,
+        ),
+    )
+    buckets.remove(timestamp)
+  }
+
+  companion object {
+    val lateTradeOutput =
+      org.apache.flink.util
+        .OutputTag("microbar-late-trades-v2", TypeInformation.of(RecordedTrade::class.java))
   }
 }
 
@@ -1461,7 +1453,7 @@ private fun maxOfNullable(
     else -> maxOf(first, second)
   }
 
-private data class BucketState(
+internal data class BucketState(
   val windowStartMillis: Long,
   val windowEndMillis: Long,
   var open: Double,
@@ -1525,29 +1517,21 @@ internal class TaSignalsFunction(
   private lateinit var barsState: ListState<MicroBarPayload>
   private lateinit var quoteState: ValueState<TimedQuoteState>
   private lateinit var sessionState: ValueState<SessionAccumulatorState>
+  private lateinit var canonicalBars: MapState<String, CanonicalSignalBar>
+  private lateinit var sessionDate: ValueState<String>
+  private lateinit var accumulator: ValueState<IndicatorAccumulator>
+  private lateinit var rejected: Counter
 
   override fun open(openContext: OpenContext) {
-    val stateNames =
-      signalStateDescriptorNames(
-        barDuration = barDuration,
-        timestampAnchor = timestampAnchor,
-        resetLegacyOneSecondState = resetLegacyOneSecondState,
-      )
-    barsState =
-      runtimeContext.getListState(
-        ListStateDescriptor(
-          stateNames.bars,
-          TypeInformation.of(MicroBarPayload::class.java),
-        ),
-      )
-    quoteState =
-      runtimeContext.getState(
-        ValueStateDescriptor(stateNames.quote, TimedQuoteState::class.java),
-      )
-    sessionState =
-      runtimeContext.getState(
-        ValueStateDescriptor(stateNames.session, SessionAccumulatorState::class.java),
-      )
+    val names = signalStateDescriptorNames(barDuration, timestampAnchor, resetLegacyOneSecondState)
+    barsState = runtimeContext.getListState(ListStateDescriptor(names.bars, TypeInformation.of(MicroBarPayload::class.java)))
+    quoteState = runtimeContext.getState(ValueStateDescriptor(names.quote, TimedQuoteState::class.java))
+    sessionState = runtimeContext.getState(ValueStateDescriptor(names.session, SessionAccumulatorState::class.java))
+    val namespace = "canonical-v3-${signalStateNamespace(barDuration, timestampAnchor)}"
+    canonicalBars = runtimeContext.getMapState(MapStateDescriptor("$namespace-bars", String::class.java, CanonicalSignalBar::class.java))
+    sessionDate = runtimeContext.getState(ValueStateDescriptor("$namespace-date", String::class.java))
+    accumulator = runtimeContext.getState(ValueStateDescriptor("$namespace-indicators", IndicatorAccumulator::class.java))
+    rejected = runtimeContext.metricGroup.counter("signal_bar_rejections_total")
   }
 
   override fun processElement1(
@@ -1555,22 +1539,60 @@ internal class TaSignalsFunction(
     ctx: Context,
     out: Collector<Envelope<TaSignalsPayload>>,
   ) {
-    val bars = barsState.get().toMutableList()
-    bars.add(value.payload)
-    val historyLimit = signalHistoryLimit(config.vwapWindow, config.realizedVolWindow, barDuration)
-    while (bars.size > historyLimit) {
-      bars.removeAt(0)
+    if (!value.isFinal) return
+    val retainedBars = maxOf(61, signalHistoryLimit(config.vwapWindow, config.realizedVolWindow, barDuration))
+    try {
+      advanceIndicators(IndicatorAccumulator(), value.payload, barDuration, retainedBars)
+    } catch (error: IllegalArgumentException) {
+      rejected.inc()
+      LoggerFactory.getLogger("ta-signals").warn("Rejected indicator bar symbol={} reason={}", value.symbol, error.message)
+      return
     }
-    bars.sortBy { it.t }
-    barsState.update(bars)
-
-    val session = sessionState.value() ?: SessionAccumulatorState()
-    session.pv += value.payload.c * value.payload.v
-    session.vol += value.payload.v
-    sessionState.update(session)
-
-    val signalsPayload = computeSignals(value, bars, session)
-    out.collect(signalsPayload)
+    val start = signalBarEndTime(value.payload.t, barDuration, timestampAnchor).minus(barDuration)
+    val date = start.atZone(ZoneId.of("America/New_York")).toLocalDate().toString()
+    val previousDate = sessionDate.value()
+    if (previousDate != null && date < previousDate) return
+    if (date != previousDate) {
+      canonicalBars.clear()
+      accumulator.clear()
+      sessionDate.update(date)
+      // Legacy retained bars cannot establish the original recursive seed or session totals.
+      barsState.clear()
+      sessionState.clear()
+    }
+    val key = value.payload.t.toString()
+    val existing = canonicalBars.get(key)
+    if (existing != null) {
+      val revision =
+        compareValues(value.ingestTs, existing.envelope.ingestTs).takeIf { it != 0 }
+          ?: compareValues(value.seq, existing.envelope.seq)
+      if (revision < 0) return
+      if (revision == 0) {
+        if (value.payload != existing.envelope.payload) rejected.inc()
+        return
+      }
+    }
+    val canonical = CanonicalSignalBar(value, if (existing == null) quoteState.value() else existing.quote)
+    canonicalBars.put(key, canonical)
+    if (existing?.envelope?.payload == value.payload) return
+    val previous = accumulator.value() ?: IndicatorAccumulator()
+    val latest = previous.recent.lastOrNull()
+    if (latest == null || value.payload.t.isAfter(latest.t)) {
+      val next = advanceIndicators(previous, value.payload, barDuration, retainedBars)
+      accumulator.update(next)
+      out.collect(computeSignals(canonical, next, ctx.timerService().currentProcessingTime()))
+    } else {
+      var next = IndicatorAccumulator()
+      for (bar in canonicalBars.values().toList().sortedBy { it.envelope.payload.t }) {
+        next = advanceIndicators(next, bar.envelope.payload, barDuration, retainedBars)
+        if (!bar.envelope.payload.t
+            .isBefore(value.payload.t)
+        ) {
+          out.collect(computeSignals(bar, next, ctx.timerService().currentProcessingTime()))
+        }
+      }
+      accumulator.update(next)
+    }
   }
 
   override fun processElement2(
@@ -1585,74 +1607,21 @@ internal class TaSignalsFunction(
   }
 
   private fun computeSignals(
-    envelope: Envelope<MicroBarPayload>,
-    bars: List<MicroBarPayload>,
-    session: SessionAccumulatorState,
+    canonical: CanonicalSignalBar,
+    state: IndicatorAccumulator,
+    computedAtMs: Long,
   ): Envelope<TaSignalsPayload> {
-    val series = BaseBarSeries("ta-$barDuration-$timestampAnchor-${envelope.symbol}")
-    bars.forEach { bar ->
-      val barTime = ZonedDateTime.ofInstant(signalBarEndTime(bar.t, barDuration, timestampAnchor), ZoneOffset.UTC)
-      val baseBar = BaseBar(barDuration, barTime, bar.o, bar.h, bar.l, bar.c, bar.v)
-      if (series.barCount == 0) {
-        series.addBar(baseBar)
-      } else {
-        val lastEndTime = series.getBar(series.endIndex).endTime
-        when {
-          barTime.isAfter(lastEndTime) -> series.addBar(baseBar)
-          barTime.isEqual(lastEndTime) -> series.addBar(baseBar, true)
-          else -> Unit
-        }
-      }
-    }
-
-    val close = ClosePriceIndicator(series)
-    val ema12Indicator = EMAIndicator(close, 12)
-    val ema26Indicator = EMAIndicator(close, 26)
-    val ema12 = ema12Indicator.getValue(series.endIndex).doubleValue()
-    val ema26 = ema26Indicator.getValue(series.endIndex).doubleValue()
-
-    val macdIndicator = MACDIndicator(close, 12, 26)
-    val macdVal = macdIndicator.getValue(series.endIndex).doubleValue()
-    val signalVal = EMAIndicator(macdIndicator, 9).getValue(series.endIndex).doubleValue()
-    val histVal = macdVal - signalVal
-
-    val rsiVal = if (series.endIndex + 1 >= 2) RSIIndicator(close, 14).getValue(series.endIndex).doubleValue() else null
-
-    val sma20 = SMAIndicator(close, 20)
-    val middle = BollingerBandsMiddleIndicator(sma20)
-    val stdDev = StandardDeviationIndicator(close, 20)
-    val upperIndicator = BollingerBandsUpperIndicator(middle, stdDev)
-    val lowerIndicator = BollingerBandsLowerIndicator(middle, stdDev)
-    val boll =
-      if (series.endIndex + 1 >= 20) {
-        ai.proompteng.dorvud.ta.stream.Bollinger(
-          mid = middle.getValue(series.endIndex).doubleValue(),
-          upper = upperIndicator.getValue(series.endIndex).doubleValue(),
-          lower = lowerIndicator.getValue(series.endIndex).doubleValue(),
-        )
-      } else {
-        null
-      }
-
-    val vwapSession = session.value()
-    val vwap5m =
-      rollingSignalVwap(
-        bars = bars,
-        window = config.vwapWindow,
-        barDuration = barDuration,
-        timestampAnchor = timestampAnchor,
-      )
-    val realizedVol =
-      realizedVol(
-        series,
-        realizedVolWindowBars(
-          windowSeconds = config.realizedVolWindow,
-          barDuration = barDuration,
-        ),
-      )
+    val envelope = canonical.envelope
+    val bars = state.recent
+    val macdVal = state.ema12 - state.ema26
+    val rsiVal = indicatorRsi(state)
+    val boll = indicatorBollinger(state, barDuration)
+    val vwapSession = if (state.volume > 0) state.closeVolume / state.volume else null
+    val vwap5m = rollingSignalVwap(bars, config.vwapWindow, barDuration, timestampAnchor)
+    val realizedVol = indicatorVolatility(state, realizedVolWindowBars(config.realizedVolWindow, barDuration), barDuration)
 
     val barEndTime = signalBarEndTime(envelope.payload.t, barDuration, timestampAnchor)
-    val quote = freshQuotePayloadForBar(quoteState.value(), barEndTime, config.quoteStaleAfterMs)
+    val quote = freshQuotePayloadForBar(canonical.quote, barEndTime, config.quoteStaleAfterMs)
     val imbalance =
       quote?.let {
         val spread = it.ap - it.bp
@@ -1668,16 +1637,28 @@ internal class TaSignalsFunction(
     val payload =
       TaSignalsPayload(
         macd =
-          ai.proompteng.dorvud.ta.stream
-            .Macd(macd = macdVal, signal = signalVal, hist = histVal),
+          if (state.count >= 34 &&
+            state.contiguous
+          ) {
+            ai.proompteng.dorvud.ta.stream
+              .Macd(macdVal, state.macdSignal, macdVal - state.macdSignal)
+          } else {
+            null
+          },
         ema =
-          ai.proompteng.dorvud.ta.stream
-            .Ema(ema12 = ema12, ema26 = ema26),
+          if (state.count >= 26 && state.contiguous) {
+            ai.proompteng.dorvud.ta.stream
+              .Ema(state.ema12, state.ema26)
+          } else {
+            null
+          },
         rsi14 = rsiVal,
         boll = boll,
         vwap =
-          ai.proompteng.dorvud.ta.stream
-            .Vwap(session = vwapSession, w5m = vwap5m),
+          vwapSession?.let {
+            ai.proompteng.dorvud.ta.stream
+              .Vwap(session = it, w5m = vwap5m)
+          },
         imbalance = imbalance,
         vol_realized =
           realizedVol?.let {
@@ -1689,29 +1670,14 @@ internal class TaSignalsFunction(
     val window = envelope.window ?: fallbackSignalWindow(envelope.payload.t, barDuration, timestampAnchor)
     return envelope
       .withPayload(payload, window = window, seqOverride = envelope.seq)
-      .copy(source = taSignalOutputSource(envelope.source))
-  }
-
-  private fun realizedVol(
-    series: BaseBarSeries,
-    window: Int,
-  ): Double? {
-    if (series.barCount < 2) return null
-    val end = series.endIndex
-    val start = (series.barCount - window).coerceAtLeast(1)
-    val returns = mutableListOf<Double>()
-    var prevClose = series.getBar(start - 1).closePrice.doubleValue()
-    for (i in start..end) {
-      val close = series.getBar(i).closePrice.doubleValue()
-      returns += kotlin.math.ln(close / prevClose)
-      prevClose = close
-    }
-    if (returns.isEmpty()) return null
-    val mean = returns.average()
-    val variance = returns.map { (it - mean) * (it - mean) }.average()
-    return kotlin.math.sqrt(variance)
+      .copy(source = taSignalOutputSource(envelope.source), ingestTs = Instant.ofEpochMilli(computedAtMs), version = 2)
   }
 }
+
+internal data class CanonicalSignalBar(
+  val envelope: Envelope<MicroBarPayload>,
+  val quote: TimedQuoteState?,
+) : Serializable
 
 internal enum class SignalBarTimestampAnchor {
   START,
