@@ -1,3 +1,5 @@
+import { IntradayPerformanceVolumeEvidenceSchema } from '../forward-performance/intraday-schema'
+import { validIntradayPerformanceVolumeEvidence } from '../forward-performance/intraday-volume'
 import { Context, Data, Effect, Option, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
@@ -76,6 +78,11 @@ const ForwardPerformanceExecutionQualitySchema = Schema.Struct({
 })
 
 const ForwardPerformanceObservedCapacitySchema = Schema.Struct({
+  intradaySources: Schema.optionalKey(
+    Schema.Array(
+      IntradayPerformanceVolumeEvidenceSchema.check(Schema.makeFilter(validIntradayPerformanceVolumeEvidence)),
+    ),
+  ),
   status: Schema.Union([Schema.Literal('MEASURED'), Schema.Literal('NOT_ELIGIBLE'), Schema.Literal('UNDETERMINED')]),
   reasonCodes: Schema.Array(ReceiptStringSchema),
   evidenceHash: Schema.NullOr(Sha256Schema),
@@ -87,6 +94,13 @@ const ForwardPerformanceObservedCapacitySchema = Schema.Struct({
       windowClosedAt: UtcInstantSchema,
       filledQuantityMicros: SignedMicrosSchema,
       marketVolumeQuantityMicros: SignedMicrosSchema,
+      intradaySource: Schema.optionalKey(
+        Schema.Struct({
+          feed: Schema.Literal('iex'),
+          volumeScope: Schema.Literal('IEX_RECORDED_SESSION_VOLUME'),
+          evidenceHash: Sha256Schema,
+        }),
+      ),
       participationRate: Schema.Struct({
         numeratorQuantityMicros: SignedMicrosSchema,
         denominatorQuantityMicros: SignedMicrosSchema,
@@ -103,7 +117,26 @@ const ForwardPerformanceObservedCapacitySchema = Schema.Struct({
       decimal: DecimalSchema,
     }),
   ),
-})
+}).check(
+  Schema.makeFilter((capacity) =>
+    capacity.observations.every((observation) => {
+      if (observation.intradaySource === undefined) return true
+      const sources = (capacity.intradaySources ?? []).filter(
+        (source) => source.contentHash === observation.intradaySource?.evidenceHash,
+      )
+      const source = sources[0]
+      return (
+        sources.length === 1 &&
+        source !== undefined &&
+        source.cycleId === observation.cycleId &&
+        source.symbol === observation.symbol &&
+        source.windowOpenedAt === observation.windowOpenedAt &&
+        source.windowClosedAt === observation.windowClosedAt &&
+        source.quantityMicros === observation.marketVolumeQuantityMicros
+      )
+    }),
+  ),
+)
 
 const ForwardPerformanceReceiptSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.forward-performance-receipt.v3'),

@@ -181,24 +181,36 @@ export const marketVolumeRequestsFromRows = (
     ) {
       continue
     }
-    const request: ForwardPerformanceMarketVolumeRequest = {
+    const base = {
       cycleId: execution.cycleId,
       decisionSnapshotId: binding.snapshot_id,
-      decisionSnapshotAsOfSession: binding.manifest.asOfSession,
       symbol: execution.symbol,
       executionSessionDate: binding.execution_session_date,
       windowOpenedAt: binding.execution_open_at.toISOString(),
       windowClosedAt: binding.execution_close_at.toISOString(),
       evidenceCutoffAt,
-      universeId: binding.manifest.universeId,
-      universeSymbolHash: binding.manifest.universeSymbolHash,
-      symbols: binding.manifest.symbols,
-      requestedStart: binding.manifest.requestedStart,
-      calendarVersion: binding.manifest.calendarVersion,
-      source: binding.manifest.source,
-      sourceFeed: binding.manifest.sourceFeed,
-      adjustment: binding.manifest.adjustment,
     }
+    const manifest = binding.manifest
+    const request: ForwardPerformanceMarketVolumeRequest =
+      manifest.schemaVersion === 'bayn.intraday-market-snapshot.v1'
+        ? {
+            ...base,
+            sourceFeed: 'iex',
+            decisionSnapshotAsOfSession: manifest.sessionDate,
+            decisionManifest: manifest,
+          }
+        : {
+            ...base,
+            decisionSnapshotAsOfSession: manifest.asOfSession,
+            universeId: manifest.universeId,
+            universeSymbolHash: manifest.universeSymbolHash,
+            symbols: manifest.symbols,
+            requestedStart: manifest.requestedStart,
+            calendarVersion: manifest.calendarVersion,
+            source: manifest.source,
+            sourceFeed: manifest.sourceFeed,
+            adjustment: manifest.adjustment,
+          }
     requests.set(JSON.stringify([request.cycleId, request.symbol]), request)
   }
   return [...requests.values()].sort((left, right) => {

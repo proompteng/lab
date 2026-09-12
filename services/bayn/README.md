@@ -170,6 +170,17 @@ Malformed or ambiguous arguments fail before configuration or evidence reads. A 
 requires completed executions and exact accounting; operational readiness and an active research mandate do not
 establish profitability.
 
+Completed native intraday cycles bind performance evidence to `intraday_snapshot_references`. The reader uses the
+same universe, IEX feed and exchange calendar as the decision, with the complete regular-session window, a fixed
+reconciliation cutoff, and captured Kafka partition offsets. Legacy daily SIP publications remain supported.
+Native receipts retain the archive request, source hashes, recorded volume and missing minute timestamps. IEX
+recorded participation does not establish consolidated liquidity or real execution capacity from PAPER fills.
+
+A canceled or partially filled order's opportunity shortfall uses the observed finalized closing-minute bar, labeled
+`FINAL_MINUTE_BAR_CLOSE`. Missing middle minutes leave full-session participation `UNDETERMINED` while retaining a
+valid closing reference and execution measurement. A missing closing bar cannot supply that reference. Reporting
+never manufactures bars or changes the decision snapshot's entry freshness rules.
+
 A standing mandate's next scheduled cycle does not make the reconciled performance window incomplete while its
 submission window is still in the future and it has no durable decision or intent. Blocked cycles, started cycles,
 and any future cycle with durable execution work still prevent a sufficient receipt.
