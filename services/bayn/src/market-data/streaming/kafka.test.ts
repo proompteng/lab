@@ -8,6 +8,7 @@ import {
 import { describe, expect, test } from 'bun:test'
 import { Clock, Effect, Exit, Logger, Redacted, Result } from 'effect'
 import { readFileSync } from 'node:fs'
+import { AuthenticationError } from '@platformatic/kafka'
 import { decodeRollingMarketFeature } from '../features/contract'
 import { TestClock } from 'effect/testing'
 
@@ -105,7 +106,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
         const projection = yield* makeKafkaMarketProjection(config, universe, () => transport)
         yield* TestClock.adjust('2 seconds')
         transport.offsets = async () => {
-          throw new Error('end-offset lookup unavailable')
+          throw new AuthenticationError('private authentication detail')
         }
         yield* TestClock.adjust('30 seconds')
         expect(logs).toContainEqual([
@@ -114,6 +115,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
             bootstrapComplete: true,
             queuedRecords: 0,
             endOffsetLookupFailure: 'Kafka read failed',
+            endOffsetLookupFailureCodes: ['PLT_KFK_AUTHENTICATION'],
             partitions: expect.arrayContaining(
               positions('0').map((position) => ({ ...position, endOffset: null, lagOffsets: null })),
             ),
@@ -149,7 +151,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
       Effect.gen(function* () {
         yield* TestClock.setTime(feature.computedAtMs + 1000)
         const projection = yield* makeKafkaMarketProjection(config, featureUniverse, () => transport)
-        yield* TestClock.adjust('2 seconds')
+        yield* TestClock.adjust('100 millis')
         const record = {
           topic: featureUniverse.topics.features,
           partition: 0,
@@ -159,7 +161,8 @@ describe('Kafka bootstrap and scoped consumption', () => {
           leaderEpoch: 1,
         }
         transport.send(record)
-        yield* TestClock.adjust('1 second')
+        yield* TestClock.adjust('100 millis')
+        expect((yield* projection.status).ready).toBe(false)
         transport.send(record)
         transport.send({ ...record, offset: '1' })
         yield* TestClock.adjust('1 second')
@@ -172,6 +175,8 @@ describe('Kafka bootstrap and scoped consumption', () => {
                 featureId: feature.featureId,
                 computedAtMs: feature.computedAtMs,
                 offset: '0',
+                bootstrapEndOffset: '0',
+                retainedAtBootstrap: false,
               }),
             ],
           ],

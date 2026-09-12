@@ -66,14 +66,17 @@ PAPER operation do not establish profitability.
 Each worker logs `Kafka feature incorporated` for accepted features before join-history retention can discard them.
 Retries of retained semantic IDs do not create another receipt; deduplicate by epoch and feature ID when aggregating. The
 `bayn.feature-availability.v1` record binds the feature ID and Kafka coordinates to its actual local receipt time,
-producer computation time, and window end. Compute session p50/p95/p99 from these records, grouped by epoch and symbol;
-exclude retained-data bootstrap and regenerated historical features from live-session latency statistics. Preserve
+producer computation time, and window end. `retainedAtBootstrap` compares the feature offset to its partition's captured
+exclusive end, so post-cut live arrivals remain classified correctly before the readiness monitor ticks. Compute session
+p50/p95/p99 from these records, grouped by epoch and symbol; exclude retained bootstrap records, retained-input diagnostics,
+and regenerated historical features from live-session latency statistics. Preserve
 the session's expected windows so absent arrivals remain missing coverage rather than disappearing from the denominator.
 
 Every 30 seconds, `Kafka market projection measurements` reports the queue high-water mark and observed depth,
 per-partition incorporated and sampled end offsets, raw quote/trade ages, current-window bar coverage, feature matches,
 and unmatched feature revisions. Offset lag is an exact decimal string and includes Kafka control-record positions;
-it is not a market-message count. A failed end-offset lookup produces null lag with an explicit failure. Missing
+it is not a market-message count. A failed end-offset lookup produces null lag with allowlisted SDK and broker error
+codes; raw exception messages are omitted. Missing
 symbols have null event ages. These measurements describe input coverage; the existing snapshot, calendar, strategy,
 and risk checks determine trading eligibility. Feature archive lag is measured separately from ClickHouse observation
 times and Kafka feature identities.

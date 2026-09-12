@@ -1,8 +1,24 @@
 import { expect, test } from 'bun:test'
-import { partitionLagMeasurements, projectionCoverageMeasurements } from './telemetry'
+import { partitionLagMeasurements, projectionCoverageMeasurements, safeKafkaFailureCodes } from './telemetry'
+import { AuthenticationError, MultipleErrors, ProtocolError, TimeoutError } from '@platformatic/kafka'
 import { emptyStreamingProjection } from './projection'
 import { canonicalJsonV1Result } from '../../hash'
 import { Result } from 'effect'
+
+test('failure classification retains SDK and broker codes without leaking error messages', () => {
+  const secretMessage = 'credential-bearing broker detail'
+  expect(safeKafkaFailureCodes(new AuthenticationError(secretMessage))).toEqual(['PLT_KFK_AUTHENTICATION'])
+  const codes = safeKafkaFailureCodes(
+    new MultipleErrors(secretMessage, [
+      new ProtocolError('TOPIC_AUTHORIZATION_FAILED', secretMessage),
+      new TimeoutError(secretMessage),
+    ]),
+  )
+  expect(codes).toContain('TOPIC_AUTHORIZATION_FAILED')
+  expect(codes).toContain('PLT_KFK_TIMEOUT')
+  expect(JSON.stringify(codes)).not.toContain(secretMessage)
+  expect(safeKafkaFailureCodes(new Error(secretMessage))).toEqual(['UNKNOWN'])
+})
 
 test('offset lag retains integer precision and distinguishes unknown ends from zero lag', () => {
   const positions = [

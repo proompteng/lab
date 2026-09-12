@@ -16,7 +16,12 @@ import {
   type Offsets,
 } from '@platformatic/kafka'
 import { Cause, Clock, Context, Data, Duration, Effect, Layer, Redacted, Result, Schedule, Stream } from 'effect'
-import { featureAvailabilityMeasurement, partitionLagMeasurements, projectionCoverageMeasurements } from './telemetry'
+import {
+  featureAvailabilityMeasurement,
+  partitionLagMeasurements,
+  projectionCoverageMeasurements,
+  safeKafkaFailureCodes,
+} from './telemetry'
 
 import {
   emptyStreamingProjection,
@@ -294,8 +299,13 @@ export const makeKafkaMarketProjection = (
                 const incorporatedFeature = projection.featureArrival
                 if (incorporatedFeature !== null)
                   yield* Effect.logInfo('Kafka feature incorporated', {
-                    ...featureAvailabilityMeasurement(epoch, incorporatedFeature),
-                    bootstrapComplete: ready,
+                    ...featureAvailabilityMeasurement(
+                      epoch,
+                      incorporatedFeature,
+                      partitions.find(
+                        (partition) => partition.topic === record.topic && partition.partition === record.partition,
+                      )?.endOffset,
+                    ),
                     consumerPurpose: diagnosticStartMs === undefined ? 'execution-worker' : 'retained-input-diagnostic',
                   })
               }
@@ -370,6 +380,7 @@ export const makeKafkaMarketProjection = (
               endOffsetLookupStartedAtMs: lookupStartedAtMs,
               endOffsetLookupCompletedAtMs: measuredAtMs,
               endOffsetLookupFailure: Result.isFailure(ends) ? ends.failure.message : null,
+              endOffsetLookupFailureCodes: Result.isFailure(ends) ? safeKafkaFailureCodes(ends.failure.cause) : null,
               partitions: partitionLagMeasurements(positions, Result.isSuccess(ends) ? ends.success : undefined),
               ...projectionCoverageMeasurements(projection, universe.symbols, measuredAtMs),
             })

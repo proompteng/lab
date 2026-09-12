@@ -1,4 +1,5 @@
 import { Result } from 'effect'
+import { errorCodes, findErrorBy, protocolErrorsCodesById, TimeoutError } from '@platformatic/kafka'
 import type { KafkaPartitionPosition } from './bootstrap'
 import { featureMatchesBars } from '../features/contract'
 import { observedBarsAt, topicPartitionKey, type ObservedFeature, type StreamingProjection } from './projection'
@@ -20,7 +21,25 @@ export const partitionLagMeasurements = (
   })
 }
 
-export const featureAvailabilityMeasurement = (epoch: string, feature: ObservedFeature) => ({
+/** Only SDK-defined codes are logged; broker messages and credential-bearing exception text are omitted. */
+export const safeKafkaFailureCodes = (cause: unknown): readonly string[] => {
+  if (!(cause instanceof Error)) return ['UNKNOWN']
+  const codes = [
+    ...new Set([
+      ...errorCodes.filter((code) => findErrorBy(cause, 'code', code) !== null),
+      ...Object.values(protocolErrorsCodesById).filter((code) => findErrorBy(cause, 'apiId', code) !== null),
+      // Kafka 2.11.0 TimeoutError carries the network code; preserve its distinct class identity too.
+      ...(findErrorBy(cause, 'constructor', TimeoutError) === null ? [] : [TimeoutError.code]),
+    ]),
+  ]
+  return codes.length === 0 ? ['UNKNOWN'] : codes
+}
+
+export const featureAvailabilityMeasurement = (
+  epoch: string,
+  feature: ObservedFeature,
+  bootstrapEndOffset?: string,
+) => ({
   schemaVersion: 'bayn.feature-availability.v1',
   epoch,
   sequence: feature.sequence,
@@ -31,6 +50,8 @@ export const featureAvailabilityMeasurement = (epoch: string, feature: ObservedF
   topic: feature.topic,
   partition: feature.partition,
   offset: feature.offset,
+  bootstrapEndOffset: bootstrapEndOffset ?? null,
+  retainedAtBootstrap: bootstrapEndOffset === undefined ? null : BigInt(feature.offset) < BigInt(bootstrapEndOffset),
   windowEndMs: feature.value.material.windowEndMs,
   computedAtMs: feature.value.computedAtMs,
   availableAtMs: feature.availableAtMs,
