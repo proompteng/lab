@@ -246,16 +246,21 @@ Retirement order and checks:
    generated Applications have automated sync disabled and no sync in progress.
    The skip-reconcile annotation alone did not prevent automatic operations in
    this cluster and is not a retirement gate.
-4. Add `Prune=false,Delete=false` to the two dedicated test Namespaces and four
-   rehearsal NetworkPolicies with UID/resource-version preconditions, preserving
-   existing annotations. Verify the protections remain after a reconciliation
-   interval. Keep the policies until all test Pods stop. In a second reviewed
-   change, remove the three ApplicationSet entries. The live root Application is
-   manual: selectively sync only the `platform` ApplicationSet at the exact
-   reviewed merge revision. Wait for the three Applications to disappear before
-   deleting retained test resources. Keep Argo and Kubernetes finalizers intact.
-   The shared `rook-ceph` namespace is neither an Application-owned resource nor a deletion
-   target.
+4. Inventory every resource managed by the three Applications and add
+   `Prune=false,Delete=false` to each live object with UID/resource-version
+   preconditions, preserving other annotations. Protect the two dedicated test
+   Namespaces too. Verify the complete managed-resource inventory still exists
+   with the same UIDs and deletion protection after a reconciliation interval.
+   This preserves all child resources when Argo finalizes the Applications;
+   protecting only namespaces and policies would still allow Argo to delete
+   unprotected Clusters or Jobs before the ordered cleanup. Keep the four
+   isolation policies until all test Pods stop. In a second reviewed change,
+   remove the three ApplicationSet entries. The live root Application is manual:
+   selectively sync only the `platform` ApplicationSet at the exact reviewed
+   merge revision. Wait for the three Applications to disappear and confirm
+   their preserved children before deleting any test resources. Keep Argo and
+   Kubernetes finalizers intact. The shared `rook-ceph` namespace is neither an
+   Application-owned resource nor a deletion target.
 5. Delete remaining rehearsal Cluster and Job objects normally with UID
    preconditions. Wait for all test Pods to stop before deleting their PVCs.
    The bounded targets are the PostgreSQL and ClickHouse acceptance namespaces
