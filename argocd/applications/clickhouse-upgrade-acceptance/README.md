@@ -1,10 +1,5 @@
 # ClickHouse upgrade acceptance
 
-Retired from the platform ApplicationSet after the September 2026 upgrades.
-These manifests remain as tested reference fixtures; no active Argo application
-should deploy them. See the [retirement procedure](../../../docs/runbooks/cluster-stable-upgrades-2026-09.md#retiring-upgrade-test-resources)
-for backup preservation and cleanup. Re-enabling them requires a new reviewed rollout.
-
 This Application owns isolated upgrade evidence and retained recovery snapshots.
 ApplicationSet creates its restricted namespace; no Namespace object is rendered.
 It does not own the serving ClickHouse installation or its credentials.

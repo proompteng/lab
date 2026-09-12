@@ -14,7 +14,7 @@ The image is pinned to the multi-architecture index
 
 The application is manual. Sync wave `-3` retains allow-all policies in agents, argocd, bilig, kafka, media,
 pgadmin, synthesis and torghut. Bayn retains an inert policy whose selector must match no Pods.
-Hermes, optional Tengri, and the six policy sets listed in the rollout runbook keep their restrictive
+Hermes, optional Tengri, and the eight policy sets listed in the rollout runbook keep their restrictive
 policies enforced. Those namespaces receive no allow-all policy during activation.
 
 The bounded wave `-2` hook validates the complete live namespace set, each retained safety policy and the
@@ -27,7 +27,3 @@ through namespace-specific policy tests that prove all required ingress and egre
 Follow [the production rollout runbook](../../../docs/runbooks/kube-router-network-policy-rollout.md) for activation,
 live enforcement proof, workload comparison, and cleanup. The emergency cleanup overlay is intentionally excluded from
 the production kustomization.
-
-The completed PostgreSQL and ClickHouse upgrade test namespaces are retired.
-Their fixture manifests remain in Git, but the live coverage gate no longer
-requires those namespaces or their policies.

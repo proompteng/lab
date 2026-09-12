@@ -215,8 +215,7 @@ Argo no longer desires the controller. Do not remove the safety policies until a
 namespace's required traffic.
 
 
-After retirement of the PostgreSQL and ClickHouse upgrade test namespaces,
-the controller coverage gate recognizes the six additional namespaces below.
+The September 10 controller upgrade also recognizes the eight namespaces below.
 Their live policy names and complete specs match committed source at `5a8a64b4101cd379c9dc55c89f04bde947d4d56d`,
 after Kubernetes omits empty ingress/egress arrays. The hook compares each exact
 policy-set hash; no new rollout allow-all rules are installed. Keep the original
@@ -225,7 +224,9 @@ Hermes/Tengri contracts, Bayn inert selector check and traffic-neutral policies.
 | Namespace | Policies | Source files |
 | --- | --- | --- |
 | buzz | 6 | `argocd/applications/buzz/networkpolicy.yaml` |
+| clickhouse-upgrade-acceptance | 1 | `argocd/applications/clickhouse-upgrade-acceptance/preparation.yaml` |
 | observability | 2 | `argocd/applications/observability/grafana-upgrade-backup.yaml`, `argocd/applications/observability/mimir-kafka-upgrade-backup.yaml` |
+| postgres-upgrade-acceptance | 3 | `argocd/applications/postgres-upgrade-acceptance/base/preparation.yaml`, `argocd/applications/postgres-upgrade-acceptance/base/recovery.yaml`, `argocd/applications/postgres-upgrade-acceptance/base/three-source-recovery.yaml` |
 | proompteng | 2 | `argocd/applications/proompteng/network-policy.yaml` |
 | restate | 1 | `argocd/applications/restate/networkpolicy.yaml` |
 | restate-example | 1 | `argocd/applications/restate-example/networkpolicy.yaml` |

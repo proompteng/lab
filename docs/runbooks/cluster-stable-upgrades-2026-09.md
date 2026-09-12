@@ -167,14 +167,15 @@ requires the matching old image and a compatible restored data set; never run an
 old major binary over an upgraded data directory. Review the freshness of a
 checkpoint before recovery, because restoring it loses subsequent writes.
 
-At the original closeout, nine failed ClickHouse/Keeper rehearsal Pods and their
-PVCs were retained. The strict CSI helper returned exit 1 because it counted
-those terminal Pods as unready consumers. That historical result remains failed;
-separate native acceptance verified no running containers in those Pods and all
-95 active Ceph consumers ready. See `final-csi-strict-helper-result.json` and
-`final-csi-native-after.json`. Subsequent authorized retirement archives this
-evidence before removing the temporary resources. It does not rewrite the
-original check result.
+Nine failed historical ClickHouse/Keeper rehearsal Pods and their PVCs remain as
+evidence. Their seven Job controllers were retired with orphan propagation and
+UID/resource-version checks; four successful proof Jobs were retained. Do not
+delete the failed Pods or recovery volumes to make a health helper green. The
+strict CSI helper returned exit 1 because it reports these nine terminal Pods as
+unready consumers. That check is recorded as failed, not passed. Separate native
+acceptance confirmed their exact retained UIDs, no running containers, and all
+95 active Ceph storage consumers ready. See `final-csi-strict-helper-result.json`
+and `final-csi-native-after.json`; preserve the historical evidence.
 
 For production data paths, preserve PVC/PV/volume-handle identities. Never
 force-delete Pods, PVCs, PVs or VolumeAttachments during closeout. CI/ARC runner
@@ -221,72 +222,26 @@ that those snapshots are ready. Preserve the source claims and backup resources
 through every rollout. Recovery of a database major uses the matching snapshot
 or backup and old image; do not downgrade binaries over an upgraded data directory.
 
-## Retiring upgrade test resources
+## Upgrade test retirement preparation
 
-The three September acceptance Applications are removed from the platform
-ApplicationSet. Their source manifests stay as test fixtures, without an active
-Application registration. Production recovery checkpoints remain in their
-original namespaces; running rehearsal databases are not backup retention.
+Retirement is in progress. The PostgreSQL, ClickHouse and storage acceptance
+Applications remain registered, with automatic reconciliation disabled. The
+ApplicationSet records `Prune=false,Delete=false` for the two dedicated test
+namespaces. No test database, claim or snapshot is removed by this preparation.
 
-Retirement order and checks:
-
-1. Archive completed acceptance receipts, Pod/Job identities, available container
-   logs, and volume/snapshot mappings outside Git. The campaign evidence directory
-   contains the `retirement/` inventory and log checksums. Containers that never
-   started have no logs; retain their recorded status instead.
-2. Verify the seven original PostgreSQL Backup objects and all ten original
-   PostgreSQL/ClickHouse/Keeper snapshots are complete or ready, keep their UIDs
-   and handles, and require `Retain` on their VolumeSnapshotContents. These
-   recovery objects tracked by the acceptance Applications already have Argo
-   `Prune=false,Delete=false` protection. The original PostgreSQL snapshots are
-   owned by the retained Backup objects in production namespaces.
-3. Merge the preparation change that sets both automatic acceptance entries to
-   `automation: manual` and records namespace `Prune=false,Delete=false` in the
-   ApplicationSet. The storage acceptance app is already manual. Verify the live
-   generated Applications have automated sync disabled and no sync in progress.
-   The skip-reconcile annotation alone did not prevent automatic operations in
-   this cluster and is not a retirement gate.
-4. Add `Prune=false,Delete=false` to the two dedicated test Namespaces and four
-   rehearsal NetworkPolicies with UID/resource-version preconditions, preserving
-   existing annotations. Verify the protections remain after a reconciliation
-   interval. Keep the policies until all test Pods stop. In a second reviewed
-   change, remove the three ApplicationSet entries. Let root reconciliation retire
-   the Applications, then wait for them to disappear before deleting retained
-   test resources. Keep Argo and Kubernetes finalizers intact. The shared
-   `rook-ceph` namespace is neither an Application-owned resource nor a deletion
-   target.
-5. Delete remaining rehearsal Cluster and Job objects normally with UID
-   preconditions. Wait for all test Pods to stop before deleting their PVCs.
-   The bounded targets are the PostgreSQL and ClickHouse acceptance namespaces
-   and `rook-ceph/storage-rbd-canary` plus `rook-ceph/storage-cephfs-canary`.
-6. Each of the ten imported snapshot references must match a ready original
-   snapshot outside the acceptance namespaces by its CSI snapshot handle. Remove
-   only the imported VolumeSnapshot and VolumeSnapshotContent objects, both
-   using the verified `Retain` policy. Keep the original snapshot/content pair
-   and underlying snapshot. Then remove the two empty test namespaces. Never
-   delete the shared `rook-ceph` namespace.
-7. Verify all three Applications, ten rehearsal Clusters, test Pods, 21 temporary
-   PVCs and their backing PVs are absent. Recheck the original recovery objects,
-   production PostgreSQL/ClickHouse readiness and Ceph `HEALTH_OK`. Preserve
-   production PVC, PV and snapshot identities throughout. The kube-router hook
-   and coverage script exclude only these retired test namespaces; all production
-   namespace and policy fingerprints remain enforced. Run the updated read-only
-   coverage check after namespace removal before any future kube-router sync.
-
-Removing scratch data is irreversible and intentionally releases test storage.
-Rehearsals can be recreated from the retained original snapshots with a newly
-reviewed Application registration. Do not re-enable historical Jobs against a
-serving database or restore an old checkpoint over current production data.
+Before the separate removal change, verify the generated Applications are manual
+and idle, then preserve the two namespace identities and four isolation policies
+with UID-guarded deletion-protection annotations. Archive test results and verify
+original recovery snapshots outside the test namespaces. Keep the current
+kube-router namespace coverage until the retirement change handles their removal.
 
 ## Storage and controllers
 
 Rook/Ceph daemon upgrades precede CSI key rotation and its one-node-at-a-time
 DaemonSet rollout. Verify all six OSDs up/in, active and clean PGs, intended
 daemon/CSI images, key generation, attachments, and existing consumer mounts.
-The retired `storage-upgrade-acceptance` manifests provide the remount and RGW
-conditional-write test procedure. Use a new reviewed temporary rollout after
-those prerequisites pass; the completed September campaign has no persistent
-acceptance Application.
+Run the manual `storage-upgrade-acceptance` Application for remount and RGW
+conditional-write evidence after those prerequisites pass.
 
 Talos 1.14 includes the [AES256K backport](https://github.com/siderolabs/pkgs/commit/84c1b8752ef16f78f5893fe3b0de7a9288c58d7d)
 in both architectures of its Linux 6.18 kernel. The upstream Linux 7.0 minimum

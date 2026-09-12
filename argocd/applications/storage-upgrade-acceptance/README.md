@@ -1,10 +1,5 @@
 # Storage upgrade acceptance
 
-Retired from the platform ApplicationSet after the September 2026 upgrades.
-These manifests remain as tested reference fixtures; no active Argo application
-should deploy them. See the [retirement procedure](../../../docs/runbooks/cluster-stable-upgrades-2026-09.md#retiring-upgrade-test-resources)
-for backup preservation and cleanup. Re-enabling them requires a new reviewed rollout.
-
 This manual Argo Application proves RBD and CephFS writes survive a remount and
 RGW supports conditional PUT and readback. It reuses two retained 1 GiB claims in
 the existing `rook-ceph` namespace. Successful hook Jobs are removed; failed Jobs
