@@ -10,6 +10,7 @@ import {
 import { Authority, type AuthorityState, type ResearchCapitalGrantGeneration } from '../../execution/contracts'
 import {
   executionActivationExpiredRestrictionReason,
+  reconciliationDiscrepancyRestrictionPattern,
   executionMandateCompletedRestrictionReason,
   executionMandateFailureRestrictionPrefix,
   legacyExecutionActivationExpiredRestrictionReason,
@@ -245,6 +246,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
               state.reason LIKE ${`${executionMandateFailureRestrictionPrefix}%`}
               OR state.reason LIKE ${`${legacyExecutionMandateFailureRestrictionPrefix}%`}
               OR state.reason = ${incompletePassReason}
+              OR state.reason ~ ${reconciliationDiscrepancyRestrictionPattern}
               OR (
                 state.reason IN (
                   ${executionMandateCompletedRestrictionReason},
@@ -375,6 +377,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
                   state.reason LIKE ${`${executionMandateFailureRestrictionPrefix}%`}
                   OR state.reason LIKE ${`${legacyExecutionMandateFailureRestrictionPrefix}%`}
                   OR state.reason = ${incompletePassReason}
+                  OR state.reason ~ ${reconciliationDiscrepancyRestrictionPattern}
                   OR (
                     state.reason IN (
                       ${executionMandateCompletedRestrictionReason},

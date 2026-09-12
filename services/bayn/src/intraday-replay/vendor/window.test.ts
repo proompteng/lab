@@ -168,7 +168,9 @@ describe('vendor intraday decision window', () => {
     const stale = quotes.map((quote) =>
       quote.symbol === 'SMH' ? { ...quote, eventAt: '2026-08-18T15:00:00.000000000Z' } : quote,
     )
-    expect(failure(validateVendorDecisionWindow(input({ quotes: stale })))).toMatchObject({
+    expect(
+      failure(validateVendorDecisionWindow(input({ quotes: stale, observedAt: '2026-08-18T15:00:10.500000000Z' }))),
+    ).toMatchObject({
       reason: 'freshness',
       symbol: 'SMH',
     })
@@ -178,12 +180,20 @@ describe('vendor intraday decision window', () => {
     const atBoundary = quotes.map((quote) =>
       quote.symbol === 'SMH' ? { ...quote, eventAt: '2026-08-18T15:00:00.500000000Z' } : quote,
     )
-    expect(Result.isSuccess(validateVendorDecisionWindow(input({ quotes: atBoundary })))).toBe(true)
+    expect(
+      Result.isSuccess(
+        validateVendorDecisionWindow(input({ quotes: atBoundary, observedAt: '2026-08-18T15:00:10.500000000Z' })),
+      ),
+    ).toBe(true)
 
     const beyondBoundary = atBoundary.map((quote) =>
       quote.symbol === 'SMH' ? { ...quote, eventAt: '2026-08-18T15:00:00.499999999Z' } : quote,
     )
-    expect(failure(validateVendorDecisionWindow(input({ quotes: beyondBoundary })))).toMatchObject({
+    expect(
+      failure(
+        validateVendorDecisionWindow(input({ quotes: beyondBoundary, observedAt: '2026-08-18T15:00:10.500000000Z' })),
+      ),
+    ).toMatchObject({
       reason: 'freshness',
       symbol: 'SMH',
     })

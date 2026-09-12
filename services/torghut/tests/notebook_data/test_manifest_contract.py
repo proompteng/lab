@@ -42,7 +42,7 @@ def _representative_render() -> list[dict[str, object]]:
                         "containers": [
                             {
                                 "name": "hub",
-                                "image": "quay.io/jupyterhub/k8s-hub:4.4.0",
+                                "image": "quay.io/jupyterhub/k8s-hub@sha256:108fbb01c3fe23e4a81efc8899aa73b4c15413615c73dfcdc44248eb63096e41",
                                 "resources": hub_resources,
                                 "env": [
                                     _secret_env(
@@ -72,7 +72,7 @@ def _representative_render() -> list[dict[str, object]]:
                         "containers": [
                             {
                                 "name": "chp",
-                                "image": "quay.io/jupyterhub/configurable-http-proxy:5.2.0",
+                                "image": "quay.io/jupyterhub/configurable-http-proxy@sha256:69a7170eeedadb139dda5aef038d0a45378295c0d24cb0dc9da58641ef698ebe",
                                 "resources": proxy_resources,
                                 "env": [
                                     _secret_env("CONFIGPROXY_AUTH_TOKEN", "proxy-token")
@@ -138,7 +138,7 @@ def test_notebook_image_uses_a_dedicated_minimal_locked_dependency_group() -> No
     pyproject = tomllib.loads(pyproject_path.read_text())
     runtime = pyproject["dependency-groups"]["notebook-runtime"]
     for required in (
-        "jupyterhub==5.5.0",
+        "jupyterhub==5.5.2",
         "jupyterlab>=4.3.4,<5.0",
         "numpy>=2.1.2,<3.0",
         "pandas>=2.2.3,<3.0",
@@ -195,15 +195,15 @@ def test_chart_and_digest_contracts_are_pinned() -> None:
         {
             "name": "jupyterhub",
             "repo": "https://hub.jupyter.org/helm-chart/",
-            "version": "4.4.0",
+            "version": "4.4.2",
             "releaseName": "torghut-notebooks",
             "namespace": "torghut",
             "valuesFile": "values.yaml",
         }
     ]
     values = yaml.safe_load((NOTEBOOKS_DIR / "values.yaml").read_text())
-    assert values["hub"]["image"]["tag"] == "4.4.0"
-    assert values["proxy"]["chp"]["image"]["tag"] == "5.2.0"
+    assert values["hub"]["image"]["tag"] == "4.4.2"
+    assert values["proxy"]["chp"]["image"]["tag"] == "5.3.0"
     assert values["singleuser"]["cmd"] is None
     notebook_image = values["hub"]["extraEnv"]["TORGHUT_NOTEBOOK_IMAGE"]["value"]
     assert re.fullmatch(
@@ -422,6 +422,9 @@ def test_database_principals_are_read_only_and_bounded() -> None:
     }
     assert notebook_profiles == {
         "notebook/readonly": 1,
+        "notebook/compatibility": "25.8",
+        "notebook/async_insert": 0,
+        "notebook/output_format_json_quote_64bit_integers": 1,
         "notebook/max_execution_time": 30,
         "notebook/max_result_rows": 100000,
         "notebook/result_overflow_mode": "throw",
@@ -434,3 +437,26 @@ def test_database_principals_are_read_only_and_bounded() -> None:
         "name": "torghut-notebook-clickhouse",
         "key": "password",
     }
+
+
+@pytest.mark.parametrize(
+    "retired_key",
+    [
+        "PGHOST",
+        "PGPORT",
+        "PGDATABASE",
+        "PGUSER",
+        "PGPASSWORD",
+        "PGOPTIONS",
+        "TORGHUT_STATUS_URL",
+    ],
+)
+def test_notebook_validation_rejects_retired_service_connections(
+    retired_key: str,
+) -> None:
+    from scripts.validate_notebook_render import _validate_singleuser_values
+
+    values = yaml.safe_load((NOTEBOOKS_DIR / "values.yaml").read_text())
+    values["singleuser"]["extraEnv"][retired_key] = "retired-service"
+    with pytest.raises(AssertionError):
+        _validate_singleuser_values(values)

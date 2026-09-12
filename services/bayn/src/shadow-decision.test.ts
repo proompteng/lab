@@ -1,3 +1,7 @@
+import { reproduceRecordedStreamingDecision } from './market-data/streaming/recorded-decision'
+import { streamingFixtureFromRaw } from './testing/streaming-market-fixture'
+import { executionMarketDataBinding } from './observe-composition/intraday-market-data'
+import { persistIntradayRecordRows } from './market-data/intraday/verification'
 import { intradayMomentumPlanningTargetWeights } from './strategy/intraday-momentum/model'
 import { describe, expect, test } from 'bun:test'
 
@@ -28,7 +32,7 @@ import { makeExecutionIntentFromDecodedPlan } from './execution/intents/domain'
 import { legacyIntentPlanSchemaVersion } from './execution/legacy-wire'
 import { bindCycleExecutionSession } from './execution-session'
 import { canonicalHashV1 } from './hash'
-import { IntradaySnapshotPurpose, persistIntradaySnapshotRows, type IntradaySnapshotRequest } from './market-data'
+import { IntradaySnapshotPurpose, type IntradaySnapshotRequest } from './market-data'
 import { reconciledStateHash } from './reconciliation'
 import { BrokerMode, Gate, PolicySchema, Reason, decodeState, evaluate, type Policy } from './risk'
 import { strictParseOptions } from './schemas'
@@ -41,9 +45,7 @@ import {
 import {
   decodeExecutionDecisionDocument,
   decodeObserveShadowDecisionDocument,
-  ExecutionMarketDataBindingSchema,
   makeExecutionDecisionDocument,
-  type ExecutionMarketDataBinding,
 } from './shadow-decision-contract'
 import { decideIntradayMomentum } from './strategy/intraday-momentum/decision'
 import { deriveIntradayMomentumSignalMetrics } from './strategy/intraday-momentum/decision-core'
@@ -151,20 +153,6 @@ const snapshotRequest = (): IntradaySnapshotRequest => ({
     .map((sourceTopic) => ({ sourceTopic, sourcePartition: 0, inclusiveLastOffset: '1000' })),
 })
 
-const executionMarketData = (
-  snapshot = makeIntradayMomentumTestSnapshot(protocol, snapshotRequest()),
-): ExecutionMarketDataBinding => {
-  const { schemaVersion: snapshotSchemaVersion, ...material } = snapshot.manifest
-  return Schema.decodeUnknownSync(
-    ExecutionMarketDataBindingSchema,
-    strictParseOptions,
-  )({
-    schemaVersion: 'bayn.execution-market-data-binding.v2',
-    snapshotSchemaVersion,
-    ...material,
-  })
-}
-
 const brokerState = () => {
   const account: AccountSnapshot = {
     schemaVersion: 'bayn.paper-account-snapshot.v1',
@@ -235,10 +223,11 @@ const policy = (): Policy =>
     decisionTtlMs: 120_000,
   })
 
-const fixture = (premiums: Readonly<Record<string, number>> = {}): ObserveShadowDecisionInput => {
+const fixture = (premiums: Readonly<Record<string, number>> = {}, streaming = false): ObserveShadowDecisionInput => {
   const cycle = activeCycle()
-  const snapshot = makeIntradayMomentumTestSnapshot(protocol, snapshotRequest(), premiums)
-  const decisionMarketData = executionMarketData(snapshot)
+  const rawSnapshot = makeIntradayMomentumTestSnapshot(protocol, snapshotRequest(), premiums)
+  const snapshot = streaming ? streamingFixtureFromRaw(rawSnapshot, snapshotRequest()).snapshot : rawSnapshot
+  const decisionMarketData = value(executionMarketDataBinding(snapshot))
   const compiledDecision = value(
     decideIntradayMomentum(
       {
@@ -261,23 +250,33 @@ const fixture = (premiums: Readonly<Record<string, number>> = {}): ObserveShadow
   )
   const planningSymbols = Object.keys(planningTargetWeights)
   const hasEntryTargets = compiledDecision.selectedSymbols.length > 0
-  const pricingMarketData = hasEntryTargets
-    ? executionMarketData(
-        makeIntradayMomentumTestSnapshot(
-          protocol,
-          {
-            ...snapshotRequest(),
-            symbols: planningSymbols,
-            purpose: IntradaySnapshotPurpose.EntryPricing,
-          },
-          premiums,
-        ),
-      )
-    : decisionMarketData
+  const pricingRequest = {
+    ...snapshotRequest(),
+    symbols: planningSymbols,
+    purpose: IntradaySnapshotPurpose.EntryPricing,
+  }
+  const rawPricing = makeIntradayMomentumTestSnapshot(protocol, pricingRequest, premiums)
+  const pricing = streaming ? streamingFixtureFromRaw(rawPricing, pricingRequest).snapshot : rawPricing
+  const pricingMarketData = hasEntryTargets ? value(executionMarketDataBinding(pricing)) : decisionMarketData
   const marketData = pricingMarketData
-  const priceMicros = Object.fromEntries(planningSymbols.map((symbol) => [symbol, '100010000']))
-  const bidPriceMicros = Object.fromEntries(planningSymbols.map((symbol) => [symbol, '99990000']))
-  const askPriceMicros = Object.fromEntries(planningSymbols.map((symbol) => [symbol, '100010000']))
+  const priceMicros = Object.fromEntries(
+    planningSymbols.map((symbol) => [
+      symbol,
+      streaming ? String(Math.round((pricing.latestQuotes[symbol]?.askPrice ?? 0) * 1000000)) : '100010000',
+    ]),
+  )
+  const bidPriceMicros = Object.fromEntries(
+    planningSymbols.map((symbol) => [
+      symbol,
+      streaming ? String(Math.round((pricing.latestQuotes[symbol]?.bidPrice ?? 0) * 1000000)) : '99990000',
+    ]),
+  )
+  const askPriceMicros = Object.fromEntries(
+    planningSymbols.map((symbol) => [
+      symbol,
+      streaming ? String(Math.round((pricing.latestQuotes[symbol]?.askPrice ?? 0) * 1000000)) : '100010000',
+    ]),
+  )
   const priceMaterial = {
     schemaVersion: intradaySnapshotReferencePricesSchemaVersion,
     signalDate: sessionDate,
@@ -392,7 +391,8 @@ const fixture = (premiums: Readonly<Record<string, number>> = {}): ObserveShadow
       finalizedAt: decisionMarketData.observedAt,
     },
     compiledDecision,
-    decisionMarketDataRows: value(persistIntradaySnapshotRows(snapshot)),
+    decisionMarketDataRows: value(persistIntradayRecordRows(snapshot)),
+    ...(streaming && hasEntryTargets ? { executionMarketDataRows: value(persistIntradayRecordRows(pricing)) } : {}),
     ...(hasEntryTargets ? { decisionMarketData } : {}),
     executionMarketData: marketData,
     plannerInput,
@@ -419,6 +419,29 @@ const executionSession = (input: ObserveShadowDecisionInput) => {
 }
 
 describe('intraday shadow decision', () => {
+  test('persists reproducible streaming decision and pricing cuts and rejects altered or missing execution rows', async () => {
+    const input = fixture({ AAPL: 0.02 }, true)
+    const document = await Effect.runPromise(
+      buildExecutionDecision({
+        ...input,
+        authorityGenerationHash: hash('6'),
+        executionSession: executionSession(input),
+      }),
+    )
+    expect(value(reproduceRecordedStreamingDecision(document)).snapshots).toHaveLength(2)
+    expect(document.bindings.executionMarketData?.schemaVersion).toBe('bayn.execution-market-data-binding.v3')
+    expect(document.decisionMarketDataRows?.bars.length).toBe(210)
+    expect(document.executionMarketDataRows?.quotes.length).toBeGreaterThan(0)
+    expect(Result.isSuccess(decodeExecutionDecisionDocument(document))).toBe(true)
+    const { executionMarketDataRows: _rows, ...missing } = document
+    expect(Result.isFailure(decodeExecutionDecisionDocument(missing))).toBe(true)
+    expect(
+      Result.isFailure(
+        decodeExecutionDecisionDocument({ ...document, executionMarketDataRows: { bars: [], quotes: [], trades: [] } }),
+      ),
+    ).toBe(true)
+  })
+
   test('persists one deterministic no-trade observation against the exact verified snapshot', async () => {
     const input = fixture()
 

@@ -1,16 +1,12 @@
+import type { StrategyMarketSnapshot, VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
+import { persistIntradayRecordRows } from '../market-data/intraday/verification'
+import type { EntryQuoteFreshness } from '../risk'
 import { Data, Result } from 'effect'
 
 import type { MarketCalendarObservation } from '../broker/alpaca'
 import type { AutonomousCycle } from '../cycle'
 import { utcInstantFromEpochMillis } from '../time'
-import {
-  IntradaySnapshotPurpose,
-  persistIntradaySnapshotRows,
-  type IntradayMarketSnapshot,
-  type IntradaySnapshotQuery,
-  type PersistedIntradaySnapshotRows,
-} from '../market-data'
-import type { ArchiveVerifiedIntradayMarketSnapshot } from '../market-data/intraday/model'
+import { IntradaySnapshotPurpose, type IntradaySnapshotQuery, type PersistedIntradaySnapshotRows } from '../market-data'
 import type { ExecutionMarketDataBinding } from '../shadow-decision-contract'
 import { MICROS } from '../execution-model'
 import {
@@ -214,8 +210,10 @@ export const intradayMomentumEntryDisposition = (
 }
 
 export interface CompiledIntradayMomentumDecision {
+  readonly entryQuotes: Readonly<Record<string, EntryQuoteFreshness>>
   readonly decision: IntradayMomentumTargetPortfolio
   readonly decisionMarketDataRows: PersistedIntradaySnapshotRows
+  readonly executionMarketDataRows?: PersistedIntradaySnapshotRows
   readonly priceMicros: Readonly<Record<string, string>>
   readonly bidPriceMicros: Readonly<Record<string, string>>
   readonly askPriceMicros: Readonly<Record<string, string>>
@@ -261,7 +259,7 @@ export const maximumSellQuantities = (
 export const evaluateIntradayMomentumDecision = (
   definition: IntradayMomentumStrategyDefinition,
   cycle: AutonomousCycle,
-  decisionSnapshot: ArchiveVerifiedIntradayMarketSnapshot,
+  decisionSnapshot: VerifiedStrategyMarketSnapshot,
 ): Result.Result<
   IntradayMomentumTargetPortfolio,
   IntradayMomentumEntryAwaitingSnapshot | IntradayMomentumRuntimeDecisionFailure
@@ -297,8 +295,8 @@ export const evaluateIntradayMomentumDecision = (
 
 export const compileIntradayMomentumDecision = (
   decision: IntradayMomentumTargetPortfolio,
-  decisionSnapshot: IntradayMarketSnapshot,
-  pricingSnapshot: IntradayMarketSnapshot,
+  decisionSnapshot: StrategyMarketSnapshot,
+  pricingSnapshot: StrategyMarketSnapshot,
   heldPositions: readonly { readonly symbol: string; readonly quantityMicros: string }[] = [],
 ): Result.Result<CompiledIntradayMomentumDecision, IntradayMomentumRuntimeDecisionFailure> =>
   Result.mapError(
@@ -320,7 +318,14 @@ export const compileIntradayMomentumDecision = (
       )
       const maximumBuyQuantityMicros = yield* maximumBuyQuantities(pricingSnapshot, planningTargetWeights)
       const quotePrices = yield* adverseQuotePrices(pricingSnapshot, pricingSymbols)
-      const decisionMarketDataRows = yield* persistIntradaySnapshotRows(decisionSnapshot)
+      const entryQuotes: Record<string, EntryQuoteFreshness> = {}
+      for (const symbol of pricingSymbols) {
+        const quote = pricingSnapshot.latestQuotes[symbol]
+        if (quote === undefined)
+          return yield* Result.fail(failure('entry-decision', `entry pricing quote is missing for ${symbol}`))
+        entryQuotes[symbol] = { eventAt: quote.eventAt, maximumAgeMs: pricingSnapshot.manifest.maximumQuoteAgeMs }
+      }
+      const decisionMarketDataRows = yield* persistIntradayRecordRows(decisionSnapshot)
       const decisionBinding = yield* executionMarketDataBinding(decisionSnapshot)
       const usesDedicatedPricing = pricingSnapshot.manifest.purpose === IntradaySnapshotPurpose.EntryPricing
       const executionBinding = usesDedicatedPricing
@@ -329,6 +334,10 @@ export const compileIntradayMomentumDecision = (
       return {
         decision,
         decisionMarketDataRows,
+        ...(usesDedicatedPricing && executionBinding.schemaVersion === 'bayn.execution-market-data-binding.v3'
+          ? { executionMarketDataRows: yield* persistIntradayRecordRows(pricingSnapshot) }
+          : {}),
+        entryQuotes,
         priceMicros: quotePrices.askPriceMicros,
         ...quotePrices,
         maximumBuyQuantityMicros,

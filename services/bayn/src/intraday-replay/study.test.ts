@@ -46,7 +46,15 @@ const inputEffect = Effect.gen(function* () {
       {
         name: 'stress',
         input: {
-          schemaVersion: 'bayn.intraday-replay-input.v1',
+          schemaVersion: 'bayn.intraday-replay-input.v2',
+          operationalTiming: {
+            decisionReadMs: 0,
+            decisionComputeMs: 0,
+            planningReadMs: 0,
+            planningComputeMs: 0,
+            commitMs: 0,
+            submissionMs: 0,
+          },
           archiveAvailability: ArchiveAvailabilityPolicy.SourceReceiptAssumption,
           range: { start: '2026-09-01', end: '2026-09-02' },
           calendar: [

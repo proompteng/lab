@@ -563,6 +563,24 @@ describe('intraday momentum strategy', () => {
     expect(decision.selectedSymbols).toEqual(['AAPL'])
   })
 
+  test.each([4_648, 10_000])('evaluates executable archive evidence %i milliseconds old', (quoteAgeMs) => {
+    const protocol = success(decodeDefaultIntradayMomentumProtocol())
+    const decision = success(
+      decideIntradayMomentum(
+        marketContextAt({
+          rangeEndAt: '2026-08-18T18:00:00.000Z',
+          observedLagMs: 30_000,
+          quoteAgeMs,
+          returnBps: qualifyingReturns,
+        }),
+        protocol,
+      ),
+    )
+
+    expect(decision.selectedSymbols).toEqual(['AAPL'])
+    expect(decision.excludedCandidates).toEqual([])
+  })
+
   test('fails closed when the benchmark quote is stale while candidate evidence remains fresh', () => {
     const protocol = success(decodeDefaultIntradayMomentumProtocol())
     expect(
@@ -604,7 +622,14 @@ describe('intraday momentum strategy', () => {
   })
 
   test.each([
-    ['stale market data', { observedLagMs: 2_500, quoteAgeMs: 2_500 }, 'market-data-freshness'],
+    [
+      'stale market data',
+      {
+        observedLagMs: defaultIntradayMomentumProtocolDocument.maximumQuoteAgeMs + 1,
+        quoteAgeMs: defaultIntradayMomentumProtocolDocument.maximumQuoteAgeMs + 1,
+      },
+      'market-data-freshness',
+    ],
     ['wide spread', { spreadBps: 6 }, 'spread'],
     [
       'empty displayed book',

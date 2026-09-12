@@ -126,8 +126,14 @@ def _secret_ref(container: YamlObject, env_name: str) -> YamlObject:
 def _validate_hub_and_proxy(documents: list[YamlObject]) -> None:
     hub = _container(_find(documents, "Deployment", "torghut-notebooks-hub"), "hub")
     proxy = _container(_find(documents, "Deployment", "torghut-notebooks-proxy"), "chp")
-    assert hub["image"] == "quay.io/jupyterhub/k8s-hub:4.4.0"
-    assert proxy["image"] == "quay.io/jupyterhub/configurable-http-proxy:5.2.0"
+    assert (
+        hub["image"]
+        == "quay.io/jupyterhub/k8s-hub@sha256:108fbb01c3fe23e4a81efc8899aa73b4c15413615c73dfcdc44248eb63096e41"
+    )
+    assert (
+        proxy["image"]
+        == "quay.io/jupyterhub/configurable-http-proxy@sha256:69a7170eeedadb139dda5aef038d0a45378295c0d24cb0dc9da58641ef698ebe"
+    )
     assert hub["resources"] == {
         "requests": {"cpu": "250m", "memory": "512Mi"},
         "limits": {"cpu": "1", "memory": "2Gi"},
@@ -238,11 +244,23 @@ def _validate_singleuser_values(values: YamlObject) -> None:
     assert _at(singleuser, "cloudMetadata", "blockWithIptables") is False
     extra_env = _mapping_at(singleuser, "extraEnv")
     assert extra_env["TORGHUT_NOTEBOOK_DATA_MODE"] == "live"
-    assert extra_env["PGOPTIONS"] == (
-        "-c default_transaction_read_only=on -c statement_timeout=30000"
+    assert extra_env["CLICKHOUSE_URL"] == (
+        "http://torghut-clickhouse.torghut.svc.cluster.local:8123"
     )
-    assert _string_at(extra_env, "TORGHUT_STATUS_URL").endswith("/trading/status")
+    assert extra_env["CLICKHOUSE_DATABASE"] == "torghut"
+    assert extra_env["CLICKHOUSE_USER"] == "torghut_notebook"
+    assert _at(extra_env, "CLICKHOUSE_PASSWORD", "valueFrom", "secretKeyRef") == {
+        "name": "torghut-notebook-clickhouse",
+        "key": "password",
+    }
     forbidden_env = {
+        "PGHOST",
+        "PGPORT",
+        "PGDATABASE",
+        "PGUSER",
+        "PGPASSWORD",
+        "PGOPTIONS",
+        "TORGHUT_STATUS_URL",
         "APCA_API_KEY_ID",
         "APCA_API_SECRET_KEY",
         "KAFKA_BOOTSTRAP_SERVERS",

@@ -175,6 +175,19 @@ const transactionTotalsMatch = (
     gains = nextGains
     losses = nextLosses
   }
+  for (const fee of input.brokerFees ?? []) {
+    const net = parseSignedMicros(fee.netAmountMicros)
+    if (net === undefined) {
+      reasons.add('INVALID_MICROS')
+      return
+    }
+    const nextFees = checkedAdd(fees, -net)
+    if (nextFees === undefined) {
+      reasons.add('INVALID_MICROS')
+      return
+    }
+    fees = nextFees
+  }
   if (gains !== totals.realizedGains || losses !== totals.realizedLosses || fees !== totals.brokerExecutionFees) {
     reasons.add('LEDGER_MISMATCH')
   }
