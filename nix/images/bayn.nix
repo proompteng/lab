@@ -12,10 +12,10 @@ let
   # SHA-256 identity for bayn.intraday-momentum.behavior.v14, verified by the production executable.
   strategyBehaviorHash = "5981590560e7760e5525192f45be248b3b60b65b28e8c9c3b7b95d9f8e4d0e51";
   # Canonical hash of the compiled bayn.intraday-momentum.protocol.v3 document.
-  strategyParameterHash = "ca956c6c35352d99705d94230c4fa47e3c7edbccd767d1572d5dbe531356436a";
+  strategyParameterHash = "cd004b8b43e50dde70ba70fb43deff19c5c65d60f4455e84a2e8df9991c0335f";
   strategyName = "intraday-momentum";
   # Canonical bayn.strategy-protocol.v1 identity: name, behavior, parameters, and parameter schema.
-  strategyProtocolHash = "474dd7cef2cad8c055d7fbf82301dda62f8d150004e508408da133bd8467aedc";
+  strategyProtocolHash = "f1c6b49013717e20cf186d5bef386ea3af60a3009f477e435653f037e56b280b";
   # Canonical quote-bound policy for the build-contract account sentinel. It binds every source-controlled risk limit
   # without embedding a broker account identity; runtime separately verifies the account-bound activation policy.
   executionRiskPolicyHash = "2e60270036900493a121a87c73730960154278778a8aa71b663b138effd82227";

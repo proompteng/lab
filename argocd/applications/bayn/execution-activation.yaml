@@ -41,7 +41,7 @@ spec:
           env:
             - name: BAYN_EXECUTION_ACTIVATION_GENERATION
               # Kargo binds bootstrap idempotency to the promoted immutable image.
-              value: "980e4d06d492e2fbf306af98e66f06b7f38bb9bb92b9c2e95648aca8069e2480"
+              value: "ef3bca793abda3d5f5d43fc2f3bd35f8613c8196fc8aab894942df9c78960e86"
             - name: BAYN_CODE_REVISION
               value: ee60493eb5a9b5f8572e868b6ff31c17675501a3
             - name: BAYN_IMAGE_REPOSITORY
@@ -55,7 +55,7 @@ spec:
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "5981590560e7760e5525192f45be248b3b60b65b28e8c9c3b7b95d9f8e4d0e51"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "ca956c6c35352d99705d94230c4fa47e3c7edbccd767d1572d5dbe531356436a"
+              value: "cd004b8b43e50dde70ba70fb43deff19c5c65d60f4455e84a2e8df9991c0335f"
             - name: BAYN_CAPITAL_ACTIVATION_REQUEST
               valueFrom:
                 secretKeyRef:
@@ -64,7 +64,7 @@ spec:
             - name: BAYN_CAPITAL_ACTIVATION_KIND
               value: ResearchCapitalActivationRequest
             - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: "{\"schemaVersion\":\"bayn.research-capital-build-lineage.v1\",\"requestHash\":\"980e4d06d492e2fbf306af98e66f06b7f38bb9bb92b9c2e95648aca8069e2480\",\"authoredActivation\":{\"sourceRevision\":\"eccb03ae32d3c261c3a396f7b9072dbeba3db1da\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:53f5c265845abb77fb09d180cb759ff5c8658afb35a6ea626971a715e00cca50\"},\"activation\":{\"sourceRevision\":\"eccb03ae32d3c261c3a396f7b9072dbeba3db1da\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:53f5c265845abb77fb09d180cb759ff5c8658afb35a6ea626971a715e00cca50\"}}"
+              value: "{\"schemaVersion\":\"bayn.research-capital-build-lineage.v1\",\"requestHash\":\"ef3bca793abda3d5f5d43fc2f3bd35f8613c8196fc8aab894942df9c78960e86\",\"authoredActivation\":{\"sourceRevision\":\"536ad8fd00c510ed874bd90afda04fc276294f13\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:f782b5a6f57b35fdef510de7b9f7453ce1938e0b100ac899dcc43cd212302af7\"},\"activation\":{\"sourceRevision\":\"536ad8fd00c510ed874bd90afda04fc276294f13\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:f782b5a6f57b35fdef510de7b9f7453ce1938e0b100ac899dcc43cd212302af7\"}}"
             - name: BAYN_BROKER_ACCESS
               value: read-only
             - name: BAYN_CAPITAL_AUTHORITY

@@ -5,7 +5,7 @@ import {
   marketFeatureClockSkewAllowanceMs,
   rollingFeatureDefinitionMaterial,
 } from '../../market-data/features/contract'
-import { KafkaBootstrapTimestampPolicy } from '../../market-data/streaming/bootstrap'
+import { kafkaBootstrapDeadlineMs, KafkaBootstrapTimestampPolicy } from '../../market-data/streaming/bootstrap'
 
 import {
   ExecutionModelV5Schema,
@@ -101,7 +101,7 @@ export const intradayMomentumStreamingContract = Object.freeze({
   requiredDefinitionHash: sha256(JSON.stringify(rollingFeatureDefinitionMaterial)),
   clockSkewAllowanceMs: marketFeatureClockSkewAllowanceMs,
   bootstrapTimestampPolicy: KafkaBootstrapTimestampPolicy.ProducerClock,
-  bootstrapDeadlineMs: 120_000,
+  bootstrapDeadlineMs: kafkaBootstrapDeadlineMs,
   freshness: 'exact-completed-window-and-matching-raw-inputs',
 } as const)
 const StreamingInputContract = Schema.Struct({
@@ -113,7 +113,7 @@ const StreamingInputContract = Schema.Struct({
   requiredDefinitionHash: Schema.Literal(intradayMomentumStreamingContract.requiredDefinitionHash),
   clockSkewAllowanceMs: Schema.Literal(marketFeatureClockSkewAllowanceMs),
   bootstrapTimestampPolicy: Schema.Literal(KafkaBootstrapTimestampPolicy.ProducerClock),
-  bootstrapDeadlineMs: Schema.Literal(120_000),
+  bootstrapDeadlineMs: Schema.Literal(kafkaBootstrapDeadlineMs),
   freshness: Schema.Literal(intradayMomentumStreamingContract.freshness),
 })
 

@@ -7,8 +7,9 @@ hashes require a matching sealed research mandate; image promotion alone cannot 
 The mandate binds the published multi-architecture Bayn build, while Kargo updates its activation build lineage for
 subsequent reviewed releases. Preserve the existing sandbox broker identity, risk policy, and limits when rotating it.
 
-The worker remains in `shadow` mode while Kafka compatibility, raw-feature joins, and replay are verified. Enable
-`streaming` through a separate reviewed configuration change after those checks pass. Verify the sealed request's
+The worker selects `streaming` after Kafka compatibility, exact raw-feature joins for all strategy symbols, and
+real-source strategy parity passed. Its versioned bootstrap budget is five minutes: the initial 905,542-record
+catch-up completed in 223 seconds on the slower worker. Freshness and entry checks apply after catch-up. Verify the sealed request's
 content hash, all three build-lineage bindings, the native activation hook, exact reconciliation, and natural controller
 progress. Retained-data diagnostics establish observation now; they do not establish historical live availability.
 
