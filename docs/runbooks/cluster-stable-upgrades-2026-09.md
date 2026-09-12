@@ -240,24 +240,33 @@ Retirement order and checks:
    recovery objects tracked by the acceptance Applications already have Argo
    `Prune=false,Delete=false` protection. The original PostgreSQL snapshots are
    owned by the retained Backup objects in production namespaces.
-3. Merge the ApplicationSet removal and let root reconciliation retire the three
+3. Before merging, add `Prune=false,Delete=false` to the two dedicated test
+   Namespaces with UID/resource-version preconditions, preserving their existing
+   annotations. Read back the protection on both Namespaces. This blocks an
+   Application finalizer from cascading namespace deletion before ordered cleanup.
+   The shared `rook-ceph` namespace is neither an Application-owned resource nor
+   a deletion target.
+4. Merge the ApplicationSet removal and let root reconciliation retire the three
    Applications. Wait for those registrations to disappear before deleting
    retained test resources so self-healing cannot recreate them. Keep Argo and
    Kubernetes finalizers intact.
-4. Delete remaining rehearsal Cluster and Job objects normally with UID
+5. Delete remaining rehearsal Cluster and Job objects normally with UID
    preconditions. Wait for all test Pods to stop before deleting their PVCs.
    The bounded targets are the PostgreSQL and ClickHouse acceptance namespaces
    and `rook-ceph/storage-rbd-canary` plus `rook-ceph/storage-cephfs-canary`.
-5. Each of the ten imported snapshot references must match a ready original
+6. Each of the ten imported snapshot references must match a ready original
    snapshot outside the acceptance namespaces by its CSI snapshot handle. Remove
    only the imported VolumeSnapshot and VolumeSnapshotContent objects, both
    using the verified `Retain` policy. Keep the original snapshot/content pair
    and underlying snapshot. Then remove the two empty test namespaces. Never
    delete the shared `rook-ceph` namespace.
-6. Verify all three Applications, ten rehearsal Clusters, test Pods, 21 temporary
+7. Verify all three Applications, ten rehearsal Clusters, test Pods, 21 temporary
    PVCs and their backing PVs are absent. Recheck the original recovery objects,
    production PostgreSQL/ClickHouse readiness and Ceph `HEALTH_OK`. Preserve
-   production PVC, PV and snapshot identities throughout.
+   production PVC, PV and snapshot identities throughout. The kube-router hook
+   and coverage script exclude only these retired test namespaces; all production
+   namespace and policy fingerprints remain enforced. Run the updated read-only
+   coverage check after namespace removal before any future kube-router sync.
 
 Removing scratch data is irreversible and intentionally releases test storage.
 Rehearsals can be recreated from the retained original snapshots with a newly
