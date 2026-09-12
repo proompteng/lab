@@ -237,7 +237,9 @@ Retirement order and checks:
 2. Verify the seven original PostgreSQL Backup objects and all ten original
    PostgreSQL/ClickHouse/Keeper snapshots are complete or ready, keep their UIDs
    and handles, and require `Retain` on their VolumeSnapshotContents. These
-   recovery objects already have Argo `Prune=false,Delete=false` protection.
+   recovery objects tracked by the acceptance Applications already have Argo
+   `Prune=false,Delete=false` protection. The original PostgreSQL snapshots are
+   owned by the retained Backup objects in production namespaces.
 3. Merge the ApplicationSet removal and let root reconciliation retire the three
    Applications. Wait for those registrations to disappear before deleting
    retained test resources so self-healing cannot recreate them. Keep Argo and
