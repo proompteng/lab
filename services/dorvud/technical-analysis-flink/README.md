@@ -42,6 +42,10 @@ job's Kafka credentials. Source and state operator IDs are separate from the leg
 Graph construction preserves every legacy operator's restoration ID, including generated Kafka and ClickHouse sink
 writers and committers. The job executes that prepared graph so enabling features retains existing savepoint state.
 The savepoint regression test checks the executable graph against legacy IDs and optional source and sink configurations.
+When adding the technical-indicator source to an already deployed rolling-feature graph, restoration aliases must
+target that preceding graph's generated checkpoint IDs. Applying the older pre-feature aliases afterward loses the
+rolling graph's generated sink IDs. Coverage includes the deployed ClickHouse signal-writer ID, optional sources and
+sinks, and Flink's generated-ID fallback for subsequent checkpoints; no state is skipped during restoration.
 
 `dorvud.rolling-price-30m.v1` emits first open, range high and low, last close, total volume, and exact input references
 once 30 contiguous finalized minute bars exist. Prices use the same binary64 multiplication and positive half rounding

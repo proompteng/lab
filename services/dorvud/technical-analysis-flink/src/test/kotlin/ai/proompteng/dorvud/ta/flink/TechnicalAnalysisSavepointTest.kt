@@ -32,6 +32,7 @@ class TechnicalAnalysisSavepointTest {
       enabled: Boolean,
       topology: FlinkTaConfig = config,
       technical: Boolean = false,
+      checkpoint: Boolean = false,
     ): Map<String, Set<String>> {
       val env = StreamExecutionEnvironment.getExecutionEnvironment()
       env.parallelism = topology.parallelism
@@ -47,13 +48,28 @@ class TechnicalAnalysisSavepointTest {
       return operators
         .groupBy { it.userDefinedOperatorName ?: "<unnamed>" }
         .mapValues { (_, values) ->
-          values.map { (it.userDefinedOperatorID?.orElse(it.generatedOperatorID) ?: it.generatedOperatorID).toHexString() }.toSet()
+          values
+            .flatMap {
+              if (checkpoint) {
+                listOf(
+                  it.generatedOperatorID.toHexString(),
+                )
+              } else {
+                listOfNotNull(it.generatedOperatorID.toHexString(), it.userDefinedOperatorID?.orElse(null)?.toHexString())
+              }
+            }.toSet()
         }
     }
     val original = hashes(false)
     val extended = hashes(true)
     val technical = hashes(true, technical = true)
-    extended.forEach { (name, ids) -> assertTrue(technical[name]?.containsAll(ids) == true, "technical addition preserves: $name") }
+    hashes(true, checkpoint = true).forEach { (name, ids) ->
+      assertTrue(technical[name]?.containsAll(ids) == true, "checkpoint generated IDs must restore: $name $ids")
+    }
+    assertTrue(
+      technical["sink-signals-clickhouse: Writer"]?.contains("f522e4fa3e4594331e6c92266d1a35bf") == true,
+      "restore the writer ID observed in the deployed savepoint",
+    )
     val legacyStatefulOperators =
       mapOf(
         "Source: ta-trades-source" to "cbc357ccb763df2852fee8c4fc7d55f2",
@@ -85,6 +101,10 @@ class TechnicalAnalysisSavepointTest {
     )) {
       val previous = hashes(false, topology)
       val current = hashes(true, topology)
+      val upgraded = hashes(true, topology, technical = true)
+      hashes(true, topology, checkpoint = true).forEach { (name, ids) ->
+        assertTrue(upgraded[name]?.containsAll(ids) == true, "optional checkpoint operator: $name $ids")
+      }
       previous.forEach { (name, ids) -> assertTrue(current[name]?.containsAll(ids) == true, "optional topology operator: $name") }
     }
   }

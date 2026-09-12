@@ -228,8 +228,8 @@ internal fun configureTechnicalAnalysisJob(
   val previous = env.getStreamGraph(false)
   val rollingGraph = configureRollingMarketFeatures(env, config, features)
   val extended = env.streamGraph
-  rollingGraph?.let { preserveExistingOperatorIds(it, extended) }
-  preserveExistingOperatorIds(previous, extended)
+  // Checkpoints contain generated IDs from the immediately preceding executable topology, not its restore aliases.
+  preserveExistingOperatorIds(rollingGraph ?: previous, extended)
   return extended
 }
 
