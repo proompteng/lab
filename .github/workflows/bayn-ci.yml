@@ -218,6 +218,35 @@ jobs:
           echo "BAYN_TEST_CLICKHOUSE_GUARD_TOKEN=${guard_token}" >> "${GITHUB_ENV}"
       - name: Verify complete Bayn PostgreSQL persistence workflows
         run: bun run --cwd services/bayn test:postgres
+      - name: Start isolated TigerBeetle for durable replay acceptance
+        run: |
+          set -euo pipefail
+          replay_tb_image='ghcr.io/tigerbeetle/tigerbeetle:0.17.9@sha256:48f623f9c1e9b6cc44d77ca93634595ae99cce3246ded418763eb1a62eee45e9'
+          replay_tb_directory="$(mktemp -d)"
+          docker run --rm --security-opt seccomp=unconfined \
+            -v "${replay_tb_directory}:/data" "${replay_tb_image}" \
+            format --cluster=20912 --replica=0 --replica-count=1 --development /data/0_0.tigerbeetle
+          docker run -d --name bayn-replay-tigerbeetle --security-opt seccomp=unconfined \
+            --memory 2g --cpus 2 -p 127.0.0.1:53000:3000 \
+            -v "${replay_tb_directory}:/data" "${replay_tb_image}" \
+            start --addresses=0.0.0.0:3000 --development /data/0_0.tigerbeetle
+          for _attempt in {1..30}; do
+            if [[ "$(docker logs bayn-replay-tigerbeetle 2>&1)" == *'listening on'* ]]; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs bayn-replay-tigerbeetle
+          exit 1
+      - name: Verify replay accounting with PostgreSQL and TigerBeetle
+        env:
+          BAYN_TEST_TIGERBEETLE_ADDRESS: 127.0.0.1:53000
+        run: |
+          bun test services/bayn/src/intraday-replay/durable-broker.integration.test.ts
+          bun test services/bayn/src/intraday-replay/runtime.integration.test.ts
+      - name: Stop isolated replay TigerBeetle
+        if: always()
+        run: docker rm -f bayn-replay-tigerbeetle || true
       - name: Verify Bayn ClickHouse Date query semantics
         run: bun test services/bayn/src/market-data.clickhouse.integration.test.ts
 

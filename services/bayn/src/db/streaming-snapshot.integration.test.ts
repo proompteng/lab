@@ -12,6 +12,9 @@ import { KafkaMarketProjection } from '../market-data/streaming/kafka'
 import { IntradayMarketData } from '../market-data/intraday/model'
 import { withRecordedArchiveReads } from '../market-data/intraday/availability'
 import { availabilityReader } from '../testing/archive-availability-fixture'
+import { simulationFixture } from '../testing/simulated-streaming-fixture'
+import { makeSimulatedMarketData } from '../market-data/streaming/simulation-service'
+import { loadIntradaySnapshot } from '../observe-composition/intraday-market-data'
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn@127.0.0.1:55439/bayn_streaming_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
@@ -49,6 +52,70 @@ describePostgres('PostgreSQL streaming decision source evidence', () => {
   })
   afterAll(async () => {
     await runtime?.dispose()
+  })
+
+  test('simulation recovers only its committed source and cannot enter the live reference table', async () => {
+    const fixture = simulationFixture()
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const market = yield* makeSimulatedMarketData(fixture.source, Effect.succeed(fixture.cursor))
+        const snapshot = yield* market.simulation.loadSnapshot(fixture.query)
+        const wrapped = withRecordedArchiveReads(market, availabilityReader, () =>
+          Effect.die('unexpected archive receipt'),
+        )
+        const loaded = yield* loadIntradaySnapshot(wrapped, fixture.query)
+        const reference = yield* market.simulation.verifyReference(snapshot)
+        const fresh = yield* makeSimulatedMarketData(fixture.source, Effect.succeed(fixture.cursor))
+        const missing = yield* Effect.exit(fresh.simulation.verifyReference(snapshot))
+        const insert = sql`INSERT INTO simulated_snapshot_references (snapshot_id,schema_version,content_hash,observed_at,manifest)
+        VALUES (${snapshot.manifest.snapshotId},${reference.schemaVersion},${snapshot.manifest.contentHash},${snapshot.manifest.observedAt}::timestamptz,${sql.json(snapshot.manifest)})`
+        yield* Effect.exit(sql.withTransaction(insert.pipe(Effect.andThen(Effect.fail('decision rejected')))))
+        const rolledBack = yield* Effect.exit(fresh.simulation.verifyReference(snapshot))
+        yield* sql.withTransaction(insert)
+        const recovered = yield* fresh.simulation.verifyReference(snapshot)
+        const other = yield* makeSimulatedMarketData(
+          { ...fixture.source, runId: 'f'.repeat(64) },
+          Effect.succeed(fixture.cursor),
+        )
+        const crossRun = yield* Effect.exit(other.simulation.verifyReference(snapshot))
+        const changed = yield* Effect.exit(fresh.simulation.verifyReference({ ...snapshot, bars: [] }))
+        const liveTable =
+          yield* Effect.exit(sql`INSERT INTO streaming_snapshot_references (snapshot_id,schema_version,content_hash,observed_at,manifest)
+        VALUES (${snapshot.manifest.snapshotId},'bayn.streaming-snapshot-reference.v1',${snapshot.manifest.contentHash},${snapshot.manifest.observedAt}::timestamptz,${sql.json(snapshot.manifest)})`)
+        const update = yield* Effect.exit(
+          sql`UPDATE simulated_snapshot_references SET content_hash = ${'c'.repeat(64)}`,
+        )
+        const remove = yield* Effect.exit(sql`DELETE FROM simulated_snapshot_references`)
+        const truncate = yield* Effect.exit(sql`TRUNCATE simulated_snapshot_references`)
+        return {
+          snapshot,
+          loaded,
+          recovered,
+          missing,
+          rolledBack,
+          crossRun,
+          changed,
+          liveTable,
+          update,
+          remove,
+          truncate,
+        }
+      }),
+    )
+    expect(result.loaded.manifest).toEqual(result.snapshot.manifest)
+    expect(result.recovered.manifest).toEqual(result.snapshot.manifest)
+    for (const rejected of [
+      result.missing,
+      result.rolledBack,
+      result.crossRun,
+      result.changed,
+      result.liveTable,
+      result.update,
+      result.remove,
+      result.truncate,
+    ])
+      expect(rejected._tag).toBe('Failure')
   })
 
   test('only recovers an exact committed cut and rolls evidence back with a failed decision transaction', async () => {
@@ -90,7 +157,7 @@ describePostgres('PostgreSQL streaming decision source evidence', () => {
       }),
     )
     for (const rejected of [result.incomplete, result.update, result.remove, result.truncate])
-      expect(Exit.isFailure(rejected)).toBe(true)
+      expect(rejected._tag).toBe('Failure')
     expect(result.exact.manifest.snapshotId).toBe(fixture.snapshot.manifest.snapshotId)
   })
 

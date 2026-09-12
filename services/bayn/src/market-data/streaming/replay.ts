@@ -11,14 +11,27 @@ import {
   type PersistedIntradaySnapshotRows,
 } from '../intraday/verification'
 import { bootstrapKafkaPartitions, canonicalPositions } from './bootstrap'
-import { StreamingSnapshotEvidenceSchema } from './evidence-schema'
+import {
+  SimulatedSnapshotEvidenceSchema,
+  SimulatedSnapshotSourceSchema,
+  StreamingSnapshotEvidenceSchema,
+} from './evidence-schema'
 import {
   emptyStreamingProjection,
   incorporateMarketRecord,
+  incorporateSimulatedMarketRecord,
   incorporateRecordedMarketValue,
   topicPartitionKey,
 } from './projection'
-import { constructStreamingSnapshot, type StreamingMarketSnapshot, type StreamingSnapshotManifest } from './snapshot'
+import {
+  constructSimulatedSnapshot,
+  constructStreamingSnapshot,
+  type SimulatedMarketSnapshot,
+  type SimulatedSnapshotManifest,
+  type StreamingSnapshotEvidence,
+  type StreamingMarketSnapshot,
+  type StreamingSnapshotManifest,
+} from './snapshot'
 import type { StreamingUniverse } from './raw-events'
 
 const fail = (message: string, cause?: unknown) =>
@@ -55,21 +68,6 @@ export const reproduceStreamingSnapshot = (
       canonicalPositions(evidence.positions).some((position, index) => position !== evidence.positions[index])
     )
       return yield* Result.fail(fail('Recorded Kafka bounds are not canonical'))
-    const decoded = yield* Result.all({
-      bars: decodeIntradayBarRows(rows.bars).pipe(Result.flatMap((values) => Result.all(values.map(normalizeBar)))),
-      quotes: decodeIntradayQuoteRows(rows.quotes).pipe(
-        Result.flatMap((values) => Result.all(values.map(normalizeQuote))),
-      ),
-      trades: decodeIntradayTradeRows(rows.trades).pipe(
-        Result.flatMap((values) => Result.all(values.map(normalizeTrade))),
-      ),
-    })
-    const values = [...decoded.bars, ...decoded.quotes, ...decoded.trades]
-    const byCoordinate = new Map(
-      values.map((value) => [coordinate(value.sourceTopic, value.sourcePartition, value.sourceOffset), value]),
-    )
-    if (byCoordinate.size !== values.length || evidence.records.length !== values.length)
-      return yield* Result.fail(fail('Recorded rows and receipts must have exactly one matching source coordinate'))
     const featureTopics = [...new Set(evidence.features.map((feature) => feature.topic))]
     const rawTopics = new Set(Object.values(manifest.sourceTopics))
     const bootstrapFeatureTopics = [
@@ -88,7 +86,65 @@ export const reproduceStreamingSnapshot = (
       symbols: manifest.universe,
       topics: { ...manifest.sourceTopics, features: featureTopic },
     }
-    let projection = emptyStreamingProjection(evidence.bootstrap.epoch)
+    const projection = yield* restoreRecordedProjection(manifest, rows, evidence, universe, evidence.bootstrap.epoch)
+    const query: IntradaySnapshotQuery = {
+      sessionDate: manifest.sessionDate,
+      calendar: manifest.calendar,
+      rangeStartAt: manifest.rangeStartAt,
+      rangeEndAt: manifest.rangeEndAt,
+      observedAt: manifest.observedAt,
+      universeId: manifest.universeId,
+      universeSymbolHash: manifest.universeSymbolHash,
+      universe: manifest.universe,
+      symbols: manifest.symbols,
+      ...(manifest.candidateSymbols === undefined ? {} : { candidateSymbols: manifest.candidateSymbols }),
+      ...(manifest.purpose === undefined ? {} : { purpose: manifest.purpose }),
+      feed: manifest.feed,
+      delayClass: manifest.delayClass,
+      sourceTopics: manifest.sourceTopics,
+      maximumQuoteAgeMs: manifest.maximumQuoteAgeMs,
+      minimumWatermarkLagMs: manifest.minimumWatermarkLagMs,
+    }
+    const reproduced = yield* constructStreamingSnapshot(
+      { projection, bootstrap: evidence.bootstrap, positions: evidence.positions },
+      query,
+    )
+    if (
+      reproduced.manifest.contentHash !== manifest.contentHash ||
+      reproduced.manifest.snapshotId !== manifest.snapshotId
+    )
+      return yield* Result.fail(fail('Recorded inputs do not reproduce the bound streaming snapshot'))
+    return reproduced
+  })
+
+const restoreRecordedProjection = (
+  manifest: StreamingSnapshotManifest | SimulatedSnapshotManifest,
+  rows: PersistedIntradaySnapshotRows,
+  evidence: Pick<StreamingSnapshotEvidence, 'records' | 'features' | 'sequence'>,
+  universe: StreamingUniverse,
+  epoch: string,
+  simulation?: typeof SimulatedSnapshotSourceSchema.Type,
+) =>
+  Result.gen(function* () {
+    const decoded = yield* Result.all({
+      bars: decodeIntradayBarRows(rows.bars).pipe(Result.flatMap((values) => Result.all(values.map(normalizeBar)))),
+      quotes: decodeIntradayQuoteRows(rows.quotes).pipe(
+        Result.flatMap((values) => Result.all(values.map(normalizeQuote))),
+      ),
+      trades: decodeIntradayTradeRows(rows.trades).pipe(
+        Result.flatMap((values) => Result.all(values.map(normalizeTrade))),
+      ),
+    })
+    const values = [...decoded.bars, ...decoded.quotes, ...decoded.trades]
+    const byCoordinate = new Map(
+      values.map((value) => [coordinate(value.sourceTopic, value.sourcePartition, value.sourceOffset), value]),
+    )
+    if (byCoordinate.size !== values.length || evidence.records.length !== values.length)
+      return yield* Result.fail(fail('Recorded rows and receipts must have exactly one matching source coordinate'))
+    let projection = {
+      ...emptyStreamingProjection(epoch),
+      availabilityMode: simulation === undefined ? ('observed' as const) : ('simulated' as const),
+    }
     const receiptKeys = new Set<string>()
     const deliveries = [
       ...evidence.records.map((receipt) => ({ kind: 'raw' as const, receipt })),
@@ -120,7 +176,7 @@ export const reproduceStreamingSnapshot = (
         projection = incorporateRecordedMarketValue(projection, value, universe, raw.availableAtMs)
       } else {
         const feature = delivery.receipt
-        projection = incorporateMarketRecord(
+        projection = (simulation === undefined ? incorporateMarketRecord : incorporateSimulatedMarketRecord)(
           projection,
           {
             topic: feature.topic,
@@ -130,10 +186,68 @@ export const reproduceStreamingSnapshot = (
           },
           universe,
           feature.availableAtMs,
+          simulation?.regeneratedFeaturesRecordedAtMs ?? feature.availableAtMs,
         )
       }
     }
     projection = { ...projection, sequence: evidence.sequence }
+    return projection
+  })
+
+export const reproduceSimulatedSnapshot = (
+  manifest: SimulatedSnapshotManifest,
+  rows: PersistedIntradaySnapshotRows,
+): Result.Result<SimulatedMarketSnapshot, IntradaySnapshotFailure> =>
+  Result.gen(function* () {
+    const evidence = yield* Schema.decodeUnknownResult(
+      SimulatedSnapshotEvidenceSchema,
+      strictParseOptions,
+    )(manifest.streaming).pipe(Result.mapError((cause) => fail('Invalid simulated input cut', cause)))
+    if (canonicalPositions(evidence.positions).some((position, index) => position !== evidence.positions[index]))
+      return yield* Result.fail(fail('Simulated source positions are not canonical'))
+    const {
+      schemaVersion: _schemaVersion,
+      positions: _positions,
+      records: _records,
+      features: _features,
+      sequence: _sequence,
+      ...source
+    } = evidence
+    const universe: StreamingUniverse = {
+      universeId: manifest.universeId,
+      universeSymbolHash: manifest.universeSymbolHash,
+      symbols: manifest.universe,
+      topics: { ...manifest.sourceTopics, features: evidence.featureTopic },
+    }
+    const bounds = new Map(
+      evidence.positions.map((position) => [
+        topicPartitionKey(position.topic, position.partition),
+        BigInt(position.offset),
+      ]),
+    )
+    if (
+      bounds.size !== evidence.positions.length ||
+      [...bounds.values()].some((offset) => offset <= 0n) ||
+      [
+        ...evidence.records.map((receipt) => ({
+          topic: receipt.sourceTopic,
+          partition: receipt.sourcePartition,
+          offset: receipt.sourceOffset,
+        })),
+        ...evidence.features,
+      ].some(
+        (receipt) => BigInt(receipt.offset) >= (bounds.get(topicPartitionKey(receipt.topic, receipt.partition)) ?? -1n),
+      )
+    )
+      return yield* Result.fail(fail('Simulated receipts lie outside their source cut'))
+    const projection = yield* restoreRecordedProjection(
+      manifest,
+      rows,
+      evidence,
+      universe,
+      `historical-${evidence.runId}`,
+      source,
+    )
     const query: IntradaySnapshotQuery = {
       sessionDate: manifest.sessionDate,
       calendar: manifest.calendar,
@@ -152,14 +266,35 @@ export const reproduceStreamingSnapshot = (
       maximumQuoteAgeMs: manifest.maximumQuoteAgeMs,
       minimumWatermarkLagMs: manifest.minimumWatermarkLagMs,
     }
-    const reproduced = yield* constructStreamingSnapshot(
-      { projection, bootstrap: evidence.bootstrap, positions: evidence.positions },
+
+    const reproduced = yield* constructSimulatedSnapshot(
+      {
+        runId: evidence.runId,
+        source,
+        universe,
+        projection: {
+          ...projection,
+          offsets: new Map(
+            evidence.positions.map((position) => [
+              topicPartitionKey(position.topic, position.partition),
+              String(BigInt(position.offset) - 1n),
+            ]),
+          ),
+        },
+        processedRecords: evidence.sequence,
+        suppliedOffsets: projection.offsets,
+        lastArrival: null,
+        ...(source.regeneratedFeaturesRecordedAtMs === undefined
+          ? {}
+          : { regeneratedFeaturesRecordedAtMs: source.regeneratedFeaturesRecordedAtMs }),
+      },
+      source,
       query,
     )
     if (
       reproduced.manifest.contentHash !== manifest.contentHash ||
       reproduced.manifest.snapshotId !== manifest.snapshotId
     )
-      return yield* Result.fail(fail('Recorded inputs do not reproduce the bound streaming snapshot'))
+      return yield* Result.fail(fail('Recorded inputs do not reproduce the simulated snapshot'))
     return reproduced
   })

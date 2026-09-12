@@ -4,7 +4,7 @@ import type { StrategyMarketSnapshot, VerifiedStrategyMarketSnapshot } from '../
 import { Data, Effect, Result, Schema } from 'effect'
 
 import { quantizeAlpacaLimitPriceMicros } from '../broker/alpaca-price'
-import type { OperationalError } from '../errors'
+import { operationalError, type OperationalError } from '../errors'
 import { MICROS, numberToMicros } from '../execution-model'
 import {
   intradayAgeNanos,
@@ -40,6 +40,15 @@ export const loadIntradaySnapshot = (
   query: IntradaySnapshotQuery,
 ): Effect.Effect<VerifiedStrategyMarketSnapshot, OperationalError> =>
   Effect.gen(function* () {
+    if (marketData.simulation !== undefined) {
+      if (marketData.streaming !== undefined)
+        return yield* operationalError({
+          component: 'market-data',
+          operation: 'load',
+          message: 'Simulated and live streaming capabilities cannot be combined',
+        })
+      return yield* marketData.simulation.loadSnapshot(query)
+    }
     const streaming = marketData.streaming
     if (streaming === undefined) return yield* loadIntradayArchiveSnapshot(marketData, query)
     if (streaming.shadowOnly !== true) return yield* streaming.loadSnapshot(query)
@@ -66,12 +75,15 @@ const decodeExecutionMarketDataBinding = Schema.decodeUnknownResult(
 export const executionMarketDataBinding = (
   snapshot: StrategyMarketSnapshot,
 ): Result.Result<ExecutionMarketDataBinding, IntradayMarketDataFailure> => {
-  if (snapshot.manifest.schemaVersion === 'bayn.streaming-market-snapshot.v1') {
+  if ('streaming' in snapshot.manifest) {
     const { schemaVersion, ...material } = snapshot.manifest
     return Result.mapError(
       decodeExecutionMarketDataBinding({
         ...material,
-        schemaVersion: 'bayn.execution-market-data-binding.v3',
+        schemaVersion:
+          schemaVersion === 'bayn.simulated-market-snapshot.v1'
+            ? 'bayn.execution-market-data-binding.v4'
+            : 'bayn.execution-market-data-binding.v3',
         snapshotSchemaVersion: schemaVersion,
       }),
       (cause) => failure('binding', 'streaming execution market data binding is invalid', cause),

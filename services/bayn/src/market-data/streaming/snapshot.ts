@@ -1,33 +1,24 @@
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
+import { SimulatedSnapshotSourceSchema, type SimulatedSnapshotEvidenceSchema } from './evidence-schema'
+import { strictParseOptions } from '../../schemas'
+import type { HistoricalMarketCursor } from './historical'
 
 import { canonicalHashV1Result } from '../../hash'
 import type {
   ArchiveVerifiedIntradayMarketSnapshot,
-  IntradayBar,
-  IntradayCandidateExclusion,
   IntradayMarketSnapshot,
-  IntradayQuote,
   IntradayRecordIdentity,
   IntradaySnapshotManifest,
   IntradaySnapshotQuery,
-  IntradayTrade,
 } from '../intraday/model'
 import { IntradaySnapshotFailure } from '../intraday/model'
-import { intradayInstantNanos } from '../intraday/time'
-import {
-  candidateAvailability,
-  compareRecords,
-  lineageOf,
-  validateBarStructure,
-  validateIdentity,
-  validateSourceTopics,
-  verifyIntradaySnapshotQuery,
-} from '../intraday/verification'
-import { featureMatchesBars, marketFeatureClockSkewAllowanceMs, type RollingMarketFeature } from '../features/contract'
+import { compareRecords, lineageOf, verifyIntradaySnapshotQuery } from '../intraday/verification'
+import type { RollingMarketFeature } from '../features/contract'
 import type { KafkaProjectionCut } from './kafka'
 import type { KafkaBootstrapEvidence, KafkaPartitionPosition } from './bootstrap'
 import { kafkaBootstrapComplete } from './bootstrap'
-import { observedBarsAt, topicPartitionKey, type ObservedMarketValue } from './projection'
+import { topicPartitionKey, type StreamingProjection, type ObservedMarketValue } from './projection'
+import { selectStreamingInputs } from './inputs'
 
 export interface StreamingRecordReceipt {
   readonly sourceTopic: string
@@ -68,8 +59,22 @@ const StreamingVerifiedSnapshotTypeId: unique symbol = Symbol('StreamingVerified
 export type StreamingVerifiedMarketSnapshot = StreamingMarketSnapshot & {
   readonly [StreamingVerifiedSnapshotTypeId]: true
 }
-export type StrategyMarketSnapshot = IntradayMarketSnapshot | StreamingMarketSnapshot
-export type VerifiedStrategyMarketSnapshot = ArchiveVerifiedIntradayMarketSnapshot | StreamingVerifiedMarketSnapshot
+export interface SimulatedSnapshotManifest extends Omit<StreamingSnapshotManifest, 'schemaVersion' | 'streaming'> {
+  readonly schemaVersion: 'bayn.simulated-market-snapshot.v1'
+  readonly streaming: typeof SimulatedSnapshotEvidenceSchema.Type
+}
+export interface SimulatedMarketSnapshot extends Omit<IntradayMarketSnapshot, 'manifest'> {
+  readonly manifest: SimulatedSnapshotManifest
+}
+const SimulatedVerifiedSnapshotTypeId: unique symbol = Symbol('SimulatedVerifiedSnapshot')
+export type SimulatedVerifiedMarketSnapshot = SimulatedMarketSnapshot & {
+  readonly [SimulatedVerifiedSnapshotTypeId]: true
+}
+export type StrategyMarketSnapshot = IntradayMarketSnapshot | StreamingMarketSnapshot | SimulatedMarketSnapshot
+export type VerifiedStrategyMarketSnapshot =
+  | ArchiveVerifiedIntradayMarketSnapshot
+  | StreamingVerifiedMarketSnapshot
+  | SimulatedVerifiedMarketSnapshot
 
 const failure = (reason: IntradaySnapshotFailure['reason'], message: string, cause?: unknown) =>
   new IntradaySnapshotFailure({ reason, message, ...(cause === undefined ? {} : { cause }) })
@@ -77,7 +82,6 @@ const hash = (value: unknown) =>
   canonicalHashV1Result(value).pipe(
     Result.mapError((cause) => failure('hash', 'Streaming input is not canonical', cause)),
   )
-const observedWithin = <A>(entry: ObservedMarketValue<A>, observedAtMs: number) => entry.availableAtMs <= observedAtMs
 const recordReceipt = (entry: ObservedMarketValue<IntradayRecordIdentity>) =>
   Result.map(
     hash(entry.value),
@@ -99,8 +103,6 @@ export const constructStreamingSnapshot = (
     const request = yield* verifyIntradaySnapshotQuery(query)
     const state = cut.projection
     const observedAtMs = Date.parse(request.observedAt)
-    const start = intradayInstantNanos(request.rangeStartAt)
-    const end = intradayInstantNanos(request.rangeEndAt)
     if (
       state.availabilityMode !== 'observed' ||
       cut.bootstrap.epoch !== state.epoch ||
@@ -112,67 +114,37 @@ export const constructStreamingSnapshot = (
       return yield* Result.fail(
         failure('not-ready', 'Streaming projection has no complete retained cut for this observation'),
       )
-    const session = request.calendar.sessions.find((entry) => entry.date === request.sessionDate)
-    if (session === undefined)
-      return yield* Result.fail(failure('request', 'Streaming snapshot has no bound exchange session'))
-    const symbols = request.symbols ?? request.universe
-    const candidates = new Set(request.candidateSymbols)
-    const entries: ObservedMarketValue<IntradayBar | IntradayQuote | IntradayTrade>[] = []
-    const featureReceipts: StreamingFeatureReceipt[] = []
-    const featureExclusions: IntradayCandidateExclusion[] = []
-    const sourcePositions = new Map(
-      cut.positions.map((position) => [topicPartitionKey(position.topic, position.partition), BigInt(position.offset)]),
-    )
-    for (const [key, history] of state.rejections) {
-      const rejection = history.find(
-        (entry) => entry.availableAtMs >= Date.parse(request.rangeStartAt) && entry.availableAtMs <= observedAtMs,
-      )
-      if (rejection !== undefined && sourcePositions.has(key))
-        return yield* Result.fail(
-          failure('rows', `Streaming partition ${key} contains rejected input: ${rejection.reason}`),
-        )
+    const snapshot = yield* constructSnapshotMaterial(state, request, cut.positions, {
+      schemaVersion: 'bayn.streaming-market-snapshot.v1',
+      streaming: { schemaVersion: 'bayn.streaming-input-cut.v1', bootstrap: cut.bootstrap },
+    })
+    return Object.freeze({ ...snapshot, [StreamingVerifiedSnapshotTypeId]: true as const })
+  })
+
+type SnapshotProvenance =
+  | {
+      readonly schemaVersion: StreamingSnapshotManifest['schemaVersion']
+      readonly streaming: Pick<StreamingSnapshotEvidence, 'schemaVersion' | 'bootstrap'>
     }
-    for (const symbol of symbols) {
-      const bars = observedBarsAt(state, symbol, start, end, observedAtMs)
-      const quote = state.quoteHistory.get(symbol)?.findLast((entry) => observedWithin(entry, observedAtMs))
-      const trade = state.tradeHistory.get(symbol)?.findLast((entry) => observedWithin(entry, observedAtMs))
-      if (request.purpose === undefined) entries.push(...bars)
-      if (quote !== undefined) entries.push(quote)
-      if (request.purpose === undefined && trade !== undefined) entries.push(trade)
-      if (request.purpose !== undefined) continue
-      let selected: StreamingFeatureReceipt | undefined
-      for (const candidate of state.features.get(symbol) ?? []) {
-        if (
-          candidate.availableAtMs > observedAtMs ||
-          candidate.value.material.sessionDate !== request.sessionDate ||
-          candidate.value.material.windowStartMs !== Date.parse(request.rangeStartAt) ||
-          candidate.value.material.windowEndMs !== Date.parse(request.rangeEndAt)
-        )
-          continue
-        const matches = yield* featureMatchesBars(
-          candidate.value,
-          bars.map((entry) => entry.value),
-        ).pipe(Result.mapError((cause) => failure('identity', 'Streaming feature inputs failed verification', cause)))
-        if (!matches) continue
-        selected = {
-          topic: candidate.topic,
-          partition: candidate.partition,
-          offset: candidate.offset,
-          availableAtMs: candidate.availableAtMs,
-          sequence: candidate.sequence,
-          value: candidate.value,
-        }
-        break
+  | {
+      readonly schemaVersion: SimulatedSnapshotManifest['schemaVersion']
+      readonly streaming: typeof SimulatedSnapshotSourceSchema.Type & {
+        readonly schemaVersion: 'bayn.simulated-input-cut.v1'
       }
-      if (selected !== undefined) featureReceipts.push(selected)
-      else if (candidates.has(symbol))
-        featureExclusions.push({
-          symbol,
-          reason: 'not-ready',
-          message: 'matching complete rolling feature is unavailable',
-        })
-      else return yield* Result.fail(failure('not-ready', `Required rolling feature is unavailable for ${symbol}`))
     }
+
+const constructSnapshotMaterial = <P extends SnapshotProvenance>(
+  state: StreamingProjection,
+  request: IntradaySnapshotQuery,
+  positions: readonly KafkaPartitionPosition[],
+  provenance: P,
+) =>
+  Result.gen(function* () {
+    const { symbols, entries, featureReceipts, bars, quotes, trades, availability, exclusions, excluded } =
+      yield* selectStreamingInputs(state, request)
+    const sourcePositions = new Map(
+      positions.map((position) => [topicPartitionKey(position.topic, position.partition), BigInt(position.offset)]),
+    )
     for (const entry of entries) {
       const maximum = sourcePositions.get(topicPartitionKey(entry.value.sourceTopic, entry.value.sourcePartition))
       if (entry.sequence > state.sequence || maximum === undefined || BigInt(entry.value.sourceOffset) >= maximum)
@@ -183,40 +155,10 @@ export const constructStreamingSnapshot = (
       if (feature.sequence > state.sequence || maximum === undefined || BigInt(feature.offset) >= maximum)
         return yield* Result.fail(failure('watermark', 'Streaming feature is outside the incorporated source cut'))
     }
-    const bars = entries
-      .map((entry) => entry.value)
-      .filter((value): value is IntradayBar => 'open' in value)
-      .toSorted(compareRecords)
-    const quotes = entries
-      .map((entry) => entry.value)
-      .filter((value): value is IntradayQuote => 'bidPrice' in value)
-      .toSorted(compareRecords)
-    const trades = entries
-      .map((entry) => entry.value)
-      .filter((value): value is IntradayTrade => 'price' in value)
-      .toSorted(compareRecords)
-    yield* validateSourceTopics(request, bars, quotes, trades)
-    yield* validateIdentity(request, bars, request.rangeEndAt, false, undefined, marketFeatureClockSkewAllowanceMs)
-    yield* validateIdentity(
-      request,
-      [...quotes, ...trades],
-      session.closeAt,
-      true,
-      undefined,
-      marketFeatureClockSkewAllowanceMs,
-    )
-    yield* validateBarStructure(request, bars, marketFeatureClockSkewAllowanceMs)
-    const availability = yield* candidateAvailability(request, bars, quotes, trades, marketFeatureClockSkewAllowanceMs)
-    const exclusions = new Map(availability.exclusions.map((exclusion) => [exclusion.symbol, exclusion]))
-    for (const exclusion of featureExclusions)
-      if (!exclusions.has(exclusion.symbol)) exclusions.set(exclusion.symbol, exclusion)
-    const excluded = new Set(exclusions.keys())
-    if (request.purpose === undefined && candidates.size > 0 && [...candidates].every((symbol) => excluded.has(symbol)))
-      return yield* Result.fail(
-        failure('not-ready', 'No candidate has complete raw data and a matching rolling feature'),
-      )
+    const schemaVersion: P['schemaVersion'] = provenance.schemaVersion
+    const streaming: P['streaming'] = provenance.streaming
     const material = {
-      schemaVersion: 'bayn.streaming-market-snapshot.v1',
+      schemaVersion,
       sessionDate: request.sessionDate,
       calendar: request.calendar,
       rangeStartAt: request.rangeStartAt,
@@ -250,9 +192,8 @@ export const constructStreamingSnapshot = (
       tradesContentHash: yield* hash(trades),
       lineage: yield* lineageOf([...bars, ...quotes, ...trades].toSorted(compareRecords)),
       streaming: {
-        schemaVersion: 'bayn.streaming-input-cut.v1',
-        bootstrap: cut.bootstrap,
-        positions: cut.positions,
+        ...streaming,
+        positions,
         sequence: state.sequence,
         records: (yield* Result.all(entries.map(recordReceipt))).toSorted((a, b) => a.sequence - b.sequence),
         features: featureReceipts.filter((feature) => !excluded.has(feature.value.material.symbol)),
@@ -261,11 +202,56 @@ export const constructStreamingSnapshot = (
     const contentHash = yield* hash(material)
     const snapshotId = yield* hash({ ...material, contentHash })
     return Object.freeze({
-      [StreamingVerifiedSnapshotTypeId]: true as const,
       bars: Object.freeze(bars),
       quotes: Object.freeze(quotes),
       trades: Object.freeze(trades),
       latestQuotes: availability.latest,
       manifest: Object.freeze({ ...material, contentHash, snapshotId }),
     })
+  })
+
+/** Simulation authority comes only from an ordered cursor and its frozen source manifest. */
+export const constructSimulatedSnapshot = (
+  cursor: HistoricalMarketCursor,
+  source: typeof SimulatedSnapshotSourceSchema.Type,
+  query: IntradaySnapshotQuery,
+): Result.Result<SimulatedVerifiedMarketSnapshot, IntradaySnapshotFailure> =>
+  Result.gen(function* () {
+    const provenance = yield* Schema.decodeUnknownResult(
+      SimulatedSnapshotSourceSchema,
+      strictParseOptions,
+    )(source).pipe(Result.mapError((cause) => failure('hash', 'Invalid simulated source provenance', cause)))
+    const request = yield* verifyIntradaySnapshotQuery(query)
+    const state = cursor.projection
+    const observedAtMs = Date.parse(request.observedAt)
+    if (
+      state.availabilityMode !== 'simulated' ||
+      (yield* hash(cursor.source ?? null)) !== (yield* hash(provenance)) ||
+      cursor.runId !== provenance.runId ||
+      state.epoch !== `historical-${provenance.runId}` ||
+      cursor.universe.topics.features !== provenance.featureTopic ||
+      cursor.universe.universeId !== request.universeId ||
+      cursor.universe.universeSymbolHash !== request.universeSymbolHash ||
+      cursor.universe.topics.bars !== request.sourceTopics.bars ||
+      cursor.universe.topics.quotes !== request.sourceTopics.quotes ||
+      cursor.universe.topics.trades !== request.sourceTopics.trades ||
+      cursor.universe.symbols.join(',') !== request.universe.join(',') ||
+      cursor.regeneratedFeaturesRecordedAtMs !== provenance.regeneratedFeaturesRecordedAtMs ||
+      state.minimumObservationMs > observedAtMs ||
+      (cursor.lastArrival !== null && cursor.lastArrival.availableAtMs > observedAtMs) ||
+      Date.parse(request.rangeStartAt) <= state.discardedRejectionsThroughMs
+    )
+      return yield* Result.fail(failure('not-ready', 'Historical cursor does not match the simulated observation'))
+    const positions = [...state.offsets]
+      .map(([key, offset]) => ({
+        topic: key.slice(0, key.lastIndexOf(':')),
+        partition: Number(key.slice(key.lastIndexOf(':') + 1)),
+        offset: String(BigInt(offset) + 1n),
+      }))
+      .toSorted((a, b) => a.topic.localeCompare(b.topic) || a.partition - b.partition)
+    const snapshot = yield* constructSnapshotMaterial(state, request, positions, {
+      schemaVersion: 'bayn.simulated-market-snapshot.v1',
+      streaming: { schemaVersion: 'bayn.simulated-input-cut.v1', ...provenance },
+    })
+    return Object.freeze({ ...snapshot, [SimulatedVerifiedSnapshotTypeId]: true as const })
   })

@@ -52,6 +52,15 @@ does not grant authority to trade or establish actual consumer availability for 
 
 ## Historical experiments
 
+Live snapshots and historical observations share `selectStreamingInputs` for raw selection, exact feature revisions,
+candidate exclusions, and input validation. The live constructor separately requires observed availability and a
+complete Kafka source cut. Calling the shared selector cannot turn a simulated projection into live execution evidence.
+
+`createHistoricalMarketCursor` and `advanceHistoricalMarketCursor` accept ordered arrivals incrementally and retain
+only the projection's bounded history. Both the cursor and the existing JSON runner use the same arrival ordering and
+reducer. The JSON command below still has its explicit 500,000-record input limit and evaluates one observation; the
+incremental cursor is the input primitive for the full-session execution driver, not an execution or accounting receipt.
+
 ```sh
 node dist/streaming-replay-command.js --historical experiment.json
 ```
@@ -111,3 +120,42 @@ clock allowance, bootstrap policy and exact-window freshness rule. Reverting the
 and protocol change through the same delivery path; retaining archived feature history is required.
 
 Bar history retains at most four winning revisions for each of 61 minutes per symbol. As-of joins select the latest revision received by the observation time. If revision eviction removes the history needed for a cut, the projection rejects that observation.
+
+## Simulated execution inputs
+
+`constructSimulatedSnapshot` consumes the incremental historical cursor through the same selection rules as live
+streaming. Its `bayn.simulated-market-snapshot.v1` manifest records the run ID, frozen source-manifest hash, supplied
+arrival policy, source positions, raw receipts, and feature payloads. Regenerated features keep their original
+computation timestamps and record the separate simulated availability explicitly.
+
+The execution document uses market-data binding v4 and requires `replay-<runId>` as its account. Decision and pricing
+cuts must share the same source and arrival policy. They run the existing strategy, planner, pricing, and risk
+validation. Recorded reproduction reports `recorded-simulated-decision`; live streaming and archive contracts retain
+their existing versions.
+
+The replay composition supplies `makeSimulatedMarketData` instead of live Kafka or ClickHouse capabilities.
+Migration 0068 adds a separate append-only simulated-reference table. Verification accepts a cut consumed by that
+service instance or an exact reference committed with a decision in the same replay database. A recreated service
+must find the committed reference; another run or source manifest cannot reuse it. Live reference tables reject
+simulated manifests. The service factory does not connect to a broker or provide capital authority.
+
+This input integration is a component of the execution replay. It does not itself run a full session, submit orders,
+restart the execution process, or produce an economic result.
+
+## Production execution replay runtime
+
+`makeReplayExecutionRuntime` assembles the production research-authority activation, cycle store, decision builder,
+intent/risk persistence, execution coordinator, final-submit checks, and broker reconciliation around the simulated
+market-data and broker ports. It acquires no Alpaca HTTP client or credentials. The caller supplies isolated PostgreSQL
+and TigerBeetle services plus the build and strategy provenance being evaluated.
+
+Migration 0069 adds an account-specific simulation clock. Only `replay-<sha256>` accounts can register it; the source
+manifest identity is immutable and time cannot move backwards. A missing clock blocks a simulated account. Intent
+transition and mutation-start risk-expiry checks use this clock for simulated accounts and PostgreSQL wall time for
+all other accounts. Authority, reconciliation, and cycle-completion queries receive the same clock explicitly.
+
+The required database acceptance test now drives a production cycle through a risk-approved intent, simulated fill,
+and exact accounting in real PostgreSQL and TigerBeetle. Recreating the runtime preserves its activated generation.
+The separate accounting test still checks reconnecting database clients. These fixtures do not establish full-session
+replay, process-crash recovery, or profitability; those require the session runner, retained source manifests, and
+closed-window economic reports.
