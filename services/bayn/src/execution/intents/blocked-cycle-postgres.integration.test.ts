@@ -1,3 +1,4 @@
+import { makeAuthorityPostgres } from '../../db/execution-store/authority-shared'
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 
 import { NodeServices } from '@effect/platform-node'
@@ -21,7 +22,10 @@ import { postgresMigrations } from '../../db/postgres-migrations'
 import { canonicalHashV1 } from '../../hash'
 import { baynTestPostgresUrl } from '../../test-environment.test-support'
 import { config as fixtureConfig } from '../../testing/runtime-fixtures'
-import { intradayMomentumExecutionModel } from '../../strategy/intraday-momentum/protocol'
+import {
+  defaultIntradayMomentumProtocolDocument,
+  intradayMomentumExecutionModel,
+} from '../../strategy/intraday-momentum/protocol'
 import { BlockedCycleIntentStore } from './blocked-cycle'
 import { BlockedCycleIntentStoreLive } from './blocked-cycle-postgres'
 
@@ -125,7 +129,7 @@ const seedExecutionAuthority = (sql: PgClient.PgClient, fixture: ReturnType<type
         'bayn.paper-authority-generation.v3', ${observeGenerationHash}, 'PAPER', 2,
         ${'2'.repeat(40)}, 'registry.example.test/lab/bayn', ${`sha256:${'3'.repeat(64)}`},
         'intraday-momentum', ${'4'.repeat(64)}, ${'5'.repeat(64)},
-        'bayn.intraday-momentum.protocol.v2', ${fixture.cycle.identity.strategyProtocolHash}, ${accountId},
+        ${defaultIntradayMomentumProtocolDocument.schemaVersion}, ${fixture.cycle.identity.strategyProtocolHash}, ${accountId},
         'bayn.broker-identity.v2', ${'6'.repeat(64)}, 'alpaca', 'sandbox', ${'7'.repeat(64)},
         ${planHash}, ${reconciliationId}, ${reconciliationHash}, ${planHash},
         ${fixture.generationActivatedAt}
@@ -216,6 +220,22 @@ describePostgres('PostgreSQL preopen authority recovery', () => {
 
   afterAll(async () => {
     await runtime?.dispose()
+  })
+
+  test('reads and locks capital authority persisted with the active intraday protocol', async () => {
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* seedExecutionAuthority(sql, makeFixture())
+        const authority = makeAuthorityPostgres(sql)
+        const rows = yield* authority.readGeneration(canonicalHashV1({ generation: 'execution' }))
+        const locked = yield* sql.withTransaction(authority.lockCapitalGrant(accountId))
+        return { rows, locked }
+      }),
+    )
+    expect(result.rows[0]?.strategy_parameter_schema_version).toBe('bayn.intraday-momentum.protocol.v3')
+    expect(result.locked.history.strategy_parameter_schema_version).toBe('bayn.intraday-momentum.protocol.v3')
+    expect(result.locked.current.generationHash).toBe(result.rows[0]?.generation_hash)
   })
 
   test('settles a restricted generation without destroying its untouched same-plan cycle', async () => {

@@ -1,3 +1,5 @@
+import { isSnapshotExecutionMarketDataBinding } from '../shadow-decision-contract'
+import { persistIntradayRecordRows } from '../market-data/intraday/verification'
 import { Clock, Context, Data, Duration, Effect, Result, Schema } from 'effect'
 import type { AutonomousCycleStartup } from '../app'
 import {
@@ -23,11 +25,7 @@ import {
 } from '../execution-session'
 import { OperationalError, operationalError, retryableOperationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
-import {
-  IntradaySnapshotPurpose,
-  persistIntradaySnapshotRows,
-  type PersistedIntradaySnapshotRows,
-} from '../market-data'
+import { IntradaySnapshotPurpose, type PersistedIntradaySnapshotRows } from '../market-data'
 import { isIntradaySnapshotPending } from '../market-data/intraday/pending'
 import { IntradaySnapshotFailure } from '../market-data/intraday/model'
 import {
@@ -697,6 +695,7 @@ type CompiledObserveStrategyDecision = {
   readonly entryQuotes?: Readonly<Record<string, EntryQuoteFreshness>>
   readonly decision: RuntimeStrategyDecision
   readonly decisionMarketDataRows?: PersistedIntradaySnapshotRows
+  readonly executionMarketDataRows?: PersistedIntradaySnapshotRows
   /** Compatibility identity for the existing planner; intraday decisions remain bound separately to execution date. */
   readonly signalDate: SignalSessionReferencePrices['signalDate']
   readonly priceMicros: Readonly<Record<string, string>>
@@ -1239,6 +1238,9 @@ function buildCycleDecision<R>(
         finalizedAt: decisionSnapshot.finalizedAt,
       },
       compiledDecision: compiled.decision,
+      ...(compiled.executionMarketDataRows === undefined
+        ? {}
+        : { executionMarketDataRows: compiled.executionMarketDataRows }),
       ...(compiled.decisionMarketDataRows === undefined
         ? {}
         : { decisionMarketDataRows: compiled.decisionMarketDataRows }),
@@ -1413,8 +1415,9 @@ const buildClosingExecutionCycleDecisionWithSource = (
       }
     }
     const entryMarketData = entryDocument.bindings.executionMarketData
-    const persistedUniverse =
-      entryMarketData?.schemaVersion === 'bayn.execution-market-data-binding.v2' ? entryMarketData.universe : undefined
+    const persistedUniverse = isSnapshotExecutionMarketDataBinding(entryMarketData)
+      ? entryMarketData.universe
+      : undefined
     const closingPass = selectClosingSymbolPass(
       reconciliation.brokerState.positions,
       persistedUniverse ?? intradayParameters.universe,
@@ -1527,7 +1530,7 @@ const buildClosingExecutionCycleDecisionWithSource = (
       const binding = yield* Effect.fromResult(executionMarketDataBinding(snapshot)).pipe(
         Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
       )
-      const decisionMarketDataRows = yield* Effect.fromResult(persistIntradaySnapshotRows(snapshot)).pipe(
+      const decisionMarketDataRows = yield* Effect.fromResult(persistIntradayRecordRows(snapshot)).pipe(
         Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
       )
       return { binding, ...quotePrices, decisionMarketDataRows }

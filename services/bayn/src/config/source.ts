@@ -18,6 +18,8 @@ import {
   minimumOperationalThresholdMs,
   type ParsedRuntimeConfig,
 } from './model'
+import { KafkaBootstrapTimestampPolicy } from '../market-data/streaming/bootstrap'
+import type { KafkaMarketConfig } from '../market-data/streaming/kafka'
 import { Pipeable } from '../pipeable'
 
 const ProvenanceMode = Schema.Literals(['production', 'development'])
@@ -47,7 +49,35 @@ const positiveInteger = (name: string, fallback: number) =>
 const operationalThreshold = (name: string, fallback: number) =>
   Config.schema(OperationalThresholdMs, name).pipe(Config.withDefault(fallback))
 
+export const kafkaMarketConfig = Config.schema(
+  Schema.Literals(['archive', 'shadow', 'streaming']),
+  'BAYN_MARKET_DATA_MODE',
+).pipe(
+  Config.withDefault('archive'),
+  Config.mapOrFail(
+    (mode): Config.Config<KafkaMarketConfig | undefined> =>
+      mode === 'archive'
+        ? Config.succeed(undefined)
+        : Config.all({
+            shadowOnly: Config.succeed(mode === 'shadow'),
+            brokers: Config.schema(ReplicaAddresses, 'BAYN_KAFKA_BROKERS'),
+            username: nonEmptyString('BAYN_KAFKA_USERNAME'),
+            password: secretString('BAYN_KAFKA_PASSWORD'),
+            groupPrefix: nonEmptyString('BAYN_KAFKA_GROUP_PREFIX').pipe(Config.withDefault('bayn-market-v1')),
+            operationTimeoutMs: operationalThreshold('BAYN_KAFKA_OPERATION_TIMEOUT_MS', 10_000),
+            bootstrapTimeoutMs: Config.schema(Schema.Literal(120_000), 'BAYN_KAFKA_BOOTSTRAP_TIMEOUT_MS').pipe(
+              Config.withDefault(120_000),
+            ),
+            timestampPolicy: Config.schema(
+              Schema.Literal(KafkaBootstrapTimestampPolicy.ProducerClock),
+              'BAYN_KAFKA_TIMESTAMP_POLICY',
+            ),
+          }),
+  ),
+)
+
 export const runtimeConfigSource = Config.all({
+  kafka: kafkaMarketConfig,
   host: nonEmptyString('BAYN_HTTP_HOST').pipe(Config.withDefault('0.0.0.0')),
   port: Config.port('BAYN_HTTP_PORT').pipe(Config.withDefault(8080)),
   sourceRevision: Config.schema(SourceRevision, 'BAYN_CODE_REVISION'),
@@ -110,6 +140,7 @@ export const runtimeConfigSource = Config.all({
 }).pipe(
   Config.map(
     (config): ParsedRuntimeConfig => ({
+      kafka: config.kafka,
       host: config.host,
       port: config.port,
       capitalActivationRequestJson: Option.getOrUndefined(config.capitalActivationRequestJson),

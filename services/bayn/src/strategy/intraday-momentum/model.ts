@@ -1,9 +1,7 @@
 import { Data, Schema } from 'effect'
+import type { VerifiedStrategyMarketSnapshot } from '../../market-data/streaming/snapshot'
 
-import type {
-  ArchiveVerifiedIntradayMarketSnapshot,
-  IntradayCandidateExclusion,
-} from '../../market-data/intraday/model'
+import type { IntradayCandidateExclusion } from '../../market-data/intraday/model'
 import { intradayAgeNanos, millisecondsAsNanos } from '../../market-data/intraday/time'
 import {
   IsoDateSchema,
@@ -359,7 +357,7 @@ export interface IntradayMomentumSessionBinding {
 }
 
 export interface IntradayMomentumMarketContext {
-  readonly snapshot: ArchiveVerifiedIntradayMarketSnapshot
+  readonly snapshot: VerifiedStrategyMarketSnapshot
   readonly session: IntradayMomentumSessionBinding
 }
 
