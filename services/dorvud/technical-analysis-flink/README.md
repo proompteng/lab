@@ -71,6 +71,33 @@ repeat a transport record; readers must deduplicate by those source coordinates 
 
 GitOps creates the topic, table, grants, and configuration. No Bayn runtime identity owns ClickHouse DDL or writes.
 
+## Retained feature replay
+
+The same jar provides an offline entry point that feeds retained raw bar arrivals through the production rolling
+feature transition. Use it when a later Kafka bootstrap's feature ordering cannot represent historical delivery:
+
+```sh
+java -Xmx1g -cp build/libs/technical-analysis-flink-all.jar \
+  ai.proompteng.dorvud.ta.flink.RetainedFeatureReplay config.json retained-bars.ndjson new-output-directory
+```
+
+The input is a bar-only extraction of Bayn arrival records (`availableAtMs` and the unchanged Kafka `record`), in
+availability, partition, offset order. The configuration has schema version `dorvud.retained-feature-replay.v1`, exact
+`sourceSha256` and `recordCount`, `barsTopic`, `featuresTopic`, `universeId`, canonical `symbols` and their
+`universeSymbolHash`, exact `producerRevision`, and `processingDelayMs`. Sources are limited to 128 MiB of extracted
+bars. The command validates and executes one immutable byte snapshot; it never reopens the input after validation.
+
+Outputs use isolated simulated partition/offset coordinates, and become available at the later of the triggering raw
+arrival or window end, plus the configured delay. Raw revisions and actual `computedAtMs` are preserved. These arrivals
+model a continuously running feature job; they are not evidence that historical Bayn received those features. All
+symbols share the source's arrival order, and corrections publish when their raw revision becomes available. Neither
+missing bars nor technical indicators are fabricated. No Kafka, ClickHouse, or broker connection is acquired.
+
+The new output directory contains `arrivals.ndjson`, the exact `config.json`, and a terminal `receipt.json` with input
+and output hashes, counts, skipped nonregular/nonfinal bars, and actual computation time. A directory without the
+receipt is incomplete. Combine these feature arrivals with the unchanged raw stream and freeze a new Bayn manifest;
+retain the original replay separately. This command regenerates the existing rolling family only.
+
 ## Validation
 
 Run from `services/dorvud`:
