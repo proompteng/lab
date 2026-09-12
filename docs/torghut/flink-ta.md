@@ -76,8 +76,9 @@ S3A properties (example):
 ## Build & Deploy
 
 - Jar: `cd services/dorvud && ./gradlew :technical-analysis-flink:uberJar`
-- Image (amd64): `docker buildx build --platform linux/amd64 -f services/dorvud/technical-analysis-flink/Dockerfile -t registry.ide-newton.ts.net/lab/torghut-ta:<tag> services/dorvud --push`
-- Apply: `kubectl -n torghut apply -k argocd/applications/torghut/ta/` or run `bun packages/scripts/src/torghut/deploy-service.ts` to build, push, and wait for `flinkdeployment/torghut-ta` Ready.
+- Production images are built by the existing Torghut CI workflows after reviewed changes merge to `main`. Kargo promotes the complete image cohort to `kargo/torghut`, and the shared Argo Application reconciles that branch.
+- The legacy `deploy:torghut` command is retired and exits without building images, running migrations, or applying resources. See the [runtime retirement runbook](../../argocd/applications/torghut/runtime-retirement.md) for the retained workload set and recovery requirements.
+- Verify the promoted immutable image on ready JobManager and TaskManager Pods, a running Flink job, and a completed checkpoint through the existing post-deploy workflow.
 - Checkpoint/Savepoint bucket: `s3a://flink-checkpoints/torghut/technical-analysis/`; provide MinIO creds via `TA_S3_ACCESS_KEY/TA_S3_SECRET_KEY` and `AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY` (S3A credential providers look for AWS env vars).
 
 ### Savepoint / upgrade / rollback

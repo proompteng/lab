@@ -64,6 +64,7 @@ export interface ArchiveRecordReference {
 export interface ArchiveSnapshotAvailability {
   readonly snapshotId: string
   readonly observedAt: string
+  readonly availableBy: string
   readonly receipts: readonly ArchiveAvailabilityReceipt[]
   /** Reader-availability exclusions are separate from the immutable archive manifest. */
   readonly candidateExclusions?: readonly IntradayCandidateExclusion[]
@@ -72,6 +73,7 @@ export interface ArchiveSnapshotAvailability {
 export interface ReplayMarketDataService extends IntradayMarketDataService {
   readonly recordedAvailability?: (
     snapshot: ArchiveVerifiedIntradayMarketSnapshot,
+    availableBy: string,
   ) => Effect.Effect<ArchiveSnapshotAvailability, OperationalError>
 }
 
@@ -215,8 +217,18 @@ export const verifyRecordedArchiveAvailability = (
   snapshot: ArchiveVerifiedIntradayMarketSnapshot,
   endpointHash: string,
   candidates: readonly unknown[],
+  availableBy: string = snapshot.manifest.observedAt,
 ): Result.Result<ArchiveSnapshotAvailability, ArchiveAvailabilityFailure> =>
   Result.gen(function* () {
+    yield* Schema.decodeUnknownResult(
+      UtcInstantSchema,
+      strictParseOptions,
+    )(availableBy).pipe(
+      Result.mapError((cause) => failure('clock', 'archive consumption clock must be a canonical UTC instant', cause)),
+    )
+    if (availableBy < snapshot.manifest.observedAt) {
+      return yield* Result.fail(failure('clock', 'archive consumption cannot precede the snapshot source cutoff'))
+    }
     const references = yield* archiveRecordReferences(snapshot)
     const receipts = yield* Result.all(candidates.map(verifyArchiveAvailabilityReceipt))
     const byId = new Map(receipts.map((receipt) => [receipt.recordId, receipt]))
@@ -240,7 +252,7 @@ export const verifyRecordedArchiveAvailability = (
       ) {
         return yield* Result.fail(failure('identity', 'archive availability does not bind the exact production record'))
       }
-      if (receipt === undefined || receipt.availableAt > snapshot.manifest.observedAt) {
+      if (receipt === undefined || receipt.availableAt > availableBy) {
         if (!independentCandidates.has(reference.symbol)) {
           return yield* Result.fail(failure('missing', 'archive reader visibility is unproven for a required record'))
         }
@@ -254,6 +266,7 @@ export const verifyRecordedArchiveAvailability = (
     return Object.freeze({
       snapshotId: snapshot.manifest.snapshotId,
       observedAt: snapshot.manifest.observedAt,
+      availableBy,
       ...(candidateExclusions.size === 0
         ? {}
         : {
@@ -312,6 +325,7 @@ export const withRecordedArchiveReads = (
       return snapshot
     })
   return {
+    ...(market.streaming === undefined ? {} : { streaming: market.streaming }),
     check: market.check,
     captureVersion: market.captureVersion,
     loadSnapshot: (request) => observed(market.loadSnapshot(request)),

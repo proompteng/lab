@@ -1,0 +1,140 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-upgrade-default-deny
+  namespace: postgres-upgrade-acceptance
+  annotations:
+    argocd.argoproj.io/sync-wave: '-30'
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress: []
+  egress: []
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  name: app-db-pg18-20260909
+  namespace: app
+  labels:
+    app.kubernetes.io/part-of: postgres-upgrade-acceptance
+    postgres.proompteng.ai/generation: 18-6-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-20'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  cluster:
+    name: app-db
+  method: volumeSnapshot
+  online: false
+  target: primary
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  name: bilig-db-pg18-20260909
+  namespace: bilig
+  labels:
+    app.kubernetes.io/part-of: postgres-upgrade-acceptance
+    postgres.proompteng.ai/generation: 18-6-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-19'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  cluster:
+    name: bilig-db
+  method: volumeSnapshot
+  online: false
+  target: primary
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  name: coder-cluster-pg18-20260909
+  namespace: coder
+  labels:
+    app.kubernetes.io/part-of: postgres-upgrade-acceptance
+    postgres.proompteng.ai/generation: 18-6-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-18'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  cluster:
+    name: coder-cluster
+  method: volumeSnapshot
+  online: false
+  target: primary
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  name: forgejo-db-pg18-20260909
+  namespace: forgejo
+  labels:
+    app.kubernetes.io/part-of: postgres-upgrade-acceptance
+    postgres.proompteng.ai/generation: 18-6-v1
+  annotations:
+    argocd.argoproj.io/sync-wave: '-17'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  cluster:
+    name: forgejo-db
+  method: volumeSnapshot
+  online: false
+  target: primary
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  name: buzz-db-pg18-20260910
+  namespace: buzz
+  labels:
+    app.kubernetes.io/part-of: postgres-upgrade-acceptance
+    postgres.proompteng.ai/generation: 18-6-v2
+  annotations:
+    argocd.argoproj.io/sync-wave: '-16'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  cluster:
+    name: buzz-db
+  method: volumeSnapshot
+  online: false
+  target: primary
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  name: jangar-db-pg18-20260910
+  namespace: jangar
+  labels:
+    app.kubernetes.io/part-of: postgres-upgrade-acceptance
+    postgres.proompteng.ai/generation: 18-6-v2
+  annotations:
+    argocd.argoproj.io/sync-wave: '-15'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  cluster:
+    name: jangar-db
+  method: volumeSnapshot
+  online: false
+  target: primary
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  name: torghut-db-pg18-20260910
+  namespace: torghut
+  labels:
+    app.kubernetes.io/part-of: postgres-upgrade-acceptance
+    postgres.proompteng.ai/generation: 18-6-v2
+  annotations:
+    argocd.argoproj.io/sync-wave: '-14'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  cluster:
+    name: torghut-db
+  method: volumeSnapshot
+  online: false
+  target: primary

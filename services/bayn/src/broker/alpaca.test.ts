@@ -238,6 +238,7 @@ describe('Alpaca paper reads', () => {
       'account',
       'accountConfiguration',
       'assetBySymbol',
+      'feeActivities',
       'fillActivities',
       'marketCalendar',
       'orderByClientId',
@@ -686,11 +687,7 @@ describe('Alpaca paper reads', () => {
         return Effect.succeed(jsonResponse(request, accountConfigurationResponse))
       }
       if (url.pathname === '/v2/positions') return Effect.succeed(jsonResponse(request, []))
-      if (
-        url.pathname === '/v2/orders' ||
-        url.pathname === '/v2/account/activities/FILL' ||
-        url.pathname === '/v2/calendar'
-      ) {
+      if (url.pathname === '/v2/orders' || url.pathname === '/v2/account/activities/FILL') {
         return Effect.succeed(jsonResponse(request, []))
       }
       return Effect.succeed(jsonResponse(request, { code: 40410000, message: 'order not found' }, 404))
@@ -714,7 +711,6 @@ describe('Alpaca paper reads', () => {
       openOrderCount: 0,
       recentOrderCount: 0,
       fillCount: 0,
-      marketCalendarSessionCount: 0,
       orderById: 'NOT_FOUND',
       orderByClientId: 'NOT_FOUND',
     })
@@ -723,8 +719,7 @@ describe('Alpaca paper reads', () => {
     expect(proof.positionsHash).toMatch(/^[a-f0-9]{64}$/)
     expect(proof.ordersHash).toMatch(/^[a-f0-9]{64}$/)
     expect(proof.fillsHash).toMatch(/^[a-f0-9]{64}$/)
-    expect(proof.marketCalendarHash).toMatch(/^[a-f0-9]{64}$/)
-    expect(requests).toHaveLength(9)
+    expect(requests).toHaveLength(8)
     expect(requests.every(({ method }) => method === 'GET')).toBe(true)
     expect(
       requests
@@ -737,8 +732,7 @@ describe('Alpaca paper reads', () => {
     const fill = requests.find(({ url }) => url.pathname === '/v2/account/activities/FILL')
     expect(fill?.url.searchParams.get('page_size')).toBe('1')
     expect(fill?.url.searchParams.get('direction')).toBe('desc')
-    const calendar = requests.find(({ url }) => url.pathname === '/v2/calendar')
-    expect(calendar?.url.searchParams.toString()).toBe('start=1970-01-01&end=1970-01-14&date_type=TRADING')
+    expect(requests.some(({ url }) => url.pathname === '/v2/calendar')).toBe(false)
   })
 
   test('preflights ordinary non-empty orders whose optional Alpaca fields are null', async () => {
@@ -769,28 +763,41 @@ describe('Alpaca paper reads', () => {
     expect(proof.ordersHash).toMatch(/^[a-f0-9]{64}$/)
   })
 
-  test('fails the complete startup preflight when the market calendar payload is invalid', async () => {
+  test('preflights account access during a market calendar outage', async () => {
+    const requests: string[] = []
     const client = HttpClient.make((request, url) => {
+      requests.push(url.pathname)
       if (url.pathname === '/v2/account') return Effect.succeed(jsonResponse(request, accountResponse))
       if (url.pathname === '/v2/account/configurations') {
         return Effect.succeed(jsonResponse(request, accountConfigurationResponse))
       }
       if (url.pathname === '/v2/calendar') {
-        return Effect.succeed(jsonResponse(request, [{ date: '2026-07-23', open: '9:30', close: '16:00' }]))
+        return Effect.succeed(jsonResponse(request, { message: 'Internal Server Error' }, 500))
+      }
+      if (url.pathname.startsWith('/v2/orders/') || url.pathname === '/v2/orders:by_client_order_id') {
+        return Effect.succeed(jsonResponse(request, { code: 40410000, message: 'order not found' }, 404))
       }
       return Effect.succeed(jsonResponse(request, []))
     })
 
-    const failure = await Effect.runPromise(Effect.flip(withClient(client, verifyConnectionReadAccess)))
+    const proof = await Effect.runPromise(
+      withClient(client, verifyConnectionReadAccess, { ...options, retryAttempts: 0 }),
+    )
 
-    expect(failure).toMatchObject({
-      operation: 'market-calendar',
-      kind: BrokerReadErrorKind.InvalidResponse,
-      retryable: false,
+    expect(proof).toMatchObject({
+      accountId,
+      accountStatus: AccountStatus.Active,
+      positionCount: 0,
+      openOrderCount: 0,
+      recentOrderCount: 0,
+      fillCount: 0,
+      orderById: 'NOT_FOUND',
+      orderByClientId: 'NOT_FOUND',
     })
+    expect(requests).not.toContain('/v2/calendar')
   })
 
-  test('fails closed on every account permission gate before reading positions, orders, fills, or calendar', async () => {
+  test('fails closed on every account permission gate before reading positions, orders, or fills', async () => {
     const cases = [
       {
         name: 'inactive account',
@@ -1167,6 +1174,43 @@ describe('Alpaca paper reads', () => {
       retryable: false,
     })
     expect(calls).toBe(callsBeforeInvalidLookup)
+  })
+
+  test('reads exact signed non-trade fees without retaining account descriptions', async () => {
+    let requestedUrl: URL | undefined
+    const raw = {
+      activity_type: 'FEE',
+      id: `20260910000000000::${orderId}`,
+      date: '2026-09-10',
+      net_amount: '-0.21',
+      description: 'private account detail',
+    }
+    const client = HttpClient.make((request, url) => {
+      requestedUrl = url
+      return Effect.succeed(jsonResponse(request, [raw]))
+    })
+    const result = await Effect.runPromise(
+      withClient(client, (read) => read.feeActivities({ pageSize: 1, direction: SortDirection.Ascending })),
+    )
+    expect(requestedUrl?.pathname).toBe('/v2/account/activities/FEE')
+    expect(result.value).toEqual({
+      items: [{ accountId, activityId: raw.id, date: raw.date, netAmountMicros: '-210000' }],
+      nextPageToken: raw.id,
+    })
+    expect(JSON.stringify(result.value)).not.toContain('private account detail')
+    for (const invalid of [
+      { ...raw, account_id: assetId },
+      { ...raw, net_amount: '-0.0000001' },
+      { ...raw, activity_type: 'DIV' },
+      { ...raw, date: '2026-02-30' },
+    ]) {
+      const bad = HttpClient.make((request) => Effect.succeed(jsonResponse(request, [invalid])))
+      const exit = await Effect.runPromiseExit(withClient(bad, (read) => read.feeActivities()))
+      expect(Exit.isFailure(exit)).toBe(true)
+    }
+    expect(Result.getOrThrow(decimalToMicrosResult('-0.01', true, 'fee'))).toBe('-10000')
+    expect(Result.isFailure(decimalToMicrosResult('-0.01', false, 'quantity'))).toBe(true)
+    expect(Result.getOrThrow(decimalToMicrosResult('0.01', true, 'fee refund'))).toBe('10000')
   })
 
   test('reads a bounded fill page and derives the documented page token', async () => {
@@ -1562,7 +1606,8 @@ describe('Alpaca paper reads', () => {
       accountStatus: AccountStatus.Active,
       fractionalTrading: true,
     })
-    expect(paths).toHaveLength(9)
+    expect(paths).toHaveLength(8)
+    expect(paths).not.toContain('/v2/calendar')
     expect(paths.filter((path) => path === '/v2/account')).toHaveLength(1)
     expect(paths.filter((path) => path === '/v2/account/configurations')).toHaveLength(1)
   })

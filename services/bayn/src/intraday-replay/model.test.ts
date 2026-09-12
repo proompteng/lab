@@ -4,7 +4,15 @@ import { Result } from 'effect'
 import { decodeIntradayReplayInput, type IntradayReplayInput } from './model'
 
 const input = {
-  schemaVersion: 'bayn.intraday-replay-input.v1',
+  schemaVersion: 'bayn.intraday-replay-input.v2',
+  operationalTiming: {
+    decisionReadMs: 0,
+    decisionComputeMs: 0,
+    planningReadMs: 0,
+    planningComputeMs: 0,
+    commitMs: 0,
+    submissionMs: 0,
+  },
   range: { start: '2026-09-04', end: '2026-09-04' },
   calendar: [{ date: '2026-09-04', open: '09:30', close: '16:00' }],
   initialCapitalMicros: '100000000000',
@@ -20,6 +28,29 @@ const input = {
 } satisfies IntradayReplayInput
 
 describe('intraday replay input boundary', () => {
+  test('requires declared operational stages and admits venue delays longer than one second', () => {
+    const { operationalTiming: _timing, ...missingTiming } = input
+    expect(Result.isFailure(decodeIntradayReplayInput(missingTiming))).toBe(true)
+    expect(
+      Result.isFailure(decodeIntradayReplayInput({ ...input, schemaVersion: 'bayn.intraday-replay-input.v1' })),
+    ).toBe(true)
+    expect(
+      Result.isSuccess(
+        decodeIntradayReplayInput({ ...input, assumptions: { ...input.assumptions, orderLatencyMs: 10_000 } }),
+      ),
+    ).toBe(true)
+    for (const duration of [-1, 0.5, 300_001]) {
+      expect(
+        Result.isFailure(
+          decodeIntradayReplayInput({
+            ...input,
+            operationalTiming: { ...input.operationalTiming, commitMs: duration },
+          }),
+        ),
+      ).toBe(true)
+    }
+  })
+
   test('accepts explicit capital, calendar, and causal execution assumptions', () => {
     expect(Result.getOrThrow(decodeIntradayReplayInput(input))).toEqual(input)
   })
@@ -55,7 +86,7 @@ describe('intraday replay input boundary', () => {
       { ...input.assumptions, firstPollDelayMs: 1_999 },
       { ...input.assumptions, firstPollDelayMs: 32_000 },
       { ...input.assumptions, orderLatencyMs: 0 },
-      { ...input.assumptions, orderLatencyMs: 1_001 },
+      { ...input.assumptions, orderLatencyMs: 60_001 },
       { ...input.assumptions, availableLiquidityPpm: 1_000_001 },
       { ...input.assumptions, slippageBps: -1 },
       { ...input.assumptions, feeMultiplierPpm: 999_999 },

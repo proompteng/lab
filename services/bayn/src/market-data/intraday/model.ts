@@ -1,3 +1,5 @@
+import type { StreamingMarketSnapshot, StreamingVerifiedMarketSnapshot } from '../streaming/snapshot'
+import type { StreamingVerifiedSnapshotReference } from '../streaming/reference'
 import { Context, Data, Effect } from 'effect'
 
 import type { OperationalError } from '../../errors'
@@ -178,6 +180,16 @@ export const archiveVerifiedIntradaySnapshotReference = (
  * materialized snapshot without the immutable-row checks in this layer.
  */
 export interface IntradayMarketDataService {
+  /** Kafka source capability. Explicit shadow mode keeps archive execution and records a parallel comparison. */
+  readonly streaming?: {
+    readonly shadowOnly?: boolean
+    readonly loadSnapshot: (
+      query: IntradaySnapshotQuery,
+    ) => Effect.Effect<StreamingVerifiedMarketSnapshot, OperationalError>
+    readonly verifyReference: (
+      snapshot: StreamingMarketSnapshot,
+    ) => Effect.Effect<StreamingVerifiedSnapshotReference, OperationalError>
+  }
   /** Verifies that the three tables required by the active strategy are queryable. */
   readonly check: Effect.Effect<void, OperationalError>
   readonly captureVersion: (

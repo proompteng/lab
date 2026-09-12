@@ -13,6 +13,7 @@ Start here when deciding which documentation to trust.
 
 - Atlas code search: `atlas/README.md`
 - Deployment automation: `release-automation.md` (Kargo is the image-promotion authority)
+- Galactic upgrade compatibility, acceptance and recovery: [cluster stable upgrades](runbooks/cluster-stable-upgrades-2026-09.md)
 - Repository cleanup backlog: `repository-cleanup-todo.md`
 - Agents/Jangar: `agents/README.md`
 - Agents/Jangar source-read state: `agents/current-source-state.md`
@@ -24,6 +25,7 @@ Start here when deciding which documentation to trust.
 
 ## Active Architecture Proposals
 
+- Bayn raw Kafka streams and Dorvud/Flink features: [streaming market data design](bayn/streaming-market-data-design.md)
 - TypeScript Kubernetes manifest authoring: `cdk8s-manifest-authoring-design.md`
 
 ## Supporting And Historical Corpora

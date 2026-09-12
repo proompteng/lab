@@ -399,7 +399,7 @@ export const makeAutonomousServiceRuntime = (
                                             runtimeServices.executionCycleClosureStore,
                                             runtimeServices.blockedCycleIntentStore,
                                             recordedMarketData,
-                                            restricted ? 'RecoveryOnly' : 'Mutation',
+                                            restricted ? 'CloseOnly' : 'Mutation',
                                           ),
                                           owner,
                                         )(startup).pipe(

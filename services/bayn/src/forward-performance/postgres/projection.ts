@@ -1,4 +1,7 @@
 import type { ForwardPerformanceExecutionEvidence, ForwardPerformanceMarketVolumeRequest } from '../model'
+import { Result, Schema } from 'effect'
+import { CycleDecisionDocumentSchema } from '../../shadow-decision-contract'
+import { strictParseOptions } from '../../schemas'
 import { legacyExecutionAuthorityToken } from '../../execution/legacy-wire'
 import {
   CycleDecisionRow,
@@ -6,7 +9,19 @@ import {
   IntentExecutionRow,
   MarketVolumeBindingRow,
   OrderExecutionRow,
+  type VerifiedCycleDecisionRow,
 } from './model'
+
+export const verifyPerformanceDecisions = (rows: readonly (typeof CycleDecisionRow.Type)[]) => {
+  const verifiedRows: VerifiedCycleDecisionRow[] = []
+  const unverifiedDecisionHashes: string[] = []
+  for (const row of rows) {
+    const decoded = Schema.decodeUnknownResult(CycleDecisionDocumentSchema, strictParseOptions)(row.document)
+    if (Result.isFailure(decoded)) unverifiedDecisionHashes.push(row.decision_hash)
+    else verifiedRows.push({ ...row, document: decoded.success })
+  }
+  return { verifiedRows, unverifiedDecisionHashes: [...new Set(unverifiedDecisionHashes)].sort() }
+}
 
 export const uniqueRows = <Row>(rows: readonly Row[], key: (row: Row) => string): ReadonlyMap<string, Row | null> => {
   const byKey = new Map<string, Row | null>()
@@ -39,7 +54,7 @@ export const intentExecutionKey = (input: {
   ])
 
 export const executionEvidenceFromRows = (
-  decisionRows: readonly (typeof CycleDecisionRow.Type)[],
+  decisionRows: readonly VerifiedCycleDecisionRow[],
   intentRows: readonly (typeof IntentExecutionRow.Type)[],
   orderRows: readonly (typeof OrderExecutionRow.Type)[],
   fillRows: readonly (typeof FillExecutionRow.Type)[],
@@ -164,7 +179,7 @@ export const executionEvidenceFromRows = (
 }
 
 export const marketVolumeRequestsFromRows = (
-  executionEvidence: readonly ForwardPerformanceExecutionEvidence[],
+  executionEvidence: readonly Pick<ForwardPerformanceExecutionEvidence, 'cycleId' | 'symbol'>[],
   bindingRows: readonly (typeof MarketVolumeBindingRow.Type)[],
   evidenceCutoffAt: string | undefined,
 ): readonly ForwardPerformanceMarketVolumeRequest[] => {
@@ -181,24 +196,36 @@ export const marketVolumeRequestsFromRows = (
     ) {
       continue
     }
-    const request: ForwardPerformanceMarketVolumeRequest = {
+    const base = {
       cycleId: execution.cycleId,
       decisionSnapshotId: binding.snapshot_id,
-      decisionSnapshotAsOfSession: binding.manifest.asOfSession,
       symbol: execution.symbol,
       executionSessionDate: binding.execution_session_date,
       windowOpenedAt: binding.execution_open_at.toISOString(),
       windowClosedAt: binding.execution_close_at.toISOString(),
       evidenceCutoffAt,
-      universeId: binding.manifest.universeId,
-      universeSymbolHash: binding.manifest.universeSymbolHash,
-      symbols: binding.manifest.symbols,
-      requestedStart: binding.manifest.requestedStart,
-      calendarVersion: binding.manifest.calendarVersion,
-      source: binding.manifest.source,
-      sourceFeed: binding.manifest.sourceFeed,
-      adjustment: binding.manifest.adjustment,
     }
+    const manifest = binding.manifest
+    const request: ForwardPerformanceMarketVolumeRequest =
+      manifest.schemaVersion === 'bayn.intraday-market-snapshot.v1'
+        ? {
+            ...base,
+            sourceFeed: 'iex',
+            decisionSnapshotAsOfSession: manifest.sessionDate,
+            decisionManifest: manifest,
+          }
+        : {
+            ...base,
+            decisionSnapshotAsOfSession: manifest.asOfSession,
+            universeId: manifest.universeId,
+            universeSymbolHash: manifest.universeSymbolHash,
+            symbols: manifest.symbols,
+            requestedStart: manifest.requestedStart,
+            calendarVersion: manifest.calendarVersion,
+            source: manifest.source,
+            sourceFeed: manifest.sourceFeed,
+            adjustment: manifest.adjustment,
+          }
     requests.set(JSON.stringify([request.cycleId, request.symbol]), request)
   }
   return [...requests.values()].sort((left, right) => {
