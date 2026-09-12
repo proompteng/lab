@@ -1,5 +1,17 @@
 # Bayn GitOps rollout notes
 
+## Streaming protocol activation
+
+The streaming implementation uses `bayn.intraday-momentum.protocol.v3`. Its reviewed behavior, parameter, and protocol
+hashes require a matching sealed research mandate; image promotion alone cannot update that strategy authority.
+The mandate binds the published multi-architecture Bayn build, while Kargo updates its activation build lineage for
+subsequent reviewed releases. Preserve the existing sandbox broker identity, risk policy, and limits when rotating it.
+
+The worker remains in `shadow` mode while Kafka compatibility, raw-feature joins, and replay are verified. Enable
+`streaming` through a separate reviewed configuration change after those checks pass. Verify the sealed request's
+content hash, all three build-lineage bindings, the native activation hook, exact reconciliation, and natural controller
+progress. Retained-data diagnostics establish observation now; they do not establish historical live availability.
+
 ## Regular-session trading boundaries
 
 Migration 59 admits zero session-boundary offsets while retaining calendar ordering, exact offset bindings, and

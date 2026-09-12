@@ -1,4 +1,4 @@
-import { observedBarsAt } from './market-data/streaming/projection'
+import { observedBarsAt, type StreamingProjection } from './market-data/streaming/projection'
 import { compressionsAlgorithms } from '@platformatic/kafka'
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { Data, Effect, Layer, Logger, Result, Schedule, Stdio, Stream } from 'effect'
@@ -15,6 +15,35 @@ class StreamingDiagnosticsFailure extends Data.TaggedError('StreamingDiagnostics
   readonly message: string
   readonly cause?: unknown
 }> {}
+
+export const summarizeStreamingSymbol = (projection: StreamingProjection, symbol: string) => {
+  const allBars = projection.bars.get(symbol) ?? []
+  const features = projection.features.get(symbol) ?? []
+  const matches = features.filter(({ value }) => {
+    const bars = observedBarsAt(
+      projection,
+      symbol,
+      BigInt(value.material.windowStartMs) * 1_000_000n,
+      BigInt(value.material.windowEndMs) * 1_000_000n,
+      Number.MAX_SAFE_INTEGER,
+    ).map(({ value: bar }) => bar)
+    const match = featureMatchesBars(value, bars)
+    return Result.isSuccess(match) && match.success
+  })
+  return {
+    symbol,
+    retainedBars: allBars.length,
+    retainedFeatures: features.length,
+    latestQuoteAt: projection.quotes.get(symbol)?.value.eventAt ?? null,
+    latestTradeAt: projection.trades.get(symbol)?.value.eventAt ?? null,
+    matchedFeatures: matches.map(({ value, availableAtMs }) => ({
+      featureId: value.featureId,
+      windowEndMs: value.material.windowEndMs,
+      computedAtMs: value.computedAtMs,
+      availableAtMs,
+    })),
+  }
+}
 
 const usage = 'Usage: bayn-streaming-diagnostics --since <UTC-instant> | --codecs | --help'
 export const parseStreamingDiagnosticsArgs = (args: readonly string[]) => {
@@ -78,34 +107,7 @@ const main = Effect.scoped(
       args.sinceMs,
     )
     const cut = yield* market.read.pipe(Effect.retry({ schedule: Schedule.spaced('1 second'), times: 150 }))
-    const symbols = protocol.universe.map((symbol) => {
-      const allBars = cut.projection.bars.get(symbol) ?? []
-      const features = cut.projection.features.get(symbol) ?? []
-      const matches = features.filter(({ value }) => {
-        const bars = observedBarsAt(
-          cut.projection,
-          symbol,
-          BigInt(value.material.windowStartMs) * 1_000_000n,
-          BigInt(value.material.windowEndMs) * 1_000_000n,
-          Number.MAX_SAFE_INTEGER,
-        ).map(({ value: bar }) => bar)
-        const match = featureMatchesBars(value, bars)
-        return Result.isSuccess(match) && match.success
-      })
-      return {
-        symbol,
-        retainedBars: allBars.length,
-        retainedFeatures: features.length,
-        latestQuoteAt: cut.projection.quotes.get(symbol)?.value.eventAt,
-        latestTradeAt: cut.projection.trades.get(symbol)?.value.eventAt,
-        matchedFeatures: matches.map(({ value, availableAtMs }) => ({
-          featureId: value.featureId,
-          windowEndMs: value.material.windowEndMs,
-          computedAtMs: value.computedAtMs,
-          availableAtMs,
-        })),
-      }
-    })
+    const symbols = protocol.universe.map((symbol) => summarizeStreamingSymbol(cut.projection, symbol))
     yield* print(
       yield* Effect.fromResult(
         canonicalJsonV1Result({

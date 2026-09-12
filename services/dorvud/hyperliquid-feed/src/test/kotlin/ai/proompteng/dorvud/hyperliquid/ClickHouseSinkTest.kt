@@ -78,6 +78,7 @@ class ClickHouseSinkTest {
     runBlocking {
       val successfulWrite = CompletableDeferred<Unit>()
       val failedWrite = CompletableDeferred<ClickHouseReadinessUpdate>()
+      var candleAttempts = 0
       val client =
         HttpClient(
           MockEngine { request ->
@@ -85,6 +86,8 @@ class ClickHouseSinkTest {
             when {
               query.startsWith("INSERT") && query.contains("hyperliquid_raw") ->
                 respond(content = "replica unavailable", status = HttpStatusCode.InternalServerError)
+              query.startsWith("INSERT") && query.contains("hyperliquid_candles") && candleAttempts++ == 0 ->
+                respond(content = "retry required", status = HttpStatusCode.ServiceUnavailable)
               query.startsWith("INSERT") -> respond(content = "", status = HttpStatusCode.OK)
               else ->
                 respond(
@@ -112,8 +115,8 @@ class ClickHouseSinkTest {
           json = Json,
           nowMs = { 10_000 },
           onReady = { update ->
-            if (update.writeSucceeded == true) successfulWrite.complete(Unit)
-            if (update.writeSucceeded == false) failedWrite.complete(update)
+            if (update.writeSucceeded == true && update.ready) successfulWrite.complete(Unit)
+            if (successfulWrite.isCompleted && update.writeSucceeded == false) failedWrite.complete(update)
           },
         )
       val job = sink.start(this)

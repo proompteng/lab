@@ -44,6 +44,8 @@ import org.apache.flink.metrics.Counter
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction
 import org.apache.flink.streaming.api.functions.co.KeyedCoProcessFunction
+import org.apache.flink.streaming.api.graph.StreamGraph
+import org.apache.flink.streaming.api.graph.StreamGraphHasherV2
 import org.apache.flink.util.Collector
 import org.apache.kafka.clients.consumer.OffsetResetStrategy
 import org.apache.kafka.clients.producer.ProducerRecord
@@ -80,12 +82,22 @@ import java.util.Properties
 
 fun main() {
   val config = FlinkTaConfig.fromEnv()
-  val serde = AvroSerde()
   applyS3SystemProperties(config)
   val env = StreamExecutionEnvironment.getExecutionEnvironment()
 
   configureEnvironment(env, config)
+  val graph = configureTechnicalAnalysisJob(env, config, RollingMarketFeatureConfig.fromEnv())
+  if (!config.clickhouseUrl.isNullOrBlank()) ensureClickhouseSchema(config)
+  graph.jobName = "torghut-technical-analysis-flink"
+  env.execute(graph)
+}
 
+internal fun configureTechnicalAnalysisJob(
+  env: StreamExecutionEnvironment,
+  config: FlinkTaConfig,
+  features: RollingMarketFeatureConfig? = null,
+): StreamGraph {
+  val serde = AvroSerde()
   val parsedTrades =
     env
       .fromSource(
@@ -225,9 +237,24 @@ fun main() {
   signals.sinkTo(signalSink(config, serde)).name("sink-signals")
   applyClickhouseSinks(config, microBars, signals)
 
-  RollingMarketFeatureConfig.fromEnv()?.let { configureRollingMarketFeatures(env, config, it) }
+  if (features == null) return env.streamGraph
 
-  env.execute("torghut-technical-analysis-flink")
+  // New sources change generated sink IDs; retain the legacy graph identities for savepoint restoration.
+  val previous = env.getStreamGraph(false)
+  val previousHashes = StreamGraphHasherV2().traverseStreamGraphAndGenerateHashes(previous)
+  configureRollingMarketFeatures(env, config, features)
+  val extended = env.streamGraph
+  for (node in previous.streamNodes) {
+    val retained =
+      extended.getStreamNode(node.id) ?: extended.streamNodes.singleOrNull {
+        it.operatorName == node.operatorName &&
+          (node.operatorName.endsWith(": Writer") || node.operatorName.endsWith(": Committer"))
+      }
+    requireNotNull(retained) { "Existing savepoint operator is missing or ambiguous: ${node.operatorName}" }
+    require(retained.operatorName == node.operatorName) { "Existing savepoint operator identity changed: ${node.operatorName}" }
+    retained.userHash = node.userHash ?: previousHashes.getValue(node.id).joinToString("") { "%02x".format(it) }
+  }
+  return extended
 }
 
 private const val STATUS_SYMBOL = "ta"
@@ -264,7 +291,6 @@ private fun applyClickhouseSinks(
     return
   }
 
-  ensureClickhouseSchema(config)
   microBars
     .sinkTo(clickhouseMicrobarSink(config))
     .name("sink-microbars-clickhouse")
