@@ -428,9 +428,18 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
             )
           if (existing === undefined) {
             const delivery = yield* Effect.gen(function* () {
-              if (config.advanceToArrival === undefined) yield* Effect.sleep(config.assumptions.latencyMs)
+              const submittedAtMs = Date.parse(observedAt)
+              const sessionDate = newYorkDate.format(submittedAtMs)
+              const calendar = yield* read.marketCalendar({ start: sessionDate, end: sessionDate })
+              const session = calendar.value.sessions.find((value) => value.date === sessionDate)
+              const closeMs = session === undefined ? submittedAtMs : Date.parse(session.closeAt)
+              // A regular-session IOC still in transit expires at the close. It cannot fill after the session.
+              const expectedArrivalMs = Math.max(
+                submittedAtMs,
+                Math.min(submittedAtMs + config.assumptions.latencyMs, closeMs),
+              )
+              if (config.advanceToArrival === undefined) yield* Effect.sleep(expectedArrivalMs - submittedAtMs)
               else {
-                const expectedArrivalMs = Date.parse(observedAt) + config.assumptions.latencyMs
                 yield* config.advanceToArrival(expectedArrivalMs)
                 if ((yield* Clock.currentTimeMillis) !== expectedArrivalMs)
                   return yield* new ReplayBrokerFailure({
@@ -439,7 +448,9 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
               }
               const arrivedAtMs = yield* Clock.currentTimeMillis
               const arrivedAt = yield* now
-              const quote = yield* config.quoteAt(intent.symbol, arrivedAtMs)
+              const sessionOpen =
+                session !== undefined && submittedAtMs >= Date.parse(session.openAt) && arrivedAtMs < closeMs
+              const quote = sessionOpen ? yield* config.quoteAt(intent.symbol, arrivedAtMs) : undefined
               const valid = quoteUsable(quote, intent.symbol, arrivedAtMs)
               const outcome =
                 valid && quote !== undefined

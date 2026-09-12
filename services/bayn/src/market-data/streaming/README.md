@@ -193,6 +193,8 @@ Broker submission advances them to its declared arrival time before reading the 
 consume modeled market time. The driver executes the native polling cadence from market open through the close,
 including the final boundary; the source-controlled strategy still applies its own warmup and order-risk rules.
 Closing equity is captured at the exact calendar close and fills receive a final reconciliation one millisecond later.
+A regular-session IOC whose modeled arrival reaches or exceeds the close expires at the close without a fill; its
+latency cannot advance execution beyond the closing-equity boundary.
 
 The new output directory retains `input.json`, `passes.ndjson`, and a hashed `report.json` with broker state, closing
 equity, schedule counts, durable row counts, and the production reconciliation result. Preserve the source file and
