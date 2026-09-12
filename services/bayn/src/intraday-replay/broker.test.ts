@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { Effect, Fiber, Result, Scope } from 'effect'
+import { Effect, Exit, Fiber, Result, Scope } from 'effect'
 import { TestClock } from 'effect/testing'
 import { AssetClass, AssetExchange, AssetStatus, OrderCollection, OrderStatus } from '../broker/alpaca/model'
 import { normalizeAssetResult } from '../broker/alpaca/normalizers'
@@ -7,7 +7,8 @@ import { IntentState, OrderSide, OrderType, TimeInForce, type Intent } from '../
 import { streamingFixture } from '../testing/streaming-market-fixture'
 import { canonicalHashV1Result } from '../hash'
 import type { IntradayQuote } from '../market-data/intraday/model'
-import { makeReplayBroker, type ReplayBrokerConfig } from './broker'
+import { makeReplayBroker, ReplayBrokerFailure, type ReplayBrokerConfig } from './broker'
+import { positionSnapshot } from '../broker/observations'
 
 const runId = 'a'.repeat(64)
 const observedAt = '2026-09-04T14:31:00.000Z'
@@ -300,3 +301,41 @@ test('missing session close prevents a fabricated next-day equity baseline', asy
   )
   expect(Result.isFailure(result)).toBe(true)
 })
+
+test('position evidence retains the valuation timestamp across asynchronous quote lookup', async () => {
+  const result = await run(
+    Effect.gen(function* () {
+      const broker = yield* setup({ quoteAt: () => TestClock.adjust(1).pipe(Effect.as(observedQuote(quote))) })
+      yield* submit(broker, intent())
+      return yield* broker.read.positions
+    }),
+  )
+  expect(Result.isSuccess(positionSnapshot(`replay-${runId}`, result))).toBe(true)
+})
+
+test.each(['failure', 'defect', 'conversion'] as const)(
+  'delivery %s leaves a terminal recoverable IOC',
+  async (kind) => {
+    const result = await run(
+      Effect.gen(function* () {
+        const broker = yield* setup({
+          quoteAt: () =>
+            kind === 'failure'
+              ? Effect.fail(new ReplayBrokerFailure({ message: 'Quote source unavailable' }))
+              : kind === 'defect'
+                ? Effect.die(new Error('Quote callback defect'))
+                : Effect.succeed(observedQuote({ ...quote, askSize: Number.POSITIVE_INFINITY })),
+        })
+        const failed = yield* Effect.exit(submit(broker, intent()))
+        const recovered = yield* broker.read.orderByClientId(intent().clientOrderId)
+        const repeated = yield* broker.mutation.submit(intent())
+        return { failed, recovered, repeated, state: yield* broker.snapshot }
+      }),
+    )
+    expect(Exit.isFailure(result.failed)).toBe(true)
+    expect(result.recovered.value.status).toBe(OrderStatus.Canceled)
+    expect(result.repeated.order.status).toBe(OrderStatus.Canceled)
+    expect(result.state.orders[0]?.deliveryFailure).toBeDefined()
+    expect(result.state.ledger.fills).toEqual([])
+  },
+)

@@ -1,4 +1,4 @@
-import { Clock, Data, Effect, Fiber, Ref, Result, Schema } from 'effect'
+import { Cause, Clock, Data, Effect, Exit, Fiber, Ref, Result, Schema } from 'effect'
 
 import {
   AccountStatus,
@@ -78,6 +78,7 @@ export interface ReplayBrokerFill extends EconomicReplayFill {
 }
 
 interface ReplayBrokerOrder {
+  readonly deliveryFailure?: Readonly<Record<string, string>>
   readonly requestHash: string
   readonly order: Order
 }
@@ -170,7 +171,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
     const markedPositions = Effect.gen(function* () {
       const current = yield* Ref.get(state)
       const observedAt = yield* now
-      return yield* Effect.forEach(current.ledger.positions, (position) =>
+      const positions = yield* Effect.forEach(current.ledger.positions, (position) =>
         Effect.gen(function* () {
           const metadata = asset(position.symbol)
           const quote = yield* config.quoteAt(position.symbol, Date.parse(observedAt))
@@ -200,6 +201,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
           } satisfies Position
         }),
       )
+      return { positions, observedAt }
     })
     const readOrder = (find: (order: Order) => boolean, operation: 'order-by-id' | 'order-by-client-id') =>
       Effect.gen(function* () {
@@ -224,8 +226,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
     const read: BrokerReadShape = {
       account: Effect.gen(function* () {
         const current = yield* Ref.get(state)
-        const positions = yield* markedPositions
-        const observedAt = yield* now
+        const { positions, observedAt } = yield* markedPositions
         const date = newYorkDate.format(Date.parse(observedAt))
         const previousSession = config.calendar
           .filter((session) => session.date < date)
@@ -255,8 +256,8 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
         )
       }).pipe(Effect.mapError((cause) => readFailure('account', 'Replay account read failed', cause))),
       positions: Effect.gen(function* () {
-        const positions = yield* markedPositions
-        return yield* evidence(positions, yield* now)
+        const { positions, observedAt } = yield* markedPositions
+        return yield* evidence(positions, observedAt)
       }).pipe(Effect.mapError((cause) => readFailure('positions', 'Replay positions read failed', cause))),
       accountConfiguration: Effect.gen(function* () {
         const observedAt = yield* now
@@ -576,7 +577,34 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
                 },
               )
               yield* Effect.fromResult(settled)
-            }).pipe(Effect.forkIn(brokerScope, { startImmediately: true }))
+            }).pipe(
+              Effect.onExit((exit) =>
+                Exit.isSuccess(exit)
+                  ? Effect.void
+                  : Effect.gen(function* () {
+                      const failedAt = yield* now
+                      yield* Ref.update(state, (current) => ({
+                        ...current,
+                        orders: current.orders.map((entry) =>
+                          entry.order.brokerOrderId === brokerOrderId && isOpen(entry.order)
+                            ? {
+                                ...entry,
+                                deliveryFailure: causeSummary(Cause.squash(exit.cause)),
+                                order: {
+                                  ...entry.order,
+                                  status: OrderStatus.Canceled,
+                                  canceledAt: failedAt,
+                                  updatedAt: failedAt,
+                                  observedAt: failedAt,
+                                },
+                              }
+                            : entry,
+                        ),
+                      }))
+                    }),
+              ),
+              Effect.forkIn(brokerScope, { startImmediately: true }),
+            )
             yield* Fiber.join(delivery)
           }
           const receipt = yield* read.orderById(brokerOrderId)
