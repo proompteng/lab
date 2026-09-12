@@ -52,8 +52,8 @@ kubectl -n flamingo get deployment,pod,service -o wide
 ```
 
 Expected image platform digests are
-`sha256:81619a698b981a5c4fd6c89ae015d0faadce5d7a5270df7562c1743e58e3283f` for amd64 and
-`sha256:b8df3247641d5f4e84e14d30b673b6362a0e3d56901218a1e1ee38a40f37afd8` for arm64.
+`sha256:05d1c7c903721ac202ce261fff33f61526e55188dc2135cdc39b4bcd173960a2` for amd64 and
+`sha256:fec5ac13d36a812636d545263fda75e5b729ac9dac624f1f19f1170d3372324b` for arm64.
 
 ## 2. Manual activation
 
@@ -107,11 +107,11 @@ while IFS=$'\t' read -r pod node pod_ready restart_count image_id; do
   node_arch=$(kubectl get node "$node" -o jsonpath='{.status.nodeInfo.architecture}')
   case "$node_arch" in
     amd64)
-      platform_digest=sha256:81619a698b981a5c4fd6c89ae015d0faadce5d7a5270df7562c1743e58e3283f
+      platform_digest=sha256:05d1c7c903721ac202ce261fff33f61526e55188dc2135cdc39b4bcd173960a2
       expected_runtime_arch=x86_64
       ;;
     arm64)
-      platform_digest=sha256:b8df3247641d5f4e84e14d30b673b6362a0e3d56901218a1e1ee38a40f37afd8
+      platform_digest=sha256:fec5ac13d36a812636d545263fda75e5b729ac9dac624f1f19f1170d3372324b
       expected_runtime_arch=aarch64
       ;;
     *)
@@ -213,3 +213,24 @@ The final probe is expected to fail with `NetworkPolicy is not enforced`; it mus
 Recheck node, DNS, service routing, OpenClaw, and Flamingo health. Revert the Git commit through the normal PR path so
 Argo no longer desires the controller. Do not remove the safety policies until a separate policy rollout proves each
 namespace's required traffic.
+
+
+After retirement of the PostgreSQL and ClickHouse upgrade test namespaces,
+the controller coverage gate recognizes the six additional namespaces below.
+Their live policy names and complete specs match committed source at `5a8a64b4101cd379c9dc55c89f04bde947d4d56d`,
+after Kubernetes omits empty ingress/egress arrays. The hook compares each exact
+policy-set hash; no new rollout allow-all rules are installed. Keep the original
+Hermes/Tengri contracts, Bayn inert selector check and traffic-neutral policies.
+
+| Namespace | Policies | Source files |
+| --- | --- | --- |
+| buzz | 6 | `argocd/applications/buzz/networkpolicy.yaml` |
+| observability | 2 | `argocd/applications/observability/grafana-upgrade-backup.yaml`, `argocd/applications/observability/mimir-kafka-upgrade-backup.yaml` |
+| proompteng | 2 | `argocd/applications/proompteng/network-policy.yaml` |
+| restate | 1 | `argocd/applications/restate/networkpolicy.yaml` |
+| restate-example | 1 | `argocd/applications/restate-example/networkpolicy.yaml` |
+| temporal | 6 | `argocd/applications/temporal/upgrade/cassandra-31119-backup.yaml`, `argocd/applications/temporal/upgrade/cassandra-4112-backup.yaml`, `argocd/applications/temporal/upgrade/cassandra-4112-v2-backup.yaml`, `argocd/applications/temporal/upgrade/cassandra-4112-v3-backup.yaml`, `argocd/applications/temporal/upgrade/cassandra-509-backup.yaml`, `argocd/applications/temporal/upgrade/elasticsearch-preparation.yaml` |
+
+Before/after acceptance must preserve these policy specs and verify all-node
+enforcement, DNS, service routing and native database isolation. The current
+controller is already enforcing policy; this is a version upgrade.

@@ -68,13 +68,10 @@ class SchedulerObservabilityManifestTests(TestCase):
         rules = cast(list[Mapping[str, object]], trading_group["rules"])
         by_alert = {str(rule["alert"]): rule for rule in rules}
 
-        api_missing = str(by_alert["TorghutApiServiceMissing"]["expr"])
+        self.assertNotIn("TorghutApiServiceMissing", by_alert)
         api_down = str(by_alert["TorghutActiveApiRevisionMetricsDown"]["expr"])
-        self.assertIn("kube_service_info", api_missing)
-        self.assertIn('service="torghut"', api_missing)
         self.assertIn('service="torghut"', api_down)
         self.assertNotIn("-private", api_down)
-        self.assertNotIn('service="torghut-scheduler"', api_missing)
         self.assertNotIn('service="torghut-scheduler"', api_down)
 
         for alert in ("TorghutSchedulerMetricsMissing", "TorghutSchedulerMetricsDown"):
@@ -123,14 +120,18 @@ class SchedulerObservabilityManifestTests(TestCase):
             self.assertIn('service="torghut-scheduler"', expression)
             self.assertNotIn('service="torghut"', expression)
 
-    def test_namespace_alloy_scrapes_api_through_stable_route(self) -> None:
+    def test_namespace_alloy_keeps_metrics_without_scraping_the_retired_api(
+        self,
+    ) -> None:
         alloy_config = _configmap_data(
             "argocd/applications/torghut/alloy-configmap.yaml",
             "config.river",
         )
         self.assertIn('regex         = "metric(s)?;.*"', alloy_config)
-        self.assertIn('prometheus.scrape "torghut_api"', alloy_config)
-        self.assertIn(
+        self.assertNotIn('prometheus.scrape "torghut_api"', alloy_config)
+        self.assertIn('prometheus.scrape "torghut"', alloy_config)
+        self.assertIn("discovery.relabel.torghut_metrics.output", alloy_config)
+        self.assertNotIn(
             '"__address__" = "torghut.torghut.svc.cluster.local:80"',
             alloy_config,
         )

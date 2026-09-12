@@ -27,7 +27,18 @@ Do not resolve the S3 endpoint through public wildcard DNS or disable certificat
 this wildcard certificate would fail Rook's internal Service hostname check; this proxy leaves Rook's management
 endpoint intact. Certificate renewal remains owned by the existing cert-manager and reflector configuration.
 
-## Rollout order and acceptance
+## Current recovery
+
+The endpoint and certificate contract above remains current. Production now runs
+Mimir 3.2 and Tempo 3. Follow the [Mimir 3.2 procedure](mimir-3-2-upgrade.md) and
+[Tempo 3 recovery](tempo-3-migration.md#recovery). Preserve Kafka, the shared
+buckets, and persistent data while correcting the client or TLS path through GitOps.
+
+The rollout and process-reload sections below document the original Mimir 3.1.2
+and Tempo 2.9 incident. Their ingester StatefulSet, PDB, and ConfigMap have been
+retired. Do not run `tempo-ingester-reload.py` against Tempo 3.
+
+## Historical rollout order and acceptance
 
 1. Merge the TLS proxy and Tempo `OnDelete` protection. Let the Rook and observability Applications reconcile.
    Record the two existing Tempo ingester Pod UIDs and verify they remain unchanged. The strategy change must not
@@ -48,7 +59,7 @@ endpoint intact. Certificate renewal remains owned by the existing cert-manager 
    current metrics queries, and a newly written trace returned by its exact trace ID. Keep Tempo's `OnDelete`
    protection until retained buffers are accounted for and Pod replacement has a verified preservation path.
 
-## Reload one Tempo ingester without replacing its Pod
+## Historical Tempo 2 ingester reload
 
 Use `scripts/cluster-upgrades/tempo-ingester-reload.py`. Its default is a read-only plan:
 
@@ -85,7 +96,7 @@ WAL replay and confirm that every recorded failed block reaches the same bucket 
 original ingester. A helper failure or unexpected identity change stops the sequence; do not repeat it blindly or
 delete the Pod to recover.
 
-## Recovery
+## Historical incident recovery
 
 If TLS or canary validation fails, stop before changing clients. The existing HTTP Service and RGW processes continue
 to serve their current users. Keep Tempo's Pods and local buffers. Do not weaken SigV4 checks, delete a bucket, replace

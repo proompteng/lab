@@ -419,7 +419,7 @@ describe('enabled app inventory', () => {
       'sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839',
     )
     expect(natsKustomization).toContain('newTag: v1.19.2')
-    expect(observabilityKustomization).toContain('version: 8.2.0')
+    expect(observabilityKustomization).toContain('version: 8.4.2')
   })
 
   it('pins the enabled service image upgrade wave', () => {
@@ -429,7 +429,7 @@ describe('enabled app inventory', () => {
       'digest: sha256:92a091b047658b14f1e3214727c6e3001063226a33cb2fc824a1733a60401e05',
     )
     expect(cloudflaredDeployment).toContain(
-      'cloudflare/cloudflared:2026.8.3@sha256:51c9cefcb4569df44e1ad403ab1d3d8065aa8e84339bcfc6aee75502e1140339',
+      'cloudflare/cloudflared:2026.9.0@sha256:ff69a2225ad7c6f85ed84fbd5f3087df46202426b2388ec60214098e0adf05e9',
     )
     expect(karapaceManifest).toContain(
       'ghcr.io/aiven-open/karapace:6.2.3@sha256:a67ecdcc7c0d0a9e965d7a0eebea91a46bf6797aad4f3b878a3f6924650f3012',
@@ -458,11 +458,16 @@ describe('enabled app inventory', () => {
     })
   })
 
-  it('pins the Temporal patch wave to immutable multi-architecture images', () => {
+  it('pins the Temporal upgrade wave to immutable multi-architecture images', () => {
     expect(temporalKustomization.helmCharts?.find((chart) => chart.name === 'temporal')).toMatchObject({
       version: '1.6.0',
     })
     expect(temporalKustomization.images).toEqual([
+      {
+        name: 'docker.elastic.co/elasticsearch/elasticsearch',
+        newTag: '8.19.21',
+        digest: 'sha256:cbf5cd6cfe5532a9c02d510c66d238bf329cd51fe3d57170a2a880aca7d47419',
+      },
       {
         name: 'mirror.gcr.io/temporalio/server',
         newName: 'mirror.gcr.io/temporalio/server',
@@ -478,22 +483,22 @@ describe('enabled app inventory', () => {
       {
         name: 'mirror.gcr.io/temporalio/ui',
         newName: 'mirror.gcr.io/temporalio/ui',
-        newTag: '2.52.0',
-        digest: 'sha256:fc47cd8202c98ed868745fd9f2f011585232676d08da621b9a6d7bc4653c17aa',
+        newTag: '2.54.0',
+        digest: 'sha256:53d6a2b0b32015a78b8748235a1743e4d5b1bf3a7d6c01dc916aa01023745932',
       },
     ])
   })
 
   it('pins the Open WebUI migration wave to its immutable image', () => {
     expect(jangarKustomization.helmCharts?.find((chart) => chart.name === 'open-webui')).toMatchObject({
-      version: '16.0.0',
+      version: '16.5.0',
     })
     expect(jangarKustomization.images?.find((image) => image.name === 'ghcr.io/open-webui/open-webui')).toEqual({
       name: 'ghcr.io/open-webui/open-webui',
-      newTag: 'v0.11.0',
-      digest: 'sha256:72c0ba641ba75e7aa52655cb242570906ececd09b1140fb736483038a22b3228',
+      newTag: 'v0.11.3',
+      digest: 'sha256:41daa0cf2561a5d4c8d1ff31ee2a98d93ab4d3ac2605cac69366ff6a3374a933',
     })
-    expect(openWebUIValues.image?.tag).toBe('v0.11.0')
+    expect(openWebUIValues.image?.tag).toBe('v0.11.3')
   })
 
   it('pins both Saigak Ollama containers to the immutable multi-architecture image', () => {
@@ -512,7 +517,7 @@ describe('enabled app inventory', () => {
     const vllm = flamingoDeployment.spec?.template?.spec?.containers?.find((container) => container.name === 'vllm')
 
     expect(vllm?.image).toBe(
-      'vllm/vllm-openai:v0.28.0-x86_64-cu129@sha256:50509e700235cea487715cedeb501d20a1cd15fa6a54ce93688284bd0d96995d',
+      'vllm/vllm-openai:v0.29.0-cu129@sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2',
     )
   })
 
@@ -552,7 +557,7 @@ describe('enabled app inventory', () => {
   it('pins both custom NVIDIA device plugins to the immutable security release', () => {
     for (const manifest of nvidiaDevicePluginManifests) {
       expect(manifest).toContain(
-        'nvcr.io/nvidia/k8s-device-plugin:v0.19.3@sha256:25cc340fe6fd53c101e16fc452f503e7a92c219c64a80ed5381784b522dbbf77',
+        'nvcr.io/nvidia/k8s-device-plugin:v0.20.0@sha256:a61ba9fd8efb82f3a79f877f7580e02c1e8e7593f62473644bc9c79e315c3312',
       )
       expect(manifest).not.toContain('nvcr.io/nvidia/k8s-device-plugin:v0.19.0')
     }
@@ -725,7 +730,7 @@ describe('enabled app inventory', () => {
       class: 'vendor-manifest',
       hasHelmChart: false,
       repoImages: [
-        'registry.ide-newton.ts.net/lab/hermes-agent@sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843',
+        'registry.ide-newton.ts.net/lab/hermes-agent@sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b',
       ],
     })
     expect(entry('hermes').deferredReason).toContain('NousResearch/hermes-agent')

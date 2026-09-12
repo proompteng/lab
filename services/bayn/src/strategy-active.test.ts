@@ -37,7 +37,7 @@ describe('active strategy composition', () => {
       name: 'intraday-momentum',
       behaviorHash: activeStrategyBehaviorHash,
       parameterHash,
-      parameterSchemaVersion: 'bayn.intraday-momentum.protocol.v2',
+      parameterSchemaVersion: 'bayn.intraday-momentum.protocol.v3',
     })
   })
 })

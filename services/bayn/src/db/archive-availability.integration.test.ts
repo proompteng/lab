@@ -72,11 +72,11 @@ describePostgres('PostgreSQL archive reader availability', () => {
         const fence = yield* WriterFence
         const record = makeArchiveAvailabilityRecorder(sql, fence)
         const read = makeArchiveAvailabilityReader(sql, availabilityReader.endpointHash)
-        const missing = yield* Effect.exit(read(availabilitySnapshot))
+        const missing = yield* Effect.exit(read(availabilitySnapshot, availabilitySnapshot.manifest.observedAt))
         yield* record(receipts())
-        const early = yield* Effect.exit(read(availabilitySnapshot))
+        const early = yield* Effect.exit(read(availabilitySnapshot, availabilitySnapshot.manifest.observedAt))
         yield* record(receipts('2026-09-04T14:30:02.900Z'))
-        const proven = yield* read(reobserveAvailabilitySnapshot(completedAt))
+        const proven = yield* read(reobserveAvailabilitySnapshot(completedAt), completedAt)
         return {
           missing,
           early,
@@ -104,10 +104,10 @@ describePostgres('PostgreSQL archive reader availability', () => {
         const changedRecord = { ...availabilitySnapshot.quotes[0], askPrice: 101 }
         const changed = { ...material, record: changedRecord, recordContentHash: canonicalHashV1(changedRecord) }
         const conflict = yield* Effect.exit(record([{ ...changed, receiptHash: canonicalHashV1(changed) }]))
-        const proven = yield* makeArchiveAvailabilityReader(
-          sql,
-          availabilityReader.endpointHash,
-        )(reobserveAvailabilitySnapshot(completedAt))
+        const proven = yield* makeArchiveAvailabilityReader(sql, availabilityReader.endpointHash)(
+          reobserveAvailabilitySnapshot(completedAt),
+          completedAt,
+        )
         return { conflict, proven }
       }),
     )
@@ -130,10 +130,10 @@ describePostgres('PostgreSQL archive reader availability', () => {
         )
         yield* makeArchiveAvailabilityRecorder(sql, fence)(development)
         return yield* Effect.exit(
-          makeArchiveAvailabilityReader(
-            sql,
-            availabilityReader.endpointHash,
-          )(reobserveAvailabilitySnapshot(completedAt)),
+          makeArchiveAvailabilityReader(sql, availabilityReader.endpointHash)(
+            reobserveAvailabilitySnapshot(completedAt),
+            completedAt,
+          ),
         )
       }),
     )
@@ -173,7 +173,10 @@ describePostgres('PostgreSQL archive reader availability', () => {
           sql,
           fence,
         )(receipts.filter((receipt) => !receiptHasSymbol(receipt, 'AAPL')))
-        return yield* makeArchiveAvailabilityReader(sql, availabilityReader.endpointHash)(snapshot)
+        return yield* makeArchiveAvailabilityReader(sql, availabilityReader.endpointHash)(
+          snapshot,
+          snapshot.manifest.observedAt,
+        )
       }),
     )
     expect(result.candidateExclusions?.map(({ symbol }) => symbol)).toEqual(['AAPL'])

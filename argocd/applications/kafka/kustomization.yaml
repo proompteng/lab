@@ -37,6 +37,7 @@ resources:
   - kafka-codex-username-secret.yaml
   - karapace.yaml
   - torghut-ws-kafkauser.yaml
+  - bayn-kafkauser.yaml
   - torghut-options-kafkauser.yaml
   - torghut-hyperliquid-feed-kafkauser.yaml
   - torghut-topics.yaml
@@ -46,6 +47,18 @@ resources:
   - torghut-options-topics.yaml
   - torghut-hyperliquid-feed-topics.yaml
 patches:
+  # Kubernetes omits empty schema properties maps. Match its stored CRD exactly.
+  - target:
+      group: apiextensions.k8s.io
+      version: v1
+      kind: CustomResourceDefinition
+      name: kafkas.kafka.strimzi.io
+    patch: |-
+      - op: test
+        path: /spec/versions/0/name
+        value: v1
+      - op: remove
+        path: /spec/versions/0/schema/openAPIV3Schema/properties/status/properties/clusterSecurity/properties
   # Make the operator watch all namespaces
   - target:
       group: apps

@@ -5,23 +5,35 @@ Loki, Mimir, and Tempo read S3 access credentials from secret `rook-ceph-rgw-lok
 namespace.
 That secret should be a reflected copy of the Rook-managed source secret
 `rook-ceph-object-user-objectstore-loki` in namespace `rook-ceph`, not a hand-sealed credential copy.
-Keep the RGW endpoint explicit in Helm values; it is not sourced from the reflected secret. Mimir and Tempo use the internal
-TLS endpoint `rook-ceph-rgw-tls.rook-ceph.svc:443` with `insecure: false` and TLS server name
-`ceph.k8s.proompteng.ai`. Loki uses `rook-ceph-rgw-objectstore.rook-ceph.svc:80`.
-Mimir's MinIO HTTP signer is incompatible with Ceph 20.2.4. Its StatefulSets, including bundled Kafka, use `OnDelete`
-while the [Mimir recovery procedure](../../../docs/runbooks/mimir-rgw-tls-recovery.md) reloads one process at a time
-and verifies retained blocks without replacing Pods or remounting volumes. The
-[compatibility runbook](../../../docs/runbooks/ceph-rgw-sigv4-compatibility.md) documents the verified TLS path,
-preservation of existing Tempo buffers, and recovery procedure.
+Keep the RGW endpoint explicit in Helm values; it is not sourced from the reflected secret. Loki, Mimir and Tempo
+use the internal TLS endpoint `rook-ceph-rgw-tls.rook-ceph.svc:443` with `insecure: false` and TLS server name
+`ceph.k8s.proompteng.ai`. Loki 3 uses its supported Thanos object-store client and retains the `loki-data` bucket
+and existing BoltDB Shipper schema. The compatibility gateway Service preserves the original client address.
+Follow the [Loki 3 migration](../../../docs/runbooks/loki-3-migration.md) for the verified drain, cutover and recovery
+procedure. The sole Loki 3 compactor uses a retained 10 GiB Ceph claim; log retention remains disabled.
+Mimir 3.2 uses normal rolling updates for ingesters, store gateway, compactor, and Alertmanager. Follow the
+[Mimir 3.2 rollout](../../../docs/runbooks/mimir-3-2-upgrade.md) for the native configuration gate, ordered sync waves,
+and live acceptance. The bundled Kafka broker uses Apache's JVM 4.3.1 image with normal StatefulSet rolling updates.
+Its existing log subdirectory is explicitly mounted at the image's declared data volume. Follow the
+[Kafka 4.3 upgrade](../../../docs/runbooks/mimir-kafka-4-3-upgrade.md) for clone recovery, buffer preservation,
+and metadata-feature acceptance.
+The [Mimir recovery procedure](../../../docs/runbooks/mimir-rgw-tls-recovery.md) is historical guidance for
+Mimir 3.1.2/chart 6.1.0; its process-reload helper deliberately rejects newer images and rolling strategies. The
+[compatibility runbook](../../../docs/runbooks/ceph-rgw-sigv4-compatibility.md) documents the verified TLS path.
+Its Tempo 2 buffer-reload procedure is historical and does not apply to the production Tempo 3 deployment.
+
+Tempo 3 owns production ingestion, queries, and compaction. The compatibility Services preserve the original
+Tempo distributor, gateway, and query-frontend addresses; do not remove them while clients use those names.
+See the [Tempo migration runbook](../../../docs/runbooks/tempo-3-migration.md) for buffer-drain and recovery evidence.
 
 ## Sources of truth
 
 1. `argocd/applications/rook-ceph/rook-ceph-objectstore-loki-user.yaml`
 2. `argocd/applications/rook-ceph/rook-ceph-object-user-objectstore-loki-reflector-source.yaml`
 3. `argocd/applications/observability/rook-ceph-rgw-loki-reflected-secret.yaml`
-4. `argocd/applications/observability/loki-values.yaml`
+4. `argocd/applications/observability/loki-v3-values.yaml`
 5. `argocd/applications/observability/mimir-values.yaml`
-6. `argocd/applications/observability/tempo-values.yaml`
+6. `argocd/applications/observability/tempo-v3-values.yaml`
 
 ## Required buckets
 
@@ -71,8 +83,8 @@ Observability is exposed over Tailscale using `Ingress` resources (not `Service`
 4. Restart components if needed:
 
 ```bash
-kubectl -n observability rollout restart deploy observability-loki-loki-distributed-distributor
-kubectl -n observability rollout restart deploy observability-tempo-distributor
+kubectl -n observability rollout restart deploy observability-loki-v3-distributor
+kubectl -n observability rollout restart deploy observability-tempo-v3-distributor
 kubectl -n observability rollout restart deploy observability-mimir-distributor
 ```
 

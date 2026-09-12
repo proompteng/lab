@@ -168,3 +168,58 @@ describe('intraday momentum decision core', () => {
     })
   })
 })
+
+describe('prepared rolling feature strategy inputs', () => {
+  test('prepared values reproduce the raw calculation and missing features never trigger local calculation', () => {
+    const input = makeInput(101)
+    const values = {
+      referencePriceMicros: '100000000',
+      rangeHighPriceMicros: '100300000',
+      rangeLowPriceMicros: '99800000',
+    }
+    const rollingPrices = Object.fromEntries(
+      [...input.protocol.candidateSymbols, input.protocol.benchmarkSymbol].map((symbol) => [symbol, values]),
+    )
+    expect(success(decideIntradayMomentumCore({ ...input, rollingPrices }))).toEqual(
+      success(decideIntradayMomentumCore(input)),
+    )
+    const { AAPL: _candidate, ...missingCandidate } = rollingPrices
+    const excluded = success(decideIntradayMomentumCore({ ...input, rollingPrices: missingCandidate }))
+    expect(excluded.excludedCandidates).toContainEqual({
+      symbol: 'AAPL',
+      reason: 'not-ready',
+      message: 'required candidate rolling feature is unavailable',
+    })
+    expect(excluded.targetWeights['AAPL']).toBe(0)
+    const { SPY: _benchmark, ...missingBenchmark } = rollingPrices
+    expect(Result.isFailure(decideIntradayMomentumCore({ ...input, rollingPrices: missingBenchmark }))).toBe(true)
+  })
+
+  test('uses supplied rolling values while executable prices continue to come from quotes', () => {
+    const input = makeInput(101)
+    const rollingPrices = Object.fromEntries(
+      [...input.protocol.candidateSymbols, input.protocol.benchmarkSymbol].map((symbol) => [
+        symbol,
+        { referencePriceMicros: '100000000', rangeHighPriceMicros: '100300000', rangeLowPriceMicros: '99800000' },
+      ]),
+    )
+    const output = success(
+      decideIntradayMomentumCore({
+        ...input,
+        rollingPrices: {
+          ...rollingPrices,
+          AAPL: {
+            referencePriceMicros: '99900000',
+            rangeHighPriceMicros: '100400000',
+            rangeLowPriceMicros: '99800000',
+          },
+        },
+      }),
+    )
+    expect(output.signals.find((signal) => signal.symbol === 'AAPL')).toMatchObject({
+      referencePriceMicros: '99900000',
+      rangeHighPriceMicros: '100400000',
+      bidPriceMicros: '100995000',
+    })
+  })
+})

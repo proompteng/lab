@@ -469,7 +469,7 @@ const recordIdentity = (
   })
 }
 
-const normalizeBar = (row: IntradayBarRow): Result.Result<IntradayBar, IntradaySnapshotFailure> =>
+export const normalizeBar = (row: IntradayBarRow): Result.Result<IntradayBar, IntradaySnapshotFailure> =>
   Result.gen(function* () {
     const identity = yield* recordIdentity(row)
     const open = yield* numberValue(row.open, 'bar open', true)
@@ -501,7 +501,7 @@ const normalizeBar = (row: IntradayBarRow): Result.Result<IntradayBar, IntradayS
     })
   })
 
-const normalizeQuote = (row: IntradayQuoteRow): Result.Result<IntradayQuote, IntradaySnapshotFailure> =>
+export const normalizeQuote = (row: IntradayQuoteRow): Result.Result<IntradayQuote, IntradaySnapshotFailure> =>
   Result.gen(function* () {
     const identity = yield* recordIdentity(row)
     const bidPrice = yield* numberValue(row.bid_price, 'quote bid price', true)
@@ -512,7 +512,7 @@ const normalizeQuote = (row: IntradayQuoteRow): Result.Result<IntradayQuote, Int
     return Object.freeze({ ...identity, bidPrice, bidSize, askPrice, askSize })
   })
 
-const normalizeTrade = (row: IntradayTradeRow): Result.Result<IntradayTrade, IntradaySnapshotFailure> =>
+export const normalizeTrade = (row: IntradayTradeRow): Result.Result<IntradayTrade, IntradaySnapshotFailure> =>
   Result.gen(function* () {
     const identity = yield* recordIdentity(row)
     const price = yield* numberValue(row.price, 'trade price', true)
@@ -528,7 +528,7 @@ const compareOffsets = (left: string, right: string): number => {
   return 0
 }
 
-const compareRecords = (
+export const compareRecords = (
   left: IntradayBar | IntradayQuote | IntradayTrade,
   right: IntradayBar | IntradayQuote | IntradayTrade,
 ): number =>
@@ -538,15 +538,17 @@ const compareRecords = (
   left.sourcePartition - right.sourcePartition ||
   compareOffsets(left.sourceOffset, right.sourceOffset)
 
-const validateIdentity = (
-  request: IntradaySnapshotRequest,
+export const validateIdentity = (
+  request: IntradaySnapshotQuery,
   records: readonly (IntradayBar | IntradayQuote | IntradayTrade)[],
   eventWindowEndAt: string,
   inclusiveEnd: boolean,
+  sourceWatermarks?: readonly IntradayArchiveWatermark[],
+  clockSkewMs = 0,
 ): Result.Result<void, IntradaySnapshotFailure> => {
   const symbols = new Set(intradaySnapshotSymbols(request))
   const watermarkByPartition = new Map(
-    request.archiveWatermarks.map((watermark) => [
+    (sourceWatermarks ?? []).map((watermark) => [
       `${watermark.sourceTopic}\u0000${watermark.sourcePartition}`,
       BigInt(watermark.inclusiveLastOffset),
     ]),
@@ -578,10 +580,9 @@ const validateIdentity = (
     if (
       eventAt < start ||
       eventAfterWindow ||
-      ingestedAt < eventAt ||
-      ingestedAt > observed ||
-      watermark === undefined ||
-      BigInt(record.sourceOffset) > watermark
+      ingestedAt + millisecondsAsNanos(clockSkewMs) < eventAt ||
+      ingestedAt > observed + millisecondsAsNanos(clockSkewMs) ||
+      (sourceWatermarks !== undefined && (watermark === undefined || BigInt(record.sourceOffset) > watermark))
     ) {
       return Result.fail(
         failure('ordering', 'intraday row falls outside the event-time and ingestion-time bounds', {
@@ -599,16 +600,17 @@ const validateIdentity = (
   return Result.succeed(undefined)
 }
 
-const validateBarStructure = (
-  request: IntradaySnapshotRequest,
+export const validateBarStructure = (
+  request: IntradaySnapshotQuery,
   bars: readonly IntradayBar[],
+  clockSkewMs = 0,
 ): Result.Result<void, IntradaySnapshotFailure> => {
   const rangeStart = intradayInstantNanos(request.rangeStartAt)
   const minuteNanos = millisecondsAsNanos(minuteMs)
   const rangeMinutes = (epoch(request.rangeEndAt) - epoch(request.rangeStartAt)) / minuteMs
   const maximumCount = intradaySnapshotSymbols(request).length * rangeMinutes
   const minimumAvailabilityDelay = millisecondsAsNanos(
-    (request.delayClass === 'delayed_15m_consolidated' ? 15 * minuteMs : 0) + minuteMs,
+    (request.delayClass === 'delayed_15m_consolidated' ? 15 * minuteMs : 0) + minuteMs - clockSkewMs,
   )
   const observed = new Set<string>()
   for (const bar of bars) {
@@ -668,12 +670,13 @@ const validateBarStructure = (
   return Result.succeed(undefined)
 }
 
-const validateBarCoverage = (
-  request: IntradaySnapshotRequest,
+export const validateBarCoverage = (
+  request: IntradaySnapshotQuery,
   bars: readonly IntradayBar[],
+  clockSkewMs = 0,
 ): Result.Result<void, IntradaySnapshotFailure> => {
   const feedDelayMs = request.delayClass === 'delayed_15m_consolidated' ? 15 * minuteMs : 0
-  const maximumAvailabilityDelay = millisecondsAsNanos(feedDelayMs + minuteMs + request.maximumQuoteAgeMs)
+  const maximumAvailabilityDelay = millisecondsAsNanos(feedDelayMs + minuteMs + request.maximumQuoteAgeMs + clockSkewMs)
   for (const bar of bars) {
     if (intradayAgeNanos(bar.ingestedAt, bar.eventAt) > maximumAvailabilityDelay) {
       return Result.fail(
@@ -708,8 +711,8 @@ const validateBarCoverage = (
   return Result.succeed(undefined)
 }
 
-const validateSourceTopics = (
-  request: IntradaySnapshotRequest,
+export const validateSourceTopics = (
+  request: IntradaySnapshotQuery,
   bars: readonly IntradayBar[],
   quotes: readonly IntradayQuote[],
   trades: readonly IntradayTrade[],
@@ -776,18 +779,19 @@ const validateArchiveProgress = (
   return Result.succeed(undefined)
 }
 
-const latestQuotes = (
-  request: IntradaySnapshotRequest,
+export const latestQuotes = (
+  request: IntradaySnapshotQuery,
   quotes: readonly IntradayQuote[],
   trades: readonly IntradayTrade[],
+  clockSkewMs = 0,
 ): Result.Result<Readonly<Record<string, IntradayQuote>>, IntradaySnapshotFailure> => {
   const latest: Record<string, IntradayQuote> = {}
   const latestTrades: Record<string, IntradayTrade> = {}
   for (const quote of quotes) latest[quote.symbol] = quote
   for (const trade of trades) latestTrades[trade.symbol] = trade
   const expectedDelayMs = request.delayClass === 'delayed_15m_consolidated' ? 15 * minuteMs : 0
-  const minimumDelay = millisecondsAsNanos(expectedDelayMs)
-  const maximumDelay = millisecondsAsNanos(expectedDelayMs + request.maximumQuoteAgeMs)
+  const minimumDelay = millisecondsAsNanos(expectedDelayMs) - BigInt(clockSkewMs) * 1_000_000n
+  const maximumDelay = millisecondsAsNanos(expectedDelayMs + request.maximumQuoteAgeMs + clockSkewMs)
   // Bind complete post-range evidence here. Executable freshness is symbol-local and is enforced by the strategy
   // before selection; sparse IEX activity for one symbol must not invalidate fresh evidence for another symbol.
   for (const symbol of intradaySnapshotSymbols(request)) {
@@ -835,7 +839,7 @@ const latestQuotes = (
   return Result.succeed(Object.freeze(latest))
 }
 
-const lineageOf = (
+export const lineageOf = (
   records: readonly (IntradayBar | IntradayQuote | IntradayTrade)[],
 ): Result.Result<readonly IntradayLineage[], IntradaySnapshotFailure> => {
   const groups = new Map<string, { topic: string; partition: number; offsets: bigint[] }>()
@@ -888,11 +892,12 @@ export interface IntradaySnapshotRows {
 
 export type PersistedIntradaySnapshotRows = Omit<IntradaySnapshotRows, 'archiveWatermarks'>
 
-const candidateAvailability = (
-  request: IntradaySnapshotRequest,
+export const candidateAvailability = (
+  request: IntradaySnapshotQuery,
   bars: readonly IntradayBar[],
   quotes: readonly IntradayQuote[],
   trades: readonly IntradayTrade[],
+  clockSkewMs = 0,
 ): Result.Result<
   {
     readonly latest: Readonly<Record<string, IntradayQuote>>
@@ -911,12 +916,14 @@ const candidateAvailability = (
         validateBarCoverage(
           symbolRequest,
           bars.filter((bar) => bar.symbol === symbol),
+          clockSkewMs,
         ),
         () =>
           latestQuotes(
             symbolRequest,
             quotes.filter((quote) => quote.symbol === symbol),
             trades.filter((trade) => trade.symbol === symbol),
+            clockSkewMs,
           ),
       )
       if (Result.isSuccess(available)) continue
@@ -957,8 +964,14 @@ export const verifyIntradaySnapshot = (
     const trades = Object.freeze((yield* Result.all(decoded.trades.map(normalizeTrade))).toSorted(compareRecords))
     const allRecords = [...bars, ...quotes, ...trades].toSorted(compareRecords)
     yield* validateSourceTopics(verifiedRequest, bars, quotes, trades)
-    yield* validateIdentity(verifiedRequest, bars, verifiedRequest.rangeEndAt, false)
-    yield* validateIdentity(verifiedRequest, [...quotes, ...trades], session.closeAt, true)
+    yield* validateIdentity(verifiedRequest, bars, verifiedRequest.rangeEndAt, false, verifiedRequest.archiveWatermarks)
+    yield* validateIdentity(
+      verifiedRequest,
+      [...quotes, ...trades],
+      session.closeAt,
+      true,
+      verifiedRequest.archiveWatermarks,
+    )
     yield* validateBarStructure(verifiedRequest, bars)
     const lineage = yield* lineageOf(allRecords)
     const minimumFeedDelay = millisecondsAsNanos(
@@ -1125,11 +1138,11 @@ const replayedBarRow = (bar: IntradayBar): Result.Result<IntradayBarRow, Intrada
       : row
   })
 
-export const persistIntradaySnapshotRows = (
-  snapshot: IntradayMarketSnapshot,
+export const persistIntradayRecordRows = (
+  snapshot: Pick<IntradayMarketSnapshot, 'bars' | 'quotes' | 'trades'>,
 ): Result.Result<PersistedIntradaySnapshotRows, IntradaySnapshotFailure> =>
   Result.gen(function* () {
-    const collections = yield* replaySnapshotEnvelope(snapshot)
+    const collections = snapshot
     const bars = yield* Result.all(collections.bars.map(replayedBarRow))
     yield* validateReplayCandidates(collections.quotes, 'quote', (quote) => [
       quote.bidPrice,
@@ -1154,6 +1167,11 @@ export const persistIntradaySnapshotRows = (
       })),
     }
   })
+
+export const persistIntradaySnapshotRows = (
+  snapshot: IntradayMarketSnapshot,
+): Result.Result<PersistedIntradaySnapshotRows, IntradaySnapshotFailure> =>
+  replaySnapshotEnvelope(snapshot).pipe(Result.flatMap(persistIntradayRecordRows))
 
 /**
  * Re-enters an already materialized snapshot through the authoritative row

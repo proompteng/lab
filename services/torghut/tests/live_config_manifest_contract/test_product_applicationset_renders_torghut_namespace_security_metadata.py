@@ -77,7 +77,7 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
             "1",
         )
 
-    def test_production_ta_recovers_transient_dependencies_without_losing_state(
+    def test_production_ta_uses_savepoint_rollouts_and_transient_restart_backoff(
         self,
     ) -> None:
         manifest = _load_yaml_mapping(
@@ -88,7 +88,7 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
         job = cast(Mapping[str, object], spec.get("job", {}))
 
         self.assertGreaterEqual(int(str(spec.get("restartNonce"))), 33)
-        self.assertEqual(job.get("upgradeMode"), "last-state")
+        self.assertEqual(job.get("upgradeMode"), "savepoint")
         self.assertEqual(flink_config.get("restart-strategy.type"), "exponential-delay")
         self.assertFalse(
             any(
