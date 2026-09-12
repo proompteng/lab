@@ -1,4 +1,7 @@
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
+import { SimulatedSnapshotSourceSchema, type SimulatedSnapshotEvidenceSchema } from './evidence-schema'
+import { strictParseOptions } from '../../schemas'
+import type { HistoricalMarketCursor } from './historical'
 
 import { canonicalHashV1Result } from '../../hash'
 import type {
@@ -14,7 +17,7 @@ import type { RollingMarketFeature } from '../features/contract'
 import type { KafkaProjectionCut } from './kafka'
 import type { KafkaBootstrapEvidence, KafkaPartitionPosition } from './bootstrap'
 import { kafkaBootstrapComplete } from './bootstrap'
-import { topicPartitionKey, type ObservedMarketValue } from './projection'
+import { topicPartitionKey, type StreamingProjection, type ObservedMarketValue } from './projection'
 import { selectStreamingInputs } from './inputs'
 
 export interface StreamingRecordReceipt {
@@ -56,8 +59,22 @@ const StreamingVerifiedSnapshotTypeId: unique symbol = Symbol('StreamingVerified
 export type StreamingVerifiedMarketSnapshot = StreamingMarketSnapshot & {
   readonly [StreamingVerifiedSnapshotTypeId]: true
 }
-export type StrategyMarketSnapshot = IntradayMarketSnapshot | StreamingMarketSnapshot
-export type VerifiedStrategyMarketSnapshot = ArchiveVerifiedIntradayMarketSnapshot | StreamingVerifiedMarketSnapshot
+export interface SimulatedSnapshotManifest extends Omit<StreamingSnapshotManifest, 'schemaVersion' | 'streaming'> {
+  readonly schemaVersion: 'bayn.simulated-market-snapshot.v1'
+  readonly streaming: typeof SimulatedSnapshotEvidenceSchema.Type
+}
+export interface SimulatedMarketSnapshot extends Omit<IntradayMarketSnapshot, 'manifest'> {
+  readonly manifest: SimulatedSnapshotManifest
+}
+const SimulatedVerifiedSnapshotTypeId: unique symbol = Symbol('SimulatedVerifiedSnapshot')
+export type SimulatedVerifiedMarketSnapshot = SimulatedMarketSnapshot & {
+  readonly [SimulatedVerifiedSnapshotTypeId]: true
+}
+export type StrategyMarketSnapshot = IntradayMarketSnapshot | StreamingMarketSnapshot | SimulatedMarketSnapshot
+export type VerifiedStrategyMarketSnapshot =
+  | ArchiveVerifiedIntradayMarketSnapshot
+  | StreamingVerifiedMarketSnapshot
+  | SimulatedVerifiedMarketSnapshot
 
 const failure = (reason: IntradaySnapshotFailure['reason'], message: string, cause?: unknown) =>
   new IntradaySnapshotFailure({ reason, message, ...(cause === undefined ? {} : { cause }) })
@@ -97,10 +114,36 @@ export const constructStreamingSnapshot = (
       return yield* Result.fail(
         failure('not-ready', 'Streaming projection has no complete retained cut for this observation'),
       )
+    const snapshot = yield* constructSnapshotMaterial(state, request, cut.positions, {
+      schemaVersion: 'bayn.streaming-market-snapshot.v1',
+      streaming: { schemaVersion: 'bayn.streaming-input-cut.v1', bootstrap: cut.bootstrap },
+    })
+    return Object.freeze({ ...snapshot, [StreamingVerifiedSnapshotTypeId]: true as const })
+  })
+
+type SnapshotProvenance =
+  | {
+      readonly schemaVersion: StreamingSnapshotManifest['schemaVersion']
+      readonly streaming: Pick<StreamingSnapshotEvidence, 'schemaVersion' | 'bootstrap'>
+    }
+  | {
+      readonly schemaVersion: SimulatedSnapshotManifest['schemaVersion']
+      readonly streaming: typeof SimulatedSnapshotSourceSchema.Type & {
+        readonly schemaVersion: 'bayn.simulated-input-cut.v1'
+      }
+    }
+
+const constructSnapshotMaterial = <P extends SnapshotProvenance>(
+  state: StreamingProjection,
+  request: IntradaySnapshotQuery,
+  positions: readonly KafkaPartitionPosition[],
+  provenance: P,
+) =>
+  Result.gen(function* () {
     const { symbols, entries, featureReceipts, bars, quotes, trades, availability, exclusions, excluded } =
       yield* selectStreamingInputs(state, request)
     const sourcePositions = new Map(
-      cut.positions.map((position) => [topicPartitionKey(position.topic, position.partition), BigInt(position.offset)]),
+      positions.map((position) => [topicPartitionKey(position.topic, position.partition), BigInt(position.offset)]),
     )
     for (const entry of entries) {
       const maximum = sourcePositions.get(topicPartitionKey(entry.value.sourceTopic, entry.value.sourcePartition))
@@ -112,8 +155,10 @@ export const constructStreamingSnapshot = (
       if (feature.sequence > state.sequence || maximum === undefined || BigInt(feature.offset) >= maximum)
         return yield* Result.fail(failure('watermark', 'Streaming feature is outside the incorporated source cut'))
     }
+    const schemaVersion: P['schemaVersion'] = provenance.schemaVersion
+    const streaming: P['streaming'] = provenance.streaming
     const material = {
-      schemaVersion: 'bayn.streaming-market-snapshot.v1',
+      schemaVersion,
       sessionDate: request.sessionDate,
       calendar: request.calendar,
       rangeStartAt: request.rangeStartAt,
@@ -147,9 +192,8 @@ export const constructStreamingSnapshot = (
       tradesContentHash: yield* hash(trades),
       lineage: yield* lineageOf([...bars, ...quotes, ...trades].toSorted(compareRecords)),
       streaming: {
-        schemaVersion: 'bayn.streaming-input-cut.v1',
-        bootstrap: cut.bootstrap,
-        positions: cut.positions,
+        ...streaming,
+        positions,
         sequence: state.sequence,
         records: (yield* Result.all(entries.map(recordReceipt))).toSorted((a, b) => a.sequence - b.sequence),
         features: featureReceipts.filter((feature) => !excluded.has(feature.value.material.symbol)),
@@ -158,11 +202,55 @@ export const constructStreamingSnapshot = (
     const contentHash = yield* hash(material)
     const snapshotId = yield* hash({ ...material, contentHash })
     return Object.freeze({
-      [StreamingVerifiedSnapshotTypeId]: true as const,
       bars: Object.freeze(bars),
       quotes: Object.freeze(quotes),
       trades: Object.freeze(trades),
       latestQuotes: availability.latest,
       manifest: Object.freeze({ ...material, contentHash, snapshotId }),
     })
+  })
+
+/** Simulation authority comes only from an ordered cursor and its frozen source manifest. */
+export const constructSimulatedSnapshot = (
+  cursor: HistoricalMarketCursor,
+  source: typeof SimulatedSnapshotSourceSchema.Type,
+  query: IntradaySnapshotQuery,
+): Result.Result<SimulatedVerifiedMarketSnapshot, IntradaySnapshotFailure> =>
+  Result.gen(function* () {
+    const provenance = yield* Schema.decodeUnknownResult(
+      SimulatedSnapshotSourceSchema,
+      strictParseOptions,
+    )(source).pipe(Result.mapError((cause) => failure('hash', 'Invalid simulated source provenance', cause)))
+    const request = yield* verifyIntradaySnapshotQuery(query)
+    const state = cursor.projection
+    const observedAtMs = Date.parse(request.observedAt)
+    if (
+      state.availabilityMode !== 'simulated' ||
+      cursor.runId !== provenance.runId ||
+      state.epoch !== `historical-${provenance.runId}` ||
+      cursor.universe.topics.features !== provenance.featureTopic ||
+      cursor.universe.universeId !== request.universeId ||
+      cursor.universe.universeSymbolHash !== request.universeSymbolHash ||
+      cursor.universe.topics.bars !== request.sourceTopics.bars ||
+      cursor.universe.topics.quotes !== request.sourceTopics.quotes ||
+      cursor.universe.topics.trades !== request.sourceTopics.trades ||
+      cursor.universe.symbols.join(',') !== request.universe.join(',') ||
+      cursor.regeneratedFeaturesRecordedAtMs !== provenance.regeneratedFeaturesRecordedAtMs ||
+      state.minimumObservationMs > observedAtMs ||
+      (cursor.lastArrival !== null && cursor.lastArrival.availableAtMs > observedAtMs) ||
+      Date.parse(request.rangeStartAt) <= state.discardedRejectionsThroughMs
+    )
+      return yield* Result.fail(failure('not-ready', 'Historical cursor does not match the simulated observation'))
+    const positions = [...state.offsets]
+      .map(([key, offset]) => ({
+        topic: key.slice(0, key.lastIndexOf(':')),
+        partition: Number(key.slice(key.lastIndexOf(':') + 1)),
+        offset: String(BigInt(offset) + 1n),
+      }))
+      .toSorted((a, b) => a.topic.localeCompare(b.topic) || a.partition - b.partition)
+    const snapshot = yield* constructSnapshotMaterial(state, request, positions, {
+      schemaVersion: 'bayn.simulated-market-snapshot.v1',
+      streaming: { schemaVersion: 'bayn.simulated-input-cut.v1', ...provenance },
+    })
+    return Object.freeze({ ...snapshot, [SimulatedVerifiedSnapshotTypeId]: true as const })
   })

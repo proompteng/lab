@@ -111,11 +111,12 @@ const validateSnapshot = (
 ): Result.Result<void, IntradayMomentumFailure> => {
   const { session, snapshot } = context
   const { manifest } = snapshot
-  if (manifest.schemaVersion === 'bayn.streaming-market-snapshot.v1') {
+  if ('streaming' in manifest) {
     const contract = protocol.streamingInput
     if (
       contract === undefined ||
-      manifest.streaming.bootstrap.timestampPolicy !== contract.bootstrapTimestampPolicy ||
+      ('bootstrap' in manifest.streaming &&
+        manifest.streaming.bootstrap.timestampPolicy !== contract.bootstrapTimestampPolicy) ||
       manifest.streaming.features.some(
         ({ value, topic }) =>
           topic !== contract.featureTopic ||
@@ -304,7 +305,7 @@ const decideIntradayMomentumFromEnvelope = (
       }),
     )
     const core = yield* decideIntradayMomentumCore({
-      ...(snapshot.manifest.schemaVersion === 'bayn.streaming-market-snapshot.v1'
+      ...('streaming' in snapshot.manifest
         ? {
             rollingPrices: Object.fromEntries(
               snapshot.manifest.streaming.features.map((feature) => [

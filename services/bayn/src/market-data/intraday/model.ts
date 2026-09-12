@@ -1,3 +1,5 @@
+import type { SimulatedMarketSnapshot, SimulatedVerifiedMarketSnapshot } from '../streaming/snapshot'
+import type { SimulatedSnapshotReference } from '../streaming/simulation-service'
 import type { StreamingMarketSnapshot, StreamingVerifiedMarketSnapshot } from '../streaming/snapshot'
 import type { StreamingVerifiedSnapshotReference } from '../streaming/reference'
 import { Context, Data, Effect } from 'effect'
@@ -180,6 +182,16 @@ export const archiveVerifiedIntradaySnapshotReference = (
  * materialized snapshot without the immutable-row checks in this layer.
  */
 export interface IntradayMarketDataService {
+  readonly simulation?: {
+    readonly runId: string
+    readonly loadSnapshot: (
+      query: IntradaySnapshotQuery,
+    ) => Effect.Effect<SimulatedVerifiedMarketSnapshot, OperationalError>
+    readonly verifyReference: (
+      snapshot: SimulatedMarketSnapshot,
+    ) => Effect.Effect<SimulatedSnapshotReference, OperationalError>
+  }
+
   /** Kafka source capability. Explicit shadow mode keeps archive execution and records a parallel comparison. */
   readonly streaming?: {
     readonly shadowOnly?: boolean

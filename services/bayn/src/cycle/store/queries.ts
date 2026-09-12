@@ -354,14 +354,15 @@ export const makeCycleQueries = (
             )
           `
         : decisionMarketData.schemaVersion === 'bayn.execution-market-data-binding.v2' ||
-            decisionMarketData.schemaVersion === 'bayn.execution-market-data-binding.v3'
+            decisionMarketData.schemaVersion === 'bayn.execution-market-data-binding.v3' ||
+            decisionMarketData.schemaVersion === 'bayn.execution-market-data-binding.v4'
           ? sql`
               ${document.bindings.snapshotId} = ${decisionMarketData.snapshotId}
               AND ${document.bindings.snapshotContentHash} = ${decisionMarketData.contentHash}
               AND ${document.bindings.snapshotFinalizedAt} = ${decisionMarketData.observedAt}
               AND EXISTS (
                 SELECT 1
-                FROM ${sql(decisionMarketData.schemaVersion === 'bayn.execution-market-data-binding.v3' ? 'streaming_snapshot_references' : 'intraday_snapshot_references')} AS snapshot
+                FROM ${sql(decisionMarketData.schemaVersion === 'bayn.execution-market-data-binding.v4' ? 'simulated_snapshot_references' : decisionMarketData.schemaVersion === 'bayn.execution-market-data-binding.v3' ? 'streaming_snapshot_references' : 'intraday_snapshot_references')} AS snapshot
                 WHERE snapshot.snapshot_id = ${decisionMarketData.snapshotId}
                   AND snapshot.content_hash = ${decisionMarketData.contentHash}
                   AND snapshot.observed_at = ${decisionMarketData.observedAt}::timestamptz
@@ -374,8 +375,9 @@ export const makeCycleQueries = (
             `
     const pricing = document.bindings.executionMarketData
     const pricingEvidence =
-      pricing?.schemaVersion === 'bayn.execution-market-data-binding.v3'
-        ? sql`EXISTS (SELECT 1 FROM streaming_snapshot_references AS snapshot
+      pricing?.schemaVersion === 'bayn.execution-market-data-binding.v3' ||
+      pricing?.schemaVersion === 'bayn.execution-market-data-binding.v4'
+        ? sql`EXISTS (SELECT 1 FROM ${sql(pricing.schemaVersion === 'bayn.execution-market-data-binding.v4' ? 'simulated_snapshot_references' : 'streaming_snapshot_references')} AS snapshot
           WHERE snapshot.snapshot_id = ${pricing.snapshotId}
             AND snapshot.content_hash = ${pricing.contentHash}
             AND snapshot.observed_at = ${pricing.observedAt}::timestamptz)`
