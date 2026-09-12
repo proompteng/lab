@@ -116,4 +116,35 @@ class CanonicalSignalsTest {
       }
     }
   }
+
+  @Test fun `correction after restore preserves historical quote inputs`() {
+    fun quote(index: Int): Envelope<QuotePayload> {
+      val time = start.plusSeconds((index + 1) * 60L).minusMillis(1)
+      return Envelope(
+        ingestTs = time,
+        eventTs = time,
+        feed = "iex",
+        channel = "quotes",
+        symbol = "AAPL",
+        seq = index.toLong(),
+        payload = QuotePayload(100.0 + index, 10.0, 100.01 + index, 11.0, time),
+      )
+    }
+    val (snapshot, original) =
+      harness().use { h ->
+        h.open()
+        for (index in 0..39) {
+          h.processElement2(StreamRecord(quote(index)))
+          h.processElement1(StreamRecord(bar(index)))
+        }
+        h.snapshot(1, start.plusSeconds(2400).toEpochMilli()) to h.extractOutputValues().map { assertNotNull(it.payload.imbalance) }
+      }
+    harness().use { h ->
+      h.initializeState(snapshot)
+      h.open()
+      h.processElement2(StreamRecord(quote(50)))
+      h.processElement1(StreamRecord(bar(0, 80.0).copy(ingestTs = start.plusSeconds(4000))))
+      assertEquals(original, h.extractOutputValues().map { it.payload.imbalance })
+    }
+  }
 }

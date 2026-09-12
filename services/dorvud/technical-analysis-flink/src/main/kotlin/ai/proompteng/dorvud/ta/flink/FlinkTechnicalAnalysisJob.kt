@@ -1572,14 +1572,15 @@ internal class TaSignalsFunction(
         return
       }
     }
-    canonicalBars.put(key, CanonicalSignalBar(value))
+    val canonical = CanonicalSignalBar(value, if (existing == null) quoteState.value() else existing.quote)
+    canonicalBars.put(key, canonical)
     if (existing?.envelope?.payload == value.payload) return
     val previous = accumulator.value() ?: IndicatorAccumulator()
     val latest = previous.recent.lastOrNull()
     if (latest == null || value.payload.t.isAfter(latest.t)) {
       val next = advanceIndicators(previous, value.payload, barDuration, retainedBars)
       accumulator.update(next)
-      out.collect(computeSignals(value, next, ctx.timerService().currentProcessingTime()))
+      out.collect(computeSignals(canonical, next, ctx.timerService().currentProcessingTime()))
     } else {
       var next = IndicatorAccumulator()
       for (bar in canonicalBars.values().toList().sortedBy { it.envelope.payload.t }) {
@@ -1587,7 +1588,7 @@ internal class TaSignalsFunction(
         if (!bar.envelope.payload.t
             .isBefore(value.payload.t)
         ) {
-          out.collect(computeSignals(bar.envelope, next, ctx.timerService().currentProcessingTime()))
+          out.collect(computeSignals(bar, next, ctx.timerService().currentProcessingTime()))
         }
       }
       accumulator.update(next)
@@ -1606,10 +1607,11 @@ internal class TaSignalsFunction(
   }
 
   private fun computeSignals(
-    envelope: Envelope<MicroBarPayload>,
+    canonical: CanonicalSignalBar,
     state: IndicatorAccumulator,
     computedAtMs: Long,
   ): Envelope<TaSignalsPayload> {
+    val envelope = canonical.envelope
     val bars = state.recent
     val macdVal = state.ema12 - state.ema26
     val rsiVal = indicatorRsi(state)
@@ -1619,7 +1621,7 @@ internal class TaSignalsFunction(
     val realizedVol = indicatorVolatility(state, realizedVolWindowBars(config.realizedVolWindow, barDuration), barDuration)
 
     val barEndTime = signalBarEndTime(envelope.payload.t, barDuration, timestampAnchor)
-    val quote = freshQuotePayloadForBar(quoteState.value(), barEndTime, config.quoteStaleAfterMs)
+    val quote = freshQuotePayloadForBar(canonical.quote, barEndTime, config.quoteStaleAfterMs)
     val imbalance =
       quote?.let {
         val spread = it.ap - it.bp
@@ -1674,6 +1676,7 @@ internal class TaSignalsFunction(
 
 internal data class CanonicalSignalBar(
   val envelope: Envelope<MicroBarPayload>,
+  val quote: TimedQuoteState?,
 ) : Serializable
 
 internal enum class SignalBarTimestampAnchor {
