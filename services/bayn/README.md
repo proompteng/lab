@@ -88,6 +88,11 @@ no unresolved mutations or open orders before creating a clear OBSERVE successor
 Mutation preparation uses its verified durable decision and session binding plus fresh broker reconciliation. It does
 not reread the market calendar after the decision is bound, so an unrelated calendar outage cannot prevent accepted
 order recovery or the scheduled close. New decision construction still reads and verifies the broker calendar.
+Each new entry risk decision retains its pricing quote event time and the snapshot's maximum quote age. Approval
+expires at that event-time deadline or an earlier broker, intent, or session deadline. The final submit transaction
+rechecks the persisted expiry after writer/grant locks and broker reads, so retries or worker restarts cannot extend
+it. An expired entry follows the existing durable no-send path. Close-only recovery keeps its separate close lease.
+
 Broker-session startup verifies account identity and permissions, account configuration, positions, orders, fills,
 and order lookup access. It does not require the calendar endpoint, so an outage cannot prevent a replacement worker
 from starting recovery of a bound decision.
@@ -243,6 +248,9 @@ submission and venue arrival advance in order. `orderLatencyMs` covers submissio
 milliseconds. Stage durations admit 0–300,000 milliseconds. A late submission creates no order; a close arriving beyond
 the hard-flat deadline remains incomplete. The next attempt waits the declared poll interval after the modeled work completes, matching the controller's
 completion-based scheduling. Snapshot `availableBy` fields state consumption bounds, not invented reader receipts.
+Entry submission also respects the original planning quote's event-time expiry, using the same deadline arithmetic
+as persisted runtime risk approval. A fresh arrival quote cannot revive an expired entry; close-only timing retains
+its separate close deadline.
 
 The range is bounded to 31 calendar days. Preserve the complete calendar response; archive date presence cannot
 establish that a session was open or that its data is complete. Each scheduled observation reconstructs archive

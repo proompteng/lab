@@ -4884,3 +4884,13 @@ describe('OBSERVE runtime composition', () => {
     }
   })
 })
+
+test('persists the pricing quote event and its shorter approval deadline for every entry target', async () => {
+  const fixture = await executionLifecycleFixture()
+  expect(fixture.document.deltaRisk.length).toBeGreaterThan(0)
+  for (const risk of fixture.document.deltaRisk) {
+    expect(risk.facts?.state.entryQuote).toEqual({ eventAt: '2020-05-01T12:44:59.000Z', maximumAgeMs: 10_000 })
+    expect(risk.evaluation.decision.expiresAt).toBe('2020-05-01T12:45:09.000Z')
+    expect(risk.evaluation.input.freshUntil).toBe(risk.evaluation.decision.expiresAt)
+  }
+})
