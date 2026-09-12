@@ -67,3 +67,6 @@ spec:
     - stageSelector:
         name: forgejo
       autoPromotionEnabled: true
+    - stageSelector:
+        name: bayn
+      autoPromotionEnabled: true

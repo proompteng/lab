@@ -665,6 +665,7 @@ spec:
           - patches
           - package.json
           - .github/workflows/nix-oci-build-common.yml
+          - .github/workflows/torghut-ta-build-push.yaml
           - packages/scripts/src/shared/oci.ts
           - .github/workflows/torghut-post-deploy-verify.yml
           - nix/oci-push.sh
@@ -1000,3 +1001,65 @@ spec:
       - ^kargo-sha-[0-9a-f]{40}$
       platform: linux/amd64
       cacheByTag: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Warehouse
+metadata:
+  name: bayn
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  interval: 1m0s
+  freightCreationPolicy: Automatic
+  freightCreationCriteria:
+    expression: imageFrom('registry.ide-newton.ts.net/lab/bayn').Tag == 'kargo-sha-' +
+      commitFrom('git@github.com:proompteng/lab.git').ID
+  subscriptions:
+    - git:
+        repoURL: git@github.com:proompteng/lab.git
+        branch: main
+        commitSelectionStrategy: NewestFromBranch
+        discoveryLimit: 20
+        strictSemvers: true
+        includePaths:
+          - services/bayn
+          - packages/scripts/src/bayn
+          - nix/images/bayn.nix
+          - nix/images/bayn-runtime-root.nix
+          - nix/images/bun-workspace-service.nix
+          - nix/images/bun-workspace-deps-source.nix
+          - nix/images/bun-workspace-deps-source.test.sh
+          - nix/packages.nix
+          - nix/cache-push.sh
+          - nix/ci-nix-oci-summary.sh
+          - nix/ci-run-timed.sh
+          - nix/oci-inspect-archive.sh
+          - nix/oci-push.sh
+          - nix/verify-bayn-image-command.sh
+          - nix/verify-bayn-image-command.test.sh
+          - packages/scripts/src/shared/oci.ts
+          - flake.nix
+          - flake.lock
+          - bun.lock
+          - glob:**/package.json
+          - .npmrc
+          - bunfig.toml
+          - patches
+          - tsconfig.base.json
+          - .github/actions/setup-nix-toolchain
+          - glob:.github/workflows/bayn-*.yml
+          - .github/workflows/common-monorepo.yml
+          - .github/workflows/nix-oci-build-common.yml
+          - argocd/applications/bayn
+          - argocd/applications/kargo
+          - argocd/applicationsets/product.yaml
+    - image:
+        repoURL: registry.ide-newton.ts.net/lab/bayn
+        imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
+        allowTagsRegexes:
+          - ^kargo-sha-[0-9a-f]{40}$
+        platform: linux/amd64
+        cacheByTag: true

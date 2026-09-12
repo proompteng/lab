@@ -148,13 +148,18 @@ export const compareEquity = (snapshot: ReconciliationSnapshot): ReconciliationD
     }),
     Result.flatMap(({ expected, observed }) =>
       pipe(
-        compareValue(
-          snapshot.accountId,
-          DiscrepancyKind.Valuation,
-          snapshot.accountId,
-          expected.toString(),
-          observed.toString(),
-        ),
+        // Separate account and position reads carry independently moving market marks.
+        snapshot.positions.some(
+          (position) => position.quantityMicros !== '0' && position.observedAt !== snapshot.account.observedAt,
+        )
+          ? Result.succeed<readonly DiscrepancyInput[]>([])
+          : compareValue(
+              snapshot.accountId,
+              DiscrepancyKind.Valuation,
+              snapshot.accountId,
+              expected.toString(),
+              observed.toString(),
+            ),
         Result.map((discrepancies) => ({ difference: observed - expected, discrepancies })),
       ),
     ),

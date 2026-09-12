@@ -82,9 +82,9 @@ spec:
             - name: BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION
               value: 8f4602324111bbb3dd5d8695aabf199f4a5328fa
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "1d3b93a585e9b37836507880323f57ba7f7db385241dccf09234c43125ee5285"
+              value: "5981590560e7760e5525192f45be248b3b60b65b28e8c9c3b7b95d9f8e4d0e51"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "104bb22429eb54e025a092a8434be2b8390059c24515512de8cbb99c66cbb797"
+              value: "ca956c6c35352d99705d94230c4fa47e3c7edbccd767d1572d5dbe531356436a"
             - name: BAYN_CAPITAL_ACTIVATION_REQUEST
               valueFrom:
                 secretKeyRef:
@@ -93,7 +93,7 @@ spec:
             - name: BAYN_CAPITAL_ACTIVATION_KIND
               value: ResearchCapitalActivationRequest
             - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: "{\"schemaVersion\":\"bayn.research-capital-build-lineage.v1\",\"requestHash\":\"423c6c805917f05d5dcf80da7e439cf8c6a373762298148b15306ed8acfe2625\",\"authoredActivation\":{\"sourceRevision\":\"ee60493eb5a9b5f8572e868b6ff31c17675501a3\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:47143f3136a8ef2bd00910ff970c75db98c2e1229f2a7c028019bd82833c5ba7\"},\"activation\":{\"sourceRevision\":\"ee60493eb5a9b5f8572e868b6ff31c17675501a3\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:47143f3136a8ef2bd00910ff970c75db98c2e1229f2a7c028019bd82833c5ba7\"}}"
+              value: "{\"schemaVersion\":\"bayn.research-capital-build-lineage.v1\",\"requestHash\":\"b24ea18ea2228f298dbc3e23e8a608afb37ace19cf3b3f6241e3a1f1c591de83\",\"authoredActivation\":{\"sourceRevision\":\"03798257c48facb7797341fc5ff07fc641fd4929\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:9bf791395a29ee8bf77324e30abe59c1d6ef83d5cc7b116c4737afecbb28dc43\"},\"activation\":{\"sourceRevision\":\"03798257c48facb7797341fc5ff07fc641fd4929\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:9bf791395a29ee8bf77324e30abe59c1d6ef83d5cc7b116c4737afecbb28dc43\"}}"
             - name: BAYN_BROKER_ACCESS
               value: read-only
             - name: BAYN_CAPITAL_AUTHORITY
@@ -185,6 +185,21 @@ spec:
               value: "9080"
             - name: NODE_ENV
               value: production
+            - name: BAYN_MARKET_DATA_MODE
+              value: shadow
+            - name: BAYN_KAFKA_BROKERS
+              value: kafka-kafka-bootstrap.kafka.svc.cluster.local:9092
+            - name: BAYN_KAFKA_USERNAME
+              value: bayn-market-data
+            - name: BAYN_KAFKA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-market-data
+                  key: password
+            - name: BAYN_KAFKA_TIMESTAMP_POLICY
+              value: dorvud.producer-clock.v1
+            - name: BAYN_KAFKA_BOOTSTRAP_TIMEOUT_MS
+              value: "120000"
           startupProbe:
             tcpSocket:
               port: restate

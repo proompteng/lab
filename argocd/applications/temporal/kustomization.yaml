@@ -3,6 +3,8 @@ kind: Kustomization
 namespace: temporal
 
 resources:
+  - upgrade/cassandra-509-rollout.yaml
+  - upgrade/cassandra-509-backup.yaml
   - upgrade/cassandra-4112-rollout.yaml
   - upgrade/cassandra-4112-v3-backup.yaml
   - upgrade/cassandra-4112-v2-backup.yaml
@@ -46,7 +48,7 @@ patches:
     patch: |-
       - op: replace
         path: /spec/template/spec/containers/0/image
-        value: mirror.gcr.io/cassandra:4.1.12@sha256:3edbfb2be84f00f3467e206d7d785ddd4dbcf7042e6a126180e1d9faa5514474
+        value: mirror.gcr.io/cassandra:5.0.9@sha256:d35e159439b302146f964919904f84fd3c2cebf347272b8cb8c4368c1cf200e5
       - op: add
         path: /spec/template/spec/containers/0/env/-
         value:
@@ -234,8 +236,8 @@ images:
     digest: sha256:dbc5fcd6ee8f0f4d808bf765af9a87dea9d8a283abfdcfbd2fc148496ba66107
   - name: mirror.gcr.io/temporalio/ui
     newName: mirror.gcr.io/temporalio/ui
-    newTag: 2.53.3
-    digest: sha256:eef301146e60fad34b47adaecfae4149016e34b2d44ba94fca5fd8e5441f182a
+    newTag: 2.54.0
+    digest: sha256:53d6a2b0b32015a78b8748235a1743e4d5b1bf3a7d6c01dc916aa01023745932
 
 configMapGenerator:
   - name: temporal-cassandra-upgrade-scripts
@@ -283,6 +285,18 @@ configMapGenerator:
       annotations:
         argocd.argoproj.io/sync-wave: "-30"
   - name: temporal-cassandra-upgrade-scripts-4112-v3
+    files:
+      - upgrade/cassandra-gate.sh
+      - upgrade/cassandra-rehearsal.sh
+      - upgrade/restore-native-snapshot.py
+      - upgrade/canonicalize-cql.py
+      - upgrade/verify-rehearsal-network.py
+      - upgrade/verify-cassandra-sstables.sh
+      - upgrade/verify-cassandra-ring.py
+    options:
+      annotations:
+        argocd.argoproj.io/sync-wave: "-30"
+  - name: temporal-cassandra-upgrade-scripts-509-v1
     files:
       - upgrade/cassandra-gate.sh
       - upgrade/cassandra-rehearsal.sh

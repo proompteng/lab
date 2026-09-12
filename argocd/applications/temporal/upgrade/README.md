@@ -327,3 +327,45 @@ workflow history/query before preparing the separate 5.0.9 stage. Do not place
 in a separate compatible cluster and a reviewed cutover, accounting for writes
 after the snapshot checkpoint. A failed rollout gate must be diagnosed before
 any subsequent node replacement; never force-delete storage or Pods.
+
+
+## Cassandra 5.0.9 rehearsal
+
+The production 4.1.12 gate completed with all three original hosts/PVCs, 256
+tokens per node, serial native SSTable conversion and a successful Temporal
+workflow replay. Generation `509-v1` takes fresh native snapshots followed by
+CSI snapshots of that accepted ring. It creates separate restore, data and
+retained proof PVCs and reuses the qualified isolation and restore scripts.
+The first native engine is 4.1.12; only its isolated clone advances to immutable
+5.0.9. Both engines must preserve host/token identity and Temporal namespace and
+schema hashes, verify all Temporal SSTables and shut down cleanly. The serving
+StatefulSet remains on 4.1.12 throughout this preparation. A separate reviewed
+activation follows only after the native 5.0.9 rehearsal passes.
+
+
+## Cassandra 5.0.9 activation
+
+Generation `509-v1` completed its isolated native 4.1.12 restore and 5.0.9
+in-place rehearsal on 2026-09-10. Both engines verified the original host and
+all 256 token values, matching Temporal namespace and schema record hashes,
+extended SSTable verification, and clean shutdown. Production CQL probes were
+denied after positive controls from the backup verifier. Receipts remain on
+`temporal-cassandra-509-v1-proof`.
+
+The activation preserves the existing `OnDelete` StatefulSet, all three original
+PVCs and host IDs, RF3, seeds, listener settings and resource configuration. It
+pins Cassandra 5.0.9 and retains `CASSANDRA_NUM_TOKENS=256`.
+The wave-1 rollout Job reads the retained receipts without write access and
+requires their generation, target version and matching ring/record hashes.
+It then uses the maintained gate to drain and replace nodes 2, 1 and 0 one at
+a time, with graceful UID/resourceVersion-conditional deletion and all three
+original nodes healthy before advancing. Final schema agreement and serial
+`nodetool upgradesstables --jobs 1` complete this stage.
+
+Require live original ring/PVC/token identities and successful Temporal workflow
+history replay, checkpoint query, completion and Elasticsearch visibility before
+accepting the final Cassandra stage. Do not place 4.1 over upgraded 5.0 data
+files. Recovery uses retained native/CSI snapshots in a separate compatible
+cluster and a reviewed cutover, accounting for writes after the snapshot
+checkpoint. Diagnose a failed gate before subsequent node replacement; never
+force-delete storage or Pods.

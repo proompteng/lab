@@ -133,6 +133,44 @@ const productImageCommonInputs = [
 ] as const
 
 const expected = {
+  bayn: {
+    creationCriteria: 'single',
+    images: [imageRepo('bayn')],
+    apps: ['bayn'],
+    includePaths: [
+      'services/bayn',
+      'packages/scripts/src/bayn',
+      'nix/images/bayn.nix',
+      'nix/images/bayn-runtime-root.nix',
+      'nix/images/bun-workspace-service.nix',
+      'nix/images/bun-workspace-deps-source.nix',
+      'nix/images/bun-workspace-deps-source.test.sh',
+      'nix/packages.nix',
+      'nix/cache-push.sh',
+      'nix/ci-nix-oci-summary.sh',
+      'nix/ci-run-timed.sh',
+      'nix/oci-inspect-archive.sh',
+      'nix/oci-push.sh',
+      'nix/verify-bayn-image-command.sh',
+      'nix/verify-bayn-image-command.test.sh',
+      'packages/scripts/src/shared/oci.ts',
+      'flake.nix',
+      'flake.lock',
+      'bun.lock',
+      'glob:**/package.json',
+      '.npmrc',
+      'bunfig.toml',
+      'patches',
+      'tsconfig.base.json',
+      '.github/actions/setup-nix-toolchain',
+      'glob:.github/workflows/bayn-*.yml',
+      '.github/workflows/common-monorepo.yml',
+      '.github/workflows/nix-oci-build-common.yml',
+      'argocd/applications/bayn',
+      'argocd/applications/kargo',
+      'argocd/applicationsets/product.yaml',
+    ],
+  },
   proompteng: {
     creationCriteria: 'single',
     images: [imageRepo('proompteng')],
@@ -415,6 +453,7 @@ const expected = {
       'patches',
       'package.json',
       '.github/workflows/nix-oci-build-common.yml',
+      '.github/workflows/torghut-ta-build-push.yaml',
       'packages/scripts/src/shared/oci.ts',
       '.github/workflows/torghut-post-deploy-verify.yml',
       'nix/oci-push.sh',
@@ -626,9 +665,6 @@ describe('Kargo direct-push GitOps contract', () => {
         )
       }
     }
-
-    expect(applications.get('bayn')?.targetRevision).toBe('codex/bayn-deploy')
-    expect(applications.get('bayn')?.annotations?.['kargo.akuity.io/authorized-stage']).toBeUndefined()
   })
 
   it('defines one automatic Warehouse for every promoted application group', () => {
@@ -918,7 +954,6 @@ describe('Kargo direct-push GitOps contract', () => {
     for (const manifest of [...warehouses, ...stages, project, projectConfig]) {
       expect(manifest.kind).not.toBe('Namespace')
     }
-    expect(expectedStageNames).not.toContain('bayn')
     expect(expectedStageNames).not.toContain('sag')
     expect(expectedStageNames).not.toContain('torghut-notebook')
     expect(expectedStageNames).not.toContain('torghut-ta')
