@@ -1,5 +1,7 @@
 import { Result } from 'effect'
 import { errorCodes, findErrorBy, protocolErrorsCodesById, TimeoutError } from '@platformatic/kafka'
+import type { TechnicalMarketFeature } from '../features/technical-contract'
+import type { RollingMarketFeature } from '../features/contract'
 import type { KafkaPartitionPosition } from './bootstrap'
 import { featureMatchesBars } from '../features/contract'
 import { observedBarsAt, topicPartitionKey, type ObservedFeature, type StreamingProjection } from './projection'
@@ -37,7 +39,7 @@ export const safeKafkaFailureCodes = (cause: unknown): readonly string[] => {
 
 export const featureAvailabilityMeasurement = (
   epoch: string,
-  feature: ObservedFeature,
+  feature: ObservedFeature<RollingMarketFeature | TechnicalMarketFeature>,
   bootstrapEndOffset?: string,
 ) => ({
   schemaVersion: 'bayn.feature-availability.v1',

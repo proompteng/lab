@@ -33,6 +33,7 @@ import type { KafkaMarketRecord, StreamingUniverse } from './raw-events'
 
 export interface KafkaMarketConfig {
   readonly shadowOnly?: boolean
+  readonly technicalFeaturesTopic?: string | undefined
   readonly brokers: readonly string[]
   readonly username: string
   readonly password: Redacted.Redacted<string>
@@ -211,7 +212,7 @@ export const makeKafkaMarketProjection = (
     const clock = yield* Clock.Clock
     const owner = yield* Effect.scope
     let restartAfterMs: number | undefined
-    let projection = emptyStreamingProjection('starting')
+    let projection = emptyStreamingProjection('starting', universe.topics.technicalFeatures)
     let bootstrap: KafkaBootstrapEvidence | undefined
     let positions: readonly KafkaPartitionPosition[] = []
     let ready = false
@@ -219,7 +220,7 @@ export const makeKafkaMarketProjection = (
     const cycle = Effect.scoped(
       Effect.gen(function* () {
         const epoch = yield* Effect.sync(randomUUID)
-        projection = emptyStreamingProjection(epoch)
+        projection = emptyStreamingProjection(epoch, universe.topics.technicalFeatures)
         ready = false
         bootstrap = undefined
         positions = []
@@ -246,7 +247,9 @@ export const makeKafkaMarketProjection = (
         const observedAtMs = yield* Clock.currentTimeMillis
         const lowerTimestampMs =
           diagnosticStartMs ?? Math.floor((observedAtMs - 2000) / 60_000) * 60_000 - 30 * 60_000 - 5000
-        const topics = Object.values(universe.topics)
+        const topics = Object.values(universe.topics).filter((topic) => topic !== undefined)
+        if (new Set(topics).size !== topics.length)
+          return yield* failure('bootstrap', 'Market input topics must be distinct')
         const starts = yield* operation('bootstrap', () => transport.offsets(topics, -2n))
         const ends = yield* operation('bootstrap', () => transport.offsets(topics, -1n))
         const seek =
@@ -295,6 +298,18 @@ export const makeKafkaMarketProjection = (
               const previousSequence = projection.sequence
               projection = incorporateMarketRecord(projection, record, universe, clock.currentTimeMillisUnsafe())
               terminals.set(topicPartitionKey(record.topic, record.partition), record)
+              if (projection.technicalFeatureArrival !== null && projection.sequence !== previousSequence)
+                yield* Effect.logInfo('Kafka technical feature incorporated', {
+                  ...featureAvailabilityMeasurement(
+                    epoch,
+                    projection.technicalFeatureArrival,
+                    partitions.find(
+                      (partition) => partition.topic === record.topic && partition.partition === record.partition,
+                    )?.endOffset,
+                  ),
+                  definitionId: projection.technicalFeatureArrival.value.material.definitionId,
+                  consumerPurpose: diagnosticStartMs === undefined ? 'execution-worker' : 'retained-input-diagnostic',
+                })
               if (record.topic === universe.topics.features && projection.sequence !== previousSequence) {
                 const incorporatedFeature = projection.featureArrival
                 if (incorporatedFeature !== null)

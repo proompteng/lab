@@ -19,6 +19,7 @@ import {
 } from '../intraday/verification'
 import { featureMatchesBars, marketFeatureClockSkewAllowanceMs } from '../features/contract'
 import { observedBarsAt, type StreamingProjection, type ObservedMarketValue } from './projection'
+import { technicalFeatureMatchesBars, type TechnicalMarketFeature } from '../features/technical-contract'
 import type { StreamingFeatureReceipt } from './snapshot'
 
 const failure = (reason: IntradaySnapshotFailure['reason'], message: string, cause?: unknown) =>
@@ -46,6 +47,7 @@ export const selectStreamingInputs = (state: StreamingProjection, query: Intrada
     const candidates = new Set(request.candidateSymbols)
     const entries: ObservedMarketValue<IntradayBar | IntradayQuote | IntradayTrade>[] = []
     const featureReceipts: StreamingFeatureReceipt[] = []
+    const technicalReceipts: StreamingFeatureReceipt<TechnicalMarketFeature>[] = []
     const featureExclusions: IntradayCandidateExclusion[] = []
     for (const [key, history] of state.rejections) {
       const rejection = history.find(
@@ -64,6 +66,35 @@ export const selectStreamingInputs = (state: StreamingProjection, query: Intrada
       if (quote !== undefined) entries.push(quote)
       if (request.purpose === undefined && trade !== undefined) entries.push(trade)
       if (request.purpose !== undefined) continue
+      if (state.technicalTopic !== undefined) {
+        for (const candidate of state.technicalFeatures.get(symbol) ?? []) {
+          if (
+            candidate.topic !== state.technicalTopic ||
+            candidate.availableAtMs > observedAtMs ||
+            candidate.availableAtMs <= state.technicalRejectionsDiscardedThroughMs ||
+            state.technicalRejections.some(
+              (rejection) => rejection.availableAtMs <= observedAtMs && rejection.sequence >= candidate.sequence,
+            ) ||
+            candidate.value.material.sessionDate !== request.sessionDate ||
+            candidate.value.material.windowEndMs !== Date.parse(request.rangeEndAt)
+          )
+            continue
+          const matched = technicalFeatureMatchesBars(
+            candidate.value,
+            bars.map((entry) => entry.value),
+          )
+          if (Result.isFailure(matched) || !matched.success) continue
+          technicalReceipts.push({
+            topic: candidate.topic,
+            partition: candidate.partition,
+            offset: candidate.offset,
+            availableAtMs: candidate.availableAtMs,
+            sequence: candidate.sequence,
+            value: candidate.value,
+          })
+          break
+        }
+      }
       let selected: StreamingFeatureReceipt | undefined
       for (const candidate of state.features.get(symbol) ?? []) {
         if (
@@ -129,5 +160,28 @@ export const selectStreamingInputs = (state: StreamingProjection, query: Intrada
       return yield* Result.fail(
         failure('not-ready', 'No candidate has complete raw data and a matching rolling feature'),
       )
-    return { request, symbols, entries, featureReceipts, bars, quotes, trades, availability, exclusions, excluded }
+    const technicalFeatures = technicalReceipts.filter((feature) => !excluded.has(feature.value.material.symbol))
+    const technical =
+      state.technicalTopic === undefined
+        ? undefined
+        : {
+            topic: state.technicalTopic,
+            features: technicalFeatures,
+            unavailableSymbols: symbols.filter(
+              (symbol) => !technicalFeatures.some((feature) => feature.value.material.symbol === symbol),
+            ),
+          }
+    return {
+      request,
+      symbols,
+      entries,
+      featureReceipts,
+      technical,
+      bars,
+      quotes,
+      trades,
+      availability,
+      exclusions,
+      excluded,
+    }
   })

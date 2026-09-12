@@ -196,6 +196,8 @@ spec:
                 secretKeyRef:
                   name: bayn-market-data
                   key: password
+            - name: BAYN_KAFKA_TECHNICAL_FEATURES_TOPIC
+              value: torghut.technical-features.v1
             - name: BAYN_KAFKA_TIMESTAMP_POLICY
               value: dorvud.producer-clock.v1
             - name: BAYN_KAFKA_BOOTSTRAP_TIMEOUT_MS

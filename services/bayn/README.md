@@ -133,6 +133,11 @@ Flat accounts and marks observed at the same instant also require exact equity a
 
 ## Market data
 
+Dorvud's optional technical-indicator stream is joined as immutable decision evidence when
+`BAYN_KAFKA_TECHNICAL_FEATURES_TOPIC` is configured. The active momentum strategy remains unchanged. See the
+[streaming contract](src/market-data/streaming/README.md#technical-indicator-evidence) for timing, readiness,
+source matching, replay and delivery requirements.
+
 Alpaca WebSocket events enter the existing raw Kafka topics. Each execution worker owns a complete
 `@platformatic/kafka` projection for the 16-symbol core universe. Dorvud/Flink independently publishes rolling
 features to `torghut.market-features.v1`; the archive retains raw and feature messages in ClickHouse. The six strategy

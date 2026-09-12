@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto'
 import { Result } from 'effect'
 import type { RawMarketEvent } from './raw-events'
+import type { TechnicalMarketFeature } from '../features/technical-contract'
+import { incorporateTechnicalRecord, type TechnicalInputRejection } from './technical-projection'
 
 import { compareIntradayInstants, intradayInstantNanos } from '../intraday/time'
 import type { IntradayBar, IntradayQuote, IntradayTrade } from '../intraday/model'
@@ -19,7 +21,7 @@ export interface ObservedMarketValue<A> {
   readonly sequence: number
   readonly recordHash: string
 }
-export interface ObservedFeature extends ObservedMarketValue<RollingMarketFeature> {
+export interface ObservedFeature<A = RollingMarketFeature> extends ObservedMarketValue<A> {
   readonly topic: string
   readonly partition: number
   readonly offset: string
@@ -38,13 +40,18 @@ export interface StreamingProjection {
   readonly features: ReadonlyMap<string, readonly ObservedFeature[]>
   /** The accepted feature for this disposition, including one too old for retained join history. */
   readonly featureArrival: ObservedFeature | null
+  readonly technicalTopic?: string
+  readonly technicalFeatures: ReadonlyMap<string, readonly ObservedFeature<TechnicalMarketFeature>[]>
+  readonly technicalFeatureArrival: ObservedFeature<TechnicalMarketFeature> | null
+  readonly technicalRejections: readonly TechnicalInputRejection[]
+  readonly technicalRejectionsDiscardedThroughMs: number
   readonly discardedRejectionsThroughMs: number
   readonly rejections: ReadonlyMap<
     string,
     readonly { readonly availableAtMs: number; readonly offset: string; readonly reason: string }[]
   >
 }
-export const emptyStreamingProjection = (epoch: string): StreamingProjection => ({
+export const emptyStreamingProjection = (epoch: string, technicalTopic?: string): StreamingProjection => ({
   availabilityMode: 'observed',
   epoch,
   sequence: 0,
@@ -57,6 +64,11 @@ export const emptyStreamingProjection = (epoch: string): StreamingProjection => 
   minimumObservationMs: 0,
   features: new Map(),
   featureArrival: null,
+  ...(technicalTopic === undefined ? {} : { technicalTopic }),
+  technicalFeatures: new Map(),
+  technicalFeatureArrival: null,
+  technicalRejections: [],
+  technicalRejectionsDiscardedThroughMs: -1,
   discardedRejectionsThroughMs: -1,
   rejections: new Map(),
 })
@@ -96,6 +108,8 @@ const incorporateDecodedRecord = (
   decodedEvent?: RawMarketEvent,
   featureRecordedAtMs = availableAtMs,
 ): StreamingProjection => {
+  if (universe.topics.technicalFeatures !== undefined && record.topic === universe.topics.technicalFeatures)
+    return incorporateTechnicalRecord(previous, record, universe, availableAtMs, featureRecordedAtMs)
   if (
     !Number.isSafeInteger(record.partition) ||
     record.partition < 0 ||
@@ -137,6 +151,7 @@ const incorporateDecodedRecord = (
     ...previous,
     sequence,
     featureArrival: null,
+    technicalFeatureArrival: null,
     offsets: new Map(previous.offsets).set(key, record.offset),
   }
   if (record.topic === universe.topics.features) {

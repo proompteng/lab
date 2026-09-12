@@ -102,7 +102,11 @@ const main = Effect.scoped(
         universeId: protocol.universeId,
         universeSymbolHash: protocol.universeSymbolHash,
         symbols: protocol.universe,
-        topics: { ...protocol.sourceTopics, features: intradayMomentumFeatureTopic },
+        topics: {
+          ...protocol.sourceTopics,
+          features: intradayMomentumFeatureTopic,
+          ...(config.technicalFeaturesTopic === undefined ? {} : { technicalFeatures: config.technicalFeaturesTopic }),
+        },
       },
       undefined,
       args.sinceMs,
