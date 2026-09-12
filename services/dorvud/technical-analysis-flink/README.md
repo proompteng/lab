@@ -103,8 +103,10 @@ retain the original replay separately. This command regenerates the existing rol
 ## Versioned technical features
 
 Set `TA_TECHNICAL_FEATURES_TOPIC=torghut.technical-features.v1` alongside the rolling feature topic to enable
-`dorvud.technical-indicators-1m.v1`. This branches the same parsed raw bar stream inside the existing TA job. It does
-not create another Flink job. The archive enables the matching topic with `ARCHIVE_TECHNICAL_FEATURES_TOPIC` and
+`dorvud.technical-indicators-1m.v1`. This uses a separate retained-bar cursor inside the existing TA job and the same raw decoder. It does
+not create another Flink job. A new technical source starts at the retained beginning so its full-session seed does
+not depend on the older rolling source's saved head offset. Subsequent checkpoints restore both source and keyed
+state normally. Bootstrap output retains actual computation time and never claims historical delivery. The archive enables the matching topic with `ARCHIVE_TECHNICAL_FEATURES_TOPIC` and
 retains its exact payload and transport coordinates in `signal.intraday_features_v1`; readers select the source topic
 and definition explicitly. These settings are optional and do not change the rolling-price contract or strategy.
 
@@ -139,6 +141,13 @@ value domains, and readiness against input coverage. Dedicated operator/state ID
 separate. The executable graph preserves both legacy TA and rolling-feature restoration IDs. A shared producer
 fixture at `services/bayn/src/market-data/features/fixtures/technical-indicators-v1.json` provides the Kotlin wire format
 for consumer contract validation. Publishing these data points alone does not establish strategy use or profitability.
+
+GitOps enables both topic settings and declares the technical KafkaTopic with three partitions, three replicas, and
+35-day delete retention. The existing authenticated Kafka identities and archive INSERT grant cover this path; no
+credential or authorization change is introduced. Topic reconciliation precedes the image-driven Kargo rollout in
+the delivery proof. Verify both Flink jobs, new checkpoints, technical-topic publication, and archival rows before
+enabling the Bayn optional consumer. A recovery retains topic and checkpoint data and reverts the optional settings
+through reviewed GitOps. Image delivery alone is not source-to-consumer acceptance.
 
 ## Validation
 

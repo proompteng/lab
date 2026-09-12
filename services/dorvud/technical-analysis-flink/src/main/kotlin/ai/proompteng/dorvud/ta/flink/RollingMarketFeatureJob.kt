@@ -12,6 +12,7 @@ import org.apache.flink.connector.kafka.sink.KafkaSink
 import org.apache.flink.connector.kafka.source.KafkaSource
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer
 import org.apache.flink.metrics.Counter
+import org.apache.flink.streaming.api.datastream.DataStream
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction
 import org.apache.flink.streaming.api.graph.StreamGraph
@@ -71,18 +72,6 @@ internal fun configureRollingMarketFeatures(
   ta: FlinkTaConfig,
   config: RollingMarketFeatureConfig,
 ): StreamGraph? {
-  val source =
-    KafkaSource
-      .builder<ArchiveKafkaRecord>()
-      .setBootstrapServers(ta.bootstrapServers)
-      .setTopics(config.barsTopic)
-      .setGroupId("${ta.groupId}-market-features-v1")
-      .setClientIdPrefix("${ta.clientId}-market-features-v1")
-      .setDeserializer(ArchiveKafkaRecordDeserializer())
-      .setStartingOffsets(OffsetsInitializer.earliest())
-      .setProperty("enable.auto.commit", "false")
-      .setProperty("isolation.level", "read_committed")
-  applyKafkaSecurity(source, ta)
   val sink =
     KafkaSink
       .builder<RollingMarketFeature>()
@@ -90,13 +79,7 @@ internal fun configureRollingMarketFeatures(
       .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE)
       .setRecordSerializer(RollingMarketFeatureSerializer(config.topic))
   sink.setKafkaSecurity(ta)
-  val bars =
-    env
-      .fromSource(source.build(), WatermarkStrategy.noWatermarks(), "market-feature-bars-source")
-      .uid("market-feature-bars-source-v1")
-      .flatMap(ParseArchiveBar(mapOf(config.barsTopic to ArchiveRoute("iex", config.universe))))
-      .returns(TypeInformation.of(IntradayBarRecord::class.java))
-      .filter { it.marketSession == "regular" && it.final }
+  val bars = marketFeatureBars(env, ta, config, technical = false)
   bars
     .keyBy(::rollingFeatureKey)
     .process(RollingMarketFeatureFunction(config.producerRevision))
@@ -107,9 +90,36 @@ internal fun configureRollingMarketFeatures(
     .uid("market-features-kafka-v1")
   return config.technicalTopic?.let { topic ->
     val previous = env.getStreamGraph(false)
-    configureTechnicalMarketFeatures(bars, ta, topic, config.producerRevision)
+    configureTechnicalMarketFeatures(marketFeatureBars(env, ta, config, technical = true), ta, topic, config.producerRevision)
     previous
   }
+}
+
+private fun marketFeatureBars(
+  env: StreamExecutionEnvironment,
+  ta: FlinkTaConfig,
+  config: RollingMarketFeatureConfig,
+  technical: Boolean,
+): DataStream<IntradayBarRecord> {
+  val family = if (technical) "technical-feature" else "market-feature"
+  val source =
+    KafkaSource
+      .builder<ArchiveKafkaRecord>()
+      .setBootstrapServers(ta.bootstrapServers)
+      .setTopics(config.barsTopic)
+      .setGroupId("${ta.groupId}-${family}s-v1")
+      .setClientIdPrefix("${ta.clientId}-${family}s-v1")
+      .setDeserializer(ArchiveKafkaRecordDeserializer())
+      .setStartingOffsets(OffsetsInitializer.earliest())
+      .setProperty("enable.auto.commit", "false")
+      .setProperty("isolation.level", "read_committed")
+  applyKafkaSecurity(source, ta)
+  return env
+    .fromSource(source.build(), WatermarkStrategy.noWatermarks(), "$family-bars-source")
+    .uid("$family-bars-source-v1")
+    .flatMap(ParseArchiveBar(mapOf(config.barsTopic to ArchiveRoute("iex", config.universe))))
+    .returns(TypeInformation.of(IntradayBarRecord::class.java))
+    .filter { it.marketSession == "regular" && it.final }
 }
 
 internal class RollingMarketFeatureFunction(
