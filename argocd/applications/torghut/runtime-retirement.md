@@ -25,6 +25,9 @@ notebooks, Alloy, and ClickHouse guardrail metrics. The shared runtime ServiceAc
 because websocket and Flink workloads use them. Backup and checkpoint buckets, recovery objects,
 credentials, and notebook volumes remain. Bayn's PostgreSQL and ledger in namespace `bayn` are unchanged.
 
+The legacy `deploy:torghut` command exits with a retirement message before any build, migration, or cluster action,
+including when `TORGHUT_SKIP_MIGRATIONS=true`. Retained workloads use normal CI, Kargo, and Argo delivery.
+
 Inactive workload manifests remain available for recovery and existing Kargo image metadata updates.
 Only the root Kustomization resource list determines which of those manifests are deployed. Restoring an
 inactive manifest to that list is an operational change requiring a reviewed recovery plan.
