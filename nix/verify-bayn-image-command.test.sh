@@ -74,7 +74,7 @@ func main() {
 			os.Exit(99)
 		}
 		if len(os.Args) == 3 && os.Args[1] == "/app/services/bayn/dist/session-replay-command.js" && os.Args[2] == "--help" {
-			fmt.Println("Usage: bayn-session-replay --input <session.json> --arrivals <source.ndjson> --output <new-directory> | --help")
+			fmt.Println("Usage: bayn-session-replay --input <session.json> --arrivals <source.ndjson> --capture <capture.json> --capture-sha256 <trusted-hash> --output <new-directory> | --help")
 			return
 		}
 		if len(os.Args) == 3 && os.Args[1] == "/app/services/bayn/dist/streaming-replay-command.js" && os.Args[2] == "--help" {
