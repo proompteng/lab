@@ -60,6 +60,9 @@ durableTest(
         Layer.provideMerge(PostgresClientLive(config)),
         Layer.provide(NodeServices.layer),
       )
+    const replayClock = (sql: PgClient.PgClient) => ({
+      now: sql`(SELECT observed_at FROM replay_acceptance_clock WHERE singleton)`,
+    })
     const { protocol, snapshot } = streamingFixture()
     const quote = snapshot.quotes.find((value) => value.symbol === 'AAPL')
     if (quote === undefined) throw new Error('Missing AAPL fixture')
@@ -116,7 +119,10 @@ durableTest(
           },
         })
         const reconcile = Effect.gen(function* () {
-          const store = yield* makeExecutionPersistence(config)
+          const sql = yield* PgClient.PgClient
+          const observedAt = yield* currentUtcInstant
+          yield* sql`UPDATE replay_acceptance_clock SET observed_at = ${observedAt}::timestamptz WHERE singleton`
+          const store = yield* makeExecutionPersistence(config, replayClock(sql))
           const fence = yield* WriterFence
           return yield* runReconciliation({ read: broker.read, store, fence, now: currentUtcInstant })
         })
@@ -125,11 +131,16 @@ durableTest(
           yield* sql`DROP SCHEMA public CASCADE`
           yield* sql`CREATE SCHEMA public`
           yield* postgresMigrations
-          const store = yield* makeExecutionPersistence(config)
-          yield* store.authorityGeneration.ensureAuthorityGeneration({
+          yield* sql`CREATE TABLE replay_acceptance_clock (
+            singleton boolean PRIMARY KEY CHECK (singleton), observed_at timestamptz NOT NULL)`
+          const observedAt = yield* currentUtcInstant
+          yield* sql`INSERT INTO replay_acceptance_clock VALUES (true, ${observedAt}::timestamptz)`
+          const store = yield* makeExecutionPersistence(config, replayClock(sql))
+          const authority = yield* store.authorityGeneration.ensureAuthorityGeneration({
             generationHash: authorityGenerationHash,
             maximum: Authority.Observe,
           })
+          expect(authority.updatedAt).toBe(observedAt)
           const baseline = yield* reconcile
           expect(baseline.report.metrics.accountingExact).toBe(true)
         }).pipe(Effect.provide(stores()), Effect.provide(NodeServices.layer))
