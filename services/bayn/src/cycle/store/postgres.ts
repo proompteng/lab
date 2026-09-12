@@ -1,5 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer } from 'effect'
+import type { DatabaseClock } from '../../db/clock'
 
 import { WriterFence, WriterFenceError, type WriterFenceService } from '../../execution/writer-fence'
 import { makeCycleBindingPrograms } from './binding-program'
@@ -9,16 +10,17 @@ import { makeCycleMutationPrimitives } from './mutations'
 import { makeCycleQueries } from './queries'
 import { makeCycleReadPrograms } from './read-program'
 
-const makeCycleStore = Effect.map(PgClient.PgClient, (sql) => {
-  const queries = makeCycleQueries(sql)
-  const mutations = makeCycleMutationPrimitives(sql, queries)
+export const makeCycleStore = (clock?: DatabaseClock) =>
+  Effect.map(PgClient.PgClient, (sql) => {
+    const queries = makeCycleQueries(sql, clock)
+    const mutations = makeCycleMutationPrimitives(sql, queries)
 
-  return {
-    ...makeCycleReadPrograms(queries),
-    ...makeCycleLifecyclePrograms(sql, queries, mutations),
-    ...makeCycleBindingPrograms(sql, queries, mutations),
-  } satisfies CycleStoreShape
-})
+    return {
+      ...makeCycleReadPrograms(queries),
+      ...makeCycleLifecyclePrograms(sql, queries, mutations),
+      ...makeCycleBindingPrograms(sql, queries, mutations),
+    } satisfies CycleStoreShape
+  })
 
 const fenceMutation = <A>(
   operation: CycleStoreError['operation'],
@@ -49,12 +51,12 @@ export const withWriterFenceCycleStore = (store: CycleStoreShape, fence: WriterF
   block: (...args) => fenceMutation('block', store.block(...args), fence),
 })
 
-export const CycleStoreLive = Layer.effect(CycleStore, makeCycleStore)
+export const CycleStoreLive = Layer.effect(CycleStore, makeCycleStore())
 
 /** Execution-only interpreter: every durable cycle mutation crosses the same PostgreSQL writer fence as intents. */
 export const WriterFencedCycleStoreLive = Layer.effect(
   CycleStore,
-  Effect.all({ store: makeCycleStore, fence: WriterFence }).pipe(
+  Effect.all({ store: makeCycleStore(), fence: WriterFence }).pipe(
     Effect.map(({ store, fence }) => withWriterFenceCycleStore(store, fence)),
   ),
 )

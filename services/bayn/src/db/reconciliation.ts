@@ -1,4 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
+import { postgresWallClock, type DatabaseClock } from './clock'
 import { Data, Effect, Result, Schema } from 'effect'
 
 import type { AccountingTransaction } from '../accounting/schema'
@@ -339,10 +340,11 @@ const readFinalExecutionRiskContextDataFirst = (
 
 export const readFinalExecutionRiskContext = Pipeable.dual(3, readFinalExecutionRiskContextDataFirst)
 
-const makeReconciliationDataFirst = (
+export const makeReconciliation = (
   sql: PgClient.PgClient,
   journal: JournalService,
   config: Pick<RuntimeConfig, 'tigerBeetle'>,
+  clock: DatabaseClock = postgresWallClock(sql),
 ) => {
   const bindings = (accountId: string): Effect.Effect<readonly IntentBinding[], ReconciliationStoreError> =>
     runStore(
@@ -624,7 +626,7 @@ const makeReconciliationDataFirst = (
             authority.reason AS authority_reason,
             authority.version::text AS authority_version,
             authority.updated_at AS authority_updated_at,
-            CASE WHEN authority.singleton IS NULL THEN NULL ELSE clock_timestamp() END AS authority_observed_at,
+            CASE WHEN authority.singleton IS NULL THEN NULL ELSE ${clock.now} END AS authority_observed_at,
             coalesce((
               SELECT sum(transaction.notional_micros)::text
               FROM accounting_transactions AS transaction
@@ -680,5 +682,3 @@ const makeReconciliationDataFirst = (
 
   return { bindings, reconcile }
 }
-
-export const makeReconciliation = Pipeable.dual(3, makeReconciliationDataFirst)
