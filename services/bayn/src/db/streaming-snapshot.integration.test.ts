@@ -1,7 +1,9 @@
+import { TestClock } from 'effect/testing'
+import { OperationDeadlineClock } from '../operation-timeout'
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Exit, Layer, ManagedRuntime, Redacted } from 'effect'
+import { Clock, Context, Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Redacted } from 'effect'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
@@ -63,7 +65,7 @@ describePostgres('PostgreSQL streaming decision source evidence', () => {
         yield* sql`CREATE SCHEMA public`
         yield* sql`CREATE TABLE authority_state (legacy_value text NOT NULL)`
         yield* sql`INSERT INTO authority_state VALUES ('preserve-existing-run')`
-        const outcome = yield* Effect.exit(prepareFreshReplayDatabase)
+        const outcome = yield* Effect.exit(prepareFreshReplayDatabase())
         expect(Exit.isFailure(outcome)).toBe(true)
         expect(JSON.stringify(outcome)).toContain('Fresh replay requires an unused database')
         expect(yield* sql`SELECT legacy_value FROM authority_state`).toEqual([
@@ -86,7 +88,7 @@ describePostgres('PostgreSQL streaming decision source evidence', () => {
         yield* sql`INSERT INTO schema_migrations VALUES (1, 'initial_schema')`
         yield* sql`CREATE TABLE evaluation_runs (run_id text)`
         yield* sql`INSERT INTO evaluation_runs VALUES ('preserve-pre-authority-evidence')`
-        const outcome = yield* Effect.exit(prepareFreshReplayDatabase)
+        const outcome = yield* Effect.exit(prepareFreshReplayDatabase())
         expect(Exit.isFailure(outcome)).toBe(true)
         expect(JSON.stringify(outcome)).toContain('Fresh replay requires an unused database')
         expect(yield* sql`SELECT * FROM schema_migrations`).toEqual([{ migration_id: 1, name: 'initial_schema' }])
@@ -111,7 +113,7 @@ describePostgres('PostgreSQL streaming decision source evidence', () => {
             yield* sql`CREATE TABLE replay_schema_guard_test.evaluation_runs (run_id text)`
             yield* sql`INSERT INTO replay_schema_guard_test.evaluation_runs VALUES ('preserve-other-schema')`
             yield* sql`SET LOCAL search_path TO replay_schema_guard_test, public`
-            const outcome = yield* Effect.exit(prepareFreshReplayDatabase)
+            const outcome = yield* Effect.exit(prepareFreshReplayDatabase())
             expect(Exit.isFailure(outcome)).toBe(true)
             expect(JSON.stringify(outcome)).toContain('only effective schema')
             expect(yield* sql`SELECT * FROM replay_schema_guard_test.evaluation_runs`).toEqual([
@@ -136,7 +138,7 @@ describePostgres('PostgreSQL streaming decision source evidence', () => {
         yield* sql`CREATE SCHEMA public`
         yield* sql`CREATE FUNCTION public.replay_guard_existing_function() RETURNS integer LANGUAGE sql AS 'SELECT 73'`
         yield* sql`CREATE DOMAIN public.replay_guard_existing_domain AS integer CHECK (VALUE > 0)`
-        const outcome = yield* Effect.exit(prepareFreshReplayDatabase)
+        const outcome = yield* Effect.exit(prepareFreshReplayDatabase())
         expect(Exit.isFailure(outcome)).toBe(true)
         expect(JSON.stringify(outcome)).toContain('empty public schema')
         expect(yield* sql`SELECT public.replay_guard_existing_function() AS result`).toEqual([{ result: 73 }])
@@ -148,15 +150,51 @@ describePostgres('PostgreSQL streaming decision source evidence', () => {
     )
   })
 
+  test('a locked replay catalog times out on the live clock without advancing frozen market time', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const live = yield* Clock.clockWith(Effect.succeed)
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+        const locked = yield* Deferred.make<void>()
+        const lockContext = yield* Layer.build(
+          PgClient.layerFrom(PgClient.make({ url: Redacted.make(testUrl), maxConnections: 1 })),
+        )
+        const lockSql = Context.get(lockContext, PgClient.PgClient)
+        const holder = yield* lockSql
+          .withTransaction(
+            Effect.gen(function* () {
+              yield* lockSql`LOCK TABLE pg_catalog.pg_depend IN ACCESS EXCLUSIVE MODE`
+              yield* Deferred.succeed(locked, undefined)
+              return yield* Effect.never
+            }),
+          )
+          .pipe(Effect.forkScoped)
+        yield* Deferred.await(locked)
+        const result = yield* Effect.gen(function* () {
+          yield* TestClock.setTime(1000)
+          const outcome = yield* Effect.exit(prepareFreshReplayDatabase(50))
+          return { outcome, atMs: yield* Clock.currentTimeMillis }
+        }).pipe(Effect.provide(TestClock.layer()), Effect.provideService(OperationDeadlineClock, live))
+        expect(Exit.isFailure(result.outcome)).toBe(true)
+        expect(JSON.stringify(result.outcome)).toContain('Replay database setup exceeded 50ms')
+        expect(result.atMs).toBe(1000)
+        yield* Fiber.interrupt(holder)
+        expect(yield* sql`SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = 'public'`).toEqual([])
+      }).pipe(Effect.scoped, Effect.timeout('3 seconds')),
+    )
+  })
+
   test('fresh replay migrates only an empty public schema', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
         yield* sql`DROP SCHEMA public CASCADE`
         yield* sql`CREATE SCHEMA public`
-        yield* prepareFreshReplayDatabase
+        yield* prepareFreshReplayDatabase()
         expect(yield* sql`SELECT count(*)::int AS count FROM authority_state`).toEqual([{ count: 0 }])
-        const second = yield* Effect.exit(prepareFreshReplayDatabase)
+        const second = yield* Effect.exit(prepareFreshReplayDatabase())
         expect(Exit.isFailure(second)).toBe(true)
       }),
     )

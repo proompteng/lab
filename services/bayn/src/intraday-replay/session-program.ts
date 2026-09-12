@@ -1,3 +1,4 @@
+import { operationTimeoutOrElse } from '../operation-timeout'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
@@ -186,24 +187,30 @@ export const prepareReplaySession = (input: unknown) =>
 export type PreparedReplaySession = Result.Result.Success<ReturnType<typeof prepareReplaySession>>
 export type ReplayDatabaseConfig = Pick<RuntimeConfig, 'postgres' | 'tigerBeetle' | 'operationTimeoutMs'>
 
-export const prepareFreshReplayDatabase = Effect.gen(function* () {
-  const sql = yield* PgClient.PgClient
-  const schema = yield* sql<Record<string, unknown>>`SELECT
+export const prepareFreshReplayDatabase = (timeoutMs = 30_000) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    const schema = yield* sql<Record<string, unknown>>`SELECT
     pg_catalog.current_schemas(false) = ARRAY['public']::name[] AS valid`
-  if (schema[0]?.['valid'] !== true)
-    return yield* new ReplayBrokerFailure({ message: 'Fresh replay requires public as the only effective schema' })
-  const existing = yield* sql<Record<string, unknown>>`SELECT EXISTS (
+    if (schema[0]?.['valid'] !== true)
+      return yield* new ReplayBrokerFailure({ message: 'Fresh replay requires public as the only effective schema' })
+    const existing = yield* sql<Record<string, unknown>>`SELECT EXISTS (
     SELECT 1 FROM pg_catalog.pg_depend d
     WHERE d.refclassid = 'pg_catalog.pg_namespace'::regclass
       AND d.refobjid = 'public'::regnamespace
   ) AS present`
-  if (existing[0]?.['present'] !== false)
-    return yield* new ReplayBrokerFailure({
-      message:
-        'Fresh replay requires an unused database with an empty public schema; preserve existing stores for recovery',
-    })
-  yield* postgresMigrations
-})
+    if (existing[0]?.['present'] !== false)
+      return yield* new ReplayBrokerFailure({
+        message:
+          'Fresh replay requires an unused database with an empty public schema; preserve existing stores for recovery',
+      })
+    yield* postgresMigrations
+  }).pipe(
+    operationTimeoutOrElse({
+      duration: timeoutMs,
+      orElse: () => Effect.fail(new ReplayBrokerFailure({ message: `Replay database setup exceeded ${timeoutMs}ms` })),
+    }),
+  )
 
 /** Runs one whole calendar session in a fresh isolated database. Broker credentials are not part of this composition. */
 export const runRetainedExecutionSession = (
@@ -215,7 +222,7 @@ export const runRetainedExecutionSession = (
   Effect.gen(function* () {
     const source = yield* openRetainedReplaySource(arrivalsPath, prepared.input.source, prepared.runId)
     const sql = yield* PgClient.PgClient
-    yield* prepareFreshReplayDatabase
+    yield* prepareFreshReplayDatabase(databases.operationTimeoutMs)
     yield* TestClock.setTime(prepared.openMs - 1)
     const clock = yield* makeSimulatedExecutionClock(prepared.runId, source.source.sourceManifestHash)
     const advanceTo = yield* makeReplayTimeline(source, clock, prepared.closeMs + 1)
