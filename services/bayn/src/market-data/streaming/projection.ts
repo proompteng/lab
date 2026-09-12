@@ -99,6 +99,7 @@ const incorporateDecodedRecord = (
   if (
     !Number.isSafeInteger(record.partition) ||
     record.partition < 0 ||
+    record.partition > 2_147_483_647 ||
     !/^(0|[1-9][0-9]*)$/.test(record.offset) ||
     BigInt(record.offset) > 9_223_372_036_854_775_807n ||
     !Number.isSafeInteger(availableAtMs) ||
@@ -176,11 +177,10 @@ const incorporateDecodedRecord = (
   if (Result.isFailure(parsed)) return reject(state, record, availableAtMs, parsed.failure.reason)
   const event = parsed.success
   if (event.kind === RawMarketEventKind.Ignored) return state
+  const ingestedAtNanos = intradayInstantNanos(event.value.ingestedAt)
   if (
-    intradayInstantNanos(event.value.ingestedAt) >
-      (BigInt(availableAtMs + marketFeatureClockSkewAllowanceMs) + 1n) * 1_000_000n - 1n ||
-    intradayInstantNanos(event.value.ingestedAt) + BigInt(marketFeatureClockSkewAllowanceMs) * 1_000_000n <
-      intradayInstantNanos(event.value.eventAt)
+    ingestedAtNanos > (BigInt(availableAtMs + marketFeatureClockSkewAllowanceMs) + 1n) * 1_000_000n - 1n ||
+    ingestedAtNanos + BigInt(marketFeatureClockSkewAllowanceMs) * 1_000_000n < intradayInstantNanos(event.value.eventAt)
   )
     return reject(state, record, availableAtMs, 'availability')
   switch (event.kind) {
@@ -192,17 +192,20 @@ const incorporateDecodedRecord = (
       const revisions = [...existing, { value: bar, availableAtMs, sequence, recordHash }].toSorted(
         (a, b) => compareIntradayInstants(b.value.eventAt, a.value.eventAt) || compareBarRevisions(b.value, a.value),
       )
-      const minuteCounts = new Map<bigint, number>()
+      const minuteCounts = new Map<string, number>()
       const bars: ObservedMarketValue<IntradayBar>[] = []
       let minimumObservationMs = state.minimumObservationMs
       for (const entry of revisions) {
-        const minute = intradayInstantNanos(entry.value.eventAt)
+        // Raw timestamps have nine fractional digits; recorded rows may have three.
+        const minute = entry.value.eventAt.slice(0, -1).padEnd(29, '0')
         const count = minuteCounts.get(minute) ?? 0
         if (count === 0 && minuteCounts.size === 61) continue
         minuteCounts.set(minute, count + 1)
         if (count < 4) bars.push(entry)
         else {
-          const earliestRetained = bars.findLast((retained) => intradayInstantNanos(retained.value.eventAt) === minute)
+          const earliestRetained = bars.findLast(
+            (retained) => compareIntradayInstants(retained.value.eventAt, entry.value.eventAt) === 0,
+          )
           minimumObservationMs = Math.max(minimumObservationMs, earliestRetained?.availableAtMs ?? availableAtMs)
         }
       }

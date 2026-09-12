@@ -1,13 +1,15 @@
 # Streaming market data
 
-The execution worker initially uses `BAYN_MARKET_DATA_MODE=shadow` with `BAYN_KAFKA_BROKERS`, `BAYN_KAFKA_USERNAME`,
+The execution worker uses `BAYN_MARKET_DATA_MODE=streaming` with `BAYN_KAFKA_BROKERS`, `BAYN_KAFKA_USERNAME`,
 `BAYN_KAFKA_PASSWORD`, and `BAYN_KAFKA_TIMESTAMP_POLICY=dorvud.producer-clock.v1`. The reviewed bootstrap deadline
-is 120 seconds. SCRAM-SHA-512 uses the existing 9092 listener. The KafkaUser secret reaches Bayn through the existing
+is 300 seconds. SCRAM-SHA-512 uses the existing 9092 listener. The KafkaUser secret reaches Bayn through the existing
 secret reflection path. The public status service and archive research commands do not start a consumer.
 
-Shadow mode keeps archive execution and compares raw input hashes and strategy results at the same observation.
+Optional shadow mode keeps archive execution and compares raw input hashes and strategy results at the same observation.
 Logs distinguish different input cuts, unavailable streams, invalid decisions and matching or mismatching decisions.
-A reviewed change to `BAYN_MARKET_DATA_MODE=streaming` selects streaming execution; failures then block that path.
+Streaming execution blocks when its required inputs are unavailable. Any mode change requires reviewed GitOps.
+
+The initial retained-data probe consumed 905,542 records across all 22 partitions in 223 seconds on the slower worker, with no rejections and exact feature matches for all strategy symbols and SPY. The five-minute budget bounds catch-up; normal calendar, exact-window, and quote-freshness checks still run after it.
 
 A replacement consumer captures partition bounds and rebuilds the required 30-minute window before serving inputs.
 Offsets are committed only after incorporation or explicit rejection. The projection retains 61 bar minutes, 512
@@ -50,13 +52,32 @@ does not grant authority to trade or establish actual consumer availability for 
 
 ## Historical experiments
 
+```sh
+node dist/streaming-replay-command.js --historical experiment.json
+```
+
+The input uses `bayn.historical-streaming-strategy-input.v1`, the current strategy's `protocolHash` and
+`behaviorHash`, a `sessionDate`, the retained Alpaca `calendar` response (`date`, `open`, `close`), and an
+`arrivals` document described below. The command validates the calendar, decision interval, raw records,
+freshness, and exact feature-to-bar joins before calling the same intraday momentum core. It evaluates all six
+candidates and SPY. Missing candidates remain explicit exclusions; a missing benchmark or absence of every
+candidate rejects the experiment observation. Invalid input cannot become a successful no-trade result.
+
+The resulting research receipt binds the input, protocol, behavior, calendar, delivery model, window, selected
+feature payloads and simulated arrival times to its content hash. It contains signals and target weights,
+without an executable snapshot or order authority. `--historical` reads only the supplied file and opens no
+database, Kafka, or broker connection. Keep the source export with the receipt to reproduce the run.
+
 `replayHistoricalMarketArrivals` uses the same reducer with an immutable run ID, supplied arrival times and the
 declared `availability-topic-partition-offset` tie-break. It consumes original raw envelopes and feature payloads
-exported with their Kafka coordinates. Its output explicitly identifies simulated consumer availability. Feature
+exported with their Kafka coordinates. A delivery model that reverses offsets within one Kafka partition is rejected
+before projection, including reversals later in the supplied experiment. Its output explicitly identifies simulated consumer availability. Feature
 computation timestamps are never backdated. A `regeneratedFeatures` declaration binds the generation run ID and
 actual recording time when an experiment assigns earlier simulated arrivals. Every historical projection is marked
 as simulated and is rejected by the live snapshot boundary. A regenerated feature therefore cannot be represented as an original
 historical receipt.
+
+The existing bar archive stores ingestion times at millisecond precision. Exact feature-input reconstruction must join archived bars to feature provenance by Kafka coordinates, recover the original nanosecond timestamp from that provenance, and verify every producer content hash. A millisecond row alone cannot establish the original nanosecond revision. The deployment check verified all 180 referenced bar hashes for six features through this path.
 
 The existing archive economics harness remains a separate evidence mode. Feature plumbing, deterministic replay and
 PAPER operation do not establish profitability.

@@ -74,7 +74,7 @@ func main() {
 			os.Exit(99)
 		}
 		if len(os.Args) == 3 && os.Args[1] == "/app/services/bayn/dist/streaming-replay-command.js" && os.Args[2] == "--help" {
-			fmt.Println("Usage: bayn-streaming-replay --file <decision.json> | --decision <decision-content-hash>")
+			fmt.Println("Usage: bayn-streaming-replay --file <decision.json> | --decision <decision-content-hash> | --historical <experiment.json>")
 			return
 		}
 		if len(os.Args) == 3 && os.Args[1] == "/app/services/bayn/dist/streaming-diagnostics-command.js" && os.Args[2] == "--codecs" {

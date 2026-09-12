@@ -4,6 +4,34 @@ The TA job consumes the existing Alpaca bars, quotes, and trades. It retains the
 publish rolling market features for Bayn. The separate market-data archive job retains raw records and feature
 messages in ClickHouse. See the [streaming design](../../../docs/bayn/streaming-market-data-design.md).
 
+## Event-time microbars and canonical technical signals
+
+Microbars use Kafka topic, partition, and offset to deduplicate transport redelivery. Each event-time second has its
+own checkpointed bucket. The configured watermark closes the bucket; open and close follow trade time, with Kafka
+coordinates breaking equal-time ties. Distinct trades at an equal price remain distinct. Records arriving after
+finalization increment `microbar_late_trades_total` and emit a side output and a structured quarantine log containing
+their source coordinates. Their raw Kafka/archive records remain available for investigation; no conflicting final
+microbar is emitted.
+
+Microbar and legacy TA envelopes use output version 2 for the corrected behavior. TA canonicalizes each session's bars
+before updating its numerical state. Duplicate revisions are inert. Corrections rebuild affected indicator outputs
+with their original event windows and current computation/ingestion time. An older session cannot contaminate the
+current session. Recursive EMA/MACD/RSI state retains its original seed when the bounded calculation buffer advances.
+The numerical regression test compares a full regular session against the pinned TA4J implementation.
+
+EMA pairs require 26 bars, MACD 34, RSI 15 closes, and Bollinger bands 20 contiguous bars. A gap invalidates recursive
+indicator readiness until the missing input is supplied and the canonical history is recomputed. No synthetic bars
+are inserted. The legacy `vol_realized.w60s` field retains its seconds-based definition and is unavailable when its
+configured interval supplies fewer than two returns. It is not relabeled as 60 one-minute returns. Legacy `vwap`
+fields still describe volume-weighted closes for compatibility; they must not be interpreted as source-bar VWAP.
+
+New keyed state is versioned separately from legacy state, while existing operator restoration IDs and sequence state
+are retained. On migration, an unfinished legacy microbar lacks the event ordering/source identities required by the
+new calculation and is discarded with `microbar_legacy_buckets_discarded_total`. Canonical indicator state warms up
+from new inputs instead of claiming that old truncated history contains a complete recursive seed or session totals.
+Subsequent checkpoints restore the complete new state. The restore tests cover open microbar buckets, duplicate
+redelivery, recursive seeds, and session totals. The rolling-price feature state and contract below are unchanged.
+
 ## Rolling feature branch
 
 Set `TA_MARKET_FEATURES_TOPIC=torghut.market-features.v1` to enable the branch. It requires the existing

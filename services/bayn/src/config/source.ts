@@ -18,7 +18,7 @@ import {
   minimumOperationalThresholdMs,
   type ParsedRuntimeConfig,
 } from './model'
-import { KafkaBootstrapTimestampPolicy } from '../market-data/streaming/bootstrap'
+import { kafkaBootstrapDeadlineMs, KafkaBootstrapTimestampPolicy } from '../market-data/streaming/bootstrap'
 import type { KafkaMarketConfig } from '../market-data/streaming/kafka'
 import { Pipeable } from '../pipeable'
 
@@ -65,9 +65,10 @@ export const kafkaMarketConfig = Config.schema(
             password: secretString('BAYN_KAFKA_PASSWORD'),
             groupPrefix: nonEmptyString('BAYN_KAFKA_GROUP_PREFIX').pipe(Config.withDefault('bayn-market-v1')),
             operationTimeoutMs: operationalThreshold('BAYN_KAFKA_OPERATION_TIMEOUT_MS', 10_000),
-            bootstrapTimeoutMs: Config.schema(Schema.Literal(120_000), 'BAYN_KAFKA_BOOTSTRAP_TIMEOUT_MS').pipe(
-              Config.withDefault(120_000),
-            ),
+            bootstrapTimeoutMs: Config.schema(
+              Schema.Literal(kafkaBootstrapDeadlineMs),
+              'BAYN_KAFKA_BOOTSTRAP_TIMEOUT_MS',
+            ).pipe(Config.withDefault(kafkaBootstrapDeadlineMs)),
             timestampPolicy: Config.schema(
               Schema.Literal(KafkaBootstrapTimestampPolicy.ProducerClock),
               'BAYN_KAFKA_TIMESTAMP_POLICY',
