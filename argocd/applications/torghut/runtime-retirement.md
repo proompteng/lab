@@ -83,8 +83,8 @@ checkpoint prefixes are separate and must remain untouched. Keep trading disable
 
 The post-deploy workflow checks the deployed revision, directly checks retired Deployment/Knative Service
 and Pod absence, and checks other retired owners through Argo's resource inventory using existing runner
-permissions. The rollout operator additionally verifies those owners directly. The workflow validates all
-running tasks and a completed checkpoint for each retained Flink job, then runs the existing Kafka,
+permissions. The rollout operator additionally verifies those owners directly. The workflow requires a running job, accounts for every task as running or successfully finished, and requires a
+completed checkpoint for each retained Flink job, then runs the existing Kafka,
 websocket, and TA freshness check with `TORGHUT_SCHEDULER_EXPECTED=false`.
 
 References: [Kubernetes retained volumes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#retain)

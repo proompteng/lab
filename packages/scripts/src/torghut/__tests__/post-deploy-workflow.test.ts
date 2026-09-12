@@ -183,20 +183,32 @@ describe('torghut post-deploy verifier workflow', () => {
   for (const [name, jobs, checkpoints, succeeds] of [
     [
       'running with checkpoint',
-      { jobs: [{ jid: 'abc', state: 'RUNNING', tasks: { total: 4, running: 4, failed: 0 } }] },
+      { jobs: [{ jid: 'abc', state: 'RUNNING', tasks: { total: 4, running: 4, finished: 0, failed: 0 } }] },
       { latest: { completed: { status: 'COMPLETED', id: 42 } } },
       true,
+    ],
+    [
+      'completed bounded source',
+      { jobs: [{ jid: 'abc', state: 'RUNNING', tasks: { total: 83, running: 82, finished: 1, failed: 0 } }] },
+      { latest: { completed: { status: 'COMPLETED', id: 42 } } },
+      true,
+    ],
+    [
+      'unaccounted task',
+      { jobs: [{ jid: 'abc', state: 'RUNNING', tasks: { total: 4, running: 3, finished: 0, failed: 0 } }] },
+      { latest: { completed: { status: 'COMPLETED', id: 42 } } },
+      false,
     ],
     ['no job', { jobs: [] }, { latest: {} }, false],
     [
       'failed task',
-      { jobs: [{ jid: 'abc', state: 'RUNNING', tasks: { total: 4, running: 3, failed: 1 } }] },
+      { jobs: [{ jid: 'abc', state: 'RUNNING', tasks: { total: 4, running: 3, finished: 0, failed: 1 } }] },
       { latest: { completed: { status: 'COMPLETED', id: 42 } } },
       false,
     ],
     [
       'no checkpoint',
-      { jobs: [{ jid: 'abc', state: 'RUNNING', tasks: { total: 4, running: 4, failed: 0 } }] },
+      { jobs: [{ jid: 'abc', state: 'RUNNING', tasks: { total: 4, running: 4, finished: 0, failed: 0 } }] },
       { latest: {} },
       false,
     ],
@@ -235,7 +247,9 @@ describe('torghut post-deploy verifier workflow', () => {
         )
         expect(result.exitCode === 0).toBe(succeeds)
         if (succeeds)
-          expect(result.stdout.toString()).toContain('market-data-archive: all tasks RUNNING and checkpoint completed')
+          expect(result.stdout.toString()).toContain(
+            'market-data-archive: job RUNNING, tasks running or finished, checkpoint completed',
+          )
       } finally {
         rmSync(directory, { recursive: true, force: true })
       }

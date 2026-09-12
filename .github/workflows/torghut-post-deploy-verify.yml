@@ -266,8 +266,8 @@ jobs:
                   "http://${pipeline}-rest.torghut.svc.cluster.local:8081/jobs/overview" \
                   -o "${EVIDENCE_DIR}/${pipeline}-jobs.json" &&
                 jq -e '.jobs | length == 1 and all(.[];
-                    .state == "RUNNING" and .tasks.total > 0 and
-                    .tasks.running == .tasks.total and .tasks.failed == 0)' \
+                    .state == "RUNNING" and .tasks.running > 0 and
+                    (.tasks.running + .tasks.finished) == .tasks.total and .tasks.failed == 0)' \
                   "${EVIDENCE_DIR}/${pipeline}-jobs.json" >/dev/null; then
                 JOB_ID="$(jq -r '.jobs[0].jid' "${EVIDENCE_DIR}/${pipeline}-jobs.json")"
                 if curl -fsS --connect-timeout 5 --max-time 15 \
@@ -279,12 +279,12 @@ jobs:
                 fi
               fi
               if [ "${pipeline_attempt}" -eq 60 ]; then
-                echo "${pipeline} did not reach RUNNING with all tasks running and a completed checkpoint"
+                echo "${pipeline} did not reach RUNNING with every task running or finished and a completed checkpoint"
                 exit 1
               fi
               sleep 10
             done
-            echo "${pipeline}: all tasks RUNNING and checkpoint completed"
+            echo "${pipeline}: job RUNNING, tasks running or finished, checkpoint completed"
           done
 
       - name: Verify market-data freshness
