@@ -1,3 +1,5 @@
+import { isTorghutLegacyRetired } from './torghut-retirement'
+
 import { normalizeTorghutSymbol } from './torghut-symbols'
 import { isQuantWindow, type QuantWindow } from './torghut-quant-contract'
 
@@ -110,7 +112,9 @@ export const resolveTorghutQuantRuntimeConfig = (
   env: EnvSource = process.env,
   overrides?: { enabled?: boolean; alertsEnabled?: boolean },
 ): TorghutQuantRuntimeConfig => ({
-  enabled: overrides?.enabled ?? parseBoolean(env.JANGAR_TORGHUT_QUANT_CONTROL_PLANE_ENABLED, false),
+  enabled:
+    !isTorghutLegacyRetired(env) &&
+    (overrides?.enabled ?? parseBoolean(env.JANGAR_TORGHUT_QUANT_CONTROL_PLANE_ENABLED, false)),
   enabledFlagKey:
     normalizeNonEmpty(env.JANGAR_TORGHUT_QUANT_CONTROL_PLANE_ENABLED_FLAG_KEY) ??
     DEFAULT_QUANT_CONTROL_PLANE_ENABLED_FLAG_KEY,
@@ -122,7 +126,9 @@ export const resolveTorghutQuantRuntimeConfig = (
   maxStalenessSeconds: parsePositiveInt(env.JANGAR_TORGHUT_QUANT_MAX_STALENESS_SECONDS, 15),
   windowsLight: parseWindowList(env.JANGAR_TORGHUT_QUANT_WINDOWS_LIGHT, ['1m', '5m', '15m', '1h', '1d']),
   windowsHeavy: parseWindowList(env.JANGAR_TORGHUT_QUANT_WINDOWS_HEAVY, ['5d', '20d']),
-  alertsEnabled: overrides?.alertsEnabled ?? parseBoolean(env.JANGAR_TORGHUT_QUANT_ALERTS_ENABLED, true),
+  alertsEnabled:
+    !isTorghutLegacyRetired(env) &&
+    (overrides?.alertsEnabled ?? parseBoolean(env.JANGAR_TORGHUT_QUANT_ALERTS_ENABLED, true)),
   alertsEnabledFlagKey:
     normalizeNonEmpty(env.JANGAR_TORGHUT_QUANT_ALERTS_ENABLED_FLAG_KEY) ?? DEFAULT_QUANT_ALERTS_ENABLED_FLAG_KEY,
   policy: {
@@ -150,13 +156,13 @@ export const resolveTorghutEndpointsConfig = (env: EnvSource = process.env): Tor
 })
 
 export const resolveTorghutTradingDatabaseConfig = (env: EnvSource = process.env): TorghutTradingDatabaseConfig => ({
-  dsn: normalizeNonEmpty(env.TORGHUT_DB_DSN),
+  dsn: isTorghutLegacyRetired(env) ? null : normalizeNonEmpty(env.TORGHUT_DB_DSN),
   sslMode: normalizeNonEmpty(env.TORGHUT_DB_SSLMODE) ?? normalizeNonEmpty(env.TORGHUT_PGSSLMODE),
   caCertPath: normalizeNonEmpty(env.TORGHUT_DB_CA_CERT),
 })
 
 export const resolveTorghutDecisionEngineConfig = (env: EnvSource = process.env): TorghutDecisionEngineConfig => ({
-  enabled: parseBoolean(env.JANGAR_TORGHUT_DECISION_ENGINE_ENABLED, false),
+  enabled: !isTorghutLegacyRetired(env) && parseBoolean(env.JANGAR_TORGHUT_DECISION_ENGINE_ENABLED, false),
   enabledFlagKey:
     normalizeNonEmpty(env.JANGAR_TORGHUT_DECISION_ENGINE_ENABLED_FLAG_KEY) ?? 'jangar.torghut.decision_engine.enabled',
   runTimeoutMs: parsePositiveInt(
