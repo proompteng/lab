@@ -4,17 +4,21 @@ import { Config, Data, Effect, FileSystem, Layer, Logger, Schema, Stdio, Stream 
 import { PostgresClientLive } from './db/postgres-client'
 import { canonicalJsonV1Result } from './hash'
 import { reproduceRecordedStreamingDecision } from './market-data/streaming/recorded-decision'
+import { replayHistoricalStreamingStrategy } from './market-data/streaming/historical-strategy'
 import { Sha256Schema } from './schemas'
 
 class StreamingReplayCommandFailure extends Data.TaggedError('StreamingReplayCommandFailure')<{
   readonly message: string
   readonly cause?: unknown
 }> {}
-const usage = 'Usage: bayn-streaming-replay --file <decision.json> | --decision <decision-content-hash>'
+const usage =
+  'Usage: bayn-streaming-replay --file <decision.json> | --decision <decision-content-hash> | --historical <experiment.json>'
 export const parseStreamingReplayArgs = (args: readonly string[]) => {
   if (args.length === 0 || (args.length === 1 && args[0] === '--help')) return { _tag: 'Help' } as const
   if (args.length === 2 && args[0] === '--file' && args[1] !== undefined && args[1].length > 0)
     return { _tag: 'File', path: args[1] } as const
+  if (args.length === 2 && args[0] === '--historical' && args[1] !== undefined && args[1].length > 0)
+    return { _tag: 'Historical', path: args[1] } as const
   if (args.length === 2 && args[0] === '--decision' && args[1] !== undefined && /^[0-9a-f]{64}$/.test(args[1]))
     return { _tag: 'Decision', hash: args[1] } as const
   return { _tag: 'Invalid' } as const
@@ -29,12 +33,12 @@ const main = Effect.gen(function* () {
   if (command._tag === 'Help') return yield* print(usage)
   if (command._tag === 'Invalid') return yield* new StreamingReplayCommandFailure({ message: usage })
   let input: unknown
-  if (command._tag === 'File') {
+  if (command._tag === 'File' || command._tag === 'Historical') {
     const fs = yield* FileSystem.FileSystem
     const raw = yield* fs.readFileString(command.path)
     input = yield* Effect.try({
       try: (): unknown => JSON.parse(raw),
-      catch: (cause) => new StreamingReplayCommandFailure({ message: 'Invalid decision JSON', cause }),
+      catch: (cause) => new StreamingReplayCommandFailure({ message: 'Invalid replay JSON', cause }),
     })
   } else {
     const hash = yield* Schema.decodeUnknownEffect(Sha256Schema)(command.hash)
@@ -56,7 +60,10 @@ const main = Effect.gen(function* () {
       Effect.provide(PostgresClientLive({ postgres, operationTimeoutMs: 30_000 })),
     )
   }
-  const receipt = yield* Effect.fromResult(reproduceRecordedStreamingDecision(input))
+  const receipt =
+    command._tag === 'Historical'
+      ? yield* Effect.fromResult(replayHistoricalStreamingStrategy(input))
+      : yield* Effect.fromResult(reproduceRecordedStreamingDecision(input))
   yield* print(yield* Effect.fromResult(canonicalJsonV1Result(receipt)))
 })
 const program = main.pipe(

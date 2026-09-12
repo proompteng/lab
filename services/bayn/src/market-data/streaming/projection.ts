@@ -99,6 +99,7 @@ const incorporateDecodedRecord = (
   if (
     !Number.isSafeInteger(record.partition) ||
     record.partition < 0 ||
+    record.partition > 2_147_483_647 ||
     !/^(0|[1-9][0-9]*)$/.test(record.offset) ||
     BigInt(record.offset) > 9_223_372_036_854_775_807n ||
     !Number.isSafeInteger(availableAtMs) ||

@@ -194,7 +194,7 @@ fi
 # Loading diagnostics also loads the external Kafka client and its codec dependencies.
 for command in streaming-replay streaming-diagnostics; do
   case "${command}" in
-    streaming-replay) expected_streaming='Usage: bayn-streaming-replay --file <decision.json> | --decision <decision-content-hash>' ;;
+    streaming-replay) expected_streaming='Usage: bayn-streaming-replay --file <decision.json> | --decision <decision-content-hash> | --historical <experiment.json>' ;;
     streaming-diagnostics) expected_streaming='Usage: bayn-streaming-diagnostics --since <UTC-instant> | --codecs | --help' ;;
   esac
   streaming_actual="$(docker run --rm --network none --read-only --cap-drop ALL \

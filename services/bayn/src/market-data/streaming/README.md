@@ -50,9 +50,26 @@ does not grant authority to trade or establish actual consumer availability for 
 
 ## Historical experiments
 
+```sh
+node dist/streaming-replay-command.js --historical experiment.json
+```
+
+The input uses `bayn.historical-streaming-strategy-input.v1`, the current strategy's `protocolHash` and
+`behaviorHash`, a `sessionDate`, the retained Alpaca `calendar` response (`date`, `open`, `close`), and an
+`arrivals` document described below. The command validates the calendar, decision interval, raw records,
+freshness, and exact feature-to-bar joins before calling the same intraday momentum core. It evaluates all six
+candidates and SPY. Missing candidates remain explicit exclusions; a missing benchmark or absence of every
+candidate rejects the experiment observation. Invalid input cannot become a successful no-trade result.
+
+The resulting research receipt binds the input, protocol, behavior, calendar, delivery model, window, selected
+feature payloads and simulated arrival times to its content hash. It contains signals and target weights,
+without an executable snapshot or order authority. `--historical` reads only the supplied file and opens no
+database, Kafka, or broker connection. Keep the source export with the receipt to reproduce the run.
+
 `replayHistoricalMarketArrivals` uses the same reducer with an immutable run ID, supplied arrival times and the
 declared `availability-topic-partition-offset` tie-break. It consumes original raw envelopes and feature payloads
-exported with their Kafka coordinates. Its output explicitly identifies simulated consumer availability. Feature
+exported with their Kafka coordinates. A delivery model that reverses offsets within one Kafka partition is rejected
+before projection, including reversals later in the supplied experiment. Its output explicitly identifies simulated consumer availability. Feature
 computation timestamps are never backdated. A `regeneratedFeatures` declaration binds the generation run ID and
 actual recording time when an experiment assigns earlier simulated arrivals. Every historical projection is marked
 as simulated and is rejected by the live snapshot boundary. A regenerated feature therefore cannot be represented as an original
