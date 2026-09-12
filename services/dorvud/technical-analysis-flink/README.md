@@ -86,6 +86,8 @@ availability, partition, offset order. The configuration has schema version `dor
 `sourceSha256` and `recordCount`, `barsTopic`, `featuresTopic`, `universeId`, canonical `symbols` and their
 `universeSymbolHash`, exact `producerRevision`, and `processingDelayMs`. Sources are limited to 128 MiB of extracted
 bars. The command validates and executes one immutable byte snapshot; it never reopens the input after validation.
+Expanded feature messages are written and hashed incrementally. The existing 5,000 ms producer/Kafka clock-skew
+allowance applies to retained arrival validation as it does in the live feature contract.
 
 Outputs use isolated simulated partition/offset coordinates, and become available at the later of the triggering raw
 arrival or window end, plus the configured delay. Raw revisions and actual `computedAtMs` are preserved. These arrivals

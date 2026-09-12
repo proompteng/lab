@@ -75,10 +75,27 @@ class RetainedFeatureReplayTest {
     100,
   )
 
+  private data class CapturedReplay(
+    val arrivals: List<RetainedFeatureArrival>,
+    val skippedBars: Int,
+    val recordedAtMs: Long,
+  )
+
+  private fun captureReplay(
+    bytes: ByteArray,
+    config: RetainedFeatureReplayConfig,
+    clock: Clock,
+  ): CapturedReplay {
+    val arrivals = mutableListOf<RetainedFeatureArrival>()
+    val summary = replayRetainedFeatures(bytes, config, clock) { arrivals.add(it) }
+    assertEquals(arrivals.size, summary.outputRecordCount)
+    return CapturedReplay(arrivals, summary.skippedBars, summary.recordedAtMs)
+  }
+
   @Test fun `both symbols emit at their triggering arrival while computed time remains actual`() {
     val arrivals = input()
     val source = bytes(arrivals)
-    val result = replayRetainedFeatures(source, config(source, arrivals.size), clock)
+    val result = captureReplay(source, config(source, arrivals.size), clock)
     assertEquals(4, result.arrivals.size)
     assertEquals(0, result.skippedBars)
     assertEquals(clock.millis(), result.recordedAtMs)
@@ -91,13 +108,13 @@ class RetainedFeatureReplayTest {
       assertEquals(30, feature.material.inputs.size)
       assertTrue(feature.material.inputs.all { it.sourcePartition == index % 2 })
     }
-    assertEquals(result, replayRetainedFeatures(source, config(source, arrivals.size), clock))
+    assertEquals(result, captureReplay(source, config(source, arrivals.size), clock))
   }
 
   @Test fun `canonical correction creates a new feature at correction availability`() {
     val arrivals = input() + arrival(30, 0, 31, 101.0)
     val source = bytes(arrivals)
-    val result = replayRetainedFeatures(source, config(source, arrivals.size), clock)
+    val result = captureReplay(source, config(source, arrivals.size), clock)
     val corrected =
       Json.decodeFromString<RollingMarketFeature>(
         result.arrivals
@@ -119,15 +136,24 @@ class RetainedFeatureReplayTest {
     val arrivals = input()
     val source = bytes(arrivals)
     val config = config(source, arrivals.size)
-    assertFailsWith<IllegalArgumentException> { replayRetainedFeatures(source, config.copy(sourceSha256 = "0".repeat(64)), clock) }
-    assertFailsWith<IllegalArgumentException> { replayRetainedFeatures(source, config.copy(recordCount = 1), clock) }
+    assertFailsWith<IllegalArgumentException> { captureReplay(source, config.copy(sourceSha256 = "0".repeat(64)), clock) }
+    assertFailsWith<IllegalArgumentException> { captureReplay(source, config.copy(recordCount = 1), clock) }
     for (invalid in listOf(
       arrivals.reversed(),
       arrivals + arrivals.last(),
-      arrivals.map { it.copy(availableAtMs = it.availableAtMs - 1) },
+      arrivals.map { it.copy(availableAtMs = it.availableAtMs - 5001) },
     )) {
       val invalidBytes = bytes(invalid)
-      assertFailsWith<IllegalArgumentException> { replayRetainedFeatures(invalidBytes, config(invalidBytes, invalid.size), clock) }
+      assertFailsWith<IllegalArgumentException> { captureReplay(invalidBytes, config(invalidBytes, invalid.size), clock) }
     }
+  }
+
+  @Test fun `retained replay honors the shared producer and Kafka clock-skew allowance`() {
+    val sourceArrivals =
+      input().map {
+        it.copy(availableAtMs = it.availableAtMs - 5000, record = it.record.copy(timestampMs = it.availableAtMs))
+      }
+    val source = bytes(sourceArrivals)
+    assertEquals(4, captureReplay(source, config(source, sourceArrivals.size), clock).arrivals.size)
   }
 }

@@ -6,6 +6,7 @@ import kotlinx.serialization.json.Json
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
+import java.security.DigestOutputStream
 import java.security.MessageDigest
 import java.time.Clock
 
@@ -39,7 +40,7 @@ internal data class RetainedFeatureArrival(
 )
 
 internal data class RetainedFeatureReplayResult(
-  val arrivals: List<RetainedFeatureArrival>,
+  val outputRecordCount: Int,
   val skippedBars: Int,
   val recordedAtMs: Long,
 )
@@ -59,6 +60,7 @@ internal fun replayRetainedFeatures(
   bytes: ByteArray,
   config: RetainedFeatureReplayConfig,
   clock: Clock,
+  emit: (RetainedFeatureArrival) -> Unit,
 ): RetainedFeatureReplayResult {
   require(config.schemaVersion == "dorvud.retained-feature-replay.v1") { "unsupported replay configuration" }
   require(config.sourceSha256.matches(sha256Pattern) && retainedBytesHash(bytes) == config.sourceSha256) { "retained source hash mismatch" }
@@ -78,24 +80,30 @@ internal fun replayRetainedFeatures(
   ) {
     "replay universe hash mismatch"
   }
-  val lines = bytes.decodeToString(throwOnInvalidSequence = true).lineSequence().dropLastEmptyLine()
-  require(lines.size == config.recordCount) { "retained source record count mismatch" }
+  val lineCount = bytes.count { it == 10.toByte() }
+  require(lineCount == config.recordCount) { "retained source record count mismatch" }
   val routes =
     mapOf(config.barsTopic to ArchiveRoute("iex", ArchiveUniverse(config.universeId, config.universeSymbolHash, config.symbols.toSet())))
   val states = mutableMapOf<String, RollingFeatureState>()
   val offsets = mutableMapOf<Int, Long>()
-  val output = mutableListOf<RetainedFeatureArrival>()
+  var outputCount = 0
   var previous: RetainedFeatureArrival? = null
   var skipped = 0
   var recordedAt = clock.millis()
-  for (line in lines) {
+  for (line in bytes.decodeToString(throwOnInvalidSequence = true).lineSequence().take(lineCount)) {
     val arrival = replayJson.decodeFromString<RetainedFeatureArrival>(line)
     val record = arrival.record
     val offset = record.offset.toLong()
     require(record.topic == config.barsTopic && record.partition >= 0 && offset >= 0 && record.offset == offset.toString()) {
       "invalid retained bar coordinate"
     }
-    require(arrival.availableAtMs >= 0 && (record.timestampMs == null || record.timestampMs <= arrival.availableAtMs)) {
+    require(
+      arrival.availableAtMs >= 0 &&
+        (
+          record.timestampMs == null ||
+            (record.timestampMs >= 0 && record.timestampMs <= Math.addExact(arrival.availableAtMs, FEATURE_MAX_CLOCK_SKEW_MS))
+        ),
+    ) {
       "raw arrival precedes Kafka availability"
     }
     require(offset > (offsets[record.partition] ?: -1L)) { "repeated or reversed retained partition offset" }
@@ -114,7 +122,9 @@ internal fun replayRetainedFeatures(
     offsets[record.partition] = offset
     previous = arrival
     val bar = decodeArchiveBar(ArchiveKafkaRecord(record.topic, record.partition, offset, record.value), routes)
-    require(bar.ingestionTime <= java.time.Instant.ofEpochMilli(arrival.availableAtMs)) { "raw arrival precedes producer ingestion" }
+    require(bar.ingestionTime <= java.time.Instant.ofEpochMilli(Math.addExact(arrival.availableAtMs, FEATURE_MAX_CLOCK_SKEW_MS))) {
+      "raw arrival precedes producer ingestion"
+    }
     if (!bar.final || bar.marketSession != "regular") {
       skipped++
       continue
@@ -126,17 +136,17 @@ internal fun replayRetainedFeatures(
     states[key] = transition.state
     transition.feature?.let { feature ->
       val available = Math.addExact(maxOf(arrival.availableAtMs, feature.material.windowEndMs), config.processingDelayMs)
-      output +=
+      emit(
         RetainedFeatureArrival(
           available,
-          RetainedFeatureRecord(config.featuresTopic, 0, output.size.toString(), replayJson.encodeToString(feature)),
-        )
+          RetainedFeatureRecord(config.featuresTopic, 0, outputCount.toString(), replayJson.encodeToString(feature)),
+        ),
+      )
+      outputCount++
     }
   }
-  return RetainedFeatureReplayResult(output, skipped, recordedAt)
+  return RetainedFeatureReplayResult(outputCount, skipped, recordedAt)
 }
-
-private fun Sequence<String>.dropLastEmptyLine(): List<String> = toList().dropLast(1)
 
 @Serializable
 private data class RetainedFeatureReceipt(
@@ -163,19 +173,26 @@ object RetainedFeatureReplay {
     require(Files.size(source) in 1..134_217_728L) { "extract bars into a source of at most 128 MiB" }
     val bytes = Files.newInputStream(source).use { it.readNBytes(134_217_729) }
     require(bytes.size <= 134_217_728) { "retained source exceeds 128 MiB" }
-    val result = replayRetainedFeatures(bytes, config, Clock.systemUTC())
-    val outputBytes = result.arrivals.joinToString("", transform = { replayJson.encodeToString(it) + "\n" }).toByteArray()
+    val directory = Files.createDirectory(Path.of(args[2]))
+    val digest = MessageDigest.getInstance("SHA-256")
+    val result =
+      Files.newOutputStream(directory.resolve("arrivals.ndjson"), StandardOpenOption.CREATE_NEW).use { stream ->
+        DigestOutputStream(stream, digest).bufferedWriter(Charsets.UTF_8).use { writer ->
+          replayRetainedFeatures(bytes, config, Clock.systemUTC()) { arrival ->
+            writer.write(replayJson.encodeToString(arrival))
+            writer.write("\n")
+          }
+        }
+      }
     val receipt =
       RetainedFeatureReceipt(
         config = config,
         configSha256 = retainedBytesHash(configBytes),
-        outputSha256 = retainedBytesHash(outputBytes),
-        outputRecordCount = result.arrivals.size,
+        outputSha256 = digest.digest().joinToString("") { "%02x".format(it) },
+        outputRecordCount = result.outputRecordCount,
         skippedBars = result.skippedBars,
         recordedAtMs = result.recordedAtMs,
       )
-    val directory = Files.createDirectory(Path.of(args[2]))
-    Files.write(directory.resolve("arrivals.ndjson"), outputBytes, StandardOpenOption.CREATE_NEW)
     Files.write(directory.resolve("config.json"), configBytes, StandardOpenOption.CREATE_NEW)
     // Receipt is the terminal completion marker. A directory without it is not a completed export.
     Files.writeString(directory.resolve("receipt.json"), replayJson.encodeToString(receipt) + "\n", StandardOpenOption.CREATE_NEW)
