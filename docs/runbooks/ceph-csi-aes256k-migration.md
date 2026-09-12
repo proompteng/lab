@@ -121,6 +121,15 @@ an unsuffixed or `.2` RBD/CephFS kernel client and that CSI userland operations
 use the current Secrets before reducing retention to zero through GitOps.
 Use `ceph auth dump-keys -f json` for key-type metadata; do not print key material.
 
+At zero retention, Rook removes the unused base and `.2` auth entities while
+preserving generation 3. This step does not restart workloads or change PVCs.
+Require reconciled `priorKeyCount: 0`, absent old identities, and fresh functional
+acceptance before restricting allowed ciphers. If retirement fails, stop and
+inspect Rook reconciliation; do not recreate an AES identity or delete active
+`.3` credentials. Restoring the retention count cannot recover deleted keys,
+so keep the verified generation-3 consumers running. Keep dated inventory and
+rollout evidence in the PR and operational receipts, outside this live runbook.
+
 After old identities have been removed and every relevant key reports
 `aes256k`, restrict `security.cephx.allowedCiphers` to `[aes256k]` in a separate
 reviewed change. Verify insecure-client, allowed-cipher, and creatable-key
@@ -129,6 +138,6 @@ warning clears without muting it.
 
 Run the strict storage acceptance helper and the functional canaries again.
 Report any remaining health warning separately. In particular, the BlueStore
-slow-operation alert observed at 08:04 UTC can remain in Ceph's retained health
+slow-operation alert can remain in Ceph's retained health
 window after current I/O latency recovers; an auth migration does not clear that
 independent warning.

@@ -74,9 +74,10 @@ overwrite that branch or its managed deployment metadata. If an Application is r
 Freight so Kargo reconstructs the branch and Argo follows it; do not recreate a digest bump pull request. An explicitly
 authorized break-glass direct deployment is an incident action, not a normal release path.
 
-Bayn is the one safety exception and is not enrolled in a Kargo Warehouse or Stage. Its `bayn-release` activation and
-source-lineage branch remain the authority for strategy activation; an image digest alone never creates Freight or
-authorizes a Bayn promotion.
+Bayn follows this same path through `lab-delivery/bayn` and `kargo/bayn`. Its Stage updates the public service,
+execution worker, and activation hook to the same source and digest, and carries the existing authored research
+request into the new build lineage. The separate `bayn-release` workflow and promotion holds have been removed.
+The native hook and trading runtime enforce account, strategy, capital grant, reconciliation, and order-risk contracts.
 
 ## Application enrollment
 

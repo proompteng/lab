@@ -69,6 +69,8 @@ vendor_wrapper="$(resolve_image_entry /bin/bayn-vendor-intraday-replay)"
 vendor_command="$(resolve_image_entry /app/services/bayn/dist/vendor-intraday-replay-command.js)"
 execution_server="$(resolve_image_entry /app/services/bayn/dist/restate-execution-server.js)"
 image_node="$(resolve_image_entry /bin/node)"
+streaming_replay="$(resolve_image_entry /app/services/bayn/dist/streaming-replay-command.js)"
+streaming_diagnostics="$(resolve_image_entry /app/services/bayn/dist/streaming-diagnostics-command.js)"
 
 test -x "${forward_wrapper}"
 test -f "${forward_command}"
@@ -78,6 +80,8 @@ test -x "${vendor_wrapper}"
 test -f "${vendor_command}"
 test -f "${execution_server}"
 test -x "${image_node}"
+test -f "${streaming_replay}"
+test -f "${streaming_diagnostics}"
 
 image_ref="$(jq -er '.[0].RepoTags | if length == 1 then .[0] else error("expected one image tag") end' \
   "${archive}/manifest.json")"
@@ -184,6 +188,31 @@ compiled_vendor_actual="$(
 )"
 if [[ "${compiled_vendor_actual}" != "${expected_vendor}" ]]; then
   printf 'Unexpected compiled Bayn vendor-intraday-replay help output:\n%s\n' "${compiled_vendor_actual}" >&2
+  exit 1
+fi
+
+# Loading diagnostics also loads the external Kafka client and its codec dependencies.
+for command in streaming-replay streaming-diagnostics; do
+  case "${command}" in
+    streaming-replay) expected_streaming='Usage: bayn-streaming-replay --file <decision.json> | --decision <decision-content-hash>' ;;
+    streaming-diagnostics) expected_streaming='Usage: bayn-streaming-diagnostics --since <UTC-instant> | --codecs | --help' ;;
+  esac
+  streaming_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
+    --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --cpus 1 \
+    --env NODE_ENV=production --entrypoint /bin/node "${image_id}" \
+    "/app/services/bayn/dist/${command}-command.js" --help)"
+  if [[ "${streaming_actual}" != "${expected_streaming}" ]]; then
+    printf 'Unexpected Bayn %s help output: %s\n' "${command}" "${streaming_actual}" >&2
+    exit 1
+  fi
+done
+
+codecs_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
+  --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --cpus 1 \
+  --env NODE_ENV=production --entrypoint /bin/node "${image_id}" \
+  /app/services/bayn/dist/streaming-diagnostics-command.js --codecs)"
+if [[ "${codecs_actual}" != 'Kafka codecs verified: gzip,snappy,lz4,zstd' ]]; then
+  printf 'Unexpected Kafka codec verification output: %s\n' "${codecs_actual}" >&2
   exit 1
 fi
 

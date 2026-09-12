@@ -4,6 +4,7 @@ metadata:
   name: torghut-ta-config
   namespace: torghut
 data:
+  TA_MARKET_FEATURES_TOPIC: "torghut.market-features.v1"
   TA_HTTP_HOST: "0.0.0.0"
   TA_HTTP_PORT: "8080"
   TA_KAFKA_BOOTSTRAP: "kafka-kafka-bootstrap.kafka:9092"

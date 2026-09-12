@@ -88,7 +88,7 @@ export const makeArchiveAvailabilityRecorder =
 /** Uses SELECT only: research must never mint or backdate availability evidence. */
 export const makeArchiveAvailabilityReader =
   (sql: PgClient.PgClient, endpointHash: string): NonNullable<ReplayMarketDataService['recordedAvailability']> =>
-  (snapshot) =>
+  (snapshot, availableBy) =>
     Effect.gen(function* () {
       const references = yield* Effect.fromResult(archiveRecordReferences(snapshot))
       const ids = yield* Effect.fromResult(canonicalJsonV1Result(references.map((reference) => reference.recordId)))
@@ -116,6 +116,7 @@ export const makeArchiveAvailabilityReader =
           snapshot,
           endpointHash,
           rows.map((row) => row.receipt),
+          availableBy,
         ),
       )
     }).pipe(Effect.mapError(archiveAvailabilityOperationalError))
