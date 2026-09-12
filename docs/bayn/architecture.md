@@ -7,7 +7,7 @@ the same strategy, intent, risk, mutation, recovery, accounting, and reconciliat
 durable capital activation determine where an otherwise identical execution plan may run.
 
 The active runtime contains one strategy, `intraday-momentum`, using
-`bayn.intraday-momentum.protocol.v2`. Historical strategy and decision schemas remain readable only where persisted
+`bayn.intraday-momentum.protocol.v3`. Historical strategy and decision schemas remain readable only where persisted
 records require them; they are not runtime fallbacks and cannot start new cycles.
 
 ## Ownership
@@ -20,8 +20,9 @@ records require them; they are not runtime fallbacks and cannot start new cycles
 - PostgreSQL is the authoritative ledger for activations, cycles, decisions, intents, mutations, reconciliation, and
   the compact controller status projection.
 - TigerBeetle is the authoritative accounting ledger for cash, fees, cost basis, and realized P&L.
-- ClickHouse is the read-only retained intraday archive populated from Alpaca WebSocket events through Kafka and
-  Dorvud/Flink.
+- Dorvud/Flink consumes original Kafka bars and publishes versioned rolling features. Each execution worker consumes
+  the raw and feature topics with a scoped `@platformatic/kafka` client and maintains a complete universe projection.
+- ClickHouse is the read-only archive for raw events and complete feature revisions, including Kafka provenance.
 - The broker adapter performs account-environment-neutral reads and mutations through the restricted egress proxy.
 - The public Bayn deployment serves read-only liveness, readiness, status, metrics, and traces. It does not schedule
   execution or own broker mutation authority.
@@ -31,15 +32,14 @@ records require them; they are not runtime fallbacks and cannot start new cycles
 1. Restate invokes one bounded `advanceExecutionOnce` pass for the canonical account-binding hash.
 2. The pass reconciles persisted intents and broker state before considering new exposure. Any unknown mutation,
    discrepancy, stale observation, or identity drift blocks new orders.
-3. During an eligible regular-market window, Bayn reads a finalized rolling intraday snapshot from ClickHouse. The
-   snapshot binds exact archive rows, Kafka topic watermarks, calendar, universe, feed, delay class, observation time,
-   and content hashes.
-4. The pure strategy returns a target portfolio or a typed no-trade result. Missing or late data is a lifecycle
-   blocker, not `NO_TRADE`.
-   Successful worker archive reads additionally retain append-only, content-bound row-availability receipts in
-   PostgreSQL before releasing the snapshot to the caller. The receipt clock is the completed reader observation,
-   not the source envelope's receipt time or the snapshot query cutoff. Public status and historical replay cannot
-   write these receipts.
+3. During an eligible regular-market window, Bayn cuts its raw-plus-feature projection at one local observation.
+   It requires exact feature-to-bar revision matches, the broker calendar, and fresh raw quotes and trades. A
+   replacement worker rebuilds state through captured Kafka partition barriers within the five-minute startup budget.
+4. The pure strategy consumes Flink's prepared rolling values and returns a target portfolio or a typed no-trade result.
+   Missing candidate features remain explicit exclusions; missing benchmark evidence blocks the observation.
+   PostgreSQL retains exact raw rows, selected feature payloads, actual receipt times, consumer epoch and sequence,
+   transport positions, and snapshot hashes before execution. Archive and shadow modes retain their separate
+   archive-availability evidence contracts; changing the deployed data mode requires reviewed GitOps.
 5. The target planner derives whole-share deltas from the reconciled account and verified execution prices. The
    strategy decision, exact decision rows, planner input, target plan, risk decisions, and deterministic intent IDs are
    committed before broker I/O.
@@ -89,7 +89,7 @@ Effect is used at capability and failure boundaries, not as a wrapper around pur
 
 - strategy calculations, hashing, market-data validation, target planning, risk rules, and state transitions are pure
   immutable functions;
-- database, ClickHouse, TigerBeetle, broker, telemetry, and HTTP resources are scoped Effect services;
+- database, Kafka, ClickHouse, TigerBeetle, broker, telemetry, and HTTP resources are scoped Effect services;
 - the execution worker owns one process-scoped `ManagedRuntime`, while each Restate handler runs one bounded pass;
 - typed domain blockers return durable outcomes and continue the reconciliation cadence; transient infrastructure
   failures use bounded Restate retries; and
