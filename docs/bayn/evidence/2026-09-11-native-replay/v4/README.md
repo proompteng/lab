@@ -31,6 +31,15 @@ first/last arrivals span the full exchange session. The original bytes are uncha
 The NDJSON remains in the local retained-source artifact store and is required for reproduction. The earlier
 reports and their original incomplete inventory remain available in the [parent evidence directory](../README.md).
 
+The subsequent [source-admission receipt](source-admission-receipt.json) validates and consumes all 8,437,431
+records using the independently supplied [capture](independent-capture.json), whose file SHA-256 is
+`2c77a11084bacee70a3ebe862477304150e533903725e703f450c0d8838ebd8a`.
+The capture is derived directly from the Kafka and Dorvud receipts, separately from the exported NDJSON. The verifier
+at `5a2db05ca60e97bdbf3a8f6635b43efc11e973a7` requires both that capture and its separately pinned hash.
+This is source-admission evidence for the identical bytes and source manifest used below. It does not rerun execution
+or change the original reports, run IDs, or executable provenance. Future session CLI runs bind the capture hash into
+the run identity and retain it in their reports.
+
 ## Frozen execution and limits
 
 The [study plan](frozen-study-plan.json) and [executable receipt](executable-receipt.json) were recorded before any

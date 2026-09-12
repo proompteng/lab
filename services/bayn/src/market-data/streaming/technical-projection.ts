@@ -22,6 +22,13 @@ export const technicalReceiptAvailableAt = (
   candidate.topic === state.technicalTopic &&
   candidate.availableAtMs <= observedAtMs &&
   candidate.availableAtMs > state.technicalRejectionsDiscardedThroughMs &&
+  !(state.technicalFeatures.get(candidate.value.material.symbol) ?? []).some(
+    (newer) =>
+      newer.value.material.sessionDate === candidate.value.material.sessionDate &&
+      newer.value.material.windowEndMs === candidate.value.material.windowEndMs &&
+      newer.sequence > candidate.sequence &&
+      newer.availableAtMs <= observedAtMs,
+  ) &&
   !state.technicalRejections.some(
     (rejection) => rejection.availableAtMs <= observedAtMs && rejection.sequence >= candidate.sequence,
   )

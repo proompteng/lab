@@ -253,6 +253,47 @@ test('exact technical suffix joins as-of and immutable conflicts remove optional
   ).toHaveLength(0)
 })
 
+test('a new technical revision supersedes the previous value before matching raw correction arrives', () => {
+  const ready = incorporateMarketRecord(initial(), record(), universe, end + 2200)
+  const material = {
+    ...feature.material,
+    inputs: feature.material.inputs.map((input, index) => (index === 60 ? { ...input, sourceOffset: '9999' } : input)),
+  }
+  const corrected = { ...feature, material, featureId: canonicalHashV1(material) }
+  const waiting = incorporateMarketRecord(ready, record('1', corrected), universe, end + 2500)
+  expect(select(waiting).technical?.features).toHaveLength(0)
+  expect(select(waiting).technical?.unavailableSymbols).toEqual(['AAPL'])
+  expect(summarizeStreamingSymbol(waiting, 'AAPL').technical?.matchedFeatures).toHaveLength(0)
+  const earlier = Result.getOrThrow(
+    selectStreamingInputs(waiting, { ...query, observedAt: new Date(end + 2400).toISOString() }),
+  )
+  expect(earlier.technical?.features[0]?.value.featureId).toBe(feature.featureId)
+  const original = bars.at(-1)
+  if (original === undefined) throw new Error('missing final bar')
+  const correctedBar = { ...original, sourceOffset: '9999' }
+  const updatedRaw = incorporateRecordedMarketValue(waiting, correctedBar, universe, end + 2600)
+  const updatedRollingMaterial = { ...rollingMaterial, inputs: material.inputs.slice(-30) }
+  const updated = incorporateMarketRecord(
+    updatedRaw,
+    {
+      topic: universe.topics.features,
+      partition: 0,
+      offset: '1',
+      value: JSON.stringify({
+        ...rolling,
+        material: updatedRollingMaterial,
+        featureId: canonicalHashV1(updatedRollingMaterial),
+      }),
+    },
+    universe,
+    end + 2700,
+  )
+  expect(select(updated).technical?.features[0]?.value.featureId).toBe(corrected.featureId)
+  expect(summarizeStreamingSymbol(updated, 'AAPL').technical?.matchedFeatures.map((value) => value.featureId)).toEqual([
+    corrected.featureId,
+  ])
+})
+
 test('live and simulated snapshots reproduce technical payload and provenance, rejecting tampering', () => {
   const ready = incorporateMarketRecord(initial(), record(), universe, end + 2200)
   const snapshot = Result.getOrThrow(constructStreamingSnapshot(cut(ready), query))

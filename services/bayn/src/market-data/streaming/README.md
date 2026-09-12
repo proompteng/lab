@@ -136,6 +136,10 @@ hashes. The producer retains complete session provenance; Bayn independently ver
 not older raw bars outside its retained window. The full technical payload and source references are hashed into the
 snapshot. Recorded live and simulated snapshots reproduce this evidence and reject changed receipts or availability.
 
+An observed replacement supersedes an older technical receipt for the same session and window, even if its raw
+correction has not arrived yet. Selection and diagnostics leave that window unavailable until the replacement
+matches; earlier observations still use only the revisions available at that time.
+
 Missing, late, mismatched or malformed technical input remains unavailable. It cannot authorize a baseline entry or
 invalidate otherwise accepted raw and rolling inputs. A technical rejection invalidates older optional receipts until
 a later distinct valid snapshot arrives. Optional receipt and rejection retention is bounded. The existing strategy,
