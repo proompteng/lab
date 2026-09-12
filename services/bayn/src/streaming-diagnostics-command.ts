@@ -1,10 +1,10 @@
+import { observedBarsAt } from './market-data/streaming/projection'
 import { compressionsAlgorithms } from '@platformatic/kafka'
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { Data, Effect, Layer, Logger, Result, Schedule, Stdio, Stream } from 'effect'
 import { kafkaMarketConfig } from './config/source'
 import { canonicalJsonV1Result } from './hash'
 import { featureMatchesBars } from './market-data/features/contract'
-import { intradayInstantNanos } from './market-data/intraday/time'
 import { makeKafkaMarketProjection } from './market-data/streaming/kafka'
 import {
   defaultIntradayMomentumProtocolDocument,
@@ -82,15 +82,13 @@ const main = Effect.scoped(
       const allBars = cut.projection.bars.get(symbol) ?? []
       const features = cut.projection.features.get(symbol) ?? []
       const matches = features.filter(({ value }) => {
-        const bars = allBars
-          .filter(({ value: bar }) => {
-            const timestamp = intradayInstantNanos(bar.eventAt)
-            return (
-              timestamp >= BigInt(value.material.windowStartMs) * 1_000_000n &&
-              timestamp < BigInt(value.material.windowEndMs) * 1_000_000n
-            )
-          })
-          .map(({ value: bar }) => bar)
+        const bars = observedBarsAt(
+          cut.projection,
+          symbol,
+          BigInt(value.material.windowStartMs) * 1_000_000n,
+          BigInt(value.material.windowEndMs) * 1_000_000n,
+          Number.MAX_SAFE_INTEGER,
+        ).map(({ value: bar }) => bar)
         const match = featureMatchesBars(value, bars)
         return Result.isSuccess(match) && match.success
       })

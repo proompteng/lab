@@ -27,7 +27,7 @@ import { featureMatchesBars, marketFeatureClockSkewAllowanceMs, type RollingMark
 import type { KafkaProjectionCut } from './kafka'
 import type { KafkaBootstrapEvidence, KafkaPartitionPosition } from './bootstrap'
 import { kafkaBootstrapComplete } from './bootstrap'
-import { topicPartitionKey, type ObservedMarketValue } from './projection'
+import { observedBarsAt, topicPartitionKey, type ObservedMarketValue } from './projection'
 
 export interface StreamingRecordReceipt {
   readonly sourceTopic: string
@@ -102,6 +102,7 @@ export const constructStreamingSnapshot = (
     const start = intradayInstantNanos(request.rangeStartAt)
     const end = intradayInstantNanos(request.rangeEndAt)
     if (
+      state.availabilityMode !== 'observed' ||
       cut.bootstrap.epoch !== state.epoch ||
       !kafkaBootstrapComplete(cut.bootstrap, cut.positions) ||
       cut.bootstrap.observedAtMs > observedAtMs ||
@@ -132,12 +133,7 @@ export const constructStreamingSnapshot = (
         )
     }
     for (const symbol of symbols) {
-      const bars = (state.bars.get(symbol) ?? []).filter(
-        (entry) =>
-          observedWithin(entry, observedAtMs) &&
-          intradayInstantNanos(entry.value.eventAt) >= start &&
-          intradayInstantNanos(entry.value.eventAt) < end,
-      )
+      const bars = observedBarsAt(state, symbol, start, end, observedAtMs)
       const quote = state.quoteHistory.get(symbol)?.findLast((entry) => observedWithin(entry, observedAtMs))
       const trade = state.tradeHistory.get(symbol)?.findLast((entry) => observedWithin(entry, observedAtMs))
       if (request.purpose === undefined) entries.push(...bars)

@@ -7,7 +7,7 @@ import {
   UnsignedMicrosSchema,
   strictParseOptions,
 } from '../../schemas'
-import { emptyStreamingProjection, incorporateMarketRecord } from './projection'
+import { emptyStreamingProjection, incorporateSimulatedMarketRecord } from './projection'
 import type { StreamingUniverse } from './raw-events'
 
 /** Explicit counterfactual delivery; computedAt and the published payload are never rewritten. */
@@ -19,6 +19,12 @@ export const HistoricalStreamingInputSchema = Schema.Struct({
     description: StrictNonEmptyStringSchema,
     tieBreak: Schema.Literal('availability-topic-partition-offset'),
   }),
+  regeneratedFeatures: Schema.optionalKey(
+    Schema.Struct({
+      runId: Sha256Schema,
+      recordedAtMs: NonNegativeIntegerSchema,
+    }),
+  ),
   observedAtMs: NonNegativeIntegerSchema,
   events: Schema.Array(
     Schema.Struct({
@@ -49,10 +55,19 @@ export const replayHistoricalMarketArrivals = (input: unknown, universe: Streami
             ? 1
             : 0),
     )
-    let projection = emptyStreamingProjection(`historical-${decoded.runId}`)
+    let projection: ReturnType<typeof emptyStreamingProjection> = {
+      ...emptyStreamingProjection(`historical-${decoded.runId}`),
+      availabilityMode: 'simulated',
+    }
     for (const event of events) {
       if (event.availableAtMs > decoded.observedAtMs) break
-      projection = incorporateMarketRecord(projection, event.record, universe, event.availableAtMs)
+      projection = incorporateSimulatedMarketRecord(
+        projection,
+        event.record,
+        universe,
+        event.availableAtMs,
+        decoded.regeneratedFeatures?.recordedAtMs ?? event.availableAtMs,
+      )
     }
     return {
       schemaVersion: 'bayn.historical-market-replay.v1' as const,
@@ -60,6 +75,7 @@ export const replayHistoricalMarketArrivals = (input: unknown, universe: Streami
       runId: decoded.runId,
       inputHash,
       deliveryModel: decoded.deliveryModel,
+      regeneratedFeatures: decoded.regeneratedFeatures,
       observedAtMs: decoded.observedAtMs,
       projection,
     }

@@ -45,7 +45,7 @@ const EnvelopeSchema = Schema.Struct({
   symbol: Schema.String,
   eventTs: Schema.String,
   ingestTs: Schema.String,
-  version: Schema.Int.check(Schema.isGreaterThanOrEqualTo(2)),
+  version: Schema.Literal(2),
   isFinal: Schema.optional(Schema.Boolean),
   payload: Schema.Unknown,
 })

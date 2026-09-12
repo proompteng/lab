@@ -129,6 +129,9 @@ describe('streaming raw and rolling feature projection', () => {
     }
     const replacement = { ...feature, material, featureId: canonicalHashV1(material) }
     const corrected = incorporateMarketRecord(initial, correctedRecord, universe, end + 4000)
+    expect(Result.getOrThrow(select(corrected, end + 3000)).feature.value.featureId).toBe(feature.featureId)
+    const previousCut = Result.getOrThrow(constructStreamingSnapshot(cutFor(corrected), query))
+    expect(previousCut.bars.find((bar) => Date.parse(bar.eventAt) === start)?.open).toBe(100)
     expect(Result.isFailure(select(corrected, end + 4000))).toBe(true)
     const replaced = incorporateMarketRecord(
       corrected,
@@ -140,6 +143,26 @@ describe('streaming raw and rolling feature projection', () => {
     const retried = incorporateMarketRecord(replaced, { ...featureRecord, offset: '2' }, universe, end + 6000)
     expect(Result.getOrThrow(select(retried, end + 6000)).feature.value.featureId).toBe(replacement.featureId)
     expect(Result.getOrThrow(select(initial)).feature.value.featureId).toBe(feature.featureId)
+  })
+
+  test('bounds bar revision history and rejects observations that need an evicted revision', () => {
+    let state = incorporate([...raw(), featureRecord])
+    for (let index = 0; index < 8; index++) {
+      const correction = rawRecord('bars', 30 + index, start, {
+        o: 100.5,
+        h: 102,
+        l: 99,
+        c: 101,
+        v: 10.25,
+        vw: 100.5,
+        n: 2,
+      })
+      state = incorporateMarketRecord(state, correction, universe, end + 4000 + index)
+    }
+    expect(state.bars.get('AAPL')).toHaveLength(33)
+    expect(state.minimumObservationMs).toBe(end + 4004)
+    expect(Result.isFailure(select(state, end + 3000))).toBe(true)
+    expect(Result.isFailure(constructStreamingSnapshot(cutFor(state), query))).toBe(true)
   })
 
   test('duplicates preserve the original receipt and conflicting immutable payloads block the cut', () => {
@@ -178,6 +201,15 @@ describe('streaming raw and rolling feature projection', () => {
     )
     expect(invalid.rejections.size).toBe(1)
     expect(invalid.offsets.size).toBe(0)
+  })
+
+  test('rejects unknown raw-envelope versions before interpreting their payloads', () => {
+    for (const version of [1, 3]) {
+      const future = { ...quote, value: quote.value.replace('"version":2', `"version":${version}`) }
+      expect(Result.isFailure(decodeRawMarketRecord(future, universe))).toBe(true)
+      const state = incorporate([...raw().filter((record) => record !== quote), future, featureRecord])
+      expect(Result.isFailure(select(state))).toBe(true)
+    }
   })
 
   test('later corrections do not mutate an earlier persisted projection and raw retention is bounded', () => {
@@ -289,6 +321,33 @@ describe('verified streaming decision snapshot', () => {
 })
 
 describe('explicit historical delivery model', () => {
+  test('regenerated features keep their computation time and cannot supply live execution evidence', () => {
+    const recordedAtMs = end + 86_400_000
+    const regenerated = { ...featureRecord, value: JSON.stringify({ ...feature, computedAtMs: recordedAtMs }) }
+    const input = {
+      schemaVersion: 'bayn.historical-market-arrivals.v1',
+      runId: 'b'.repeat(64),
+      deliveryModel: {
+        schemaVersion: 'bayn.supplied-arrival-times.v1',
+        description: 'Counterfactual three-second delivery',
+        tieBreak: 'availability-topic-partition-offset',
+      },
+      regeneratedFeatures: { runId: 'c'.repeat(64), recordedAtMs },
+      observedAtMs: end + 3000,
+      events: [...raw(), regenerated].map((record) => ({ record, availableAtMs: end + 3000 })),
+    }
+    const replay = Result.getOrThrow(replayHistoricalMarketArrivals(input, universe))
+    expect(Result.getOrThrow(select(replay.projection)).feature.value.computedAtMs).toBe(recordedAtMs)
+    expect(replay.regeneratedFeatures?.runId).toBe('c'.repeat(64))
+    expect(Result.isFailure(constructStreamingSnapshot(cutFor(replay.projection), query))).toBe(true)
+    const live = incorporate([...raw(), regenerated])
+    expect(Result.isFailure(select(live))).toBe(true)
+    const { regeneratedFeatures: _regenerated, ...undeclared } = input
+    expect(
+      Result.isFailure(select(Result.getOrThrow(replayHistoricalMarketArrivals(undeclared, universe)).projection)),
+    ).toBe(true)
+  })
+
   test('uses the same reducer and retains late feature availability and supplied computation time', () => {
     const input = {
       schemaVersion: 'bayn.historical-market-arrivals.v1',

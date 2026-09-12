@@ -25,6 +25,7 @@ export interface ObservedFeature extends ObservedMarketValue<RollingMarketFeatur
   readonly offset: string
 }
 export interface StreamingProjection {
+  readonly availabilityMode: 'observed' | 'simulated'
   readonly epoch: string
   readonly sequence: number
   readonly offsets: ReadonlyMap<string, string>
@@ -42,6 +43,7 @@ export interface StreamingProjection {
   >
 }
 export const emptyStreamingProjection = (epoch: string): StreamingProjection => ({
+  availabilityMode: 'observed',
   epoch,
   sequence: 0,
   offsets: new Map(),
@@ -89,6 +91,7 @@ const incorporateDecodedRecord = (
   universe: StreamingUniverse,
   availableAtMs: number,
   decodedEvent?: RawMarketEvent,
+  featureRecordedAtMs = availableAtMs,
 ): StreamingProjection => {
   if (
     !Number.isSafeInteger(record.partition) ||
@@ -96,7 +99,9 @@ const incorporateDecodedRecord = (
     !/^(0|[1-9][0-9]*)$/.test(record.offset) ||
     BigInt(record.offset) > 9_223_372_036_854_775_807n ||
     !Number.isSafeInteger(availableAtMs) ||
-    availableAtMs < 0
+    availableAtMs < 0 ||
+    !Number.isSafeInteger(featureRecordedAtMs) ||
+    featureRecordedAtMs < 0
   ) {
     return reject(previous, record, availableAtMs, 'invalid-transport-coordinate')
   }
@@ -138,7 +143,7 @@ const incorporateDecodedRecord = (
       material.universeSymbolHash !== universe.universeSymbolHash ||
       !universe.symbols.includes(material.symbol) ||
       material.inputs.some((input) => input.sourceTopic !== universe.topics.bars) ||
-      feature.computedAtMs > availableAtMs + marketFeatureClockSkewAllowanceMs ||
+      feature.computedAtMs > featureRecordedAtMs + marketFeatureClockSkewAllowanceMs ||
       (record.timestampMs !== undefined &&
         (!Number.isSafeInteger(record.timestampMs) || Math.abs(record.timestampMs - feature.computedAtMs) > 5000))
     )
@@ -176,13 +181,24 @@ const incorporateDecodedRecord = (
       const existing = state.bars.get(bar.symbol) ?? []
       const current = existing.find((entry) => compareIntradayInstants(entry.value.eventAt, bar.eventAt) === 0)
       if (current !== undefined && compareBarRevisions(bar, current.value) <= 0) return state
-      const bars = [
-        ...existing.filter((entry) => compareIntradayInstants(entry.value.eventAt, bar.eventAt) !== 0),
-        { value: bar, availableAtMs, sequence, recordHash },
-      ]
-        .toSorted((a, b) => compareIntradayInstants(b.value.eventAt, a.value.eventAt))
-        .slice(0, 61)
-      return { ...state, bars: new Map(state.bars).set(bar.symbol, bars) }
+      const revisions = [...existing, { value: bar, availableAtMs, sequence, recordHash }].toSorted(
+        (a, b) => compareIntradayInstants(b.value.eventAt, a.value.eventAt) || compareBarRevisions(b.value, a.value),
+      )
+      const minuteCounts = new Map<bigint, number>()
+      const bars: ObservedMarketValue<IntradayBar>[] = []
+      let minimumObservationMs = state.minimumObservationMs
+      for (const entry of revisions) {
+        const minute = intradayInstantNanos(entry.value.eventAt)
+        const count = minuteCounts.get(minute) ?? 0
+        if (count === 0 && minuteCounts.size === 61) continue
+        minuteCounts.set(minute, count + 1)
+        if (count < 4) bars.push(entry)
+        else {
+          const earliestRetained = bars.findLast((retained) => intradayInstantNanos(retained.value.eventAt) === minute)
+          minimumObservationMs = Math.max(minimumObservationMs, earliestRetained?.availableAtMs ?? availableAtMs)
+        }
+      }
+      return { ...state, minimumObservationMs, bars: new Map(state.bars).set(bar.symbol, bars) }
     }
     case RawMarketEventKind.Quote: {
       const current = state.quotes.get(event.value.symbol)
@@ -230,6 +246,23 @@ export const incorporateMarketRecord = (
   availableAtMs: number,
 ): StreamingProjection => incorporateDecodedRecord(previous, record, universe, availableAtMs)
 
+/** Research can model earlier feature arrivals while retaining the real production timestamp. */
+export const incorporateSimulatedMarketRecord = (
+  previous: StreamingProjection,
+  record: KafkaMarketRecord,
+  universe: StreamingUniverse,
+  availableAtMs: number,
+  featureRecordedAtMs = availableAtMs,
+): StreamingProjection =>
+  incorporateDecodedRecord(
+    { ...previous, availabilityMode: 'simulated' },
+    record,
+    universe,
+    availableAtMs,
+    undefined,
+    featureRecordedAtMs,
+  )
+
 /** Recorded-decision replay passes decoded archived rows through the same reducer without re-encoding binary64 values. */
 export const incorporateRecordedMarketValue = (
   previous: StreamingProjection,
@@ -264,6 +297,24 @@ export interface StreamingSymbolInputs {
   readonly feature: ObservedFeature
 }
 
+/** Choose the winning revision that had arrived at the observation, preserving earlier cuts across corrections. */
+export const observedBarsAt = (
+  state: StreamingProjection,
+  symbol: string,
+  startNanos: bigint,
+  endNanos: bigint,
+  observedAtMs: number,
+): readonly ObservedMarketValue<IntradayBar>[] => {
+  const selected = new Map<bigint, ObservedMarketValue<IntradayBar>>()
+  for (const entry of state.bars.get(symbol) ?? []) {
+    const minute = intradayInstantNanos(entry.value.eventAt)
+    if (entry.availableAtMs > observedAtMs || minute < startNanos || minute >= endNanos) continue
+    const prior = selected.get(minute)
+    if (prior === undefined || compareBarRevisions(entry.value, prior.value) > 0) selected.set(minute, entry)
+  }
+  return [...selected.values()].toSorted((a, b) => compareIntradayInstants(a.value.eventAt, b.value.eventAt))
+}
+
 export const selectStreamingSymbolInputs = (
   state: StreamingProjection,
   symbol: string,
@@ -273,15 +324,13 @@ export const selectStreamingSymbolInputs = (
 ): Result.Result<StreamingSymbolInputs, MarketFeatureFailure> =>
   Result.gen(function* () {
     const fail = (message: string) => Result.fail(new MarketFeatureFailure({ reason: 'input', message }))
-    const bars = (state.bars.get(symbol) ?? [])
-      .filter(
-        (entry) =>
-          entry.availableAtMs <= observedAtMs &&
-          intradayInstantNanos(entry.value.eventAt) >= BigInt(windowStartMs) * 1_000_000n &&
-          intradayInstantNanos(entry.value.eventAt) < BigInt(windowEndMs) * 1_000_000n,
-      )
-      .map((entry) => entry.value)
-      .toSorted((a, b) => compareIntradayInstants(a.eventAt, b.eventAt))
+    const bars = observedBarsAt(
+      state,
+      symbol,
+      BigInt(windowStartMs) * 1_000_000n,
+      BigInt(windowEndMs) * 1_000_000n,
+      observedAtMs,
+    ).map((entry) => entry.value)
     if (observedAtMs < state.minimumObservationMs) return yield* fail('observation precedes retained arrival history')
     if (windowStartMs <= state.discardedRejectionsThroughMs)
       return yield* fail('requested window precedes retained rejection history')

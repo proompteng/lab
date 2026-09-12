@@ -52,7 +52,9 @@ does not grant authority to trade or establish actual consumer availability for 
 `replayHistoricalMarketArrivals` uses the same reducer with an immutable run ID, supplied arrival times and the
 declared `availability-topic-partition-offset` tie-break. It consumes original raw envelopes and feature payloads
 exported with their Kafka coordinates. Its output explicitly identifies simulated consumer availability. Feature
-computation timestamps are never backdated. A regenerated feature therefore cannot be represented as an original
+computation timestamps are never backdated. A `regeneratedFeatures` declaration binds the generation run ID and
+actual recording time when an experiment assigns earlier simulated arrivals. Every historical projection is marked
+as simulated and is rejected by the live snapshot boundary. A regenerated feature therefore cannot be represented as an original
 historical receipt.
 
 The existing archive economics harness remains a separate evidence mode. Feature plumbing, deterministic replay and
@@ -65,3 +67,5 @@ existing reviewed-main, immutable-image, Kargo Stage and Argo path. Verify actua
 decision reproduction in addition to infrastructure readiness. The protocol binds the feature definition hash,
 clock allowance, bootstrap policy and exact-window freshness rule. Reverting the runtime requires a reviewed source
 and protocol change through the same delivery path; retaining archived feature history is required.
+
+Bar history retains at most four winning revisions for each of 61 minutes per symbol. As-of joins select the latest revision received by the observation time. If revision eviction removes the history needed for a cut, the projection rejects that observation.
