@@ -74,6 +74,41 @@ export const readForwardPerformanceUnclosedCycleCountDataFirst = (
     Effect.map(([row]) => row.count),
   )
 
+export const readForwardPerformanceMarketVolumeBindings = (
+  sql: PgClient.PgClient,
+  accountId: string,
+  authorityGenerationHash?: string,
+) =>
+  sql<Record<string, unknown>>`
+    WITH latest_reconciliation AS (
+      SELECT reconciliation.reconciled_at
+      FROM reconciliations AS reconciliation
+      WHERE reconciliation.account_id = ${accountId}
+        AND ${generationScope(sql, accountId, authorityGenerationHash, 'reconciliation')}
+      ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
+      LIMIT 1
+    )
+    SELECT
+      cycle.cycle_id,
+      cycle.snapshot_id,
+      cycle.execution_session_date::text AS execution_session_date,
+      cycle.execution_open_at,
+      cycle.execution_close_at,
+      reference.manifest
+    FROM autonomous_cycles AS cycle
+    JOIN LATERAL (
+      SELECT daily.manifest FROM snapshot_references AS daily WHERE daily.snapshot_id = cycle.snapshot_id
+      UNION ALL
+      SELECT intraday.manifest FROM intraday_snapshot_references AS intraday WHERE intraday.snapshot_id = cycle.snapshot_id
+    ) AS reference ON true
+    CROSS JOIN latest_reconciliation
+    WHERE cycle.account_id = ${accountId}
+      AND cycle.state = 'COMPLETED'
+      AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
+      AND cycle.terminal_at <= latest_reconciliation.reconciled_at
+    ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
+  `.pipe(Effect.flatMap(decodeMarketVolumeBindings))
+
 export const readForwardPerformancePostgresDataFirst = (
   sql: PgClient.PgClient,
   accountId: string,
@@ -415,31 +450,11 @@ export const readForwardPerformancePostgresDataFirst = (
             AND cycle.terminal_at <= latest_reconciliation.reconciled_at
           ORDER BY decision_rows.cycle_id COLLATE "C", decision_rows.created_at, decision_rows.decision_hash COLLATE "C"
         `.pipe(Effect.flatMap(decodeCycleDecisions))
-        const marketVolumeBindingRows = yield* sql<Record<string, unknown>>`
-          WITH latest_reconciliation AS (
-            SELECT reconciliation.reconciled_at
-            FROM reconciliations AS reconciliation
-            WHERE reconciliation.account_id = ${accountId}
-              AND ${generationScope(sql, accountId, authorityGenerationHash, 'reconciliation')}
-            ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
-            LIMIT 1
-          )
-          SELECT
-            cycle.cycle_id,
-            cycle.snapshot_id,
-            cycle.execution_session_date::text AS execution_session_date,
-            cycle.execution_open_at,
-            cycle.execution_close_at,
-            reference.manifest
-          FROM autonomous_cycles AS cycle
-          JOIN snapshot_references AS reference ON reference.snapshot_id = cycle.snapshot_id
-          CROSS JOIN latest_reconciliation
-          WHERE cycle.account_id = ${accountId}
-            AND cycle.state = 'COMPLETED'
-            AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
-            AND cycle.terminal_at <= latest_reconciliation.reconciled_at
-          ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
-        `.pipe(Effect.flatMap(decodeMarketVolumeBindings))
+        const marketVolumeBindingRows = yield* readForwardPerformanceMarketVolumeBindings(
+          sql,
+          accountId,
+          authorityGenerationHash,
+        )
         const executionIntentRows = yield* sql<Record<string, unknown>>`
           WITH latest_reconciliation AS (
             SELECT reconciliation.reconciled_at

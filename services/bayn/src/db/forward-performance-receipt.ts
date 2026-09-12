@@ -1,3 +1,5 @@
+import { IntradayPerformanceVolumeEvidenceSchema } from '../forward-performance/intraday-schema'
+import { validIntradayPerformanceVolumeEvidence } from '../forward-performance/intraday-volume'
 import { Context, Data, Effect, Option, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
@@ -87,6 +89,15 @@ const ForwardPerformanceObservedCapacitySchema = Schema.Struct({
       windowClosedAt: UtcInstantSchema,
       filledQuantityMicros: SignedMicrosSchema,
       marketVolumeQuantityMicros: SignedMicrosSchema,
+      intradaySource: Schema.optionalKey(
+        Schema.Struct({
+          feed: Schema.Literal('iex'),
+          volumeScope: Schema.Literal('IEX_RECORDED_SESSION_VOLUME'),
+          evidence: IntradayPerformanceVolumeEvidenceSchema.check(
+            Schema.makeFilter(validIntradayPerformanceVolumeEvidence),
+          ),
+        }),
+      ),
       participationRate: Schema.Struct({
         numeratorQuantityMicros: SignedMicrosSchema,
         denominatorQuantityMicros: SignedMicrosSchema,

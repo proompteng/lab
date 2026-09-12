@@ -1,3 +1,5 @@
+import { makeIntradayPerformanceFixture } from './intraday-cycle.test-support'
+import { makeIntradayPerformanceVolumeEvidence } from './intraday-volume'
 import assert from 'node:assert/strict'
 
 import { describe, expect, test } from 'bun:test'
@@ -6,6 +8,7 @@ import { Result } from 'effect'
 import { canonicalHashV1 } from '../hash'
 import { makeForwardPerformanceReceipt } from './domain'
 import type {
+  ForwardPerformanceDailyMarketVolumeEvidence,
   ForwardPerformanceEvidenceInput,
   ForwardPerformanceExecutionEvidence,
   ForwardPerformanceMarketVolumeEvidence,
@@ -205,7 +208,7 @@ const exactExecutionEvidence = (reverse = false) => {
 }
 
 const exactMarketVolumeEvidence = (): readonly ForwardPerformanceMarketVolumeEvidence[] => {
-  const material: Omit<ForwardPerformanceMarketVolumeEvidence, 'contentHash'> = {
+  const material: Omit<ForwardPerformanceDailyMarketVolumeEvidence, 'contentHash'> = {
     schemaVersion: 'bayn.forward-performance-market-volume-evidence.v1' as const,
     cycleId: hash('a'),
     decisionSnapshotId: hash('5'),
@@ -1428,4 +1431,29 @@ describe('forward performance domain', () => {
     expect(receipt.evidence.reasonCodes).toContain('ACCOUNT_IDENTITY_GAP')
     expect(receipt.profitability).toBe('UNDETERMINED')
   })
+})
+
+test('retains measured native execution quality when missing minutes prevent complete session participation', () => {
+  const { request, archive, bars } = makeIntradayPerformanceFixture()
+  for (const missing of [false, true]) {
+    const evidence = Result.getOrThrow(
+      makeIntradayPerformanceVolumeEvidence(request, archive, missing ? bars.slice(1) : bars),
+    )
+    if (evidence === undefined) throw new Error('expected terminal mark')
+    const { contentHash: _hash, ...source } = evidence
+    const material = { ...source, cycleId: hash('a') }
+    const volume = { ...material, contentHash: canonicalHashV1(material) }
+    // Move the existing synthetic accounting fixture into the native session's window.
+    const accounting = JSON.parse(
+      JSON.stringify(input({ transactions: exactTransactions(), executionEvidence: exactExecutionEvidence() }))
+        .replaceAll('2026-07-20', '2026-09-11')
+        .replaceAll('T20:00:', 'T19:55:'),
+    ) as ForwardPerformanceEvidenceInput
+    const receipt = success(makeForwardPerformanceReceipt({ ...accounting, marketVolumeEvidence: [volume] }))
+    expect(receipt.executionQuality.status).toBe('MEASURED')
+    expect(receipt.observedCapacity.status).toBe(missing ? 'UNDETERMINED' : 'MEASURED')
+    expect(receipt.observedCapacity.reasonCodes).toEqual(missing ? ['MARKET_VOLUME_EVIDENCE_GAP'] : [])
+    expect(receipt.observedCapacity.observations[0]?.intradaySource?.evidence).toEqual(volume)
+    if (missing) expect(receipt.observedCapacity.boundedObservedReferenceNotionalMicros).toBeNull()
+  }
 })

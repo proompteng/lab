@@ -1,3 +1,6 @@
+import { Result } from 'effect'
+import { makeIntradayPerformanceFixture } from '../forward-performance/intraday-cycle.test-support'
+import { makeIntradayPerformanceVolumeEvidence } from '../forward-performance/intraday-volume'
 import { describe, expect, test } from 'bun:test'
 
 import { canonicalHashV1 } from '../hash'
@@ -119,4 +122,52 @@ describe('forward-performance receipt persistence contract', () => {
 
     expect(decoded._tag).toBe('Failure')
   })
+})
+
+test('round trips native archive provenance and rejects a rehashed nested source substitution', () => {
+  const { request, archive, bars } = makeIntradayPerformanceFixture()
+  const evidence = Result.getOrThrow(makeIntradayPerformanceVolumeEvidence(request, archive, bars))
+  if (evidence === undefined) throw new Error('expected native evidence')
+  const material = {
+    ...receiptMaterial,
+    observedCapacity: {
+      ...receiptMaterial.observedCapacity,
+      observations: [
+        {
+          cycleId: request.cycleId,
+          symbol: request.symbol,
+          windowOpenedAt: request.windowOpenedAt,
+          windowClosedAt: request.windowClosedAt,
+          filledQuantityMicros: '18000000',
+          marketVolumeQuantityMicros: evidence.quantityMicros,
+          participationRate: {
+            numeratorQuantityMicros: '18000000',
+            denominatorQuantityMicros: evidence.quantityMicros,
+            decimal: '0.000461538461',
+          },
+          intradaySource: { feed: 'iex' as const, volumeScope: evidence.volumeScope, evidence },
+        },
+      ],
+    },
+  }
+  const nested = { ...material, receiptHash: canonicalHashV1(material) }
+  const outer = { ...envelopeMaterial, receipt: nested, receiptHash: nested.receiptHash }
+  const decoded = Result.getOrThrow(
+    decodeForwardPerformanceReceiptEnvelopeResult({ ...outer, contentHash: canonicalHashV1(outer) }),
+  )
+  expect(decoded.receipt.observedCapacity.observations[0]?.intradaySource?.evidence).toEqual(evidence)
+  const altered = { ...evidence, decisionSnapshotId: '0'.repeat(64) }
+  const { contentHash: _hash, ...alteredMaterial } = altered
+  material.observedCapacity.observations[0]!.intradaySource.evidence = {
+    ...alteredMaterial,
+    contentHash: canonicalHashV1(alteredMaterial),
+  }
+  const tamperedReceipt = { ...material, receiptHash: canonicalHashV1(material) }
+  const tamperedEnvelope = { ...envelopeMaterial, receipt: tamperedReceipt, receiptHash: tamperedReceipt.receiptHash }
+  expect(
+    decodeForwardPerformanceReceiptEnvelopeResult({
+      ...tamperedEnvelope,
+      contentHash: canonicalHashV1(tamperedEnvelope),
+    })._tag,
+  ).toBe('Failure')
 })

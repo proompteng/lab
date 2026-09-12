@@ -11,6 +11,7 @@ import {
   strictParseOptions,
 } from '../../schemas'
 import { CycleDecisionDocumentSchema } from '../../shadow-decision-contract'
+import { IntradayPerformanceManifestSchema } from '../intraday-schema'
 import type {
   ForwardPerformanceCashYieldEvidence,
   ForwardPerformanceCycleEvidence,
@@ -106,7 +107,7 @@ export const MarketVolumeBindingRow = Schema.Struct({
   execution_session_date: IsoDateSchema,
   execution_open_at: Schema.Date,
   execution_close_at: Schema.Date,
-  manifest: FinalizedSnapshotProvenanceSchema,
+  manifest: Schema.Union([FinalizedSnapshotProvenanceSchema, IntradayPerformanceManifestSchema]),
 })
 export const IntentExecutionRow = Schema.Struct({
   intent_id: Sha256,
