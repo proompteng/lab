@@ -15,15 +15,9 @@ import {
   intradayMomentumFeatureTopic,
   intradayMomentumSnapshotSymbols,
 } from '../../strategy/intraday-momentum/protocol'
-import { marketFeatureClockSkewAllowanceMs } from '../features/contract'
-import {
-  candidateAvailability,
-  validateBarStructure,
-  validateIdentity,
-  verifyIntradaySnapshotQuery,
-} from '../intraday/verification'
+import { verifyIntradaySnapshotQuery } from '../intraday/verification'
 import { HistoricalStreamingInputSchema, replayHistoricalMarketArrivals } from './historical'
-import { observedBarsAt, selectStreamingSymbolInputs } from './projection'
+import { selectStreamingInputs } from './inputs'
 
 export const HistoricalStreamingStrategyInputSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.historical-streaming-strategy-input.v1'),
@@ -92,74 +86,21 @@ export const replayHistoricalStreamingStrategy = (input: unknown) =>
       symbols: protocol.universe,
       topics: { ...protocol.sourceTopics, features: intradayMomentumFeatureTopic },
     })
-    const state = replay.projection
-    if (
-      state.minimumObservationMs > observedAtMs ||
-      windowStartMs <= state.discardedRejectionsThroughMs ||
-      [...state.rejections.values()].some((history) =>
-        history.some((entry) => entry.availableAtMs >= windowStartMs && entry.availableAtMs <= observedAtMs),
-      )
-    )
-      return yield* Result.fail(
-        new HistoricalStreamingStrategyFailure({
-          message: 'Historical input contains rejected records or incomplete retained history',
-        }),
-      )
-    const symbols = intradayMomentumSnapshotSymbols(protocol)
-    const bars = symbols.flatMap((symbol) =>
-      observedBarsAt(
-        state,
-        symbol,
-        BigInt(windowStartMs) * 1_000_000n,
-        BigInt(windowEndMs) * 1_000_000n,
-        observedAtMs,
-      ).map((entry) => entry.value),
-    )
-    const quotes = symbols.flatMap((symbol) => {
-      const entry = state.quoteHistory.get(symbol)?.findLast((value) => value.availableAtMs <= observedAtMs)
-      return entry === undefined ? [] : [entry.value]
-    })
-    const trades = symbols.flatMap((symbol) => {
-      const entry = state.tradeHistory.get(symbol)?.findLast((value) => value.availableAtMs <= observedAtMs)
-      return entry === undefined ? [] : [entry.value]
-    })
-    yield* validateIdentity(query, bars, query.rangeEndAt, false, undefined, marketFeatureClockSkewAllowanceMs)
-    yield* validateIdentity(
-      query,
-      [...quotes, ...trades],
-      session.closeAt,
-      true,
-      undefined,
-      marketFeatureClockSkewAllowanceMs,
-    )
-    yield* validateBarStructure(query, bars, marketFeatureClockSkewAllowanceMs)
-    const availability = yield* candidateAvailability(query, bars, quotes, trades, marketFeatureClockSkewAllowanceMs)
-    const exclusions = new Map(availability.exclusions.map((entry) => [entry.symbol, entry]))
+    const selected = yield* selectStreamingInputs(replay.projection, query)
+    const { bars, quotes, trades, exclusions } = selected
     const rollingPrices: Record<string, IntradayMomentumRollingPrices> = {}
-    const features = []
-    for (const symbol of symbols) {
-      const selected = selectStreamingSymbolInputs(state, symbol, windowStartMs, windowEndMs, observedAtMs)
-      if (Result.isFailure(selected)) {
-        if (symbol === protocol.benchmarkSymbol) return yield* Result.fail(selected.failure)
-        if (!exclusions.has(symbol))
-          exclusions.set(symbol, { symbol, reason: 'not-ready', message: selected.failure.message })
-        continue
-      }
-      const feature = selected.success.feature
+    const features = selected.featureReceipts.map((feature) => {
+      const symbol = feature.value.material.symbol
       rollingPrices[symbol] = feature.value.material.values
-      features.push({
+      return {
         symbol,
         topic: feature.topic,
         partition: feature.partition,
         offset: feature.offset,
         simulatedAvailableAtMs: feature.availableAtMs,
         value: feature.value,
-      })
-    }
-    if (exclusions.size === protocol.candidateSymbols.length)
-      return yield* Result.fail(
-        new HistoricalStreamingStrategyFailure({ message: 'Every historical candidate is unavailable' }),
-      )
+      }
+    })
     const decision = yield* decideIntradayMomentumCore({
       protocol,
       bars,

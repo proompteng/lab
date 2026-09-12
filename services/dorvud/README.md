@@ -1,12 +1,29 @@
-# Dorvud (placeholder)
+# Dorvud market data
 
-Multi-project Kotlin service scaffold aligned to the Dorvud design outline. Modules:
+Dorvud ingests market data, calculates technical signals, and archives source records and derived features.
 
-- `platform`: shared foundations and configuration placeholders.
-- `technical-analysis`: stub for analytics logic.
-- `websockets`: stub for realtime gateway.
-- `flink-integration`: stub for Flink job/integration wiring.
+- `websockets`: Alpaca WebSocket ingestion and Kafka publication, including source identity and bar revisions.
+- `technical-analysis-flink`: the Flink technical-analysis job and the separate market-data archive job. The TA job
+  consumes trades, quotes, and minute bars, produces microbars and technical signals, and publishes versioned rolling
+  features for Bayn. The archive job writes raw records and published features to ClickHouse.
+- `technical-analysis`: shared payloads, serializers, and calculation utilities used by the Flink job.
+- `platform`: shared envelopes, timestamps, and Kafka configuration.
+- `hyperliquid-feed`: the separate Hyperliquid ingestion module.
+- `flink-integration`: integration support.
 
-Each module currently exposes a minimal placeholder function and builds with Gradle 9.2.0 / Kotlin 2.3.0.
+Bayn consumes raw Kafka records and the feature topic. It owns strategy selection, risk, broker orders, accounting,
+and reconciliation. Dorvud does not grant trading authority or establish strategy profitability.
+
+See [the Flink guide](technical-analysis-flink/README.md) for contracts, state migration, and validation, and the
+[Bayn streaming design](../../docs/bayn/streaming-market-data-design.md) for the consumer and replay architecture.
+
+Run the producer checks from this directory:
+
+```sh
+./gradlew :technical-analysis-flink:ktlintCheck :technical-analysis-flink:test :technical-analysis-flink:uberJar
+```
+
+Normal deployment uses the repository's reviewed main, image publication, Kargo promotion, and Argo reconciliation.
+Checkpoint compatibility and actual source-to-consumer behavior are separate acceptance checks.
 
 Local WS dev: copy `websockets/.env.local.example` to `.env.local`, fill Alpaca sandbox creds, and run `./gradlew :websockets:run` to stream into a local Kafka; `.env`/`.env.local` are auto-loaded (system env still wins). To get local infra only, run `docker compose -f websockets/docker-compose.local.yml up --build` for Kafka + UI, then start the forwarder separately with your env loaded; use symbol `FAKEPACA` for quick smoke.
