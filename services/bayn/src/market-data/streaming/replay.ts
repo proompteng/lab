@@ -270,6 +270,7 @@ export const reproduceSimulatedSnapshot = (
     const reproduced = yield* constructSimulatedSnapshot(
       {
         runId: evidence.runId,
+        source,
         universe,
         projection: {
           ...projection,

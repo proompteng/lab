@@ -31,6 +31,7 @@ export const simulationFixture = (regeneratedAtMs?: number) => {
         topics: { ...protocol.sourceTopics, features: source.featureTopic },
       },
       regeneratedAtMs,
+      source,
     ),
   )
   const events = input.arrivals.events.toSorted(

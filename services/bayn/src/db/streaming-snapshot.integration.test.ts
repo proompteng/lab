@@ -61,7 +61,10 @@ describePostgres('PostgreSQL streaming decision source evidence', () => {
         const sql = yield* PgClient.PgClient
         const market = yield* makeSimulatedMarketData(fixture.source, Effect.succeed(fixture.cursor))
         const snapshot = yield* market.simulation.loadSnapshot(fixture.query)
-        const loaded = yield* loadIntradaySnapshot(market, fixture.query)
+        const wrapped = withRecordedArchiveReads(market, availabilityReader, () =>
+          Effect.die('unexpected archive receipt'),
+        )
+        const loaded = yield* loadIntradaySnapshot(wrapped, fixture.query)
         const reference = yield* market.simulation.verifyReference(snapshot)
         const fresh = yield* makeSimulatedMarketData(fixture.source, Effect.succeed(fixture.cursor))
         const missing = yield* Effect.exit(fresh.simulation.verifyReference(snapshot))

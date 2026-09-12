@@ -226,6 +226,7 @@ export const constructSimulatedSnapshot = (
     const observedAtMs = Date.parse(request.observedAt)
     if (
       state.availabilityMode !== 'simulated' ||
+      (yield* hash(cursor.source ?? null)) !== (yield* hash(provenance)) ||
       cursor.runId !== provenance.runId ||
       state.epoch !== `historical-${provenance.runId}` ||
       cursor.universe.topics.features !== provenance.featureTopic ||

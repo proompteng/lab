@@ -33,6 +33,18 @@ test('simulated input cut round trips through execution binding with original ti
 
 test('simulation rejects wrong run, changed payload, future cut, and noncanonical source positions', () => {
   const { cursor, source, query } = simulationFixture()
+  expect(
+    Result.isFailure(constructSimulatedSnapshot(cursor, { ...source, sourceManifestHash: 'e'.repeat(64) }, query)),
+  ).toBe(true)
+  expect(
+    Result.isFailure(
+      constructSimulatedSnapshot(
+        cursor,
+        { ...source, deliveryModel: { ...source.deliveryModel, description: 'Different arrivals' } },
+        query,
+      ),
+    ),
+  ).toBe(true)
   expect(Result.isFailure(constructSimulatedSnapshot(cursor, { ...source, runId: 'f'.repeat(64) }, query))).toBe(true)
   expect(
     Result.isFailure(constructSimulatedSnapshot(cursor, source, { ...query, observedAt: '2026-09-04T14:30:00.000Z' })),

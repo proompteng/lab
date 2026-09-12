@@ -237,10 +237,21 @@ const fixture = (
     if (protocol.streamingInput === undefined) throw new Error('missing streaming protocol')
     const { cut, query } = streamingFixtureFromRaw(raw, request)
     const runId = hash('b')
+    const source = {
+      runId,
+      sourceManifestHash: hash('c'),
+      featureTopic: protocol.streamingInput.featureTopic,
+      deliveryModel: {
+        schemaVersion: 'bayn.supplied-arrival-times.v1',
+        description: 'Deterministic fixture arrivals',
+        tieBreak: 'availability-topic-partition-offset',
+      },
+    } as const
     return value(
       constructSimulatedSnapshot(
         {
           runId,
+          source,
           universe: {
             universeId: protocol.universeId,
             universeSymbolHash: protocol.universeSymbolHash,
@@ -252,16 +263,7 @@ const fixture = (
           suppliedOffsets: cut.projection.offsets,
           lastArrival: null,
         },
-        {
-          runId,
-          sourceManifestHash: hash('c'),
-          featureTopic: protocol.streamingInput.featureTopic,
-          deliveryModel: {
-            schemaVersion: 'bayn.supplied-arrival-times.v1',
-            description: 'Deterministic fixture arrivals',
-            tieBreak: 'availability-topic-partition-offset',
-          },
-        },
+        source,
         query,
       ),
     )
