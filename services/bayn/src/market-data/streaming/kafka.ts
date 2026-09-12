@@ -15,7 +15,13 @@ import {
   type MessagesStream,
   type Offsets,
 } from '@platformatic/kafka'
-import { Cause, Clock, Context, Data, Duration, Effect, Layer, Redacted, Schedule, Stream } from 'effect'
+import { Cause, Clock, Context, Data, Duration, Effect, Layer, Redacted, Result, Schedule, Stream } from 'effect'
+import {
+  featureAvailabilityMeasurement,
+  partitionLagMeasurements,
+  projectionCoverageMeasurements,
+  safeKafkaFailureCodes,
+} from './telemetry'
 
 import {
   emptyStreamingProjection,
@@ -48,6 +54,7 @@ export interface KafkaConsumedRecord extends KafkaMarketRecord {
   readonly leaderEpoch: number
 }
 export interface KafkaProjectionStream extends AsyncIterable<KafkaConsumedRecord> {
+  readonly queuedRecords: () => number
   /** Positions include skipped transaction/control offsets. False while any delivered record is unincorporated. */
   readonly drainedPositions: () => readonly KafkaPartitionPosition[] | undefined
 }
@@ -123,6 +130,7 @@ export const platformaticProjectionTransport: KafkaProjectionTransportFactory = 
       active = source
       let pending = false
       return {
+        queuedRecords: () => source.readableLength,
         drainedPositions: () =>
           pending || source.readableLength !== 0
             ? undefined
@@ -282,10 +290,25 @@ export const makeKafkaMarketProjection = (
           failure('consume', 'Kafka consumption failed', cause),
         ).pipe(
           Stream.runForEach((record) =>
-            Effect.sync(() => {
+            Effect.gen(function* () {
               if (invalidation !== undefined) return
+              const previousSequence = projection.sequence
               projection = incorporateMarketRecord(projection, record, universe, clock.currentTimeMillisUnsafe())
               terminals.set(topicPartitionKey(record.topic, record.partition), record)
+              if (record.topic === universe.topics.features && projection.sequence !== previousSequence) {
+                const incorporatedFeature = projection.featureArrival
+                if (incorporatedFeature !== null)
+                  yield* Effect.logInfo('Kafka feature incorporated', {
+                    ...featureAvailabilityMeasurement(
+                      epoch,
+                      incorporatedFeature,
+                      partitions.find(
+                        (partition) => partition.topic === record.topic && partition.partition === record.partition,
+                      )?.endOffset,
+                    ),
+                    consumerPurpose: diagnosticStartMs === undefined ? 'execution-worker' : 'retained-input-diagnostic',
+                  })
+              }
             }),
           ),
           Effect.andThen(Effect.fail(failure('consume', 'Kafka consumption ended'))),
@@ -336,7 +359,34 @@ export const makeKafkaMarketProjection = (
             }
           }
         })
-        return yield* Effect.raceFirst(consume, monitor)
+        const report = Effect.gen(function* () {
+          while (true) {
+            yield* Effect.sleep(Duration.seconds(30))
+            const lookupStartedAtMs = yield* Clock.currentTimeMillis
+            // The SDK bounds requests and retries; an optional lookup must not use operation's whole-client timeout.
+            // Consumer-scope finalization still closes this request if the worker stops during the lookup.
+            const ends = yield* Effect.tryPromise({
+              try: () => transport.offsets(topics, -1n),
+              catch: (cause) => failure('read', 'Kafka read failed', cause),
+            }).pipe(Effect.result)
+            const measuredAtMs = yield* Clock.currentTimeMillis
+            yield* Effect.logInfo('Kafka market projection measurements', {
+              schemaVersion: 'bayn.kafka-projection-measurements.v1',
+              epoch,
+              sequence: projection.sequence,
+              bootstrapComplete: ready,
+              queuedRecords: source.queuedRecords(),
+              queueHighWaterMark: 256,
+              endOffsetLookupStartedAtMs: lookupStartedAtMs,
+              endOffsetLookupCompletedAtMs: measuredAtMs,
+              endOffsetLookupFailure: Result.isFailure(ends) ? ends.failure.message : null,
+              endOffsetLookupFailureCodes: Result.isFailure(ends) ? safeKafkaFailureCodes(ends.failure.cause) : null,
+              partitions: partitionLagMeasurements(positions, Result.isSuccess(ends) ? ends.success : undefined),
+              ...projectionCoverageMeasurements(projection, universe.symbols, measuredAtMs),
+            })
+          }
+        })
+        return yield* Effect.raceFirst(consume, Effect.raceFirst(monitor, report))
       }),
     ).pipe(
       Effect.tapError((cause) =>
