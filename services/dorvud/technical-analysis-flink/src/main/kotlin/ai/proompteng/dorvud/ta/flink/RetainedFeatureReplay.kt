@@ -42,6 +42,7 @@ internal data class RetainedFeatureArrival(
 internal data class RetainedFeatureReplayResult(
   val outputRecordCount: Int,
   val skippedBars: Int,
+  val rejectedBars: Int,
   val recordedAtMs: Long,
 )
 
@@ -90,6 +91,7 @@ internal fun replayRetainedFeatures(
   var previousOutputAvailability = 0L
   var previous: RetainedFeatureArrival? = null
   var skipped = 0
+  var rejected = 0
   var recordedAt = clock.millis()
   for (line in bytes.decodeToString(throwOnInvalidSequence = true).lineSequence().take(lineCount)) {
     val arrival = replayJson.decodeFromString<RetainedFeatureArrival>(line)
@@ -122,7 +124,12 @@ internal fun replayRetainedFeatures(
     }
     offsets[record.partition] = offset
     previous = arrival
-    val bar = decodeArchiveBar(ArchiveKafkaRecord(record.topic, record.partition, offset, record.value), routes)
+    val parsed = runCatching { decodeArchiveBar(ArchiveKafkaRecord(record.topic, record.partition, offset, record.value), routes) }
+    if (parsed.isFailure) {
+      rejected++
+      continue
+    }
+    val bar = parsed.getOrThrow()
     require(bar.ingestionTime <= java.time.Instant.ofEpochMilli(Math.addExact(arrival.availableAtMs, FEATURE_MAX_CLOCK_SKEW_MS))) {
       "raw arrival precedes producer ingestion"
     }
@@ -133,7 +140,8 @@ internal fun replayRetainedFeatures(
     val key = rollingFeatureKey(bar)
     val computedAt = clock.millis()
     recordedAt = maxOf(recordedAt, computedAt)
-    val transition = advanceRollingFeature(states[key] ?: RollingFeatureState(), bar, computedAt, config.producerRevision)
+    val transition = processRollingFeature(states[key] ?: RollingFeatureState(), bar, computedAt, config.producerRevision)
+    if (transition.rejection != null) rejected++
     states[key] = transition.state
     transition.feature?.let { feature ->
       val available =
@@ -151,7 +159,7 @@ internal fun replayRetainedFeatures(
       outputCount++
     }
   }
-  return RetainedFeatureReplayResult(outputCount, skipped, recordedAt)
+  return RetainedFeatureReplayResult(outputCount, skipped, rejected, recordedAt)
 }
 
 @Serializable
@@ -162,6 +170,7 @@ private data class RetainedFeatureReceipt(
   val outputSha256: String,
   val outputRecordCount: Int,
   val skippedBars: Int,
+  val rejectedBars: Int,
   val recordedAtMs: Long,
   val coordinates: String = "isolated-simulation-partition-zero-offset-order",
   val delivery: String =
@@ -199,6 +208,7 @@ object RetainedFeatureReplay {
         outputSha256 = digest.digest().joinToString("") { "%02x".format(it) },
         outputRecordCount = result.outputRecordCount,
         skippedBars = result.skippedBars,
+        rejectedBars = result.rejectedBars,
         recordedAtMs = result.recordedAtMs,
       )
     Files.write(directory.resolve("config.json"), configBytes, StandardOpenOption.CREATE_NEW)

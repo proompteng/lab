@@ -78,6 +78,7 @@ class RetainedFeatureReplayTest {
   private data class CapturedReplay(
     val arrivals: List<RetainedFeatureArrival>,
     val skippedBars: Int,
+    val rejectedBars: Int,
     val recordedAtMs: Long,
   )
 
@@ -89,7 +90,7 @@ class RetainedFeatureReplayTest {
     val arrivals = mutableListOf<RetainedFeatureArrival>()
     val summary = replayRetainedFeatures(bytes, config, clock) { arrivals.add(it) }
     assertEquals(arrivals.size, summary.outputRecordCount)
-    return CapturedReplay(arrivals, summary.skippedBars, summary.recordedAtMs)
+    return CapturedReplay(arrivals, summary.skippedBars, summary.rejectedBars, summary.recordedAtMs)
   }
 
   @Test fun `both symbols emit at their triggering arrival while computed time remains actual`() {
@@ -146,6 +147,49 @@ class RetainedFeatureReplayTest {
     )
     assertEquals(start.plusSeconds(31 * 60).toEpochMilli() + 100, result.arrivals[2].availableAtMs)
     assertEquals(result.arrivals[2].availableAtMs, result.arrivals[3].availableAtMs)
+  }
+
+  @Test fun `live-equivalent rejections preserve keyed history and permit later valid features`() {
+    val invalidMinute =
+      arrival(29, 0).let { arrival ->
+        arrival.copy(
+          record =
+            arrival.record.copy(
+              value =
+                arrival.record.value.replace(
+                  start.plusSeconds(29 * 60).toString(),
+                  start.plusSeconds(29 * 60 + 1).toString(),
+                ),
+            ),
+        )
+      }
+    val malformed = arrival(30, 0).let { it.copy(record = it.record.copy(value = "{invalid-json")) }
+    val arrivals = (0..28).map { arrival(it, 0) } + invalidMinute + malformed + arrival(29, 0, 31)
+    val source = bytes(arrivals)
+    val result = captureReplay(source, config(source, arrivals.size), clock)
+    assertEquals(2, result.rejectedBars)
+    assertEquals(0, result.skippedBars)
+    assertEquals(1, result.arrivals.size)
+    val feature =
+      Json.decodeFromString<RollingMarketFeature>(
+        result.arrivals
+          .single()
+          .record.value,
+      )
+    assertEquals(30, feature.material.inputs.size)
+    assertEquals(
+      "0",
+      feature.material.inputs
+        .first()
+        .sourceOffset,
+    )
+    assertEquals(
+      "31",
+      feature.material.inputs
+        .last()
+        .sourceOffset,
+    )
+    assertEquals(arrivals.last().availableAtMs + 100, result.arrivals.single().availableAtMs)
   }
 
   @Test fun `hash count ordering and premature arrival failures cannot produce a receipt`() {

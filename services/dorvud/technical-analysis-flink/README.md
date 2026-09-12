@@ -124,3 +124,8 @@ state, so a single rejected input cannot erase 30 minutes of usable history.
 Simulated feature delivery is monotonic within its output partition. Each output is available at the later of its own
 modeled completion and the previous output availability. This preserves both Kafka offset order and arrival order
 when cross-host clock skew temporarily puts one symbol's completed window ahead of another symbol's input.
+
+Retained replay uses the same rejection-preserving rolling transition as the live producer. Malformed bar payloads
+and invalid feature inputs increment `rejectedBars` in the terminal receipt and preserve accepted keyed history.
+`skippedBars` counts non-final or non-regular bars separately. Source hash, coordinate, arrival-order, and recorded
+availability violations still reject the export itself; they cannot be reclassified as ordinary producer rejections.
