@@ -160,6 +160,16 @@ export const prepareReplaySession = (input: unknown) =>
       identity,
       openMs,
       closeMs,
+      buildEvidence: {
+        sourceRevision: decoded.build.sourceRevision,
+        imageRepository: decoded.build.imageRepository,
+        declaredImageDigest: decoded.build.imageDigest,
+        imageDigestVerification: 'unverified-input' as const,
+        strategyBehaviorHash: decoded.build.strategyBehaviorHash,
+        strategyParameterHash: decoded.build.strategyParameterHash,
+        sourceAndStrategyVerification:
+          embeddedBuildMetadata === undefined ? ('configured' as const) : ('embedded' as const),
+      },
       build: {
         ...decoded.build,
         verification: embeddedBuildMetadata === undefined ? ('development-configured' as const) : ('embedded' as const),
@@ -244,7 +254,7 @@ export const runRetainedExecutionSession = (
       runId: prepared.runId,
       source: source.source,
       sessionDate: prepared.input.sessionDate,
-      build: prepared.build,
+      build: prepared.buildEvidence,
       assumptions: prepared.input.assumptions,
       schedule,
       closingEquity,

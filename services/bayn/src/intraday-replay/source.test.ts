@@ -60,7 +60,7 @@ test('retained source rejects changed bytes, count, bounds, ordering and duplica
   )
 })
 
-test('preflight rejects omitted partition endpoints even when the file hash and count match', async () => {
+test('preflight rejects omitted partition endpoints and interior records even when the file hash and count match', async () => {
   const data = fixture()
   const partition = data.manifest.positions[0]
   if (partition === undefined) throw new Error('Fixture requires partition cuts')
@@ -71,7 +71,7 @@ test('preflight rejects omitted partition endpoints even when the file hash and 
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
       const path = yield* fs.makeTempFileScoped()
-      for (const omitted of [matching[0], matching.at(-1)]) {
+      for (const omitted of [matching[0], matching[1], matching.at(-1)]) {
         const events = data.events.filter((event) => event !== omitted)
         const body = events.map((event) => JSON.stringify(event)).join('\n') + '\n'
         yield* fs.writeFileString(path, body)

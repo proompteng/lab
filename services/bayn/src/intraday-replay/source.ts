@@ -148,6 +148,8 @@ export const openRetainedReplaySource = (path: string, input: unknown, runId: st
               return yield* fail('Arrival is outside frozen source partition bounds')
             if (previous === undefined && offset !== BigInt(bound.startOffset))
               return yield* fail('Source omits the first data record of a declared partition cut')
+            if (previous !== undefined && offset !== BigInt(previous) + 1n)
+              return yield* fail('Source partition cuts must contain every consecutive Kafka offset')
             if (
               (last !== undefined && compareArrivalPositions(arrivalPosition(last), arrivalPosition(event)) > 0) ||
               (previous !== undefined && offset <= BigInt(previous))
