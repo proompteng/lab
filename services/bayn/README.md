@@ -232,7 +232,8 @@ durable broker's pending delivery queue.
 Before exposing a checkpoint file, the restart acceptance retains its hash in PostgreSQL's immutable
 `simulated_broker_checkpoints` table with source identity and broker observation time. A separate scoped connection commits it independently of the
 coordinator transaction that may be interrupted. Restore receives the expected hash from
-that independent store, never from the file being restored. This authenticates canceled and rejected orders as well
+that independent store, never from the file being restored. IOC settlement, cancellation, failed delivery, and session
+closing equity persist before their terminal state is published or acknowledged. This authenticates canceled and rejected orders as well
 as fills; removing a fill and rehashing a fabricated cancellation cannot replace the retained broker commit.
 
 ### Full-session native execution

@@ -62,7 +62,7 @@ export interface ReplayBrokerConfig {
   readonly sourceManifestHash: string
   /** expectedHash comes from the independent durable store, never from the supplied value. */
   readonly restoreCheckpoint?: { readonly value: unknown; readonly expectedHash: string }
-  /** Commit terminal IOC state before publishing it to broker readers or returning a response. */
+  /** Commit terminal broker state before publishing it to readers or returning a response. */
   readonly retainSettlement?: (checkpoint: ReplayBrokerCheckpoint) => Effect.Effect<void, ReplayBrokerFailure>
   readonly openingCashMicros: string
   readonly protocol: IntradayMomentumProtocol
@@ -173,6 +173,28 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       if (failure !== undefined) return yield* failure
       return yield* SynchronizedRef.get(state)
     })
+    const retainTerminalState = (next: ReplayBrokerState, observedAt: string) =>
+      Effect.gen(function* () {
+        const previousFailure = yield* Ref.get(retentionFailure)
+        if (previousFailure !== undefined) return yield* previousFailure
+        if (config.retainSettlement === undefined) return
+        const checkpoint = yield* Effect.fromResult(makeReplayBrokerCheckpoint(config, next, observedAt))
+        yield* config.retainSettlement(checkpoint)
+      }).pipe(
+        Effect.tapCause((cause) =>
+          Ref.set(
+            retentionFailure,
+            new ReplayBrokerFailure({
+              message: 'Broker settlement persistence failed; restore durable state before further reads or mutations',
+              cause: Cause.squash(cause),
+            }),
+          ),
+        ),
+      )
+    const updateTerminalState = (observedAt: string, update: (current: ReplayBrokerState) => ReplayBrokerState) =>
+      SynchronizedRef.updateEffect(state, (current) =>
+        Effect.succeed(update(current)).pipe(Effect.tap((next) => retainTerminalState(next, observedAt))),
+      )
     const now = Clock.currentTimeMillis.pipe(Effect.map((value) => new Date(value).toISOString()))
     const evidence = <A>(value: A, observedAt: string): Effect.Effect<ReadResult<A>, ReplayBrokerFailure> =>
       Effect.fromResult(hash(value)).pipe(
@@ -689,21 +711,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
               const settled = yield* SynchronizedRef.modifyEffect(state, (current) =>
                 Effect.succeed(settle(current)).pipe(
                   Effect.tap(([result, next]) =>
-                    Result.isFailure(result) || config.retainSettlement === undefined
-                      ? Effect.void
-                      : Effect.fromResult(makeReplayBrokerCheckpoint(config, next, arrivedAt)).pipe(
-                          Effect.flatMap(config.retainSettlement),
-                          Effect.tapCause((cause) =>
-                            Ref.set(
-                              retentionFailure,
-                              new ReplayBrokerFailure({
-                                message:
-                                  'Broker settlement persistence failed; restore durable state before further reads or mutations',
-                                cause: Cause.squash(cause),
-                              }),
-                            ),
-                          ),
-                        ),
+                    Result.isFailure(result) ? Effect.void : retainTerminalState(next, arrivedAt),
                   ),
                 ),
               )
@@ -714,7 +722,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
                   ? Effect.void
                   : Effect.gen(function* () {
                       const failedAt = yield* now
-                      yield* SynchronizedRef.update(state, (current) => ({
+                      yield* updateTerminalState(failedAt, (current) => ({
                         ...current,
                         orders: current.orders.map((entry) =>
                           entry.order.brokerOrderId === brokerOrderId && isOpen(entry.order)
@@ -758,7 +766,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
           const prepared = yield* Effect.fromResult(prepareCancel(brokerOrderId))
           const observedAt = yield* now
           yield* read.orderById(brokerOrderId)
-          yield* SynchronizedRef.update(state, (current) => ({
+          yield* updateTerminalState(observedAt, (current) => ({
             ...current,
             orders: current.orders.map((entry) =>
               entry.order.brokerOrderId === brokerOrderId && isOpen(entry.order)
@@ -800,12 +808,12 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
         if (current.orders.some((record) => isOpen(record.order)))
           return yield* new ReplayBrokerFailure({ message: 'Cannot complete session with unresolved broker orders' })
         const account = yield* read.account
-        const close = { sessionDate, equityMicros: account.value.equityMicros }
+        const close = { sessionDate: session.date, equityMicros: account.value.equityMicros }
         const previous = current.sessionCloses.find((value) => value.sessionDate === sessionDate)
         if (previous !== undefined && previous.equityMicros !== close.equityMicros)
           return yield* new ReplayBrokerFailure({ message: 'Session close changed after it was recorded' })
         if (previous === undefined)
-          yield* SynchronizedRef.update(state, (value) => ({
+          yield* updateTerminalState(session.closeAt, (value) => ({
             ...value,
             sessionCloses: [...value.sessionCloses, close],
           }))

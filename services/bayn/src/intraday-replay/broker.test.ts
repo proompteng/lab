@@ -9,7 +9,7 @@ import { canonicalHashV1Result } from '../hash'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import { makeReplayBroker, ReplayBrokerFailure, type ReplayBrokerConfig } from './broker'
 import { positionSnapshot } from '../broker/observations'
-import { restoreReplayBrokerCheckpoint } from './broker-checkpoint'
+import { restoreReplayBrokerCheckpoint, type ReplayBrokerCheckpoint } from './broker-checkpoint'
 
 const runId = 'a'.repeat(64)
 const observedAt = '2026-09-04T14:31:00.000Z'
@@ -657,6 +657,67 @@ test('an uncertain settlement commit blocks further broker state reads and mutat
         expect(exit._tag).toBe('Failure')
         expect(JSON.stringify(exit)).toContain('restore durable state')
       }
+    }),
+  )
+})
+
+test('cancellation commits before its response and can restore before delivery latency elapses', async () => {
+  await run(
+    Effect.gen(function* () {
+      const calculated = yield* Deferred.make<ReplayBrokerCheckpoint>()
+      const committed = yield* Deferred.make<void>()
+      const broker = yield* setup({
+        retainSettlement: (checkpoint) =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(calculated, checkpoint)
+            yield* Deferred.await(committed)
+          }),
+      })
+      const submitFiber = yield* broker.mutation.submit(intent()).pipe(Effect.forkChild({ startImmediately: true }))
+      const pending = (yield* broker.read.orders({ status: OrderCollection.Open })).value[0]
+      if (pending === undefined) throw new Error('expected pending IOC')
+      const cancelFiber = yield* broker.mutation
+        .cancel(pending.brokerOrderId)
+        .pipe(Effect.forkChild({ startImmediately: true }))
+      const checkpoint = yield* Deferred.await(calculated)
+      expect(checkpoint.state.orders[0]?.order.status).toBe(OrderStatus.Canceled)
+      expect((yield* broker.read.orderById(pending.brokerOrderId)).value.status).toBe(OrderStatus.New)
+      yield* Deferred.succeed(committed, undefined)
+      yield* Fiber.join(cancelFiber)
+      const restored = yield* makeReplayBroker({
+        ...config,
+        restoreCheckpoint: { value: checkpoint, expectedHash: checkpoint.checkpointHash },
+      })
+      expect((yield* restored.read.orderById(pending.brokerOrderId)).value.status).toBe(OrderStatus.Canceled)
+      expect((yield* restored.snapshot).fills).toHaveLength(0)
+      yield* TestClock.adjust(100)
+      expect((yield* Fiber.join(submitFiber)).order.status).toBe(OrderStatus.Canceled)
+    }),
+  )
+})
+
+test('delivery failures and session closes retain their terminal state before publication', async () => {
+  await run(
+    Effect.gen(function* () {
+      const retained: ReplayBrokerCheckpoint[] = []
+      const broker = yield* setup({
+        retainSettlement: (checkpoint) =>
+          Effect.sync(() => {
+            retained.push(checkpoint)
+          }),
+        quoteAt: () => Effect.fail(new ReplayBrokerFailure({ message: 'arrival source failed' })),
+      })
+      expect((yield* Effect.exit(submit(broker, intent())))._tag).toBe('Failure')
+      expect(retained.at(-1)?.state.orders[0]?.order.status).toBe(OrderStatus.Canceled)
+      expect(retained.at(-1)?.state.orders[0]?.deliveryFailure).toBeDefined()
+      yield* TestClock.setTime(Date.parse('2026-09-04T20:00:00Z'))
+      const close = yield* broker.completeSession('2026-09-04')
+      const checkpoint = retained.at(-1)
+      if (checkpoint === undefined) throw new Error('expected retained session close')
+      expect(checkpoint.state.sessionCloses).toHaveLength(1)
+      expect(checkpoint.state.sessionCloses[0]?.sessionDate).toBe('2026-09-04')
+      expect(checkpoint.state.sessionCloses[0]?.equityMicros).toBe(close.equityMicros)
+      expect((yield* broker.checkpoint).checkpointHash).toBe(checkpoint.checkpointHash)
     }),
   )
 })
