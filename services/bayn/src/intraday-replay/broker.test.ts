@@ -33,6 +33,7 @@ const observedQuote = (value: IntradayQuote, availableAtMs = startMs) => ({
 })
 const config: ReplayBrokerConfig = {
   runId,
+  sourceManifestHash: 'c'.repeat(64),
   protocol,
   openingCashMicros: '10000000000',
   assumptions: { latencyMs: 100, slippageBps: 0, availableLiquidityPpm: 1_000_000, feeMultiplierPpm: 1_000_000 },
@@ -407,3 +408,74 @@ test.each([0, 60_000])(
     expect(result.closing.equityMicros).toBe(config.openingCashMicros)
   },
 )
+test('checkpoint restores exact fills, activities, request identity and idempotent order recovery', async () => {
+  await run(
+    Effect.gen(function* () {
+      const broker = yield* setup()
+      const original = yield* submit(broker, intent())
+      const checkpoint = yield* broker.checkpoint
+      const restored = yield* makeReplayBroker({ ...config, restoreCheckpoint: checkpoint })
+      expect(yield* restored.snapshot).toEqual(yield* broker.snapshot)
+      expect((yield* restored.read.orderByClientId(intent().clientOrderId)).value).toEqual(original.order)
+      yield* restored.mutation.submit(intent())
+      expect((yield* restored.snapshot).fills).toHaveLength(1)
+      expect((yield* restored.read.account).value.cashMicros).toBe((yield* broker.read.account).value.cashMicros)
+      expect(yield* restored.checkpoint).toEqual(checkpoint)
+    }),
+  )
+})
+
+test('checkpoint rejects changed economics, requests, source, configuration and restore time', async () => {
+  await run(
+    Effect.gen(function* () {
+      const broker = yield* setup()
+      yield* submit(broker, intent())
+      const checkpoint = yield* broker.checkpoint
+      const changedCash = {
+        ...checkpoint,
+        state: { ...checkpoint.state, ledger: { ...checkpoint.state.ledger, cashMicros: '1' } },
+      }
+      const changedRequest = {
+        ...checkpoint,
+        state: {
+          ...checkpoint.state,
+          orders: checkpoint.state.orders.map((order) => ({ ...order, requestHash: '0'.repeat(64) })),
+        },
+      }
+      for (const changed of [changedCash, changedRequest]) {
+        const { checkpointHash: _checkpointHash, ...material } = changed
+        const resigned = { ...material, checkpointHash: Result.getOrThrow(canonicalHashV1Result(material)) }
+        expect((yield* Effect.exit(makeReplayBroker({ ...config, restoreCheckpoint: resigned })))._tag).toBe('Failure')
+      }
+      expect(
+        (yield* Effect.exit(
+          makeReplayBroker({ ...config, sourceManifestHash: 'd'.repeat(64), restoreCheckpoint: checkpoint }),
+        ))._tag,
+      ).toBe('Failure')
+      expect(
+        (yield* Effect.exit(
+          makeReplayBroker({
+            ...config,
+            assumptions: { ...config.assumptions, latencyMs: 200 },
+            restoreCheckpoint: checkpoint,
+          }),
+        ))._tag,
+      ).toBe('Failure')
+      yield* TestClock.adjust(1)
+      expect((yield* Effect.exit(makeReplayBroker({ ...config, restoreCheckpoint: checkpoint })))._tag).toBe('Failure')
+    }),
+  )
+})
+
+test('checkpoint cannot claim pending IOC delivery survived a process restart', async () => {
+  await run(
+    Effect.gen(function* () {
+      const broker = yield* setup()
+      const pending = yield* broker.mutation.submit(intent()).pipe(Effect.forkChild({ startImmediately: true }))
+      expect((yield* Effect.exit(broker.checkpoint))._tag).toBe('Failure')
+      yield* TestClock.adjust(100)
+      yield* Fiber.join(pending)
+      expect((yield* broker.checkpoint).state.fills).toHaveLength(1)
+    }),
+  )
+})

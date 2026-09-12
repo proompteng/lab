@@ -67,6 +67,7 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
       identity.environment !== BrokerEnvironment.Sandbox ||
       identity.accountId !== `replay-${input.source.runId}` ||
       input.broker.accountId !== identity.accountId ||
+      input.broker.sourceManifestHash !== input.source.sourceManifestHash ||
       input.clock.accountId !== identity.accountId ||
       input.clock.sourceManifestHash !== input.source.sourceManifestHash
     )

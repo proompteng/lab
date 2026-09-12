@@ -46,6 +46,7 @@ import type { IntradayMomentumProtocol } from '../strategy/intraday-momentum/pro
 import { applyReplayFill, createReplayLedger, type EconomicReplayFill, type ReplayLedger } from './ledger'
 import { simulateIntradayReplayIocCore } from './execution-core'
 import type { IntradayReplayIocAssumptions } from './execution'
+import { makeReplayBrokerCheckpoint, restoreReplayBrokerCheckpoint } from './broker-checkpoint'
 
 export class ReplayBrokerFailure extends Data.TaggedError('ReplayBrokerFailure')<{
   readonly message: string
@@ -54,6 +55,8 @@ export class ReplayBrokerFailure extends Data.TaggedError('ReplayBrokerFailure')
 
 export interface ReplayBrokerConfig {
   readonly runId: string
+  readonly sourceManifestHash: string
+  readonly restoreCheckpoint?: unknown
   readonly openingCashMicros: string
   readonly protocol: IntradayMomentumProtocol
   readonly assumptions: IntradayReplayIocAssumptions & { readonly latencyMs: number; readonly feeMultiplierPpm: number }
@@ -131,19 +134,28 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       config.assumptions.feeMultiplierPpm > 10_000_000
     )
       return yield* new ReplayBrokerFailure({ message: 'Invalid replay execution assumptions' })
+    yield* Effect.fromResult(Schema.decodeUnknownResult(Sha256Schema, strictParseOptions)(config.sourceManifestHash))
+    const restored =
+      config.restoreCheckpoint === undefined
+        ? undefined
+        : yield* Effect.fromResult(restoreReplayBrokerCheckpoint(config.restoreCheckpoint, config))
+    if (restored !== undefined && Date.parse(restored.observedAt) !== (yield* Clock.currentTimeMillis))
+      return yield* new ReplayBrokerFailure({ message: 'Broker restore clock must equal the checkpoint observation' })
     const brokerScope = yield* Effect.scope
     const accountId = `replay-${config.runId}`
     const ledger = yield* Effect.fromResult(createReplayLedger<ReplayBrokerFill>(config.openingCashMicros))
-    const state = yield* Ref.make<ReplayBrokerState>({
-      schemaVersion: 'bayn.simulated-broker-state.v1',
-      runId: config.runId,
-      accountId,
-      ledger,
-      orders: [],
-      fills: [],
-      fees: [],
-      sessionCloses: [],
-    })
+    const state = yield* Ref.make<ReplayBrokerState>(
+      restored?.state ?? {
+        schemaVersion: 'bayn.simulated-broker-state.v1',
+        runId: config.runId,
+        accountId,
+        ledger,
+        orders: [],
+        fills: [],
+        fees: [],
+        sessionCloses: [],
+      },
+    )
     const now = Clock.currentTimeMillis.pipe(Effect.map((value) => new Date(value).toISOString()))
     const evidence = <A>(value: A, observedAt: string): Effect.Effect<ReadResult<A>, ReplayBrokerFailure> =>
       Effect.fromResult(hash(value)).pipe(
@@ -698,5 +710,17 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
           yield* Ref.update(state, (value) => ({ ...value, sessionCloses: [...value.sessionCloses, close] }))
         return close
       })
-    return { accountId, read, mutation, completeSession, snapshot: Ref.get(state) }
+    const checkpoint = Effect.gen(function* () {
+      const observedAt = yield* now
+      return yield* Effect.fromResult(makeReplayBrokerCheckpoint(config, yield* Ref.get(state), observedAt))
+    })
+    return {
+      accountId,
+      sourceManifestHash: config.sourceManifestHash,
+      read,
+      mutation,
+      completeSession,
+      snapshot: Ref.get(state),
+      checkpoint,
+    }
   })

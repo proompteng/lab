@@ -27,6 +27,7 @@ import {
   TimeInForce,
 } from '../execution/contracts'
 import { WriterFenceLive } from '../execution/writer-fence'
+import { executionMandateFailureRestrictionPrefix } from '../execution/mandate'
 import { canonicalHashV1 } from '../hash'
 import { Journal, type JournalService } from '../ledger'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
@@ -266,9 +267,24 @@ describePostgres('PostgreSQL execution persistence', () => {
           maximum: Authority.Observe,
         })
         const lineage = yield* authority.readAuthorityGenerationLineage(generationHash)
-        yield* restriction.restrictAuthority('reconciliation discrepancy fixture', '2026-08-28T14:32:00.000Z')
-        yield* restriction.restrictAuthority('reconciliation discrepancy fixture', '2026-08-28T14:33:00.000Z')
-        return { initial, replay, lineage, restricted: yield* authority.readAuthorityState }
+        yield* restriction.restrictAuthority(
+          `reconciliation discrepancy ${hash('first-discrepancy')}`,
+          '2026-08-28T14:32:00.000Z',
+        )
+        yield* restriction.restrictAuthority(
+          `reconciliation discrepancy ${hash('first-discrepancy')}`,
+          '2026-08-28T14:33:00.000Z',
+        )
+        yield* restriction.restrictAuthority(
+          `reconciliation discrepancy ${hash('next-discrepancy')}`,
+          '2026-08-28T14:33:00.000Z',
+        )
+        const restricted = yield* authority.readAuthorityState
+        yield* restriction.restrictAuthority(
+          `${executionMandateFailureRestrictionPrefix} permanent failure`,
+          '2026-08-28T14:34:00.000Z',
+        )
+        return { initial, replay, lineage, restricted, promoted: yield* authority.readAuthorityState }
       }),
     )
 
@@ -289,8 +305,14 @@ describePostgres('PostgreSQL execution persistence', () => {
       generationHash,
       effective: Authority.Observe,
       kill: KillState.Active,
-      reason: 'reconciliation discrepancy fixture',
+      reason: `reconciliation discrepancy ${hash('first-discrepancy')}`,
       version: 2,
+    })
+    expect(result.promoted).toMatchObject({
+      effective: Authority.Observe,
+      kill: KillState.Active,
+      reason: `${executionMandateFailureRestrictionPrefix} permanent failure`,
+      version: 3,
     })
   })
 

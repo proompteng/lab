@@ -105,6 +105,7 @@ durableTest(
         }
         const broker = yield* makeReplayBroker({
           runId,
+          sourceManifestHash: fixture.source.sourceManifestHash,
           openingCashMicros: '100000000000',
           protocol: fixture.protocol,
           assumptions: { latencyMs: 10, slippageBps: 0, availableLiquidityPpm: 1000000, feeMultiplierPpm: 1000000 },
