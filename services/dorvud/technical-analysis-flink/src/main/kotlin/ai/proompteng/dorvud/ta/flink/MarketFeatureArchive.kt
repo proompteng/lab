@@ -102,7 +102,10 @@ internal fun decodeArchivedMarketFeature(
       input.eventTimeNanos == ((material.windowStartMs + index * 60_000).toBigInteger() * 1_000_000L.toBigInteger()).toString(),
     ) { "feature inputs are not contiguous" }
     require(input.ingestionTimeNanos.matches(Regex("0|[1-9][0-9]*"))) { "invalid input availability timestamp" }
-    require(input.ingestionTimeNanos.toBigInteger() >= input.eventTimeNanos.toBigInteger() + 60_000_000_000L.toBigInteger()) {
+    require(
+      input.ingestionTimeNanos.toBigInteger() + FEATURE_MAX_CLOCK_SKEW_MS.toBigInteger() * 1_000_000L.toBigInteger() >=
+        input.eventTimeNanos.toBigInteger() + 60_000_000_000L.toBigInteger(),
+    ) {
       "premature feature input"
     }
     require(

@@ -139,6 +139,15 @@ class RollingMarketFeaturesTest {
     assertEquals(1, compareFeatureBarRevision(left, right))
   }
 
+  @Test fun `finalized bar close tolerates a bounded trailing ingestion clock`() {
+    val accepted = processRollingFeature(RollingFeatureState(), bar(0).copy(ingestionTime = start.plusSeconds(59)), computed, "test")
+    assertNull(accepted.rejection)
+    assertEquals(1, accepted.state.bars.size)
+    val rejected = processRollingFeature(RollingFeatureState(), bar(0).copy(ingestionTime = start.plusSeconds(54)), computed, "test")
+    assertNotNull(rejected.rejection)
+    assertEquals(0, rejected.state.bars.size)
+  }
+
   @Test fun `conflicting immutable coordinate and premature bars fail`() {
     val original = complete()
     assertFailsWith<IllegalArgumentException> {

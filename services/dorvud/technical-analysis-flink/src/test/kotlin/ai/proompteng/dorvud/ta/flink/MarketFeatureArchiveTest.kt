@@ -46,6 +46,30 @@ class MarketFeatureArchiveTest {
     assertEquals(archivedAt - 2000, decoded.archivedAtMs)
   }
 
+  @Test fun `archive shares the finalized bar clock allowance`() {
+    val feature = json.decodeFromString(RollingMarketFeature.serializer(), fixture())
+    for ((leadMs, accepted) in listOf(1000L to true, 6000L to false)) {
+      val input = feature.material.inputs.first()
+      val changedInput =
+        input.copy(
+          ingestionTimeNanos =
+            (input.eventTimeNanos.toBigInteger() + (60_000 - leadMs).toBigInteger() * 1_000_000L.toBigInteger()).toString(),
+        )
+      val material = feature.material.copy(inputs = listOf(changedInput) + feature.material.inputs.drop(1))
+      val changed =
+        feature.copy(
+          material = material,
+          featureId = featureHash(json.encodeToJsonElement(RollingMarketFeatureMaterial.serializer(), material)),
+        )
+      val record = record().copy(value = json.encodeToString(RollingMarketFeature.serializer(), changed))
+      if (accepted) {
+        assertEquals(feature.computedAtMs, decodeArchivedMarketFeature(record, routes(), archivedAt).computedAtMs)
+      } else {
+        assertFailsWith<IllegalArgumentException> { decodeArchivedMarketFeature(record, routes(), archivedAt) }
+      }
+    }
+  }
+
   @Test fun `archive rejects incomplete provenance even with recomputed content hash`() {
     val feature = json.decodeFromString(RollingMarketFeature.serializer(), fixture())
     val material = feature.material.copy(inputs = feature.material.inputs.drop(1))

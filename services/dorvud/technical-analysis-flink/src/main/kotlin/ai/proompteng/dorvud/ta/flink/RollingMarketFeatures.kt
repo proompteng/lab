@@ -168,7 +168,9 @@ internal fun advanceRollingFeature(
   require(bar.marketSession == "regular" && bar.final) { "features require finalized regular-session bars" }
   require(bar.eventTime.nano == 0 && bar.eventTime.epochSecond % 60 == 0L) { "feature bar must be minute aligned" }
   require(bar.sourcePartition >= 0 && bar.sourceOffset >= 0) { "invalid feature source coordinates" }
-  require(bar.ingestionTime >= bar.eventTime.plusSeconds(60)) { "feature bar arrived before its window closed" }
+  require(bar.ingestionTime.plusMillis(FEATURE_MAX_CLOCK_SKEW_MS) >= bar.eventTime.plusSeconds(60)) {
+    "feature bar arrived before its window closed"
+  }
   require(
     bar.ingestionTime.toEpochMilli() <= computedAtMs + FEATURE_MAX_CLOCK_SKEW_MS,
   ) { "feature computation precedes input availability" }
