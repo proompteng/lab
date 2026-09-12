@@ -13,6 +13,7 @@ import { IntradayMarketData } from '../market-data/intraday/model'
 import { withRecordedArchiveReads } from '../market-data/intraday/availability'
 import { availabilityReader } from '../testing/archive-availability-fixture'
 import { simulationFixture } from '../testing/simulated-streaming-fixture'
+import { prepareFreshReplayDatabase } from '../intraday-replay/session-program'
 import { makeSimulatedMarketData } from '../market-data/streaming/simulation-service'
 import { loadIntradaySnapshot } from '../observe-composition/intraday-market-data'
 
@@ -52,6 +53,27 @@ describePostgres('PostgreSQL streaming decision source evidence', () => {
   })
   afterAll(async () => {
     await runtime?.dispose()
+  })
+
+  test('fresh replay rejects an occupied old schema before applying any migration', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+        yield* sql`CREATE TABLE authority_state (legacy_value text NOT NULL)`
+        yield* sql`INSERT INTO authority_state VALUES ('preserve-existing-run')`
+        const outcome = yield* Effect.exit(prepareFreshReplayDatabase)
+        expect(Exit.isFailure(outcome)).toBe(true)
+        expect(JSON.stringify(outcome)).toContain('Fresh replay requires an unused database')
+        expect(yield* sql`SELECT legacy_value FROM authority_state`).toEqual([
+          { legacy_value: 'preserve-existing-run' },
+        ])
+        expect(yield* sql`SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename`).toEqual([
+          { tablename: 'authority_state' },
+        ])
+      }),
+    )
   })
 
   test('simulation recovers only its committed source and cannot enter the live reference table', async () => {

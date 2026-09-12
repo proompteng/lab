@@ -128,6 +128,7 @@ export const prepareReplaySession = (input: unknown) =>
     const assetSymbols = decoded.assets.map((asset) => asset.symbol)
     if (
       new Set(assetSymbols).size !== assetSymbols.length ||
+      assetSymbols.length !== protocol.universe.length ||
       protocol.universe.some((symbol) => !assetSymbols.includes(symbol))
     )
       return yield* Result.fail(
@@ -181,6 +182,21 @@ export const prepareReplaySession = (input: unknown) =>
 export type PreparedReplaySession = Result.Result.Success<ReturnType<typeof prepareReplaySession>>
 export type ReplayDatabaseConfig = Pick<RuntimeConfig, 'postgres' | 'tigerBeetle' | 'operationTimeoutMs'>
 
+export const prepareFreshReplayDatabase = Effect.gen(function* () {
+  const sql = yield* PgClient.PgClient
+  const existing = yield* sql<
+    Record<string, unknown>
+  >`SELECT to_regclass('public.authority_state') IS NOT NULL AS present`
+  if (existing[0]?.['present'] !== false) {
+    const occupied = yield* sql<Record<string, unknown>>`SELECT EXISTS(SELECT 1 FROM authority_state) AS occupied`
+    if (occupied[0]?.['occupied'] !== false)
+      return yield* new ReplayBrokerFailure({
+        message: 'Fresh replay requires an unused database; preserve both existing durable stores for recovery',
+      })
+  }
+  yield* postgresMigrations
+})
+
 /** Runs one whole calendar session in a fresh isolated database. Broker credentials are not part of this composition. */
 export const runRetainedExecutionSession = (
   prepared: PreparedReplaySession,
@@ -191,12 +207,7 @@ export const runRetainedExecutionSession = (
   Effect.gen(function* () {
     const source = yield* openRetainedReplaySource(arrivalsPath, prepared.input.source, prepared.runId)
     const sql = yield* PgClient.PgClient
-    yield* postgresMigrations
-    const occupied = yield* sql<Record<string, unknown>>`SELECT EXISTS(SELECT 1 FROM authority_state) AS occupied`
-    if (occupied[0]?.['occupied'] !== false)
-      return yield* new ReplayBrokerFailure({
-        message: 'Fresh replay requires an unused database; preserve both existing durable stores for recovery',
-      })
+    yield* prepareFreshReplayDatabase
     yield* TestClock.setTime(prepared.openMs - 1)
     const clock = yield* makeSimulatedExecutionClock(prepared.runId, source.source.sourceManifestHash)
     const advanceTo = yield* makeReplayTimeline(source, clock, prepared.closeMs + 1)

@@ -57,6 +57,7 @@ test('session preparation rejects changed strategy, partial hours, unknown calen
     { ...input, source: { ...input.source, coverageEndMs: Date.parse('2026-09-04T19:00:00Z') } },
     { ...input, calendar: [] },
     { ...input, assets: input.assets.slice(1) },
+    { ...input, assets: [...input.assets, { ...input.assets[0], symbol: 'XYZ' }] },
     { ...input, assetObservationAt: '2026-09-05T00:00:00.000Z' },
   ])
     expect(Result.isFailure(prepareReplaySession(invalid))).toBe(true)
