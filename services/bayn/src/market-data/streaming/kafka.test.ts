@@ -6,7 +6,9 @@ import {
   type KafkaPartitionPosition,
 } from './bootstrap'
 import { describe, expect, test } from 'bun:test'
-import { Clock, Effect, Exit, Redacted } from 'effect'
+import { Clock, Effect, Exit, Logger, Redacted, Result } from 'effect'
+import { readFileSync } from 'node:fs'
+import { decodeRollingMarketFeature } from '../features/contract'
 import { TestClock } from 'effect/testing'
 
 import { provideTestLayer } from '../../effect-test-support'
@@ -55,6 +57,7 @@ class FakeTransport implements KafkaProjectionTransport {
   ): Promise<KafkaProjectionStream> => {
     this.invalidated = invalidated
     return {
+      queuedRecords: () => this.queue.length,
       drainedPositions: () => this.drained,
       [Symbol.asyncIterator]: () => ({
         next: () =>
@@ -92,6 +95,92 @@ const program = <A, E>(effect: Effect.Effect<A, E, import('effect').Scope.Scope>
   Effect.runPromise(Effect.scoped(effect).pipe(provideTestLayer(TestClock.layer())))
 
 describe('Kafka bootstrap and scoped consumption', () => {
+  test('periodic measurements report lookup failure as unknown and close with their consumer scope', async () => {
+    const logs: unknown[] = []
+    const logger = Logger.make(({ message }) => logs.push(message))
+    const transport = new FakeTransport()
+    await program(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-09-11T14:00:02Z'))
+        const projection = yield* makeKafkaMarketProjection(config, universe, () => transport)
+        yield* TestClock.adjust('2 seconds')
+        transport.offsets = async () => {
+          throw new Error('end-offset lookup unavailable')
+        }
+        yield* TestClock.adjust('30 seconds')
+        expect(logs).toContainEqual([
+          'Kafka market projection measurements',
+          expect.objectContaining({
+            bootstrapComplete: true,
+            queuedRecords: 0,
+            endOffsetLookupFailure: 'Kafka read failed',
+            partitions: expect.arrayContaining(
+              positions('0').map((position) => ({ ...position, endOffset: null, lagOffsets: null })),
+            ),
+          }),
+        ])
+        expect((yield* projection.read).projection.sequence).toBe(0)
+        expect(transport.closeCount).toBe(0)
+      }).pipe(Effect.provide(Logger.layer([logger]))),
+    )
+    expect(transport.closeCount).toBe(1)
+  })
+
+  test('feature arrival receipts are emitted once after incorporation, excluding transport and semantic retries', async () => {
+    const fixture: unknown = JSON.parse(
+      readFileSync(new URL('../features/fixtures/rolling-price-v1.json', import.meta.url), 'utf8'),
+    )
+    const feature = Result.getOrThrow(decodeRollingMarketFeature(fixture))
+    const input = feature.material.inputs[0]
+    if (input === undefined) throw new Error('fixture has no input')
+    const featureUniverse = {
+      ...universe,
+      universeId: feature.material.universeId,
+      universeSymbolHash: feature.material.universeSymbolHash,
+      topics: { ...universe.topics, bars: input.sourceTopic },
+    }
+    const logs: unknown[] = []
+    const logger = Logger.make(({ message }) => logs.push(message))
+    const transport = new FakeTransport()
+    const bounds = Object.values(featureUniverse.topics).map((topic) => ({ topic, partition: 0, offset: '0' }))
+    transport.offsets = async () => bounds
+    transport.drained = bounds
+    await program(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(feature.computedAtMs + 1000)
+        const projection = yield* makeKafkaMarketProjection(config, featureUniverse, () => transport)
+        yield* TestClock.adjust('2 seconds')
+        const record = {
+          topic: featureUniverse.topics.features,
+          partition: 0,
+          offset: '0',
+          value: JSON.stringify(feature),
+          timestampMs: feature.computedAtMs,
+          leaderEpoch: 1,
+        }
+        transport.send(record)
+        yield* TestClock.adjust('1 second')
+        transport.send(record)
+        transport.send({ ...record, offset: '1' })
+        yield* TestClock.adjust('1 second')
+        expect((yield* projection.read).projection.features.get('AAPL')).toHaveLength(1)
+        expect(logs.filter((message) => Array.isArray(message) && message[0] === 'Kafka feature incorporated')).toEqual(
+          [
+            [
+              'Kafka feature incorporated',
+              expect.objectContaining({
+                featureId: feature.featureId,
+                computedAtMs: feature.computedAtMs,
+                offset: '0',
+              }),
+            ],
+          ],
+        )
+      }).pipe(Effect.provide(Logger.layer([logger]))),
+    )
+    expect(transport.closeCount).toBe(1)
+  })
+
   test('binds empty partitions and gaps without assuming contiguous message offsets', () => {
     const partitions = bootstrapKafkaPartitions(positions('10'), positions('100'), positions('-1'))
     expect(partitions.every((partition) => partition.startOffset === '100')).toBe(true)

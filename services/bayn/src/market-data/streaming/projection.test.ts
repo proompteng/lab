@@ -1,4 +1,5 @@
 import { replayHistoricalMarketArrivals } from './historical'
+import { featureAvailabilityMeasurement, projectionCoverageMeasurements } from './telemetry'
 import { reproduceStreamingSnapshot } from './replay'
 import { persistIntradayRecordRows } from '../intraday/verification'
 import { describe, expect, test } from 'bun:test'
@@ -82,6 +83,32 @@ const select = (state: ReturnType<typeof incorporate>, at = end + 3000) =>
   selectStreamingSymbolInputs(state, 'AAPL', start, end, at)
 
 describe('streaming raw and rolling feature projection', () => {
+  test('arrival measurements preserve real computation time and distinguish pending raw joins', () => {
+    const pending = incorporate([featureRecord], end + 5000)
+    const pendingMeasurements = projectionCoverageMeasurements(pending, ['AAPL'], end + 5000)
+    expect(pendingMeasurements.symbols[0]).toMatchObject({
+      observedBars: 0,
+      windowFeatures: 1,
+      matchedFeatures: 0,
+      unmatchedFeatures: 1,
+    })
+    const joined = incorporate([...raw(), featureRecord], end + 5000)
+    const inputs = Result.getOrThrow(selectStreamingSymbolInputs(joined, 'AAPL', start, end, end + 5000))
+    expect(featureAvailabilityMeasurement(joined.epoch, inputs.feature)).toMatchObject({
+      computedAtMs: feature.computedAtMs,
+      availableAtMs: end + 5000,
+      windowAvailabilityDelayMs: 5000,
+      consumerDelayMs: end + 5000 - feature.computedAtMs,
+    })
+    expect(projectionCoverageMeasurements(joined, ['AAPL'], end + 5000).symbols[0]).toMatchObject({
+      observedBars: 30,
+      matchedFeatures: 1,
+      unmatchedFeatures: 0,
+      quoteAgeMs: 3000,
+      tradeAgeMs: 3000,
+    })
+  })
+
   test('joins the Kotlin feature only after its exact raw inputs are incorporated', () => {
     let state = incorporate([featureRecord, quote, trade])
     expect(Result.isFailure(select(state))).toBe(true)

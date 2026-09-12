@@ -61,6 +61,22 @@ historical receipt.
 The existing archive economics harness remains a separate evidence mode. Feature plumbing, deterministic replay and
 PAPER operation do not establish profitability.
 
+## Session measurements
+
+Each worker logs `Kafka feature incorporated` once per newly accepted semantic feature in its process epoch. The
+`bayn.feature-availability.v1` record binds the feature ID and Kafka coordinates to its actual local receipt time,
+producer computation time, and window end. Compute session p50/p95/p99 from these records, grouped by epoch and symbol;
+exclude retained-data bootstrap and regenerated historical features from live-session latency statistics. Preserve
+the session's expected windows so absent arrivals remain missing coverage rather than disappearing from the denominator.
+
+Every 30 seconds, `Kafka market projection measurements` reports the queue high-water mark and observed depth,
+per-partition incorporated and sampled end offsets, raw quote/trade ages, current-window bar coverage, feature matches,
+and unmatched feature revisions. Offset lag is an exact decimal string and includes Kafka control-record positions;
+it is not a market-message count. A failed end-offset lookup produces null lag with an explicit failure. Missing
+symbols have null event ages. These measurements describe input coverage; the existing snapshot, calendar, strategy,
+and risk checks determine trading eligibility. Feature archive lag is measured separately from ClickHouse observation
+times and Kafka feature identities.
+
 ## Delivery and verification
 
 Deliver the Dorvud producer/archive, topic and ClickHouse table before enabling Bayn streaming execution. Use the
