@@ -21,12 +21,15 @@ import org.apache.kafka.clients.producer.ProducerRecord
 import org.slf4j.LoggerFactory
 import java.io.Serializable
 
+internal enum class FeatureRestoreTopology { TA_ONLY, ROLLING_FEATURES }
+
 internal data class RollingMarketFeatureConfig(
   val topic: String,
   val barsTopic: String,
   val universe: ArchiveUniverse,
   val producerRevision: String,
   val technicalTopic: String? = null,
+  val restoreTopology: FeatureRestoreTopology = FeatureRestoreTopology.TA_ONLY,
 ) : Serializable {
   companion object {
     fun fromEnv(env: Map<String, String> = System.getenv()): RollingMarketFeatureConfig? {
@@ -62,6 +65,7 @@ internal data class RollingMarketFeatureConfig(
         ArchiveUniverse(required("ARCHIVE_CORE_UNIVERSE_ID"), symbolHash, symbols.toSet()),
         required("TORGHUT_TA_COMMIT"),
         technical,
+        if (technical == null) FeatureRestoreTopology.TA_ONLY else FeatureRestoreTopology.valueOf(required("TA_FEATURE_RESTORE_TOPOLOGY")),
       )
     }
   }

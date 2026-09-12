@@ -46,6 +46,11 @@ When adding the technical-indicator source to an already deployed rolling-featur
 target that preceding graph's generated checkpoint IDs. Applying the older pre-feature aliases afterward loses the
 rolling graph's generated sink IDs. Coverage includes the deployed ClickHouse signal-writer ID, optional sources and
 sinks, and Flink's generated-ID fallback for subsequent checkpoints; no state is skipped during restoration.
+When enabling technical features, `TA_FEATURE_RESTORE_TOPOLOGY` must identify the savepoint being restored:
+`TA_ONLY` supports a direct upgrade from the original TA job, and `ROLLING_FEATURES` supports an upgrade after the
+rolling-only job completed a checkpoint. The committed deployment selects `ROLLING_FEATURES` for its existing
+rolling-job savepoint. Keep the selection on subsequent restarts; current generated IDs restore new checkpoints.
+An absent or unknown selection fails configuration instead of guessing which topology previously ran.
 
 `dorvud.rolling-price-30m.v1` emits first open, range high and low, last close, total volume, and exact input references
 once 30 contiguous finalized minute bars exist. Prices use the same binary64 multiplication and positive half rounding
@@ -124,15 +129,15 @@ Values are signed decimal integer strings rounded to millionths, with a safe-int
 `READY`, `WARMING`, `GAP`, `SOURCE_MISSING`, or `ZERO_VOLUME`; unavailable values are null. A missing value cannot
 be confused with numerical zero. The definition hash binds these calculations and units:
 
-| Fields | Calculation and readiness |
-| --- | --- |
-| EMA12, EMA26 | Close-price EMA, first close seed, alpha 2/(period+1), ready after 12/26 bars |
-| MACD, signal, histogram | EMA12 minus EMA26; signal EMA9 seeded at zero; ready after 34 bars |
-| RSI14 | Wilder gain/loss recurrence with alpha 1/14 and zero seeds; 15 closes; a flat series is zero, matching pinned TA4J 0.16 |
-| Bollinger middle/upper/lower | 20 closes, population standard deviation, two standard deviations |
-| Weighted close, 5-minute/session | Sum(close times volume) divided by volume |
-| Source VWAP, 5-minute/session | Sum(source-bar VWAP times volume) divided by volume; unavailable if a positive-volume bar lacks VWAP |
-| Realized volatility | Population standard deviation of 60 log returns from 61 minute closes; ratio times one million, not annualized |
+| Fields                           | Calculation and readiness                                                                                               |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| EMA12, EMA26                     | Close-price EMA, first close seed, alpha 2/(period+1), ready after 12/26 bars                                           |
+| MACD, signal, histogram          | EMA12 minus EMA26; signal EMA9 seeded at zero; ready after 34 bars                                                      |
+| RSI14                            | Wilder gain/loss recurrence with alpha 1/14 and zero seeds; 15 closes; a flat series is zero, matching pinned TA4J 0.16 |
+| Bollinger middle/upper/lower     | 20 closes, population standard deviation, two standard deviations                                                       |
+| Weighted close, 5-minute/session | Sum(close times volume) divided by volume                                                                               |
+| Source VWAP, 5-minute/session    | Sum(source-bar VWAP times volume) divided by volume; unavailable if a positive-volume bar lacks VWAP                    |
+| Realized volatility              | Population standard deviation of 60 log returns from 61 minute closes; ratio times one million, not annualized          |
 
 Price fields use price millionths. RSI uses percentage-point millionths. Recursive and session calculations require
 complete history from the session open. Rolling calculations can recover on a complete contiguous tail after an older
