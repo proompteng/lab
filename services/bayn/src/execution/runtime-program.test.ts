@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Effect, Exit, Option, Result } from 'effect'
+import { Cause, Clock, Effect, Exit, Option, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import {
@@ -1353,3 +1353,59 @@ describe('same-code execution program composition', () => {
     })
   })
 })
+
+for (const delay of ['writer fence', 'broker read', 'restart'] as const) {
+  test(`honors a persisted ten-second entry deadline after ${delay} with zero broker posts`, async () => {
+    const fixture = finalLiveFixture()
+    if (fixture.stored.decision === undefined) throw new Error('expected stored approval')
+    const expiresAt = '2026-07-28T08:00:10.000Z'
+    const stored: StoredIntent = { ...fixture.stored, decision: { ...fixture.stored.decision, expiresAt } }
+    const broker = stableBrokerRead()
+    let posts = 0
+    let brokerReads = 0
+    const testDependencies: ExecutionProgramDependencies = {
+      ...dependencies('entry-quote-expiry'),
+      brokerRead: {
+        ...broker,
+        account: Effect.sync(() => {
+          brokerReads += 1
+        }).pipe(
+          Effect.andThen(delay === 'broker read' ? TestClock.setTime(Date.parse(expiresAt)) : Effect.void),
+          Effect.andThen(broker.account),
+        ),
+      },
+      intentStore: {
+        read: () => Effect.succeed(Option.some(stored)),
+      } as unknown as ExecutionProgramDependencies['intentStore'],
+      mutationStore: { authorizeSubmit: () => Effect.void } as unknown as ExecutionProgramDependencies['mutationStore'],
+      writerFence: {
+        check: Effect.void,
+        transaction: (effect) =>
+          (delay === 'writer fence' ? TestClock.setTime(Date.parse(expiresAt)) : Effect.void).pipe(
+            Effect.andThen(effect),
+          ),
+      },
+      persistedCapitalGrants: {
+        read: () => Effect.die(new Error('expected locked grant read')),
+        lockForSubmit: () => Effect.succeed(grantedCapitalAuthority(fixture.grant)),
+      },
+      currentUtcInstant: Clock.currentTimeMillis.pipe(Effect.map((instant) => new Date(instant).toISOString())),
+    }
+    const exit = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(delay === 'restart' ? expiresAt : observedAt))
+        return yield* authorizeFinalBrokerSubmit(
+          fixture.authority,
+          fixture.intent,
+          Effect.sync(() => {
+            posts += 1
+          }),
+          testDependencies,
+        ).pipe(Effect.exit)
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+    expect(finalAuthorizationFailureTag(exit)).toBe('ExpiredRiskDecision')
+    expect(posts).toBe(0)
+    expect(brokerReads).toBe(delay === 'broker read' ? 1 : 0)
+  })
+}

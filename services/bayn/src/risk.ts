@@ -36,10 +36,12 @@ import {
   StrictNonEmptyStringSchema as NonEmptyString,
   SymbolSchema as SymbolName,
   UtcInstantSchema as UtcInstant,
+  UtcOrderTimestampSchema,
   strictParseOptions as StrictParseOptions,
 } from './schemas'
 import { Pipeable } from './pipeable'
 import { utcInstantFromEpochMillis } from './time'
+import { intradayAgeNanos } from './market-data/intraday/time'
 import {
   legacyExecutionAuthorityToken,
   legacyExecutionIntentSchemaVersion,
@@ -253,6 +255,12 @@ const policyAllowsOrderType = (policy: Policy, orderType: OrderType): boolean =>
     ? orderType === OrderType.Market
     : policy.allowedOrderTypes.includes(orderType)
 
+export const EntryQuoteFreshnessSchema = Schema.Struct({
+  eventAt: Schema.Union([UtcInstant, UtcOrderTimestampSchema]),
+  maximumAgeMs: AgeMilliseconds,
+})
+export type EntryQuoteFreshness = typeof EntryQuoteFreshnessSchema.Type
+
 const StateBase = Schema.Struct({
   schemaVersion: Schema.Literal(legacyRiskStateSchemaVersion),
   brokerMode: Schema.Literal(BrokerMode.Execution),
@@ -275,6 +283,8 @@ const StateBase = Schema.Struct({
   referencePriceMicros: PositiveMicrosSchema,
   expectedExecutionPriceMicros: PositiveMicrosSchema,
   marketDataObservedAt: UtcInstant,
+  /** Absent only in legacy stored evaluations and close-only recovery. */
+  entryQuote: Schema.optionalKey(EntryQuoteFreshnessSchema),
   executionSession: ExecutionSessionBindingSchema,
   reservedBuyingPowerMicros: UnsignedMicrosSchema,
   evaluatedAt: UtcInstant,
@@ -320,6 +330,9 @@ export const StateSchema = StateBase.check(
   Schema.makeFilter((state: typeof StateBase.Type): readonly Schema.FilterIssue[] => {
     const issues: Schema.FilterIssue[] = []
     const accountId = state.account.accountId
+    if (state.entryQuote !== undefined && intradayAgeNanos(state.marketDataObservedAt, state.entryQuote.eventAt) < 0n) {
+      issues.push({ path: ['entryQuote', 'eventAt'], issue: 'must not follow the pricing snapshot observation' })
+    }
     const expectedMarketDataHash =
       state.executionMarketDataHash ??
       (state.executionSession.schemaVersion === 'bayn.execution-session-binding.v1'
@@ -803,7 +816,13 @@ const deriveRiskMetrics = (facts: RiskFacts): Result.Result<DerivedRiskMetrics, 
     unresolvedOrderCount,
     oldestBrokerStateAt,
     brokerFreshUntil: oldestBrokerStateAt + facts.policy.maxBrokerStateAgeMs,
-    marketFreshUntil: facts.marketDataObservedAt + facts.policy.maxMarketDataAgeMs,
+    marketFreshUntil: Math.min(
+      facts.marketDataObservedAt + facts.policy.maxMarketDataAgeMs,
+      facts.state.closeOnly !== true && facts.state.entryQuote !== undefined
+        ? // The persisted deadline uses millisecond precision; truncate toward an earlier deadline.
+          Date.parse(facts.state.entryQuote.eventAt) + facts.state.entryQuote.maximumAgeMs
+        : Number.POSITIVE_INFINITY,
+    ),
   })
 }
 
@@ -950,8 +969,10 @@ const buildAuthorityAndStateGates = (
     makeGate(
       Gate.MarketDataFreshness,
       facts.evaluatedAt < metrics.marketFreshUntil,
-      facts.evaluatedAt - facts.marketDataObservedAt,
-      `<${policy.maxMarketDataAgeMs}`,
+      !closeOnly && state.entryQuote !== undefined ? state.evaluatedAt : facts.evaluatedAt - facts.marketDataObservedAt,
+      !closeOnly && state.entryQuote !== undefined
+        ? `<${utc(metrics.marketFreshUntil)}`
+        : `<${policy.maxMarketDataAgeMs}`,
     ),
     makeGate(
       Gate.Session,
@@ -1162,6 +1183,7 @@ const deriveRiskBindingHashes = (facts: RiskFacts): Result.Result<RiskBindingHas
       symbol: facts.state.marketDataSymbol,
       sourceHash: facts.state.marketDataHash,
       observedAt: facts.state.marketDataObservedAt,
+      ...(facts.state.entryQuote === undefined ? {} : { entryQuote: facts.state.entryQuote }),
       referencePriceMicros: facts.state.referencePriceMicros,
       expectedExecutionPriceMicros: facts.state.expectedExecutionPriceMicros,
       executionSession: facts.state.executionSession,

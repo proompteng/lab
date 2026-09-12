@@ -40,7 +40,14 @@ import { isQuoteBoundExecutionModel, type CycleExecutionModel } from '../executi
 import { legacyRiskPolicySchemaVersion, legacyRiskStateSchemaVersion } from '../execution/legacy-wire'
 import { runOnce, type ReconciliationPassResult } from '../reconciler'
 import { reconciledStateHash } from '../reconciliation'
-import { BrokerMode, decodePolicy, executionRiskPolicySchemaVersion, type Policy, type State } from '../risk'
+import {
+  BrokerMode,
+  decodePolicy,
+  executionRiskPolicySchemaVersion,
+  type Policy,
+  type State,
+  type EntryQuoteFreshness,
+} from '../risk'
 import {
   buildObserveShadowDecision,
   buildExecutionDecision,
@@ -687,6 +694,7 @@ const prepareExecutionSessionBinding = <R>(
 }
 
 type CompiledObserveStrategyDecision = {
+  readonly entryQuotes?: Readonly<Record<string, EntryQuoteFreshness>>
   readonly decision: RuntimeStrategyDecision
   readonly decisionMarketDataRows?: PersistedIntradaySnapshotRows
   /** Compatibility identity for the existing planner; intraday decisions remain bound separately to execution date. */
@@ -981,6 +989,7 @@ export const prepareObservePlanner = <R>(
   )
 
 type RiskInputPreparation = {
+  readonly entryQuotes?: Readonly<Record<string, EntryQuoteFreshness>>
   readonly executionModel: CycleExecutionModel
   readonly reconciliation: ReconciliationPassResult
   readonly authorityObservation: ObserveAuthorityObservation
@@ -1001,6 +1010,15 @@ const reduceRiskInputs = (
   Result.mapError(
     Result.all(
       input.targetPlan.intentTargets.map((target) => {
+        const entryQuote = input.closeOnlyExpiresAt === undefined ? input.entryQuotes?.[target.symbol] : undefined
+        if (input.closeOnlyExpiresAt === undefined && entryQuote === undefined) {
+          return Result.fail(
+            compositionFailure(
+              'shadow-risk-inputs',
+              `entry target ${target.symbol} has no bound pricing quote event time`,
+            ),
+          )
+        }
         const referencePriceMicros = input.targetPlan.targets.find(
           (planned) => planned.symbol === target.symbol,
         )?.referencePriceMicros
@@ -1047,6 +1065,7 @@ const reduceRiskInputs = (
               referencePriceMicros: referencePrice.toString(),
               expectedExecutionPriceMicros: pricing.expectedExecutionPriceMicros.toString(),
               marketDataObservedAt: input.executionMarketData?.observedAt ?? input.evaluatedAt,
+              ...(entryQuote === undefined ? {} : { entryQuote }),
               executionSession: input.executionSession,
               reservedBuyingPowerMicros: '0',
               evaluatedAt: input.evaluatedAt,
@@ -1078,8 +1097,10 @@ const reduceObserveRiskInputs = <R>(
     'contentHash' | 'observedAt'
   >,
   closeOnlyExpiresAt?: string,
+  entryQuotes?: Readonly<Record<string, EntryQuoteFreshness>>,
 ): Result.Result<readonly ShadowDeltaRiskInput[], ObserveDecisionCompositionFailure> =>
   reduceRiskInputs({
+    ...(entryQuotes === undefined ? {} : { entryQuotes }),
     executionModel: input.executionModel,
     reconciliation: facts.reconciliation,
     authorityObservation,
@@ -1192,6 +1213,8 @@ function buildCycleDecision<R>(
         targetPlan,
         snapshotContentHash,
         compiled.executionMarketData,
+        undefined,
+        compiled.entryQuotes,
       ),
     )
     const decisionMarketData = compiled.decisionMarketData ?? compiled.executionMarketData
