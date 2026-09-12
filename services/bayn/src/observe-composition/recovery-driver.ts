@@ -1,3 +1,4 @@
+import { operationTimeoutOrElse } from '../operation-timeout'
 import { Clock, Duration, Effect, Ref, Result, Semaphore } from 'effect'
 import type { AutonomousCycleStartup } from '../app'
 import type { AutonomousCycle } from '../cycle'
@@ -200,7 +201,7 @@ export const runRestateAdvanceWithinTimeout = <A, E, R>(
   onTimeout: (error: CycleRunnerError) => Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> =>
   operationPermit.withPermit(lifecycleAdvance).pipe(
-    Effect.timeoutOrElse({
+    operationTimeoutOrElse({
       duration: Duration.millis(timeoutMs),
       orElse: () => onTimeout(mutationCyclePassTimeoutError(timeoutMs)),
     }),

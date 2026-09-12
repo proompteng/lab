@@ -1,5 +1,6 @@
+import { OperationDeadlineClock } from './operation-timeout'
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
-import { Config, Data, Effect, FileSystem, Layer, Logger, Path, Redacted, Schema, Stdio, Stream } from 'effect'
+import { Clock, Config, Data, Effect, FileSystem, Layer, Logger, Path, Redacted, Schema, Stdio, Stream } from 'effect'
 import { TestClock } from 'effect/testing'
 import { PostgresClientLive } from './db/postgres-client'
 import { WriterFenceLive } from './execution/writer-fence'
@@ -105,6 +106,7 @@ const main = Effect.scoped(
       ExecutionCycleClosureStoreLive,
       PersistedCapitalGrantStoreLive,
     ).pipe(Layer.provideMerge(base))
+    const deadlineClock = yield* Clock.clockWith(Effect.succeed)
     const report = yield* runRetainedExecutionSession(prepared, args.arrivalsPath, databases, (pass) =>
       Effect.fromResult(canonicalJsonV1Result(pass)).pipe(
         Effect.flatMap((line) => fs.writeFileString(passesPath, `${line}\n`, { flag: 'a' })),
@@ -120,6 +122,7 @@ const main = Effect.scoped(
     ).pipe(
       // @effect-diagnostics-next-line strictEffectProvide:off -- isolated replay command owns its database and virtual clock resources
       Effect.provide(Layer.mergeAll(stores, TestClock.layer())),
+      Effect.provideService(OperationDeadlineClock, deadlineClock),
       // This outer deadline uses the command clock; database stalls cannot freeze it with simulated time.
       Effect.timeout('30 minutes'),
     )

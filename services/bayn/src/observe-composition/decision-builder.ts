@@ -1,3 +1,4 @@
+import { operationCurrentTimeMillis, operationTimeoutOrElse } from '../operation-timeout'
 import { isSnapshotExecutionMarketDataBinding } from '../shadow-decision-contract'
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
 import { Clock, Context, Data, Duration, Effect, Result, Schema } from 'effect'
@@ -173,7 +174,7 @@ export const boundedReconciliationPass = (
   timeoutMs: number,
 ): Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime> =>
   runOnce.pipe(
-    Effect.timeoutOrElse({
+    operationTimeoutOrElse({
       duration: timeoutMs,
       orElse: () =>
         Effect.fail(
@@ -202,14 +203,14 @@ export const runMutationPassWithinTimeout = <A, E, R>(
   timeoutMs: number,
 ): Effect.Effect<A, E | CycleRunnerError, R> =>
   Effect.gen(function* () {
-    const startedAt = yield* Clock.currentTimeMillis
+    const startedAt = yield* operationCurrentTimeMillis
     const parentBudget = yield* mutationPassBudget
     return yield* effect.pipe(
       Effect.provideService(mutationPassBudget, {
         startedAt: parentBudget?.startedAt ?? startedAt,
         deadlineAt: Math.min(parentBudget?.deadlineAt ?? Infinity, startedAt + timeoutMs),
       }),
-      Effect.timeoutOrElse({
+      operationTimeoutOrElse({
         duration: Duration.millis(timeoutMs),
         orElse: () => Effect.fail(mutationCyclePassTimeoutError(timeoutMs)),
       }),
@@ -1485,19 +1486,20 @@ const buildClosingExecutionCycleDecisionWithSource = (
             : mutationRunnerError({ message: cause.message, cause, failure: 'contract' }),
         ),
       )
-      const archiveStartedAt = yield* Clock.currentTimeMillis
+      const archiveMarketAt = yield* Clock.currentTimeMillis
+      const archiveStartedAt = yield* operationCurrentTimeMillis
       const passBudget = yield* mutationPassBudget
       const remainingMs = Math.min(
         input.reconciliationPassTimeoutMs,
         input.reconciliationIntervalMs,
-        Date.parse(closeExpiresAt) - archiveStartedAt,
+        Date.parse(closeExpiresAt) - archiveMarketAt,
         (passBudget?.deadlineAt ?? Infinity) - archiveStartedAt,
       )
       // Reserve twice the observed preparatory work for a fresh reconciliation and close construction.
       const fallbackReserveMs =
         passBudget === undefined ? remainingMs / 2 : 2 * (archiveStartedAt - passBudget.startedAt)
       const snapshot = yield* loadIntradaySnapshot(input.intradayMarketData, query).pipe(
-        Effect.timeoutOrElse({
+        operationTimeoutOrElse({
           duration: Duration.millis(
             Math.max(1, Math.floor(Math.min(remainingMs / 2, remainingMs - fallbackReserveMs))),
           ),
