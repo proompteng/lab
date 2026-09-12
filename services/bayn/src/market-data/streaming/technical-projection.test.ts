@@ -220,7 +220,10 @@ test('exact technical suffix joins as-of and immutable conflicts remove optional
   expect(select(conflict).technical?.features).toHaveLength(0)
   expect(summarizeStreamingSymbol(conflict, 'AAPL').technical?.matchedFeatures).toHaveLength(0)
   const malformed = incorporateMarketRecord(ready, { ...record('2'), value: '{' }, universe, end + 2400)
-  const discarded = { ...ready, technicalRejectionsDiscardedThroughMs: end + 2200 }
+  const discarded = {
+    ...ready,
+    technicalRejectionsDiscardedThrough: { availableAtMs: end + 2200, sequence: ready.sequence },
+  }
   for (const invalidated of [malformed, discarded]) {
     expect(select(invalidated).technical?.features).toHaveLength(0)
     expect(summarizeStreamingSymbol(invalidated, 'AAPL').technical?.matchedFeatures).toHaveLength(0)
@@ -251,6 +254,18 @@ test('exact technical suffix joins as-of and immutable conflicts remove optional
       ),
     ).technical?.features,
   ).toHaveLength(0)
+})
+
+test('a valid technical record after an evicted rejection in the same millisecond is available', () => {
+  let state = initial()
+  for (let offset = 0; offset < 257; offset++) {
+    state = incorporateMarketRecord(state, record(String(offset), { invalid: true }), universe, end + 2200)
+  }
+  expect(state.technicalRejections).toHaveLength(256)
+  expect(select(state).technical?.features).toHaveLength(0)
+  const recovered = incorporateMarketRecord(state, record('257'), universe, end + 2200)
+  expect(select(recovered).technical?.features[0]?.value.featureId).toBe(feature.featureId)
+  expect(summarizeStreamingSymbol(recovered, 'AAPL').technical?.matchedFeatures[0]?.featureId).toBe(feature.featureId)
 })
 
 test('a new technical revision supersedes the previous value before matching raw correction arrives', () => {

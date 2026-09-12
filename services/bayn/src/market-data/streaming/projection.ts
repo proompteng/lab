@@ -44,7 +44,7 @@ export interface StreamingProjection {
   readonly technicalFeatures: ReadonlyMap<string, readonly ObservedFeature<TechnicalMarketFeature>[]>
   readonly technicalFeatureArrival: ObservedFeature<TechnicalMarketFeature> | null
   readonly technicalRejections: readonly TechnicalInputRejection[]
-  readonly technicalRejectionsDiscardedThroughMs: number
+  readonly technicalRejectionsDiscardedThrough: Pick<TechnicalInputRejection, 'availableAtMs' | 'sequence'> | null
   readonly discardedRejectionsThroughMs: number
   readonly rejections: ReadonlyMap<
     string,
@@ -68,7 +68,7 @@ export const emptyStreamingProjection = (epoch: string, technicalTopic?: string)
   technicalFeatures: new Map(),
   technicalFeatureArrival: null,
   technicalRejections: [],
-  technicalRejectionsDiscardedThroughMs: -1,
+  technicalRejectionsDiscardedThrough: null,
   discardedRejectionsThroughMs: -1,
   rejections: new Map(),
 })

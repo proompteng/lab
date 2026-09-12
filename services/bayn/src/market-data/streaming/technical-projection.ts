@@ -14,6 +14,11 @@ export interface TechnicalInputRejection {
   readonly reason: string
 }
 
+const compareObservation = (
+  left: Pick<TechnicalInputRejection, 'availableAtMs' | 'sequence'>,
+  right: Pick<TechnicalInputRejection, 'availableAtMs' | 'sequence'>,
+) => left.availableAtMs - right.availableAtMs || left.sequence - right.sequence
+
 export const technicalReceiptAvailableAt = (
   state: StreamingProjection,
   candidate: ObservedFeature<TechnicalMarketFeature>,
@@ -21,7 +26,8 @@ export const technicalReceiptAvailableAt = (
 ) =>
   candidate.topic === state.technicalTopic &&
   candidate.availableAtMs <= observedAtMs &&
-  candidate.availableAtMs > state.technicalRejectionsDiscardedThroughMs &&
+  (state.technicalRejectionsDiscardedThrough === null ||
+    compareObservation(candidate, state.technicalRejectionsDiscardedThrough) > 0) &&
   !(state.technicalFeatures.get(candidate.value.material.symbol) ?? []).some(
     (newer) =>
       newer.value.material.sessionDate === candidate.value.material.sessionDate &&
@@ -55,10 +61,12 @@ const rejectTechnical = (
     ...state,
     technicalFeatureArrival: null,
     technicalRejections: rejections.slice(-256),
-    technicalRejectionsDiscardedThroughMs: Math.max(
-      state.technicalRejectionsDiscardedThroughMs,
-      discarded?.availableAtMs ?? -1,
-    ),
+    technicalRejectionsDiscardedThrough:
+      discarded !== undefined &&
+      (state.technicalRejectionsDiscardedThrough === null ||
+        compareObservation(discarded, state.technicalRejectionsDiscardedThrough) > 0)
+        ? { availableAtMs: discarded.availableAtMs, sequence: discarded.sequence }
+        : state.technicalRejectionsDiscardedThrough,
   }
 }
 
