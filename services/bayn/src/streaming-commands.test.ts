@@ -7,6 +7,11 @@ import { parseStreamingDiagnosticsArgs, summarizeStreamingSymbol } from './strea
 
 test('streaming commands require an explicit evidence source and reject ambiguous arguments', () => {
   expect(parseStreamingReplayArgs(['--file', 'decision.json'])).toEqual({ _tag: 'File', path: 'decision.json' })
+  expect(parseStreamingReplayArgs(['--historical', 'experiment.json'])).toEqual({
+    _tag: 'Historical',
+    path: 'experiment.json',
+  })
+  expect(parseStreamingReplayArgs(['--historical', 'experiment.json', '--file', 'decision.json'])._tag).toBe('Invalid')
   expect(parseStreamingReplayArgs(['--decision', 'a'.repeat(64)])._tag).toBe('Decision')
   expect(parseStreamingReplayArgs(['--decision', 'not-a-hash'])._tag).toBe('Invalid')
   expect(parseStreamingReplayArgs(['--file', 'decision.json', '--help'])._tag).toBe('Invalid')
