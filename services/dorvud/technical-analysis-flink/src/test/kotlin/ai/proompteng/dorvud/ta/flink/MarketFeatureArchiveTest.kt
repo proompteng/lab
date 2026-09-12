@@ -37,7 +37,13 @@ class MarketFeatureArchiveTest {
       decodeArchivedMarketFeature(record().copy(value = fixture().replace("131000000", "132000000")), routes(), archivedAt)
     }
     assertFailsWith<IllegalArgumentException> { decodeArchivedMarketFeature(record(), emptyMap(), archivedAt) }
-    assertFailsWith<IllegalArgumentException> { decodeArchivedMarketFeature(record(), routes(), archivedAt - 2000) }
+    assertFailsWith<IllegalArgumentException> { decodeArchivedMarketFeature(record(), routes(), archivedAt - 7000) }
+  }
+
+  @Test fun `archive accepts bounded producer clock lead without changing either timestamp`() {
+    val decoded = decodeArchivedMarketFeature(record(), routes(), archivedAt - 2000)
+    assertEquals(archivedAt - 1000, decoded.computedAtMs)
+    assertEquals(archivedAt - 2000, decoded.archivedAtMs)
   }
 
   @Test fun `archive rejects incomplete provenance even with recomputed content hash`() {

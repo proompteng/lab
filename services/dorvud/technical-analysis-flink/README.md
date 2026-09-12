@@ -54,3 +54,8 @@ with the producing test, then verify the TypeScript decoder and inspect the resu
 ```sh
 ./gradlew :technical-analysis-flink:test --tests '*RollingMarketFeaturesTest' -PwriteMarketFeatureFixture=true
 ```
+
+The definition binds a 5,000 ms cross-host clock allowance. Producer, input-ingestion, and archive clocks may differ within
+that bound; original timestamps are retained. Bayn eligibility still depends on its actual local receipt and the exact
+completed decision window. Invalid records increment rejection diagnostics and preserve previously accepted rolling
+state, so a single rejected input cannot erase 30 minutes of usable history.

@@ -71,7 +71,8 @@ internal fun decodeArchivedMarketFeature(
   }
   require(
     material.inputs.size == FEATURE_LOOKBACK_MINUTES &&
-      feature.computedAtMs in material.windowEndMs..253_402_300_799_999L && feature.computedAtMs <= archivedAtMs,
+      feature.computedAtMs in (material.windowEndMs - FEATURE_MAX_CLOCK_SKEW_MS)..253_402_300_799_999L &&
+      feature.computedAtMs <= archivedAtMs + FEATURE_MAX_CLOCK_SKEW_MS,
   ) {
     "invalid feature availability"
   }
@@ -105,7 +106,8 @@ internal fun decodeArchivedMarketFeature(
       "premature feature input"
     }
     require(
-      input.ingestionTimeNanos.toBigInteger() <= feature.computedAtMs.toBigInteger() * 1_000_000L.toBigInteger() + 999_999L.toBigInteger(),
+      input.ingestionTimeNanos.toBigInteger() <=
+        (feature.computedAtMs + FEATURE_MAX_CLOCK_SKEW_MS).toBigInteger() * 1_000_000L.toBigInteger() + 999_999L.toBigInteger(),
     ) {
       "feature computation precedes input"
     }

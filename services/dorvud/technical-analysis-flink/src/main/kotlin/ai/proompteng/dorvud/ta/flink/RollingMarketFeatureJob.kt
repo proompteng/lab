@@ -114,13 +114,8 @@ internal class RollingMarketFeatureFunction(
     out: Collector<RollingMarketFeature>,
   ) {
     val transition =
-      try {
-        advanceRollingFeature(state.value() ?: RollingFeatureState(), value, ctx.timerService().currentProcessingTime(), producerRevision)
-      } catch (_: IllegalArgumentException) {
-        rejected.inc()
-        state.clear()
-        return
-      }
+      processRollingFeature(state.value() ?: RollingFeatureState(), value, ctx.timerService().currentProcessingTime(), producerRevision)
+    if (transition.rejection != null) rejected.inc()
     state.update(transition.state)
     transition.feature?.let {
       out.collect(it)

@@ -15,6 +15,7 @@ internal const val ROLLING_FEATURE_DEFINITION = "dorvud.rolling-price-30m.v1"
 internal const val ROLLING_FEATURE_SCHEMA = "dorvud.market-feature.v1"
 internal const val FEATURE_SESSION_POLICY = "alpaca.regular.new-york-date.v1"
 internal const val FEATURE_LOOKBACK_MINUTES = 30
+internal const val FEATURE_MAX_CLOCK_SKEW_MS = 5000L
 private const val MINUTE_MS = 60_000L
 private const val MAX_SAFE_INTEGER = 9_007_199_254_740_991L
 private val featureZone = ZoneId.of("America/New_York")
@@ -74,6 +75,7 @@ data class RollingFeatureState(
 data class RollingFeatureTransition(
   val state: RollingFeatureState,
   val feature: RollingMarketFeature?,
+  val rejection: String? = null,
 )
 
 internal fun featureHash(element: JsonElement): String {
@@ -96,6 +98,7 @@ internal fun rollingFeatureDefinitionHash(): String =
         "binary64-times-1000000-round-half-positive-infinity",
         "bar-winner:ingestion-nanos,partition,offset",
         "raw-content:binary64-hex-v1",
+        "cross-host-clock-skew-ms:$FEATURE_MAX_CLOCK_SKEW_MS",
       ).map(::JsonPrimitive),
     ),
   )
@@ -166,7 +169,9 @@ internal fun advanceRollingFeature(
   require(bar.eventTime.nano == 0 && bar.eventTime.epochSecond % 60 == 0L) { "feature bar must be minute aligned" }
   require(bar.sourcePartition >= 0 && bar.sourceOffset >= 0) { "invalid feature source coordinates" }
   require(bar.ingestionTime >= bar.eventTime.plusSeconds(60)) { "feature bar arrived before its window closed" }
-  require(bar.ingestionTime.toEpochMilli() <= computedAtMs) { "feature computation precedes input availability" }
+  require(
+    bar.ingestionTime.toEpochMilli() <= computedAtMs + FEATURE_MAX_CLOCK_SKEW_MS,
+  ) { "feature computation precedes input availability" }
   require(
     listOf(bar.open, bar.high, bar.low, bar.close).all { it.isFinite() && it > 0 && featureMicros(it) > 0 },
   ) { "invalid feature price" }
@@ -239,3 +244,15 @@ internal fun advanceRollingFeature(
   if (id == current.lastFeatureId) return RollingFeatureTransition(state, null)
   return RollingFeatureTransition(state.copy(lastFeatureId = id), RollingMarketFeature(material, id, computedAtMs, producerRevision))
 }
+
+internal fun processRollingFeature(
+  previous: RollingFeatureState,
+  bar: IntradayBarRecord,
+  computedAtMs: Long,
+  producerRevision: String,
+): RollingFeatureTransition =
+  try {
+    advanceRollingFeature(previous, bar, computedAtMs, producerRevision)
+  } catch (error: IllegalArgumentException) {
+    RollingFeatureTransition(previous, null, error.message ?: "invalid feature input")
+  }

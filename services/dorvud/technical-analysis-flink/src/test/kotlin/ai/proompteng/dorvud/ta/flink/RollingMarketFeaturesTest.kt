@@ -94,6 +94,17 @@ class RollingMarketFeaturesTest {
     )
   }
 
+  @Test fun `invalid input preserves completed history and the next minute publishes immediately`() {
+    val state = complete().state
+    val rejected = processRollingFeature(state, bar(30).copy(high = -1.0), computed + 60_000, "test-revision")
+    assertEquals(state, rejected.state)
+    assertNotNull(rejected.rejection)
+    assertNull(rejected.feature)
+    val recovered = processRollingFeature(rejected.state, bar(30), computed + 60_000, "test-revision")
+    assertNotNull(recovered.feature)
+    assertNull(recovered.rejection)
+  }
+
   @Test fun `arrival ordering cannot change semantic feature identity`() {
     val ordered = assertNotNull(complete().feature)
     val reversed = assertNotNull(complete((0..29).reversed().toList()).feature)

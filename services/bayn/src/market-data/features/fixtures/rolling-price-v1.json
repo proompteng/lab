@@ -2,7 +2,7 @@
   "material": {
     "schemaVersion": "dorvud.market-feature.v1",
     "definitionId": "dorvud.rolling-price-30m.v1",
-    "definitionHash": "2b9a3fc5c2211fb428aad9d69774c7663cc2b869863458d166016412472e03cb",
+    "definitionHash": "f9c3d3e8146e17ed2c143aad3cbcb8f1d741d2203bb98df7d240bf66306630de",
     "provider": "alpaca",
     "feed": "iex",
     "delayClass": "real_time_exchange_only",
@@ -263,7 +263,7 @@
       "totalVolumeMicros": "307500000"
     }
   },
-  "featureId": "30a869b1b239fed6b54163a3875e9fa7f6329ee6494c7ab5f40753b80cf826ee",
+  "featureId": "d0b7607f571893fa4564d286f8b5865169eb4d4f572c0ca7aec521a3a822d697",
   "computedAtMs": 1789135202000,
   "producerRevision": "test-revision"
 }
