@@ -377,6 +377,7 @@ targets:
     workflow: dorvud-ci
     paths:
       - services/dorvud/**
+      - services/bayn/src/market-data/features/fixtures/**
 
   otel:
     kind: delegated

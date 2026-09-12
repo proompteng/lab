@@ -17,10 +17,11 @@ resources:
   - ta-replicated-table-migration-job.yaml
   - signal-schema-job.yaml
   - intraday-bars-schema-job.yaml
+  - intraday-features-schema-job.yaml
   - bayn-universe-v2-configmap.yaml
   - signal-publisher-cronjob.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/signal-publisher
     newName: registry.ide-newton.ts.net/lab/signal-publisher
-    newTag: kargo-sha-b0f698fbe865b805cb9bab6271d8b0b41e40900a
-    digest: sha256:1cbcc31cea995f8a574bf4b64e0c95d606071b948ee56c7ce6a4abd5c6d591d2
+    newTag: kargo-sha-85b9a3fbe49936f2e304506b69c19d00da0799ec
+    digest: sha256:fe70a43de904c650869f00b3814c936d6d9ac86df3c87aad29d72005e3905211
