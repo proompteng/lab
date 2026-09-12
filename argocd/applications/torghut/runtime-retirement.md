@@ -17,7 +17,8 @@ used by Bayn. It does not remove the shared `torghut` Argo Application or namesp
 The same change retires PostgreSQL migration, CA-reflector, TigerBeetle smoke, and whitepapers bootstrap
 hooks; PostgreSQL backup scheduling; the three legacy Torghut CronJobs; historical simulation workflows
 and analysis templates; and their dedicated RBAC/configuration. It removes API exposure and scraping.
-Notebooks keep ClickHouse access; legacy PostgreSQL and trading-status views are unavailable.
+Notebooks initialize with ClickHouse credentials alone. Market-data views keep reading ClickHouse; legacy
+PostgreSQL and trading-status views report unavailable without connecting to retired services.
 
 The active resources retain `torghut-ws`, live `torghut-ta`, `market-data-archive`, ClickHouse and Keeper,
 notebooks, Alloy, and ClickHouse guardrail metrics. The shared runtime ServiceAccount and RBAC remain
@@ -89,7 +90,8 @@ The post-deploy workflow checks the deployed revision, directly checks retired D
 and Pod absence, and checks other retired owners through Argo's resource inventory using existing runner
 permissions. The rollout operator additionally verifies those owners directly. For each retained Flink
 pipeline, the workflow requires ready JobManager and TaskManager Pods running the immutable image
-from the promoted manifest. It rejects a healthy job left on an older image, accounts for every task
+from the verified Argo revision in Git, including manual runs checked out on another branch. It rejects a
+healthy job left on an older image, accounts for every task
 as running or successfully finished, and requires a completed checkpoint, then runs the existing Kafka,
 websocket, and TA freshness check with `TORGHUT_SCHEDULER_EXPECTED=false`.
 

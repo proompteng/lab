@@ -1,9 +1,6 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
-
-import YAML from 'yaml'
 
 import { describe, expect, it } from 'bun:test'
 
@@ -179,12 +176,7 @@ describe('torghut post-deploy verifier workflow', () => {
     })
   }
 
-  const repoRoot = fileURLToPath(new URL('../../../../../', import.meta.url))
-  const promotedImage = (
-    YAML.parse(readFileSync(join(repoRoot, 'argocd/applications/torghut/ta/flinkdeployment.yaml'), 'utf8')) as {
-      spec: { image: string }
-    }
-  ).spec.image
+  const promotedImage = 'registry.invalid/promoted@sha256:' + '1'.repeat(64)
   const flinkPods = (image: string, ready = true) => ({
     items: ['jobmanager', 'taskmanager'].map((component) => ({
       metadata: { labels: { component } },
@@ -263,6 +255,36 @@ describe('torghut post-deploy verifier workflow', () => {
     it(`validates native Flink evidence when ${name}`, () => {
       const directory = mkdtempSync(join(tmpdir(), 'torghut-pipeline-test-'))
       try {
+        const git = (...args: string[]) => {
+          const result = Bun.spawnSync(['git', ...args], {
+            cwd: directory,
+            env: {
+              ...process.env,
+              GIT_AUTHOR_NAME: 'Workflow test',
+              GIT_AUTHOR_EMAIL: 'test@example.invalid',
+              GIT_COMMITTER_NAME: 'Workflow test',
+              GIT_COMMITTER_EMAIL: 'test@example.invalid',
+            },
+          })
+          expect(result.exitCode).toBe(0)
+          return result.stdout.toString().trim()
+        }
+        git('init', '--quiet')
+        const manifests = ['ta', 'market-data-archive'].map((path) => {
+          const parent = join(directory, 'argocd/applications/torghut', path)
+          mkdirSync(parent, { recursive: true })
+          const manifest = join(parent, 'flinkdeployment.yaml')
+          writeFileSync(manifest, `spec:\n  image: ${promotedImage}\n`)
+          return manifest
+        })
+        git('add', 'argocd')
+        git('-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'Promoted image')
+        const revision = git('rev-parse', 'HEAD')
+        for (const manifest of manifests) {
+          writeFileSync(manifest, `spec:\n  image: registry.invalid/checkout@sha256:${'2'.repeat(64)}\n`)
+        }
+        git('add', 'argocd')
+        git('-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'Different dispatch checkout')
         const result = Bun.spawnSync(
           [
             'bash',
@@ -286,10 +308,11 @@ describe('torghut post-deploy verifier workflow', () => {
         `,
           ],
           {
-            cwd: repoRoot,
+            cwd: directory,
             env: {
               ...process.env,
               EVIDENCE_DIR: directory,
+              REVISION: revision,
               TEST_JOBS: JSON.stringify(jobs),
               TEST_PODS: JSON.stringify(pods),
               TEST_CHECKPOINTS: JSON.stringify(checkpoints),

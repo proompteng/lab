@@ -114,7 +114,7 @@ jobs:
             if git cat-file -e "${revision}^{commit}" >/dev/null 2>&1; then
               return 0
             fi
-            git fetch --no-tags --depth=200 origin main >/dev/null 2>&1 || true
+            git fetch --no-tags --depth=200 origin kargo/torghut >/dev/null 2>&1 || true
             git cat-file -e "${revision}^{commit}" >/dev/null 2>&1
           }
 
@@ -197,6 +197,10 @@ jobs:
 
           EVIDENCE_DIR="${RUNNER_TEMP}/torghut-post-deploy"
           mkdir -p "${EVIDENCE_DIR}"
+          if ! ensure_revision_known "${REVISION}"; then
+            echo "The verified Argo revision ${REVISION} is unavailable in Git"
+            exit 1
+          fi
 
           for removal_attempt in $(seq 1 30); do
             RETIRED_DEPLOYMENTS="$(
@@ -263,6 +267,8 @@ jobs:
           for pipeline in torghut-ta market-data-archive; do
             pipeline_path="${pipeline}"
             if [ "${pipeline}" = torghut-ta ]; then pipeline_path=ta; fi
+            git show "${REVISION}:argocd/applications/torghut/${pipeline_path}/flinkdeployment.yaml" \
+              > "${EVIDENCE_DIR}/${pipeline}-promoted.yaml"
             expected_image="$(bun -e '
               const manifest = Bun.YAML.parse(await Bun.file(process.argv[1]).text());
               const image = manifest.spec?.image;
@@ -270,7 +276,7 @@ jobs:
                 throw new Error("Promoted Flink manifest is missing an immutable image digest");
               }
               console.log(image);
-            ' "argocd/applications/torghut/${pipeline_path}/flinkdeployment.yaml")"
+            ' "${EVIDENCE_DIR}/${pipeline}-promoted.yaml")"
             for pipeline_attempt in $(seq 1 60); do
               if kubectl get pods -n torghut -l "app=${pipeline}" -o json \
                   > "${EVIDENCE_DIR}/${pipeline}-pods.json" &&
