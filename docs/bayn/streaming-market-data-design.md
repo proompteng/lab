@@ -129,19 +129,19 @@ Extract reusable indicator calculations from the existing TA operator. Give the 
 and state descriptors, preserving existing consumers and savepoint state. Keep the pinned Flink and connector
 versions until compatibility testing supports a change.
 
-The first definition publishes the following values:
+The first release publishes only the rolling price-window values used by the current strategy: first open, maximum
+high, minimum low, last close, total volume, and coverage for 30 complete one-minute bars. Preserve the current
+strategy's numeric rules and prove decision parity before adding indicator-based rules.
 
-| Feature family       | Definition                                                                                                                                                                                          |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Rolling price window | First open, maximum high, minimum low, last close, total volume, and coverage for 30 complete one-minute bars. Preserve the current strategy's numeric rules.                                       |
-| EMA and MACD         | EMA 12 and 26; MACD 12/26 with a 9-period signal. Reuse ta4j formulas and pin the seed behavior in fixtures.                                                                                        |
-| RSI and Bollinger    | RSI 14; Bollinger 20 with two standard deviations. Pin denominator and seed behavior in fixtures.                                                                                                   |
-| VWAP                 | Five-minute and session VWAP from provider bar VWAP multiplied by volume. If a contributing nonzero-volume bar lacks VWAP, publish an unavailable value. Do not label close-weighted price as VWAP. |
-| Realized volatility  | Thirty log returns from 31 consecutive closes, population standard deviation, unannualized. Name the horizon and units explicitly.                                                                  |
+The feature definition includes the fixed-point scale and rounding used by Bayn. Flink converts source prices at the
+same boundary and produces the same integer values. Kafka carries those integers as decimal strings. The Kotlin and
+TypeScript fixtures must include values at rounding and strategy-threshold boundaries.
 
-The first Bayn migration uses rolling price-window values to preserve decision behavior. Additional indicators are
-available inputs, not automatic new entry rules. Introducing an RSI filter or changing a threshold is a subsequent
-strategy change.
+Dorvud already contains EMA, MACD, RSI, Bollinger, VWAP, and realized-volatility calculations. Add those feature families
+when a concrete strategy experiment needs them, reusing the existing formulas where their semantics match. Each
+extension declares periods, seed behavior, required history, units, and rounding. A close-weighted price must not be
+labeled VWAP, and volatility must state its horizon and annualization. These extensions do not delay the initial
+raw-plus-rolling-feature release or silently introduce new entry rules.
 
 State is isolated by the full data identity and exchange session. Session boundaries use a versioned exchange
 calendar, including holidays, early closes, and daylight saving changes. The broker calendar remains authoritative
@@ -149,24 +149,31 @@ for Bayn's order window; a disagreement blocks entry until resolved.
 
 Within a session, retain one canonical bar revision per minute. Bound state to that session's scheduled minutes and
 expire old session state. Resolve retransmissions and corrections using the same explicit precedence rule as the
-raw archive reader. Partition offsets are ordered only within a partition; never compare offsets from different
-partitions as a global revision sequence.
+raw archive reader. For bars at the source baseline, the [archive query](../../services/bayn/src/market-data/intraday/queries.ts)
+selects the greatest ingestion time, then partition number, then offset for the same symbol and event time within
+the configured topic. Extract this policy into matching fixtures rather than implementing a different arrival-order
+winner in Flink. Partition-number precedence is a deterministic tie-break, not evidence of causal recency across
+partitions. Conflicting content at the same immutable source coordinates is an error.
 
-A newer canonical correction replaces its previous contribution, including VWAP numerator and denominator. Recompute
-affected indicator state and publish a new snapshot for the current completed window. Preserve prior feature
-messages for audit. A correction cannot insert later-event data into an earlier window or rewrite a past decision.
-Historical backfills run with a separate output identity and cannot overwrite current live feature state.
+A newer canonical correction replaces its previous contribution. Recompute the affected window and publish a new
+snapshot for the current completed window. Preserve prior feature messages for audit. A correction cannot insert
+later-event data into an earlier window or rewrite a past decision. Historical backfills run with a separate output
+identity and cannot overwrite current live feature state.
 
-Indicators reset at session open in this first definition. EMA 12 and 26 require at least 12 and 26 contiguous bars;
-MACD requires 34, RSI requires 15 closes, and Bollinger requires 20. These are minimum declared warmup rules, not a
-claim that initialization has no influence. Session indicators additionally require complete input history from
-session open. Rolling families can recover after their full contiguous window is available. Each family carries its
-own validity, so unavailable optional indicators do not invalidate an otherwise complete rolling price window.
+The initial rolling feature requires all 30 scheduled minute bars in its window. Gaps remain invalid until a complete
+window is available. No additional session warmup is imposed. Future indicator families must declare whether they
+reset at session open or require earlier history, and carry their own validity. An unavailable optional indicator
+cannot invalidate an otherwise complete rolling price window.
 
-Use event time for feature windows and bounded lateness for normal emission. A
-[Flink watermark](https://nightlies.apache.org/flink/flink-docs-release-2.2/docs/concepts/time/) describes event-time
-progress, not permanent finality or consumer availability. Missing minutes remain visible. Never fabricate bars to
-advance a watermark or clear warmup.
+Derive each minute bar's exclusive end from its start timestamp and duration. Emit a feature as soon as all required
+finalized bars for that completed window are present. Do not wait for the next minute's bar to advance a watermark
+past this window: that would add a minute of avoidable delay. Reject premature bars and retain the distinction between
+the latest finalized revision and a bar that can never be corrected.
+
+Use event time for window membership and watermarks for progress reporting and bounded state cleanup. A
+[Flink watermark](https://nightlies.apache.org/flink/flink-docs-release-2.2/docs/concepts/time/) does not establish
+permanent finality or consumer availability. Missing minutes remain visible; their arrival can complete a pending
+window. Never fabricate bars to advance a watermark or clear warmup.
 
 Use checkpointed state with at-least-once feature publication initially. Semantic feature IDs absorb duplicates after
 recovery. This avoids making feature visibility wait for a Kafka transaction committed at the checkpoint interval.
@@ -186,7 +193,10 @@ projection contract into a shared market-data process rather than changing group
 
 The Effect resource owns the client, consumer stream, bounded queue, reducer, and cleanup. Use scoped acquisition,
 typed decode failures, bounded reconnect behavior, and cancellation that closes the client. A message becomes usable
-only after validation and incorporation into the reducer. Offset commits follow incorporation, never queue admission.
+only after validation and incorporation into the reducer. Offset commits follow a terminal message disposition,
+never queue admission. A rejected message updates the bounded rejection diagnostics and marks its affected symbol
+unavailable before advancing the offset. If the identity cannot be decoded, invalidate the affected partition's
+coverage. Do not retry malformed bytes indefinitely or count a rejection as usable data.
 Backpressure pauses consumption; it does not silently drop inputs. Freshness checks prevent a backlog from becoming
 a current trading snapshot.
 
@@ -201,11 +211,24 @@ At a controller observation time, Bayn takes one immutable cut of that reducer:
 2. Compute the same decision window as the current protocol, including its two-second delay.
 3. Select a feature for that exact window and identity whose inputs have also been observed and whose canonical bar
    revisions match the raw projection. A feature can arrive before its raw inputs; keep it pending until they match.
+   Select by matching input revision, not by greatest feature-topic offset: an old feature retried after recovery
+   must not replace a corrected feature.
 4. Require candidate and benchmark windows to align. Apply per-family completeness and freshness rules. If a raw bar
    correction arrives before its replacement feature, exclude the affected candidate until the values agree.
 5. Combine valid window features with fresh quotes and trades, then run the pure strategy and portfolio logic.
 6. Persist the snapshot evidence before releasing the observation to the trading path. Bind exact raw records, feature
    IDs and payloads, availability observations, definition hashes, and the projection cut to the decision.
+
+For example, assume the requested window ends at 14:30:00 UTC and all shared inputs are valid:
+
+| Local observation time | New input or controller tick                   | Result                                                        |
+| ---------------------- | ---------------------------------------------- | ------------------------------------------------------------- |
+| 14:30:01               | Raw bars complete the window                   | Raw state is ready; the matching feature is pending.          |
+| 14:30:02               | Controller observes                            | Exclude the candidate because its feature is unavailable.     |
+| 14:30:03               | Matching feature arrives and is validated      | It becomes eligible for a later snapshot.                     |
+| 14:30:04               | Controller observes with fresh prices          | Use the feature and persist this exact input cut.             |
+| 14:30:05               | A contributing raw bar is corrected            | Invalidate the old feature for future snapshots.              |
+| 14:30:06               | Controller observes before replacement feature | Exclude the candidate. The 14:30:04 decision stays unchanged. |
 
 An observed-but-old quote does not become fresh because a new feature arrived. The existing event-time quote deadline
 still expires the entry approval, and the final mutation transaction still enforces it.
@@ -225,11 +248,30 @@ An offset commit is not a durable checkpoint of an in-memory projection. Every r
 state before it can supply an entry snapshot. Do not resume at committed offsets with empty state or default to
 `latest` and call the worker ready.
 
-The initial implementation replays a bounded current-session range from Kafka. It resolves start offsets using a
-verified ingestion-time index, includes the declared lateness margin, and captures an end-offset barrier for every
-required partition. The timestamp-to-offset contract must be tested against the actual producers. If it cannot locate
-a sufficient range, startup remains unavailable with the missing range identified. ClickHouse bootstrap is a later
-optimization and must supply a verified per-partition coverage cut before Kafka continuation can be trusted.
+The initial implementation uses this bootstrap algorithm:
+
+1. Fix a bootstrap observation time and derive the protocol's completed window end `E` and required lookback `L`.
+   For the initial rolling feature, `L` is 30 minutes. An extension that needs session history must declare that longer
+   requirement rather than reusing the shorter bootstrap range.
+2. Calculate a common lower time bound `S = E - L - M`, where `M` is the versioned maximum clock-skew and timestamp
+   uncertainty allowance. Kafka record timestamps must represent producer ingestion or publication time within that
+   allowance. Verify the existing producer and topic timestamp policy before relying on timestamp lookup. A provider
+   bar event timestamp alone does not meet this contract.
+3. Record the topic partition set and capture each partition's log-start offset and readable end offset `H`, exclusive.
+   Resolve the first offset at or after `S` with Kafka timestamp lookup and seek there. Retain these exact bounds in
+   bootstrap evidence. If lookup finds no record, start at the captured end for that partition and let data coverage
+   checks determine availability. If retained data starts after required history, report the coverage gap.
+4. Consume in partition order through every captured `H`, using broker positions rather than assuming numeric offsets
+   are contiguous. Apply the same validation and reducer used after bootstrap. Deduplicate any delivery repeats.
+   Process features pending on raw inputs once those inputs have arrived.
+5. Once every partition crosses its barrier, choose a fresh observation time and construct a normal decision snapshot.
+   Require its exact rolling coverage and fresh prices. If catch-up has taken long enough that a newer window is
+   required, continue consumption until that window is available. Never serve the old bootstrap window as current.
+
+The timestamp contract is a prerequisite for using the bounded seek. If a topic cannot satisfy it, consume from its
+retained beginning under a bounded startup deadline and report unavailable if that cannot recover sufficient data.
+Do not guess a later offset. ClickHouse bootstrap is a later optimization and must supply a verified per-partition
+coverage cut before Kafka continuation can be trusted.
 
 After crossing the captured barriers, the worker still requires complete bars, compatible features, current quotes
 and trades, and successful durable evidence writes. End-offset progress alone is not readiness. Consumer group
@@ -286,7 +328,8 @@ Implement and validate these increments in order:
 
 1. **Contract and fixtures.** Specify canonical encoding, correction precedence, session calendar, warmup, and numeric
    rules. Kotlin and TypeScript must agree on decoded values and IDs for normal, duplicate, corrected, and invalid
-   records. The protocol states required feature families and the feature availability deadline explicitly.
+   records. The protocol states required feature families, clock allowance, bootstrap deadline, and feature freshness
+   rules explicitly.
 2. **Dorvud producer and archive.** Add the isolated feature branch, Kafka topic, and archive table. Verify session
    rollover, gaps, out-of-order bars, corrections, duplicate recovery, source isolation, and savepoint restoration.
    Add `:technical-analysis-flink:test` to Dorvud CI, which currently omits that module's tests.
@@ -310,8 +353,10 @@ secret path. Do not reuse an unrelated identity or switch to the unauthenticated
 
 Acceptance measurements include per-partition lag, last usable event age, feature delay after window end, archive lag,
 warmup by symbol, pending joins, rejected revisions, queue size, restart time, and eligible/excluded symbols. Capture
-p50, p95, and p99 feature availability across complete sessions. Compare those values with the current two-second
-decision delay and existing entry deadlines. Do not silently widen freshness limits if delivery is slower.
+p50, p95, and p99 feature availability across complete sessions. The two-second decision delay is the earliest
+observation time, not proof that Flink will deliver by then. A late feature may serve a later controller tick while
+its window is still the requested window and raw inputs remain valid. Measure missed opportunities and do not silently
+widen freshness limits or substitute an older window if delivery is slower.
 
 Rollback selects the previous reviewed source and data mode through the existing promotion and activation contracts.
 It must not erase feature history, reinterpret streaming decisions as archive decisions, or restore stale entry
