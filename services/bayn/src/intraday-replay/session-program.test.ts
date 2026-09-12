@@ -70,3 +70,12 @@ test('session preparation rejects changed strategy, partial hours, unknown calen
     ),
   ).toBe(true)
 })
+
+test('asset response ordering cannot change replay identity or broker configuration', () => {
+  const input = fixture()
+  const canonical = Result.getOrThrow(prepareReplaySession(input))
+  const reordered = Result.getOrThrow(prepareReplaySession({ ...input, assets: [...input.assets].reverse() }))
+  expect(reordered.runId).toBe(canonical.runId)
+  expect(reordered.input).toEqual(canonical.input)
+  expect(reordered.assets).toEqual(canonical.assets)
+})

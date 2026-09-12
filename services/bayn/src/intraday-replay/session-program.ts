@@ -65,7 +65,11 @@ export const ReplaySessionInputSchema = Schema.Struct({
 })
 export const prepareReplaySession = (input: unknown) =>
   Result.gen(function* () {
-    const decoded = yield* Schema.decodeUnknownResult(ReplaySessionInputSchema, strictParseOptions)(input)
+    const supplied = yield* Schema.decodeUnknownResult(ReplaySessionInputSchema, strictParseOptions)(input)
+    const decoded = {
+      ...supplied,
+      assets: [...supplied.assets].sort((a, b) => (a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0)),
+    }
     yield* validateRetainedReplaySourceManifest(decoded.source)
     const protocol = yield* loadActiveStrategyProtocol()
     const parameterHash = yield* canonicalHashV1Result(protocol)
