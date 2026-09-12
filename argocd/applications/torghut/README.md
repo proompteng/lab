@@ -23,6 +23,28 @@ rollout order, and recovery constraints. The post-deploy workflow verifies absen
 then verifies both retained Flink jobs, checkpoints, websocket/Kafka flow, and TA freshness. It observes the
 Kargo-owned rollout and does not contact the retired API endpoints.
 
+## Recovering a failed stateful TA upgrade
+
+When the Flink operator reports a missing JobManager and unavailable HA metadata, an ordinary image update cannot
+complete a stateful upgrade. Use the operator's explicit savepoint redeployment through reviewed GitOps:
+
+1. Read `status.jobStatus.upgradeSavepointPath` and verify the selected savepoint's `_metadata` is readable from the
+   existing checkpoint storage identity. Preserve the savepoint and its referenced state files.
+2. Verify that the replacement TA image preserves the saved operator IDs, including generated Kafka sink Writer
+   and Committer operators. Do not enable `allowNonRestoredState` to bypass incompatible state.
+3. Set `spec.job.initialSavepointPath` to that verified path and increment `spec.job.savepointRedeployNonce`. Leave
+   `upgradeMode: savepoint` in place. Publish the change through the normal matching-image Kargo promotion.
+4. Check the actual Flink job reaches `RUNNING`, restores the selected state, and completes a new checkpoint.
+   Confirm raw/feature output and archive progress independently of Kargo or Argo status.
+
+Nonce `1` selects the retained savepoint from the streaming-feature upgrade. Once restored, keep the nonce stable;
+ordinary subsequent upgrades resume using the operator's checkpoint/savepoint lifecycle. Increment it only for a
+new explicitly selected recovery. The operator does not support automatic rollback after this redeployment: if
+restoration fails, retain the saved data, repair the state compatibility, and deliver another reviewed recovery.
+
+The behavior is documented in the
+[deployed operator's recovery contract](https://github.com/apache/flink-kubernetes-operator/blob/79d730bab4d8403f3a447fb027f879f5cbdc59ad/docs/content/docs/custom-resource/job-management.md#redeploy-using-the-savepointredeploynonce).
+
 ## Historical procedures
 
 The procedures below predate runtime retirement. They assume services that are now absent and must not be
