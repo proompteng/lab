@@ -69,6 +69,7 @@ export const prepareReplaySession = (input: unknown) =>
     const decoded = {
       ...supplied,
       assets: [...supplied.assets].sort((a, b) => (a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0)),
+      calendar: [...supplied.calendar].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)),
     }
     yield* validateRetainedReplaySourceManifest(decoded.source)
     const protocol = yield* loadActiveStrategyProtocol()
@@ -106,8 +107,8 @@ export const prepareReplaySession = (input: unknown) =>
         new ReplayBrokerFailure({ message: 'Replay source universe differs from the strategy universe' }),
       )
     const calendar = yield* normalizeMarketCalendarResult(decoded.calendar, {
-      start: decoded.sessionDate,
-      end: decoded.sessionDate,
+      start: decoded.calendar[0]?.date ?? decoded.sessionDate,
+      end: decoded.calendar.at(-1)?.date ?? decoded.sessionDate,
     })
     const session = calendar.sessions.find((entry) => entry.date === decoded.sessionDate)
     if (session === undefined)

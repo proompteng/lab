@@ -79,3 +79,16 @@ test('asset response ordering cannot change replay identity or broker configurat
   expect(reordered.input).toEqual(canonical.input)
   expect(reordered.assets).toEqual(canonical.assets)
 })
+
+test('session preparation permits the broker calendar to include the next trading session', () => {
+  const input = fixture()
+  const prepared = Result.getOrThrow(
+    prepareReplaySession({
+      ...input,
+      calendar: [...input.calendar, { date: '2026-09-08', open: '09:30', close: '16:00' }],
+    }),
+  )
+  expect(prepared.openMs).toBe(Date.parse('2026-09-04T13:30:00Z'))
+  expect(prepared.closeMs).toBe(Date.parse('2026-09-04T20:00:00Z'))
+  expect(prepared.input.calendar).toHaveLength(2)
+})
