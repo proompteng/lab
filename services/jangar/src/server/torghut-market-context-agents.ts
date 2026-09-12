@@ -1545,7 +1545,8 @@ export const ingestMarketContextProviderResult = async (input: IngestPayload) =>
   if (batchItems) {
     if (settings.batchRequireOpenSession) {
       const marketOpen = await resolveTradingSessionOpen(settings)
-      if (marketOpen === false) {
+      if (marketOpen !== true) {
+        const skipped = marketOpen === false ? 'market_closed' : 'market_session_unavailable'
         await executeDbTransaction(db, async (trx) => {
           await upsertRunLifecycleFromIngest({
             trx,
@@ -1562,7 +1563,7 @@ export const ingestMarketContextProviderResult = async (input: IngestPayload) =>
                 updatedSymbols: 0,
                 failedSymbols: 0,
               },
-              skipped: 'market_closed',
+              skipped,
             },
             runError: null,
             now,
@@ -1579,13 +1580,13 @@ export const ingestMarketContextProviderResult = async (input: IngestPayload) =>
                 updatedSymbols: 0,
                 failedSymbols: 0,
               },
-              skipped: 'market_closed',
+              skipped,
               metadata,
             },
           })
         })
 
-        recordTorghutMarketContextBatchRun({ domain, outcome: 'skipped_market_closed' })
+        recordTorghutMarketContextBatchRun({ domain, outcome: `skipped_${skipped}` })
         recordTorghutMarketContextBatchRunDurationMs(Date.now() - batchStartMs, { domain })
         recordTorghutMarketContextBatchRunSymbols(0, { domain, category: 'processed' })
         recordTorghutMarketContextBatchRunSymbols(0, { domain, category: 'updated' })
@@ -1601,7 +1602,7 @@ export const ingestMarketContextProviderResult = async (input: IngestPayload) =>
             updatedSymbols: 0,
             failedSymbols: 0,
           },
-          skipped: 'market_closed',
+          skipped,
         }
       }
     }
