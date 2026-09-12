@@ -358,7 +358,6 @@ for (const [namespace, sources] of Object.entries(reviewedPolicySources)) {
 test('normalizes API-omitted empty policy rules and ignores other manifest kinds', async () => {
   const files = copy(await loadProductionFiles())
   files.grafanaRehearsalPolicies = files.grafanaRehearsalPolicies.replace(/^  (ingress|egress): \[\]\n/gm, '')
-  files.grafanaRehearsalPolicies +=
-    '\n---\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: unrelated\ndata: {}\n'
+  files.grafanaRehearsalPolicies += '\n---\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: unrelated\ndata: {}\n'
   expect(validateProductionContent(files)).toEqual([])
 })
