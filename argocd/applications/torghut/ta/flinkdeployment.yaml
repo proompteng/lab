@@ -112,6 +112,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: torghut-ta-config
+            - configMapRef:
+                name: market-data-archive-config
           env:
             - name: TA_KAFKA_DELIVERY_GUARANTEE
               value: AT_LEAST_ONCE

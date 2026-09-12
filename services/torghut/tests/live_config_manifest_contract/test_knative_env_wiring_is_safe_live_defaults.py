@@ -679,13 +679,13 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
         self.assertEqual(spec_mapping["pdb"], {"enabled": True, "minAvailable": 1})
         self.assertEqual(spec_mapping["health"], {"checkIntervalSeconds": 5})
 
-    def test_torghut_kustomization_includes_tigerbeetle_cluster(self) -> None:
+    def test_torghut_kustomization_excludes_retired_tigerbeetle_cluster(self) -> None:
         manifest = _load_yaml_mapping("argocd/applications/torghut/kustomization.yaml")
         resources = manifest.get("resources")
 
         self.assertIsInstance(resources, list)
-        self.assertIn("tigerbeetle-cluster.yaml", resources)
-        self.assertIn("tigerbeetle-smoke-job.yaml", resources)
+        self.assertNotIn("tigerbeetle-cluster.yaml", resources)
+        self.assertNotIn("tigerbeetle-smoke-job.yaml", resources)
         self.assertNotIn("tigerbeetle-journal-order-events-cronjob.yaml", resources)
         self.assertNotIn(
             "bounded-paper-route-target-materialization-cronjob.yaml", resources
