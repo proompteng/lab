@@ -12,6 +12,7 @@ import { guardRetiredTorghutRoute } from '~/server/torghut-retirement'
 import { resolveWhitepaperControlConfig } from '~/server/whitepaper-config'
 
 vi.mock('~/server/kysely-migrations', () => ({ ensureMigrations: vi.fn() }))
+vi.mock('crossws/adapters/bun', () => ({ default: () => ({ websocket: {}, handleUpgrade: vi.fn() }) }))
 
 const retired = { JANGAR_TORGHUT_LEGACY_RETIRED: 'true' }
 
