@@ -261,6 +261,10 @@ export const EntryQuoteFreshnessSchema = Schema.Struct({
 })
 export type EntryQuoteFreshness = typeof EntryQuoteFreshnessSchema.Type
 
+// Stored risk deadlines have millisecond precision; truncate toward an earlier deadline.
+export const entryQuoteExpiresAtMillis = (quote: EntryQuoteFreshness): number =>
+  Date.parse(quote.eventAt) + quote.maximumAgeMs
+
 const StateBase = Schema.Struct({
   schemaVersion: Schema.Literal(legacyRiskStateSchemaVersion),
   brokerMode: Schema.Literal(BrokerMode.Execution),
@@ -819,8 +823,7 @@ const deriveRiskMetrics = (facts: RiskFacts): Result.Result<DerivedRiskMetrics, 
     marketFreshUntil: Math.min(
       facts.marketDataObservedAt + facts.policy.maxMarketDataAgeMs,
       facts.state.closeOnly !== true && facts.state.entryQuote !== undefined
-        ? // The persisted deadline uses millisecond precision; truncate toward an earlier deadline.
-          Date.parse(facts.state.entryQuote.eventAt) + facts.state.entryQuote.maximumAgeMs
+        ? entryQuoteExpiresAtMillis(facts.state.entryQuote)
         : Number.POSITIVE_INFINITY,
     ),
   })

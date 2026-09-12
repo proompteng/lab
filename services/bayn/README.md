@@ -237,6 +237,9 @@ submission and venue arrival advance in order. `orderLatencyMs` covers submissio
 milliseconds. Stage durations admit 0–300,000 milliseconds. A late submission creates no order; a close arriving beyond
 the hard-flat deadline remains incomplete. The next attempt waits the declared poll interval after the modeled work completes, matching the controller's
 completion-based scheduling. Snapshot `availableBy` fields state consumption bounds, not invented reader receipts.
+Entry submission also respects the original planning quote's event-time expiry, using the same deadline arithmetic
+as persisted runtime risk approval. A fresh arrival quote cannot revive an expired entry; close-only timing retains
+its separate close deadline.
 
 The range is bounded to 31 calendar days. Preserve the complete calendar response; archive date presence cannot
 establish that a session was open or that its data is complete. Each scheduled observation reconstructs archive

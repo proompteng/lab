@@ -46,7 +46,7 @@ import {
 import type { IntradayMomentumQueryContext } from '../observe-composition/intraday-momentum-decision'
 import { strictParseOptions, UtcInstantSchema } from '../schemas'
 import type { MarketCalendarObservation } from '../broker/alpaca/model'
-import type { Policy } from '../risk'
+import { entryQuoteExpiresAtMillis, type Policy } from '../risk'
 import { loadQuoteBoundExecutionRiskPolicy } from '../observe-composition/decision-builder'
 import {
   activeStrategyBehaviorHash,
@@ -688,6 +688,25 @@ const replaySession = (
         observations,
         orders,
         'entry construction exceeded the submission cutoff; no order submitted',
+        equityDiagnostics(),
+      )
+    }
+    const planningQuote = planningSnapshot.latestQuotes[symbol]
+    if (planningQuote === undefined) return incompleteAfterBaseline('entry planning omitted the selected quote')
+    const pricingExpiresAt = Math.min(
+      Date.parse(planningSnapshot.manifest.observedAt) + policy.maxMarketDataAgeMs,
+      entryQuoteExpiresAtMillis({
+        eventAt: planningQuote.eventAt,
+        maximumAgeMs: planningSnapshot.manifest.maximumQuoteAgeMs,
+      }),
+    )
+    if (Date.parse(entryTimeline.submittedAt) >= pricingExpiresAt) {
+      return completeSession(
+        context,
+        ledger,
+        observations,
+        orders,
+        'entry pricing quote expired before submission; no order submitted',
         equityDiagnostics(),
       )
     }
