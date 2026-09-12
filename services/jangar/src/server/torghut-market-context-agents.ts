@@ -1490,13 +1490,12 @@ const resolveMarketSessionOpenFromPayload = (value: unknown): boolean | null => 
 }
 
 const resolveTradingSessionOpen = async (settings: ReturnType<typeof resolveSettings>): Promise<boolean | null> => {
-  const url = settings.batchTradingStatusUrl.trim()
-  if (!url) return null
+  if (!settings.batchTradingStatusUrl.trim()) return null
 
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), settings.batchTradingStatusTimeoutMs)
   try {
-    const response = await fetch(url, {
+    const response = await fetch(settings.batchTradingStatusUrl, {
       headers: { accept: 'application/json' },
       signal: controller.signal,
     })
