@@ -1,5 +1,10 @@
 # PostgreSQL 18 recovery acceptance
 
+Retired from the platform ApplicationSet after the September 2026 upgrades.
+These manifests remain as tested reference fixtures; no active Argo application
+should deploy them. See the [retirement procedure](../../../docs/runbooks/cluster-stable-upgrades-2026-09.md#retiring-upgrade-test-resources)
+for backup preservation and cleanup. Re-enabling them requires a new reviewed rollout.
+
 This application owns upgrade recovery artifacts, separately from the Kargo-owned
 serving applications. The preparation generation `18-6-v1` requests fresh cold
 primary snapshots for `app-db`, `bilig-db`, `coder-cluster`, and `forgejo-db`.
@@ -41,7 +46,6 @@ Namespace objects, serving Clusters or application credentials. Recovery Pods
 and their temporary volumes are removed only after their completed results are
 recorded; the original backups remain retained for recovery.
 
-
 The first recovery phase imports the exact four native CSI snapshot handles into
 this namespace and starts one PostgreSQL 17.11 source clone for each. The original
 snapshot contents become Retain; no source data claim, serving Cluster, image,
@@ -56,7 +60,6 @@ database/schema/table, role, sequence, logical slot and required extension, then
 apply the reviewed isolated 18.6 image change. Production major activation remains a
 separate step. Recovery from this preparation is to retire the isolated clones;
 their original backup handles remain retained.
-
 
 The four native 17.11 restores passed before the isolated 18.6 activation: all
 four original system identifiers, eight databases, 462 relations and 363,342
@@ -83,7 +86,6 @@ updates and refresh optimizer statistics. Keep the original snapshots Retain.
 If the isolated upgrade fails, revert the clone image to 17.11 and inspect the
 native failure; never advance a serving image on an unproven rehearsal.
 
-
 ## Recreating the rehearsal from retained snapshots
 
 Reconcile `argocd/applications/postgres-upgrade-acceptance/phases/recover-17`
@@ -104,7 +106,6 @@ Do not apply the 17 phase to an already-upgraded live clone as a downgrade. Use 
 only for fresh recovery or the documented native failed-upgrade rollback. Keep
 retained snapshots when retiring or rebuilding the isolated rehearsal.
 
-
 The second source-backup generation creates cold primary snapshots for Buzz,
 Jangar and Torghut as `*-db-pg18-20260910`, sequentially at waves -16 through
 -14. Their PostgreSQL 17.11 images and Barman archives remain unchanged. Before
@@ -113,7 +114,6 @@ merging this stage, require each live source Cluster to expose the reviewed
 Backup health blocks subsequent waves until snapshot completion. The next
 reviewed change imports the retained CSI snapshots and creates isolated 17.11
 clones; it must not downgrade the four already-qualified 18.6 clones.
-
 
 The `18-6-v2` restore stage imports the completed cold primary snapshots from
 Buzz, Jangar and Torghut into three separate PostgreSQL 17.11 clones. Original
@@ -129,7 +129,6 @@ operator ingress is restricted to port 8000. The existing four 18.6 clones are
 unchanged. Require native 17.11 recovery, positive isolation controls and full
 data/catalog inventories before the separate reviewed 18.6 rehearsal stage.
 
-
 The second major-version rehearsal advances only Buzz, Jangar and Torghut's
 isolated clones from their recovered 17.11 images to 18.6 on the same OS family.
 The separate PreSync guard requires the recorded Cluster UID, snapshot bootstrap
@@ -144,7 +143,6 @@ catalogs and logical slots before updating extensions in the clones. Verify
 native extension operations and analyze the migrated databases before preparing
 production activation with fresh cold backups and separate PostgreSQL 18 archive
 prefixes. Never run a 17 image over a converted clone volume.
-
 
 Three additional `*-pg17-compare` clones recover the same retained cold snapshots
 for a repeatable source/target comparison after workstation evidence was lost.
