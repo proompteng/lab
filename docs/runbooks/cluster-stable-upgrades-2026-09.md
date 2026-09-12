@@ -222,6 +222,19 @@ that those snapshots are ready. Preserve the source claims and backup resources
 through every rollout. Recovery of a database major uses the matching snapshot
 or backup and old image; do not downgrade binaries over an upgraded data directory.
 
+## Upgrade test retirement preparation
+
+Retirement is in progress. The PostgreSQL, ClickHouse and storage acceptance
+Applications remain registered, with automatic reconciliation disabled. The
+ApplicationSet records `Prune=false,Delete=false` for the two dedicated test
+namespaces. No test database, claim or snapshot is removed by this preparation.
+
+Before the separate removal change, verify the generated Applications are manual
+and idle, then preserve the two namespace identities and four isolation policies
+with UID-guarded deletion-protection annotations. Archive test results and verify
+original recovery snapshots outside the test namespaces. Keep the current
+kube-router namespace coverage until the retirement change handles their removal.
+
 ## Storage and controllers
 
 Rook/Ceph daemon upgrades precede CSI key rotation and its one-node-at-a-time
