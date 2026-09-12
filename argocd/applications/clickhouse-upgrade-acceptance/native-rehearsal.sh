@@ -8,10 +8,12 @@ export LC_ALL=C
 [[ "$REHEARSAL_VERSION" =~ ^v[0-9]+_[0-9]+$ ]]
 [[ "$REPLICA" =~ ^[01]$ ]]
 [[ "$BACKUP_DIRECTORY" =~ ^upgrade-20260910-v1-replica-[01]$ ]]
-fixture="/fixture/v2/$REHEARSAL_VERSION"
-proof="/proof/v2/$REHEARSAL_VERSION"
+generation=${REHEARSAL_GENERATION:-v3}
+[[ "$generation" =~ ^v[0-9]+$ ]]
+fixture="/fixture/$generation/$REHEARSAL_VERSION"
+proof="/proof/$generation/$REHEARSAL_VERSION"
 backup="/source/backups/$BACKUP_DIRECTORY"
-mkdir -p /fixture/v2 /proof/v2
+mkdir -p "/fixture/$generation" "/proof/$generation"
 mkdir "$proof"
 mkdir "$fixture"
 mkdir -p "$fixture"/{data,tmp,user_files,access,keeper/log,keeper/snapshots}
@@ -63,6 +65,9 @@ keeper_pid=''
 cleanup() {
   result=$?
   trap - EXIT
+  if [[ "$result" != 0 ]]; then
+    tail -c 12000 "$proof/server.log" "$proof/keeper.log" >&2 || true
+  fi
   for child in "$server_pid" "$keeper_pid"; do
     if [[ -n "$child" ]] && kill -0 "$child" 2>/dev/null; then
       kill -TERM "$child"
@@ -81,6 +86,8 @@ cat > "$fixture/config.xml" <<EOF
   <path>$fixture/data/</path><tmp_path>$fixture/tmp/</tmp_path>
   <user_files_path>$fixture/user_files/</user_files_path><access_control_path>$fixture/access/</access_control_path>
   <listen_host>127.0.0.1</listen_host><tcp_port>9000</tcp_port><http_port>8123</http_port>
+  <interserver_http_host>127.0.0.1</interserver_http_host><interserver_http_port>9009</interserver_http_port>
+  <interserver_listen_host>127.0.0.1</interserver_listen_host>
   <max_server_memory_usage>4294967296</max_server_memory_usage>
   <background_pool_size>4</background_pool_size><background_schedule_pool_size>16</background_schedule_pool_size>
   <merge_tree><number_of_free_entries_in_pool_to_execute_mutation>2</number_of_free_entries_in_pool_to_execute_mutation>
@@ -89,12 +96,14 @@ cat > "$fixture/config.xml" <<EOF
   </merge_tree>
   <profiles><default><max_threads>2</max_threads><max_memory_usage>3221225472</max_memory_usage>
     <compatibility>$COMPATIBILITY</compatibility><output_format_json_quote_64bit_integers>1</output_format_json_quote_64bit_integers>
-    <async_insert>0</async_insert></default></profiles>
+    <async_insert>0</async_insert><restore_threads>1</restore_threads></default></profiles>
   <users><default><password></password><networks><ip>127.0.0.1</ip><ip>::1</ip></networks>
     <profile>default</profile><quota>default</quota></default></users><quotas><default/></quotas>
   <backups><allowed_path>/source/backups</allowed_path></backups>
   <macros><cluster>torghut-clickhouse</cluster><shard>0</shard><replica>restore-$REPLICA</replica></macros>
-  <zookeeper><node><host>127.0.0.1</host><port>2181</port></node></zookeeper>
+  <zookeeper><node><host>127.0.0.1</host><port>2181</port></node>
+    <operation_timeout_ms>60000</operation_timeout_ms><session_timeout_ms>300000</session_timeout_ms>
+  </zookeeper>
 </clickhouse>
 EOF
 cat > "$fixture/keeper.xml" <<EOF
@@ -102,7 +111,7 @@ cat > "$fixture/keeper.xml" <<EOF
   <logger><level>warning</level><console>1</console></logger><listen_host>127.0.0.1</listen_host>
   <keeper_server><tcp_port>2181</tcp_port><server_id>1</server_id>
     <log_storage_path>$fixture/keeper/log</log_storage_path><snapshot_storage_path>$fixture/keeper/snapshots</snapshot_storage_path>
-    <coordination_settings><operation_timeout_ms>10000</operation_timeout_ms><session_timeout_ms>30000</session_timeout_ms></coordination_settings>
+    <coordination_settings><operation_timeout_ms>60000</operation_timeout_ms><session_timeout_ms>300000</session_timeout_ms></coordination_settings>
     <raft_configuration><server><id>1</id><hostname>127.0.0.1</hostname><port>9234</port></server></raft_configuration>
   </keeper_server>
 </clickhouse>
@@ -116,7 +125,11 @@ ready=false
 for ((attempt=0; attempt<90; attempt++)); do
   kill -0 "$server_pid"
   kill -0 "$keeper_pid"
-  if sql 'SELECT version()' TSVRaw > "$proof/version" 2>/dev/null; then ready=true; break; fi
+  if sql 'SELECT version()' TSVRaw > "$proof/version" 2>/dev/null &&
+    sql "SELECT count() FROM system.zookeeper WHERE path='/'" TSVRaw > "$proof/keeper-ready.tsv" 2>"$proof/keeper-ready.stderr"; then
+    ready=true
+    break
+  fi
   sleep 2
 done
 reported_version=$(cat "$proof/version")
@@ -132,6 +145,17 @@ while IFS=$'\t' read -r database table engine; do
     sql "SYSTEM STOP TTL MERGES \`$database\`.\`$table\`"
   fi
 done < "$proof/tables.tsv"
+replicas_ready=false
+for ((attempt=0; attempt<90; attempt++)); do
+  kill -0 "$server_pid"
+  kill -0 "$keeper_pid"
+  if [[ "$(sql "SELECT count()=11 AND countIf(is_readonly OR is_session_expired)=0 FROM system.replicas" TSVRaw)" == 1 ]]; then
+    replicas_ready=true
+    break
+  fi
+  sleep 2
+done
+[[ "$replicas_ready" == true ]]
 sql "$restore" > "$proof/data-restore.jsonl"
 sql "SELECT database,name,engine,engine_full,uuid FROM system.tables WHERE database IN ('default','signal','torghut') ORDER BY database,name" > "$proof/tables.jsonl"
 sql "SELECT database,table,name,type,default_kind,default_expression,compression_codec FROM system.columns WHERE database IN ('default','signal','torghut') ORDER BY database,table,position" > "$proof/columns.jsonl"
@@ -150,6 +174,29 @@ while IFS=$'\t' read -r database table engine; do
     sql "SELECT count() AS rows FROM $relation" > "$proof/view-$database-$table.jsonl"
   fi
 done < "$proof/tables.tsv"
+# Resume ordinary merges after the immutable backup fingerprint is captured.
+# TTL merges remain stopped so historical rows survive the recovery comparison.
+while IFS=$'\t' read -r database table engine; do
+  if [[ "$engine" == *MergeTree ]]; then
+    sql "SYSTEM START MERGES \`$database\`.\`$table\`"
+    sql "SYSTEM STOP TTL MERGES \`$database\`.\`$table\`"
+  fi
+done < "$proof/tables.tsv"
+replicas_drained=false
+for ((attempt=0; attempt<300; attempt++)); do
+  kill -0 "$server_pid"
+  kill -0 "$keeper_pid"
+  if [[ "$(sql "SELECT count()=11 AND countIf(is_readonly OR is_session_expired OR queue_size OR lost_part_count)=0 FROM system.replicas" TSVRaw)" == 1 ]]; then
+    replicas_drained=true
+    break
+  fi
+  sleep 2
+done
+if [[ "$replicas_drained" != true ]]; then
+  sql "SELECT database,table,type,last_exception,postpone_reason FROM system.replication_queue ORDER BY database,table" > "$proof/undrained-replication-queue.jsonl"
+  cat "$proof/undrained-replication-queue.jsonl" >&2
+  exit 1
+fi
 sql "SELECT database,table,is_readonly,is_session_expired,queue_size,lost_part_count FROM system.replicas ORDER BY database,table" > "$proof/replicas.jsonl"
 kill -TERM "$server_pid"
 wait "$server_pid"

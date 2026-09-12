@@ -146,6 +146,7 @@ export const AuthorityGenerationRow = Schema.Struct({
       'bayn.opening-drive.protocol.v2',
       'bayn.intraday-momentum.protocol.v1',
       'bayn.intraday-momentum.protocol.v2',
+      'bayn.intraday-momentum.protocol.v3',
     ]),
   ),
   account_id: Schema.NullOr(NonEmptyString),

@@ -1,12 +1,12 @@
 {
   "jobs": [
-    "keeper-native-20260910-v1"
+    "keeper-native-20260910-v2"
   ],
   "phases": {
     "v25-12": "v25_12",
     "v26-8": "v26_8"
   },
-  "proofPrefix": "/proof/keeper-v1/",
+  "proofPrefix": "/proof/keeper-v2/",
   "sources": {
     "chi-torghut-clickhouse-default-0-0-0": [
       9000,

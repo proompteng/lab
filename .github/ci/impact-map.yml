@@ -69,6 +69,22 @@ targets:
       - argocd/applications/forgejo/upstream-image.json
       - argocd/applications/hermes/**
       - argocd/applications/kube-router/**
+      - argocd/applications/buzz/networkpolicy.yaml
+      - argocd/applications/clickhouse-upgrade-acceptance/preparation.yaml
+      - argocd/applications/observability/grafana-upgrade-backup.yaml
+      - argocd/applications/observability/mimir-kafka-upgrade-backup.yaml
+      - argocd/applications/postgres-upgrade-acceptance/base/preparation.yaml
+      - argocd/applications/postgres-upgrade-acceptance/base/recovery.yaml
+      - argocd/applications/postgres-upgrade-acceptance/base/three-source-recovery.yaml
+      - argocd/applications/proompteng/network-policy.yaml
+      - argocd/applications/restate/networkpolicy.yaml
+      - argocd/applications/restate-example/networkpolicy.yaml
+      - argocd/applications/temporal/upgrade/cassandra-31119-backup.yaml
+      - argocd/applications/temporal/upgrade/cassandra-4112-backup.yaml
+      - argocd/applications/temporal/upgrade/cassandra-4112-v2-backup.yaml
+      - argocd/applications/temporal/upgrade/cassandra-4112-v3-backup.yaml
+      - argocd/applications/temporal/upgrade/cassandra-509-backup.yaml
+      - argocd/applications/temporal/upgrade/elasticsearch-preparation.yaml
       - argocd/applications/temporal/upgrade/**
       - argocd/applications/tengri/network-policies.yaml
       - argocd/applications/observability/cluster-metrics-alloy-config.river
@@ -361,6 +377,7 @@ targets:
     workflow: dorvud-ci
     paths:
       - services/dorvud/**
+      - services/bayn/src/market-data/features/fixtures/**
 
   otel:
     kind: delegated

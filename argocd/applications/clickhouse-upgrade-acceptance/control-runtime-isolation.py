@@ -9,7 +9,7 @@ import time
 
 
 NAMESPACE = "clickhouse-upgrade-acceptance"
-JOBS = ["clickhouse-native-20260910-v2-0", "clickhouse-native-20260910-v2-1"]
+JOBS = ["clickhouse-native-20260910-v4-0", "clickhouse-native-20260910-v4-1"]
 SOURCES = {
     "chi-torghut-clickhouse-default-0-0-0": [9000, 8123],
     "chi-torghut-clickhouse-default-0-1-0": [9000, 8123],
@@ -132,7 +132,7 @@ def write_control(pod, container, directory, side, receipt):
 def main():
     global JOBS, SOURCES
     phases = {name: name.replace("-", "_") for name in ["v25-3", "v25-8", "v26-3"]}
-    proof_prefix = "/proof/v2/"
+    proof_prefix = "/proof/v4/"
     if len(sys.argv) == 3:
         profile = json.loads(Path(sys.argv[2]).read_text())
         JOBS, SOURCES = profile["jobs"], profile["sources"]
@@ -253,39 +253,67 @@ def main():
             )
             if ready.returncode:
                 continue
-            before_raw = read_file(
-                pod_name, container, directory + "/runtime-before.json"
-            )
-            if before_raw is None:
-                before = positive_controls()
-                write_control(pod_name, container, directory, "before", before)
+            try:
+                before_raw = read_file(
+                    pod_name, container, directory + "/runtime-before.json"
+                )
+                if before_raw is None:
+                    before = positive_controls()
+                    write_control(pod_name, container, directory, "before", before)
+                    print(
+                        json.dumps({"job": name, "phase": container, "before": "PASS"}),
+                        flush=True,
+                    )
+                    continue
+                before = json.loads(before_raw)
+                if (
+                    read_file(pod_name, container, directory + "/runtime-after.epoch")
+                    is not None
+                ):
+                    continue
+                denied = read_file(pod_name, container, directory + "/isolation.tsv")
+                expected = "".join(
+                    t["endpoint"] + "\tDENIED\n" for t in before["targets"]
+                ).encode()
+                if denied != expected:
+                    continue
+                after = positive_controls(before["targets"])
+                if after["epoch"] - before["epoch"] > 90:
+                    raise RuntimeError(
+                        "Runtime controls are stale; refuse to accept isolation"
+                    )
+                write_control(pod_name, container, directory, "after", after)
                 print(
-                    json.dumps({"job": name, "phase": container, "before": "PASS"}),
+                    json.dumps({"job": name, "phase": container, "isolation": "PASS"}),
                     flush=True,
                 )
-                continue
-            before = json.loads(before_raw)
-            if (
-                read_file(pod_name, container, directory + "/runtime-after.epoch")
-                is not None
-            ):
-                continue
-            denied = read_file(pod_name, container, directory + "/isolation.tsv")
-            expected = "".join(
-                t["endpoint"] + "\tDENIED\n" for t in before["targets"]
-            ).encode()
-            if denied != expected:
-                continue
-            after = positive_controls(before["targets"])
-            if after["epoch"] - before["epoch"] > 90:
-                raise RuntimeError(
-                    "Runtime controls are stale; refuse to accept isolation"
+            except RuntimeError:
+                current = get(NAMESPACE, "pod", pod_name)
+                state = next(
+                    (
+                        item.get("state", {})
+                        for item in current.get("status", {}).get(
+                            "initContainerStatuses", []
+                        )
+                        if item["name"] == container
+                    ),
+                    {},
                 )
-            write_control(pod_name, container, directory, "after", after)
-            print(
-                json.dumps({"job": name, "phase": container, "isolation": "PASS"}),
-                flush=True,
-            )
+                if (
+                    current["metadata"]["uid"] != pod["metadata"]["uid"]
+                    or state.get("terminated", {}).get("exitCode") != 0
+                ):
+                    raise
+                print(
+                    json.dumps(
+                        {
+                            "job": name,
+                            "phase": container,
+                            "transition": "completed during control read",
+                        }
+                    ),
+                    flush=True,
+                )
         time.sleep(3)
 
 

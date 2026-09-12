@@ -1,5 +1,10 @@
 # PostgreSQL 18 recovery acceptance
 
+Retired from the platform ApplicationSet after the September 2026 upgrades.
+These manifests remain as tested reference fixtures; no active Argo application
+should deploy them. See the [retirement procedure](../../../docs/runbooks/cluster-stable-upgrades-2026-09.md#retiring-upgrade-test-resources)
+for backup preservation and cleanup. Re-enabling them requires a new reviewed rollout.
+
 This application owns upgrade recovery artifacts, separately from the Kargo-owned
 serving applications. The preparation generation `18-6-v1` requests fresh cold
 primary snapshots for `app-db`, `bilig-db`, `coder-cluster`, and `forgejo-db`.
@@ -144,3 +149,12 @@ catalogs and logical slots before updating extensions in the clones. Verify
 native extension operations and analyze the migrated databases before preparing
 production activation with fresh cold backups and separate PostgreSQL 18 archive
 prefixes. Never run a 17 image over a converted clone volume.
+
+
+Three additional `*-pg17-compare` clones recover the same retained cold snapshots
+for a repeatable source/target comparison after workstation evidence was lost.
+They preserve the source 17.11 image, restricted namespace policy and original
+snapshot references. The existing seven upgraded clones remain on 18.6. These
+new clones use separate retained PVCs and fresh controller-owned credentials;
+production Clusters, snapshots and credentials are unchanged. Capture both sides
+with the same native inventory and persist the results before activation.

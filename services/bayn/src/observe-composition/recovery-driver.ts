@@ -60,6 +60,45 @@ const verifyDecisionBindingEvidence = (
   document: CycleDecisionDocument,
 ): Effect.Effect<CycleDecisionBindingEvidence, CycleDecisionBuildError> => {
   const binding = document.bindings.decisionMarketData ?? document.bindings.executionMarketData
+  if (binding?.schemaVersion === 'bayn.execution-market-data-binding.v3') {
+    const streaming = marketData?.streaming
+    if (streaming === undefined || !('decisionMarketDataRows' in document))
+      return Effect.fail(
+        new CycleDecisionBuildError({ failure: 'contract', message: 'Streaming source verification is unavailable' }),
+      )
+    const inputs = [{ binding, rows: document.decisionMarketDataRows }]
+    const pricing = document.bindings.executionMarketData
+    if (
+      pricing?.schemaVersion === 'bayn.execution-market-data-binding.v3' &&
+      pricing.snapshotId !== binding.snapshotId
+    ) {
+      if (document.executionMarketDataRows === undefined)
+        return Effect.fail(
+          new CycleDecisionBuildError({ failure: 'contract', message: 'Streaming pricing rows are missing' }),
+        )
+      inputs.push({ binding: pricing, rows: document.executionMarketDataRows })
+    }
+    return Effect.forEach(inputs, ({ binding: source, rows }) => {
+      const snapshot = rows === undefined ? undefined : reconstructBoundIntradaySnapshot(source, rows)
+      if (snapshot === undefined)
+        return Effect.fail(
+          new CycleDecisionBuildError({
+            failure: 'contract',
+            message: 'Streaming decision or pricing input cut does not reproduce',
+          }),
+        )
+      return streaming.verifyReference(snapshot).pipe(
+        Effect.mapError(
+          (cause) =>
+            new CycleDecisionBuildError({
+              failure: 'market-data',
+              message: 'Streaming decision source evidence is unavailable',
+              cause,
+            }),
+        ),
+      )
+    }).pipe(Effect.map((references) => ({ streamingSnapshotReferences: references })))
+  }
   if (binding?.schemaVersion !== 'bayn.execution-market-data-binding.v2') return Effect.succeed({})
   if (
     marketData === undefined ||
@@ -195,7 +234,7 @@ const makeRecoveryFirstCycleDriverEffect = (
       Effect.tap(() => markMutationReconciliationCompleted(cadence)),
     )
     const observeCycleFailure = (error: CycleRunnerError) =>
-      (capability._tag === 'Mutation' && shouldRestrictMutationLoopFailure(error)
+      (capability._tag !== 'RecoveryOnly' && shouldRestrictMutationLoopFailure(error)
         ? restrictMutationLoopFailure(error)
         : Effect.void
       ).pipe(

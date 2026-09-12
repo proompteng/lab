@@ -57,7 +57,6 @@ test('Mimir records the storage baseline and alerts on actionable pressure', () 
     'ceph_storage:scrubbing_pgs:sum',
     'ceph_storage:rbd_pod_write_bytes_per_second:rate5m',
     'ceph_storage:rbd_pod_write_iops:rate5m',
-    'alert: TorghutPostgresMetricsMissing',
     'alert: CloudNativePgWalArchiveBacklog',
     'alert: CloudNativePgReplicationSlotWalRetentionHigh',
     'alert: PersistentVolumeFreeLowWarning',
@@ -74,6 +73,10 @@ test('Mimir records the storage baseline and alerts on actionable pressure', () 
     'alert: TorghutPostgresWalBuffersFull',
   ]) {
     expect(rules).toContain(contract)
+  }
+
+  for (const retired of ['TorghutPostgresMetricsMissing', 'TorghutApiServiceMissing', 'TorghutLLMTelemetryMissing']) {
+    expect(rules).not.toContain(`alert: ${retired}`)
   }
 
   expect(rules).toContain('max(ceph_osd_flag_noscrub{job="ceph-storage"}) > 0 or')

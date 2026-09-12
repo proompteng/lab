@@ -7,10 +7,20 @@ metadata:
     app.kubernetes.io/name: torghut-clickhouse
     app.kubernetes.io/part-of: torghut
   annotations:
-    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/sync-wave: '1'
 spec:
   configuration:
     files:
+      config.d/99-upgrade-compatibility.xml: |-
+        <yandex>
+          <merge_tree>
+            <serialization_info_version>basic</serialization_info_version>
+            <string_serialization_version>single_stream</string_serialization_version>
+            <propagate_types_serialization_versions_to_nested_types>false</propagate_types_serialization_versions_to_nested_types>
+            <object_serialization_version>v2</object_serialization_version>
+            <dynamic_serialization_version>v2</dynamic_serialization_version>
+          </merge_tree>
+        </yandex>
       config.d/99-prometheus.xml: |-
         <yandex>
           <prometheus>
@@ -75,6 +85,9 @@ spec:
         <yandex>
           <profiles>
             <default>
+              <compatibility>25.8</compatibility>
+              <async_insert>0</async_insert>
+              <output_format_json_quote_64bit_integers>1</output_format_json_quote_64bit_integers>
               <!-- Disable sampling profiler logs to keep system tables small. -->
               <query_profiler_real_time_period_ns>0</query_profiler_real_time_period_ns>
               <query_profiler_cpu_time_period_ns>0</query_profiler_cpu_time_period_ns>
@@ -83,6 +96,9 @@ spec:
           </profiles>
         </yandex>
     profiles:
+      bayn/compatibility: '25.8'
+      bayn/async_insert: 0
+      bayn/output_format_json_quote_64bit_integers: 1
       bayn/readonly: 1
       bayn/max_execution_time: 60
       bayn/max_result_rows: 1000000
@@ -92,6 +108,9 @@ spec:
       # Watermark capture and paged snapshot reads may hit different replicas.
       # Refuse a stale replica instead of returning a partial quorum-confirmed prefix.
       bayn/select_sequential_consistency: 1
+      signal_publisher/compatibility: '25.8'
+      signal_publisher/async_insert: 0
+      signal_publisher/output_format_json_quote_64bit_integers: 1
       signal_publisher/max_execution_time: 120
       signal_publisher/max_result_rows: 1000000
       signal_publisher/result_overflow_mode: throw
@@ -102,6 +121,9 @@ spec:
       signal_publisher/insert_quorum_timeout: 60000
       signal_publisher/select_sequential_consistency: 1
       notebook/readonly: 1
+      notebook/compatibility: '25.8'
+      notebook/async_insert: 0
+      notebook/output_format_json_quote_64bit_integers: 1
       notebook/max_execution_time: 30
       notebook/max_result_rows: 100000
       notebook/result_overflow_mode: throw
@@ -131,6 +153,7 @@ spec:
         - GRANT SELECT ON signal.intraday_bars_1m_v2
         - GRANT SELECT ON signal.intraday_quotes_v1
         - GRANT SELECT ON signal.intraday_trades_v1
+        - GRANT SELECT ON signal.intraday_features_v1
         - GRANT SELECT ON signal.snapshot_manifests_v1
         - GRANT SELECT ON signal.snapshot_manifests_v2
       signal_publisher/password_sha256_hex:
@@ -151,6 +174,7 @@ spec:
         - GRANT INSERT ON signal.intraday_bars_1m_v2
         - GRANT INSERT ON signal.intraday_quotes_v1
         - GRANT INSERT ON signal.intraday_trades_v1
+        - GRANT INSERT ON signal.intraday_features_v1
         - GRANT SELECT, INSERT ON signal.snapshot_manifests_v1
         - GRANT SELECT, INSERT ON signal.snapshot_manifests_v2
       default/password_sha256_hex:
@@ -208,7 +232,7 @@ spec:
                   topologyKey: kubernetes.io/hostname
           containers:
             - name: clickhouse
-              image: altinity/clickhouse-server:25.3.6.10034.altinitystable
+              image: altinity/clickhouse-server:26.3.16.10001.altinitystable@sha256:8526a7742e6ef707dee68107876b18d45570b0448f284d3c785eb2d2e4417a5e
               resources:
                 requests:
                   cpu: 1

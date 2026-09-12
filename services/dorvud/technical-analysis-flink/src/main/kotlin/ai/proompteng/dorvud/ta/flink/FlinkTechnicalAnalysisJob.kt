@@ -225,6 +225,8 @@ fun main() {
   signals.sinkTo(signalSink(config, serde)).name("sink-signals")
   applyClickhouseSinks(config, microBars, signals)
 
+  RollingMarketFeatureConfig.fromEnv()?.let { configureRollingMarketFeatures(env, config, it) }
+
   env.execute("torghut-technical-analysis-flink")
 }
 
@@ -537,8 +539,8 @@ private fun kafkaSource(
   return builder.build()
 }
 
-private fun applyKafkaSecurity(
-  builder: KafkaSourceBuilder<String>,
+internal fun <T> applyKafkaSecurity(
+  builder: KafkaSourceBuilder<T>,
   config: FlinkTaConfig,
 ) {
   builder.setProperty("security.protocol", config.securityProtocol)
@@ -1000,7 +1002,7 @@ internal class ParseMicroBarCompatFlatMap :
   }
 }
 
-private fun <T> KafkaSinkBuilder<T>.setKafkaSecurity(config: FlinkTaConfig): KafkaSinkBuilder<T> {
+internal fun <T> KafkaSinkBuilder<T>.setKafkaSecurity(config: FlinkTaConfig): KafkaSinkBuilder<T> {
   setProperty("security.protocol", config.securityProtocol)
   config.saslMechanism?.let { setProperty("sasl.mechanism", it) }
   if (!config.saslUsername.isNullOrBlank() && !config.saslPassword.isNullOrBlank()) {
