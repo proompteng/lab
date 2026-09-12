@@ -1,3 +1,4 @@
+import { summarizeStreamingSymbol } from '../../streaming-diagnostics-command'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 import technicalFixture from '../features/fixtures/technical-indicators-v1.json'
@@ -202,6 +203,11 @@ test('exact technical suffix joins as-of and immutable conflicts remove optional
   const ready = incorporateMarketRecord(base, record(), universe, end + 2200)
   expect(select(ready).technical?.features[0]?.value).toEqual(feature)
   expect(select(ready).technical?.unavailableSymbols).toEqual([])
+  expect(summarizeStreamingSymbol(ready, 'AAPL').technical?.matchedFeatures[0]).toMatchObject({
+    featureId: feature.featureId,
+    matchedRawBars: 30,
+    values: feature.material.values,
+  })
   const duplicate = incorporateMarketRecord(ready, record('1'), universe, end + 2300)
   expect(duplicate.technicalFeatures.get('AAPL')).toHaveLength(1)
   expect(select(duplicate).technical?.features[0]?.availableAtMs).toBe(end + 2200)

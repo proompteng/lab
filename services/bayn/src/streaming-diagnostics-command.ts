@@ -5,6 +5,7 @@ import { Data, Effect, Layer, Logger, Result, Schedule, Stdio, Stream } from 'ef
 import { kafkaMarketConfig } from './config/source'
 import { canonicalJsonV1Result } from './hash'
 import { featureMatchesBars } from './market-data/features/contract'
+import { technicalFeatureMatchesBars } from './market-data/features/technical-contract'
 import { makeKafkaMarketProjection } from './market-data/streaming/kafka'
 import { kafkaBootstrapDeadlineMs } from './market-data/streaming/bootstrap'
 import {
@@ -31,8 +32,39 @@ export const summarizeStreamingSymbol = (projection: StreamingProjection, symbol
     const match = featureMatchesBars(value, bars)
     return Result.isSuccess(match) && match.success
   })
+  const technicalMatches = (projection.technicalFeatures.get(symbol) ?? []).filter(({ value }) => {
+    const bars = observedBarsAt(
+      projection,
+      symbol,
+      BigInt(value.material.windowEndMs - 30 * 60_000) * 1_000_000n,
+      BigInt(value.material.windowEndMs) * 1_000_000n,
+      Number.MAX_SAFE_INTEGER,
+    ).map((entry) => entry.value)
+    if (bars.length !== 30) return false
+    const match = technicalFeatureMatchesBars(value, bars)
+    return Result.isSuccess(match) && match.success
+  })
   return {
     symbol,
+    ...(projection.technicalTopic === undefined
+      ? {}
+      : {
+          technical: {
+            topic: projection.technicalTopic,
+            retainedFeatures: projection.technicalFeatures.get(symbol)?.length ?? 0,
+            matchedFeatures: technicalMatches.map(({ value, availableAtMs, topic, partition, offset }) => ({
+              featureId: value.featureId,
+              windowEndMs: value.material.windowEndMs,
+              computedAtMs: value.computedAtMs,
+              availableAtMs,
+              topic,
+              partition,
+              offset,
+              matchedRawBars: 30,
+              values: value.material.values,
+            })),
+          },
+        }),
     retainedBars: allBars.length,
     retainedFeatures: features.length,
     latestQuoteAt: projection.quotes.get(symbol)?.value.eventAt ?? null,
@@ -125,6 +157,9 @@ const main = Effect.scoped(
           positions: cut.positions,
           sequence: cut.projection.sequence,
           rejections: Object.fromEntries(cut.projection.rejections),
+          ...(cut.projection.technicalTopic === undefined
+            ? {}
+            : { technicalRejections: cut.projection.technicalRejections }),
           symbols,
         }),
       ),
