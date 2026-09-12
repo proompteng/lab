@@ -141,3 +141,21 @@ simulated manifests. The service factory does not connect to a broker or provide
 
 This input integration is a component of the execution replay. It does not itself run a full session, submit orders,
 restart the execution process, or produce an economic result.
+
+## Production execution replay runtime
+
+`makeReplayExecutionRuntime` assembles the production research-authority activation, cycle store, decision builder,
+intent/risk persistence, execution coordinator, final-submit checks, and broker reconciliation around the simulated
+market-data and broker ports. It acquires no Alpaca HTTP client or credentials. The caller supplies isolated PostgreSQL
+and TigerBeetle services plus the build and strategy provenance being evaluated.
+
+Migration 0069 adds an account-specific simulation clock. Only `replay-<sha256>` accounts can register it; the source
+manifest identity is immutable and time cannot move backwards. A missing clock blocks a simulated account. Intent
+transition and mutation-start risk-expiry checks use this clock for simulated accounts and PostgreSQL wall time for
+all other accounts. Authority, reconciliation, and cycle-completion queries receive the same clock explicitly.
+
+The required database acceptance test now drives a production cycle through a risk-approved intent, simulated fill,
+and exact accounting in real PostgreSQL and TigerBeetle. Recreating the runtime preserves its activated generation.
+The separate accounting test still checks reconnecting database clients. These fixtures do not establish full-session
+replay, process-crash recovery, or profitability; those require the session runner, retained source manifests, and
+closed-window economic reports.
