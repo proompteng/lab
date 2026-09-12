@@ -371,6 +371,37 @@ describe('execution reconciliation', () => {
     expect(first.discrepancies[0].evidenceHash).not.toBe(second.discrepancies[0].evidenceHash)
   })
 
+  test('accepts an accounted broker fill before the acknowledged intent is terminalized', () => {
+    const current = snapshot()
+    const intents = current.intents.map(({ terminalOutcome: _terminalOutcome, ...intent }) => ({
+      ...intent,
+      state: IntentState.Acknowledged,
+    }))
+
+    expect(successOf(compareReconciliation({ ...current, intents })).discrepancies).toEqual([])
+    expect(
+      successOf(compareReconciliation({ ...current, intents, durableFills: [] })).discrepancies.length,
+    ).toBeGreaterThan(0)
+  })
+
+  test('reports moving equity marks from separate observations without treating them as ledger discrepancies', () => {
+    const result = successOf(
+      compareReconciliation(
+        snapshot({
+          account: { ...account, equityMicros: '1000170000' },
+          positions: [{ ...position, observedAt: '2026-07-22T15:30:00.002Z' }],
+        }),
+      ),
+    )
+
+    expect(result.discrepancies).toEqual([])
+    expect(result.metrics.equityDifferenceMicros).toBe('170000')
+    const flat = successOf(
+      compareReconciliation(snapshot({ positions: [], valuation: { ...valuation, equityMicros: '0' } })),
+    )
+    expect(flat.discrepancies.some(({ kind }) => kind === DiscrepancyKind.Valuation)).toBe(true)
+  })
+
   test('compares the complete order contract, lifecycle, and aggregate fill quantity', () => {
     const result = successOf(
       compareReconciliation(

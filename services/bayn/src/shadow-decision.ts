@@ -502,6 +502,13 @@ const validateRiskState = (
   if (state.marketDataSymbol !== riskInput.symbol) {
     return Result.fail(error('binding', 'shadow risk market symbol must match its target delta'))
   }
+  if (
+    state.entryQuote !== undefined &&
+    (input.executionMarketData === undefined ||
+      !('maximumQuoteAgeMs' in input.executionMarketData) ||
+      state.entryQuote.maximumAgeMs !== input.executionMarketData.maximumQuoteAgeMs)
+  )
+    return Result.fail(error('binding', 'entry quote freshness must match its execution market-data binding'))
   const decisionMarketDataHash = input.executionMarketData?.contentHash ?? snapshot.contentHash
   if (
     state.marketDataHash !== decisionMarketDataHash ||

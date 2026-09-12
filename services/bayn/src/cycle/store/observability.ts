@@ -610,6 +610,13 @@ const makeCycleObservability = Effect.gen(function* () {
             FROM accounting_transactions AS transaction
             WHERE transaction.account_id = (SELECT account_id FROM selected_account)
           ),
+          selected_broker_fee_cash AS (
+            SELECT coalesce(sum(fee.net_amount_micros), 0) AS net_amount_micros
+            FROM broker_fee_accounting AS fee
+            WHERE fee.account_id = (SELECT account_id FROM selected_account)
+              AND fee.first_observed_at <= CURRENT_TIMESTAMP
+              AND fee.posted_at <= CURRENT_TIMESTAMP
+          ),
           selected_accounting_receipts AS (
             SELECT receipt.*
             FROM accounting_receipts AS receipt
@@ -912,9 +919,11 @@ const makeCycleObservability = Effect.gen(function* () {
             ) AS unreceipted_transaction_count,
             coalesce((SELECT sum(realized_pnl_micros) FROM selected_accounting_transactions), 0)::text
               AS accounting_gross_realized_pnl_micros,
-            coalesce((SELECT sum(fee_micros) FROM selected_accounting_transactions), 0)::text
+            (coalesce((SELECT sum(fee_micros) FROM selected_accounting_transactions), 0)
+              - (SELECT net_amount_micros FROM selected_broker_fee_cash))::text
               AS accounting_execution_fees_micros,
-            coalesce((SELECT sum(realized_pnl_micros - fee_micros) FROM selected_accounting_transactions), 0)::text
+            (coalesce((SELECT sum(realized_pnl_micros - fee_micros) FROM selected_accounting_transactions), 0)
+              + (SELECT net_amount_micros FROM selected_broker_fee_cash))::text
               AS accounting_net_realized_pnl_after_execution_fees_micros,
             (SELECT created_at FROM latest_performance_receipt) AS performance_receipt_created_at,
             (SELECT document -> 'evidence' ->> 'status' FROM latest_performance_receipt)

@@ -36,7 +36,7 @@ hub:
         - '3333333333333333333333333333333333333333333333333333333333333333'
   extraEnv:
     TORGHUT_NOTEBOOK_IMAGE:
-      value: registry.ide-newton.ts.net/lab/torghut-notebook@sha256:b8210a56b4a86c5cc03e09e6281c91e0f9aa138cbb6f392cff2c365b58998caa
+      value: registry.ide-newton.ts.net/lab/torghut-notebook@sha256:3bc44b6ae90fad342c323c5115e7e8a50fdb0f73f36ab2006523c686bf6947a3
     TORGHUT_HUB_COOKIE_SECRET:
       valueFrom:
         secretKeyRef:
@@ -133,20 +133,6 @@ singleuser:
     blockWithIptables: false
   extraEnv:
     TORGHUT_NOTEBOOK_DATA_MODE: live
-    PGHOST: torghut-db-r.torghut.svc.cluster.local
-    PGPORT: '5432'
-    PGDATABASE: torghut
-    PGUSER:
-      valueFrom:
-        secretKeyRef:
-          name: torghut-notebook-postgres
-          key: username
-    PGPASSWORD:
-      valueFrom:
-        secretKeyRef:
-          name: torghut-notebook-postgres
-          key: password
-    PGOPTIONS: '-c default_transaction_read_only=on -c statement_timeout=30000'
     CLICKHOUSE_URL: http://torghut-clickhouse.torghut.svc.cluster.local:8123
     CLICKHOUSE_DATABASE: torghut
     CLICKHOUSE_USER: torghut_notebook
@@ -155,7 +141,6 @@ singleuser:
         secretKeyRef:
           name: torghut-notebook-clickhouse
           key: password
-    TORGHUT_STATUS_URL: http://torghut-scheduler.torghut.svc.cluster.local:8183/trading/status
   extraPodConfig:
     automountServiceAccountToken: false
     enableServiceLinks: false
@@ -172,25 +157,10 @@ singleuser:
       - to:
           - podSelector:
               matchLabels:
-                cnpg.io/cluster: torghut-db
-        ports:
-          - protocol: TCP
-            port: 5432
-      - to:
-          - podSelector:
-              matchLabels:
                 clickhouse.altinity.com/chi: torghut-clickhouse
         ports:
           - protocol: TCP
             port: 8123
-      - to:
-          - podSelector:
-              matchLabels:
-                app.kubernetes.io/name: torghut
-                app.kubernetes.io/component: trading-scheduler
-        ports:
-          - protocol: TCP
-            port: 8183
 
 scheduling:
   userScheduler:

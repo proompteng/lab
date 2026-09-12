@@ -45,6 +45,7 @@ const makeReconciliationDecision = (
       orders,
       ordersObservedAt,
       fills: normalized.fillEvents.map((event) => event.fill),
+      fees: normalized.fees,
       valuation,
       reconciledAt,
     },

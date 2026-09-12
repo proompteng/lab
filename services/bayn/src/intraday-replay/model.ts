@@ -12,25 +12,38 @@ import { PositiveMicrosSchema, strictParseOptions } from '../schemas'
 import type { IntradayMomentumTargetPortfolio } from '../strategy/intraday-momentum/model'
 import type { IntradayReplayIocOutcome } from './execution'
 import type { IntradayReplayEquityMark } from './equity'
+import type { IntradayReplayTimeline } from './timing'
 import { ArchiveAvailabilityPolicy, type ArchiveAvailabilityReceipt } from '../market-data/intraday/availability'
 
 export const IntradayReplayAssumptionsSchema = Schema.Struct({
   pollIntervalMs: Schema.Literal(30_000),
   firstPollDelayMs: Schema.Int.check(Schema.isBetween({ minimum: 2_000, maximum: 31_999 })),
-  orderLatencyMs: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1_000 })),
+  orderLatencyMs: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 60_000 })),
   availableLiquidityPpm: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1_000_000 })),
   slippageBps: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
   feeMultiplierPpm: Schema.Int.check(Schema.isBetween({ minimum: 1_000_000, maximum: 10_000_000 })),
 })
 export type IntradayReplayAssumptions = typeof IntradayReplayAssumptionsSchema.Type
 
+const StageDurationMs = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 300_000 }))
+export const IntradayReplayOperationalTimingSchema = Schema.Struct({
+  decisionReadMs: StageDurationMs,
+  decisionComputeMs: StageDurationMs,
+  planningReadMs: StageDurationMs,
+  planningComputeMs: StageDurationMs,
+  commitMs: StageDurationMs,
+  submissionMs: StageDurationMs,
+})
+export type IntradayReplayOperationalTiming = typeof IntradayReplayOperationalTimingSchema.Type
+
 const ReplayInputBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.intraday-replay-input.v1'),
+  schemaVersion: Schema.Literal('bayn.intraday-replay-input.v2'),
   range: MarketCalendarQueryBase,
   calendar: MarketCalendarResponseSchema.annotate({ parseOptions: responseParseOptions }),
   initialCapitalMicros: PositiveMicrosSchema,
   allocationCapitalMicros: PositiveMicrosSchema,
   assumptions: IntradayReplayAssumptionsSchema,
+  operationalTiming: IntradayReplayOperationalTimingSchema,
   /** Omission fails closed to recorded reader evidence; the source-receipt counterfactual must be explicit. */
   archiveAvailability: Schema.optionalKey(Schema.Enum(ArchiveAvailabilityPolicy)),
 })
@@ -60,6 +73,7 @@ export type IntradayReplayObservation =
       readonly kind: 'snapshot'
       readonly purpose: 'decision' | 'planning' | 'arrival' | 'mark' | 'close'
       readonly manifest: IntradaySnapshotManifest
+      readonly availableBy: string
       readonly decision?: IntradayMomentumTargetPortfolio
       readonly equity?: IntradayReplayEquityMark
     }
@@ -70,6 +84,11 @@ export type IntradayReplayObservation =
       readonly reason: string
       readonly message: string
       readonly retryable: boolean
+    }
+  | {
+      readonly kind: 'timing'
+      readonly purpose: 'planning' | 'close'
+      readonly timeline: IntradayReplayTimeline
     }
 
 export interface IntradayReplayFill {
@@ -108,7 +127,7 @@ export interface IntradayReplaySession {
 }
 
 export interface IntradayReplayReport {
-  readonly schemaVersion: 'bayn.intraday-replay-report.v3'
+  readonly schemaVersion: 'bayn.intraday-replay-report.v4'
   readonly evidenceKind: 'COUNTERFACTUAL_RESEARCH'
   readonly qualification: 'NOT_QUALIFIED'
   readonly inputHash: string
@@ -124,6 +143,7 @@ export interface IntradayReplayReport {
     readonly snapshots: readonly {
       readonly snapshotId: string
       readonly observedAt: string
+      readonly availableBy: string
       readonly receiptHashes: readonly string[]
       readonly candidateExclusions?: readonly IntradayCandidateExclusion[]
     }[]

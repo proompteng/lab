@@ -8,6 +8,8 @@ import {
   AssetClass,
   AssetResponseSchema,
   FillActivityResponseSchema,
+  FeeActivityResponseSchema,
+  type FeeActivity,
   I128_MAX,
   I128_MIN,
   MarketCalendarQueryBase,
@@ -38,7 +40,7 @@ import {
 import { accountConfigurationRequestMaterial, assetRequestMaterial } from './requests'
 import { Pipeable } from '../../pipeable'
 
-const decimalPattern = /^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$|^-[1-9][0-9]*(?:\.[0-9]+)?$/
+const decimalPattern = /^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$|^-[1-9][0-9]*(?:\.[0-9]+)?$|^-0\.[0-9]*[1-9][0-9]*$/
 
 const hashResult = (value: unknown, field: string): Result.Result<string, BrokerReadContractFailure> =>
   Result.mapError(canonicalHashV1Result(value), (failure) =>
@@ -587,3 +589,27 @@ const normalizeMarketCalendarResultDataFirst = (
   })
 
 export const normalizeMarketCalendarResult = Pipeable.dual(2, normalizeMarketCalendarResultDataFirst)
+
+export const normalizeFeeActivitiesResult = (
+  raw: readonly (typeof FeeActivityResponseSchema.Type)[],
+  accountId: string,
+): Result.Result<readonly FeeActivity[], BrokerReadContractFailure> =>
+  Result.all(
+    raw.map((activity) => {
+      if (activity.account_id !== undefined && activity.account_id !== accountId)
+        return Result.fail(
+          contractFailure({
+            reason: 'ACCOUNT_BINDING',
+            message: 'fee activity account does not match the configured account',
+          }),
+        )
+      return decimalToMicrosResult(activity.net_amount, true, 'fee net amount').pipe(
+        Result.map((netAmountMicros) => ({
+          accountId,
+          activityId: activity.id,
+          date: activity.date,
+          netAmountMicros,
+        })),
+      )
+    }),
+  )

@@ -1,3 +1,4 @@
+import type { EntryQuoteFreshness } from '../risk'
 import { Data, Result } from 'effect'
 
 import type { MarketCalendarObservation } from '../broker/alpaca'
@@ -214,6 +215,7 @@ export const intradayMomentumEntryDisposition = (
 }
 
 export interface CompiledIntradayMomentumDecision {
+  readonly entryQuotes: Readonly<Record<string, EntryQuoteFreshness>>
   readonly decision: IntradayMomentumTargetPortfolio
   readonly decisionMarketDataRows: PersistedIntradaySnapshotRows
   readonly priceMicros: Readonly<Record<string, string>>
@@ -320,6 +322,13 @@ export const compileIntradayMomentumDecision = (
       )
       const maximumBuyQuantityMicros = yield* maximumBuyQuantities(pricingSnapshot, planningTargetWeights)
       const quotePrices = yield* adverseQuotePrices(pricingSnapshot, pricingSymbols)
+      const entryQuotes: Record<string, EntryQuoteFreshness> = {}
+      for (const symbol of pricingSymbols) {
+        const quote = pricingSnapshot.latestQuotes[symbol]
+        if (quote === undefined)
+          return yield* Result.fail(failure('entry-decision', `entry pricing quote is missing for ${symbol}`))
+        entryQuotes[symbol] = { eventAt: quote.eventAt, maximumAgeMs: pricingSnapshot.manifest.maximumQuoteAgeMs }
+      }
       const decisionMarketDataRows = yield* persistIntradaySnapshotRows(decisionSnapshot)
       const decisionBinding = yield* executionMarketDataBinding(decisionSnapshot)
       const usesDedicatedPricing = pricingSnapshot.manifest.purpose === IntradaySnapshotPurpose.EntryPricing
@@ -329,6 +338,7 @@ export const compileIntradayMomentumDecision = (
       return {
         decision,
         decisionMarketDataRows,
+        entryQuotes,
         priceMicros: quotePrices.askPriceMicros,
         ...quotePrices,
         maximumBuyQuantityMicros,

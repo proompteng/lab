@@ -5,61 +5,28 @@ configurations:
 resources:
 - codex-auth-externalsecret.yaml
 - postgres-upgrade-final-backup.yaml
-- postgres-cluster.yaml
-- torghut-db-ca-prune-tombstone.yaml
-- torghut-db-ca-reflector-rbac.yaml
-- torghut-db-ca-prune-guard-job.yaml
-- torghut-db-ca-reflector-job.yaml
 - cnpg-torghut-db-objectbucketclaim.yaml
-- postgres-scheduled-backup.yaml
-- strategy-configmap.yaml
-- autonomous-configmap.yaml
-- autonomy-configmap.yaml
-- autonomy-gate-policy-configmap.yaml
-- db-migrations-job.yaml
-- tigerbeetle-cluster.yaml
-- tigerbeetle-smoke-job.yaml
-- knative-service.yaml
-- knative-service-sim.yaml
-- tailscale-service.yaml
 - ingressroute-flink-k8s-private.yaml
 - sealed-secrets.yaml
 - rook-ceph-rgw-argo-workflows-sealedsecret.yaml
 - serviceaccount.yaml
 - role.yaml
 - rolebinding.yaml
-- workflow-controller-configmap-rbac.yaml
-- rollouts-analysis-role.yaml
-- rollouts-analysis-rolebinding-codex-workflow.yaml
-- rollouts-analysis-rolebinding-runtime.yaml
 - alloy-rbac.yaml
 - alloy-configmap.yaml
 - alloy-deployment.yaml
-- llm-guardrails-exporter-configmap.yaml
-- llm-guardrails-exporter.yaml
 - whitepapers-objectbucketclaim.yaml
-- whitepapers-bucket-bootstrap-job.yaml
-- generated-resource-retention-rbac.yaml
-- generated-resource-retention-cronjob.yaml
-- broker-economic-ledger-reconciliation-cronjob.yaml
-- order-lineage-reconciliation-cronjob.yaml
-- historical-simulation-workflowtemplate.yaml
-- analysis-template-runtime-ready.yaml
-- analysis-template-activity.yaml
-- analysis-template-teardown-clean.yaml
-- analysis-template-artifact-bundle.yaml
 - clickhouse
 - ws
 - ta
 - market-data-archive
-- ta-sim
 - notebooks
 images:
 - name: registry.ide-newton.ts.net/lab/signal-publisher
-  digest: sha256:1e9b8d9c1fe02b86e6d9a0b64bf27edefbcd524101e8f1bdab7cedb01d43c1e4
+  digest: sha256:1cbcc31cea995f8a574bf4b64e0c95d606071b948ee56c7ce6a4abd5c6d591d2
 - name: registry.ide-newton.ts.net/lab/torghut
-  digest: sha256:462150eaeb4ec5e0e303017032d7ec61025ad151e8019f3df3bcdbb72d6f984f
+  digest: sha256:48c2a2e33b7c5d6d4e31560921e4582c9bf1efe25e9b0feeb68deb413d33b781
 - name: registry.ide-newton.ts.net/lab/torghut-ta
-  digest: sha256:f15bc6e036c36f1e0f2f88fc6cfd14c7505e75e836b0f1ad00113682c326f748
+  digest: sha256:e99864d918ee781bddbcefc9155fe3b0006171ab83ae60e352dd4ff57fb5e4ea
 - name: registry.ide-newton.ts.net/lab/torghut-ws
-  digest: sha256:1ba4a7f9fe4d6baa2a9fcda9c177a4773992c94984e075dfb9b05e1dd6769ff1
+  digest: sha256:cf98bb3ebb125d048661ab4e0ae729928ec4eed853e17b0df5a93b8351be194d
