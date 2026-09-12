@@ -218,6 +218,11 @@ cash, exact accounting, and fill deduplication. The fixture's orders have no pro
 retains the resulting unknown-order discrepancies. Production cycle orchestration and full-process restart recovery
 remain separate acceptance requirements.
 
+Execution persistence and cycle-query factories accept an explicit database clock expression. Production layers use
+PostgreSQL `clock_timestamp()`; the isolated replay acceptance test supplies a timestamp row advanced with its Effect
+clock. Authority initialization, authority observations, reconciliation risk context, and completion-evidence queries
+therefore evaluate the same replay time without rewriting recorded market timestamps or overriding PostgreSQL builtins.
+
 Current Alpaca position responses retain the broker's `cost_basis` as `bayn.position.v2`. Reconciliation compares that
 exact value with fill accounting instead of reconstructing it from rounded `avg_entry_price`. Migration 67 retains
 legacy position history and adds the versioned cost-basis column. Legacy `bayn.paper-position.v1` observations preserve

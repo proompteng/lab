@@ -1,5 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect } from 'effect'
+import { postgresWallClock, type DatabaseClock } from '../../db/clock'
 
 import { legacyExecutionAuthorityToken } from '../../execution/legacy-wire'
 import type { CycleDecisionDocument, ExecutionDecisionDocument } from '../../shadow-decision-contract'
@@ -32,7 +33,10 @@ export interface CycleQueries {
   ) => Effect.Effect<boolean, CycleStoreInternalError>
 }
 
-export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
+export const makeCycleQueries = (
+  sql: PgClient.PgClient,
+  clock: DatabaseClock = postgresWallClock(sql),
+): CycleQueries => {
   const selectCycle: CycleQueries['selectCycle'] = (cycleId, locked) => {
     const rows = locked
       ? sql<Record<string, unknown>>`
@@ -125,7 +129,7 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
         paper_cycle_completion_evidence_matches(
           cycle_id,
           decision_hash,
-          clock_timestamp()
+          ${clock.now}
         ) AS execution_completion_evidence_matches,
         paper_cycle_generation_is_superseded(
           cycle_id,
