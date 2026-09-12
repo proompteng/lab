@@ -199,6 +199,7 @@ class ClickHouseSinkTest {
             val query = queryParam(request.url)
             if (query.startsWith("INSERT")) {
               inserts += query to (request.body as TextContent).text
+              delay(25)
               respond(content = "", status = HttpStatusCode.OK)
             } else {
               respond(
@@ -244,7 +245,12 @@ class ClickHouseSinkTest {
 
       sink.enqueue(candleRecord(seq = 2))
       withTimeout(1_000) {
-        while (inserts.none { (query, _) -> query.contains("hyperliquid_candles") }) {
+        while (registry
+            .find("torghut_hyperliquid_clickhouse_flushes_total")
+            .tags("table", "hyperliquid_candles", "reason", "size")
+            .counter()
+            ?.count() != 1.0
+        ) {
           delay(10)
         }
       }
