@@ -77,7 +77,7 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
             "1",
         )
 
-    def test_production_ta_recovers_transient_dependencies_without_losing_state(
+    def test_production_ta_uses_savepoint_rollouts_and_transient_restart_backoff(
         self,
     ) -> None:
         manifest = _load_yaml_mapping(

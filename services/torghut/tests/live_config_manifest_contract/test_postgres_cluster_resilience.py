@@ -50,7 +50,7 @@ class PostgresClusterResilienceManifestTests(TestCase):
             },
         )
 
-    def test_continuous_backup_prefers_the_standby(self) -> None:
+    def test_inactive_backup_config_preserves_the_pg18_archive(self) -> None:
         backup = cast(Mapping[str, object], self.cluster_spec["backup"])
         object_store = cast(Mapping[str, object], backup["barmanObjectStore"])
         wal = cast(Mapping[str, object], object_store["wal"])
