@@ -11,6 +11,10 @@ Set `TA_MARKET_FEATURES_TOPIC=torghut.market-features.v1` to enable the branch. 
 `ARCHIVE_CORE_UNIVERSE_SYMBOL_HASH` configuration, plus `TORGHUT_TA_COMMIT` for producer provenance. It uses the TA
 job's Kafka credentials. Source and state operator IDs are separate from the legacy TA branch.
 
+Graph construction preserves every legacy operator's restoration ID, including generated Kafka and ClickHouse sink
+writers and committers. The job executes that prepared graph so enabling features retains existing savepoint state.
+The savepoint regression test checks the executable graph against legacy IDs and optional source and sink configurations.
+
 `dorvud.rolling-price-30m.v1` emits first open, range high and low, last close, total volume, and exact input references
 once 30 contiguous finalized minute bars exist. Prices use the same binary64 multiplication and positive half rounding
 to millionths as Bayn. Volume is rounded per bar before summing as an integer. Values and offsets cross JSON as decimal
