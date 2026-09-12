@@ -1,4 +1,4 @@
-import { Cause, Clock, Data, Effect, Exit, Fiber, Ref, Result, Schema } from 'effect'
+import { Cause, Clock, Data, Effect, Exit, Fiber, Ref, Result, Schema, SynchronizedRef } from 'effect'
 
 import {
   AccountStatus,
@@ -46,7 +46,11 @@ import type { IntradayMomentumProtocol } from '../strategy/intraday-momentum/pro
 import { applyReplayFill, createReplayLedger, type EconomicReplayFill, type ReplayLedger } from './ledger'
 import { simulateIntradayReplayIocCore } from './execution-core'
 import type { IntradayReplayIocAssumptions } from './execution'
-import { makeReplayBrokerCheckpoint, restoreReplayBrokerCheckpoint } from './broker-checkpoint'
+import {
+  makeReplayBrokerCheckpoint,
+  restoreReplayBrokerCheckpoint,
+  type ReplayBrokerCheckpoint,
+} from './broker-checkpoint'
 
 export class ReplayBrokerFailure extends Data.TaggedError('ReplayBrokerFailure')<{
   readonly message: string
@@ -58,6 +62,8 @@ export interface ReplayBrokerConfig {
   readonly sourceManifestHash: string
   /** expectedHash comes from the independent durable store, never from the supplied value. */
   readonly restoreCheckpoint?: { readonly value: unknown; readonly expectedHash: string }
+  /** Commit terminal IOC state before publishing it to broker readers or returning a response. */
+  readonly retainSettlement?: (checkpoint: ReplayBrokerCheckpoint) => Effect.Effect<void, ReplayBrokerFailure>
   readonly openingCashMicros: string
   readonly protocol: IntradayMomentumProtocol
   readonly assumptions: IntradayReplayIocAssumptions & { readonly latencyMs: number; readonly feeMultiplierPpm: number }
@@ -149,7 +155,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
     const brokerScope = yield* Effect.scope
     const accountId = `replay-${config.runId}`
     const ledger = yield* Effect.fromResult(createReplayLedger<ReplayBrokerFill>(config.openingCashMicros))
-    const state = yield* Ref.make<ReplayBrokerState>(
+    const state = yield* SynchronizedRef.make<ReplayBrokerState>(
       restored?.state ?? {
         schemaVersion: 'bayn.simulated-broker-state.v1',
         runId: config.runId,
@@ -161,6 +167,12 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
         sessionCloses: [],
       },
     )
+    const retentionFailure = yield* Ref.make<ReplayBrokerFailure | undefined>(undefined)
+    const readState = Effect.gen(function* () {
+      const failure = yield* Ref.get(retentionFailure)
+      if (failure !== undefined) return yield* failure
+      return yield* SynchronizedRef.get(state)
+    })
     const now = Clock.currentTimeMillis.pipe(Effect.map((value) => new Date(value).toISOString()))
     const evidence = <A>(value: A, observedAt: string): Effect.Effect<ReadResult<A>, ReplayBrokerFailure> =>
       Effect.fromResult(hash(value)).pipe(
@@ -273,7 +285,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       }
     }
     const markedPositions = Effect.gen(function* () {
-      const current = yield* Ref.get(state)
+      const current = yield* readState
       const observedAt = yield* now
       const positions = yield* Effect.forEach(current.ledger.positions, (position) =>
         Effect.gen(function* () {
@@ -309,7 +321,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
     })
     const readOrder = (find: (order: Order) => boolean, operation: 'order-by-id' | 'order-by-client-id') =>
       Effect.gen(function* () {
-        const current = yield* Ref.get(state)
+        const current = yield* readState
         const found = current.orders.find((entry) => find(entry.order))
         if (found === undefined)
           return yield* new BrokerReadError({
@@ -329,7 +341,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
 
     const read: BrokerReadShape = {
       account: Effect.gen(function* () {
-        const current = yield* Ref.get(state)
+        const current = yield* readState
         const { positions, observedAt } = yield* markedPositions
         const date = newYorkDate.format(Date.parse(observedAt))
         const previousSession = config.calendar
@@ -398,7 +410,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       orderByClientId: (id) => readOrder((order) => order.clientOrderId === id, 'order-by-client-id'),
       orders: (query) =>
         Effect.gen(function* () {
-          const current = yield* Ref.get(state)
+          const current = yield* readState
           const observedAt = yield* now
           const orders = current.orders
             .map((entry) => entry.order)
@@ -420,7 +432,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
         }).pipe(Effect.mapError((cause) => readFailure('orders', 'Replay orders read failed', cause))),
       fillActivities: (query) =>
         Effect.gen(function* () {
-          const current = yield* Ref.get(state)
+          const current = yield* readState
           const values = current.fills
             .filter(
               (fill) =>
@@ -449,7 +461,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
         }).pipe(Effect.mapError((cause) => readFailure('fill-activities', 'Replay fill read failed', cause))),
       feeActivities: (query) =>
         Effect.gen(function* () {
-          const current = yield* Ref.get(state)
+          const current = yield* readState
           const values = current.fees
             .filter(
               (fee) =>
@@ -481,6 +493,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
     const mutation: BrokerMutationShape = {
       submit: (intent: Intent, closeOnly = false) =>
         Effect.gen(function* () {
+          yield* readState
           const prepared = yield* Effect.fromResult(prepareSubmit(intent, accountId, closeOnly))
           const request = prepared.request
           if (request.type !== OrderType.Limit || request.time_in_force !== TimeInForce.ImmediateOrCancel)
@@ -514,7 +527,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
             extendedHours: false,
             observedAt,
           }
-          const existing = yield* Ref.modify(state, (current) => {
+          const existing = yield* SynchronizedRef.modify(state, (current) => {
             const previous = current.orders.find((entry) => entry.order.clientOrderId === intent.clientOrderId)
             return [
               previous,
@@ -558,122 +571,141 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
                 valid && quote !== undefined
                   ? yield* Effect.fromResult(executeQuote(request.side, intent.quantityMicros, limit, quote.value))
                   : null
-              const settled = yield* Ref.modify(
-                state,
-                (current): readonly [Result.Result<void, ReplayBrokerFailure>, ReplayBrokerState] => {
-                  const record = current.orders.find((entry) => entry.order.brokerOrderId === brokerOrderId)
-                  if (record === undefined || !isOpen(record.order))
-                    return [Result.succeed(undefined), current] as const
-                  let nextLedger = current.ledger
-                  const fees = [...current.fees]
-                  const fills = [...current.fills]
-                  let order: Order = {
+              const settle = (
+                current: ReplayBrokerState,
+              ): readonly [Result.Result<void, ReplayBrokerFailure>, ReplayBrokerState] => {
+                const record = current.orders.find((entry) => entry.order.brokerOrderId === brokerOrderId)
+                if (record === undefined || !isOpen(record.order)) return [Result.succeed(undefined), current] as const
+                let nextLedger = current.ledger
+                const fees = [...current.fees]
+                const fills = [...current.fills]
+                let order: Order = {
+                  ...record.order,
+                  observedAt: arrivedAt,
+                  updatedAt: arrivedAt,
+                  canceledAt: arrivedAt,
+                  status: OrderStatus.Canceled,
+                }
+                if (outcome?.status === 'filled' && quote !== undefined) {
+                  const applied = applyReplayFill(
+                    current.ledger,
+                    {
+                      symbol: intent.symbol,
+                      side: request.side,
+                      observedAt: arrivedAt,
+                      quantityMicros: outcome.filledQuantityMicros.toString(),
+                      priceMicros: outcome.fillPriceMicros.toString(),
+                      notionalMicros: outcome.fillNotionalMicros.toString(),
+                      brokerOrderId,
+                      clientOrderId: intent.clientOrderId,
+                      quoteSource: {
+                        topic: quote.value.sourceTopic,
+                        partition: quote.value.sourcePartition,
+                        offset: quote.value.sourceOffset,
+                        availableAtMs: quote.availableAtMs,
+                      },
+                    },
+                    intent.quantityMicros,
+                    config.protocol.executionModel,
+                    config.assumptions.feeMultiplierPpm,
+                  )
+                  if (Result.isFailure(applied)) {
+                    if (
+                      applied.failure._tag === 'IntradayReplayLedgerOversell' ||
+                      applied.failure._tag === 'IntradayReplayLedgerInsufficientCash'
+                    ) {
+                      const rejected: Order = {
+                        ...record.order,
+                        status: OrderStatus.Rejected,
+                        failedAt: arrivedAt,
+                        updatedAt: arrivedAt,
+                        observedAt: arrivedAt,
+                      }
+                      return [
+                        Result.succeed(undefined),
+                        {
+                          ...current,
+                          orders: current.orders.map((entry) =>
+                            entry.order.brokerOrderId === brokerOrderId ? { ...entry, order: rejected } : entry,
+                          ),
+                        },
+                      ]
+                    }
+                    return [
+                      Result.fail(
+                        new ReplayBrokerFailure({ message: 'Replay fill accounting failed', cause: applied.failure }),
+                      ),
+                      current,
+                    ] as const
+                  }
+                  nextLedger = applied.success
+                  const fee = BigInt(nextLedger.executionFeesMicros) - BigInt(current.ledger.executionFeesMicros)
+                  if (fee !== 0n)
+                    fees.push({
+                      accountId,
+                      activityId: `fee::${brokerOrderId}`,
+                      date: arrivedAt.slice(0, 10),
+                      netAmountMicros: (-fee).toString(),
+                    })
+                  const complete = outcome.unfilledRemainder === 'none'
+                  order = {
                     ...record.order,
                     observedAt: arrivedAt,
                     updatedAt: arrivedAt,
-                    canceledAt: arrivedAt,
-                    status: OrderStatus.Canceled,
+                    filledAt: arrivedAt,
+                    ...(complete ? {} : { canceledAt: arrivedAt }),
+                    status: complete ? OrderStatus.Filled : OrderStatus.Canceled,
+                    filledQuantityMicros: outcome.filledQuantityMicros.toString(),
+                    filledAveragePriceMicros: outcome.fillPriceMicros.toString(),
                   }
-                  if (outcome?.status === 'filled' && quote !== undefined) {
-                    const applied = applyReplayFill(
-                      current.ledger,
-                      {
-                        symbol: intent.symbol,
-                        side: request.side,
-                        observedAt: arrivedAt,
-                        quantityMicros: outcome.filledQuantityMicros.toString(),
-                        priceMicros: outcome.fillPriceMicros.toString(),
-                        notionalMicros: outcome.fillNotionalMicros.toString(),
-                        brokerOrderId,
-                        clientOrderId: intent.clientOrderId,
-                        quoteSource: {
-                          topic: quote.value.sourceTopic,
-                          partition: quote.value.sourcePartition,
-                          offset: quote.value.sourceOffset,
-                          availableAtMs: quote.availableAtMs,
-                        },
-                      },
-                      intent.quantityMicros,
-                      config.protocol.executionModel,
-                      config.assumptions.feeMultiplierPpm,
-                    )
-                    if (Result.isFailure(applied)) {
-                      if (
-                        applied.failure._tag === 'IntradayReplayLedgerOversell' ||
-                        applied.failure._tag === 'IntradayReplayLedgerInsufficientCash'
-                      ) {
-                        const rejected: Order = {
-                          ...record.order,
-                          status: OrderStatus.Rejected,
-                          failedAt: arrivedAt,
-                          updatedAt: arrivedAt,
-                          observedAt: arrivedAt,
-                        }
-                        return [
-                          Result.succeed(undefined),
-                          {
-                            ...current,
-                            orders: current.orders.map((entry) =>
-                              entry.order.brokerOrderId === brokerOrderId ? { ...entry, order: rejected } : entry,
+                  fills.push({
+                    accountId,
+                    activityId: `fill::${brokerOrderId}`,
+                    cumulativeQuantityMicros: order.filledQuantityMicros,
+                    leavesQuantityMicros: (BigInt(intent.quantityMicros) - outcome.filledQuantityMicros).toString(),
+                    priceMicros: outcome.fillPriceMicros.toString(),
+                    quantityMicros: order.filledQuantityMicros,
+                    side: request.side,
+                    symbol: intent.symbol,
+                    transactionTime: arrivedAt,
+                    brokerOrderId,
+                    type: complete ? TradeActivityType.Fill : TradeActivityType.PartialFill,
+                    orderStatus: order.status,
+                  })
+                }
+                return [
+                  Result.succeed(undefined),
+                  {
+                    ...current,
+                    ledger: nextLedger,
+                    fees,
+                    fills,
+                    orders: current.orders.map((entry) =>
+                      entry.order.brokerOrderId === brokerOrderId ? { ...entry, order } : entry,
+                    ),
+                  },
+                ] as const
+              }
+              const settled = yield* SynchronizedRef.modifyEffect(state, (current) =>
+                Effect.succeed(settle(current)).pipe(
+                  Effect.tap(([result, next]) =>
+                    Result.isFailure(result) || config.retainSettlement === undefined
+                      ? Effect.void
+                      : Effect.fromResult(makeReplayBrokerCheckpoint(config, next, arrivedAt)).pipe(
+                          Effect.flatMap(config.retainSettlement),
+                          Effect.tapCause((cause) =>
+                            Ref.set(
+                              retentionFailure,
+                              new ReplayBrokerFailure({
+                                message:
+                                  'Broker settlement persistence failed; restore durable state before further reads or mutations',
+                                cause: Cause.squash(cause),
+                              }),
                             ),
-                          },
-                        ]
-                      }
-                      return [
-                        Result.fail(
-                          new ReplayBrokerFailure({ message: 'Replay fill accounting failed', cause: applied.failure }),
+                          ),
                         ),
-                        current,
-                      ] as const
-                    }
-                    nextLedger = applied.success
-                    const fee = BigInt(nextLedger.executionFeesMicros) - BigInt(current.ledger.executionFeesMicros)
-                    if (fee !== 0n)
-                      fees.push({
-                        accountId,
-                        activityId: `fee::${brokerOrderId}`,
-                        date: arrivedAt.slice(0, 10),
-                        netAmountMicros: (-fee).toString(),
-                      })
-                    const complete = outcome.unfilledRemainder === 'none'
-                    order = {
-                      ...record.order,
-                      observedAt: arrivedAt,
-                      updatedAt: arrivedAt,
-                      filledAt: arrivedAt,
-                      ...(complete ? {} : { canceledAt: arrivedAt }),
-                      status: complete ? OrderStatus.Filled : OrderStatus.Canceled,
-                      filledQuantityMicros: outcome.filledQuantityMicros.toString(),
-                      filledAveragePriceMicros: outcome.fillPriceMicros.toString(),
-                    }
-                    fills.push({
-                      accountId,
-                      activityId: `fill::${brokerOrderId}`,
-                      cumulativeQuantityMicros: order.filledQuantityMicros,
-                      leavesQuantityMicros: (BigInt(intent.quantityMicros) - outcome.filledQuantityMicros).toString(),
-                      priceMicros: outcome.fillPriceMicros.toString(),
-                      quantityMicros: order.filledQuantityMicros,
-                      side: request.side,
-                      symbol: intent.symbol,
-                      transactionTime: arrivedAt,
-                      brokerOrderId,
-                      type: complete ? TradeActivityType.Fill : TradeActivityType.PartialFill,
-                      orderStatus: order.status,
-                    })
-                  }
-                  return [
-                    Result.succeed(undefined),
-                    {
-                      ...current,
-                      ledger: nextLedger,
-                      fees,
-                      fills,
-                      orders: current.orders.map((entry) =>
-                        entry.order.brokerOrderId === brokerOrderId ? { ...entry, order } : entry,
-                      ),
-                    },
-                  ] as const
-                },
+                  ),
+                ),
               )
               yield* Effect.fromResult(settled)
             }).pipe(
@@ -682,7 +714,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
                   ? Effect.void
                   : Effect.gen(function* () {
                       const failedAt = yield* now
-                      yield* Ref.update(state, (current) => ({
+                      yield* SynchronizedRef.update(state, (current) => ({
                         ...current,
                         orders: current.orders.map((entry) =>
                           entry.order.brokerOrderId === brokerOrderId && isOpen(entry.order)
@@ -726,7 +758,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
           const prepared = yield* Effect.fromResult(prepareCancel(brokerOrderId))
           const observedAt = yield* now
           yield* read.orderById(brokerOrderId)
-          yield* Ref.update(state, (current) => ({
+          yield* SynchronizedRef.update(state, (current) => ({
             ...current,
             orders: current.orders.map((entry) =>
               entry.order.brokerOrderId === brokerOrderId && isOpen(entry.order)
@@ -764,7 +796,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
           return yield* new ReplayBrokerFailure({
             message: 'Session equity must be captured at the recorded market close',
           })
-        const current = yield* Ref.get(state)
+        const current = yield* readState
         if (current.orders.some((record) => isOpen(record.order)))
           return yield* new ReplayBrokerFailure({ message: 'Cannot complete session with unresolved broker orders' })
         const account = yield* read.account
@@ -773,12 +805,15 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
         if (previous !== undefined && previous.equityMicros !== close.equityMicros)
           return yield* new ReplayBrokerFailure({ message: 'Session close changed after it was recorded' })
         if (previous === undefined)
-          yield* Ref.update(state, (value) => ({ ...value, sessionCloses: [...value.sessionCloses, close] }))
+          yield* SynchronizedRef.update(state, (value) => ({
+            ...value,
+            sessionCloses: [...value.sessionCloses, close],
+          }))
         return close
       })
     const checkpoint = Effect.gen(function* () {
       const observedAt = yield* now
-      return yield* Effect.fromResult(makeReplayBrokerCheckpoint(config, yield* Ref.get(state), observedAt))
+      return yield* Effect.fromResult(makeReplayBrokerCheckpoint(config, yield* readState, observedAt))
     })
     return {
       accountId,
@@ -786,7 +821,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       read,
       mutation,
       completeSession,
-      snapshot: Ref.get(state),
+      snapshot: readState,
       checkpoint,
     }
   })

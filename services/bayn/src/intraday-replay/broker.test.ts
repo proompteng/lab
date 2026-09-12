@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { Clock, Effect, Exit, Fiber, Result, Scope } from 'effect'
+import { Clock, Deferred, Effect, Exit, Fiber, Result, Scope } from 'effect'
 import { TestClock } from 'effect/testing'
 import { AssetClass, AssetExchange, AssetStatus, OrderCollection, OrderStatus } from '../broker/alpaca/model'
 import { normalizeAssetResult } from '../broker/alpaca/normalizers'
@@ -611,6 +611,52 @@ test('an independently retained checkpoint hash rejects a forged zero-fill cance
           }),
         ))._tag,
       ).toBe('Failure')
+    }),
+  )
+})
+
+test('settlement persistence completes before a calculated fill becomes observable', async () => {
+  await run(
+    Effect.gen(function* () {
+      const calculated = yield* Deferred.make<void>()
+      const committed = yield* Deferred.make<void>()
+      const broker = yield* setup({
+        retainSettlement: (checkpoint) =>
+          Effect.gen(function* () {
+            expect(checkpoint.state.fills).toHaveLength(1)
+            yield* Deferred.succeed(calculated, undefined)
+            yield* Deferred.await(committed)
+          }),
+      })
+      const pending = yield* broker.mutation.submit(intent()).pipe(Effect.forkChild({ startImmediately: true }))
+      yield* TestClock.adjust(100)
+      yield* Deferred.await(calculated)
+      expect((yield* broker.snapshot).fills).toHaveLength(0)
+      expect((yield* broker.read.account).value.cashMicros).toBe(config.openingCashMicros)
+      yield* Deferred.succeed(committed, undefined)
+      const response = yield* Fiber.join(pending)
+      expect(response.order.status).toBe(OrderStatus.Filled)
+      expect((yield* broker.snapshot).fills).toHaveLength(1)
+    }),
+  )
+})
+
+test('an uncertain settlement commit blocks further broker state reads and mutations until restoration', async () => {
+  await run(
+    Effect.gen(function* () {
+      const broker = yield* setup({
+        retainSettlement: () => Effect.fail(new ReplayBrokerFailure({ message: 'commit acknowledgment lost' })),
+      })
+      expect((yield* Effect.exit(submit(broker, intent())))._tag).toBe('Failure')
+      for (const exit of [
+        yield* Effect.exit(broker.snapshot),
+        yield* Effect.exit(broker.read.account),
+        yield* Effect.exit(broker.read.orderByClientId(intent().clientOrderId)),
+        yield* Effect.exit(broker.mutation.submit(intent())),
+      ]) {
+        expect(exit._tag).toBe('Failure')
+        expect(JSON.stringify(exit)).toContain('restore durable state')
+      }
     }),
   )
 })

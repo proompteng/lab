@@ -225,13 +225,16 @@ market prices or calibrate the data feed.
 
 ## Process recovery acceptance
 
-The replay checkpoint store commits the complete broker payload and its authenticated hash together in PostgreSQL
+The replay checkpoint store commits the complete broker payload and its content hash together in PostgreSQL
 migration 0070, using a separate scoped connection pool. A killed coordinator transaction cannot roll back that
-simulated broker commit. Recovery reads the latest source-bound payload from PostgreSQL, verifies its receipt and
+simulated broker commit. The broker's settlement callback persists the calculated terminal IOC state before that
+state becomes visible to broker readers or a submit response can reach the coordinator. A failed or uncertain
+commit blocks further state reads and mutations until restoration. Recovery reads the latest source-bound payload from PostgreSQL, verifies its receipt and
 configuration, and advances from the retained broker timestamp before reconciling. A broker commit may be ahead of
 the rolled-back execution clock; a checkpoint behind the committed execution clock is stale and cannot recover it.
 
-The process-death test kills the worker after a broker fill and before the coordinator receives its response. It
+The process-death test kills the worker inside settlement after its database commit and before either in-memory
+publication or the coordinator response. It
 removes the exported checkpoint file before the kill and recovers from PostgreSQL in a new PID, proving one intent,
 one fill, one accounting transaction, and exact reconciliation with real TigerBeetle. Export files are not recovery
 authority. The full-session command still requires a fresh database; it does not expose a command-line resume mode.

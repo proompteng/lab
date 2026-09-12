@@ -14,8 +14,6 @@ import { BrokerAccess, noCapitalAuthority } from '../execution/authority'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import { AssetClass, AssetExchange, AssetStatus, MarketCalendarResponseSchema } from '../broker/alpaca/model'
 import { normalizeAssetResult } from '../broker/alpaca/normalizers'
-import { BrokerMutationError, MutationFailure, MutationOperation, causeSummary } from '../broker/alpaca-mutations/model'
-import { MutationOutcome } from '../execution/contracts'
 import { JournalLive } from '../ledger'
 import { Sha256Schema } from '../schemas'
 import { canonicalJsonV1Result } from '../hash'
@@ -124,53 +122,30 @@ const main = Effect.scoped(
         ),
         quoteAt: (symbol) => Effect.succeed(cursor.projection.quotes.get(symbol)),
         advanceToArrival: advanceTo,
+        retainSettlement: (checkpoint) =>
+          Effect.gen(function* () {
+            yield* checkpointStore.retain(checkpoint)
+            if (mode === 'crash' && checkpoint.state.fills.length > 0) {
+              yield* fs.writeFileString(
+                checkpointPath + '.writing',
+                yield* Effect.fromResult(canonicalJsonV1Result(checkpoint)),
+                { flag: 'wx' },
+              )
+              yield* fs.rename(checkpointPath + '.writing', checkpointPath)
+              // Kill before settlement publishes the Ref or returns a broker response to the coordinator.
+              return yield* Effect.never
+            }
+          }).pipe(
+            Effect.mapError((cause) => new ReplayBrokerFailure({ message: 'Cannot commit broker settlement', cause })),
+          ),
         ...(saved === undefined ? {} : { restoreCheckpoint: saved }),
       })
-      const executionBroker =
-        mode === 'recover'
-          ? broker
-          : {
-              ...broker,
-              mutation: {
-                ...broker.mutation,
-                submit: (intent: Parameters<typeof broker.mutation.submit>[0], closeOnly?: boolean) =>
-                  broker.mutation.submit(intent, closeOnly).pipe(
-                    Effect.tap(() =>
-                      Effect.gen(function* () {
-                        const checkpoint = yield* broker.checkpoint
-                        if (checkpoint.state.fills.length === 0)
-                          return yield* new ReplayBrokerFailure({ message: 'Crash point requires a committed fill' })
-                        yield* checkpointStore.retain(checkpoint)
-                        yield* fs.writeFileString(
-                          checkpointPath + '.writing',
-                          yield* Effect.fromResult(canonicalJsonV1Result(checkpoint)),
-                          { flag: 'wx' },
-                        )
-                        yield* fs.rename(checkpointPath + '.writing', checkpointPath)
-                        // Parent sends SIGKILL after this write. The coordinator never receives the successful broker response.
-                        return yield* Effect.never
-                      }).pipe(
-                        Effect.mapError(
-                          (cause) =>
-                            new BrokerMutationError({
-                              operation: MutationOperation.Submit,
-                              failure: MutationFailure.Unknown,
-                              outcome: MutationOutcome.Unknown,
-                              message: 'Restart acceptance could not retain broker commit',
-                              cause: causeSummary(cause),
-                            }),
-                        ),
-                      ),
-                    ),
-                  ),
-              },
-            }
       // The restored broker commits at checkpoint time; the restarted process observes it after that instant.
       if (mode === 'recover') yield* advanceTo(initialMs + 1)
       const runtime = yield* makeReplayExecutionRuntime({
         config,
         strategy: fixtureRuntime,
-        broker: executionBroker,
+        broker,
         source,
         cursor: Effect.succeed(cursor),
         clock,

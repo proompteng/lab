@@ -11,7 +11,7 @@ import { ReplayBrokerCheckpointSchema } from './broker-checkpoint'
 const durableTest = baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined ? test.skip : test
 
 durableTest(
-  'full process death after broker fill recovers from atomic PostgreSQL checkpoint without an export file or duplicate',
+  'process death after durable settlement but before broker state publication recovers without an export or duplicate',
   async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
