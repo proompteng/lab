@@ -37,7 +37,7 @@ let
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = {
-    x86_64-linux = "sha256-Cw9ZS/ZLSaAXgTPkNzTGBLspoWMp2GXJE+qvBnbc6Fk=";
+    x86_64-linux = "sha256-RugImy5pe/8WfMsF5UjwHEwKjhsnwPtcskuE9D6XjDk=";
     aarch64-linux = "sha256-K8UEzB0sS4pllXEfWwigevTzUw91Rqm2fRU0GwPCyCU=";
   };
   buildCommands = [
