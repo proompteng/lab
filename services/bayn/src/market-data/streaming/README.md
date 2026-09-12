@@ -52,6 +52,15 @@ does not grant authority to trade or establish actual consumer availability for 
 
 ## Historical experiments
 
+Live snapshots and historical observations share `selectStreamingInputs` for raw selection, exact feature revisions,
+candidate exclusions, and input validation. The live constructor separately requires observed availability and a
+complete Kafka source cut. Calling the shared selector cannot turn a simulated projection into live execution evidence.
+
+`createHistoricalMarketCursor` and `advanceHistoricalMarketCursor` accept ordered arrivals incrementally and retain
+only the projection's bounded history. Both the cursor and the existing JSON runner use the same arrival ordering and
+reducer. The JSON command below still has its explicit 500,000-record input limit and evaluates one observation; the
+incremental cursor is the input primitive for the full-session execution driver, not an execution or accounting receipt.
+
 ```sh
 node dist/streaming-replay-command.js --historical experiment.json
 ```
