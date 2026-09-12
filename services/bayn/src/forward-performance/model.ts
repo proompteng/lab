@@ -334,6 +334,7 @@ export interface ForwardPerformanceEvidenceInput {
   readonly transactions: readonly ForwardPerformanceTransactionEvidence[]
   readonly brokerFees?: readonly import('../broker/alpaca').FeeActivity[]
   readonly executionEvidence?: readonly ForwardPerformanceExecutionEvidence[]
+  readonly unverifiedDecisionHashes?: readonly string[]
   readonly marketVolumeEvidence?: readonly ForwardPerformanceMarketVolumeEvidence[]
   readonly ledgerTotals?: ForwardPerformanceLedgerTotals
   readonly cashYieldEvidenceRequired: boolean
@@ -398,6 +399,7 @@ export interface ForwardPerformanceReceiptMaterial {
     readonly openPositionCount: number
   }
   readonly executionQuality: {
+    readonly unverifiedDecisionHashes?: readonly string[]
     readonly status: ForwardPerformanceMeasurementStatus
     readonly reasonCodes: readonly ForwardPerformanceExecutionQualityReasonCode[]
     readonly evidenceHash: string | null
