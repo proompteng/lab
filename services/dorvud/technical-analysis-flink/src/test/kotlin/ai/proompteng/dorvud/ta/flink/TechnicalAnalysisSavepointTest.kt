@@ -31,10 +31,16 @@ class TechnicalAnalysisSavepointTest {
     fun hashes(
       enabled: Boolean,
       topology: FlinkTaConfig = config,
+      technical: Boolean = false,
     ): Map<String, Set<String>> {
       val env = StreamExecutionEnvironment.getExecutionEnvironment()
       env.parallelism = topology.parallelism
-      val graph = configureTechnicalAnalysisJob(env, topology, if (enabled) features else null)
+      val graph =
+        configureTechnicalAnalysisJob(
+          env,
+          topology,
+          if (enabled) features.copy(technicalTopic = if (technical) "torghut.technical-features.v1" else null) else null,
+        )
       val operators = graph.jobGraph.vertices.flatMap { it.operatorIDs }
       val identities = operators.map { (it.userDefinedOperatorID?.orElse(it.generatedOperatorID) ?: it.generatedOperatorID).toHexString() }
       assertEquals(identities.size, identities.toSet().size, "executable operators have unique restoration IDs")
@@ -46,6 +52,8 @@ class TechnicalAnalysisSavepointTest {
     }
     val original = hashes(false)
     val extended = hashes(true)
+    val technical = hashes(true, technical = true)
+    extended.forEach { (name, ids) -> assertTrue(technical[name]?.containsAll(ids) == true, "technical addition preserves: $name") }
     val legacyStatefulOperators =
       mapOf(
         "Source: ta-trades-source" to "cbc357ccb763df2852fee8c4fc7d55f2",

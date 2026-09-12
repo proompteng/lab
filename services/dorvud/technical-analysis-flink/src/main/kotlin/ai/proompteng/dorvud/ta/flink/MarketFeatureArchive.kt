@@ -168,15 +168,18 @@ internal fun configureMarketFeatureArchive(
   env: StreamExecutionEnvironment,
   config: MarketDataArchiveConfig,
   topic: String,
+  technical: Boolean = false,
 ) {
+  val family = if (technical) "technical-feature" else "market-feature"
+  val consumer = if (technical) "technical-features" else "features"
   require(topic !in config.routes) { "feature archive topic must differ from raw topics" }
   val source =
     KafkaSource
       .builder<ArchiveKafkaRecord>()
       .setBootstrapServers(config.bootstrapServers)
       .setTopics(topic)
-      .setGroupId("${config.groupId}-features-v1")
-      .setClientIdPrefix("${config.clientId}-features-v1")
+      .setGroupId("${config.groupId}-$consumer-v1")
+      .setClientIdPrefix("${config.clientId}-$consumer-v1")
       .setDeserializer(ArchiveKafkaRecordDeserializer())
       .setStartingOffsets(OffsetsInitializer.earliest())
       .setProperty("isolation.level", "read_committed")
@@ -221,23 +224,27 @@ internal fun configureMarketFeatureArchive(
           .build(),
       ).buildAtLeastOnce(connection)
   env
-    .fromSource(source.build(), WatermarkStrategy.noWatermarks(), "market-feature-archive-source")
-    .uid("market-feature-archive-source-v1")
-    .flatMap(ParseMarketFeatureArchive(config.routes))
+    .fromSource(source.build(), WatermarkStrategy.noWatermarks(), "$family-archive-source")
+    .uid("$family-archive-source-v1")
+    .flatMap(ParseMarketFeatureArchive(config.routes, technical))
     .returns(TypeInformation.of(ArchivedMarketFeature::class.java))
     .keyBy { ArchiveSourcePartition(it.sourceTopic, it.sourcePartition) }
     .sinkTo(sink)
-    .name("signal-intraday-features-archive")
-    .uid("signal-intraday-features-archive-v1")
+    .name(if (technical) "signal-technical-features-archive" else "signal-intraday-features-archive")
+    .uid(if (technical) "signal-technical-features-archive-v1" else "signal-intraday-features-archive-v1")
 }
 
 internal class ParseMarketFeatureArchive(
   private val routes: Map<String, ArchiveRoute>,
+  private val technical: Boolean = false,
 ) : RichFlatMapFunction<ArchiveKafkaRecord, ArchivedMarketFeature>() {
   private lateinit var rejected: Counter
 
   override fun open(openContext: OpenContext) {
-    rejected = runtimeContext.metricGroup.counter("market_feature_archive_rejected_total")
+    rejected =
+      runtimeContext.metricGroup.counter(
+        if (technical) "technical_feature_archive_rejected_total" else "market_feature_archive_rejected_total",
+      )
   }
 
   override fun flatMap(
@@ -245,7 +252,13 @@ internal class ParseMarketFeatureArchive(
     out: Collector<ArchivedMarketFeature>,
   ) {
     try {
-      out.collect(decodeArchivedMarketFeature(value, routes, System.currentTimeMillis()))
+      out.collect(
+        if (technical) {
+          decodeArchivedTechnicalFeature(value, routes, System.currentTimeMillis())
+        } else {
+          decodeArchivedMarketFeature(value, routes, System.currentTimeMillis())
+        },
+      )
     } catch (cause: IllegalArgumentException) {
       rejected.inc()
       val reason =

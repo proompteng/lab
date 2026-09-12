@@ -14,6 +14,7 @@ import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsIni
 import org.apache.flink.metrics.Counter
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction
+import org.apache.flink.streaming.api.graph.StreamGraph
 import org.apache.flink.util.Collector
 import org.apache.kafka.clients.producer.ProducerRecord
 import org.slf4j.LoggerFactory
@@ -24,10 +25,16 @@ internal data class RollingMarketFeatureConfig(
   val barsTopic: String,
   val universe: ArchiveUniverse,
   val producerRevision: String,
+  val technicalTopic: String? = null,
 ) : Serializable {
   companion object {
     fun fromEnv(env: Map<String, String> = System.getenv()): RollingMarketFeatureConfig? {
-      val topic = env["TA_MARKET_FEATURES_TOPIC"]?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+      val technical = env["TA_TECHNICAL_FEATURES_TOPIC"]?.trim()?.takeIf { it.isNotEmpty() }
+      val topic =
+        env["TA_MARKET_FEATURES_TOPIC"]?.trim()?.takeIf { it.isNotEmpty() } ?: run {
+          require(technical == null) { "technical features require the market feature branch" }
+          return null
+        }
 
       fun required(key: String) =
         requireNotNull(
@@ -46,12 +53,14 @@ internal data class RollingMarketFeatureConfig(
       require(symbolHash == canonicalSymbolHash(symbols)) { "feature universe hash mismatch" }
       require(required("ARCHIVE_CORE_FEED") == "iex") { "market features currently require IEX" }
       val barsTopic = required("ARCHIVE_CORE_BARS_TOPIC")
+      require(technical == null || (technical != topic && technical != barsTopic)) { "technical topic must be distinct" }
       require(topic != barsTopic) { "feature output must differ from its input" }
       return RollingMarketFeatureConfig(
         topic,
         barsTopic,
         ArchiveUniverse(required("ARCHIVE_CORE_UNIVERSE_ID"), symbolHash, symbols.toSet()),
         required("TORGHUT_TA_COMMIT"),
+        technical,
       )
     }
   }
@@ -61,7 +70,7 @@ internal fun configureRollingMarketFeatures(
   env: StreamExecutionEnvironment,
   ta: FlinkTaConfig,
   config: RollingMarketFeatureConfig,
-) {
+): StreamGraph? {
   val source =
     KafkaSource
       .builder<ArchiveKafkaRecord>()
@@ -81,12 +90,14 @@ internal fun configureRollingMarketFeatures(
       .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE)
       .setRecordSerializer(RollingMarketFeatureSerializer(config.topic))
   sink.setKafkaSecurity(ta)
-  env
-    .fromSource(source.build(), WatermarkStrategy.noWatermarks(), "market-feature-bars-source")
-    .uid("market-feature-bars-source-v1")
-    .flatMap(ParseArchiveBar(mapOf(config.barsTopic to ArchiveRoute("iex", config.universe))))
-    .returns(TypeInformation.of(IntradayBarRecord::class.java))
-    .filter { it.marketSession == "regular" && it.final }
+  val bars =
+    env
+      .fromSource(source.build(), WatermarkStrategy.noWatermarks(), "market-feature-bars-source")
+      .uid("market-feature-bars-source-v1")
+      .flatMap(ParseArchiveBar(mapOf(config.barsTopic to ArchiveRoute("iex", config.universe))))
+      .returns(TypeInformation.of(IntradayBarRecord::class.java))
+      .filter { it.marketSession == "regular" && it.final }
+  bars
     .keyBy(::rollingFeatureKey)
     .process(RollingMarketFeatureFunction(config.producerRevision))
     .name("rolling-market-features")
@@ -94,6 +105,11 @@ internal fun configureRollingMarketFeatures(
     .sinkTo(sink.build())
     .name("market-features-kafka")
     .uid("market-features-kafka-v1")
+  return config.technicalTopic?.let { topic ->
+    val previous = env.getStreamGraph(false)
+    configureTechnicalMarketFeatures(bars, ta, topic, config.producerRevision)
+    previous
+  }
 }
 
 internal class RollingMarketFeatureFunction(

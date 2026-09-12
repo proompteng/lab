@@ -40,10 +40,18 @@ class MarketDataArchiveJobTest {
 
   @Test
   fun `adding features retains raw source and sink savepoint identities`() {
-    fun hashes(features: Boolean): Map<String, String> {
+    fun hashes(
+      features: Boolean,
+      technical: Boolean = false,
+    ): Map<String, String> {
       val environment = StreamExecutionEnvironment.getExecutionEnvironment()
       val variables = validEnvironment() + if (features) mapOf("ARCHIVE_FEATURES_TOPIC" to "torghut.market-features.v1") else emptyMap()
-      configureMarketDataArchiveJob(environment, MarketDataArchiveConfig.fromEnv(variables))
+      configureMarketDataArchiveJob(
+        environment,
+        MarketDataArchiveConfig.fromEnv(variables).copy(
+          technicalFeaturesTopic = if (technical) "torghut.technical-features.v1" else null,
+        ),
+      )
       val graph = environment.streamGraph
       val hashes = StreamGraphHasherV2().traverseStreamGraphAndGenerateHashes(graph)
       return graph.streamNodes
@@ -52,6 +60,8 @@ class MarketDataArchiveJobTest {
     }
     val existing = hashes(false)
     val extended = hashes(true)
+    val technical = hashes(true, true)
+    extended.forEach { (name, hash) -> assertEquals(hash, technical[name], "technical archive preserves: $name") }
     assertEquals(4, existing.size)
     assertTrue(extended.size > existing.size)
     existing.forEach { (name, hash) -> assertEquals(hash, extended[name], "savepoint operator: $name") }

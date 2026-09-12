@@ -75,6 +75,7 @@ data class MarketDataArchiveConfig(
   val clickhouseFlushMs: Long,
   val clickhouseMaxRetries: Int,
   val featuresTopic: String? = null,
+  val technicalFeaturesTopic: String? = null,
 ) : Serializable {
   companion object {
     private const val serialVersionUID: Long = 1L
@@ -188,6 +189,7 @@ data class MarketDataArchiveConfig(
         clickhouseFlushMs = flushMs,
         clickhouseMaxRetries = maxRetries,
         featuresTopic = optional("ARCHIVE_FEATURES_TOPIC"),
+        technicalFeaturesTopic = optional("ARCHIVE_TECHNICAL_FEATURES_TOPIC"),
       )
     }
   }
@@ -307,7 +309,9 @@ internal fun configureMarketDataArchiveJob(
     .uid("signal-intraday-trades-archive-v1")
 
   // Keep generated IDs of the existing raw topology stable for savepoint restoration.
+  require(config.technicalFeaturesTopic == null || config.technicalFeaturesTopic != config.featuresTopic) { "feature topics must differ" }
   config.featuresTopic?.let { configureMarketFeatureArchive(environment, config, it) }
+  config.technicalFeaturesTopic?.let { configureMarketFeatureArchive(environment, config, it, technical = true) }
 }
 
 internal class ArchiveKafkaRecordDeserializer : KafkaRecordDeserializationSchema<ArchiveKafkaRecord> {

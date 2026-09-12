@@ -226,9 +226,18 @@ internal fun configureTechnicalAnalysisJob(
 
   // New sources change generated sink IDs; retain the legacy graph identities for savepoint restoration.
   val previous = env.getStreamGraph(false)
-  val previousHashes = StreamGraphHasherV2().traverseStreamGraphAndGenerateHashes(previous)
-  configureRollingMarketFeatures(env, config, features)
+  val rollingGraph = configureRollingMarketFeatures(env, config, features)
   val extended = env.streamGraph
+  rollingGraph?.let { preserveExistingOperatorIds(it, extended) }
+  preserveExistingOperatorIds(previous, extended)
+  return extended
+}
+
+internal fun preserveExistingOperatorIds(
+  previous: StreamGraph,
+  extended: StreamGraph,
+) {
+  val previousHashes = StreamGraphHasherV2().traverseStreamGraphAndGenerateHashes(previous)
   for (node in previous.streamNodes) {
     val retained =
       extended.getStreamNode(node.id) ?: extended.streamNodes.singleOrNull {
@@ -239,7 +248,6 @@ internal fun configureTechnicalAnalysisJob(
     require(retained.operatorName == node.operatorName) { "Existing savepoint operator identity changed: ${node.operatorName}" }
     retained.userHash = node.userHash ?: previousHashes.getValue(node.id).joinToString("") { "%02x".format(it) }
   }
-  return extended
 }
 
 private const val STATUS_SYMBOL = "ta"

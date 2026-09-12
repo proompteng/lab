@@ -1,0 +1,568 @@
+{
+    "material": {
+        "schemaVersion": "dorvud.technical-feature.v1",
+        "definitionId": "dorvud.technical-indicators-1m.v1",
+        "definitionHash": "600e5e7df1a00f5eb2d3f1790a31dde566d6657322753c2292bd70cc313d3ecc",
+        "provider": "alpaca",
+        "feed": "iex",
+        "delayClass": "real_time_exchange_only",
+        "universeId": "test-equity-v1",
+        "universeSymbolHash": "1eb44d625271a4eb75016f276d13783617c012685cb598f20ae93249164c0121",
+        "symbol": "AAPL",
+        "sessionDate": "2026-09-11",
+        "sessionPolicy": "alpaca.regular.new-york-date.v1",
+        "windowStartMs": 1789133400000,
+        "windowEndMs": 1789137060000,
+        "inputs": [
+            {
+                "eventTimeNanos": "1789133400000000000",
+                "ingestionTimeNanos": "1789133461000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "0",
+                "contentHash": "e1bd4da7247f3fc7a650ea59e17e6aa3c965ae5ac276f02d2e2052c87563e405"
+            },
+            {
+                "eventTimeNanos": "1789133460000000000",
+                "ingestionTimeNanos": "1789133521000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "1",
+                "contentHash": "6ae283d8c5f31c55ca7096f76ba6dfb636f8470c32f96bc22e4d2fc07998a7d2"
+            },
+            {
+                "eventTimeNanos": "1789133520000000000",
+                "ingestionTimeNanos": "1789133581000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "2",
+                "contentHash": "d85e4a817160e10aa9ddda862ec0f1fa0d9c2ee47a2e2c5a5f4bbc466beb54e5"
+            },
+            {
+                "eventTimeNanos": "1789133580000000000",
+                "ingestionTimeNanos": "1789133641000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "3",
+                "contentHash": "260a3e1cfdf1eaa8cb123021df3dc4bfb1aa0a94cf57fe5dd2912cfe258da1db"
+            },
+            {
+                "eventTimeNanos": "1789133640000000000",
+                "ingestionTimeNanos": "1789133701000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "4",
+                "contentHash": "d4a98fcc11f411583bb48af8d9b9762b9c847f7b1f2789afdb9a92bb363c9d46"
+            },
+            {
+                "eventTimeNanos": "1789133700000000000",
+                "ingestionTimeNanos": "1789133761000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "5",
+                "contentHash": "cb580e33504c55b1a84c3981cc8917dcf1a225d08e2140a86bc7a88a1a6321f9"
+            },
+            {
+                "eventTimeNanos": "1789133760000000000",
+                "ingestionTimeNanos": "1789133821000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "6",
+                "contentHash": "caef37ab4af94ab0e71ebf921a4c37cd1485a2ee6a5489fd63b2572654e5ad89"
+            },
+            {
+                "eventTimeNanos": "1789133820000000000",
+                "ingestionTimeNanos": "1789133881000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "7",
+                "contentHash": "0a478f2e9bf7ed90650522ea2a1c869fb68982b74e664f92a2f344a8a01c6370"
+            },
+            {
+                "eventTimeNanos": "1789133880000000000",
+                "ingestionTimeNanos": "1789133941000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "8",
+                "contentHash": "aad2d3d4772252b7c0d8ccfc24f4a4161724dcf9edd2727f5f0479125d156d6f"
+            },
+            {
+                "eventTimeNanos": "1789133940000000000",
+                "ingestionTimeNanos": "1789134001000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "9",
+                "contentHash": "32022cf70c2130dff7979c44660fd9bef221554a89ccd44551633fd920b7ef3e"
+            },
+            {
+                "eventTimeNanos": "1789134000000000000",
+                "ingestionTimeNanos": "1789134061000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "10",
+                "contentHash": "2f08d4130983e1da437c4763de5c145ef22aba8a11f33275bacba1df0263afde"
+            },
+            {
+                "eventTimeNanos": "1789134060000000000",
+                "ingestionTimeNanos": "1789134121000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "11",
+                "contentHash": "50ac7474405240c23a93303b2f0a5816889fd9c9e972d9d01ff764dcdc4d8658"
+            },
+            {
+                "eventTimeNanos": "1789134120000000000",
+                "ingestionTimeNanos": "1789134181000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "12",
+                "contentHash": "5b097140c0c02ccebeb356e3faad77813922d8e7f2dcc543bc81a279ba537dfc"
+            },
+            {
+                "eventTimeNanos": "1789134180000000000",
+                "ingestionTimeNanos": "1789134241000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "13",
+                "contentHash": "69df7c63e82c2837d63a9c622f103d75b0f3a453b1e5bafa32e0d1dde3e9c131"
+            },
+            {
+                "eventTimeNanos": "1789134240000000000",
+                "ingestionTimeNanos": "1789134301000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "14",
+                "contentHash": "1f3dae0b9a3cff681923bf1b19df1501ca272b2b7af1e0411090a6ab4486c860"
+            },
+            {
+                "eventTimeNanos": "1789134300000000000",
+                "ingestionTimeNanos": "1789134361000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "15",
+                "contentHash": "7923474e663cbc6ef58f95f3a789b193c1be5a4496724c6dc99cd7cbc2540298"
+            },
+            {
+                "eventTimeNanos": "1789134360000000000",
+                "ingestionTimeNanos": "1789134421000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "16",
+                "contentHash": "56366b56bca2a87b24d53dad22efe93a4a51df703bc3ec521238eba1c14f98b7"
+            },
+            {
+                "eventTimeNanos": "1789134420000000000",
+                "ingestionTimeNanos": "1789134481000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "17",
+                "contentHash": "9e8436fb64873b57d45546d164afe24b2bb2862620466b119baa5a2d2cf01eab"
+            },
+            {
+                "eventTimeNanos": "1789134480000000000",
+                "ingestionTimeNanos": "1789134541000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "18",
+                "contentHash": "1386678cf0cdd5e00ffddcd8d30efc0e040f53338f50d459970e123331a37401"
+            },
+            {
+                "eventTimeNanos": "1789134540000000000",
+                "ingestionTimeNanos": "1789134601000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "19",
+                "contentHash": "b9c9394db3ade3115f9238cb4f60af73d99855e69265e4f6412da6dd2830c5aa"
+            },
+            {
+                "eventTimeNanos": "1789134600000000000",
+                "ingestionTimeNanos": "1789134661000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "20",
+                "contentHash": "2ac8cc5030daa535efcc1cfbcbdddc3202924a48450ad0529c2a6767a7389760"
+            },
+            {
+                "eventTimeNanos": "1789134660000000000",
+                "ingestionTimeNanos": "1789134721000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "21",
+                "contentHash": "4f819b4f66899e84ca8936280bca8dfbf082f435849f2d0402445ffb37d970fd"
+            },
+            {
+                "eventTimeNanos": "1789134720000000000",
+                "ingestionTimeNanos": "1789134781000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "22",
+                "contentHash": "a23bca06c3d7d05659b2df530b22a018676057ccb44b8347937d4ec89142d374"
+            },
+            {
+                "eventTimeNanos": "1789134780000000000",
+                "ingestionTimeNanos": "1789134841000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "23",
+                "contentHash": "9d71653b14b4c62b58fa008cb499492401a49f7f03061b3c34f0f159a39b2544"
+            },
+            {
+                "eventTimeNanos": "1789134840000000000",
+                "ingestionTimeNanos": "1789134901000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "24",
+                "contentHash": "d8be6d09a42977409386447e60deb0f22d03a923c056d187ed0963babd3b82ad"
+            },
+            {
+                "eventTimeNanos": "1789134900000000000",
+                "ingestionTimeNanos": "1789134961000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "25",
+                "contentHash": "4f991aab12b48f2e6684172ada06067f15e56e071b016f89f679d5fe96e068db"
+            },
+            {
+                "eventTimeNanos": "1789134960000000000",
+                "ingestionTimeNanos": "1789135021000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "26",
+                "contentHash": "d682e36df77187af0608aec30f1f6f36cb8054ee9c0ed286acf747b3487a4482"
+            },
+            {
+                "eventTimeNanos": "1789135020000000000",
+                "ingestionTimeNanos": "1789135081000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "27",
+                "contentHash": "9edabfdb9d4ab729480847c955b3b6be761f95992a7a44da5739230ad39d13f4"
+            },
+            {
+                "eventTimeNanos": "1789135080000000000",
+                "ingestionTimeNanos": "1789135141000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "28",
+                "contentHash": "e3452f74c201ca768cb1c886058c6b48d2b5541d10c5137bc51783365c300e58"
+            },
+            {
+                "eventTimeNanos": "1789135140000000000",
+                "ingestionTimeNanos": "1789135201000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "29",
+                "contentHash": "a61c8deb7bb4739b5d02acf5990f3d3c4ef5c3c1bb329862e961a8513bbca5a9"
+            },
+            {
+                "eventTimeNanos": "1789135200000000000",
+                "ingestionTimeNanos": "1789135261000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "30",
+                "contentHash": "b3c50afb58c2e0d9c0e3e53c3f115a612545a1ef87ec646373b912975765ec70"
+            },
+            {
+                "eventTimeNanos": "1789135260000000000",
+                "ingestionTimeNanos": "1789135321000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "31",
+                "contentHash": "3dcdfb87ef881dc811a0ee7d6990a8bd8abb718ed24f05398b6c7c29d8f6b672"
+            },
+            {
+                "eventTimeNanos": "1789135320000000000",
+                "ingestionTimeNanos": "1789135381000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "32",
+                "contentHash": "679432c79c03f03f48703eaed1db736463d891bc9c3cc5325c87c8b0d3aea717"
+            },
+            {
+                "eventTimeNanos": "1789135380000000000",
+                "ingestionTimeNanos": "1789135441000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "33",
+                "contentHash": "93fe3e3ab12ad5014545d0439a9be23ab2e1635b00d8322d0970387028a6676e"
+            },
+            {
+                "eventTimeNanos": "1789135440000000000",
+                "ingestionTimeNanos": "1789135501000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "34",
+                "contentHash": "f4d2143d78f54c60c8b5a2cb7f74369bf8a51968edf8f72818995f7a678a440e"
+            },
+            {
+                "eventTimeNanos": "1789135500000000000",
+                "ingestionTimeNanos": "1789135561000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "35",
+                "contentHash": "7eeedd19a0cf77da38c1a7d5e0c701ca31d3b93a582b0161fb1bbf9de6c3d072"
+            },
+            {
+                "eventTimeNanos": "1789135560000000000",
+                "ingestionTimeNanos": "1789135621000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "36",
+                "contentHash": "dbc06bfd02594a60bfd8100941f371e5df1154915d81ec010a948af3e86ada62"
+            },
+            {
+                "eventTimeNanos": "1789135620000000000",
+                "ingestionTimeNanos": "1789135681000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "37",
+                "contentHash": "1c06a2d33fcb00b8c46ecdb318995777430a791aeb236f269a72e10cd9ad5e03"
+            },
+            {
+                "eventTimeNanos": "1789135680000000000",
+                "ingestionTimeNanos": "1789135741000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "38",
+                "contentHash": "3d7e56b1fab178e639f1376caa0cd7c9211a813ae176dbd06fcf14e8d3a8d8e3"
+            },
+            {
+                "eventTimeNanos": "1789135740000000000",
+                "ingestionTimeNanos": "1789135801000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "39",
+                "contentHash": "d54dbb9ebd41f22e82adf90d1563e7ccf633ae39fe50a6cb6eb50f0d3166aaac"
+            },
+            {
+                "eventTimeNanos": "1789135800000000000",
+                "ingestionTimeNanos": "1789135861000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "40",
+                "contentHash": "3b77160ef9c13c43a192a966c987493823912e4db45c65ec0497faa42fedbdf8"
+            },
+            {
+                "eventTimeNanos": "1789135860000000000",
+                "ingestionTimeNanos": "1789135921000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "41",
+                "contentHash": "f723b2c57ce3b6c20aeca7a4ee1adc87001364fb0d16a9c51d39e022183653a5"
+            },
+            {
+                "eventTimeNanos": "1789135920000000000",
+                "ingestionTimeNanos": "1789135981000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "42",
+                "contentHash": "6762bb78b5496bbab3f40cd846e60227548b3e9908dffa545b2d9b60cd8df2f7"
+            },
+            {
+                "eventTimeNanos": "1789135980000000000",
+                "ingestionTimeNanos": "1789136041000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "43",
+                "contentHash": "c972c8e6fb209c662658481a3ceba36cf97e7a85ca6c7f7f514346de13c95a82"
+            },
+            {
+                "eventTimeNanos": "1789136040000000000",
+                "ingestionTimeNanos": "1789136101000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "44",
+                "contentHash": "9d9eaa5e1ad946811f46a810a9fa678ef130e1a5c590dd066be54c841117ec31"
+            },
+            {
+                "eventTimeNanos": "1789136100000000000",
+                "ingestionTimeNanos": "1789136161000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "45",
+                "contentHash": "190ce5d2b06c1dcb2092e01809d15f98320a7c867cba85ce1052668b0275ca36"
+            },
+            {
+                "eventTimeNanos": "1789136160000000000",
+                "ingestionTimeNanos": "1789136221000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "46",
+                "contentHash": "517f3e35f1131cec169ec323b9d893c718bb8df2c682808315c48854dcf6af1d"
+            },
+            {
+                "eventTimeNanos": "1789136220000000000",
+                "ingestionTimeNanos": "1789136281000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "47",
+                "contentHash": "9552103943b05b867712ebb3bbc8312360e2352596fa79a288e694275088f641"
+            },
+            {
+                "eventTimeNanos": "1789136280000000000",
+                "ingestionTimeNanos": "1789136341000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "48",
+                "contentHash": "a0c022513f99c027f06436d1085cb376ec77a6301376d21ded59619f71c400e5"
+            },
+            {
+                "eventTimeNanos": "1789136340000000000",
+                "ingestionTimeNanos": "1789136401000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "49",
+                "contentHash": "bd98a2f576cce8b92311e2f1a03c503acb0bcc7f984a7c511e21f68165880365"
+            },
+            {
+                "eventTimeNanos": "1789136400000000000",
+                "ingestionTimeNanos": "1789136461000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "50",
+                "contentHash": "2621b3bb1718d6a470b07d33aeccb3717303191ba5d35faa7584d1b1d508ad3f"
+            },
+            {
+                "eventTimeNanos": "1789136460000000000",
+                "ingestionTimeNanos": "1789136521000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "51",
+                "contentHash": "b3d03a4e946dbf36c97f648cdcf969fbf8ff9dd21f83a2069ba3081b8bde2a18"
+            },
+            {
+                "eventTimeNanos": "1789136520000000000",
+                "ingestionTimeNanos": "1789136581000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "52",
+                "contentHash": "8a2cd93b54b0e744a232fa326bb0f33b5124f82de08783d0dd77e31de314316f"
+            },
+            {
+                "eventTimeNanos": "1789136580000000000",
+                "ingestionTimeNanos": "1789136641000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "53",
+                "contentHash": "048a21d12e51d498e22f1dbd93e639508a39ee3286b955cadb49b38e77eeb13b"
+            },
+            {
+                "eventTimeNanos": "1789136640000000000",
+                "ingestionTimeNanos": "1789136701000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "54",
+                "contentHash": "e605fda5aae2f61026603b62389e4014912037c19aeb4393bfae58f0a83c316b"
+            },
+            {
+                "eventTimeNanos": "1789136700000000000",
+                "ingestionTimeNanos": "1789136761000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "55",
+                "contentHash": "56dac5afd1adf2517746aa68eaa73ed4ebbb71c3634a4ff876f08ce0c29a7d70"
+            },
+            {
+                "eventTimeNanos": "1789136760000000000",
+                "ingestionTimeNanos": "1789136821000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "56",
+                "contentHash": "3a3787596ebfcb19f4eb5f0b7746d2b3785eb23c5da68dc61a0654e5aaa769a0"
+            },
+            {
+                "eventTimeNanos": "1789136820000000000",
+                "ingestionTimeNanos": "1789136881000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "57",
+                "contentHash": "9847679acfc1069aef6ad777e09e7f0ae041e53c738bcc68f607c2fbd0e8c6d6"
+            },
+            {
+                "eventTimeNanos": "1789136880000000000",
+                "ingestionTimeNanos": "1789136941000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "58",
+                "contentHash": "4a72fc4d8fa40389f9778e12cf08242739d311957b1c4ed32f6eff0148b45a0c"
+            },
+            {
+                "eventTimeNanos": "1789136940000000000",
+                "ingestionTimeNanos": "1789137001000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "59",
+                "contentHash": "c71a1ab05e5b15aa0a455e49c00c29a783c6eb190b16629d112f115aae9660f2"
+            },
+            {
+                "eventTimeNanos": "1789137000000000000",
+                "ingestionTimeNanos": "1789137061000000000",
+                "sourceTopic": "torghut.bars.1m.v1",
+                "sourcePartition": 0,
+                "sourceOffset": "60",
+                "contentHash": "349e563a9cfeec228bcedfbb3345a97b0775f525ef990771894176d5531ddc11"
+            }
+        ],
+        "values": {
+            "ema12PriceMicros": {
+                "status": "READY",
+                "value": "100000000"
+            },
+            "ema26PriceMicros": {
+                "status": "READY",
+                "value": "100000000"
+            },
+            "macdPriceMicros": {
+                "status": "READY",
+                "value": "0"
+            },
+            "macdSignalPriceMicros": {
+                "status": "READY",
+                "value": "0"
+            },
+            "macdHistogramPriceMicros": {
+                "status": "READY",
+                "value": "0"
+            },
+            "rsi14Micros": {
+                "status": "READY",
+                "value": "0"
+            },
+            "bollingerMiddlePriceMicros": {
+                "status": "READY",
+                "value": "100000000"
+            },
+            "bollingerUpperPriceMicros": {
+                "status": "READY",
+                "value": "100000000"
+            },
+            "bollingerLowerPriceMicros": {
+                "status": "READY",
+                "value": "100000000"
+            },
+            "weightedClose5mPriceMicros": {
+                "status": "READY",
+                "value": "100000000"
+            },
+            "weightedCloseSessionPriceMicros": {
+                "status": "READY",
+                "value": "100000000"
+            },
+            "vwap5mPriceMicros": {
+                "status": "READY",
+                "value": "99500000"
+            },
+            "vwapSessionPriceMicros": {
+                "status": "READY",
+                "value": "99500000"
+            },
+            "realizedVolatility60ReturnsPpm": {
+                "status": "READY",
+                "value": "0"
+            }
+        }
+    },
+    "featureId": "9a14a47abede7857b7e8161487d98c35126344966866da700a33120debdfae90",
+    "computedAtMs": 1789219800000,
+    "producerRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}
