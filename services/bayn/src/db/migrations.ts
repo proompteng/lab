@@ -1,3 +1,4 @@
+import positionCostBasis from '../../migrations/0067_position_cost_basis'
 import streamingAuthorityProtocol from '../../migrations/0066_streaming_authority_protocol'
 import streamingSnapshotReferences from '../../migrations/0065_streaming_snapshot_references'
 import { PgMigrator } from '@effect/sql-pg'
@@ -68,6 +69,7 @@ import brokerFeeAccounting from '../../migrations/0063_broker_fee_accounting'
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '67_position_cost_basis': positionCostBasis,
   '1_initial_schema': initialSchema,
   '2_paper_contracts': paperContracts,
   '3_intent_risk_clock': intentRiskClock,

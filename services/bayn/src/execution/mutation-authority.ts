@@ -288,6 +288,7 @@ const positionExposureIdentity = (positions: readonly Position[]) =>
       side: position.side,
       quantityMicros: position.quantityMicros,
       averageEntryPriceMicros: position.averageEntryPriceMicros,
+      ...(position.costBasisMicros === undefined ? {} : { costBasisMicros: position.costBasisMicros }),
     }))
     .sort((left, right) =>
       left.assetId < right.assetId ? -1 : left.assetId > right.assetId ? 1 : left.symbol.localeCompare(right.symbol),

@@ -251,6 +251,8 @@ export interface Position {
   readonly side: PositionSide
   readonly quantityMicros: string
   readonly averageEntryPriceMicros: string
+  /** Present on current broker responses; omitted only by legacy observations. */
+  readonly costBasisMicros?: string
   readonly marketPriceMicros: string
   readonly marketValueMicros: string
   readonly unrealizedPnlMicros: string
@@ -449,6 +451,7 @@ export const PositionResponseSchema = Schema.Struct({
   exchange: Schema.Enum(AssetExchange),
   asset_class: Schema.Enum(AssetClass),
   avg_entry_price: Decimal,
+  cost_basis: Decimal,
   qty: Decimal,
   side: Schema.Enum(PositionSide),
   market_value: Decimal,
