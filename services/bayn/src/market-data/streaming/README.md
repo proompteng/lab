@@ -19,7 +19,8 @@ request a fresh rebuild after a 30-second cooldown. Scope closure cancels consum
 Snapshots bind the consumer epoch, local receipt sequence, transport positions, raw rows and selected feature
 payloads. Separate pricing snapshots are retained when execution uses a different quote cut. PostgreSQL commits
 immutable references in the decision transaction. Restart verification requires the exact committed reference.
-Flink failure does not disable broker reconciliation or the existing close-window recovery path.
+Flink failure does not disable broker reconciliation or the existing close-window recovery path. Migration 0066
+adds intraday protocol v3 to the durable authority contracts while preserving v1/v2 history.
 
 ## Retained-input verification
 
