@@ -159,3 +159,45 @@ and exact accounting in real PostgreSQL and TigerBeetle. Recreating the runtime 
 The separate accounting test still checks reconnecting database clients. These fixtures do not establish full-session
 replay, process-crash recovery, or profitability; those require the session runner, retained source manifests, and
 closed-window economic reports.
+
+## Full calendar-session command
+
+```sh
+BAYN_REPLAY_POSTGRES_URL=postgresql://bayn:bayn@127.0.0.1:55432/bayn_replay \
+BAYN_REPLAY_TIGERBEETLE_ADDRESS=127.0.0.1:53000 \
+BAYN_REPLAY_TIGERBEETLE_CLUSTER_ID=20912 BAYN_REPLAY_TIGERBEETLE_LEDGER=70912 \
+node dist/session-replay-command.js --input session.json --arrivals source.ndjson --output new-run-directory
+```
+
+Run this command against separately provisioned local stores. It accepts only local PostgreSQL databases whose names
+end in `_replay`/`_test` (or `replay`/`test`) and a local TigerBeetle replica. It requires an unused PostgreSQL authority
+state and never clears either database. Give each attempt a distinct `replicate` in the frozen input; resetting
+PostgreSQL while retaining TigerBeetle under the same run ID is not a fresh run. Database clients close with the command. A 30-minute wall-clock deadline bounds a stalled offline run without changing its modeled session interval.
+The normal service composition does not load this command or its virtual clock.
+
+`bayn.execution-replay-session.v1` binds the calendar session, source manifest, unchanged source-controlled strategy
+and build, opening cash, IOC latency/liquidity/slippage/fee assumptions, and production polling/reconciliation cadence.
+It also retains asset metadata and its observation time. Asset eligibility captured after the session must explicitly
+use `counterfactual-current-asset-eligibility`; it cannot be described as historical as-of evidence. Embedded builds
+must match the input build; source invocations identify their build verification as `development-configured`.
+
+The `bayn.retained-replay-source.v1` manifest binds the SHA-256 of the complete NDJSON file, record count, export
+coverage interval, first/last arrival, partition bounds, universe, origin, and delivery policy. Each line uses
+`HistoricalMarketArrivalSchema`. The reader verifies the entire file before execution, then reads bounded chunks
+while retaining the production projection. It rejects duplicate/reversed Kafka coordinates, reversed availability,
+records outside the frozen cuts, and changed bytes/counts. It rehashes the consumed stream before a final report.
+There is no 500,000-record or single-observation limit on this path.
+
+The timeline advances available source records, the account-specific PostgreSQL clock, and the Effect clock together.
+Broker submission advances them to its declared arrival time before reading the execution quote. Database I/O does not
+consume modeled market time. The driver executes the native polling cadence from market open through the close,
+including the final boundary; the source-controlled strategy still applies its own warmup and order-risk rules.
+Closing equity is captured at the exact calendar close and fills receive a final reconciliation one millisecond later.
+
+The new output directory retains `input.json`, `passes.ndjson`, and a hashed `report.json` with broker state, closing
+equity, schedule counts, durable row counts, and the production reconciliation result. Preserve the source file and
+both databases alongside it. A report with missing inputs, failed passes, unresolved orders/positions or accounting
+mismatches is not acceptance. The command reports profitability as `UNPROVEN`: source coverage, realistic execution
+assumptions, independent sessions, and cost sensitivity still require evaluation. The existing durable integration
+test proves a native intent/fill/accounting path; it does not substitute for a retained full-session result or a
+full-process crash/restart test.

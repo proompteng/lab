@@ -93,6 +93,41 @@ const submit = (broker: Broker, order: Intent) =>
 const run = <A, E>(program: Effect.Effect<A, E, Scope.Scope>) =>
   Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(TestClock.layer())))
 
+test('historical arrival scheduler advances data before delivery without a wall-time polling loop', async () => {
+  const arrivals: number[] = []
+  const result = await run(
+    Effect.gen(function* () {
+      const broker = yield* setup({
+        advanceToArrival: (atMs) =>
+          Effect.sync(() => {
+            arrivals.push(atMs)
+          }).pipe(Effect.andThen(TestClock.setTime(atMs))),
+        quoteAt: (_symbol, atMs) =>
+          Effect.succeed(observedQuote({ ...quote, askPrice: arrivals.includes(atMs) ? 100.5 : 100 })),
+      })
+      const filled = yield* broker.mutation.submit(intent())
+      yield* broker.mutation.submit(intent())
+      return filled
+    }),
+  )
+  expect(arrivals).toEqual([startMs + 100])
+  expect(result.order.filledAveragePriceMicros).toBe('100500000')
+  expect(result.order.filledAt).toBe('2026-09-04T14:31:00.100Z')
+})
+
+test('an inaccurate historical scheduler cannot manufacture a fill', async () => {
+  const result = await run(
+    Effect.gen(function* () {
+      const broker = yield* setup({ advanceToArrival: (atMs) => TestClock.setTime(atMs + 1) })
+      const submitted = yield* Effect.exit(broker.mutation.submit(intent()))
+      return { submitted, state: yield* broker.snapshot }
+    }),
+  )
+  expect(Exit.isFailure(result.submitted)).toBe(true)
+  expect(result.state.fills).toEqual([])
+  expect(result.state.orders[0]?.order.status).toBe(OrderStatus.Canceled)
+})
+
 test('arrival quote drives partial IOC fill and the remainder is canceled once', async () => {
   const result = await run(
     Effect.gen(function* () {

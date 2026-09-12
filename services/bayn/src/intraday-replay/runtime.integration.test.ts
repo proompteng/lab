@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Clock, Effect, Fiber, Layer, Redacted, Ref, Result, Schema } from 'effect'
+import { Clock, Effect, Layer, Redacted, Ref, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { AssetClass, AssetExchange, AssetStatus, MarketCalendarResponseSchema } from '../broker/alpaca/model'
@@ -24,7 +24,7 @@ import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environ
 import { config as baseConfig, fixtureRuntime } from '../testing/runtime-fixtures'
 import { simulationFixture } from '../testing/simulated-streaming-fixture'
 import { utcInstantFromEpochMillis } from '../time'
-import { makeReplayBroker } from './broker'
+import { makeReplayBroker, ReplayBrokerFailure } from './broker'
 import { makeReplayExecutionRuntime } from './runtime'
 
 const durableTest = baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined ? test.skip : test
@@ -127,6 +127,13 @@ durableTest(
             ),
           ),
           quoteAt: (symbol) => Effect.succeed(cursor.projection.quotes.get(symbol)),
+          advanceToArrival: (atMs) =>
+            clock.advanceTo(utcInstantFromEpochMillis(atMs)).pipe(
+              Effect.andThen(TestClock.setTime(atMs)),
+              Effect.mapError(
+                (cause) => new ReplayBrokerFailure({ message: 'Cannot advance test arrival clock', cause }),
+              ),
+            ),
         })
         const passes = yield* Ref.make<unknown[]>([])
         const runtimeInput = {
@@ -143,16 +150,18 @@ durableTest(
           reconciliationPassTimeoutMs: 1000,
         }
         const runtime = yield* makeReplayExecutionRuntime(runtimeInput)
+        yield* clock.advanceTo(utcInstantFromEpochMillis(initialMs + 1))
+        yield* TestClock.setTime(initialMs + 1)
         for (let pass = 0; pass < 20; pass++) {
-          const execution = yield* runtime.advance.pipe(Effect.forkChild({ startImmediately: true }))
-          const tick = Effect.gen(function* () {
-            const nowMs = yield* Clock.currentTimeMillis
-            yield* clock.advanceTo(utcInstantFromEpochMillis(nowMs + 1))
-            yield* TestClock.adjust(1)
-          }).pipe(Effect.forever)
-          const advanced = yield* Fiber.join(execution).pipe(Effect.raceFirst(tick))
-          if (advanced.observation.result === 'FAILURE') break
+          const advanced = yield* runtime.advance
+          if (advanced.observation.result === 'FAILURE' || (yield* broker.snapshot).fills.length > 0) break
+          const nextMs = (yield* Clock.currentTimeMillis) + 1000
+          yield* clock.advanceTo(utcInstantFromEpochMillis(nextMs))
+          yield* TestClock.setTime(nextMs)
         }
+        const settledMs = (yield* Clock.currentTimeMillis) + 1
+        yield* clock.advanceTo(utcInstantFromEpochMillis(settledMs))
+        yield* TestClock.setTime(settledMs)
         const brokerState = yield* broker.snapshot
         const reconciliation = yield* runtime.reconcile
         const recreated = yield* makeReplayExecutionRuntime(runtimeInput)

@@ -60,6 +60,8 @@ export interface ReplayBrokerConfig {
   readonly fractionalTrading: boolean
   readonly assets: readonly AssetObservation[]
   readonly calendar: typeof MarketCalendarResponseSchema.Type
+  /** A historical runner advances retained arrivals and both clocks to this exact delivery instant. */
+  readonly advanceToArrival?: (atMs: number) => Effect.Effect<void, ReplayBrokerFailure>
   readonly quoteAt: (
     symbol: string,
     nowMs: number,
@@ -426,7 +428,15 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
             )
           if (existing === undefined) {
             const delivery = yield* Effect.gen(function* () {
-              yield* Effect.sleep(config.assumptions.latencyMs)
+              if (config.advanceToArrival === undefined) yield* Effect.sleep(config.assumptions.latencyMs)
+              else {
+                const expectedArrivalMs = Date.parse(observedAt) + config.assumptions.latencyMs
+                yield* config.advanceToArrival(expectedArrivalMs)
+                if ((yield* Clock.currentTimeMillis) !== expectedArrivalMs)
+                  return yield* new ReplayBrokerFailure({
+                    message: 'Historical arrival scheduler did not reach the exact broker delivery time',
+                  })
+              }
               const arrivedAtMs = yield* Clock.currentTimeMillis
               const arrivedAt = yield* now
               const quote = yield* config.quoteAt(intent.symbol, arrivedAtMs)
