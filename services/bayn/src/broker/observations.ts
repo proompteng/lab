@@ -327,7 +327,9 @@ const positionObservation = (
   evidence: ReadEvidence,
 ): Result.Result<PositionEventInput, BrokerObservationError> => {
   const position = {
-    schemaVersion: 'bayn.paper-position.v1' as const,
+    ...(value.costBasisMicros === undefined
+      ? { schemaVersion: 'bayn.paper-position.v1' as const }
+      : { schemaVersion: 'bayn.position.v2' as const, costBasisMicros: value.costBasisMicros }),
     accountId: value.accountId,
     symbol: value.symbol,
     quantityMicros: value.quantityMicros,

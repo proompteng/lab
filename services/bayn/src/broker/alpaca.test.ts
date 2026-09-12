@@ -930,6 +930,7 @@ describe('Alpaca paper reads', () => {
         side: PositionSide.Long,
         quantityMicros: '5000000',
         averageEntryPriceMicros: '100000000',
+        costBasisMicros: '500000000',
         marketPriceMicros: '120000000',
         marketValueMicros: '600000000',
         unrealizedPnlMicros: '100000000',
