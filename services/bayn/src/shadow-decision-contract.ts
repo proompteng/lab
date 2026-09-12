@@ -1593,6 +1593,10 @@ const executionMaterialIssues = (
           facts.state.dayStartEquityMicros !== riskContext.dayStartEquityMicros ||
           facts.state.peakEquityMicros !== riskContext.peakEquityMicros ||
           facts.state.marketDataSymbol !== target.symbol ||
+          (facts.state.entryQuote !== undefined &&
+            (executionMarketData === undefined ||
+              !('maximumQuoteAgeMs' in executionMarketData) ||
+              facts.state.entryQuote.maximumAgeMs !== executionMarketData.maximumQuoteAgeMs)) ||
           facts.state.marketDataHash !== expectedMarketDataHash ||
           facts.state.executionMarketDataHash !== executionMarketData?.contentHash ||
           facts.state.referencePriceMicros !==

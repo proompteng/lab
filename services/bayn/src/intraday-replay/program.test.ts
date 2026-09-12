@@ -201,8 +201,8 @@ describe('intraday replay program', () => {
       snapshot: (request, phase) => {
         const hiddenExcursion =
           phase === 'entry-pricing' &&
-          request.observedAt >= '2026-09-04T14:05:00.000Z' &&
-          request.observedAt < '2026-09-04T14:06:00.000Z'
+          request.observedAt >= '2026-09-04T14:05:10.000Z' &&
+          request.observedAt < '2026-09-04T14:05:12.000Z'
         return snapshotFor(request, phase === 'decision' ? { AAPL: 0.01 } : {}, {}, hiddenExcursion ? 1 : 100)
       },
     })
@@ -216,7 +216,7 @@ describe('intraday replay program', () => {
           decisionComputeMs: 0,
           planningReadMs: 0,
           planningComputeMs: 0,
-          commitMs: 120000,
+          commitMs: 8000,
           submissionMs: 0,
         },
       }),
@@ -276,8 +276,8 @@ describe('intraday replay program', () => {
           decisionComputeMs: 0,
           planningReadMs: 2000,
           planningComputeMs: 3000,
-          commitMs: 120000,
-          submissionMs: 120000,
+          commitMs: 1000,
+          submissionMs: 1000,
         },
       }),
       archive,
@@ -409,6 +409,37 @@ describe('intraday replay program', () => {
     expect(close.timeline.decisionReadCompletedAt).toBeNull()
     expect(Date.parse(close.timeline.submittedAt) - Date.parse(close.timeline.sourceCutoffAt)).toBe(6_245)
   })
+
+  test.each([8999, 9000, 12000])(
+    'honors the original quote deadline after %i ms of construction',
+    async (submissionMs) => {
+      const archive = makeArchive()
+      const report = await run(
+        replayInput([sessionDates[0]], {
+          calendar: [{ date: sessionDates[0], open: '09:30', close: '10:10' }],
+          operationalTiming: {
+            decisionReadMs: 0,
+            decisionComputeMs: 0,
+            planningReadMs: 0,
+            planningComputeMs: 0,
+            commitMs: 0,
+            submissionMs,
+          },
+        }),
+        archive,
+      )
+      const session = report.sessions[0]
+      if (submissionMs < 9000) {
+        expect(session?.fills.map((fill) => fill.side)).toEqual(['buy', 'sell'])
+      } else {
+        expect(session?.status).toBe('COMPLETE')
+        expect(session?.reason).toContain('entry pricing quote expired')
+        expect(session?.orders).toEqual([])
+        expect(session?.fills).toEqual([])
+        expect(session?.observations.some((item) => item.purpose === 'arrival')).toBe(false)
+      }
+    },
+  )
 
   test('consumes exact retained records only once their reader completion bound is reached', async () => {
     const evaluate = (decisionReadMs: number) => {
