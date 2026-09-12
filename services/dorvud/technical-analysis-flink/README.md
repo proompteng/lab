@@ -153,7 +153,8 @@ fixture lives in `services/bayn/src/market-data/features/fixtures/rolling-price-
 with the producing test, then verify the TypeScript decoder and inspect the resulting changes:
 
 ```sh
-./gradlew :technical-analysis-flink:test --tests '*RollingMarketFeaturesTest' -PwriteMarketFeatureFixture=true
+./gradlew :technical-analysis-flink:test --tests '*RollingMarketFeaturesTest' --tests '*TechnicalMarketFeaturesTest' -PwriteMarketFeatureFixture=true
+bunx oxfmt ../bayn/src/market-data/features/fixtures/*.json
 ```
 
 The definition binds a 5,000 ms cross-host clock allowance. Producer, input-ingestion, and archive clocks may differ within
