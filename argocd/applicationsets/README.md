@@ -93,3 +93,30 @@ that the dependent Traefik Application received the repository-assigned address.
 
 The former Harvester preparation command and manual child-ApplicationSet workflow were removed from this runbook. Their
 retained files are tracked for evidence-gated retirement in `docs/repository-cleanup-todo.md`.
+
+## Storage maintenance holds
+
+Product and platform ApplicationSets preserve the `argocd.argoproj.io/skip-reconcile` and
+`storage.proompteng.ai/ceph-remount-owner` annotations. This permits an authorized storage-maintenance operator to
+hold one Application while its owning controller stops and restarts a workload. The ApplicationSet must not remove
+that hold during volume detachment. No Application is paused by this configuration.
+
+Before taking a hold, verify the Application UID, settled revision, absence of active synchronization or promotion,
+and absence of another owner's annotations. Set both annotations atomically with UID/resourceVersion preconditions.
+While held, Argo status is stale; use native workload, quorum, PVC identity, and kernel mount checks. Remove only the
+owned annotations after the workload has recovered, then verify fresh Argo reconciliation. If detachment or recovery
+fails, retain the ownership receipt and recover the same operation before clearing its hold.
+
+Argo documents [skip reconciliation](https://argo-cd.readthedocs.io/en/stable/user-guide/skip_reconcile/) and
+[ApplicationSet annotation preservation](https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/Controlling-Resource-Modification/).
+
+## Pruning after Kargo maintenance
+
+Hermes and Forgejo use automatic Argo reconciliation in steady state on their
+Kargo-owned branches. The verified image and source still enter those branches
+only through their authorized Stages. This lets Argo prune obsolete generated
+ConfigMaps and completed maintenance resources: Kargo 1.11.4's `argocd-update`
+operation does not enable pruning itself. `PruneLast=true` keeps cleanup after
+workload health, and resource retention annotations protect recovery data.
+Their staged maintenance runbooks require a reviewed manual-policy change
+before quiescence and restore automatic reconciliation after acceptance.

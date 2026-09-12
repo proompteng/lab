@@ -1,0 +1,138 @@
+{
+  'apiVersion': 'batch/v1',
+  'kind': 'Job',
+  'metadata':
+    {
+      'name': 'clickhouse-native-20260910-v5-0',
+      'namespace': 'clickhouse-upgrade-acceptance',
+      'labels': { 'clickhouse.proompteng.ai/rehearsal': '20260910-v5' },
+      'annotations':
+        { 'argocd.argoproj.io/sync-options': 'Prune=false,Delete=false', 'argocd.argoproj.io/sync-wave': '0' },
+    },
+  'spec':
+    {
+      'backoffLimit': 0,
+      'activeDeadlineSeconds': 7200,
+      'template':
+        {
+          'metadata': { 'labels': { 'clickhouse.proompteng.ai/rehearsal': '20260910-v5' } },
+          'spec':
+            {
+              'automountServiceAccountToken': false,
+              'containers':
+                [
+                  {
+                    'command':
+                      [
+                        'python3',
+                        '-c',
+                        "import hashlib, json, os, runpy\nfrom pathlib import Path\nroot = Path('/proof/v5')\nretained = {}\nfor phase in ['v25_3', 'v25_8']:\n    source = Path('/proof/v4') / phase\n    for name in ['process-exit', 'server-exit', 'keeper-exit']:\n        if (source / name).read_text().strip() != '0':\n            raise RuntimeError('Retained phase did not exit cleanly: ' + phase)\n    retained[phase] = {\n        'job': 'clickhouse-native-20260910-v4-0',\n        'jobUID': 'd642c7d0-24e3-4896-9bbb-87eaeb17ae41',\n        'files': {p.name: hashlib.sha256(p.read_bytes()).hexdigest()\n                  for p in sorted(source.iterdir()) if p.is_file()},\n    }\n    (root / phase).symlink_to(source, target_is_directory=True)\nverifier = runpy.run_path('/scripts/verify-clickhouse-native-rehearsal.py')\nresult = verifier['verify'](root, Path('/scripts/expected-tables.tsv').read_text())\nresult.update(replica=os.environ['REPLICA'], backupManifestSHA256=os.environ['BACKUP_MANIFEST_SHA256'], retainedPhases=retained)\noutput = json.dumps(result, sort_keys=True)\n(root / 'native-acceptance.json').write_text(output + '\\n')\nprint(output, flush=True)\n",
+                      ],
+                    'env':
+                      [
+                        { 'name': 'REHEARSAL_GENERATION', 'value': 'v5' },
+                        { 'name': 'REPLICA', 'value': '0' },
+                        {
+                          'name': 'BACKUP_MANIFEST_SHA256',
+                          'value': 'e2111b73fcc4fdb344c00f95ebf0dbcefc720e932e0020a114d76be0229d9b42',
+                        },
+                      ],
+                    'image': 'mirror.gcr.io/python:3.14-bookworm@sha256:ecac9e212daacda8a702eae372fceebc0ee36f5805abe087880367e8d061fa5b',
+                    'imagePullPolicy': 'IfNotPresent',
+                    'name': 'verify',
+                    'resources':
+                      { 'limits': { 'cpu': '1', 'memory': '512Mi' }, 'requests': { 'cpu': '100m', 'memory': '128Mi' } },
+                    'securityContext':
+                      {
+                        'allowPrivilegeEscalation': false,
+                        'capabilities': { 'drop': ['ALL'] },
+                        'readOnlyRootFilesystem': true,
+                      },
+                    'terminationMessagePath': '/dev/termination-log',
+                    'terminationMessagePolicy': 'File',
+                    'volumeMounts':
+                      [
+                        { 'mountPath': '/proof', 'name': 'proof' },
+                        { 'mountPath': '/scripts', 'name': 'scripts', 'readOnly': true },
+                      ],
+                  },
+                ],
+              'dnsPolicy': 'ClusterFirst',
+              'enableServiceLinks': false,
+              'initContainers':
+                [
+                  {
+                    'command':
+                      [
+                        '/bin/bash',
+                        '-c',
+                        "clickhouse-client() {\n  command clickhouse-client --receive_timeout 1800 \"$@\"\n}\nexport -f clickhouse-client\nexec /bin/bash /scripts/native-rehearsal.sh\n",
+                      ],
+                    'env':
+                      [
+                        { 'name': 'REHEARSAL_GENERATION', 'value': 'v5' },
+                        { 'name': 'REHEARSAL_VERSION', 'value': 'v26_3' },
+                        { 'name': 'EXPECTED_VERSION', 'value': '26.3.16.10001' },
+                        { 'name': 'REPLICA', 'value': '0' },
+                        { 'name': 'BACKUP_DIRECTORY', 'value': 'upgrade-20260910-v1-replica-0' },
+                        {
+                          'name': 'BACKUP_MANIFEST_SHA256',
+                          'value': 'e2111b73fcc4fdb344c00f95ebf0dbcefc720e932e0020a114d76be0229d9b42',
+                        },
+                        { 'name': 'COMPATIBILITY', 'value': '25.8' },
+                        { 'name': 'HOME', 'value': '/fixture' },
+                      ],
+                    'image': 'altinity/clickhouse-server:26.3.16.10001.altinitystable@sha256:8526a7742e6ef707dee68107876b18d45570b0448f284d3c785eb2d2e4417a5e',
+                    'imagePullPolicy': 'IfNotPresent',
+                    'name': 'v26-3',
+                    'resources':
+                      { 'requests': { 'cpu': '2', 'memory': '2Gi' }, 'limits': { 'cpu': '4', 'memory': '6Gi' } },
+                    'securityContext':
+                      {
+                        'allowPrivilegeEscalation': false,
+                        'capabilities': { 'drop': ['ALL'] },
+                        'readOnlyRootFilesystem': true,
+                      },
+                    'terminationMessagePath': '/dev/termination-log',
+                    'terminationMessagePolicy': 'File',
+                    'volumeMounts':
+                      [
+                        { 'mountPath': '/source', 'name': 'source', 'readOnly': true },
+                        { 'mountPath': '/fixture', 'name': 'data' },
+                        { 'mountPath': '/proof', 'name': 'proof' },
+                        { 'mountPath': '/scripts', 'name': 'scripts', 'readOnly': true },
+                        { 'mountPath': '/tmp', 'name': 'tmp' },
+                      ],
+                  },
+                ],
+              'nodeSelector': { 'kubernetes.io/arch': 'amd64' },
+              'restartPolicy': 'Never',
+              'schedulerName': 'default-scheduler',
+              'securityContext':
+                {
+                  'fsGroup': 101,
+                  'fsGroupChangePolicy': 'OnRootMismatch',
+                  'runAsGroup': 101,
+                  'runAsNonRoot': true,
+                  'runAsUser': 101,
+                  'seccompProfile': { 'type': 'RuntimeDefault' },
+                },
+              'terminationGracePeriodSeconds': 120,
+              'volumes':
+                [
+                  {
+                    'name': 'source',
+                    'persistentVolumeClaim': { 'claimName': 'clickhouse-native-20260910-0-source', 'readOnly': true },
+                  },
+                  { 'name': 'data', 'persistentVolumeClaim': { 'claimName': 'clickhouse-native-20260910-0-data' } },
+                  { 'name': 'proof', 'persistentVolumeClaim': { 'claimName': 'clickhouse-native-20260910-0-proof' } },
+                  {
+                    'configMap': { 'defaultMode': 420, 'name': 'clickhouse-native-rehearsal-20260910-v4' },
+                    'name': 'scripts',
+                  },
+                  { 'emptyDir': { 'sizeLimit': '256Mi' }, 'name': 'tmp' },
+                ],
+            },
+        },
+    },
+}

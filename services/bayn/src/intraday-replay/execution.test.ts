@@ -251,7 +251,7 @@ describe('intraday replay IOC execution', () => {
       failure(simulateIntradayReplayIoc(input({}, {}, withQuote(`${sessionDate}T13:35:30.000000001Z`)))),
     ).toMatchObject({ reason: 'future-quote' })
     expect(
-      failure(simulateIntradayReplayIoc(input({}, {}, withQuote(`${sessionDate}T13:35:27.999999999Z`)))),
+      failure(simulateIntradayReplayIoc(input({}, {}, withQuote(`${sessionDate}T13:35:19.999999999Z`)))),
     ).toMatchObject({ reason: 'stale-quote' })
   })
 

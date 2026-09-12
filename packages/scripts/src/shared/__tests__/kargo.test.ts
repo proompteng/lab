@@ -133,6 +133,44 @@ const productImageCommonInputs = [
 ] as const
 
 const expected = {
+  bayn: {
+    creationCriteria: 'single',
+    images: [imageRepo('bayn')],
+    apps: ['bayn'],
+    includePaths: [
+      'services/bayn',
+      'packages/scripts/src/bayn',
+      'nix/images/bayn.nix',
+      'nix/images/bayn-runtime-root.nix',
+      'nix/images/bun-workspace-service.nix',
+      'nix/images/bun-workspace-deps-source.nix',
+      'nix/images/bun-workspace-deps-source.test.sh',
+      'nix/packages.nix',
+      'nix/cache-push.sh',
+      'nix/ci-nix-oci-summary.sh',
+      'nix/ci-run-timed.sh',
+      'nix/oci-inspect-archive.sh',
+      'nix/oci-push.sh',
+      'nix/verify-bayn-image-command.sh',
+      'nix/verify-bayn-image-command.test.sh',
+      'packages/scripts/src/shared/oci.ts',
+      'flake.nix',
+      'flake.lock',
+      'bun.lock',
+      'glob:**/package.json',
+      '.npmrc',
+      'bunfig.toml',
+      'patches',
+      'tsconfig.base.json',
+      '.github/actions/setup-nix-toolchain',
+      'glob:.github/workflows/bayn-*.yml',
+      '.github/workflows/common-monorepo.yml',
+      '.github/workflows/nix-oci-build-common.yml',
+      'argocd/applications/bayn',
+      'argocd/applications/kargo',
+      'argocd/applicationsets/product.yaml',
+    ],
+  },
   proompteng: {
     creationCriteria: 'single',
     images: [imageRepo('proompteng')],
@@ -329,6 +367,12 @@ const expected = {
       'argocd/applications/hermes',
     ],
   },
+  forgejo: {
+    creationCriteria: 'single',
+    images: [imageRepo('forgejo')],
+    apps: ['forgejo'],
+    includePaths: ['.github/workflows/forgejo-image-publish.yml', 'scripts/forgejo', 'argocd/applications/forgejo'],
+  },
   jangar: {
     creationCriteria: 'single',
     requiresBuildReceipt: true,
@@ -345,6 +389,7 @@ const expected = {
       '.github/workflows/jangar-post-deploy-verify.yml',
       'nix/oci-push.sh',
       'argocd/applications/jangar',
+      'argocd/bootstrap/jangar',
     ],
   },
   symphony: {
@@ -408,6 +453,7 @@ const expected = {
       'patches',
       'package.json',
       '.github/workflows/nix-oci-build-common.yml',
+      '.github/workflows/torghut-ta-build-push.yaml',
       'packages/scripts/src/shared/oci.ts',
       '.github/workflows/torghut-post-deploy-verify.yml',
       'nix/oci-push.sh',
@@ -494,7 +540,12 @@ const expected = {
     creationCriteria: 'single',
     images: [imageRepo('buzz')],
     apps: ['buzz'],
-    includePaths: ['third_party/buzz', '.github/workflows/buzz-relay-build-push.yml', 'argocd/applications/buzz'],
+    includePaths: [
+      'third_party/buzz',
+      '.github/workflows/buzz-relay-build-push.yml',
+      'argocd/applications/buzz',
+      'argocd/bootstrap/buzz',
+    ],
   },
 } as const
 
@@ -614,9 +665,6 @@ describe('Kargo direct-push GitOps contract', () => {
         )
       }
     }
-
-    expect(applications.get('bayn')?.targetRevision).toBe('codex/bayn-deploy')
-    expect(applications.get('bayn')?.annotations?.['kargo.akuity.io/authorized-stage']).toBeUndefined()
   })
 
   it('defines one automatic Warehouse for every promoted application group', () => {
@@ -725,6 +773,22 @@ describe('Kargo direct-push GitOps contract', () => {
     expect(git?.excludePaths).toEqual(excludePaths)
   })
 
+  it('pairs promoted Redis bootstrap selection with the matching publisher and Warehouse', () => {
+    for (const [name, workflowPath] of [
+      ['buzz', '.github/workflows/buzz-relay-build-push.yml'],
+      ['jangar', '.github/workflows/jangar-build-push.yaml'],
+    ]) {
+      const workflow = YAML.parse(readFileSync(workflowPath, 'utf8'))
+      const paths = workflow.on.push.paths.map((path: string) => path.replace(/\/\*\*$/, ''))
+      const subscriptions = byName(warehouses).get(name)?.spec?.subscriptions as Array<Record<string, any>>
+      const sourcePaths = subscriptions.find((subscription) => subscription.git)?.git?.includePaths
+      expect(sourcePaths).toEqual(paths)
+      expect(sourcePaths).toContain(`argocd/bootstrap/${name}`)
+      expect(sourcePaths).toContain(`argocd/applications/${name}`)
+      expect(applicationSetElements.find((element) => element.name === name)?.path).toBe(`argocd/applications/${name}`)
+    }
+  })
+
   it('keeps every stage direct, automatic, branch-backed, and free of pull-request promotion', () => {
     const stageMap = byName(stages)
     expect([...stageMap.keys()].sort()).toEqual(expectedStageNames)
@@ -799,7 +863,14 @@ describe('Kargo direct-push GitOps contract', () => {
 
       const argocdUpdate = steps.at(-1)
       expect(argocdUpdate?.retry).toEqual({
-        timeout: stageName === 'torghut' ? '1h45m0s' : '20m0s',
+        timeout:
+          stageName === 'torghut'
+            ? '1h45m0s'
+            : stageName === 'bilig'
+              ? '1h15m0s'
+              : stageName === 'forgejo'
+                ? '45m0s'
+                : '20m0s',
         errorThreshold: 3,
       })
       const apps = argocdUpdate?.config?.apps as Array<Record<string, any>>
@@ -883,7 +954,6 @@ describe('Kargo direct-push GitOps contract', () => {
     for (const manifest of [...warehouses, ...stages, project, projectConfig]) {
       expect(manifest.kind).not.toBe('Namespace')
     }
-    expect(expectedStageNames).not.toContain('bayn')
     expect(expectedStageNames).not.toContain('sag')
     expect(expectedStageNames).not.toContain('torghut-notebook')
     expect(expectedStageNames).not.toContain('torghut-ta')
