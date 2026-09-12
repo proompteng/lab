@@ -184,16 +184,15 @@ export type ReplayDatabaseConfig = Pick<RuntimeConfig, 'postgres' | 'tigerBeetle
 
 export const prepareFreshReplayDatabase = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
-  const existing = yield* sql<
-    Record<string, unknown>
-  >`SELECT to_regclass('public.authority_state') IS NOT NULL AS present`
-  if (existing[0]?.['present'] !== false) {
-    const occupied = yield* sql<Record<string, unknown>>`SELECT EXISTS(SELECT 1 FROM authority_state) AS occupied`
-    if (occupied[0]?.['occupied'] !== false)
-      return yield* new ReplayBrokerFailure({
-        message: 'Fresh replay requires an unused database; preserve both existing durable stores for recovery',
-      })
-  }
+  const existing = yield* sql<Record<string, unknown>>`SELECT EXISTS (
+    SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')
+  ) AS present`
+  if (existing[0]?.['present'] !== false)
+    return yield* new ReplayBrokerFailure({
+      message:
+        'Fresh replay requires an unused database with an empty public schema; preserve existing stores for recovery',
+    })
   yield* postgresMigrations
 })
 

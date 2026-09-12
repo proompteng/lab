@@ -76,6 +76,43 @@ describePostgres('PostgreSQL streaming decision source evidence', () => {
     )
   })
 
+  test('fresh replay preserves a pre-authority schema and its migration history', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+        yield* sql`CREATE TABLE schema_migrations (migration_id integer, name text)`
+        yield* sql`INSERT INTO schema_migrations VALUES (1, 'initial_schema')`
+        yield* sql`CREATE TABLE evaluation_runs (run_id text)`
+        yield* sql`INSERT INTO evaluation_runs VALUES ('preserve-pre-authority-evidence')`
+        const outcome = yield* Effect.exit(prepareFreshReplayDatabase)
+        expect(Exit.isFailure(outcome)).toBe(true)
+        expect(JSON.stringify(outcome)).toContain('Fresh replay requires an unused database')
+        expect(yield* sql`SELECT * FROM schema_migrations`).toEqual([{ migration_id: 1, name: 'initial_schema' }])
+        expect(yield* sql`SELECT * FROM evaluation_runs`).toEqual([{ run_id: 'preserve-pre-authority-evidence' }])
+        expect(yield* sql`SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename`).toEqual([
+          { tablename: 'evaluation_runs' },
+          { tablename: 'schema_migrations' },
+        ])
+      }),
+    )
+  })
+
+  test('fresh replay migrates only an empty public schema', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+        yield* prepareFreshReplayDatabase
+        expect(yield* sql`SELECT count(*)::int AS count FROM authority_state`).toEqual([{ count: 0 }])
+        const second = yield* Effect.exit(prepareFreshReplayDatabase)
+        expect(Exit.isFailure(second)).toBe(true)
+      }),
+    )
+  })
+
   test('simulation recovers only its committed source and cannot enter the live reference table', async () => {
     const fixture = simulationFixture()
     const result = await runtime.runPromise(
