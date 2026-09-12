@@ -229,6 +229,12 @@ not only its latest quote projection. A missing or different quote rejects resto
 unsettled IOC is rejected. This proves recovery after a retained broker commit; it does not model an independently
 durable broker's pending delivery queue.
 
+Before exposing a checkpoint file, the restart acceptance retains its hash in PostgreSQL's immutable
+`simulated_broker_checkpoints` table with source identity and broker observation time. A separate scoped connection commits it independently of the
+coordinator transaction that may be interrupted. Restore receives the expected hash from
+that independent store, never from the file being restored. This authenticates canceled and rejected orders as well
+as fills; removing a fill and rehashing a fabricated cancellation cannot replace the retained broker commit.
+
 ### Full-session native execution
 
 The image includes `session-replay-command.js` for one complete supplied exchange-calendar session. It consumes a
@@ -259,6 +265,11 @@ The command rejects remote or ambiguously parameterized database URLs, requires 
 and never acquires Alpaca credentials. It writes the input, per-pass observations and hashed report to a new directory.
 Its 30-minute wall deadline bounds stalled I/O without trimming simulated market hours. The command currently starts
 a fresh session; its broker restore primitive and process-restart acceptance do not imply CLI resume support.
+
+Source cuts must include every consecutive offset, including their endpoints. Filtered or transactional cuts with
+Kafka control-record gaps need independent completeness support before this command can accept them. The calendar
+may include subsequent exchange sessions for native cycle discovery at the close. Reports distinguish embedded
+source/strategy verification from the operator-declared image digest, which remains unverified input.
 
 Reports preserve failed passes, residual positions, execution costs, exact accounting and source limitations, and label
 profitability `UNPROVEN`. Component and restart tests do not replace a retained-data full-session economic study.

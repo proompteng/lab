@@ -56,7 +56,8 @@ export class ReplayBrokerFailure extends Data.TaggedError('ReplayBrokerFailure')
 export interface ReplayBrokerConfig {
   readonly runId: string
   readonly sourceManifestHash: string
-  readonly restoreCheckpoint?: unknown
+  /** expectedHash comes from the independent durable store, never from the supplied value. */
+  readonly restoreCheckpoint?: { readonly value: unknown; readonly expectedHash: string }
   readonly openingCashMicros: string
   readonly protocol: IntradayMomentumProtocol
   readonly assumptions: IntradayReplayIocAssumptions & { readonly latencyMs: number; readonly feeMultiplierPpm: number }
@@ -138,7 +139,11 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
     const restored =
       config.restoreCheckpoint === undefined
         ? undefined
-        : yield* Effect.fromResult(restoreReplayBrokerCheckpoint(config.restoreCheckpoint, config))
+        : yield* Effect.fromResult(restoreReplayBrokerCheckpoint(config.restoreCheckpoint.value, config))
+    if (restored !== undefined && restored.checkpointHash !== config.restoreCheckpoint?.expectedHash)
+      return yield* new ReplayBrokerFailure({
+        message: 'Checkpoint differs from the independently retained broker commit',
+      })
     if (restored !== undefined && Date.parse(restored.observedAt) !== (yield* Clock.currentTimeMillis))
       return yield* new ReplayBrokerFailure({ message: 'Broker restore clock must equal the checkpoint observation' })
     const brokerScope = yield* Effect.scope

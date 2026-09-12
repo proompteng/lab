@@ -1,3 +1,4 @@
+import { makeReplayCheckpointStore } from './checkpoint-store'
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Clock, Config, Effect, FileSystem, Layer, Redacted, Result, Schema } from 'effect'
@@ -73,6 +74,7 @@ const main = Effect.scoped(
     yield* Effect.gen(function* () {
       const sql = yield* PgClient.PgClient
       const fs = yield* FileSystem.FileSystem
+      const checkpointStore = yield* makeReplayCheckpointStore(config)
       const fixture = simulationFixture()
       const saved =
         mode === 'recover'
@@ -127,7 +129,14 @@ const main = Effect.scoped(
         ),
         quoteAt: (symbol) => Effect.succeed(cursor.projection.quotes.get(symbol)),
         advanceToArrival: advanceTo,
-        ...(saved === undefined ? {} : { restoreCheckpoint: saved }),
+        ...(saved === undefined
+          ? {}
+          : {
+              restoreCheckpoint: {
+                value: saved,
+                expectedHash: yield* checkpointStore.loadHash(runId, source.sourceManifestHash),
+              },
+            }),
       })
       const executionBroker =
         mode === 'recover'
@@ -143,6 +152,7 @@ const main = Effect.scoped(
                         const checkpoint = yield* broker.checkpoint
                         if (checkpoint.state.fills.length === 0)
                           return yield* new ReplayBrokerFailure({ message: 'Crash point requires a committed fill' })
+                        yield* checkpointStore.retain(checkpoint)
                         yield* fs.writeFileString(
                           checkpointPath + '.writing',
                           yield* Effect.fromResult(canonicalJsonV1Result(checkpoint)),

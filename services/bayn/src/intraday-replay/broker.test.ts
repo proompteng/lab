@@ -9,6 +9,7 @@ import { canonicalHashV1Result } from '../hash'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import { makeReplayBroker, ReplayBrokerFailure, type ReplayBrokerConfig } from './broker'
 import { positionSnapshot } from '../broker/observations'
+import { restoreReplayBrokerCheckpoint } from './broker-checkpoint'
 
 const runId = 'a'.repeat(64)
 const observedAt = '2026-09-04T14:31:00.000Z'
@@ -414,7 +415,10 @@ test('checkpoint restores exact fills, activities, request identity and idempote
       const broker = yield* setup()
       const original = yield* submit(broker, intent())
       const checkpoint = yield* broker.checkpoint
-      const restored = yield* makeReplayBroker({ ...config, restoreCheckpoint: checkpoint })
+      const restored = yield* makeReplayBroker({
+        ...config,
+        restoreCheckpoint: { value: checkpoint, expectedHash: checkpoint.checkpointHash },
+      })
       expect(yield* restored.snapshot).toEqual(yield* broker.snapshot)
       expect((yield* restored.read.orderByClientId(intent().clientOrderId)).value).toEqual(original.order)
       yield* restored.mutation.submit(intent())
@@ -445,11 +449,22 @@ test('checkpoint rejects changed economics, requests, source, configuration and 
       for (const changed of [changedCash, changedRequest]) {
         const { checkpointHash: _checkpointHash, ...material } = changed
         const resigned = { ...material, checkpointHash: Result.getOrThrow(canonicalHashV1Result(material)) }
-        expect((yield* Effect.exit(makeReplayBroker({ ...config, restoreCheckpoint: resigned })))._tag).toBe('Failure')
+        expect(
+          (yield* Effect.exit(
+            makeReplayBroker({
+              ...config,
+              restoreCheckpoint: { value: resigned, expectedHash: resigned.checkpointHash },
+            }),
+          ))._tag,
+        ).toBe('Failure')
       }
       expect(
         (yield* Effect.exit(
-          makeReplayBroker({ ...config, sourceManifestHash: 'd'.repeat(64), restoreCheckpoint: checkpoint }),
+          makeReplayBroker({
+            ...config,
+            sourceManifestHash: 'd'.repeat(64),
+            restoreCheckpoint: { value: checkpoint, expectedHash: checkpoint.checkpointHash },
+          }),
         ))._tag,
       ).toBe('Failure')
       expect(
@@ -457,12 +472,19 @@ test('checkpoint rejects changed economics, requests, source, configuration and 
           makeReplayBroker({
             ...config,
             assumptions: { ...config.assumptions, latencyMs: 200 },
-            restoreCheckpoint: checkpoint,
+            restoreCheckpoint: { value: checkpoint, expectedHash: checkpoint.checkpointHash },
           }),
         ))._tag,
       ).toBe('Failure')
       yield* TestClock.adjust(1)
-      expect((yield* Effect.exit(makeReplayBroker({ ...config, restoreCheckpoint: checkpoint })))._tag).toBe('Failure')
+      expect(
+        (yield* Effect.exit(
+          makeReplayBroker({
+            ...config,
+            restoreCheckpoint: { value: checkpoint, expectedHash: checkpoint.checkpointHash },
+          }),
+        ))._tag,
+      ).toBe('Failure')
     }),
   )
 })
@@ -514,7 +536,9 @@ test('checkpoint restoration verifies fill prices against the retained arrival q
         },
       }
       const forged = { ...material, checkpointHash: Result.getOrThrow(canonicalHashV1Result(material)) }
-      const outcome = yield* Effect.exit(makeReplayBroker({ ...config, restoreCheckpoint: forged }))
+      const outcome = yield* Effect.exit(
+        makeReplayBroker({ ...config, restoreCheckpoint: { value: forged, expectedHash: forged.checkpointHash } }),
+      )
       expect(outcome._tag).toBe('Failure')
     }),
   )
@@ -533,7 +557,60 @@ test('checkpoint restoration recomputes closing equity instead of trusting a reh
         state: { ...material.state, sessionCloses: [{ sessionDate: '2026-09-04', equityMicros: '1' }] },
       }
       const forged = { ...altered, checkpointHash: Result.getOrThrow(canonicalHashV1Result(altered)) }
-      expect((yield* Effect.exit(makeReplayBroker({ ...config, restoreCheckpoint: forged })))._tag).toBe('Failure')
+      expect(
+        (yield* Effect.exit(
+          makeReplayBroker({ ...config, restoreCheckpoint: { value: forged, expectedHash: forged.checkpointHash } }),
+        ))._tag,
+      ).toBe('Failure')
+    }),
+  )
+})
+
+test('an independently retained checkpoint hash rejects a forged zero-fill cancellation', async () => {
+  await run(
+    Effect.gen(function* () {
+      const broker = yield* setup()
+      yield* submit(broker, intent())
+      const checkpoint = yield* broker.checkpoint
+      const { checkpointHash: _hash, ...material } = checkpoint
+      const altered = {
+        ...material,
+        state: {
+          ...material.state,
+          ledger: {
+            ...material.state.ledger,
+            cashMicros: config.openingCashMicros,
+            executionFeesMicros: '0',
+            netRealizedPnlAfterCostsMicros: '0',
+            positions: [],
+            fills: [],
+          },
+          fills: [],
+          fees: [],
+          orders: material.state.orders.map((entry) => {
+            const { filledAt: _filledAt, filledAveragePriceMicros: _price, ...order } = entry.order
+            return {
+              ...entry,
+              order: {
+                ...order,
+                canceledAt: checkpoint.observedAt,
+                filledQuantityMicros: '0',
+                status: OrderStatus.Canceled,
+              },
+            }
+          }),
+        },
+      }
+      const forged = { ...altered, checkpointHash: Result.getOrThrow(canonicalHashV1Result(altered)) }
+      expect(Result.isSuccess(restoreReplayBrokerCheckpoint(forged, config))).toBe(true)
+      expect(
+        (yield* Effect.exit(
+          makeReplayBroker({
+            ...config,
+            restoreCheckpoint: { value: forged, expectedHash: checkpoint.checkpointHash },
+          }),
+        ))._tag,
+      ).toBe('Failure')
     }),
   )
 })
