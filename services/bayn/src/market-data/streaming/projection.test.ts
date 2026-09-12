@@ -203,6 +203,34 @@ describe('streaming raw and rolling feature projection', () => {
     expect(invalid.offsets.size).toBe(0)
   })
 
+  test('validates off-session payloads before ignoring their market data', () => {
+    for (const session of ['pre', 'post', 'overnight']) {
+      for (const record of [barRecord(0), quote, trade]) {
+        const outsideSession = {
+          ...record,
+          value: record.value.replace('"marketSession":"regular"', `"marketSession":"${session}"`),
+        }
+        expect(Result.getOrThrow(decodeRawMarketRecord(outsideSession, universe)).kind).toBe(RawMarketEventKind.Ignored)
+        const malformed = {
+          ...outsideSession,
+          value: JSON.stringify({ ...JSON.parse(outsideSession.value), payload: null }),
+        }
+        expect(Result.isFailure(decodeRawMarketRecord(malformed, universe))).toBe(true)
+      }
+    }
+    const state = incorporate([...raw(), featureRecord])
+    const malformed = {
+      ...quote,
+      offset: '2',
+      value: JSON.stringify({ ...JSON.parse(quote.value), marketSession: 'post', payload: null }),
+    }
+    expect(
+      Result.isFailure(
+        constructStreamingSnapshot(cutFor(incorporateMarketRecord(state, malformed, universe, end + 3000)), query),
+      ),
+    ).toBe(true)
+  })
+
   test('rejects unknown raw-envelope versions before interpreting their payloads', () => {
     for (const version of [1, 3]) {
       const future = { ...quote, value: quote.value.replace('"version":2', `"version":${version}`) }

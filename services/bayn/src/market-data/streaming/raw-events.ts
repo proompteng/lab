@@ -112,7 +112,6 @@ export const decodeRawMarketRecord = (
       (!Number.isSafeInteger(record.timestampMs) || Math.abs(record.timestampMs - Date.parse(ingestedAt)) > 5000)
     )
       return yield* Result.fail(fail('Kafka timestamp violates the producer clock contract'))
-    if (envelope.marketSession !== 'regular') return { kind: RawMarketEventKind.Ignored }
     const identity = {
       provider: envelope.provider,
       universe_id: universe.universeId,
@@ -136,6 +135,7 @@ export const decodeRawMarketRecord = (
         )
         if ((yield* canonicalRawTimestamp(payload.t)) !== eventAt)
           return yield* Result.fail(fail('bar payload timestamp differs from envelope'))
+        if (envelope.marketSession !== 'regular') return { kind: RawMarketEventKind.Ignored }
         const decoded = yield* decodeIntradayBarRows([
           {
             ...identity,
@@ -161,6 +161,7 @@ export const decodeRawMarketRecord = (
         )
         if ((yield* canonicalRawTimestamp(payload.t)) !== eventAt)
           return yield* Result.fail(fail('quote payload timestamp differs from envelope'))
+        if (envelope.marketSession !== 'regular') return { kind: RawMarketEventKind.Ignored }
         const decoded = yield* decodeIntradayQuoteRows([
           { ...identity, bid_price: payload.bp, bid_size: payload.bs, ask_price: payload.ap, ask_size: payload.as },
         ]).pipe(Result.mapError((cause) => fail('invalid raw quote row', cause)))
@@ -177,6 +178,7 @@ export const decodeRawMarketRecord = (
         )
         if ((yield* canonicalRawTimestamp(payload.t)) !== eventAt)
           return yield* Result.fail(fail('trade payload timestamp differs from envelope'))
+        if (envelope.marketSession !== 'regular') return { kind: RawMarketEventKind.Ignored }
         const decoded = yield* decodeIntradayTradeRows([{ ...identity, price: payload.p, size: payload.s }]).pipe(
           Result.mapError((cause) => fail('invalid raw trade row', cause)),
         )
