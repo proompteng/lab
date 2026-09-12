@@ -1,6 +1,7 @@
 # Bayn streaming market data and Flink features
 
-Status: Proposed implementation design. This document describes the requested architecture, not deployed behavior.
+Status: Implemented contract and PAPER cutover design. See [streaming operations](../../services/bayn/src/market-data/streaming/README.md)
+for the configured runtime and replay procedures; deployment and market-session evidence require current verification.
 Source baseline: `13c53e073a655fde7250d59b926e71d02ca6c2b9`, inspected September 12, 2026 UTC.
 The [current Bayn architecture](architecture.md) remains the reference for the existing runtime.
 
@@ -36,7 +37,7 @@ Raw quotes reach Bayn independently of feature production. An execution price mu
 when a slower feature window supplies the reason to enter. Flink feature updates do not submit orders or trigger a
 second trading scheduler. The account-keyed Restate controller continues to own execution cadence.
 
-## What exists today
+## Source baseline and change scope
 
 | Component           | Source-backed behavior                                                                              | Required change                                                                          |
 | ------------------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
