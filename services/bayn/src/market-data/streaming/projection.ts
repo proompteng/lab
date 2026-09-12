@@ -36,6 +36,8 @@ export interface StreamingProjection {
   readonly tradeHistory: ReadonlyMap<string, readonly ObservedMarketValue<IntradayTrade>[]>
   readonly minimumObservationMs: number
   readonly features: ReadonlyMap<string, readonly ObservedFeature[]>
+  /** The accepted feature for this disposition, including one too old for retained join history. */
+  readonly featureArrival: ObservedFeature | null
   readonly discardedRejectionsThroughMs: number
   readonly rejections: ReadonlyMap<
     string,
@@ -54,6 +56,7 @@ export const emptyStreamingProjection = (epoch: string): StreamingProjection => 
   tradeHistory: new Map(),
   minimumObservationMs: 0,
   features: new Map(),
+  featureArrival: null,
   discardedRejectionsThroughMs: -1,
   rejections: new Map(),
 })
@@ -129,7 +132,12 @@ const incorporateDecodedRecord = (
       : previous
   }
   const sequence = previous.sequence + 1
-  const state = { ...previous, sequence, offsets: new Map(previous.offsets).set(key, record.offset) }
+  const state = {
+    ...previous,
+    sequence,
+    featureArrival: null,
+    offsets: new Map(previous.offsets).set(key, record.offset),
+  }
   if (record.topic === universe.topics.features) {
     const parsed = Result.try({
       try: (): unknown => JSON.parse(record.value),
@@ -162,7 +170,7 @@ const incorporateDecodedRecord = (
     const features = [...existing, incoming]
       .toSorted((a, b) => b.value.material.windowEndMs - a.value.material.windowEndMs || b.sequence - a.sequence)
       .slice(0, 64)
-    return { ...state, features: new Map(state.features).set(material.symbol, features) }
+    return { ...state, featureArrival: incoming, features: new Map(state.features).set(material.symbol, features) }
   }
   const parsed = decodedEvent === undefined ? decodeRawMarketRecord(record, universe) : Result.succeed(decodedEvent)
   if (Result.isFailure(parsed)) return reject(state, record, availableAtMs, parsed.failure.reason)

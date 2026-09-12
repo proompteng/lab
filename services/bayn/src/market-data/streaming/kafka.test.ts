@@ -181,6 +181,31 @@ describe('Kafka bootstrap and scoped consumption', () => {
     expect(transport.closeCount).toBe(1)
   })
 
+  test('a slow optional lookup leaves the live projection and consumer running', async () => {
+    const transport = new FakeTransport()
+    let finishLookup: ((value: readonly KafkaPartitionPosition[]) => void) | undefined
+    await program(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-09-11T14:00:02Z'))
+        const projection = yield* makeKafkaMarketProjection(config, universe, () => transport)
+        yield* TestClock.adjust('2 seconds')
+        const original = yield* projection.read
+        transport.offsets = () =>
+          new Promise((resolve) => {
+            finishLookup = resolve
+          })
+        yield* TestClock.adjust('33 seconds')
+        expect(transport.closeCount).toBe(0)
+        expect((yield* projection.read).projection.epoch).toBe(original.projection.epoch)
+        expect(finishLookup).toBeDefined()
+        finishLookup?.(positions('0'))
+        yield* TestClock.adjust('1 second')
+        expect((yield* projection.read).projection.epoch).toBe(original.projection.epoch)
+      }),
+    )
+    expect(transport.closeCount).toBe(1)
+  })
+
   test('binds empty partitions and gaps without assuming contiguous message offsets', () => {
     const partitions = bootstrapKafkaPartitions(positions('10'), positions('100'), positions('-1'))
     expect(partitions.every((partition) => partition.startOffset === '100')).toBe(true)

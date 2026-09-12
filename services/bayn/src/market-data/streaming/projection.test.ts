@@ -83,6 +83,46 @@ const select = (state: ReturnType<typeof incorporate>, at = end + 3000) =>
   selectStreamingSymbolInputs(state, 'AAPL', start, end, at)
 
 describe('streaming raw and rolling feature projection', () => {
+  test('very late accepted features retain arrival evidence even when newer windows fill join history', () => {
+    const receivedAtMs = end + 65 * 60_000
+    let state = emptyStreamingProjection('late-feature-epoch')
+    for (let index = 1; index <= 64; index++) {
+      const shiftMs = index * 60_000
+      const material = {
+        ...feature.material,
+        windowStartMs: start + shiftMs,
+        windowEndMs: end + shiftMs,
+        inputs: feature.material.inputs.map((input) => ({
+          ...input,
+          eventTimeNanos: String(BigInt(input.eventTimeNanos) + BigInt(shiftMs) * 1_000_000n),
+          ingestionTimeNanos: String(BigInt(input.ingestionTimeNanos) + BigInt(shiftMs) * 1_000_000n),
+        })),
+      }
+      state = incorporateMarketRecord(
+        state,
+        {
+          ...featureRecord,
+          offset: String(index),
+          value: JSON.stringify({
+            ...feature,
+            material,
+            featureId: canonicalHashV1(material),
+            computedAtMs: feature.computedAtMs + shiftMs,
+          }),
+        },
+        universe,
+        receivedAtMs,
+      )
+    }
+    expect(state.features.get('AAPL')).toHaveLength(64)
+    const late = incorporateMarketRecord(state, { ...featureRecord, offset: '65' }, universe, receivedAtMs)
+    expect(late.features.get('AAPL')).toHaveLength(64)
+    expect(late.features.get('AAPL')?.some((entry) => entry.value.featureId === feature.featureId)).toBe(false)
+    expect(late.featureArrival?.value.featureId).toBe(feature.featureId)
+    if (late.featureArrival === null) throw new Error('late arrival measurement was lost')
+    expect(featureAvailabilityMeasurement(late.epoch, late.featureArrival).windowAvailabilityDelayMs).toBe(65 * 60_000)
+  })
+
   test('arrival measurements preserve real computation time and distinguish pending raw joins', () => {
     const pending = incorporate([featureRecord], end + 5000)
     const pendingMeasurements = projectionCoverageMeasurements(pending, ['AAPL'], end + 5000)

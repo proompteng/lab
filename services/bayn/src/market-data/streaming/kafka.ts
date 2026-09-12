@@ -291,10 +291,8 @@ export const makeKafkaMarketProjection = (
               projection = incorporateMarketRecord(projection, record, universe, clock.currentTimeMillisUnsafe())
               terminals.set(topicPartitionKey(record.topic, record.partition), record)
               if (record.topic === universe.topics.features && projection.sequence !== previousSequence) {
-                const incorporatedFeature = [...projection.features.values()]
-                  .flat()
-                  .find((entry) => entry.sequence === projection.sequence)
-                if (incorporatedFeature !== undefined)
+                const incorporatedFeature = projection.featureArrival
+                if (incorporatedFeature !== null)
                   yield* Effect.logInfo('Kafka feature incorporated', {
                     ...featureAvailabilityMeasurement(epoch, incorporatedFeature),
                     bootstrapComplete: ready,
@@ -355,7 +353,12 @@ export const makeKafkaMarketProjection = (
           while (true) {
             yield* Effect.sleep(Duration.seconds(30))
             const lookupStartedAtMs = yield* Clock.currentTimeMillis
-            const ends = yield* operation('read', () => transport.offsets(topics, -1n)).pipe(Effect.result)
+            // The SDK bounds requests and retries; an optional lookup must not use operation's whole-client timeout.
+            // Consumer-scope finalization still closes this request if the worker stops during the lookup.
+            const ends = yield* Effect.tryPromise({
+              try: () => transport.offsets(topics, -1n),
+              catch: (cause) => failure('read', 'Kafka read failed', cause),
+            }).pipe(Effect.result)
             const measuredAtMs = yield* Clock.currentTimeMillis
             yield* Effect.logInfo('Kafka market projection measurements', {
               schemaVersion: 'bayn.kafka-projection-measurements.v1',

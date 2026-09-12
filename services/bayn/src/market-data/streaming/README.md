@@ -63,7 +63,8 @@ PAPER operation do not establish profitability.
 
 ## Session measurements
 
-Each worker logs `Kafka feature incorporated` once per newly accepted semantic feature in its process epoch. The
+Each worker logs `Kafka feature incorporated` for accepted features before join-history retention can discard them.
+Retries of retained semantic IDs do not create another receipt; deduplicate by epoch and feature ID when aggregating. The
 `bayn.feature-availability.v1` record binds the feature ID and Kafka coordinates to its actual local receipt time,
 producer computation time, and window end. Compute session p50/p95/p99 from these records, grouped by epoch and symbol;
 exclude retained-data bootstrap and regenerated historical features from live-session latency statistics. Preserve
