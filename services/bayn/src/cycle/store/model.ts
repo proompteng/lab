@@ -1,3 +1,4 @@
+import type { StreamingVerifiedSnapshotReference } from '../../market-data/streaming/reference'
 import { Context, Data, Effect, Option, Result, Schema } from 'effect'
 import { isSqlError, type SqlError } from 'effect/unstable/sql/SqlError'
 
@@ -25,6 +26,7 @@ export interface CycleMutationReceipt {
 }
 
 export interface CycleDecisionBindingEvidence {
+  readonly streamingSnapshotReferences?: readonly StreamingVerifiedSnapshotReference[]
   readonly intradaySnapshotReferences?: readonly ArchiveVerifiedIntradaySnapshotReference[]
 }
 

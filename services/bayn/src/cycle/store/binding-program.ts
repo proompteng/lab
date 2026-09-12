@@ -1,3 +1,4 @@
+import type { StreamingVerifiedSnapshotReference } from '../../market-data/streaming/reference'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Match } from 'effect'
 
@@ -150,12 +151,16 @@ const makeCycleBindingProgramsDataFirst = (
     )
 
   const persistIntradaySnapshotReference = (
-    reference: ArchiveVerifiedIntradaySnapshotReference,
+    reference: ArchiveVerifiedIntradaySnapshotReference | StreamingVerifiedSnapshotReference,
   ): Effect.Effect<void, CycleStoreInternalError> =>
     Effect.gen(function* () {
       const manifest = reference.manifest
+      const table =
+        reference.schemaVersion === 'bayn.streaming-snapshot-reference.v1'
+          ? 'streaming_snapshot_references'
+          : 'intraday_snapshot_references'
       yield* sql`
-        INSERT INTO intraday_snapshot_references (
+        INSERT INTO ${sql(table)} (
           snapshot_id, schema_version, content_hash, observed_at, manifest
         ) VALUES (
           ${manifest.snapshotId}, ${reference.schemaVersion}, ${manifest.contentHash},
@@ -166,7 +171,7 @@ const makeCycleBindingProgramsDataFirst = (
       const [match] = yield* sql<{ matches: boolean }>`
         SELECT EXISTS (
           SELECT 1
-          FROM intraday_snapshot_references AS reference
+          FROM ${sql(table)} AS reference
           WHERE reference.snapshot_id = ${manifest.snapshotId}
             AND reference.schema_version = ${reference.schemaVersion}
             AND reference.content_hash = ${manifest.contentHash}
@@ -186,10 +191,14 @@ const makeCycleBindingProgramsDataFirst = (
   const persistDecisionEvidence = (
     evidence: CycleDecisionBindingEvidence | undefined,
   ): Effect.Effect<void, CycleStoreInternalError> =>
-    Effect.forEach(evidence?.intradaySnapshotReferences ?? [], persistIntradaySnapshotReference, {
-      concurrency: 1,
-      discard: true,
-    })
+    Effect.forEach(
+      [...(evidence?.intradaySnapshotReferences ?? []), ...(evidence?.streamingSnapshotReferences ?? [])],
+      persistIntradaySnapshotReference,
+      {
+        concurrency: 1,
+        discard: true,
+      },
+    )
 
   const requireDecisionEvidence = (document: CycleDecisionDocument): Effect.Effect<void, CycleStoreInternalError> =>
     queries

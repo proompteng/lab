@@ -20,6 +20,12 @@ import { WriterFenceLive } from '../execution/writer-fence'
 import { HttpServerLive } from '../http'
 import { Journal, JournalLive } from '../ledger'
 import { IntradayMarketData, IntradayMarketDataLive, type IntradayMarketDataService } from '../market-data'
+import { KafkaMarketProjectionLive } from '../market-data/streaming/kafka'
+import { streamingIntradayMarketDataLive } from '../market-data/streaming/service'
+import {
+  defaultIntradayMomentumProtocolDocument,
+  intradayMomentumFeatureTopic,
+} from '../strategy/intraday-momentum/protocol'
 import { sqlResource } from '../operations'
 
 type PostgresResourceConfig = Pick<LoadedRuntimeConfig, 'operationTimeoutMs' | 'postgres'>
@@ -68,6 +74,23 @@ const SignalMarketDataLive = (plan: ApplicationIdentity) => {
   return IntradayMarketDataLive.pipe(Layer.provide(clickHouse))
 }
 
+const WorkerMarketDataLive = (plan: ApplicationIdentity, postgres: ReturnType<typeof PostgresLive>) => {
+  const archive = SignalMarketDataLive(plan)
+  if (plan.config.kafka === undefined) return archive
+  const protocol = defaultIntradayMomentumProtocolDocument
+  const kafka = KafkaMarketProjectionLive(plan.config.kafka, {
+    universeId: protocol.universeId,
+    universeSymbolHash: protocol.universeSymbolHash,
+    symbols: protocol.universe,
+    topics: { ...protocol.sourceTopics, features: intradayMomentumFeatureTopic },
+  })
+  return streamingIntradayMarketDataLive(plan.config.kafka.shadowOnly).pipe(
+    Layer.provide(archive),
+    Layer.provide(kafka),
+    Layer.provide(postgres),
+  )
+}
+
 const PostgresLive = (config: PostgresResourceConfig) => {
   const client = sqlResource(PostgresClientResourceLive(config))
   const migrations = PostgresMigrationsLive(config).pipe(Layer.provide(client))
@@ -78,7 +101,7 @@ export const AutonomousApplicationResourcesLive = (plan: ApplicationPlanFor<'Aut
   const postgres = PostgresLive(plan.config)
   const journal = JournalResourceLive(plan.config)
   return Layer.mergeAll(
-    SignalMarketDataLive(plan),
+    WorkerMarketDataLive(plan, postgres),
     postgres,
     journal,
     CycleObservabilityResourceLive.pipe(Layer.provide(postgres)),
@@ -104,7 +127,7 @@ export const AutonomousWorkerApplicationResourcesLive = (plan: ApplicationPlanFo
   const postgres = PostgresLive(plan.config)
   const journal = JournalResourceLive(plan.config)
   return Layer.mergeAll(
-    SignalMarketDataLive(plan),
+    WorkerMarketDataLive(plan, postgres),
     postgres,
     journal,
     CycleObservabilityResourceLive.pipe(Layer.provide(postgres)),

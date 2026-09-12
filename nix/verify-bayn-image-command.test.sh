@@ -73,6 +73,14 @@ func main() {
 		if exists("/node-fail") {
 			os.Exit(99)
 		}
+		if len(os.Args) == 3 && os.Args[1] == "/app/services/bayn/dist/streaming-replay-command.js" && os.Args[2] == "--help" {
+			fmt.Println("Usage: bayn-streaming-replay --file <decision.json> | --decision <decision-content-hash>")
+			return
+		}
+		if len(os.Args) == 3 && os.Args[1] == "/app/services/bayn/dist/streaming-diagnostics-command.js" && os.Args[2] == "--help" {
+			fmt.Println("Usage: bayn-streaming-diagnostics --since <UTC-instant> | --help")
+			return
+		}
 		if len(os.Args) == 3 && os.Args[1] == "/app/services/bayn/dist/forward-performance-command.js" && os.Args[2] == "--help" {
 			fmt.Println("Usage: bayn-forward-performance [--authority-generation <sha256>] | --help")
 			return
@@ -133,6 +141,13 @@ ln -s /nix/store/test-bayn-runtime/app/services/bayn/dist/vendor-intraday-replay
   "${root}/app/services/bayn/dist/vendor-intraday-replay-command.js"
 ln -s /nix/store/test-bayn-runtime/app/services/bayn/dist/restate-execution-server.js \
   "${root}/app/services/bayn/dist/restate-execution-server.js"
+
+: > "${root}/nix/store/test-bayn-runtime/app/services/bayn/dist/streaming-replay-command.js"
+ln -s /nix/store/test-bayn-runtime/app/services/bayn/dist/streaming-replay-command.js \
+  "${root}/app/services/bayn/dist/streaming-replay-command.js"
+: > "${root}/nix/store/test-bayn-runtime/app/services/bayn/dist/streaming-diagnostics-command.js"
+ln -s /nix/store/test-bayn-runtime/app/services/bayn/dist/streaming-diagnostics-command.js \
+  "${root}/app/services/bayn/dist/streaming-diagnostics-command.js"
 
 pack_image() {
   tar -C "${root}" -cf "${work}/rootfs.tar" .

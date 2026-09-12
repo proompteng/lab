@@ -37,6 +37,7 @@ resources:
   - kafka-codex-username-secret.yaml
   - karapace.yaml
   - torghut-ws-kafkauser.yaml
+  - bayn-kafkauser.yaml
   - torghut-options-kafkauser.yaml
   - torghut-hyperliquid-feed-kafkauser.yaml
   - torghut-topics.yaml
