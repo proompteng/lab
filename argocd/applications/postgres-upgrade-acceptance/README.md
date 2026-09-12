@@ -1,5 +1,10 @@
 # PostgreSQL 18 recovery acceptance
 
+Retired from the platform ApplicationSet after the September 2026 upgrades.
+These manifests remain as tested reference fixtures; no active Argo application
+should deploy them. See the [retirement procedure](../../../docs/runbooks/cluster-stable-upgrades-2026-09.md#retiring-upgrade-test-resources)
+for backup preservation and cleanup. Re-enabling them requires a new reviewed rollout.
+
 This application owns upgrade recovery artifacts, separately from the Kargo-owned
 serving applications. The preparation generation `18-6-v1` requests fresh cold
 primary snapshots for `app-db`, `bilig-db`, `coder-cluster`, and `forgejo-db`.

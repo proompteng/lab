@@ -28,12 +28,8 @@ export const productionPaths = {
   safetyPolicies: 'argocd/applications/kube-router/safety-policies.yaml',
   preflightHook: 'argocd/applications/kube-router/preflight-hook.yaml',
   buzzPolicies: 'argocd/applications/buzz/networkpolicy.yaml',
-  clickhouseRehearsalPolicies: 'argocd/applications/clickhouse-upgrade-acceptance/preparation.yaml',
   grafanaRehearsalPolicies: 'argocd/applications/observability/grafana-upgrade-backup.yaml',
   mimirRehearsalPolicies: 'argocd/applications/observability/mimir-kafka-upgrade-backup.yaml',
-  postgresPreparationPolicies: 'argocd/applications/postgres-upgrade-acceptance/base/preparation.yaml',
-  postgresRecoveryPolicies: 'argocd/applications/postgres-upgrade-acceptance/base/recovery.yaml',
-  postgresThreeRecoveryPolicies: 'argocd/applications/postgres-upgrade-acceptance/base/three-source-recovery.yaml',
   proomptengPolicies: 'argocd/applications/proompteng/network-policy.yaml',
   restatePolicies: 'argocd/applications/restate/networkpolicy.yaml',
   restateExamplePolicies: 'argocd/applications/restate-example/networkpolicy.yaml',
@@ -64,13 +60,7 @@ export const productionPaths = {
 
 export const reviewedPolicySources = {
   buzz: ['buzzPolicies'],
-  'clickhouse-upgrade-acceptance': ['clickhouseRehearsalPolicies'],
   observability: ['grafanaRehearsalPolicies', 'mimirRehearsalPolicies'],
-  'postgres-upgrade-acceptance': [
-    'postgresPreparationPolicies',
-    'postgresRecoveryPolicies',
-    'postgresThreeRecoveryPolicies',
-  ],
   proompteng: ['proomptengPolicies'],
   restate: ['restatePolicies'],
   'restate-example': ['restateExamplePolicies'],

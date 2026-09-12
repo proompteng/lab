@@ -25,7 +25,11 @@ on each serving replica before taking its new CSI checkpoint. The committed
 `clickhouse-upgrade-25-8-checkpoints.yaml` adopts those completed checkpoints and
 records native Backup IDs, manifest SHA256 hashes and original PVC UIDs. Verify
 ReadyToUse snapshots and the retained source identities before activation.
-Retain all earlier native backups and rehearsal claims.
+Retain the earlier native backups and original production snapshot checkpoints.
+The completed rehearsal receipts and available logs are archived before the
+[authorized retirement](cluster-stable-upgrades-2026-09.md#retiring-upgrade-test-resources)
+removes the scratch rehearsal claims. Recovery uses a retained original snapshot
+restored into a fresh isolated claim, rather than a deleted rehearsal volume.
 
 ## Production sequence
 

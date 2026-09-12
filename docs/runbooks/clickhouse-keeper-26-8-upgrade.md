@@ -12,7 +12,11 @@ The isolated native qualification Job `keeper-native-20260910-v2` passed on
 then upgraded those same isolated files to 26.8. All 23,381 znodes, recursive
 counts, persistent canary value/stat/ACL, UUID and clean exits passed. Its source
 snapshot SHA256 is `97a2ca37c571b1584af15f0928b571ca0c33e872e47f2284f9b9322eaec0fd30`.
-The Job and isolated proof/source claims remain in `clickhouse-upgrade-acceptance`.
+The completed qualification receipts and available container logs are archived
+with the campaign evidence. The subsequent authorized retirement removes the
+Job and isolated proof/source claims; they are not recovery checkpoints. Original
+production snapshots and their retained contents remain available. See the
+[retirement procedure](cluster-stable-upgrades-2026-09.md#retiring-upgrade-test-resources).
 
 Before merging, verify retained VolumeSnapshot `keeper-production-26-8-20260910`
 is ReadyToUse with bound content. It was created from the original 1Gi PVC while
