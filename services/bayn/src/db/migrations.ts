@@ -1,3 +1,4 @@
+import simulatedExecutionClock from '../../migrations/0069_simulated_execution_clock'
 import simulatedSnapshotReferences from '../../migrations/0068_simulated_snapshot_references'
 import positionCostBasis from '../../migrations/0067_position_cost_basis'
 import streamingAuthorityProtocol from '../../migrations/0066_streaming_authority_protocol'
@@ -137,5 +138,6 @@ export const migrationLoader = PgMigrator.fromRecord({
   '64_partial_ioc_completion': partialIocCompletion,
   '65_streaming_snapshot_references': streamingSnapshotReferences,
   '68_simulated_snapshot_references': simulatedSnapshotReferences,
+  '69_simulated_execution_clock': simulatedExecutionClock,
   '66_streaming_authority_protocol': streamingAuthorityProtocol,
 })

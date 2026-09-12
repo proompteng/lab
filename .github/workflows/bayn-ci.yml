@@ -241,7 +241,9 @@ jobs:
       - name: Verify replay accounting with PostgreSQL and TigerBeetle
         env:
           BAYN_TEST_TIGERBEETLE_ADDRESS: 127.0.0.1:53000
-        run: bun test services/bayn/src/intraday-replay/durable-broker.integration.test.ts
+        run: |
+          bun test services/bayn/src/intraday-replay/durable-broker.integration.test.ts
+          bun test services/bayn/src/intraday-replay/runtime.integration.test.ts
       - name: Stop isolated replay TigerBeetle
         if: always()
         run: docker rm -f bayn-replay-tigerbeetle || true
