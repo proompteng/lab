@@ -157,6 +157,7 @@ export type ReconciliationIntegerSource =
   | 'fill-quantity'
   | 'order-filled-quantity'
   | 'position-average-price'
+  | 'position-cost-basis'
   | 'position-quantity'
   | 'projected-position-cost'
   | 'projected-position-quantity'

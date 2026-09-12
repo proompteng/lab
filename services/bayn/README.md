@@ -205,6 +205,18 @@ and any future cycle with durable execution work still prevent a sufficient rece
 
 ## Historical intraday replay
 
+`intraday-replay/broker.ts` supplies simulated broker read and mutation ports for the execution replay runtime.
+It accepts production LIMIT/IOC requests, resolves fills against quotes available after the declared arrival latency,
+and shares the IOC and cash/fee arithmetic with the existing replay. Accepted orders survive interruption of the
+submit response. Session closing equity must be captured at the calendar close before the next session can read its
+daily risk baseline. The adapter acquires no Alpaca client or credentials and uses a distinct `replay-<runId>` account.
+Its lifecycle tests are component evidence; the adapter alone does not prove a full-session execution or profitability.
+
+Current Alpaca position responses retain the broker's `cost_basis` as `bayn.position.v2`. Reconciliation compares that
+exact value with fill accounting instead of reconstructing it from rounded `avg_entry_price`. Migration 67 retains
+legacy position history and adds the versioned cost-basis column. Legacy `bayn.paper-position.v1` observations preserve
+their previous quantity-times-average comparison; new broker reads require the explicit cost basis.
+
 The intraday protocol admits quote and trade evidence up to 10 seconds old at the observation time. The previous
 2-second budget was shorter than the existing Kafka/Flink/ClickHouse delivery path: September 10 live samples showed
 SPY quote ages of 1.3–4.6 seconds despite roughly 40 milliseconds from provider event to websocket receipt. The

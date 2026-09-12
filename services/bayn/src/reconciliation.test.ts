@@ -331,6 +331,42 @@ describe('execution reconciliation', () => {
     ])
   })
 
+  test('uses broker cost basis without reconstructing it from rounded average entry price', () => {
+    const input = snapshot({
+      positions: [
+        {
+          ...position,
+          schemaVersion: 'bayn.position.v2',
+          quantityMicros: '3000000',
+          averageEntryPriceMicros: '100333333',
+          costBasisMicros: '301000000',
+        },
+      ],
+      projectedPositions: [{ symbol: position.symbol, quantityMicros: '3000000', costBasisMicros: '301000000' }],
+    })
+    expect(successOf(compareReconciliation(input)).discrepancies).toEqual([])
+    const drift = successOf(
+      compareReconciliation({
+        ...input,
+        positions: [
+          {
+            ...position,
+            schemaVersion: 'bayn.position.v2',
+            quantityMicros: '3000000',
+            averageEntryPriceMicros: '100333333',
+            costBasisMicros: '301000001',
+          },
+        ],
+      }),
+    )
+    expect(drift.discrepancies).toHaveLength(1)
+    expect(drift.discrepancies[0]).toMatchObject({
+      identity: `${position.symbol}:cost`,
+      expected: '301000000',
+      observed: '301000001',
+    })
+  })
+
   test('preserves reconciliation output above U128 and its exact evidence hashes', () => {
     const quantityMicros = '170141183460469231731687303715884105727'
     const result = successOf(

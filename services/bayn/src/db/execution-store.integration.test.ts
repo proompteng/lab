@@ -362,6 +362,39 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(result.counts).toEqual({ events: 3, snapshots: 1, valuations: 1 })
   })
 
+  test('persists exact broker cost basis beside legacy position history', async () => {
+    const sourceHash = hash('position-cost-basis-v2')
+    const legacy = positionEvent(sourceHash, 'NVDA', '3000000', '303000000')
+    const position = {
+      ...legacy.position,
+      schemaVersion: 'bayn.position.v2' as const,
+      averageEntryPriceMicros: '100333333',
+      costBasisMicros: '301000000',
+    }
+    const current: PositionEventInput = { ...legacy, position, contentHash: canonicalHashV1({ sourceHash, position }) }
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const events = yield* BrokerEventStore
+        const receipt = yield* events.ingestPositions(positionSnapshot(sourceHash, [current]))
+        const replay = yield* events.ingestPositions(positionSnapshot(sourceHash, [current]))
+        const sql = yield* PgClient.PgClient
+        const rows = yield* sql<{ schema_version: string; cost_basis_micros: string; content_hash: string }>`
+        SELECT p.schema_version, p.cost_basis_micros::text, e.content_hash
+        FROM positions p JOIN broker_events e ON e.event_id = p.event_id
+        WHERE p.snapshot_id = ${receipt.snapshotId}
+      `
+        return { receipt, replay, rows }
+      }),
+    )
+    expect(result.replay.snapshotId).toBe(result.receipt.snapshotId)
+    expect(result.rows).toHaveLength(1)
+    expect(result.rows[0]).toMatchObject({
+      schema_version: 'bayn.position.v2',
+      cost_basis_micros: '301000000',
+      content_hash: current.contentHash,
+    })
+  })
+
   test('resumes a prepared fill after a ledger failure without duplicating durable accounting', async () => {
     const fill = fillEvent('fill-buy-1', OrderSide.Buy, '3000000', '100000000')
     journalControl.failPosts = true
