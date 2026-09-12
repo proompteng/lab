@@ -177,11 +177,10 @@ const incorporateDecodedRecord = (
   if (Result.isFailure(parsed)) return reject(state, record, availableAtMs, parsed.failure.reason)
   const event = parsed.success
   if (event.kind === RawMarketEventKind.Ignored) return state
+  const ingestedAtNanos = intradayInstantNanos(event.value.ingestedAt)
   if (
-    intradayInstantNanos(event.value.ingestedAt) >
-      (BigInt(availableAtMs + marketFeatureClockSkewAllowanceMs) + 1n) * 1_000_000n - 1n ||
-    intradayInstantNanos(event.value.ingestedAt) + BigInt(marketFeatureClockSkewAllowanceMs) * 1_000_000n <
-      intradayInstantNanos(event.value.eventAt)
+    ingestedAtNanos > (BigInt(availableAtMs + marketFeatureClockSkewAllowanceMs) + 1n) * 1_000_000n - 1n ||
+    ingestedAtNanos + BigInt(marketFeatureClockSkewAllowanceMs) * 1_000_000n < intradayInstantNanos(event.value.eventAt)
   )
     return reject(state, record, availableAtMs, 'availability')
   switch (event.kind) {
