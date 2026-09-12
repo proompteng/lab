@@ -48,6 +48,9 @@ const ForwardPerformanceCashYieldBindingSchema = Schema.Struct({
 })
 
 const ForwardPerformanceExecutionQualitySchema = Schema.Struct({
+  unverifiedDecisionHashes: Schema.optionalKey(
+    Schema.Array(Sha256Schema).check(Schema.isMinLength(1), Schema.isUnique()),
+  ),
   status: Schema.Union([Schema.Literal('MEASURED'), Schema.Literal('NOT_ELIGIBLE'), Schema.Literal('UNDETERMINED')]),
   reasonCodes: Schema.Array(ReceiptStringSchema),
   evidenceHash: Schema.NullOr(Sha256Schema),
@@ -75,7 +78,19 @@ const ForwardPerformanceExecutionQualitySchema = Schema.Struct({
       lastTerminalOrderObservedAt: UtcInstantSchema,
     }),
   ),
-})
+}).check(
+  Schema.makeFilter((quality) => {
+    if (quality.unverifiedDecisionHashes === undefined) return true
+    const expectedHash = canonicalHashV1Result({ unverifiedDecisionHashes: quality.unverifiedDecisionHashes })
+    return (
+      quality.status === 'UNDETERMINED' &&
+      quality.implementationShortfall === null &&
+      quality.reasonCodes.includes('PLANNED_DECISION_EVIDENCE_GAP') &&
+      Result.isSuccess(expectedHash) &&
+      expectedHash.success === quality.evidenceHash
+    )
+  }),
+)
 
 const ForwardPerformanceObservedCapacitySchema = Schema.Struct({
   intradaySources: Schema.optionalKey(

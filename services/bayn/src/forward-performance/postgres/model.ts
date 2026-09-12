@@ -10,7 +10,7 @@ import {
   StrictNonEmptyStringSchema as NonEmptyString,
   strictParseOptions,
 } from '../../schemas'
-import { CycleDecisionDocumentSchema } from '../../shadow-decision-contract'
+import type { CycleDecisionDocument } from '../../shadow-decision-contract'
 import { IntradayPerformanceManifestSchema } from '../intraday-schema'
 import type {
   ForwardPerformanceCashYieldEvidence,
@@ -98,9 +98,12 @@ export const TransactionRow = Schema.Struct({
 export const CycleDecisionRow = Schema.Struct({
   cycle_id: Sha256,
   decision_hash: Sha256,
-  document: CycleDecisionDocumentSchema,
+  document: Schema.Unknown,
   created_at: Schema.Date,
 })
+export type VerifiedCycleDecisionRow = Omit<typeof CycleDecisionRow.Type, 'document'> & {
+  readonly document: CycleDecisionDocument
+}
 export const MarketVolumeBindingRow = Schema.Struct({
   cycle_id: Sha256,
   snapshot_id: Sha256,
@@ -214,6 +217,7 @@ export interface ForwardPerformancePostgresEvidence {
   readonly ambiguousBrokerFeeCount?: number
   readonly transactionEvidence: readonly ForwardPerformanceTransactionEvidence[]
   readonly executionEvidence: readonly ForwardPerformanceExecutionEvidence[]
+  readonly unverifiedDecisionHashes?: readonly string[]
   readonly marketVolumeRequests: readonly ForwardPerformanceMarketVolumeRequest[]
   readonly receipts: readonly AccountingReceipt[]
   /** All accounting receipts paired with ledgerTransactions, for stable-account ledger replay. */

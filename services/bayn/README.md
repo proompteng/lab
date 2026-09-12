@@ -174,6 +174,9 @@ Without that option, the command evaluates account history, which may span retir
 Malformed or ambiguous arguments fail before configuration or evidence reads. A generation-scoped receipt still
 requires completed executions and exact accounting; operational readiness and an active research mandate do not
 establish profitability.
+Historical decisions that the current runtime cannot validate are listed by hash in `executionQuality.unverifiedDecisionHashes`.
+Their accounting remains reportable, but any such decision leaves execution quality and capacity `UNDETERMINED`.
+Native archive requests use durable intent symbols independently of decision validation; reporting cannot authorize an order.
 
 Completed native intraday cycles bind performance evidence to `intraday_snapshot_references`. The reader uses the
 same universe, IEX feed and exchange calendar as the decision, with the complete regular-session window, a fixed

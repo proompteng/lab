@@ -53,8 +53,8 @@ spec:
                     pod-security.kubernetes.io/audit: restricted
                     pod-security.kubernetes.io/warn: restricted
                   annotations:
-                    argocd.argoproj.io/sync-options: Prune=false
-                automation: auto
+                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+                automation: manual
                 enabled: "true"
               - name: clickhouse-upgrade-acceptance
                 path: argocd/applications/clickhouse-upgrade-acceptance
@@ -68,8 +68,8 @@ spec:
                     pod-security.kubernetes.io/audit: restricted
                     pod-security.kubernetes.io/warn: restricted
                   annotations:
-                    argocd.argoproj.io/sync-options: Prune=false
-                automation: auto
+                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+                automation: manual
                 enabled: "true"
               - name: clickhouse-operator
                 path: argocd/applications/clickhouse-operator

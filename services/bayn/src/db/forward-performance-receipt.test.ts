@@ -83,6 +83,25 @@ const envelopeMaterial = {
 const envelope = { ...envelopeMaterial, contentHash: canonicalHashV1(envelopeMaterial) }
 
 describe('forward-performance receipt persistence contract', () => {
+  test('retains unverified decision hashes only with undetermined execution quality', () => {
+    for (const status of ['UNDETERMINED', 'MEASURED'] as const) {
+      const unverifiedDecisionHashes = ['9'.repeat(64)]
+      const material = {
+        ...receiptMaterial,
+        executionQuality: {
+          ...receiptMaterial.executionQuality,
+          status,
+          reasonCodes: ['PLANNED_DECISION_EVIDENCE_GAP'],
+          unverifiedDecisionHashes,
+          evidenceHash: canonicalHashV1({ unverifiedDecisionHashes }),
+        },
+      }
+      const receipt = { ...material, receiptHash: canonicalHashV1(material) }
+      const value = { ...envelopeMaterial, receipt, receiptHash: receipt.receiptHash }
+      const decoded = decodeForwardPerformanceReceiptEnvelopeResult({ ...value, contentHash: canonicalHashV1(value) })
+      expect(decoded._tag).toBe(status === 'UNDETERMINED' ? 'Success' : 'Failure')
+    }
+  })
   test('rejects an envelope whose receipt only exposes a matching hash', () => {
     const decoded = decodeForwardPerformanceReceiptEnvelopeResult({
       schemaVersion: 'bayn.forward-performance-receipt-envelope.v1',
