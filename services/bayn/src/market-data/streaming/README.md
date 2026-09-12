@@ -11,7 +11,8 @@ A reviewed change to `BAYN_MARKET_DATA_MODE=streaming` selects streaming executi
 
 A replacement consumer captures partition bounds and rebuilds the required 30-minute window before serving inputs.
 Offsets are committed only after incorporation or explicit rejection. The projection retains 61 bar minutes, 512
-quote/trade updates and 64 feature revisions per symbol. An observation older than retained history fails.
+quote/trade updates and 64 feature revisions per symbol, plus 256 rejections per partition. Windows that need
+discarded rejection history fail verification. An observation older than retained history fails.
 Reassignment discards the old projection. Connection attempts are bounded; after exhaustion, a later read can
 request a fresh rebuild after a 30-second cooldown. Scope closure cancels consumption and closes the client.
 

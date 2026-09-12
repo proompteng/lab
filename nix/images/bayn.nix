@@ -38,7 +38,7 @@ let
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = {
     x86_64-linux = "sha256-Cw9ZS/ZLSaAXgTPkNzTGBLspoWMp2GXJE+qvBnbc6Fk=";
-    aarch64-linux = "sha256-7eHkNniN0mAv9vp0Ia7UidpKFOolvEcDyziUqNuQuvk=";
+    aarch64-linux = "sha256-K8UEzB0sS4pllXEfWwigevTzUw91Rqm2fRU0GwPCyCU=";
   };
   buildCommands = [
     "bun --cwd=services/bayn run tsc"

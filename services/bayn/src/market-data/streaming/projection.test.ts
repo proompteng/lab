@@ -241,6 +241,22 @@ const cutFor = (projection: ReturnType<typeof incorporate>): KafkaProjectionCut 
   }
 }
 describe('verified streaming decision snapshot', () => {
+  test('later rejection cannot erase the rejection applicable to an earlier observation', () => {
+    const initial = incorporate([...raw(), featureRecord], end + 2000)
+    expect(Result.isSuccess(constructStreamingSnapshot(cutFor(initial), query))).toBe(true)
+    const malformed = (offset: string) => ({ topic: universe.topics.features, partition: 0, offset, value: '{' })
+    const first = incorporateMarketRecord(initial, malformed('100'), universe, end + 2500)
+    const later = incorporateMarketRecord(first, malformed('101'), universe, end + 4000)
+    expect(Result.isFailure(constructStreamingSnapshot(cutFor(later), query))).toBe(true)
+    expect(later.rejections.get(`${universe.topics.features}:0`)).toHaveLength(2)
+    let bounded = first
+    for (let index = 0; index < 256; index++)
+      bounded = incorporateMarketRecord(bounded, malformed(String(101 + index)), universe, end + 2600 + index)
+    expect(bounded.rejections.get(`${universe.topics.features}:0`)).toHaveLength(256)
+    expect(bounded.discardedRejectionsThroughMs).toBe(end + 2500)
+    expect(Result.isFailure(constructStreamingSnapshot(cutFor(bounded), query))).toBe(true)
+  })
+
   test('binds calendar, exact raw receipts, selected feature and source cut without archive provenance', () => {
     const snapshot = Result.getOrThrow(
       constructStreamingSnapshot(cutFor(incorporate([...raw(), featureRecord])), query),

@@ -105,7 +105,8 @@ export const constructStreamingSnapshot = (
       cut.bootstrap.epoch !== state.epoch ||
       !kafkaBootstrapComplete(cut.bootstrap, cut.positions) ||
       cut.bootstrap.observedAtMs > observedAtMs ||
-      state.minimumObservationMs > observedAtMs
+      state.minimumObservationMs > observedAtMs ||
+      Date.parse(request.rangeStartAt) <= state.discardedRejectionsThroughMs
     )
       return yield* Result.fail(
         failure('not-ready', 'Streaming projection has no complete retained cut for this observation'),
@@ -121,12 +122,11 @@ export const constructStreamingSnapshot = (
     const sourcePositions = new Map(
       cut.positions.map((position) => [topicPartitionKey(position.topic, position.partition), BigInt(position.offset)]),
     )
-    for (const [key, rejection] of state.rejections) {
-      if (
-        rejection.availableAtMs >= Date.parse(request.rangeStartAt) &&
-        rejection.availableAtMs <= observedAtMs &&
-        sourcePositions.has(key)
+    for (const [key, history] of state.rejections) {
+      const rejection = history.find(
+        (entry) => entry.availableAtMs >= Date.parse(request.rangeStartAt) && entry.availableAtMs <= observedAtMs,
       )
+      if (rejection !== undefined && sourcePositions.has(key))
         return yield* Result.fail(
           failure('rows', `Streaming partition ${key} contains rejected input: ${rejection.reason}`),
         )

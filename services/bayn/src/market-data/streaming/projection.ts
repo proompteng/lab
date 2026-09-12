@@ -35,9 +35,10 @@ export interface StreamingProjection {
   readonly tradeHistory: ReadonlyMap<string, readonly ObservedMarketValue<IntradayTrade>[]>
   readonly minimumObservationMs: number
   readonly features: ReadonlyMap<string, readonly ObservedFeature[]>
+  readonly discardedRejectionsThroughMs: number
   readonly rejections: ReadonlyMap<
     string,
-    { readonly availableAtMs: number; readonly offset: string; readonly reason: string }
+    readonly { readonly availableAtMs: number; readonly offset: string; readonly reason: string }[]
   >
 }
 export const emptyStreamingProjection = (epoch: string): StreamingProjection => ({
@@ -51,6 +52,7 @@ export const emptyStreamingProjection = (epoch: string): StreamingProjection => 
   tradeHistory: new Map(),
   minimumObservationMs: 0,
   features: new Map(),
+  discardedRejectionsThroughMs: -1,
   rejections: new Map(),
 })
 export const topicPartitionKey = (topic: string, partition: number): string => `${topic}:${partition}`
@@ -70,14 +72,16 @@ const reject = (
   record: KafkaMarketRecord,
   availableAtMs: number,
   reason: string,
-): StreamingProjection => ({
-  ...state,
-  rejections: new Map(state.rejections).set(topicPartitionKey(record.topic, record.partition), {
-    availableAtMs,
-    offset: record.offset,
-    reason,
-  }),
-})
+): StreamingProjection => {
+  const key = topicPartitionKey(record.topic, record.partition)
+  const history = [...(state.rejections.get(key) ?? []), { availableAtMs, offset: record.offset, reason }]
+  const discarded = history.length > 256 ? history[history.length - 257] : undefined
+  return {
+    ...state,
+    discardedRejectionsThroughMs: Math.max(state.discardedRejectionsThroughMs, discarded?.availableAtMs ?? -1),
+    rejections: new Map(state.rejections).set(key, history.slice(-256)),
+  }
+}
 
 const incorporateDecodedRecord = (
   previous: StreamingProjection,
@@ -279,6 +283,8 @@ export const selectStreamingSymbolInputs = (
       .map((entry) => entry.value)
       .toSorted((a, b) => compareIntradayInstants(a.eventAt, b.eventAt))
     if (observedAtMs < state.minimumObservationMs) return yield* fail('observation precedes retained arrival history')
+    if (windowStartMs <= state.discardedRejectionsThroughMs)
+      return yield* fail('requested window precedes retained rejection history')
     const quote = state.quoteHistory.get(symbol)?.findLast((entry) => entry.availableAtMs <= observedAtMs)
     const trade = state.tradeHistory.get(symbol)?.findLast((entry) => entry.availableAtMs <= observedAtMs)
     if (
@@ -293,9 +299,8 @@ export const selectStreamingSymbolInputs = (
     )
     if (
       coordinates.some((coordinate) => {
-        const rejection = state.rejections.get(coordinate)
-        return (
-          rejection !== undefined && rejection.availableAtMs > windowStartMs && rejection.availableAtMs <= observedAtMs
+        return (state.rejections.get(coordinate) ?? []).some(
+          (rejection) => rejection.availableAtMs >= windowStartMs && rejection.availableAtMs <= observedAtMs,
         )
       })
     )
@@ -307,8 +312,11 @@ export const selectStreamingSymbolInputs = (
         feature.value.material.windowEndMs !== windowEndMs
       )
         continue
-      const rejection = state.rejections.get(topicPartitionKey(feature.topic, feature.partition))
-      if (rejection !== undefined && rejection.availableAtMs > windowStartMs && rejection.availableAtMs <= observedAtMs)
+      if (
+        (state.rejections.get(topicPartitionKey(feature.topic, feature.partition)) ?? []).some(
+          (rejection) => rejection.availableAtMs >= windowStartMs && rejection.availableAtMs <= observedAtMs,
+        )
+      )
         return yield* fail('feature partition has rejected records in the observation window')
       if (yield* featureMatchesBars(feature.value, bars))
         return { bars, quote: quote.value, trade: trade.value, feature }

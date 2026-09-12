@@ -67,21 +67,6 @@ spec:
               containerPort: 9080
               protocol: TCP
           env:
-            - name: BAYN_MARKET_DATA_MODE
-              value: shadow
-            - name: BAYN_KAFKA_BROKERS
-              value: kafka-kafka-bootstrap.kafka.svc.cluster.local:9092
-            - name: BAYN_KAFKA_USERNAME
-              value: bayn-market-data
-            - name: BAYN_KAFKA_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: bayn-market-data
-                  key: password
-            - name: BAYN_KAFKA_TIMESTAMP_POLICY
-              value: dorvud.producer-clock.v1
-            - name: BAYN_KAFKA_BOOTSTRAP_TIMEOUT_MS
-              value: "120000"
             - name: BAYN_CODE_REVISION
               value: ee60493eb5a9b5f8572e868b6ff31c17675501a3
             - name: BAYN_IMAGE_REPOSITORY
@@ -200,6 +185,21 @@ spec:
               value: "9080"
             - name: NODE_ENV
               value: production
+            - name: BAYN_MARKET_DATA_MODE
+              value: shadow
+            - name: BAYN_KAFKA_BROKERS
+              value: kafka-kafka-bootstrap.kafka.svc.cluster.local:9092
+            - name: BAYN_KAFKA_USERNAME
+              value: bayn-market-data
+            - name: BAYN_KAFKA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-market-data
+                  key: password
+            - name: BAYN_KAFKA_TIMESTAMP_POLICY
+              value: dorvud.producer-clock.v1
+            - name: BAYN_KAFKA_BOOTSTRAP_TIMEOUT_MS
+              value: "120000"
           startupProbe:
             tcpSocket:
               port: restate
