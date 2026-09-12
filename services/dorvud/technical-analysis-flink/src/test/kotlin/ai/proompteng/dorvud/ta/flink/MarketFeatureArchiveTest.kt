@@ -32,6 +32,14 @@ class MarketFeatureArchiveTest {
     assertEquals(archivedAt, decoded.archivedAtMs)
   }
 
+  @Test fun `non-object JSON is rejected through the normal validation path`() {
+    for (payload in listOf("[]", "null", "true", "1", "\"text\"", "{}", "{\"material\":[]}", "{\"material\":null}")) {
+      assertFailsWith<IllegalArgumentException> {
+        decodeArchivedMarketFeature(record().copy(value = payload), routes(), archivedAt)
+      }
+    }
+  }
+
   @Test fun `archive rejects tampered content and wrong universe`() {
     assertFailsWith<IllegalArgumentException> {
       decodeArchivedMarketFeature(record().copy(value = fixture().replace("131000000", "132000000")), routes(), archivedAt)

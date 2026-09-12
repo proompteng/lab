@@ -1,7 +1,7 @@
 package ai.proompteng.dorvud.ta.flink
 
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.JsonObject
 import org.apache.flink.api.common.eventtime.WatermarkStrategy
 import org.apache.flink.api.common.functions.OpenContext
 import org.apache.flink.api.common.functions.RichFlatMapFunction
@@ -42,7 +42,9 @@ internal fun decodeArchivedMarketFeature(
 ): ArchivedMarketFeature {
   val json = Json { encodeDefaults = true }
   val document = json.parseToJsonElement(record.value)
-  val suppliedMaterial = requireNotNull(document.jsonObject["material"]).jsonObject
+  require(document is JsonObject) { "feature document must be an object" }
+  val suppliedMaterial = document["material"]
+  require(suppliedMaterial is JsonObject) { "feature material must be an object" }
   require(listOf("schemaVersion", "definitionId", "definitionHash", "sessionPolicy").all { it in suppliedMaterial }) {
     "feature contract fields must be explicit"
   }
