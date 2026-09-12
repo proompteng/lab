@@ -109,7 +109,7 @@ const incorporateDecodedRecord = (
   featureRecordedAtMs = availableAtMs,
 ): StreamingProjection => {
   if (universe.topics.technicalFeatures !== undefined && record.topic === universe.topics.technicalFeatures)
-    return incorporateTechnicalRecord(previous, record, universe, availableAtMs, featureRecordedAtMs)
+    return incorporateTechnicalRecord(previous, record, universe, availableAtMs)
   if (
     !Number.isSafeInteger(record.partition) ||
     record.partition < 0 ||

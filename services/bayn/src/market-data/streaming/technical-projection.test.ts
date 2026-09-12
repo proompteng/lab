@@ -17,7 +17,7 @@ import {
 import { selectStreamingInputs } from './inputs'
 import { constructSimulatedSnapshot, constructStreamingSnapshot } from './snapshot'
 import { reproduceSimulatedSnapshot, reproduceStreamingSnapshot } from './replay'
-import { createHistoricalMarketCursor } from './historical'
+import { advanceHistoricalMarketCursor, createHistoricalMarketCursor } from './historical'
 import { KafkaBootstrapTimestampPolicy } from './bootstrap'
 
 const feature = Result.getOrThrow(
@@ -292,6 +292,40 @@ test('a new technical revision supersedes the previous value before matching raw
   expect(summarizeStreamingSymbol(updated, 'AAPL').technical?.matchedFeatures.map((value) => value.featureId)).toEqual([
     corrected.featureId,
   ])
+})
+
+test('rolling regeneration time cannot admit technical records computed after their arrival', () => {
+  const regeneratedAtMs = end + 86_400_000
+  const source = Result.getOrThrow(createHistoricalMarketCursor('d'.repeat(64), universe, regeneratedAtMs))
+  const rollingCursor = Result.getOrThrow(
+    advanceHistoricalMarketCursor(source, {
+      availableAtMs: observed,
+      record: {
+        topic: universe.topics.features,
+        partition: 0,
+        offset: '0',
+        value: JSON.stringify({ ...rolling, computedAtMs: regeneratedAtMs }),
+      },
+    }),
+  )
+  expect(rollingCursor.projection.features.get('AAPL')).toHaveLength(1)
+  const rejected = Result.getOrThrow(
+    advanceHistoricalMarketCursor(rollingCursor, {
+      availableAtMs: observed + 1,
+      record: {
+        ...record(),
+        timestampMs: regeneratedAtMs,
+        value: JSON.stringify({ ...feature, computedAtMs: regeneratedAtMs }),
+      },
+    }),
+  )
+  expect(rejected.projection.technicalFeatures.size).toBe(0)
+  expect(rejected.projection.technicalRejections[0]?.reason).toBe('technical-identity-or-availability')
+  expect(rejected.projection.features.get('AAPL')).toHaveLength(1)
+  const accepted = Result.getOrThrow(
+    advanceHistoricalMarketCursor(rejected, { availableAtMs: observed + 2, record: record('1') }),
+  )
+  expect(accepted.projection.technicalFeatures.get('AAPL')).toHaveLength(1)
 })
 
 test('live and simulated snapshots reproduce technical payload and provenance, rejecting tampering', () => {

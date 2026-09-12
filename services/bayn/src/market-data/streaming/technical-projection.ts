@@ -68,7 +68,6 @@ export const incorporateTechnicalRecord = (
   record: KafkaMarketRecord,
   universe: StreamingUniverse,
   availableAtMs: number,
-  recordedAtMs: number,
 ): StreamingProjection => {
   if (
     !Number.isSafeInteger(record.partition) ||
@@ -77,9 +76,7 @@ export const incorporateTechnicalRecord = (
     !/^(0|[1-9][0-9]*)$/.test(record.offset) ||
     BigInt(record.offset) > 9_223_372_036_854_775_807n ||
     !Number.isSafeInteger(availableAtMs) ||
-    availableAtMs < 0 ||
-    !Number.isSafeInteger(recordedAtMs) ||
-    recordedAtMs < 0
+    availableAtMs < 0
   )
     return rejectTechnical(previous, record, availableAtMs, 'invalid-technical-transport')
   const key = `${record.topic}:${record.partition}`
@@ -115,7 +112,7 @@ export const incorporateTechnicalRecord = (
     material.universeSymbolHash !== universe.universeSymbolHash ||
     !universe.symbols.includes(material.symbol) ||
     material.inputs.some((input) => input.sourceTopic !== universe.topics.bars) ||
-    feature.computedAtMs > recordedAtMs + marketFeatureClockSkewAllowanceMs ||
+    feature.computedAtMs > availableAtMs + marketFeatureClockSkewAllowanceMs ||
     (record.timestampMs !== undefined &&
       (!Number.isSafeInteger(record.timestampMs) ||
         Math.abs(record.timestampMs - feature.computedAtMs) > marketFeatureClockSkewAllowanceMs))

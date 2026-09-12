@@ -148,8 +148,9 @@ for subsequent strategy research, not a new claimed trading edge. The original i
 optional topic is unconfigured.
 
 Frozen replay sources can include `universe.topics.technicalFeatures`. That topic and its retained source bytes are
-bound to the run and reproduced cut. Raw, rolling and technical topics must be distinct. Regenerated input keeps
-actual computation time separate from explicitly supplied simulated availability. The historical economic study
+bound to the run and reproduced cut. Raw, rolling and technical topics must be distinct. The regeneration timestamp
+applies only to rolling features, retaining actual computation time separately from simulated availability. Original
+technical records must pass the normal computation-to-arrival clock bound. The historical economic study
 under `docs/bayn/evidence/2026-09-11-native-replay/` did not include technical indicators or modify the baseline.
 
 Enable the consumer after the reviewed producer/topic deployment. `Kafka technical feature incorporated` logs report
