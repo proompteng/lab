@@ -132,6 +132,22 @@ class RetainedFeatureReplayTest {
     assertEquals(arrivals.last().availableAtMs + 100, result.arrivals.last().availableAtMs)
   }
 
+  @Test fun `clock skew cannot reverse availability within the simulated output partition`() {
+    val ahead = arrival(30, 0).let { it.copy(availableAtMs = it.availableAtMs - 5000) }
+    val lagging = arrival(29, 1, 30, 101.0).copy(availableAtMs = ahead.availableAtMs + 1000)
+    val arrivals = input().take(60) + ahead + lagging
+    val source = bytes(arrivals)
+    val result = captureReplay(source, config(source, arrivals.size), clock)
+    assertEquals(4, result.arrivals.size)
+    assertTrue(
+      result.arrivals.zipWithNext().all { (left, right) ->
+        left.availableAtMs <= right.availableAtMs && left.record.offset.toLong() < right.record.offset.toLong()
+      },
+    )
+    assertEquals(start.plusSeconds(31 * 60).toEpochMilli() + 100, result.arrivals[2].availableAtMs)
+    assertEquals(result.arrivals[2].availableAtMs, result.arrivals[3].availableAtMs)
+  }
+
   @Test fun `hash count ordering and premature arrival failures cannot produce a receipt`() {
     val arrivals = input()
     val source = bytes(arrivals)

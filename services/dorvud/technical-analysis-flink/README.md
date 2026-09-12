@@ -120,3 +120,7 @@ The definition binds a 5,000 ms cross-host clock allowance. Producer, input-inge
 that bound; original timestamps are retained. Bayn eligibility still depends on its actual local receipt and the exact
 completed decision window. Invalid records increment rejection diagnostics and preserve previously accepted rolling
 state, so a single rejected input cannot erase 30 minutes of usable history.
+
+Simulated feature delivery is monotonic within its output partition. Each output is available at the later of its own
+modeled completion and the previous output availability. This preserves both Kafka offset order and arrival order
+when cross-host clock skew temporarily puts one symbol's completed window ahead of another symbol's input.

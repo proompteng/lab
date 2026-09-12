@@ -87,6 +87,7 @@ internal fun replayRetainedFeatures(
   val states = mutableMapOf<String, RollingFeatureState>()
   val offsets = mutableMapOf<Int, Long>()
   var outputCount = 0
+  var previousOutputAvailability = 0L
   var previous: RetainedFeatureArrival? = null
   var skipped = 0
   var recordedAt = clock.millis()
@@ -135,7 +136,12 @@ internal fun replayRetainedFeatures(
     val transition = advanceRollingFeature(states[key] ?: RollingFeatureState(), bar, computedAt, config.producerRevision)
     states[key] = transition.state
     transition.feature?.let { feature ->
-      val available = Math.addExact(maxOf(arrival.availableAtMs, feature.material.windowEndMs), config.processingDelayMs)
+      val available =
+        maxOf(
+          previousOutputAvailability,
+          Math.addExact(maxOf(arrival.availableAtMs, feature.material.windowEndMs), config.processingDelayMs),
+        )
+      previousOutputAvailability = available
       emit(
         RetainedFeatureArrival(
           available,
@@ -158,7 +164,9 @@ private data class RetainedFeatureReceipt(
   val skippedBars: Int,
   val recordedAtMs: Long,
   val coordinates: String = "isolated-simulation-partition-zero-offset-order",
-  val delivery: String = "max(triggering-raw-arrival,window-end)+processing-delay; actual computedAt is retained",
+  val delivery: String =
+    "max(previous-output-availability,max(triggering-raw-arrival,window-end)+processing-delay); " +
+      "actual computedAt is retained",
 )
 
 /** Offline only: no Kafka client, network endpoint, database or broker credentials. */
