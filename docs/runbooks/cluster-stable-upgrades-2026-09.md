@@ -240,22 +240,21 @@ Retirement order and checks:
    recovery objects tracked by the acceptance Applications already have Argo
    `Prune=false,Delete=false` protection. The original PostgreSQL snapshots are
    owned by the retained Backup objects in production namespaces.
-3. Pause only the three test Applications with the `argocd.argoproj.io/skip-reconcile`
-   annotation, which the platform ApplicationSet preserves. Require no sync in
-   progress. Before merging, add `Prune=false,Delete=false` to the two dedicated test
-   Namespaces with UID/resource-version preconditions, preserving their existing
-   annotations. Also protect the four rehearsal NetworkPolicies until all test
-   Pods stop, preserving isolation during shutdown. Read back these protections
-   while reconciliation is paused; an active app can restore old metadata. This blocks an
-   Application finalizer from cascading namespace deletion before ordered cleanup.
-   The shared `rook-ceph` namespace is neither an Application-owned resource nor
-   a deletion target.
-4. Merge the ApplicationSet removal and let root reconciliation retire the three
-   Applications. Once the entries are absent from the live ApplicationSet and
-   the Applications have deletion timestamps, clear their reconciliation pause
-   so normal resource finalization can proceed. Wait for them to disappear before deleting
-   retained test resources so self-healing cannot recreate them. Keep Argo and
-   Kubernetes finalizers intact.
+3. Merge the preparation change that sets both automatic acceptance entries to
+   `automation: manual` and records namespace `Prune=false,Delete=false` in the
+   ApplicationSet. The storage acceptance app is already manual. Verify the live
+   generated Applications have automated sync disabled and no sync in progress.
+   The skip-reconcile annotation alone did not prevent automatic operations in
+   this cluster and is not a retirement gate.
+4. Add `Prune=false,Delete=false` to the two dedicated test Namespaces and four
+   rehearsal NetworkPolicies with UID/resource-version preconditions, preserving
+   existing annotations. Verify the protections remain after a reconciliation
+   interval. Keep the policies until all test Pods stop. In a second reviewed
+   change, remove the three ApplicationSet entries. Let root reconciliation retire
+   the Applications, then wait for them to disappear before deleting retained
+   test resources. Keep Argo and Kubernetes finalizers intact. The shared
+   `rook-ceph` namespace is neither an Application-owned resource nor a deletion
+   target.
 5. Delete remaining rehearsal Cluster and Job objects normally with UID
    preconditions. Wait for all test Pods to stop before deleting their PVCs.
    The bounded targets are the PostgreSQL and ClickHouse acceptance namespaces
