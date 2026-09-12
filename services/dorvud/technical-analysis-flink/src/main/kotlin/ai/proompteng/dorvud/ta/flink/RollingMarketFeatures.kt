@@ -184,7 +184,7 @@ internal fun advanceRollingFeature(
   require(bar.low <= minOf(bar.open, bar.close) && bar.high >= maxOf(bar.open, bar.close) && bar.high >= bar.low) {
     "inconsistent feature range"
   }
-  require(bar.volume.isFinite() && bar.volume >= 0) { "invalid feature volume" }
+  featureMicros(bar.volume)
   val sessionDate =
     bar.eventTime
       .atZone(featureZone)

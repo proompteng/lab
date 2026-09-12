@@ -105,6 +105,16 @@ class RollingMarketFeaturesTest {
     assertNull(recovered.rejection)
   }
 
+  @Test fun `oversized volume cannot poison partially warmed state`() {
+    val previous = complete((0..11).toList()).state
+    val rejected = processRollingFeature(previous, bar(12).copy(volume = 10_000_000_000.0), computed, "test-revision")
+    assertEquals(previous, rejected.state)
+    assertNotNull(rejected.rejection)
+    var recovered = rejected
+    for (index in 12..29) recovered = processRollingFeature(recovered.state, bar(index), computed, "test-revision")
+    assertEquals(complete().feature, recovered.feature)
+  }
+
   @Test fun `timestamp overflow is rejected without losing warm history`() {
     val state = complete().state
     val malformed =
