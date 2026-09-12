@@ -158,7 +158,9 @@ export const buildNixRolloutReport = (input: {
     const missing = []
     if (!entry.nixImageAttr) missing.push('nix attr')
     if (!entry.buildScriptPath) missing.push('manual build script')
-    if (!entry.deployScriptPath) missing.push('manual deploy script')
+    if (!entry.deployScriptPath && !entry.workflowPaths.includes('argocd/applications/kargo')) {
+      missing.push('manual deploy script')
+    }
     if (entry.workflowPaths.length === 0) missing.push('workflow')
     return missing.length > 0 ? [`${entry.name}: missing ${missing.join(', ')}`] : []
   })

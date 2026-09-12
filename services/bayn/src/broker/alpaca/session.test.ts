@@ -156,7 +156,7 @@ describe('Alpaca broker session acquisition retry', () => {
       orderByClientId: 'NOT_FOUND',
     })
     expect(accountRequests).toBe(3)
-    expect(requests).toBe(11)
+    expect(requests).toBe(10)
     const renderedLogs = JSON.stringify(logs)
     expect(renderedLogs).not.toContain(key)
     expect(renderedLogs).not.toContain(secret)

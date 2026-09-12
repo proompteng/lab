@@ -25,7 +25,7 @@ from app.notebook_data import (
     strategy_lifecycle,
 )
 from app.notebook_data.fixtures import FIXTURE_AS_OF, fixture_query
-from app.notebook_data.models import QueryResult
+from app.notebook_data.models import FlowLane, QueryResult
 from app.notebook_data.queries import (
     ALL_QUERIES,
     DECISION_STATUS_QUERY,
@@ -423,6 +423,66 @@ def test_adapter_environment_selects_only_explicit_live_or_fixture_modes(
     monkeypatch.setenv("TORGHUT_NOTEBOOK_DATA_MODE", "automatic")
     with pytest.raises(NotebookDataError, match="exactly 'live' or 'fixture'"):
         adapter_from_environment()
+
+
+@pytest.fixture
+def clickhouse_only_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ("PGHOST", "PGDATABASE", "PGUSER", "PGPASSWORD", "TORGHUT_STATUS_URL"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("TORGHUT_NOTEBOOK_DATA_MODE", "live")
+    monkeypatch.setenv("CLICKHOUSE_URL", "http://clickhouse.example:8123")
+    monkeypatch.setenv("CLICKHOUSE_USER", "torghut_notebook")
+    monkeypatch.setenv("CLICKHOUSE_PASSWORD", "read-only")
+
+
+@pytest.mark.usefixtures("clickhouse_only_environment")
+@pytest.mark.parametrize("lane", ("equities", "options", "hyperliquid"))
+def test_live_market_data_flows_work_after_legacy_sources_retire(
+    monkeypatch: pytest.MonkeyPatch, lane: FlowLane
+) -> None:
+    requests: list[urllib.request.Request] = []
+
+    def response(request: urllib.request.Request, *, timeout: int) -> io.BytesIO:
+        assert timeout == 35
+        assert request.full_url.startswith("http://clickhouse.example:8123/")
+        requests.append(request)
+        rows = fixture_query(f"flow.{lane}", {}, row_limit=MAX_PROJECTED_ROWS).records
+        return io.BytesIO(json.dumps({"data": rows}).encode())
+
+    monkeypatch.setattr(urllib.request, "urlopen", response)
+    window = Window.sessions(1) if lane == "equities" else Window.minutes(30)
+    snapshot = flow_snapshot(lane, window)
+    assert snapshot.quality == "ok"
+    assert snapshot.datasets[lane]
+    assert snapshot.datasets["runtime_status"] == ()
+    assert any("TORGHUT_STATUS_URL" in message for message in snapshot.messages)
+    assert len(requests) == 1
+
+
+@pytest.mark.usefixtures("clickhouse_only_environment")
+@pytest.mark.parametrize("partial_postgres", (False, True))
+def test_retired_notebook_views_report_unavailable_without_network_calls(
+    monkeypatch: pytest.MonkeyPatch, partial_postgres: bool
+) -> None:
+    if partial_postgres:
+        monkeypatch.setenv("PGHOST", "retired.example")
+
+    def unexpected_connection(*args: object, **kwargs: object) -> None:
+        pytest.fail("retired notebook source attempted a network connection")
+
+    monkeypatch.setattr(urllib.request, "urlopen", unexpected_connection)
+    monkeypatch.setattr(
+        "app.notebook_data.adapters.psycopg.Connection.connect", unexpected_connection
+    )
+    for snapshot in (
+        strategy_lifecycle(None, Window.days(1)),
+        execution_evidence(None, Window.days(1)),
+        capital_authority(),
+    ):
+        assert snapshot.quality == "unavailable"
+        assert snapshot.datasets == {}
+        assert snapshot.row_count == 0
+        assert any("not configured" in message for message in snapshot.messages)
 
 
 def test_live_clickhouse_and_status_reads_are_bounded_and_typed(

@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { createServer, type Server } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -100,5 +100,56 @@ test('rejects database-copy failures even with the exact socket warning', async 
     expect(await runPolicy(output, hermesHome)).toBe(1)
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())))
+  }
+})
+
+test('accepts both 0.21 runtime sockets and rejects every unaccounted warning', async () => {
+  const hermesHome = await mkdtemp(join(tmpdir(), 'hermes-policy-'))
+  temporaryDirectories.push(hermesHome)
+  await mkdir(join(hermesHome, 'state'))
+  const gateway = await createUnixSocket(join(hermesHome, 'gateway.sock'))
+  const loopPath = 'state/gateway.loop-tick.1.sock'
+  const loop = await createUnixSocket(join(hermesHome, loopPath))
+  const loopWarning = `  ${loopPath}: [Errno 6] No such device or address: '${hermesHome}/${loopPath}'`
+  const output = gatewaySocketWarning(hermesHome, 2, loopWarning)
+  try {
+    expect(await runPolicy(output, hermesHome)).toBe(0)
+    expect(await runPolicy(output.replace('(2 files', '(1 files'), hermesHome)).toBe(1)
+    expect(await runPolicy(`${output}\n  state.db: permission denied`, hermesHome)).toBe(1)
+    expect(await runPolicy(`${output}\n${loopWarning}`, hermesHome)).toBe(1)
+    expect(await runPolicy(`${output}\n  Warnings (2 files skipped):`, hermesHome)).toBe(1)
+    expect(await runPolicy(`${output}\nSQLite safe copy failed`, hermesHome)).toBe(1)
+    expect(await runPolicy(`${output}\nRaw copy also failed`, hermesHome)).toBe(1)
+  } finally {
+    await Promise.all(
+      [gateway, loop].map(
+        (server) =>
+          new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
+      ),
+    )
+  }
+  expect(await runPolicy(output, hermesHome)).toBe(1)
+})
+
+test('rejects regular files and symlinks at the loop-tick socket path', async () => {
+  const hermesHome = await mkdtemp(join(tmpdir(), 'hermes-policy-'))
+  temporaryDirectories.push(hermesHome)
+  await mkdir(join(hermesHome, 'state'))
+  const gateway = await createUnixSocket(join(hermesHome, 'gateway.sock'))
+  const loopPath = 'state/gateway.loop-tick.1.sock'
+  const output = gatewaySocketWarning(
+    hermesHome,
+    2,
+    `  ${loopPath}: [Errno 6] No such device or address: '${hermesHome}/${loopPath}'`,
+  )
+  try {
+    expect(await runPolicy(output, hermesHome)).toBe(1)
+    await writeFile(join(hermesHome, loopPath), 'not a socket')
+    expect(await runPolicy(output, hermesHome)).toBe(1)
+    await rm(join(hermesHome, loopPath))
+    await symlink(join(hermesHome, 'gateway.sock'), join(hermesHome, loopPath))
+    expect(await runPolicy(output, hermesHome)).toBe(1)
+  } finally {
+    await new Promise<void>((resolve, reject) => gateway.close((error) => (error ? reject(error) : resolve())))
   }
 })

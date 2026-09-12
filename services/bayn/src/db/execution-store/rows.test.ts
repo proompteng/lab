@@ -7,7 +7,7 @@ import { strictParseOptions } from '../../schemas'
 import { AuthorityGenerationRow } from './rows'
 
 describe('execution-store row compatibility', () => {
-  test('decodes persisted intraday-momentum v1 authority history', () => {
+  test.each(['v1', 'v2', 'v3'])('decodes persisted intraday-momentum %s authority history', (version) => {
     const decoded = Schema.decodeUnknownResult(
       AuthorityGenerationRow,
       strictParseOptions,
@@ -35,7 +35,7 @@ describe('execution-store row compatibility', () => {
       strategy_name: 'intraday-momentum',
       strategy_behavior_hash: '6'.repeat(64),
       strategy_parameter_hash: '7'.repeat(64),
-      strategy_parameter_schema_version: 'bayn.intraday-momentum.protocol.v1',
+      strategy_parameter_schema_version: `bayn.intraday-momentum.protocol.${version}`,
       account_id: 'sandbox-account',
       risk_policy_hash: '8'.repeat(64),
       proof_plan_hash: null,

@@ -1,3 +1,6 @@
+import { compareStreamingShadowSnapshots } from './streaming-shadow'
+import type { ArchiveVerifiedIntradayMarketSnapshot } from '../market-data/intraday/model'
+import type { StrategyMarketSnapshot, VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 import { Data, Effect, Result, Schema } from 'effect'
 
 import { quantizeAlpacaLimitPriceMicros } from '../broker/alpaca-price'
@@ -7,10 +10,8 @@ import {
   intradayAgeNanos,
   millisecondsAsNanos,
   type IntradayMarketDataService,
-  type IntradayMarketSnapshot,
   type IntradaySnapshotQuery,
 } from '../market-data'
-import type { ArchiveVerifiedIntradayMarketSnapshot } from '../market-data/intraday/model'
 import { strictParseOptions } from '../schemas'
 import { ExecutionMarketDataBindingSchema, type ExecutionMarketDataBinding } from '../shadow-decision-contract'
 
@@ -26,7 +27,7 @@ const failure = (
   cause?: unknown,
 ): IntradayMarketDataFailure => new IntradayMarketDataFailure({ operation, message, cause })
 
-export const loadIntradaySnapshot = (
+export const loadIntradayArchiveSnapshot = (
   marketData: IntradayMarketDataService,
   query: IntradaySnapshotQuery,
 ): Effect.Effect<ArchiveVerifiedIntradayMarketSnapshot, OperationalError> =>
@@ -34,15 +35,49 @@ export const loadIntradaySnapshot = (
     .captureVersion(query)
     .pipe(Effect.flatMap((archiveWatermarks) => marketData.loadSnapshot({ ...query, archiveWatermarks })))
 
+export const loadIntradaySnapshot = (
+  marketData: IntradayMarketDataService,
+  query: IntradaySnapshotQuery,
+): Effect.Effect<VerifiedStrategyMarketSnapshot, OperationalError> =>
+  Effect.gen(function* () {
+    const streaming = marketData.streaming
+    if (streaming === undefined) return yield* loadIntradayArchiveSnapshot(marketData, query)
+    if (streaming.shadowOnly !== true) return yield* streaming.loadSnapshot(query)
+    const [archive, streamed] = yield* Effect.all(
+      [loadIntradayArchiveSnapshot(marketData, query), Effect.result(streaming.loadSnapshot(query))],
+      { concurrency: 2 },
+    )
+    const comparison = Result.isSuccess(streamed)
+      ? compareStreamingShadowSnapshots(archive, streamed.success)
+      : { outcome: 'streaming-unavailable', message: streamed.failure.message }
+    yield* Effect.logInfo('Bayn streaming shadow comparison', {
+      observedAt: query.observedAt,
+      archiveSnapshotId: archive.manifest.snapshotId,
+      ...comparison,
+    })
+    return archive
+  })
+
 const decodeExecutionMarketDataBinding = Schema.decodeUnknownResult(
   ExecutionMarketDataBindingSchema,
   strictParseOptions,
 )
 
 export const executionMarketDataBinding = (
-  snapshot: IntradayMarketSnapshot,
-): Result.Result<ExecutionMarketDataBinding, IntradayMarketDataFailure> =>
-  Result.mapError(
+  snapshot: StrategyMarketSnapshot,
+): Result.Result<ExecutionMarketDataBinding, IntradayMarketDataFailure> => {
+  if (snapshot.manifest.schemaVersion === 'bayn.streaming-market-snapshot.v1') {
+    const { schemaVersion, ...material } = snapshot.manifest
+    return Result.mapError(
+      decodeExecutionMarketDataBinding({
+        ...material,
+        schemaVersion: 'bayn.execution-market-data-binding.v3',
+        snapshotSchemaVersion: schemaVersion,
+      }),
+      (cause) => failure('binding', 'streaming execution market data binding is invalid', cause),
+    )
+  }
+  return Result.mapError(
     decodeExecutionMarketDataBinding({
       schemaVersion:
         snapshot.manifest.universe === undefined
@@ -83,6 +118,7 @@ export const executionMarketDataBinding = (
     }),
     (cause) => failure('binding', 'verified intraday snapshot cannot form an execution binding', cause),
   )
+}
 
 export interface AdverseQuotePrices {
   readonly bidPriceMicros: Readonly<Record<string, string>>
@@ -119,7 +155,7 @@ export const adverseQuotePrices = (
 }
 
 export const adverseClosingQuotePrices = (
-  snapshot: IntradayMarketSnapshot,
+  snapshot: StrategyMarketSnapshot,
   symbols: readonly string[],
 ): Result.Result<AdverseQuotePrices, IntradayMarketDataFailure> => {
   const maximumQuoteAge = millisecondsAsNanos(snapshot.manifest.maximumQuoteAgeMs)
@@ -139,7 +175,7 @@ export const adverseClosingQuotePrices = (
 }
 
 export const requireFreshIntradayPositionQuotes = (
-  snapshot: IntradayMarketSnapshot,
+  snapshot: StrategyMarketSnapshot,
   positions: readonly { readonly symbol: string; readonly quantityMicros: string }[],
 ): Result.Result<void, IntradayMarketDataFailure> => {
   const maximumQuoteAge = millisecondsAsNanos(snapshot.manifest.maximumQuoteAgeMs)

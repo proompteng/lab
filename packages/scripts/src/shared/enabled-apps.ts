@@ -108,7 +108,6 @@ const appToBuildScriptPath = new Map<string, string>([
 
 const appToDeployScriptPath = new Map<string, string>([
   ['arc', 'packages/scripts/src/arc-runner/deploy-service.ts'],
-  ['bayn', 'packages/scripts/src/bayn/update-manifests.ts'],
   ['symphony-jangar', 'packages/scripts/src/symphony/deploy-service.ts'],
   ['symphony-torghut', 'packages/scripts/src/symphony/deploy-service.ts'],
   ['torghut-hyperliquid-feed', 'packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts'],
@@ -117,6 +116,7 @@ const appToDeployScriptPath = new Map<string, string>([
 ])
 
 const appToWorkflowPaths = new Map<string, string[]>([
+  ['bayn', ['.github/workflows/bayn-build-push.yml', 'argocd/applications/kargo']],
   ['tengri', ['.github/workflows/tengri-images.yml', 'argocd/applications/kargo']],
   ['symphony-jangar', ['.github/workflows/symphony-build-push.yaml']],
   ['symphony-torghut', ['.github/workflows/symphony-build-push.yaml']],

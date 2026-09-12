@@ -207,6 +207,7 @@ describe('impact router', () => {
       ['docs/runbooks/hermes-production-rollout.md', ['root-scripts']],
       ['.github/ci/impact-map.yml', ['root-scripts', 'workflow-lint']],
       ['.github/workflows/pull-request.yml', ['root-scripts', 'workflow-lint']],
+      ['.github/workflows/hermes-agent-mirror.yml', ['root-scripts', 'workflow-lint']],
     ] as const
 
     for (const [file, expectedTargets] of cases) {

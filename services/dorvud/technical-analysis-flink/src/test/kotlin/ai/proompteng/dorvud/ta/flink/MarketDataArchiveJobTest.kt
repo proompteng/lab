@@ -7,6 +7,7 @@ import ai.proompteng.dorvud.ta.stream.TradePayload
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment
+import org.apache.flink.streaming.api.graph.StreamGraphHasherV2
 import org.apache.flink.streaming.runtime.partitioner.KeyGroupStreamPartitioner
 import org.apache.kafka.clients.consumer.OffsetResetStrategy
 import java.nio.charset.StandardCharsets
@@ -16,6 +17,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 class MarketDataArchiveJobTest {
   private val observationSymbols = setOf("DBC", "EFA", "IEF", "SPY", "VNQ")
@@ -35,6 +37,25 @@ class MarketDataArchiveJobTest {
         ArchiveRoute("delayed_sip", observationUniverse, ArchiveRecordKind.Trade),
       "bayn.market-data.overnight.bars.1m.v1" to ArchiveRoute("overnight", observationUniverse),
     )
+
+  @Test
+  fun `adding features retains raw source and sink savepoint identities`() {
+    fun hashes(features: Boolean): Map<String, String> {
+      val environment = StreamExecutionEnvironment.getExecutionEnvironment()
+      val variables = validEnvironment() + if (features) mapOf("ARCHIVE_FEATURES_TOPIC" to "torghut.market-features.v1") else emptyMap()
+      configureMarketDataArchiveJob(environment, MarketDataArchiveConfig.fromEnv(variables))
+      val graph = environment.streamGraph
+      val hashes = StreamGraphHasherV2().traverseStreamGraphAndGenerateHashes(graph)
+      return graph.streamNodes
+        .filter { it.operatorName == "Source: market-data-bars-source" || it.operatorName.endsWith(": Writer") }
+        .associate { it.operatorName to hashes.getValue(it.id).contentToString() }
+    }
+    val existing = hashes(false)
+    val extended = hashes(true)
+    assertEquals(4, existing.size)
+    assertTrue(extended.size > existing.size)
+    existing.forEach { (name, hash) -> assertEquals(hash, extended[name], "savepoint operator: $name") }
+  }
 
   @Test
   fun `decodes enriched bars with source-offset lineage and cross-feed separation`() {

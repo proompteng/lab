@@ -108,6 +108,14 @@ const fillActivitiesRequestDataFirst = (
 }
 
 export const fillActivitiesRequest = Pipeable.dual(2, fillActivitiesRequestDataFirst)
+export const feeActivitiesRequest = (
+  connection: BrokerConnection,
+  query: FillActivitiesQuery,
+): FillActivitiesRequest => {
+  const request = fillActivitiesRequest(connection, query)
+  request.url.pathname = '/v2/account/activities/FEE'
+  return request
+}
 
 const responseEvidenceResultDataFirst = (
   headers: typeof ResponseHeadersSchema.Type,
