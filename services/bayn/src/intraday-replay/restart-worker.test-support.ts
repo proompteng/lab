@@ -24,7 +24,6 @@ import type { RuntimeConfig } from '../config'
 import { config as baseConfig, fixtureRuntime } from '../testing/runtime-fixtures'
 import { simulationFixture } from '../testing/simulated-streaming-fixture'
 import { makeReplayBroker, ReplayBrokerFailure } from './broker'
-import { ReplayBrokerCheckpointSchema } from './broker-checkpoint'
 import { makeSimulatedExecutionClock } from './clock'
 import { makeReplayExecutionRuntime } from './runtime'
 import { validateReplayDatabaseTargets } from '../session-replay-command'
@@ -77,12 +76,8 @@ const main = Effect.scoped(
       const checkpointStore = yield* makeReplayCheckpointStore(config)
       const fixture = simulationFixture()
       const saved =
-        mode === 'recover'
-          ? yield* fs
-              .readFileString(checkpointPath)
-              .pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(ReplayBrokerCheckpointSchema))))
-          : undefined
-      const initialMs = saved === undefined ? Date.parse(fixture.query.observedAt) : Date.parse(saved.observedAt)
+        mode === 'recover' ? yield* checkpointStore.load(runId, fixture.source.sourceManifestHash) : undefined
+      const initialMs = saved === undefined ? Date.parse(fixture.query.observedAt) : Date.parse(saved.value.observedAt)
       yield* TestClock.setTime(initialMs)
       if (mode === 'crash') {
         yield* sql`DROP SCHEMA public CASCADE`
@@ -129,14 +124,7 @@ const main = Effect.scoped(
         ),
         quoteAt: (symbol) => Effect.succeed(cursor.projection.quotes.get(symbol)),
         advanceToArrival: advanceTo,
-        ...(saved === undefined
-          ? {}
-          : {
-              restoreCheckpoint: {
-                value: saved,
-                expectedHash: yield* checkpointStore.loadHash(runId, source.sourceManifestHash),
-              },
-            }),
+        ...(saved === undefined ? {} : { restoreCheckpoint: saved }),
       })
       const executionBroker =
         mode === 'recover'

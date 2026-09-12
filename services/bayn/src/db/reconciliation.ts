@@ -220,9 +220,10 @@ const isTransientReconciliationRestriction = (reason: string | null): boolean =>
   reason === 'reconciliation pass incomplete' || reason?.startsWith('reconciliation discrepancy ') === true
 
 const shouldPromoteRestrictionReason = (currentReason: string | null, nextReason: string): boolean =>
-  isTransientReconciliationRestriction(currentReason) &&
-  !isTransientReconciliationRestriction(nextReason) &&
-  isExecutionMandateFailureRestriction(nextReason)
+  (currentReason === 'reconciliation pass incomplete' && nextReason.startsWith('reconciliation discrepancy ')) ||
+  (isTransientReconciliationRestriction(currentReason) &&
+    !isTransientReconciliationRestriction(nextReason) &&
+    isExecutionMandateFailureRestriction(nextReason))
 
 const fromDecision = <A>(
   operation: ReconciliationStoreError['operation'],

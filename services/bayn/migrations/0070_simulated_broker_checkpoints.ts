@@ -9,10 +9,17 @@ export default Effect.gen(function* () {
     source_manifest_hash text NOT NULL CHECK(source_manifest_hash ~ '^[0-9a-f]{64}$'),
     checkpoint_hash text NOT NULL CHECK(checkpoint_hash ~ '^[0-9a-f]{64}$'),
     observed_at timestamptz NOT NULL,
+    payload jsonb NOT NULL CHECK(jsonb_typeof(payload) = 'object'),
     UNIQUE(account_id, checkpoint_hash)
   )`
   yield* sql`CREATE FUNCTION enforce_simulated_broker_checkpoint() RETURNS trigger LANGUAGE plpgsql AS $function$
     BEGIN
+      IF NEW.payload->>'checkpointHash' IS DISTINCT FROM NEW.checkpoint_hash
+        OR NEW.payload->>'sourceManifestHash' IS DISTINCT FROM NEW.source_manifest_hash
+        OR NEW.payload#>>'{state,accountId}' IS DISTINCT FROM NEW.account_id
+        OR (NEW.payload->>'observedAt')::timestamptz IS DISTINCT FROM NEW.observed_at THEN
+        RAISE EXCEPTION 'broker checkpoint payload must match its receipt' USING ERRCODE = '23514';
+      END IF;
       IF NOT EXISTS(SELECT 1 FROM simulated_execution_clocks
         WHERE account_id = NEW.account_id AND source_manifest_hash = NEW.source_manifest_hash
           AND observed_at <= NEW.observed_at) THEN

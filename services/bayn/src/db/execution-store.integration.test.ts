@@ -267,6 +267,7 @@ describePostgres('PostgreSQL execution persistence', () => {
           maximum: Authority.Observe,
         })
         const lineage = yield* authority.readAuthorityGenerationLineage(generationHash)
+        yield* restriction.restrictAuthority('reconciliation pass incomplete', '2026-08-28T14:31:00.000Z')
         yield* restriction.restrictAuthority(
           `reconciliation discrepancy ${hash('first-discrepancy')}`,
           '2026-08-28T14:32:00.000Z',
@@ -306,13 +307,13 @@ describePostgres('PostgreSQL execution persistence', () => {
       effective: Authority.Observe,
       kill: KillState.Active,
       reason: `reconciliation discrepancy ${hash('first-discrepancy')}`,
-      version: 2,
+      version: 3,
     })
     expect(result.promoted).toMatchObject({
       effective: Authority.Observe,
       kill: KillState.Active,
       reason: `${executionMandateFailureRestrictionPrefix} permanent failure`,
-      version: 3,
+      version: 4,
     })
   })
 

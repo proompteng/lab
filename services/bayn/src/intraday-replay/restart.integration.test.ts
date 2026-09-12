@@ -11,7 +11,7 @@ import { ReplayBrokerCheckpointSchema } from './broker-checkpoint'
 const durableTest = baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined ? test.skip : test
 
 durableTest(
-  'full process death after broker fill recovers one intent and exact accounting without a duplicate',
+  'full process death after broker fill recovers from atomic PostgreSQL checkpoint without an export file or duplicate',
   async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
@@ -37,6 +37,9 @@ durableTest(
           .readFileString(checkpointPath)
           .pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(ReplayBrokerCheckpointSchema))))
         expect(checkpoint.state.fills).toHaveLength(1)
+        // The export is only a test barrier. Recovery must survive its complete loss after the atomic database commit.
+        yield* fs.remove(checkpointPath)
+        expect(yield* fs.exists(checkpointPath)).toBe(false)
         yield* first.kill({ killSignal: 'SIGKILL' })
         yield* Effect.exit(first.exitCode)
         const second = yield* spawner.spawn(command('recover'))
