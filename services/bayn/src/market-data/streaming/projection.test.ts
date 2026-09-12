@@ -13,7 +13,12 @@ import type { IntradaySnapshotQuery } from '../intraday/model'
 import { canonicalHashV1 } from '../../hash'
 import { decodeRollingMarketFeature, featureBarContentHash } from '../features/contract'
 import { decodeRawMarketRecord, RawMarketEventKind, type KafkaMarketRecord, type StreamingUniverse } from './raw-events'
-import { emptyStreamingProjection, incorporateMarketRecord, selectStreamingSymbolInputs } from './projection'
+import {
+  emptyStreamingProjection,
+  incorporateMarketRecord,
+  incorporateRecordedMarketValue,
+  selectStreamingSymbolInputs,
+} from './projection'
 
 const fixture: unknown = JSON.parse(
   readFileSync(new URL('../features/fixtures/rolling-price-v1.json', import.meta.url), 'utf8'),
@@ -230,6 +235,26 @@ describe('streaming raw and rolling feature projection', () => {
     expect(state.minimumObservationMs).toBe(end + 4004)
     expect(Result.isFailure(select(state, end + 3000))).toBe(true)
     expect(Result.isFailure(constructStreamingSnapshot(cutFor(state), query))).toBe(true)
+  })
+
+  test('mixed recorded timestamp precision shares one bounded minute revision history', () => {
+    const parsed = Result.getOrThrow(decodeRawMarketRecord(barRecord(0), universe))
+    if (parsed.kind !== RawMarketEventKind.Bar) throw new Error('Expected a bar fixture')
+    let state = emptyStreamingProjection('mixed-precision')
+    for (let index = 0; index < 8; index++)
+      state = incorporateRecordedMarketValue(
+        state,
+        {
+          ...parsed.value,
+          eventAt: index % 2 === 0 ? new Date(start).toISOString() : parsed.value.eventAt,
+          sourceOffset: String(index),
+        },
+        universe,
+        end + index,
+      )
+    expect(state.bars.get('AAPL')?.map((entry) => entry.value.sourceOffset)).toEqual(['7', '6', '5', '4'])
+    expect(state.minimumObservationMs).toBe(end + 4)
+    expect(state.rejections.size).toBe(0)
   })
 
   test('duplicates preserve the original receipt and conflicting immutable payloads block the cut', () => {
