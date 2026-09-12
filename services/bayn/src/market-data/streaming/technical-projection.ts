@@ -14,6 +14,18 @@ export interface TechnicalInputRejection {
   readonly reason: string
 }
 
+export const technicalReceiptAvailableAt = (
+  state: StreamingProjection,
+  candidate: ObservedFeature<TechnicalMarketFeature>,
+  observedAtMs: number,
+) =>
+  candidate.topic === state.technicalTopic &&
+  candidate.availableAtMs <= observedAtMs &&
+  candidate.availableAtMs > state.technicalRejectionsDiscardedThroughMs &&
+  !state.technicalRejections.some(
+    (rejection) => rejection.availableAtMs <= observedAtMs && rejection.sequence >= candidate.sequence,
+  )
+
 const rejectTechnical = (
   state: StreamingProjection,
   record: KafkaMarketRecord,

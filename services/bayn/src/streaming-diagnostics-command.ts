@@ -6,6 +6,7 @@ import { kafkaMarketConfig } from './config/source'
 import { canonicalJsonV1Result } from './hash'
 import { featureMatchesBars } from './market-data/features/contract'
 import { technicalFeatureMatchesBars } from './market-data/features/technical-contract'
+import { technicalReceiptAvailableAt } from './market-data/streaming/technical-projection'
 import { makeKafkaMarketProjection } from './market-data/streaming/kafka'
 import { kafkaBootstrapDeadlineMs } from './market-data/streaming/bootstrap'
 import {
@@ -32,7 +33,9 @@ export const summarizeStreamingSymbol = (projection: StreamingProjection, symbol
     const match = featureMatchesBars(value, bars)
     return Result.isSuccess(match) && match.success
   })
-  const technicalMatches = (projection.technicalFeatures.get(symbol) ?? []).filter(({ value }) => {
+  const technicalMatches = (projection.technicalFeatures.get(symbol) ?? []).filter((candidate) => {
+    if (!technicalReceiptAvailableAt(projection, candidate, Number.MAX_SAFE_INTEGER)) return false
+    const { value } = candidate
     const bars = observedBarsAt(
       projection,
       symbol,

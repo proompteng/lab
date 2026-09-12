@@ -20,6 +20,7 @@ import {
 import { featureMatchesBars, marketFeatureClockSkewAllowanceMs } from '../features/contract'
 import { observedBarsAt, type StreamingProjection, type ObservedMarketValue } from './projection'
 import { technicalFeatureMatchesBars, type TechnicalMarketFeature } from '../features/technical-contract'
+import { technicalReceiptAvailableAt } from './technical-projection'
 import type { StreamingFeatureReceipt } from './snapshot'
 
 const failure = (reason: IntradaySnapshotFailure['reason'], message: string, cause?: unknown) =>
@@ -69,12 +70,7 @@ export const selectStreamingInputs = (state: StreamingProjection, query: Intrada
       if (state.technicalTopic !== undefined) {
         for (const candidate of state.technicalFeatures.get(symbol) ?? []) {
           if (
-            candidate.topic !== state.technicalTopic ||
-            candidate.availableAtMs > observedAtMs ||
-            candidate.availableAtMs <= state.technicalRejectionsDiscardedThroughMs ||
-            state.technicalRejections.some(
-              (rejection) => rejection.availableAtMs <= observedAtMs && rejection.sequence >= candidate.sequence,
-            ) ||
+            !technicalReceiptAvailableAt(state, candidate, observedAtMs) ||
             candidate.value.material.sessionDate !== request.sessionDate ||
             candidate.value.material.windowEndMs !== Date.parse(request.rangeEndAt)
           )

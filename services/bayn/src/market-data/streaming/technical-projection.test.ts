@@ -218,6 +218,13 @@ test('exact technical suffix joins as-of and immutable conflicts remove optional
     end + 2400,
   )
   expect(select(conflict).technical?.features).toHaveLength(0)
+  expect(summarizeStreamingSymbol(conflict, 'AAPL').technical?.matchedFeatures).toHaveLength(0)
+  const malformed = incorporateMarketRecord(ready, { ...record('2'), value: '{' }, universe, end + 2400)
+  const discarded = { ...ready, technicalRejectionsDiscardedThroughMs: end + 2200 }
+  for (const invalidated of [malformed, discarded]) {
+    expect(select(invalidated).technical?.features).toHaveLength(0)
+    expect(summarizeStreamingSymbol(invalidated, 'AAPL').technical?.matchedFeatures).toHaveLength(0)
+  }
   expect(select(conflict).featureReceipts).toEqual(select(base).featureReceipts)
   const wrong = { ...feature.material, universeId: 'other' }
   expect(
