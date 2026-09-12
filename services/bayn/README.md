@@ -222,7 +222,10 @@ coordinator receives the response, then restores the same broker checkpoint and 
 one intent, one fill, one accounting transaction, exact cash and no unresolved mutation after lookup recovery.
 
 Broker checkpoints bind the run, source manifest and execution configuration. Restore reconstructs cash, positions,
-fees and activities from fills and checks deterministic order and request identities. A checkpoint containing an
+fees and activities from fills and checks deterministic order and request identities. It resolves every fill against
+the source's historical arrival quote and reruns the same IOC execution model; session equity is recalculated from
+fills and retained closing quotes. The restoring caller must supply historical quote lookup for the same frozen source,
+not only its latest quote projection. A missing or different quote rejects restore. A checkpoint containing an
 unsettled IOC is rejected. This proves recovery after a retained broker commit; it does not model an independently
 durable broker's pending delivery queue.
 

@@ -35,7 +35,7 @@ import {
   type BrokerMutationShape,
   causeSummary,
 } from '../broker/alpaca-mutations/model'
-import { MutationOutcome, type Intent } from '../execution/contracts'
+import { MutationOutcome, OrderSide as IntentSide, type Intent } from '../execution/contracts'
 import { numberToMicros, notionalMicros, MICROS } from '../execution-model'
 import { canonicalHashV1Result } from '../hash'
 import { Sha256Schema, strictParseOptions } from '../schemas'
@@ -182,6 +182,91 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       intradayInstantNanos(quote.value.eventAt) <= BigInt(nowMs) * 1_000_000n &&
       BigInt(nowMs) * 1_000_000n - intradayInstantNanos(quote.value.eventAt) <=
         BigInt(config.protocol.maximumQuoteAgeMs) * 1_000_000n
+    const executeQuote = (side: OrderSide, quantity: string, limit: string, quote: IntradayQuote) =>
+      Result.gen(function* () {
+        return yield* simulateIntradayReplayIocCore({
+          order: {
+            side: side === OrderSide.Buy ? IntentSide.Buy : IntentSide.Sell,
+            quantityMicros: BigInt(quantity),
+            limitPriceMicros: BigInt(limit),
+          },
+          quote: {
+            priceMicros: yield* numberToMicros(side === OrderSide.Buy ? quote.askPrice : quote.bidPrice, 'quote.price'),
+            displayedQuantityMicros: yield* numberToMicros(
+              side === OrderSide.Buy ? quote.askSize : quote.bidSize,
+              'quote.size',
+            ),
+          },
+          executionModel: config.protocol.executionModel,
+          assumptions: config.assumptions,
+        })
+      })
+    if (restored !== undefined) {
+      for (const fill of restored.state.ledger.fills) {
+        const order = restored.state.orders.find((entry) => entry.order.brokerOrderId === fill.brokerOrderId)?.order
+        const arrivedAtMs = Date.parse(fill.observedAt)
+        const quote = yield* config.quoteAt(fill.symbol, arrivedAtMs)
+        if (
+          order === undefined ||
+          !quoteUsable(quote, fill.symbol, arrivedAtMs) ||
+          arrivedAtMs < Date.parse(order.submittedAt) + config.assumptions.latencyMs ||
+          quote.value.sourceTopic !== fill.quoteSource.topic ||
+          quote.value.sourcePartition !== fill.quoteSource.partition ||
+          quote.value.sourceOffset !== fill.quoteSource.offset ||
+          quote.availableAtMs !== fill.quoteSource.availableAtMs
+        )
+          return yield* new ReplayBrokerFailure({ message: 'Restored fill has no matching retained arrival quote' })
+        const outcome = yield* Effect.fromResult(
+          executeQuote(order.side, order.quantityMicros, order.limitPriceMicros, quote.value),
+        )
+        if (
+          outcome.status !== 'filled' ||
+          outcome.filledQuantityMicros.toString() !== fill.quantityMicros ||
+          outcome.fillPriceMicros.toString() !== fill.priceMicros ||
+          outcome.fillNotionalMicros.toString() !== fill.notionalMicros
+        )
+          return yield* new ReplayBrokerFailure({ message: 'Restored fill differs from retained quote execution' })
+      }
+      for (const close of restored.state.sessionCloses) {
+        const calendar = yield* Effect.fromResult(
+          normalizeMarketCalendarResult(
+            config.calendar.filter((session) => session.date === close.sessionDate),
+            { start: close.sessionDate, end: close.sessionDate },
+          ),
+        )
+        const session = calendar.sessions[0]
+        if (session === undefined) return yield* new ReplayBrokerFailure({ message: 'Restored close has no session' })
+        let closingLedger = yield* Effect.fromResult(createReplayLedger<ReplayBrokerFill>(config.openingCashMicros))
+        for (const fill of restored.state.ledger.fills) {
+          if (fill.observedAt > session.closeAt) break
+          const order = restored.state.orders.find((entry) => entry.order.brokerOrderId === fill.brokerOrderId)?.order
+          if (order === undefined)
+            return yield* new ReplayBrokerFailure({ message: 'Restored close has an unknown order' })
+          closingLedger = yield* Effect.fromResult(
+            applyReplayFill(
+              closingLedger,
+              fill,
+              order.quantityMicros,
+              config.protocol.executionModel,
+              config.assumptions.feeMultiplierPpm,
+            ),
+          )
+        }
+        let equity = BigInt(closingLedger.cashMicros)
+        for (const position of closingLedger.positions) {
+          const atMs = Date.parse(session.closeAt)
+          const quote = yield* config.quoteAt(position.symbol, atMs)
+          if (!quoteUsable(quote, position.symbol, atMs))
+            return yield* new ReplayBrokerFailure({ message: 'Restored close has no retained valuation quote' })
+          const price = yield* Effect.fromResult(numberToMicros(quote.value.bidPrice, 'mark.bid'))
+          equity += yield* Effect.fromResult(notionalMicros(BigInt(position.quantityMicros), price))
+        }
+        if (equity.toString() !== close.equityMicros)
+          return yield* new ReplayBrokerFailure({
+            message: 'Restored closing equity differs from retained quotes and fills',
+          })
+      }
+    }
     const markedPositions = Effect.gen(function* () {
       const current = yield* Ref.get(state)
       const observedAt = yield* now
@@ -466,31 +551,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
               const valid = quoteUsable(quote, intent.symbol, arrivedAtMs)
               const outcome =
                 valid && quote !== undefined
-                  ? yield* Effect.fromResult(
-                      simulateIntradayReplayIocCore({
-                        order: {
-                          side: intent.side,
-                          quantityMicros: BigInt(intent.quantityMicros),
-                          limitPriceMicros: BigInt(limit),
-                        },
-                        quote: {
-                          priceMicros: yield* Effect.fromResult(
-                            numberToMicros(
-                              request.side === OrderSide.Buy ? quote.value.askPrice : quote.value.bidPrice,
-                              'quote.price',
-                            ),
-                          ),
-                          displayedQuantityMicros: yield* Effect.fromResult(
-                            numberToMicros(
-                              request.side === OrderSide.Buy ? quote.value.askSize : quote.value.bidSize,
-                              'quote.size',
-                            ),
-                          ),
-                        },
-                        executionModel: config.protocol.executionModel,
-                        assumptions: config.assumptions,
-                      }),
-                    )
+                  ? yield* Effect.fromResult(executeQuote(request.side, intent.quantityMicros, limit, quote.value))
                   : null
               const settled = yield* Ref.modify(
                 state,

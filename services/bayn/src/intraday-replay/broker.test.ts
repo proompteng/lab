@@ -479,3 +479,61 @@ test('checkpoint cannot claim pending IOC delivery survived a process restart', 
     }),
   )
 })
+
+test('checkpoint restoration verifies fill prices against the retained arrival quote', async () => {
+  await run(
+    Effect.gen(function* () {
+      const broker = yield* setup()
+      yield* submit(broker, intent())
+      const checkpoint = yield* broker.checkpoint
+      const material = {
+        schemaVersion: checkpoint.schemaVersion,
+        configurationHash: checkpoint.configurationHash,
+        sourceManifestHash: checkpoint.sourceManifestHash,
+        observedAt: checkpoint.observedAt,
+        state: {
+          ...checkpoint.state,
+          ledger: {
+            ...checkpoint.state.ledger,
+            cashMicros: '9504990000',
+            positions: checkpoint.state.ledger.positions.map((position) => ({
+              ...position,
+              costBasisMicros: '495000000',
+            })),
+            fills: checkpoint.state.ledger.fills.map((fill) => ({
+              ...fill,
+              priceMicros: '99000000',
+              notionalMicros: '495000000',
+            })),
+          },
+          fills: checkpoint.state.fills.map((fill) => ({ ...fill, priceMicros: '99000000' })),
+          orders: checkpoint.state.orders.map((entry) => ({
+            ...entry,
+            order: { ...entry.order, filledAveragePriceMicros: '99000000' },
+          })),
+        },
+      }
+      const forged = { ...material, checkpointHash: Result.getOrThrow(canonicalHashV1Result(material)) }
+      const outcome = yield* Effect.exit(makeReplayBroker({ ...config, restoreCheckpoint: forged }))
+      expect(outcome._tag).toBe('Failure')
+    }),
+  )
+})
+
+test('checkpoint restoration recomputes closing equity instead of trusting a rehashed mark', async () => {
+  await run(
+    Effect.gen(function* () {
+      const broker = yield* setup()
+      yield* TestClock.setTime(Date.parse('2026-09-04T20:00:00Z'))
+      yield* broker.completeSession('2026-09-04')
+      const checkpoint = yield* broker.checkpoint
+      const { checkpointHash: _hash, ...material } = checkpoint
+      const altered = {
+        ...material,
+        state: { ...material.state, sessionCloses: [{ sessionDate: '2026-09-04', equityMicros: '1' }] },
+      }
+      const forged = { ...altered, checkpointHash: Result.getOrThrow(canonicalHashV1Result(altered)) }
+      expect((yield* Effect.exit(makeReplayBroker({ ...config, restoreCheckpoint: forged })))._tag).toBe('Failure')
+    }),
+  )
+})
