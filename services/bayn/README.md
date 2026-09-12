@@ -212,6 +212,12 @@ submit response. Session closing equity must be captured at the calendar close b
 daily risk baseline. The adapter acquires no Alpaca client or credentials and uses a distinct `replay-<runId>` account.
 Its lifecycle tests are component evidence; the adapter alone does not prove a full-session execution or profitability.
 
+The required PostgreSQL CI job also runs `durable-broker.integration.test.ts` against PostgreSQL 18 and TigerBeetle
+0.17.9. It posts a simulated round trip through production reconciliation, reconnects both database clients, and checks
+cash, exact accounting, and fill deduplication. The fixture's orders have no production intent bindings, and the test
+retains the resulting unknown-order discrepancies. Production cycle orchestration and full-process restart recovery
+remain separate acceptance requirements.
+
 Current Alpaca position responses retain the broker's `cost_basis` as `bayn.position.v2`. Reconciliation compares that
 exact value with fill accounting instead of reconstructing it from rounded `avg_entry_price`. Migration 67 retains
 legacy position history and adds the versioned cost-basis column. Legacy `bayn.paper-position.v1` observations preserve
