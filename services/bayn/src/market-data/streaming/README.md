@@ -120,3 +120,24 @@ clock allowance, bootstrap policy and exact-window freshness rule. Reverting the
 and protocol change through the same delivery path; retaining archived feature history is required.
 
 Bar history retains at most four winning revisions for each of 61 minutes per symbol. As-of joins select the latest revision received by the observation time. If revision eviction removes the history needed for a cut, the projection rejects that observation.
+
+## Simulated execution inputs
+
+`constructSimulatedSnapshot` consumes the incremental historical cursor through the same selection rules as live
+streaming. Its `bayn.simulated-market-snapshot.v1` manifest records the run ID, frozen source-manifest hash, supplied
+arrival policy, source positions, raw receipts, and feature payloads. Regenerated features keep their original
+computation timestamps and record the separate simulated availability explicitly.
+
+The execution document uses market-data binding v4 and requires `replay-<runId>` as its account. Decision and pricing
+cuts must share the same source and arrival policy. They run the existing strategy, planner, pricing, and risk
+validation. Recorded reproduction reports `recorded-simulated-decision`; live streaming and archive contracts retain
+their existing versions.
+
+The replay composition supplies `makeSimulatedMarketData` instead of live Kafka or ClickHouse capabilities.
+Migration 0068 adds a separate append-only simulated-reference table. Verification accepts a cut consumed by that
+service instance or an exact reference committed with a decision in the same replay database. A recreated service
+must find the committed reference; another run or source manifest cannot reuse it. Live reference tables reject
+simulated manifests. The service factory does not connect to a broker or provide capital authority.
+
+This input integration is a component of the execution replay. It does not itself run a full session, submit orders,
+restart the execution process, or produce an economic result.
