@@ -26,6 +26,16 @@ requires a flat account at the closing bell. Entries stop when flattening starts
 until the actual close, including early-close sessions. The five-minute exit budget is an operational policy;
 unfilled exits or unresolved reconciliation remain incomplete and visible.
 
+During that close window, missing or over-late archive evidence, a retryable archive outage, or an archive read
+timeout triggers a fresh broker reconciliation and the existing market/DAY close path. The close binds the exact
+reconciled holdings and cannot exceed their remaining quantity. The archive read receives at most half the smaller
+of the remaining execution-pass budget and remaining close window. It additionally reserves twice the already
+elapsed preparatory work for a fresh reconciliation and close planning; a slow initial reconciliation therefore
+leaves less time for archive reads. The overall pass and close deadlines still apply.
+Malformed archive identities, hashes, ordering and lineage still fail. Unknown mutations, unresolved orders,
+inexact reconciliation, stale broker state and expired close authority still prevent submission. This exit policy
+is part of behavior v13; entry decisions retain their existing evidence and LIMIT/IOC requirements.
+
 Entry observations evaluate candidate availability independently. Missing or late candidate bars, quotes, or trades
 exclude that candidate with an explicit reason while other candidates remain eligible for evaluation. SPY is the
 mandatory benchmark. Source identity, canonical ordering, watermarks, finality, and premature data still fail the
@@ -55,8 +65,43 @@ embeds and verifies the source revision and the behavior, parameter, protocol, a
   outcomes block new exposure until deterministic lookup and reconciliation resolve them.
 - Execution is long-only. Sells cannot exceed reconciled inventory. Entry, gross exposure, turnover, loss, drawdown,
   cutoff, and stale-data limits fail closed.
-- PostgreSQL and TigerBeetle must reconcile exactly. Any identity drift, unresolved mutation, stale data, duplicate
-  controller, or accounting discrepancy blocks new orders.
+- PostgreSQL and TigerBeetle must reconcile exactly. Identity drift, unresolved mutations, stale broker evidence,
+  duplicate controllers and accounting discrepancies block new orders. Unavailable archive evidence blocks entry;
+  the bounded close-only path can instead bind freshly reconciled broker positions.
+
+An accepted LIMIT/IOC entry may finish canceled after filling only part of its requested quantity. Bayn verifies the
+exact broker order and intent identity and treats a positive fill smaller than the requested quantity as settled
+entry exposure, without restricting authority or submitting the unfilled remainder. The cycle remains open for its
+scheduled close. Rejected, mismatched, overfilled, and non-IOC canceled orders retain their failure handling.
+Durable completion additionally requires the recorded partial fills to match the accepted order, a later trusted flat
+position snapshot, exact reconciliation covering the account's latest broker events, and no open broker orders.
+
+When a worker resumes an existing PAPER grant under a recognized system failure restriction, it runs close-only
+recovery. It cannot discover new cycles or submit entries. During the existing close window it can cancel outstanding
+orders belonging to the bound cycle and submit the existing position-reducing close after fresh exact reconciliation.
+The persisted kill state remains active, and broker identity, unknown-order, quantity, accounting, and close-deadline
+checks still apply. Operator restrictions do not enter this recovery path.
+Once durable completion evidence is verified, the cycle may settle its restricted generation even when it had fills.
+Native authority rollover still requires all intents to be terminal, fresh exact reconciliation, a flat account and
+no unresolved mutations or open orders before creating a clear OBSERVE successor.
+
+Mutation preparation uses its verified durable decision and session binding plus fresh broker reconciliation. It does
+not reread the market calendar after the decision is bound, so an unrelated calendar outage cannot prevent accepted
+order recovery or the scheduled close. New decision construction still reads and verifies the broker calendar.
+Each new entry risk decision retains its pricing quote event time and the snapshot's maximum quote age. Approval
+expires at that event-time deadline or an earlier broker, intent, or session deadline. The final submit transaction
+rechecks the persisted expiry after writer/grant locks and broker reads, so retries or worker restarts cannot extend
+it. An expired entry follows the existing durable no-send path. Close-only recovery keeps its separate close lease.
+
+Broker-session startup verifies account identity and permissions, account configuration, positions, orders, fills,
+and order lookup access. It does not require the calendar endpoint, so an outage cannot prevent a replacement worker
+from starting recovery of a bound decision.
+
+Broker reconciliation recaptures changing history or lagging fill activities at most twice, 500 milliseconds apart,
+before persisting a snapshot. A broker terminal fill may precede local acknowledged-intent recovery; recorded terminal
+outcomes and aggregate fills still must agree. Equity marks from separate account and position observations remain
+visible as valuation differences, while cash, inventory, cost basis, fees, and ledger reconciliation remain exact.
+Flat accounts and marks observed at the same instant also require exact equity agreement.
 
 ## Runtime architecture
 
@@ -72,6 +117,15 @@ embeds and verifies the source revision and the behavior, parameter, protocol, a
   It still requires fresh exact, flat reconciliation and the normal OBSERVE successor before reactivation. An operator
   kill remains restricted.
 - TigerBeetle is the authoritative fee, cost-basis, cash, and realized-P&L ledger.
+- Reconciliation reads Alpaca `FEE` activities alongside fills and orders. Each fee or refund has an immutable
+  account/activity identity and a deterministic cash/fee-expense ledger transfer. Delayed fees update exact cash
+  reconciliation without changing the opening balance or inventing fills; changed or missing activity history fails
+  closed. Fees dated before the opening cash baseline require earlier baseline evidence and are rejected before any
+  ledger post; their date alone cannot prove when they settled. Descriptions are not retained because they may contain account details.
+- Forward performance deducts delayed fees by their trading date when that date belongs to one authority generation.
+  Fees on dates shared by generations leave the receipt insufficient until allocation is supported. Account-wide
+  ledger verification includes all fees; cash-yield calculations account for their actual observation window.
+
 - The public Bayn deployment serves read-only status and health. It does not schedule execution or hold mutation
   authority.
 - Broker egress is restricted to the configured Alpaca endpoint through the dedicated CONNECT proxy. Credentials and
@@ -86,20 +140,20 @@ limits. Bayn owns no ClickHouse DDL or backfill path.
 
 ## Operations
 
-Normal delivery is immutable and automatic:
+Normal delivery uses the shared Kargo path:
 
 1. merge reviewed source to `main`;
-2. build and publish the exact multi-architecture image;
-3. advance the generated `codex/bayn-deploy` pins when activation identity is valid; and
-4. let Argo reconcile the status service, execution worker, and source-versioned activation hook.
+2. build the exact multi-architecture image and publish its immutable `kargo-sha-<source>` alias;
+3. let the `bayn` Warehouse and automatic Stage copy that source into `kargo/bayn`, update all three runtime image
+   bindings and the existing research build lineage, and push the generated GitOps commit; and
+4. let Argo reconcile the execution worker, activation hook, and status service in their existing sync order.
 
-Builds and releases finish without cancellation when later commits arrive. A completed image may release after
-unrelated monorepo changes, provided its source remains on `main`, Bayn's source, configuration, and shared build
-inputs still match `main`, and its source does not precede or diverge from the deployed source. The release checks
-these conditions again before pushing GitOps; a later Bayn change requires the next image.
+Builds are scoped to Bayn inputs and finish when later commits arrive. There is no separate release workflow or
+promotion-eligibility script. Kargo controls delivery; the native activation hook and runtime enforce the configured
+account, strategy, capital grant, reconciliation, and order-risk contracts.
 
-Do not deploy directly or submit a broker order manually. A strategy-identity change requires a new reviewed durable
-activation; an ordinary code-only release preserves the existing exact grant lineage.
+Do not deploy directly or submit a broker order manually. A code release does not change the sealed research request
+or grant live capital authority.
 
 ## Endpoints
 
@@ -120,12 +174,33 @@ Without that option, the command evaluates account history, which may span retir
 Malformed or ambiguous arguments fail before configuration or evidence reads. A generation-scoped receipt still
 requires completed executions and exact accounting; operational readiness and an active research mandate do not
 establish profitability.
+Historical decisions that the current runtime cannot validate are listed by hash in `executionQuality.unverifiedDecisionHashes`.
+Their accounting remains reportable, but any such decision leaves execution quality and capacity `UNDETERMINED`.
+Native archive requests use durable intent symbols independently of decision validation; reporting cannot authorize an order.
+
+Completed native intraday cycles bind performance evidence to `intraday_snapshot_references`. The reader uses the
+same universe, IEX feed and exchange calendar as the decision, with the complete regular-session window, a fixed
+reconciliation cutoff, and captured Kafka partition offsets. Legacy daily SIP publications remain supported.
+Native receipts retain the archive request, source hashes, recorded volume and missing minute timestamps. IEX
+recorded participation does not establish consolidated liquidity or real execution capacity from PAPER fills.
+
+A canceled or partially filled order's opportunity shortfall uses the observed finalized closing-minute bar, labeled
+`FINAL_MINUTE_BAR_CLOSE`. Missing middle minutes leave full-session participation `UNDETERMINED` while retaining a
+valid closing reference and execution measurement. A missing closing bar cannot supply that reference. Reporting
+never manufactures bars or changes the decision snapshot's entry freshness rules.
 
 A standing mandate's next scheduled cycle does not make the reconciled performance window incomplete while its
 submission window is still in the future and it has no durable decision or intent. Blocked cycles, started cycles,
 and any future cycle with durable execution work still prevent a sufficient receipt.
 
 ## Historical intraday replay
+
+The intraday protocol admits quote and trade evidence up to 10 seconds old at the observation time. The previous
+2-second budget was shorter than the existing Kafka/Flink/ClickHouse delivery path: September 10 live samples showed
+SPY quote ages of 1.3–4.6 seconds despite roughly 40 milliseconds from provider event to websocket receipt. The
+10-second bound gives the archive time to publish usable evidence for the 30-minute signal. Future timestamps,
+evidence beyond the bound, missing bars, spread and signal requirements, and quote-bound IOC prices still block
+execution. Changing this bound changes strategy identity and requires normal activation; it is not profitability proof.
 
 `bayn-intraday-replay --input <path>` evaluates finalized sessions from an exported Alpaca calendar against the retained
 intraday archive. It reads ClickHouse using `BAYN_CLICKHOUSE_URL`, `BAYN_CLICKHOUSE_USERNAME`, and
@@ -144,12 +219,20 @@ the exact calendar response for this date range:
 
 ```json
 {
-  "schemaVersion": "bayn.intraday-replay-input.v1",
+  "schemaVersion": "bayn.intraday-replay-input.v2",
   "range": { "start": "2026-09-04", "end": "2026-09-04" },
   "calendar": [{ "date": "2026-09-04", "open": "09:30", "close": "16:00" }],
   "initialCapitalMicros": "100000000000",
   "allocationCapitalMicros": "100000000000",
   "archiveAvailability": "recorded-reader",
+  "operationalTiming": {
+    "decisionReadMs": 2000,
+    "decisionComputeMs": 1000,
+    "planningReadMs": 2000,
+    "planningComputeMs": 1000,
+    "commitMs": 1000,
+    "submissionMs": 2000
+  },
   "assumptions": {
     "pollIntervalMs": 30000,
     "firstPollDelayMs": 2000,
@@ -160,6 +243,17 @@ the exact calendar response for this date range:
   }
 }
 ```
+
+All six operational durations are required, including an explicit zero for an intentionally omitted stage. The
+example durations are experiment assumptions, not calibrated latency estimates. Source cutoff and reader completion
+are separate: decision and planning retain the same cutoff as the live path, while computation, planning, commit,
+submission and venue arrival advance in order. `orderLatencyMs` covers submission-to-arrival only and admits 1–60,000
+milliseconds. Stage durations admit 0–300,000 milliseconds. A late submission creates no order; a close arriving beyond
+the hard-flat deadline remains incomplete. The next attempt waits the declared poll interval after the modeled work completes, matching the controller's
+completion-based scheduling. Snapshot `availableBy` fields state consumption bounds, not invented reader receipts.
+Entry submission also respects the original planning quote's event-time expiry, using the same deadline arithmetic
+as persisted runtime risk approval. A fresh arrival quote cannot revive an expired entry; close-only timing retains
+its separate close deadline.
 
 The range is bounded to 31 calendar days. Preserve the complete calendar response; archive date presence cannot
 establish that a session was open or that its data is complete. Each scheduled observation reconstructs archive
@@ -174,18 +268,20 @@ completion time is rounded up to the next millisecond, never backdated to the so
 stored observation; changed content under the same source identity fails closed. The public status service and replay
 commands cannot mint these receipts. Recording failure prevents release of that read to the execution caller.
 
-Default replay requires a matching production-reader receipt for every used row, completed no later than the simulated
-observation. Missing or late receipts for an independent decision candidate exclude that candidate with zero weight;
+Default replay requires a matching production-reader receipt for every used row, completed no later than the declared
+reader-completion clock for a decision or close-pricing read. Arrival and equity-mark evidence retain their own
+source-time bound. Missing or late receipts for an independent decision candidate exclude that candidate with zero weight;
 the shared strategy core ranks the remaining candidates. These reader-derived exclusions are bound separately in
 `availability.snapshots[].candidateExclusions`, without rewriting the immutable archive manifest or discarding raw
-excluded rows. Valid late receipts are retained as exclusion evidence, never as proof of availability at the cutoff.
+excluded rows. Valid late receipts are retained as exclusion evidence, never as proof of availability at the declared consumption clock.
 Missing benchmark or execution-pricing evidence still rejects the whole observation. Corrupt, duplicate, unrelated,
 development-only, or conflicting receipts remain global failures, including receipts belonging to excluded candidates.
 An entry window with all candidates unavailable remains incomplete, not a clean `NO_TRADE`, and prevents aggregate P&L.
 Receipts cover rows actually
 observed by the worker, not the entire feed. They are conservative availability upper bounds, not earliest visibility,
 simultaneous snapshot proof, reader uptime, or actual execution evidence. In particular, a read completing after its
-query cutoff cannot certify replay at that cutoff. Strict-mode coverage can remain sparse; this does not reconstruct
+query cutoff becomes consumable only when its declared completion clock reaches that receipt; its source cutoff
+and snapshot identity remain unchanged. Strict-mode coverage can remain sparse; this does not reconstruct
 missing historical delivery times or establish a complete live-equivalent backtest.
 
 Existing source-time experiments may explicitly freeze `archiveAvailability: "source-receipt-assumption"` in their input.
@@ -194,14 +290,22 @@ That mode remains ClickHouse-only and retains the original economic counterfactu
 recorded receipts, not this assumption. There is no automatic fallback or historical receipt backfill.
 
 The report retains decision, planning, arrival and mark manifests, receipt bindings and deduplicated raw receipts,
-data failures, canceled IOC quantities, fees, cash, and unclosed positions. Retain the report alongside the frozen input.
+stage timelines, data failures, canceled IOC quantities, fees, cash, and unclosed positions. Retain the report alongside the frozen input.
 
 The fill model uses whole shares, the opposite arrival quote, a declared share of displayed liquidity, and adverse
 slippage. A modeled price beyond the submitted limit cancels the order. Zero added slippage still includes crossing
 the quoted spread and the protocol's fees. `feeMultiplierPpm` scales the fees before their normal rounding. Execution
-assumptions describe a counterfactual; they do not measure queue position or actual broker fills.
+assumptions describe a counterfactual; they do not measure queue position or actual broker fills. An archive outage
+that requires the broker market/DAY close fallback is incomplete because this harness has no verified fill model for
+that recovery. It never substitutes a later IOC or an invented market fill.
 
-The `bayn.intraday-replay-report.v3` report includes explicit availability policy/evidence and holding-period equity marks from adverse verified archive bids,
+The retained September 10 conformance fixture reproduces the IWM decision, candidate exclusions, 34-share target and
+287.93 limit under its original v11 identity and 2-second quote-age protocol. All 223 row receipts match the original
+snapshot. Its cutoff was 19:50:27.072Z, reader completion 19:50:29.128Z, planning reader completion 19:50:32.224Z and
+submission start 19:50:35.817Z. No venue-arrival timestamp was retained. This fixture proves historical conformance;
+it is not economic evidence for the current strategy.
+
+The `bayn.intraday-replay-report.v4` report includes explicit availability policy/evidence and holding-period equity marks from adverse verified archive bids,
 observed drawdown, carried peak equity, and diagnostic daily-loss/drawdown-limit breaches. Marks use the declared
 30-second poll interval, so excursions between observations can be missed. Missing required mark evidence makes the
 session incomplete while preserving attempted closes, fees, fills, and remaining positions. These diagnostics do not
@@ -222,8 +326,8 @@ to carry cash and stop after incomplete sessions.
 
 The study input has `schemaVersion: "bayn.archive-replay-study-input.v1"`, `sessionMode: "independent-flat-start"`,
 `experimentPlanHash`, the frozen `strategyProtocolHash` and `riskPolicyHash`, and `scenarios: [{ name, input }]`.
-Each scenario's `input` is the complete `bayn.intraday-replay-input.v1` object above. Scenarios must have unique names
-and identical calendars, date ranges, and starting/allocation capital and availability policy. Only execution assumptions may differ. Freeze
+Each scenario's `input` is the complete `bayn.intraday-replay-input.v2` object above. Scenarios must have unique names
+and identical calendars, date ranges, and starting/allocation capital and availability policy. Only execution assumptions and operational timing may differ. Freeze
 the plan and all scenarios before examining their evaluation returns; a supplied plan hash records identity, not proof
 of preregistration. The command rejects strategy/risk identity drift before archive reads.
 

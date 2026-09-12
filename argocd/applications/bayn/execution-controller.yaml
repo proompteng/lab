@@ -82,9 +82,9 @@ spec:
             - name: BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION
               value: 8f4602324111bbb3dd5d8695aabf199f4a5328fa
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "1d3b93a585e9b37836507880323f57ba7f7db385241dccf09234c43125ee5285"
+              value: "49b8a34ecc19e6e23c58a17cbee05869e1e9deac688baf6b93050bb5a53ce30a"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "104bb22429eb54e025a092a8434be2b8390059c24515512de8cbb99c66cbb797"
+              value: "5da6b30f1961de364c796302bd5d1be3f009dd97b9d8225e9201e782b8149f4c"
             - name: BAYN_CAPITAL_ACTIVATION_REQUEST
               valueFrom:
                 secretKeyRef:
@@ -93,7 +93,7 @@ spec:
             - name: BAYN_CAPITAL_ACTIVATION_KIND
               value: ResearchCapitalActivationRequest
             - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: "{\"schemaVersion\":\"bayn.research-capital-build-lineage.v1\",\"requestHash\":\"423c6c805917f05d5dcf80da7e439cf8c6a373762298148b15306ed8acfe2625\",\"authoredActivation\":{\"sourceRevision\":\"ee60493eb5a9b5f8572e868b6ff31c17675501a3\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:47143f3136a8ef2bd00910ff970c75db98c2e1229f2a7c028019bd82833c5ba7\"},\"activation\":{\"sourceRevision\":\"ee60493eb5a9b5f8572e868b6ff31c17675501a3\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:47143f3136a8ef2bd00910ff970c75db98c2e1229f2a7c028019bd82833c5ba7\"}}"
+              value: "{\"schemaVersion\":\"bayn.research-capital-build-lineage.v1\",\"requestHash\":\"b24ea18ea2228f298dbc3e23e8a608afb37ace19cf3b3f6241e3a1f1c591de83\",\"authoredActivation\":{\"sourceRevision\":\"03798257c48facb7797341fc5ff07fc641fd4929\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:9bf791395a29ee8bf77324e30abe59c1d6ef83d5cc7b116c4737afecbb28dc43\"},\"activation\":{\"sourceRevision\":\"03798257c48facb7797341fc5ff07fc641fd4929\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:9bf791395a29ee8bf77324e30abe59c1d6ef83d5cc7b116c4737afecbb28dc43\"}}"
             - name: BAYN_BROKER_ACCESS
               value: read-only
             - name: BAYN_CAPITAL_AUTHORITY

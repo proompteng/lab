@@ -60,6 +60,10 @@ import recoverPreopenAuthorityCycle from '../../migrations/0057_recover_preopen_
 import archiveReaderAvailability from '../../migrations/0058_archive_reader_availability'
 import regularSessionBoundaries from '../../migrations/0059_regular_session_boundaries'
 import materializedCompletionCutoff from '../../migrations/0060_materialized_completion_cutoff'
+import latestRearmPosition from '../../migrations/0061_latest_rearm_position'
+import discrepancyMandateRotation from '../../migrations/0062_discrepancy_mandate_rotation'
+import brokerFeeAccounting from '../../migrations/0063_broker_fee_accounting'
+import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
   '1_initial_schema': initialSchema,
@@ -122,4 +126,8 @@ export const migrationLoader = PgMigrator.fromRecord({
   '58_archive_reader_availability': archiveReaderAvailability,
   '59_regular_session_boundaries': regularSessionBoundaries,
   '60_materialized_completion_cutoff': materializedCompletionCutoff,
+  '61_latest_rearm_position': latestRearmPosition,
+  '62_discrepancy_mandate_rotation': discrepancyMandateRotation,
+  '63_broker_fee_accounting': brokerFeeAccounting,
+  '64_partial_ioc_completion': partialIocCompletion,
 })

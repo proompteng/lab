@@ -58,7 +58,7 @@ class PostgresClusterResilienceManifestTests(TestCase):
         self.assertEqual(backup["target"], "prefer-standby")
         self.assertEqual(backup["retentionPolicy"], "14d")
         self.assertEqual(object_store["destinationPath"], "s3://cnpg-torghut")
-        self.assertEqual(object_store["serverName"], "torghut-db-live")
+        self.assertEqual(object_store["serverName"], "torghut-db-pg18")
         self.assertEqual(wal["maxParallel"], 8)
 
         schedule = load_yaml_mapping(

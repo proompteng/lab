@@ -698,19 +698,6 @@ data:
               )
       - name: torghut-storage-alerts.rules
         rules:
-          - alert: TorghutPostgresMetricsMissing
-            expr: |
-              min(up{cluster="torghut-db",job="cnpg-postgres"}) < 1 or
-              absent(up{cluster="torghut-db",job="cnpg-postgres"})
-            for: 10m
-            labels:
-              severity: warning
-              service: torghut-postgres
-              team: platform
-            annotations:
-              summary: Torghut PostgreSQL storage metrics are missing
-              description: CloudNativePG metrics for torghut-db have been absent or failing for 10 minutes.
-              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
           - alert: CephStorageMetricsMissing
             expr: |
               min(up{job="ceph-storage"}) < 1 or
@@ -1279,23 +1266,6 @@ data:
               runbook_url: docs/torghut/design-system/v1/operations-ta-replay-and-recovery.md
       - name: torghut-trading.rules
         rules:
-          - alert: TorghutApiServiceMissing
-            expr: |
-              absent(
-                kube_service_info{
-                  namespace="torghut",
-                  service="torghut"
-                }
-              ) == 1
-            for: 10m
-            labels:
-              severity: warning
-            annotations:
-              summary: Torghut API service is missing
-              description: |
-                The stable Knative API Service is absent from Kubernetes inventory.
-                The Torghut metrics scrape uses this Service to reach the current revision.
-              runbook_url: docs/torghut/design-system/v1/operations-knative-revision-failures.md
           - alert: TorghutActiveApiRevisionMetricsDown
             expr: |
               max(
@@ -1507,22 +1477,6 @@ data:
               summary: Torghut LLM token usage spiked
               description: LLM token rate is >3x the trailing 1h baseline for 10 minutes.
               runbook_url: docs/torghut/design-system/v1/cost-model-and-budgets.md
-          - alert: TorghutLLMTelemetryMissing
-            expr: |
-              absent(
-                torghut_llm_requests_total{
-                  job="torghut",
-                  namespace="torghut",
-                  service="torghut-llm-guardrails-exporter"
-                }
-              ) == 1
-            for: 15m
-            labels:
-              severity: warning
-            annotations:
-              summary: Torghut LLM telemetry missing
-              description: torghut LLM review metrics are not being scraped for 15 minutes.
-              runbook_url: docs/torghut/design-system/v1/observability-metrics-logs-traces.md
       - name: torghut-mrm.rules
         rules:
           - alert: TorghutLLMGuardrailsExporterDown

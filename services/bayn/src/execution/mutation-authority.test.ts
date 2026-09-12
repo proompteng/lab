@@ -284,6 +284,7 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
       }),
     orderById: () => unusedRead,
     orderByClientId: () => unusedRead,
+    feeActivities: () => unusedRead,
     fillActivities: () => unusedRead,
     marketCalendar: () => unusedRead,
   }

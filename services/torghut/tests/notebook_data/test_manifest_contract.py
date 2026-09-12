@@ -422,6 +422,9 @@ def test_database_principals_are_read_only_and_bounded() -> None:
     }
     assert notebook_profiles == {
         "notebook/readonly": 1,
+        "notebook/compatibility": "25.8",
+        "notebook/async_insert": 0,
+        "notebook/output_format_json_quote_64bit_integers": 1,
         "notebook/max_execution_time": 30,
         "notebook/max_result_rows": 100000,
         "notebook/result_overflow_mode": "throw",

@@ -88,7 +88,7 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
         job = cast(Mapping[str, object], spec.get("job", {}))
 
         self.assertGreaterEqual(int(str(spec.get("restartNonce"))), 33)
-        self.assertEqual(job.get("upgradeMode"), "last-state")
+        self.assertEqual(job.get("upgradeMode"), "savepoint")
         self.assertEqual(flink_config.get("restart-strategy.type"), "exponential-delay")
         self.assertFalse(
             any(

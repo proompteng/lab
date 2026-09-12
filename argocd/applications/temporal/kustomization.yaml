@@ -236,8 +236,8 @@ images:
     digest: sha256:dbc5fcd6ee8f0f4d808bf765af9a87dea9d8a283abfdcfbd2fc148496ba66107
   - name: mirror.gcr.io/temporalio/ui
     newName: mirror.gcr.io/temporalio/ui
-    newTag: 2.53.3
-    digest: sha256:eef301146e60fad34b47adaecfae4149016e34b2d44ba94fca5fd8e5441f182a
+    newTag: 2.54.0
+    digest: sha256:53d6a2b0b32015a78b8748235a1743e4d5b1bf3a7d6c01dc916aa01023745932
 
 configMapGenerator:
   - name: temporal-cassandra-upgrade-scripts

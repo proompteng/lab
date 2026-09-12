@@ -280,7 +280,7 @@ export const defaultIntradayMomentumProtocolDocument = Object.freeze({
   lookbackMinutes: 30,
   decisionDelaySeconds: 2,
   maximumDecisionLagMs: 60_000,
-  maximumQuoteAgeMs: 2_000,
+  maximumQuoteAgeMs: 10_000,
   warmupMinutesAfterOpen: 0,
   entryCutoffMinutesBeforeClose: 5,
   flattenBeforeCloseMinutes: 5,
