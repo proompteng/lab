@@ -84,6 +84,27 @@ test('shared input selection preserves live identity and never turns a simulated
   )
 })
 
+test('rejected transport records still enforce supplied partition offset order', () => {
+  const { universe, event } = fixture()
+  const first = event(9)
+  const cursor = Result.getOrThrow(
+    advanceHistoricalMarketCursor(Result.getOrThrow(createHistoricalMarketCursor('c'.repeat(64), universe)), {
+      ...first,
+      record: { ...first.record, partition: 2_147_483_648 },
+    }),
+  )
+  expect(cursor.projection.offsets.size).toBe(0)
+  expect(
+    Result.isFailure(
+      advanceHistoricalMarketCursor(cursor, {
+        ...first,
+        availableAtMs: first.availableAtMs + 1,
+        record: { ...first.record, partition: 2_147_483_648, offset: '8' },
+      }),
+    ),
+  ).toBe(true)
+})
+
 test('incremental replay exceeds the whole-file limit while retaining bounded quote state', () => {
   const { universe, event, symbol } = fixture()
   let cursor: HistoricalMarketCursor = Result.getOrThrow(createHistoricalMarketCursor('b'.repeat(64), universe))

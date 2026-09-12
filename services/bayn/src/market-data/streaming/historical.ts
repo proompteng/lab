@@ -117,6 +117,7 @@ export interface HistoricalMarketCursor {
   readonly regeneratedFeaturesRecordedAtMs?: number
   readonly projection: ReturnType<typeof emptyStreamingProjection>
   readonly processedRecords: number
+  readonly suppliedOffsets: ReadonlyMap<string, string>
   readonly lastArrival: HistoricalArrivalPosition | null
 }
 
@@ -135,6 +136,7 @@ export const createHistoricalMarketCursor = (
       ...(regeneratedFeaturesRecordedAtMs === undefined ? {} : { regeneratedFeaturesRecordedAtMs }),
       projection: { ...emptyStreamingProjection(`historical-${runId}`), availabilityMode: 'simulated' },
       processedRecords: 0,
+      suppliedOffsets: new Map<string, string>(),
       lastArrival: null,
     } satisfies HistoricalMarketCursor
   })
@@ -144,7 +146,8 @@ export const advanceHistoricalMarketCursor = (cursor: HistoricalMarketCursor, in
     const event = yield* Schema.decodeUnknownResult(HistoricalMarketArrivalSchema, strictParseOptions)(input)
     const { record } = event
     const last = cursor.lastArrival
-    const offset = cursor.projection.offsets.get(topicPartitionKey(record.topic, record.partition))
+    const partitionKey = topicPartitionKey(record.topic, record.partition)
+    const offset = cursor.suppliedOffsets.get(partitionKey)
     const order = last === null ? 1 : compareArrivalPositions(arrivalPosition(event), last)
     if (order < 0 || (offset !== undefined && BigInt(record.offset) < BigInt(offset)))
       return yield* Result.fail(
@@ -165,6 +168,7 @@ export const advanceHistoricalMarketCursor = (cursor: HistoricalMarketCursor, in
         cursor.regeneratedFeaturesRecordedAtMs ?? event.availableAtMs,
       ),
       processedRecords: cursor.processedRecords + 1,
+      suppliedOffsets: new Map(cursor.suppliedOffsets).set(partitionKey, record.offset),
       lastArrival: {
         availableAtMs: event.availableAtMs,
         topic: record.topic,
