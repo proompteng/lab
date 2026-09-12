@@ -1,3 +1,4 @@
+import { isSnapshotExecutionMarketDataBinding } from './shadow-decision-contract'
 import { Data, Effect, Result, Schema } from 'effect'
 
 import {
@@ -94,6 +95,7 @@ export interface ObserveShadowDecisionInput {
   readonly snapshot: ShadowSnapshotBinding
   readonly compiledDecision: RuntimeStrategyDecision
   readonly decisionMarketDataRows?: PersistedIntradaySnapshotRows
+  readonly executionMarketDataRows?: PersistedIntradaySnapshotRows
   readonly decisionMarketData?: ExecutionMarketDataBinding
   readonly executionMarketData?: ExecutionMarketDataBinding
   readonly plannerInput: TargetPlannerInput
@@ -139,6 +141,13 @@ const ObserveShadowDecisionInputSchema = Schema.Struct({
   snapshot: ShadowSnapshotBindingSchema,
   compiledDecision: Schema.Unknown,
   decisionMarketDataRows: Schema.optionalKey(
+    Schema.Struct({
+      bars: Schema.Array(Schema.Unknown),
+      quotes: Schema.Array(Schema.Unknown),
+      trades: Schema.Array(Schema.Unknown),
+    }),
+  ),
+  executionMarketDataRows: Schema.optionalKey(
     Schema.Struct({
       bars: Schema.Array(Schema.Unknown),
       quotes: Schema.Array(Schema.Unknown),
@@ -353,10 +362,12 @@ const validateBindings = (
   if (intradayEntry && decisionMarketData?.purpose !== undefined) {
     return Result.fail(error('binding', 'intraday entry decision requires bar-and-trade market-data evidence'))
   }
-  if (intradayEntry && executionMarketData?.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
-    return Result.fail(error('binding', 'intraday-momentum entry requires execution market-data binding v2'))
+  if (intradayEntry && !isSnapshotExecutionMarketDataBinding(executionMarketData)) {
+    return Result.fail(
+      error('binding', 'intraday-momentum entry requires a verified execution market-data snapshot binding'),
+    )
   }
-  if (intradayEntry && decisionMarketData?.schemaVersion === 'bayn.execution-market-data-binding.v2') {
+  if (intradayEntry && isSnapshotExecutionMarketDataBinding(decisionMarketData)) {
     const excludedSymbols = decision.excludedCandidates.map(({ symbol }) => symbol)
     const decisionSymbols = [
       ...decision.signals.map(({ symbol }) => symbol),
@@ -449,7 +460,7 @@ const validateBindings = (
             .filter(
               (position) =>
                 BigInt(position.quantityMicros) !== 0n &&
-                executionMarketData?.schemaVersion === 'bayn.execution-market-data-binding.v2' &&
+                isSnapshotExecutionMarketDataBinding(executionMarketData) &&
                 executionMarketData.universe.includes(position.symbol),
             )
             .map((position) => position.symbol),
@@ -1031,6 +1042,9 @@ const assembleExecutionDecisionDocument = (
       executionSession,
       strategyDecision: input.compiledDecision,
       ...(input.decisionMarketDataRows === undefined ? {} : { decisionMarketDataRows: input.decisionMarketDataRows }),
+      ...(input.executionMarketDataRows === undefined
+        ? {}
+        : { executionMarketDataRows: input.executionMarketDataRows }),
       plannerInput: input.plannerInput,
       riskPolicy: input.policy,
       targetPlan: input.targetPlan,
@@ -1056,6 +1070,9 @@ export const buildExecutionDecision = (
         snapshot: input.snapshot,
         compiledDecision: input.compiledDecision,
         ...(input.decisionMarketDataRows === undefined ? {} : { decisionMarketDataRows: input.decisionMarketDataRows }),
+        ...(input.executionMarketDataRows === undefined
+          ? {}
+          : { executionMarketDataRows: input.executionMarketDataRows }),
         ...(input.decisionMarketData === undefined ? {} : { decisionMarketData: input.decisionMarketData }),
         ...(input.executionMarketData === undefined ? {} : { executionMarketData: input.executionMarketData }),
         plannerInput: input.plannerInput,

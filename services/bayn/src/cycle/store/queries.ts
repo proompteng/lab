@@ -349,14 +349,15 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
                 AND snapshot.manifest ->> 'finalizedAt' = ${document.bindings.snapshotFinalizedAt}
             )
           `
-        : decisionMarketData.schemaVersion === 'bayn.execution-market-data-binding.v2'
+        : decisionMarketData.schemaVersion === 'bayn.execution-market-data-binding.v2' ||
+            decisionMarketData.schemaVersion === 'bayn.execution-market-data-binding.v3'
           ? sql`
               ${document.bindings.snapshotId} = ${decisionMarketData.snapshotId}
               AND ${document.bindings.snapshotContentHash} = ${decisionMarketData.contentHash}
               AND ${document.bindings.snapshotFinalizedAt} = ${decisionMarketData.observedAt}
               AND EXISTS (
                 SELECT 1
-                FROM intraday_snapshot_references AS snapshot
+                FROM ${sql(decisionMarketData.schemaVersion === 'bayn.execution-market-data-binding.v3' ? 'streaming_snapshot_references' : 'intraday_snapshot_references')} AS snapshot
                 WHERE snapshot.snapshot_id = ${decisionMarketData.snapshotId}
                   AND snapshot.content_hash = ${decisionMarketData.contentHash}
                   AND snapshot.observed_at = ${decisionMarketData.observedAt}::timestamptz
@@ -367,11 +368,20 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
               AND ${document.bindings.snapshotContentHash} = ${decisionMarketData.contentHash}
               AND ${document.bindings.snapshotFinalizedAt} = ${decisionMarketData.observedAt}
             `
+    const pricing = document.bindings.executionMarketData
+    const pricingEvidence =
+      pricing?.schemaVersion === 'bayn.execution-market-data-binding.v3'
+        ? sql`EXISTS (SELECT 1 FROM streaming_snapshot_references AS snapshot
+          WHERE snapshot.snapshot_id = ${pricing.snapshotId}
+            AND snapshot.content_hash = ${pricing.contentHash}
+            AND snapshot.observed_at = ${pricing.observedAt}::timestamptz)`
+        : sql`true`
     return sql<Record<string, unknown>>`
       SELECT EXISTS (
         SELECT 1
         FROM reconciliations AS reconciliation
         WHERE ${snapshotEvidence}
+          AND ${pricingEvidence}
           AND ${riskContextEvidence}
           AND reconciliation.reconciliation_id = ${document.bindings.reconciliationId}
           AND reconciliation.account_id = ${document.bindings.accountId}
