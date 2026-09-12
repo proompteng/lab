@@ -77,8 +77,12 @@ func main() {
 			fmt.Println("Usage: bayn-streaming-replay --file <decision.json> | --decision <decision-content-hash>")
 			return
 		}
+		if len(os.Args) == 3 && os.Args[1] == "/app/services/bayn/dist/streaming-diagnostics-command.js" && os.Args[2] == "--codecs" {
+			fmt.Println("Kafka codecs verified: gzip,snappy,lz4,zstd")
+			return
+		}
 		if len(os.Args) == 3 && os.Args[1] == "/app/services/bayn/dist/streaming-diagnostics-command.js" && os.Args[2] == "--help" {
-			fmt.Println("Usage: bayn-streaming-diagnostics --since <UTC-instant> | --help")
+			fmt.Println("Usage: bayn-streaming-diagnostics --since <UTC-instant> | --codecs | --help")
 			return
 		}
 		if len(os.Args) == 3 && os.Args[1] == "/app/services/bayn/dist/forward-performance-command.js" && os.Args[2] == "--help" {

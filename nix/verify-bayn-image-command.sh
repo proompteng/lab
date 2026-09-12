@@ -195,7 +195,7 @@ fi
 for command in streaming-replay streaming-diagnostics; do
   case "${command}" in
     streaming-replay) expected_streaming='Usage: bayn-streaming-replay --file <decision.json> | --decision <decision-content-hash>' ;;
-    streaming-diagnostics) expected_streaming='Usage: bayn-streaming-diagnostics --since <UTC-instant> | --help' ;;
+    streaming-diagnostics) expected_streaming='Usage: bayn-streaming-diagnostics --since <UTC-instant> | --codecs | --help' ;;
   esac
   streaming_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
     --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --cpus 1 \
@@ -206,5 +206,14 @@ for command in streaming-replay streaming-diagnostics; do
     exit 1
   fi
 done
+
+codecs_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
+  --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --cpus 1 \
+  --env NODE_ENV=production --entrypoint /bin/node "${image_id}" \
+  /app/services/bayn/dist/streaming-diagnostics-command.js --codecs)"
+if [[ "${codecs_actual}" != 'Kafka codecs verified: gzip,snappy,lz4,zstd' ]]; then
+  printf 'Unexpected Kafka codec verification output: %s\n' "${codecs_actual}" >&2
+  exit 1
+fi
 
 printf '%s\n' "${actual}"

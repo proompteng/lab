@@ -1,3 +1,4 @@
+import { compressionsAlgorithms } from '@platformatic/kafka'
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { Data, Effect, Layer, Logger, Result, Schedule, Stdio, Stream } from 'effect'
 import { kafkaMarketConfig } from './config/source'
@@ -12,10 +13,12 @@ import {
 
 class StreamingDiagnosticsFailure extends Data.TaggedError('StreamingDiagnosticsFailure')<{
   readonly message: string
+  readonly cause?: unknown
 }> {}
 
-const usage = 'Usage: bayn-streaming-diagnostics --since <UTC-instant> | --help'
+const usage = 'Usage: bayn-streaming-diagnostics --since <UTC-instant> | --codecs | --help'
 export const parseStreamingDiagnosticsArgs = (args: readonly string[]) => {
+  if (args.length === 1 && args[0] === '--codecs') return { kind: 'codecs' } as const
   if (args.length === 1 && args[0] === '--help') return { kind: 'help' } as const
   if (
     args.length === 2 &&
@@ -42,6 +45,20 @@ const main = Effect.scoped(
   Effect.gen(function* () {
     const args = parseStreamingDiagnosticsArgs(process.argv.slice(2))
     if (args.kind === 'help') return yield* print(usage)
+    if (args.kind === 'codecs') {
+      yield* Effect.try({
+        try: () => {
+          const payload = Buffer.from('Bayn Kafka codec verification '.repeat(32))
+          for (const algorithm of ['gzip', 'snappy', 'lz4', 'zstd'] as const) {
+            const codec = compressionsAlgorithms[algorithm]
+            if (!codec.available || !codec.decompressSync(codec.compressSync(payload)).equals(payload))
+              throw new StreamingDiagnosticsFailure({ message: `Kafka codec verification failed: ${algorithm}` })
+          }
+        },
+        catch: (cause) => new StreamingDiagnosticsFailure({ message: 'Kafka codec verification failed', cause }),
+      })
+      return yield* print('Kafka codecs verified: gzip,snappy,lz4,zstd')
+    }
     if (args.kind === 'invalid') return yield* new StreamingDiagnosticsFailure({ message: usage })
     const config = yield* kafkaMarketConfig
     if (config === undefined)

@@ -31,7 +31,8 @@ This bounded probe uses the configured Bayn Kafka identity and the production co
 bounds, consumes retained records, commits incorporated offsets in a unique group, verifies exact feature-to-bar
 matches, and closes the connection. Receipt times are the actual diagnostic times. Its output identifies retained
 input joins observed now; it does not claim those features were available in a past trading session. The image
-check loads this command with `--help` to validate external Kafka and codec packaging without network access.
+check loads this command with `--help` and runs `--codecs` to round-trip gzip, Snappy, LZ4 and Zstd from the
+finished image without network access.
 
 ## Recorded decisions
 
