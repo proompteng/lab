@@ -1453,7 +1453,25 @@ test('retains measured native execution quality when missing minutes prevent com
     expect(receipt.executionQuality.status).toBe('MEASURED')
     expect(receipt.observedCapacity.status).toBe(missing ? 'UNDETERMINED' : 'MEASURED')
     expect(receipt.observedCapacity.reasonCodes).toEqual(missing ? ['MARKET_VOLUME_EVIDENCE_GAP'] : [])
-    expect(receipt.observedCapacity.observations[0]?.intradaySource?.evidence).toEqual(volume)
+    expect(receipt.observedCapacity.observations[0]?.intradaySource?.evidenceHash).toBe(volume.contentHash)
+    expect(receipt.observedCapacity.intradaySources).toEqual([volume])
     if (missing) expect(receipt.observedCapacity.boundedObservedReferenceNotionalMicros).toBeNull()
   }
+})
+
+test('retains native archive evidence even when a missing fill prevents execution-quality measurement', () => {
+  const { request, archive, bars } = makeIntradayPerformanceFixture()
+  const volume = Result.getOrThrow(makeIntradayPerformanceVolumeEvidence(request, archive, bars.slice(1)))
+  if (volume === undefined) throw new Error('expected native evidence')
+  const receipt = success(
+    makeForwardPerformanceReceipt(
+      input({
+        executionEvidence: exactExecutionEvidence().map((evidence) => ({ ...evidence, fills: [] })),
+        marketVolumeEvidence: [volume],
+      }),
+    ),
+  )
+  expect(receipt.executionQuality.status).toBe('UNDETERMINED')
+  expect(receipt.observedCapacity.status).toBe('UNDETERMINED')
+  expect(receipt.observedCapacity.intradaySources).toEqual([volume])
 })

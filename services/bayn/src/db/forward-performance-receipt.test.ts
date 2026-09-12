@@ -132,6 +132,7 @@ test('round trips native archive provenance and rejects a rehashed nested source
     ...receiptMaterial,
     observedCapacity: {
       ...receiptMaterial.observedCapacity,
+      intradaySources: [evidence],
       observations: [
         {
           cycleId: request.cycleId,
@@ -145,7 +146,11 @@ test('round trips native archive provenance and rejects a rehashed nested source
             denominatorQuantityMicros: evidence.quantityMicros,
             decimal: '0.000461538461',
           },
-          intradaySource: { feed: 'iex' as const, volumeScope: evidence.volumeScope, evidence },
+          intradaySource: {
+            feed: 'iex' as const,
+            volumeScope: evidence.volumeScope,
+            evidenceHash: evidence.contentHash,
+          },
         },
       ],
     },
@@ -155,10 +160,10 @@ test('round trips native archive provenance and rejects a rehashed nested source
   const decoded = Result.getOrThrow(
     decodeForwardPerformanceReceiptEnvelopeResult({ ...outer, contentHash: canonicalHashV1(outer) }),
   )
-  expect(decoded.receipt.observedCapacity.observations[0]?.intradaySource?.evidence).toEqual(evidence)
+  expect(decoded.receipt.observedCapacity.intradaySources).toEqual([evidence])
   const altered = { ...evidence, decisionSnapshotId: '0'.repeat(64) }
   const { contentHash: _hash, ...alteredMaterial } = altered
-  material.observedCapacity.observations[0]!.intradaySource.evidence = {
+  material.observedCapacity.intradaySources[0] = {
     ...alteredMaterial,
     contentHash: canonicalHashV1(alteredMaterial),
   }

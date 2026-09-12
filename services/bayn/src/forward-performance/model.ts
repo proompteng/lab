@@ -425,6 +425,7 @@ export interface ForwardPerformanceReceiptMaterial {
     } | null
   }
   readonly observedCapacity: {
+    readonly intradaySources?: readonly ForwardPerformanceIntradayMarketVolumeEvidence[]
     readonly status: ForwardPerformanceMeasurementStatus
     readonly reasonCodes: readonly ForwardPerformanceObservedCapacityReasonCode[]
     readonly evidenceHash: string | null
@@ -439,7 +440,7 @@ export interface ForwardPerformanceReceiptMaterial {
       readonly intradaySource?: {
         readonly feed: 'iex'
         readonly volumeScope: 'IEX_RECORDED_SESSION_VOLUME'
-        readonly evidence: ForwardPerformanceIntradayMarketVolumeEvidence
+        readonly evidenceHash: string
       }
       readonly participationRate: {
         readonly numeratorQuantityMicros: string

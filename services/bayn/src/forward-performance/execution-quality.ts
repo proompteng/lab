@@ -820,7 +820,9 @@ const measureObservedCapacity = (
       filledQuantityMicros: filled.toString(),
       marketVolumeQuantityMicros: marketVolume.toString(),
       ...(volume.schemaVersion === 'bayn.forward-performance-intraday-volume-evidence.v1'
-        ? { intradaySource: { feed: 'iex' as const, volumeScope: volume.volumeScope, evidence: volume } }
+        ? {
+            intradaySource: { feed: 'iex' as const, volumeScope: volume.volumeScope, evidenceHash: volume.contentHash },
+          }
         : {}),
       participationRate: {
         numeratorQuantityMicros: filled.toString(),
@@ -861,8 +863,17 @@ export const makeForwardPerformanceExecutionMeasurements = (
   input: ForwardPerformanceEvidenceInput,
 ): Result.Result<ForwardPerformanceExecutionMeasurements, CanonicalHashFailure> =>
   Result.flatMap(measureExecutionQuality(input), ({ executionQuality, contributions }) =>
-    Result.map(measureObservedCapacity(input, executionQuality, contributions), (observedCapacity) => ({
-      executionQuality,
-      observedCapacity,
-    })),
+    Result.map(measureObservedCapacity(input, executionQuality, contributions), (observedCapacity) => {
+      const intradaySources = (input.marketVolumeEvidence ?? [])
+        .filter((volume) => volume.schemaVersion === 'bayn.forward-performance-intraday-volume-evidence.v1')
+        .filter(validIntradayPerformanceVolumeEvidence)
+        .toSorted((left, right) => compareStrings(volumeSortKey(left), volumeSortKey(right)))
+      return {
+        executionQuality,
+        observedCapacity: {
+          ...observedCapacity,
+          ...(intradaySources.length === 0 ? {} : { intradaySources }),
+        },
+      }
+    }),
   )
