@@ -42,14 +42,18 @@ inactive manifest to that list is an operational change requiring a reviewed rec
    Record the operator's actual backup mode; this checkpoint reports `online: true` despite the request's
    `online: false`, so do not describe it as an offline backup. The retained original PVs also preserve the
    database data through shutdown. A completed snapshot alone is not a tested restore.
-4. Validate the rendered resource set and post-deploy verifier, then merge through normal review and CI.
+4. Deploy the Jangar consumer retirement in [PR #14529](https://github.com/proompteng/lab/pull/14529)
+   through its normal Kargo stage before deleting Torghut. Verify its retired API routes return HTTP 410,
+   its Torghut database environment and CA mount are absent, and its retained routes still respond.
+   The same prerequisite removes the API, PostgreSQL, and LLM telemetry absence alerts.
+5. Validate the rendered resource set and post-deploy verifier, then merge through normal review and CI.
    All five existing image builders publish the exact source cohort. Kargo promotes that source to
    `kargo/torghut`; Argo prunes the retired owners and Kubernetes garbage-collects their dependents.
    Do not manually sync Argo, replace the shared Application, or publish a hand-written image bump.
-5. Verify all six owners, their Pods, API Services, and dependent scheduled consumers are absent. Inspect
+6. Verify all six owners, their Pods, API Services, and dependent scheduled consumers are absent. Inspect
    any terminal hook remnants against the pre-removal UID inventory before normal deletion. Never strip
    finalizers, force-delete storage, delete a namespace, or delete objects using a broad name prefix.
-6. Verify recovery volumes and backups still exist, both retained Flink jobs are running with completed
+7. Verify recovery volumes and backups still exist, both retained Flink jobs are running with completed
    checkpoints, websocket/Kafka and ClickHouse reads work, and Bayn and Ceph remain healthy. During a
    closed market, report the market-data check's observation mode rather than claiming fresh trading ticks.
 
@@ -83,8 +87,10 @@ checkpoint prefixes are separate and must remain untouched. Keep trading disable
 
 The post-deploy workflow checks the deployed revision, directly checks retired Deployment/Knative Service
 and Pod absence, and checks other retired owners through Argo's resource inventory using existing runner
-permissions. The rollout operator additionally verifies those owners directly. The workflow requires a running job, accounts for every task as running or successfully finished, and requires a
-completed checkpoint for each retained Flink job, then runs the existing Kafka,
+permissions. The rollout operator additionally verifies those owners directly. For each retained Flink
+pipeline, the workflow requires ready JobManager and TaskManager Pods running the immutable image
+from the promoted manifest. It rejects a healthy job left on an older image, accounts for every task
+as running or successfully finished, and requires a completed checkpoint, then runs the existing Kafka,
 websocket, and TA freshness check with `TORGHUT_SCHEDULER_EXPECTED=false`.
 
 References: [Kubernetes retained volumes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#retain)

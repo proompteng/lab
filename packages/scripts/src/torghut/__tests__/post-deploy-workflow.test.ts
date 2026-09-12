@@ -1,6 +1,9 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import YAML from 'yaml'
 
 import { describe, expect, it } from 'bun:test'
 
@@ -176,42 +179,86 @@ describe('torghut post-deploy verifier workflow', () => {
     })
   }
 
+  const repoRoot = fileURLToPath(new URL('../../../../../', import.meta.url))
+  const promotedImage = (
+    YAML.parse(readFileSync(join(repoRoot, 'argocd/applications/torghut/ta/flinkdeployment.yaml'), 'utf8')) as {
+      spec: { image: string }
+    }
+  ).spec.image
+  const flinkPods = (image: string, ready = true) => ({
+    items: ['jobmanager', 'taskmanager'].map((component) => ({
+      metadata: { labels: { component } },
+      spec: { containers: [{ name: 'flink-main-container', image }] },
+      status: {
+        phase: 'Running',
+        conditions: [{ type: 'Ready', status: ready ? 'True' : 'False' }],
+        containerStatuses: [
+          {
+            name: 'flink-main-container',
+            ready,
+            imageID: 'containerd://sha256:platform-image',
+            state: { running: {} },
+          },
+        ],
+      },
+    })),
+  })
   const pipelineCheck = workflow.slice(
     workflow.indexOf('          for pipeline in'),
     workflow.indexOf('      - name: Verify market-data freshness'),
   )
-  for (const [name, jobs, checkpoints, succeeds] of [
+  for (const [name, jobs, checkpoints, succeeds, pods] of [
     [
       'running with checkpoint',
       { jobs: [{ jid: 'abc', state: 'RUNNING', tasks: { total: 4, running: 4, finished: 0, failed: 0 } }] },
       { latest: { completed: { status: 'COMPLETED', id: 42 } } },
       true,
+      flinkPods(promotedImage),
     ],
     [
       'completed bounded source',
       { jobs: [{ jid: 'abc', state: 'RUNNING', tasks: { total: 83, running: 82, finished: 1, failed: 0 } }] },
       { latest: { completed: { status: 'COMPLETED', id: 42 } } },
       true,
+      flinkPods(promotedImage),
     ],
     [
       'unaccounted task',
       { jobs: [{ jid: 'abc', state: 'RUNNING', tasks: { total: 4, running: 3, finished: 0, failed: 0 } }] },
       { latest: { completed: { status: 'COMPLETED', id: 42 } } },
       false,
+      flinkPods(promotedImage),
     ],
-    ['no job', { jobs: [] }, { latest: {} }, false],
+    ['no job', { jobs: [] }, { latest: {} }, false, flinkPods(promotedImage)],
     [
       'failed task',
       { jobs: [{ jid: 'abc', state: 'RUNNING', tasks: { total: 4, running: 3, finished: 0, failed: 1 } }] },
       { latest: { completed: { status: 'COMPLETED', id: 42 } } },
       false,
+      flinkPods(promotedImage),
     ],
     [
       'no checkpoint',
       { jobs: [{ jid: 'abc', state: 'RUNNING', tasks: { total: 4, running: 4, finished: 0, failed: 0 } }] },
       { latest: {} },
       false,
+      flinkPods(promotedImage),
     ],
+    [
+      'a healthy job still uses the old image',
+      { jobs: [{ jid: 'abc', state: 'RUNNING', tasks: { total: 4, running: 4, finished: 0, failed: 0 } }] },
+      { latest: { completed: { status: 'COMPLETED', id: 42 } } },
+      false,
+      flinkPods('registry.invalid/old@sha256:' + '0'.repeat(64)),
+    ],
+    [
+      'promoted workers are not ready',
+      { jobs: [{ jid: 'abc', state: 'RUNNING', tasks: { total: 4, running: 4, finished: 0, failed: 0 } }] },
+      { latest: { completed: { status: 'COMPLETED', id: 42 } } },
+      false,
+      flinkPods(promotedImage, false),
+    ],
+    ['worker inventory is empty', { jobs: [] }, { latest: {} }, false, { items: [] }],
   ] as const) {
     it(`validates native Flink evidence when ${name}`, () => {
       const directory = mkdtempSync(join(tmpdir(), 'torghut-pipeline-test-'))
@@ -224,6 +271,8 @@ describe('torghut post-deploy verifier workflow', () => {
             '-c',
             `
           sleep() { :; }
+          seq() { printf '60\n'; }
+          kubectl() { printf '%s' "$TEST_PODS"; }
           curl() {
             local url="" output=""
             while [ "$#" -gt 0 ]; do
@@ -237,10 +286,12 @@ describe('torghut post-deploy verifier workflow', () => {
         `,
           ],
           {
+            cwd: repoRoot,
             env: {
               ...process.env,
               EVIDENCE_DIR: directory,
               TEST_JOBS: JSON.stringify(jobs),
+              TEST_PODS: JSON.stringify(pods),
               TEST_CHECKPOINTS: JSON.stringify(checkpoints),
             },
           },

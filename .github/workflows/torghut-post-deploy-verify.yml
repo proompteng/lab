@@ -261,8 +261,32 @@ jobs:
           fi
 
           for pipeline in torghut-ta market-data-archive; do
+            pipeline_path="${pipeline}"
+            if [ "${pipeline}" = torghut-ta ]; then pipeline_path=ta; fi
+            expected_image="$(bun -e '
+              const manifest = Bun.YAML.parse(await Bun.file(process.argv[1]).text());
+              const image = manifest.spec?.image;
+              if (typeof image !== "string" || !/@sha256:[0-9a-f]{64}$/.test(image)) {
+                throw new Error("Promoted Flink manifest is missing an immutable image digest");
+              }
+              console.log(image);
+            ' "argocd/applications/torghut/${pipeline_path}/flinkdeployment.yaml")"
             for pipeline_attempt in $(seq 1 60); do
-              if curl -fsS --connect-timeout 5 --max-time 15 \
+              if kubectl get pods -n torghut -l "app=${pipeline}" -o json \
+                  > "${EVIDENCE_DIR}/${pipeline}-pods.json" &&
+                jq -e --arg image "${expected_image}" '
+                  [.items[] | select(.metadata.deletionTimestamp == null)] as $pods
+                  | any($pods[]; .metadata.labels.component == "jobmanager")
+                    and any($pods[]; .metadata.labels.component == "taskmanager")
+                    and all($pods[];
+                      .status.phase == "Running"
+                      and any(.status.conditions[]?; .type == "Ready" and .status == "True")
+                      and any(.spec.containers[]; .name == "flink-main-container" and .image == $image)
+                      and any(.status.containerStatuses[]?;
+                        .name == "flink-main-container" and .ready == true
+                        and .state.running != null and ((.imageID // "") | length) > 0))
+                ' "${EVIDENCE_DIR}/${pipeline}-pods.json" >/dev/null &&
+                curl -fsS --connect-timeout 5 --max-time 15 \
                   "http://${pipeline}-rest.torghut.svc.cluster.local:8081/jobs/overview" \
                   -o "${EVIDENCE_DIR}/${pipeline}-jobs.json" &&
                 jq -e '.jobs | length == 1 and all(.[];
@@ -279,7 +303,7 @@ jobs:
                 fi
               fi
               if [ "${pipeline_attempt}" -eq 60 ]; then
-                echo "${pipeline} did not reach RUNNING with every task running or finished and a completed checkpoint"
+                echo "${pipeline} did not converge on the promoted image with ready workers, a RUNNING job, and a completed checkpoint"
                 exit 1
               fi
               sleep 10
