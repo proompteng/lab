@@ -240,14 +240,20 @@ Retirement order and checks:
    recovery objects tracked by the acceptance Applications already have Argo
    `Prune=false,Delete=false` protection. The original PostgreSQL snapshots are
    owned by the retained Backup objects in production namespaces.
-3. Before merging, add `Prune=false,Delete=false` to the two dedicated test
+3. Pause only the three test Applications with the `argocd.argoproj.io/skip-reconcile`
+   annotation, which the platform ApplicationSet preserves. Require no sync in
+   progress. Before merging, add `Prune=false,Delete=false` to the two dedicated test
    Namespaces with UID/resource-version preconditions, preserving their existing
-   annotations. Read back the protection on both Namespaces. This blocks an
+   annotations. Also protect the four rehearsal NetworkPolicies until all test
+   Pods stop, preserving isolation during shutdown. Read back these protections
+   while reconciliation is paused; an active app can restore old metadata. This blocks an
    Application finalizer from cascading namespace deletion before ordered cleanup.
    The shared `rook-ceph` namespace is neither an Application-owned resource nor
    a deletion target.
 4. Merge the ApplicationSet removal and let root reconciliation retire the three
-   Applications. Wait for those registrations to disappear before deleting
+   Applications. Once the entries are absent from the live ApplicationSet and
+   the Applications have deletion timestamps, clear their reconciliation pause
+   so normal resource finalization can proceed. Wait for them to disappear before deleting
    retained test resources so self-healing cannot recreate them. Keep Argo and
    Kubernetes finalizers intact.
 5. Delete remaining rehearsal Cluster and Job objects normally with UID
