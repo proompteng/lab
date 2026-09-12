@@ -115,6 +115,10 @@ export const prepareReplaySession = (input: unknown) =>
       return yield* Result.fail(
         new ReplayBrokerFailure({ message: 'Replay session is not in the supplied market calendar' }),
       )
+    if (decoded.calendar.some((entry) => entry.date < decoded.sessionDate))
+      return yield* Result.fail(
+        new ReplayBrokerFailure({ message: 'A fresh single-session replay cannot include prior calendar sessions' }),
+      )
     const openMs = Date.parse(session.openAt)
     const closeMs = Date.parse(session.closeAt)
     if (decoded.assetObservationPolicy === 'retained-as-of-session' && Date.parse(decoded.assetObservationAt) > openMs)
@@ -184,8 +188,12 @@ export type ReplayDatabaseConfig = Pick<RuntimeConfig, 'postgres' | 'tigerBeetle
 
 export const prepareFreshReplayDatabase = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
+  const schema = yield* sql<Record<string, unknown>>`SELECT
+    pg_catalog.current_schemas(false) = ARRAY['public']::name[] AS valid`
+  if (schema[0]?.['valid'] !== true)
+    return yield* new ReplayBrokerFailure({ message: 'Fresh replay requires public as the only effective schema' })
   const existing = yield* sql<Record<string, unknown>>`SELECT EXISTS (
-    SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
     WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')
   ) AS present`
   if (existing[0]?.['present'] !== false)

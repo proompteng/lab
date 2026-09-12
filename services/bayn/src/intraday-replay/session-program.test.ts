@@ -93,3 +93,16 @@ test('session preparation permits the broker calendar to include the next tradin
   expect(prepared.closeMs).toBe(Date.parse('2026-09-04T20:00:00Z'))
   expect(prepared.input.calendar).toHaveLength(2)
 })
+
+test('prior calendar sessions fail preparation before a fresh database can be occupied', () => {
+  const input = fixture()
+  const result = prepareReplaySession({
+    ...input,
+    calendar: [{ date: '2026-09-03', open: '09:30', close: '16:00' }, ...input.calendar],
+  })
+  expect(Result.isFailure(result)).toBe(true)
+  if (Result.isFailure(result))
+    expect(result.failure).toMatchObject({
+      message: 'A fresh single-session replay cannot include prior calendar sessions',
+    })
+})

@@ -99,6 +99,35 @@ describePostgres('PostgreSQL streaming decision source evidence', () => {
     )
   })
 
+  test('fresh replay rejects a different effective schema without migrating it', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`CREATE SCHEMA replay_schema_guard_test`
+            yield* sql`CREATE TABLE replay_schema_guard_test.evaluation_runs (run_id text)`
+            yield* sql`INSERT INTO replay_schema_guard_test.evaluation_runs VALUES ('preserve-other-schema')`
+            yield* sql`SET LOCAL search_path TO replay_schema_guard_test, public`
+            const outcome = yield* Effect.exit(prepareFreshReplayDatabase)
+            expect(Exit.isFailure(outcome)).toBe(true)
+            expect(JSON.stringify(outcome)).toContain('only effective schema')
+            expect(yield* sql`SELECT * FROM replay_schema_guard_test.evaluation_runs`).toEqual([
+              { run_id: 'preserve-other-schema' },
+            ])
+            expect(yield* sql`SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = 'public'`).toEqual([])
+            expect(
+              yield* sql`SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = 'replay_schema_guard_test'`,
+            ).toEqual([{ tablename: 'evaluation_runs' }])
+            yield* sql`DROP SCHEMA replay_schema_guard_test CASCADE`
+          }),
+        )
+      }),
+    )
+  })
+
   test('fresh replay migrates only an empty public schema', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
