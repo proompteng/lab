@@ -148,6 +148,16 @@ class RollingMarketFeaturesTest {
     assertEquals(0, rejected.state.bars.size)
   }
 
+  @Test fun `pairwise host skew cannot accumulate beyond the completed window allowance`() {
+    val early = bar(0).copy(ingestionTime = start.plusSeconds(55))
+    val rejected = processRollingFeature(RollingFeatureState(), early, start.plusSeconds(50).toEpochMilli(), "test")
+    assertNotNull(rejected.rejection)
+    assertEquals(0, rejected.state.bars.size)
+    val accepted = processRollingFeature(RollingFeatureState(), early, start.plusSeconds(55).toEpochMilli(), "test")
+    assertNull(accepted.rejection)
+    assertEquals(1, accepted.state.bars.size)
+  }
+
   @Test fun `conflicting immutable coordinate and premature bars fail`() {
     val original = complete()
     assertFailsWith<IllegalArgumentException> {

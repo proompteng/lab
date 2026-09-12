@@ -171,6 +171,9 @@ internal fun advanceRollingFeature(
   require(bar.ingestionTime.plusMillis(FEATURE_MAX_CLOCK_SKEW_MS) >= bar.eventTime.plusSeconds(60)) {
     "feature bar arrived before its window closed"
   }
+  require(computedAtMs + FEATURE_MAX_CLOCK_SKEW_MS >= bar.eventTime.plusSeconds(60).toEpochMilli()) {
+    "feature computation precedes the completed window"
+  }
   require(
     bar.ingestionTime.toEpochMilli() <= computedAtMs + FEATURE_MAX_CLOCK_SKEW_MS,
   ) { "feature computation precedes input availability" }
