@@ -192,17 +192,20 @@ const incorporateDecodedRecord = (
       const revisions = [...existing, { value: bar, availableAtMs, sequence, recordHash }].toSorted(
         (a, b) => compareIntradayInstants(b.value.eventAt, a.value.eventAt) || compareBarRevisions(b.value, a.value),
       )
-      const minuteCounts = new Map<bigint, number>()
+      const minuteCounts = new Map<string, number>()
       const bars: ObservedMarketValue<IntradayBar>[] = []
       let minimumObservationMs = state.minimumObservationMs
       for (const entry of revisions) {
-        const minute = intradayInstantNanos(entry.value.eventAt)
+        // Raw timestamps have nine fractional digits; recorded rows may have three.
+        const minute = entry.value.eventAt.slice(0, -1).padEnd(29, '0')
         const count = minuteCounts.get(minute) ?? 0
         if (count === 0 && minuteCounts.size === 61) continue
         minuteCounts.set(minute, count + 1)
         if (count < 4) bars.push(entry)
         else {
-          const earliestRetained = bars.findLast((retained) => intradayInstantNanos(retained.value.eventAt) === minute)
+          const earliestRetained = bars.findLast(
+            (retained) => compareIntradayInstants(retained.value.eventAt, entry.value.eventAt) === 0,
+          )
           minimumObservationMs = Math.max(minimumObservationMs, earliestRetained?.availableAtMs ?? availableAtMs)
         }
       }
