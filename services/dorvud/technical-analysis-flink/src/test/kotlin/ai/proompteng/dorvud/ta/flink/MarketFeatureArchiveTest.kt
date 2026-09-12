@@ -95,6 +95,32 @@ class MarketFeatureArchiveTest {
     }
   }
 
+  @Test fun `feature input offsets must fit nonnegative Kafka int64`() {
+    val feature = json.decodeFromString(RollingMarketFeature.serializer(), fixture())
+    for ((offset, accepted) in listOf(Long.MAX_VALUE.toString() to true, "9223372036854775808" to false, "-1" to false, "01" to false)) {
+      val material =
+        feature.material.copy(
+          inputs =
+            listOf(
+              feature.material.inputs
+                .first()
+                .copy(sourceOffset = offset),
+            ) + feature.material.inputs.drop(1),
+        )
+      val changed =
+        feature.copy(
+          material = material,
+          featureId = featureHash(json.encodeToJsonElement(RollingMarketFeatureMaterial.serializer(), material)),
+        )
+      val record = record().copy(value = json.encodeToString(RollingMarketFeature.serializer(), changed))
+      if (accepted) {
+        decodeArchivedMarketFeature(record, routes(), archivedAt)
+      } else {
+        assertFailsWith<IllegalArgumentException> { decodeArchivedMarketFeature(record, routes(), archivedAt) }
+      }
+    }
+  }
+
   @Test fun `feature branch is opt in and rejects noncanonical universe configuration`() {
     assertNull(RollingMarketFeatureConfig.fromEnv(emptyMap()))
     assertFailsWith<IllegalArgumentException> { RollingMarketFeatureConfig.fromEnv(mapOf("TA_MARKET_FEATURES_TOPIC" to "features")) }

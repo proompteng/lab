@@ -16,6 +16,7 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction
 import org.apache.flink.util.Collector
 import org.apache.kafka.clients.producer.ProducerRecord
+import org.slf4j.LoggerFactory
 import java.io.Serializable
 
 internal data class RollingMarketFeatureConfig(
@@ -115,7 +116,16 @@ internal class RollingMarketFeatureFunction(
   ) {
     val transition =
       processRollingFeature(state.value() ?: RollingFeatureState(), value, ctx.timerService().currentProcessingTime(), producerRevision)
-    if (transition.rejection != null) rejected.inc()
+    if (transition.rejection != null) {
+      rejected.inc()
+      LoggerFactory.getLogger("rolling-market-features").warn(
+        "Rejected rolling input topic={} partition={} offset={} reason={}",
+        value.sourceTopic,
+        value.sourcePartition,
+        value.sourceOffset,
+        transition.rejection.replace(Regex("[\\r\\n]"), " ").take(240),
+      )
+    }
     state.update(transition.state)
     transition.feature?.let {
       out.collect(it)

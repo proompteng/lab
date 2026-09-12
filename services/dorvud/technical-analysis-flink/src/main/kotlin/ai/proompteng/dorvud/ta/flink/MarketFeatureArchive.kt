@@ -119,7 +119,8 @@ internal fun decodeArchivedMarketFeature(
       "feature computation precedes input"
     }
     require(
-      input.sourcePartition >= 0 && input.sourceOffset.matches(Regex("0|[1-9][0-9]*")) && input.contentHash.matches(Regex("[0-9a-f]{64}")),
+      input.sourcePartition >= 0 && input.sourceOffset.matches(Regex("0|[1-9][0-9]*")) &&
+        input.sourceOffset.toLongOrNull()?.let { it >= 0 } == true && input.contentHash.matches(Regex("[0-9a-f]{64}")),
     ) {
       "invalid feature provenance"
     }
