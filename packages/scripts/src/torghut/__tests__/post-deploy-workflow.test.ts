@@ -1,13 +1,11 @@
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { describe, expect, it } from 'bun:test'
 
 const workflow = readFileSync(
   new URL('../../../../../.github/workflows/torghut-post-deploy-verify.yml', import.meta.url),
-  'utf8',
-)
-const dbMigrationJob = readFileSync(
-  new URL('../../../../../argocd/applications/torghut/db-migrations-job.yaml', import.meta.url),
   'utf8',
 )
 const agentsCiClusterRbac = readFileSync(
@@ -24,284 +22,234 @@ const arcKubeModeServiceAccount = readFileSync(
 )
 
 describe('torghut post-deploy verifier workflow', () => {
-  it('runs from the Kargo promotion branch instead of the pre-promotion main branch', () => {
+  it('observes the Kargo promotion and keeps Argo revision verification read-only', () => {
     const pushTrigger = workflow.slice(workflow.indexOf('  push:'), workflow.indexOf('  workflow_dispatch:'))
-
     expect(pushTrigger).toContain('- kargo/torghut')
     expect(pushTrigger).not.toContain('- main')
     expect(pushTrigger).toContain("- 'argocd/applications/torghut/**'")
-    expect(pushTrigger).not.toContain('torghut-options')
-    expect(pushTrigger).not.toContain('torghut-hyperliquid')
+    expect(workflow).toContain('git merge-base --is-ancestor "${EXPECTED_REVISION}" "${candidate}"')
+    expect(workflow).toContain('contents: read')
+    expect(workflow).toContain('argocd-update step owns the sync')
+    expect(workflow).not.toContain('kubectl patch application')
+    expect(workflow).not.toContain('kubectl annotate application')
+    expect(workflow).not.toContain('contents: write')
+    expect(workflow).toContain('ARGO_SYNC_TIMEOUT_SECONDS=1800')
+    expect(workflow).toContain('dump_argocd_app_diagnostics "${app}"')
   })
 
-  it('does not skip Knative Service readiness when the runner lacks RBAC', () => {
-    expect(workflow).not.toContain('Skipping Knative Service readiness check')
-    expect(workflow).toContain('Failed to read Knative Service ${service}')
-  })
-
-  it('polls Knative Service readiness after Argo applies a new revision', () => {
-    expect(workflow).toContain('wait_knative_service_ready()')
-    expect(workflow).toContain('KNSVC_READY_ATTEMPTS=60')
-    expect(workflow).toContain('KNSVC_READY_INTERVAL_SECONDS=2')
-    expect(workflow).toContain('wait_knative_service_ready torghut')
-    expect(workflow).toContain('wait_knative_service_ready torghut-sim')
+  it('checks retained deployments and both Flink jobs without contacting retired APIs', () => {
     expect(workflow).toContain(
-      'Attempt ${attempt}: Knative Service ${service} ready=${ready:-empty} latestReady=${latest_ready:-empty} latestCreated=${latest_created:-empty}',
+      'for deployment in \\\n            torghut-ta \\\n            market-data-archive \\\n            torghut-ws; do',
     )
-    expect(workflow).toContain('Knative Service ${service} did not become Ready after bounded retry window')
-    expect(workflow).not.toContain('KNSVC_READY_STATUS=$?')
-    expect(workflow).not.toContain('SIM_KNSVC_READY_STATUS=$?')
-  })
-
-  it('uses a shell-safe jsonpath for Knative Service readiness', () => {
-    expect(workflow).toContain(
-      `jsonpath='{.status.conditions[?(@.type=="Ready")].status} {.status.latestReadyRevisionName} {.status.latestCreatedRevisionName}'`,
-    )
-    expect(workflow).not.toContain(`jsonpath='{.status.conditions[?(@.type==\\"Ready\\")].status}'`)
-  })
-
-  it('continues to runtime safety checks when Torghut Argo health is degraded after sync', () => {
-    expect(workflow).toContain('Torghut Argo health is Degraded after sync; continuing to runtime safety checks')
-    expect(workflow).toContain('[ "${app}" = \'torghut\' ]')
-    expect(workflow).toContain('[ "${OPERATION_PHASE}" = \'Succeeded\' ]')
-  })
-
-  it('verifies the retained Torghut application and runtime deployments after GitOps changes', () => {
-    expect(workflow).toContain("- 'argocd/applications/torghut/**'")
-    expect(workflow).toContain('for app in torghut; do')
+    expect(workflow).toContain('for pipeline in torghut-ta market-data-archive; do')
     expect(workflow).toContain('kubectl rollout status "deployment/${deployment}"')
-    expect(workflow).toContain('torghut-ta')
-    expect(workflow).toContain('torghut-ta-sim')
-    expect(workflow).toContain('torghut-ws')
-    expect(workflow).not.toContain('torghut-options')
-    expect(workflow).not.toContain('torghut-hyperliquid')
-  })
-
-  it('delegates API and status evidence to the runtime contract validator', () => {
-    expect(workflow).toContain('TORGHUT_SCHEDULER_REPLICAS')
-    expect(workflow).toContain('TORGHUT_API_READYZ_HTTP_STATUS')
-    expect(workflow).toContain('TORGHUT_SIM_TRADING_ENABLED')
-    expect(workflow).toContain('TORGHUT_SIM_STATUS_HTTP_STATUS')
-    expect(workflow).toContain('TORGHUT_STATUS_HTTP_STATUS')
-    expect(workflow).toContain('TORGHUT_API_READYZ_PAYLOAD="${EVIDENCE_DIR}/torghut-api-readyz.json"')
-    expect(workflow).toContain('TORGHUT_SIM_STATUS_PAYLOAD="${EVIDENCE_DIR}/torghut-sim-status.json"')
-    expect(workflow).toContain('TORGHUT_STATUS_PAYLOAD="${EVIDENCE_DIR}/torghut-status.json"')
-    expect(workflow).toContain('bun run packages/scripts/src/torghut/post-deploy-evidence.ts')
-    expect(workflow).not.toContain('/trading/revenue-repair')
-    expect(workflow).not.toContain('/trading/proofs')
+    expect(workflow).not.toContain('wait_knative_service_ready')
+    expect(workflow).not.toContain('http://torghut.torghut.svc.cluster.local')
+    expect(workflow).not.toContain('http://torghut-sim.torghut.svc.cluster.local')
+    expect(workflow).not.toContain('post-deploy-evidence.ts')
+    expect(workflow).toContain('ImagePullBackOff')
+    expect(workflow).toContain('ErrImagePull')
   })
 
   const removalCheck = workflow.slice(
-    workflow.indexOf('          for removal_attempt in $(seq 1 18); do'),
-    workflow.indexOf('          if ! TORGHUT_SIM_TRADING_ENABLED'),
+    workflow.indexOf('          for removal_attempt in $(seq 1 30); do'),
+    workflow.indexOf('          for deployment in'),
   )
-
-  it('requires scheduler removal after Argo convergence', () => {
-    expect(workflow.indexOf('          for removal_attempt in $(seq 1 18); do')).toBeGreaterThan(
-      workflow.indexOf('for app in torghut; do'),
-    )
-    expect(removalCheck).toContain('kubectl get deployment/torghut-scheduler')
-    expect(removalCheck).toContain('kubectl get application torghut -n argocd -o json')
-    expect(removalCheck).not.toContain('service/torghut-scheduler')
-    expect(removalCheck).toContain('--ignore-not-found -o name')
-    expect(removalCheck).toContain('app.kubernetes.io/name=torghut,app.kubernetes.io/component=trading-scheduler')
-    expect(removalCheck).toContain("TORGHUT_SCHEDULER_REPLICAS='0'")
-  })
-
   const emptyInventory = { status: { resources: [] } }
-  const trackedService = {
-    status: { resources: [{ kind: 'Service', namespace: 'torghut', name: 'torghut-scheduler' }] },
+  const emptyPods = { items: [] }
+  const removalCases: Array<[string, string, string, unknown, unknown, number, boolean]> = [
+    ['all retired resources absent', '', '', emptyInventory, emptyPods, 0, true],
+    ['scaled-down Deployment remains', 'deployment.apps/torghut-ta-sim', '', emptyInventory, emptyPods, 0, false],
+    ['scale-to-zero API remains', '', 'service.serving.knative.dev/torghut', emptyInventory, emptyPods, 0, false],
+    ['Argo inventory is missing', '', '', {}, emptyPods, 0, false],
+    ['cluster access denied', '', '', emptyInventory, emptyPods, 1, false],
+    [
+      'retained pipeline pods',
+      '',
+      '',
+      emptyInventory,
+      {
+        items: ['torghut-ta-123', 'market-data-archive-123', 'torghut-ws-123', 'chi-torghut-clickhouse-0-0'].map(
+          (name) => ({ metadata: { name } }),
+        ),
+      },
+      0,
+      true,
+    ],
+    [
+      'recovery objects retained',
+      '',
+      '',
+      {
+        status: {
+          resources: [
+            { kind: 'PersistentVolumeClaim', namespace: 'torghut', name: 'torghut-db' },
+            { kind: 'Backup', namespace: 'torghut', name: 'torghut-db-retirement-20260912' },
+          ],
+        },
+      },
+      emptyPods,
+      0,
+      true,
+    ],
+  ]
+  for (const [kind, name] of [
+    ['Cluster', 'torghut-db'],
+    ['TigerBeetleCluster', 'torghut-tigerbeetle'],
+    ['FlinkDeployment', 'torghut-ta-sim'],
+    ['Service', 'torghut'],
+    ['Deployment', 'torghut-llm-guardrails-exporter'],
+    ['CronJob', 'torghut-order-lineage-reconciliation'],
+    ['ScheduledBackup', 'torghut-db-daily'],
+  ]) {
+    removalCases.push([
+      `Argo still tracks ${kind}/${name}`,
+      '',
+      '',
+      { status: { resources: [{ kind, name, namespace: 'torghut' }] } },
+      emptyPods,
+      0,
+      false,
+    ])
   }
-  for (const [name, resources, pods, inventory, exitCode, succeeds] of [
-    ['all scheduler resources absent', '', '', emptyInventory, 0, true],
-    ['scaled-down Deployment still exists', 'deployment.apps/torghut-scheduler', '', emptyInventory, 0, false],
-    ['Argo still tracks the Service', '', '', trackedService, 0, false],
-    ['scheduler pod still terminating', '', 'pod/torghut-scheduler-old', emptyInventory, 0, false],
-    ['Argo inventory is missing', '', '', {}, 0, false],
-    ['cluster access denied', '', '', emptyInventory, 1, false],
-  ] as const) {
-    it(`checks scheduler removal when ${name}`, () => {
-      const result = Bun.spawnSync(
-        [
-          'bash',
-          '-euo',
-          'pipefail',
-          '-c',
-          `
+  for (const name of [
+    'torghut-01573-deployment-abc',
+    'torghut-sim-01645-deployment-abc',
+    'torghut-db-1',
+    'torghut-tigerbeetle-0',
+    'torghut-ta-sim-taskmanager-1-1',
+    'torghut-llm-guardrails-exporter-abc',
+    'torghut-scheduler-abc',
+  ]) {
+    removalCases.push([
+      `${name} still terminating`,
+      '',
+      '',
+      emptyInventory,
+      { items: [{ metadata: { name, deletionTimestamp: '2026-09-12T00:00:00Z' } }] },
+      0,
+      false,
+    ])
+  }
+  for (const [name, deployments, apis, inventory, pods, exitCode, succeeds] of removalCases) {
+    it(`checks retirement when ${name}`, () => {
+      const directory = mkdtempSync(join(tmpdir(), 'torghut-retirement-test-'))
+      try {
+        const result = Bun.spawnSync(
+          [
+            'bash',
+            '-euo',
+            'pipefail',
+            '-c',
+            `
           sleep() { :; }
           kubectl() {
             if [ "$TEST_EXIT_CODE" != '0' ]; then return "$TEST_EXIT_CODE"; fi
             case "$2" in
-              deployment/torghut-scheduler) printf '%s' "$TEST_RESOURCES" ;;
-              pods) printf '%s' "$TEST_PODS" ;;
+              deployment) printf '%s' "$TEST_DEPLOYMENTS" ;;
+              ksvc) printf '%s' "$TEST_APIS" ;;
               application) printf '%s' "$TEST_INVENTORY" ;;
+              pods) printf '%s' "$TEST_PODS" ;;
               *) return 99 ;;
             esac
           }
           ${removalCheck}
         `,
-        ],
-        {
-          env: {
-            ...process.env,
-            TEST_RESOURCES: resources,
-            TEST_PODS: pods,
-            TEST_INVENTORY: JSON.stringify(inventory),
-            TEST_EXIT_CODE: String(exitCode),
+          ],
+          {
+            env: {
+              ...process.env,
+              EVIDENCE_DIR: directory,
+              TEST_DEPLOYMENTS: deployments,
+              TEST_APIS: apis,
+              TEST_INVENTORY: JSON.stringify(inventory),
+              TEST_PODS: JSON.stringify(pods),
+              TEST_EXIT_CODE: String(exitCode),
+            },
           },
-        },
-      )
-      expect(result.exitCode === 0).toBe(succeeds)
-      if (succeeds)
-        expect(result.stdout.toString()).toContain(
-          'Deployment and pods are absent; Service is absent from Argo inventory',
         )
+        expect(result.exitCode === 0).toBe(succeeds)
+        if (succeeds) expect(result.stdout.toString()).toContain('Retired Torghut workloads and pods are absent')
+      } finally {
+        rmSync(directory, { recursive: true, force: true })
+      }
     })
   }
 
-  it('reads and exports the desired torghut-sim trading state from the live Knative Service', () => {
-    const desiredStateRead = workflow.indexOf('kubectl get ksvc torghut-sim -n torghut -o json')
-    const argoWait = workflow.indexOf('for app in torghut; do')
+  const pipelineCheck = workflow.slice(
+    workflow.indexOf('          for pipeline in'),
+    workflow.indexOf('      - name: Verify market-data freshness'),
+  )
+  for (const [name, jobs, checkpoints, succeeds] of [
+    [
+      'running with checkpoint',
+      { jobs: [{ jid: 'abc', state: 'RUNNING', tasks: { total: 4, running: 4, failed: 0 } }] },
+      { latest: { completed: { status: 'COMPLETED', id: 42 } } },
+      true,
+    ],
+    ['no job', { jobs: [] }, { latest: {} }, false],
+    [
+      'failed task',
+      { jobs: [{ jid: 'abc', state: 'RUNNING', tasks: { total: 4, running: 3, failed: 1 } }] },
+      { latest: { completed: { status: 'COMPLETED', id: 42 } } },
+      false,
+    ],
+    [
+      'no checkpoint',
+      { jobs: [{ jid: 'abc', state: 'RUNNING', tasks: { total: 4, running: 4, failed: 0 } }] },
+      { latest: {} },
+      false,
+    ],
+  ] as const) {
+    it(`validates native Flink evidence when ${name}`, () => {
+      const directory = mkdtempSync(join(tmpdir(), 'torghut-pipeline-test-'))
+      try {
+        const result = Bun.spawnSync(
+          [
+            'bash',
+            '-euo',
+            'pipefail',
+            '-c',
+            `
+          sleep() { :; }
+          curl() {
+            local url="" output=""
+            while [ "$#" -gt 0 ]; do
+              case "$1" in http*) url="$1" ;; -o) shift; output="$1" ;; esac
+              shift
+            done
+            case "$url" in */overview) printf '%s' "$TEST_JOBS" > "$output" ;;
+              */checkpoints) printf '%s' "$TEST_CHECKPOINTS" > "$output" ;; *) return 99 ;; esac
+          }
+          ${pipelineCheck}
+        `,
+          ],
+          {
+            env: {
+              ...process.env,
+              EVIDENCE_DIR: directory,
+              TEST_JOBS: JSON.stringify(jobs),
+              TEST_CHECKPOINTS: JSON.stringify(checkpoints),
+            },
+          },
+        )
+        expect(result.exitCode === 0).toBe(succeeds)
+        if (succeeds)
+          expect(result.stdout.toString()).toContain('market-data-archive: all tasks RUNNING and checkpoint completed')
+      } finally {
+        rmSync(directory, { recursive: true, force: true })
+      }
+    })
+  }
 
-    expect(desiredStateRead).toBeGreaterThan(argoWait)
-    expect(workflow).toContain('select(.name == "TRADING_ENABLED")')
-    expect(workflow).toContain('case "${TORGHUT_SIM_TRADING_ENABLED}" in')
-    expect(workflow).toContain('true | false)')
-    expect(workflow).toContain(
-      'torghut-sim desired TRADING_ENABLED must be exactly true or false; got ${TORGHUT_SIM_TRADING_ENABLED:-unset}',
-    )
-    expect(workflow).toContain('export TORGHUT_SIM_TRADING_ENABLED')
-  })
-
-  it('runs market-data freshness verification after deploy evidence is accepted', () => {
-    expect(workflow).toContain('Verify market-data freshness')
+  it('keeps Kafka, websocket, and TA freshness checks with bounded retries', () => {
     expect(workflow).toContain('MARKET_DATA_FRESHNESS_MODE: auto')
     expect(workflow).toContain("TORGHUT_SCHEDULER_EXPECTED: 'false'")
-    expect(workflow).toContain("MARKET_DATA_MAX_LAG_SECONDS: '300'")
-    expect(workflow).toContain("MARKET_DATA_ACCEPTED_MAX_LAG_SECONDS: '300'")
-    expect(workflow).toContain(
-      "MARKET_DATA_HOLIDAYS: '2026-01-01,2026-01-19,2026-02-16,2026-04-03,2026-05-25,2026-06-19,2026-07-03,2026-09-07,2026-11-26,2026-12-25,2027-01-01,2027-01-18,2027-02-15,2027-03-26,2027-05-31,2027-06-18,2027-07-05,2027-09-06,2027-11-25,2027-12-24,2027-12-31,2028-01-17,2028-02-21,2028-04-14,2028-05-29,2028-06-19,2028-07-04,2028-09-04,2028-11-23,2028-12-25'",
-    )
-    expect(workflow).toContain("MARKET_DATA_PRINT_SUMMARIES: 'false'")
-    expect(workflow).not.toContain("KAFKA_TOPIC_PARTITIONS: '0,1,2'")
     expect(workflow).toContain('bun run smoke:torghut-market-data')
-  })
-
-  it('captures API readiness without probing the removed scheduler', () => {
-    expect(workflow).toContain('http://torghut.torghut.svc.cluster.local/readyz')
-    expect(workflow).not.toContain('http://torghut-scheduler.torghut.svc.cluster.local:8183/readyz')
-    expect(workflow).not.toContain('TORGHUT_SCHEDULER_READYZ_HTTP_STATUS')
-    expect(workflow).not.toContain('kubectl rollout status deployment/torghut-scheduler')
-  })
-
-  it('bounds full-contract convergence and fails after the final attempt', () => {
-    const finalFailure = workflow.indexOf(
-      'Torghut full post-deploy contract did not converge after ${FULL_CONTRACT_ATTEMPTS} attempts',
-    )
-    const finalExit = workflow.indexOf('exit 1', finalFailure)
-
-    expect(workflow).toContain('FULL_CONTRACT_ATTEMPTS=120')
-    expect(workflow).toContain('FULL_CONTRACT_INTERVAL_SECONDS=10')
-    expect(workflow).toContain('for contract_attempt in $(seq 1 "${FULL_CONTRACT_ATTEMPTS}"); do')
-    expect(workflow).toContain('sleep "${FULL_CONTRACT_INTERVAL_SECONDS}"')
-    expect(workflow).toContain('[ "${contract_attempt}" -eq "${FULL_CONTRACT_ATTEMPTS}" ]')
-    expect(finalFailure).toBeGreaterThan(-1)
-    expect(finalExit).toBeGreaterThan(finalFailure)
-  })
-
-  it('retries across the TA heartbeat interval before failing market-data freshness', () => {
     expect(workflow).toContain('TA_FRESHNESS_ATTEMPTS=4')
     expect(workflow).toContain('TA_FRESHNESS_INTERVAL_SECONDS=30')
-    expect(workflow).toContain('for ta_attempt in $(seq 1 "${TA_FRESHNESS_ATTEMPTS}"); do')
     expect(workflow).toContain('waiting for the next TA heartbeat')
-    expect(workflow).toContain('[ "${ta_attempt}" -eq "${TA_FRESHNESS_ATTEMPTS}" ]')
-  })
-
-  it('refetches every evidence surface and invokes the strict validator inside each convergence attempt', () => {
-    const loopStart = workflow.indexOf('for contract_attempt in $(seq 1 "${FULL_CONTRACT_ATTEMPTS}"); do')
-    const loopEnd = workflow.indexOf('\n          done', loopStart)
-    const loopBody = workflow.slice(loopStart, loopEnd)
-
-    expect(loopStart).toBeGreaterThan(-1)
-    expect(loopEnd).toBeGreaterThan(loopStart)
-    expect(loopBody).toContain('rm -f \\')
-    expect(loopBody).toContain('TORGHUT_API_READYZ_HTTP_STATUS="$(')
-    expect(loopBody).toContain('TORGHUT_SIM_STATUS_HTTP_STATUS="$(')
-    expect(loopBody).toContain('TORGHUT_STATUS_HTTP_STATUS="$(')
-    expect(loopBody).toContain('http://torghut-sim.torghut.svc.cluster.local/trading/status')
-    expect(loopBody).toContain('"${EVIDENCE_DIR}/torghut-sim-status.json"')
-    expect(loopBody).toContain('bun run packages/scripts/src/torghut/post-deploy-evidence.ts 2>&1')
-    expect(loopBody).not.toContain('contract_mismatch_accepted')
-  })
-
-  it('retries parseable JSON evidence capture before invoking the validator', () => {
-    expect(workflow).toContain('fetch_json()')
-    expect(workflow).toContain('python3 -m json.tool "${output_path}"')
-    expect(workflow).toContain('not usable JSON yet; retrying')
-    expect(workflow).not.toContain('fetch_json_2xx')
-    expect(workflow).not.toContain('curl -fsS http://torghut.torghut.svc.cluster.local/trading/status')
-  })
-
-  it('captures the trading status HTTP code for mode-aware validation without requiring 2xx', () => {
-    expect(workflow).toContain('TORGHUT_STATUS_HTTP_STATUS="$(')
-    expect(workflow).toContain('http://torghut.torghut.svc.cluster.local/trading/status')
-    expect(workflow).toContain('export TORGHUT_STATUS_HTTP_STATUS')
-    expect(workflow).toContain('trading status returned invalid HTTP status ${TORGHUT_STATUS_HTTP_STATUS:-unset}')
-    expect(workflow).toContain('HTTP_MAX_TIME_SECONDS=15')
-    expect(workflow).toContain('JSON_EVIDENCE_ATTEMPTS=3')
-    expect(workflow).toContain('--max-time "${HTTP_MAX_TIME_SECONDS}"')
-    expect(workflow).not.toContain('fetch_json_2xx')
-    expect(workflow).not.toContain('expected 2xx')
-    expect(workflow).not.toContain('--max-time 90')
-  })
-
-  it('keeps simulation rollout readiness and adds strict local-runtime evidence', () => {
-    expect(workflow).toContain('wait_knative_service_ready torghut-sim')
-    expect(workflow).toContain('TORGHUT_SIM_STATUS_HTTP_STATUS="$(')
-    expect(workflow).toContain('export TORGHUT_SIM_STATUS_HTTP_STATUS')
-    expect(workflow).toContain('export TORGHUT_SIM_STATUS_PAYLOAD="${EVIDENCE_DIR}/torghut-sim-status.json"')
-    expect(workflow).toContain('simulation trading status capture failed')
-    expect(workflow).not.toContain('PAPER_ROUTE_EVIDENCE')
-    expect(workflow).not.toContain('SIM_MIRROR')
-  })
-
-  it('observes the Kargo-owned Argo sync without mutating applications', () => {
-    expect(workflow).toContain('contents: read')
-    expect(workflow).toContain("Kargo's")
-    expect(workflow).toContain('argocd-update step owns the sync')
-    expect(workflow).toContain('for app in torghut; do')
-    expect(workflow).not.toContain('argocd.argoproj.io/refresh')
-    expect(workflow).not.toContain('request_argocd_sync()')
-    expect(workflow).not.toContain('kubectl annotate application')
-    expect(workflow).not.toContain('kubectl patch application')
-    expect(workflow).not.toContain('contents: write')
-    expect(workflow).not.toContain('issues: write')
-    expect(workflow).not.toContain('pull-requests: write')
-  })
-
-  it('bounds Argo convergence waits and prints resource diagnostics on timeout', () => {
-    const syncTimeoutSeconds = Number(workflow.match(/ARGO_SYNC_TIMEOUT_SECONDS=(\d+)/)?.[1])
-    const migrationDeadlineSeconds = Number(dbMigrationJob.match(/activeDeadlineSeconds:\s*(\d+)/)?.[1])
-
-    expect(syncTimeoutSeconds).toBeGreaterThanOrEqual(migrationDeadlineSeconds + 300)
-    expect(workflow).toContain('ARGO_SYNC_POLL_INTERVAL_SECONDS=2')
-    expect(workflow).toContain(
-      'ARGO_SYNC_POLL_ATTEMPTS=$((ARGO_SYNC_TIMEOUT_SECONDS / ARGO_SYNC_POLL_INTERVAL_SECONDS))',
-    )
-    expect(workflow).toContain('for attempt in $(seq 1 "${ARGO_SYNC_POLL_ATTEMPTS}"); do')
-    expect(workflow).toContain('sleep "${ARGO_SYNC_POLL_INTERVAL_SECONDS}"')
-    expect(workflow).toContain(
-      'Argo application ${app} sync operation succeeded while health is Progressing; runtime checks will verify readiness',
-    )
-    expect(workflow).toContain('dump_argocd_app_diagnostics "${app}"')
-    expect(workflow).toContain('Argo application ${app} OutOfSync resources:')
-  })
-
-  it('fails when Torghut-managed images still have pull errors', () => {
-    expect(workflow).toContain('ImagePullBackOff')
-    expect(workflow).toContain('ErrImagePull')
-    expect(workflow).toContain('startswith("registry.ide-newton.ts.net/lab/torghut")')
-    expect(workflow).toContain('Torghut-managed image pull failures remain after deploy')
+    expect(workflow).not.toContain("KAFKA_TOPIC_PARTITIONS: '0,1,2'")
   })
 
   it('grants the ARC runner read access to Torghut post-deploy resources', () => {
