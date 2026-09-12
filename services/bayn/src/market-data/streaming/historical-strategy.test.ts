@@ -173,6 +173,22 @@ test('a delivery model reversing Kafka offsets fails globally instead of excludi
   expect(Result.isFailure(replayHistoricalStreamingStrategy(input))).toBe(true)
 })
 
+test('feature transport partitions outside Kafka Int32 fail the whole experiment', () => {
+  const { input, raw, features } = experiment()
+  const changed = features.map((event) => ({ ...event, record: { ...event.record, partition: 2_147_483_648 } }))
+  expect(
+    Result.isFailure(
+      replayHistoricalStreamingStrategy({
+        ...input,
+        arrivals: {
+          ...input.arrivals,
+          events: [...raw, ...changed],
+        },
+      }),
+    ),
+  ).toBe(true)
+})
+
 test('invalid protocol, session, raw input and stale benchmark cannot become successful research decisions', () => {
   const { input } = experiment()
   expect(Result.isFailure(replayHistoricalStreamingStrategy({ ...input, protocolHash: '0'.repeat(64) }))).toBe(true)
