@@ -32,7 +32,7 @@ import { isIntradaySnapshotPending } from '../market-data/intraday/pending'
 import {
   adverseClosingQuotePrices,
   adverseQuotePrices,
-  loadIntradaySnapshot,
+  loadIntradayArchiveSnapshot,
   maximumBuyQuantities,
 } from '../observe-composition/intraday-market-data'
 import {
@@ -176,7 +176,7 @@ const readSnapshot = (
   query: IntradaySnapshotQuery,
   availableBy: string = query.observedAt,
 ): Effect.Effect<SnapshotRead> =>
-  loadIntradaySnapshot(marketData, query).pipe(
+  loadIntradayArchiveSnapshot(marketData, query).pipe(
     Effect.tap((snapshot) => marketData.recordedAvailability?.(snapshot, availableBy) ?? Effect.void),
     Effect.map((snapshot) => ({ _tag: 'Success' as const, snapshot })),
     Effect.catch((error) => Effect.succeed({ _tag: 'Failure' as const, error })),

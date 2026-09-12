@@ -4,7 +4,7 @@ Bayn is a single-writer intraday execution service. Restate schedules one accoun
 decides what should happen, Effect interprets one bounded pass, PostgreSQL stores trading truth, TigerBeetle stores
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
-There is one active strategy: `intraday-momentum` using `bayn.intraday-momentum.protocol.v2`. Historical strategy
+There is one active strategy: `intraday-momentum` using `bayn.intraday-momentum.protocol.v3`. Historical strategy
 rows remain decodable for audit and reconciliation, but they are not runtime fallbacks and cannot create new cycles.
 
 ## Active strategy
@@ -34,7 +34,7 @@ elapsed preparatory work for a fresh reconciliation and close planning; a slow i
 leaves less time for archive reads. The overall pass and close deadlines still apply.
 Malformed archive identities, hashes, ordering and lineage still fail. Unknown mutations, unresolved orders,
 inexact reconciliation, stale broker state and expired close authority still prevent submission. This exit policy
-is part of behavior v13; entry decisions retain their existing evidence and LIMIT/IOC requirements.
+is retained in behavior v14; entry decisions retain their existing evidence and LIMIT/IOC requirements.
 
 Entry observations evaluate candidate availability independently. Missing or late candidate bars, quotes, or trades
 exclude that candidate with an explicit reason while other candidates remain eligible for evaluation. SPY is the
@@ -133,10 +133,20 @@ Flat accounts and marks observed at the same instant also require exact equity a
 
 ## Market data
 
-Alpaca WebSocket events flow through Kafka and the Dorvud/Flink archive into ClickHouse. Bayn reads the retained
-`intraday_bars_1m_v2`, `intraday_quotes_v1`, and `intraday_trades_v1` tables with a read-only identity. Each decision
-binds exact topic watermarks, content hashes, session calendar, universe, feed, observation window, and freshness
-limits. Bayn owns no ClickHouse DDL or backfill path.
+Alpaca WebSocket events enter the existing raw Kafka topics. Each execution worker owns a complete
+`@platformatic/kafka` projection for the 16-symbol core universe. Dorvud/Flink independently publishes rolling
+features to `torghut.market-features.v1`; the archive retains raw and feature messages in ClickHouse. The six strategy
+candidates and SPY benchmark remain unchanged. The public status service does not consume Kafka.
+
+The worker joins a completed feature window to its exact raw bar revisions and independently fresh quotes/trades.
+Corrections invalidate an old feature until its replacement matches. Missing candidates produce exclusions;
+missing benchmark data or absence of every candidate makes the observation unavailable. Streaming failures never
+silently switch to the archive path. Reconciliation and the existing close-window recovery remain available.
+
+PostgreSQL commits the exact decision and pricing cuts with immutable source references before broker work proceeds.
+Streaming evidence has a separate schema and carries no archive-watermark claim. Bayn owns no ClickHouse DDL or
+backfill path. See [streaming operations and replay](src/market-data/streaming/README.md) for configuration,
+recovery behavior, and evidence boundaries.
 
 ## Operations
 

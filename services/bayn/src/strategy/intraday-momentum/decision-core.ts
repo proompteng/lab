@@ -42,7 +42,14 @@ export interface IntradayMomentumCoreTrade {
   readonly price: number
 }
 
+export interface IntradayMomentumRollingPrices {
+  readonly referencePriceMicros: string
+  readonly rangeHighPriceMicros: string
+  readonly rangeLowPriceMicros: string
+}
+
 export interface IntradayMomentumCoreInput {
+  readonly rollingPrices?: Readonly<Record<string, IntradayMomentumRollingPrices>>
   readonly bars: readonly IntradayMomentumCoreBar[]
   readonly latestQuotes: Readonly<Record<string, IntradayMomentumCoreQuote>>
   readonly latestTrades: Readonly<Record<string, IntradayMomentumCoreTrade>>
@@ -247,6 +254,24 @@ export const deriveIntradayMomentumSignalMetrics = (
   )
 }
 
+const preparedRollingPrices = (
+  values: IntradayMomentumRollingPrices,
+  symbol: string,
+): Result.Result<
+  { readonly reference: bigint; readonly high: bigint; readonly low: bigint },
+  IntradayMomentumFailure
+> => {
+  const strings = [values.referencePriceMicros, values.rangeHighPriceMicros, values.rangeLowPriceMicros]
+  if (strings.some((value) => !/^[1-9][0-9]*$/.test(value) || BigInt(value) > BigInt(Number.MAX_SAFE_INTEGER)))
+    return fail('market-value', 'rolling feature prices exceed the exact positive integer domain', { symbol })
+  const reference = BigInt(values.referencePriceMicros)
+  const high = BigInt(values.rangeHighPriceMicros)
+  const low = BigInt(values.rangeLowPriceMicros)
+  return low <= reference && reference <= high
+    ? Result.succeed({ reference, high, low })
+    : fail('market-value', 'rolling feature range is inconsistent', { symbol })
+}
+
 const signalFor = (
   symbol: string,
   bars: readonly IntradayMomentumCoreBar[],
@@ -255,22 +280,33 @@ const signalFor = (
   protocol: IntradayMomentumProtocol,
   observedAt: string,
   benchmarkPrices: IntradayMomentumBenchmarkPrices,
+  rolling?: IntradayMomentumRollingPrices,
 ): Result.Result<IntradayMomentumSignal, IntradayMomentumFailure> => {
   const ordered = bars.toSorted((left, right) => compareIntradayInstants(left.eventAt, right.eventAt))
   const first = ordered[0]
   if (first === undefined) return fail('snapshot-coverage', 'intraday symbol has no rolling bars', { symbol })
   return Result.gen(function* () {
-    const reference = yield* finite(first.open, 'lookback-open', symbol, true)
-    const highs = yield* Result.all(ordered.map((bar) => finite(bar.high, 'bar-high', symbol, true)))
-    const lows = yield* Result.all(ordered.map((bar) => finite(bar.low, 'bar-low', symbol, true)))
+    const range =
+      rolling === undefined
+        ? yield* Result.gen(function* () {
+            const reference = yield* finite(first.open, 'lookback-open', symbol, true)
+            const highs = yield* Result.all(ordered.map((bar) => finite(bar.high, 'bar-high', symbol, true)))
+            const lows = yield* Result.all(ordered.map((bar) => finite(bar.low, 'bar-low', symbol, true)))
+            return yield* Result.all({
+              reference: scaledInteger(reference, 'lookback-open', symbol),
+              high: scaledInteger(Math.max(...highs), 'range-high', symbol),
+              low: scaledInteger(Math.min(...lows), 'range-low', symbol),
+            })
+          })
+        : yield* preparedRollingPrices(rolling, symbol)
     const bid = yield* finite(quote.bidPrice, 'quote-bid', symbol, true)
     const ask = yield* finite(quote.askPrice, 'quote-ask', symbol, true)
     const tradePrice = yield* finite(trade.price, 'trade-price', symbol, true)
     if (ask < bid) return yield* fail('market-value', 'intraday quote is crossed', { symbol })
     const prices = yield* Result.all({
-      reference: scaledInteger(reference, 'lookback-open', symbol),
-      high: scaledInteger(Math.max(...highs), 'range-high', symbol),
-      low: scaledInteger(Math.min(...lows), 'range-low', symbol),
+      reference: Result.succeed(range.reference),
+      high: Result.succeed(range.high),
+      low: Result.succeed(range.low),
       bid: scaledInteger(bid, 'quote-bid', symbol),
       ask: scaledInteger(ask, 'quote-ask', symbol),
       trade: scaledInteger(tradePrice, 'trade-price', symbol),
@@ -338,7 +374,15 @@ export const decideIntradayMomentumCore = (
       })
     }
     const benchmarkPrices = yield* Result.gen(function* () {
-      const reference = yield* scaledInteger(benchmarkFirst.open, 'benchmark-lookback-open', protocol.benchmarkSymbol)
+      const rolling = input.rollingPrices?.[protocol.benchmarkSymbol]
+      if (input.rollingPrices !== undefined && rolling === undefined)
+        return yield* fail('snapshot-coverage', 'required benchmark rolling feature is unavailable', {
+          symbol: protocol.benchmarkSymbol,
+        })
+      const reference =
+        rolling === undefined
+          ? yield* scaledInteger(benchmarkFirst.open, 'benchmark-lookback-open', protocol.benchmarkSymbol)
+          : (yield* preparedRollingPrices(rolling, protocol.benchmarkSymbol)).reference
       const bid = yield* scaledInteger(benchmarkQuote.bidPrice, 'benchmark-quote-bid', protocol.benchmarkSymbol)
       const ask = yield* scaledInteger(benchmarkQuote.askPrice, 'benchmark-quote-ask', protocol.benchmarkSymbol)
       const bidSize = yield* scaledInteger(benchmarkQuote.bidSize, 'benchmark-quote-bid-size', protocol.benchmarkSymbol)
@@ -386,7 +430,18 @@ export const decideIntradayMomentumCore = (
         })
         continue
       }
-      candidates.push(yield* signalFor(symbol, bars, quote, trade, protocol, input.observedAt, benchmarkPrices))
+      const rolling = input.rollingPrices?.[symbol]
+      if (input.rollingPrices !== undefined && rolling === undefined) {
+        excludedCandidates.push({
+          symbol,
+          reason: 'not-ready',
+          message: 'required candidate rolling feature is unavailable',
+        })
+        continue
+      }
+      candidates.push(
+        yield* signalFor(symbol, bars, quote, trade, protocol, input.observedAt, benchmarkPrices, rolling),
+      )
     }
     const selected = selectCanonicalIntradayMomentumSignals(candidates, protocol.maximumPositions)
     const selectedSymbols = Object.freeze(selected.map(({ symbol }) => symbol))

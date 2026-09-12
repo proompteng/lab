@@ -5,10 +5,10 @@ import { canonicalHashV1Result, sha256 } from '../../hash'
 import type {
   IntradayBar,
   IntradayCandidateExclusion,
-  IntradayMarketSnapshot,
   IntradayQuote,
   IntradayTrade,
 } from '../../market-data/intraday/model'
+import type { StrategyMarketSnapshot } from '../../market-data/streaming/snapshot'
 import { compareIntradayInstants, intradayInstantNanos } from '../../market-data/intraday/time'
 import { strictParseOptions, UtcInstantSchema } from '../../schemas'
 import type { VerifiedStrategyContext } from '../core'
@@ -32,7 +32,7 @@ import {
 
 const minuteMs = 60_000
 
-export const intradayMomentumBehaviorVersion = 'bayn.intraday-momentum.behavior.v13' as const
+export const intradayMomentumBehaviorVersion = 'bayn.intraday-momentum.behavior.v14' as const
 export const intradayMomentumBehaviorHash = sha256(intradayMomentumBehaviorVersion)
 
 const compareCanonicalText = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
@@ -57,7 +57,7 @@ const fail = (
   Result.fail(new IntradayMomentumFailure({ reason, message, ...details }))
 
 type IntradayMomentumEnvelopeContext = {
-  readonly snapshot: IntradayMarketSnapshot
+  readonly snapshot: StrategyMarketSnapshot
   readonly session: IntradayMomentumMarketContext['session']
 }
 
@@ -70,7 +70,7 @@ const sameStrings = (left: readonly string[], right: readonly string[]): boolean
   left.length === right.length && left.every((value, index) => value === right[index])
 
 const validateCandidateEnvelope = (
-  manifest: IntradayMarketSnapshot['manifest'],
+  manifest: StrategyMarketSnapshot['manifest'],
   protocol: IntradayMomentumProtocol,
 ): Result.Result<CandidateEnvelope, IntradayMomentumFailure> => {
   const hasCandidates = manifest.candidateSymbols !== undefined
@@ -111,6 +111,20 @@ const validateSnapshot = (
 ): Result.Result<void, IntradayMomentumFailure> => {
   const { session, snapshot } = context
   const { manifest } = snapshot
+  if (manifest.schemaVersion === 'bayn.streaming-market-snapshot.v1') {
+    const contract = protocol.streamingInput
+    if (
+      contract === undefined ||
+      manifest.streaming.bootstrap.timestampPolicy !== contract.bootstrapTimestampPolicy ||
+      manifest.streaming.features.some(
+        ({ value, topic }) =>
+          topic !== contract.featureTopic ||
+          value.material.definitionId !== contract.requiredDefinitionId ||
+          value.material.definitionHash !== contract.requiredDefinitionHash,
+      )
+    )
+      return fail('snapshot-identity', 'streaming evidence does not match the strategy input contract')
+  }
   const snapshotSymbols = intradayMomentumSnapshotSymbols(protocol)
   const candidateEnvelope = validateCandidateEnvelope(manifest, protocol)
   if (Result.isFailure(candidateEnvelope)) return Result.fail(candidateEnvelope.failure)
@@ -290,6 +304,16 @@ const decideIntradayMomentumFromEnvelope = (
       }),
     )
     const core = yield* decideIntradayMomentumCore({
+      ...(snapshot.manifest.schemaVersion === 'bayn.streaming-market-snapshot.v1'
+        ? {
+            rollingPrices: Object.fromEntries(
+              snapshot.manifest.streaming.features.map((feature) => [
+                feature.value.material.symbol,
+                feature.value.material.values,
+              ]),
+            ),
+          }
+        : {}),
       bars: snapshot.bars.map(toCoreBar),
       latestQuotes: Object.fromEntries(
         Object.entries(snapshot.latestQuotes).map(([symbol, quote]) => [symbol, toCoreQuote(quote)]),
@@ -311,7 +335,7 @@ const decideIntradayMomentumFromEnvelope = (
     })
   })
 
-/** Execution decision boundary: only immutable-archive-selected snapshots can produce targets. */
+/** Execution decision boundary: only verified archive or streaming snapshots can produce targets. */
 export const decideIntradayMomentum = (
   context: IntradayMomentumMarketContext,
   protocol: IntradayMomentumProtocol,

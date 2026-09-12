@@ -1,3 +1,5 @@
+import streamingAuthorityProtocol from '../../migrations/0066_streaming_authority_protocol'
+import streamingSnapshotReferences from '../../migrations/0065_streaming_snapshot_references'
 import { PgMigrator } from '@effect/sql-pg'
 
 import initialSchema from '../../migrations/0001_initial_schema'
@@ -130,4 +132,6 @@ export const migrationLoader = PgMigrator.fromRecord({
   '62_discrepancy_mandate_rotation': discrepancyMandateRotation,
   '63_broker_fee_accounting': brokerFeeAccounting,
   '64_partial_ioc_completion': partialIocCompletion,
+  '65_streaming_snapshot_references': streamingSnapshotReferences,
+  '66_streaming_authority_protocol': streamingAuthorityProtocol,
 })
