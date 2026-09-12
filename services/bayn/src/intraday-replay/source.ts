@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { Data, Effect, FileSystem, Pull, Schema, Semaphore, Stream } from 'effect'
+import { Cause, Data, Effect, FileSystem, Option, Pull, Schema, Semaphore, Stream } from 'effect'
 import { canonicalHashV1Result } from '../hash'
 import {
   HistoricalMarketArrivalSchema,
@@ -79,6 +79,13 @@ export const openRetainedReplaySource = (path: string, input: unknown, runId: st
     )
       return yield* fail('Source partition bounds are duplicated or empty')
     const fs = yield* FileSystem.FileSystem
+    // Keep a private, unlinked snapshot open through preflight and execution. Replacing or
+    // changing the caller's path cannot substitute bytes after validation.
+    const snapshotPath = yield* fs.makeTempFileScoped({ prefix: 'bayn-replay-source-' })
+    const snapshot = yield* fs.open(snapshotPath, { flag: 'r+' })
+    yield* fs.remove(snapshotPath)
+    yield* Stream.runForEach(fs.stream(path), (chunk) => snapshot.writeAll(chunk))
+    yield* snapshot.seek(0, 'start')
     const source = {
       runId,
       sourceManifestHash,
@@ -97,7 +104,15 @@ export const openRetainedReplaySource = (path: string, input: unknown, runId: st
       let firstMs: number | undefined
       let last: HistoricalMarketArrival | undefined
       const offsets = new Map<string, string>()
-      const stream = fs.stream(path).pipe(
+      const stream = Stream.fromPull(
+        Effect.succeed(
+          snapshot
+            .readAlloc(64 * 1024)
+            .pipe(
+              Effect.flatMap(Option.match({ onNone: () => Cause.done(), onSome: (chunk) => Effect.succeed([chunk]) })),
+            ),
+        ),
+      ).pipe(
         Stream.tap((chunk) =>
           Effect.sync(() => {
             digest.update(chunk)
@@ -144,6 +159,7 @@ export const openRetainedReplaySource = (path: string, input: unknown, runId: st
     const preflight = read()
     yield* Stream.runDrain(preflight.stream)
     yield* preflight.verify
+    yield* snapshot.seek(0, 'start')
     const replay = read()
     const pull = yield* Stream.toPull(replay.stream)
     let pending: readonly HistoricalMarketArrival[] = []

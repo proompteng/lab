@@ -47,6 +47,8 @@ export const validateReplayDatabaseTargets = (config: ReplayDatabaseConfig) =>
       !['postgres:', 'postgresql:'].includes(url.protocol) ||
       !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) ||
       !/\/(?:[a-z][a-z0-9_]*_)?(?:replay|test)$/.test(url.pathname) ||
+      url.search !== '' ||
+      url.hash !== '' ||
       config.tigerBeetle.replicaAddresses.length !== 1 ||
       !/^127\.0\.0\.1:\d+$/.test(config.tigerBeetle.replicaAddresses[0] ?? '') ||
       config.tigerBeetle.clusterId <= 0n ||

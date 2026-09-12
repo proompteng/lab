@@ -58,3 +58,21 @@ test('retained source rejects changed bytes, count, bounds, ordering and duplica
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
 })
+
+test('execution consumes the validated snapshot after the original file is changed or replaced', async () => {
+  const data = fixture()
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const path = yield* fs.makeTempFileScoped()
+      yield* fs.writeFileString(path, data.body)
+      const source = yield* openRetainedReplaySource(path, data.manifest, data.input.source.runId)
+      yield* fs.writeFileString(path, 'changed in place\n')
+      yield* fs.remove(path)
+      yield* fs.writeFileString(path, 'replacement file\n')
+      yield* source.finish
+      expect((yield* source.cursor).processedRecords).toBe(data.events.length)
+      expect((yield* source.cursor).projection.sequence).toBe(data.input.cursor.projection.sequence)
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
+})

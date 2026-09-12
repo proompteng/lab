@@ -19,6 +19,10 @@ test('session command cannot target live database hosts or unspecified database 
     'postgresql://test:test@bayn-rw.bayn.svc:5432/bayn_replay',
     'postgresql://test:test@127.0.0.1:55432/bayn',
     'https://localhost/bayn_replay',
+    'postgresql://test:test@localhost/bayn_replay?host=bayn-rw.bayn.svc&database=bayn',
+    'postgresql://test:test@localhost/bayn_replay?database=bayn',
+    'postgresql://test:test@localhost/bayn_replay?options=-csearch_path%3Dpublic',
+    'postgresql://test:test@localhost/bayn_replay#unvalidated-fragment',
   ])
     expect(
       (
