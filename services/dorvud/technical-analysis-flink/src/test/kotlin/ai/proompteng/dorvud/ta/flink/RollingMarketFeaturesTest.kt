@@ -105,6 +105,27 @@ class RollingMarketFeaturesTest {
     assertNull(recovered.rejection)
   }
 
+  @Test fun `timestamp overflow is rejected without losing warm history`() {
+    val state = complete().state
+    val malformed =
+      listOf(
+        bar(30).copy(ingestionTime = Instant.MAX),
+        bar(30).copy(ingestionTime = Instant.MIN),
+        bar(30).copy(eventTime = Instant.MAX),
+        bar(30).copy(eventTime = Instant.MIN),
+      )
+    for (input in malformed) {
+      val result = processRollingFeature(state, input, computed + 60_000, "test-revision")
+      assertEquals(state, result.state)
+      assertNotNull(result.rejection)
+      assertNull(result.feature)
+    }
+    val overflow = processRollingFeature(state, bar(30), Long.MAX_VALUE, "test-revision")
+    assertEquals(state, overflow.state)
+    assertNotNull(overflow.rejection)
+    assertNotNull(processRollingFeature(state, bar(30), computed + 60_000, "test-revision").feature)
+  }
+
   @Test fun `arrival ordering cannot change semantic feature identity`() {
     val ordered = assertNotNull(complete().feature)
     val reversed = assertNotNull(complete((0..29).reversed().toList()).feature)

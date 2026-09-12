@@ -7,6 +7,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import java.security.MessageDigest
+import java.time.DateTimeException
 import java.time.Instant
 import java.time.ZoneId
 import kotlin.math.floor
@@ -171,11 +172,11 @@ internal fun advanceRollingFeature(
   require(bar.ingestionTime.plusMillis(FEATURE_MAX_CLOCK_SKEW_MS) >= bar.eventTime.plusSeconds(60)) {
     "feature bar arrived before its window closed"
   }
-  require(computedAtMs + FEATURE_MAX_CLOCK_SKEW_MS >= bar.eventTime.plusSeconds(60).toEpochMilli()) {
+  require(Math.addExact(computedAtMs, FEATURE_MAX_CLOCK_SKEW_MS) >= bar.eventTime.plusSeconds(60).toEpochMilli()) {
     "feature computation precedes the completed window"
   }
   require(
-    bar.ingestionTime.toEpochMilli() <= computedAtMs + FEATURE_MAX_CLOCK_SKEW_MS,
+    bar.ingestionTime.toEpochMilli() <= Math.addExact(computedAtMs, FEATURE_MAX_CLOCK_SKEW_MS),
   ) { "feature computation precedes input availability" }
   require(
     listOf(bar.open, bar.high, bar.low, bar.close).all { it.isFinite() && it > 0 && featureMicros(it) > 0 },
@@ -260,4 +261,8 @@ internal fun processRollingFeature(
     advanceRollingFeature(previous, bar, computedAtMs, producerRevision)
   } catch (error: IllegalArgumentException) {
     RollingFeatureTransition(previous, null, error.message ?: "invalid feature input")
+  } catch (error: DateTimeException) {
+    RollingFeatureTransition(previous, null, error.message ?: "invalid feature timestamp")
+  } catch (error: ArithmeticException) {
+    RollingFeatureTransition(previous, null, error.message ?: "feature timestamp overflow")
   }
