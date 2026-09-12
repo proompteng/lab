@@ -60,6 +60,49 @@ const verifyDecisionBindingEvidence = (
   document: CycleDecisionDocument,
 ): Effect.Effect<CycleDecisionBindingEvidence, CycleDecisionBuildError> => {
   const binding = document.bindings.decisionMarketData ?? document.bindings.executionMarketData
+  if (binding?.schemaVersion === 'bayn.execution-market-data-binding.v4') {
+    const simulation = marketData?.simulation
+    if (
+      simulation === undefined ||
+      simulation.runId !== binding.streaming.runId ||
+      !('decisionMarketDataRows' in document)
+    )
+      return Effect.fail(
+        new CycleDecisionBuildError({ failure: 'contract', message: 'Simulated source verification is unavailable' }),
+      )
+    const inputs = [{ binding, rows: document.decisionMarketDataRows }]
+    const pricing = document.bindings.executionMarketData
+    if (
+      pricing?.schemaVersion === 'bayn.execution-market-data-binding.v4' &&
+      pricing.snapshotId !== binding.snapshotId
+    ) {
+      if (document.executionMarketDataRows === undefined)
+        return Effect.fail(
+          new CycleDecisionBuildError({ failure: 'contract', message: 'Simulated pricing rows are missing' }),
+        )
+      inputs.push({ binding: pricing, rows: document.executionMarketDataRows })
+    }
+    return Effect.forEach(inputs, ({ binding: source, rows }) => {
+      const snapshot = rows === undefined ? undefined : reconstructBoundIntradaySnapshot(source, rows)
+      if (snapshot === undefined)
+        return Effect.fail(
+          new CycleDecisionBuildError({
+            failure: 'contract',
+            message: 'Simulated decision or pricing input cut does not reproduce',
+          }),
+        )
+      return simulation.verifyReference(snapshot).pipe(
+        Effect.mapError(
+          (cause) =>
+            new CycleDecisionBuildError({
+              failure: 'market-data',
+              message: 'Simulated decision source evidence is unavailable',
+              cause,
+            }),
+        ),
+      )
+    }).pipe(Effect.map((references) => ({ simulatedSnapshotReferences: references })))
+  }
   if (binding?.schemaVersion === 'bayn.execution-market-data-binding.v3') {
     const streaming = marketData?.streaming
     if (streaming === undefined || !('decisionMarketDataRows' in document))

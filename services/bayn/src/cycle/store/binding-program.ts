@@ -1,3 +1,4 @@
+import type { SimulatedSnapshotReference } from '../../market-data/streaming/simulation-service'
 import type { StreamingVerifiedSnapshotReference } from '../../market-data/streaming/reference'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Match } from 'effect'
@@ -151,14 +152,19 @@ const makeCycleBindingProgramsDataFirst = (
     )
 
   const persistIntradaySnapshotReference = (
-    reference: ArchiveVerifiedIntradaySnapshotReference | StreamingVerifiedSnapshotReference,
+    reference:
+      | ArchiveVerifiedIntradaySnapshotReference
+      | StreamingVerifiedSnapshotReference
+      | SimulatedSnapshotReference,
   ): Effect.Effect<void, CycleStoreInternalError> =>
     Effect.gen(function* () {
       const manifest = reference.manifest
       const table =
-        reference.schemaVersion === 'bayn.streaming-snapshot-reference.v1'
-          ? 'streaming_snapshot_references'
-          : 'intraday_snapshot_references'
+        reference.schemaVersion === 'bayn.simulated-snapshot-reference.v1'
+          ? 'simulated_snapshot_references'
+          : reference.schemaVersion === 'bayn.streaming-snapshot-reference.v1'
+            ? 'streaming_snapshot_references'
+            : 'intraday_snapshot_references'
       yield* sql`
         INSERT INTO ${sql(table)} (
           snapshot_id, schema_version, content_hash, observed_at, manifest
@@ -192,7 +198,11 @@ const makeCycleBindingProgramsDataFirst = (
     evidence: CycleDecisionBindingEvidence | undefined,
   ): Effect.Effect<void, CycleStoreInternalError> =>
     Effect.forEach(
-      [...(evidence?.intradaySnapshotReferences ?? []), ...(evidence?.streamingSnapshotReferences ?? [])],
+      [
+        ...(evidence?.intradaySnapshotReferences ?? []),
+        ...(evidence?.streamingSnapshotReferences ?? []),
+        ...(evidence?.simulatedSnapshotReferences ?? []),
+      ],
       persistIntradaySnapshotReference,
       {
         concurrency: 1,

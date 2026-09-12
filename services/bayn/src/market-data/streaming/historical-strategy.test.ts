@@ -2,77 +2,12 @@ import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 import { canonicalHashV1 } from '../../hash'
 import { decideIntradayMomentumCore } from '../../strategy/intraday-momentum/decision-core'
-import { intradayMomentumBehaviorHash } from '../../strategy/intraday-momentum/decision'
 import { canonicalRawTimestamp } from './raw-events'
-import { streamingFixture } from '../../testing/streaming-market-fixture'
+import { historicalStreamingFixture } from '../../testing/historical-streaming-fixture'
 import { replayHistoricalStreamingStrategy } from './historical-strategy'
 
-const experiment = () => {
-  const { cut, snapshot, protocol } = streamingFixture()
-  const observedAtMs = Date.parse(snapshot.manifest.observedAt)
-  const raw = [...snapshot.bars, ...snapshot.quotes, ...snapshot.trades].map((row) => ({
-    availableAtMs: observedAtMs,
-    record: {
-      topic: row.sourceTopic,
-      partition: row.sourcePartition,
-      offset: row.sourceOffset,
-      value: JSON.stringify({
-        version: 2,
-        provider: row.provider,
-        feed: row.feed,
-        delayClass: row.delayClass,
-        marketSession: row.marketSession,
-        symbol: row.symbol,
-        eventTs: row.eventAt,
-        ingestTs: row.ingestedAt,
-        channel: 'open' in row ? row.channel : 'bidPrice' in row ? 'quotes' : 'trades',
-        isFinal: 'open' in row ? row.final : true,
-        payload: {
-          t: row.eventAt,
-          ...('open' in row
-            ? {
-                o: row.open,
-                h: row.high,
-                l: row.low,
-                c: row.close,
-                v: row.volume,
-                vw: row.vwap,
-                n: row.tradeCount === null ? null : Number(row.tradeCount),
-              }
-            : 'bidPrice' in row
-              ? { bp: row.bidPrice, ap: row.askPrice, bs: row.bidSize, as: row.askSize }
-              : { p: row.price, s: row.size }),
-        },
-      }),
-    },
-  }))
-  const features = [...cut.projection.features.values()].flat().map((feature, partition) => ({
-    availableAtMs: observedAtMs,
-    record: { topic: feature.topic, partition, offset: feature.offset, value: JSON.stringify(feature.value) },
-  }))
-  const input = {
-    schemaVersion: 'bayn.historical-streaming-strategy-input.v1',
-    protocolHash: canonicalHashV1(protocol),
-    behaviorHash: intradayMomentumBehaviorHash,
-    sessionDate: '2026-09-04',
-    calendar: [{ date: '2026-09-04', open: '09:30', close: '16:00' }],
-    arrivals: {
-      schemaVersion: 'bayn.historical-market-arrivals.v1',
-      runId: 'a'.repeat(64),
-      observedAtMs,
-      deliveryModel: {
-        schemaVersion: 'bayn.supplied-arrival-times.v1',
-        description: 'All retained records available at the supplied observation',
-        tieBreak: 'availability-topic-partition-offset',
-      },
-      events: [...raw, ...features],
-    },
-  }
-  return { input, snapshot, protocol, raw, features }
-}
-
 test('historical strategy reaches the same core with all seven symbols and an explicit research receipt', () => {
-  const { input, snapshot, protocol } = experiment()
+  const { input, snapshot, protocol } = historicalStreamingFixture()
   const receipt = Result.getOrThrow(replayHistoricalStreamingStrategy(input))
   const direct = Result.getOrThrow(
     decideIntradayMomentumCore({
@@ -105,7 +40,7 @@ test('historical strategy reaches the same core with all seven symbols and an ex
 })
 
 test('late candidate features exclude only that candidate while late benchmark or all candidates fail', () => {
-  const { input, raw, features } = experiment()
+  const { input, raw, features } = historicalStreamingFixture()
   const run = (late: readonly string[]) =>
     replayHistoricalStreamingStrategy({
       ...input,
@@ -130,7 +65,7 @@ test('late candidate features exclude only that candidate while late benchmark o
 })
 
 test('regenerated research retains real computation time and requires a declared run identity', () => {
-  const { input, raw, features } = experiment()
+  const { input, raw, features } = historicalStreamingFixture()
   const recordedAtMs = input.arrivals.observedAtMs + 86_400_000
   const arrivals = {
     ...input.arrivals,
@@ -160,7 +95,7 @@ test('regenerated research retains real computation time and requires a declared
 })
 
 test('a delivery model reversing Kafka offsets fails globally instead of excluding a candidate', () => {
-  const { input } = experiment()
+  const { input } = historicalStreamingFixture()
   const candidates = input.arrivals.events
     .filter((event) => {
       const value = JSON.parse(event.record.value)
@@ -174,7 +109,7 @@ test('a delivery model reversing Kafka offsets fails globally instead of excludi
 })
 
 test('feature transport partitions outside Kafka Int32 fail the whole experiment', () => {
-  const { input, raw, features } = experiment()
+  const { input, raw, features } = historicalStreamingFixture()
   const changed = features.map((event) => ({ ...event, record: { ...event.record, partition: 2_147_483_648 } }))
   expect(
     Result.isFailure(
@@ -190,7 +125,7 @@ test('feature transport partitions outside Kafka Int32 fail the whole experiment
 })
 
 test('invalid protocol, session, raw input and stale benchmark cannot become successful research decisions', () => {
-  const { input } = experiment()
+  const { input } = historicalStreamingFixture()
   expect(Result.isFailure(replayHistoricalStreamingStrategy({ ...input, protocolHash: '0'.repeat(64) }))).toBe(true)
   expect(Result.isFailure(replayHistoricalStreamingStrategy({ ...input, behaviorHash: '0'.repeat(64) }))).toBe(true)
   expect(Result.isFailure(replayHistoricalStreamingStrategy({ ...input, calendar: [] }))).toBe(true)

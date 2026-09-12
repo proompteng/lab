@@ -1,3 +1,4 @@
+import simulatedSnapshotReferences from '../../migrations/0068_simulated_snapshot_references'
 import positionCostBasis from '../../migrations/0067_position_cost_basis'
 import streamingAuthorityProtocol from '../../migrations/0066_streaming_authority_protocol'
 import streamingSnapshotReferences from '../../migrations/0065_streaming_snapshot_references'
@@ -135,5 +136,6 @@ export const migrationLoader = PgMigrator.fromRecord({
   '63_broker_fee_accounting': brokerFeeAccounting,
   '64_partial_ioc_completion': partialIocCompletion,
   '65_streaming_snapshot_references': streamingSnapshotReferences,
+  '68_simulated_snapshot_references': simulatedSnapshotReferences,
   '66_streaming_authority_protocol': streamingAuthorityProtocol,
 })

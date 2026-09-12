@@ -1,7 +1,14 @@
 import type { IntradayMarketSnapshot } from './market-data/intraday/model'
-import type { StreamingMarketSnapshot, StrategyMarketSnapshot } from './market-data/streaming/snapshot'
-import { reproduceStreamingSnapshot } from './market-data/streaming/replay'
-import { StreamingSnapshotEvidenceSchema } from './market-data/streaming/evidence-schema'
+import type {
+  SimulatedMarketSnapshot,
+  StreamingMarketSnapshot,
+  StrategyMarketSnapshot,
+} from './market-data/streaming/snapshot'
+import { reproduceSimulatedSnapshot, reproduceStreamingSnapshot } from './market-data/streaming/replay'
+import {
+  SimulatedSnapshotEvidenceSchema,
+  StreamingSnapshotEvidenceSchema,
+} from './market-data/streaming/evidence-schema'
 import { Data, Result, Schema } from 'effect'
 
 import { quantizeAlpacaLimitPriceMicros } from './broker/alpaca-price'
@@ -143,6 +150,13 @@ const {
 } = ExecutionMarketDataBindingFields
 
 const ExecutionMarketDataBindingBase = Schema.Union([
+  Schema.Struct({
+    ...ExecutionStreamingMarketDataBindingFields,
+    schemaVersion: Schema.Literal('bayn.execution-market-data-binding.v4'),
+    snapshotSchemaVersion: Schema.Literal('bayn.simulated-market-snapshot.v1'),
+    universe: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique()),
+    streaming: SimulatedSnapshotEvidenceSchema,
+  }),
   Schema.Struct({
     ...ExecutionStreamingMarketDataBindingFields,
     schemaVersion: Schema.Literal('bayn.execution-market-data-binding.v3'),
@@ -290,7 +304,7 @@ const marketDataBindingIssues = (
     issues.push({ path: ['tradeCount'], issue: 'must be positive for decision evidence' })
   }
   const watermarks =
-    binding.schemaVersion === 'bayn.execution-market-data-binding.v3'
+    'streaming' in binding
       ? binding.streaming.positions
           .filter((position) => BigInt(position.offset) > 0n)
           .map((position) => ({
@@ -400,7 +414,8 @@ export const isSnapshotExecutionMarketDataBinding = (
   binding: ExecutionMarketDataBinding | undefined,
 ): binding is SnapshotExecutionMarketDataBinding =>
   binding?.schemaVersion === 'bayn.execution-market-data-binding.v2' ||
-  binding?.schemaVersion === 'bayn.execution-market-data-binding.v3'
+  binding?.schemaVersion === 'bayn.execution-market-data-binding.v3' ||
+  binding?.schemaVersion === 'bayn.execution-market-data-binding.v4'
 
 const sameStrings = (left: readonly string[], right: readonly string[]): boolean =>
   left.length === right.length && left.every((value, index) => value === right[index])
@@ -871,7 +886,12 @@ const intradayMomentumSnapshotEvidenceIssues = (
 
 type SnapshotExecutionMarketDataBinding = Extract<
   ExecutionMarketDataBinding,
-  { readonly schemaVersion: 'bayn.execution-market-data-binding.v2' | 'bayn.execution-market-data-binding.v3' }
+  {
+    readonly schemaVersion:
+      | 'bayn.execution-market-data-binding.v2'
+      | 'bayn.execution-market-data-binding.v3'
+      | 'bayn.execution-market-data-binding.v4'
+  }
 >
 
 export function reconstructBoundIntradaySnapshot(
@@ -889,6 +909,13 @@ export function reconstructBoundIntradaySnapshot(
   rows: typeof PersistedIntradaySnapshotRowsSchema.Type,
 ): StreamingMarketSnapshot | undefined
 export function reconstructBoundIntradaySnapshot(
+  binding: Extract<
+    SnapshotExecutionMarketDataBinding,
+    { readonly schemaVersion: 'bayn.execution-market-data-binding.v4' }
+  >,
+  rows: typeof PersistedIntradaySnapshotRowsSchema.Type,
+): SimulatedMarketSnapshot | undefined
+export function reconstructBoundIntradaySnapshot(
   binding: SnapshotExecutionMarketDataBinding,
   rows: typeof PersistedIntradaySnapshotRowsSchema.Type,
 ): StrategyMarketSnapshot | undefined
@@ -896,6 +923,11 @@ export function reconstructBoundIntradaySnapshot(
   binding: SnapshotExecutionMarketDataBinding,
   rows: typeof PersistedIntradaySnapshotRowsSchema.Type,
 ): StrategyMarketSnapshot | undefined {
+  if (binding.schemaVersion === 'bayn.execution-market-data-binding.v4') {
+    const { schemaVersion: _bindingVersion, snapshotSchemaVersion, ...material } = binding
+    const replay = reproduceSimulatedSnapshot({ ...material, schemaVersion: snapshotSchemaVersion }, rows)
+    return Result.isSuccess(replay) ? replay.success : undefined
+  }
   if (binding.schemaVersion === 'bayn.execution-market-data-binding.v3') {
     const { schemaVersion: _bindingVersion, snapshotSchemaVersion, ...material } = binding
     const replay = reproduceStreamingSnapshot({ ...material, schemaVersion: snapshotSchemaVersion }, rows)
@@ -1048,7 +1080,8 @@ const streamingPricingEvidenceIssues = (
 ): readonly Schema.FilterIssue[] => {
   const binding = document.bindings.executionMarketData
   if (
-    binding?.schemaVersion !== 'bayn.execution-market-data-binding.v3' ||
+    (binding?.schemaVersion !== 'bayn.execution-market-data-binding.v3' &&
+      binding?.schemaVersion !== 'bayn.execution-market-data-binding.v4') ||
     binding.purpose !== IntradaySnapshotPurpose.EntryPricing
   )
     return []
@@ -1345,6 +1378,28 @@ const executionMaterialIssues = (
       path: ['bindings', 'executionMarketData', 'snapshotId'],
       issue: 'must match the exact market-data snapshot persisted by the target plan',
     })
+  }
+  const simulatedBindings = [decisionMarketData, executionMarketData].filter(
+    (binding) => binding?.schemaVersion === 'bayn.execution-market-data-binding.v4',
+  )
+  for (const binding of simulatedBindings) {
+    if (
+      document.bindings.accountId !== `replay-${binding.streaming.runId}` ||
+      [decisionMarketData, executionMarketData].some(
+        (other) =>
+          other !== undefined &&
+          (other.schemaVersion !== 'bayn.execution-market-data-binding.v4' ||
+            other.streaming.runId !== binding.streaming.runId ||
+            other.streaming.sourceManifestHash !== binding.streaming.sourceManifestHash ||
+            other.streaming.regeneratedFeaturesRecordedAtMs !== binding.streaming.regeneratedFeaturesRecordedAtMs ||
+            other.streaming.featureTopic !== binding.streaming.featureTopic ||
+            other.streaming.deliveryModel.description !== binding.streaming.deliveryModel.description),
+      )
+    )
+      issues.push({
+        path: ['bindings'],
+        issue: 'simulated input cuts require one source manifest, replay run, and its synthetic account',
+      })
   }
   const isLegacyIntradayEntry =
     strategyDecision?.schemaVersion === 'bayn.intraday-momentum.target.v1' ||

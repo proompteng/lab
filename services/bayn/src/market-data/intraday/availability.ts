@@ -326,6 +326,7 @@ export const withRecordedArchiveReads = (
     })
   return {
     ...(market.streaming === undefined ? {} : { streaming: market.streaming }),
+    ...(market.simulation === undefined ? {} : { simulation: market.simulation }),
     check: market.check,
     captureVersion: market.captureVersion,
     loadSnapshot: (request) => observed(market.loadSnapshot(request)),

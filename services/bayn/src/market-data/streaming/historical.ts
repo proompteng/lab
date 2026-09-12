@@ -1,3 +1,4 @@
+import { SimulatedSnapshotSourceSchema } from './evidence-schema'
 import { Data, Result, Schema } from 'effect'
 import { canonicalHashV1Result } from '../../hash'
 import {
@@ -112,6 +113,7 @@ const compareArrivalPositions = (a: HistoricalArrivalPosition, b: HistoricalArri
 
 /** Incremental state accepts already ordered arrivals without retaining the source file. */
 export interface HistoricalMarketCursor {
+  readonly source?: typeof SimulatedSnapshotSourceSchema.Type
   readonly runId: string
   readonly universe: StreamingUniverse
   readonly regeneratedFeaturesRecordedAtMs?: number
@@ -125,12 +127,28 @@ export const createHistoricalMarketCursor = (
   runId: string,
   universe: StreamingUniverse,
   regeneratedFeaturesRecordedAtMs?: number,
+  source?: typeof SimulatedSnapshotSourceSchema.Type,
 ) =>
   Result.gen(function* () {
     yield* Schema.decodeUnknownResult(Sha256Schema, strictParseOptions)(runId)
     if (regeneratedFeaturesRecordedAtMs !== undefined)
       yield* Schema.decodeUnknownResult(NonNegativeIntegerSchema, strictParseOptions)(regeneratedFeaturesRecordedAtMs)
+    const provenance =
+      source === undefined
+        ? undefined
+        : yield* Schema.decodeUnknownResult(
+            SimulatedSnapshotSourceSchema.check(
+              Schema.makeFilter(
+                (value) =>
+                  value.runId === runId &&
+                  value.featureTopic === universe.topics.features &&
+                  value.regeneratedFeaturesRecordedAtMs === regeneratedFeaturesRecordedAtMs,
+              ),
+            ),
+            strictParseOptions,
+          )(source)
     return {
+      ...(provenance === undefined ? {} : { source: provenance }),
       runId,
       universe,
       ...(regeneratedFeaturesRecordedAtMs === undefined ? {} : { regeneratedFeaturesRecordedAtMs }),
