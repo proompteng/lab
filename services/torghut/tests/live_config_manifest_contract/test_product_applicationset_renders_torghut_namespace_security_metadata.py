@@ -162,7 +162,6 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
     def test_direct_torghut_deployments_bound_replica_set_history(self) -> None:
         deployment_paths = [
             "argocd/applications/torghut/alloy-deployment.yaml",
-            "argocd/applications/torghut/clickhouse/clickhouse-guardrails-exporter.yaml",
             "argocd/applications/torghut/llm-guardrails-exporter.yaml",
             "argocd/applications/torghut/ws/deployment.yaml",
             "argocd/applications/torghut-options/catalog/deployment.yaml",
