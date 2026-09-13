@@ -10,8 +10,6 @@ const readRepoFile = (path: string): string => readFileSync(new URL(path, repoRo
 test('cluster Alloy collects bounded CloudNativePG and Ceph storage metrics', () => {
   const config = readRepoFile('argocd/applications/observability/cluster-metrics-alloy-config.river')
   const deployment = readRepoFile('argocd/applications/observability/cluster-metrics-alloy-deployment.yaml')
-  const kustomization = readRepoFile('argocd/applications/observability/kustomization.yaml')
-  const mimirValues: unknown = YAML.parse(readRepoFile('argocd/applications/observability/mimir-values.yaml'))
 
   expect(config).toContain('discovery.kubernetes "cnpg_pods"')
   expect(config).toContain('label = "cnpg.io/cluster"')
@@ -29,21 +27,34 @@ test('cluster Alloy collects bounded CloudNativePG and Ceph storage metrics', ()
   expect(config).toContain('prometheus.relabel "rbd_client_metrics"')
   expect(config).toContain('container_fs_(reads|writes)(_bytes)?_total;/dev/rbd[0-9]+;;.+')
   expect(config).toContain('prometheus.relabel.rbd_client_metrics.receiver')
-  expect(mimirValues).toMatchObject({
-    kafka: {
-      persistence: {
-        enabled: true,
-        size: '20Gi',
-        storageClassName: 'rook-ceph-block',
-      },
-    },
-  })
-  expect(kustomization).toContain(
-    'name: observability-mimir-kafka\n    patch: |-\n      apiVersion: apps/v1\n      kind: StatefulSet',
-  )
   expect(deployment).toContain(
     `observability.proompteng.ai/config-sha256: ${createHash('sha256').update(config).digest('hex')}`,
   )
+})
+
+test('Mimir uses the replicated shared Kafka topic with cluster-local offsets', () => {
+  const values = YAML.parse(readRepoFile('argocd/applications/observability/mimir-values.yaml'))
+  const topic = YAML.parse(readRepoFile('argocd/applications/kafka/mimir-topic.yaml'))
+  const kafkaResources = YAML.parse(readRepoFile('argocd/applications/kafka/kustomization.yaml')).resources
+  const config = values.mimir.structuredConfig.ingest_storage
+
+  expect(values.kafka).toEqual({ enabled: false })
+  expect(config).toMatchObject({
+    enabled: true,
+    kafka: {
+      address: 'kafka-kafka-bootstrap.kafka.svc.cluster.local:9093',
+      topic: topic.metadata.name,
+      auto_create_topic_enabled: false,
+      consumer_group_offset_commit_file_enforced: false,
+    },
+  })
+  expect(kafkaResources).toContain('mimir-topic.yaml')
+  expect(topic.metadata.labels['strimzi.io/cluster']).toBe('kafka')
+  expect(topic.spec.partitions).toBeGreaterThanOrEqual(values.ingester.replicas)
+  expect(topic.spec.replicas).toBe(3)
+  expect(topic.spec.config['min.insync.replicas']).toBe(2)
+  expect(topic.spec.config['max.message.bytes']).toBeGreaterThanOrEqual(16000000)
+  expect(topic.spec.config['retention.ms']).toBeGreaterThanOrEqual(86400000)
 })
 
 test('Mimir records the storage baseline and alerts on actionable pressure', () => {
