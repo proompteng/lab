@@ -82,7 +82,7 @@ export const summarizeStreamingSymbol = (projection: StreamingProjection, symbol
 }
 
 const usage =
-  'Usage: bayn-streaming-diagnostics --since <UTC-instant> [--bootstrap-timeout-seconds <1..3600>] | --codecs | --help'
+  'Usage: bayn-streaming-diagnostics --since <UTC-instant> [--bootstrap-timeout-seconds <1..14400>] | --codecs | --help'
 export const parseStreamingDiagnosticsArgs = (args: readonly string[]) => {
   if (args.length === 1 && args[0] === '--codecs') return { kind: 'codecs' } as const
   if (args.length === 1 && args[0] === '--help') return { kind: 'help' } as const
@@ -98,7 +98,7 @@ export const parseStreamingDiagnosticsArgs = (args: readonly string[]) => {
     if (
       Number.isSafeInteger(timeoutSeconds) &&
       timeoutSeconds >= 1 &&
-      timeoutSeconds <= 3600 &&
+      timeoutSeconds <= 14_400 &&
       Number.isSafeInteger(sinceMs) &&
       sinceMs > 0 &&
       new Date(sinceMs).toISOString().replace('.000Z', 'Z') === args[1].replace('.000Z', 'Z')
