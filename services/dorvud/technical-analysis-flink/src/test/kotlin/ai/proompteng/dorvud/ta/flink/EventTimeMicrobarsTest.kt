@@ -8,8 +8,11 @@ import org.apache.flink.api.common.state.ValueState
 import org.apache.flink.api.common.state.ValueStateDescriptor
 import org.apache.flink.api.common.typeinfo.Types
 import org.apache.flink.api.java.functions.KeySelector
+import org.apache.flink.runtime.checkpoint.CheckpointOptions
+import org.apache.flink.runtime.state.memory.MemCheckpointStreamFactory
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction
 import org.apache.flink.streaming.api.operators.KeyedProcessOperator
+import org.apache.flink.streaming.api.operators.OperatorSnapshotFinalizer
 import org.apache.flink.streaming.api.watermark.Watermark
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord
 import org.apache.flink.streaming.util.KeyedOneInputStreamOperatorTestHarness
@@ -18,6 +21,7 @@ import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class EventTimeMicrobarsTest {
@@ -98,6 +102,44 @@ class EventTimeMicrobarsTest {
     val bucket = EventTimeTradeBucket().add(original).add(trade(100, 100.0, 2))
     assertEquals(2L, bucket.payload().count)
     assertFailsWith<IllegalArgumentException> { bucket.add(trade(100, 102.0, 1)) }
+  }
+
+  @Test fun `pending heap checkpoint isolates continued trade processing before serialization`() {
+    val snapshot =
+      harness().use { h ->
+        h.open()
+        h.processElement(StreamRecord(trade(100, 100.0, 1)))
+        h.prepareSnapshotPreBarrier(1)
+        val pending =
+          h.operator.snapshotState(
+            1,
+            start.toEpochMilli(),
+            CheckpointOptions.forCheckpointWithDefaultLocation(),
+            MemCheckpointStreamFactory(1024 * 1024),
+          )
+        assertFalse(pending.keyedStateManagedFuture.isDone)
+        h.processElement(StreamRecord(trade(500, 102.0, 2)))
+        h.processElement(StreamRecord(trade(100, 100.0, 1)))
+        val saved = OperatorSnapshotFinalizer.create(pending).jobManagerOwnedState
+        h.processWatermark(Watermark(start.plusSeconds(1).toEpochMilli()))
+        assertEquals(
+          2L,
+          h
+            .extractOutputValues()
+            .single()
+            .payload.count,
+        )
+        saved
+      }
+    harness().use { h ->
+      h.initializeState(snapshot)
+      h.open()
+      h.processElement(StreamRecord(trade(100, 100.0, 1)))
+      h.processWatermark(Watermark(start.plusSeconds(1).toEpochMilli()))
+      val restored = h.extractOutputValues().single().payload
+      assertEquals(1L, restored.count)
+      assertEquals(100.0, restored.c)
+    }
   }
 
   @Test fun `restores bucket bytes from the deployed v2 serializer`() {
