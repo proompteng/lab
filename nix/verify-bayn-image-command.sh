@@ -198,7 +198,7 @@ for command in streaming-replay streaming-diagnostics session-replay; do
   case "${command}" in
     streaming-replay) expected_streaming='Usage: bayn-streaming-replay --file <decision.json> | --decision <decision-content-hash> | --historical <experiment.json>' ;;
     session-replay) expected_streaming='Usage: bayn-session-replay --input <session.json> --arrivals <source.ndjson> --capture <capture.json> --capture-sha256 <trusted-hash> --output <new-directory> | --help' ;;
-    streaming-diagnostics) expected_streaming='Usage: bayn-streaming-diagnostics --since <UTC-instant> [--bootstrap-timeout-seconds <1..3600>] | --codecs | --help' ;;
+    streaming-diagnostics) expected_streaming='Usage: bayn-streaming-diagnostics --since <UTC-instant> [--bootstrap-timeout-seconds <1..14400>] | --codecs | --help' ;;
   esac
   streaming_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
     --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --cpus 1 \
