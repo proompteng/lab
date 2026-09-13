@@ -42,9 +42,9 @@ class EventTimeMicrobarsTest {
     offset,
   )
 
-  private fun harness() =
+  private fun harness(interruptible: Boolean = true) =
     KeyedOneInputStreamOperatorTestHarness(
-      KeyedProcessOperator(MicrobarProcessFunction()),
+      if (interruptible) MicrobarOperator() else KeyedProcessOperator(MicrobarProcessFunction()),
       KeySelector<RecordedTrade, String> { it.envelope.symbol },
       Types.STRING,
     )
@@ -73,7 +73,7 @@ class EventTimeMicrobarsTest {
 
   @Test fun `checkpoint restores all open buckets and deduplication before finalization`() {
     val snapshot =
-      harness().use { h ->
+      harness(interruptible = false).use { h ->
         h.open()
         h.processElement(StreamRecord(trade(100, 100.0, 1)))
         h.processElement(StreamRecord(trade(1200, 105.0, 2)))

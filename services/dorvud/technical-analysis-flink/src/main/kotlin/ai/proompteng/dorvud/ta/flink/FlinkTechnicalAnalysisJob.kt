@@ -138,7 +138,7 @@ internal fun configureTechnicalAnalysisJob(
   val microBars =
     trades
       .keyBy { it.envelope.symbol }
-      .process(MicrobarProcessFunction())
+      .transform("KeyedProcess", TypeInformation.of(object : TypeHint<MicroBarEnvelope>() {}), MicrobarOperator())
       .name("ta-microbars")
       .uid("ta-microbars")
 
@@ -500,6 +500,7 @@ private fun configureEnvironment(
   val checkpointConfig = env.checkpointConfig
   checkpointConfig.checkpointTimeout = config.checkpointTimeoutMs
   checkpointConfig.minPauseBetweenCheckpoints = config.minPauseBetweenCheckpointsMs
+  checkpointConfig.enableUnalignedCheckpointsInterruptibleTimers(true)
   env.config.setAutoWatermarkInterval(1_000)
 }
 
@@ -1058,6 +1059,12 @@ private fun kafkaJaas(config: FlinkTaConfig): String {
 }
 
 private typealias MicroBarEnvelope = Envelope<MicroBarPayload>
+
+internal class MicrobarOperator :
+  org.apache.flink.streaming.api.operators.KeyedProcessOperator<String, RecordedTrade, MicroBarEnvelope>(MicrobarProcessFunction()) {
+  // Each callback finalizes one bucket atomically; Flink may checkpoint between callbacks in a watermark burst.
+  override fun useInterruptibleTimers(): Boolean = true
+}
 
 internal class MicrobarProcessFunction : KeyedProcessFunction<String, RecordedTrade, MicroBarEnvelope>() {
   private lateinit var legacyBucket: ValueState<BucketState>

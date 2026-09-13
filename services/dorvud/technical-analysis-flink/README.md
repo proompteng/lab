@@ -13,6 +13,14 @@ finalization increment `microbar_late_trades_total` and emit a side output and a
 their source coordinates. Their raw Kafka/archive records remain available for investigation; no conflicting final
 microbar is emitted.
 
+The microbar operator opts into Flink 2.2's interruptible event-time timers when unaligned checkpoints are enabled.
+During retained-data recovery, one watermark can close thousands of buckets. Flink yields between complete bucket
+callbacks so a slow downstream sink cannot hold a checkpoint behind the entire burst. Pending timers and buckets
+remain checkpointed, and each callback updates its sequence, emits one final bar, and removes that bucket before
+yielding. The operator UID and state descriptors are unchanged. A two-task-manager regression test checkpoints the
+production operator twice under downstream backpressure; the restore test transfers an old operator's open buckets
+into the interruptible operator and checks ordered output and deduplication.
+
 Microbar and legacy TA envelopes use output version 2 for the corrected behavior. TA canonicalizes each session's bars
 before updating its numerical state. Duplicate revisions are inert. Corrections rebuild affected indicator outputs
 with their original event windows and current computation/ingestion time. An older session cannot contaminate the
