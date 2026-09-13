@@ -32,6 +32,21 @@ with their original event windows and current computation/ingestion time. An old
 current session. Recursive EMA/MACD/RSI state retains its original seed when the bounded calculation buffer advances.
 The numerical regression test compares a full regular session against the pinned TA4J implementation.
 
+A correction snapshots the canonical bars and stores a checkpointed rebuild cursor. Processing-time callbacks advance
+at most 64 prefix bars and emit at most one revised signal before returning to Flink. This lets checkpoints progress
+when an upstream microbar timer burst feeds a slow signal sink. Further accepted changes are combined into the next
+rebuild from their earliest affected bar; intermediate revisions waiting behind the current rebuild are not each
+expanded into a separate full-session output burst. Source revisions and the final canonical values remain retained.
+Fresh ordered bars still emit immediately when no rebuild is pending.
+
+Checkpoints retain the current rebuild's input snapshot, recursive accumulator, emission cursor, pending timer, and
+queued changes. Session rollover preserves unfinished prior-session rebuilds separately so they finish without
+replacing the new session's accumulator. Recovery tests compare the remaining output with a fresh canonical
+calculation, including queued corrections, appends, and session rollover. The two-task-manager regression combines
+the production microbar and signal operators and completes two checkpoints before the final rebuilt bar is emitted.
+Operator IDs and existing state descriptors remain stable. Rolling back this change requires the preceding image's
+pre-upgrade savepoint: that image cannot resume the new pending-work state.
+
 Payload-identical newer bars advance a separate checkpointed input revision without replacing the canonical envelope.
 Later corrections therefore retain the original signal identity while stale conflicting revisions remain rejected.
 Each canonical bar also retains its last emitted millisecond revision. Repeated corrections in one processing
