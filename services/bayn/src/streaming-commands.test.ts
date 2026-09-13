@@ -24,13 +24,13 @@ test('streaming commands require an explicit evidence source and reject ambiguou
 test('historical diagnostics require an explicit bounded bootstrap budget', () => {
   const args = ['--since', '2026-09-11T19:00:00Z']
   expect(parseStreamingDiagnosticsArgs(args)).toMatchObject({ kind: 'probe', bootstrapTimeoutMs: 300_000 })
-  for (const seconds of ['1', '1800', '3600']) {
+  for (const seconds of ['1', '1800', '3600', '7200', '14400']) {
     expect(parseStreamingDiagnosticsArgs([...args, '--bootstrap-timeout-seconds', seconds])).toMatchObject({
       kind: 'probe',
       bootstrapTimeoutMs: Number(seconds) * 1000,
     })
   }
-  for (const seconds of ['0', '-1', '3601', 'Infinity', 'NaN', '1.5', '1e3', ' 300', '']) {
+  for (const seconds of ['0', '-1', '14401', 'Infinity', 'NaN', '1.5', '1e3', ' 300', '']) {
     expect(parseStreamingDiagnosticsArgs([...args, '--bootstrap-timeout-seconds', seconds]).kind).toBe('invalid')
   }
   expect(parseStreamingDiagnosticsArgs([...args, '--bootstrap-timeout-seconds']).kind).toBe('invalid')

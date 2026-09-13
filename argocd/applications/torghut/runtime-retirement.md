@@ -21,7 +21,7 @@ Notebooks initialize with ClickHouse credentials alone. Market-data views keep r
 PostgreSQL and trading-status views report unavailable without connecting to retired services.
 
 The active resources retain `torghut-ws`, live `torghut-ta`, `market-data-archive`, ClickHouse and Keeper,
-notebooks, Alloy, and ClickHouse guardrail metrics. The shared runtime ServiceAccount and RBAC remain
+notebooks, and Alloy. The shared runtime ServiceAccount and RBAC remain
 because websocket and Flink workloads use them. Backup and checkpoint buckets, recovery objects,
 credentials, and notebook volumes remain. Bayn's PostgreSQL and ledger in namespace `bayn` are unchanged.
 
@@ -31,6 +31,24 @@ including when `TORGHUT_SKIP_MIGRATIONS=true`. Retained workloads use normal CI,
 Inactive workload manifests remain available for recovery and existing Kargo image metadata updates.
 Only the root Kustomization resource list determines which of those manifests are deployed. Restoring an
 inactive manifest to that list is an operational change requiring a reviewed recovery plan.
+
+## ClickHouse exporter removal
+
+The ClickHouse guardrails exporter is retired. Remove its Deployment, Service,
+and ConfigMap from the ClickHouse Kustomization and delete their source manifests. Alloy discovers metrics
+Services dynamically, so the deleted Service disappears from its scrape targets without changing Alloy.
+
+The `torghut-clickhouse.guardrails.rules` and `torghut-freshness.rules` Mimir groups contain eight alerts
+that rely on this exporter. Remove both groups; the existing observability PostSync loader deletes their
+stored rule groups. This removes the custom disk, read-only, scrape-failure, fallback, and TA freshness
+alerts. Native ClickHouse metrics, Kubernetes volume metrics, and the remaining pipelines continue.
+
+Roll out through reviewed main, Kargo's matching image cohort, and Argo. Confirm the exporter Deployment,
+Service, ConfigMap and Pods are absent, both Mimir groups are absent, and ClickHouse and the retained
+Flink jobs remain ready. No database, volume, credential, or Kafka setting changes are needed.
+
+To restore this exporter, restore both source manifests, their Kustomization entries, the two Mimir groups,
+and the deployment-history test entry together through reviewed GitOps.
 
 ## Rollout and preservation
 

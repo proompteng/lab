@@ -13,10 +13,12 @@ Follow the [Loki 3 migration](../../../docs/runbooks/loki-3-migration.md) for th
 procedure. The sole Loki 3 compactor uses a retained 10 GiB Ceph claim; log retention remains disabled.
 Mimir 3.2 uses normal rolling updates for ingesters, store gateway, compactor, and Alertmanager. Follow the
 [Mimir 3.2 rollout](../../../docs/runbooks/mimir-3-2-upgrade.md) for the native configuration gate, ordered sync waves,
-and live acceptance. The bundled Kafka broker uses Apache's JVM 4.3.1 image with normal StatefulSet rolling updates.
-Its existing log subdirectory is explicitly mounted at the image's declared data volume. Follow the
-[Kafka 4.3 upgrade](../../../docs/runbooks/mimir-kafka-4-3-upgrade.md) for clone recovery, buffer preservation,
-and metadata-feature acceptance.
+and live acceptance. Mimir uses the shared Strimzi Kafka cluster at
+`kafka-kafka-bootstrap.kafka.svc.cluster.local:9093`, on `observability.mimir.ingest.v1`.
+The topic has three partitions, replication factor three, and minimum ISR two. Topic creation belongs to the Kafka
+application; Mimir's bundled Kafka chart is disabled. Increase topic partitions before scaling ingesters above three.
+The [shared Kafka migration runbook](../../../docs/runbooks/mimir-shared-kafka.md) describes the hard cutover,
+offset handling, and verification. Historical Kafka snapshot/restore PVCs remain as retained data without a workload.
 The [Mimir recovery procedure](../../../docs/runbooks/mimir-rgw-tls-recovery.md) is historical guidance for
 Mimir 3.1.2/chart 6.1.0; its process-reload helper deliberately rejects newer images and rolling strategies. The
 [compatibility runbook](../../../docs/runbooks/ceph-rgw-sigv4-compatibility.md) documents the verified TLS path.

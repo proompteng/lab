@@ -38,8 +38,10 @@ check loads this command with `--help` and runs `--codecs` to round-trip gzip, S
 finished image without network access.
 
 Historical probes may need to consume a large retained backfill whose Kafka timestamps reflect recent publication.
-Use `--bootstrap-timeout-seconds 3600` with `--since` to allow up to one hour for that read-only bootstrap. The default
-is 300 seconds, and the accepted range is 1–3600 seconds. The receipt records the selected `bootstrapTimeoutMs`.
+Use `--bootstrap-timeout-seconds 7200` with `--since` to allow two hours for that read-only bootstrap. The default
+is 300 seconds, and the accepted range is 1–14400 seconds (four hours). Estimate the budget from retained record
+count and observed processing rate, allowing time for bounded connection recovery. The receipt records the
+selected `bootstrapTimeoutMs`.
 This budget applies to the diagnostic's Kafka bootstrap and wait, with 60 additional seconds for scoped shutdown;
 the trading runtime's configured 300-second deadline is unchanged. Every partition must still reach its frozen
 bootstrap end offset. The command retains all decoding, identity, availability, and exact raw-bar join checks.
