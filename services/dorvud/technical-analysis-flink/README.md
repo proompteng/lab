@@ -13,6 +13,11 @@ finalization increment `microbar_late_trades_total` and emit a side output and a
 their source coordinates. Their raw Kafka/archive records remain available for investigation; no conflicting final
 microbar is emitted.
 
+Open microbar buckets append trades and index their source coordinates, avoiding repeated scans and whole-list
+copies during bursts. The index is transient and rebuilt once after deserialization. Checkpoints retain the same
+trade-list field and state descriptor; a fixture captured from the preceding deployed serializer verifies restoration,
+redelivery, and further appends.
+
 The microbar operator opts into Flink 2.2's interruptible event-time timers when unaligned checkpoints are enabled.
 During retained-data recovery, one watermark can close thousands of buckets. Flink yields between complete bucket
 callbacks so a slow downstream sink cannot hold a checkpoint behind the entire burst. Pending timers and buckets
@@ -27,6 +32,14 @@ with their original event windows and current computation/ingestion time. An old
 current session. Recursive EMA/MACD/RSI state retains its original seed when the bounded calculation buffer advances.
 The numerical regression test compares a full regular session against the pinned TA4J implementation.
 
+Payload-identical newer bars advance a separate checkpointed input revision without replacing the canonical envelope.
+Later corrections therefore retain the original signal identity while stale conflicting revisions remain rejected.
+Each canonical bar also retains its last emitted millisecond revision. Repeated corrections in one processing
+millisecond advance that bar's `ingestTs` by one millisecond, preserving ClickHouse replacement ordering across
+checkpoints. These revision maps reset at session rollover. Existing checkpoints initialize input revisions from
+their retained envelopes and output revisions from the first new processing timestamp. A rollback uses the preceding
+image and its matching pre-upgrade savepoint through the normal GitOps path.
+
 EMA pairs require 26 bars, MACD 34, RSI 15 closes, and Bollinger bands 20 contiguous bars. A gap invalidates recursive
 indicator readiness until the missing input is supplied and the canonical history is recomputed. No synthetic bars
 are inserted. The legacy `vol_realized.w60s` field retains its seconds-based definition and is unavailable when its
@@ -39,6 +52,13 @@ new calculation and is discarded with `microbar_legacy_buckets_discarded_total`.
 from new inputs instead of claiming that old truncated history contains a complete recursive seed or session totals.
 Subsequent checkpoints restore the complete new state. The restore tests cover open microbar buckets, duplicate
 redelivery, recursive seeds, and session totals. The rolling-price feature state and contract below are unchanged.
+
+## ClickHouse sink batching
+
+The equity TA sinks bound `TA_CLICKHOUSE_BATCH_SIZE` to 1–1,000 rows. The deployed 1,000-row setting reaches the JDBC
+batch instead of being silently reduced to 100. The existing flush interval still publishes a partial batch when
+input is sparse. The bound limits buffered rows while allowing retained corrections to use the configured batching.
+Rollout acceptance checks actual ClickHouse insert sizes and completed Flink checkpoints after savepoint restore.
 
 ## Rolling feature branch
 
