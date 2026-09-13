@@ -1,5 +1,8 @@
 # Mimir Kafka 4.3 upgrade
 
+> Historical procedure: the bundled broker has been retired. Production Mimir uses
+> [shared Kafka](mimir-shared-kafka.md). Do not recreate the old broker or its restore Job.
+
 Mimir's bundled broker is separate from the main Strimzi cluster. Preserve its
 cluster ID `5L6g3nShT-eMCtK--X86sw`, node ID 0, two topics, 150 partitions, and
 the original `kafka-data-observability-mimir-kafka-0` PVC. Do not reformat logs

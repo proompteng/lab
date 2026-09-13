@@ -2,12 +2,6 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 configMapGenerator:
-  - name: observability-mimir-kafka-restore-check
-    files:
-      - mimir-kafka-restore-check.sh
-    options:
-      annotations:
-        argocd.argoproj.io/sync-wave: "-6"
   - name: observability-grafana-sqlite-backup
     files:
       - grafana-sqlite-backup.py
@@ -26,7 +20,7 @@ resources:
   - loki-v3-config-check.yaml
   - tempo-compatibility-services.yaml
   - grafana-upgrade-backup.yaml
-  - mimir-kafka-upgrade-backup.yaml
+  - mimir-kafka-retained-backups.yaml
   - rook-ceph-rgw-loki-reflected-secret.yaml
   - tailscale-ingresses.yaml
   - ingressroute-grafana-k8s-private.yaml
@@ -154,16 +148,6 @@ patches:
         annotations:
           argocd.argoproj.io/sync-options: Replace=true
           argocd.argoproj.io/sync-wave: "1"
-  - target:
-      kind: StatefulSet
-      name: observability-mimir-kafka
-    patch: |-
-      apiVersion: apps/v1
-      kind: StatefulSet
-      metadata:
-        name: observability-mimir-kafka
-        annotations:
-          argocd.argoproj.io/sync-options: Replace=true
   - target:
       kind: Job
       name: observability-mimir-smoke-test

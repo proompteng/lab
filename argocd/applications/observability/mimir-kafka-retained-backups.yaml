@@ -1,0 +1,32 @@
+# Historical data only; no broker or restore workload consumes these volumes.
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: observability-mimir-kafka-before-4-3-1
+  namespace: observability
+  annotations:
+    argocd.argoproj.io/sync-wave: "-5"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  volumeSnapshotClassName: rook-ceph-block
+  source:
+    persistentVolumeClaimName: kafka-data-observability-mimir-kafka-0
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: observability-mimir-kafka-restore-4-3-1
+  namespace: observability
+  annotations:
+    argocd.argoproj.io/sync-wave: "-4"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: rook-ceph-block
+  resources:
+    requests:
+      storage: 20Gi
+  dataSource:
+    apiGroup: snapshot.storage.k8s.io
+    kind: VolumeSnapshot
+    name: observability-mimir-kafka-before-4-3-1

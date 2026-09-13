@@ -43,6 +43,7 @@ resources:
   - torghut-topics.yaml
   - bayn-market-data-topics.yaml
   - tempo-topic.yaml
+  - mimir-topic.yaml
   - torghut-sim-topics.yaml
   - torghut-options-topics.yaml
   - torghut-hyperliquid-feed-topics.yaml
