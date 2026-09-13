@@ -37,6 +37,14 @@ input joins observed now; it does not claim those features were available in a p
 check loads this command with `--help` and runs `--codecs` to round-trip gzip, Snappy, LZ4 and Zstd from the
 finished image without network access.
 
+Historical probes may need to consume a large retained backfill whose Kafka timestamps reflect recent publication.
+Use `--bootstrap-timeout-seconds 3600` with `--since` to allow up to one hour for that read-only bootstrap. The default
+is 300 seconds, and the accepted range is 1–3600 seconds. The receipt records the selected `bootstrapTimeoutMs`.
+This budget applies to the diagnostic's Kafka bootstrap and wait, with 60 additional seconds for scoped shutdown;
+the trading runtime's configured 300-second deadline is unchanged. Every partition must still reach its frozen
+bootstrap end offset. The command retains all decoding, identity, availability, and exact raw-bar join checks.
+An expired budget is a failed probe and produces no successful receipt.
+
 ## Recorded decisions
 
 From the built service directory:
