@@ -26,8 +26,9 @@ revisions, Pod and PVC identities, topic offsets, native Mimir metrics, and curr
 4. Compare the old topic's final end offsets with each ingester's last consumed offset. Mimir records the last
    consumed record itself, so it must equal Kafka's end offset minus one. Check every nonempty partition and abort
    retirement if any has no consuming owner or remains behind. Confirm offsets stop advancing after writers exit.
-5. Call each ingester's `POST /ingester/flush?wait=true`. HTTP success alone does not establish successful shipping:
-   also inspect flush/ship logs and failure counters, and confirm no unshipped head remains. Preserve all TSDB PVCs.
+5. Preserve the ingester TSDB heads, WAL, and PVC identities. Do not force a head flush while collectors are
+   buffering: forced compaction advances the TSDB minimum valid timestamp and can reject queued samples older
+   than that boundary. The clean stop and existing PVCs preserve already-consumed records for WAL replay.
 6. Scale the ingester StatefulSet to zero and wait for every old ingester Pod to terminate before resuming Argo.
    Remove the Application's skip-reconcile annotation. Argo applies the shared Kafka configuration, starts the
    configured replicas, and prunes the bundled Kafka StatefulSet and Services after the sync health gates pass.
@@ -35,9 +36,10 @@ revisions, Pod and PVC identities, topic offsets, native Mimir metrics, and curr
    topic's start offset, then advancing consumed offsets. Verify fresh remote writes become queryable, historical
    queries still return their baseline data, collector buffers recover, and Kafka produce failures do not increase
    during the observation window. Confirm all partitions retain three in-sync replicas and no bundled broker Pod,
-   StatefulSet, Service, restore Job, or restore ConfigMap remains.
+   StatefulSet, Service, restore Job, or restore ConfigMap remains. Check native ingester discard counters as well
+   as collector failures: a successful Kafka write does not prove every sample was accepted by the TSDB.
 
-The Application pause is temporary operational state, not a second desired configuration. If drain/flush checks
+The Application pause is temporary operational state, not a second desired configuration. If drain or PVC checks
 fail before step 6, restore the original replica counts while resolving that failure and keep reconciliation paused:
 main already contains the shared Kafka configuration. Do not delete the broker or its data before draining succeeds.
 Remove the pause when completing the cutover. After switching to shared Kafka, repair forward on that cluster.
@@ -54,9 +56,38 @@ replay the retained topic on every restart. Do not copy old broker consumer offs
 No mirroring, dual write, or fallback Kafka backend is configured. Retained volumes are for data recovery only.
 Do not delete ingester PVCs, TSDB/WAL directories, or the Mimir S3 buckets during this operation.
 
+## Recover queued samples rejected at the flush boundary
+
+Kafka retains the original records even after the ingester rejects their samples. Repair on the shared cluster:
+
+1. Capture native per-ingester `cortex_discarded_samples_total` counters, the three topic end offsets, and a query
+   showing the exact missing timestamp from a rejection log. Confirm the records remain within topic retention.
+2. Let any active Argo sync finish, pause observability reconciliation, and save the original runtime ConfigMap.
+   Calculate a temporary per-tenant `out_of_order_time_window` from the newest TSDB sample timestamp minus the
+   oldest retained sample timestamp to replay, plus a margin for the entire recovery duration. Verify that bound
+   before applying the override without changing other limits; do not assume one hour covers a 24-hour topic.
+   Keep the final Git configuration unchanged.
+3. Stop only the three ingesters without flushing their heads again. Preserve their PVCs and WAL. Distributors
+   keep writing to shared Kafka; current queries can be temporarily unavailable while ingesters restart.
+4. Once all old ingester Pods are gone, delete only each ingester group's committed offsets for
+   `observability.mimir.ingest.v1`. Do not reset another group or topic, delete any Kafka records, copy offsets
+   from the retired broker, or remove TSDB files. With file enforcement disabled, absent topic offsets cause the
+   native reader to restart at the earliest retained partition offset. A CLI reset to offset zero is insufficient because Mimir
+   interprets committed offsets as the last consumed record and would start at offset one.
+5. Restore the three ingester replicas. Verify the runtime override, startup at the partition beginning, progress
+   beyond the captured end offsets, and no new timestamp or out-of-order rejections. Keep the override enabled
+   until collector queues and distributor producer buffers have drained. Capture fresh Kafka end offsets and
+   verify each last consumed offset reaches that partition's end minus one; repeat while checking that no queued
+   backlog remains and consumer lag has returned to zero. The initial watermark alone cannot cover buffered
+   records appended during replay. Confirm previously missing sample timestamps now query exactly and
+   historical/current queries still work.
+6. Restore the original runtime ConfigMap and remove the temporary Argo pause. Verify the default out-of-order
+   window is restored, recovered samples remain queryable, and collector queues and native producer errors recover.
+
 ## Evidence sources
 
 - [Mimir Kafka backend configuration](https://grafana.com/docs/mimir/latest/configure/configure-kafka-backend/)
 - [Mimir flush API and its verification limit](https://grafana.com/docs/mimir/latest/references/http-api/#flush-blocks)
 - [Exact 3.2.1 Kafka offset configuration](https://github.com/grafana/mimir/blob/mimir-3.2.1/pkg/storage/ingest/config.go)
 - [Exact 3.2.1 reader startup behavior](https://github.com/grafana/mimir/blob/mimir-3.2.1/pkg/storage/ingest/reader.go)
+- [Mimir out-of-order ingestion and disabling its temporary window](https://grafana.com/docs/mimir/latest/configure/configure-out-of-order-samples-ingestion/)
