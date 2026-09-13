@@ -81,23 +81,29 @@ export const summarizeStreamingSymbol = (projection: StreamingProjection, symbol
   }
 }
 
-const usage = 'Usage: bayn-streaming-diagnostics --since <UTC-instant> | --codecs | --help'
+const usage =
+  'Usage: bayn-streaming-diagnostics --since <UTC-instant> [--bootstrap-timeout-seconds <1..3600>] | --codecs | --help'
 export const parseStreamingDiagnosticsArgs = (args: readonly string[]) => {
   if (args.length === 1 && args[0] === '--codecs') return { kind: 'codecs' } as const
   if (args.length === 1 && args[0] === '--help') return { kind: 'help' } as const
   if (
-    args.length === 2 &&
+    (args.length === 2 ||
+      (args.length === 4 && args[2] === '--bootstrap-timeout-seconds' && /^[1-9]\d*$/.test(args[3] ?? ''))) &&
     args[0] === '--since' &&
     args[1] !== undefined &&
     /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(args[1])
   ) {
     const sinceMs = Date.parse(args[1])
+    const timeoutSeconds = args.length === 4 ? Number(args[3]) : kafkaBootstrapDeadlineMs / 1000
     if (
+      Number.isSafeInteger(timeoutSeconds) &&
+      timeoutSeconds >= 1 &&
+      timeoutSeconds <= 3600 &&
       Number.isSafeInteger(sinceMs) &&
       sinceMs > 0 &&
       new Date(sinceMs).toISOString().replace('.000Z', 'Z') === args[1].replace('.000Z', 'Z')
     )
-      return { kind: 'probe', sinceMs } as const
+      return { kind: 'probe', sinceMs, bootstrapTimeoutMs: timeoutSeconds * 1000 } as const
   }
   return { kind: 'invalid' } as const
 }
@@ -106,72 +112,75 @@ const print = (value: string) =>
     const stdio = yield* Stdio.Stdio
     yield* Stream.run(Stream.make(`${value}\n`), stdio.stdout())
   })
-const main = Effect.scoped(
-  Effect.gen(function* () {
-    const args = parseStreamingDiagnosticsArgs(process.argv.slice(2))
-    if (args.kind === 'help') return yield* print(usage)
-    if (args.kind === 'codecs') {
-      yield* Effect.try({
-        try: () => {
-          const payload = Buffer.from('Bayn Kafka codec verification '.repeat(32))
-          for (const algorithm of ['gzip', 'snappy', 'lz4', 'zstd'] as const) {
-            const codec = compressionsAlgorithms[algorithm]
-            if (!codec.available || !codec.decompressSync(codec.compressSync(payload)).equals(payload))
-              throw new StreamingDiagnosticsFailure({ message: `Kafka codec verification failed: ${algorithm}` })
-          }
+const main = (args: ReturnType<typeof parseStreamingDiagnosticsArgs>) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      if (args.kind === 'help') return yield* print(usage)
+      if (args.kind === 'codecs') {
+        yield* Effect.try({
+          try: () => {
+            const payload = Buffer.from('Bayn Kafka codec verification '.repeat(32))
+            for (const algorithm of ['gzip', 'snappy', 'lz4', 'zstd'] as const) {
+              const codec = compressionsAlgorithms[algorithm]
+              if (!codec.available || !codec.decompressSync(codec.compressSync(payload)).equals(payload))
+                throw new StreamingDiagnosticsFailure({ message: `Kafka codec verification failed: ${algorithm}` })
+            }
+          },
+          catch: (cause) => new StreamingDiagnosticsFailure({ message: 'Kafka codec verification failed', cause }),
+        })
+        return yield* print('Kafka codecs verified: gzip,snappy,lz4,zstd')
+      }
+      if (args.kind === 'invalid') return yield* new StreamingDiagnosticsFailure({ message: usage })
+      const config = yield* kafkaMarketConfig
+      if (config === undefined)
+        return yield* new StreamingDiagnosticsFailure({
+          message: 'Diagnostics require the configured Bayn Kafka identity',
+        })
+      const protocol = defaultIntradayMomentumProtocolDocument
+      const market = yield* makeKafkaMarketProjection(
+        { ...config, bootstrapTimeoutMs: args.bootstrapTimeoutMs },
+        {
+          universeId: protocol.universeId,
+          universeSymbolHash: protocol.universeSymbolHash,
+          symbols: protocol.universe,
+          topics: {
+            ...protocol.sourceTopics,
+            features: intradayMomentumFeatureTopic,
+            ...(config.technicalFeaturesTopic === undefined
+              ? {}
+              : { technicalFeatures: config.technicalFeaturesTopic }),
+          },
         },
-        catch: (cause) => new StreamingDiagnosticsFailure({ message: 'Kafka codec verification failed', cause }),
-      })
-      return yield* print('Kafka codecs verified: gzip,snappy,lz4,zstd')
-    }
-    if (args.kind === 'invalid') return yield* new StreamingDiagnosticsFailure({ message: usage })
-    const config = yield* kafkaMarketConfig
-    if (config === undefined)
-      return yield* new StreamingDiagnosticsFailure({
-        message: 'Diagnostics require the configured Bayn Kafka identity',
-      })
-    const protocol = defaultIntradayMomentumProtocolDocument
-    const market = yield* makeKafkaMarketProjection(
-      config,
-      {
-        universeId: protocol.universeId,
-        universeSymbolHash: protocol.universeSymbolHash,
-        symbols: protocol.universe,
-        topics: {
-          ...protocol.sourceTopics,
-          features: intradayMomentumFeatureTopic,
-          ...(config.technicalFeaturesTopic === undefined ? {} : { technicalFeatures: config.technicalFeaturesTopic }),
-        },
-      },
-      undefined,
-      args.sinceMs,
-    )
-    const cut = yield* market.read.pipe(
-      Effect.retry({ schedule: Schedule.spaced('1 second'), times: kafkaBootstrapDeadlineMs / 1000 + 30 }),
-    )
-    const symbols = protocol.universe.map((symbol) => summarizeStreamingSymbol(cut.projection, symbol))
-    yield* print(
-      yield* Effect.fromResult(
-        canonicalJsonV1Result({
-          schemaVersion: 'bayn.streaming-diagnostic-receipt.v1',
-          evidenceMode: 'retained-input-join-observed-now',
-          sinceMs: args.sinceMs,
-          bootstrap: cut.bootstrap,
-          positions: cut.positions,
-          sequence: cut.projection.sequence,
-          rejections: Object.fromEntries(cut.projection.rejections),
-          ...(cut.projection.technicalTopic === undefined
-            ? {}
-            : { technicalRejections: cut.projection.technicalRejections }),
-          symbols,
-        }),
-      ),
-    )
-  }),
-).pipe(Effect.timeout(kafkaBootstrapDeadlineMs + 60_000))
+        undefined,
+        args.sinceMs,
+      )
+      const cut = yield* market.read.pipe(
+        Effect.retry({ schedule: Schedule.spaced('1 second'), times: args.bootstrapTimeoutMs / 1000 + 30 }),
+      )
+      const symbols = protocol.universe.map((symbol) => summarizeStreamingSymbol(cut.projection, symbol))
+      yield* print(
+        yield* Effect.fromResult(
+          canonicalJsonV1Result({
+            schemaVersion: 'bayn.streaming-diagnostic-receipt.v1',
+            evidenceMode: 'retained-input-join-observed-now',
+            sinceMs: args.sinceMs,
+            bootstrapTimeoutMs: args.bootstrapTimeoutMs,
+            bootstrap: cut.bootstrap,
+            positions: cut.positions,
+            sequence: cut.projection.sequence,
+            rejections: Object.fromEntries(cut.projection.rejections),
+            ...(cut.projection.technicalTopic === undefined
+              ? {}
+              : { technicalRejections: cut.projection.technicalRejections }),
+            symbols,
+          }),
+        ),
+      )
+    }),
+  ).pipe(Effect.timeout((args.kind === 'probe' ? args.bootstrapTimeoutMs : kafkaBootstrapDeadlineMs) + 60_000))
 if (import.meta.main)
   NodeRuntime.runMain(
-    main.pipe(
+    main(parseStreamingDiagnosticsArgs(process.argv.slice(2))).pipe(
       Effect.tapCause(Effect.logError),
       // @effect-diagnostics-next-line strictEffectProvide:off -- read-only diagnostic entry point owns and closes its Kafka resources
       Effect.provide(Layer.mergeAll(NodeServices.layer, Logger.layer([Logger.withConsoleError(Logger.formatJson)]))),
