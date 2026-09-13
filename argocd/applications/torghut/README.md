@@ -53,6 +53,22 @@ restoration fails, retain the saved data, repair the state compatibility, and de
 The behavior is documented in the
 [deployed operator's recovery contract](https://github.com/apache/flink-kubernetes-operator/blob/79d730bab4d8403f3a447fb027f879f5cbdc59ad/docs/content/docs/custom-resource/job-management.md#redeploy-using-the-savepointredeploynonce).
 
+## ClickHouse archive capacity
+
+Each ClickHouse replica requests a 200 GiB `rook-ceph-block` data volume. The technical-feature backfill exhausted
+the former 50 GiB volumes: ClickHouse rejected inserts with `NOT_ENOUGH_SPACE`, and the archive's JDBC failures
+restarted Flink workers. Capacity must cover retained source data, full indicator lineage, and temporary merge parts.
+The expansion uses the existing Ceph pool and preserves both PVC names, data, replication, and quorum enforcement.
+
+Deliver the volume-template change through matching-image Kargo promotion and Argo reconciliation. Let the
+ClickHouse operator reconcile the existing claims and any required replica rollout; do not delete PVCs or tables.
+Verify both PVCs' requested and actual capacity, mounted filesystem space, both active replicas, completed archive
+checkpoints, and advancing feature rows. A green Argo application alone does not prove storage recovery.
+
+Expanded volumes cannot be shrunk in place. If application configuration is rolled back, retain the 200 GiB storage
+request and existing data. Further recovery must preserve the claims and use the operator's normal reconciliation.
+See [Altinity's persistent-storage behavior](https://altinity.com/blog/whats-new-in-altinity-clickhouse-operator).
+
 ## Historical procedures
 
 The procedures below predate runtime retirement. They assume services that are now absent and must not be
