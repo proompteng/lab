@@ -33,7 +33,8 @@ import {
   type RetainedReplayCapture,
 } from './source'
 import { makeSimulatedExecutionClock } from './clock'
-import { makeReplayBroker, ReplayBrokerFailure } from './broker'
+import { makeReplayBroker, ReplayBrokerFailure, type ReplayBrokerState } from './broker'
+import type { CycleRunResult } from '../cycle/runner/model'
 import { makeReplayExecutionRuntime } from './runtime'
 import { makeReplayTimeline, driveReplaySession } from './session'
 import type { RuntimeConfig } from '../config'
@@ -227,12 +228,17 @@ export const prepareFreshReplayDatabase = (timeoutMs = 30_000) =>
     }),
   )
 
+export type ReplaySessionPass = Parameters<RecordAutonomousCyclePass>[0] & {
+  readonly cycleResult: CycleRunResult | null
+  readonly brokerState: ReplayBrokerState
+}
+
 /** Runs one whole calendar session in a fresh isolated database. Broker credentials are not part of this composition. */
 export const runRetainedExecutionSession = (
   prepared: PreparedReplaySession,
   arrivalsPath: string,
   databases: ReplayDatabaseConfig,
-  recordPass: (pass: Parameters<RecordAutonomousCyclePass>[0]) => Effect.Effect<void, OperationalError>,
+  recordPass: (pass: ReplaySessionPass) => Effect.Effect<void, OperationalError>,
 ) =>
   Effect.gen(function* () {
     const source = yield* openRetainedReplaySource(
@@ -279,7 +285,20 @@ export const runRetainedExecutionSession = (
       ...prepared.input.cadence,
     })
     const schedule = yield* driveReplaySession(
-      { ...runtime, advance: runtime.advance.pipe(Effect.tap((pass) => recordPass(pass.observation))) },
+      {
+        ...runtime,
+        advance: runtime.advance.pipe(
+          Effect.tap((pass) =>
+            Effect.gen(function* () {
+              yield* recordPass({
+                ...pass.observation,
+                cycleResult: pass.result ?? null,
+                brokerState: yield* broker.snapshot,
+              })
+            }),
+          ),
+        ),
+      },
       advanceTo,
       prepared.openMs,
       prepared.closeMs,

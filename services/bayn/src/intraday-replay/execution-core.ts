@@ -43,6 +43,7 @@ export type IntradayReplayIocCoreOutcome =
     }
   | {
       readonly status: 'canceled'
+      readonly adversePriceMicros: bigint
       readonly requestedQuantityMicros: bigint
       readonly filledQuantityMicros: bigint
       readonly reason: 'adverse-price-exceeds-limit' | 'no-displayed-liquidity' | 'zero-after-whole-share-rounding'
@@ -123,6 +124,7 @@ export const simulateIntradayReplayIocCore = (
   ): Result.Result<IntradayReplayIocCoreOutcome, IntradayReplayIocCoreFailure> =>
     Result.succeed({
       status: 'canceled',
+      adversePriceMicros: adversePrice,
       requestedQuantityMicros: order.quantityMicros,
       filledQuantityMicros: 0n,
       reason,

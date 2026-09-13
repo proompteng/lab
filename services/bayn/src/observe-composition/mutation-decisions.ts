@@ -7,6 +7,7 @@ import {
   orderRequestNotionalMicros,
 } from '../broker/alpaca-mutations'
 import { CycleTerminalReason } from '../cycle'
+import type { CycleWaitReason } from '../cycle/runner/model'
 import {
   Authority,
   IntentState,
@@ -497,15 +498,7 @@ export type ExecutionCycleCompletionDecision =
   | { readonly _tag: 'Complete' }
   | {
       readonly _tag: 'Wait'
-      readonly reason:
-        | 'accounting-inexact'
-        | 'intent-nonterminal'
-        | 'intent-unsuccessful'
-        | 'reconciliation-not-later'
-        | 'reconciliation-not-exact'
-        | 'unknown-mutation'
-        | 'unknown-order'
-        | 'open-position'
+      readonly reason: Exclude<CycleWaitReason, 'ENTRY_INTENTS_SETTLED_UNTIL_CLOSE' | 'POST_MUTATION_RECONCILIATION'>
     }
 
 const decideExecutionCycleCompletionDataFirst = (
@@ -642,7 +635,7 @@ export type PreparedMutationCycleStep =
         | CycleTerminalReason.Risk
       readonly observedAt: string
     }
-  | { readonly _tag: 'Wait'; readonly observedAt: string }
+  | { readonly _tag: 'Wait'; readonly observedAt: string; readonly waitReason?: CycleWaitReason }
   | { readonly _tag: 'Complete'; readonly observedAt: string }
 
 export type BoundMutationCycleOutcome = Exclude<PreparedMutationCycleStep, { readonly _tag: 'Execute' }>
