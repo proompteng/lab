@@ -255,8 +255,12 @@ BAYN_REPLAY_TIGERBEETLE_ADDRESS=127.0.0.1:53000 \
 BAYN_REPLAY_TIGERBEETLE_CLUSTER_ID=20912 \
 BAYN_REPLAY_TIGERBEETLE_LEDGER=70912 \
 node services/bayn/dist/session-replay-command.js \
-  --input session.json --arrivals source.ndjson --output new-output-directory
+  --input session.json --arrivals source.ndjson \
+  --capture capture.json --capture-sha256 "$CAPTURE_SHA256" --output new-output-directory
 ```
+
+Supply the independently retained capture receipt and its separately pinned SHA-256. The command verifies the source
+manifest against that capture before executing; deriving both from the exported NDJSON cannot establish completeness.
 
 Supply the `bayn.execution-replay-session.v1` contract in `intraday-replay/session-program.ts`: the unchanged strategy
 and build identities, opening cash, captured calendar and asset metadata with its observation policy, IOC cost and

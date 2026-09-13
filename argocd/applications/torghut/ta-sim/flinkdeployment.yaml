@@ -6,7 +6,7 @@ metadata:
   labels:
     app: torghut-ta-sim
 spec:
-  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:20ad763e936b11798bb3d39ef26944d2250f58f806f0d0e86105a8a4e4165ec2
+  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:da888bf85ee604519d13b98f672b26207ffd60e551ce44476eaf00f1e1930b86
   imagePullPolicy: IfNotPresent
   restartNonce: 40
   flinkVersion: v2_2
@@ -158,9 +158,9 @@ spec:
                   name: flink-checkpoints
                   key: AWS_SECRET_ACCESS_KEY
             - name: TORGHUT_TA_VERSION
-              value: kargo-sha-e2aeb7251865344377351e0924a90cc5b452166e
+              value: kargo-sha-4b74d138e9e7649af22bbc0bc9b6c9111d2fba77
             - name: TORGHUT_TA_COMMIT
-              value: e2aeb7251865344377351e0924a90cc5b452166e
+              value: 4b74d138e9e7649af22bbc0bc9b6c9111d2fba77
           ports:
             - containerPort: 9249
               name: metrics
