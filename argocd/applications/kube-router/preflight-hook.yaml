@@ -106,7 +106,7 @@ spec:
                 buzz|observability|proompteng|restate|restate-example|temporal)
                   case "$namespace" in
                   buzz) expected_reviewed_policy_hash=ee25664228868c28750e36ff48db913fe8d193e7b374f17b0e8f26d72675e369 ;;
-                  observability) expected_reviewed_policy_hash=38284204aa837a57d235478ac55cb48215bb9e2f386b05ed6de0be009906d49e ;;
+                  observability) expected_reviewed_policy_hash=6d7b899e361542c477b1f6b81a6d106dcf95017c6c356f37729e019e25cc36b4 ;;
                   proompteng) expected_reviewed_policy_hash=fdbd44c9427a32ad4f6d8f8d5bb9a1bd6e0fdfff47dbd0ec8a459a26cabd1f99 ;;
                   restate) expected_reviewed_policy_hash=76f18dc30c1e0ab7e796a508bd4574e803018cd9b398aabfcdee1df4ee5118bd ;;
                   restate-example) expected_reviewed_policy_hash=8c60dd47fe42b26c7a3eb02269c35d07a440066cf905a3ae4c15c9ab9f53cf9e ;;
