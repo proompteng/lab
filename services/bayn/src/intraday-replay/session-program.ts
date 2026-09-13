@@ -243,6 +243,7 @@ export const runRetainedExecutionSession = (
     yield* advanceTo(prepared.openMs - 1)
     const broker = yield* makeReplayBroker({
       runId: prepared.runId,
+      sourceManifestHash: source.source.sourceManifestHash,
       openingCashMicros: prepared.input.openingCashMicros,
       protocol: prepared.protocol,
       assumptions: prepared.input.assumptions,

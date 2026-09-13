@@ -215,8 +215,65 @@ Its lifecycle tests are component evidence; the adapter alone does not prove a f
 The required PostgreSQL CI job also runs `durable-broker.integration.test.ts` against PostgreSQL 18 and TigerBeetle
 0.17.9. It posts a simulated round trip through production reconciliation, reconnects both database clients, and checks
 cash, exact accounting, and fill deduplication. The fixture's orders have no production intent bindings, and the test
-retains the resulting unknown-order discrepancies. Production cycle orchestration and full-process restart recovery
-remain separate acceptance requirements.
+retains the resulting unknown-order discrepancies. `runtime.integration.test.ts` drives the native activation, strategy,
+planner, risk, coordinator and reconciliation with real PostgreSQL and TigerBeetle; its generated order has no unknown
+order or mutation discrepancy. `restart.integration.test.ts` kills a separate process after broker fill but before the
+coordinator receives the response, then restores the same broker checkpoint and databases in a new process. It requires
+one intent, one fill, one accounting transaction, exact cash and no unresolved mutation after lookup recovery.
+
+Broker checkpoints bind the run, source manifest and execution configuration. Restore reconstructs cash, positions,
+fees and activities from fills and checks deterministic order and request identities. It resolves every fill against
+the source's historical arrival quote and reruns the same IOC execution model; session equity is recalculated from
+fills and retained closing quotes. The restoring caller must supply historical quote lookup for the same frozen source,
+not only its latest quote projection. A missing or different quote rejects restore. A checkpoint containing an
+unsettled IOC is rejected. This proves recovery after a retained broker commit; it does not model an independently
+durable broker's pending delivery queue.
+
+Before exposing a checkpoint file, the restart acceptance retains its hash in PostgreSQL's immutable
+`simulated_broker_checkpoints` table with source identity and broker observation time. A separate scoped connection commits it independently of the
+coordinator transaction that may be interrupted. Restore receives the expected hash from
+that independent store, never from the file being restored. IOC settlement, cancellation, failed delivery, and session
+closing equity persist before their terminal state is published or acknowledged. This authenticates canceled and rejected orders as well
+as fills; removing a fill and rehashing a fabricated cancellation cannot replace the retained broker commit.
+
+### Full-session native execution
+
+The image includes `session-replay-command.js` for one complete supplied exchange-calendar session. It consumes a
+frozen NDJSON stream of `{ availableAtMs, record }`, using the shared live input projection and production cycle,
+planner, risk, order coordinator and reconciliation. IOC arrival advances the source and both clocks by the declared
+latency; database wall time does not supply execution latency. Every scheduled poll from open through close remains
+in the output, including failed passes and unavailable inputs.
+
+```sh
+BAYN_REPLAY_POSTGRES_URL=postgresql://bayn:bayn@127.0.0.1:55432/bayn_replay \
+BAYN_REPLAY_TIGERBEETLE_ADDRESS=127.0.0.1:53000 \
+BAYN_REPLAY_TIGERBEETLE_CLUSTER_ID=20912 \
+BAYN_REPLAY_TIGERBEETLE_LEDGER=70912 \
+node services/bayn/dist/session-replay-command.js \
+  --input session.json --arrivals source.ndjson --output new-output-directory
+```
+
+Supply the `bayn.execution-replay-session.v1` contract in `intraday-replay/session-program.ts`: the unchanged strategy
+and build identities, opening cash, captured calendar and asset metadata with its observation policy, IOC cost and
+latency assumptions, cadence, and `bayn.retained-replay-source.v1` manifest. The manifest binds exact file bytes,
+record count, availability bounds, Kafka coordinate cuts, universe, and the stated arrival model. Regenerated features
+must retain their actual computation times and explicitly declare historical availability. Current asset eligibility
+cannot be labeled as a retained historical observation.
+
+The source reader copies and validates a private file before execution and consumes that same unlinked file handle.
+Memory retains one input chunk and the bounded projection; the private snapshot requires disk space equal to the source.
+The command rejects remote or ambiguously parameterized database URLs, requires an unused local replay/test database,
+and never acquires Alpaca credentials. It writes the input, per-pass observations and hashed report to a new directory.
+Its 30-minute wall deadline bounds stalled I/O without trimming simulated market hours. The command currently starts
+a fresh session; its broker restore primitive and process-restart acceptance do not imply CLI resume support.
+
+Source cuts must include every consecutive offset, including their endpoints. Filtered or transactional cuts with
+Kafka control-record gaps need independent completeness support before this command can accept them. The calendar
+may include subsequent exchange sessions for native cycle discovery at the close. Reports distinguish embedded
+source/strategy verification from the operator-declared image digest, which remains unverified input.
+
+Reports preserve failed passes, residual positions, execution costs, exact accounting and source limitations, and label
+profitability `UNPROVEN`. Component and restart tests do not replace a retained-data full-session economic study.
 
 Execution persistence and cycle-query factories accept an explicit database clock expression. Production layers use
 PostgreSQL `clock_timestamp()`; the isolated replay acceptance test supplies a timestamp row advanced with its Effect
