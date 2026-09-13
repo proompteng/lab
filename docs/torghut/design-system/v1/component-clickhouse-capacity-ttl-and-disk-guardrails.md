@@ -1,5 +1,9 @@
 # Component: ClickHouse Capacity, TTL, and Disk Guardrails
 
+The ClickHouse guardrails exporter described here is retired. Its manifests and exporter-dependent
+alerts have been removed; the exporter query modes and commands below are historical. See
+[the current retirement record](../../../../argocd/applications/torghut/runtime-retirement.md#clickhouse-exporter-removal).
+
 ## Status
 
 - Version: `v1`
