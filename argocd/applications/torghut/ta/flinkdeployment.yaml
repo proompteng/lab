@@ -190,5 +190,5 @@ spec:
     parallelism: 8
     upgradeMode: savepoint
     state: running
-    initialSavepointPath: s3a://flink-checkpoints/torghut/technical-analysis/savepoints/savepoint-20cd45-4bcb34f8cd8d
-    savepointRedeployNonce: 1
+    initialSavepointPath: s3a://flink-checkpoints/torghut/technical-analysis/savepoints/savepoint-437918-85237d1073d0
+    savepointRedeployNonce: 2

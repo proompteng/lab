@@ -37,7 +37,15 @@ complete a stateful upgrade. Use the operator's explicit savepoint redeployment 
 4. Check the actual Flink job reaches `RUNNING`, restores the selected state, and completes a new checkpoint.
    Confirm raw/feature output and archive progress independently of Kargo or Argo status.
 
-Nonce `1` selects the retained savepoint from the streaming-feature upgrade. Once restored, keep the nonce stable;
+Nonce `2` selects `savepoint-437918-85237d1073d0`, the retained rolling-feature savepoint recorded by the operator
+before the technical-indicator upgrade. Its 205,817-byte `_metadata` was read successfully through the existing
+checkpoint identity on 2026-09-13; SHA-256 is `16c4ebc4937b2e47070758775af35d29561fe990c9a898da2985b759a15eae20`.
+Use `TA_FEATURE_RESTORE_TOPOLOGY=ROLLING_FEATURES` with this saved topology. The old job failed before restoring
+the new graph, so this recovery resumes the same selected state rather than moving back to the older nonce-1
+bootstrap point. Kafka sources resume their saved offsets; the new technical source reads retained bars from
+the beginning. Existing at-least-once sink semantics still apply when records are replayed.
+
+Once restored, keep the nonce stable;
 ordinary subsequent upgrades resume using the operator's checkpoint/savepoint lifecycle. Increment it only for a
 new explicitly selected recovery. The operator does not support automatic rollback after this redeployment: if
 restoration fails, retain the saved data, repair the state compatibility, and deliver another reviewed recovery.
