@@ -49,10 +49,14 @@ internal class ParseRecordedTrade : RichFlatMapFunction<ArchiveKafkaRecord, Reco
 }
 
 internal data class EventTimeTradeBucket(
-  val trades: List<RecordedTrade> = emptyList(),
+  val trades: MutableList<RecordedTrade> = ArrayList(),
 ) : Serializable {
+  @Transient private var sourceIndex: MutableMap<TradeSourceKey, RecordedTrade>? = null
+
   fun add(incoming: RecordedTrade): EventTimeTradeBucket {
-    val existing = trades.find { it.topic == incoming.topic && it.partition == incoming.partition && it.offset == incoming.offset }
+    val index = sourceIndex ?: trades.associateByTo(HashMap()) { it.sourceKey() }.also { sourceIndex = it }
+    val key = incoming.sourceKey()
+    val existing = index[key]
     if (existing != null) {
       require(existing == incoming) { "conflicting immutable trade source record" }
       return this
@@ -64,7 +68,9 @@ internal data class EventTimeTradeBucket(
     ) {
       "mixed microbar windows"
     }
-    return copy(trades = trades + incoming)
+    trades.add(incoming)
+    index[key] = incoming
+    return this
   }
 
   fun payload(): MicroBarPayload {
@@ -84,3 +90,11 @@ internal data class EventTimeTradeBucket(
     )
   }
 }
+
+private data class TradeSourceKey(
+  val topic: String,
+  val partition: Int,
+  val offset: Long,
+)
+
+private fun RecordedTrade.sourceKey() = TradeSourceKey(topic, partition, offset)

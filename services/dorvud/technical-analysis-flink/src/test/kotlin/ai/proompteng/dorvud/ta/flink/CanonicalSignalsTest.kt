@@ -15,6 +15,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class CanonicalSignalsTest {
   private val start = Instant.parse("2026-09-11T13:30:00Z")
@@ -145,6 +146,64 @@ class CanonicalSignalsTest {
       h.processElement2(StreamRecord(quote(50)))
       h.processElement1(StreamRecord(bar(0, 80.0).copy(ingestTs = start.plusSeconds(4000))))
       assertEquals(original, h.extractOutputValues().map { it.payload.imbalance })
+    }
+  }
+
+  @Test fun `same millisecond corrections retain strictly increasing revisions after restore`() {
+    val processingTime = start.plusSeconds(5000).toEpochMilli()
+    val (snapshot, emitted) =
+      harness().use { h ->
+        h.open()
+        h.setProcessingTime(processingTime)
+        for (index in 0..39) h.processElement1(StreamRecord(bar(index)))
+        val initial = h.extractOutputValues()
+        h.processElement1(StreamRecord(bar(0, 80.0).copy(ingestTs = start.plusSeconds(3000))))
+        val corrected = h.extractOutputValues().takeLast(40)
+        initial.zip(corrected).forEach { (before, after) -> assertTrue(after.ingestTs.isAfter(before.ingestTs)) }
+        h.snapshot(1, processingTime) to corrected
+      }
+    harness().use { h ->
+      h.initializeState(snapshot)
+      h.open()
+      h.setProcessingTime(processingTime)
+      h.processElement1(StreamRecord(bar(0, 70.0).copy(ingestTs = start.plusSeconds(3001))))
+      val corrected = h.extractOutputValues()
+      assertEquals(40, corrected.size)
+      emitted.zip(corrected).forEach { (before, after) ->
+        assertEquals(before.eventTs, after.eventTs)
+        assertEquals(before.seq, after.seq)
+        assertTrue(after.ingestTs.isAfter(before.ingestTs))
+      }
+    }
+  }
+
+  @Test fun `newer identical bars retain canonical identity and revision ordering after restore`() {
+    val snapshot =
+      harness().use { h ->
+        h.open()
+        for (index in 0..39) h.processElement1(StreamRecord(bar(index)))
+        h.processElement1(StreamRecord(bar(5).copy(ingestTs = start.plusSeconds(4000), seq = 500)))
+        assertEquals(40, h.extractOutputValues().size)
+        h.snapshot(1, start.plusSeconds(5000).toEpochMilli())
+      }
+    harness().use { h ->
+      h.initializeState(snapshot)
+      h.open()
+      h.processElement1(StreamRecord(bar(5, 999.0).copy(ingestTs = start.plusSeconds(3500))))
+      assertTrue(h.extractOutputValues().isEmpty())
+      h.processElement1(StreamRecord(bar(0, 80.0).copy(ingestTs = start.plusSeconds(5000))))
+      val replayed = h.extractOutputValues()
+      assertEquals(40, replayed.size)
+      assertEquals(bar(5).seq, replayed.single { it.eventTs == bar(5).eventTs }.seq)
+      h.processElement1(StreamRecord(bar(5, 110.0).copy(ingestTs = start.plusSeconds(6000), seq = 600)))
+      assertEquals(
+        600L,
+        h
+          .extractOutputValues()
+          .takeLast(35)
+          .first()
+          .seq,
+      )
     }
   }
 }

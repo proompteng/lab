@@ -13,6 +13,11 @@ finalization increment `microbar_late_trades_total` and emit a side output and a
 their source coordinates. Their raw Kafka/archive records remain available for investigation; no conflicting final
 microbar is emitted.
 
+Open microbar buckets append trades and index their source coordinates, avoiding repeated scans and whole-list
+copies during bursts. The index is transient and rebuilt once after deserialization. Checkpoints retain the same
+trade-list field and state descriptor; a fixture captured from the preceding deployed serializer verifies restoration,
+redelivery, and further appends.
+
 The microbar operator opts into Flink 2.2's interruptible event-time timers when unaligned checkpoints are enabled.
 During retained-data recovery, one watermark can close thousands of buckets. Flink yields between complete bucket
 callbacks so a slow downstream sink cannot hold a checkpoint behind the entire burst. Pending timers and buckets
@@ -26,6 +31,14 @@ before updating its numerical state. Duplicate revisions are inert. Corrections 
 with their original event windows and current computation/ingestion time. An older session cannot contaminate the
 current session. Recursive EMA/MACD/RSI state retains its original seed when the bounded calculation buffer advances.
 The numerical regression test compares a full regular session against the pinned TA4J implementation.
+
+Payload-identical newer bars advance a separate checkpointed input revision without replacing the canonical envelope.
+Later corrections therefore retain the original signal identity while stale conflicting revisions remain rejected.
+Each canonical bar also retains its last emitted millisecond revision. Repeated corrections in one processing
+millisecond advance that bar's `ingestTs` by one millisecond, preserving ClickHouse replacement ordering across
+checkpoints. These revision maps reset at session rollover. Existing checkpoints initialize input revisions from
+their retained envelopes and output revisions from the first new processing timestamp. A rollback uses the preceding
+image and its matching pre-upgrade savepoint through the normal GitOps path.
 
 EMA pairs require 26 bars, MACD 34, RSI 15 closes, and Bollinger bands 20 contiguous bars. A gap invalidates recursive
 indicator readiness until the missing input is supplied and the canonical history is recomputed. No synthetic bars
