@@ -60,6 +60,8 @@ export interface ReplayBrokerConfig {
   readonly fractionalTrading: boolean
   readonly assets: readonly AssetObservation[]
   readonly calendar: typeof MarketCalendarResponseSchema.Type
+  /** A historical runner advances retained arrivals and both clocks to this exact delivery instant. */
+  readonly advanceToArrival?: (atMs: number) => Effect.Effect<void, ReplayBrokerFailure>
   readonly quoteAt: (
     symbol: string,
     nowMs: number,
@@ -426,10 +428,29 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
             )
           if (existing === undefined) {
             const delivery = yield* Effect.gen(function* () {
-              yield* Effect.sleep(config.assumptions.latencyMs)
+              const submittedAtMs = Date.parse(observedAt)
+              const sessionDate = newYorkDate.format(submittedAtMs)
+              const calendar = yield* read.marketCalendar({ start: sessionDate, end: sessionDate })
+              const session = calendar.value.sessions.find((value) => value.date === sessionDate)
+              const closeMs = session === undefined ? submittedAtMs : Date.parse(session.closeAt)
+              // A regular-session IOC still in transit expires at the close. It cannot fill after the session.
+              const expectedArrivalMs = Math.max(
+                submittedAtMs,
+                Math.min(submittedAtMs + config.assumptions.latencyMs, closeMs),
+              )
+              if (config.advanceToArrival === undefined) yield* Effect.sleep(expectedArrivalMs - submittedAtMs)
+              else {
+                yield* config.advanceToArrival(expectedArrivalMs)
+                if ((yield* Clock.currentTimeMillis) !== expectedArrivalMs)
+                  return yield* new ReplayBrokerFailure({
+                    message: 'Historical arrival scheduler did not reach the exact broker delivery time',
+                  })
+              }
               const arrivedAtMs = yield* Clock.currentTimeMillis
               const arrivedAt = yield* now
-              const quote = yield* config.quoteAt(intent.symbol, arrivedAtMs)
+              const sessionOpen =
+                session !== undefined && submittedAtMs >= Date.parse(session.openAt) && arrivedAtMs < closeMs
+              const quote = sessionOpen ? yield* config.quoteAt(intent.symbol, arrivedAtMs) : undefined
               const valid = quoteUsable(quote, intent.symbol, arrivedAtMs)
               const outcome =
                 valid && quote !== undefined

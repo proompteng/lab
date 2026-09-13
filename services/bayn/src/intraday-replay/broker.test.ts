@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { Effect, Exit, Fiber, Result, Scope } from 'effect'
+import { Clock, Effect, Exit, Fiber, Result, Scope } from 'effect'
 import { TestClock } from 'effect/testing'
 import { AssetClass, AssetExchange, AssetStatus, OrderCollection, OrderStatus } from '../broker/alpaca/model'
 import { normalizeAssetResult } from '../broker/alpaca/normalizers'
@@ -92,6 +92,41 @@ const submit = (broker: Broker, order: Intent) =>
   })
 const run = <A, E>(program: Effect.Effect<A, E, Scope.Scope>) =>
   Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(TestClock.layer())))
+
+test('historical arrival scheduler advances data before delivery without a wall-time polling loop', async () => {
+  const arrivals: number[] = []
+  const result = await run(
+    Effect.gen(function* () {
+      const broker = yield* setup({
+        advanceToArrival: (atMs) =>
+          Effect.sync(() => {
+            arrivals.push(atMs)
+          }).pipe(Effect.andThen(TestClock.setTime(atMs))),
+        quoteAt: (_symbol, atMs) =>
+          Effect.succeed(observedQuote({ ...quote, askPrice: arrivals.includes(atMs) ? 100.5 : 100 })),
+      })
+      const filled = yield* broker.mutation.submit(intent())
+      yield* broker.mutation.submit(intent())
+      return filled
+    }),
+  )
+  expect(arrivals).toEqual([startMs + 100])
+  expect(result.order.filledAveragePriceMicros).toBe('100500000')
+  expect(result.order.filledAt).toBe('2026-09-04T14:31:00.100Z')
+})
+
+test('an inaccurate historical scheduler cannot manufacture a fill', async () => {
+  const result = await run(
+    Effect.gen(function* () {
+      const broker = yield* setup({ advanceToArrival: (atMs) => TestClock.setTime(atMs + 1) })
+      const submitted = yield* Effect.exit(broker.mutation.submit(intent()))
+      return { submitted, state: yield* broker.snapshot }
+    }),
+  )
+  expect(Exit.isFailure(result.submitted)).toBe(true)
+  expect(result.state.fills).toEqual([])
+  expect(result.state.orders[0]?.order.status).toBe(OrderStatus.Canceled)
+})
 
 test('arrival quote drives partial IOC fill and the remainder is canceled once', async () => {
   const result = await run(
@@ -337,5 +372,38 @@ test.each(['failure', 'defect', 'conversion'] as const)(
     expect(result.repeated.order.status).toBe(OrderStatus.Canceled)
     expect(result.state.orders[0]?.deliveryFailure).toBeDefined()
     expect(result.state.ledger.fills).toEqual([])
+  },
+)
+
+test.each([0, 60_000])(
+  'IOC arriving at or beyond close expires at close with latency %d and preserves closing equity',
+  async (latencyMs) => {
+    const close = Date.parse('2026-09-04T20:00:00Z')
+    const arrivals: number[] = []
+    const result = await run(
+      Effect.gen(function* () {
+        const broker = yield* setup({
+          assumptions: { ...config.assumptions, latencyMs },
+          advanceToArrival: (atMs) =>
+            Effect.sync(() => {
+              arrivals.push(atMs)
+            }).pipe(Effect.andThen(TestClock.setTime(atMs))),
+          quoteAt: () => Effect.die(new Error('An expired IOC must not read an execution quote')),
+        })
+        yield* TestClock.setTime(latencyMs === 0 ? close : close - 30_000)
+        const receipt = yield* broker.mutation.submit(intent())
+        const closing = yield* broker.completeSession('2026-09-04')
+        const duplicate = yield* broker.mutation.submit(intent())
+        return { receipt, duplicate, closing, atMs: yield* Clock.currentTimeMillis, state: yield* broker.snapshot }
+      }),
+    )
+    expect(arrivals).toEqual([close])
+    expect(result.atMs).toBe(close)
+    expect(result.receipt.order.status).toBe(OrderStatus.Canceled)
+    expect(result.receipt.order.canceledAt).toBe('2026-09-04T20:00:00.000Z')
+    expect(result.duplicate.order.brokerOrderId).toBe(result.receipt.order.brokerOrderId)
+    expect(result.state.fills).toEqual([])
+    expect(result.state.ledger.cashMicros).toBe(config.openingCashMicros)
+    expect(result.closing.equityMicros).toBe(config.openingCashMicros)
   },
 )

@@ -98,13 +98,13 @@ export const replayHistoricalMarketArrivals = (input: unknown, universe: Streami
 type HistoricalArrivalPosition = Pick<HistoricalMarketArrival, 'availableAtMs'> &
   Pick<HistoricalMarketArrival['record'], 'topic' | 'partition' | 'offset'>
 
-const arrivalPosition = (event: HistoricalMarketArrival): HistoricalArrivalPosition => ({
+export const arrivalPosition = (event: HistoricalMarketArrival): HistoricalArrivalPosition => ({
   availableAtMs: event.availableAtMs,
   topic: event.record.topic,
   partition: event.record.partition,
   offset: event.record.offset,
 })
-const compareArrivalPositions = (a: HistoricalArrivalPosition, b: HistoricalArrivalPosition): number => {
+export const compareArrivalPositions = (a: HistoricalArrivalPosition, b: HistoricalArrivalPosition): number => {
   if (a.availableAtMs !== b.availableAtMs) return a.availableAtMs - b.availableAtMs
   if (a.topic !== b.topic) return a.topic < b.topic ? -1 : 1
   if (a.partition !== b.partition) return a.partition - b.partition
