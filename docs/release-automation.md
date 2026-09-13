@@ -64,6 +64,15 @@ Every application image follows this transaction:
    merge—is the deployed revision. `workflow_dispatch` may run the same verifier diagnostically; it is not a promotion
    or recovery fallback.
 
+Torghut's five-image release takes its source commit from the immutable images. Its Warehouse requires every image
+to share the same eligible tag, each tag to match its OCI revision annotation, and every source annotation to name
+this repository. The Stage checks out that exact revision. It has no separate path-filtered Git subscription:
+an atomic stack push can build its final commit while the last commit touching Torghut's paths is an earlier stack
+member. Equating those different identities would strand a complete release. Configuration changes under the
+Torghut application paths remain inputs to all five existing main-only image workflows, so their next release
+includes the configuration from the built source. This uses Kargo's
+[image subscriptions and matching-image criteria](https://docs.kargo.io/user-guide/how-to-guides/working-with-warehouses).
+
 There is no Image Updater, SHA-manifest bump, release branch, deployment PR, release automerge, manual Argo sync, or
 direct `kubectl` deployment in this path. A failed build, Warehouse, Freight, Stage, Argo, or rollout gate blocks the
 transaction at that gate; it is not repaired by bypassing the gate.
