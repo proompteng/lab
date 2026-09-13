@@ -77,7 +77,11 @@ class EventTimeMicrobarsTest {
         h.open()
         h.processElement(StreamRecord(trade(100, 100.0, 1)))
         h.processElement(StreamRecord(trade(1200, 105.0, 2)))
-        h.snapshot(1, start.toEpochMilli())
+        val saved = h.snapshot(1, start.toEpochMilli())
+        h.processElement(StreamRecord(trade(500, 102.0, 3)))
+        h.processWatermark(Watermark(start.plusSeconds(2).toEpochMilli()))
+        assertEquals(listOf(2.0, 1.0), h.extractOutputValues().map { it.payload.v })
+        saved
       }
     harness().use { h ->
       h.initializeState(snapshot)
@@ -94,6 +98,45 @@ class EventTimeMicrobarsTest {
     val bucket = EventTimeTradeBucket().add(original).add(trade(100, 100.0, 2))
     assertEquals(2L, bucket.payload().count)
     assertFailsWith<IllegalArgumentException> { bucket.add(trade(100, 102.0, 1)) }
+  }
+
+  @Test fun `restores bucket bytes from the deployed v2 serializer`() {
+    val serializer =
+      org.apache.flink.api.java.typeutils.runtime.kryo.KryoSerializer(
+        EventTimeTradeBucket::class.java,
+        org.apache.flink.api.common.serialization
+          .SerializerConfigImpl(),
+      )
+    // Captured with the unmodified serializer at 254dadd248e1b3b45d01fe90379f38ec587f5561.
+    val encoded = checkNotNull(javaClass.getResourceAsStream("/microbar-bucket-v2.base64")).bufferedReader().use { it.readText().trim() }
+    val bucket =
+      serializer.deserialize(
+        org.apache.flink.core.memory
+          .DataInputDeserializer(
+            java.util.Base64
+              .getDecoder()
+              .decode(encoded),
+          ),
+      )
+    bucket.add(trade(800, 103.0, 1))
+    bucket.add(trade(500, 101.0, 3))
+    assertEquals(3L, bucket.payload().count)
+    assertEquals(100.0, bucket.payload().o)
+    assertEquals(103.0, bucket.payload().c)
+    assertFailsWith<IllegalArgumentException> { bucket.add(trade(800, 104.0, 1)) }
+  }
+
+  @Test fun `large buckets preserve distinct source records and redelivery`() {
+    val count = 20_000
+    val started = System.nanoTime()
+    var bucket = EventTimeTradeBucket()
+    for (index in 0 until count) bucket = bucket.add(trade(index % 1000L, 100.0, index.toLong()))
+    for (index in 0 until count) bucket = bucket.add(trade(index % 1000L, 100.0, index.toLong()))
+    val payload = bucket.payload()
+    assertEquals(count.toLong(), payload.count)
+    assertEquals(count.toDouble(), payload.v)
+    assertEquals(100.0, payload.vwap)
+    println("Microbar bucket $count inserts and redeliveries: ${(System.nanoTime() - started) / 1_000_000} ms")
   }
 
   @Test fun `legacy savepoint retains sequence and retires unprovable unfinished aggregate`() {

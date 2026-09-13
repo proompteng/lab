@@ -1538,6 +1538,8 @@ internal class TaSignalsFunction(
   private lateinit var quoteState: ValueState<TimedQuoteState>
   private lateinit var sessionState: ValueState<SessionAccumulatorState>
   private lateinit var canonicalBars: MapState<String, CanonicalSignalBar>
+  private lateinit var inputRevisions: MapState<String, SignalInputRevision>
+  private lateinit var outputRevisions: MapState<String, Long>
   private lateinit var sessionDate: ValueState<String>
   private lateinit var accumulator: ValueState<IndicatorAccumulator>
   private lateinit var rejected: Counter
@@ -1549,6 +1551,9 @@ internal class TaSignalsFunction(
     sessionState = runtimeContext.getState(ValueStateDescriptor(names.session, SessionAccumulatorState::class.java))
     val namespace = "canonical-v3-${signalStateNamespace(barDuration, timestampAnchor)}"
     canonicalBars = runtimeContext.getMapState(MapStateDescriptor("$namespace-bars", String::class.java, CanonicalSignalBar::class.java))
+    inputRevisions =
+      runtimeContext.getMapState(MapStateDescriptor("$namespace-input-revisions", String::class.java, SignalInputRevision::class.java))
+    outputRevisions = runtimeContext.getMapState(MapStateDescriptor("$namespace-output-revisions", String::class.java, Long::class.java))
     sessionDate = runtimeContext.getState(ValueStateDescriptor("$namespace-date", String::class.java))
     accumulator = runtimeContext.getState(ValueStateDescriptor("$namespace-indicators", IndicatorAccumulator::class.java))
     rejected = runtimeContext.metricGroup.counter("signal_bar_rejections_total")
@@ -1574,6 +1579,8 @@ internal class TaSignalsFunction(
     if (previousDate != null && date < previousDate) return
     if (date != previousDate) {
       canonicalBars.clear()
+      inputRevisions.clear()
+      outputRevisions.clear()
       accumulator.clear()
       sessionDate.update(date)
       // Legacy retained bars cannot establish the original recursive seed or session totals.
@@ -1582,19 +1589,21 @@ internal class TaSignalsFunction(
     }
     val key = value.payload.t.toString()
     val existing = canonicalBars.get(key)
-    if (existing != null) {
+    val previousRevision = inputRevisions.get(key) ?: existing?.envelope?.let { SignalInputRevision(it.ingestTs, it.seq) }
+    if (previousRevision != null) {
       val revision =
-        compareValues(value.ingestTs, existing.envelope.ingestTs).takeIf { it != 0 }
-          ?: compareValues(value.seq, existing.envelope.seq)
+        compareValues(value.ingestTs, previousRevision.ingestTs).takeIf { it != 0 }
+          ?: compareValues(value.seq, previousRevision.seq)
       if (revision < 0) return
       if (revision == 0) {
-        if (value.payload != existing.envelope.payload) rejected.inc()
+        if (value.payload != existing?.envelope?.payload) rejected.inc()
         return
       }
     }
+    inputRevisions.put(key, SignalInputRevision(value.ingestTs, value.seq))
+    if (existing?.envelope?.payload == value.payload) return
     val canonical = CanonicalSignalBar(value, if (existing == null) quoteState.value() else existing.quote)
     canonicalBars.put(key, canonical)
-    if (existing?.envelope?.payload == value.payload) return
     val previous = accumulator.value() ?: IndicatorAccumulator()
     val latest = previous.recent.lastOrNull()
     if (latest == null || value.payload.t.isAfter(latest.t)) {
@@ -1688,15 +1697,23 @@ internal class TaSignalsFunction(
       )
 
     val window = envelope.window ?: fallbackSignalWindow(envelope.payload.t, barDuration, timestampAnchor)
+    val key = envelope.payload.t.toString()
+    val revisionMs = maxOf(computedAtMs, outputRevisions.get(key)?.let { Math.incrementExact(it) } ?: computedAtMs)
+    outputRevisions.put(key, revisionMs)
     return envelope
       .withPayload(payload, window = window, seqOverride = envelope.seq)
-      .copy(source = taSignalOutputSource(envelope.source), ingestTs = Instant.ofEpochMilli(computedAtMs), version = 2)
+      .copy(source = taSignalOutputSource(envelope.source), ingestTs = Instant.ofEpochMilli(revisionMs), version = 2)
   }
 }
 
 internal data class CanonicalSignalBar(
   val envelope: Envelope<MicroBarPayload>,
   val quote: TimedQuoteState?,
+) : Serializable
+
+internal data class SignalInputRevision(
+  val ingestTs: Instant,
+  val seq: Long,
 ) : Serializable
 
 internal enum class SignalBarTimestampAnchor {
