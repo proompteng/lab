@@ -53,6 +53,13 @@ from new inputs instead of claiming that old truncated history contains a comple
 Subsequent checkpoints restore the complete new state. The restore tests cover open microbar buckets, duplicate
 redelivery, recursive seeds, and session totals. The rolling-price feature state and contract below are unchanged.
 
+## ClickHouse sink batching
+
+The equity TA sinks bound `TA_CLICKHOUSE_BATCH_SIZE` to 1–1,000 rows. The deployed 1,000-row setting reaches the JDBC
+batch instead of being silently reduced to 100. The existing flush interval still publishes a partial batch when
+input is sparse. The bound limits buffered rows while allowing retained corrections to use the configured batching.
+Rollout acceptance checks actual ClickHouse insert sizes and completed Flink checkpoints after savepoint restore.
+
 ## Rolling feature branch
 
 Set `TA_MARKET_FEATURES_TOPIC=torghut.market-features.v1` to enable the branch. It requires the existing
