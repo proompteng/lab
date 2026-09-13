@@ -40,11 +40,11 @@ import { numberToMicros, notionalMicros, MICROS } from '../execution-model'
 import { canonicalHashV1Result } from '../hash'
 import { Sha256Schema, strictParseOptions } from '../schemas'
 import type { IntradayQuote } from '../market-data/intraday/model'
-import { intradayInstantNanos } from '../market-data/intraday/time'
 import type { ObservedMarketValue } from '../market-data/streaming/projection'
 import type { IntradayMomentumProtocol } from '../strategy/intraday-momentum/protocol'
 import { applyReplayFill, createReplayLedger, type EconomicReplayFill, type ReplayLedger } from './ledger'
-import { simulateIntradayReplayIocCore } from './execution-core'
+import { simulateIntradayReplayIocCore, type IntradayReplayIocCoreOutcome } from './execution-core'
+import { makeReplayOrderExecution, replayQuoteRejection, type ReplayOrderExecution } from './broker-execution-evidence'
 import type { IntradayReplayIocAssumptions } from './execution'
 import {
   makeReplayBrokerCheckpoint,
@@ -90,6 +90,7 @@ export interface ReplayBrokerFill extends EconomicReplayFill {
 }
 
 interface ReplayBrokerOrder {
+  readonly execution?: ReplayOrderExecution
   readonly deliveryFailure?: Readonly<Record<string, string>>
   readonly requestHash: string
   readonly order: Order
@@ -209,18 +210,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       symbol: string,
       nowMs: number,
     ): quote is ObservedMarketValue<IntradayQuote> =>
-      quote !== undefined &&
-      quote.value.symbol === symbol &&
-      quote.value.feed === config.protocol.feed &&
-      quote.value.delayClass === config.protocol.delayClass &&
-      quote.value.marketSession === 'regular' &&
-      quote.value.bidPrice > 0 &&
-      quote.value.askPrice >= quote.value.bidPrice &&
-      Number.isFinite(quote.value.askPrice) &&
-      quote.availableAtMs <= nowMs &&
-      intradayInstantNanos(quote.value.eventAt) <= BigInt(nowMs) * 1_000_000n &&
-      BigInt(nowMs) * 1_000_000n - intradayInstantNanos(quote.value.eventAt) <=
-        BigInt(config.protocol.maximumQuoteAgeMs) * 1_000_000n
+      replayQuoteRejection(quote, symbol, nowMs, config.protocol) === null
     const executeQuote = (side: OrderSide, quantity: string, limit: string, quote: IntradayQuote) =>
       Result.gen(function* () {
         return yield* simulateIntradayReplayIocCore({
@@ -588,11 +578,30 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
               const sessionOpen =
                 session !== undefined && submittedAtMs >= Date.parse(session.openAt) && arrivedAtMs < closeMs
               const quote = sessionOpen ? yield* config.quoteAt(intent.symbol, arrivedAtMs) : undefined
-              const valid = quoteUsable(quote, intent.symbol, arrivedAtMs)
-              const outcome =
-                valid && quote !== undefined
-                  ? yield* Effect.fromResult(executeQuote(request.side, intent.quantityMicros, limit, quote.value))
-                  : null
+              const unavailableReason = sessionOpen
+                ? replayQuoteRejection(quote, intent.symbol, arrivedAtMs, config.protocol)
+                : 'outside-regular-session'
+              const arrival = {
+                submittedAt: observedAt,
+                arrivedAt,
+                maximumQuoteAgeMs: config.protocol.maximumQuoteAgeMs,
+                quote,
+              }
+              let outcome: IntradayReplayIocCoreOutcome | null = null
+              let execution: ReplayOrderExecution
+              if (unavailableReason !== null) {
+                execution = makeReplayOrderExecution({
+                  ...arrival,
+                  outcome: { status: 'unavailable', reason: unavailableReason },
+                })
+              } else {
+                if (quote === undefined)
+                  return yield* new ReplayBrokerFailure({ message: 'Validated arrival quote is missing' })
+                outcome = yield* Effect.fromResult(
+                  executeQuote(request.side, intent.quantityMicros, limit, quote.value),
+                )
+                execution = makeReplayOrderExecution({ ...arrival, outcome })
+              }
               const settle = (
                 current: ReplayBrokerState,
               ): readonly [Result.Result<void, ReplayBrokerFailure>, ReplayBrokerState] => {
@@ -648,7 +657,22 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
                         {
                           ...current,
                           orders: current.orders.map((entry) =>
-                            entry.order.brokerOrderId === brokerOrderId ? { ...entry, order: rejected } : entry,
+                            entry.order.brokerOrderId === brokerOrderId
+                              ? {
+                                  ...entry,
+                                  order: rejected,
+                                  execution: {
+                                    ...execution,
+                                    outcome: {
+                                      status: 'rejected',
+                                      reason:
+                                        applied.failure._tag === 'IntradayReplayLedgerOversell'
+                                          ? 'oversell'
+                                          : 'insufficient-cash',
+                                    },
+                                  },
+                                }
+                              : entry,
                           ),
                         },
                       ]
@@ -703,7 +727,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
                     fees,
                     fills,
                     orders: current.orders.map((entry) =>
-                      entry.order.brokerOrderId === brokerOrderId ? { ...entry, order } : entry,
+                      entry.order.brokerOrderId === brokerOrderId ? { ...entry, order, execution } : entry,
                     ),
                   },
                 ] as const

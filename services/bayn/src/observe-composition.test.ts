@@ -3930,7 +3930,7 @@ describe('OBSERVE runtime composition', () => {
       [partialOrder],
     )
 
-    expect(step).toEqual({ _tag: 'Wait', observedAt })
+    expect(step).toEqual({ _tag: 'Wait', observedAt, waitReason: 'intent-unsuccessful' })
     expect(restrictions).toHaveLength(0)
     expect(executionCycleHasFilledIntent({ intents: [record.intent], orders: [partialOrder] })).toBe(true)
 

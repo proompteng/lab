@@ -10,7 +10,7 @@ import { IntentStoreLive, BlockedCycleIntentStoreLive } from './execution/intent
 import { MutationStoreLive } from './execution/mutations'
 import { ExecutionCycleClosureStoreLive } from './db/execution-cycle-closure-postgres'
 import { PersistedCapitalGrantStoreLive } from './db/persisted-capital-grant'
-import { canonicalJsonV1Result } from './hash'
+import { canonicalHashV1Result, canonicalJsonV1Result, sha256 } from './hash'
 import { operationalError } from './errors'
 import {
   prepareReplaySession,
@@ -142,7 +142,18 @@ const main = Effect.scoped(
       // This outer deadline uses the command clock; database stalls cannot freeze it with simulated time.
       Effect.timeout('30 minutes'),
     )
-    const output = yield* Effect.fromResult(canonicalJsonV1Result(report))
+    const passText = yield* fs.readFileString(passesPath)
+    const { reportHash: _reportHash, ...reportBody } = report
+    const material = {
+      ...reportBody,
+      passLog: { file: 'passes.ndjson', sha256: sha256(passText), records: report.schedule.passCount },
+    }
+    const output = yield* Effect.fromResult(
+      canonicalJsonV1Result({
+        ...material,
+        reportHash: yield* Effect.fromResult(canonicalHashV1Result(material)),
+      }),
+    )
     yield* fs.writeFileString(path.join(args.outputPath, 'report.json'), `${output}\n`, { flag: 'wx' })
     yield* print(output)
   }),

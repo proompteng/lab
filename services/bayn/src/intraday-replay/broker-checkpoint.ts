@@ -29,6 +29,7 @@ import {
   strictParseOptions,
 } from '../schemas'
 import { applyReplayFill, createReplayLedger } from './ledger'
+import { ReplayOrderExecutionSchema } from './broker-execution-evidence'
 import type { ReplayBrokerConfig, ReplayBrokerFill, ReplayBrokerState } from './broker'
 
 const OrderSchema = Schema.Struct({
@@ -100,6 +101,7 @@ export const ReplayBrokerCheckpointSchema = Schema.Struct({
         requestHash: Sha256Schema,
         order: OrderSchema,
         deliveryFailure: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+        execution: Schema.optionalKey(ReplayOrderExecutionSchema),
       }),
     ),
     fills: Schema.Array(
