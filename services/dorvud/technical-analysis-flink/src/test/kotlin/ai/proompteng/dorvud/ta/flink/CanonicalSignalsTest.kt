@@ -46,6 +46,16 @@ class CanonicalSignalsTest {
       Types.STRING,
     )
 
+  private fun drainRebuild(
+    h: KeyedTwoInputStreamOperatorTestHarness<String, Envelope<MicroBarPayload>, Envelope<QuotePayload>, Envelope<TaSignalsPayload>>,
+  ) {
+    repeat(10_000) {
+      if (h.numProcessingTimeTimers() == 0) return
+      h.setProcessingTime(h.processingTimeService.activeTimerTimestamps.min())
+    }
+    error("signal rebuild did not finish")
+  }
+
   @Test fun `duplicates are inert and corrections rebuild all affected outputs`() {
     harness().use { h ->
       h.open()
@@ -56,6 +66,7 @@ class CanonicalSignalsTest {
       h.processElement1(StreamRecord(bar(0)))
       assertEquals(40, h.extractOutputValues().size)
       h.processElement1(StreamRecord(bar(0, 80.0).copy(ingestTs = start.plusSeconds(3000))))
+      drainRebuild(h)
       assertEquals(80, h.extractOutputValues().size)
       assertEquals(
         119.0,
@@ -145,6 +156,7 @@ class CanonicalSignalsTest {
       h.open()
       h.processElement2(StreamRecord(quote(50)))
       h.processElement1(StreamRecord(bar(0, 80.0).copy(ingestTs = start.plusSeconds(4000))))
+      drainRebuild(h)
       assertEquals(original, h.extractOutputValues().map { it.payload.imbalance })
     }
   }
@@ -158,6 +170,7 @@ class CanonicalSignalsTest {
         for (index in 0..39) h.processElement1(StreamRecord(bar(index)))
         val initial = h.extractOutputValues()
         h.processElement1(StreamRecord(bar(0, 80.0).copy(ingestTs = start.plusSeconds(3000))))
+        drainRebuild(h)
         val corrected = h.extractOutputValues().takeLast(40)
         initial.zip(corrected).forEach { (before, after) -> assertTrue(after.ingestTs.isAfter(before.ingestTs)) }
         h.snapshot(1, processingTime) to corrected
@@ -167,6 +180,7 @@ class CanonicalSignalsTest {
       h.open()
       h.setProcessingTime(processingTime)
       h.processElement1(StreamRecord(bar(0, 70.0).copy(ingestTs = start.plusSeconds(3001))))
+      drainRebuild(h)
       val corrected = h.extractOutputValues()
       assertEquals(40, corrected.size)
       emitted.zip(corrected).forEach { (before, after) ->
@@ -192,10 +206,12 @@ class CanonicalSignalsTest {
       h.processElement1(StreamRecord(bar(5, 999.0).copy(ingestTs = start.plusSeconds(3500))))
       assertTrue(h.extractOutputValues().isEmpty())
       h.processElement1(StreamRecord(bar(0, 80.0).copy(ingestTs = start.plusSeconds(5000))))
+      drainRebuild(h)
       val replayed = h.extractOutputValues()
       assertEquals(40, replayed.size)
       assertEquals(bar(5).seq, replayed.single { it.eventTs == bar(5).eventTs }.seq)
       h.processElement1(StreamRecord(bar(5, 110.0).copy(ingestTs = start.plusSeconds(6000), seq = 600)))
+      drainRebuild(h)
       assertEquals(
         600L,
         h
@@ -203,6 +219,114 @@ class CanonicalSignalsTest {
           .takeLast(35)
           .first()
           .seq,
+      )
+    }
+  }
+
+  @Test fun `checkpoint resumes a partially emitted correction without replaying its prefix`() {
+    val correction = bar(0, 80.0).copy(ingestTs = start.plusSeconds(3000))
+    val (snapshot, prefix) =
+      harness().use { h ->
+        h.open()
+        for (index in 0..99) h.processElement1(StreamRecord(bar(index)))
+        h.processElement1(StreamRecord(correction))
+        repeat(10) { h.setProcessingTime(h.processingTime + 1) }
+        val emitted = h.extractOutputValues().drop(100)
+        assertEquals(10, emitted.size)
+        h.snapshot(1, h.processingTime) to emitted
+      }
+    harness().use { restored ->
+      restored.initializeState(snapshot)
+      restored.open()
+      restored.processElement1(StreamRecord(correction))
+      drainRebuild(restored)
+      val recovered = restored.extractOutputValues()
+      assertEquals(90, recovered.size)
+      assertEquals(bar(10).eventTs, recovered.first().eventTs)
+      harness().use { expected ->
+        expected.open()
+        for (index in 0..99) expected.processElement1(StreamRecord(bar(index, if (index == 0) 80.0 else 100.0 + index)))
+        assertEquals(expected.extractOutputValues().map { it.payload }, (prefix + recovered).map { it.payload })
+      }
+      restored.processElement1(StreamRecord(bar(100)))
+      assertEquals(bar(100).eventTs, restored.extractOutputValues().last().eventTs)
+    }
+  }
+
+  @Test fun `corrections queued during a rebuild survive restore and use the latest canonical bars`() {
+    val snapshot =
+      harness().use { h ->
+        h.open()
+        for (index in 0..39) h.processElement1(StreamRecord(bar(index)))
+        h.processElement1(StreamRecord(bar(0, 80.0).copy(ingestTs = start.plusSeconds(3000))))
+        repeat(5) { h.setProcessingTime(h.processingTime + 1) }
+        h.processElement1(StreamRecord(bar(1, 70.0).copy(ingestTs = start.plusSeconds(3001))))
+        h.processElement1(StreamRecord(bar(1, 75.0).copy(ingestTs = start.plusSeconds(3002))))
+        h.processElement1(StreamRecord(bar(2, 90.0).copy(ingestTs = start.plusSeconds(3003))))
+        h.processElement1(StreamRecord(bar(40)))
+        h.snapshot(1, h.processingTime)
+      }
+    harness().use { restored ->
+      restored.initializeState(snapshot)
+      restored.open()
+      drainRebuild(restored)
+      val actual = restored.extractOutputValues()
+      assertEquals(35 + 40, actual.size)
+      harness().use { expected ->
+        expected.open()
+        for (index in 0..40) {
+          val price =
+            when (index) {
+              0 -> 80.0
+              1 -> 75.0
+              2 -> 90.0
+              else -> 100.0 + index
+            }
+          expected.processElement1(StreamRecord(bar(index, price)))
+        }
+        assertEquals(expected.extractOutputValues().drop(1).map { it.payload }, actual.takeLast(40).map { it.payload })
+        actual.groupBy { it.eventTs }.values.forEach { revisions ->
+          revisions.zipWithNext().forEach { (before, after) -> assertTrue(after.ingestTs.isAfter(before.ingestTs)) }
+        }
+      }
+    }
+  }
+
+  @Test fun `session rollover preserves unfinished corrections without contaminating the new session`() {
+    val snapshot =
+      harness().use { h ->
+        h.open()
+        for (index in 0..39) h.processElement1(StreamRecord(bar(index)))
+        h.processElement1(StreamRecord(bar(0, 80.0).copy(ingestTs = start.plusSeconds(3000))))
+        h.processElement1(StreamRecord(bar(1, 70.0).copy(ingestTs = start.plusSeconds(3001))))
+        h.setProcessingTime(1)
+        assertEquals(41, h.extractOutputValues().size)
+        val time = start.plusSeconds(86_400)
+        val next = bar(0, 200.0)
+        h.processElement1(StreamRecord(next.copy(eventTs = time, ingestTs = time.plusSeconds(61), payload = next.payload.copy(t = time))))
+        assertTrue(h.numProcessingTimeTimers() > 0)
+        h.snapshot(1, h.processingTime)
+      }
+    harness().use { h ->
+      h.initializeState(snapshot)
+      h.open()
+      drainRebuild(h)
+      val recovered = h.extractOutputValues()
+      assertEquals(39 + 39 + 1, recovered.size)
+      assertEquals(200.0, assertNotNull(recovered.last().payload.vwap).session)
+      assertNull(recovered.last().payload.ema)
+      assertEquals(start.plusSeconds(86_400), recovered.last().eventTs)
+      val next = bar(1, 202.0)
+      val time = next.eventTs.plusSeconds(86_400)
+      h.processElement1(StreamRecord(next.copy(eventTs = time, ingestTs = time.plusSeconds(61), payload = next.payload.copy(t = time))))
+      assertEquals(
+        201.0,
+        assertNotNull(
+          h
+            .extractOutputValues()
+            .last()
+            .payload.vwap,
+        ).session,
       )
     }
   }
