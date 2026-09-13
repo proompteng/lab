@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { Effect, Exit, Fiber, Result, Scope } from 'effect'
+import { Clock, Deferred, Effect, Exit, Fiber, Result, Scope } from 'effect'
 import { TestClock } from 'effect/testing'
 import { AssetClass, AssetExchange, AssetStatus, OrderCollection, OrderStatus } from '../broker/alpaca/model'
 import { normalizeAssetResult } from '../broker/alpaca/normalizers'
@@ -9,6 +9,7 @@ import { canonicalHashV1Result } from '../hash'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import { makeReplayBroker, ReplayBrokerFailure, type ReplayBrokerConfig } from './broker'
 import { positionSnapshot } from '../broker/observations'
+import { restoreReplayBrokerCheckpoint, type ReplayBrokerCheckpoint } from './broker-checkpoint'
 
 const runId = 'a'.repeat(64)
 const observedAt = '2026-09-04T14:31:00.000Z'
@@ -33,6 +34,7 @@ const observedQuote = (value: IntradayQuote, availableAtMs = startMs) => ({
 })
 const config: ReplayBrokerConfig = {
   runId,
+  sourceManifestHash: 'c'.repeat(64),
   protocol,
   openingCashMicros: '10000000000',
   assumptions: { latencyMs: 100, slippageBps: 0, availableLiquidityPpm: 1_000_000, feeMultiplierPpm: 1_000_000 },
@@ -92,6 +94,41 @@ const submit = (broker: Broker, order: Intent) =>
   })
 const run = <A, E>(program: Effect.Effect<A, E, Scope.Scope>) =>
   Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(TestClock.layer())))
+
+test('historical arrival scheduler advances data before delivery without a wall-time polling loop', async () => {
+  const arrivals: number[] = []
+  const result = await run(
+    Effect.gen(function* () {
+      const broker = yield* setup({
+        advanceToArrival: (atMs) =>
+          Effect.sync(() => {
+            arrivals.push(atMs)
+          }).pipe(Effect.andThen(TestClock.setTime(atMs))),
+        quoteAt: (_symbol, atMs) =>
+          Effect.succeed(observedQuote({ ...quote, askPrice: arrivals.includes(atMs) ? 100.5 : 100 })),
+      })
+      const filled = yield* broker.mutation.submit(intent())
+      yield* broker.mutation.submit(intent())
+      return filled
+    }),
+  )
+  expect(arrivals).toEqual([startMs + 100])
+  expect(result.order.filledAveragePriceMicros).toBe('100500000')
+  expect(result.order.filledAt).toBe('2026-09-04T14:31:00.100Z')
+})
+
+test('an inaccurate historical scheduler cannot manufacture a fill', async () => {
+  const result = await run(
+    Effect.gen(function* () {
+      const broker = yield* setup({ advanceToArrival: (atMs) => TestClock.setTime(atMs + 1) })
+      const submitted = yield* Effect.exit(broker.mutation.submit(intent()))
+      return { submitted, state: yield* broker.snapshot }
+    }),
+  )
+  expect(Exit.isFailure(result.submitted)).toBe(true)
+  expect(result.state.fills).toEqual([])
+  expect(result.state.orders[0]?.order.status).toBe(OrderStatus.Canceled)
+})
 
 test('arrival quote drives partial IOC fill and the remainder is canceled once', async () => {
   const result = await run(
@@ -339,3 +376,348 @@ test.each(['failure', 'defect', 'conversion'] as const)(
     expect(result.state.ledger.fills).toEqual([])
   },
 )
+
+test.each([0, 60_000])(
+  'IOC arriving at or beyond close expires at close with latency %d and preserves closing equity',
+  async (latencyMs) => {
+    const close = Date.parse('2026-09-04T20:00:00Z')
+    const arrivals: number[] = []
+    const result = await run(
+      Effect.gen(function* () {
+        const broker = yield* setup({
+          assumptions: { ...config.assumptions, latencyMs },
+          advanceToArrival: (atMs) =>
+            Effect.sync(() => {
+              arrivals.push(atMs)
+            }).pipe(Effect.andThen(TestClock.setTime(atMs))),
+          quoteAt: () => Effect.die(new Error('An expired IOC must not read an execution quote')),
+        })
+        yield* TestClock.setTime(latencyMs === 0 ? close : close - 30_000)
+        const receipt = yield* broker.mutation.submit(intent())
+        const closing = yield* broker.completeSession('2026-09-04')
+        const duplicate = yield* broker.mutation.submit(intent())
+        return { receipt, duplicate, closing, atMs: yield* Clock.currentTimeMillis, state: yield* broker.snapshot }
+      }),
+    )
+    expect(arrivals).toEqual([close])
+    expect(result.atMs).toBe(close)
+    expect(result.receipt.order.status).toBe(OrderStatus.Canceled)
+    expect(result.receipt.order.canceledAt).toBe('2026-09-04T20:00:00.000Z')
+    expect(result.duplicate.order.brokerOrderId).toBe(result.receipt.order.brokerOrderId)
+    expect(result.state.fills).toEqual([])
+    expect(result.state.ledger.cashMicros).toBe(config.openingCashMicros)
+    expect(result.closing.equityMicros).toBe(config.openingCashMicros)
+  },
+)
+test('checkpoint restores exact fills, activities, request identity and idempotent order recovery', async () => {
+  await run(
+    Effect.gen(function* () {
+      const broker = yield* setup()
+      const original = yield* submit(broker, intent())
+      const checkpoint = yield* broker.checkpoint
+      const restored = yield* makeReplayBroker({
+        ...config,
+        restoreCheckpoint: { value: checkpoint, expectedHash: checkpoint.checkpointHash },
+      })
+      expect(yield* restored.snapshot).toEqual(yield* broker.snapshot)
+      expect((yield* restored.read.orderByClientId(intent().clientOrderId)).value).toEqual(original.order)
+      yield* restored.mutation.submit(intent())
+      expect((yield* restored.snapshot).fills).toHaveLength(1)
+      expect((yield* restored.read.account).value.cashMicros).toBe((yield* broker.read.account).value.cashMicros)
+      expect(yield* restored.checkpoint).toEqual(checkpoint)
+    }),
+  )
+})
+
+test('checkpoint rejects changed economics, requests, source, configuration and restore time', async () => {
+  await run(
+    Effect.gen(function* () {
+      const broker = yield* setup()
+      yield* submit(broker, intent())
+      const checkpoint = yield* broker.checkpoint
+      const changedCash = {
+        ...checkpoint,
+        state: { ...checkpoint.state, ledger: { ...checkpoint.state.ledger, cashMicros: '1' } },
+      }
+      const changedRequest = {
+        ...checkpoint,
+        state: {
+          ...checkpoint.state,
+          orders: checkpoint.state.orders.map((order) => ({ ...order, requestHash: '0'.repeat(64) })),
+        },
+      }
+      for (const changed of [changedCash, changedRequest]) {
+        const { checkpointHash: _checkpointHash, ...material } = changed
+        const resigned = { ...material, checkpointHash: Result.getOrThrow(canonicalHashV1Result(material)) }
+        expect(
+          (yield* Effect.exit(
+            makeReplayBroker({
+              ...config,
+              restoreCheckpoint: { value: resigned, expectedHash: resigned.checkpointHash },
+            }),
+          ))._tag,
+        ).toBe('Failure')
+      }
+      expect(
+        (yield* Effect.exit(
+          makeReplayBroker({
+            ...config,
+            sourceManifestHash: 'd'.repeat(64),
+            restoreCheckpoint: { value: checkpoint, expectedHash: checkpoint.checkpointHash },
+          }),
+        ))._tag,
+      ).toBe('Failure')
+      expect(
+        (yield* Effect.exit(
+          makeReplayBroker({
+            ...config,
+            assumptions: { ...config.assumptions, latencyMs: 200 },
+            restoreCheckpoint: { value: checkpoint, expectedHash: checkpoint.checkpointHash },
+          }),
+        ))._tag,
+      ).toBe('Failure')
+      yield* TestClock.adjust(1)
+      expect(
+        (yield* Effect.exit(
+          makeReplayBroker({
+            ...config,
+            restoreCheckpoint: { value: checkpoint, expectedHash: checkpoint.checkpointHash },
+          }),
+        ))._tag,
+      ).toBe('Failure')
+    }),
+  )
+})
+
+test('checkpoint cannot claim pending IOC delivery survived a process restart', async () => {
+  await run(
+    Effect.gen(function* () {
+      const broker = yield* setup()
+      const pending = yield* broker.mutation.submit(intent()).pipe(Effect.forkChild({ startImmediately: true }))
+      expect((yield* Effect.exit(broker.checkpoint))._tag).toBe('Failure')
+      yield* TestClock.adjust(100)
+      yield* Fiber.join(pending)
+      expect((yield* broker.checkpoint).state.fills).toHaveLength(1)
+    }),
+  )
+})
+
+test('checkpoint restoration verifies fill prices against the retained arrival quote', async () => {
+  await run(
+    Effect.gen(function* () {
+      const broker = yield* setup()
+      yield* submit(broker, intent())
+      const checkpoint = yield* broker.checkpoint
+      const material = {
+        schemaVersion: checkpoint.schemaVersion,
+        configurationHash: checkpoint.configurationHash,
+        sourceManifestHash: checkpoint.sourceManifestHash,
+        observedAt: checkpoint.observedAt,
+        state: {
+          ...checkpoint.state,
+          ledger: {
+            ...checkpoint.state.ledger,
+            cashMicros: '9504990000',
+            positions: checkpoint.state.ledger.positions.map((position) => ({
+              ...position,
+              costBasisMicros: '495000000',
+            })),
+            fills: checkpoint.state.ledger.fills.map((fill) => ({
+              ...fill,
+              priceMicros: '99000000',
+              notionalMicros: '495000000',
+            })),
+          },
+          fills: checkpoint.state.fills.map((fill) => ({ ...fill, priceMicros: '99000000' })),
+          orders: checkpoint.state.orders.map((entry) => ({
+            ...entry,
+            order: { ...entry.order, filledAveragePriceMicros: '99000000' },
+          })),
+        },
+      }
+      const forged = { ...material, checkpointHash: Result.getOrThrow(canonicalHashV1Result(material)) }
+      const outcome = yield* Effect.exit(
+        makeReplayBroker({ ...config, restoreCheckpoint: { value: forged, expectedHash: forged.checkpointHash } }),
+      )
+      expect(outcome._tag).toBe('Failure')
+    }),
+  )
+})
+
+test('checkpoint restoration recomputes closing equity instead of trusting a rehashed mark', async () => {
+  await run(
+    Effect.gen(function* () {
+      const broker = yield* setup()
+      yield* TestClock.setTime(Date.parse('2026-09-04T20:00:00Z'))
+      yield* broker.completeSession('2026-09-04')
+      const checkpoint = yield* broker.checkpoint
+      const { checkpointHash: _hash, ...material } = checkpoint
+      const altered = {
+        ...material,
+        state: { ...material.state, sessionCloses: [{ sessionDate: '2026-09-04', equityMicros: '1' }] },
+      }
+      const forged = { ...altered, checkpointHash: Result.getOrThrow(canonicalHashV1Result(altered)) }
+      expect(
+        (yield* Effect.exit(
+          makeReplayBroker({ ...config, restoreCheckpoint: { value: forged, expectedHash: forged.checkpointHash } }),
+        ))._tag,
+      ).toBe('Failure')
+    }),
+  )
+})
+
+test('an independently retained checkpoint hash rejects a forged zero-fill cancellation', async () => {
+  await run(
+    Effect.gen(function* () {
+      const broker = yield* setup()
+      yield* submit(broker, intent())
+      const checkpoint = yield* broker.checkpoint
+      const { checkpointHash: _hash, ...material } = checkpoint
+      const altered = {
+        ...material,
+        state: {
+          ...material.state,
+          ledger: {
+            ...material.state.ledger,
+            cashMicros: config.openingCashMicros,
+            executionFeesMicros: '0',
+            netRealizedPnlAfterCostsMicros: '0',
+            positions: [],
+            fills: [],
+          },
+          fills: [],
+          fees: [],
+          orders: material.state.orders.map((entry) => {
+            const { filledAt: _filledAt, filledAveragePriceMicros: _price, ...order } = entry.order
+            return {
+              ...entry,
+              order: {
+                ...order,
+                canceledAt: checkpoint.observedAt,
+                filledQuantityMicros: '0',
+                status: OrderStatus.Canceled,
+              },
+            }
+          }),
+        },
+      }
+      const forged = { ...altered, checkpointHash: Result.getOrThrow(canonicalHashV1Result(altered)) }
+      expect(Result.isSuccess(restoreReplayBrokerCheckpoint(forged, config))).toBe(true)
+      expect(
+        (yield* Effect.exit(
+          makeReplayBroker({
+            ...config,
+            restoreCheckpoint: { value: forged, expectedHash: checkpoint.checkpointHash },
+          }),
+        ))._tag,
+      ).toBe('Failure')
+    }),
+  )
+})
+
+test('settlement persistence completes before a calculated fill becomes observable', async () => {
+  await run(
+    Effect.gen(function* () {
+      const calculated = yield* Deferred.make<void>()
+      const committed = yield* Deferred.make<void>()
+      const broker = yield* setup({
+        retainSettlement: (checkpoint) =>
+          Effect.gen(function* () {
+            expect(checkpoint.state.fills).toHaveLength(1)
+            yield* Deferred.succeed(calculated, undefined)
+            yield* Deferred.await(committed)
+          }),
+      })
+      const pending = yield* broker.mutation.submit(intent()).pipe(Effect.forkChild({ startImmediately: true }))
+      yield* TestClock.adjust(100)
+      yield* Deferred.await(calculated)
+      expect((yield* broker.snapshot).fills).toHaveLength(0)
+      expect((yield* broker.read.account).value.cashMicros).toBe(config.openingCashMicros)
+      yield* Deferred.succeed(committed, undefined)
+      const response = yield* Fiber.join(pending)
+      expect(response.order.status).toBe(OrderStatus.Filled)
+      expect((yield* broker.snapshot).fills).toHaveLength(1)
+    }),
+  )
+})
+
+test('an uncertain settlement commit blocks further broker state reads and mutations until restoration', async () => {
+  await run(
+    Effect.gen(function* () {
+      const broker = yield* setup({
+        retainSettlement: () => Effect.fail(new ReplayBrokerFailure({ message: 'commit acknowledgment lost' })),
+      })
+      expect((yield* Effect.exit(submit(broker, intent())))._tag).toBe('Failure')
+      for (const exit of [
+        yield* Effect.exit(broker.snapshot),
+        yield* Effect.exit(broker.read.account),
+        yield* Effect.exit(broker.read.orderByClientId(intent().clientOrderId)),
+        yield* Effect.exit(broker.mutation.submit(intent())),
+      ]) {
+        expect(exit._tag).toBe('Failure')
+        expect(JSON.stringify(exit)).toContain('restore durable state')
+      }
+    }),
+  )
+})
+
+test('cancellation commits before its response and can restore before delivery latency elapses', async () => {
+  await run(
+    Effect.gen(function* () {
+      const calculated = yield* Deferred.make<ReplayBrokerCheckpoint>()
+      const committed = yield* Deferred.make<void>()
+      const broker = yield* setup({
+        retainSettlement: (checkpoint) =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(calculated, checkpoint)
+            yield* Deferred.await(committed)
+          }),
+      })
+      const submitFiber = yield* broker.mutation.submit(intent()).pipe(Effect.forkChild({ startImmediately: true }))
+      const pending = (yield* broker.read.orders({ status: OrderCollection.Open })).value[0]
+      if (pending === undefined) throw new Error('expected pending IOC')
+      const cancelFiber = yield* broker.mutation
+        .cancel(pending.brokerOrderId)
+        .pipe(Effect.forkChild({ startImmediately: true }))
+      const checkpoint = yield* Deferred.await(calculated)
+      expect(checkpoint.state.orders[0]?.order.status).toBe(OrderStatus.Canceled)
+      expect((yield* broker.read.orderById(pending.brokerOrderId)).value.status).toBe(OrderStatus.New)
+      yield* Deferred.succeed(committed, undefined)
+      yield* Fiber.join(cancelFiber)
+      const restored = yield* makeReplayBroker({
+        ...config,
+        restoreCheckpoint: { value: checkpoint, expectedHash: checkpoint.checkpointHash },
+      })
+      expect((yield* restored.read.orderById(pending.brokerOrderId)).value.status).toBe(OrderStatus.Canceled)
+      expect((yield* restored.snapshot).fills).toHaveLength(0)
+      yield* TestClock.adjust(100)
+      expect((yield* Fiber.join(submitFiber)).order.status).toBe(OrderStatus.Canceled)
+    }),
+  )
+})
+
+test('delivery failures and session closes retain their terminal state before publication', async () => {
+  await run(
+    Effect.gen(function* () {
+      const retained: ReplayBrokerCheckpoint[] = []
+      const broker = yield* setup({
+        retainSettlement: (checkpoint) =>
+          Effect.sync(() => {
+            retained.push(checkpoint)
+          }),
+        quoteAt: () => Effect.fail(new ReplayBrokerFailure({ message: 'arrival source failed' })),
+      })
+      expect((yield* Effect.exit(submit(broker, intent())))._tag).toBe('Failure')
+      expect(retained.at(-1)?.state.orders[0]?.order.status).toBe(OrderStatus.Canceled)
+      expect(retained.at(-1)?.state.orders[0]?.deliveryFailure).toBeDefined()
+      yield* TestClock.setTime(Date.parse('2026-09-04T20:00:00Z'))
+      const close = yield* broker.completeSession('2026-09-04')
+      const checkpoint = retained.at(-1)
+      if (checkpoint === undefined) throw new Error('expected retained session close')
+      expect(checkpoint.state.sessionCloses).toHaveLength(1)
+      expect(checkpoint.state.sessionCloses[0]?.sessionDate).toBe('2026-09-04')
+      expect(checkpoint.state.sessionCloses[0]?.equityMicros).toBe(close.equityMicros)
+      expect((yield* broker.checkpoint).checkpointHash).toBe(checkpoint.checkpointHash)
+    }),
+  )
+})

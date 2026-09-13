@@ -1,0 +1,71 @@
+import { Result } from 'effect'
+import { sha256 } from '../hash'
+import { simulationFixture } from './simulated-streaming-fixture'
+import { arrivalPosition, compareArrivalPositions } from '../market-data/streaming/historical'
+import {
+  retainedReplaySourcePartitions,
+  validateRetainedReplayCapture,
+  type RetainedReplaySourceManifest,
+} from '../intraday-replay/source'
+
+export const retainedReplayCaptureFixture = (manifest: RetainedReplaySourceManifest) => {
+  const text = JSON.stringify({
+    schemaVersion: 'bayn.replay-source-capture.v1',
+    capturedAt: new Date(manifest.coverageEndMs + 1).toISOString(),
+    origin: 'Independently frozen deterministic capture fixture',
+    coverageStartMs: manifest.coverageStartMs,
+    coverageEndMs: manifest.coverageEndMs,
+    universe: manifest.universe,
+    positions: manifest.positions,
+  })
+  return validateRetainedReplayCapture(text, sha256(text)).pipe(Result.getOrThrow)
+}
+
+export const retainedReplayFixture = () => {
+  const input = simulationFixture()
+  const events = input.input.arrivals.events
+    .map((event) =>
+      event.record.topic === input.cursor.universe.topics.features
+        ? { ...event, record: { ...event.record, partition: 0 } }
+        : event,
+    )
+    .toSorted((a, b) => compareArrivalPositions(arrivalPosition(a), arrivalPosition(b)))
+  const body = events.map((event) => JSON.stringify(event)).join('\n') + '\n'
+  const positions = new Map<
+    string,
+    { topic: string; partition: number; startOffset: string; endOffsetExclusive: string }
+  >()
+  for (const { record } of events) {
+    const key = `${record.topic}:${record.partition}`
+    const previous = positions.get(key)
+    positions.set(key, {
+      topic: record.topic,
+      partition: record.partition,
+      startOffset: previous?.startOffset ?? record.offset,
+      endOffsetExclusive: String(BigInt(record.offset) + 1n),
+    })
+  }
+  const manifest: RetainedReplaySourceManifest = {
+    schemaVersion: 'bayn.retained-replay-source.v1',
+    dataSha256: sha256(body),
+    recordCount: events.length,
+    firstAvailableAtMs: events[0]?.availableAtMs ?? 0,
+    lastAvailableAtMs: events.at(-1)?.availableAtMs ?? 0,
+    coverageStartMs: events[0]?.availableAtMs ?? 0,
+    coverageEndMs: events.at(-1)?.availableAtMs ?? 0,
+    origin: 'deterministic unit fixture',
+    positions: [...positions.values()].sort((a, b) =>
+      a.topic < b.topic ? -1 : a.topic > b.topic ? 1 : a.partition - b.partition,
+    ),
+    universe: input.cursor.universe,
+    deliveryModel: input.source.deliveryModel,
+  }
+  const complete = {
+    ...manifest,
+    positions: retainedReplaySourcePartitions(manifest).map(
+      ({ topic, partition }) =>
+        positions.get(`${topic}:${partition}`) ?? { topic, partition, startOffset: '0', endOffsetExclusive: '0' },
+    ),
+  }
+  return { body, manifest: complete, capture: retainedReplayCaptureFixture(complete), events, input }
+}

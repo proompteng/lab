@@ -444,9 +444,12 @@ describe('runtime configuration loading', () => {
     expect(streaming.kafka?.brokers).toEqual(['one:9092', 'two:9092'])
     expect(streaming.kafka?.bootstrapTimeoutMs).toBe(300000)
     expect(streaming.kafka?.shadowOnly).toBe(false)
+    expect(streaming.kafka?.technicalFeaturesTopic).toBeUndefined()
+    environment.set('BAYN_KAFKA_TECHNICAL_FEATURES_TOPIC', 'torghut.technical-features.v1')
     environment.set('BAYN_MARKET_DATA_MODE', 'shadow')
     const shadow = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), environment))
     expect(shadow.kafka?.shadowOnly).toBe(true)
+    expect(shadow.kafka?.technicalFeaturesTopic).toBe('torghut.technical-features.v1')
     expect(JSON.stringify(streaming.kafka)).not.toContain('never-print-kafka-secret')
     for (const unsupportedDeadline of ['1', '120000', '300001']) {
       environment.set('BAYN_KAFKA_BOOTSTRAP_TIMEOUT_MS', unsupportedDeadline)

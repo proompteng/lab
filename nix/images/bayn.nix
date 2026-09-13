@@ -37,13 +37,13 @@ let
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = {
-    x86_64-linux = "sha256-RugImy5pe/8WfMsF5UjwHEwKjhsnwPtcskuE9D6XjDk=";
-    aarch64-linux = "sha256-K8UEzB0sS4pllXEfWwigevTzUw91Rqm2fRU0GwPCyCU=";
+    x86_64-linux = "sha256-76zpd2tRl1ZKYesS1geCSE+evAiSbaeMmsFZnvoFcG8=";
+    aarch64-linux = "sha256-F9WCeGBQRkD4N4JEItkkU2bfvngAQ/4Rg/ekwEG3Fck=";
   };
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
     (
-      "bun --cwd=services/bayn build src/index.ts src/verify-build-contract.ts src/forward-performance-command.ts src/intraday-replay-command.ts src/streaming-replay-command.ts src/streaming-diagnostics-command.ts src/vendor-intraday-replay-command.ts src/restate/restate-execution-server.ts src/restate/restate-execution-activate.ts --target=node "
+      "bun --cwd=services/bayn build src/index.ts src/verify-build-contract.ts src/forward-performance-command.ts src/intraday-replay-command.ts src/streaming-replay-command.ts src/session-replay-command.ts src/streaming-diagnostics-command.ts src/vendor-intraday-replay-command.ts src/restate/restate-execution-server.ts src/restate/restate-execution-activate.ts --target=node "
       + "--external tigerbeetle-node --external @platformatic/kafka --entry-naming '[name].js' --outdir=dist "
       + buildDefine "__BAYN_BUILD_SOURCE_REVISION__" repoRevision
       + " "
@@ -78,6 +78,7 @@ let
     cp "$TMPDIR/work/services/bayn/dist/forward-performance-command.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/intraday-replay-command.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/streaming-replay-command.js" "$out/app/services/bayn/dist/"
+    cp "$TMPDIR/work/services/bayn/dist/session-replay-command.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/streaming-diagnostics-command.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/vendor-intraday-replay-command.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/restate-execution-server.js" "$out/app/services/bayn/dist/"
@@ -101,7 +102,14 @@ let
   };
 in
 import ./bun-workspace-service.nix {
-  inherit pkgs lib bun nodejs depsHash runtimeRoot;
+  inherit
+    pkgs
+    lib
+    bun
+    nodejs
+    depsHash
+    runtimeRoot
+    ;
   repoRoot = dependencySource;
   serviceName = "bayn";
   packageName = "@proompteng/bayn";

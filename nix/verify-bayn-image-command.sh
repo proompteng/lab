@@ -70,6 +70,7 @@ vendor_command="$(resolve_image_entry /app/services/bayn/dist/vendor-intraday-re
 execution_server="$(resolve_image_entry /app/services/bayn/dist/restate-execution-server.js)"
 image_node="$(resolve_image_entry /bin/node)"
 streaming_replay="$(resolve_image_entry /app/services/bayn/dist/streaming-replay-command.js)"
+session_replay="$(resolve_image_entry /app/services/bayn/dist/session-replay-command.js)"
 streaming_diagnostics="$(resolve_image_entry /app/services/bayn/dist/streaming-diagnostics-command.js)"
 
 test -x "${forward_wrapper}"
@@ -81,6 +82,7 @@ test -f "${vendor_command}"
 test -f "${execution_server}"
 test -x "${image_node}"
 test -f "${streaming_replay}"
+test -f "${session_replay}"
 test -f "${streaming_diagnostics}"
 
 image_ref="$(jq -er '.[0].RepoTags | if length == 1 then .[0] else error("expected one image tag") end' \
@@ -192,9 +194,10 @@ if [[ "${compiled_vendor_actual}" != "${expected_vendor}" ]]; then
 fi
 
 # Loading diagnostics also loads the external Kafka client and its codec dependencies.
-for command in streaming-replay streaming-diagnostics; do
+for command in streaming-replay streaming-diagnostics session-replay; do
   case "${command}" in
     streaming-replay) expected_streaming='Usage: bayn-streaming-replay --file <decision.json> | --decision <decision-content-hash> | --historical <experiment.json>' ;;
+    session-replay) expected_streaming='Usage: bayn-session-replay --input <session.json> --arrivals <source.ndjson> --capture <capture.json> --capture-sha256 <trusted-hash> --output <new-directory> | --help' ;;
     streaming-diagnostics) expected_streaming='Usage: bayn-streaming-diagnostics --since <UTC-instant> | --codecs | --help' ;;
   esac
   streaming_actual="$(docker run --rm --network none --read-only --cap-drop ALL \

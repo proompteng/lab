@@ -4,8 +4,9 @@ import { randomUUID } from 'node:crypto'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Clock, Effect, Fiber, Layer, Redacted, Ref, Result, Schema } from 'effect'
+import { Clock, Effect, Layer, Redacted, Ref, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
+import { OperationDeadlineClock } from '../operation-timeout'
 
 import { AssetClass, AssetExchange, AssetStatus, MarketCalendarResponseSchema } from '../broker/alpaca/model'
 import { normalizeAssetResult } from '../broker/alpaca/normalizers'
@@ -24,7 +25,7 @@ import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environ
 import { config as baseConfig, fixtureRuntime } from '../testing/runtime-fixtures'
 import { simulationFixture } from '../testing/simulated-streaming-fixture'
 import { utcInstantFromEpochMillis } from '../time'
-import { makeReplayBroker } from './broker'
+import { makeReplayBroker, ReplayBrokerFailure } from './broker'
 import { makeReplayExecutionRuntime } from './runtime'
 
 const durableTest = baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined ? test.skip : test
@@ -104,6 +105,7 @@ durableTest(
         }
         const broker = yield* makeReplayBroker({
           runId,
+          sourceManifestHash: fixture.source.sourceManifestHash,
           openingCashMicros: '100000000000',
           protocol: fixture.protocol,
           assumptions: { latencyMs: 10, slippageBps: 0, availableLiquidityPpm: 1000000, feeMultiplierPpm: 1000000 },
@@ -127,12 +129,31 @@ durableTest(
             ),
           ),
           quoteAt: (symbol) => Effect.succeed(cursor.projection.quotes.get(symbol)),
+          advanceToArrival: (atMs) =>
+            clock.advanceTo(utcInstantFromEpochMillis(atMs)).pipe(
+              Effect.andThen(TestClock.setTime(atMs)),
+              Effect.mapError(
+                (cause) => new ReplayBrokerFailure({ message: 'Cannot advance test arrival clock', cause }),
+              ),
+            ),
         })
         const passes = yield* Ref.make<unknown[]>([])
+        const stallReconciliation = yield* Ref.make(false)
+        const interrupted = yield* Ref.make(false)
         const runtimeInput = {
           config,
           strategy: fixtureRuntime,
-          broker,
+          broker: {
+            ...broker,
+            read: {
+              ...broker.read,
+              account: Ref.get(stallReconciliation).pipe(
+                Effect.flatMap((stall) =>
+                  stall ? Effect.never.pipe(Effect.onInterrupt(() => Ref.set(interrupted, true))) : broker.read.account,
+                ),
+              ),
+            },
+          },
           source: { ...fixture.source, runId },
           cursor: Effect.succeed(cursor),
           clock,
@@ -143,20 +164,32 @@ durableTest(
           reconciliationPassTimeoutMs: 1000,
         }
         const runtime = yield* makeReplayExecutionRuntime(runtimeInput)
+        yield* clock.advanceTo(utcInstantFromEpochMillis(initialMs + 1))
+        yield* TestClock.setTime(initialMs + 1)
         for (let pass = 0; pass < 20; pass++) {
-          const execution = yield* runtime.advance.pipe(Effect.forkChild({ startImmediately: true }))
-          const tick = Effect.gen(function* () {
-            const nowMs = yield* Clock.currentTimeMillis
-            yield* clock.advanceTo(utcInstantFromEpochMillis(nowMs + 1))
-            yield* TestClock.adjust(1)
-          }).pipe(Effect.forever)
-          const advanced = yield* Fiber.join(execution).pipe(Effect.raceFirst(tick))
-          if (advanced.observation.result === 'FAILURE') break
+          const advanced = yield* runtime.advance
+          if (advanced.observation.result === 'FAILURE' || (yield* broker.snapshot).fills.length > 0) break
+          const nextMs = (yield* Clock.currentTimeMillis) + 1000
+          yield* clock.advanceTo(utcInstantFromEpochMillis(nextMs))
+          yield* TestClock.setTime(nextMs)
         }
+        const settledMs = (yield* Clock.currentTimeMillis) + 1
+        yield* clock.advanceTo(utcInstantFromEpochMillis(settledMs))
+        yield* TestClock.setTime(settledMs)
         const brokerState = yield* broker.snapshot
         const reconciliation = yield* runtime.reconcile
         const recreated = yield* makeReplayExecutionRuntime(runtimeInput)
         expect(recreated.authorityGenerationHash).toBe(runtime.authorityGenerationHash)
+        const frozenAt = yield* Clock.currentTimeMillis
+        const liveClock = yield* TestClock.withLive(Clock.clockWith(Effect.succeed))
+        yield* Ref.set(stallReconciliation, true)
+        const stalledFinal = yield* Effect.exit(
+          runtime.reconcile.pipe(Effect.provideService(OperationDeadlineClock, liveClock)),
+        )
+        expect(stalledFinal._tag).toBe('Failure')
+        expect(JSON.stringify(stalledFinal)).toContain('Replay reconciliation exceeded 1000ms')
+        expect(yield* Ref.get(interrupted)).toBe(true)
+        expect(yield* Clock.currentTimeMillis).toBe(frozenAt)
         const rows = yield* sql<Record<string, unknown>>`SELECT
       (SELECT count(*)::int FROM intents WHERE account_id = ${accountId}) AS intents,
       (SELECT count(*)::int FROM fills WHERE account_id = ${accountId}) AS fills,

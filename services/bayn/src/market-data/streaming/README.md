@@ -121,6 +121,42 @@ and protocol change through the same delivery path; retaining archived feature h
 
 Bar history retains at most four winning revisions for each of 61 minutes per symbol. As-of joins select the latest revision received by the observation time. If revision eviction removes the history needed for a cut, the projection rejects that observation.
 
+## Technical indicator evidence
+
+`BAYN_KAFKA_TECHNICAL_FEATURES_TOPIC=torghut.technical-features.v1` subscribes the same scoped consumer to Dorvud's
+`dorvud.technical-feature.v1` messages. The definition is `dorvud.technical-indicators-1m.v1`. The producer publishes
+EMA 12/26, MACD/signal/histogram, RSI 14, Bollinger bands 20, five-minute/session weighted close and source VWAP,
+and volatility over 60 log returns. Each scalar carries its own readiness and explicit units. Bayn validates the
+versioned definition, payload hash, identity, session bounds, source references, readiness and numeric domains.
+It does not recalculate indicators.
+
+An optional technical receipt joins only when it was available at the observation, ends at the exact decision-window
+boundary, and its source-reference suffix matches the currently selected raw bars, including corrections and content
+hashes. The producer retains complete session provenance; Bayn independently verifies the decision-window suffix,
+not older raw bars outside its retained window. The full technical payload and source references are hashed into the
+snapshot. Recorded live and simulated snapshots reproduce this evidence and reject changed receipts or availability.
+
+An observed replacement supersedes an older technical receipt for the same session and window, even if its raw
+correction has not arrived yet. Selection and diagnostics leave that window unavailable until the replacement
+matches; earlier observations still use only the revisions available at that time.
+
+Missing, late, mismatched or malformed technical input remains unavailable. It cannot authorize a baseline entry or
+invalidate otherwise accepted raw and rolling inputs. A technical rejection invalidates older optional receipts until
+a later distinct valid snapshot arrives. Optional receipt and rejection retention is bounded. The existing strategy,
+thresholds, ranking, risk policy and behavior/parameter hashes remain unchanged; these indicators are retained evidence
+for subsequent strategy research, not a new claimed trading edge. The original input-cut shape is retained when the
+optional topic is unconfigured.
+
+Frozen replay sources can include `universe.topics.technicalFeatures`. That topic and its retained source bytes are
+bound to the run and reproduced cut. Raw, rolling and technical topics must be distinct. The regeneration timestamp
+applies only to rolling features, retaining actual computation time separately from simulated availability. Original
+technical records must pass the normal computation-to-arrival clock bound. The historical economic study
+under `docs/bayn/evidence/2026-09-11-native-replay/` did not include technical indicators or modify the baseline.
+
+Enable the consumer after the reviewed producer/topic deployment. `Kafka technical feature incorporated` logs report
+feature identity, source position, computation and receipt times; they prove ingestion, while a reproduced snapshot
+with matching technical receipts proves the join.
+
 ## Simulated execution inputs
 
 `constructSimulatedSnapshot` consumes the incremental historical cursor through the same selection rules as live
@@ -159,3 +195,82 @@ and exact accounting in real PostgreSQL and TigerBeetle. Recreating the runtime 
 The separate accounting test still checks reconnecting database clients. These fixtures do not establish full-session
 replay, process-crash recovery, or profitability; those require the session runner, retained source manifests, and
 closed-window economic reports.
+
+## Full calendar-session command
+
+```sh
+BAYN_REPLAY_POSTGRES_URL=postgresql://bayn:bayn@127.0.0.1:55432/bayn_replay \
+BAYN_REPLAY_TIGERBEETLE_ADDRESS=127.0.0.1:53000 \
+BAYN_REPLAY_TIGERBEETLE_CLUSTER_ID=20912 BAYN_REPLAY_TIGERBEETLE_LEDGER=70912 \
+node dist/session-replay-command.js --input session.json --arrivals source.ndjson \
+  --capture capture.json --capture-sha256 "$CAPTURE_SHA256" --output new-run-directory
+```
+
+Run this command against separately provisioned local stores. It accepts only local PostgreSQL databases whose names
+end in `_replay`/`_test` (or `replay`/`test`) and a local TigerBeetle replica. It requires an unused PostgreSQL authority
+state and never clears either database. Give each attempt a distinct `replicate` in the frozen input; resetting
+PostgreSQL while retaining TigerBeetle under the same run ID is not a fresh run. Database clients close with the command. A 30-minute wall-clock deadline bounds a stalled offline run without changing its modeled session interval.
+The normal service composition does not load this command or its virtual clock.
+
+`bayn.execution-replay-session.v1` binds the calendar session, source manifest, unchanged source-controlled strategy
+and build, opening cash, IOC latency/liquidity/slippage/fee assumptions, and production polling/reconciliation cadence.
+It also retains asset metadata and its observation time. Asset eligibility captured after the session must explicitly
+use `counterfactual-current-asset-eligibility`; it cannot be described as historical as-of evidence. Embedded builds
+must match the input build; source invocations identify their build verification as `development-configured`.
+
+The `bayn.retained-replay-source.v1` manifest binds the SHA-256 of the complete NDJSON file, record count, export
+coverage interval, first/last arrival, partition bounds, universe, origin, and delivery policy. Each line uses
+`HistoricalMarketArrivalSchema`. The reader verifies the entire file before execution, then reads bounded chunks
+while retaining the production projection. It rejects duplicate/reversed Kafka coordinates, reversed availability,
+records outside the frozen cuts, and changed bytes/counts. The current Torghut capture profile independently requires
+three bar partitions, thirteen quote partitions, three trade partitions, and three retained feature partitions.
+The offline regenerated feature stream has its own single partition. Every partition needs a cut, including empty
+cuts with equal start/end offsets. Record-derived partition inventories cannot establish source completeness.
+The verified first and last arrivals must also span the exchange session; declared coverage alone is insufficient.
+Every partition cut must also equal the independently captured offset receipt. Its separately supplied SHA-256 is
+trusted configuration, outside the editable session input; replacing the receipt without that authority is rejected.
+It rehashes the consumed stream before a final report. Initial and final reconciliation use the configured live
+reconciliation deadline while market time remains simulated.
+There is no 500,000-record or single-observation limit on this path.
+
+The timeline advances available source records, the account-specific PostgreSQL clock, and the Effect clock together.
+Broker submission advances them to its declared arrival time before reading the execution quote. Database I/O does not
+consume modeled market time. The driver executes the native polling cadence from market open through the close,
+including the final boundary; the source-controlled strategy still applies its own warmup and order-risk rules.
+Closing equity is captured at the exact calendar close and fills receive a final reconciliation one millisecond later.
+A regular-session IOC whose modeled arrival reaches or exceeds the close expires at the close without a fill; its
+latency cannot advance execution beyond the closing-equity boundary.
+
+The new output directory retains `input.json`, `passes.ndjson`, and a hashed `report.json` with broker state, closing
+equity, schedule counts, durable row counts, and the production reconciliation result. Preserve the source file and
+both databases alongside it. A report with missing inputs, failed passes, unresolved orders/positions or accounting
+mismatches is not acceptance. The command reports profitability as `UNPROVEN`: source coverage, realistic execution
+assumptions, independent sessions, and cost sensitivity still require evaluation. The existing durable integration
+test proves a native intent/fill/accounting path; it does not substitute for a retained full-session result or a
+full-process crash/restart test.
+
+The required capture receipt uses `bayn.replay-source-capture.v1` with `capturedAt`, `origin`, `coverageStartMs`,
+`coverageEndMs`, `universe`, and complete `positions` (`topic`, `partition`, `startOffset`, `endOffsetExclusive`).
+Capture the raw cuts with Kafka ListOffsets at both requested boundaries, resolving a missing timestamp match to the
+captured high-water mark. Obtain regenerated-feature extents from the independently retained producer receipt.
+Freeze the receipt and its byte SHA-256 at capture time; do not derive them from whichever records the replay export
+happens to contain. Supply that trusted hash through `--capture-sha256`. The command checks both receipt bytes and
+every manifest cut before touching a database, copies the receipt to its output, and binds its hash into the run ID
+and final report. This establishes completeness relative to the pinned capture authority; it does not authenticate
+market prices or calibrate the data feed.
+
+## Process recovery acceptance
+
+The replay checkpoint store commits the complete broker payload and its content hash together in PostgreSQL
+migration 0070, using a separate scoped connection pool. A killed coordinator transaction cannot roll back that
+simulated broker commit. The broker's settlement callback persists the calculated terminal IOC state before that
+state becomes visible to broker readers or a submit response can reach the coordinator. A failed or uncertain
+commit blocks further state reads and mutations until restoration. Recovery reads the latest source-bound payload from PostgreSQL, verifies its receipt and
+configuration, and advances from the retained broker timestamp before reconciling. A broker commit may be ahead of
+the rolled-back execution clock; a checkpoint behind the committed execution clock is stale and cannot recover it.
+
+The process-death test kills the worker inside settlement after its database commit and before either in-memory
+publication or the coordinator response. It
+removes the exported checkpoint file before the kill and recovers from PostgreSQL in a new PID, proving one intent,
+one fill, one accounting transaction, and exact reconciliation with real TigerBeetle. Export files are not recovery
+authority. The full-session command still requires a fresh database; it does not expose a command-line resume mode.

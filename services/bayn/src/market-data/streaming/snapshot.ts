@@ -1,5 +1,9 @@
 import { Result, Schema } from 'effect'
-import { SimulatedSnapshotSourceSchema, type SimulatedSnapshotEvidenceSchema } from './evidence-schema'
+import {
+  SimulatedSnapshotSourceSchema,
+  type SimulatedSnapshotEvidenceSchema,
+  type TechnicalSnapshotEvidenceSchema,
+} from './evidence-schema'
 import { strictParseOptions } from '../../schemas'
 import type { HistoricalMarketCursor } from './historical'
 
@@ -28,13 +32,13 @@ export interface StreamingRecordReceipt {
   readonly sequence: number
   readonly contentHash: string
 }
-export interface StreamingFeatureReceipt {
+export interface StreamingFeatureReceipt<A = RollingMarketFeature> {
   readonly topic: string
   readonly partition: number
   readonly offset: string
   readonly availableAtMs: number
   readonly sequence: number
-  readonly value: RollingMarketFeature
+  readonly value: A
 }
 export interface StreamingSnapshotEvidence {
   readonly schemaVersion: 'bayn.streaming-input-cut.v1'
@@ -43,6 +47,7 @@ export interface StreamingSnapshotEvidence {
   readonly sequence: number
   readonly records: readonly StreamingRecordReceipt[]
   readonly features: readonly StreamingFeatureReceipt[]
+  readonly technical?: typeof TechnicalSnapshotEvidenceSchema.Type
 }
 export interface StreamingSnapshotManifest extends Omit<
   IntradaySnapshotManifest,
@@ -140,7 +145,7 @@ const constructSnapshotMaterial = <P extends SnapshotProvenance>(
   provenance: P,
 ) =>
   Result.gen(function* () {
-    const { symbols, entries, featureReceipts, bars, quotes, trades, availability, exclusions, excluded } =
+    const { symbols, entries, featureReceipts, technical, bars, quotes, trades, availability, exclusions, excluded } =
       yield* selectStreamingInputs(state, request)
     const sourcePositions = new Map(
       positions.map((position) => [topicPartitionKey(position.topic, position.partition), BigInt(position.offset)]),
@@ -150,7 +155,7 @@ const constructSnapshotMaterial = <P extends SnapshotProvenance>(
       if (entry.sequence > state.sequence || maximum === undefined || BigInt(entry.value.sourceOffset) >= maximum)
         return yield* Result.fail(failure('watermark', 'Streaming row is outside the incorporated source cut'))
     }
-    for (const feature of featureReceipts) {
+    for (const feature of [...featureReceipts, ...(technical?.features ?? [])]) {
       const maximum = sourcePositions.get(topicPartitionKey(feature.topic, feature.partition))
       if (feature.sequence > state.sequence || maximum === undefined || BigInt(feature.offset) >= maximum)
         return yield* Result.fail(failure('watermark', 'Streaming feature is outside the incorporated source cut'))
@@ -193,6 +198,7 @@ const constructSnapshotMaterial = <P extends SnapshotProvenance>(
       lineage: yield* lineageOf([...bars, ...quotes, ...trades].toSorted(compareRecords)),
       streaming: {
         ...streaming,
+        ...(technical === undefined ? {} : { technical }),
         positions,
         sequence: state.sequence,
         records: (yield* Result.all(entries.map(recordReceipt))).toSorted((a, b) => a.sequence - b.sequence),
@@ -230,6 +236,7 @@ export const constructSimulatedSnapshot = (
       cursor.runId !== provenance.runId ||
       state.epoch !== `historical-${provenance.runId}` ||
       cursor.universe.topics.features !== provenance.featureTopic ||
+      cursor.universe.topics.technicalFeatures !== provenance.technicalFeatureTopic ||
       cursor.universe.universeId !== request.universeId ||
       cursor.universe.universeSymbolHash !== request.universeSymbolHash ||
       cursor.universe.topics.bars !== request.sourceTopics.bars ||

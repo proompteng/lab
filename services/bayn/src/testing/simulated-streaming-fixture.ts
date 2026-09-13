@@ -7,7 +7,7 @@ import {
   type HistoricalMarketCursor,
 } from '../market-data/streaming/historical'
 
-export const simulationFixture = (regeneratedAtMs?: number) => {
+export const simulationFixture = (regeneratedAtMs?: number, technicalFeatureTopic?: string) => {
   const fixture = historicalStreamingFixture()
   const { input, protocol } = fixture
   const source = {
@@ -19,6 +19,7 @@ export const simulationFixture = (regeneratedAtMs?: number) => {
       tieBreak: 'availability-topic-partition-offset' as const,
     },
     featureTopic: protocol.streamingInput.featureTopic,
+    ...(technicalFeatureTopic === undefined ? {} : { technicalFeatureTopic }),
     ...(regeneratedAtMs === undefined ? {} : { regeneratedFeaturesRecordedAtMs: regeneratedAtMs }),
   }
   let cursor: HistoricalMarketCursor = Result.getOrThrow(
@@ -28,7 +29,11 @@ export const simulationFixture = (regeneratedAtMs?: number) => {
         universeId: protocol.universeId,
         universeSymbolHash: protocol.universeSymbolHash,
         symbols: protocol.universe,
-        topics: { ...protocol.sourceTopics, features: source.featureTopic },
+        topics: {
+          ...protocol.sourceTopics,
+          features: source.featureTopic,
+          ...(technicalFeatureTopic === undefined ? {} : { technicalFeatures: technicalFeatureTopic }),
+        },
       },
       regeneratedAtMs,
       source,

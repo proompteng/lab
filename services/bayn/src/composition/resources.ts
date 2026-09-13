@@ -82,7 +82,13 @@ const WorkerMarketDataLive = (plan: ApplicationIdentity, postgres: ReturnType<ty
     universeId: protocol.universeId,
     universeSymbolHash: protocol.universeSymbolHash,
     symbols: protocol.universe,
-    topics: { ...protocol.sourceTopics, features: intradayMomentumFeatureTopic },
+    topics: {
+      ...protocol.sourceTopics,
+      features: intradayMomentumFeatureTopic,
+      ...(plan.config.kafka.technicalFeaturesTopic === undefined
+        ? {}
+        : { technicalFeatures: plan.config.kafka.technicalFeaturesTopic }),
+    },
   })
   return streamingIntradayMarketDataLive(plan.config.kafka.shadowOnly).pipe(
     Layer.provide(archive),
