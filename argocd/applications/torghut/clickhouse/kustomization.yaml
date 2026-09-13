@@ -10,8 +10,6 @@ resources:
   - sealed-secret.yaml
   - bayn-sealed-secret.yaml
   - signal-publisher-sealed-secret.yaml
-  - clickhouse-guardrails-exporter-configmap.yaml
-  - clickhouse-guardrails-exporter.yaml
   - clickhouse-cluster.yaml
   - clickhouse-service.yaml
   - ta-replicated-table-migration-job.yaml
@@ -23,5 +21,5 @@ resources:
 images:
   - name: registry.ide-newton.ts.net/lab/signal-publisher
     newName: registry.ide-newton.ts.net/lab/signal-publisher
-    newTag: kargo-sha-b25c4f5f90b692563dddd47ba5f2de955a81c67c
-    digest: sha256:e1ca902964a2070d3c3a7e5cce16fb8c7a89f6a2a5df1cf90eaae4cec1f7075e
+    newTag: kargo-sha-80f36400bc2519bab68e0698d4a04a4943ee200f
+    digest: sha256:b65e83578933219480346fd2759c5efa9bb8e2654cf71c2be4e6acde775ebf9f
