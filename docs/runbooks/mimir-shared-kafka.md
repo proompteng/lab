@@ -63,18 +63,24 @@ Kafka retains the original records even after the ingester rejects their samples
 1. Capture native per-ingester `cortex_discarded_samples_total` counters, the three topic end offsets, and a query
    showing the exact missing timestamp from a rejection log. Confirm the records remain within topic retention.
 2. Let any active Argo sync finish, pause observability reconciliation, and save the original runtime ConfigMap.
-   Set a temporary per-tenant `out_of_order_time_window: 1h` override, without changing other limits. The window
-   must cover the oldest retained samples being replayed. Keep the final Git configuration unchanged.
+   Calculate a temporary per-tenant `out_of_order_time_window` from the newest TSDB sample timestamp minus the
+   oldest retained sample timestamp to replay, plus a margin for the entire recovery duration. Verify that bound
+   before applying the override without changing other limits; do not assume one hour covers a 24-hour topic.
+   Keep the final Git configuration unchanged.
 3. Stop only the three ingesters without flushing their heads again. Preserve their PVCs and WAL. Distributors
    keep writing to shared Kafka; current queries can be temporarily unavailable while ingesters restart.
 4. Once all old ingester Pods are gone, delete only each ingester group's committed offsets for
    `observability.mimir.ingest.v1`. Do not reset another group or topic, delete any Kafka records, copy offsets
    from the retired broker, or remove TSDB files. With file enforcement disabled, absent topic offsets cause the
-   native reader to restart at partition offset zero. A CLI reset to offset zero is insufficient because Mimir
+   native reader to restart at the earliest retained partition offset. A CLI reset to offset zero is insufficient because Mimir
    interprets committed offsets as the last consumed record and would start at offset one.
 5. Restore the three ingester replicas. Verify the runtime override, startup at the partition beginning, progress
-   beyond the captured end offsets, and no new timestamp or out-of-order rejections. Confirm previously missing
-   sample timestamps now query exactly and historical/current queries still work.
+   beyond the captured end offsets, and no new timestamp or out-of-order rejections. Keep the override enabled
+   until collector queues and distributor producer buffers have drained. Capture fresh Kafka end offsets and
+   verify each last consumed offset reaches that partition's end minus one; repeat while checking that no queued
+   backlog remains and consumer lag has returned to zero. The initial watermark alone cannot cover buffered
+   records appended during replay. Confirm previously missing sample timestamps now query exactly and
+   historical/current queries still work.
 6. Restore the original runtime ConfigMap and remove the temporary Argo pause. Verify the default out-of-order
    window is restored, recovered samples remain queryable, and collector queues and native producer errors recover.
 
