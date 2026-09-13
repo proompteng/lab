@@ -259,6 +259,18 @@ assumptions, independent sessions, and cost sensitivity still require evaluation
 test proves a native intent/fill/accounting path; it does not substitute for a retained full-session result or a
 full-process crash/restart test.
 
+Each replayed IOC retains its actual modeled arrival quote, source coordinates and record hash, quote availability
+and age, and the fill, cancellation or rejection reason. Price-limit cancellations include the rounded adverse price
+used by the execution model. Order limits and quantities remain on the same broker order; the report binds the
+latency, slippage, liquidity and fee assumptions. These receipts survive broker checkpoints. Older checkpoints may
+lack an execution receipt and cannot establish an unsuccessful order's arrival cause.
+
+Every pass also retains the production cycle result and broker state. The final report binds the pass file's SHA-256
+and record count. `ENTRY_INTENTS_SETTLED_UNTIL_CLOSE` identifies
+the existing lifecycle rule that waits after terminal entry intents, including a zero-fill IOC cancellation. This
+distinguishes a waiting bound decision from a fresh strategy evaluation. Retaining these facts does not change entry
+thresholds, the lifecycle rule, or the modeled execution price.
+
 The required capture receipt uses `bayn.replay-source-capture.v1` with `capturedAt`, `origin`, `coverageStartMs`,
 `coverageEndMs`, `universe`, and complete `positions` (`topic`, `partition`, `startOffset`, `endOffsetExclusive`).
 Capture the raw cuts with Kafka ListOffsets at both requested boundaries, resolving a missing timestamp match to the

@@ -41,6 +41,7 @@ import org.apache.flink.connector.kafka.source.KafkaSourceBuilder
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer
 import org.apache.flink.connector.kafka.source.reader.deserializer.KafkaRecordDeserializationSchema
 import org.apache.flink.metrics.Counter
+import org.apache.flink.streaming.api.TimerService
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction
 import org.apache.flink.streaming.api.functions.co.KeyedCoProcessFunction
@@ -1542,7 +1543,12 @@ internal class TaSignalsFunction(
   private lateinit var outputRevisions: MapState<String, Long>
   private lateinit var sessionDate: ValueState<String>
   private lateinit var accumulator: ValueState<IndicatorAccumulator>
+  private lateinit var pendingRebuild: ValueState<SignalRebuildState>
+  private lateinit var queuedRebuildFrom: ValueState<Instant>
+  private lateinit var closedSessionRebuilds: ListState<SignalRebuildState>
+  private lateinit var rebuildTimer: ValueState<Long>
   private lateinit var rejected: Counter
+  private val retainedBars = maxOf(61, signalHistoryLimit(config.vwapWindow, config.realizedVolWindow, barDuration))
 
   override fun open(openContext: OpenContext) {
     val names = signalStateDescriptorNames(barDuration, timestampAnchor, resetLegacyOneSecondState)
@@ -1556,6 +1562,11 @@ internal class TaSignalsFunction(
     outputRevisions = runtimeContext.getMapState(MapStateDescriptor("$namespace-output-revisions", String::class.java, Long::class.java))
     sessionDate = runtimeContext.getState(ValueStateDescriptor("$namespace-date", String::class.java))
     accumulator = runtimeContext.getState(ValueStateDescriptor("$namespace-indicators", IndicatorAccumulator::class.java))
+    pendingRebuild = runtimeContext.getState(ValueStateDescriptor("$namespace-pending-rebuild-v1", SignalRebuildState::class.java))
+    queuedRebuildFrom = runtimeContext.getState(ValueStateDescriptor("$namespace-queued-rebuild-from-v1", Instant::class.java))
+    closedSessionRebuilds =
+      runtimeContext.getListState(ListStateDescriptor("$namespace-closed-session-rebuilds-v1", SignalRebuildState::class.java))
+    rebuildTimer = runtimeContext.getState(ValueStateDescriptor("$namespace-rebuild-timer-v1", Long::class.java))
     rejected = runtimeContext.metricGroup.counter("signal_bar_rejections_total")
   }
 
@@ -1565,7 +1576,6 @@ internal class TaSignalsFunction(
     out: Collector<Envelope<TaSignalsPayload>>,
   ) {
     if (!value.isFinal) return
-    val retainedBars = maxOf(61, signalHistoryLimit(config.vwapWindow, config.realizedVolWindow, barDuration))
     try {
       advanceIndicators(IndicatorAccumulator(), value.payload, barDuration, retainedBars)
     } catch (error: IllegalArgumentException) {
@@ -1578,9 +1588,11 @@ internal class TaSignalsFunction(
     val previousDate = sessionDate.value()
     if (previousDate != null && date < previousDate) return
     if (date != previousDate) {
+      queuedRebuildFrom.value()?.let { closedSessionRebuilds.add(rebuildSnapshot(it)) }
+      queuedRebuildFrom.clear()
       canonicalBars.clear()
       inputRevisions.clear()
-      outputRevisions.clear()
+      if (pendingRebuild.value() == null) outputRevisions.clear()
       accumulator.clear()
       sessionDate.update(date)
       // Legacy retained bars cannot establish the original recursive seed or session totals.
@@ -1604,6 +1616,10 @@ internal class TaSignalsFunction(
     if (existing?.envelope?.payload == value.payload) return
     val canonical = CanonicalSignalBar(value, if (existing == null) quoteState.value() else existing.quote)
     canonicalBars.put(key, canonical)
+    if (pendingRebuild.value() != null) {
+      queuedRebuildFrom.update(minOf(queuedRebuildFrom.value() ?: value.payload.t, value.payload.t))
+      return
+    }
     val previous = accumulator.value() ?: IndicatorAccumulator()
     val latest = previous.recent.lastOrNull()
     if (latest == null || value.payload.t.isAfter(latest.t)) {
@@ -1611,16 +1627,67 @@ internal class TaSignalsFunction(
       accumulator.update(next)
       out.collect(computeSignals(canonical, next, ctx.timerService().currentProcessingTime()))
     } else {
-      var next = IndicatorAccumulator()
-      for (bar in canonicalBars.values().toList().sortedBy { it.envelope.payload.t }) {
-        next = advanceIndicators(next, bar.envelope.payload, barDuration, retainedBars)
-        if (!bar.envelope.payload.t
-            .isBefore(value.payload.t)
-        ) {
-          out.collect(computeSignals(bar, next, ctx.timerService().currentProcessingTime()))
-        }
+      beginRebuild(value.payload.t, ctx.timerService())
+    }
+  }
+
+  private fun beginRebuild(
+    from: Instant,
+    timers: TimerService,
+  ) {
+    pendingRebuild.update(rebuildSnapshot(from))
+    scheduleRebuild(timers)
+  }
+
+  private fun rebuildSnapshot(from: Instant) =
+    SignalRebuildState(checkNotNull(sessionDate.value()), canonicalBars.values().toList().sortedBy { it.envelope.payload.t }, from)
+
+  private fun scheduleRebuild(timers: TimerService) {
+    val next = Math.incrementExact(timers.currentProcessingTime())
+    rebuildTimer.update(next)
+    timers.registerProcessingTimeTimer(next)
+  }
+
+  override fun onTimer(
+    timestamp: Long,
+    ctx: OnTimerContext,
+    out: Collector<Envelope<TaSignalsPayload>>,
+  ) {
+    if (rebuildTimer.value() != timestamp) return
+    rebuildTimer.clear()
+    val pending = checkNotNull(pendingRebuild.value()) { "signal rebuild timer has no pending work" }
+    var index = pending.index
+    var next = pending.indicators
+    var advanced = 0
+    while (index < pending.bars.size && advanced < 64) {
+      val bar = pending.bars[index++]
+      next = advanceIndicators(next, bar.envelope.payload, barDuration, retainedBars)
+      advanced += 1
+      if (!bar.envelope.payload.t
+          .isBefore(pending.from)
+      ) {
+        out.collect(computeSignals(bar, next, ctx.timerService().currentProcessingTime()))
+        break
       }
-      accumulator.update(next)
+    }
+    if (index < pending.bars.size) {
+      pendingRebuild.update(pending.copy(index = index, indicators = next))
+      scheduleRebuild(ctx.timerService())
+      return
+    }
+    if (pending.sessionDate == sessionDate.value()) accumulator.update(next)
+    pendingRebuild.clear()
+    val closed = closedSessionRebuilds.get().toList()
+    if (closed.isNotEmpty()) {
+      closedSessionRebuilds.update(closed.drop(1))
+      pendingRebuild.update(closed.first())
+      scheduleRebuild(ctx.timerService())
+      return
+    }
+    val queued = queuedRebuildFrom.value()
+    if (queued != null) {
+      queuedRebuildFrom.clear()
+      beginRebuild(queued, ctx.timerService())
     }
   }
 
@@ -1709,6 +1776,14 @@ internal class TaSignalsFunction(
 internal data class CanonicalSignalBar(
   val envelope: Envelope<MicroBarPayload>,
   val quote: TimedQuoteState?,
+) : Serializable
+
+internal data class SignalRebuildState(
+  val sessionDate: String,
+  val bars: List<CanonicalSignalBar>,
+  val from: Instant,
+  val index: Int = 0,
+  val indicators: IndicatorAccumulator = IndicatorAccumulator(),
 ) : Serializable
 
 internal data class SignalInputRevision(

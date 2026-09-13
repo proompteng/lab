@@ -751,7 +751,7 @@ const executeBoundExecutionCycle = (
       })
       switch (terminalization._tag) {
         case 'WaitForClose':
-          return { _tag: 'Wait', observedAt: step.observedAt }
+          return { _tag: 'Wait', observedAt: step.observedAt, waitReason: 'ENTRY_INTENTS_SETTLED_UNTIL_CLOSE' }
         case 'Block':
           return { _tag: 'Block', reason: CycleTerminalReason.Risk, observedAt: step.observedAt }
         case 'Complete':
@@ -820,6 +820,7 @@ const executeBoundExecutionCycle = (
 export const deferPostMutationReconciliation = (pending: PostMutationReconciliation): CycleRunResult => ({
   outcome: 'RECOVERED' as const,
   action: 'WAITING' as const,
+  waitReason: 'POST_MUTATION_RECONCILIATION',
   observedAt: pending.observedAt,
   cycle: pending.cycle,
 })
@@ -966,6 +967,7 @@ const interpretBoundMutationCycleOutcome = (
         action: 'WAITING',
         observedAt: outcome.observedAt,
         cycle,
+        ...(outcome.waitReason === undefined ? {} : { waitReason: outcome.waitReason }),
       })
     case 'Block':
       return input.blockedCycleIntentStore === undefined
