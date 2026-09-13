@@ -244,6 +244,7 @@ jobs:
         run: |
           bun test services/bayn/src/intraday-replay/durable-broker.integration.test.ts
           bun test services/bayn/src/intraday-replay/runtime.integration.test.ts
+          bun test services/bayn/src/intraday-replay/restart.integration.test.ts
       - name: Stop isolated replay TigerBeetle
         if: always()
         run: docker rm -f bayn-replay-tigerbeetle || true

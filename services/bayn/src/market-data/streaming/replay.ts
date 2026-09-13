@@ -72,9 +72,12 @@ export const reproduceStreamingSnapshot = (
     const rawTopics = new Set(Object.values(manifest.sourceTopics))
     const bootstrapFeatureTopics = [
       ...new Set(evidence.bootstrap.partitions.map((partition) => partition.topic)),
-    ].filter((topic) => !rawTopics.has(topic))
+    ].filter((topic) => !rawTopics.has(topic) && topic !== evidence.technical?.topic)
     const featureTopic = bootstrapFeatureTopics[0]
     if (
+      (evidence.technical !== undefined &&
+        (rawTopics.has(evidence.technical.topic) ||
+          !evidence.bootstrap.partitions.some((partition) => partition.topic === evidence.technical?.topic))) ||
       bootstrapFeatureTopics.length !== 1 ||
       featureTopic === undefined ||
       featureTopics.some((topic) => topic !== featureTopic)
@@ -84,7 +87,11 @@ export const reproduceStreamingSnapshot = (
       universeId: manifest.universeId,
       universeSymbolHash: manifest.universeSymbolHash,
       symbols: manifest.universe,
-      topics: { ...manifest.sourceTopics, features: featureTopic },
+      topics: {
+        ...manifest.sourceTopics,
+        features: featureTopic,
+        ...(evidence.technical === undefined ? {} : { technicalFeatures: evidence.technical.topic }),
+      },
     }
     const projection = yield* restoreRecordedProjection(manifest, rows, evidence, universe, evidence.bootstrap.epoch)
     const query: IntradaySnapshotQuery = {
@@ -110,6 +117,12 @@ export const reproduceStreamingSnapshot = (
       query,
     )
     if (
+      (yield* canonicalHashV1Result(reproduced.manifest.streaming).pipe(
+        Result.mapError((cause) => fail('Invalid reproduced cut hash', cause)),
+      )) !==
+        (yield* canonicalHashV1Result(evidence).pipe(
+          Result.mapError((cause) => fail('Invalid supplied cut hash', cause)),
+        )) ||
       reproduced.manifest.contentHash !== manifest.contentHash ||
       reproduced.manifest.snapshotId !== manifest.snapshotId
     )
@@ -120,7 +133,7 @@ export const reproduceStreamingSnapshot = (
 const restoreRecordedProjection = (
   manifest: StreamingSnapshotManifest | SimulatedSnapshotManifest,
   rows: PersistedIntradaySnapshotRows,
-  evidence: Pick<StreamingSnapshotEvidence, 'records' | 'features' | 'sequence'>,
+  evidence: Pick<StreamingSnapshotEvidence, 'records' | 'features' | 'sequence' | 'technical'>,
   universe: StreamingUniverse,
   epoch: string,
   simulation?: typeof SimulatedSnapshotSourceSchema.Type,
@@ -142,13 +155,14 @@ const restoreRecordedProjection = (
     if (byCoordinate.size !== values.length || evidence.records.length !== values.length)
       return yield* Result.fail(fail('Recorded rows and receipts must have exactly one matching source coordinate'))
     let projection = {
-      ...emptyStreamingProjection(epoch),
+      ...emptyStreamingProjection(epoch, universe.topics.technicalFeatures),
       availabilityMode: simulation === undefined ? ('observed' as const) : ('simulated' as const),
     }
     const receiptKeys = new Set<string>()
     const deliveries = [
       ...evidence.records.map((receipt) => ({ kind: 'raw' as const, receipt })),
       ...evidence.features.map((receipt) => ({ kind: 'feature' as const, receipt })),
+      ...(evidence.technical?.features ?? []).map((receipt) => ({ kind: 'technical' as const, receipt })),
     ].toSorted((a, b) => a.receipt.sequence - b.receipt.sequence)
     let previousSequence = 0
     for (const delivery of deliveries) {
@@ -210,14 +224,21 @@ export const reproduceSimulatedSnapshot = (
       positions: _positions,
       records: _records,
       features: _features,
+      technical: _technical,
       sequence: _sequence,
       ...source
     } = evidence
+    if (evidence.technicalFeatureTopic !== evidence.technical?.topic)
+      return yield* Result.fail(fail('Technical source differs from the simulated input cut'))
     const universe: StreamingUniverse = {
       universeId: manifest.universeId,
       universeSymbolHash: manifest.universeSymbolHash,
       symbols: manifest.universe,
-      topics: { ...manifest.sourceTopics, features: evidence.featureTopic },
+      topics: {
+        ...manifest.sourceTopics,
+        features: evidence.featureTopic,
+        ...(evidence.technicalFeatureTopic === undefined ? {} : { technicalFeatures: evidence.technicalFeatureTopic }),
+      },
     }
     const bounds = new Map(
       evidence.positions.map((position) => [
@@ -235,6 +256,7 @@ export const reproduceSimulatedSnapshot = (
           offset: receipt.sourceOffset,
         })),
         ...evidence.features,
+        ...(evidence.technical?.features ?? []),
       ].some(
         (receipt) => BigInt(receipt.offset) >= (bounds.get(topicPartitionKey(receipt.topic, receipt.partition)) ?? -1n),
       )
@@ -292,6 +314,12 @@ export const reproduceSimulatedSnapshot = (
       query,
     )
     if (
+      (yield* canonicalHashV1Result(reproduced.manifest.streaming).pipe(
+        Result.mapError((cause) => fail('Invalid reproduced cut hash', cause)),
+      )) !==
+        (yield* canonicalHashV1Result(evidence).pipe(
+          Result.mapError((cause) => fail('Invalid supplied cut hash', cause)),
+        )) ||
       reproduced.manifest.contentHash !== manifest.contentHash ||
       reproduced.manifest.snapshotId !== manifest.snapshotId
     )

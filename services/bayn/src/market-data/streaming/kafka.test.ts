@@ -10,6 +10,8 @@ import { Clock, Effect, Exit, Logger, Redacted, Result } from 'effect'
 import { readFileSync } from 'node:fs'
 import { AuthenticationError } from '@platformatic/kafka'
 import { decodeRollingMarketFeature } from '../features/contract'
+import technicalFixture from '../features/fixtures/technical-indicators-v1.json'
+import { decodeTechnicalMarketFeature } from '../features/technical-contract'
 import { TestClock } from 'effect/testing'
 
 import { provideTestLayer } from '../../effect-test-support'
@@ -128,49 +130,67 @@ describe('Kafka bootstrap and scoped consumption', () => {
     expect(transport.closeCount).toBe(1)
   })
 
-  test('feature arrival receipts are emitted once after incorporation, excluding transport and semantic retries', async () => {
-    const fixture: unknown = JSON.parse(
-      readFileSync(new URL('../features/fixtures/rolling-price-v1.json', import.meta.url), 'utf8'),
-    )
-    const feature = Result.getOrThrow(decodeRollingMarketFeature(fixture))
-    const input = feature.material.inputs[0]
-    if (input === undefined) throw new Error('fixture has no input')
-    const featureUniverse = {
-      ...universe,
-      universeId: feature.material.universeId,
-      universeSymbolHash: feature.material.universeSymbolHash,
-      topics: { ...universe.topics, bars: input.sourceTopic },
-    }
-    const logs: unknown[] = []
-    const logger = Logger.make(({ message }) => logs.push(message))
-    const transport = new FakeTransport()
-    const bounds = Object.values(featureUniverse.topics).map((topic) => ({ topic, partition: 0, offset: '0' }))
-    transport.offsets = async () => bounds
-    transport.drained = bounds
-    await program(
-      Effect.gen(function* () {
-        yield* TestClock.setTime(feature.computedAtMs + 1000)
-        const projection = yield* makeKafkaMarketProjection(config, featureUniverse, () => transport)
-        yield* TestClock.adjust('100 millis')
-        const record = {
-          topic: featureUniverse.topics.features,
-          partition: 0,
-          offset: '0',
-          value: JSON.stringify(feature),
-          timestampMs: feature.computedAtMs,
-          leaderEpoch: 1,
-        }
-        transport.send(record)
-        yield* TestClock.adjust('100 millis')
-        expect((yield* projection.status).ready).toBe(false)
-        transport.send(record)
-        transport.send({ ...record, offset: '1' })
-        yield* TestClock.adjust('1 second')
-        expect((yield* projection.read).projection.features.get('AAPL')).toHaveLength(1)
-        expect(logs.filter((message) => Array.isArray(message) && message[0] === 'Kafka feature incorporated')).toEqual(
-          [
+  test.each(['rolling', 'technical'] as const)(
+    '%s feature arrival receipts are emitted once after incorporation, excluding transport and semantic retries',
+    async (family) => {
+      const fixture: unknown = JSON.parse(
+        readFileSync(new URL('../features/fixtures/rolling-price-v1.json', import.meta.url), 'utf8'),
+      )
+      const feature =
+        family === 'technical'
+          ? Result.getOrThrow(decodeTechnicalMarketFeature(technicalFixture))
+          : Result.getOrThrow(decodeRollingMarketFeature(fixture))
+      const technicalTopic = 'torghut.technical-features.v1'
+      const featureTopic = family === 'technical' ? technicalTopic : universe.topics.features
+      const logMessage = family === 'technical' ? 'Kafka technical feature incorporated' : 'Kafka feature incorporated'
+      const input = feature.material.inputs[0]
+      if (input === undefined) throw new Error('fixture has no input')
+      const featureUniverse = {
+        ...universe,
+        universeId: feature.material.universeId,
+        universeSymbolHash: feature.material.universeSymbolHash,
+        topics: {
+          ...universe.topics,
+          bars: input.sourceTopic,
+          ...(family === 'technical' ? { technicalFeatures: technicalTopic } : {}),
+        },
+      }
+      const logs: unknown[] = []
+      const logger = Logger.make(({ message }) => logs.push(message))
+      const transport = new FakeTransport()
+      const bounds = Object.values(featureUniverse.topics).map((topic) => ({ topic, partition: 0, offset: '0' }))
+      const requestedTopics: readonly string[][] = []
+      const lookups = [...requestedTopics]
+      transport.offsets = async (topics) => {
+        lookups.push([...topics])
+        return bounds
+      }
+      transport.drained = bounds
+      await program(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(feature.computedAtMs + 1000)
+          const projection = yield* makeKafkaMarketProjection(config, featureUniverse, () => transport)
+          yield* TestClock.adjust('100 millis')
+          const record = {
+            topic: featureTopic,
+            partition: 0,
+            offset: '0',
+            value: JSON.stringify(feature),
+            timestampMs: feature.computedAtMs,
+            leaderEpoch: 1,
+          }
+          transport.send(record)
+          yield* TestClock.adjust('100 millis')
+          expect((yield* projection.status).ready).toBe(false)
+          transport.send(record)
+          transport.send({ ...record, offset: '1' })
+          yield* TestClock.adjust('1 second')
+          const state = (yield* projection.read).projection
+          expect((family === 'technical' ? state.technicalFeatures : state.features).get('AAPL')).toHaveLength(1)
+          expect(lookups.every((topics) => topics.includes(featureTopic))).toBe(true)
+          expect(logs.filter((message) => Array.isArray(message) && message[0] === logMessage)).toEqual([
             [
-              'Kafka feature incorporated',
+              logMessage,
               expect.objectContaining({
                 featureId: feature.featureId,
                 computedAtMs: feature.computedAtMs,
@@ -179,12 +199,12 @@ describe('Kafka bootstrap and scoped consumption', () => {
                 retainedAtBootstrap: false,
               }),
             ],
-          ],
-        )
-      }).pipe(Effect.provide(Logger.layer([logger]))),
-    )
-    expect(transport.closeCount).toBe(1)
-  })
+          ])
+        }).pipe(Effect.provide(Logger.layer([logger]))),
+      )
+      expect(transport.closeCount).toBe(1)
+    },
+  )
 
   test('a slow optional lookup leaves the live projection and consumer running', async () => {
     const transport = new FakeTransport()

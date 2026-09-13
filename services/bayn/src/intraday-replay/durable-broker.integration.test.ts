@@ -72,6 +72,7 @@ durableTest(
         yield* TestClock.setTime(Date.parse('2026-09-04T00:00:00.000Z'))
         const broker = yield* makeReplayBroker({
           runId,
+          sourceManifestHash: 'f'.repeat(64),
           openingCashMicros: '10000000000',
           protocol,
           assumptions: {

@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "bayn.replay-source-admission-receipt.v1",
+  "sourceRevision": "5a2db05ca60e97bdbf3a8f6635b43efc11e973a7",
+  "validatedAt": "2026-09-12T23:18:37.660Z",
+  "captureHash": "2c77a11084bacee70a3ebe862477304150e533903725e703f450c0d8838ebd8a",
+  "sourceManifestHash": "c96291137e33b8d008f049b1a881da79a1f1c7f8091a59e2730631764bc2f6f9",
+  "processedRecords": 8437431,
+  "scope": "Source admission only; existing v4 execution reports are unchanged and use their separately recorded executable",
+  "receiptHash": "7c0ca94f63250c54b095ec4332a1ec4df0b6deda3995e2e339c8e176ede27d7a"
+}

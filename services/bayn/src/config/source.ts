@@ -60,6 +60,9 @@ export const kafkaMarketConfig = Config.schema(
         ? Config.succeed(undefined)
         : Config.all({
             shadowOnly: Config.succeed(mode === 'shadow'),
+            technicalFeaturesTopic: Config.option(nonEmptyString('BAYN_KAFKA_TECHNICAL_FEATURES_TOPIC')).pipe(
+              Config.map(Option.getOrUndefined),
+            ),
             brokers: Config.schema(ReplicaAddresses, 'BAYN_KAFKA_BROKERS'),
             username: nonEmptyString('BAYN_KAFKA_USERNAME'),
             password: secretString('BAYN_KAFKA_PASSWORD'),

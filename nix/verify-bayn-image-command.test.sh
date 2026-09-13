@@ -73,6 +73,10 @@ func main() {
 		if exists("/node-fail") {
 			os.Exit(99)
 		}
+		if len(os.Args) == 3 && os.Args[1] == "/app/services/bayn/dist/session-replay-command.js" && os.Args[2] == "--help" {
+			fmt.Println("Usage: bayn-session-replay --input <session.json> --arrivals <source.ndjson> --capture <capture.json> --capture-sha256 <trusted-hash> --output <new-directory> | --help")
+			return
+		}
 		if len(os.Args) == 3 && os.Args[1] == "/app/services/bayn/dist/streaming-replay-command.js" && os.Args[2] == "--help" {
 			fmt.Println("Usage: bayn-streaming-replay --file <decision.json> | --decision <decision-content-hash> | --historical <experiment.json>")
 			return
@@ -146,6 +150,9 @@ ln -s /nix/store/test-bayn-runtime/app/services/bayn/dist/vendor-intraday-replay
 ln -s /nix/store/test-bayn-runtime/app/services/bayn/dist/restate-execution-server.js \
   "${root}/app/services/bayn/dist/restate-execution-server.js"
 
+: > "${root}/nix/store/test-bayn-runtime/app/services/bayn/dist/session-replay-command.js"
+ln -s /nix/store/test-bayn-runtime/app/services/bayn/dist/session-replay-command.js \
+  "${root}/app/services/bayn/dist/session-replay-command.js"
 : > "${root}/nix/store/test-bayn-runtime/app/services/bayn/dist/streaming-replay-command.js"
 ln -s /nix/store/test-bayn-runtime/app/services/bayn/dist/streaming-replay-command.js \
   "${root}/app/services/bayn/dist/streaming-replay-command.js"

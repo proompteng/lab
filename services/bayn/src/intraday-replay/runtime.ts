@@ -1,5 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
 import { Context, Effect } from 'effect'
+import { operationTimeoutOrElse } from '../operation-timeout'
 
 import { BrokerRead } from '../broker/alpaca'
 import { BrokerEnvironment } from '../broker/identity'
@@ -66,6 +67,7 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
       identity.environment !== BrokerEnvironment.Sandbox ||
       identity.accountId !== `replay-${input.source.runId}` ||
       input.broker.accountId !== identity.accountId ||
+      input.broker.sourceManifestHash !== input.source.sourceManifestHash ||
       input.clock.accountId !== identity.accountId ||
       input.clock.sourceManifestHash !== input.source.sourceManifestHash
     )
@@ -124,7 +126,17 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
       generationHash: sourceGenerationHash,
       maximum: Authority.Observe,
     })
-    const reconcile = runReconciliation({ read: input.broker.read, store, fence, now: currentUtcInstant })
+    const reconcile = runReconciliation({ read: input.broker.read, store, fence, now: currentUtcInstant }).pipe(
+      operationTimeoutOrElse({
+        duration: input.reconciliationPassTimeoutMs,
+        orElse: () =>
+          Effect.fail(
+            new ReplayBrokerFailure({
+              message: `Replay reconciliation exceeded ${input.reconciliationPassTimeoutMs}ms`,
+            }),
+          ),
+      }),
+    )
     yield* reconcile
     const activated = yield* store.capitalGrantLifecycle.activateResearchCapitalGrant(
       researchCapitalGrantProof(request),

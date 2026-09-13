@@ -4,6 +4,7 @@ import org.apache.flink.connector.base.DeliveryGuarantee
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class TechnicalAnalysisSavepointTest {
@@ -32,6 +33,8 @@ class TechnicalAnalysisSavepointTest {
       enabled: Boolean,
       topology: FlinkTaConfig = config,
       technical: Boolean = false,
+      checkpoint: Boolean = false,
+      restoreTopology: FeatureRestoreTopology = FeatureRestoreTopology.ROLLING_FEATURES,
     ): Map<String, Set<String>> {
       val env = StreamExecutionEnvironment.getExecutionEnvironment()
       env.parallelism = topology.parallelism
@@ -39,7 +42,14 @@ class TechnicalAnalysisSavepointTest {
         configureTechnicalAnalysisJob(
           env,
           topology,
-          if (enabled) features.copy(technicalTopic = if (technical) "torghut.technical-features.v1" else null) else null,
+          if (enabled) {
+            features.copy(
+              technicalTopic = if (technical) "torghut.technical-features.v1" else null,
+              restoreTopology = if (technical) restoreTopology else FeatureRestoreTopology.TA_ONLY,
+            )
+          } else {
+            null
+          },
         )
       val operators = graph.jobGraph.vertices.flatMap { it.operatorIDs }
       val identities = operators.map { (it.userDefinedOperatorID?.orElse(it.generatedOperatorID) ?: it.generatedOperatorID).toHexString() }
@@ -47,13 +57,32 @@ class TechnicalAnalysisSavepointTest {
       return operators
         .groupBy { it.userDefinedOperatorName ?: "<unnamed>" }
         .mapValues { (_, values) ->
-          values.map { (it.userDefinedOperatorID?.orElse(it.generatedOperatorID) ?: it.generatedOperatorID).toHexString() }.toSet()
+          values
+            .flatMap {
+              if (checkpoint) {
+                listOf(
+                  it.generatedOperatorID.toHexString(),
+                )
+              } else {
+                listOfNotNull(it.generatedOperatorID.toHexString(), it.userDefinedOperatorID?.orElse(null)?.toHexString())
+              }
+            }.toSet()
         }
     }
     val original = hashes(false)
     val extended = hashes(true)
     val technical = hashes(true, technical = true)
-    extended.forEach { (name, ids) -> assertTrue(technical[name]?.containsAll(ids) == true, "technical addition preserves: $name") }
+    val direct = hashes(true, technical = true, restoreTopology = FeatureRestoreTopology.TA_ONLY)
+    hashes(false, checkpoint = true).forEach { (name, ids) ->
+      assertTrue(direct[name]?.containsAll(ids) == true, "direct TA-only upgrade must restore: $name $ids")
+    }
+    hashes(true, checkpoint = true).forEach { (name, ids) ->
+      assertTrue(technical[name]?.containsAll(ids) == true, "checkpoint generated IDs must restore: $name $ids")
+    }
+    assertTrue(
+      technical["sink-signals-clickhouse: Writer"]?.contains("f522e4fa3e4594331e6c92266d1a35bf") == true,
+      "restore the writer ID observed in the deployed savepoint",
+    )
     val legacyStatefulOperators =
       mapOf(
         "Source: ta-trades-source" to "cbc357ccb763df2852fee8c4fc7d55f2",
@@ -85,7 +114,35 @@ class TechnicalAnalysisSavepointTest {
     )) {
       val previous = hashes(false, topology)
       val current = hashes(true, topology)
+      val upgraded = hashes(true, topology, technical = true)
+      val directUpgrade = hashes(true, topology, technical = true, restoreTopology = FeatureRestoreTopology.TA_ONLY)
+      hashes(false, topology, checkpoint = true).forEach { (name, ids) ->
+        assertTrue(directUpgrade[name]?.containsAll(ids) == true, "optional direct upgrade operator: $name $ids")
+      }
+      hashes(true, topology, checkpoint = true).forEach { (name, ids) ->
+        assertTrue(upgraded[name]?.containsAll(ids) == true, "optional checkpoint operator: $name $ids")
+      }
       previous.forEach { (name, ids) -> assertTrue(current[name]?.containsAll(ids) == true, "optional topology operator: $name") }
+    }
+  }
+
+  @Test
+  fun `technical features require explicit savepoint topology selection`() {
+    val env =
+      mapOf(
+        "TA_MARKET_FEATURES_TOPIC" to "rolling",
+        "TA_TECHNICAL_FEATURES_TOPIC" to "technical",
+        "ARCHIVE_CORE_BARS_TOPIC" to "bars",
+        "ARCHIVE_CORE_UNIVERSE_ID" to "test-equity-v1",
+        "ARCHIVE_CORE_UNIVERSE_SYMBOLS" to "AAPL",
+        "ARCHIVE_CORE_UNIVERSE_SYMBOL_HASH" to canonicalSymbolHash(listOf("AAPL")),
+        "ARCHIVE_CORE_FEED" to "iex",
+        "TORGHUT_TA_COMMIT" to "test-revision",
+      )
+    assertFailsWith<IllegalArgumentException> { RollingMarketFeatureConfig.fromEnv(env) }
+    assertFailsWith<IllegalArgumentException> { RollingMarketFeatureConfig.fromEnv(env + ("TA_FEATURE_RESTORE_TOPOLOGY" to "unknown")) }
+    for (topology in FeatureRestoreTopology.entries) {
+      assertEquals(topology, RollingMarketFeatureConfig.fromEnv(env + ("TA_FEATURE_RESTORE_TOPOLOGY" to topology.name))?.restoreTopology)
     }
   }
 }
