@@ -47,6 +47,7 @@ export const RetainedReplaySourceManifestSchema = Schema.Struct({
       quotes: StrictNonEmptyStringSchema,
       trades: StrictNonEmptyStringSchema,
       features: StrictNonEmptyStringSchema,
+      technicalFeatures: Schema.optionalKey(StrictNonEmptyStringSchema),
     }),
   }),
   deliveryModel: SimulatedSnapshotSourceSchema.fields.deliveryModel,
@@ -121,6 +122,9 @@ export const retainedReplaySourcePartitions = (manifest: RetainedReplaySourceMan
 export const validateRetainedReplaySourceManifest = (input: unknown) =>
   Result.gen(function* () {
     const manifest = yield* Schema.decodeUnknownResult(RetainedReplaySourceManifestSchema, strictParseOptions)(input)
+    const topics = Object.values(manifest.universe.topics)
+    if (new Set(topics).size !== topics.length)
+      return yield* Result.fail(fail('Raw and derived source topics must be distinct'))
     const expected = retainedReplaySourcePartitions(manifest)
     if (
       manifest.positions.length !== expected.length ||
@@ -175,6 +179,9 @@ export const openRetainedReplaySource = (path: string, input: unknown, runId: st
       sourceManifestHash,
       deliveryModel: manifest.deliveryModel,
       featureTopic: manifest.universe.topics.features,
+      ...(manifest.universe.topics.technicalFeatures === undefined
+        ? {}
+        : { technicalFeatureTopic: manifest.universe.topics.technicalFeatures }),
       ...(manifest.regeneratedFeaturesRecordedAtMs === undefined
         ? {}
         : { regeneratedFeaturesRecordedAtMs: manifest.regeneratedFeaturesRecordedAtMs }),

@@ -7,6 +7,7 @@ import {
   StrictNonEmptyStringSchema,
   UnsignedMicrosSchema,
 } from '../../schemas'
+import { TechnicalMarketFeatureSchema } from '../features/technical-contract'
 import { RollingMarketFeatureSchema } from '../features/contract'
 import { KafkaBootstrapTimestampPolicy } from './bootstrap'
 
@@ -27,7 +28,21 @@ const BootstrapSchema = Schema.Struct({
     }),
   ).check(Schema.isMinLength(1)),
 })
+export const TechnicalSnapshotEvidenceSchema = Schema.Struct({
+  topic: StrictNonEmptyStringSchema,
+  features: Schema.Array(
+    Schema.Struct({
+      ...PositionFields,
+      offset: UnsignedMicrosSchema,
+      availableAtMs: Timestamp,
+      sequence: PositiveIntegerSchema,
+      value: TechnicalMarketFeatureSchema,
+    }),
+  ),
+  unavailableSymbols: Schema.Array(StrictNonEmptyStringSchema),
+})
 const CutFields = {
+  technical: Schema.optionalKey(TechnicalSnapshotEvidenceSchema),
   positions: Schema.Array(Schema.Struct({ ...PositionFields, offset: UnsignedMicrosSchema })).check(
     Schema.isMinLength(1),
   ),
@@ -68,6 +83,7 @@ export const SimulatedSnapshotSourceSchema = Schema.Struct({
     tieBreak: Schema.Literal('availability-topic-partition-offset'),
   }),
   featureTopic: StrictNonEmptyStringSchema,
+  technicalFeatureTopic: Schema.optionalKey(StrictNonEmptyStringSchema),
   regeneratedFeaturesRecordedAtMs: Schema.optionalKey(Timestamp),
 })
 export const SimulatedSnapshotEvidenceSchema = Schema.Struct({

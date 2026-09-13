@@ -1,5 +1,9 @@
 # Retained Friday native replay
 
+A [new complete-cut study](v4/README.md) supersedes this original source inventory. It retains independent Kafka
+offset evidence and a pre-execution bundle hash for all three scenarios. Its economic result is still zero fills and
+$0 net P&L. The original reports below remain unchanged.
+
 Status: economic acceptance failed; profitability **UNPROVEN**. This is historical simulation evidence, not current
 deployment or broker readiness. It uses the existing Alpaca IEX integration without a data-feed upgrade.
 

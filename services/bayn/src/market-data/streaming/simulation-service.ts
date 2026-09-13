@@ -73,6 +73,7 @@ export const makeSimulatedMarketData = (
               sequence: _sequence,
               records: _records,
               features: _features,
+              technical: _technical,
               ...provenance
             } = snapshot.manifest.streaming
             const sourceHash = canonicalHashV1Result(source)

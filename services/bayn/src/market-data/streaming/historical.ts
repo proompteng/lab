@@ -142,6 +142,7 @@ export const createHistoricalMarketCursor = (
                 (value) =>
                   value.runId === runId &&
                   value.featureTopic === universe.topics.features &&
+                  value.technicalFeatureTopic === universe.topics.technicalFeatures &&
                   value.regeneratedFeaturesRecordedAtMs === regeneratedFeaturesRecordedAtMs,
               ),
             ),
@@ -152,7 +153,10 @@ export const createHistoricalMarketCursor = (
       runId,
       universe,
       ...(regeneratedFeaturesRecordedAtMs === undefined ? {} : { regeneratedFeaturesRecordedAtMs }),
-      projection: { ...emptyStreamingProjection(`historical-${runId}`), availabilityMode: 'simulated' },
+      projection: {
+        ...emptyStreamingProjection(`historical-${runId}`, universe.topics.technicalFeatures),
+        availabilityMode: 'simulated',
+      },
       processedRecords: 0,
       suppliedOffsets: new Map<string, string>(),
       lastArrival: null,

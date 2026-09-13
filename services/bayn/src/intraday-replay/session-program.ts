@@ -104,7 +104,13 @@ export const prepareReplaySession = (input: unknown, capture: RetainedReplayCapt
       universeId: protocol.universeId,
       universeSymbolHash: protocol.universeSymbolHash,
       symbols: protocol.universe,
-      topics: { ...protocol.sourceTopics, features: protocol.streamingInput.featureTopic },
+      topics: {
+        ...protocol.sourceTopics,
+        features: protocol.streamingInput.featureTopic,
+        ...(decoded.source.universe.topics.technicalFeatures === undefined
+          ? {}
+          : { technicalFeatures: decoded.source.universe.topics.technicalFeatures }),
+      },
     }
     if ((yield* canonicalHashV1Result(universe)) !== (yield* canonicalHashV1Result(decoded.source.universe)))
       return yield* Result.fail(

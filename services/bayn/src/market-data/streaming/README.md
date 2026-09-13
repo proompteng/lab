@@ -121,6 +121,42 @@ and protocol change through the same delivery path; retaining archived feature h
 
 Bar history retains at most four winning revisions for each of 61 minutes per symbol. As-of joins select the latest revision received by the observation time. If revision eviction removes the history needed for a cut, the projection rejects that observation.
 
+## Technical indicator evidence
+
+`BAYN_KAFKA_TECHNICAL_FEATURES_TOPIC=torghut.technical-features.v1` subscribes the same scoped consumer to Dorvud's
+`dorvud.technical-feature.v1` messages. The definition is `dorvud.technical-indicators-1m.v1`. The producer publishes
+EMA 12/26, MACD/signal/histogram, RSI 14, Bollinger bands 20, five-minute/session weighted close and source VWAP,
+and volatility over 60 log returns. Each scalar carries its own readiness and explicit units. Bayn validates the
+versioned definition, payload hash, identity, session bounds, source references, readiness and numeric domains.
+It does not recalculate indicators.
+
+An optional technical receipt joins only when it was available at the observation, ends at the exact decision-window
+boundary, and its source-reference suffix matches the currently selected raw bars, including corrections and content
+hashes. The producer retains complete session provenance; Bayn independently verifies the decision-window suffix,
+not older raw bars outside its retained window. The full technical payload and source references are hashed into the
+snapshot. Recorded live and simulated snapshots reproduce this evidence and reject changed receipts or availability.
+
+An observed replacement supersedes an older technical receipt for the same session and window, even if its raw
+correction has not arrived yet. Selection and diagnostics leave that window unavailable until the replacement
+matches; earlier observations still use only the revisions available at that time.
+
+Missing, late, mismatched or malformed technical input remains unavailable. It cannot authorize a baseline entry or
+invalidate otherwise accepted raw and rolling inputs. A technical rejection invalidates older optional receipts until
+a later distinct valid snapshot arrives. Optional receipt and rejection retention is bounded. The existing strategy,
+thresholds, ranking, risk policy and behavior/parameter hashes remain unchanged; these indicators are retained evidence
+for subsequent strategy research, not a new claimed trading edge. The original input-cut shape is retained when the
+optional topic is unconfigured.
+
+Frozen replay sources can include `universe.topics.technicalFeatures`. That topic and its retained source bytes are
+bound to the run and reproduced cut. Raw, rolling and technical topics must be distinct. The regeneration timestamp
+applies only to rolling features, retaining actual computation time separately from simulated availability. Original
+technical records must pass the normal computation-to-arrival clock bound. The historical economic study
+under `docs/bayn/evidence/2026-09-11-native-replay/` did not include technical indicators or modify the baseline.
+
+Enable the consumer after the reviewed producer/topic deployment. `Kafka technical feature incorporated` logs report
+feature identity, source position, computation and receipt times; they prove ingestion, while a reproduced snapshot
+with matching technical receipts proves the join.
+
 ## Simulated execution inputs
 
 `constructSimulatedSnapshot` consumes the incremental historical cursor through the same selection rules as live
