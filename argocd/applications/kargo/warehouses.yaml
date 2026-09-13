@@ -614,65 +614,21 @@ spec:
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
-      imageFrom('registry.ide-newton.ts.net/lab/torghut').Tag == 'kargo-sha-' +
-      commitFrom('git@github.com:proompteng/lab.git').ID &&
-      imageFrom('registry.ide-newton.ts.net/lab/torghut-notebook').Tag == 'kargo-sha-' +
-      commitFrom('git@github.com:proompteng/lab.git').ID &&
-      imageFrom('registry.ide-newton.ts.net/lab/torghut-ta').Tag == 'kargo-sha-' +
-      commitFrom('git@github.com:proompteng/lab.git').ID &&
-      imageFrom('registry.ide-newton.ts.net/lab/torghut-ws').Tag == 'kargo-sha-' +
-      commitFrom('git@github.com:proompteng/lab.git').ID &&
-      imageFrom('registry.ide-newton.ts.net/lab/signal-publisher').Tag == 'kargo-sha-' +
-      commitFrom('git@github.com:proompteng/lab.git').ID
+      imageFrom('registry.ide-newton.ts.net/lab/torghut').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/torghut').Annotations['org.opencontainers.image.revision'] &&
+      imageFrom('registry.ide-newton.ts.net/lab/torghut').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab' &&
+      imageFrom('registry.ide-newton.ts.net/lab/torghut-notebook').Tag == imageFrom('registry.ide-newton.ts.net/lab/torghut').Tag &&
+      imageFrom('registry.ide-newton.ts.net/lab/torghut-notebook').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/torghut-notebook').Annotations['org.opencontainers.image.revision'] &&
+      imageFrom('registry.ide-newton.ts.net/lab/torghut-notebook').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab' &&
+      imageFrom('registry.ide-newton.ts.net/lab/torghut-ta').Tag == imageFrom('registry.ide-newton.ts.net/lab/torghut').Tag &&
+      imageFrom('registry.ide-newton.ts.net/lab/torghut-ta').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/torghut-ta').Annotations['org.opencontainers.image.revision'] &&
+      imageFrom('registry.ide-newton.ts.net/lab/torghut-ta').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab' &&
+      imageFrom('registry.ide-newton.ts.net/lab/torghut-ws').Tag == imageFrom('registry.ide-newton.ts.net/lab/torghut').Tag &&
+      imageFrom('registry.ide-newton.ts.net/lab/torghut-ws').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/torghut-ws').Annotations['org.opencontainers.image.revision'] &&
+      imageFrom('registry.ide-newton.ts.net/lab/torghut-ws').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab' &&
+      imageFrom('registry.ide-newton.ts.net/lab/signal-publisher').Tag == imageFrom('registry.ide-newton.ts.net/lab/torghut').Tag &&
+      imageFrom('registry.ide-newton.ts.net/lab/signal-publisher').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/signal-publisher').Annotations['org.opencontainers.image.revision'] &&
+      imageFrom('registry.ide-newton.ts.net/lab/signal-publisher').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab'
   subscriptions:
-    - git:
-        repoURL: git@github.com:proompteng/lab.git
-        branch: main
-        commitSelectionStrategy: NewestFromBranch
-        discoveryLimit: 20
-        strictSemvers: true
-        includePaths:
-          - services/torghut
-          - packages/scripts/src/torghut
-          - services/dorvud/gradle
-          - services/dorvud/gradlew
-          - services/dorvud/gradle.properties
-          - services/dorvud/settings.gradle.kts
-          - services/dorvud/build.gradle.kts
-          - services/dorvud/platform
-          - services/dorvud/technical-analysis
-          - services/dorvud/technical-analysis-flink
-          - services/dorvud/websockets
-          - services/signal-publisher
-          - nix/images/torghut.nix
-          - nix/images/torghut-notebook.nix
-          - nix/images/torghut-ta.nix
-          - nix/images/dorvud-jvm-service.nix
-          - nix/images/torghut-ws.nix
-          - nix/images/signal-publisher.nix
-          - nix/images/bun-workspace-service.nix
-          - nix/images/bun-workspace-deps-source.nix
-          - nix/images/bun-workspace-deps-source.test.sh
-          - nix/check-bun-dependency-closure.sh
-          - .github/workflows/nix-bun-dependency-closure.yml
-          - services/torghut/uv.lock
-          - flake.nix
-          - flake.lock
-          - bun.lock
-          - glob:**/package.json
-          - bunfig.toml
-          - .npmrc
-          - patches
-          - package.json
-          - .github/workflows/nix-oci-build-common.yml
-          - .github/workflows/torghut-ta-build-push.yaml
-          - packages/scripts/src/shared/oci.ts
-          - .github/workflows/torghut-post-deploy-verify.yml
-          - nix/oci-push.sh
-          - argocd/applications/torghut
-        excludePaths:
-          - packages/scripts/src/torghut/__tests__
-          - 'glob:packages/scripts/src/torghut/**/*.test.ts'
     - image:
         repoURL: registry.ide-newton.ts.net/lab/torghut
         imageSelectionStrategy: NewestBuild
