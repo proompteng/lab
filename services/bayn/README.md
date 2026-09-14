@@ -278,8 +278,10 @@ read-only ClickHouse access. See `tools/history.ts` for the strict job schema.
 2. **Publish:** provide `operation: "publish"`, `datasetDirectory`, pinned `datasetId`, and `receiptPath`.
    Configure `BAYN_HISTORY_CLICKHOUSE_URL`, `BAYN_HISTORY_CLICKHOUSE_USERNAME`, and
    `BAYN_HISTORY_CLICKHOUSE_PASSWORD` for the existing offline data administrator. The GitOps schema hook must have
-   created the historical tables first. The tool inserts only missing records, verifies complete row readback, then
-   publishes the manifest. Conflicting records stop publication. It never creates tables or changes permissions.
+   created the historical tables first. Publication and restoration read records in batches of up to 50,000 rows.
+   The publisher inserts only missing records, verifies complete row readback, then publishes the manifest. Restarting
+   the same job rechecks existing rows and resumes missing inserts, including an interrupted batch. Conflicting
+   records stop publication. It never creates tables or changes permissions.
 3. **Restore:** provide `operation: "restore"`, pinned `datasetId`, and `outputDirectory`, using the same explicit
    ClickHouse configuration. Restoration reconstructs identical normalized chunks, calendar, coverage, and manifest;
    every checksum must match. Original HTTP page bodies remain at the acquisition destination. Preserve that archive
