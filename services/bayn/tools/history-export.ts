@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { createGzip, createGunzip } from 'node:zlib'
+import { createGzip, createGunzip, gzipSync } from 'node:zlib'
 import { NodeStream } from '@effect/platform-node'
 import { Cause, DateTime, Effect, FileSystem, Pull, Schema, Stream } from 'effect'
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process'
@@ -51,8 +51,7 @@ const decodeArrival = Schema.decodeUnknownEffect(
   strictParseOptions,
 )
 
-/** One decoded chunk per source file; memory does not grow with the number of market events. */
-export const mergeArrivalFiles = (paths: readonly string[]) =>
+const mergeArrivalBatch = (paths: readonly string[]) =>
   Stream.fromPull(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
@@ -104,6 +103,46 @@ export const mergeArrivalFiles = (paths: readonly string[]) =>
         selected.head = yield* selected.next
         return [event] as const
       })
+    }),
+  )
+
+/** Stable external merge with at most 32 input streams open, regardless of the dataset's session count. */
+export const mergeArrivalFiles = (paths: readonly string[]) =>
+  Stream.unwrap(
+    Effect.gen(function* () {
+      const fanIn = 32
+      if (paths.length <= fanIn) return mergeArrivalBatch(paths)
+      const fs = yield* FileSystem.FileSystem
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: 'bayn-history-merge-' })
+      let inputs = paths,
+        round = 0
+      while (inputs.length > fanIn) {
+        const outputs: string[] = []
+        for (let start = 0; start < inputs.length; start += fanIn) {
+          const path = `${directory}/${round}-${outputs.length}.ndjson.gz`
+          yield* mergeArrivalBatch(inputs.slice(start, start + fanIn)).pipe(
+            Stream.map((event) => `${JSON.stringify(event)}\n`),
+            Stream.concat(Stream.make('')),
+            Stream.grouped(512),
+            // Bounded gzip members propagate upstream failures without a separate duplex writer fiber.
+            Stream.mapEffect((rows) =>
+              Effect.try({
+                try: () => gzipSync(rows.join(''), { level: 1 }),
+                catch: (cause) =>
+                  new HistoricalDatasetFailure({ message: 'Historical merge compression failed', cause }),
+              }),
+            ),
+            Stream.run(fs.sink(path, { flag: 'wx', mode: 0o600 })),
+            Effect.scoped,
+          )
+          outputs.push(path)
+          // Original source files remain immutable; completed intermediate rounds are disposable.
+          if (round > 0) for (const input of inputs.slice(start, start + fanIn)) yield* fs.remove(input)
+        }
+        inputs = outputs
+        round++
+      }
+      return mergeArrivalBatch(inputs)
     }),
   )
 
