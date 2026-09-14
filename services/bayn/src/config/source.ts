@@ -49,21 +49,16 @@ const positiveInteger = (name: string, fallback: number) =>
 const operationalThreshold = (name: string, fallback: number) =>
   Config.schema(OperationalThresholdMs, name).pipe(Config.withDefault(fallback))
 
-export const kafkaMarketConfig = Config.schema(
-  Schema.Literals(['archive', 'shadow', 'streaming']),
-  'BAYN_MARKET_DATA_MODE',
-).pipe(
-  Config.withDefault('archive'),
+export const kafkaMarketConfig = Config.option(Config.schema(ReplicaAddresses, 'BAYN_KAFKA_BROKERS')).pipe(
   Config.mapOrFail(
-    (mode): Config.Config<KafkaMarketConfig | undefined> =>
-      mode === 'archive'
+    (brokers): Config.Config<KafkaMarketConfig | undefined> =>
+      Option.isNone(brokers)
         ? Config.succeed(undefined)
         : Config.all({
-            shadowOnly: Config.succeed(mode === 'shadow'),
+            brokers: Config.succeed(brokers.value),
             technicalFeaturesTopic: Config.option(nonEmptyString('BAYN_KAFKA_TECHNICAL_FEATURES_TOPIC')).pipe(
               Config.map(Option.getOrUndefined),
             ),
-            brokers: Config.schema(ReplicaAddresses, 'BAYN_KAFKA_BROKERS'),
             username: nonEmptyString('BAYN_KAFKA_USERNAME'),
             password: secretString('BAYN_KAFKA_PASSWORD'),
             groupPrefix: nonEmptyString('BAYN_KAFKA_GROUP_PREFIX').pipe(Config.withDefault('bayn-market-v1')),

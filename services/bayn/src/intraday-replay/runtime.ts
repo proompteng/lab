@@ -30,7 +30,7 @@ import {
 import { Authority } from '../execution/contracts'
 import { BlockedCycleIntentStore, IntentStore } from '../execution/intents'
 import { MutationStore } from '../execution/mutations'
-import { makeExecutionProgram } from '../execution/runtime-program'
+import { makeTradingEngine } from '../composition/trading-engine'
 import { WriterFence } from '../execution/writer-fence'
 import { capitalGrantFromLegacyGeneration, capitalGrantKey } from '../execution/mandate'
 import { canonicalHashV1Result } from '../hash'
@@ -38,7 +38,7 @@ import { makeStrategyProtocolHashResult } from '../contracts'
 import { makeSimulatedMarketData } from '../market-data/streaming/simulation-service'
 import type { SimulatedSnapshotSourceSchema } from '../market-data/streaming/evidence-schema'
 import type { HistoricalMarketCursor } from '../market-data/streaming/historical'
-import { loadStrategyExecutionRiskPolicy, makeMutationAutonomousCycleStartup } from '../observe-composition/startup'
+import { loadStrategyExecutionRiskPolicy } from '../observe-composition/startup'
 import type { StrategyRuntime } from '../strategy'
 import { runReconciliation } from '../simulation-reconciliation/broker-reconciler-program'
 import { operationalError, type OperationalError } from '../errors'
@@ -154,21 +154,31 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
         strategy: input.strategy.provenance.strategy,
       }),
     )
-    const executionProgram = yield* Effect.fromResult(
-      makeExecutionProgram(authority, {
+    const engine = yield* makeTradingEngine({
+      authority,
+      cycle: {
+        accountId: identity.accountId,
+        authorityGenerationHash: activated.generationHash,
+        strategy: input.strategy,
+        intradayMarketData: marketData,
+        executionCycleClosureStore: closures,
+        blockedCycleIntentStore,
+        pollIntervalMs: input.pollIntervalMs,
+        reconciliationIntervalMs: input.reconciliationIntervalMs,
+        reconciliationPassTimeoutMs: input.reconciliationPassTimeoutMs,
+      },
+      executionMode: 'Mutation',
+      execution: {
         brokerRead: input.broker.read,
         brokerMutation: input.broker.mutation,
         intentStore,
         mutationStore,
         writerFence: fence,
         persistedCapitalGrants,
-        riskPolicy,
-        currentUtcInstant,
         readFinalExecutionRiskContext: (observedAt) =>
           readFinalExecutionRiskContext(sql, identity.accountId, observedAt),
-        isCloseOnlyIntent: closures.containsIntent,
-      }),
-    )
+      },
+    })
     const resources = Context.make(BrokerRead, input.broker.read).pipe(
       Context.add(CycleStore, cycleStore),
       Context.add(BrokerEventStore, store.events),
@@ -181,18 +191,10 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
       Context.add(IntentStore, intentStore),
       Context.add(MutationStore, mutationStore),
     )
-    const startup = yield* makeMutationAutonomousCycleStartup({
-      accountId: identity.accountId,
-      authorityGenerationHash: activated.generationHash,
-      strategy: input.strategy,
-      intradayMarketData: marketData,
-      executionProgram,
-      executionCycleClosureStore: closures,
-      blockedCycleIntentStore,
-      pollIntervalMs: input.pollIntervalMs,
-      reconciliationIntervalMs: input.reconciliationIntervalMs,
-      reconciliationPassTimeoutMs: input.reconciliationPassTimeoutMs,
-    })({ cycleBindingId: capitalGrantKey(capitalGrantFromLegacyGeneration(generation)), recordPass: input.recordPass })
+    const startup = yield* engine.startCycle({
+      cycleBindingId: capitalGrantKey(capitalGrantFromLegacyGeneration(generation)),
+      recordPass: input.recordPass,
+    })
     const driver = yield* startup.pipe(Effect.provideContext(resources))
     return {
       authorityGenerationHash: activated.generationHash,

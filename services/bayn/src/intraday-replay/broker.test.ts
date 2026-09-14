@@ -396,6 +396,63 @@ test('position evidence retains the valuation timestamp across asynchronous quot
   expect(Result.isSuccess(positionSnapshot(`replay-${runId}`, result))).toBe(true)
 })
 
+test('a quote gap retains an evidenced position mark but cannot supply an executable quote', async () => {
+  const result = await run(
+    Effect.gen(function* () {
+      const broker = yield* setup()
+      yield* submit(broker, intent())
+      yield* TestClock.adjust(protocol.maximumQuoteAgeMs + 1)
+      const account = (yield* broker.read.account).value
+      const valuation = yield* broker.valuation
+      yield* submit(broker, intent({ intentId: '7'.repeat(64), clientOrderId: 'stale-second-buy' }))
+      return { account, valuation, state: yield* broker.snapshot }
+    }),
+  )
+  expect(result.valuation).toMatchObject({
+    model: 'last-observed-bid',
+    marks: [{ symbol: 'AAPL', priceMicros: '100000000', eventAt: observedAt, staleForExecution: true }],
+  })
+  expect(BigInt(result.valuation.marks[0]?.ageNanos ?? '0')).toBeGreaterThan(
+    BigInt(protocol.maximumQuoteAgeMs) * 1_000_000n,
+  )
+  expect(result.account.equityMicros).toBe((BigInt(result.state.ledger.cashMicros) + 500_000_000n).toString())
+  expect(result.state.fills).toHaveLength(1)
+  expect(result.state.orders[1]?.execution?.outcome).toMatchObject({
+    status: 'canceled',
+    reason: ReplayQuoteRejection.Stale,
+  })
+})
+
+test.each(['missing', 'future', 'crossed', 'other-feed'] as const)(
+  'valuation rejects %s quotes after an actual fill',
+  async (kind) => {
+    let afterFill = false
+    const result = await run(
+      Effect.gen(function* () {
+        const broker = yield* setup({
+          quoteAt: () =>
+            Effect.succeed(
+              !afterFill
+                ? observedQuote(quote)
+                : kind === 'missing'
+                  ? undefined
+                  : observedQuote({
+                      ...quote,
+                      eventAt: kind === 'future' ? new Date(startMs + 60_000).toISOString() : quote.eventAt,
+                      askPrice: kind === 'crossed' ? 99 : quote.askPrice,
+                      feed: kind === 'other-feed' ? 'sip' : quote.feed,
+                    }),
+            ),
+        })
+        yield* submit(broker, intent())
+        afterFill = true
+        return yield* Effect.result(broker.read.account)
+      }),
+    )
+    expect(Result.isFailure(result)).toBeTrue()
+  },
+)
+
 test.each(['failure', 'defect', 'conversion'] as const)(
   'delivery %s leaves a terminal recoverable IOC',
   async (kind) => {

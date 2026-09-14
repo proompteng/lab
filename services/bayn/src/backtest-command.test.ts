@@ -1,29 +1,29 @@
 import { expect, test } from 'bun:test'
 import { Effect, Redacted } from 'effect'
-import { parseSessionReplayArgs, validateReplayDatabaseTargets } from './session-replay-command'
+import { parseBacktestArgs, validateReplayDatabaseTargets } from './backtest-command'
 const config = {
   operationTimeoutMs: 1000,
   postgres: { url: Redacted.make('postgresql://test:test@127.0.0.1:55432/bayn_replay'), tls: false, caPath: '/unused' },
   tigerBeetle: { clusterId: 20912n, ledger: 70912, replicaAddresses: ['127.0.0.1:53000'] },
 }
 test('session command requires source, input and a separate output directory', () => {
-  expect(parseSessionReplayArgs(['--help'])._tag).toBe('Help')
+  expect(parseBacktestArgs(['--help'])._tag).toBe('Help')
   expect(
-    parseSessionReplayArgs([
+    parseBacktestArgs([
       '--input',
       'input.json',
       '--arrivals',
       'raw.ndjson',
-      '--capture',
+      '--source-receipt',
       'capture.json',
-      '--capture-sha256',
+      '--source-receipt-sha256',
       'a'.repeat(64),
       '--output',
       'result',
     ]),
   ).toMatchObject({ _tag: 'Run' })
-  expect(parseSessionReplayArgs(['--input', 'input.json'])._tag).toBe('Invalid')
-  expect(parseSessionReplayArgs(['--input', 'input.json', '--arrivals', 'raw.ndjson', '--output', 'result'])._tag).toBe(
+  expect(parseBacktestArgs(['--input', 'input.json'])._tag).toBe('Invalid')
+  expect(parseBacktestArgs(['--input', 'input.json', '--arrivals', 'raw.ndjson', '--output', 'result'])._tag).toBe(
     'Invalid',
   )
 })

@@ -24,7 +24,7 @@ import { simulationFixture } from '../testing/simulated-streaming-fixture'
 import { makeReplayBroker, ReplayBrokerFailure } from './broker'
 import { makeSimulatedExecutionClock } from './clock'
 import { makeReplayExecutionRuntime } from './runtime'
-import { validateReplayDatabaseTargets } from '../session-replay-command'
+import { validateReplayDatabaseTargets } from '../backtest-command'
 
 const main = Effect.scoped(
   Effect.gen(function* () {

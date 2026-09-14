@@ -5,7 +5,6 @@ import { isSqlError, type SqlError } from 'effect/unstable/sql/SqlError'
 
 import { Pipeable } from '../../pipeable'
 import type { CycleDecisionDocument } from '../../shadow-decision-contract'
-import type { ArchiveVerifiedIntradaySnapshotReference } from '../../market-data/intraday/model'
 import type { InputManifest, IsoDate } from '../../types'
 import type { AutonomousCycle, CycleCompletionState, CycleDraft, CycleTerminalReason } from '../model'
 import type { CycleStoreDecisionFailure } from './decision-contract'
@@ -29,7 +28,6 @@ export interface CycleMutationReceipt {
 export interface CycleDecisionBindingEvidence {
   readonly simulatedSnapshotReferences?: readonly SimulatedSnapshotReference[]
   readonly streamingSnapshotReferences?: readonly StreamingVerifiedSnapshotReference[]
-  readonly intradaySnapshotReferences?: readonly ArchiveVerifiedIntradaySnapshotReference[]
 }
 
 interface CycleAuthoritySlotScope {

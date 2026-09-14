@@ -32,7 +32,6 @@ import {
 import type { KafkaMarketRecord, StreamingUniverse } from './raw-events'
 
 export interface KafkaMarketConfig {
-  readonly shadowOnly?: boolean
   readonly technicalFeaturesTopic?: string | undefined
   readonly brokers: readonly string[]
   readonly username: string
