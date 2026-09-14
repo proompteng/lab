@@ -22,9 +22,8 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
   durability guarantee. A failed scratch bootstrap is a runner admission failure; investigate it before changing the
   storage class or falling back to `/var`.
 - DinD mounts separate root-owned scratch subpaths at `/var/lib/docker` and `/var/lib/containerd`, covering both the
-  daemon data root and the containerd image store. The runner's Nix store and cache remain owned by UID 1001. Keep the
-  concurrency cap and validate `/var` I/O under the actual workload before resuming storage maintenance or increasing
-  build capacity.
+  daemon data root and the containerd image store. The runner's Nix store and cache remain owned by UID 1001. Validate
+  `/var` I/O under the actual workload before resuming storage maintenance or increasing build capacity further.
 - The AMD64 scratch init requests 2Gi and is limited to 8Gi of memory. Its full Nix-tree bootstrap exceeded the prior
   512Mi limit and was OOM-killed before the runner could register. This stays within the Pod's existing 16Gi aggregate
   memory request for runner and DinD, so the init does not increase its scheduling reservation.
@@ -35,30 +34,24 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
 - ARC runner and listener pods append the tailnet search suffix `ide-newton.ts.net` via `dnsConfig.searches`, so bare tailnet hosts such as `temporal-grpc` resolve from GitHub Actions jobs without hardcoding the full `*.ts.net` name.
 - Generate the `github-token` SealedSecret with `scripts/generate-arc-github-token-secret.sh`. The script reads the token from 1Password via `${ARC_GITHUB_TOKEN_OP_PATH}` (defaults to `op://infra/github personal token/token`) and writes the sealed manifest to `argocd/applications/arc/github-token.yaml`.
 
-## AMD64 maintenance throttle
+## AMD64 capacity
 
-The `arc-amd64` scale set is bounded to `minRunners: 0` and `maxRunners: 1` in `application.yaml`. During the original
-incident, build scratch, etcd data, and Ceph monitor data shared Turin's `/var` NVMe; five concurrent builds saturated
-that device and coincided with multi-second etcd fsyncs and read timeouts. Future AMD64 runner Pods move their Nix,
-cache, `/tmp`, shared work, and Docker data paths to the Intel scratch PVC above, while control-plane data remains on
-`/var`. The cap limits new AMD64 build concurrency while keeping the normal ARC image/Kargo path available. Existing busy runners finish
-before the running count falls to one; the
-[ARC controller](https://github.com/actions/actions-runner-controller/blob/master/docs/gha-runner-scale-set-controller/README.md)
+The `arc-amd64` scale set uses `minRunners: 1` and `maxRunners: 5` in `application.yaml`. One idle runner stays available,
+and the set can scale to five runners. ARM64 and `analysis-arm64` retain their existing limits.
+
+The September 8 maintenance throttle reduced AMD64 capacity to `minRunners: 0` and `maxRunners: 1` after five concurrent
+builds saturated Turin's `/var` NVMe, which also held etcd and Ceph monitor data. AMD64 build scratch now uses the separate
+Intel NVMe PVC described above. Restoring capacity does not establish disk headroom or etcd latency under concurrent
+builds; check those under actual workload before increasing capacity further.
+
+Capacity changes use a reviewed Git change and the normal runner-image/Kargo delivery path. If storage contention
+returns, restore `minRunners: 0` and `maxRunners: 1` through that path. Existing busy runners finish before the count
+falls; the [ARC controller](https://github.com/actions/actions-runner-controller/blob/master/docs/gha-runner-scale-set-controller/README.md)
 checks with the Actions service before deleting a runner. Do not delete runner Pods manually.
 
 GitHub's [official ARC scale-set documentation](https://docs.github.com/en/actions/how-tos/manage-runners/use-actions-runner-controller/deploy-runner-scale-sets#example-jobs-queue-draining)
-documents strict queue draining as setting both `minRunners` and `maxRunners` to `0`: ARC does not create new runner Pods
-for newly assigned jobs, so those jobs remain queued. That mode is reserved for an explicitly coordinated emergency
-drain because the ordinary ARC image/Kargo workflow also requires an AMD64 runner and would otherwise have no recovery
-path from GitOps.
-
-Verify the cap through the `arc-runner` image build, automatic Kargo promotion, and Argo reconciliation. Then measure
-etcd fsync/read latency and the NVMe queue under a real build before resuming storage maintenance. A quiet interval alone
-does not prove that the contention is fixed.
-
-Keep the cap until build storage is isolated from etcd or measured concurrent build load establishes adequate headroom.
-Recovery to the prior capacity is a reviewed change to `minRunners: 1` and `maxRunners: 5`, delivered through the same
-image/Kargo path. The ARM64 and `analysis-arm64` scale sets retain their current values.
+documents strict queue draining as setting both `minRunners` and `maxRunners` to `0`. Reserve that mode for an explicitly
+coordinated emergency drain because the ordinary ARC image/Kargo workflow also requires an AMD64 runner.
 
 For current node placement and taint operations, start with `devices/galactic/README.md` and verify the target Talos node
 before changing scheduling state.
