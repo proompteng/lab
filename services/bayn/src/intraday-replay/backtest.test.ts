@@ -22,7 +22,7 @@ const fixture = () => {
     },
     openingCashMicros: '100000000000',
     fractionalTrading: false,
-    calendar: source.input.input.calendar,
+    calendar: [...source.input.input.calendar, { date: '2026-09-08', open: '09:30', close: '16:00' }],
     assets: source.input.protocol.universe.map((symbol, index) => ({
       id: `12345678-1234-4234-8234-${String(index).padStart(12, '0')}`,
       symbol,
@@ -52,6 +52,19 @@ test('session preparation freezes the unchanged strategy and complete calendar i
   expect(first.identity.accountId).toBe(`replay-${first.runId}`)
   expect(first.runId).toBe(Result.getOrThrow(prepareBacktest(input)).runId)
   expect(first.runId).not.toBe(Result.getOrThrow(prepareBacktest({ ...input, replicate: 'separate-run' })).runId)
+})
+
+test('calendar must include a successor session before a backtest can start', () => {
+  const input = fixture()
+  const result = prepareBacktest({
+    ...input,
+    calendar: input.calendar.filter((session) => session.date <= '2026-09-04'),
+  })
+  expect(Result.isFailure(result)).toBe(true)
+  if (Result.isFailure(result))
+    expect(result.failure).toMatchObject({
+      message: 'Backtest calendar must include the next broker session after the final replay session',
+    })
 })
 test('session preparation rejects changed strategy, partial hours, unknown calendar and future as-of metadata', () => {
   const input = fixture()
@@ -96,12 +109,12 @@ test('asset response ordering cannot change replay identity or broker configurat
   expect(reordered.assets).toEqual(canonical.assets)
 })
 
-test('session preparation permits the broker calendar to include the next trading session', () => {
+test('the broker calendar successor does not extend the execution interval', () => {
   const input = fixture()
   const prepared = Result.getOrThrow(
     prepareBacktest({
       ...input,
-      calendar: [...input.calendar, { date: '2026-09-08', open: '09:30', close: '16:00' }],
+      calendar: input.calendar,
     }),
   )
   expect(prepared.openMs).toBe(Date.parse('2026-09-04T13:30:00Z'))
@@ -148,7 +161,7 @@ test('one backtest binds consecutive sessions and normalizes their order', () =>
   const input = {
     ...base,
     sessionDates: ['2026-09-04', '2026-09-08'],
-    calendar: [...base.calendar, { date: '2026-09-08', open: '09:30', close: '16:00' }],
+    calendar: [...base.calendar, { date: '2026-09-09', open: '09:30', close: '16:00' }],
     source: {
       ...base.source,
       coverageEndMs: Date.parse('2026-09-08T20:00:00Z'),
@@ -173,8 +186,8 @@ test('continuous backtesting rejects an omitted intervening trading session', ()
     sessionDates: ['2026-09-04', '2026-09-09'],
     calendar: [
       ...base.calendar,
-      { date: '2026-09-08', open: '09:30', close: '16:00' },
       { date: '2026-09-09', open: '09:30', close: '16:00' },
+      { date: '2026-09-10', open: '09:30', close: '16:00' },
     ],
   }
   const result = prepareWithCapture(input, retainedReplayCaptureFixture(input.source))

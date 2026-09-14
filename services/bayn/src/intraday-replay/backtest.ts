@@ -196,6 +196,12 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
           message: 'A continuous backtest cannot skip calendar sessions between its boundaries',
         }),
       )
+    if (!calendar.sessions.some((session) => session.date > lastSession.date))
+      return yield* Result.fail(
+        new ReplayBrokerFailure({
+          message: 'Backtest calendar must include the next broker session after the final replay session',
+        }),
+      )
     const openMs = Date.parse(firstSession.openAt)
     const closeMs = Date.parse(lastSession.closeAt)
     if (decoded.assetObservationPolicy === 'retained-as-of-session' && Date.parse(decoded.assetObservationAt) > openMs)

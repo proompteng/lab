@@ -242,6 +242,12 @@ calendar, source manifest, build and strategy identities, opening cash, asset me
 execution assumptions, and controller/reconciliation cadence. The command accepts only this contract. The older
 archive and vendor replay commands and their input contracts have been removed.
 
+The broker calendar must include the next trading session after the final replay date. The production scheduler
+selects that successor after finishing its last position; omitting it is an input error even when all requested market
+hours have data. Retain the actual Alpaca calendar response, including holidays and early closes. The export's
+`calendar.json` lists the selected data sessions; extend the backtest calendar with verified broker calendar context.
+The successor supplies scheduling context only and does not add a replay session or require market events for that day.
+
 Every input uses `bayn.backtest-source.v1`, a complete source file, and a separately pinned source receipt. Captured Kafka and historical REST declare different transport provenance. Hashes, source
 coordinates, partition inventory, record ordering, and coverage must validate before database setup. Capture receipts
 establish the retained stream's bounds; they do not establish historical liquidity or original delivery for REST data.
