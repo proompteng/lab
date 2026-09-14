@@ -4,7 +4,7 @@ import { expect, test } from 'bun:test'
 import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { NodeServices } from '@effect/platform-node'
 import { Config, ConfigProvider, Effect, FileSystem, Layer, Option, Result, Schema } from 'effect'
-import { HttpClient } from 'effect/unstable/http'
+import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
 import { backfillAlpacaHistory } from '../../../tools/backfill'
 import { publishHistoricalDataset, restoreHistoricalDataset } from '../../../tools/history-store'
 import { exportHistoricalDataset } from '../../../tools/history-export'
@@ -169,6 +169,87 @@ featureTest(
     )
   },
   60_000,
+)
+
+storeTest(
+  'historical batch readback uses bounded indexed reads for a large quote capture',
+  async () => {
+    const quotes = HttpClient.make((request) => {
+      const url = new URL(request.url)
+      for (const [key, value] of request.urlParams) url.searchParams.set(key, value)
+      if (!url.pathname.endsWith('/quotes')) return historyFixtureHttp.execute(request)
+      const page = Number(url.searchParams.get('page_token') ?? '0')
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(
+            JSON.stringify({
+              quotes: {
+                SPY: Array.from({ length: 10_000 }, (_, index) => ({
+                  t: new Date(Date.parse('2026-09-11T13:30:00Z') + page * 10_000 + index).toISOString(),
+                  bp: 100,
+                  bs: 10,
+                  ap: 100.1,
+                  as: 20,
+                  bx: 'V',
+                  ax: 'V',
+                  c: ['R'],
+                  z: 'C',
+                })),
+              },
+              next_page_token: page < 9 ? String(page + 1) : null,
+            }),
+            { status: 200 },
+          ),
+        ),
+      )
+    })
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* prepareHistoryStorageFixture
+        const fs = yield* FileSystem.FileSystem
+        const directory = yield* fs.makeTempDirectoryScoped()
+        const captured = yield* backfillAlpacaHistory(
+          { ...historyFixtureRequest, symbols: ['SPY'], executionSessions: ['2026-09-11'] },
+          directory,
+        )
+        yield* publishHistoricalDataset(directory, captured.datasetId)
+        const sql = yield* ClickhouseClient.ClickhouseClient
+        const queryId = sha256(directory)
+        const verified = yield* publishHistoricalDataset(directory, captured.datasetId).pipe(
+          sql.withQueryId(queryId),
+          sql.withClickhouseSettings({ log_queries: 1 }),
+        )
+        expect(verified.insertedRecords).toBe(0)
+        expect(verified.verifiedRecords).toBe(captured.records)
+        yield* sql.asCommand(sql`SYSTEM FLUSH LOGS`)
+        const reads = yield* sql`SELECT toString(sum(read_rows)) AS rows FROM system.query_log
+          WHERE query_id = ${queryId} AND type = 'QueryFinish' AND query_kind = 'Select'`.pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ rows: Schema.String })))),
+        )
+        expect(reads).toHaveLength(1)
+        expect(Number(reads[0]?.rows)).toBeGreaterThan(0)
+        expect(Number(reads[0]?.rows)).toBeLessThan(captured.records * 15)
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            Layer.succeed(HttpClient.HttpClient, quotes),
+            Layer.succeed(ConfigProvider.ConfigProvider, historyFixtureCredentials),
+            ClickhouseClient.layer({
+              url: baynTestClickhouseUrl ?? 'http://127.0.0.1:8123',
+              username: 'default',
+              password: '',
+              request_timeout: 10_000,
+              compression: { request: true, response: true },
+            }),
+          ),
+        ),
+      ),
+    )
+  },
+  120_000,
 )
 
 storeTest(
