@@ -178,6 +178,22 @@ durableTest(
         yield* TestClock.setTime(settledMs)
         const brokerState = yield* broker.snapshot
         const reconciliation = yield* runtime.reconcile
+        let waiting = yield* runtime.advance
+        for (
+          let attempt = 0;
+          attempt < 4 && waiting.result?.outcome === 'RECOVERED' && waiting.result.waitReason !== 'open-position';
+          attempt++
+        ) {
+          const nextMs = (yield* Clock.currentTimeMillis) + 1000
+          yield* clock.advanceTo(utcInstantFromEpochMillis(nextMs))
+          yield* TestClock.setTime(nextMs)
+          waiting = yield* runtime.advance
+        }
+        expect(waiting.result).toMatchObject({
+          outcome: 'RECOVERED',
+          action: 'WAITING',
+          waitReason: 'open-position',
+        })
         const recreated = yield* makeReplayExecutionRuntime(runtimeInput)
         expect(recreated.authorityGenerationHash).toBe(runtime.authorityGenerationHash)
         const frozenAt = yield* Clock.currentTimeMillis

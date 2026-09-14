@@ -17,9 +17,6 @@ import {
 import { makeMutation } from '../broker/alpaca-mutations'
 import type { LoadedRuntimeConfig } from '../config'
 import { readFinalExecutionRiskContext } from '../db/reconciliation'
-import { makeArchiveAvailabilityRecorder } from '../db/archive-availability'
-import { sha256 } from '../hash'
-import { withRecordedArchiveReads } from '../market-data/intraday/availability'
 import { BrokerAccess } from '../execution/authority'
 import { Authority, KillState, type ResearchCapitalGrantGeneration } from '../execution/contracts'
 import {
@@ -27,7 +24,6 @@ import {
   type ResearchCapitalBuildContinuation,
   type ResearchCapitalBuildLineage,
 } from '../execution/configuration'
-import { makeExecutionProgram } from '../execution/runtime-program'
 import { resolvePreparedExecutionAuthority, resolvePreparedExecutionPolicy } from '../execution/runtime-authority'
 import { OperationalError } from '../errors'
 import {
@@ -36,7 +32,6 @@ import {
   isExecutionMandateRecoveryRestriction,
 } from '../execution/mandate'
 import {
-  loadStrategyExecutionRiskPolicy,
   type RecoveryFirstCycleDriver,
   type RecoveryFirstCycleDriverOwner,
   type RecoveryFirstRuntime,
@@ -47,13 +42,8 @@ import type { RuntimeState } from '../runtime-state'
 import { scopedAcquisition } from '../resource-boundary'
 import { autonomousRuntimeServices, makeAutonomousCycleResources } from './autonomous-runtime-resources'
 import { AutonomousRuntimeResourcesLive, applicationDependencies } from './resources'
-import {
-  executionProgramError,
-  mutationCycle,
-  observeCycle,
-  observeCycleGenerationHash,
-  runtimeBroker,
-} from './lifecycle'
+import { executionProgramError, observeCycle, observeCycleGenerationHash, runtimeBroker } from './lifecycle'
+import { makeTradingEngine } from './trading-engine'
 import {
   capitalActivationOperationalError,
   decodeConfiguredCapitalActivation,
@@ -173,17 +163,8 @@ export const makeAutonomousServiceRuntime = (
                   Effect.flatMap((runtimeContext) =>
                     autonomousRuntimeServices.pipe(
                       Effect.flatMap((runtimeServices) => {
-                        const recordedMarketData = withRecordedArchiveReads(
-                          dependencies.intradayMarketData,
-                          {
-                            endpointHash: sha256(plan.config.clickhouse.url),
-                            sourceRevision: plan.config.build.sourceRevision,
-                            imageDigest: plan.config.build.imageDigest,
-                            verification: plan.config.build.verification,
-                          },
-                          makeArchiveAvailabilityRecorder(runtimeServices.pgClient, runtimeServices.writerFence),
-                        )
-                        const cycleResources = makeAutonomousCycleResources(runtimeServices, recordedMarketData)
+                        const marketData = dependencies.intradayMarketData
+                        const cycleResources = makeAutonomousCycleResources(runtimeServices, marketData)
                         const readStartCycle = (startup: AutonomousCycleStartupInput) =>
                           Effect.gen(function* () {
                             if (runtimeServices.authorityGenerationStore.readAuthorityState === undefined) {
@@ -200,7 +181,7 @@ export const makeAutonomousServiceRuntime = (
                               observeCycleGenerationHash(authority),
                             ).pipe(Effect.mapError((message) => capitalActivationOperationalError(message)))
                             return yield* ownCycleDriverStartup(
-                              observeCycle(observePlan, authorityGenerationHash, recordedMarketData),
+                              observeCycle(observePlan, authorityGenerationHash, marketData),
                               options.ownCycleDriver,
                             )(startup)
                           }).pipe(
@@ -353,54 +334,43 @@ export const makeAutonomousServiceRuntime = (
                                   ).pipe(
                                     Effect.mapError(executionProgramError),
                                     Effect.flatMap((brokerMutation) =>
-                                      loadStrategyExecutionRiskPolicy(
-                                        realizedPlan.config.alpaca.expectedAccountId,
-                                        realizedPlan.strategy,
-                                      ).pipe(
-                                        Effect.mapError((cause) =>
-                                          capitalActivationOperationalError(
-                                            'source-controlled execution risk policy is invalid',
-                                            cause,
-                                          ),
-                                        ),
-                                        Effect.flatMap((riskPolicy) =>
-                                          Effect.fromResult(
-                                            makeExecutionProgram(authority, {
-                                              brokerRead: runtimeServices.session.read,
-                                              persistedCapitalGrants: runtimeServices.persistedCapitalGrants,
-                                              riskPolicy,
-                                              readFinalExecutionRiskContext: (observedAt) =>
-                                                readFinalExecutionRiskContext(
-                                                  runtimeServices.pgClient,
-                                                  realizedPlan.config.alpaca.expectedAccountId,
-                                                  observedAt,
-                                                ),
-                                              currentUtcInstant,
-                                              isCloseOnlyIntent: (intentId) =>
-                                                runtimeServices.executionCycleClosureStore.containsIntent(intentId),
-                                              intentStore: runtimeServices.intentStore,
-                                              mutationStore: runtimeServices.mutationStore,
-                                              writerFence: runtimeServices.writerFence,
-                                              brokerMutation,
-                                            }),
-                                          ).pipe(Effect.mapError(executionProgramError)),
-                                        ),
-                                      ),
+                                      makeTradingEngine({
+                                        authority,
+                                        cycle: {
+                                          accountId: realizedPlan.config.alpaca.expectedAccountId,
+                                          authorityGenerationHash: generation.generationHash,
+                                          strategy: realizedPlan.strategy,
+                                          intradayMarketData: marketData,
+                                          executionCycleClosureStore: runtimeServices.executionCycleClosureStore,
+                                          blockedCycleIntentStore: runtimeServices.blockedCycleIntentStore,
+                                          pollIntervalMs: realizedPlan.config.cyclePollIntervalMs,
+                                          reconciliationIntervalMs: realizedPlan.config.alpaca.reconciliationIntervalMs,
+                                          reconciliationPassTimeoutMs: realizedPlan.config.operationTimeoutMs,
+                                        },
+                                        executionMode: restricted ? 'CloseOnly' : 'Mutation',
+                                        execution: {
+                                          brokerRead: runtimeServices.session.read,
+                                          brokerMutation,
+                                          persistedCapitalGrants: runtimeServices.persistedCapitalGrants,
+                                          readFinalExecutionRiskContext: (observedAt) =>
+                                            readFinalExecutionRiskContext(
+                                              runtimeServices.pgClient,
+                                              realizedPlan.config.alpaca.expectedAccountId,
+                                              observedAt,
+                                            ),
+                                          intentStore: runtimeServices.intentStore,
+                                          mutationStore: runtimeServices.mutationStore,
+                                          writerFence: runtimeServices.writerFence,
+                                        },
+                                      }),
                                     ),
-                                    Effect.flatMap((executionProgram) => {
+                                    Effect.flatMap((engine) => {
                                       const startCycle = (
                                         startup: AutonomousCycleStartupInput,
                                         owner: RecoveryFirstCycleDriverOwner = options.ownCycleDriver,
                                       ) =>
                                         ownCycleDriverStartup(
-                                          mutationCycle(
-                                            realizedPlan,
-                                            executionProgram,
-                                            runtimeServices.executionCycleClosureStore,
-                                            runtimeServices.blockedCycleIntentStore,
-                                            recordedMarketData,
-                                            restricted ? 'CloseOnly' : 'Mutation',
-                                          ),
+                                          engine.startCycle,
                                           owner,
                                         )(startup).pipe(
                                           // @effect-diagnostics-next-line strictEffectProvide:off -- value-only cycle services have no resource lifetime
@@ -416,7 +386,7 @@ export const makeAutonomousServiceRuntime = (
                                         _tag: 'AutonomousMutation' as const,
                                         broker: runtimeBroker(realizedPlan, runtimeServices.session.read, true),
                                         cycleBindingId,
-                                        executionProgram,
+                                        executionProgram: engine.executionProgram,
                                         startCycle,
                                       }
                                       const activate = realizedCapitalActivation(

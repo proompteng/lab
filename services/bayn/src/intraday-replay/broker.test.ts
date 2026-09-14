@@ -10,6 +10,7 @@ import type { IntradayQuote } from '../market-data/intraday/model'
 import { makeReplayBroker, ReplayBrokerFailure, type ReplayBrokerConfig } from './broker'
 import { positionSnapshot } from '../broker/observations'
 import { restoreReplayBrokerCheckpoint, type ReplayBrokerCheckpoint } from './broker-checkpoint'
+import { ReplayQuoteRejection } from './broker-execution-evidence'
 
 const runId = 'a'.repeat(64)
 const observedAt = '2026-09-04T14:31:00.000Z'
@@ -95,6 +96,29 @@ const submit = (broker: Broker, order: Intent) =>
 const run = <A, E>(program: Effect.Effect<A, E, Scope.Scope>) =>
   Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(TestClock.layer())))
 
+test('canceled IOC retains the actual arrival quote, modeled price and reason in its durable checkpoint', async () => {
+  const checkpoint = await run(
+    Effect.gen(function* () {
+      const broker = yield* setup({ assumptions: { ...config.assumptions, slippageBps: 1 } })
+      yield* submit(broker, intent({ notionalLimitMicros: '500000000' }))
+      return yield* broker.checkpoint
+    }),
+  )
+  expect(checkpoint.state.orders[0]?.execution).toMatchObject({
+    arrivedAt: '2026-09-04T14:31:00.100Z',
+    quote: {
+      eventAt: observedAt,
+      availableAtMs: startMs,
+      ageNanos: '100000000',
+      askPrice: 100,
+      askSize: 100,
+      sourceOffset: quote.sourceOffset,
+    },
+    outcome: { status: 'canceled', reason: 'adverse-price-exceeds-limit', adversePriceMicros: '100010000' },
+  })
+  expect(checkpoint.state.orders[0]?.order.filledQuantityMicros).toBe('0')
+})
+
 test('historical arrival scheduler advances data before delivery without a wall-time polling loop', async () => {
   const arrivals: number[] = []
   const result = await run(
@@ -161,6 +185,12 @@ test('arrival quote drives partial IOC fill and the remainder is canceled once',
   expect(result.positions[0]?.quantityMicros).toBe('2000000')
   expect(result.account.cashMicros).toBe(result.state.ledger.cashMicros)
   expect(result.state.ledger.fills[0]?.quoteSource.offset).toBe(quote.sourceOffset)
+  expect(result.state.orders[0]?.execution?.outcome).toMatchObject({
+    status: 'filled',
+    filledQuantityMicros: '2000000',
+    fillPriceMicros: '100500000',
+    unfilledRemainder: 'canceled',
+  })
 })
 
 test('round trip cash includes execution fees and broker activities agree with fills', async () => {
@@ -252,11 +282,23 @@ test.each(['stale', 'future', 'crossed', 'other-feed'] as const)('%s quote canno
             ),
           ),
       })
-      return yield* submit(broker, intent())
+      const receipt = yield* submit(broker, intent())
+      return { receipt, checkpoint: yield* broker.checkpoint }
     }),
   )
-  expect(result.order.status).toBe(OrderStatus.Canceled)
-  expect(result.order.filledQuantityMicros).toBe('0')
+  expect(result.receipt.order.status).toBe(OrderStatus.Canceled)
+  expect(result.receipt.order.filledQuantityMicros).toBe('0')
+  const reasons = {
+    stale: ReplayQuoteRejection.Stale,
+    future: ReplayQuoteRejection.Unavailable,
+    crossed: ReplayQuoteRejection.Price,
+    'other-feed': ReplayQuoteRejection.Identity,
+  }
+  expect(result.checkpoint.state.orders[0]?.execution?.outcome).toEqual({
+    status: 'canceled',
+    reason: reasons[kind],
+    adversePriceMicros: null,
+  })
 })
 
 test.each(['oversell', 'cash'] as const)('%s rejection is terminal and recoverable by client ID', async (kind) => {
@@ -274,6 +316,10 @@ test.each(['oversell', 'cash'] as const)('%s rejection is terminal and recoverab
   expect(result.receipt.order.status).toBe(OrderStatus.Rejected)
   expect(result.lookup.value.status).toBe(OrderStatus.Rejected)
   expect(result.state.ledger.fills).toEqual([])
+  expect(result.state.orders[0]?.execution?.outcome).toEqual({
+    status: 'rejected',
+    reason: kind === 'oversell' ? 'oversell' : 'insufficient-cash',
+  })
 })
 
 test('real account identity and unapproved intent cannot mutate the simulated account', async () => {
@@ -349,6 +395,63 @@ test('position evidence retains the valuation timestamp across asynchronous quot
   )
   expect(Result.isSuccess(positionSnapshot(`replay-${runId}`, result))).toBe(true)
 })
+
+test('a quote gap retains an evidenced position mark but cannot supply an executable quote', async () => {
+  const result = await run(
+    Effect.gen(function* () {
+      const broker = yield* setup()
+      yield* submit(broker, intent())
+      yield* TestClock.adjust(protocol.maximumQuoteAgeMs + 1)
+      const account = (yield* broker.read.account).value
+      const valuation = yield* broker.valuation
+      yield* submit(broker, intent({ intentId: '7'.repeat(64), clientOrderId: 'stale-second-buy' }))
+      return { account, valuation, state: yield* broker.snapshot }
+    }),
+  )
+  expect(result.valuation).toMatchObject({
+    model: 'last-observed-bid',
+    marks: [{ symbol: 'AAPL', priceMicros: '100000000', eventAt: observedAt, staleForExecution: true }],
+  })
+  expect(BigInt(result.valuation.marks[0]?.ageNanos ?? '0')).toBeGreaterThan(
+    BigInt(protocol.maximumQuoteAgeMs) * 1_000_000n,
+  )
+  expect(result.account.equityMicros).toBe((BigInt(result.state.ledger.cashMicros) + 500_000_000n).toString())
+  expect(result.state.fills).toHaveLength(1)
+  expect(result.state.orders[1]?.execution?.outcome).toMatchObject({
+    status: 'canceled',
+    reason: ReplayQuoteRejection.Stale,
+  })
+})
+
+test.each(['missing', 'future', 'crossed', 'other-feed'] as const)(
+  'valuation rejects %s quotes after an actual fill',
+  async (kind) => {
+    let afterFill = false
+    const result = await run(
+      Effect.gen(function* () {
+        const broker = yield* setup({
+          quoteAt: () =>
+            Effect.succeed(
+              !afterFill
+                ? observedQuote(quote)
+                : kind === 'missing'
+                  ? undefined
+                  : observedQuote({
+                      ...quote,
+                      eventAt: kind === 'future' ? new Date(startMs + 60_000).toISOString() : quote.eventAt,
+                      askPrice: kind === 'crossed' ? 99 : quote.askPrice,
+                      feed: kind === 'other-feed' ? 'sip' : quote.feed,
+                    }),
+            ),
+        })
+        yield* submit(broker, intent())
+        afterFill = true
+        return yield* Effect.result(broker.read.account)
+      }),
+    )
+    expect(Result.isFailure(result)).toBeTrue()
+  },
+)
 
 test.each(['failure', 'defect', 'conversion'] as const)(
   'delivery %s leaves a terminal recoverable IOC',

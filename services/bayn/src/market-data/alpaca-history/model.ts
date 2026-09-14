@@ -6,11 +6,18 @@ import type * as HttpClient from 'effect/unstable/http/HttpClient'
 
 import {
   IsoDateSchema,
+  NonNegativeFiniteSchema,
+  NonNegativeIntegerSchema,
+  PositiveFiniteSchema,
+  PositiveIntegerSchema,
+  Sha256Schema,
+  StrictNonEmptyStringSchema,
+  UtcOrderTimestampSchema,
   SymbolSchema,
   TrimmedNonEmptyStringSchema,
   UtcInstantSchema,
   strictParseOptions,
-} from '../../../schemas'
+} from '../../schemas'
 
 export const alpacaHistoricalDataOrigin = 'https://data.alpaca.markets' as const
 export const alpacaHistoricalFeed = 'iex' as const
@@ -73,41 +80,45 @@ export interface AlpacaHistoricalCredentials {
   readonly secret: Redacted.Redacted<string>
 }
 
-export interface VendorHistoricalBar {
-  readonly symbol: string
-  readonly eventAt: string
-  readonly open: number
-  readonly high: number
-  readonly low: number
-  readonly close: number
-  readonly volume: number
-  readonly vwap: number | null
-  readonly tradeCount: number
-}
+export const VendorHistoricalBarSchema = Schema.Struct({
+  symbol: SymbolSchema,
+  eventAt: UtcOrderTimestampSchema,
+  open: Schema.Finite,
+  high: Schema.Finite,
+  low: Schema.Finite,
+  close: Schema.Finite,
+  volume: NonNegativeFiniteSchema,
+  vwap: Schema.NullOr(NonNegativeFiniteSchema),
+  tradeCount: NonNegativeIntegerSchema,
+})
+export type VendorHistoricalBar = typeof VendorHistoricalBarSchema.Type
 
-export interface VendorHistoricalQuote {
-  readonly symbol: string
-  readonly eventAt: string
-  readonly bidPrice: number
-  readonly bidSize: number
-  readonly askPrice: number
-  readonly askSize: number
-  readonly bidExchange: string
-  readonly askExchange: string
-  readonly conditions: readonly string[]
-  readonly tape: string
-}
+const ProviderConditionsSchema = Schema.Array(Schema.String.check(Schema.isMinLength(1)))
+export const VendorHistoricalQuoteSchema = Schema.Struct({
+  symbol: SymbolSchema,
+  eventAt: UtcOrderTimestampSchema,
+  bidPrice: NonNegativeFiniteSchema,
+  bidSize: NonNegativeIntegerSchema,
+  askPrice: NonNegativeFiniteSchema,
+  askSize: NonNegativeIntegerSchema,
+  bidExchange: StrictNonEmptyStringSchema,
+  askExchange: StrictNonEmptyStringSchema,
+  conditions: ProviderConditionsSchema,
+  tape: StrictNonEmptyStringSchema,
+})
+export type VendorHistoricalQuote = typeof VendorHistoricalQuoteSchema.Type
 
-export interface VendorHistoricalTrade {
-  readonly symbol: string
-  readonly eventAt: string
-  readonly providerTradeId: string
-  readonly price: number
-  readonly size: number
-  readonly exchange: string
-  readonly conditions: readonly string[]
-  readonly tape: string
-}
+export const VendorHistoricalTradeSchema = Schema.Struct({
+  symbol: SymbolSchema,
+  eventAt: UtcOrderTimestampSchema,
+  providerTradeId: Schema.String.check(Schema.isPattern(/^-?[0-9]+$/)),
+  price: PositiveFiniteSchema,
+  size: PositiveIntegerSchema,
+  exchange: StrictNonEmptyStringSchema,
+  conditions: ProviderConditionsSchema,
+  tape: StrictNonEmptyStringSchema,
+})
+export type VendorHistoricalTrade = typeof VendorHistoricalTradeSchema.Type
 
 export type VendorHistoricalRow = VendorHistoricalBar | VendorHistoricalQuote | VendorHistoricalTrade
 
@@ -126,39 +137,62 @@ export interface VendorHistoricalQueryIdentity {
   readonly adjustment?: 'raw'
 }
 
-export interface VendorHistoricalPageReceipt {
-  readonly pageIndex: number
-  readonly requestPageTokenHash: string | null
-  readonly status: 200
-  readonly retrievedAt: string
-  readonly rawTextHash: string
-  readonly normalizedHash: string
-  readonly rowCount: number
-  readonly nextPageTokenHash: string | null
-  readonly nextPageTokenPresent: boolean
-  readonly bodyPath: string
-  readonly receiptPath: string
-}
+export const VendorHistoricalPageReceiptSchema = Schema.Struct({
+  pageIndex: NonNegativeIntegerSchema,
+  requestPageTokenHash: Schema.NullOr(Sha256Schema),
+  status: Schema.Literal(200),
+  retrievedAt: UtcInstantSchema,
+  rawTextHash: Sha256Schema,
+  normalizedHash: Sha256Schema,
+  rowCount: NonNegativeIntegerSchema,
+  nextPageTokenHash: Schema.NullOr(Sha256Schema),
+  nextPageTokenPresent: Schema.Boolean,
+  bodyPath: Schema.String.check(Schema.isPattern(/^page-[0-9]{8}\.body\.json$/)),
+  receiptPath: Schema.String.check(Schema.isPattern(/^page-[0-9]{8}\.receipt\.json$/)),
+})
+export type VendorHistoricalPageReceipt = typeof VendorHistoricalPageReceiptSchema.Type
 
-export interface VendorHistoricalProvenance {
-  readonly schemaVersion: 'bayn.vendor-historical-provenance.v1'
-  readonly source: 'alpaca-historical'
-  readonly endpointPath: `/v2/stocks/${AlpacaHistoricalKind}`
-  readonly feed: typeof alpacaHistoricalFeed
-  readonly asof: string
-  readonly marketSession: 'regular'
-  readonly timeBasis: 'event-time-only'
-  readonly completeness: 'complete'
-  readonly sessionDate: string
-  readonly requestedSymbols: readonly string[]
-  readonly queryHash: string
-  readonly normalizedHash: string
-  readonly rowCountsBySymbol: Readonly<Record<string, number>>
-  readonly pageReceipts: readonly VendorHistoricalPageReceipt[]
-  /** Stable query cache key. The caller-supplied absolute cache directory is kept on the query only. */
-  readonly cacheKey: string
-  readonly retrievedAt: string
-}
+export const VendorHistoricalProvenanceSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.vendor-historical-provenance.v1'),
+  source: Schema.Literal('alpaca-historical'),
+  endpointPath: Schema.Literals(['/v2/stocks/bars', '/v2/stocks/quotes', '/v2/stocks/trades']),
+  feed: Schema.Literal(alpacaHistoricalFeed),
+  asof: IsoDateSchema,
+  marketSession: Schema.Literal('regular'),
+  timeBasis: Schema.Literal('event-time-only'),
+  completeness: Schema.Literal('complete'),
+  sessionDate: IsoDateSchema,
+  requestedSymbols: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique()),
+  queryHash: Sha256Schema,
+  normalizedHash: Sha256Schema,
+  rowCountsBySymbol: Schema.Record(SymbolSchema, NonNegativeIntegerSchema),
+  pageReceipts: Schema.Array(VendorHistoricalPageReceiptSchema).check(Schema.isMinLength(1)),
+  cacheKey: StrictNonEmptyStringSchema,
+  retrievedAt: UtcInstantSchema,
+})
+export type VendorHistoricalProvenance = typeof VendorHistoricalProvenanceSchema.Type
+
+export const StoredHistoricalCaptureSchema = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal('bars'),
+    rows: Schema.Array(VendorHistoricalBarSchema),
+    provenance: VendorHistoricalProvenanceSchema,
+    provenanceHash: Sha256Schema,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal('quotes'),
+    rows: Schema.Array(VendorHistoricalQuoteSchema),
+    provenance: VendorHistoricalProvenanceSchema,
+    provenanceHash: Sha256Schema,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal('trades'),
+    rows: Schema.Array(VendorHistoricalTradeSchema),
+    provenance: VendorHistoricalProvenanceSchema,
+    provenanceHash: Sha256Schema,
+  }),
+])
+export type StoredHistoricalCapture = typeof StoredHistoricalCaptureSchema.Type
 
 export interface VendorHistoricalCaptureBase {
   readonly query: AlpacaHistoricalQuery

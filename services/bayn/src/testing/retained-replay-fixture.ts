@@ -1,14 +1,15 @@
 import { Result } from 'effect'
+import { gzipSync } from 'node:zlib'
 import { sha256 } from '../hash'
 import { simulationFixture } from './simulated-streaming-fixture'
 import { arrivalPosition, compareArrivalPositions } from '../market-data/streaming/historical'
 import {
-  retainedReplaySourcePartitions,
-  validateRetainedReplayCapture,
-  type RetainedReplaySourceManifest,
+  backtestSourcePartitions,
+  validateBacktestSourceReceipt,
+  type BacktestSourceManifest,
 } from '../intraday-replay/source'
 
-export const retainedReplayCaptureFixture = (manifest: RetainedReplaySourceManifest) => {
+export const retainedReplayCaptureFixture = (manifest: BacktestSourceManifest) => {
   const text = JSON.stringify({
     schemaVersion: 'bayn.replay-source-capture.v1',
     capturedAt: new Date(manifest.coverageEndMs + 1).toISOString(),
@@ -18,7 +19,7 @@ export const retainedReplayCaptureFixture = (manifest: RetainedReplaySourceManif
     universe: manifest.universe,
     positions: manifest.positions,
   })
-  return validateRetainedReplayCapture(text, sha256(text)).pipe(Result.getOrThrow)
+  return validateBacktestSourceReceipt(text, sha256(text)).pipe(Result.getOrThrow)
 }
 
 export const retainedReplayFixture = () => {
@@ -45,9 +46,11 @@ export const retainedReplayFixture = () => {
       endOffsetExclusive: String(BigInt(record.offset) + 1n),
     })
   }
-  const manifest: RetainedReplaySourceManifest = {
-    schemaVersion: 'bayn.retained-replay-source.v1',
-    dataSha256: sha256(body),
+  const manifest: BacktestSourceManifest = {
+    schemaVersion: 'bayn.backtest-source.v1',
+    encoding: 'ndjson-gzip',
+    transport: 'captured-kafka',
+    dataSha256: sha256(gzipSync(body)),
     recordCount: events.length,
     firstAvailableAtMs: events[0]?.availableAtMs ?? 0,
     lastAvailableAtMs: events.at(-1)?.availableAtMs ?? 0,
@@ -62,7 +65,7 @@ export const retainedReplayFixture = () => {
   }
   const complete = {
     ...manifest,
-    positions: retainedReplaySourcePartitions(manifest).map(
+    positions: backtestSourcePartitions(manifest).map(
       ({ topic, partition }) =>
         positions.get(`${topic}:${partition}`) ?? { topic, partition, startOffset: '0', endOffsetExclusive: '0' },
     ),

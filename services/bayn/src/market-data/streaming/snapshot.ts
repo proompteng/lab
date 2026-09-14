@@ -9,7 +9,6 @@ import type { HistoricalMarketCursor } from './historical'
 
 import { canonicalHashV1Result } from '../../hash'
 import type {
-  ArchiveVerifiedIntradayMarketSnapshot,
   IntradayMarketSnapshot,
   IntradayRecordIdentity,
   IntradaySnapshotManifest,
@@ -75,11 +74,8 @@ const SimulatedVerifiedSnapshotTypeId: unique symbol = Symbol('SimulatedVerified
 export type SimulatedVerifiedMarketSnapshot = SimulatedMarketSnapshot & {
   readonly [SimulatedVerifiedSnapshotTypeId]: true
 }
-export type StrategyMarketSnapshot = IntradayMarketSnapshot | StreamingMarketSnapshot | SimulatedMarketSnapshot
-export type VerifiedStrategyMarketSnapshot =
-  | ArchiveVerifiedIntradayMarketSnapshot
-  | StreamingVerifiedMarketSnapshot
-  | SimulatedVerifiedMarketSnapshot
+export type StrategyMarketSnapshot = StreamingMarketSnapshot | SimulatedMarketSnapshot
+export type VerifiedStrategyMarketSnapshot = StreamingVerifiedMarketSnapshot | SimulatedVerifiedMarketSnapshot
 
 const failure = (reason: IntradaySnapshotFailure['reason'], message: string, cause?: unknown) =>
   new IntradaySnapshotFailure({ reason, message, ...(cause === undefined ? {} : { cause }) })

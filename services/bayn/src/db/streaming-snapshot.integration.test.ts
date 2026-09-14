@@ -12,10 +12,8 @@ import { recoverStreamingSnapshotReference, streamingSnapshotReference } from '.
 import { StreamingIntradayMarketDataLive } from '../market-data/streaming/service'
 import { KafkaMarketProjection } from '../market-data/streaming/kafka'
 import { IntradayMarketData } from '../market-data/intraday/model'
-import { withRecordedArchiveReads } from '../market-data/intraday/availability'
-import { availabilityReader } from '../testing/archive-availability-fixture'
 import { simulationFixture } from '../testing/simulated-streaming-fixture'
-import { prepareFreshReplayDatabase } from '../intraday-replay/session-program'
+import { prepareFreshReplayDatabase } from '../intraday-replay/backtest'
 import { makeSimulatedMarketData } from '../market-data/streaming/simulation-service'
 import { loadIntradaySnapshot } from '../observe-composition/intraday-market-data'
 
@@ -208,27 +206,24 @@ describePostgres('PostgreSQL streaming decision source evidence', () => {
         Effect.gen(function* () {
           const sql = yield* PgClient.PgClient
           const market = yield* makeSimulatedMarketData(fixture.source, Effect.succeed(fixture.cursor))
-          const snapshot = yield* market.simulation.loadSnapshot(fixture.query)
+          const snapshot = yield* market.loadSnapshot(fixture.query)
           expect(snapshot.manifest.streaming.technical !== undefined).toBe(technical)
-          const wrapped = withRecordedArchiveReads(market, availabilityReader, () =>
-            Effect.die('unexpected archive receipt'),
-          )
-          const loaded = yield* loadIntradaySnapshot(wrapped, fixture.query)
-          const reference = yield* market.simulation.verifyReference(snapshot)
+          const loaded = yield* loadIntradaySnapshot(market, fixture.query)
+          const reference = yield* market.verifyReference(snapshot)
           const fresh = yield* makeSimulatedMarketData(fixture.source, Effect.succeed(fixture.cursor))
-          const missing = yield* Effect.exit(fresh.simulation.verifyReference(snapshot))
+          const missing = yield* Effect.exit(fresh.verifyReference(snapshot))
           const insert = sql`INSERT INTO simulated_snapshot_references (snapshot_id,schema_version,content_hash,observed_at,manifest)
         VALUES (${snapshot.manifest.snapshotId},${reference.schemaVersion},${snapshot.manifest.contentHash},${snapshot.manifest.observedAt}::timestamptz,${sql.json(snapshot.manifest)})`
           yield* Effect.exit(sql.withTransaction(insert.pipe(Effect.andThen(Effect.fail('decision rejected')))))
-          const rolledBack = yield* Effect.exit(fresh.simulation.verifyReference(snapshot))
+          const rolledBack = yield* Effect.exit(fresh.verifyReference(snapshot))
           yield* sql.withTransaction(insert)
-          const recovered = yield* fresh.simulation.verifyReference(snapshot)
+          const recovered = yield* fresh.verifyReference(snapshot)
           const other = yield* makeSimulatedMarketData(
             { ...fixture.source, runId: 'f'.repeat(64) },
             Effect.succeed(fixture.cursor),
           )
-          const crossRun = yield* Effect.exit(other.simulation.verifyReference(snapshot))
-          const changed = yield* Effect.exit(fresh.simulation.verifyReference({ ...snapshot, bars: [] }))
+          const crossRun = yield* Effect.exit(other.verifyReference(snapshot))
+          const changed = yield* Effect.exit(fresh.verifyReference({ ...snapshot, bars: [] }))
           const liveTable =
             yield* Effect.exit(sql`INSERT INTO streaming_snapshot_references (snapshot_id,schema_version,content_hash,observed_at,manifest)
         VALUES (${snapshot.manifest.snapshotId},'bayn.streaming-snapshot-reference.v1',${snapshot.manifest.contentHash},${snapshot.manifest.observedAt}::timestamptz,${sql.json(snapshot.manifest)})`)
@@ -311,18 +306,11 @@ describePostgres('PostgreSQL streaming decision source evidence', () => {
     expect(result.exact.manifest.snapshotId).toBe(fixture.snapshot.manifest.snapshotId)
   })
 
-  test('preserves streaming through the archive wrapper and verifies a fresh observation without archive reads', async () => {
+  test('verifies a consumed Kafka cut and rejects forged rows through the canonical adapter', async () => {
     const result = await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
-        const archive = {
-          check: Effect.void,
-          captureVersion: () => Effect.die('unexpected archive read'),
-          loadSnapshot: () => Effect.die('unexpected archive read'),
-          verifyArchiveSnapshot: () => Effect.die('unexpected archive verification'),
-        }
         const live = StreamingIntradayMarketDataLive.pipe(
-          Layer.provide(Layer.succeed(IntradayMarketData, archive)),
           Layer.provide(Layer.succeed(PgClient.PgClient, sql)),
           Layer.provide(
             Layer.succeed(KafkaMarketProjection, {
@@ -337,15 +325,9 @@ describePostgres('PostgreSQL streaming decision source evidence', () => {
         )
         return yield* Effect.gen(function* () {
           const service = yield* IntradayMarketData
-          const wrapped = withRecordedArchiveReads(service, availabilityReader, () =>
-            Effect.die('unexpected archive receipt'),
-          )
-          if (wrapped.streaming === undefined) return yield* Effect.die('streaming capability lost')
-          const snapshot = yield* wrapped.streaming.loadSnapshot(fixture.query)
-          const reference = yield* wrapped.streaming.verifyReference(snapshot)
-          const forged = yield* Effect.exit(
-            wrapped.streaming.verifyReference({ ...snapshot, bars: snapshot.bars.slice(1) }),
-          )
+          const snapshot = yield* service.loadSnapshot(fixture.query)
+          const reference = yield* service.verifyReference(snapshot)
+          const forged = yield* Effect.exit(service.verifyReference({ ...snapshot, bars: snapshot.bars.slice(1) }))
           return { reference, forged }
         }).pipe(Effect.provide(live))
       }),

@@ -185,8 +185,6 @@ spec:
               value: "9080"
             - name: NODE_ENV
               value: production
-            - name: BAYN_MARKET_DATA_MODE
-              value: streaming
             - name: BAYN_KAFKA_BROKERS
               value: kafka-kafka-bootstrap.kafka.svc.cluster.local:9092
             - name: BAYN_KAFKA_USERNAME
