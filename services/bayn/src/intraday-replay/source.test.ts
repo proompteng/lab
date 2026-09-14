@@ -1,7 +1,9 @@
 import { expect, test } from 'bun:test'
 import { gzipSync } from 'node:zlib'
 import { NodeServices } from '@effect/platform-node'
-import { Effect, FileSystem } from 'effect'
+import { Clock, Effect, FileSystem } from 'effect'
+import { TestClock } from 'effect/testing'
+import { makeReplayTimeline } from './session'
 import { canonicalHashV1, sha256 } from '../hash'
 import { retainedReplayFixture as fixture } from '../testing/retained-replay-fixture'
 import { openBacktestSource, validateBacktestSourceReceipt } from './source'
@@ -25,6 +27,39 @@ test('retained source preflights its bytes and advances only available records a
       yield* source.finish
       expect((yield* Effect.exit(source.advanceTo(data.manifest.firstAvailableAtMs)))._tag).toBe('Failure')
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
+})
+
+test('a delayed source tail is consumed after trading stops without advancing execution or database time', async () => {
+  const data = fixture()
+  const closeMs = data.manifest.lastAvailableAtMs - 35
+  const sqlTimes: string[] = []
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const path = yield* fs.makeTempFileScoped()
+      yield* fs.writeFile(path, gzipSync(data.body))
+      const source = yield* openBacktestSource(path, data.manifest, data.input.source.runId, data.capture)
+      yield* TestClock.setTime(closeMs - 1)
+      const advance = yield* makeReplayTimeline(
+        source,
+        {
+          advanceTo: (at) =>
+            Effect.sync(() => {
+              sqlTimes.push(at)
+            }),
+        },
+        closeMs + 1,
+      )
+      yield* advance(closeMs + 1)
+      expect((yield* source.cursor).processedRecords).toBeLessThan(data.events.length)
+      const beforeTail = [...sqlTimes]
+      yield* source.finish
+      expect((yield* source.cursor).processedRecords).toBe(data.events.length)
+      expect(yield* Clock.currentTimeMillis).toBe(closeMs + 1)
+      expect(sqlTimes).toEqual(beforeTail)
+      expect((yield* Effect.exit(advance(data.manifest.lastAvailableAtMs)))._tag).toBe('Failure')
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer()), Effect.provide(NodeServices.layer)),
   )
 })
 

@@ -167,6 +167,11 @@ Builds are scoped to Bayn inputs and finish when later commits arrive. There is 
 promotion-eligibility script. Kargo controls delivery; the native activation hook and runtime enforce the configured
 account, strategy, capital grant, reconciliation, and order-risk contracts.
 
+This migration retires the previous decision and market-data contracts. Before promotion, verify that no unfinished
+cycle references a retired decision or snapshot and that broker orders, positions, and ledger balances reconcile.
+If an earlier release still owns such work, let that release finish recovery before the cutover. Retain terminal
+financial documents unchanged for audit; do not rewrite their hashes or restore legacy runtime decoders.
+
 Do not deploy directly or submit a broker order manually. A code release does not change the sealed research request
 or grant live capital authority.
 
