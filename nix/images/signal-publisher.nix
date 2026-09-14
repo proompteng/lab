@@ -18,8 +18,8 @@ import ./bun-workspace-service.nix {
   serviceName = "signal-publisher";
   packageName = "@proompteng/signal-publisher";
   depsHash = {
-    x86_64-linux = "sha256-RTSm6OtsmPWC61VQ2PC3FFKBPfjgdKVQiYYhYUWsdpI=";
-    aarch64-linux = "sha256-fMB2zj0fQ6SNIdnz/nTkSNA+fH+GNrsV38dok7EK+zU=";
+    x86_64-linux = "sha256-yj99BX72khrbE+LXP86oTBjjdRkwHm2MwnY4hbA2Zr0=";
+    aarch64-linux = "sha256-BrND6olKZ5m4IWXoyjja3cvnhPzhS58v1T17r5kZh9U=";
   };
   installFilters = [
     "@proompteng/signal-publisher"

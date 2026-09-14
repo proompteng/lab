@@ -19,14 +19,16 @@ import { MutationStoreLive } from '../execution/mutations'
 import { WriterFenceLive } from '../execution/writer-fence'
 import { HttpServerLive } from '../http'
 import { Journal, JournalLive } from '../ledger'
-import { IntradayMarketData, IntradayMarketDataLive, type IntradayMarketDataService } from '../market-data'
+import { IntradayMarketData, MarketDataHealth, type IntradayMarketDataService } from '../market-data'
 import { KafkaMarketProjectionLive } from '../market-data/streaming/kafka'
-import { streamingIntradayMarketDataLive } from '../market-data/streaming/service'
+import { StreamingIntradayMarketDataLive } from '../market-data/streaming/service'
 import {
   defaultIntradayMomentumProtocolDocument,
   intradayMomentumFeatureTopic,
 } from '../strategy/intraday-momentum/protocol'
 import { sqlResource } from '../operations'
+import { operationalError } from '../errors'
+import { makeIntradayMarketDataQueries } from '../market-data/intraday/queries'
 
 type PostgresResourceConfig = Pick<LoadedRuntimeConfig, 'operationTimeoutMs' | 'postgres'>
 
@@ -69,26 +71,52 @@ export const ApplicationPlatformLive = Layer.merge(NodeServices.layer, NodeHttpC
 const HttpApplicationPlatformLive = (config: LoadedRuntimeConfig) =>
   Layer.merge(HttpServerLive(config), ApplicationPlatformLive)
 
-const SignalMarketDataLive = (plan: ApplicationIdentity) => {
+const SignalArchiveHealthLive = (plan: ApplicationIdentity) => {
   const clickHouse = sqlResource(ClickHouseClientResourceLive(plan.config))
-  return IntradayMarketDataLive.pipe(Layer.provide(clickHouse))
+  return Layer.effect(
+    MarketDataHealth,
+    Effect.map(ClickhouseClient.ClickhouseClient, (sql) => ({
+      check: makeIntradayMarketDataQueries(sql).checkIntradayArchive.pipe(
+        Effect.asVoid,
+        Effect.mapError((cause) =>
+          operationalError({
+            component: 'market-data',
+            operation: 'check',
+            message: 'Historical archive is unavailable',
+            cause,
+          }),
+        ),
+      ),
+    })),
+  ).pipe(Layer.provide(clickHouse))
 }
 
 const WorkerMarketDataLive = (plan: ApplicationIdentity, postgres: ReturnType<typeof PostgresLive>) => {
-  const archive = SignalMarketDataLive(plan)
-  if (plan.config.kafka === undefined) return archive
+  if (plan.config.kafka === undefined)
+    return Layer.effect(
+      IntradayMarketData,
+      Effect.fail(
+        operationalError({
+          component: 'config',
+          operation: 'market-data',
+          message: 'Trading requires configured Kafka market data',
+        }),
+      ),
+    )
   const protocol = defaultIntradayMomentumProtocolDocument
   const kafka = KafkaMarketProjectionLive(plan.config.kafka, {
     universeId: protocol.universeId,
     universeSymbolHash: protocol.universeSymbolHash,
     symbols: protocol.universe,
-    topics: { ...protocol.sourceTopics, features: intradayMomentumFeatureTopic },
+    topics: {
+      ...protocol.sourceTopics,
+      features: intradayMomentumFeatureTopic,
+      ...(plan.config.kafka.technicalFeaturesTopic === undefined
+        ? {}
+        : { technicalFeatures: plan.config.kafka.technicalFeaturesTopic }),
+    },
   })
-  return streamingIntradayMarketDataLive(plan.config.kafka.shadowOnly).pipe(
-    Layer.provide(archive),
-    Layer.provide(kafka),
-    Layer.provide(postgres),
-  )
+  return StreamingIntradayMarketDataLive.pipe(Layer.provide(kafka), Layer.provide(postgres))
 }
 
 const PostgresLive = (config: PostgresResourceConfig) => {
@@ -117,7 +145,7 @@ export const AutonomousStatusApplicationResourcesLive = (plan: ApplicationPlanFo
     postgres,
     controllerStatus,
     cycleObservability,
-    SignalMarketDataLive(plan),
+    SignalArchiveHealthLive(plan),
     JournalResourceLive(plan.config),
     BrokerReadOnlyResourcesLive(plan.config.alpaca),
   ).pipe(Layer.provideMerge(HttpApplicationPlatformLive(plan.config)))

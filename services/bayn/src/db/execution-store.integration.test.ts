@@ -27,6 +27,7 @@ import {
   TimeInForce,
 } from '../execution/contracts'
 import { WriterFenceLive } from '../execution/writer-fence'
+import { executionMandateFailureRestrictionPrefix } from '../execution/mandate'
 import { canonicalHashV1 } from '../hash'
 import { Journal, type JournalService } from '../ledger'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
@@ -266,9 +267,25 @@ describePostgres('PostgreSQL execution persistence', () => {
           maximum: Authority.Observe,
         })
         const lineage = yield* authority.readAuthorityGenerationLineage(generationHash)
-        yield* restriction.restrictAuthority('reconciliation discrepancy fixture', '2026-08-28T14:32:00.000Z')
-        yield* restriction.restrictAuthority('reconciliation discrepancy fixture', '2026-08-28T14:33:00.000Z')
-        return { initial, replay, lineage, restricted: yield* authority.readAuthorityState }
+        yield* restriction.restrictAuthority('reconciliation pass incomplete', '2026-08-28T14:31:00.000Z')
+        yield* restriction.restrictAuthority(
+          `reconciliation discrepancy ${hash('first-discrepancy')}`,
+          '2026-08-28T14:32:00.000Z',
+        )
+        yield* restriction.restrictAuthority(
+          `reconciliation discrepancy ${hash('first-discrepancy')}`,
+          '2026-08-28T14:33:00.000Z',
+        )
+        yield* restriction.restrictAuthority(
+          `reconciliation discrepancy ${hash('next-discrepancy')}`,
+          '2026-08-28T14:33:00.000Z',
+        )
+        const restricted = yield* authority.readAuthorityState
+        yield* restriction.restrictAuthority(
+          `${executionMandateFailureRestrictionPrefix} permanent failure`,
+          '2026-08-28T14:34:00.000Z',
+        )
+        return { initial, replay, lineage, restricted, promoted: yield* authority.readAuthorityState }
       }),
     )
 
@@ -289,8 +306,14 @@ describePostgres('PostgreSQL execution persistence', () => {
       generationHash,
       effective: Authority.Observe,
       kill: KillState.Active,
-      reason: 'reconciliation discrepancy fixture',
-      version: 2,
+      reason: `reconciliation discrepancy ${hash('first-discrepancy')}`,
+      version: 3,
+    })
+    expect(result.promoted).toMatchObject({
+      effective: Authority.Observe,
+      kill: KillState.Active,
+      reason: `${executionMandateFailureRestrictionPrefix} permanent failure`,
+      version: 4,
     })
   })
 
@@ -360,6 +383,39 @@ describePostgres('PostgreSQL execution persistence', () => {
     })
     expect(result.valuationReplay).toEqual(result.valuation)
     expect(result.counts).toEqual({ events: 3, snapshots: 1, valuations: 1 })
+  })
+
+  test('persists exact broker cost basis beside legacy position history', async () => {
+    const sourceHash = hash('position-cost-basis-v2')
+    const legacy = positionEvent(sourceHash, 'NVDA', '3000000', '303000000')
+    const position = {
+      ...legacy.position,
+      schemaVersion: 'bayn.position.v2' as const,
+      averageEntryPriceMicros: '100333333',
+      costBasisMicros: '301000000',
+    }
+    const current: PositionEventInput = { ...legacy, position, contentHash: canonicalHashV1({ sourceHash, position }) }
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const events = yield* BrokerEventStore
+        const receipt = yield* events.ingestPositions(positionSnapshot(sourceHash, [current]))
+        const replay = yield* events.ingestPositions(positionSnapshot(sourceHash, [current]))
+        const sql = yield* PgClient.PgClient
+        const rows = yield* sql<{ schema_version: string; cost_basis_micros: string; content_hash: string }>`
+        SELECT p.schema_version, p.cost_basis_micros::text, e.content_hash
+        FROM positions p JOIN broker_events e ON e.event_id = p.event_id
+        WHERE p.snapshot_id = ${receipt.snapshotId}
+      `
+        return { receipt, replay, rows }
+      }),
+    )
+    expect(result.replay.snapshotId).toBe(result.receipt.snapshotId)
+    expect(result.rows).toHaveLength(1)
+    expect(result.rows[0]).toMatchObject({
+      schema_version: 'bayn.position.v2',
+      cost_basis_micros: '301000000',
+      content_hash: current.contentHash,
+    })
   })
 
   test('resumes a prepared fill after a ledger failure without duplicating durable accounting', async () => {

@@ -1,3 +1,4 @@
+import { operationTimeoutOrElse } from '../operation-timeout'
 import { Clock, Duration, Effect, Ref, Result, Semaphore } from 'effect'
 import type { AutonomousCycleStartup } from '../app'
 import type { AutonomousCycle } from '../cycle'
@@ -16,7 +17,7 @@ import { validateCycleLoopInterval } from '../cycle/runner/decisions'
 import { type ReconciliationCadenceState } from '../cycle/runner/model'
 import type { CycleDecisionBindingEvidence } from '../cycle/store'
 import { OperationalError, operationalError } from '../errors'
-import { archiveVerifiedIntradaySnapshotReference, type IntradayMarketDataService } from '../market-data'
+import { type IntradayMarketDataService } from '../market-data'
 import { type ReconciliationPassResult } from '../reconciler'
 import { type Policy } from '../risk'
 import { currentUtcInstant } from '../time'
@@ -60,78 +61,65 @@ const verifyDecisionBindingEvidence = (
   document: CycleDecisionDocument,
 ): Effect.Effect<CycleDecisionBindingEvidence, CycleDecisionBuildError> => {
   const binding = document.bindings.decisionMarketData ?? document.bindings.executionMarketData
-  if (binding?.schemaVersion === 'bayn.execution-market-data-binding.v3') {
-    const streaming = marketData?.streaming
-    if (streaming === undefined || !('decisionMarketDataRows' in document))
-      return Effect.fail(
-        new CycleDecisionBuildError({ failure: 'contract', message: 'Streaming source verification is unavailable' }),
-      )
-    const inputs = [{ binding, rows: document.decisionMarketDataRows }]
-    const pricing = document.bindings.executionMarketData
-    if (
-      pricing?.schemaVersion === 'bayn.execution-market-data-binding.v3' &&
-      pricing.snapshotId !== binding.snapshotId
-    ) {
-      if (document.executionMarketDataRows === undefined)
-        return Effect.fail(
-          new CycleDecisionBuildError({ failure: 'contract', message: 'Streaming pricing rows are missing' }),
-        )
-      inputs.push({ binding: pricing, rows: document.executionMarketDataRows })
-    }
-    return Effect.forEach(inputs, ({ binding: source, rows }) => {
-      const snapshot = rows === undefined ? undefined : reconstructBoundIntradaySnapshot(source, rows)
-      if (snapshot === undefined)
-        return Effect.fail(
-          new CycleDecisionBuildError({
-            failure: 'contract',
-            message: 'Streaming decision or pricing input cut does not reproduce',
-          }),
-        )
-      return streaming.verifyReference(snapshot).pipe(
-        Effect.mapError(
-          (cause) =>
-            new CycleDecisionBuildError({
-              failure: 'market-data',
-              message: 'Streaming decision source evidence is unavailable',
-              cause,
-            }),
-        ),
-      )
-    }).pipe(Effect.map((references) => ({ streamingSnapshotReferences: references })))
-  }
-  if (binding?.schemaVersion !== 'bayn.execution-market-data-binding.v2') return Effect.succeed({})
+  if (binding === undefined || binding.schemaVersion === 'bayn.reconciled-position-liquidation-binding.v1')
+    return Effect.succeed({})
   if (
     marketData === undefined ||
     !('decisionMarketDataRows' in document) ||
-    document.decisionMarketDataRows === undefined
-  ) {
+    (binding.schemaVersion !== 'bayn.execution-market-data-binding.v3' &&
+      binding.schemaVersion !== 'bayn.execution-market-data-binding.v4')
+  )
     return Effect.fail(
       new CycleDecisionBuildError({
         failure: 'contract',
-        message: 'intraday decision has no archive reader or persisted rows for external verification',
+        message: 'Decision requires canonical market data and persisted input rows',
       }),
     )
-  }
-  const snapshot = reconstructBoundIntradaySnapshot(binding, document.decisionMarketDataRows)
-  if (snapshot === undefined) {
-    return Effect.fail(
-      new CycleDecisionBuildError({
-        failure: 'contract',
-        message: 'intraday decision rows do not reconstruct their bound archive snapshot',
-      }),
+  const inputs = [{ binding, rows: document.decisionMarketDataRows }]
+  const pricing = document.bindings.executionMarketData
+  if (pricing !== undefined && pricing.snapshotId !== binding.snapshotId) {
+    if (
+      (pricing.schemaVersion !== 'bayn.execution-market-data-binding.v3' &&
+        pricing.schemaVersion !== 'bayn.execution-market-data-binding.v4') ||
+      document.executionMarketDataRows === undefined
     )
-  }
-  return marketData.verifyArchiveSnapshot(snapshot).pipe(
-    Effect.map((verified) => ({
-      intradaySnapshotReferences: [archiveVerifiedIntradaySnapshotReference(verified)],
-    })),
-    Effect.mapError(
-      (cause) =>
+      return Effect.fail(
         new CycleDecisionBuildError({
-          failure: 'market-data',
-          message: 'intraday decision does not match the immutable archive at its bound watermarks',
-          cause,
+          failure: 'contract',
+          message: 'Pricing requires canonical market data and persisted input rows',
         }),
+      )
+    inputs.push({ binding: pricing, rows: document.executionMarketDataRows })
+  }
+  return Effect.forEach(inputs, ({ binding: source, rows }) => {
+    const snapshot = rows === undefined ? undefined : reconstructBoundIntradaySnapshot(source, rows)
+    if (snapshot === undefined)
+      return Effect.fail(
+        new CycleDecisionBuildError({
+          failure: 'contract',
+          message: 'Decision or pricing input cut does not reproduce',
+        }),
+      )
+    return marketData.verifyReference(snapshot).pipe(
+      Effect.mapError(
+        (cause) =>
+          new CycleDecisionBuildError({
+            failure: 'market-data',
+            message: 'Decision source evidence is unavailable',
+            cause,
+          }),
+      ),
+    )
+  }).pipe(
+    Effect.map(
+      (references): CycleDecisionBindingEvidence => ({
+        simulatedSnapshotReferences: references.filter(
+          (reference) => reference.schemaVersion === 'bayn.simulated-snapshot-reference.v1',
+        ),
+        streamingSnapshotReferences: references.filter(
+          (reference) => reference.schemaVersion === 'bayn.streaming-snapshot-reference.v1',
+        ),
+      }),
     ),
   )
 }
@@ -157,7 +145,7 @@ export const runRestateAdvanceWithinTimeout = <A, E, R>(
   onTimeout: (error: CycleRunnerError) => Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> =>
   operationPermit.withPermit(lifecycleAdvance).pipe(
-    Effect.timeoutOrElse({
+    operationTimeoutOrElse({
       duration: Duration.millis(timeoutMs),
       orElse: () => onTimeout(mutationCyclePassTimeoutError(timeoutMs)),
     }),
