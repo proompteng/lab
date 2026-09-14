@@ -98,8 +98,8 @@ featureTest(
         const captured = yield* backfillAlpacaHistory(historyFixtureRequest, datasetDirectory)
         const universe = {
           universeId: 'history-integration',
-          universeSymbolHash: sha256('AAPL,SPY'),
-          symbols: ['AAPL', 'SPY'],
+          universeSymbolHash: sha256('AAPL,AMD,SPY'),
+          symbols: ['AAPL', 'AMD', 'SPY'],
           topics: {
             bars: 'bars',
             quotes: 'quotes',
@@ -140,7 +140,14 @@ featureTest(
           ),
         )
         expect(manifest.transport).toBe('alpaca-rest')
-        expect(receipt.value.schemaVersion).toBe('bayn.alpaca-rest-replay-receipt.v1')
+        expect(receipt.value).toMatchObject({
+          schemaVersion: 'bayn.alpaca-rest-replay-receipt.v2',
+          acquiredSymbols: ['AAPL', 'SPY'],
+          unacquiredSymbols: ['AMD'],
+        })
+        const receiptText = yield* fs.readFileString(`${output}/source-receipt.json`)
+        const hiddenMissing = receiptText.replace('"unacquiredSymbols":["AMD"]', '"unacquiredSymbols":[]')
+        expect(Result.isFailure(validateBacktestSourceReceipt(hiddenMissing, sha256(hiddenMissing)))).toBe(true)
         expect(manifest.positions).toHaveLength(5)
         for (const topic of [universe.topics.features, universe.topics.technicalFeatures])
           expect(

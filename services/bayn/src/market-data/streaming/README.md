@@ -238,8 +238,11 @@ every manifest cut before touching a database, copies the receipt to its output,
 and final report. This establishes completeness relative to the pinned capture authority; it does not authenticate
 market prices or calibrate the data feed.
 
-REST exports use `bayn.alpaca-rest-replay-receipt.v1`, which binds the dataset ID, raw chunk hashes, Dorvud feature
-receipt, final source hash, modeled coordinate policy, and `NOT_OBSERVED` original stream availability. Its virtual
+REST exports use `bayn.alpaca-rest-replay-receipt.v2`, which binds the dataset ID, acquired symbols, unacquired strategy
+candidates, raw chunk hashes, Dorvud feature receipt, final source hash, modeled coordinate policy, and `NOT_OBSERVED`
+original stream availability. The declared universe is a strategy contract, not a claim that every candidate was
+acquired. The receipt must list the exact complement of its acquired symbols; unacquired candidates remain excluded.
+Version 2 normalization includes raw delivery delay after bar finalization. Its virtual
 streams have one partition each. The same source validator and projection consume both transports. See the
 [historical data workflow](../../../README.md#historical-data-workflow) for acquisition, ClickHouse publication,
 verified restoration, and feature production outside the deployed service.

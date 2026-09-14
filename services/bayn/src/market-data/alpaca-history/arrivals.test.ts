@@ -99,6 +99,9 @@ test('minute bars arrive only after completion and inclusive endpoint rows remai
   const events = [...Result.getOrThrow(restCaptureArrivals({ ...base, capture })).arrivals]
   expect(events).toHaveLength(1)
   expect(events[0]?.availableAtMs).toBe(Date.parse('2026-09-11T20:00:00.010Z'))
+  const delayed = [...Result.getOrThrow(restCaptureArrivals({ ...base, capture, rawDeliveryDelayMs: 25 })).arrivals]
+  expect(delayed[0]?.availableAtMs).toBe(Date.parse('2026-09-11T20:00:00.035Z'))
+  expect(JSON.parse(delayed[0]?.record.value ?? '').ingestTs).toBe('2026-09-11T20:00:00.035Z')
   const event = events[0]
   if (event === undefined) throw new Error('expected a bar')
   expect(Result.getOrThrow(decodeRawMarketRecord(event.record, universe)).kind).toBe(RawMarketEventKind.Bar)

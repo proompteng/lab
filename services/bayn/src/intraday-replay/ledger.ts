@@ -1,10 +1,11 @@
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
 
 import type { ExecutionModel } from '../execution-model-contract'
 import { saleCostBasisMicros } from '../strategy/execution-model/cash'
 import { calculateSessionFees, type FeeInput } from '../strategy/execution-model/fees'
 import { notionalMicros } from '../strategy/execution-model/fixed-point'
 import { MICROS, type ExecutionModelFailure } from '../strategy/execution-model/model'
+import { UtcInstantSchema } from '../schemas'
 
 const MAX_U128 = (1n << 128n) - 1n
 const canonicalUnsigned = /^(?:0|[1-9][0-9]*)$/
@@ -24,6 +25,7 @@ type InvalidReason =
   | 'quantity-exceeds-requested'
   | 'non-whole-share-quantity'
   | 'inconsistent-fees'
+  | 'invalid-observed-at'
 
 export type IntradayReplayLedgerFailure =
   | {
@@ -109,12 +111,30 @@ const parseFeeMultiplier = (value: number): Result.Result<bigint, IntradayReplay
     ? Result.succeed(BigInt(value))
     : invalid('feeMultiplierPpm', value, 'invalid-fee-multiplier')
 
-const feeInputsFromFills = (fills: readonly EconomicReplayFill[]): readonly FeeInput[] =>
-  fills.map((fill) => ({
-    side: fill.side,
-    quantityMicros: BigInt(fill.quantityMicros),
-    notionalMicros: BigInt(fill.notionalMicros),
-  }))
+const sessionDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' })
+const cumulativeFees = (fills: readonly EconomicReplayFill[], model: ExecutionModel, multiplier: bigint) =>
+  Result.gen(function* () {
+    const sessions = new Map<string, FeeInput[]>()
+    for (const fill of fills) {
+      if (Result.isFailure(Schema.decodeUnknownResult(UtcInstantSchema)(fill.observedAt)))
+        return yield* invalid<bigint>('fill.observedAt', fill.observedAt, 'invalid-observed-at')
+      const date = sessionDate.format(Date.parse(fill.observedAt))
+      const inputs = sessions.get(date) ?? []
+      inputs.push({
+        side: fill.side,
+        quantityMicros: BigInt(fill.quantityMicros),
+        notionalMicros: BigInt(fill.notionalMicros),
+      })
+      sessions.set(date, inputs)
+    }
+    let total = 0n
+    for (const inputs of sessions.values()) {
+      const fees = calculateSessionFees(inputs, model, multiplier)
+      if (Result.isFailure(fees)) return yield* accountingFailure<bigint>(fees.failure)
+      total += fees.success.totalMicros
+    }
+    return total
+  })
 
 const makeLedger = <Fill extends EconomicReplayFill>(
   openingCashMicros: bigint,
@@ -169,11 +189,11 @@ export const applyReplayFill = <Fill extends EconomicReplayFill>(
     return invalid('fill.notionalMicros', fill.notionalMicros, 'notional-mismatch')
   }
   const nextFills = [...ledger.fills, fill]
-  const nextFees = calculateSessionFees(feeInputsFromFills(nextFills), executionModel, feeMultiplier.success)
-  if (Result.isFailure(nextFees)) return accountingFailure(nextFees.failure)
+  const nextFees = cumulativeFees(nextFills, executionModel, feeMultiplier.success)
+  if (Result.isFailure(nextFees)) return Result.fail(nextFees.failure)
   const priorFees = parseUnsigned(ledger.executionFeesMicros, 'ledger.executionFeesMicros', false)
   if (Result.isFailure(priorFees)) return Result.fail(priorFees.failure)
-  const feeDelta = nextFees.success.totalMicros - priorFees.success
+  const feeDelta = nextFees.success - priorFees.success
   if (feeDelta < 0n) return invalid('ledger.executionFeesMicros', ledger.executionFeesMicros, 'inconsistent-fees')
 
   const existingIndex = ledger.positions.findIndex((position) => position.symbol === fill.symbol)
@@ -244,7 +264,5 @@ export const applyReplayFill = <Fill extends EconomicReplayFill>(
       requiredCashMicros: (fillNotional.success + feeDelta).toString(),
     })
   }
-  return Result.succeed(
-    makeLedger(openingCash.success, nextCash, nextFees.success.totalMicros, nextPositions, nextFills),
-  )
+  return Result.succeed(makeLedger(openingCash.success, nextCash, nextFees.success, nextPositions, nextFills))
 }

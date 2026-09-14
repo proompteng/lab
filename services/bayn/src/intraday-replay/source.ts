@@ -78,14 +78,16 @@ const CapturedKafkaSourceReceiptSchema = Schema.Struct({
 export const BacktestSourceReceiptSchema = Schema.Union([
   CapturedKafkaSourceReceiptSchema,
   Schema.Struct({
-    schemaVersion: Schema.Literal('bayn.alpaca-rest-replay-receipt.v1'),
+    schemaVersion: Schema.Literal('bayn.alpaca-rest-replay-receipt.v2'),
     recordedAt: UtcInstantSchema,
     origin: StrictNonEmptyStringSchema,
     datasetId: Sha256Schema,
+    acquiredSymbols: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique()),
+    unacquiredSymbols: Schema.Array(SymbolSchema).check(Schema.isUnique()),
     rawChunkHashes: Schema.Array(Sha256Schema).check(Schema.isMinLength(1), Schema.isUnique()),
     featureReceiptHash: Sha256Schema,
     sourceDataSha256: Sha256Schema,
-    normalization: Schema.Literal('bayn.alpaca-rest-arrivals.v1'),
+    normalization: Schema.Literal('bayn.alpaca-rest-arrivals.v2'),
     coordinates: Schema.Literal('virtual-topic-partition-zero-offset-order'),
     originalStreamAvailability: Schema.Literal('NOT_OBSERVED'),
     coverageStartMs: NonNegativeIntegerSchema,
@@ -111,6 +113,16 @@ export const validateBacktestSourceReceipt = (text: string, expectedHash: string
         value.coverageEndMs
     )
       return yield* Result.fail(fail('Source capture must observe the complete export interval'))
+    if (
+      value.schemaVersion === 'bayn.alpaca-rest-replay-receipt.v2' &&
+      (value.acquiredSymbols.join(',') !== [...value.acquiredSymbols].sort().join(',') ||
+        value.acquiredSymbols.some((symbol) => !value.universe.symbols.includes(symbol)) ||
+        value.unacquiredSymbols.join(',') !==
+          value.universe.symbols.filter((symbol) => !value.acquiredSymbols.includes(symbol)).join(','))
+    )
+      return yield* Result.fail(
+        fail('REST receipt must distinguish acquired symbols from unacquired strategy candidates'),
+      )
     return { value, contentHash: expectedHash }
   })
 export type BacktestSourceReceipt = Result.Result.Success<ReturnType<typeof validateBacktestSourceReceipt>>
@@ -121,7 +133,7 @@ export const validateBacktestSourceCuts = (manifest: BacktestSourceManifest, cap
     if ((manifest.transport === 'captured-kafka') !== capturedKafka)
       return yield* Result.fail(fail('Source transport differs from its independently pinned receipt'))
     if (
-      capture.value.schemaVersion === 'bayn.alpaca-rest-replay-receipt.v1' &&
+      capture.value.schemaVersion === 'bayn.alpaca-rest-replay-receipt.v2' &&
       capture.value.sourceDataSha256 !== manifest.dataSha256
     )
       return yield* Result.fail(fail('REST replay bytes differ from the dataset export receipt'))

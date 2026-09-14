@@ -25,10 +25,25 @@ const apply = (ledger: ReplayLedger<EconomicReplayFill>, input: FillInput) => {
 }
 
 describe('intraday replay ledger', () => {
+  test('rounds each session independently while carrying cash positions and prior fees', () => {
+    const firstEntry = success(apply(freshLedger(), filled()))
+    const firstClose = success(apply(firstEntry, filled({ side: 'sell' })))
+    const secondEntry = success(apply(firstClose, filled({ observedAt: '2026-09-08T13:35:30.000Z' })))
+    const secondClose = success(apply(secondEntry, filled({ side: 'sell', observedAt: '2026-09-08T19:55:30.000Z' })))
+    expect(firstClose.executionFeesMicros).toBe('30000')
+    expect(secondEntry.executionFeesMicros).toBe('40000')
+    expect(secondClose.executionFeesMicros).toBe('60000')
+    expect(secondClose.cashMicros).toBe('999940000')
+    expect(secondClose.netRealizedPnlAfterCostsMicros).toBe('-60000')
+    expect(secondClose.fills).toHaveLength(4)
+    expect(secondClose.positions).toEqual([])
+  })
+
   test.each([
     ['requestedQuantityMicros', '1500000'],
     ['quantityMicros', '1500000'],
     ['priceMicros', '0'],
+    ['observedAt', 'invalid-date'],
     ['notionalMicros', '0'],
   ])('rejects malformed fill data in %s', (field, value) => {
     expect(apply(freshLedger(), filled({ [field]: value }))).toMatchObject({

@@ -426,14 +426,18 @@ export const exportHistoricalDataset = (
       yield* Effect.fromResult(validateBacktestSourceManifest(manifest))
       const recordedAt = DateTime.formatIso(yield* DateTime.now)
       const receipt = {
-        schemaVersion: 'bayn.alpaca-rest-replay-receipt.v1',
+        schemaVersion: 'bayn.alpaca-rest-replay-receipt.v2',
         recordedAt,
         origin,
         datasetId: request.datasetId,
+        acquiredSymbols: dataset.manifest.request.symbols,
+        unacquiredSymbols: request.universe.symbols.filter(
+          (symbol) => !dataset.manifest.request.symbols.includes(symbol),
+        ),
         rawChunkHashes: chunks.map((chunk) => chunk.sha256),
         featureReceiptHash: sha256(featureText),
         sourceDataSha256: source.dataSha256,
-        normalization: 'bayn.alpaca-rest-arrivals.v1',
+        normalization: 'bayn.alpaca-rest-arrivals.v2',
         coordinates: 'virtual-topic-partition-zero-offset-order',
         originalStreamAvailability: 'NOT_OBSERVED',
         coverageStartMs: manifest.coverageStartMs,

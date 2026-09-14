@@ -293,6 +293,12 @@ read-only ClickHouse access. See `tools/history.ts` for the strict job schema.
    production Dorvud transitions, writes `source.json`, `source-receipt.json`, `arrivals.ndjson.gz`, calendar and coverage,
    and reports the receipt's SHA-256. Use these with the canonical backtest input and command above.
 
+REST export receipts explicitly list acquired symbols and unacquired strategy candidates. The strategy universe is
+the routing and evaluation contract; it does not claim complete acquisition. Missing candidates remain excluded with
+zero weight. A result from the seven-symbol dataset must not be described as a full-universe strategy comparison.
+Finalized bars become available after minute completion plus both the configured finalization and raw delivery delays.
+Simulation fees round separately for each New York session while account cash and positions carry across sessions.
+
 Historical tables retain dataset versions without the live archive TTL. Each row carries dataset/query identity,
 provider, feed, event time, and retrieval time. REST is explicitly `REST_AS_OF_RETRIEVAL` and original stream
 availability is `NOT_OBSERVED`; a REST response cannot reproduce updates that were unavailable at its historical time.

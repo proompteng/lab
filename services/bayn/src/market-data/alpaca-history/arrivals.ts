@@ -45,7 +45,8 @@ export const restCaptureArrivals = (input: {
         )
       const availableAtMs =
         Number((nanos + 999_999n) / 1_000_000n) +
-        (capture.kind === 'bars' ? 60_000 + input.barFinalizationDelayMs : input.rawDeliveryDelayMs)
+        input.rawDeliveryDelayMs +
+        (capture.kind === 'bars' ? 60_000 + input.barFinalizationDelayMs : 0)
       pending.push({ availableAtMs, ordinal, row })
     }
     pending.sort(
@@ -108,7 +109,7 @@ export const restCaptureArrivals = (input: {
               payload,
               provenance: {
                 transport: 'historical-rest',
-                normalization: 'bayn.alpaca-rest-arrivals.v1',
+                normalization: 'bayn.alpaca-rest-arrivals.v2',
                 datasetId: input.datasetId,
                 queryHash: capture.provenance.queryHash,
                 retrievedAt: capture.provenance.retrievedAt,
