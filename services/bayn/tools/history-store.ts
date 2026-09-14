@@ -31,7 +31,7 @@ const decodeMetadataRows = Schema.decodeUnknownEffect(
   Schema.Array(Schema.Struct({ metadata: Schema.String })),
   strictParseOptions,
 )
-const storageBatchSize = 5000
+const storageBatchSize = 50_000
 const timestamp = (instant: string) => instant.replace('T', ' ').replace(/Z$/, '')
 const encode = (value: unknown) => Effect.fromResult(canonicalJsonV1Result(value))
 const readRecords = (datasetId: string, chunk: HistoricalChunk, first: number, last: number) =>
