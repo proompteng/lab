@@ -78,6 +78,30 @@ processors per partition. `default-replication` is initial-provisioning only.
 
 Official contracts: [HA](https://docs.restate.dev/server/deploy/ha), [metadata](https://docs.restate.dev/server/deploy/metadata), and [snapshots](https://docs.restate.dev/server/deploy/snapshots).
 
+### Metadata election timing
+
+The metadata Raft election timeout is 100 ticks at the existing 100ms tick interval: 10 seconds. Heartbeats remain
+two ticks apart (200ms). Restate 1.7.9 defaults to a one-second election timeout, but the retained RBD volumes have
+shown metadata WAL sync p99 of 1.5–2 seconds. The Raft event loop awaits durable storage before processing its next
+event, so those delays can cause false elections, partition leadership changes, and repeated Bayn tick interruptions.
+See the pinned [Raft loop](https://github.com/restatedev/restate/blob/v1.7.9/crates/metadata-server/src/raft/server/member.rs)
+and [timing options](https://github.com/restatedev/restate/blob/v1.7.9/crates/types/src/config/metadata_server.rs).
+
+This setting tolerates the observed routine latency; it does not repair the underlying disk latency or cover every
+outlier. A genuinely lost metadata leader takes longer to replace. WAL durability, replication, Bayn reconciliation
+deadlines, and alert thresholds retain their existing settings.
+
+Argo rolls the StatefulSet one retained member at a time. Before rollout, verify the three members agree on their
+Raft membership and have caught up, with replication two and positive archived LSNs for all 24 partitions. Verify all
+replacement members rejoin that same quorum. Do not change PVCs, node
+identities, PDB, or Bayn activation to apply this timing correction. Recovery is a reviewed revert of the environment
+setting through GitOps; it restores the previous election timing without changing stored state.
+
+Acceptance requires stable metadata leadership, two caught-up processors per partition, several consecutive completed
+Bayn controller ticks with fresh exact reconciliation, both status replicas ready, and the existing alerts resolved.
+If elections continue, correlate `restate_rocksdb_wal_file_sync_seconds` with metadata terms and investigate storage
+latency; increasing the timeout again without that evidence is not acceptance.
+
 The singleton layer includes a fail-closed PreSync rollback guard. If a later HA layer is reverted after replication
 was raised, it performs Restate's documented shrink sequence while all three pods still exist and only permits the
 StatefulSet downscale after replication is one, removable workers/log servers are drained, metadata is singleton, a

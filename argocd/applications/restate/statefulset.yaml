@@ -205,6 +205,8 @@ spec:
               value: "false"
             - name: RESTATE_METADATA_CLIENT__ADDRESSES
               value: '["http://restate-0.restate-cluster:5122","http://restate-1.restate-cluster:5122","http://restate-2.restate-cluster:5122"]'
+            - name: RESTATE_METADATA_SERVER__RAFT_ELECTION_TICK
+              value: "100"
             - name: RESTATE_DEFAULT_REPLICATION
               value: "1"
             - name: RESTATE_SHUTDOWN_TIMEOUT
