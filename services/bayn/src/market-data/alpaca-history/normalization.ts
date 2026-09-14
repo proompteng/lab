@@ -1,7 +1,7 @@
 import { DateTime, Option, Result, Schema } from 'effect'
 
-import { canonicalHashV1Result, renderCanonicalJsonFailure } from '../../../hash'
-import { PositiveFiniteSchema, StrictNonEmptyStringSchema, SymbolSchema } from '../../../schemas'
+import { canonicalHashV1Result, renderCanonicalJsonFailure } from '../../hash'
+import { PositiveFiniteSchema, StrictNonEmptyStringSchema, SymbolSchema } from '../../schemas'
 import {
   VendorHistoricalFailure,
   type AlpacaHistoricalKind,

@@ -125,8 +125,8 @@ GitOps creates the topic, table, grants, and configuration. No Bayn runtime iden
 
 ## Retained feature replay
 
-The same jar provides an offline entry point that feeds retained raw bar arrivals through the production rolling
-feature transition. Use it when a later Kafka bootstrap's feature ordering cannot represent historical delivery:
+The same jar provides an offline entry point that feeds retained raw bar arrivals through the production rolling and technical
+feature transitions. Use it when a later Kafka bootstrap's feature ordering cannot represent historical delivery:
 
 ```sh
 java -Xmx1g -cp build/libs/technical-analysis-flink-all.jar \
@@ -134,8 +134,8 @@ java -Xmx1g -cp build/libs/technical-analysis-flink-all.jar \
 ```
 
 The input is a bar-only extraction of Bayn arrival records (`availableAtMs` and the unchanged Kafka `record`), in
-availability, partition, offset order. The configuration has schema version `dorvud.retained-feature-replay.v1`, exact
-`sourceSha256` and `recordCount`, `barsTopic`, `featuresTopic`, `universeId`, canonical `symbols` and their
+availability, partition, offset order. The configuration has schema version `dorvud.retained-feature-replay.v2`, exact
+`sourceSha256` and `recordCount`, `barsTopic`, `rollingFeaturesTopic`, `technicalFeaturesTopic`, `feed`, `universeId`, canonical `symbols` and their
 `universeSymbolHash`, exact `producerRevision`, and `processingDelayMs`. Sources are limited to 128 MiB of extracted
 bars. The command validates and executes one immutable byte snapshot; it never reopens the input after validation.
 Expanded feature messages are written and hashed incrementally. The existing 5,000 ms producer/Kafka clock-skew
@@ -150,7 +150,7 @@ missing bars nor technical indicators are fabricated. No Kafka, ClickHouse, or b
 The new output directory contains `arrivals.ndjson`, the exact `config.json`, and a terminal `receipt.json` with input
 and output hashes, counts, skipped nonregular/nonfinal bars, and actual computation time. A directory without the
 receipt is incomplete. Combine these feature arrivals with the unchanged raw stream and freeze a new Bayn manifest;
-retain the original replay separately. This command regenerates the existing rolling family only.
+retain the original replay separately. Both feature families use their production state transitions. Equal-time output is sorted by topic and then by per-topic offset. The obsolete rolling-only replay configuration is rejected.
 
 ## Versioned technical features
 
@@ -223,7 +223,7 @@ that bound; original timestamps are retained. Bayn eligibility still depends on 
 completed decision window. Invalid records increment rejection diagnostics and preserve previously accepted rolling
 state, so a single rejected input cannot erase 30 minutes of usable history.
 
-Simulated feature delivery is monotonic within its output partition. Each output is available at the later of its own
+Simulated feature delivery is monotonic within each output partition. Each output is available at the later of its own
 modeled completion and the previous output availability. This preserves both Kafka offset order and arrival order
 when cross-host clock skew temporarily puts one symbol's completed window ahead of another symbol's input.
 

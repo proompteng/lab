@@ -1,3 +1,5 @@
+import { operationalError as marketFixtureError } from './errors'
+import { streamingFixtureFromRaw, fixtureStreamingReference } from './testing/streaming-market-fixture'
 import { describe, expect, test } from 'bun:test'
 
 import { Cause, Clock, Deferred, Duration, Effect, Exit, Fiber, Logger, Option, Result } from 'effect'
@@ -68,14 +70,9 @@ import {
   type MarketDataService,
   type MarketDataSnapshot,
 } from './market-data'
-import {
-  IntradayIngestionDelayDirection,
-  IntradaySnapshotFailure,
-  type ArchiveVerifiedIntradayMarketSnapshot,
-} from './market-data/intraday/model'
+import { IntradayIngestionDelayDirection, IntradaySnapshotFailure } from './market-data/intraday/model'
 import { intradayMomentumBehaviorHash, makeIntradayMomentumDefinition } from './strategy/intraday-momentum/decision'
-import { intradayTestArchiveTopics, makeIntradayMomentumTestSnapshot } from './strategy/intraday-momentum/test-support'
-import { persistIntradaySnapshotRows, verifyIntradaySnapshot } from './market-data/intraday/verification'
+import { makeIntradayMomentumTestSnapshot } from './strategy/intraday-momentum/test-support'
 import { decodeDefaultIntradayMomentumProtocol } from './strategy/intraday-momentum/protocol'
 import { makePersistedSnapshotFixture } from './testing/persisted-snapshot-fixture'
 import {
@@ -887,28 +884,20 @@ const executionLifecycleFixture = async (
       : []
   const intradayMarketData: IntradayMarketDataService = {
     check: Effect.void,
-    captureVersion: () =>
-      Effect.succeed(
-        Object.values(intradayTestArchiveTopics)
-          .sort()
-          .map((sourceTopic) => ({
-            sourceTopic,
-            sourcePartition: 0,
-            inclusiveLastOffset: String(
-              currentIntradayProtocol.universe.length * currentIntradayProtocol.lookbackMinutes,
+    loadSnapshot: (query) =>
+      Effect.sync(
+        () =>
+          streamingFixtureFromRaw(
+            makeIntradayMomentumTestSnapshot(
+              currentIntradayProtocol,
+              { ...query, archiveWatermarks: [] },
+              { NVDA: 0.02 },
+              10,
             ),
-          })),
+            query,
+          ).snapshot,
       ),
-    loadSnapshot: (request) =>
-      Effect.succeed(
-        makeIntradayMomentumTestSnapshot(
-          currentIntradayProtocol,
-          request,
-          { NVDA: 0.02 },
-          10,
-        ) as ArchiveVerifiedIntradayMarketSnapshot,
-      ),
-    verifyArchiveSnapshot: (snapshot) => Effect.succeed(snapshot as ArchiveVerifiedIntradayMarketSnapshot),
+    verifyReference: fixtureStreamingReference,
   }
   const input = {
     accountId,
@@ -4072,7 +4061,7 @@ describe('OBSERVE runtime composition', () => {
     }
   })
 
-  test('builds an authority-gated intraday execution decision from verified archive data', async () => {
+  test('builds an authority-gated intraday execution decision from the canonical feature and raw-data adapter', async () => {
     const protocol = Result.getOrThrow(decodeDefaultIntradayMomentumProtocol())
     const definition = makeIntradayMomentumDefinition(protocol)
     const strategy = {
@@ -4142,38 +4131,26 @@ describe('OBSERVE runtime composition', () => {
     let displayedBidSizes: Readonly<Record<string, number>> = {}
     const archive: IntradayMarketDataService = {
       check: Effect.void,
-      captureVersion: () =>
-        Effect.succeed(
-          Object.values(intradayTestArchiveTopics)
-            .sort()
-            .map((sourceTopic) => ({
-              sourceTopic,
-              sourcePartition: 0,
-              inclusiveLastOffset: String(protocol.universe.length * protocol.lookbackMinutes),
-            })),
-        ),
-      loadSnapshot: (request) =>
-        Effect.sync(() => {
-          archiveRequests.push(request)
-          const snapshot = makeIntradayMomentumTestSnapshot(protocol, request, { NVDA: 0.02 }, 10, displayedBidSizes)
-          const rows = Result.getOrThrow(
-            persistIntradaySnapshotRows({
-              ...snapshot,
-              trades: snapshot.trades.filter(({ symbol }) => !excludedTradeSymbols.includes(symbol)),
+      loadSnapshot: (query) =>
+        Effect.try({
+          try: () => {
+            const request = { ...query, archiveWatermarks: [] }
+            archiveRequests.push(request)
+            const raw = makeIntradayMomentumTestSnapshot(protocol, request, { NVDA: 0.02 }, 10, displayedBidSizes)
+            return streamingFixtureFromRaw(
+              { ...raw, trades: raw.trades.filter(({ symbol }) => !excludedTradeSymbols.includes(symbol)) },
+              query,
+            ).snapshot
+          },
+          catch: (cause) =>
+            marketFixtureError({
+              component: 'market-data',
+              operation: 'load',
+              message: 'Fixture snapshot unavailable',
+              cause,
             }),
-          )
-          return Result.getOrThrow(
-            verifyIntradaySnapshot(request, {
-              ...rows,
-              archiveWatermarks: request.archiveWatermarks.map((watermark) => ({
-                source_topic: watermark.sourceTopic,
-                source_partition: watermark.sourcePartition,
-                inclusive_last_offset: watermark.inclusiveLastOffset,
-              })),
-            }),
-          ) as ArchiveVerifiedIntradayMarketSnapshot
         }),
-      verifyArchiveSnapshot: (snapshot) => Effect.succeed(snapshot as ArchiveVerifiedIntradayMarketSnapshot),
+      verifyReference: fixtureStreamingReference,
     }
     const input = {
       accountId,
@@ -4390,7 +4367,10 @@ describe('OBSERVE runtime composition', () => {
 
     const decisionRequest = archiveRequests[0]
     if (decisionRequest === undefined) return expect.unreachable('intraday decision request must be captured')
-    const noTradeSnapshot = makeIntradayMomentumTestSnapshot(protocol, decisionRequest, {}, 10)
+    const noTradeSnapshot = streamingFixtureFromRaw(
+      makeIntradayMomentumTestSnapshot(protocol, decisionRequest, {}, 10),
+      decisionRequest,
+    ).snapshot
     const noTradeDecision = Result.getOrThrow(
       evaluateIntradayMomentumDecision(definition, activeCycle, noTradeSnapshot),
     )
@@ -4425,18 +4405,10 @@ describe('OBSERVE runtime composition', () => {
     expect(Exit.isFailure(unavailable)).toBeTrue()
     if (Exit.isFailure(unavailable)) expect(Cause.pretty(unavailable.cause)).toContain('ObserveDecisionAwaitingSignal')
     expect(archiveRequests.length - unavailableRequestsStart).toBe(1)
-    expect(candidateObservations).toContainEqual(
-      expect.objectContaining({
-        event: 'bayn.intraday-candidate-observation.v1',
-        decision: expect.objectContaining({
-          signals: [],
-          selectedSymbols: [],
-          excludedCandidates: protocol.candidateSymbols.map((symbol) =>
-            expect.objectContaining({ symbol, reason: 'not-ready' }),
-          ),
-        }),
-      }),
-    )
+    if (Exit.isFailure(unavailable))
+      expect(Cause.pretty(unavailable.cause)).toContain(
+        'No candidate has complete raw data and a matching rolling feature',
+      )
     excludedTradeSymbols = ['AAPL']
 
     const closeObservedAt = '2020-05-01T16:25:01.000Z'
@@ -4476,7 +4448,7 @@ describe('OBSERVE runtime composition', () => {
       ),
     )
     expect(closeDocument.bindings.executionMarketData).toMatchObject({
-      schemaVersion: 'bayn.execution-market-data-binding.v2',
+      schemaVersion: 'bayn.execution-market-data-binding.v3',
       purpose: IntradaySnapshotPurpose.Liquidation,
       rangeStartAt: '2020-05-01T16:24:00.000Z',
       rangeEndAt: '2020-05-01T16:25:00.000Z',

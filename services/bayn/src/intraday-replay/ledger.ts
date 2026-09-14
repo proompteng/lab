@@ -1,13 +1,10 @@
 import { Result } from 'effect'
 
-import { OrderSide } from '../execution/contracts'
 import type { ExecutionModel } from '../execution-model-contract'
 import { saleCostBasisMicros } from '../strategy/execution-model/cash'
 import { calculateSessionFees, type FeeInput } from '../strategy/execution-model/fees'
 import { notionalMicros } from '../strategy/execution-model/fixed-point'
 import { MICROS, type ExecutionModelFailure } from '../strategy/execution-model/model'
-import type { IntradayReplayIocOutcome } from './execution'
-import type { IntradayReplayFill, IntradayReplayPosition } from './model'
 
 const MAX_U128 = (1n << 128n) - 1n
 const canonicalUnsigned = /^(?:0|[1-9][0-9]*)$/
@@ -51,23 +48,31 @@ export type IntradayReplayLedgerFailure =
       readonly cause: ExecutionModelFailure
     }
 
-export type EconomicReplayFill = Pick<
-  IntradayReplayFill,
-  'symbol' | 'side' | 'observedAt' | 'quantityMicros' | 'priceMicros' | 'notionalMicros'
->
+export interface EconomicReplayFill {
+  readonly symbol: string
+  readonly side: 'buy' | 'sell'
+  readonly observedAt: string
+  readonly quantityMicros: string
+  readonly priceMicros: string
+  readonly notionalMicros: string
+}
+
+export interface ReplayPosition {
+  readonly symbol: string
+  readonly quantityMicros: string
+  readonly costBasisMicros: string
+}
 
 /** Cash and cost basis retain the caller's independently verified fill provenance. */
 export interface ReplayLedger<Fill extends EconomicReplayFill> {
   readonly openingCashMicros: string
   readonly cashMicros: string
   readonly executionFeesMicros: string
-  readonly positions: readonly IntradayReplayPosition[]
+  readonly positions: readonly ReplayPosition[]
   readonly fills: readonly Fill[]
   /** Net realized PnL is available only after all positions are flat. */
   readonly netRealizedPnlAfterCostsMicros: string | null
 }
-
-export type IntradayReplayLedger = ReplayLedger<IntradayReplayFill>
 
 const invalid = <A>(
   field: string,
@@ -115,7 +120,7 @@ const makeLedger = <Fill extends EconomicReplayFill>(
   openingCashMicros: bigint,
   cashMicros: bigint,
   executionFeesMicros: bigint,
-  positions: readonly IntradayReplayPosition[],
+  positions: readonly ReplayPosition[],
   fills: readonly Fill[],
 ): ReplayLedger<Fill> => ({
   openingCashMicros: openingCashMicros.toString(),
@@ -127,54 +132,12 @@ const makeLedger = <Fill extends EconomicReplayFill>(
 })
 
 /** Create an empty replay ledger with no positions or fills. */
-export const createReplayLedger = <Fill extends EconomicReplayFill = IntradayReplayFill>(
+export const createReplayLedger = <Fill extends EconomicReplayFill = EconomicReplayFill>(
   initialCashMicros: string,
 ): Result.Result<ReplayLedger<Fill>, IntradayReplayLedgerFailure> => {
   const cash = parseUnsigned(initialCashMicros, 'initialCashMicros', false)
   if (Result.isFailure(cash)) return invalid('initialCashMicros', initialCashMicros, 'invalid-initial-cash')
   return Result.succeed(makeLedger<Fill>(cash.success, cash.success, 0n, [], []))
-}
-
-const archiveFillErrorFields: Readonly<Record<string, string>> = {
-  requestedQuantityMicros: 'outcome.requestedQuantityMicros',
-  'fill.quantityMicros': 'outcome.filledQuantityMicros',
-  'fill.priceMicros': 'outcome.fillPriceMicros',
-  'fill.notionalMicros': 'outcome.fillNotionalMicros',
-}
-
-/** The archive wrapper retains its source-specific evidence without lending that identity to other datasets. */
-export const applyReplayIoc = (
-  ledger: IntradayReplayLedger,
-  outcome: IntradayReplayIocOutcome,
-  executionModel: ExecutionModel,
-  feeMultiplierPpm: number,
-): Result.Result<IntradayReplayLedger, IntradayReplayLedgerFailure> => {
-  const feeMultiplier = parseFeeMultiplier(feeMultiplierPpm)
-  if (Result.isFailure(feeMultiplier)) return Result.fail(feeMultiplier.failure)
-  if (outcome.status === 'canceled') return Result.succeed(ledger)
-  const side = outcome.side === OrderSide.Buy ? 'buy' : outcome.side === OrderSide.Sell ? 'sell' : undefined
-  if (side === undefined) return invalid('outcome.side', outcome.side, 'invalid-side')
-  return applyReplayFill(
-    ledger,
-    {
-      symbol: outcome.symbol,
-      side,
-      observedAt: outcome.observedAt,
-      quantityMicros: outcome.filledQuantityMicros,
-      priceMicros: outcome.fillPriceMicros,
-      notionalMicros: outcome.fillNotionalMicros,
-      snapshotId: outcome.snapshotId,
-    },
-    outcome.requestedQuantityMicros,
-    executionModel,
-    feeMultiplierPpm,
-  ).pipe(
-    Result.mapError((failure) =>
-      failure._tag === 'InvalidIntradayReplayLedger'
-        ? { ...failure, field: archiveFillErrorFields[failure.field] ?? failure.field }
-        : failure,
-    ),
-  )
 }
 
 /** Apply the economic fill after the owning data boundary has established its provenance. */
@@ -215,11 +178,11 @@ export const applyReplayFill = <Fill extends EconomicReplayFill>(
 
   const existingIndex = ledger.positions.findIndex((position) => position.symbol === fill.symbol)
   const existing = existingIndex < 0 ? undefined : ledger.positions[existingIndex]
-  let nextPositions: readonly IntradayReplayPosition[]
+  let nextPositions: readonly ReplayPosition[]
   if (side === 'buy') {
     const quantity = (existing === undefined ? 0n : BigInt(existing.quantityMicros)) + filledQuantity.success
     const costBasis = (existing === undefined ? 0n : BigInt(existing.costBasisMicros)) + fillNotional.success
-    const nextPosition: IntradayReplayPosition = {
+    const nextPosition: ReplayPosition = {
       symbol: fill.symbol,
       quantityMicros: quantity.toString(),
       costBasisMicros: costBasis.toString(),

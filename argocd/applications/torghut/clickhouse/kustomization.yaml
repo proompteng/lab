@@ -16,6 +16,7 @@ resources:
   - signal-schema-job.yaml
   - intraday-bars-schema-job.yaml
   - intraday-features-schema-job.yaml
+  - historical-datasets-schema-job.yaml
   - bayn-universe-v2-configmap.yaml
   - signal-publisher-cronjob.yaml
 images:

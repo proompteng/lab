@@ -1,78 +1,48 @@
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { OrderSide } from '../execution/contracts'
 import { intradayMomentumExecutionModel } from '../strategy/intraday-momentum/protocol'
-import type { IntradayReplayIocOutcome } from './execution'
-import {
-  applyReplayFill,
-  applyReplayIoc,
-  createReplayLedger,
-  type EconomicReplayFill,
-  type IntradayReplayLedger,
-} from './ledger'
+import { applyReplayFill, createReplayLedger, type EconomicReplayFill, type ReplayLedger } from './ledger'
 
 const feeMultiplierPpm = 1_000_000
 const executionModel = intradayMomentumExecutionModel
-type FilledOutcome = Extract<IntradayReplayIocOutcome, { readonly status: 'filled' }>
-type CanceledOutcome = Extract<IntradayReplayIocOutcome, { readonly status: 'canceled' }>
-
-const filledDefaults: FilledOutcome = {
+type FillInput = EconomicReplayFill & { readonly requestedQuantityMicros: string }
+const filledDefaults: FillInput = {
   symbol: 'AMD',
-  side: OrderSide.Buy,
+  side: 'buy',
   requestedQuantityMicros: '1000000',
-  filledQuantityMicros: '1000000',
-  snapshotId: 'a'.repeat(64),
-  snapshotContentHash: 'b'.repeat(64),
+  quantityMicros: '1000000',
   observedAt: '2026-09-04T13:35:30.000Z',
-  limitPriceMicros: '100000000',
-  submittedAt: '2026-09-04T13:35:20.000Z',
-  status: 'filled',
-  fillPriceMicros: '100000000',
-  fillNotionalMicros: '100000000',
-  unfilledRemainder: 'none',
+  priceMicros: '100000000',
+  notionalMicros: '100000000',
 }
-
-const filled = (overrides: Partial<FilledOutcome> = {}): FilledOutcome => ({ ...filledDefaults, ...overrides })
-
-const canceledDefaults: CanceledOutcome = {
-  symbol: 'AMD',
-  side: OrderSide.Buy,
-  requestedQuantityMicros: '1000000',
-  filledQuantityMicros: '0',
-  snapshotId: 'a'.repeat(64),
-  snapshotContentHash: 'b'.repeat(64),
-  observedAt: '2026-09-04T13:35:30.000Z',
-  limitPriceMicros: '100000000',
-  submittedAt: '2026-09-04T13:35:20.000Z',
-  status: 'canceled',
-  reason: 'no-displayed-liquidity',
-  unfilledRemainder: 'canceled',
-}
-
-const canceled = (overrides: Partial<CanceledOutcome> = {}): CanceledOutcome => ({ ...canceledDefaults, ...overrides })
-
+const filled = (overrides: Partial<FillInput> = {}): FillInput => ({ ...filledDefaults, ...overrides })
 const success = <A, E>(result: Result.Result<A, E>): A => Result.getOrThrow(result)
-const freshLedger = (cashMicros = '1000000000'): IntradayReplayLedger => success(createReplayLedger(cashMicros))
-const apply = (ledger: IntradayReplayLedger, outcome: IntradayReplayIocOutcome) =>
-  applyReplayIoc(ledger, outcome, executionModel, feeMultiplierPpm)
+const freshLedger = (cashMicros = '1000000000') => success(createReplayLedger(cashMicros))
+const apply = (ledger: ReplayLedger<EconomicReplayFill>, input: FillInput) => {
+  const { requestedQuantityMicros, ...fill } = input
+  return applyReplayFill(ledger, fill, requestedQuantityMicros, executionModel, feeMultiplierPpm)
+}
 
 describe('intraday replay ledger', () => {
   test.each([
     ['requestedQuantityMicros', '1500000'],
-    ['filledQuantityMicros', '1500000'],
-    ['fillPriceMicros', '0'],
-    ['fillNotionalMicros', '0'],
-  ])('preserves the archive outcome error field for %s', (field, value) => {
+    ['quantityMicros', '1500000'],
+    ['priceMicros', '0'],
+    ['notionalMicros', '0'],
+  ])('rejects malformed fill data in %s', (field, value) => {
     expect(apply(freshLedger(), filled({ [field]: value }))).toMatchObject({
       _tag: 'Failure',
-      failure: { _tag: 'InvalidIntradayReplayLedger', field: `outcome.${field}` },
+      failure: {
+        _tag: 'InvalidIntradayReplayLedger',
+        field: field === 'requestedQuantityMicros' ? field : `fill.${field}`,
+      },
     })
   })
 
-  test('preserves vendor provenance while applying the same cash and fee accounting', () => {
-    type VendorFill = EconomicReplayFill & { readonly provenanceHash: string }
-    const entry: VendorFill = {
+  test('retains fill provenance through cash and fee accounting', () => {
+    type ProvenancedFill = EconomicReplayFill & { readonly provenanceHash: string }
+    const entry: ProvenancedFill = {
       symbol: 'AMD',
       side: 'buy',
       observedAt: filledDefaults.observedAt,
@@ -81,29 +51,26 @@ describe('intraday replay ledger', () => {
       notionalMicros: '100000000',
       provenanceHash: 'c'.repeat(64),
     }
-    const vendor = success(
+    const ledger = success(
       applyReplayFill(
-        success(createReplayLedger<VendorFill>('1000000000')),
+        success(createReplayLedger<ProvenancedFill>('1000000000')),
         entry,
         '1000000',
         executionModel,
         feeMultiplierPpm,
       ),
     )
-    const archive = success(apply(freshLedger(), filled()))
-    expect(vendor.cashMicros).toBe(archive.cashMicros)
-    expect(vendor.executionFeesMicros).toBe(archive.executionFeesMicros)
-    expect(vendor.positions).toEqual(archive.positions)
-    expect(vendor.fills).toEqual([entry])
-    expect(vendor.fills[0]).not.toHaveProperty('snapshotId')
+    const reference = success(apply(freshLedger(), filled()))
+    expect(ledger.cashMicros).toBe(reference.cashMicros)
+    expect(ledger.executionFeesMicros).toBe(reference.executionFeesMicros)
+    expect(ledger.positions).toEqual(reference.positions)
+    expect(ledger.fills).toEqual([entry])
+    expect(ledger.fills[0]).not.toHaveProperty('snapshotId')
   })
 
   test('carries a partial entry through a profitable close and aggregates fees', () => {
     const afterEntry = success(
-      apply(
-        freshLedger(),
-        filled({ requestedQuantityMicros: '2000000', filledQuantityMicros: '1000000', unfilledRemainder: 'canceled' }),
-      ),
+      apply(freshLedger(), filled({ requestedQuantityMicros: '2000000', quantityMicros: '1000000' })),
     )
     expect(afterEntry).toMatchObject({
       cashMicros: '899990000',
@@ -117,9 +84,9 @@ describe('intraday replay ledger', () => {
       apply(
         afterEntry,
         filled({
-          side: OrderSide.Sell,
-          fillPriceMicros: '101000000',
-          fillNotionalMicros: '101000000',
+          side: 'sell',
+          priceMicros: '101000000',
+          notionalMicros: '101000000',
         }),
       ),
     )
@@ -136,7 +103,7 @@ describe('intraday replay ledger', () => {
   test('reports a realized loss after all session costs when the position is flat', () => {
     const afterEntry = success(apply(freshLedger(), filled()))
     const closed = success(
-      apply(afterEntry, filled({ side: OrderSide.Sell, fillPriceMicros: '99000000', fillNotionalMicros: '99000000' })),
+      apply(afterEntry, filled({ side: 'sell', priceMicros: '99000000', notionalMicros: '99000000' })),
     )
 
     expect(closed).toMatchObject({
@@ -153,8 +120,8 @@ describe('intraday replay ledger', () => {
         freshLedger(),
         filled({
           requestedQuantityMicros: '3000000',
-          filledQuantityMicros: '3000000',
-          fillNotionalMicros: '300000000',
+          quantityMicros: '3000000',
+          notionalMicros: '300000000',
         }),
       ),
     )
@@ -162,11 +129,10 @@ describe('intraday replay ledger', () => {
       apply(
         opened,
         filled({
-          side: OrderSide.Sell,
+          side: 'sell',
           requestedQuantityMicros: '3000000',
-          fillPriceMicros: '101000000',
-          fillNotionalMicros: '101000000',
-          unfilledRemainder: 'canceled',
+          priceMicros: '101000000',
+          notionalMicros: '101000000',
         }),
       ),
     )
@@ -180,11 +146,11 @@ describe('intraday replay ledger', () => {
       apply(
         partial,
         filled({
-          side: OrderSide.Sell,
+          side: 'sell',
           requestedQuantityMicros: '2000000',
-          filledQuantityMicros: '2000000',
-          fillPriceMicros: '99000000',
-          fillNotionalMicros: '198000000',
+          quantityMicros: '2000000',
+          priceMicros: '99000000',
+          notionalMicros: '198000000',
         }),
       ),
     )
@@ -196,23 +162,16 @@ describe('intraday replay ledger', () => {
     })
   })
 
-  test('treats a canceled IOC as an accounting no-op', () => {
-    const ledger = freshLedger()
-    const result = apply(ledger, canceled())
-
-    expect(Result.getOrThrow(result)).toBe(ledger)
-  })
-
   test('rejects an oversell without mutating the existing position', () => {
     const ledger = success(apply(freshLedger(), filled()))
     const result = apply(
       ledger,
       filled({
-        side: OrderSide.Sell,
+        side: 'sell',
         requestedQuantityMicros: '2000000',
-        filledQuantityMicros: '2000000',
-        fillPriceMicros: '99000000',
-        fillNotionalMicros: '198000000',
+        quantityMicros: '2000000',
+        priceMicros: '99000000',
+        notionalMicros: '198000000',
       }),
     )
 
@@ -243,11 +202,8 @@ describe('intraday replay ledger', () => {
 
   test('rejects malformed financial quantities and notional without recording a fill', () => {
     const ledger = freshLedger()
-    const malformedNotional = apply(ledger, filled({ fillNotionalMicros: '99999999' }))
-    const fractionalQuantity = apply(
-      ledger,
-      filled({ requestedQuantityMicros: '1500000', filledQuantityMicros: '1500000' }),
-    )
+    const malformedNotional = apply(ledger, filled({ notionalMicros: '99999999' }))
+    const fractionalQuantity = apply(ledger, filled({ requestedQuantityMicros: '1500000', quantityMicros: '1500000' }))
 
     expect(Result.isFailure(malformedNotional)).toBe(true)
     expect(Result.isFailure(fractionalQuantity)).toBe(true)
@@ -260,7 +216,7 @@ describe('intraday replay ledger', () => {
   })
 
   test('bounds the fee multiplier before accounting', () => {
-    const result = applyReplayIoc(freshLedger(), filled(), executionModel, 999_999)
+    const result = applyReplayFill(freshLedger(), filled(), '1000000', executionModel, 999_999)
 
     expect(Result.isFailure(result)).toBe(true)
     if (Result.isFailure(result)) expect(result.failure).toMatchObject({ reason: 'invalid-fee-multiplier' })

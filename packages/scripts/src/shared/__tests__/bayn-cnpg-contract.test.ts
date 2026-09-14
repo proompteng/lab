@@ -418,7 +418,6 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
       imageDigest: 'sha256:f782b5a6f57b35fdef510de7b9f7453ce1938e0b100ac899dcc43cd212302af7',
     },
   })
-  expect(controllerEnvironment.get('BAYN_MARKET_DATA_MODE')?.value).toBe('streaming')
   expect(controllerEnvironment.get('BAYN_KAFKA_BOOTSTRAP_TIMEOUT_MS')?.value).toBe('300000')
   expect(controllerEnvironment.get('BAYN_BROKER_ACCESS')?.value).toBe('read-only')
   expect(controllerEnvironment.get('BAYN_CAPITAL_AUTHORITY')?.value).toBe('none')

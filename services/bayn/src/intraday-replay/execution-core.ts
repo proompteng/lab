@@ -5,7 +5,11 @@ import { OrderSide } from '../execution/contracts'
 import { MICROS, notionalMicros } from '../execution-model'
 import { PositiveMicrosSchema } from '../schemas'
 import type { IntradayMomentumProtocol } from '../strategy/intraday-momentum/protocol'
-import type { IntradayReplayIocAssumptions } from './execution'
+
+export interface IntradayReplayIocAssumptions {
+  readonly slippageBps: number
+  readonly availableLiquidityPpm: number
+}
 
 const BPS = 10_000n
 const PPM = 1_000_000n

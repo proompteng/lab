@@ -16,7 +16,9 @@ internal data class RetainedFeatureReplayConfig(
   val sourceSha256: String,
   val recordCount: Int,
   val barsTopic: String,
-  val featuresTopic: String,
+  val rollingFeaturesTopic: String,
+  val technicalFeaturesTopic: String,
+  val feed: String,
   val universeId: String,
   val universeSymbolHash: String,
   val symbols: List<String>,
@@ -63,14 +65,14 @@ internal fun replayRetainedFeatures(
   clock: Clock,
   emit: (RetainedFeatureArrival) -> Unit,
 ): RetainedFeatureReplayResult {
-  require(config.schemaVersion == "dorvud.retained-feature-replay.v1") { "unsupported replay configuration" }
+  require(config.schemaVersion == "dorvud.retained-feature-replay.v2") { "unsupported replay configuration" }
   require(config.sourceSha256.matches(sha256Pattern) && retainedBytesHash(bytes) == config.sourceSha256) { "retained source hash mismatch" }
   require(config.recordCount > 0 && bytes.isNotEmpty() && bytes.last() == '\n'.code.toByte()) { "incomplete retained source" }
   require(config.processingDelayMs in 0..60_000) { "invalid simulated processing delay" }
   require(config.producerRevision.matches(Regex("[0-9a-f]{40}"))) { "producer revision must be an exact commit" }
-  require(config.barsTopic.isNotBlank() && config.featuresTopic.isNotBlank() && config.featuresTopic != config.barsTopic) {
-    "invalid replay topics"
-  }
+  val topics = listOf(config.barsTopic, config.rollingFeaturesTopic, config.technicalFeaturesTopic)
+  require(topics.all { it.isNotBlank() } && topics.distinct().size == topics.size) { "invalid replay topics" }
+  require(config.feed in setOf("iex", "sip", "delayed_sip")) { "unsupported replay feed" }
   require(config.universeId.isNotBlank() && config.symbols.isNotEmpty() && config.symbols == config.symbols.distinct().sorted()) {
     "noncanonical replay universe"
   }
@@ -84,11 +86,38 @@ internal fun replayRetainedFeatures(
   val lineCount = bytes.count { it == 10.toByte() }
   require(lineCount == config.recordCount) { "retained source record count mismatch" }
   val routes =
-    mapOf(config.barsTopic to ArchiveRoute("iex", ArchiveUniverse(config.universeId, config.universeSymbolHash, config.symbols.toSet())))
-  val states = mutableMapOf<String, RollingFeatureState>()
+    mapOf(
+      config.barsTopic to ArchiveRoute(config.feed, ArchiveUniverse(config.universeId, config.universeSymbolHash, config.symbols.toSet())),
+    )
+  val rollingStates = mutableMapOf<String, RollingFeatureState>()
+  val technicalStates = mutableMapOf<String, TechnicalFeatureState>()
   val offsets = mutableMapOf<Int, Long>()
   var outputCount = 0
   var previousOutputAvailability = 0L
+  val outputOffsets = mutableMapOf<String, Int>()
+  val pending = mutableListOf<Pair<String, String>>()
+
+  fun flush() {
+    for ((topic, value) in pending.sortedBy { it.first }) {
+      val offset = outputOffsets[topic] ?: 0
+      emit(RetainedFeatureArrival(previousOutputAvailability, RetainedFeatureRecord(topic, 0, offset.toString(), value)))
+      outputOffsets[topic] = offset + 1
+      outputCount++
+    }
+    pending.clear()
+  }
+
+  fun publish(
+    topic: String,
+    value: String,
+    rawAvailableAtMs: Long,
+    windowEndMs: Long,
+  ) {
+    val available = maxOf(previousOutputAvailability, Math.addExact(maxOf(rawAvailableAtMs, windowEndMs), config.processingDelayMs))
+    if (available > previousOutputAvailability) flush()
+    previousOutputAvailability = available
+    pending.add(topic to value)
+  }
   var previous: RetainedFeatureArrival? = null
   var skipped = 0
   var rejected = 0
@@ -149,31 +178,25 @@ internal fun replayRetainedFeatures(
     val key = rollingFeatureKey(bar)
     val computedAt = clock.millis()
     recordedAt = maxOf(recordedAt, computedAt)
-    val transition = processRollingFeature(states[key] ?: RollingFeatureState(), bar, computedAt, config.producerRevision)
-    if (transition.rejection != null) rejected++
-    states[key] = transition.state
-    transition.feature?.let { feature ->
-      val available =
-        maxOf(
-          previousOutputAvailability,
-          Math.addExact(maxOf(arrival.availableAtMs, feature.material.windowEndMs), config.processingDelayMs),
-        )
-      previousOutputAvailability = available
-      emit(
-        RetainedFeatureArrival(
-          available,
-          RetainedFeatureRecord(config.featuresTopic, 0, outputCount.toString(), replayJson.encodeToString(feature)),
-        ),
-      )
-      outputCount++
+    val rolling = processRollingFeature(rollingStates[key] ?: RollingFeatureState(), bar, computedAt, config.producerRevision)
+    val technical = processTechnicalFeature(technicalStates[key] ?: TechnicalFeatureState(), bar, computedAt, config.producerRevision)
+    if (rolling.rejection != null || technical.rejection != null) rejected++
+    rollingStates[key] = rolling.state
+    technicalStates[key] = technical.state
+    rolling.feature?.let { feature ->
+      publish(config.rollingFeaturesTopic, replayJson.encodeToString(feature), arrival.availableAtMs, feature.material.windowEndMs)
+    }
+    technical.feature?.let { feature ->
+      publish(config.technicalFeaturesTopic, replayJson.encodeToString(feature), arrival.availableAtMs, feature.material.windowEndMs)
     }
   }
+  flush()
   return RetainedFeatureReplayResult(outputCount, skipped, rejected, recordedAt)
 }
 
 @Serializable
 private data class RetainedFeatureReceipt(
-  val schemaVersion: String = "dorvud.retained-feature-replay-receipt.v1",
+  val schemaVersion: String = "dorvud.retained-feature-replay-receipt.v2",
   val config: RetainedFeatureReplayConfig,
   val configSha256: String,
   val outputSha256: String,

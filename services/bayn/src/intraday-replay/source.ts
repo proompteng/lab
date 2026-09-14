@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto'
+import { createGunzip } from 'node:zlib'
+import { NodeStream } from '@effect/platform-node'
 import { Cause, Data, Effect, FileSystem, Option, Pull, Result, Schema, Semaphore, Stream } from 'effect'
 import { canonicalHashV1Result, sha256 } from '../hash'
 import {
@@ -28,8 +30,10 @@ const SourcePositionSchema = Schema.Struct({
   startOffset: UnsignedMicrosSchema,
   endOffsetExclusive: UnsignedMicrosSchema,
 })
-export const RetainedReplaySourceManifestSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.retained-replay-source.v1'),
+export const BacktestSourceManifestSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.backtest-source.v1'),
+  encoding: Schema.Literal('ndjson-gzip'),
+  transport: Schema.Literals(['captured-kafka', 'alpaca-rest']),
   dataSha256: Sha256Schema,
   recordCount: PositiveIntegerSchema,
   coverageStartMs: NonNegativeIntegerSchema,
@@ -53,7 +57,7 @@ export const RetainedReplaySourceManifestSchema = Schema.Struct({
   deliveryModel: SimulatedSnapshotSourceSchema.fields.deliveryModel,
   regeneratedFeaturesRecordedAtMs: Schema.optionalKey(NonNegativeIntegerSchema),
 })
-export type RetainedReplaySourceManifest = typeof RetainedReplaySourceManifestSchema.Type
+export type BacktestSourceManifest = typeof BacktestSourceManifestSchema.Type
 export class ReplaySourceFailure extends Data.TaggedError('ReplaySourceFailure')<{
   readonly message: string
   readonly cause?: unknown
@@ -61,36 +65,68 @@ export class ReplaySourceFailure extends Data.TaggedError('ReplaySourceFailure')
 const fail = (message: string, cause?: unknown) => new ReplaySourceFailure({ message, cause })
 const partitionKey = (topic: string, partition: number) => `${topic}:${partition}`
 
-export const RetainedReplayCaptureSchema = Schema.Struct({
+const CapturedKafkaSourceReceiptSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.replay-source-capture.v1'),
   capturedAt: UtcInstantSchema,
   origin: StrictNonEmptyStringSchema,
   coverageStartMs: NonNegativeIntegerSchema,
   coverageEndMs: NonNegativeIntegerSchema,
-  universe: RetainedReplaySourceManifestSchema.fields.universe,
-  positions: RetainedReplaySourceManifestSchema.fields.positions,
+  universe: BacktestSourceManifestSchema.fields.universe,
+  positions: BacktestSourceManifestSchema.fields.positions,
 })
 
+export const BacktestSourceReceiptSchema = Schema.Union([
+  CapturedKafkaSourceReceiptSchema,
+  Schema.Struct({
+    schemaVersion: Schema.Literal('bayn.alpaca-rest-replay-receipt.v1'),
+    recordedAt: UtcInstantSchema,
+    origin: StrictNonEmptyStringSchema,
+    datasetId: Sha256Schema,
+    rawChunkHashes: Schema.Array(Sha256Schema).check(Schema.isMinLength(1), Schema.isUnique()),
+    featureReceiptHash: Sha256Schema,
+    sourceDataSha256: Sha256Schema,
+    normalization: Schema.Literal('bayn.alpaca-rest-arrivals.v1'),
+    coordinates: Schema.Literal('virtual-topic-partition-zero-offset-order'),
+    originalStreamAvailability: Schema.Literal('NOT_OBSERVED'),
+    coverageStartMs: NonNegativeIntegerSchema,
+    coverageEndMs: NonNegativeIntegerSchema,
+    universe: BacktestSourceManifestSchema.fields.universe,
+    positions: BacktestSourceManifestSchema.fields.positions,
+  }),
+])
+
 /** The expected hash is supplied by the capture authority, independently of the editable session manifest. */
-export const validateRetainedReplayCapture = (text: string, expectedHash: string) =>
+export const validateBacktestSourceReceipt = (text: string, expectedHash: string) =>
   Result.gen(function* () {
     yield* Schema.decodeUnknownResult(Sha256Schema)(expectedHash)
     if (sha256(text) !== expectedHash)
       return yield* Result.fail(fail('Source capture bytes differ from the independently pinned capture hash'))
     const value = yield* Schema.decodeUnknownResult(
-      Schema.fromJsonString(RetainedReplayCaptureSchema),
+      Schema.fromJsonString(BacktestSourceReceiptSchema),
       strictParseOptions,
     )(text)
-    if (value.coverageStartMs > value.coverageEndMs || Date.parse(value.capturedAt) < value.coverageEndMs)
+    if (
+      value.coverageStartMs > value.coverageEndMs ||
+      Date.parse(value.schemaVersion === 'bayn.replay-source-capture.v1' ? value.capturedAt : value.recordedAt) <
+        value.coverageEndMs
+    )
       return yield* Result.fail(fail('Source capture must observe the complete export interval'))
     return { value, contentHash: expectedHash }
   })
-export type RetainedReplayCapture = Result.Result.Success<ReturnType<typeof validateRetainedReplayCapture>>
+export type BacktestSourceReceipt = Result.Result.Success<ReturnType<typeof validateBacktestSourceReceipt>>
 
-export const validateCapturedReplayCuts = (manifest: RetainedReplaySourceManifest, capture: RetainedReplayCapture) =>
+export const validateBacktestSourceCuts = (manifest: BacktestSourceManifest, capture: BacktestSourceReceipt) =>
   Result.gen(function* () {
+    const capturedKafka = capture.value.schemaVersion === 'bayn.replay-source-capture.v1'
+    if ((manifest.transport === 'captured-kafka') !== capturedKafka)
+      return yield* Result.fail(fail('Source transport differs from its independently pinned receipt'))
+    if (
+      capture.value.schemaVersion === 'bayn.alpaca-rest-replay-receipt.v1' &&
+      capture.value.sourceDataSha256 !== manifest.dataSha256
+    )
+      return yield* Result.fail(fail('REST replay bytes differ from the dataset export receipt'))
     const cuts = (
-      value: Pick<RetainedReplaySourceManifest, 'coverageStartMs' | 'coverageEndMs' | 'universe' | 'positions'>,
+      value: Pick<BacktestSourceManifest, 'coverageStartMs' | 'coverageEndMs' | 'universe' | 'positions'>,
     ) => ({
       coverageStartMs: value.coverageStartMs,
       coverageEndMs: value.coverageEndMs,
@@ -98,34 +134,38 @@ export const validateCapturedReplayCuts = (manifest: RetainedReplaySourceManifes
       positions: value.positions,
     })
     if ((yield* canonicalHashV1Result(cuts(manifest))) !== (yield* canonicalHashV1Result(cuts(capture.value))))
-      return yield* Result.fail(fail('Source partition cuts differ from the independently captured session offsets'))
+      return yield* Result.fail(fail('Source partition cuts differ from the independently pinned receipt'))
   })
 
 /** The current Torghut capture profile matches the committed KafkaTopic topology, not observed records. */
-export const retainedReplaySourcePartitions = (manifest: RetainedReplaySourceManifest) =>
+export const backtestSourcePartitions = (manifest: BacktestSourceManifest) =>
   Object.values(manifest.universe.topics)
     .flatMap((topic) =>
       Array.from(
         {
           length:
-            topic === manifest.universe.topics.quotes
-              ? 13
-              : topic === manifest.universe.topics.features && manifest.regeneratedFeaturesRecordedAtMs !== undefined
-                ? 1
-                : 3,
+            manifest.transport === 'alpaca-rest'
+              ? 1
+              : topic === manifest.universe.topics.quotes
+                ? 13
+                : (topic === manifest.universe.topics.features ||
+                      topic === manifest.universe.topics.technicalFeatures) &&
+                    manifest.regeneratedFeaturesRecordedAtMs !== undefined
+                  ? 1
+                  : 3,
         },
         (_, partition) => ({ topic, partition }),
       ),
     )
     .sort((a, b) => a.topic.localeCompare(b.topic) || a.partition - b.partition)
 
-export const validateRetainedReplaySourceManifest = (input: unknown) =>
+export const validateBacktestSourceManifest = (input: unknown) =>
   Result.gen(function* () {
-    const manifest = yield* Schema.decodeUnknownResult(RetainedReplaySourceManifestSchema, strictParseOptions)(input)
+    const manifest = yield* Schema.decodeUnknownResult(BacktestSourceManifestSchema, strictParseOptions)(input)
     const topics = Object.values(manifest.universe.topics)
     if (new Set(topics).size !== topics.length)
       return yield* Result.fail(fail('Raw and derived source topics must be distinct'))
-    const expected = retainedReplaySourcePartitions(manifest)
+    const expected = backtestSourcePartitions(manifest)
     if (
       manifest.positions.length !== expected.length ||
       expected.some((partition, index) => {
@@ -133,7 +173,7 @@ export const validateRetainedReplaySourceManifest = (input: unknown) =>
         return supplied?.topic !== partition.topic || supplied.partition !== partition.partition
       })
     )
-      return yield* Result.fail(fail('Source cuts must include every partition in the Torghut capture topology'))
+      return yield* Result.fail(fail('Source cuts must include every partition in the declared source topology'))
     if (
       manifest.positions.some((position, index) => {
         const previous = manifest.positions[index - 1]
@@ -152,10 +192,10 @@ export const validateRetainedReplaySourceManifest = (input: unknown) =>
   })
 
 /** Validate the complete file before execution; replay it with one chunk and the bounded live projection retained. */
-export const openRetainedReplaySource = (path: string, input: unknown, runId: string, capture: RetainedReplayCapture) =>
+export const openBacktestSource = (path: string, input: unknown, runId: string, capture: BacktestSourceReceipt) =>
   Effect.gen(function* () {
-    const manifest = yield* Effect.fromResult(validateRetainedReplaySourceManifest(input))
-    yield* Effect.fromResult(validateCapturedReplayCuts(manifest, capture))
+    const manifest = yield* Effect.fromResult(validateBacktestSourceManifest(input))
+    yield* Effect.fromResult(validateBacktestSourceCuts(manifest, capture))
     const sourceManifestHash = yield* Effect.fromResult(canonicalHashV1Result(manifest))
     if (
       manifest.firstAvailableAtMs > manifest.lastAvailableAtMs ||
@@ -209,6 +249,10 @@ export const openRetainedReplaySource = (path: string, input: unknown, runId: st
             digest.update(chunk)
           }),
         ),
+        NodeStream.pipeThroughDuplex({
+          evaluate: () => createGunzip(),
+          onError: (cause) => fail('Invalid compressed backtest source', cause),
+        }),
         Stream.decodeText({ encoding: 'utf-8' }),
         Stream.splitLines,
         Stream.mapEffect((line) =>
@@ -227,12 +271,12 @@ export const openRetainedReplaySource = (path: string, input: unknown, runId: st
             if (previous === undefined && offset !== BigInt(bound.startOffset))
               return yield* fail('Source omits the first data record of a declared partition cut')
             if (previous !== undefined && offset !== BigInt(previous) + 1n)
-              return yield* fail('Source partition cuts must contain every consecutive Kafka offset')
+              return yield* fail('Source partition cuts must contain every consecutive source offset')
             if (
               (last !== undefined && compareArrivalPositions(arrivalPosition(last), arrivalPosition(event)) > 0) ||
               (previous !== undefined && offset <= BigInt(previous))
             )
-              return yield* fail('Source arrivals reverse time or repeat/reverse a Kafka coordinate')
+              return yield* fail('Source arrivals reverse time or repeat/reverse a source coordinate')
             count++
             firstMs ??= event.availableAtMs
             last = event

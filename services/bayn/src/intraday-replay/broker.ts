@@ -44,8 +44,14 @@ import type { ObservedMarketValue } from '../market-data/streaming/projection'
 import type { IntradayMomentumProtocol } from '../strategy/intraday-momentum/protocol'
 import { applyReplayFill, createReplayLedger, type EconomicReplayFill, type ReplayLedger } from './ledger'
 import { simulateIntradayReplayIocCore, type IntradayReplayIocCoreOutcome } from './execution-core'
-import { makeReplayOrderExecution, replayQuoteRejection, type ReplayOrderExecution } from './broker-execution-evidence'
-import type { IntradayReplayIocAssumptions } from './execution'
+import {
+  makeReplayOrderExecution,
+  replayQuoteRejection,
+  ReplayQuoteRejection,
+  type ReplayOrderExecution,
+} from './broker-execution-evidence'
+import { intradayInstantNanos } from '../market-data/intraday/time'
+import type { IntradayReplayIocAssumptions } from './execution-core'
 import {
   makeReplayBrokerCheckpoint,
   restoreReplayBrokerCheckpoint,
@@ -104,6 +110,23 @@ export interface ReplayBrokerState {
   readonly fills: readonly FillActivity[]
   readonly fees: readonly FeeActivity[]
   readonly sessionCloses: readonly { readonly sessionDate: string; readonly equityMicros: string }[]
+}
+
+export interface ReplayValuationEvidence {
+  readonly model: 'last-observed-bid'
+  readonly observedAt: string
+  readonly marks: readonly {
+    readonly symbol: string
+    readonly priceMicros: string
+    readonly eventAt: string
+    readonly availableAtMs: number
+    readonly ageNanos: string
+    readonly staleForExecution: boolean
+    readonly topic: string
+    readonly partition: number
+    readonly offset: string
+    readonly recordHash: string
+  }[]
 }
 
 const readFailure = (operation: BrokerReadError['operation'], message: string, cause?: unknown) =>
@@ -211,6 +234,14 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       nowMs: number,
     ): quote is ObservedMarketValue<IntradayQuote> =>
       replayQuoteRejection(quote, symbol, nowMs, config.protocol) === null
+    const valuationQuoteUsable = (
+      quote: ObservedMarketValue<IntradayQuote> | undefined,
+      symbol: string,
+      nowMs: number,
+    ): quote is ObservedMarketValue<IntradayQuote> => {
+      const rejection = replayQuoteRejection(quote, symbol, nowMs, config.protocol)
+      return rejection === null || rejection === ReplayQuoteRejection.Stale
+    }
     const executeQuote = (side: OrderSide, quantity: string, limit: string, quote: IntradayQuote) =>
       Result.gen(function* () {
         return yield* simulateIntradayReplayIocCore({
@@ -285,7 +316,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
         for (const position of closingLedger.positions) {
           const atMs = Date.parse(session.closeAt)
           const quote = yield* config.quoteAt(position.symbol, atMs)
-          if (!quoteUsable(quote, position.symbol, atMs))
+          if (!valuationQuoteUsable(quote, position.symbol, atMs))
             return yield* new ReplayBrokerFailure({ message: 'Restored close has no retained valuation quote' })
           const price = yield* Effect.fromResult(numberToMicros(quote.value.bidPrice, 'mark.bid'))
           equity += yield* Effect.fromResult(notionalMicros(BigInt(position.quantityMicros), price))
@@ -299,17 +330,17 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
     const markedPositions = Effect.gen(function* () {
       const current = yield* readState
       const observedAt = yield* now
-      const positions = yield* Effect.forEach(current.ledger.positions, (position) =>
+      const marked = yield* Effect.forEach(current.ledger.positions, (position) =>
         Effect.gen(function* () {
           const metadata = asset(position.symbol)
           const quote = yield* config.quoteAt(position.symbol, Date.parse(observedAt))
-          if (metadata === undefined || !quoteUsable(quote, position.symbol, Date.parse(observedAt)))
+          if (metadata === undefined || !valuationQuoteUsable(quote, position.symbol, Date.parse(observedAt)))
             return yield* new ReplayBrokerFailure({
               message: `Replay position mark unavailable for ${position.symbol}`,
             })
           const price = yield* Effect.fromResult(numberToMicros(quote.value.bidPrice, 'mark.bid'))
           const value = yield* Effect.fromResult(notionalMicros(BigInt(position.quantityMicros), price))
-          return {
+          const positionValue = {
             accountId,
             assetId: metadata.assetId,
             symbol: position.symbol,
@@ -327,9 +358,35 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
             unrealizedPnlMicros: (value - BigInt(position.costBasisMicros)).toString(),
             observedAt,
           } satisfies Position
+          return {
+            position: positionValue,
+            mark: {
+              symbol: position.symbol,
+              priceMicros: price.toString(),
+              eventAt: quote.value.eventAt,
+              availableAtMs: quote.availableAtMs,
+              ageNanos: (
+                BigInt(Date.parse(observedAt)) * 1_000_000n -
+                intradayInstantNanos(quote.value.eventAt)
+              ).toString(),
+              staleForExecution: !quoteUsable(quote, position.symbol, Date.parse(observedAt)),
+              topic: quote.value.sourceTopic,
+              partition: quote.value.sourcePartition,
+              offset: quote.value.sourceOffset,
+              recordHash: quote.recordHash,
+            },
+          }
         }),
       )
-      return { positions, observedAt }
+      return {
+        positions: marked.map(({ position }) => position),
+        observedAt,
+        valuation: {
+          model: 'last-observed-bid',
+          observedAt,
+          marks: marked.map(({ mark }) => mark),
+        } satisfies ReplayValuationEvidence,
+      }
     })
     const readOrder = (find: (order: Order) => boolean, operation: 'order-by-id' | 'order-by-client-id') =>
       Effect.gen(function* () {
@@ -853,6 +910,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       read,
       mutation,
       completeSession,
+      valuation: markedPositions.pipe(Effect.map(({ valuation }) => valuation)),
       snapshot: readState,
       checkpoint,
     }

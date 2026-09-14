@@ -1,4 +1,8 @@
-import { Result } from 'effect'
+import { Effect, Result } from 'effect'
+import { numberToMicros } from '../execution-model'
+import type { StreamingVerifiedSnapshotReference } from '../market-data/streaming/reference'
+import type { IntradayMarketDataService } from '../market-data/intraday/model'
+import { reproduceStreamingSnapshot } from '../market-data/streaming/replay'
 import { canonicalHashV1 } from '../hash'
 import {
   featureBarContentHash,
@@ -15,21 +19,48 @@ import {
 import { KafkaBootstrapTimestampPolicy } from '../market-data/streaming/bootstrap'
 import { constructStreamingSnapshot } from '../market-data/streaming/snapshot'
 import { intradayInstantNanos } from '../market-data/intraday/time'
-import type {
-  ArchiveVerifiedIntradayMarketSnapshot,
-  IntradaySnapshotQuery,
-  IntradaySnapshotRequest,
-} from '../market-data/intraday/model'
+import type { IntradaySnapshotQuery, IntradaySnapshotRequest } from '../market-data/intraday/model'
 import { verifyIntradaySnapshot, persistIntradayRecordRows } from '../market-data/intraday/verification'
 import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
 import {
   defaultIntradayMomentumProtocolDocument as protocol,
   intradayMomentumFeatureTopic,
 } from '../strategy/intraday-momentum/protocol'
-import { availabilityRequest } from './archive-availability-fixture'
+import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
+import { IntradaySnapshotPurpose } from '../market-data/intraday/model'
+
+const rawPricingRequest: IntradaySnapshotRequest = {
+  sessionDate: '2026-09-04',
+  calendar: Result.getOrThrow(
+    normalizeMarketCalendarResult([{ date: '2026-09-04', open: '09:30', close: '16:00' }], {
+      start: '2026-09-04',
+      end: '2026-09-04',
+    }),
+  ),
+  rangeStartAt: '2026-09-04T14:29:00.000Z',
+  rangeEndAt: '2026-09-04T14:30:00.000Z',
+  observedAt: '2026-09-04T14:30:02.000Z',
+  universeId: protocol.universeId,
+  universeSymbolHash: protocol.universeSymbolHash,
+  universe: protocol.universe,
+  symbols: ['AAPL'],
+  purpose: IntradaySnapshotPurpose.EntryPricing,
+  feed: protocol.feed,
+  delayClass: protocol.delayClass,
+  sourceTopics: protocol.sourceTopics,
+  maximumQuoteAgeMs: 2_000,
+  minimumWatermarkLagMs: 0,
+  archiveWatermarks: Object.values(protocol.sourceTopics)
+    .toSorted()
+    .map((sourceTopic) => ({
+      sourceTopic,
+      sourcePartition: 0,
+      inclusiveLastOffset: '1000',
+    })),
+}
 
 export const streamingFixture = () => {
-  const { purpose: _purpose, ...baseRequest } = availabilityRequest
+  const { purpose: _purpose, ...baseRequest } = rawPricingRequest
   const request: IntradaySnapshotRequest = {
     ...baseRequest,
     rangeStartAt: '2026-09-04T14:00:00.000Z',
@@ -50,12 +81,12 @@ export const streamingFixture = () => {
       })),
     }),
   )
-  return { cut, query, snapshot, rows, archive: archive as ArchiveVerifiedIntradayMarketSnapshot, protocol }
+  return { cut, query, snapshot, rows, archive, protocol }
 }
 
 export const streamingFixtureFromRaw = (
   raw: ReturnType<typeof makeIntradayMomentumTestSnapshot>,
-  request: IntradaySnapshotRequest,
+  request: IntradaySnapshotQuery,
 ) => {
   const universe = {
     universeId: protocol.universeId,
@@ -72,6 +103,7 @@ export const streamingFixtureFromRaw = (
   let offset = 0
   for (const symbol of request.purpose === undefined ? (request.symbols ?? []) : []) {
     const bars = raw.bars.filter((bar) => bar.symbol === symbol)
+    if (bars.length !== 30) continue
     const material = {
       schemaVersion: MarketFeatureContract.V1,
       definitionId: MarketFeatureDefinition.RollingPrice30m,
@@ -95,11 +127,20 @@ export const streamingFixtureFromRaw = (
         contentHash: Result.getOrThrow(featureBarContentHash(bar)),
       })),
       values: {
-        referencePriceMicros: '100000000',
-        rangeHighPriceMicros: '101000000',
-        rangeLowPriceMicros: '99000000',
-        lastClosePriceMicros: '100000000',
-        totalVolumeMicros: '30000000000',
+        referencePriceMicros: Result.getOrThrow(numberToMicros(bars[0]?.open ?? 0, 'fixture open')).toString(),
+        rangeHighPriceMicros: Result.getOrThrow(
+          numberToMicros(Math.max(...bars.map((bar) => bar.high)), 'fixture high'),
+        ).toString(),
+        rangeLowPriceMicros: Result.getOrThrow(
+          numberToMicros(Math.min(...bars.map((bar) => bar.low)), 'fixture low'),
+        ).toString(),
+        lastClosePriceMicros: Result.getOrThrow(numberToMicros(bars.at(-1)?.close ?? 0, 'fixture close')).toString(),
+        totalVolumeMicros: Result.getOrThrow(
+          numberToMicros(
+            bars.reduce((total, bar) => total + bar.volume, 0),
+            'fixture volume',
+          ),
+        ).toString(),
       },
     }
     const feature = Result.getOrThrow(
@@ -147,3 +188,17 @@ export const streamingFixtureFromRaw = (
   const rows = Result.getOrThrow(persistIntradayRecordRows(snapshot))
   return { cut, query, snapshot, rows }
 }
+
+export const fixtureStreamingReference: IntradayMarketDataService['verifyReference'] = (snapshot) =>
+  Effect.sync(() => {
+    if (snapshot.manifest.schemaVersion !== 'bayn.streaming-market-snapshot.v1')
+      throw new Error('Expected streaming test fixture')
+    Result.getOrThrow(
+      reproduceStreamingSnapshot(snapshot.manifest, Result.getOrThrow(persistIntradayRecordRows(snapshot))),
+    )
+    // This unit fixture supplies consumption authority; durable adapter tests use actual committed references.
+    return {
+      schemaVersion: 'bayn.streaming-snapshot-reference.v1',
+      manifest: snapshot.manifest,
+    } as StreamingVerifiedSnapshotReference
+  })

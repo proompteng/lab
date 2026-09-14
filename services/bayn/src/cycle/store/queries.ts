@@ -353,8 +353,7 @@ export const makeCycleQueries = (
                 AND snapshot.manifest ->> 'finalizedAt' = ${document.bindings.snapshotFinalizedAt}
             )
           `
-        : decisionMarketData.schemaVersion === 'bayn.execution-market-data-binding.v2' ||
-            decisionMarketData.schemaVersion === 'bayn.execution-market-data-binding.v3' ||
+        : decisionMarketData.schemaVersion === 'bayn.execution-market-data-binding.v3' ||
             decisionMarketData.schemaVersion === 'bayn.execution-market-data-binding.v4'
           ? sql`
               ${document.bindings.snapshotId} = ${decisionMarketData.snapshotId}
@@ -362,7 +361,7 @@ export const makeCycleQueries = (
               AND ${document.bindings.snapshotFinalizedAt} = ${decisionMarketData.observedAt}
               AND EXISTS (
                 SELECT 1
-                FROM ${sql(decisionMarketData.schemaVersion === 'bayn.execution-market-data-binding.v4' ? 'simulated_snapshot_references' : decisionMarketData.schemaVersion === 'bayn.execution-market-data-binding.v3' ? 'streaming_snapshot_references' : 'intraday_snapshot_references')} AS snapshot
+                FROM ${sql(decisionMarketData.schemaVersion === 'bayn.execution-market-data-binding.v4' ? 'simulated_snapshot_references' : 'streaming_snapshot_references')} AS snapshot
                 WHERE snapshot.snapshot_id = ${decisionMarketData.snapshotId}
                   AND snapshot.content_hash = ${decisionMarketData.contentHash}
                   AND snapshot.observed_at = ${decisionMarketData.observedAt}::timestamptz
