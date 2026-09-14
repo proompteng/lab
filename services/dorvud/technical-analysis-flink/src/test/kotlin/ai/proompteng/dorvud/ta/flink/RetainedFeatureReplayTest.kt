@@ -4,6 +4,9 @@ import ai.proompteng.dorvud.platform.Envelope
 import ai.proompteng.dorvud.ta.stream.AlpacaBarPayload
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import java.nio.file.Files
+import java.security.DigestOutputStream
+import java.security.MessageDigest
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
@@ -93,9 +96,69 @@ class RetainedFeatureReplayTest {
     clock: Clock,
   ): CapturedReplay {
     val arrivals = mutableListOf<RetainedFeatureArrival>()
-    val summary = replayRetainedFeatures(bytes, config, clock) { arrivals.add(it) }
+    val summary = bytes.inputStream().use { replayRetainedFeatures(it, config, clock) { arrivals.add(it) } }
     assertEquals(arrivals.size, summary.outputRecordCount)
     return CapturedReplay(arrivals, summary.skippedBars, summary.rejectedBars, summary.recordedAtMs)
+  }
+
+  @Test fun `command streams sources larger than 128 MiB without resetting feature state`() {
+    val directory = Files.createTempDirectory("retained-large-source-")
+    try {
+      val source = directory.resolve("source.ndjson")
+      val digest = MessageDigest.getInstance("SHA-256")
+      val padding = " ".repeat(512 * 1024)
+      val count = 260
+      Files.newOutputStream(source).use { stream ->
+        DigestOutputStream(stream, digest).bufferedWriter(Charsets.UTF_8).use { writer ->
+          for (minute in 0 until count) {
+            writer.write(Json.encodeToString(arrival(minute, 0)))
+            writer.write(padding)
+            writer.write("\n")
+          }
+        }
+      }
+      assertTrue(Files.size(source) > 134_217_728L)
+      val config = config(byteArrayOf(), count).copy(sourceSha256 = digest.digest().joinToString("") { "%02x".format(it) })
+      val configPath = directory.resolve("config.json")
+      Files.writeString(configPath, Json.encodeToString(config))
+      val output = directory.resolve("output")
+      RetainedFeatureReplay.main(arrayOf(configPath.toString(), source.toString(), output.toString()))
+      val arrivals = Files.readAllLines(output.resolve("arrivals.ndjson")).map { Json.decodeFromString<RetainedFeatureArrival>(it) }
+      assertEquals(count, arrivals.count { it.record.topic == "technical" })
+      assertEquals(count - 29, arrivals.count { it.record.topic == "features" })
+      assertTrue(Files.exists(output.resolve("receipt.json")))
+    } finally {
+      Files.walk(directory).use { paths -> paths.sorted(Comparator.reverseOrder()).forEach { Files.delete(it) } }
+    }
+  }
+
+  @Test fun `changing the original path during emission cannot change the verified snapshot`() {
+    val source = bytes(input())
+    val config = config(source, input().size)
+    val expected = captureReplay(source, config, clock)
+    val path = Files.createTempFile("retained-replaced-source-", ".ndjson")
+    try {
+      Files.write(path, source)
+      val arrivals = mutableListOf<RetainedFeatureArrival>()
+      Files.newInputStream(path).use { input ->
+        replayRetainedFeatures(input, config, clock) { arrival ->
+          if (arrivals.isEmpty()) Files.writeString(path, "replaced source\n")
+          arrivals.add(arrival)
+        }
+      }
+      assertEquals(expected.arrivals, arrivals)
+    } finally {
+      Files.delete(path)
+    }
+  }
+
+  @Test fun `streaming input retains final newline strict UTF-8 and per-record bounds`() {
+    val truncated = bytes(input()).dropLast(1).toByteArray()
+    assertFailsWith<IllegalArgumentException> { captureReplay(truncated, config(truncated, input().size), clock) }
+    val oversized = (" ".repeat(1024 * 1024 + 1) + "\n").toByteArray()
+    assertFailsWith<IllegalArgumentException> { captureReplay(oversized, config(oversized, 1), clock) }
+    val malformed = byteArrayOf(0xc3.toByte(), 0x28, 10)
+    assertFailsWith<java.nio.charset.MalformedInputException> { captureReplay(malformed, config(malformed, 1), clock) }
   }
 
   @Test fun `both symbols emit at their triggering arrival while computed time remains actual`() {

@@ -3,6 +3,10 @@ package ai.proompteng.dorvud.ta.flink
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import java.io.InputStream
+import java.nio.ByteBuffer
+import java.nio.channels.Channels
+import java.nio.channels.FileChannel
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
@@ -58,16 +62,58 @@ private val sha256Pattern = Regex("[0-9a-f]{64}")
 internal fun retainedBytesHash(bytes: ByteArray): String =
   MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
-/** Same keyed transition as the Flink branch, with simulated delivery separated from actual computation time. */
+/** Snapshot and verify a bounded stream before feeding the shared keyed transitions. The caller owns the source. */
 internal fun replayRetainedFeatures(
-  bytes: ByteArray,
+  source: InputStream,
+  config: RetainedFeatureReplayConfig,
+  clock: Clock,
+  emit: (RetainedFeatureArrival) -> Unit,
+): RetainedFeatureReplayResult {
+  require(config.sourceSha256.matches(sha256Pattern) && config.recordCount > 0) { "invalid retained source identity" }
+  val snapshot = Files.createTempFile("dorvud-retained-", ".ndjson")
+  try {
+    FileChannel.open(snapshot, StandardOpenOption.READ, StandardOpenOption.WRITE, StandardOpenOption.DELETE_ON_CLOSE).use { channel ->
+      val digest = MessageDigest.getInstance("SHA-256")
+      val buffer = ByteArray(64 * 1024)
+      var recordCount = 0
+      var lineBytes = 0
+      while (true) {
+        val size = source.read(buffer)
+        if (size == -1) break
+        digest.update(buffer, 0, size)
+        for (index in 0 until size) {
+          if (buffer[index] == '\n'.code.toByte()) {
+            recordCount = Math.incrementExact(recordCount)
+            lineBytes = 0
+          } else {
+            lineBytes++
+            require(lineBytes <= 1024 * 1024) { "retained record exceeds 1 MiB" }
+          }
+        }
+        val bytes = ByteBuffer.wrap(buffer, 0, size)
+        while (bytes.hasRemaining()) channel.write(bytes)
+      }
+      require(recordCount > 0 && lineBytes == 0) { "incomplete retained source" }
+      require(recordCount == config.recordCount) { "retained source record count mismatch" }
+      require(digest.digest().joinToString("") { "%02x".format(it) } == config.sourceSha256) { "retained source hash mismatch" }
+      channel.position(0)
+      Channels.newReader(channel, Charsets.UTF_8.newDecoder(), -1).buffered().use { reader ->
+        return replayRetainedFeatureLines(reader.lineSequence(), config, clock, emit)
+      }
+    }
+  } finally {
+    Files.deleteIfExists(snapshot)
+  }
+}
+
+/** Same keyed transition as the Flink branch, with simulated delivery separated from actual computation time. */
+private fun replayRetainedFeatureLines(
+  lines: Sequence<String>,
   config: RetainedFeatureReplayConfig,
   clock: Clock,
   emit: (RetainedFeatureArrival) -> Unit,
 ): RetainedFeatureReplayResult {
   require(config.schemaVersion == "dorvud.retained-feature-replay.v2") { "unsupported replay configuration" }
-  require(config.sourceSha256.matches(sha256Pattern) && retainedBytesHash(bytes) == config.sourceSha256) { "retained source hash mismatch" }
-  require(config.recordCount > 0 && bytes.isNotEmpty() && bytes.last() == '\n'.code.toByte()) { "incomplete retained source" }
   require(config.processingDelayMs in 0..60_000) { "invalid simulated processing delay" }
   require(config.producerRevision.matches(Regex("[0-9a-f]{40}"))) { "producer revision must be an exact commit" }
   val topics = listOf(config.barsTopic, config.rollingFeaturesTopic, config.technicalFeaturesTopic)
@@ -83,8 +129,6 @@ internal fun replayRetainedFeatures(
   ) {
     "replay universe hash mismatch"
   }
-  val lineCount = bytes.count { it == 10.toByte() }
-  require(lineCount == config.recordCount) { "retained source record count mismatch" }
   val routes =
     mapOf(
       config.barsTopic to ArchiveRoute(config.feed, ArchiveUniverse(config.universeId, config.universeSymbolHash, config.symbols.toSet())),
@@ -122,7 +166,7 @@ internal fun replayRetainedFeatures(
   var skipped = 0
   var rejected = 0
   var recordedAt = clock.millis()
-  for (line in bytes.decodeToString(throwOnInvalidSequence = true).lineSequence().take(lineCount)) {
+  for (line in lines) {
     val arrival = replayJson.decodeFromString<RetainedFeatureArrival>(line)
     val record = arrival.record
     val offset = record.offset.toLong()
@@ -218,18 +262,16 @@ object RetainedFeatureReplay {
     val configBytes = Files.readAllBytes(Path.of(args[0]))
     val config = replayJson.decodeFromString<RetainedFeatureReplayConfig>(configBytes.decodeToString(throwOnInvalidSequence = true))
     val source = Path.of(args[1])
-    // One immutable in-memory byte snapshot is validated and evaluated; paths are never reopened after validation.
-    require(Files.size(source) in 1..134_217_728L) { "extract bars into a source of at most 128 MiB" }
-    val bytes = Files.newInputStream(source).use { it.readNBytes(134_217_729) }
-    require(bytes.size <= 134_217_728) { "retained source exceeds 128 MiB" }
     val directory = Files.createDirectory(Path.of(args[2]))
     val digest = MessageDigest.getInstance("SHA-256")
     val result =
       Files.newOutputStream(directory.resolve("arrivals.ndjson"), StandardOpenOption.CREATE_NEW).use { stream ->
         DigestOutputStream(stream, digest).bufferedWriter(Charsets.UTF_8).use { writer ->
-          replayRetainedFeatures(bytes, config, Clock.systemUTC()) { arrival ->
-            writer.write(replayJson.encodeToString(arrival))
-            writer.write("\n")
+          Files.newInputStream(source).use { input ->
+            replayRetainedFeatures(input, config, Clock.systemUTC()) { arrival ->
+              writer.write(replayJson.encodeToString(arrival))
+              writer.write("\n")
+            }
           }
         }
       }

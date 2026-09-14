@@ -136,8 +136,11 @@ java -Xmx1g -cp build/libs/technical-analysis-flink-all.jar \
 The input is a bar-only extraction of Bayn arrival records (`availableAtMs` and the unchanged Kafka `record`), in
 availability, partition, offset order. The configuration has schema version `dorvud.retained-feature-replay.v2`, exact
 `sourceSha256` and `recordCount`, `barsTopic`, `rollingFeaturesTopic`, `technicalFeaturesTopic`, `feed`, `universeId`, canonical `symbols` and their
-`universeSymbolHash`, exact `producerRevision`, and `processingDelayMs`. Sources are limited to 128 MiB of extracted
-bars. The command validates and executes one immutable byte snapshot; it never reopens the input after validation.
+`universeSymbolHash`, exact `producerRevision`, and `processingDelayMs`. The command streams the source into a private
+temporary snapshot, verifies its hash, count, and final newline, then processes the same open snapshot. It never
+reopens the source after validation. Total source size is not limited to memory; each record is bounded to 1 MiB.
+Rolling and technical state continues across the entire source, including session boundaries. The temporary snapshot
+is removed on success or failure.
 Expanded feature messages are written and hashed incrementally. The existing 5,000 ms producer/Kafka clock-skew
 allowance applies to retained arrival validation as it does in the live feature contract.
 
