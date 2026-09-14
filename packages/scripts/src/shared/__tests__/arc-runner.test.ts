@@ -95,9 +95,9 @@ describe('ARC Nix runner toolchain', () => {
             volumeClaimTemplate: expect.objectContaining({
               spec: {
                 accessModes: ['ReadWriteOnce'],
-                storageClassName: 'local-path-turin-nvme-intel',
+                storageClassName: 'local-path-turin-nvme-transcend',
                 volumeMode: 'Filesystem',
-                resources: { requests: { storage: '80Gi' } },
+                resources: { requests: { storage: '45Gi' } },
               },
             }),
           },

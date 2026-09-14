@@ -8,16 +8,16 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
 - Upgrading from ≤0.9.x requires deleting the legacy `actions.github.com` CRDs and reinstalling the controller/runner charts before letting Argo CD reconcile.
 - Keep the custom template (init container + privileged `docker:dind` sidecar with `DOCKER_HOST=unix:///var/run/docker.sock`) when reapplying so Docker builds continue to work under Kubernetes mode.
 - The runner container intentionally waits for `docker version` before starting `run.sh`; without this guard, ARC can register a runner before the dind socket is ready.
-- The `arc-amd64` runner uses one 80Gi generic ephemeral PVC on the existing Turin-only
-  `local-path-turin-nvme-intel` class. Its `/nix`, `/home/runner/.cache`, `/tmp`, shared `/home/runner/_work`, and Docker data
-  subpaths live on the dedicated rebuildable Intel NVMe scratch volume rather than the Talos `/var` disk. The init
+- The `arc-amd64` runner uses one 45Gi generic ephemeral PVC on the existing Turin-only
+  `local-path-turin-nvme-transcend` class. Its `/nix`, `/home/runner/.cache`, `/tmp`, shared `/home/runner/_work`, and Docker data
+  subpaths live on the dedicated rebuildable Transcend NVMe scratch volume rather than the Talos `/var` disk. The init
   container copies the image's `/nix` tree before the main containers mount the scratch subpath, verifies the mount,
   capacity, regular-file byte count, regular-file count, and symlink count, then fails closed on any mismatch. The PVC
   is deleted with the runner Pod; no job or build state is durable. The ARM64 and `analysis-arm64` scale sets retain
   their existing `emptyDir` workspaces.
-- The 80Gi value is the PVC request; the local-path provisioner does not configure an XFS project quota, so Kubernetes
-  does not enforce an 80Gi per-runner ceiling. The init reserves at least 80Gi of free space after copying the image
-  tree and cache. The 2026-09-08 validation snapshot measured 242,927,108 KiB (about 231.7GiB) free on the Intel XFS
+- The 45Gi value is the PVC request; the local-path provisioner does not configure an XFS project quota, so Kubernetes
+  does not enforce a 45Gi per-runner ceiling. The init requires at least 45Gi of free space after copying the image
+  tree and cache. The 2026-09-14 validation snapshot measured about 233GiB free on the Transcend XFS
   backing partition and found no existing PVC consumers. That is current headroom evidence, not a hard capacity or
   durability guarantee. A failed scratch bootstrap is a runner admission failure; investigate it before changing the
   storage class or falling back to `/var`.
@@ -37,11 +37,14 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
 ## AMD64 capacity
 
 The `arc-amd64` scale set uses `minRunners: 1` and `maxRunners: 5` in `application.yaml`. One idle runner stays available,
-and the set can scale to five runners. ARM64 and `analysis-arm64` retain their existing limits.
+and the set can scale to five runners. Five 45Gi requests total 225Gi, leaving about 12Gi of the Transcend filesystem
+unallocated. These requests do not reserve space or cap writes; the bootstrap free-space check is also shared across
+runners. Actual concurrent-build usage still needs validation. The Intel disk holds Bayn ledger storage and is no
+longer the target for new AMD64 runner scratch volumes. ARM64 and `analysis-arm64` retain their existing limits.
 
 The September 8 maintenance throttle reduced AMD64 capacity to `minRunners: 0` and `maxRunners: 1` after five concurrent
 builds saturated Turin's `/var` NVMe, which also held etcd and Ceph monitor data. AMD64 build scratch now uses the separate
-Intel NVMe PVC described above. Restoring capacity does not establish disk headroom or etcd latency under concurrent
+Transcend NVMe PVC described above. Restoring capacity does not establish disk headroom or etcd latency under concurrent
 builds; check those under actual workload before increasing capacity further.
 
 Capacity changes use a reviewed Git change and the normal runner-image/Kargo delivery path. If storage contention
