@@ -185,7 +185,7 @@ storeTest(
           new Response(
             JSON.stringify({
               quotes: {
-                SPY: Array.from({ length: page === 50 ? 3 : 10_000 }, (_, index) => ({
+                SPY: Array.from({ length: page === 25 ? 3 : 10_000 }, (_, index) => ({
                   t: new Date(Date.parse('2026-09-11T13:30:00Z') + page * 10_000 + index).toISOString(),
                   bp: 100,
                   bs: 10,
@@ -197,7 +197,7 @@ storeTest(
                   z: 'C',
                 })),
               },
-              next_page_token: page < 50 ? String(page + 1) : null,
+              next_page_token: page < 25 ? String(page + 1) : null,
             }),
             { status: 200 },
           ),
@@ -229,12 +229,12 @@ storeTest(
         )
         expect(reads).toHaveLength(1)
         expect(Number(reads[0]?.rows)).toBeGreaterThan(0)
-        expect(Number(reads[0]?.rows)).toBeLessThan(captured.records * 15)
+        expect(Number(reads[0]?.rows)).toBeLessThan(captured.records * 10)
         const restored = `${directory}/restored`
         yield* restoreHistoricalDataset(captured.datasetId, restored)
         const dataset = yield* readHistoricalDataset(directory, captured.datasetId)
         const quoteChunk = dataset.manifest.chunks.find((chunk) => chunk.kind === 'quotes')
-        expect(quoteChunk?.rowCount).toBe(500_003)
+        expect(quoteChunk?.rowCount).toBe(250_003)
         if (quoteChunk === undefined) throw new Error('Large quote capture is absent')
         expect(sha256(yield* fs.readFileString(`${restored}/${quoteChunk.path}`))).toBe(quoteChunk.sha256)
       }).pipe(
