@@ -95,7 +95,10 @@ featureTest(
         const directory = yield* fs.makeTempDirectoryScoped()
         const datasetDirectory = `${directory}/dataset`,
           output = `${directory}/export`
-        const captured = yield* backfillAlpacaHistory(historyFixtureRequest, datasetDirectory)
+        const captured = yield* backfillAlpacaHistory(
+          { ...historyFixtureRequest, symbols: [...historyFixtureRequest.symbols].reverse() },
+          datasetDirectory,
+        )
         const universe = {
           universeId: 'history-integration',
           universeSymbolHash: sha256('AAPL,AMD,SPY'),

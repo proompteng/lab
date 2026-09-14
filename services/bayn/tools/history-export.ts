@@ -430,7 +430,7 @@ export const exportHistoricalDataset = (
         recordedAt,
         origin,
         datasetId: request.datasetId,
-        acquiredSymbols: dataset.manifest.request.symbols,
+        acquiredSymbols: dataset.manifest.request.symbols.toSorted(),
         unacquiredSymbols: request.universe.symbols.filter(
           (symbol) => !dataset.manifest.request.symbols.includes(symbol),
         ),
