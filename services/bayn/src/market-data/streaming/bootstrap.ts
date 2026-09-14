@@ -3,6 +3,8 @@ import { topicPartitionKey } from './projection'
 
 export class KafkaBootstrapFailure extends Data.TaggedError('KafkaBootstrapFailure')<{ readonly message: string }> {}
 
+export const kafkaBootstrapDeadlineMs = 300_000
+
 export enum KafkaBootstrapTimestampPolicy {
   ProducerClock = 'dorvud.producer-clock.v1',
   RetainedBeginning = 'retained-beginning',

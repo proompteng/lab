@@ -2,12 +2,7 @@ import { Result, Schema } from 'effect'
 
 import { makeExecutionCalendarObservation } from '../../cycle/construction'
 import { canonicalHashV1Result, sha256 } from '../../hash'
-import type {
-  IntradayBar,
-  IntradayCandidateExclusion,
-  IntradayQuote,
-  IntradayTrade,
-} from '../../market-data/intraday/model'
+import type { IntradayCandidateExclusion, IntradayQuote, IntradayTrade } from '../../market-data/intraday/model'
 import type { StrategyMarketSnapshot } from '../../market-data/streaming/snapshot'
 import { compareIntradayInstants, intradayInstantNanos } from '../../market-data/intraday/time'
 import { strictParseOptions, UtcInstantSchema } from '../../schemas'
@@ -20,7 +15,6 @@ import {
 } from './model'
 import {
   decideIntradayMomentumCore,
-  type IntradayMomentumCoreBar,
   type IntradayMomentumCoreQuote,
   type IntradayMomentumCoreTrade,
 } from './decision-core'
@@ -111,11 +105,11 @@ const validateSnapshot = (
 ): Result.Result<void, IntradayMomentumFailure> => {
   const { session, snapshot } = context
   const { manifest } = snapshot
-  if (manifest.schemaVersion === 'bayn.streaming-market-snapshot.v1') {
+  if ('streaming' in manifest) {
     const contract = protocol.streamingInput
     if (
-      contract === undefined ||
-      manifest.streaming.bootstrap.timestampPolicy !== contract.bootstrapTimestampPolicy ||
+      ('bootstrap' in manifest.streaming &&
+        manifest.streaming.bootstrap.timestampPolicy !== contract.bootstrapTimestampPolicy) ||
       manifest.streaming.features.some(
         ({ value, topic }) =>
           topic !== contract.featureTopic ||
@@ -259,14 +253,6 @@ const validateSnapshot = (
   return Result.succeed(undefined)
 }
 
-const toCoreBar = ({ symbol, eventAt, open, high, low }: IntradayBar): IntradayMomentumCoreBar => ({
-  symbol,
-  eventAt,
-  open,
-  high,
-  low,
-})
-
 const toCoreQuote = ({
   symbol,
   eventAt,
@@ -303,24 +289,17 @@ const decideIntradayMomentumFromEnvelope = (
         return trade === undefined ? [] : [[symbol, toCoreTrade(trade)] as const]
       }),
     )
+    if (!('streaming' in snapshot.manifest))
+      return yield* fail('snapshot-identity', 'Strategy requires the canonical feature input contract')
     const core = yield* decideIntradayMomentumCore({
-      ...(snapshot.manifest.schemaVersion === 'bayn.streaming-market-snapshot.v1'
-        ? {
-            rollingPrices: Object.fromEntries(
-              snapshot.manifest.streaming.features.map((feature) => [
-                feature.value.material.symbol,
-                feature.value.material.values,
-              ]),
-            ),
-          }
-        : {}),
-      bars: snapshot.bars.map(toCoreBar),
+      rollingPrices: Object.fromEntries(
+        snapshot.manifest.streaming.features.map(({ value }) => [value.material.symbol, value.material.values]),
+      ),
       latestQuotes: Object.fromEntries(
         Object.entries(snapshot.latestQuotes).map(([symbol, quote]) => [symbol, toCoreQuote(quote)]),
       ),
       latestTrades,
       observedAt: snapshot.manifest.observedAt,
-      rangeStartAt: snapshot.manifest.rangeStartAt,
       ...(candidateExclusions === undefined ? {} : { candidateExclusions }),
       protocol,
     })

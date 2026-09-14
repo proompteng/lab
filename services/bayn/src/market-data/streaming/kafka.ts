@@ -15,7 +15,13 @@ import {
   type MessagesStream,
   type Offsets,
 } from '@platformatic/kafka'
-import { Cause, Clock, Context, Data, Duration, Effect, Layer, Redacted, Schedule, Stream } from 'effect'
+import { Cause, Clock, Context, Data, Duration, Effect, Layer, Redacted, Result, Schedule, Stream } from 'effect'
+import {
+  featureAvailabilityMeasurement,
+  partitionLagMeasurements,
+  projectionCoverageMeasurements,
+  safeKafkaFailureCodes,
+} from './telemetry'
 
 import {
   emptyStreamingProjection,
@@ -26,7 +32,7 @@ import {
 import type { KafkaMarketRecord, StreamingUniverse } from './raw-events'
 
 export interface KafkaMarketConfig {
-  readonly shadowOnly?: boolean
+  readonly technicalFeaturesTopic?: string | undefined
   readonly brokers: readonly string[]
   readonly username: string
   readonly password: Redacted.Redacted<string>
@@ -48,6 +54,7 @@ export interface KafkaConsumedRecord extends KafkaMarketRecord {
   readonly leaderEpoch: number
 }
 export interface KafkaProjectionStream extends AsyncIterable<KafkaConsumedRecord> {
+  readonly queuedRecords: () => number
   /** Positions include skipped transaction/control offsets. False while any delivered record is unincorporated. */
   readonly drainedPositions: () => readonly KafkaPartitionPosition[] | undefined
 }
@@ -123,6 +130,7 @@ export const platformaticProjectionTransport: KafkaProjectionTransportFactory = 
       active = source
       let pending = false
       return {
+        queuedRecords: () => source.readableLength,
         drainedPositions: () =>
           pending || source.readableLength !== 0
             ? undefined
@@ -203,7 +211,7 @@ export const makeKafkaMarketProjection = (
     const clock = yield* Clock.Clock
     const owner = yield* Effect.scope
     let restartAfterMs: number | undefined
-    let projection = emptyStreamingProjection('starting')
+    let projection = emptyStreamingProjection('starting', universe.topics.technicalFeatures)
     let bootstrap: KafkaBootstrapEvidence | undefined
     let positions: readonly KafkaPartitionPosition[] = []
     let ready = false
@@ -211,7 +219,7 @@ export const makeKafkaMarketProjection = (
     const cycle = Effect.scoped(
       Effect.gen(function* () {
         const epoch = yield* Effect.sync(randomUUID)
-        projection = emptyStreamingProjection(epoch)
+        projection = emptyStreamingProjection(epoch, universe.topics.technicalFeatures)
         ready = false
         bootstrap = undefined
         positions = []
@@ -238,7 +246,9 @@ export const makeKafkaMarketProjection = (
         const observedAtMs = yield* Clock.currentTimeMillis
         const lowerTimestampMs =
           diagnosticStartMs ?? Math.floor((observedAtMs - 2000) / 60_000) * 60_000 - 30 * 60_000 - 5000
-        const topics = Object.values(universe.topics)
+        const topics = Object.values(universe.topics).filter((topic) => topic !== undefined)
+        if (new Set(topics).size !== topics.length)
+          return yield* failure('bootstrap', 'Market input topics must be distinct')
         const starts = yield* operation('bootstrap', () => transport.offsets(topics, -2n))
         const ends = yield* operation('bootstrap', () => transport.offsets(topics, -1n))
         const seek =
@@ -282,10 +292,37 @@ export const makeKafkaMarketProjection = (
           failure('consume', 'Kafka consumption failed', cause),
         ).pipe(
           Stream.runForEach((record) =>
-            Effect.sync(() => {
+            Effect.gen(function* () {
               if (invalidation !== undefined) return
+              const previousSequence = projection.sequence
               projection = incorporateMarketRecord(projection, record, universe, clock.currentTimeMillisUnsafe())
               terminals.set(topicPartitionKey(record.topic, record.partition), record)
+              if (projection.technicalFeatureArrival !== null && projection.sequence !== previousSequence)
+                yield* Effect.logInfo('Kafka technical feature incorporated', {
+                  ...featureAvailabilityMeasurement(
+                    epoch,
+                    projection.technicalFeatureArrival,
+                    partitions.find(
+                      (partition) => partition.topic === record.topic && partition.partition === record.partition,
+                    )?.endOffset,
+                  ),
+                  definitionId: projection.technicalFeatureArrival.value.material.definitionId,
+                  consumerPurpose: diagnosticStartMs === undefined ? 'execution-worker' : 'retained-input-diagnostic',
+                })
+              if (record.topic === universe.topics.features && projection.sequence !== previousSequence) {
+                const incorporatedFeature = projection.featureArrival
+                if (incorporatedFeature !== null)
+                  yield* Effect.logInfo('Kafka feature incorporated', {
+                    ...featureAvailabilityMeasurement(
+                      epoch,
+                      incorporatedFeature,
+                      partitions.find(
+                        (partition) => partition.topic === record.topic && partition.partition === record.partition,
+                      )?.endOffset,
+                    ),
+                    consumerPurpose: diagnosticStartMs === undefined ? 'execution-worker' : 'retained-input-diagnostic',
+                  })
+              }
             }),
           ),
           Effect.andThen(Effect.fail(failure('consume', 'Kafka consumption ended'))),
@@ -336,7 +373,34 @@ export const makeKafkaMarketProjection = (
             }
           }
         })
-        return yield* Effect.raceFirst(consume, monitor)
+        const report = Effect.gen(function* () {
+          while (true) {
+            yield* Effect.sleep(Duration.seconds(30))
+            const lookupStartedAtMs = yield* Clock.currentTimeMillis
+            // The SDK bounds requests and retries; an optional lookup must not use operation's whole-client timeout.
+            // Consumer-scope finalization still closes this request if the worker stops during the lookup.
+            const ends = yield* Effect.tryPromise({
+              try: () => transport.offsets(topics, -1n),
+              catch: (cause) => failure('read', 'Kafka read failed', cause),
+            }).pipe(Effect.result)
+            const measuredAtMs = yield* Clock.currentTimeMillis
+            yield* Effect.logInfo('Kafka market projection measurements', {
+              schemaVersion: 'bayn.kafka-projection-measurements.v1',
+              epoch,
+              sequence: projection.sequence,
+              bootstrapComplete: ready,
+              queuedRecords: source.queuedRecords(),
+              queueHighWaterMark: 256,
+              endOffsetLookupStartedAtMs: lookupStartedAtMs,
+              endOffsetLookupCompletedAtMs: measuredAtMs,
+              endOffsetLookupFailure: Result.isFailure(ends) ? ends.failure.message : null,
+              endOffsetLookupFailureCodes: Result.isFailure(ends) ? safeKafkaFailureCodes(ends.failure.cause) : null,
+              partitions: partitionLagMeasurements(positions, Result.isSuccess(ends) ? ends.success : undefined),
+              ...projectionCoverageMeasurements(projection, universe.symbols, measuredAtMs),
+            })
+          }
+        })
+        return yield* Effect.raceFirst(consume, Effect.raceFirst(monitor, report))
       }),
     ).pipe(
       Effect.tapError((cause) =>

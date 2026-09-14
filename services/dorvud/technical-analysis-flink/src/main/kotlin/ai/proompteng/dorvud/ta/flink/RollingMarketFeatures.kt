@@ -159,12 +159,10 @@ internal fun compareFeatureBarRevision(
 internal fun rollingFeatureKey(bar: IntradayBarRecord): String =
   listOf(bar.provider, bar.feed, bar.delayClass, bar.universeId, bar.universeSymbolHash, bar.symbol).joinToString("|")
 
-internal fun advanceRollingFeature(
-  previous: RollingFeatureState,
+internal fun validateMarketFeatureBar(
   bar: IntradayBarRecord,
   computedAtMs: Long,
-  producerRevision: String,
-): RollingFeatureTransition {
+) {
   require(bar.provider == "alpaca" && bar.feed == "iex" && bar.delayClass == "real_time_exchange_only") { "unsupported feature feed" }
   require(bar.marketSession == "regular" && bar.final) { "features require finalized regular-session bars" }
   require(bar.eventTime.nano == 0 && bar.eventTime.epochSecond % 60 == 0L) { "feature bar must be minute aligned" }
@@ -185,6 +183,15 @@ internal fun advanceRollingFeature(
     "inconsistent feature range"
   }
   featureMicros(bar.volume)
+}
+
+internal fun advanceRollingFeature(
+  previous: RollingFeatureState,
+  bar: IntradayBarRecord,
+  computedAtMs: Long,
+  producerRevision: String,
+): RollingFeatureTransition {
+  validateMarketFeatureBar(bar, computedAtMs)
   val sessionDate =
     bar.eventTime
       .atZone(featureZone)

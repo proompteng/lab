@@ -5,7 +5,7 @@ import {
   marketFeatureClockSkewAllowanceMs,
   rollingFeatureDefinitionMaterial,
 } from '../../market-data/features/contract'
-import { KafkaBootstrapTimestampPolicy } from '../../market-data/streaming/bootstrap'
+import { kafkaBootstrapDeadlineMs, KafkaBootstrapTimestampPolicy } from '../../market-data/streaming/bootstrap'
 
 import {
   ExecutionModelV5Schema,
@@ -101,7 +101,7 @@ export const intradayMomentumStreamingContract = Object.freeze({
   requiredDefinitionHash: sha256(JSON.stringify(rollingFeatureDefinitionMaterial)),
   clockSkewAllowanceMs: marketFeatureClockSkewAllowanceMs,
   bootstrapTimestampPolicy: KafkaBootstrapTimestampPolicy.ProducerClock,
-  bootstrapDeadlineMs: 120_000,
+  bootstrapDeadlineMs: kafkaBootstrapDeadlineMs,
   freshness: 'exact-completed-window-and-matching-raw-inputs',
 } as const)
 const StreamingInputContract = Schema.Struct({
@@ -113,13 +113,13 @@ const StreamingInputContract = Schema.Struct({
   requiredDefinitionHash: Schema.Literal(intradayMomentumStreamingContract.requiredDefinitionHash),
   clockSkewAllowanceMs: Schema.Literal(marketFeatureClockSkewAllowanceMs),
   bootstrapTimestampPolicy: Schema.Literal(KafkaBootstrapTimestampPolicy.ProducerClock),
-  bootstrapDeadlineMs: Schema.Literal(120_000),
+  bootstrapDeadlineMs: Schema.Literal(kafkaBootstrapDeadlineMs),
   freshness: Schema.Literal(intradayMomentumStreamingContract.freshness),
 })
 
 const IntradayMomentumProtocolBase = Schema.Struct({
-  schemaVersion: Schema.Literals(['bayn.intraday-momentum.protocol.v2', 'bayn.intraday-momentum.protocol.v3']),
-  streamingInput: Schema.optionalKey(StreamingInputContract),
+  schemaVersion: Schema.Literal('bayn.intraday-momentum.protocol.v3'),
+  streamingInput: StreamingInputContract,
   universeId: Schema.Literal('torghut-core-equity-v2'),
   universeSymbolHash: Sha256Schema,
   universe: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isMaxLength(64)),
@@ -156,12 +156,7 @@ const IntradayMomentumProtocolBase = Schema.Struct({
 
 const protocolIssues = (protocol: typeof IntradayMomentumProtocolBase.Type): readonly Schema.FilterIssue[] => {
   const issues: Schema.FilterIssue[] = []
-  if ((protocol.schemaVersion === 'bayn.intraday-momentum.protocol.v3') !== (protocol.streamingInput !== undefined))
-    issues.push({
-      path: ['streamingInput'],
-      issue: 'v3 requires its streaming input contract; v2 preserves archive inputs',
-    })
-  if (protocol.streamingInput !== undefined && protocol.lookbackMinutes !== 30)
+  if (protocol.lookbackMinutes !== 30)
     issues.push({ path: ['lookbackMinutes'], issue: 'rolling-price-30m requires exactly 30 completed minutes' })
   const canonicalUniverse = [...new Set(protocol.universe)].sort()
   const canonicalCandidates = [...new Set(protocol.candidateSymbols)].sort()

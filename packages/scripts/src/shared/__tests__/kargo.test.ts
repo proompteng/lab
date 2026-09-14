@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import { runInNewContext } from 'node:vm'
 
 import { describe, expect, it } from 'bun:test'
 import YAML from 'yaml'
@@ -77,13 +78,27 @@ const applicationSetElements = ['argocd/applicationsets/product.yaml', 'argocd/a
 const imageRepo = (name: string): string => `registry.ide-newton.ts.net/lab/${name}`
 const gitRepo = 'git@github.com:proompteng/lab.git'
 const publicGitRepo = 'https://github.com/proompteng/lab.git'
+const imageSourceRepo = 'https://github.com/proompteng/lab'
 const buildRunIdAnnotation = 'ai.proompteng.github-actions-run-id'
 const buildConclusionAnnotation = 'ai.proompteng.github-actions-build-conclusion'
 const runQualifiedTagRegex = '^kargo-sha-[0-9a-f]{40}-run-[1-9][0-9]*$'
 
-type FreightCriteria = 'single' | 'all' | 'external'
+type FreightCriteria = 'single' | 'all' | 'external' | 'image-revision'
 
 const criteriaExpression = (mode: FreightCriteria, images: readonly string[], freightGitRepo = gitRepo): string => {
+  if (mode === 'image-revision') {
+    const primary = `imageFrom('${images[0]}')`
+    return images
+      .flatMap((repo, index) => {
+        const image = `imageFrom('${repo}')`
+        return [
+          ...(index === 0 ? [] : [`${image}.Tag == ${primary}.Tag`]),
+          `${image}.Tag == 'kargo-sha-' + ${image}.Annotations['org.opencontainers.image.revision']`,
+          `${image}.Annotations['org.opencontainers.image.source'] == '${imageSourceRepo}'`,
+        ]
+      })
+      .join(' && ')
+  }
   const clauses = images.map(
     (image) => `imageFrom('${image}').Tag == 'kargo-sha-' + commitFrom('${freightGitRepo}').ID`,
   )
@@ -410,7 +425,7 @@ const expected = {
     ],
   },
   torghut: {
-    creationCriteria: 'all',
+    creationCriteria: 'image-revision',
     images: [
       imageRepo('torghut'),
       imageRepo('torghut-notebook'),
@@ -419,47 +434,6 @@ const expected = {
       imageRepo('signal-publisher'),
     ],
     apps: ['torghut'],
-    includePaths: [
-      'services/torghut',
-      'packages/scripts/src/torghut',
-      'services/dorvud/gradle',
-      'services/dorvud/gradlew',
-      'services/dorvud/gradle.properties',
-      'services/dorvud/settings.gradle.kts',
-      'services/dorvud/build.gradle.kts',
-      'services/dorvud/platform',
-      'services/dorvud/technical-analysis',
-      'services/dorvud/technical-analysis-flink',
-      'services/dorvud/websockets',
-      'services/signal-publisher',
-      'nix/images/torghut.nix',
-      'nix/images/torghut-notebook.nix',
-      'nix/images/torghut-ta.nix',
-      'nix/images/dorvud-jvm-service.nix',
-      'nix/images/torghut-ws.nix',
-      'nix/images/signal-publisher.nix',
-      'nix/images/bun-workspace-service.nix',
-      'nix/images/bun-workspace-deps-source.nix',
-      'nix/images/bun-workspace-deps-source.test.sh',
-      'nix/check-bun-dependency-closure.sh',
-      '.github/workflows/nix-bun-dependency-closure.yml',
-      'services/torghut/uv.lock',
-      'flake.nix',
-      'flake.lock',
-      'bun.lock',
-      'glob:**/package.json',
-      'bunfig.toml',
-      '.npmrc',
-      'patches',
-      'package.json',
-      '.github/workflows/nix-oci-build-common.yml',
-      '.github/workflows/torghut-ta-build-push.yaml',
-      'packages/scripts/src/shared/oci.ts',
-      '.github/workflows/torghut-post-deploy-verify.yml',
-      'nix/oci-push.sh',
-      'argocd/applications/torghut',
-    ],
-    excludePaths: ['packages/scripts/src/torghut/__tests__', 'glob:packages/scripts/src/torghut/**/*.test.ts'],
   },
   bilig: {
     creationCriteria: 'external',
@@ -555,6 +529,78 @@ const byName = (manifests: Manifest[]): Map<string, Manifest> =>
   new Map(manifests.map((manifest) => [manifest.metadata?.name ?? '', manifest]))
 
 describe('Kargo direct-push GitOps contract', () => {
+  it('promotes one immutable Torghut source after a stack ends beyond the last path-filtered commit', () => {
+    const source = '21c7541cea499b753c4003bab998ac1e2818239b'
+    const filteredAncestor = '31ee20b0b6e90b534dec72e7e420cee3d1c1ce68'
+    const warehouse = byName(warehouses).get('torghut')
+    const expression = warehouse?.spec?.freightCreationCriteria?.expression
+    expect(typeof expression).toBe('string')
+    const images = Object.fromEntries(
+      expected.torghut.images.map((repo) => [
+        repo,
+        {
+          Tag: `kargo-sha-${source}`,
+          Annotations: {
+            'org.opencontainers.image.revision': source,
+            'org.opencontainers.image.source': imageSourceRepo,
+          },
+        },
+      ]),
+    )
+    const evaluate = (input: typeof images) =>
+      runInNewContext(
+        expression,
+        {
+          imageFrom: (repo: string) => input[repo],
+          commitFrom: () => ({ ID: filteredAncestor }),
+        },
+        { timeout: 100 },
+      )
+    expect(evaluate(images)).toBe(true)
+    for (const repo of expected.torghut.images) {
+      const image = images[repo]
+      if (image === undefined) throw new Error('Missing release fixture')
+      expect(evaluate({ ...images, [repo]: { ...image, Tag: `kargo-sha-${filteredAncestor}` } })).toBe(false)
+      expect(
+        evaluate({
+          ...images,
+          [repo]: {
+            ...image,
+            Annotations: { ...image.Annotations, 'org.opencontainers.image.revision': filteredAncestor },
+          },
+        }),
+      ).toBe(false)
+      expect(
+        evaluate({
+          ...images,
+          [repo]: {
+            ...image,
+            Annotations: {
+              ...image.Annotations,
+              'org.opencontainers.image.source': 'https://github.com/other/repository',
+            },
+          },
+        }),
+      ).toBe(false)
+    }
+    const stage = byName(stages).get('torghut')
+    const clone = stage?.spec?.promotionTemplate?.spec?.steps.find(
+      (step: Record<string, any>) => step.uses === 'git-clone',
+    )
+    const sourceExpression = clone.config.checkout[0].commit.slice(3, -2).trim()
+    expect(
+      runInNewContext(
+        sourceExpression,
+        {
+          vars: { imageRepo: imageRepo('torghut'), gitRepo },
+          imageFrom: (repo: string) => images[repo],
+          commitFrom: () => ({ ID: filteredAncestor }),
+        },
+        { timeout: 100 },
+      ),
+    ).toBe(source)
+  })
+
   it('uses the current Kargo patch and persists Argo resource health for Stage checks', () => {
     expect(kargoHelmElement?.version).toBe('1.11.4')
     expect(argoCDCommandParameters.data?.['controller.resource.health.persist']).toBe('true')
@@ -697,19 +743,24 @@ describe('Kargo direct-push GitOps contract', () => {
       }
 
       const subscriptions = warehouse?.spec?.subscriptions as Array<Record<string, any>>
-      expect(subscriptions).toHaveLength(contract.images.length + 1)
+      const sourceFromImage = contract.creationCriteria === 'image-revision'
+      expect(subscriptions).toHaveLength(contract.images.length + (sourceFromImage ? 0 : 1))
       const git = subscriptions.find((subscription) => subscription.git)?.git
-      expect(git).toMatchObject({
-        repoURL: freightGitRepo,
-        branch: 'main',
-        commitSelectionStrategy: 'NewestFromBranch',
-        discoveryLimit: 20,
-        strictSemvers: true,
-      })
-      expect(git?.blobless).toBe(stageName === 'proompteng' ? true : undefined)
-      expect(git?.includePaths).toEqual(contract.includePaths)
-      if (contract.excludePaths) expect(git?.excludePaths).toEqual(contract.excludePaths)
-      else expect(git?.excludePaths).toBeUndefined()
+      if (sourceFromImage) {
+        expect(git).toBeUndefined()
+      } else {
+        expect(git).toMatchObject({
+          repoURL: freightGitRepo,
+          branch: 'main',
+          commitSelectionStrategy: 'NewestFromBranch',
+          discoveryLimit: 20,
+          strictSemvers: true,
+        })
+        expect(git?.blobless).toBe(stageName === 'proompteng' ? true : undefined)
+        expect(git?.includePaths).toEqual(contract.includePaths)
+        if (contract.excludePaths) expect(git?.excludePaths).toEqual(contract.excludePaths)
+        else expect(git?.excludePaths).toBeUndefined()
+      }
 
       const imageSubscriptions = subscriptions
         .filter((subscription) => subscription.image)
@@ -848,7 +899,11 @@ describe('Kargo direct-push GitOps contract', () => {
 
       if (['jangar', 'symphony', 'torghut'].includes(stageName)) {
         const commit = steps.find((step) => step.uses === 'git-commit')
-        expect(commit?.config?.message).toContain('Source commit: ${{ commitFrom(vars.gitRepo).ID }}')
+        expect(commit?.config?.message).toContain(
+          stageName === 'torghut'
+            ? "Source commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}"
+            : 'Source commit: ${{ commitFrom(vars.gitRepo).ID }}',
+        )
       }
 
       const clone = steps.find((step) => step.uses === 'git-clone')
@@ -857,7 +912,13 @@ describe('Kargo direct-push GitOps contract', () => {
         author: { name: 'Kargo', email: 'kargo@proompteng.ai' },
       })
       expect(clone?.config?.checkout).toEqual([
-        { commit: `\${{ commitFrom(vars.${freightRepoVariable}).ID }}`, path: '${{ vars.srcPath }}' },
+        {
+          commit:
+            stageName === 'torghut'
+              ? "${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}"
+              : `\${{ commitFrom(vars.${freightRepoVariable}).ID }}`,
+          path: '${{ vars.srcPath }}',
+        },
         { branch: '${{ vars.targetBranch }}', create: true, path: '${{ vars.outPath }}' },
       ])
 
@@ -929,7 +990,11 @@ describe('Kargo direct-push GitOps contract', () => {
       const stage = stageMap.get(stageName)
       const steps = stage?.spec?.promotionTemplate?.spec?.steps as Array<Record<string, any>>
       const serialized = JSON.stringify(stage)
-      expect(serialized).toContain(`commitFrom(vars.${freightRepoVariable}).ID`)
+      expect(serialized).toContain(
+        contract.creationCriteria === 'image-revision'
+          ? "imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision']"
+          : `commitFrom(vars.${freightRepoVariable}).ID`,
+      )
       expect(serialized).toContain('outputs.commit.commit')
       expect(serialized).not.toContain('updateTargetRevision')
 
