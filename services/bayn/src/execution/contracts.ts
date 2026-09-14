@@ -189,7 +189,7 @@ const AccountSnapshotBase = Schema.Struct({
 export const AccountSnapshotSchema = AccountSnapshotBase
 export type AccountSnapshot = typeof AccountSnapshotSchema.Type
 
-export const PositionSchema = Schema.Struct({
+const LegacyPositionSchema = Schema.Struct({
   schemaVersion: Schema.Literal(legacyPositionSchemaVersion),
   accountId: NonEmptyString,
   symbol: SymbolName,
@@ -200,6 +200,14 @@ export const PositionSchema = Schema.Struct({
   unrealizedPnlMicros: SignedMicros,
   observedAt: UtcInstant,
 })
+export const PositionSchema = Schema.Union([
+  LegacyPositionSchema,
+  Schema.Struct({
+    ...LegacyPositionSchema.fields,
+    schemaVersion: Schema.Literal('bayn.position.v2'),
+    costBasisMicros: SignedMicros,
+  }),
+])
 export type Position = typeof PositionSchema.Type
 
 const OrderBase = Schema.Struct({

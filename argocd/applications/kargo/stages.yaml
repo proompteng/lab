@@ -1130,7 +1130,7 @@ spec:
               name: Kargo
               email: kargo@proompteng.ai
             checkout:
-              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+              - commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
                 path: ${{ vars.srcPath }}
               - branch: ${{ vars.targetBranch }}
                 create: true
@@ -1309,7 +1309,7 @@ spec:
             message: |
               kargo(torghut): promote ${{ ctx.targetFreight.name }}
 
-              Source commit: ${{ commitFrom(vars.gitRepo).ID }}
+              Source commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
         - uses: git-push
           as: push
           config:

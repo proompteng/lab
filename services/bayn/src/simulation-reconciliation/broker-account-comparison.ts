@@ -40,7 +40,9 @@ const comparePosition = (
       observedCost:
         observedPosition === undefined
           ? Result.succeed(0n)
-          : roundMicrosProduct(symbol, observedPosition.quantityMicros, observedPosition.averageEntryPriceMicros),
+          : observedPosition.schemaVersion === 'bayn.position.v2'
+            ? integer('position-cost-basis', symbol, observedPosition.costBasisMicros)
+            : roundMicrosProduct(symbol, observedPosition.quantityMicros, observedPosition.averageEntryPriceMicros),
     }),
     Result.flatMap(({ expectedCost, expectedQuantity, observedCost, observedQuantity }) =>
       pipe(

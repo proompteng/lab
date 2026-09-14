@@ -18,7 +18,7 @@ import {
   minimumOperationalThresholdMs,
   type ParsedRuntimeConfig,
 } from './model'
-import { KafkaBootstrapTimestampPolicy } from '../market-data/streaming/bootstrap'
+import { kafkaBootstrapDeadlineMs, KafkaBootstrapTimestampPolicy } from '../market-data/streaming/bootstrap'
 import type { KafkaMarketConfig } from '../market-data/streaming/kafka'
 import { Pipeable } from '../pipeable'
 
@@ -49,25 +49,24 @@ const positiveInteger = (name: string, fallback: number) =>
 const operationalThreshold = (name: string, fallback: number) =>
   Config.schema(OperationalThresholdMs, name).pipe(Config.withDefault(fallback))
 
-export const kafkaMarketConfig = Config.schema(
-  Schema.Literals(['archive', 'shadow', 'streaming']),
-  'BAYN_MARKET_DATA_MODE',
-).pipe(
-  Config.withDefault('archive'),
+export const kafkaMarketConfig = Config.option(Config.schema(ReplicaAddresses, 'BAYN_KAFKA_BROKERS')).pipe(
   Config.mapOrFail(
-    (mode): Config.Config<KafkaMarketConfig | undefined> =>
-      mode === 'archive'
+    (brokers): Config.Config<KafkaMarketConfig | undefined> =>
+      Option.isNone(brokers)
         ? Config.succeed(undefined)
         : Config.all({
-            shadowOnly: Config.succeed(mode === 'shadow'),
-            brokers: Config.schema(ReplicaAddresses, 'BAYN_KAFKA_BROKERS'),
+            brokers: Config.succeed(brokers.value),
+            technicalFeaturesTopic: Config.option(nonEmptyString('BAYN_KAFKA_TECHNICAL_FEATURES_TOPIC')).pipe(
+              Config.map(Option.getOrUndefined),
+            ),
             username: nonEmptyString('BAYN_KAFKA_USERNAME'),
             password: secretString('BAYN_KAFKA_PASSWORD'),
             groupPrefix: nonEmptyString('BAYN_KAFKA_GROUP_PREFIX').pipe(Config.withDefault('bayn-market-v1')),
             operationTimeoutMs: operationalThreshold('BAYN_KAFKA_OPERATION_TIMEOUT_MS', 10_000),
-            bootstrapTimeoutMs: Config.schema(Schema.Literal(120_000), 'BAYN_KAFKA_BOOTSTRAP_TIMEOUT_MS').pipe(
-              Config.withDefault(120_000),
-            ),
+            bootstrapTimeoutMs: Config.schema(
+              Schema.Literal(kafkaBootstrapDeadlineMs),
+              'BAYN_KAFKA_BOOTSTRAP_TIMEOUT_MS',
+            ).pipe(Config.withDefault(kafkaBootstrapDeadlineMs)),
             timestampPolicy: Config.schema(
               Schema.Literal(KafkaBootstrapTimestampPolicy.ProducerClock),
               'BAYN_KAFKA_TIMESTAMP_POLICY',

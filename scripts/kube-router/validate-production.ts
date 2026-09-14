@@ -29,7 +29,6 @@ export const productionPaths = {
   preflightHook: 'argocd/applications/kube-router/preflight-hook.yaml',
   buzzPolicies: 'argocd/applications/buzz/networkpolicy.yaml',
   grafanaRehearsalPolicies: 'argocd/applications/observability/grafana-upgrade-backup.yaml',
-  mimirRehearsalPolicies: 'argocd/applications/observability/mimir-kafka-upgrade-backup.yaml',
   proomptengPolicies: 'argocd/applications/proompteng/network-policy.yaml',
   restatePolicies: 'argocd/applications/restate/networkpolicy.yaml',
   restateExamplePolicies: 'argocd/applications/restate-example/networkpolicy.yaml',
@@ -60,7 +59,7 @@ export const productionPaths = {
 
 export const reviewedPolicySources = {
   buzz: ['buzzPolicies'],
-  observability: ['grafanaRehearsalPolicies', 'mimirRehearsalPolicies'],
+  observability: ['grafanaRehearsalPolicies'],
   proompteng: ['proomptengPolicies'],
   restate: ['restatePolicies'],
   'restate-example': ['restateExamplePolicies'],

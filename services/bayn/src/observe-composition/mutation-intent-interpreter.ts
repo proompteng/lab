@@ -738,7 +738,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
     })
     return completion._tag === 'Complete'
       ? { _tag: 'Complete', observedAt: facts.evaluatedAt }
-      : { _tag: 'Wait', observedAt: facts.evaluatedAt }
+      : { _tag: 'Wait', observedAt: facts.evaluatedAt, waitReason: completion.reason }
   })
 
 export const prepareMutationIntent = Pipeable.generic<

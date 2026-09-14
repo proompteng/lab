@@ -225,7 +225,7 @@ Hermes/Tengri contracts, Bayn inert selector check and traffic-neutral policies.
 | Namespace | Policies | Source files |
 | --- | --- | --- |
 | buzz | 6 | `argocd/applications/buzz/networkpolicy.yaml` |
-| observability | 2 | `argocd/applications/observability/grafana-upgrade-backup.yaml`, `argocd/applications/observability/mimir-kafka-upgrade-backup.yaml` |
+| observability | 1 | `argocd/applications/observability/grafana-upgrade-backup.yaml` |
 | proompteng | 2 | `argocd/applications/proompteng/network-policy.yaml` |
 | restate | 1 | `argocd/applications/restate/networkpolicy.yaml` |
 | restate-example | 1 | `argocd/applications/restate-example/networkpolicy.yaml` |

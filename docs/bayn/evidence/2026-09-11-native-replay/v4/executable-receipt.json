@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "bayn.local-execution-bundle-receipt.v1",
+  "recordedAt": "2026-09-12T22:48:49.740208+00:00",
+  "sourceRevision": "0d56c6ce8c989d74d9300afab7cc5ab4a5815764",
+  "bundleSha256": "6ab2e293cb78acfec7fc905e1af8a6d402346f40f9c54e7dbc5e09f114f28a14",
+  "lockfileSha256": "13cd4b69ac5fd56e93c0533fa71b6f5fb1cbae01c001223c4118b4562ebc7dd7",
+  "nodeVersion": "v24.14.0",
+  "bunVersion": "1.4.0",
+  "buildCommand": "bun run build",
+  "buildMode": "development-configured; local bundle, declared image digest unverified",
+  "note": "The same archived bundle is used directly by every v4 scenario. Receipt frozen before any v4 execution."
+}
